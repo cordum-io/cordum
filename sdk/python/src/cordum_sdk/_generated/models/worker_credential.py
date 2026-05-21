@@ -16,25 +16,21 @@ from typing import Union
 import datetime
 
 
-
-
-
-
 T = TypeVar("T", bound="WorkerCredential")
 
 
 @_attrs_define
 class WorkerCredential:
-    """ 
-        Attributes:
-            worker_id (str):
-            created_by (str):
-            created_at (datetime.datetime):
-            allowed_pools (Union[Unset, List[str]]):
-            allowed_topics (Union[Unset, List[str]]):
-            pack_id (Union[Unset, str]):
-            revoked_at (Union[Unset, datetime.datetime]):
-     """
+    """
+    Attributes:
+        worker_id (str):
+        created_by (str):
+        created_at (datetime.datetime):
+        allowed_pools (Union[Unset, List[str]]):
+        allowed_topics (Union[Unset, List[str]]):
+        pack_id (Union[Unset, str]):
+        revoked_at (Union[Unset, datetime.datetime]):
+    """
 
     worker_id: str
     created_by: str
@@ -44,7 +40,6 @@ class WorkerCredential:
     pack_id: Union[Unset, str] = UNSET
     revoked_at: Union[Unset, datetime.datetime] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         worker_id = self.worker_id
@@ -57,13 +52,9 @@ class WorkerCredential:
         if not isinstance(self.allowed_pools, Unset):
             allowed_pools = self.allowed_pools
 
-
-
         allowed_topics: Union[Unset, List[str]] = UNSET
         if not isinstance(self.allowed_topics, Unset):
             allowed_topics = self.allowed_topics
-
-
 
         pack_id = self.pack_id
 
@@ -71,14 +62,15 @@ class WorkerCredential:
         if not isinstance(self.revoked_at, Unset):
             revoked_at = self.revoked_at.isoformat()
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "worker_id": worker_id,
-            "created_by": created_by,
-            "created_at": created_at,
-        })
+        field_dict.update(
+            {
+                "worker_id": worker_id,
+                "created_by": created_by,
+                "created_at": created_at,
+            }
+        )
         if allowed_pools is not UNSET:
             field_dict["allowed_pools"] = allowed_pools
         if allowed_topics is not UNSET:
@@ -90,8 +82,6 @@ class WorkerCredential:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
@@ -101,26 +91,18 @@ class WorkerCredential:
 
         created_at = isoparse(d.pop("created_at"))
 
-
-
-
         allowed_pools = cast(List[str], d.pop("allowed_pools", UNSET))
 
-
         allowed_topics = cast(List[str], d.pop("allowed_topics", UNSET))
-
 
         pack_id = d.pop("pack_id", UNSET)
 
         _revoked_at = d.pop("revoked_at", UNSET)
         revoked_at: Union[Unset, datetime.datetime]
-        if isinstance(_revoked_at,  Unset):
+        if isinstance(_revoked_at, Unset):
             revoked_at = UNSET
         else:
             revoked_at = isoparse(_revoked_at)
-
-
-
 
         worker_credential = cls(
             worker_id=worker_id,
@@ -131,7 +113,6 @@ class WorkerCredential:
             pack_id=pack_id,
             revoked_at=revoked_at,
         )
-
 
         worker_credential.additional_properties = d
         return worker_credential

@@ -5,10 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import {
-  useMutation,
-  useQuery
-} from '@tanstack/react-query';
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
   DataTag,
   DefinedInitialDataOptions,
@@ -21,13 +18,13 @@ import type {
   UseMutationOptions,
   UseMutationResult,
   UseQueryOptions,
-  UseQueryResult
-} from '@tanstack/react-query';
+  UseQueryResult,
+} from "@tanstack/react-query";
 
 import type {
   BadRequestResponse,
   ChatMessage,
-  ConflictResponse,
+  Error,
   GetRunChat200,
   InternalServerErrorResponse,
   ListAllWorkflowRuns200,
@@ -38,635 +35,998 @@ import type {
   RerunWorkflowBody,
   RunDetail,
   TimelineEvent,
-  UnauthorizedResponse
-} from '.././model';
+  UnauthorizedResponse,
+} from ".././model";
 
-import { apiClient } from '../../client';
-
-
-
+import { apiClient } from "../../client";
 
 /**
  * @summary List workflow runs across all workflows
  */
 export const listAllWorkflowRuns = (
-    params?: ListAllWorkflowRunsParams,
- signal?: AbortSignal
+  params?: ListAllWorkflowRunsParams,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<ListAllWorkflowRuns200>(
-      {url: `/api/v1/workflow-runs`, method: 'GET',
-        params, signal
-    },
-      );
-    }
-  
+  return apiClient<ListAllWorkflowRuns200>({
+    url: `/api/v1/workflow-runs`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
 
-
-
-export const getListAllWorkflowRunsQueryKey = (params?: ListAllWorkflowRunsParams,) => {
-    return [
-    `/api/v1/workflow-runs`, ...(params ? [params]: [])
-    ] as const;
-    }
-
-    
-export const getListAllWorkflowRunsQueryOptions = <TData = Awaited<ReturnType<typeof listAllWorkflowRuns>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(params?: ListAllWorkflowRunsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAllWorkflowRuns>>, TError, TData>>, }
+export const getListAllWorkflowRunsQueryKey = (
+  params?: ListAllWorkflowRunsParams,
 ) => {
+  return [`/api/v1/workflow-runs`, ...(params ? [params] : [])] as const;
+};
 
-const {query: queryOptions} = options ?? {};
+export const getListAllWorkflowRunsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listAllWorkflowRuns>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  params?: ListAllWorkflowRunsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listAllWorkflowRuns>>,
+        TError,
+        TData
+      >
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListAllWorkflowRunsQueryKey(params);
+  const queryKey =
+    queryOptions?.queryKey ?? getListAllWorkflowRunsQueryKey(params);
 
-  
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listAllWorkflowRuns>>
+  > = ({ signal }) => listAllWorkflowRuns(params, signal);
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAllWorkflowRuns>>> = ({ signal }) => listAllWorkflowRuns(params, signal);
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listAllWorkflowRuns>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-      
+export type ListAllWorkflowRunsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listAllWorkflowRuns>>
+>;
+export type ListAllWorkflowRunsQueryError =
+  | UnauthorizedResponse
+  | InternalServerErrorResponse;
 
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAllWorkflowRuns>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type ListAllWorkflowRunsQueryResult = NonNullable<Awaited<ReturnType<typeof listAllWorkflowRuns>>>
-export type ListAllWorkflowRunsQueryError = UnauthorizedResponse | InternalServerErrorResponse
-
-
-export function useListAllWorkflowRuns<TData = Awaited<ReturnType<typeof listAllWorkflowRuns>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
- params: undefined |  ListAllWorkflowRunsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAllWorkflowRuns>>, TError, TData>> & Pick<
+export function useListAllWorkflowRuns<
+  TData = Awaited<ReturnType<typeof listAllWorkflowRuns>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  params: undefined | ListAllWorkflowRunsParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listAllWorkflowRuns>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listAllWorkflowRuns>>,
           TError,
           Awaited<ReturnType<typeof listAllWorkflowRuns>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListAllWorkflowRuns<TData = Awaited<ReturnType<typeof listAllWorkflowRuns>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
- params?: ListAllWorkflowRunsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAllWorkflowRuns>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListAllWorkflowRuns<
+  TData = Awaited<ReturnType<typeof listAllWorkflowRuns>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  params?: ListAllWorkflowRunsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listAllWorkflowRuns>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listAllWorkflowRuns>>,
           TError,
           Awaited<ReturnType<typeof listAllWorkflowRuns>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListAllWorkflowRuns<TData = Awaited<ReturnType<typeof listAllWorkflowRuns>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
- params?: ListAllWorkflowRunsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAllWorkflowRuns>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListAllWorkflowRuns<
+  TData = Awaited<ReturnType<typeof listAllWorkflowRuns>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  params?: ListAllWorkflowRunsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listAllWorkflowRuns>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary List workflow runs across all workflows
  */
 
-export function useListAllWorkflowRuns<TData = Awaited<ReturnType<typeof listAllWorkflowRuns>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
- params?: ListAllWorkflowRunsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAllWorkflowRuns>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
-
-  const queryOptions = getListAllWorkflowRunsQueryOptions(params,options)
-
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
-
-  return query;
-}
-
-
-
-
-/**
- * @summary Get workflow run detail
- */
-export const getWorkflowRun = (
-    id: string,
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<RunDetail>(
-      {url: `/api/v1/workflow-runs/${id}`, method: 'GET', signal
-    },
-      );
-    }
-  
-
-
-
-export const getGetWorkflowRunQueryKey = (id?: string,) => {
-    return [
-    `/api/v1/workflow-runs/${id}`
-    ] as const;
-    }
-
-    
-export const getGetWorkflowRunQueryOptions = <TData = Awaited<ReturnType<typeof getWorkflowRun>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWorkflowRun>>, TError, TData>>, }
-) => {
-
-const {query: queryOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetWorkflowRunQueryKey(id);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getWorkflowRun>>> = ({ signal }) => getWorkflowRun(id, signal);
-
-      
-
-      
-
-   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getWorkflowRun>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetWorkflowRunQueryResult = NonNullable<Awaited<ReturnType<typeof getWorkflowRun>>>
-export type GetWorkflowRunQueryError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse
-
-
-export function useGetWorkflowRun<TData = Awaited<ReturnType<typeof getWorkflowRun>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWorkflowRun>>, TError, TData>> & Pick<
-        DefinedInitialDataOptions<
-          Awaited<ReturnType<typeof getWorkflowRun>>,
-          TError,
-          Awaited<ReturnType<typeof getWorkflowRun>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetWorkflowRun<TData = Awaited<ReturnType<typeof getWorkflowRun>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWorkflowRun>>, TError, TData>> & Pick<
-        UndefinedInitialDataOptions<
-          Awaited<ReturnType<typeof getWorkflowRun>>,
-          TError,
-          Awaited<ReturnType<typeof getWorkflowRun>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetWorkflowRun<TData = Awaited<ReturnType<typeof getWorkflowRun>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWorkflowRun>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-/**
- * @summary Get workflow run detail
- */
-
-export function useGetWorkflowRun<TData = Awaited<ReturnType<typeof getWorkflowRun>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWorkflowRun>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
-
-  const queryOptions = getGetWorkflowRunQueryOptions(id,options)
-
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
-
-  return query;
-}
-
-
-
-
-/**
- * @summary Delete a workflow run
- */
-export const deleteWorkflowRun = (
-    id: string,
- ) => {
-      
-      
-      return apiClient<void>(
-      {url: `/api/v1/workflow-runs/${id}`, method: 'DELETE'
-    },
-      );
-    }
-  
-
-
-export const getDeleteWorkflowRunMutationOptions = <TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteWorkflowRun>>, TError,{id: string}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof deleteWorkflowRun>>, TError,{id: string}, TContext> => {
-
-const mutationKey = ['deleteWorkflowRun'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
-
-      
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteWorkflowRun>>, {id: string}> = (props) => {
-          const {id} = props ?? {};
-
-          return  deleteWorkflowRun(id,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type DeleteWorkflowRunMutationResult = NonNullable<Awaited<ReturnType<typeof deleteWorkflowRun>>>
-    
-    export type DeleteWorkflowRunMutationError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse
-
-    /**
- * @summary Delete a workflow run
- */
-export const useDeleteWorkflowRun = <TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteWorkflowRun>>, TError,{id: string}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof deleteWorkflowRun>>,
+export function useListAllWorkflowRuns<
+  TData = Awaited<ReturnType<typeof listAllWorkflowRuns>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  params?: ListAllWorkflowRunsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listAllWorkflowRuns>>,
         TError,
-        {id: string},
-        TContext
-      > => {
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListAllWorkflowRunsQueryOptions(params, options);
 
-      const mutationOptions = getDeleteWorkflowRunMutationOptions(options);
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
- * @summary Get timeline events for a run
- */
-export const getRunTimeline = (
-    id: string,
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<TimelineEvent[]>(
-      {url: `/api/v1/workflow-runs/${id}/timeline`, method: 'GET', signal
-    },
-      );
-    }
-  
-
-
-
-export const getGetRunTimelineQueryKey = (id?: string,) => {
-    return [
-    `/api/v1/workflow-runs/${id}/timeline`
-    ] as const;
-    }
-
-    
-export const getGetRunTimelineQueryOptions = <TData = Awaited<ReturnType<typeof getRunTimeline>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRunTimeline>>, TError, TData>>, }
-) => {
-
-const {query: queryOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetRunTimelineQueryKey(id);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getRunTimeline>>> = ({ signal }) => getRunTimeline(id, signal);
-
-      
-
-      
-
-   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getRunTimeline>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetRunTimelineQueryResult = NonNullable<Awaited<ReturnType<typeof getRunTimeline>>>
-export type GetRunTimelineQueryError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse
-
-
-export function useGetRunTimeline<TData = Awaited<ReturnType<typeof getRunTimeline>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRunTimeline>>, TError, TData>> & Pick<
-        DefinedInitialDataOptions<
-          Awaited<ReturnType<typeof getRunTimeline>>,
-          TError,
-          Awaited<ReturnType<typeof getRunTimeline>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetRunTimeline<TData = Awaited<ReturnType<typeof getRunTimeline>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRunTimeline>>, TError, TData>> & Pick<
-        UndefinedInitialDataOptions<
-          Awaited<ReturnType<typeof getRunTimeline>>,
-          TError,
-          Awaited<ReturnType<typeof getRunTimeline>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetRunTimeline<TData = Awaited<ReturnType<typeof getRunTimeline>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRunTimeline>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-/**
- * @summary Get timeline events for a run
- */
-
-export function useGetRunTimeline<TData = Awaited<ReturnType<typeof getRunTimeline>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRunTimeline>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
-
-  const queryOptions = getGetRunTimelineQueryOptions(id,options)
-
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
 
-
-
-
 /**
- * @summary Get chat messages for a run
+ * @summary Get workflow run detail
  */
-export const getRunChat = (
-    id: string,
- signal?: AbortSignal
+export const getWorkflowRun = (id: string, signal?: AbortSignal) => {
+  return apiClient<RunDetail>({
+    url: `/api/v1/workflow-runs/${id}`,
+    method: "GET",
+    signal,
+  });
+};
+
+export const getGetWorkflowRunQueryKey = (id?: string) => {
+  return [`/api/v1/workflow-runs/${id}`] as const;
+};
+
+export const getGetWorkflowRunQueryOptions = <
+  TData = Awaited<ReturnType<typeof getWorkflowRun>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getWorkflowRun>>, TError, TData>
+    >;
+  },
 ) => {
-      
-      
-      return apiClient<GetRunChat200>(
-      {url: `/api/v1/workflow-runs/${id}/chat`, method: 'GET', signal
-    },
-      );
-    }
-  
+  const { query: queryOptions } = options ?? {};
 
+  const queryKey = queryOptions?.queryKey ?? getGetWorkflowRunQueryKey(id);
 
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getWorkflowRun>>> = ({
+    signal,
+  }) => getWorkflowRun(id, signal);
 
-export const getGetRunChatQueryKey = (id?: string,) => {
-    return [
-    `/api/v1/workflow-runs/${id}/chat`
-    ] as const;
-    }
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getWorkflowRun>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    
-export const getGetRunChatQueryOptions = <TData = Awaited<ReturnType<typeof getRunChat>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRunChat>>, TError, TData>>, }
-) => {
+export type GetWorkflowRunQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getWorkflowRun>>
+>;
+export type GetWorkflowRunQueryError =
+  | UnauthorizedResponse
+  | NotFoundResponse
+  | InternalServerErrorResponse;
 
-const {query: queryOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetRunChatQueryKey(id);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getRunChat>>> = ({ signal }) => getRunChat(id, signal);
-
-      
-
-      
-
-   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getRunChat>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetRunChatQueryResult = NonNullable<Awaited<ReturnType<typeof getRunChat>>>
-export type GetRunChatQueryError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse
-
-
-export function useGetRunChat<TData = Awaited<ReturnType<typeof getRunChat>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRunChat>>, TError, TData>> & Pick<
+export function useGetWorkflowRun<
+  TData = Awaited<ReturnType<typeof getWorkflowRun>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getWorkflowRun>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
-          Awaited<ReturnType<typeof getRunChat>>,
+          Awaited<ReturnType<typeof getWorkflowRun>>,
           TError,
-          Awaited<ReturnType<typeof getRunChat>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetRunChat<TData = Awaited<ReturnType<typeof getRunChat>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRunChat>>, TError, TData>> & Pick<
+          Awaited<ReturnType<typeof getWorkflowRun>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetWorkflowRun<
+  TData = Awaited<ReturnType<typeof getWorkflowRun>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getWorkflowRun>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
-          Awaited<ReturnType<typeof getRunChat>>,
+          Awaited<ReturnType<typeof getWorkflowRun>>,
           TError,
-          Awaited<ReturnType<typeof getRunChat>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetRunChat<TData = Awaited<ReturnType<typeof getRunChat>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRunChat>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+          Awaited<ReturnType<typeof getWorkflowRun>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetWorkflowRun<
+  TData = Awaited<ReturnType<typeof getWorkflowRun>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getWorkflowRun>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
- * @summary Get chat messages for a run
+ * @summary Get workflow run detail
  */
 
-export function useGetRunChat<TData = Awaited<ReturnType<typeof getRunChat>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRunChat>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetWorkflowRun<
+  TData = Awaited<ReturnType<typeof getWorkflowRun>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getWorkflowRun>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetWorkflowRunQueryOptions(id, options);
 
-  const queryOptions = getGetRunChatQueryOptions(id,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
 
+/**
+ * @summary Delete a workflow run
+ */
+export const deleteWorkflowRun = (id: string) => {
+  return apiClient<void>({
+    url: `/api/v1/workflow-runs/${id}`,
+    method: "DELETE",
+  });
+};
 
+export const getDeleteWorkflowRunMutationOptions = <
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteWorkflowRun>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteWorkflowRun>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["deleteWorkflowRun"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteWorkflowRun>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return deleteWorkflowRun(id);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteWorkflowRunMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteWorkflowRun>>
+>;
+
+export type DeleteWorkflowRunMutationError =
+  | UnauthorizedResponse
+  | NotFoundResponse
+  | InternalServerErrorResponse;
+
+/**
+ * @summary Delete a workflow run
+ */
+export const useDeleteWorkflowRun = <
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof deleteWorkflowRun>>,
+      TError,
+      { id: string },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof deleteWorkflowRun>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationOptions = getDeleteWorkflowRunMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+/**
+ * @summary Get timeline events for a run
+ */
+export const getRunTimeline = (id: string, signal?: AbortSignal) => {
+  return apiClient<TimelineEvent[]>({
+    url: `/api/v1/workflow-runs/${id}/timeline`,
+    method: "GET",
+    signal,
+  });
+};
+
+export const getGetRunTimelineQueryKey = (id?: string) => {
+  return [`/api/v1/workflow-runs/${id}/timeline`] as const;
+};
+
+export const getGetRunTimelineQueryOptions = <
+  TData = Awaited<ReturnType<typeof getRunTimeline>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getRunTimeline>>, TError, TData>
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetRunTimelineQueryKey(id);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getRunTimeline>>> = ({
+    signal,
+  }) => getRunTimeline(id, signal);
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getRunTimeline>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
+
+export type GetRunTimelineQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getRunTimeline>>
+>;
+export type GetRunTimelineQueryError =
+  | UnauthorizedResponse
+  | NotFoundResponse
+  | InternalServerErrorResponse;
+
+export function useGetRunTimeline<
+  TData = Awaited<ReturnType<typeof getRunTimeline>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getRunTimeline>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRunTimeline>>,
+          TError,
+          Awaited<ReturnType<typeof getRunTimeline>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetRunTimeline<
+  TData = Awaited<ReturnType<typeof getRunTimeline>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getRunTimeline>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRunTimeline>>,
+          TError,
+          Awaited<ReturnType<typeof getRunTimeline>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetRunTimeline<
+  TData = Awaited<ReturnType<typeof getRunTimeline>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getRunTimeline>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+/**
+ * @summary Get timeline events for a run
+ */
+
+export function useGetRunTimeline<
+  TData = Awaited<ReturnType<typeof getRunTimeline>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getRunTimeline>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetRunTimelineQueryOptions(id, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * @summary Get chat messages for a run
+ */
+export const getRunChat = (id: string, signal?: AbortSignal) => {
+  return apiClient<GetRunChat200>({
+    url: `/api/v1/workflow-runs/${id}/chat`,
+    method: "GET",
+    signal,
+  });
+};
+
+export const getGetRunChatQueryKey = (id?: string) => {
+  return [`/api/v1/workflow-runs/${id}/chat`] as const;
+};
+
+export const getGetRunChatQueryOptions = <
+  TData = Awaited<ReturnType<typeof getRunChat>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getRunChat>>, TError, TData>
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetRunChatQueryKey(id);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getRunChat>>> = ({
+    signal,
+  }) => getRunChat(id, signal);
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getRunChat>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
+
+export type GetRunChatQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getRunChat>>
+>;
+export type GetRunChatQueryError =
+  | UnauthorizedResponse
+  | NotFoundResponse
+  | InternalServerErrorResponse;
+
+export function useGetRunChat<
+  TData = Awaited<ReturnType<typeof getRunChat>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getRunChat>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRunChat>>,
+          TError,
+          Awaited<ReturnType<typeof getRunChat>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetRunChat<
+  TData = Awaited<ReturnType<typeof getRunChat>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getRunChat>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRunChat>>,
+          TError,
+          Awaited<ReturnType<typeof getRunChat>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetRunChat<
+  TData = Awaited<ReturnType<typeof getRunChat>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getRunChat>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+/**
+ * @summary Get chat messages for a run
+ */
+
+export function useGetRunChat<
+  TData = Awaited<ReturnType<typeof getRunChat>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getRunChat>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetRunChatQueryOptions(id, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
 
 /**
  * @summary Post a chat message to a run
  */
 export const postRunChat = (
-    id: string,
-    postChatRequest: PostChatRequest,
- signal?: AbortSignal
+  id: string,
+  postChatRequest: PostChatRequest,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<ChatMessage>(
-      {url: `/api/v1/workflow-runs/${id}/chat`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: postChatRequest, signal
-    },
-      );
-    }
-  
+  return apiClient<ChatMessage>({
+    url: `/api/v1/workflow-runs/${id}/chat`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: postChatRequest,
+    signal,
+  });
+};
 
+export const getPostRunChatMutationOptions = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof postRunChat>>,
+    TError,
+    { id: string; data: PostChatRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof postRunChat>>,
+  TError,
+  { id: string; data: PostChatRequest },
+  TContext
+> => {
+  const mutationKey = ["postRunChat"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getPostRunChatMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postRunChat>>, TError,{id: string;data: PostChatRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof postRunChat>>, TError,{id: string;data: PostChatRequest}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof postRunChat>>,
+    { id: string; data: PostChatRequest }
+  > = (props) => {
+    const { id, data } = props ?? {};
 
-const mutationKey = ['postRunChat'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return postRunChat(id, data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type PostRunChatMutationResult = NonNullable<
+  Awaited<ReturnType<typeof postRunChat>>
+>;
+export type PostRunChatMutationBody = PostChatRequest;
+export type PostRunChatMutationError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | NotFoundResponse
+  | InternalServerErrorResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof postRunChat>>, {id: string;data: PostChatRequest}> = (props) => {
-          const {id,data} = props ?? {};
-
-          return  postRunChat(id,data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type PostRunChatMutationResult = NonNullable<Awaited<ReturnType<typeof postRunChat>>>
-    export type PostRunChatMutationBody = PostChatRequest
-    export type PostRunChatMutationError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse
-
-    /**
+/**
  * @summary Post a chat message to a run
  */
-export const usePostRunChat = <TError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postRunChat>>, TError,{id: string;data: PostChatRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof postRunChat>>,
-        TError,
-        {id: string;data: PostChatRequest},
-        TContext
-      > => {
+export const usePostRunChat = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof postRunChat>>,
+      TError,
+      { id: string; data: PostChatRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof postRunChat>>,
+  TError,
+  { id: string; data: PostChatRequest },
+  TContext
+> => {
+  const mutationOptions = getPostRunChatMutationOptions(options);
 
-      const mutationOptions = getPostRunChatMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary Re-run a workflow (optionally from a specific step)
  */
 export const rerunWorkflow = (
-    id: string,
-    rerunWorkflowBody: RerunWorkflowBody,
- signal?: AbortSignal
+  id: string,
+  rerunWorkflowBody: RerunWorkflowBody,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<RerunWorkflow200>(
-      {url: `/api/v1/workflow-runs/${id}/rerun`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: rerunWorkflowBody, signal
-    },
-      );
-    }
-  
+  return apiClient<RerunWorkflow200>({
+    url: `/api/v1/workflow-runs/${id}/rerun`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: rerunWorkflowBody,
+    signal,
+  });
+};
 
+export const getRerunWorkflowMutationOptions = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof rerunWorkflow>>,
+    TError,
+    { id: string; data: RerunWorkflowBody },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof rerunWorkflow>>,
+  TError,
+  { id: string; data: RerunWorkflowBody },
+  TContext
+> => {
+  const mutationKey = ["rerunWorkflow"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getRerunWorkflowMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rerunWorkflow>>, TError,{id: string;data: RerunWorkflowBody}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof rerunWorkflow>>, TError,{id: string;data: RerunWorkflowBody}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof rerunWorkflow>>,
+    { id: string; data: RerunWorkflowBody }
+  > = (props) => {
+    const { id, data } = props ?? {};
 
-const mutationKey = ['rerunWorkflow'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return rerunWorkflow(id, data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type RerunWorkflowMutationResult = NonNullable<
+  Awaited<ReturnType<typeof rerunWorkflow>>
+>;
+export type RerunWorkflowMutationBody = RerunWorkflowBody;
+export type RerunWorkflowMutationError =
+  | Error
+  | UnauthorizedResponse
+  | NotFoundResponse
+  | InternalServerErrorResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof rerunWorkflow>>, {id: string;data: RerunWorkflowBody}> = (props) => {
-          const {id,data} = props ?? {};
-
-          return  rerunWorkflow(id,data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type RerunWorkflowMutationResult = NonNullable<Awaited<ReturnType<typeof rerunWorkflow>>>
-    export type RerunWorkflowMutationBody = RerunWorkflowBody
-    export type RerunWorkflowMutationError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse
-
-    /**
+/**
  * @summary Re-run a workflow (optionally from a specific step)
  */
-export const useRerunWorkflow = <TError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rerunWorkflow>>, TError,{id: string;data: RerunWorkflowBody}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof rerunWorkflow>>,
-        TError,
-        {id: string;data: RerunWorkflowBody},
-        TContext
-      > => {
+export const useRerunWorkflow = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof rerunWorkflow>>,
+      TError,
+      { id: string; data: RerunWorkflowBody },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof rerunWorkflow>>,
+  TError,
+  { id: string; data: RerunWorkflowBody },
+  TContext
+> => {
+  const mutationOptions = getRerunWorkflowMutationOptions(options);
 
-      const mutationOptions = getRerunWorkflowMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary Cancel a running workflow run
  */
 export const cancelWorkflowRun = (
-    id: string,
-    runId: string,
- signal?: AbortSignal
+  id: string,
+  runId: string,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<void>(
-      {url: `/api/v1/workflows/${id}/runs/${runId}/cancel`, method: 'POST', signal
-    },
-      );
-    }
-  
+  return apiClient<void>({
+    url: `/api/v1/workflows/${id}/runs/${runId}/cancel`,
+    method: "POST",
+    signal,
+  });
+};
 
+export const getCancelWorkflowRunMutationOptions = <
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | Error
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof cancelWorkflowRun>>,
+    TError,
+    { id: string; runId: string },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof cancelWorkflowRun>>,
+  TError,
+  { id: string; runId: string },
+  TContext
+> => {
+  const mutationKey = ["cancelWorkflowRun"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getCancelWorkflowRunMutationOptions = <TError = UnauthorizedResponse | NotFoundResponse | ConflictResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelWorkflowRun>>, TError,{id: string;runId: string}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof cancelWorkflowRun>>, TError,{id: string;runId: string}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof cancelWorkflowRun>>,
+    { id: string; runId: string }
+  > = (props) => {
+    const { id, runId } = props ?? {};
 
-const mutationKey = ['cancelWorkflowRun'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return cancelWorkflowRun(id, runId);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type CancelWorkflowRunMutationResult = NonNullable<
+  Awaited<ReturnType<typeof cancelWorkflowRun>>
+>;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof cancelWorkflowRun>>, {id: string;runId: string}> = (props) => {
-          const {id,runId} = props ?? {};
+export type CancelWorkflowRunMutationError =
+  | UnauthorizedResponse
+  | NotFoundResponse
+  | Error
+  | InternalServerErrorResponse;
 
-          return  cancelWorkflowRun(id,runId,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type CancelWorkflowRunMutationResult = NonNullable<Awaited<ReturnType<typeof cancelWorkflowRun>>>
-    
-    export type CancelWorkflowRunMutationError = UnauthorizedResponse | NotFoundResponse | ConflictResponse | InternalServerErrorResponse
-
-    /**
+/**
  * @summary Cancel a running workflow run
  */
-export const useCancelWorkflowRun = <TError = UnauthorizedResponse | NotFoundResponse | ConflictResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelWorkflowRun>>, TError,{id: string;runId: string}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof cancelWorkflowRun>>,
-        TError,
-        {id: string;runId: string},
-        TContext
-      > => {
+export const useCancelWorkflowRun = <
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | Error
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof cancelWorkflowRun>>,
+      TError,
+      { id: string; runId: string },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof cancelWorkflowRun>>,
+  TError,
+  { id: string; runId: string },
+  TContext
+> => {
+  const mutationOptions = getCancelWorkflowRunMutationOptions(options);
 
-      const mutationOptions = getCancelWorkflowRunMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    
+  return useMutation(mutationOptions, queryClient);
+};

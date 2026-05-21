@@ -5,8 +5,8 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { PolicyRuleAction } from './policyRuleAction';
-import type { PolicyRuleConditions } from './policyRuleConditions';
+import type { PolicyRuleAction } from "./policyRuleAction";
+import type { PolicyRuleConditions } from "./policyRuleConditions";
 
 export interface PolicyRule {
   id?: string;

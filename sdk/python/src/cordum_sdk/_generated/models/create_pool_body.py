@@ -13,40 +13,31 @@ from typing import cast, List
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="CreatePoolBody")
 
 
 @_attrs_define
 class CreatePoolBody:
-    """ 
-        Attributes:
-            requires (Union[Unset, List[str]]):
-            description (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        requires (Union[Unset, List[str]]):
+        description (Union[Unset, str]):
+    """
 
     requires: Union[Unset, List[str]] = UNSET
     description: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         requires: Union[Unset, List[str]] = UNSET
         if not isinstance(self.requires, Unset):
             requires = self.requires
 
-
-
         description = self.description
-
 
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if requires is not UNSET:
             field_dict["requires"] = requires
         if description is not UNSET:
@@ -54,13 +45,10 @@ class CreatePoolBody:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
         requires = cast(List[str], d.pop("requires", UNSET))
-
 
         description = d.pop("description", UNSET)
 
@@ -68,7 +56,6 @@ class CreatePoolBody:
             requires=requires,
             description=description,
         )
-
 
         create_pool_body.additional_properties = d
         return create_pool_body

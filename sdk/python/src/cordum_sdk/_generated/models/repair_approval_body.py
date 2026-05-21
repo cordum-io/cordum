@@ -12,44 +12,35 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="RepairApprovalBody")
 
 
 @_attrs_define
 class RepairApprovalBody:
-    """ 
-        Attributes:
-            apply (Union[Unset, bool]):
-            note (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        apply (Union[Unset, bool]):
+        note (Union[Unset, str]):
+    """
 
     apply: Union[Unset, bool] = UNSET
     note: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         apply = self.apply
 
         note = self.note
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if apply is not UNSET:
             field_dict["apply"] = apply
         if note is not UNSET:
             field_dict["note"] = note
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -62,7 +53,6 @@ class RepairApprovalBody:
             apply=apply,
             note=note,
         )
-
 
         repair_approval_body.additional_properties = d
         return repair_approval_body

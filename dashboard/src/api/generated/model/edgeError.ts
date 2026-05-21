@@ -5,8 +5,8 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { EdgeErrorCode } from './edgeErrorCode';
-import type { EdgeErrorDetails } from './edgeErrorDetails';
+import type { EdgeErrorCode } from "./edgeErrorCode";
+import type { EdgeErrorDetails } from "./edgeErrorDetails";
 
 /**
  * Standard error envelope for all `/api/v1/edge/*` routes. Messages and details are sanitized and must not echo raw tool payloads, API keys, signed URLs, or secrets.

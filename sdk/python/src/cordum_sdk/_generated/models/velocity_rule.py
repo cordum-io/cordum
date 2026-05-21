@@ -16,10 +16,7 @@ from typing import Union
 import datetime
 
 if TYPE_CHECKING:
-  from ..models.velocity_rule_match import VelocityRuleMatch
-
-
-
+    from ..models.velocity_rule_match import VelocityRuleMatch
 
 
 T = TypeVar("T", bound="VelocityRule")
@@ -27,24 +24,24 @@ T = TypeVar("T", bound="VelocityRule")
 
 @_attrs_define
 class VelocityRule:
-    """ 
-        Attributes:
-            id (str):
-            name (str):
-            match (Union[Unset, VelocityRuleMatch]):
-            window (Union[Unset, str]):
-            key (Union[Unset, str]):
-            threshold (Union[Unset, int]):
-            decision (Union[Unset, str]):
-            reason (Union[Unset, str]):
-            enabled (Union[Unset, bool]):
-            created_at (Union[Unset, datetime.datetime]):
-            updated_at (Union[Unset, datetime.datetime]):
-     """
+    """
+    Attributes:
+        id (str):
+        name (str):
+        match (Union[Unset, VelocityRuleMatch]):
+        window (Union[Unset, str]):
+        key (Union[Unset, str]):
+        threshold (Union[Unset, int]):
+        decision (Union[Unset, str]):
+        reason (Union[Unset, str]):
+        enabled (Union[Unset, bool]):
+        created_at (Union[Unset, datetime.datetime]):
+        updated_at (Union[Unset, datetime.datetime]):
+    """
 
     id: str
     name: str
-    match: Union[Unset, 'VelocityRuleMatch'] = UNSET
+    match: Union[Unset, "VelocityRuleMatch"] = UNSET
     window: Union[Unset, str] = UNSET
     key: Union[Unset, str] = UNSET
     threshold: Union[Unset, int] = UNSET
@@ -55,9 +52,9 @@ class VelocityRule:
     updated_at: Union[Unset, datetime.datetime] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
         from ..models.velocity_rule_match import VelocityRuleMatch
+
         id = self.id
 
         name = self.name
@@ -86,13 +83,14 @@ class VelocityRule:
         if not isinstance(self.updated_at, Unset):
             updated_at = self.updated_at.isoformat()
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "id": id,
-            "name": name,
-        })
+        field_dict.update(
+            {
+                "id": id,
+                "name": name,
+            }
+        )
         if match is not UNSET:
             field_dict["match"] = match
         if window is not UNSET:
@@ -114,11 +112,10 @@ class VelocityRule:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.velocity_rule_match import VelocityRuleMatch
+
         d = src_dict.copy()
         id = d.pop("id")
 
@@ -126,13 +123,10 @@ class VelocityRule:
 
         _match = d.pop("match", UNSET)
         match: Union[Unset, VelocityRuleMatch]
-        if isinstance(_match,  Unset):
+        if isinstance(_match, Unset):
             match = UNSET
         else:
             match = VelocityRuleMatch.from_dict(_match)
-
-
-
 
         window = d.pop("window", UNSET)
 
@@ -148,23 +142,17 @@ class VelocityRule:
 
         _created_at = d.pop("created_at", UNSET)
         created_at: Union[Unset, datetime.datetime]
-        if isinstance(_created_at,  Unset):
+        if isinstance(_created_at, Unset):
             created_at = UNSET
         else:
             created_at = isoparse(_created_at)
 
-
-
-
         _updated_at = d.pop("updated_at", UNSET)
         updated_at: Union[Unset, datetime.datetime]
-        if isinstance(_updated_at,  Unset):
+        if isinstance(_updated_at, Unset):
             updated_at = UNSET
         else:
             updated_at = isoparse(_updated_at)
-
-
-
 
         velocity_rule = cls(
             id=id,
@@ -179,7 +167,6 @@ class VelocityRule:
             created_at=created_at,
             updated_at=updated_at,
         )
-
 
         velocity_rule.additional_properties = d
         return velocity_rule

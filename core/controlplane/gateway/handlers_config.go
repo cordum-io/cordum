@@ -66,14 +66,14 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	if scope == configsvc.ScopeOrg {
 		tenant, err := s.resolveTenant(r, scopeID)
 		if err != nil {
-			writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
+			writeJSONError(w, http.StatusForbidden, errorCodeConfigKeyForbidden, "tenant access denied")
 			return
 		}
 		scopeID = tenant
 	}
 	if scope == configsvc.ScopeSystem && (scopeID == "" || scopeID == "default") {
 		if _, hasBundles := data[packs.PolicyConfigKey]; hasBundles {
-			writeErrorJSON(w, http.StatusBadRequest, "bundles must be written to system/policy scope, not system/default")
+			writeJSONError(w, http.StatusBadRequest, errorCodeConfigKeyForbidden, "bundles must be written to system/policy scope, not system/default")
 			return
 		}
 	}
@@ -91,10 +91,10 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if errors.Is(err, configsvc.ErrRevisionConflict) {
-			writeErrorJSON(w, http.StatusConflict, "config update conflict — retry")
+			writeJSONError(w, http.StatusConflict, errorCodeConfigVersionConflict, "config update conflict — retry")
 		} else {
 			slog.Error("config set failed", "error", err, "scope", scopeStr, "scope_id", scopeID)
-			writeErrorJSON(w, http.StatusBadRequest, "config update failed")
+			writeJSONError(w, http.StatusBadRequest, errorCodeConfigSchemaViolation, "config update failed")
 		}
 		return
 	}
@@ -122,7 +122,7 @@ func (s *server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	case configsvc.ScopeSystem, configsvc.ScopeOrg, configsvc.ScopeTeam, configsvc.ScopeWorkflow, configsvc.ScopeStep:
 		// valid
 	default:
-		writeErrorJSON(w, http.StatusBadRequest, "invalid scope")
+		writeJSONError(w, http.StatusBadRequest, errorCodeConfigRequestInvalid, "invalid scope")
 		return
 	}
 	scopeID := strings.TrimSpace(r.URL.Query().Get("scope_id"))
@@ -142,7 +142,7 @@ func (s *server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	if configsvc.Scope(scope) == configsvc.ScopeOrg {
 		tenant, err := s.resolveTenant(r, scopeID)
 		if err != nil {
-			writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
+			writeJSONError(w, http.StatusForbidden, errorCodeConfigKeyForbidden, "tenant access denied")
 			return
 		}
 		scopeID = tenant
@@ -157,7 +157,7 @@ func (s *server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 				writeJSON(w, map[string]any{})
 				return
 			}
-			writeErrorJSON(w, http.StatusNotFound, "config not found")
+			writeJSONError(w, http.StatusNotFound, errorCodeConfigNotFound, "config not found")
 			return
 		}
 		slog.Error("config get failed", "error", err, "scope", scope, "scope_id", scopeID) // #nosec -- values are validated and used for diagnostics.
@@ -184,7 +184,7 @@ func (s *server) handleGetEffectiveConfig(w http.ResponseWriter, r *http.Request
 	}
 	orgID, err := s.resolveTenant(r, r.URL.Query().Get("org_id"))
 	if err != nil {
-		writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
+		writeJSONError(w, http.StatusForbidden, errorCodeConfigKeyForbidden, "tenant access denied")
 		return
 	}
 	teamID := r.URL.Query().Get("team_id")
@@ -253,9 +253,13 @@ func (s *server) handleRegisterSchema(w http.ResponseWriter, r *http.Request) {
 		writeJSONDecodeError(w, err, "invalid json")
 		return
 	}
+	if strings.TrimSpace(req.ID) == "" {
+		writeJSONError(w, http.StatusBadRequest, errorCodeConfigSchemaViolation, "schema id required")
+		return
+	}
 	data, err := json.Marshal(req.Schema)
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid schema")
+		writeJSONError(w, http.StatusBadRequest, errorCodeConfigSchemaViolation, "invalid schema")
 		return
 	}
 	_, err = s.schemaRegistry.Get(r.Context(), req.ID)
@@ -276,7 +280,7 @@ func (s *server) handleRegisterSchema(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := s.schemaRegistry.Register(r.Context(), req.ID, data); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodeConfigSchemaViolation, err.Error())
 		return
 	}
 	s.appendAuditEntryNamed(r.Context(), "register", "schema", req.ID, req.ID, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "register schema "+req.ID)
@@ -304,13 +308,13 @@ func (s *server) handleGetSchema(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	if id == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "schema id required")
+		writeJSONError(w, http.StatusBadRequest, errorCodeConfigSchemaViolation, "schema id required")
 		return
 	}
 	data, err := s.schemaRegistry.Get(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			writeErrorJSON(w, http.StatusNotFound, "schema not found")
+			writeJSONError(w, http.StatusNotFound, errorCodeConfigSchemaNotFound, "schema not found")
 			return
 		}
 		slog.Error("schema get failed", "error", err, "id", id) // #nosec -- id is validated and used for diagnostics.
@@ -332,7 +336,7 @@ func (s *server) handleDeleteSchema(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	if id == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "schema id required")
+		writeJSONError(w, http.StatusBadRequest, errorCodeConfigSchemaViolation, "schema id required")
 		return
 	}
 	if err := s.schemaRegistry.Delete(r.Context(), id); err != nil {

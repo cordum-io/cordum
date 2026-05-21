@@ -17,10 +17,7 @@ from typing import Union
 import datetime
 
 if TYPE_CHECKING:
-  from ..models.worker_runtime_labels import WorkerRuntimeLabels
-
-
-
+    from ..models.worker_runtime_labels import WorkerRuntimeLabels
 
 
 T = TypeVar("T", bound="WorkerRuntime")
@@ -28,21 +25,21 @@ T = TypeVar("T", bound="WorkerRuntime")
 
 @_attrs_define
 class WorkerRuntime:
-    """ 
-        Attributes:
-            worker_id (str):
-            pool (Union[Unset, str]):
-            active_jobs (Union[Unset, int]):
-            max_parallel_jobs (Union[Unset, int]):
-            capabilities (Union[Unset, List[str]]):
-            cpu_load (Union[Unset, float]):
-            gpu_utilization (Union[Unset, float]):
-            memory_load (Union[Unset, float]):
-            region (Union[Unset, str]):
-            type (Union[Unset, str]):
-            labels (Union[Unset, WorkerRuntimeLabels]):
-            last_heartbeat (Union[Unset, datetime.datetime]):
-     """
+    """
+    Attributes:
+        worker_id (str):
+        pool (Union[Unset, str]):
+        active_jobs (Union[Unset, int]):
+        max_parallel_jobs (Union[Unset, int]):
+        capabilities (Union[Unset, List[str]]):
+        cpu_load (Union[Unset, float]):
+        gpu_utilization (Union[Unset, float]):
+        memory_load (Union[Unset, float]):
+        region (Union[Unset, str]):
+        type (Union[Unset, str]):
+        labels (Union[Unset, WorkerRuntimeLabels]):
+        last_heartbeat (Union[Unset, datetime.datetime]):
+    """
 
     worker_id: str
     pool: Union[Unset, str] = UNSET
@@ -54,13 +51,13 @@ class WorkerRuntime:
     memory_load: Union[Unset, float] = UNSET
     region: Union[Unset, str] = UNSET
     type: Union[Unset, str] = UNSET
-    labels: Union[Unset, 'WorkerRuntimeLabels'] = UNSET
+    labels: Union[Unset, "WorkerRuntimeLabels"] = UNSET
     last_heartbeat: Union[Unset, datetime.datetime] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
         from ..models.worker_runtime_labels import WorkerRuntimeLabels
+
         worker_id = self.worker_id
 
         pool = self.pool
@@ -72,8 +69,6 @@ class WorkerRuntime:
         capabilities: Union[Unset, List[str]] = UNSET
         if not isinstance(self.capabilities, Unset):
             capabilities = self.capabilities
-
-
 
         cpu_load = self.cpu_load
 
@@ -93,12 +88,13 @@ class WorkerRuntime:
         if not isinstance(self.last_heartbeat, Unset):
             last_heartbeat = self.last_heartbeat.isoformat()
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "worker_id": worker_id,
-        })
+        field_dict.update(
+            {
+                "worker_id": worker_id,
+            }
+        )
         if pool is not UNSET:
             field_dict["pool"] = pool
         if active_jobs is not UNSET:
@@ -124,11 +120,10 @@ class WorkerRuntime:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.worker_runtime_labels import WorkerRuntimeLabels
+
         d = src_dict.copy()
         worker_id = d.pop("worker_id")
 
@@ -139,7 +134,6 @@ class WorkerRuntime:
         max_parallel_jobs = d.pop("max_parallel_jobs", UNSET)
 
         capabilities = cast(List[str], d.pop("capabilities", UNSET))
-
 
         cpu_load = d.pop("cpu_load", UNSET)
 
@@ -153,23 +147,17 @@ class WorkerRuntime:
 
         _labels = d.pop("labels", UNSET)
         labels: Union[Unset, WorkerRuntimeLabels]
-        if isinstance(_labels,  Unset):
+        if isinstance(_labels, Unset):
             labels = UNSET
         else:
             labels = WorkerRuntimeLabels.from_dict(_labels)
 
-
-
-
         _last_heartbeat = d.pop("last_heartbeat", UNSET)
         last_heartbeat: Union[Unset, datetime.datetime]
-        if isinstance(_last_heartbeat,  Unset):
+        if isinstance(_last_heartbeat, Unset):
             last_heartbeat = UNSET
         else:
             last_heartbeat = isoparse(_last_heartbeat)
-
-
-
 
         worker_runtime = cls(
             worker_id=worker_id,
@@ -185,7 +173,6 @@ class WorkerRuntime:
             labels=labels,
             last_heartbeat=last_heartbeat,
         )
-
 
         worker_runtime.additional_properties = d
         return worker_runtime

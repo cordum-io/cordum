@@ -5,10 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import {
-  useMutation,
-  useQuery
-} from '@tanstack/react-query';
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
   DataTag,
   DefinedInitialDataOptions,
@@ -21,10 +18,14 @@ import type {
   UseMutationOptions,
   UseMutationResult,
   UseQueryOptions,
-  UseQueryResult
-} from '@tanstack/react-query';
+  UseQueryResult,
+} from "@tanstack/react-query";
 
 import type {
+  BinaryVerifyEventsEnvelope,
+  CreateEdgeMCPUpstreamParams,
+  CreateShadowAgentFindingRequest,
+  CreateShadowExceptionRequest,
   EdgeAgentActionEvent,
   EdgeAgentActionEventBatchRequest,
   EdgeAgentActionEventBatchResponse,
@@ -51,6 +52,8 @@ import type {
   EdgeMaxExecutionsExceededResponse,
   EdgeNotFoundResponse,
   EdgePayloadTooLargeResponse,
+  EdgeRuntimeIngestRequest,
+  EdgeRuntimeIngestResponse,
   EdgeServiceUnavailableResponse,
   EdgeSession,
   EdgeSessionCreateRequest,
@@ -59,18 +62,35 @@ import type {
   EdgeUnauthorizedResponse,
   ExportEdgeSession200,
   ExportEdgeSessionBody,
+  IngestBinaryVerifyRequest,
+  IngestBinaryVerifyResponse,
+  ListBinaryVerifyParams,
   ListEdgeApprovalsParams,
   ListEdgeExecutionEventsParams,
   ListEdgeExecutionsParams,
+  ListEdgeMCPUpstreamsLegacyParams,
+  ListEdgeMCPUpstreamsParams,
   ListEdgeSessionEventsParams,
   ListEdgeSessionsParams,
-  WaitEdgeApprovalBody
-} from '.././model';
+  ListShadowAgentFindingsParams,
+  ListShadowExceptionsParams,
+  ListShadowExceptionsResponse,
+  MCPUpstreamListResponse,
+  MCPUpstreamServer,
+  MCPUpstreamServerWriteRequest,
+  MCPUpstreamValidationResponse,
+  ResolveShadowAgentFindingRequest,
+  RevokeShadowExceptionRequest,
+  ShadowAgentFinding,
+  ShadowAgentFindingPage,
+  ShadowAgentRemediationRequest,
+  ShadowAgentRemediationResponse,
+  ShadowException,
+  SuppressShadowAgentFindingRequest,
+  WaitEdgeApprovalBody,
+} from ".././model";
 
-import { apiClient } from '../../client';
-
-
-
+import { apiClient } from "../../client";
 
 /**
  * EDGE-060 — supports `Idempotency-Key`. A retry with the same key
@@ -83,470 +103,840 @@ behavior (every call generates fresh UUIDs).
  * @summary Create an Edge session and initial execution
  */
 export const createEdgeSession = (
-    edgeSessionCreateRequest: EdgeSessionCreateRequest,
- signal?: AbortSignal
+  edgeSessionCreateRequest: EdgeSessionCreateRequest,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<EdgeSessionCreateResponse>(
-      {url: `/api/v1/edge/sessions`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: edgeSessionCreateRequest, signal
-    },
-      );
-    }
-  
+  return apiClient<EdgeSessionCreateResponse>({
+    url: `/api/v1/edge/sessions`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: edgeSessionCreateRequest,
+    signal,
+  });
+};
 
+export const getCreateEdgeSessionMutationOptions = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeConflictResponse
+    | EdgePayloadTooLargeResponse
+    | EdgeEventCapExceededResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createEdgeSession>>,
+    TError,
+    { data: EdgeSessionCreateRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createEdgeSession>>,
+  TError,
+  { data: EdgeSessionCreateRequest },
+  TContext
+> => {
+  const mutationKey = ["createEdgeSession"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getCreateEdgeSessionMutationOptions = <TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeConflictResponse | EdgePayloadTooLargeResponse | EdgeEventCapExceededResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createEdgeSession>>, TError,{data: EdgeSessionCreateRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof createEdgeSession>>, TError,{data: EdgeSessionCreateRequest}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createEdgeSession>>,
+    { data: EdgeSessionCreateRequest }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['createEdgeSession'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return createEdgeSession(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type CreateEdgeSessionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createEdgeSession>>
+>;
+export type CreateEdgeSessionMutationBody = EdgeSessionCreateRequest;
+export type CreateEdgeSessionMutationError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeConflictResponse
+  | EdgePayloadTooLargeResponse
+  | EdgeEventCapExceededResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createEdgeSession>>, {data: EdgeSessionCreateRequest}> = (props) => {
-          const {data} = props ?? {};
-
-          return  createEdgeSession(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type CreateEdgeSessionMutationResult = NonNullable<Awaited<ReturnType<typeof createEdgeSession>>>
-    export type CreateEdgeSessionMutationBody = EdgeSessionCreateRequest
-    export type CreateEdgeSessionMutationError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeConflictResponse | EdgePayloadTooLargeResponse | EdgeEventCapExceededResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse
-
-    /**
+/**
  * @summary Create an Edge session and initial execution
  */
-export const useCreateEdgeSession = <TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeConflictResponse | EdgePayloadTooLargeResponse | EdgeEventCapExceededResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createEdgeSession>>, TError,{data: EdgeSessionCreateRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof createEdgeSession>>,
-        TError,
-        {data: EdgeSessionCreateRequest},
-        TContext
-      > => {
+export const useCreateEdgeSession = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeConflictResponse
+    | EdgePayloadTooLargeResponse
+    | EdgeEventCapExceededResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof createEdgeSession>>,
+      TError,
+      { data: EdgeSessionCreateRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof createEdgeSession>>,
+  TError,
+  { data: EdgeSessionCreateRequest },
+  TContext
+> => {
+  const mutationOptions = getCreateEdgeSessionMutationOptions(options);
 
-      const mutationOptions = getCreateEdgeSessionMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary List Edge sessions for a tenant
  */
 export const listEdgeSessions = (
-    params?: ListEdgeSessionsParams,
- signal?: AbortSignal
+  params?: ListEdgeSessionsParams,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<EdgeSessionPageResponse>(
-      {url: `/api/v1/edge/sessions`, method: 'GET',
-        params, signal
-    },
-      );
-    }
-  
+  return apiClient<EdgeSessionPageResponse>({
+    url: `/api/v1/edge/sessions`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
 
-
-
-export const getListEdgeSessionsQueryKey = (params?: ListEdgeSessionsParams,) => {
-    return [
-    `/api/v1/edge/sessions`, ...(params ? [params]: [])
-    ] as const;
-    }
-
-    
-export const getListEdgeSessionsQueryOptions = <TData = Awaited<ReturnType<typeof listEdgeSessions>>, TError = EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(params?: ListEdgeSessionsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEdgeSessions>>, TError, TData>>, }
+export const getListEdgeSessionsQueryKey = (
+  params?: ListEdgeSessionsParams,
 ) => {
+  return [`/api/v1/edge/sessions`, ...(params ? [params] : [])] as const;
+};
 
-const {query: queryOptions} = options ?? {};
+export const getListEdgeSessionsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listEdgeSessions>>,
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListEdgeSessionsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeSessions>>,
+        TError,
+        TData
+      >
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListEdgeSessionsQueryKey(params);
+  const queryKey =
+    queryOptions?.queryKey ?? getListEdgeSessionsQueryKey(params);
 
-  
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listEdgeSessions>>
+  > = ({ signal }) => listEdgeSessions(params, signal);
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listEdgeSessions>>> = ({ signal }) => listEdgeSessions(params, signal);
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listEdgeSessions>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-      
+export type ListEdgeSessionsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listEdgeSessions>>
+>;
+export type ListEdgeSessionsQueryError =
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
 
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listEdgeSessions>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type ListEdgeSessionsQueryResult = NonNullable<Awaited<ReturnType<typeof listEdgeSessions>>>
-export type ListEdgeSessionsQueryError = EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse
-
-
-export function useListEdgeSessions<TData = Awaited<ReturnType<typeof listEdgeSessions>>, TError = EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- params: undefined |  ListEdgeSessionsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEdgeSessions>>, TError, TData>> & Pick<
+export function useListEdgeSessions<
+  TData = Awaited<ReturnType<typeof listEdgeSessions>>,
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params: undefined | ListEdgeSessionsParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeSessions>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listEdgeSessions>>,
           TError,
           Awaited<ReturnType<typeof listEdgeSessions>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListEdgeSessions<TData = Awaited<ReturnType<typeof listEdgeSessions>>, TError = EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- params?: ListEdgeSessionsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEdgeSessions>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListEdgeSessions<
+  TData = Awaited<ReturnType<typeof listEdgeSessions>>,
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListEdgeSessionsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeSessions>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listEdgeSessions>>,
           TError,
           Awaited<ReturnType<typeof listEdgeSessions>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListEdgeSessions<TData = Awaited<ReturnType<typeof listEdgeSessions>>, TError = EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- params?: ListEdgeSessionsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEdgeSessions>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListEdgeSessions<
+  TData = Awaited<ReturnType<typeof listEdgeSessions>>,
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListEdgeSessionsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeSessions>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary List Edge sessions for a tenant
  */
 
-export function useListEdgeSessions<TData = Awaited<ReturnType<typeof listEdgeSessions>>, TError = EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- params?: ListEdgeSessionsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEdgeSessions>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useListEdgeSessions<
+  TData = Awaited<ReturnType<typeof listEdgeSessions>>,
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListEdgeSessionsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeSessions>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListEdgeSessionsQueryOptions(params, options);
 
-  const queryOptions = getListEdgeSessionsQueryOptions(params,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
 
-
-
-
 /**
  * @summary Get an Edge session
  */
-export const getEdgeSession = (
-    sessionId: string,
- signal?: AbortSignal
+export const getEdgeSession = (sessionId: string, signal?: AbortSignal) => {
+  return apiClient<EdgeSession>({
+    url: `/api/v1/edge/sessions/${sessionId}`,
+    method: "GET",
+    signal,
+  });
+};
+
+export const getGetEdgeSessionQueryKey = (sessionId?: string) => {
+  return [`/api/v1/edge/sessions/${sessionId}`] as const;
+};
+
+export const getGetEdgeSessionQueryOptions = <
+  TData = Awaited<ReturnType<typeof getEdgeSession>>,
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  sessionId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getEdgeSession>>, TError, TData>
+    >;
+  },
 ) => {
-      
-      
-      return apiClient<EdgeSession>(
-      {url: `/api/v1/edge/sessions/${sessionId}`, method: 'GET', signal
-    },
-      );
-    }
-  
+  const { query: queryOptions } = options ?? {};
 
+  const queryKey =
+    queryOptions?.queryKey ?? getGetEdgeSessionQueryKey(sessionId);
 
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getEdgeSession>>> = ({
+    signal,
+  }) => getEdgeSession(sessionId, signal);
 
-export const getGetEdgeSessionQueryKey = (sessionId?: string,) => {
-    return [
-    `/api/v1/edge/sessions/${sessionId}`
-    ] as const;
-    }
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!sessionId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getEdgeSession>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    
-export const getGetEdgeSessionQueryOptions = <TData = Awaited<ReturnType<typeof getEdgeSession>>, TError = EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(sessionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEdgeSession>>, TError, TData>>, }
-) => {
+export type GetEdgeSessionQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getEdgeSession>>
+>;
+export type GetEdgeSessionQueryError =
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeNotFoundResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
 
-const {query: queryOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetEdgeSessionQueryKey(sessionId);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getEdgeSession>>> = ({ signal }) => getEdgeSession(sessionId, signal);
-
-      
-
-      
-
-   return  { queryKey, queryFn, enabled: !!(sessionId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getEdgeSession>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetEdgeSessionQueryResult = NonNullable<Awaited<ReturnType<typeof getEdgeSession>>>
-export type GetEdgeSessionQueryError = EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse
-
-
-export function useGetEdgeSession<TData = Awaited<ReturnType<typeof getEdgeSession>>, TError = EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- sessionId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEdgeSession>>, TError, TData>> & Pick<
+export function useGetEdgeSession<
+  TData = Awaited<ReturnType<typeof getEdgeSession>>,
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  sessionId: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getEdgeSession>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getEdgeSession>>,
           TError,
           Awaited<ReturnType<typeof getEdgeSession>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetEdgeSession<TData = Awaited<ReturnType<typeof getEdgeSession>>, TError = EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- sessionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEdgeSession>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetEdgeSession<
+  TData = Awaited<ReturnType<typeof getEdgeSession>>,
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  sessionId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getEdgeSession>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getEdgeSession>>,
           TError,
           Awaited<ReturnType<typeof getEdgeSession>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetEdgeSession<TData = Awaited<ReturnType<typeof getEdgeSession>>, TError = EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- sessionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEdgeSession>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetEdgeSession<
+  TData = Awaited<ReturnType<typeof getEdgeSession>>,
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  sessionId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getEdgeSession>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Get an Edge session
  */
 
-export function useGetEdgeSession<TData = Awaited<ReturnType<typeof getEdgeSession>>, TError = EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- sessionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEdgeSession>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetEdgeSession<
+  TData = Awaited<ReturnType<typeof getEdgeSession>>,
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  sessionId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getEdgeSession>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetEdgeSessionQueryOptions(sessionId, options);
 
-  const queryOptions = getGetEdgeSessionQueryOptions(sessionId,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * @summary Refresh an Edge session heartbeat
  */
 export const heartbeatEdgeSession = (
-    sessionId: string,
- signal?: AbortSignal
+  sessionId: string,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<EdgeHeartbeatResponse>(
-      {url: `/api/v1/edge/sessions/${sessionId}/heartbeat`, method: 'POST', signal
-    },
-      );
-    }
-  
+  return apiClient<EdgeHeartbeatResponse>({
+    url: `/api/v1/edge/sessions/${sessionId}/heartbeat`,
+    method: "POST",
+    signal,
+  });
+};
 
+export const getHeartbeatEdgeSessionMutationOptions = <
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof heartbeatEdgeSession>>,
+    TError,
+    { sessionId: string },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof heartbeatEdgeSession>>,
+  TError,
+  { sessionId: string },
+  TContext
+> => {
+  const mutationKey = ["heartbeatEdgeSession"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getHeartbeatEdgeSessionMutationOptions = <TError = EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof heartbeatEdgeSession>>, TError,{sessionId: string}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof heartbeatEdgeSession>>, TError,{sessionId: string}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof heartbeatEdgeSession>>,
+    { sessionId: string }
+  > = (props) => {
+    const { sessionId } = props ?? {};
 
-const mutationKey = ['heartbeatEdgeSession'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return heartbeatEdgeSession(sessionId);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type HeartbeatEdgeSessionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof heartbeatEdgeSession>>
+>;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof heartbeatEdgeSession>>, {sessionId: string}> = (props) => {
-          const {sessionId} = props ?? {};
+export type HeartbeatEdgeSessionMutationError =
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeNotFoundResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
 
-          return  heartbeatEdgeSession(sessionId,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type HeartbeatEdgeSessionMutationResult = NonNullable<Awaited<ReturnType<typeof heartbeatEdgeSession>>>
-    
-    export type HeartbeatEdgeSessionMutationError = EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse
-
-    /**
+/**
  * @summary Refresh an Edge session heartbeat
  */
-export const useHeartbeatEdgeSession = <TError = EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof heartbeatEdgeSession>>, TError,{sessionId: string}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof heartbeatEdgeSession>>,
-        TError,
-        {sessionId: string},
-        TContext
-      > => {
+export const useHeartbeatEdgeSession = <
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof heartbeatEdgeSession>>,
+      TError,
+      { sessionId: string },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof heartbeatEdgeSession>>,
+  TError,
+  { sessionId: string },
+  TContext
+> => {
+  const mutationOptions = getHeartbeatEdgeSessionMutationOptions(options);
 
-      const mutationOptions = getHeartbeatEdgeSessionMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary End an Edge session
  */
 export const endEdgeSession = (
-    sessionId: string,
-    edgeEndSessionRequest?: EdgeEndSessionRequest,
- signal?: AbortSignal
+  sessionId: string,
+  edgeEndSessionRequest?: EdgeEndSessionRequest,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<EdgeSession>(
-      {url: `/api/v1/edge/sessions/${sessionId}/end`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: edgeEndSessionRequest, signal
-    },
-      );
-    }
-  
+  return apiClient<EdgeSession>({
+    url: `/api/v1/edge/sessions/${sessionId}/end`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: edgeEndSessionRequest,
+    signal,
+  });
+};
 
+export const getEndEdgeSessionMutationOptions = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof endEdgeSession>>,
+    TError,
+    { sessionId: string; data: EdgeEndSessionRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof endEdgeSession>>,
+  TError,
+  { sessionId: string; data: EdgeEndSessionRequest },
+  TContext
+> => {
+  const mutationKey = ["endEdgeSession"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getEndEdgeSessionMutationOptions = <TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof endEdgeSession>>, TError,{sessionId: string;data: EdgeEndSessionRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof endEdgeSession>>, TError,{sessionId: string;data: EdgeEndSessionRequest}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof endEdgeSession>>,
+    { sessionId: string; data: EdgeEndSessionRequest }
+  > = (props) => {
+    const { sessionId, data } = props ?? {};
 
-const mutationKey = ['endEdgeSession'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return endEdgeSession(sessionId, data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type EndEdgeSessionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof endEdgeSession>>
+>;
+export type EndEdgeSessionMutationBody = EdgeEndSessionRequest;
+export type EndEdgeSessionMutationError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeNotFoundResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof endEdgeSession>>, {sessionId: string;data: EdgeEndSessionRequest}> = (props) => {
-          const {sessionId,data} = props ?? {};
-
-          return  endEdgeSession(sessionId,data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type EndEdgeSessionMutationResult = NonNullable<Awaited<ReturnType<typeof endEdgeSession>>>
-    export type EndEdgeSessionMutationBody = EdgeEndSessionRequest
-    export type EndEdgeSessionMutationError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse
-
-    /**
+/**
  * @summary End an Edge session
  */
-export const useEndEdgeSession = <TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof endEdgeSession>>, TError,{sessionId: string;data: EdgeEndSessionRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof endEdgeSession>>,
-        TError,
-        {sessionId: string;data: EdgeEndSessionRequest},
-        TContext
-      > => {
+export const useEndEdgeSession = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof endEdgeSession>>,
+      TError,
+      { sessionId: string; data: EdgeEndSessionRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof endEdgeSession>>,
+  TError,
+  { sessionId: string; data: EdgeEndSessionRequest },
+  TContext
+> => {
+  const mutationOptions = getEndEdgeSessionMutationOptions(options);
 
-      const mutationOptions = getEndEdgeSessionMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary List Edge agent executions for a tenant
  */
 export const listEdgeExecutions = (
-    params?: ListEdgeExecutionsParams,
- signal?: AbortSignal
+  params?: ListEdgeExecutionsParams,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<EdgeExecutionPageResponse>(
-      {url: `/api/v1/edge/executions`, method: 'GET',
-        params, signal
-    },
-      );
-    }
-  
+  return apiClient<EdgeExecutionPageResponse>({
+    url: `/api/v1/edge/executions`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
 
-
-
-export const getListEdgeExecutionsQueryKey = (params?: ListEdgeExecutionsParams,) => {
-    return [
-    `/api/v1/edge/executions`, ...(params ? [params]: [])
-    ] as const;
-    }
-
-    
-export const getListEdgeExecutionsQueryOptions = <TData = Awaited<ReturnType<typeof listEdgeExecutions>>, TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(params?: ListEdgeExecutionsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEdgeExecutions>>, TError, TData>>, }
+export const getListEdgeExecutionsQueryKey = (
+  params?: ListEdgeExecutionsParams,
 ) => {
+  return [`/api/v1/edge/executions`, ...(params ? [params] : [])] as const;
+};
 
-const {query: queryOptions} = options ?? {};
+export const getListEdgeExecutionsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listEdgeExecutions>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListEdgeExecutionsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeExecutions>>,
+        TError,
+        TData
+      >
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListEdgeExecutionsQueryKey(params);
+  const queryKey =
+    queryOptions?.queryKey ?? getListEdgeExecutionsQueryKey(params);
 
-  
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listEdgeExecutions>>
+  > = ({ signal }) => listEdgeExecutions(params, signal);
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listEdgeExecutions>>> = ({ signal }) => listEdgeExecutions(params, signal);
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listEdgeExecutions>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-      
+export type ListEdgeExecutionsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listEdgeExecutions>>
+>;
+export type ListEdgeExecutionsQueryError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
 
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listEdgeExecutions>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type ListEdgeExecutionsQueryResult = NonNullable<Awaited<ReturnType<typeof listEdgeExecutions>>>
-export type ListEdgeExecutionsQueryError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse
-
-
-export function useListEdgeExecutions<TData = Awaited<ReturnType<typeof listEdgeExecutions>>, TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- params: undefined |  ListEdgeExecutionsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEdgeExecutions>>, TError, TData>> & Pick<
+export function useListEdgeExecutions<
+  TData = Awaited<ReturnType<typeof listEdgeExecutions>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params: undefined | ListEdgeExecutionsParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeExecutions>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listEdgeExecutions>>,
           TError,
           Awaited<ReturnType<typeof listEdgeExecutions>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListEdgeExecutions<TData = Awaited<ReturnType<typeof listEdgeExecutions>>, TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- params?: ListEdgeExecutionsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEdgeExecutions>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListEdgeExecutions<
+  TData = Awaited<ReturnType<typeof listEdgeExecutions>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListEdgeExecutionsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeExecutions>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listEdgeExecutions>>,
           TError,
           Awaited<ReturnType<typeof listEdgeExecutions>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListEdgeExecutions<TData = Awaited<ReturnType<typeof listEdgeExecutions>>, TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- params?: ListEdgeExecutionsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEdgeExecutions>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListEdgeExecutions<
+  TData = Awaited<ReturnType<typeof listEdgeExecutions>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListEdgeExecutionsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeExecutions>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary List Edge agent executions for a tenant
  */
 
-export function useListEdgeExecutions<TData = Awaited<ReturnType<typeof listEdgeExecutions>>, TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- params?: ListEdgeExecutionsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEdgeExecutions>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useListEdgeExecutions<
+  TData = Awaited<ReturnType<typeof listEdgeExecutions>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListEdgeExecutionsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeExecutions>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListEdgeExecutionsQueryOptions(params, options);
 
-  const queryOptions = getListEdgeExecutionsQueryOptions(params,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * EDGE-060 — supports `Idempotency-Key`. A retry with the same
@@ -559,409 +949,769 @@ behavior (every call generates a fresh `execution_id`).
  * @summary Create an Edge agent execution
  */
 export const createEdgeExecution = (
-    edgeExecutionCreateRequest: EdgeExecutionCreateRequest,
- signal?: AbortSignal
+  edgeExecutionCreateRequest: EdgeExecutionCreateRequest,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<EdgeAgentExecution>(
-      {url: `/api/v1/edge/executions`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: edgeExecutionCreateRequest, signal
-    },
-      );
-    }
-  
+  return apiClient<EdgeAgentExecution>({
+    url: `/api/v1/edge/executions`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: edgeExecutionCreateRequest,
+    signal,
+  });
+};
 
+export const getCreateEdgeExecutionMutationOptions = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgePayloadTooLargeResponse
+    | EdgeMaxExecutionsExceededResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createEdgeExecution>>,
+    TError,
+    { data: EdgeExecutionCreateRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createEdgeExecution>>,
+  TError,
+  { data: EdgeExecutionCreateRequest },
+  TContext
+> => {
+  const mutationKey = ["createEdgeExecution"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getCreateEdgeExecutionMutationOptions = <TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgePayloadTooLargeResponse | EdgeMaxExecutionsExceededResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createEdgeExecution>>, TError,{data: EdgeExecutionCreateRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof createEdgeExecution>>, TError,{data: EdgeExecutionCreateRequest}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createEdgeExecution>>,
+    { data: EdgeExecutionCreateRequest }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['createEdgeExecution'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return createEdgeExecution(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type CreateEdgeExecutionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createEdgeExecution>>
+>;
+export type CreateEdgeExecutionMutationBody = EdgeExecutionCreateRequest;
+export type CreateEdgeExecutionMutationError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeNotFoundResponse
+  | EdgePayloadTooLargeResponse
+  | EdgeMaxExecutionsExceededResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createEdgeExecution>>, {data: EdgeExecutionCreateRequest}> = (props) => {
-          const {data} = props ?? {};
-
-          return  createEdgeExecution(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type CreateEdgeExecutionMutationResult = NonNullable<Awaited<ReturnType<typeof createEdgeExecution>>>
-    export type CreateEdgeExecutionMutationBody = EdgeExecutionCreateRequest
-    export type CreateEdgeExecutionMutationError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgePayloadTooLargeResponse | EdgeMaxExecutionsExceededResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse
-
-    /**
+/**
  * @summary Create an Edge agent execution
  */
-export const useCreateEdgeExecution = <TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgePayloadTooLargeResponse | EdgeMaxExecutionsExceededResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createEdgeExecution>>, TError,{data: EdgeExecutionCreateRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof createEdgeExecution>>,
-        TError,
-        {data: EdgeExecutionCreateRequest},
-        TContext
-      > => {
+export const useCreateEdgeExecution = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgePayloadTooLargeResponse
+    | EdgeMaxExecutionsExceededResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof createEdgeExecution>>,
+      TError,
+      { data: EdgeExecutionCreateRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof createEdgeExecution>>,
+  TError,
+  { data: EdgeExecutionCreateRequest },
+  TContext
+> => {
+  const mutationOptions = getCreateEdgeExecutionMutationOptions(options);
 
-      const mutationOptions = getCreateEdgeExecutionMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary Get an Edge agent execution
  */
-export const getEdgeExecution = (
-    executionId: string,
- signal?: AbortSignal
+export const getEdgeExecution = (executionId: string, signal?: AbortSignal) => {
+  return apiClient<EdgeAgentExecution>({
+    url: `/api/v1/edge/executions/${executionId}`,
+    method: "GET",
+    signal,
+  });
+};
+
+export const getGetEdgeExecutionQueryKey = (executionId?: string) => {
+  return [`/api/v1/edge/executions/${executionId}`] as const;
+};
+
+export const getGetEdgeExecutionQueryOptions = <
+  TData = Awaited<ReturnType<typeof getEdgeExecution>>,
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  executionId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEdgeExecution>>,
+        TError,
+        TData
+      >
+    >;
+  },
 ) => {
-      
-      
-      return apiClient<EdgeAgentExecution>(
-      {url: `/api/v1/edge/executions/${executionId}`, method: 'GET', signal
-    },
-      );
-    }
-  
+  const { query: queryOptions } = options ?? {};
 
+  const queryKey =
+    queryOptions?.queryKey ?? getGetEdgeExecutionQueryKey(executionId);
 
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getEdgeExecution>>
+  > = ({ signal }) => getEdgeExecution(executionId, signal);
 
-export const getGetEdgeExecutionQueryKey = (executionId?: string,) => {
-    return [
-    `/api/v1/edge/executions/${executionId}`
-    ] as const;
-    }
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!executionId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getEdgeExecution>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    
-export const getGetEdgeExecutionQueryOptions = <TData = Awaited<ReturnType<typeof getEdgeExecution>>, TError = EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(executionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEdgeExecution>>, TError, TData>>, }
-) => {
+export type GetEdgeExecutionQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getEdgeExecution>>
+>;
+export type GetEdgeExecutionQueryError =
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeNotFoundResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
 
-const {query: queryOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetEdgeExecutionQueryKey(executionId);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getEdgeExecution>>> = ({ signal }) => getEdgeExecution(executionId, signal);
-
-      
-
-      
-
-   return  { queryKey, queryFn, enabled: !!(executionId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getEdgeExecution>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetEdgeExecutionQueryResult = NonNullable<Awaited<ReturnType<typeof getEdgeExecution>>>
-export type GetEdgeExecutionQueryError = EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse
-
-
-export function useGetEdgeExecution<TData = Awaited<ReturnType<typeof getEdgeExecution>>, TError = EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- executionId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEdgeExecution>>, TError, TData>> & Pick<
+export function useGetEdgeExecution<
+  TData = Awaited<ReturnType<typeof getEdgeExecution>>,
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  executionId: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEdgeExecution>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getEdgeExecution>>,
           TError,
           Awaited<ReturnType<typeof getEdgeExecution>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetEdgeExecution<TData = Awaited<ReturnType<typeof getEdgeExecution>>, TError = EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- executionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEdgeExecution>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetEdgeExecution<
+  TData = Awaited<ReturnType<typeof getEdgeExecution>>,
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  executionId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEdgeExecution>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getEdgeExecution>>,
           TError,
           Awaited<ReturnType<typeof getEdgeExecution>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetEdgeExecution<TData = Awaited<ReturnType<typeof getEdgeExecution>>, TError = EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- executionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEdgeExecution>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetEdgeExecution<
+  TData = Awaited<ReturnType<typeof getEdgeExecution>>,
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  executionId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEdgeExecution>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Get an Edge agent execution
  */
 
-export function useGetEdgeExecution<TData = Awaited<ReturnType<typeof getEdgeExecution>>, TError = EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- executionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEdgeExecution>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetEdgeExecution<
+  TData = Awaited<ReturnType<typeof getEdgeExecution>>,
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  executionId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEdgeExecution>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetEdgeExecutionQueryOptions(executionId, options);
 
-  const queryOptions = getGetEdgeExecutionQueryOptions(executionId,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * @summary End an Edge agent execution
  */
 export const endEdgeExecution = (
-    executionId: string,
-    edgeEndExecutionRequest?: EdgeEndExecutionRequest,
- signal?: AbortSignal
+  executionId: string,
+  edgeEndExecutionRequest?: EdgeEndExecutionRequest,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<EdgeAgentExecution>(
-      {url: `/api/v1/edge/executions/${executionId}/end`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: edgeEndExecutionRequest, signal
-    },
-      );
-    }
-  
+  return apiClient<EdgeAgentExecution>({
+    url: `/api/v1/edge/executions/${executionId}/end`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: edgeEndExecutionRequest,
+    signal,
+  });
+};
 
+export const getEndEdgeExecutionMutationOptions = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof endEdgeExecution>>,
+    TError,
+    { executionId: string; data: EdgeEndExecutionRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof endEdgeExecution>>,
+  TError,
+  { executionId: string; data: EdgeEndExecutionRequest },
+  TContext
+> => {
+  const mutationKey = ["endEdgeExecution"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getEndEdgeExecutionMutationOptions = <TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof endEdgeExecution>>, TError,{executionId: string;data: EdgeEndExecutionRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof endEdgeExecution>>, TError,{executionId: string;data: EdgeEndExecutionRequest}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof endEdgeExecution>>,
+    { executionId: string; data: EdgeEndExecutionRequest }
+  > = (props) => {
+    const { executionId, data } = props ?? {};
 
-const mutationKey = ['endEdgeExecution'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return endEdgeExecution(executionId, data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type EndEdgeExecutionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof endEdgeExecution>>
+>;
+export type EndEdgeExecutionMutationBody = EdgeEndExecutionRequest;
+export type EndEdgeExecutionMutationError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeNotFoundResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof endEdgeExecution>>, {executionId: string;data: EdgeEndExecutionRequest}> = (props) => {
-          const {executionId,data} = props ?? {};
-
-          return  endEdgeExecution(executionId,data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type EndEdgeExecutionMutationResult = NonNullable<Awaited<ReturnType<typeof endEdgeExecution>>>
-    export type EndEdgeExecutionMutationBody = EdgeEndExecutionRequest
-    export type EndEdgeExecutionMutationError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse
-
-    /**
+/**
  * @summary End an Edge agent execution
  */
-export const useEndEdgeExecution = <TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof endEdgeExecution>>, TError,{executionId: string;data: EdgeEndExecutionRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof endEdgeExecution>>,
-        TError,
-        {executionId: string;data: EdgeEndExecutionRequest},
-        TContext
-      > => {
+export const useEndEdgeExecution = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof endEdgeExecution>>,
+      TError,
+      { executionId: string; data: EdgeEndExecutionRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof endEdgeExecution>>,
+  TError,
+  { executionId: string; data: EdgeEndExecutionRequest },
+  TContext
+> => {
+  const mutationOptions = getEndEdgeExecutionMutationOptions(options);
 
-      const mutationOptions = getEndEdgeExecutionMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * Lists tenant-scoped Edge approval records for action-level governance. Non-admin/non-operator callers receive only approvals whose `principal_id` matches the authenticated `auth.PrincipalID`; admin and operator callers may list all approvals in the tenant for operations and forensics. Status, tuple, cursor, and limit filters are applied within that visibility scope so list pagination remains principal-stable. Raw action payloads are never returned; actions are represented by `event_id`, `action_hash`, `input_hash`, and `policy_snapshot`.
  * @summary List Edge action approvals
  */
 export const listEdgeApprovals = (
-    params?: ListEdgeApprovalsParams,
- signal?: AbortSignal
+  params?: ListEdgeApprovalsParams,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<EdgeApprovalPageResponse>(
-      {url: `/api/v1/edge/approvals`, method: 'GET',
-        params, signal
-    },
-      );
-    }
-  
+  return apiClient<EdgeApprovalPageResponse>({
+    url: `/api/v1/edge/approvals`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
 
-
-
-export const getListEdgeApprovalsQueryKey = (params?: ListEdgeApprovalsParams,) => {
-    return [
-    `/api/v1/edge/approvals`, ...(params ? [params]: [])
-    ] as const;
-    }
-
-    
-export const getListEdgeApprovalsQueryOptions = <TData = Awaited<ReturnType<typeof listEdgeApprovals>>, TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(params?: ListEdgeApprovalsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEdgeApprovals>>, TError, TData>>, }
+export const getListEdgeApprovalsQueryKey = (
+  params?: ListEdgeApprovalsParams,
 ) => {
+  return [`/api/v1/edge/approvals`, ...(params ? [params] : [])] as const;
+};
 
-const {query: queryOptions} = options ?? {};
+export const getListEdgeApprovalsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listEdgeApprovals>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListEdgeApprovalsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeApprovals>>,
+        TError,
+        TData
+      >
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListEdgeApprovalsQueryKey(params);
+  const queryKey =
+    queryOptions?.queryKey ?? getListEdgeApprovalsQueryKey(params);
 
-  
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listEdgeApprovals>>
+  > = ({ signal }) => listEdgeApprovals(params, signal);
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listEdgeApprovals>>> = ({ signal }) => listEdgeApprovals(params, signal);
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listEdgeApprovals>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-      
+export type ListEdgeApprovalsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listEdgeApprovals>>
+>;
+export type ListEdgeApprovalsQueryError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
 
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listEdgeApprovals>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type ListEdgeApprovalsQueryResult = NonNullable<Awaited<ReturnType<typeof listEdgeApprovals>>>
-export type ListEdgeApprovalsQueryError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse
-
-
-export function useListEdgeApprovals<TData = Awaited<ReturnType<typeof listEdgeApprovals>>, TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- params: undefined |  ListEdgeApprovalsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEdgeApprovals>>, TError, TData>> & Pick<
+export function useListEdgeApprovals<
+  TData = Awaited<ReturnType<typeof listEdgeApprovals>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params: undefined | ListEdgeApprovalsParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeApprovals>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listEdgeApprovals>>,
           TError,
           Awaited<ReturnType<typeof listEdgeApprovals>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListEdgeApprovals<TData = Awaited<ReturnType<typeof listEdgeApprovals>>, TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- params?: ListEdgeApprovalsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEdgeApprovals>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListEdgeApprovals<
+  TData = Awaited<ReturnType<typeof listEdgeApprovals>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListEdgeApprovalsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeApprovals>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listEdgeApprovals>>,
           TError,
           Awaited<ReturnType<typeof listEdgeApprovals>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListEdgeApprovals<TData = Awaited<ReturnType<typeof listEdgeApprovals>>, TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- params?: ListEdgeApprovalsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEdgeApprovals>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListEdgeApprovals<
+  TData = Awaited<ReturnType<typeof listEdgeApprovals>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListEdgeApprovalsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeApprovals>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary List Edge action approvals
  */
 
-export function useListEdgeApprovals<TData = Awaited<ReturnType<typeof listEdgeApprovals>>, TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- params?: ListEdgeApprovalsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEdgeApprovals>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useListEdgeApprovals<
+  TData = Awaited<ReturnType<typeof listEdgeApprovals>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListEdgeApprovalsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeApprovals>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListEdgeApprovalsQueryOptions(params, options);
 
-  const queryOptions = getListEdgeApprovalsQueryOptions(params,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * Returns one tenant-scoped Edge approval record. Detail reads are principal-bound: the caller must be the original requester principal (`auth.PrincipalID` matches the approval `principal_id`) or hold an admin/operator role. Cross-tenant requests and same-tenant callers that fail this binding are reported as not found and no raw tool/action payload is exposed.
  * @summary Get an Edge action approval
  */
-export const getEdgeApproval = (
-    approvalRef: string,
- signal?: AbortSignal
+export const getEdgeApproval = (approvalRef: string, signal?: AbortSignal) => {
+  return apiClient<EdgeApproval>({
+    url: `/api/v1/edge/approvals/${approvalRef}`,
+    method: "GET",
+    signal,
+  });
+};
+
+export const getGetEdgeApprovalQueryKey = (approvalRef?: string) => {
+  return [`/api/v1/edge/approvals/${approvalRef}`] as const;
+};
+
+export const getGetEdgeApprovalQueryOptions = <
+  TData = Awaited<ReturnType<typeof getEdgeApproval>>,
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeError
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  approvalRef: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEdgeApproval>>,
+        TError,
+        TData
+      >
+    >;
+  },
 ) => {
-      
-      
-      return apiClient<EdgeApproval>(
-      {url: `/api/v1/edge/approvals/${approvalRef}`, method: 'GET', signal
-    },
-      );
-    }
-  
+  const { query: queryOptions } = options ?? {};
 
+  const queryKey =
+    queryOptions?.queryKey ?? getGetEdgeApprovalQueryKey(approvalRef);
 
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getEdgeApproval>>> = ({
+    signal,
+  }) => getEdgeApproval(approvalRef, signal);
 
-export const getGetEdgeApprovalQueryKey = (approvalRef?: string,) => {
-    return [
-    `/api/v1/edge/approvals/${approvalRef}`
-    ] as const;
-    }
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!approvalRef,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getEdgeApproval>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    
-export const getGetEdgeApprovalQueryOptions = <TData = Awaited<ReturnType<typeof getEdgeApproval>>, TError = EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeError | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(approvalRef: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEdgeApproval>>, TError, TData>>, }
-) => {
+export type GetEdgeApprovalQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getEdgeApproval>>
+>;
+export type GetEdgeApprovalQueryError =
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeError
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
 
-const {query: queryOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetEdgeApprovalQueryKey(approvalRef);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getEdgeApproval>>> = ({ signal }) => getEdgeApproval(approvalRef, signal);
-
-      
-
-      
-
-   return  { queryKey, queryFn, enabled: !!(approvalRef), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getEdgeApproval>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetEdgeApprovalQueryResult = NonNullable<Awaited<ReturnType<typeof getEdgeApproval>>>
-export type GetEdgeApprovalQueryError = EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeError | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse
-
-
-export function useGetEdgeApproval<TData = Awaited<ReturnType<typeof getEdgeApproval>>, TError = EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeError | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- approvalRef: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEdgeApproval>>, TError, TData>> & Pick<
+export function useGetEdgeApproval<
+  TData = Awaited<ReturnType<typeof getEdgeApproval>>,
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeError
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  approvalRef: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEdgeApproval>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getEdgeApproval>>,
           TError,
           Awaited<ReturnType<typeof getEdgeApproval>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetEdgeApproval<TData = Awaited<ReturnType<typeof getEdgeApproval>>, TError = EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeError | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- approvalRef: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEdgeApproval>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetEdgeApproval<
+  TData = Awaited<ReturnType<typeof getEdgeApproval>>,
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeError
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  approvalRef: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEdgeApproval>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getEdgeApproval>>,
           TError,
           Awaited<ReturnType<typeof getEdgeApproval>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetEdgeApproval<TData = Awaited<ReturnType<typeof getEdgeApproval>>, TError = EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeError | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- approvalRef: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEdgeApproval>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetEdgeApproval<
+  TData = Awaited<ReturnType<typeof getEdgeApproval>>,
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeError
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  approvalRef: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEdgeApproval>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Get an Edge action approval
  */
 
-export function useGetEdgeApproval<TData = Awaited<ReturnType<typeof getEdgeApproval>>, TError = EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeError | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- approvalRef: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEdgeApproval>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetEdgeApproval<
+  TData = Awaited<ReturnType<typeof getEdgeApproval>>,
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeError
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  approvalRef: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEdgeApproval>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetEdgeApprovalQueryOptions(approvalRef, options);
 
-  const queryOptions = getGetEdgeApprovalQueryOptions(approvalRef,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * Resolves a pending Edge approval as approved for one retry/consume. Requires approval/admin permission, enforces tenant scope and self-approval protection, and fails with 409 if the session/execution/event/action hash or policy snapshot is stale.
@@ -976,134 +1726,227 @@ existing 409 path.
  * @summary Approve an Edge action approval
  */
 export const approveEdgeApproval = (
-    approvalRef: string,
-    edgeApprovalDecisionRequest?: EdgeApprovalDecisionRequest,
- signal?: AbortSignal
+  approvalRef: string,
+  edgeApprovalDecisionRequest?: EdgeApprovalDecisionRequest,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<EdgeApproval>(
-      {url: `/api/v1/edge/approvals/${approvalRef}/approve`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: edgeApprovalDecisionRequest, signal
-    },
-      );
-    }
-  
+  return apiClient<EdgeApproval>({
+    url: `/api/v1/edge/approvals/${approvalRef}/approve`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: edgeApprovalDecisionRequest,
+    signal,
+  });
+};
 
+export const getApproveEdgeApprovalMutationOptions = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeError
+    | EdgeNotFoundResponse
+    | EdgeConflictResponse
+    | EdgePayloadTooLargeResponse
+    | EdgeEventCapExceededResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof approveEdgeApproval>>,
+    TError,
+    { approvalRef: string; data: EdgeApprovalDecisionRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof approveEdgeApproval>>,
+  TError,
+  { approvalRef: string; data: EdgeApprovalDecisionRequest },
+  TContext
+> => {
+  const mutationKey = ["approveEdgeApproval"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getApproveEdgeApprovalMutationOptions = <TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeError | EdgeNotFoundResponse | EdgeConflictResponse | EdgePayloadTooLargeResponse | EdgeEventCapExceededResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveEdgeApproval>>, TError,{approvalRef: string;data: EdgeApprovalDecisionRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof approveEdgeApproval>>, TError,{approvalRef: string;data: EdgeApprovalDecisionRequest}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof approveEdgeApproval>>,
+    { approvalRef: string; data: EdgeApprovalDecisionRequest }
+  > = (props) => {
+    const { approvalRef, data } = props ?? {};
 
-const mutationKey = ['approveEdgeApproval'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return approveEdgeApproval(approvalRef, data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type ApproveEdgeApprovalMutationResult = NonNullable<
+  Awaited<ReturnType<typeof approveEdgeApproval>>
+>;
+export type ApproveEdgeApprovalMutationBody = EdgeApprovalDecisionRequest;
+export type ApproveEdgeApprovalMutationError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeError
+  | EdgeNotFoundResponse
+  | EdgeConflictResponse
+  | EdgePayloadTooLargeResponse
+  | EdgeEventCapExceededResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof approveEdgeApproval>>, {approvalRef: string;data: EdgeApprovalDecisionRequest}> = (props) => {
-          const {approvalRef,data} = props ?? {};
-
-          return  approveEdgeApproval(approvalRef,data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type ApproveEdgeApprovalMutationResult = NonNullable<Awaited<ReturnType<typeof approveEdgeApproval>>>
-    export type ApproveEdgeApprovalMutationBody = EdgeApprovalDecisionRequest
-    export type ApproveEdgeApprovalMutationError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeError | EdgeNotFoundResponse | EdgeConflictResponse | EdgePayloadTooLargeResponse | EdgeEventCapExceededResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse
-
-    /**
+/**
  * @summary Approve an Edge action approval
  */
-export const useApproveEdgeApproval = <TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeError | EdgeNotFoundResponse | EdgeConflictResponse | EdgePayloadTooLargeResponse | EdgeEventCapExceededResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveEdgeApproval>>, TError,{approvalRef: string;data: EdgeApprovalDecisionRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof approveEdgeApproval>>,
-        TError,
-        {approvalRef: string;data: EdgeApprovalDecisionRequest},
-        TContext
-      > => {
+export const useApproveEdgeApproval = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeError
+    | EdgeNotFoundResponse
+    | EdgeConflictResponse
+    | EdgePayloadTooLargeResponse
+    | EdgeEventCapExceededResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof approveEdgeApproval>>,
+      TError,
+      { approvalRef: string; data: EdgeApprovalDecisionRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof approveEdgeApproval>>,
+  TError,
+  { approvalRef: string; data: EdgeApprovalDecisionRequest },
+  TContext
+> => {
+  const mutationOptions = getApproveEdgeApprovalMutationOptions(options);
 
-      const mutationOptions = getApproveEdgeApprovalMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * Agentd/local-dev affordance that polls the Edge approval store until the approval is non-pending or the bounded timeout elapses, then returns the current EdgeApproval. The wait is principal-bound: the caller must be the original requester principal (`auth.PrincipalID` matches the approval `principal_id`) or hold an admin/operator role. The server clamps `timeout_ms` to a 5 minute maximum and uses a 30 second default when omitted or non-positive. Tenant isolation is enforced; cross-tenant references and same-tenant callers that fail the principal binding return 404 with no metadata leakage. This endpoint is not required by the dashboard approve/reject UX — callers there should use the standard list/detail/approve/reject flow.
  * @summary Bounded blocking wait for an Edge approval to leave Pending
  */
 export const waitEdgeApproval = (
-    approvalRef: string,
-    waitEdgeApprovalBody?: WaitEdgeApprovalBody,
- signal?: AbortSignal
+  approvalRef: string,
+  waitEdgeApprovalBody?: WaitEdgeApprovalBody,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<EdgeApproval>(
-      {url: `/api/v1/edge/approvals/${approvalRef}/wait`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: waitEdgeApprovalBody, signal
-    },
-      );
-    }
-  
+  return apiClient<EdgeApproval>({
+    url: `/api/v1/edge/approvals/${approvalRef}/wait`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: waitEdgeApprovalBody,
+    signal,
+  });
+};
 
+export const getWaitEdgeApprovalMutationOptions = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeError
+    | EdgeConflictResponse
+    | EdgePayloadTooLargeResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof waitEdgeApproval>>,
+    TError,
+    { approvalRef: string; data: WaitEdgeApprovalBody },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof waitEdgeApproval>>,
+  TError,
+  { approvalRef: string; data: WaitEdgeApprovalBody },
+  TContext
+> => {
+  const mutationKey = ["waitEdgeApproval"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getWaitEdgeApprovalMutationOptions = <TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeError | EdgeConflictResponse | EdgePayloadTooLargeResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof waitEdgeApproval>>, TError,{approvalRef: string;data: WaitEdgeApprovalBody}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof waitEdgeApproval>>, TError,{approvalRef: string;data: WaitEdgeApprovalBody}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof waitEdgeApproval>>,
+    { approvalRef: string; data: WaitEdgeApprovalBody }
+  > = (props) => {
+    const { approvalRef, data } = props ?? {};
 
-const mutationKey = ['waitEdgeApproval'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return waitEdgeApproval(approvalRef, data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type WaitEdgeApprovalMutationResult = NonNullable<
+  Awaited<ReturnType<typeof waitEdgeApproval>>
+>;
+export type WaitEdgeApprovalMutationBody = WaitEdgeApprovalBody;
+export type WaitEdgeApprovalMutationError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeError
+  | EdgeConflictResponse
+  | EdgePayloadTooLargeResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof waitEdgeApproval>>, {approvalRef: string;data: WaitEdgeApprovalBody}> = (props) => {
-          const {approvalRef,data} = props ?? {};
-
-          return  waitEdgeApproval(approvalRef,data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type WaitEdgeApprovalMutationResult = NonNullable<Awaited<ReturnType<typeof waitEdgeApproval>>>
-    export type WaitEdgeApprovalMutationBody = WaitEdgeApprovalBody
-    export type WaitEdgeApprovalMutationError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeError | EdgeConflictResponse | EdgePayloadTooLargeResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse
-
-    /**
+/**
  * @summary Bounded blocking wait for an Edge approval to leave Pending
  */
-export const useWaitEdgeApproval = <TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeError | EdgeConflictResponse | EdgePayloadTooLargeResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof waitEdgeApproval>>, TError,{approvalRef: string;data: WaitEdgeApprovalBody}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof waitEdgeApproval>>,
-        TError,
-        {approvalRef: string;data: WaitEdgeApprovalBody},
-        TContext
-      > => {
+export const useWaitEdgeApproval = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeError
+    | EdgeConflictResponse
+    | EdgePayloadTooLargeResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof waitEdgeApproval>>,
+      TError,
+      { approvalRef: string; data: WaitEdgeApprovalBody },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof waitEdgeApproval>>,
+  TError,
+  { approvalRef: string; data: WaitEdgeApprovalBody },
+  TContext
+> => {
+  const mutationOptions = getWaitEdgeApprovalMutationOptions(options);
 
-      const mutationOptions = getWaitEdgeApprovalMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * Resolves a pending Edge approval as rejected. Requires approval/admin permission, enforces tenant scope and self-approval protection, and fails with 409 if the referenced Edge session/execution/event is stale.
 
 EDGE-060 — supports `Idempotency-Key` for safe retry against
@@ -1114,362 +1957,1758 @@ rejected".
  * @summary Reject an Edge action approval
  */
 export const rejectEdgeApproval = (
-    approvalRef: string,
-    edgeApprovalDecisionRequest?: EdgeApprovalDecisionRequest,
- signal?: AbortSignal
+  approvalRef: string,
+  edgeApprovalDecisionRequest?: EdgeApprovalDecisionRequest,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<EdgeApproval>(
-      {url: `/api/v1/edge/approvals/${approvalRef}/reject`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: edgeApprovalDecisionRequest, signal
-    },
-      );
-    }
-  
+  return apiClient<EdgeApproval>({
+    url: `/api/v1/edge/approvals/${approvalRef}/reject`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: edgeApprovalDecisionRequest,
+    signal,
+  });
+};
 
+export const getRejectEdgeApprovalMutationOptions = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeError
+    | EdgeNotFoundResponse
+    | EdgeConflictResponse
+    | EdgePayloadTooLargeResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof rejectEdgeApproval>>,
+    TError,
+    { approvalRef: string; data: EdgeApprovalDecisionRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof rejectEdgeApproval>>,
+  TError,
+  { approvalRef: string; data: EdgeApprovalDecisionRequest },
+  TContext
+> => {
+  const mutationKey = ["rejectEdgeApproval"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getRejectEdgeApprovalMutationOptions = <TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeError | EdgeNotFoundResponse | EdgeConflictResponse | EdgePayloadTooLargeResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectEdgeApproval>>, TError,{approvalRef: string;data: EdgeApprovalDecisionRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof rejectEdgeApproval>>, TError,{approvalRef: string;data: EdgeApprovalDecisionRequest}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof rejectEdgeApproval>>,
+    { approvalRef: string; data: EdgeApprovalDecisionRequest }
+  > = (props) => {
+    const { approvalRef, data } = props ?? {};
 
-const mutationKey = ['rejectEdgeApproval'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return rejectEdgeApproval(approvalRef, data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type RejectEdgeApprovalMutationResult = NonNullable<
+  Awaited<ReturnType<typeof rejectEdgeApproval>>
+>;
+export type RejectEdgeApprovalMutationBody = EdgeApprovalDecisionRequest;
+export type RejectEdgeApprovalMutationError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeError
+  | EdgeNotFoundResponse
+  | EdgeConflictResponse
+  | EdgePayloadTooLargeResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof rejectEdgeApproval>>, {approvalRef: string;data: EdgeApprovalDecisionRequest}> = (props) => {
-          const {approvalRef,data} = props ?? {};
-
-          return  rejectEdgeApproval(approvalRef,data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type RejectEdgeApprovalMutationResult = NonNullable<Awaited<ReturnType<typeof rejectEdgeApproval>>>
-    export type RejectEdgeApprovalMutationBody = EdgeApprovalDecisionRequest
-    export type RejectEdgeApprovalMutationError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeError | EdgeNotFoundResponse | EdgeConflictResponse | EdgePayloadTooLargeResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse
-
-    /**
+/**
  * @summary Reject an Edge action approval
  */
-export const useRejectEdgeApproval = <TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeError | EdgeNotFoundResponse | EdgeConflictResponse | EdgePayloadTooLargeResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectEdgeApproval>>, TError,{approvalRef: string;data: EdgeApprovalDecisionRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof rejectEdgeApproval>>,
-        TError,
-        {approvalRef: string;data: EdgeApprovalDecisionRequest},
-        TContext
-      > => {
+export const useRejectEdgeApproval = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeError
+    | EdgeNotFoundResponse
+    | EdgeConflictResponse
+    | EdgePayloadTooLargeResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof rejectEdgeApproval>>,
+      TError,
+      { approvalRef: string; data: EdgeApprovalDecisionRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof rejectEdgeApproval>>,
+  TError,
+  { approvalRef: string; data: EdgeApprovalDecisionRequest },
+  TContext
+> => {
+  const mutationOptions = getRejectEdgeApprovalMutationOptions(options);
 
-      const mutationOptions = getRejectEdgeApprovalMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * Classifies a bounded, redacted agent action for an existing Edge session/execution, calls the Safety Kernel using the Edge policy topic, persists a redacted policy decision or degraded event, and returns hook-friendly allow/deny fields. Raw `tool_input`, raw transcripts, and unredacted payloads are rejected; large evidence must use artifact pointers.
  * @summary Evaluate an Edge action with Safety Kernel policy
  */
 export const evaluateEdgeAction = (
-    edgeEvaluateRequest: EdgeEvaluateRequest,
- signal?: AbortSignal
+  edgeEvaluateRequest: EdgeEvaluateRequest,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<EdgeEvaluateResponse>(
-      {url: `/api/v1/edge/evaluate`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: edgeEvaluateRequest, signal
-    },
-      );
-    }
-  
+  return apiClient<EdgeEvaluateResponse>({
+    url: `/api/v1/edge/evaluate`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: edgeEvaluateRequest,
+    signal,
+  });
+};
 
+export const getEvaluateEdgeActionMutationOptions = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeConflictResponse
+    | EdgePayloadTooLargeResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeBadGatewayResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof evaluateEdgeAction>>,
+    TError,
+    { data: EdgeEvaluateRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof evaluateEdgeAction>>,
+  TError,
+  { data: EdgeEvaluateRequest },
+  TContext
+> => {
+  const mutationKey = ["evaluateEdgeAction"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getEvaluateEdgeActionMutationOptions = <TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeConflictResponse | EdgePayloadTooLargeResponse | EdgeInternalServerErrorResponse | EdgeBadGatewayResponse | EdgeServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof evaluateEdgeAction>>, TError,{data: EdgeEvaluateRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof evaluateEdgeAction>>, TError,{data: EdgeEvaluateRequest}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof evaluateEdgeAction>>,
+    { data: EdgeEvaluateRequest }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['evaluateEdgeAction'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return evaluateEdgeAction(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type EvaluateEdgeActionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof evaluateEdgeAction>>
+>;
+export type EvaluateEdgeActionMutationBody = EdgeEvaluateRequest;
+export type EvaluateEdgeActionMutationError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeNotFoundResponse
+  | EdgeConflictResponse
+  | EdgePayloadTooLargeResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeBadGatewayResponse
+  | EdgeServiceUnavailableResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof evaluateEdgeAction>>, {data: EdgeEvaluateRequest}> = (props) => {
-          const {data} = props ?? {};
-
-          return  evaluateEdgeAction(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type EvaluateEdgeActionMutationResult = NonNullable<Awaited<ReturnType<typeof evaluateEdgeAction>>>
-    export type EvaluateEdgeActionMutationBody = EdgeEvaluateRequest
-    export type EvaluateEdgeActionMutationError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeConflictResponse | EdgePayloadTooLargeResponse | EdgeInternalServerErrorResponse | EdgeBadGatewayResponse | EdgeServiceUnavailableResponse
-
-    /**
+/**
  * @summary Evaluate an Edge action with Safety Kernel policy
  */
-export const useEvaluateEdgeAction = <TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeConflictResponse | EdgePayloadTooLargeResponse | EdgeInternalServerErrorResponse | EdgeBadGatewayResponse | EdgeServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof evaluateEdgeAction>>, TError,{data: EdgeEvaluateRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof evaluateEdgeAction>>,
-        TError,
-        {data: EdgeEvaluateRequest},
-        TContext
-      > => {
+export const useEvaluateEdgeAction = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeConflictResponse
+    | EdgePayloadTooLargeResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeBadGatewayResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof evaluateEdgeAction>>,
+      TError,
+      { data: EdgeEvaluateRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof evaluateEdgeAction>>,
+  TError,
+  { data: EdgeEvaluateRequest },
+  TContext
+> => {
+  const mutationOptions = getEvaluateEdgeActionMutationOptions(options);
 
-      const mutationOptions = getEvaluateEdgeActionMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
- * Writes a redacted AgentActionEvent for an existing Edge session/execution. Raw tool inputs, raw tool results, and transcripts must not be sent inline; send bounded `input_redacted` details and reference large evidence with `artifact_ptrs`. Optional `Idempotency-Key` retries are scoped by tenant and endpoint: the same normalized request replays the first 201 response without appending a duplicate event, while the same key with a different normalized request returns 409 `idempotency_conflict`. The append and replay record commit in one Redis transaction. If the replay record has expired and the same logical `event_id` is already present, the API returns 409 `idempotency_window_expired` and does not append a duplicate event.
- * @summary Append a single Edge agent action event
- */
-export const createEdgeEvent = (
-    edgeAgentActionEventWriteRequest: EdgeAgentActionEventWriteRequest,
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<EdgeAgentActionEvent>(
-      {url: `/api/v1/edge/events`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: edgeAgentActionEventWriteRequest, signal
-    },
-      );
-    }
-  
-
-
-export const getCreateEdgeEventMutationOptions = <TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeConflictResponse | EdgePayloadTooLargeResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createEdgeEvent>>, TError,{data: EdgeAgentActionEventWriteRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof createEdgeEvent>>, TError,{data: EdgeAgentActionEventWriteRequest}, TContext> => {
-
-const mutationKey = ['createEdgeEvent'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
-
-      
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createEdgeEvent>>, {data: EdgeAgentActionEventWriteRequest}> = (props) => {
-          const {data} = props ?? {};
-
-          return  createEdgeEvent(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type CreateEdgeEventMutationResult = NonNullable<Awaited<ReturnType<typeof createEdgeEvent>>>
-    export type CreateEdgeEventMutationBody = EdgeAgentActionEventWriteRequest
-    export type CreateEdgeEventMutationError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeConflictResponse | EdgePayloadTooLargeResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse
-
-    /**
- * @summary Append a single Edge agent action event
- */
-export const useCreateEdgeEvent = <TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeConflictResponse | EdgePayloadTooLargeResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createEdgeEvent>>, TError,{data: EdgeAgentActionEventWriteRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof createEdgeEvent>>,
-        TError,
-        {data: EdgeAgentActionEventWriteRequest},
-        TContext
-      > => {
-
-      const mutationOptions = getCreateEdgeEventMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
- * Appends a fully prevalidated, ordered batch for existing Edge session/execution parents. Mixed-tenant or invalid items are rejected before append where possible. Large raw payloads must be stored separately and referenced by `artifact_ptrs`. Optional `Idempotency-Key` retries are scoped by tenant and endpoint: the same normalized batch replays the first 201 response without partial append or duplicate events, while the same key with a different normalized batch returns 409 `idempotency_conflict`. The append and replay record commit in one Redis transaction. If the replay record has expired and any same logical `event_id` is already present, the API returns 409 `idempotency_window_expired` and does not append duplicate events.
- * @summary Append a batch of Edge agent action events
- */
-export const createEdgeEventsBatch = (
-    edgeAgentActionEventBatchRequest: EdgeAgentActionEventBatchRequest,
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<EdgeAgentActionEventBatchResponse>(
-      {url: `/api/v1/edge/events/batch`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: edgeAgentActionEventBatchRequest, signal
-    },
-      );
-    }
-  
-
-
-export const getCreateEdgeEventsBatchMutationOptions = <TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeConflictResponse | EdgePayloadTooLargeResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createEdgeEventsBatch>>, TError,{data: EdgeAgentActionEventBatchRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof createEdgeEventsBatch>>, TError,{data: EdgeAgentActionEventBatchRequest}, TContext> => {
-
-const mutationKey = ['createEdgeEventsBatch'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
-
-      
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createEdgeEventsBatch>>, {data: EdgeAgentActionEventBatchRequest}> = (props) => {
-          const {data} = props ?? {};
-
-          return  createEdgeEventsBatch(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type CreateEdgeEventsBatchMutationResult = NonNullable<Awaited<ReturnType<typeof createEdgeEventsBatch>>>
-    export type CreateEdgeEventsBatchMutationBody = EdgeAgentActionEventBatchRequest
-    export type CreateEdgeEventsBatchMutationError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeConflictResponse | EdgePayloadTooLargeResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse
-
-    /**
- * @summary Append a batch of Edge agent action events
- */
-export const useCreateEdgeEventsBatch = <TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeConflictResponse | EdgePayloadTooLargeResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createEdgeEventsBatch>>, TError,{data: EdgeAgentActionEventBatchRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof createEdgeEventsBatch>>,
-        TError,
-        {data: EdgeAgentActionEventBatchRequest},
-        TContext
-      > => {
-
-      const mutationOptions = getCreateEdgeEventsBatchMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
- * Returns tenant-scoped events across executions in the session with cursor pagination and optional kind, decision, and RFC3339 time-window filters.
- * @summary List Edge events for a session
- */
-export const listEdgeSessionEvents = (
-    sessionId: string,
-    params?: ListEdgeSessionEventsParams,
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<EdgeAgentActionEventPageResponse>(
-      {url: `/api/v1/edge/sessions/${sessionId}/events`, method: 'GET',
-        params, signal
-    },
-      );
-    }
-  
-
-
-
-export const getListEdgeSessionEventsQueryKey = (sessionId?: string,
-    params?: ListEdgeSessionEventsParams,) => {
-    return [
-    `/api/v1/edge/sessions/${sessionId}/events`, ...(params ? [params]: [])
-    ] as const;
-    }
-
-    
-export const getListEdgeSessionEventsQueryOptions = <TData = Awaited<ReturnType<typeof listEdgeSessionEvents>>, TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(sessionId: string,
-    params?: ListEdgeSessionEventsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEdgeSessionEvents>>, TError, TData>>, }
-) => {
-
-const {query: queryOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getListEdgeSessionEventsQueryKey(sessionId,params);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listEdgeSessionEvents>>> = ({ signal }) => listEdgeSessionEvents(sessionId,params, signal);
-
-      
-
-      
-
-   return  { queryKey, queryFn, enabled: !!(sessionId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listEdgeSessionEvents>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type ListEdgeSessionEventsQueryResult = NonNullable<Awaited<ReturnType<typeof listEdgeSessionEvents>>>
-export type ListEdgeSessionEventsQueryError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse
-
-
-export function useListEdgeSessionEvents<TData = Awaited<ReturnType<typeof listEdgeSessionEvents>>, TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- sessionId: string,
-    params: undefined |  ListEdgeSessionEventsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEdgeSessionEvents>>, TError, TData>> & Pick<
-        DefinedInitialDataOptions<
-          Awaited<ReturnType<typeof listEdgeSessionEvents>>,
-          TError,
-          Awaited<ReturnType<typeof listEdgeSessionEvents>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListEdgeSessionEvents<TData = Awaited<ReturnType<typeof listEdgeSessionEvents>>, TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- sessionId: string,
-    params?: ListEdgeSessionEventsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEdgeSessionEvents>>, TError, TData>> & Pick<
-        UndefinedInitialDataOptions<
-          Awaited<ReturnType<typeof listEdgeSessionEvents>>,
-          TError,
-          Awaited<ReturnType<typeof listEdgeSessionEvents>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListEdgeSessionEvents<TData = Awaited<ReturnType<typeof listEdgeSessionEvents>>, TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- sessionId: string,
-    params?: ListEdgeSessionEventsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEdgeSessionEvents>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+  return useMutation(mutationOptions, queryClient);
+};
 /**
- * @summary List Edge events for a session
+ * Lists tenant-scoped upstream MCP registry entries plus system-wide entries. Secret material is never resolved; `auth_secret_ref` is returned only as a redacted `secret://` reference.
+ * @summary List approved upstream MCP servers
+ */
+export const listEdgeMCPUpstreams = (
+  params?: ListEdgeMCPUpstreamsParams,
+  signal?: AbortSignal,
+) => {
+  return apiClient<MCPUpstreamListResponse>({
+    url: `/api/v1/edge/mcp/upstreams`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
+
+export const getListEdgeMCPUpstreamsQueryKey = (
+  params?: ListEdgeMCPUpstreamsParams,
+) => {
+  return [`/api/v1/edge/mcp/upstreams`, ...(params ? [params] : [])] as const;
+};
+
+export const getListEdgeMCPUpstreamsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listEdgeMCPUpstreams>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListEdgeMCPUpstreamsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeMCPUpstreams>>,
+        TError,
+        TData
+      >
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListEdgeMCPUpstreamsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listEdgeMCPUpstreams>>
+  > = ({ signal }) => listEdgeMCPUpstreams(params, signal);
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listEdgeMCPUpstreams>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
+
+export type ListEdgeMCPUpstreamsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listEdgeMCPUpstreams>>
+>;
+export type ListEdgeMCPUpstreamsQueryError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
+
+export function useListEdgeMCPUpstreams<
+  TData = Awaited<ReturnType<typeof listEdgeMCPUpstreams>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params: undefined | ListEdgeMCPUpstreamsParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeMCPUpstreams>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listEdgeMCPUpstreams>>,
+          TError,
+          Awaited<ReturnType<typeof listEdgeMCPUpstreams>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListEdgeMCPUpstreams<
+  TData = Awaited<ReturnType<typeof listEdgeMCPUpstreams>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListEdgeMCPUpstreamsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeMCPUpstreams>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listEdgeMCPUpstreams>>,
+          TError,
+          Awaited<ReturnType<typeof listEdgeMCPUpstreams>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListEdgeMCPUpstreams<
+  TData = Awaited<ReturnType<typeof listEdgeMCPUpstreams>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListEdgeMCPUpstreamsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeMCPUpstreams>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+/**
+ * @summary List approved upstream MCP servers
  */
 
-export function useListEdgeSessionEvents<TData = Awaited<ReturnType<typeof listEdgeSessionEvents>>, TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- sessionId: string,
-    params?: ListEdgeSessionEventsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEdgeSessionEvents>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useListEdgeMCPUpstreams<
+  TData = Awaited<ReturnType<typeof listEdgeMCPUpstreams>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListEdgeMCPUpstreamsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeMCPUpstreams>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListEdgeMCPUpstreamsQueryOptions(params, options);
 
-  const queryOptions = getListEdgeSessionEventsQueryOptions(sessionId,params,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
 
+/**
+ * Creates a tenant-scoped upstream MCP registry entry. With `validate_only=true`, validates the entry without storing it and returns a validation verdict. Raw secrets are rejected; use `secret://` auth references.
+ * @summary Create or validate an upstream MCP server entry
+ */
+export const createEdgeMCPUpstream = (
+  mCPUpstreamServerWriteRequest: MCPUpstreamServerWriteRequest,
+  params?: CreateEdgeMCPUpstreamParams,
+  signal?: AbortSignal,
+) => {
+  return apiClient<MCPUpstreamValidationResponse | MCPUpstreamServer>({
+    url: `/api/v1/edge/mcp/upstreams`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: mCPUpstreamServerWriteRequest,
+    params,
+    signal,
+  });
+};
 
+export const getCreateEdgeMCPUpstreamMutationOptions = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeConflictResponse
+    | EdgePayloadTooLargeResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createEdgeMCPUpstream>>,
+    TError,
+    {
+      data: MCPUpstreamServerWriteRequest;
+      params?: CreateEdgeMCPUpstreamParams;
+    },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createEdgeMCPUpstream>>,
+  TError,
+  { data: MCPUpstreamServerWriteRequest; params?: CreateEdgeMCPUpstreamParams },
+  TContext
+> => {
+  const mutationKey = ["createEdgeMCPUpstream"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createEdgeMCPUpstream>>,
+    {
+      data: MCPUpstreamServerWriteRequest;
+      params?: CreateEdgeMCPUpstreamParams;
+    }
+  > = (props) => {
+    const { data, params } = props ?? {};
+
+    return createEdgeMCPUpstream(data, params);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateEdgeMCPUpstreamMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createEdgeMCPUpstream>>
+>;
+export type CreateEdgeMCPUpstreamMutationBody = MCPUpstreamServerWriteRequest;
+export type CreateEdgeMCPUpstreamMutationError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeConflictResponse
+  | EdgePayloadTooLargeResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
+
+/**
+ * @summary Create or validate an upstream MCP server entry
+ */
+export const useCreateEdgeMCPUpstream = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeConflictResponse
+    | EdgePayloadTooLargeResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof createEdgeMCPUpstream>>,
+      TError,
+      {
+        data: MCPUpstreamServerWriteRequest;
+        params?: CreateEdgeMCPUpstreamParams;
+      },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof createEdgeMCPUpstream>>,
+  TError,
+  { data: MCPUpstreamServerWriteRequest; params?: CreateEdgeMCPUpstreamParams },
+  TContext
+> => {
+  const mutationOptions = getCreateEdgeMCPUpstreamMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+/**
+ * Compatibility alias for `GET /api/v1/edge/mcp/upstreams`.
+ * @summary List approved upstream MCP servers (compatibility path)
+ */
+export const listEdgeMCPUpstreamsLegacy = (
+  params?: ListEdgeMCPUpstreamsLegacyParams,
+  signal?: AbortSignal,
+) => {
+  return apiClient<MCPUpstreamListResponse>({
+    url: `/api/v1/edge/mcp/upstreams/list`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
+
+export const getListEdgeMCPUpstreamsLegacyQueryKey = (
+  params?: ListEdgeMCPUpstreamsLegacyParams,
+) => {
+  return [
+    `/api/v1/edge/mcp/upstreams/list`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getListEdgeMCPUpstreamsLegacyQueryOptions = <
+  TData = Awaited<ReturnType<typeof listEdgeMCPUpstreamsLegacy>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListEdgeMCPUpstreamsLegacyParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeMCPUpstreamsLegacy>>,
+        TError,
+        TData
+      >
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListEdgeMCPUpstreamsLegacyQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listEdgeMCPUpstreamsLegacy>>
+  > = ({ signal }) => listEdgeMCPUpstreamsLegacy(params, signal);
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listEdgeMCPUpstreamsLegacy>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
+
+export type ListEdgeMCPUpstreamsLegacyQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listEdgeMCPUpstreamsLegacy>>
+>;
+export type ListEdgeMCPUpstreamsLegacyQueryError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
+
+export function useListEdgeMCPUpstreamsLegacy<
+  TData = Awaited<ReturnType<typeof listEdgeMCPUpstreamsLegacy>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params: undefined | ListEdgeMCPUpstreamsLegacyParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeMCPUpstreamsLegacy>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listEdgeMCPUpstreamsLegacy>>,
+          TError,
+          Awaited<ReturnType<typeof listEdgeMCPUpstreamsLegacy>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListEdgeMCPUpstreamsLegacy<
+  TData = Awaited<ReturnType<typeof listEdgeMCPUpstreamsLegacy>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListEdgeMCPUpstreamsLegacyParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeMCPUpstreamsLegacy>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listEdgeMCPUpstreamsLegacy>>,
+          TError,
+          Awaited<ReturnType<typeof listEdgeMCPUpstreamsLegacy>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListEdgeMCPUpstreamsLegacy<
+  TData = Awaited<ReturnType<typeof listEdgeMCPUpstreamsLegacy>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListEdgeMCPUpstreamsLegacyParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeMCPUpstreamsLegacy>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+/**
+ * @summary List approved upstream MCP servers (compatibility path)
+ */
+
+export function useListEdgeMCPUpstreamsLegacy<
+  TData = Awaited<ReturnType<typeof listEdgeMCPUpstreamsLegacy>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListEdgeMCPUpstreamsLegacyParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeMCPUpstreamsLegacy>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListEdgeMCPUpstreamsLegacyQueryOptions(
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * @summary Get an upstream MCP server entry
+ */
+export const getEdgeMCPUpstream = (name: string, signal?: AbortSignal) => {
+  return apiClient<MCPUpstreamServer>({
+    url: `/api/v1/edge/mcp/upstreams/${name}`,
+    method: "GET",
+    signal,
+  });
+};
+
+export const getGetEdgeMCPUpstreamQueryKey = (name?: string) => {
+  return [`/api/v1/edge/mcp/upstreams/${name}`] as const;
+};
+
+export const getGetEdgeMCPUpstreamQueryOptions = <
+  TData = Awaited<ReturnType<typeof getEdgeMCPUpstream>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  name: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEdgeMCPUpstream>>,
+        TError,
+        TData
+      >
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetEdgeMCPUpstreamQueryKey(name);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getEdgeMCPUpstream>>
+  > = ({ signal }) => getEdgeMCPUpstream(name, signal);
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!name,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getEdgeMCPUpstream>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
+
+export type GetEdgeMCPUpstreamQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getEdgeMCPUpstream>>
+>;
+export type GetEdgeMCPUpstreamQueryError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeNotFoundResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
+
+export function useGetEdgeMCPUpstream<
+  TData = Awaited<ReturnType<typeof getEdgeMCPUpstream>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  name: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEdgeMCPUpstream>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getEdgeMCPUpstream>>,
+          TError,
+          Awaited<ReturnType<typeof getEdgeMCPUpstream>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetEdgeMCPUpstream<
+  TData = Awaited<ReturnType<typeof getEdgeMCPUpstream>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  name: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEdgeMCPUpstream>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getEdgeMCPUpstream>>,
+          TError,
+          Awaited<ReturnType<typeof getEdgeMCPUpstream>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetEdgeMCPUpstream<
+  TData = Awaited<ReturnType<typeof getEdgeMCPUpstream>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  name: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEdgeMCPUpstream>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+/**
+ * @summary Get an upstream MCP server entry
+ */
+
+export function useGetEdgeMCPUpstream<
+  TData = Awaited<ReturnType<typeof getEdgeMCPUpstream>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  name: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEdgeMCPUpstream>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetEdgeMCPUpstreamQueryOptions(name, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * Updates a tenant-scoped upstream MCP registry entry and stores a best-effort backup of the prior entry before overwrite.
+ * @summary Update an upstream MCP server entry
+ */
+export const updateEdgeMCPUpstream = (
+  name: string,
+  mCPUpstreamServerWriteRequest: MCPUpstreamServerWriteRequest,
+) => {
+  return apiClient<MCPUpstreamServer>({
+    url: `/api/v1/edge/mcp/upstreams/${name}`,
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    data: mCPUpstreamServerWriteRequest,
+  });
+};
+
+export const getUpdateEdgeMCPUpstreamMutationOptions = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeConflictResponse
+    | EdgePayloadTooLargeResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateEdgeMCPUpstream>>,
+    TError,
+    { name: string; data: MCPUpstreamServerWriteRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateEdgeMCPUpstream>>,
+  TError,
+  { name: string; data: MCPUpstreamServerWriteRequest },
+  TContext
+> => {
+  const mutationKey = ["updateEdgeMCPUpstream"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateEdgeMCPUpstream>>,
+    { name: string; data: MCPUpstreamServerWriteRequest }
+  > = (props) => {
+    const { name, data } = props ?? {};
+
+    return updateEdgeMCPUpstream(name, data);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateEdgeMCPUpstreamMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateEdgeMCPUpstream>>
+>;
+export type UpdateEdgeMCPUpstreamMutationBody = MCPUpstreamServerWriteRequest;
+export type UpdateEdgeMCPUpstreamMutationError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeNotFoundResponse
+  | EdgeConflictResponse
+  | EdgePayloadTooLargeResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
+
+/**
+ * @summary Update an upstream MCP server entry
+ */
+export const useUpdateEdgeMCPUpstream = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeConflictResponse
+    | EdgePayloadTooLargeResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof updateEdgeMCPUpstream>>,
+      TError,
+      { name: string; data: MCPUpstreamServerWriteRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof updateEdgeMCPUpstream>>,
+  TError,
+  { name: string; data: MCPUpstreamServerWriteRequest },
+  TContext
+> => {
+  const mutationOptions = getUpdateEdgeMCPUpstreamMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+/**
+ * @summary Disable an upstream MCP server entry
+ */
+export const disableEdgeMCPUpstream = (name: string, signal?: AbortSignal) => {
+  return apiClient<MCPUpstreamServer>({
+    url: `/api/v1/edge/mcp/upstreams/${name}/disable`,
+    method: "POST",
+    signal,
+  });
+};
+
+export const getDisableEdgeMCPUpstreamMutationOptions = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof disableEdgeMCPUpstream>>,
+    TError,
+    { name: string },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof disableEdgeMCPUpstream>>,
+  TError,
+  { name: string },
+  TContext
+> => {
+  const mutationKey = ["disableEdgeMCPUpstream"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof disableEdgeMCPUpstream>>,
+    { name: string }
+  > = (props) => {
+    const { name } = props ?? {};
+
+    return disableEdgeMCPUpstream(name);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DisableEdgeMCPUpstreamMutationResult = NonNullable<
+  Awaited<ReturnType<typeof disableEdgeMCPUpstream>>
+>;
+
+export type DisableEdgeMCPUpstreamMutationError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeNotFoundResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
+
+/**
+ * @summary Disable an upstream MCP server entry
+ */
+export const useDisableEdgeMCPUpstream = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof disableEdgeMCPUpstream>>,
+      TError,
+      { name: string },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof disableEdgeMCPUpstream>>,
+  TError,
+  { name: string },
+  TContext
+> => {
+  const mutationOptions = getDisableEdgeMCPUpstreamMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+/**
+ * @summary Enable an upstream MCP server entry
+ */
+export const enableEdgeMCPUpstream = (name: string, signal?: AbortSignal) => {
+  return apiClient<MCPUpstreamServer>({
+    url: `/api/v1/edge/mcp/upstreams/${name}/enable`,
+    method: "POST",
+    signal,
+  });
+};
+
+export const getEnableEdgeMCPUpstreamMutationOptions = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof enableEdgeMCPUpstream>>,
+    TError,
+    { name: string },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof enableEdgeMCPUpstream>>,
+  TError,
+  { name: string },
+  TContext
+> => {
+  const mutationKey = ["enableEdgeMCPUpstream"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof enableEdgeMCPUpstream>>,
+    { name: string }
+  > = (props) => {
+    const { name } = props ?? {};
+
+    return enableEdgeMCPUpstream(name);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type EnableEdgeMCPUpstreamMutationResult = NonNullable<
+  Awaited<ReturnType<typeof enableEdgeMCPUpstream>>
+>;
+
+export type EnableEdgeMCPUpstreamMutationError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeNotFoundResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
+
+/**
+ * @summary Enable an upstream MCP server entry
+ */
+export const useEnableEdgeMCPUpstream = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof enableEdgeMCPUpstream>>,
+      TError,
+      { name: string },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof enableEdgeMCPUpstream>>,
+  TError,
+  { name: string },
+  TContext
+> => {
+  const mutationOptions = getEnableEdgeMCPUpstreamMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+/**
+ * Writes a redacted AgentActionEvent for an existing Edge session/execution. Raw tool inputs, raw tool results, and transcripts must not be sent inline; send bounded `input_redacted` details and reference large evidence with `artifact_ptrs`. Optional `Idempotency-Key` retries are scoped by tenant and endpoint: the same normalized request replays the first 201 response without appending a duplicate event, while the same key with a different normalized request returns 409 `idempotency_conflict`. The append and replay record commit in one Redis transaction. If the replay record has expired and the same logical `event_id` is already present, the API returns 409 `idempotency_window_expired` and does not append a duplicate event.
+ * @summary Append a single Edge agent action event
+ */
+export const createEdgeEvent = (
+  edgeAgentActionEventWriteRequest: EdgeAgentActionEventWriteRequest,
+  signal?: AbortSignal,
+) => {
+  return apiClient<EdgeAgentActionEvent>({
+    url: `/api/v1/edge/events`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: edgeAgentActionEventWriteRequest,
+    signal,
+  });
+};
+
+export const getCreateEdgeEventMutationOptions = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeConflictResponse
+    | EdgePayloadTooLargeResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createEdgeEvent>>,
+    TError,
+    { data: EdgeAgentActionEventWriteRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createEdgeEvent>>,
+  TError,
+  { data: EdgeAgentActionEventWriteRequest },
+  TContext
+> => {
+  const mutationKey = ["createEdgeEvent"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createEdgeEvent>>,
+    { data: EdgeAgentActionEventWriteRequest }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createEdgeEvent(data);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateEdgeEventMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createEdgeEvent>>
+>;
+export type CreateEdgeEventMutationBody = EdgeAgentActionEventWriteRequest;
+export type CreateEdgeEventMutationError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeNotFoundResponse
+  | EdgeConflictResponse
+  | EdgePayloadTooLargeResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
+
+/**
+ * @summary Append a single Edge agent action event
+ */
+export const useCreateEdgeEvent = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeConflictResponse
+    | EdgePayloadTooLargeResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof createEdgeEvent>>,
+      TError,
+      { data: EdgeAgentActionEventWriteRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof createEdgeEvent>>,
+  TError,
+  { data: EdgeAgentActionEventWriteRequest },
+  TContext
+> => {
+  const mutationOptions = getCreateEdgeEventMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+/**
+ * Appends a fully prevalidated, ordered batch for existing Edge session/execution parents. Mixed-tenant or invalid items are rejected before append where possible. Large raw payloads must be stored separately and referenced by `artifact_ptrs`. Optional `Idempotency-Key` retries are scoped by tenant and endpoint: the same normalized batch replays the first 201 response without partial append or duplicate events, while the same key with a different normalized batch returns 409 `idempotency_conflict`. The append and replay record commit in one Redis transaction. If the replay record has expired and any same logical `event_id` is already present, the API returns 409 `idempotency_window_expired` and does not append duplicate events.
+ * @summary Append a batch of Edge agent action events
+ */
+export const createEdgeEventsBatch = (
+  edgeAgentActionEventBatchRequest: EdgeAgentActionEventBatchRequest,
+  signal?: AbortSignal,
+) => {
+  return apiClient<EdgeAgentActionEventBatchResponse>({
+    url: `/api/v1/edge/events/batch`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: edgeAgentActionEventBatchRequest,
+    signal,
+  });
+};
+
+export const getCreateEdgeEventsBatchMutationOptions = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeConflictResponse
+    | EdgePayloadTooLargeResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createEdgeEventsBatch>>,
+    TError,
+    { data: EdgeAgentActionEventBatchRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createEdgeEventsBatch>>,
+  TError,
+  { data: EdgeAgentActionEventBatchRequest },
+  TContext
+> => {
+  const mutationKey = ["createEdgeEventsBatch"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createEdgeEventsBatch>>,
+    { data: EdgeAgentActionEventBatchRequest }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createEdgeEventsBatch(data);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateEdgeEventsBatchMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createEdgeEventsBatch>>
+>;
+export type CreateEdgeEventsBatchMutationBody =
+  EdgeAgentActionEventBatchRequest;
+export type CreateEdgeEventsBatchMutationError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeNotFoundResponse
+  | EdgeConflictResponse
+  | EdgePayloadTooLargeResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
+
+/**
+ * @summary Append a batch of Edge agent action events
+ */
+export const useCreateEdgeEventsBatch = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeConflictResponse
+    | EdgePayloadTooLargeResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof createEdgeEventsBatch>>,
+      TError,
+      { data: EdgeAgentActionEventBatchRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof createEdgeEventsBatch>>,
+  TError,
+  { data: EdgeAgentActionEventBatchRequest },
+  TContext
+> => {
+  const mutationOptions = getCreateEdgeEventsBatchMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+/**
+ * Disabled by default. When `CORDUM_EDGE_RUNTIME_INGEST_ENABLED` is unset (or set to a non-truthy value), the route returns 503 `service_unavailable` and persists nothing. When enabled, the endpoint accepts a bounded, redacted runtime event batch (process exec, file read/write, network connect, DNS query) from an authenticated runtime collector holding `edge.runtime.ingest`; generic job writers are forbidden. A bounded `nonce` is required by default and is checked against a Redis replay window scoped to `(tenant, collector)`; duplicate nonce submissions return idempotent success without appending another copy. The request `source.source_id` must match the authenticated collector principal and the referenced session/execution must be bound to that collector before mapped `AgentActionEvent` records with `layer=runtime` and `decision=RECORDED` are persisted through the existing Edge store. Raw argv, file contents, packet payloads, DNS response bodies, request bodies, headers, secrets, and tokens are rejected at the strict-schema decode boundary. All-or-nothing batch acceptance — a single invalid envelope aborts the whole batch. See `docs/edge/runtime-ingestion.md` for the full contract.
+ * @summary Ingest bounded runtime telemetry from a trusted sidecar
+ */
+export const ingestEdgeRuntimeEvents = (
+  edgeRuntimeIngestRequest: EdgeRuntimeIngestRequest,
+  signal?: AbortSignal,
+) => {
+  return apiClient<EdgeRuntimeIngestResponse | EdgeRuntimeIngestResponse>({
+    url: `/api/v1/edge/runtime/events`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: edgeRuntimeIngestRequest,
+    signal,
+  });
+};
+
+export const getIngestEdgeRuntimeEventsMutationOptions = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgePayloadTooLargeResponse
+    | EdgeError
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof ingestEdgeRuntimeEvents>>,
+    TError,
+    { data: EdgeRuntimeIngestRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof ingestEdgeRuntimeEvents>>,
+  TError,
+  { data: EdgeRuntimeIngestRequest },
+  TContext
+> => {
+  const mutationKey = ["ingestEdgeRuntimeEvents"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof ingestEdgeRuntimeEvents>>,
+    { data: EdgeRuntimeIngestRequest }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return ingestEdgeRuntimeEvents(data);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type IngestEdgeRuntimeEventsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof ingestEdgeRuntimeEvents>>
+>;
+export type IngestEdgeRuntimeEventsMutationBody = EdgeRuntimeIngestRequest;
+export type IngestEdgeRuntimeEventsMutationError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeNotFoundResponse
+  | EdgePayloadTooLargeResponse
+  | EdgeError
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
+
+/**
+ * @summary Ingest bounded runtime telemetry from a trusted sidecar
+ */
+export const useIngestEdgeRuntimeEvents = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgePayloadTooLargeResponse
+    | EdgeError
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof ingestEdgeRuntimeEvents>>,
+      TError,
+      { data: EdgeRuntimeIngestRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof ingestEdgeRuntimeEvents>>,
+  TError,
+  { data: EdgeRuntimeIngestRequest },
+  TContext
+> => {
+  const mutationOptions = getIngestEdgeRuntimeEventsMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+/**
+ * Returns tenant-scoped events across executions in the session with cursor pagination and optional kind, decision, and RFC3339 time-window filters.
+ * @summary List Edge events for a session
+ */
+export const listEdgeSessionEvents = (
+  sessionId: string,
+  params?: ListEdgeSessionEventsParams,
+  signal?: AbortSignal,
+) => {
+  return apiClient<EdgeAgentActionEventPageResponse>({
+    url: `/api/v1/edge/sessions/${sessionId}/events`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
+
+export const getListEdgeSessionEventsQueryKey = (
+  sessionId?: string,
+  params?: ListEdgeSessionEventsParams,
+) => {
+  return [
+    `/api/v1/edge/sessions/${sessionId}/events`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getListEdgeSessionEventsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listEdgeSessionEvents>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  sessionId: string,
+  params?: ListEdgeSessionEventsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeSessionEvents>>,
+        TError,
+        TData
+      >
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getListEdgeSessionEventsQueryKey(sessionId, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listEdgeSessionEvents>>
+  > = ({ signal }) => listEdgeSessionEvents(sessionId, params, signal);
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!sessionId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof listEdgeSessionEvents>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
+
+export type ListEdgeSessionEventsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listEdgeSessionEvents>>
+>;
+export type ListEdgeSessionEventsQueryError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeNotFoundResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
+
+export function useListEdgeSessionEvents<
+  TData = Awaited<ReturnType<typeof listEdgeSessionEvents>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  sessionId: string,
+  params: undefined | ListEdgeSessionEventsParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeSessionEvents>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listEdgeSessionEvents>>,
+          TError,
+          Awaited<ReturnType<typeof listEdgeSessionEvents>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListEdgeSessionEvents<
+  TData = Awaited<ReturnType<typeof listEdgeSessionEvents>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  sessionId: string,
+  params?: ListEdgeSessionEventsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeSessionEvents>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listEdgeSessionEvents>>,
+          TError,
+          Awaited<ReturnType<typeof listEdgeSessionEvents>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListEdgeSessionEvents<
+  TData = Awaited<ReturnType<typeof listEdgeSessionEvents>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  sessionId: string,
+  params?: ListEdgeSessionEventsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeSessionEvents>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+/**
+ * @summary List Edge events for a session
+ */
+
+export function useListEdgeSessionEvents<
+  TData = Awaited<ReturnType<typeof listEdgeSessionEvents>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  sessionId: string,
+  params?: ListEdgeSessionEventsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeSessionEvents>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListEdgeSessionEventsQueryOptions(
+    sessionId,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
 
 /**
  * Returns a `SessionExportBundle` for the named session — session record,
@@ -1482,165 +3721,2182 @@ receive 404 indistinguishable from missing-session.
  * @summary Assemble an Edge session evidence bundle
  */
 export const exportEdgeSession = (
-    sessionId: string,
-    exportEdgeSessionBody?: ExportEdgeSessionBody,
- signal?: AbortSignal
+  sessionId: string,
+  exportEdgeSessionBody?: ExportEdgeSessionBody,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<ExportEdgeSession200>(
-      {url: `/api/v1/edge/sessions/${sessionId}/export`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: exportEdgeSessionBody, signal
-    },
-      );
-    }
-  
+  return apiClient<ExportEdgeSession200>({
+    url: `/api/v1/edge/sessions/${sessionId}/export`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: exportEdgeSessionBody,
+    signal,
+  });
+};
 
+export const getExportEdgeSessionMutationOptions = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeError
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof exportEdgeSession>>,
+    TError,
+    { sessionId: string; data: ExportEdgeSessionBody },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof exportEdgeSession>>,
+  TError,
+  { sessionId: string; data: ExportEdgeSessionBody },
+  TContext
+> => {
+  const mutationKey = ["exportEdgeSession"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getExportEdgeSessionMutationOptions = <TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeError | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof exportEdgeSession>>, TError,{sessionId: string;data: ExportEdgeSessionBody}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof exportEdgeSession>>, TError,{sessionId: string;data: ExportEdgeSessionBody}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof exportEdgeSession>>,
+    { sessionId: string; data: ExportEdgeSessionBody }
+  > = (props) => {
+    const { sessionId, data } = props ?? {};
 
-const mutationKey = ['exportEdgeSession'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return exportEdgeSession(sessionId, data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type ExportEdgeSessionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof exportEdgeSession>>
+>;
+export type ExportEdgeSessionMutationBody = ExportEdgeSessionBody;
+export type ExportEdgeSessionMutationError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeNotFoundResponse
+  | EdgeError
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof exportEdgeSession>>, {sessionId: string;data: ExportEdgeSessionBody}> = (props) => {
-          const {sessionId,data} = props ?? {};
-
-          return  exportEdgeSession(sessionId,data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type ExportEdgeSessionMutationResult = NonNullable<Awaited<ReturnType<typeof exportEdgeSession>>>
-    export type ExportEdgeSessionMutationBody = ExportEdgeSessionBody
-    export type ExportEdgeSessionMutationError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeError | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse
-
-    /**
+/**
  * @summary Assemble an Edge session evidence bundle
  */
-export const useExportEdgeSession = <TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeError | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof exportEdgeSession>>, TError,{sessionId: string;data: ExportEdgeSessionBody}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof exportEdgeSession>>,
-        TError,
-        {sessionId: string;data: ExportEdgeSessionBody},
-        TContext
-      > => {
+export const useExportEdgeSession = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeError
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof exportEdgeSession>>,
+      TError,
+      { sessionId: string; data: ExportEdgeSessionBody },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof exportEdgeSession>>,
+  TError,
+  { sessionId: string; data: ExportEdgeSessionBody },
+  TContext
+> => {
+  const mutationOptions = getExportEdgeSessionMutationOptions(options);
 
-      const mutationOptions = getExportEdgeSessionMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * Returns tenant-scoped events for one execution in ascending sequence order with cursor pagination and optional kind, decision, and RFC3339 time-window filters.
  * @summary List Edge events for an execution
  */
 export const listEdgeExecutionEvents = (
-    executionId: string,
-    params?: ListEdgeExecutionEventsParams,
- signal?: AbortSignal
+  executionId: string,
+  params?: ListEdgeExecutionEventsParams,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<EdgeAgentActionEventPageResponse>(
-      {url: `/api/v1/edge/executions/${executionId}/events`, method: 'GET',
-        params, signal
-    },
-      );
-    }
-  
+  return apiClient<EdgeAgentActionEventPageResponse>({
+    url: `/api/v1/edge/executions/${executionId}/events`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
 
-
-
-export const getListEdgeExecutionEventsQueryKey = (executionId?: string,
-    params?: ListEdgeExecutionEventsParams,) => {
-    return [
-    `/api/v1/edge/executions/${executionId}/events`, ...(params ? [params]: [])
-    ] as const;
-    }
-
-    
-export const getListEdgeExecutionEventsQueryOptions = <TData = Awaited<ReturnType<typeof listEdgeExecutionEvents>>, TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(executionId: string,
-    params?: ListEdgeExecutionEventsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEdgeExecutionEvents>>, TError, TData>>, }
+export const getListEdgeExecutionEventsQueryKey = (
+  executionId?: string,
+  params?: ListEdgeExecutionEventsParams,
 ) => {
+  return [
+    `/api/v1/edge/executions/${executionId}/events`,
+    ...(params ? [params] : []),
+  ] as const;
+};
 
-const {query: queryOptions} = options ?? {};
+export const getListEdgeExecutionEventsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listEdgeExecutionEvents>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  executionId: string,
+  params?: ListEdgeExecutionEventsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeExecutionEvents>>,
+        TError,
+        TData
+      >
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListEdgeExecutionEventsQueryKey(executionId,params);
+  const queryKey =
+    queryOptions?.queryKey ??
+    getListEdgeExecutionEventsQueryKey(executionId, params);
 
-  
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listEdgeExecutionEvents>>
+  > = ({ signal }) => listEdgeExecutionEvents(executionId, params, signal);
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listEdgeExecutionEvents>>> = ({ signal }) => listEdgeExecutionEvents(executionId,params, signal);
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!executionId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof listEdgeExecutionEvents>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-      
+export type ListEdgeExecutionEventsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listEdgeExecutionEvents>>
+>;
+export type ListEdgeExecutionEventsQueryError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeNotFoundResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
 
-      
-
-   return  { queryKey, queryFn, enabled: !!(executionId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listEdgeExecutionEvents>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type ListEdgeExecutionEventsQueryResult = NonNullable<Awaited<ReturnType<typeof listEdgeExecutionEvents>>>
-export type ListEdgeExecutionEventsQueryError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse
-
-
-export function useListEdgeExecutionEvents<TData = Awaited<ReturnType<typeof listEdgeExecutionEvents>>, TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- executionId: string,
-    params: undefined |  ListEdgeExecutionEventsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEdgeExecutionEvents>>, TError, TData>> & Pick<
+export function useListEdgeExecutionEvents<
+  TData = Awaited<ReturnType<typeof listEdgeExecutionEvents>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  executionId: string,
+  params: undefined | ListEdgeExecutionEventsParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeExecutionEvents>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listEdgeExecutionEvents>>,
           TError,
           Awaited<ReturnType<typeof listEdgeExecutionEvents>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListEdgeExecutionEvents<TData = Awaited<ReturnType<typeof listEdgeExecutionEvents>>, TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- executionId: string,
-    params?: ListEdgeExecutionEventsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEdgeExecutionEvents>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListEdgeExecutionEvents<
+  TData = Awaited<ReturnType<typeof listEdgeExecutionEvents>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  executionId: string,
+  params?: ListEdgeExecutionEventsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeExecutionEvents>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listEdgeExecutionEvents>>,
           TError,
           Awaited<ReturnType<typeof listEdgeExecutionEvents>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListEdgeExecutionEvents<TData = Awaited<ReturnType<typeof listEdgeExecutionEvents>>, TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- executionId: string,
-    params?: ListEdgeExecutionEventsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEdgeExecutionEvents>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListEdgeExecutionEvents<
+  TData = Awaited<ReturnType<typeof listEdgeExecutionEvents>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  executionId: string,
+  params?: ListEdgeExecutionEventsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeExecutionEvents>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary List Edge events for an execution
  */
 
-export function useListEdgeExecutionEvents<TData = Awaited<ReturnType<typeof listEdgeExecutionEvents>>, TError = EdgeBadRequestResponse | EdgeUnauthorizedResponse | EdgeForbiddenResponse | EdgeNotFoundResponse | EdgeInternalServerErrorResponse | EdgeServiceUnavailableResponse>(
- executionId: string,
-    params?: ListEdgeExecutionEventsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEdgeExecutionEvents>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useListEdgeExecutionEvents<
+  TData = Awaited<ReturnType<typeof listEdgeExecutionEvents>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  executionId: string,
+  params?: ListEdgeExecutionEventsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEdgeExecutionEvents>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListEdgeExecutionEventsQueryOptions(
+    executionId,
+    params,
+    options,
+  );
 
-  const queryOptions = getListEdgeExecutionEventsQueryOptions(executionId,params,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
 
+/**
+ * Persists a single ShadowAgentFinding lifecycle record. Evidence must be either a bounded redacted summary or an artifact pointer; raw payloads are rejected. Observe/warn only — no enforcement, no remediation execution, no Cordum Job creation. Audit event `shadow_agent.detected` is emitted on success.
+ * @summary Ingest one redacted shadow-agent finding
+ */
+export const createShadowAgentFinding = (
+  createShadowAgentFindingRequest: CreateShadowAgentFindingRequest,
+  signal?: AbortSignal,
+) => {
+  return apiClient<ShadowAgentFinding>({
+    url: `/api/v1/edge/shadow-agents`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: createShadowAgentFindingRequest,
+    signal,
+  });
+};
 
+export const getCreateShadowAgentFindingMutationOptions = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeConflictResponse
+    | EdgePayloadTooLargeResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createShadowAgentFinding>>,
+    TError,
+    { data: CreateShadowAgentFindingRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createShadowAgentFinding>>,
+  TError,
+  { data: CreateShadowAgentFindingRequest },
+  TContext
+> => {
+  const mutationKey = ["createShadowAgentFinding"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createShadowAgentFinding>>,
+    { data: CreateShadowAgentFindingRequest }
+  > = (props) => {
+    const { data } = props ?? {};
 
+    return createShadowAgentFinding(data);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateShadowAgentFindingMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createShadowAgentFinding>>
+>;
+export type CreateShadowAgentFindingMutationBody =
+  CreateShadowAgentFindingRequest;
+export type CreateShadowAgentFindingMutationError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeConflictResponse
+  | EdgePayloadTooLargeResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
+
+/**
+ * @summary Ingest one redacted shadow-agent finding
+ */
+export const useCreateShadowAgentFinding = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeConflictResponse
+    | EdgePayloadTooLargeResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof createShadowAgentFinding>>,
+      TError,
+      { data: CreateShadowAgentFindingRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof createShadowAgentFinding>>,
+  TError,
+  { data: CreateShadowAgentFindingRequest },
+  TContext
+> => {
+  const mutationOptions = getCreateShadowAgentFindingMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+/**
+ * Returns a tenant-scoped cursor-paginated page of ShadowAgentFinding records. Filters narrow the result set; the narrowest filter is selected as the primary index path. Resolved/suppressed records past terminal retention are hidden.
+ * @summary List shadow-agent findings
+ */
+export const listShadowAgentFindings = (
+  params?: ListShadowAgentFindingsParams,
+  signal?: AbortSignal,
+) => {
+  return apiClient<ShadowAgentFindingPage>({
+    url: `/api/v1/edge/shadow-agents`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
+
+export const getListShadowAgentFindingsQueryKey = (
+  params?: ListShadowAgentFindingsParams,
+) => {
+  return [`/api/v1/edge/shadow-agents`, ...(params ? [params] : [])] as const;
+};
+
+export const getListShadowAgentFindingsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listShadowAgentFindings>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListShadowAgentFindingsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listShadowAgentFindings>>,
+        TError,
+        TData
+      >
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListShadowAgentFindingsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listShadowAgentFindings>>
+  > = ({ signal }) => listShadowAgentFindings(params, signal);
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listShadowAgentFindings>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
+
+export type ListShadowAgentFindingsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listShadowAgentFindings>>
+>;
+export type ListShadowAgentFindingsQueryError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
+
+export function useListShadowAgentFindings<
+  TData = Awaited<ReturnType<typeof listShadowAgentFindings>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params: undefined | ListShadowAgentFindingsParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listShadowAgentFindings>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listShadowAgentFindings>>,
+          TError,
+          Awaited<ReturnType<typeof listShadowAgentFindings>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListShadowAgentFindings<
+  TData = Awaited<ReturnType<typeof listShadowAgentFindings>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListShadowAgentFindingsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listShadowAgentFindings>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listShadowAgentFindings>>,
+          TError,
+          Awaited<ReturnType<typeof listShadowAgentFindings>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListShadowAgentFindings<
+  TData = Awaited<ReturnType<typeof listShadowAgentFindings>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListShadowAgentFindingsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listShadowAgentFindings>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+/**
+ * @summary List shadow-agent findings
+ */
+
+export function useListShadowAgentFindings<
+  TData = Awaited<ReturnType<typeof listShadowAgentFindings>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListShadowAgentFindingsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listShadowAgentFindings>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListShadowAgentFindingsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * Returns one ShadowAgentFinding scoped to the caller's tenant. Cross-tenant lookups return 404 (not 403) to prevent tuple-existence probing.
+ * @summary Get a shadow-agent finding by id
+ */
+export const getShadowAgentFinding = (
+  findingId: string,
+  signal?: AbortSignal,
+) => {
+  return apiClient<ShadowAgentFinding>({
+    url: `/api/v1/edge/shadow-agents/${findingId}`,
+    method: "GET",
+    signal,
+  });
+};
+
+export const getGetShadowAgentFindingQueryKey = (findingId?: string) => {
+  return [`/api/v1/edge/shadow-agents/${findingId}`] as const;
+};
+
+export const getGetShadowAgentFindingQueryOptions = <
+  TData = Awaited<ReturnType<typeof getShadowAgentFinding>>,
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  findingId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getShadowAgentFinding>>,
+        TError,
+        TData
+      >
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetShadowAgentFindingQueryKey(findingId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getShadowAgentFinding>>
+  > = ({ signal }) => getShadowAgentFinding(findingId, signal);
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!findingId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getShadowAgentFinding>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
+
+export type GetShadowAgentFindingQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getShadowAgentFinding>>
+>;
+export type GetShadowAgentFindingQueryError =
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeNotFoundResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
+
+export function useGetShadowAgentFinding<
+  TData = Awaited<ReturnType<typeof getShadowAgentFinding>>,
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  findingId: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getShadowAgentFinding>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getShadowAgentFinding>>,
+          TError,
+          Awaited<ReturnType<typeof getShadowAgentFinding>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetShadowAgentFinding<
+  TData = Awaited<ReturnType<typeof getShadowAgentFinding>>,
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  findingId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getShadowAgentFinding>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getShadowAgentFinding>>,
+          TError,
+          Awaited<ReturnType<typeof getShadowAgentFinding>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetShadowAgentFinding<
+  TData = Awaited<ReturnType<typeof getShadowAgentFinding>>,
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  findingId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getShadowAgentFinding>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+/**
+ * @summary Get a shadow-agent finding by id
+ */
+
+export function useGetShadowAgentFinding<
+  TData = Awaited<ReturnType<typeof getShadowAgentFinding>>,
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  findingId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getShadowAgentFinding>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetShadowAgentFindingQueryOptions(findingId, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * Flips a detected finding to resolved. Idempotent on a resolved finding; returns 409 when called on a suppressed terminal record. Emits `shadow_agent.resolved` audit event on success.
+ * @summary Resolve a shadow-agent finding
+ */
+export const resolveShadowAgentFinding = (
+  findingId: string,
+  resolveShadowAgentFindingRequest?: ResolveShadowAgentFindingRequest,
+  signal?: AbortSignal,
+) => {
+  return apiClient<ShadowAgentFinding>({
+    url: `/api/v1/edge/shadow-agents/${findingId}/resolve`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: resolveShadowAgentFindingRequest,
+    signal,
+  });
+};
+
+export const getResolveShadowAgentFindingMutationOptions = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeConflictResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof resolveShadowAgentFinding>>,
+    TError,
+    { findingId: string; data: ResolveShadowAgentFindingRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof resolveShadowAgentFinding>>,
+  TError,
+  { findingId: string; data: ResolveShadowAgentFindingRequest },
+  TContext
+> => {
+  const mutationKey = ["resolveShadowAgentFinding"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof resolveShadowAgentFinding>>,
+    { findingId: string; data: ResolveShadowAgentFindingRequest }
+  > = (props) => {
+    const { findingId, data } = props ?? {};
+
+    return resolveShadowAgentFinding(findingId, data);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ResolveShadowAgentFindingMutationResult = NonNullable<
+  Awaited<ReturnType<typeof resolveShadowAgentFinding>>
+>;
+export type ResolveShadowAgentFindingMutationBody =
+  ResolveShadowAgentFindingRequest;
+export type ResolveShadowAgentFindingMutationError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeNotFoundResponse
+  | EdgeConflictResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
+
+/**
+ * @summary Resolve a shadow-agent finding
+ */
+export const useResolveShadowAgentFinding = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeConflictResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof resolveShadowAgentFinding>>,
+      TError,
+      { findingId: string; data: ResolveShadowAgentFindingRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof resolveShadowAgentFinding>>,
+  TError,
+  { findingId: string; data: ResolveShadowAgentFindingRequest },
+  TContext
+> => {
+  const mutationOptions = getResolveShadowAgentFindingMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+/**
+ * Flips a detected finding to suppressed. Idempotent on a suppressed finding; returns 409 when called on a resolved terminal record. Optional `suppressed_until` records a time-bound exception for downstream re-evaluation. Emits `shadow_agent.suppressed` audit event on success.
+ * @summary Suppress a shadow-agent finding
+ */
+export const suppressShadowAgentFinding = (
+  findingId: string,
+  suppressShadowAgentFindingRequest?: SuppressShadowAgentFindingRequest,
+  signal?: AbortSignal,
+) => {
+  return apiClient<ShadowAgentFinding>({
+    url: `/api/v1/edge/shadow-agents/${findingId}/suppress`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: suppressShadowAgentFindingRequest,
+    signal,
+  });
+};
+
+export const getSuppressShadowAgentFindingMutationOptions = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeConflictResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof suppressShadowAgentFinding>>,
+    TError,
+    { findingId: string; data: SuppressShadowAgentFindingRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof suppressShadowAgentFinding>>,
+  TError,
+  { findingId: string; data: SuppressShadowAgentFindingRequest },
+  TContext
+> => {
+  const mutationKey = ["suppressShadowAgentFinding"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof suppressShadowAgentFinding>>,
+    { findingId: string; data: SuppressShadowAgentFindingRequest }
+  > = (props) => {
+    const { findingId, data } = props ?? {};
+
+    return suppressShadowAgentFinding(findingId, data);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SuppressShadowAgentFindingMutationResult = NonNullable<
+  Awaited<ReturnType<typeof suppressShadowAgentFinding>>
+>;
+export type SuppressShadowAgentFindingMutationBody =
+  SuppressShadowAgentFindingRequest;
+export type SuppressShadowAgentFindingMutationError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeNotFoundResponse
+  | EdgeConflictResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
+
+/**
+ * @summary Suppress a shadow-agent finding
+ */
+export const useSuppressShadowAgentFinding = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeConflictResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof suppressShadowAgentFinding>>,
+      TError,
+      { findingId: string; data: SuppressShadowAgentFindingRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof suppressShadowAgentFinding>>,
+  TError,
+  { findingId: string; data: SuppressShadowAgentFindingRequest },
+  TContext
+> => {
+  const mutationOptions = getSuppressShadowAgentFindingMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+/**
+ * Compatibility alias for POST /api/v1/edge/shadow-agents/{finding_id}/suppress. Shares the same handler and emits the same audit event; new clients should use /suppress.
+ * @summary Suppress a shadow-agent finding (compat alias for /suppress)
+ */
+export const ignoreShadowAgentFinding = (
+  findingId: string,
+  suppressShadowAgentFindingRequest?: SuppressShadowAgentFindingRequest,
+  signal?: AbortSignal,
+) => {
+  return apiClient<ShadowAgentFinding>({
+    url: `/api/v1/edge/shadow-agents/${findingId}/ignore`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: suppressShadowAgentFindingRequest,
+    signal,
+  });
+};
+
+export const getIgnoreShadowAgentFindingMutationOptions = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeConflictResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof ignoreShadowAgentFinding>>,
+    TError,
+    { findingId: string; data: SuppressShadowAgentFindingRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof ignoreShadowAgentFinding>>,
+  TError,
+  { findingId: string; data: SuppressShadowAgentFindingRequest },
+  TContext
+> => {
+  const mutationKey = ["ignoreShadowAgentFinding"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof ignoreShadowAgentFinding>>,
+    { findingId: string; data: SuppressShadowAgentFindingRequest }
+  > = (props) => {
+    const { findingId, data } = props ?? {};
+
+    return ignoreShadowAgentFinding(findingId, data);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type IgnoreShadowAgentFindingMutationResult = NonNullable<
+  Awaited<ReturnType<typeof ignoreShadowAgentFinding>>
+>;
+export type IgnoreShadowAgentFindingMutationBody =
+  SuppressShadowAgentFindingRequest;
+export type IgnoreShadowAgentFindingMutationError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeNotFoundResponse
+  | EdgeConflictResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
+
+/**
+ * @summary Suppress a shadow-agent finding (compat alias for /suppress)
+ */
+export const useIgnoreShadowAgentFinding = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeConflictResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof ignoreShadowAgentFinding>>,
+      TError,
+      { findingId: string; data: SuppressShadowAgentFindingRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof ignoreShadowAgentFinding>>,
+  TError,
+  { findingId: string; data: SuppressShadowAgentFindingRequest },
+  TContext
+> => {
+  const mutationOptions = getIgnoreShadowAgentFindingMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+/**
+ * Returns a deterministic, redacted RemediationPlan for the referenced finding.
+Read-only: the handler does not mutate finding state, does not enqueue Cordum
+Jobs, does not emit audit events, and does not call the Safety Kernel. All
+commands inside the plan use literal placeholders (`<gateway-url>`,
+`<tenant-id>`, etc.) and never carry live secrets or developer paths.
+
+ * @summary Generate an advisory remediation plan for a shadow-agent finding (EDGE-142)
+ */
+export const generateShadowAgentRemediation = (
+  findingId: string,
+  shadowAgentRemediationRequest?: ShadowAgentRemediationRequest,
+  signal?: AbortSignal,
+) => {
+  return apiClient<ShadowAgentRemediationResponse>({
+    url: `/api/v1/edge/shadow-agents/${findingId}/remediation`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: shadowAgentRemediationRequest,
+    signal,
+  });
+};
+
+export const getGenerateShadowAgentRemediationMutationOptions = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof generateShadowAgentRemediation>>,
+    TError,
+    { findingId: string; data: ShadowAgentRemediationRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof generateShadowAgentRemediation>>,
+  TError,
+  { findingId: string; data: ShadowAgentRemediationRequest },
+  TContext
+> => {
+  const mutationKey = ["generateShadowAgentRemediation"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof generateShadowAgentRemediation>>,
+    { findingId: string; data: ShadowAgentRemediationRequest }
+  > = (props) => {
+    const { findingId, data } = props ?? {};
+
+    return generateShadowAgentRemediation(findingId, data);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type GenerateShadowAgentRemediationMutationResult = NonNullable<
+  Awaited<ReturnType<typeof generateShadowAgentRemediation>>
+>;
+export type GenerateShadowAgentRemediationMutationBody =
+  ShadowAgentRemediationRequest;
+export type GenerateShadowAgentRemediationMutationError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeNotFoundResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
+
+/**
+ * @summary Generate an advisory remediation plan for a shadow-agent finding (EDGE-142)
+ */
+export const useGenerateShadowAgentRemediation = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof generateShadowAgentRemediation>>,
+      TError,
+      { findingId: string; data: ShadowAgentRemediationRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof generateShadowAgentRemediation>>,
+  TError,
+  { findingId: string; data: ShadowAgentRemediationRequest },
+  TContext
+> => {
+  const mutationOptions =
+    getGenerateShadowAgentRemediationMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+/**
+ * Persists an operator-signed exception declaration that suppresses
+future ShadowAgent findings matching its scope predicate
+(source_type + source_id + risk_level + signal_set). Matching is
+applied at finding emit time: matching findings are stamped with
+exception_id, false_positive_reason="operator_exception", and
+status=managed_skip; they are excluded from default-filter list
+queries.
+
+Q8 step-up auth: when scope_risk_level is "high", the caller MUST
+hold the `admin` legacy role OR the `shadow.exception.high_risk`
+permission. Failure returns 403 with code `step_up_required` and
+details.required = "mfa_recent|signed_admin_token". The persisted
+Exception records which factor satisfied the gate so SIEM rules
+can pivot on the auth tier at the time of action.
+
+expires_at MUST be in the future and within 90 days (§10.3
+"longer requires re-affirmation").
+
+ * @summary Create an operator-defined shadow exception (EDGE-143.6)
+ */
+export const createShadowException = (
+  createShadowExceptionRequest: CreateShadowExceptionRequest,
+  signal?: AbortSignal,
+) => {
+  return apiClient<ShadowException>({
+    url: `/api/v1/edge/shadow/exception`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: createShadowExceptionRequest,
+    signal,
+  });
+};
+
+export const getCreateShadowExceptionMutationOptions = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeError
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createShadowException>>,
+    TError,
+    { data: CreateShadowExceptionRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createShadowException>>,
+  TError,
+  { data: CreateShadowExceptionRequest },
+  TContext
+> => {
+  const mutationKey = ["createShadowException"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createShadowException>>,
+    { data: CreateShadowExceptionRequest }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createShadowException(data);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateShadowExceptionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createShadowException>>
+>;
+export type CreateShadowExceptionMutationBody = CreateShadowExceptionRequest;
+export type CreateShadowExceptionMutationError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeError
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
+
+/**
+ * @summary Create an operator-defined shadow exception (EDGE-143.6)
+ */
+export const useCreateShadowException = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeError
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof createShadowException>>,
+      TError,
+      { data: CreateShadowExceptionRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof createShadowException>>,
+  TError,
+  { data: CreateShadowExceptionRequest },
+  TContext
+> => {
+  const mutationOptions = getCreateShadowExceptionMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+/**
+ * Returns the exception record scoped to the caller's tenant.
+Cross-tenant probes return 404 (never 403) to avoid leaking
+tuple existence.
+
+ * @summary Read a single shadow exception (EDGE-143.6)
+ */
+export const getShadowException = (
+  exceptionId: string,
+  signal?: AbortSignal,
+) => {
+  return apiClient<ShadowException>({
+    url: `/api/v1/edge/shadow/exception/${exceptionId}`,
+    method: "GET",
+    signal,
+  });
+};
+
+export const getGetShadowExceptionQueryKey = (exceptionId?: string) => {
+  return [`/api/v1/edge/shadow/exception/${exceptionId}`] as const;
+};
+
+export const getGetShadowExceptionQueryOptions = <
+  TData = Awaited<ReturnType<typeof getShadowException>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  exceptionId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getShadowException>>,
+        TError,
+        TData
+      >
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetShadowExceptionQueryKey(exceptionId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getShadowException>>
+  > = ({ signal }) => getShadowException(exceptionId, signal);
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!exceptionId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getShadowException>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
+
+export type GetShadowExceptionQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getShadowException>>
+>;
+export type GetShadowExceptionQueryError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeNotFoundResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
+
+export function useGetShadowException<
+  TData = Awaited<ReturnType<typeof getShadowException>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  exceptionId: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getShadowException>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getShadowException>>,
+          TError,
+          Awaited<ReturnType<typeof getShadowException>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetShadowException<
+  TData = Awaited<ReturnType<typeof getShadowException>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  exceptionId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getShadowException>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getShadowException>>,
+          TError,
+          Awaited<ReturnType<typeof getShadowException>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetShadowException<
+  TData = Awaited<ReturnType<typeof getShadowException>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  exceptionId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getShadowException>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+/**
+ * @summary Read a single shadow exception (EDGE-143.6)
+ */
+
+export function useGetShadowException<
+  TData = Awaited<ReturnType<typeof getShadowException>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  exceptionId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getShadowException>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetShadowExceptionQueryOptions(exceptionId, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * Transitions an active exception to revoked. Revoke uses the SAME
+auth tier as the original create: if the exception's
+scope_risk_level is "high", the caller MUST satisfy the step-up
+gate. Failure returns 403 with code `step_up_required`.
+
+Idempotent when the exception is already revoked AND the caller
+principal matches the original revoker; conflicting double-revoke
+returns 409.
+
+ * @summary Revoke an active shadow exception (EDGE-143.6)
+ */
+export const revokeShadowException = (
+  exceptionId: string,
+  revokeShadowExceptionRequest?: RevokeShadowExceptionRequest,
+) => {
+  return apiClient<void>({
+    url: `/api/v1/edge/shadow/exception/${exceptionId}`,
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    data: revokeShadowExceptionRequest,
+  });
+};
+
+export const getRevokeShadowExceptionMutationOptions = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeConflictResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof revokeShadowException>>,
+    TError,
+    { exceptionId: string; data: RevokeShadowExceptionRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof revokeShadowException>>,
+  TError,
+  { exceptionId: string; data: RevokeShadowExceptionRequest },
+  TContext
+> => {
+  const mutationKey = ["revokeShadowException"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof revokeShadowException>>,
+    { exceptionId: string; data: RevokeShadowExceptionRequest }
+  > = (props) => {
+    const { exceptionId, data } = props ?? {};
+
+    return revokeShadowException(exceptionId, data);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RevokeShadowExceptionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof revokeShadowException>>
+>;
+export type RevokeShadowExceptionMutationBody = RevokeShadowExceptionRequest;
+export type RevokeShadowExceptionMutationError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeNotFoundResponse
+  | EdgeConflictResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
+
+/**
+ * @summary Revoke an active shadow exception (EDGE-143.6)
+ */
+export const useRevokeShadowException = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeConflictResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof revokeShadowException>>,
+      TError,
+      { exceptionId: string; data: RevokeShadowExceptionRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof revokeShadowException>>,
+  TError,
+  { exceptionId: string; data: RevokeShadowExceptionRequest },
+  TContext
+> => {
+  const mutationOptions = getRevokeShadowExceptionMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+/**
+ * Returns a bounded, cursor-paginated page of exceptions for the
+requested tenant. Optional filters: status (active|revoked|
+expired), source_type (local|kubernetes|ci|network), risk
+(low|medium|high|critical).
+
+ * @summary List shadow exceptions for the caller's tenant (EDGE-143.6)
+ */
+export const listShadowExceptions = (
+  params?: ListShadowExceptionsParams,
+  signal?: AbortSignal,
+) => {
+  return apiClient<ListShadowExceptionsResponse>({
+    url: `/api/v1/edge/shadow/exceptions`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
+
+export const getListShadowExceptionsQueryKey = (
+  params?: ListShadowExceptionsParams,
+) => {
+  return [
+    `/api/v1/edge/shadow/exceptions`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getListShadowExceptionsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listShadowExceptions>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListShadowExceptionsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listShadowExceptions>>,
+        TError,
+        TData
+      >
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListShadowExceptionsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listShadowExceptions>>
+  > = ({ signal }) => listShadowExceptions(params, signal);
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listShadowExceptions>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
+
+export type ListShadowExceptionsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listShadowExceptions>>
+>;
+export type ListShadowExceptionsQueryError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
+
+export function useListShadowExceptions<
+  TData = Awaited<ReturnType<typeof listShadowExceptions>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params: undefined | ListShadowExceptionsParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listShadowExceptions>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listShadowExceptions>>,
+          TError,
+          Awaited<ReturnType<typeof listShadowExceptions>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListShadowExceptions<
+  TData = Awaited<ReturnType<typeof listShadowExceptions>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListShadowExceptionsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listShadowExceptions>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listShadowExceptions>>,
+          TError,
+          Awaited<ReturnType<typeof listShadowExceptions>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListShadowExceptions<
+  TData = Awaited<ReturnType<typeof listShadowExceptions>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListShadowExceptionsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listShadowExceptions>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+/**
+ * @summary List shadow exceptions for the caller's tenant (EDGE-143.6)
+ */
+
+export function useListShadowExceptions<
+  TData = Awaited<ReturnType<typeof listShadowExceptions>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListShadowExceptionsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listShadowExceptions>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListShadowExceptionsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * Persists structured binary-verify outcomes emitted by
+`tools/scripts/install.{sh,ps1}` (the pre-activation integrity
+gate documented in `docs/security/binary-signing.md` §8).
+Operators capture install-script stderr (one JSON line per
+binary verified), batch it into the `events` array, and POST
+here. Each event is validated against `model.BinaryVerifyEvent`
+and persisted through the existing audit chain as a SIEMEvent
+with `EventType = binary-verify-ok | binary-verify-fail`.
+
+Partial-success semantics: per-event validation failures are
+reported in the response `errors[]` and counted in `rejected`;
+accepted events are persisted. A request with zero accepted
+events returns 400.
+
+Auth: requires `audit.export` permission or `admin` role,
+plus tenant access enforced via `X-Tenant-ID`.
+
+ * @summary Ingest install-time binary-verify outcomes
+ */
+export const ingestBinaryVerify = (
+  ingestBinaryVerifyRequest: IngestBinaryVerifyRequest,
+  signal?: AbortSignal,
+) => {
+  return apiClient<IngestBinaryVerifyResponse>({
+    url: `/api/v1/edge/binary-integrity/events`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: ingestBinaryVerifyRequest,
+    signal,
+  });
+};
+
+export const getIngestBinaryVerifyMutationOptions = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgePayloadTooLargeResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof ingestBinaryVerify>>,
+    TError,
+    { data: IngestBinaryVerifyRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof ingestBinaryVerify>>,
+  TError,
+  { data: IngestBinaryVerifyRequest },
+  TContext
+> => {
+  const mutationKey = ["ingestBinaryVerify"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof ingestBinaryVerify>>,
+    { data: IngestBinaryVerifyRequest }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return ingestBinaryVerify(data);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type IngestBinaryVerifyMutationResult = NonNullable<
+  Awaited<ReturnType<typeof ingestBinaryVerify>>
+>;
+export type IngestBinaryVerifyMutationBody = IngestBinaryVerifyRequest;
+export type IngestBinaryVerifyMutationError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgePayloadTooLargeResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
+
+/**
+ * @summary Ingest install-time binary-verify outcomes
+ */
+export const useIngestBinaryVerify = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgePayloadTooLargeResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof ingestBinaryVerify>>,
+      TError,
+      { data: IngestBinaryVerifyRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof ingestBinaryVerify>>,
+  TError,
+  { data: IngestBinaryVerifyRequest },
+  TContext
+> => {
+  const mutationOptions = getIngestBinaryVerifyMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+/**
+ * Returns a tenant-scoped reverse-chronological page of
+binary-verify outcomes recovered from the tenant audit
+stream. Filters narrow the page; values that fall outside
+the accepted enums return 400. The response envelope mirrors
+`/api/v1/audit/events` (items / next_cursor / returned) but
+each item carries the original BinaryVerifyEvent shape plus a
+server-side timestamp and endpoint label.
+
+Auth: requires `audit.read` permission or `admin` role,
+plus tenant access enforced via `X-Tenant-ID`.
+
+ * @summary List binary-verify outcomes for a tenant
+ */
+export const listBinaryVerify = (
+  params?: ListBinaryVerifyParams,
+  signal?: AbortSignal,
+) => {
+  return apiClient<BinaryVerifyEventsEnvelope>({
+    url: `/api/v1/edge/binary-integrity/events`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
+
+export const getListBinaryVerifyQueryKey = (
+  params?: ListBinaryVerifyParams,
+) => {
+  return [
+    `/api/v1/edge/binary-integrity/events`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getListBinaryVerifyQueryOptions = <
+  TData = Awaited<ReturnType<typeof listBinaryVerify>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListBinaryVerifyParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listBinaryVerify>>,
+        TError,
+        TData
+      >
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListBinaryVerifyQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listBinaryVerify>>
+  > = ({ signal }) => listBinaryVerify(params, signal);
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listBinaryVerify>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
+
+export type ListBinaryVerifyQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listBinaryVerify>>
+>;
+export type ListBinaryVerifyQueryError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
+
+export function useListBinaryVerify<
+  TData = Awaited<ReturnType<typeof listBinaryVerify>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params: undefined | ListBinaryVerifyParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listBinaryVerify>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listBinaryVerify>>,
+          TError,
+          Awaited<ReturnType<typeof listBinaryVerify>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListBinaryVerify<
+  TData = Awaited<ReturnType<typeof listBinaryVerify>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListBinaryVerifyParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listBinaryVerify>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listBinaryVerify>>,
+          TError,
+          Awaited<ReturnType<typeof listBinaryVerify>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListBinaryVerify<
+  TData = Awaited<ReturnType<typeof listBinaryVerify>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListBinaryVerifyParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listBinaryVerify>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+/**
+ * @summary List binary-verify outcomes for a tenant
+ */
+
+export function useListBinaryVerify<
+  TData = Awaited<ReturnType<typeof listBinaryVerify>>,
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  params?: ListBinaryVerifyParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listBinaryVerify>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListBinaryVerifyQueryOptions(params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}

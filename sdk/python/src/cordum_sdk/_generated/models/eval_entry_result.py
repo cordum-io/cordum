@@ -16,10 +16,7 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.eval_entry_result_input import EvalEntryResultInput
-
-
-
+    from ..models.eval_entry_result_input import EvalEntryResultInput
 
 
 T = TypeVar("T", bound="EvalEntryResult")
@@ -27,24 +24,24 @@ T = TypeVar("T", bound="EvalEntryResult")
 
 @_attrs_define
 class EvalEntryResult:
-    """ 
-        Attributes:
-            entry_id (str):
-            status (EvalEntryResultStatus): regression = expected was deny/require_approval/throttle/allow_with_constraints
-                AND actual is allow
-            drift_direction (EvalEntryResultDriftDirection):
-            input_ (Union[Unset, EvalEntryResultInput]):
-            expected_decision (Union[Unset, str]):
-            actual_decision (Union[Unset, str]):
-            rule_id (Union[Unset, str]):
-            reason (Union[Unset, str]):
-            error (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        entry_id (str):
+        status (EvalEntryResultStatus): regression = expected was deny/require_approval/throttle/allow_with_constraints
+            AND actual is allow
+        drift_direction (EvalEntryResultDriftDirection):
+        input_ (Union[Unset, EvalEntryResultInput]):
+        expected_decision (Union[Unset, str]):
+        actual_decision (Union[Unset, str]):
+        rule_id (Union[Unset, str]):
+        reason (Union[Unset, str]):
+        error (Union[Unset, str]):
+    """
 
     entry_id: str
     status: EvalEntryResultStatus
     drift_direction: EvalEntryResultDriftDirection
-    input_: Union[Unset, 'EvalEntryResultInput'] = UNSET
+    input_: Union[Unset, "EvalEntryResultInput"] = UNSET
     expected_decision: Union[Unset, str] = UNSET
     actual_decision: Union[Unset, str] = UNSET
     rule_id: Union[Unset, str] = UNSET
@@ -52,9 +49,9 @@ class EvalEntryResult:
     error: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
         from ..models.eval_entry_result_input import EvalEntryResultInput
+
         entry_id = self.entry_id
 
         status = self.status.value
@@ -75,14 +72,15 @@ class EvalEntryResult:
 
         error = self.error
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "entry_id": entry_id,
-            "status": status,
-            "drift_direction": drift_direction,
-        })
+        field_dict.update(
+            {
+                "entry_id": entry_id,
+                "status": status,
+                "drift_direction": drift_direction,
+            }
+        )
         if input_ is not UNSET:
             field_dict["input"] = input_
         if expected_decision is not UNSET:
@@ -98,33 +96,23 @@ class EvalEntryResult:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.eval_entry_result_input import EvalEntryResultInput
+
         d = src_dict.copy()
         entry_id = d.pop("entry_id")
 
         status = EvalEntryResultStatus(d.pop("status"))
 
-
-
-
         drift_direction = EvalEntryResultDriftDirection(d.pop("drift_direction"))
-
-
-
 
         _input_ = d.pop("input", UNSET)
         input_: Union[Unset, EvalEntryResultInput]
-        if isinstance(_input_,  Unset):
+        if isinstance(_input_, Unset):
             input_ = UNSET
         else:
             input_ = EvalEntryResultInput.from_dict(_input_)
-
-
-
 
         expected_decision = d.pop("expected_decision", UNSET)
 
@@ -147,7 +135,6 @@ class EvalEntryResult:
             reason=reason,
             error=error,
         )
-
 
         eval_entry_result.additional_properties = d
         return eval_entry_result

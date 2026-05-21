@@ -207,6 +207,15 @@ shell_exec_matches() {
   ' "$f"
 }
 
+# LINT_SCAN_ROOTS_OVERRIDE — colon-separated list of dirs that REPLACES the
+# default Phase 4 scan roots. Used by tools/scripts/lint_no_secret_log.test.sh
+# to point the guard at testdata fixtures. Unset in normal CI/operator use.
+if [[ -n "${LINT_SCAN_ROOTS_OVERRIDE:-}" ]]; then
+  IFS=':' read -r -a PHASE4_ROOTS <<< "${LINT_SCAN_ROOTS_OVERRIDE}"
+else
+  PHASE4_ROOTS=("$REPO_ROOT/cmd" "$REPO_ROOT/core")
+fi
+
 while IFS= read -r f; do
   matches=$(shell_exec_matches "$f" 2>/dev/null || true)
   if [[ -n "$matches" ]]; then
@@ -214,7 +223,7 @@ while IFS= read -r f; do
     echo "$matches"
     FAILED=1
   fi
-done < <(find "$REPO_ROOT/cmd" "$REPO_ROOT/core" -name '*.go' -type f 2>/dev/null)
+done < <(find "${PHASE4_ROOTS[@]}" -name '*.go' -type f 2>/dev/null)
 
 if [[ "$FAILED" -eq 0 ]]; then
   echo "OK: No raw secret logging, test-fixture leaks, or shell exec patterns found"

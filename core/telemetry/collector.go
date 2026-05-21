@@ -477,7 +477,7 @@ func (c *Collector) registeredWorkerCount(ctx context.Context) (int, error) {
 	if c == nil || c.workerCredentials == nil {
 		return 0, nil
 	}
-	records, err := c.workerCredentials.List(ctx)
+	records, err := c.workerCredentials.List(ctx, c.tenantID)
 	if err != nil {
 		return 0, fmt.Errorf("telemetry list worker credentials: %w", err)
 	}

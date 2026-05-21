@@ -172,6 +172,9 @@ func (s *Service) UpdateMemory(ctx context.Context, req *pb.UpdateMemoryRequest)
 	if memoryID == "" {
 		return &pb.UpdateMemoryResponse{}, nil
 	}
+	if err := validateGovernanceWrite(req); err != nil {
+		return nil, err
+	}
 	mode := req.GetMode()
 	if mode == pb.ContextMode_CONTEXT_MODE_UNSPECIFIED {
 		mode = pb.ContextMode_CONTEXT_MODE_RAW

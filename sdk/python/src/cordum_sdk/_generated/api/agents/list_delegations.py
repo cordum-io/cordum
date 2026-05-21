@@ -17,7 +17,6 @@ from typing import Union
 import datetime
 
 
-
 def _get_kwargs(
     *,
     status: Union[Unset, ListDelegationsStatus] = UNSET,
@@ -28,14 +27,9 @@ def _get_kwargs(
     cursor: Union[Unset, str] = UNSET,
     limit: Union[Unset, int] = UNSET,
     x_tenant_id: str,
-
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
     headers["X-Tenant-ID"] = x_tenant_id
-
-
-
-    
 
     params: Dict[str, Any] = {}
 
@@ -66,9 +60,7 @@ def _get_kwargs(
 
     params["limit"] = limit
 
-
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
-
 
     _kwargs: Dict[str, Any] = {
         "method": "get",
@@ -76,16 +68,15 @@ def _get_kwargs(
         "params": params,
     }
 
-
     _kwargs["headers"] = headers
     return _kwargs
 
 
-def _parse_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Optional[Union[Any, DelegationListResponse]]:
+def _parse_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Optional[Union[Any, DelegationListResponse]]:
     if response.status_code == 200:
         response_200 = DelegationListResponse.from_dict(response.json())
-
-
 
         return response_200
     if response.status_code == 400:
@@ -106,7 +97,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         return None
 
 
-def _build_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Response[Union[Any, DelegationListResponse]]:
+def _build_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Response[Union[Any, DelegationListResponse]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -126,9 +119,8 @@ def sync_detailed(
     cursor: Union[Unset, str] = UNSET,
     limit: Union[Unset, int] = UNSET,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, DelegationListResponse]]:
-    """ List delegation tokens for the current tenant
+    """List delegation tokens for the current tenant
 
     Args:
         status (Union[Unset, ListDelegationsStatus]):
@@ -146,19 +138,17 @@ def sync_detailed(
 
     Returns:
         Response[Union[Any, DelegationListResponse]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         status=status,
-scope=scope,
-before_expiry=before_expiry,
-since_issued=since_issued,
-until_issued=until_issued,
-cursor=cursor,
-limit=limit,
-x_tenant_id=x_tenant_id,
-
+        scope=scope,
+        before_expiry=before_expiry,
+        since_issued=since_issued,
+        until_issued=until_issued,
+        cursor=cursor,
+        limit=limit,
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -166,6 +156,7 @@ x_tenant_id=x_tenant_id,
     )
 
     return _build_response(client=client, response=response)
+
 
 def sync(
     *,
@@ -178,9 +169,8 @@ def sync(
     cursor: Union[Unset, str] = UNSET,
     limit: Union[Unset, int] = UNSET,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, DelegationListResponse]]:
-    """ List delegation tokens for the current tenant
+    """List delegation tokens for the current tenant
 
     Args:
         status (Union[Unset, ListDelegationsStatus]):
@@ -198,21 +188,20 @@ def sync(
 
     Returns:
         Union[Any, DelegationListResponse]
-     """
-
+    """
 
     return sync_detailed(
         client=client,
-status=status,
-scope=scope,
-before_expiry=before_expiry,
-since_issued=since_issued,
-until_issued=until_issued,
-cursor=cursor,
-limit=limit,
-x_tenant_id=x_tenant_id,
-
+        status=status,
+        scope=scope,
+        before_expiry=before_expiry,
+        since_issued=since_issued,
+        until_issued=until_issued,
+        cursor=cursor,
+        limit=limit,
+        x_tenant_id=x_tenant_id,
     ).parsed
+
 
 async def asyncio_detailed(
     *,
@@ -225,9 +214,8 @@ async def asyncio_detailed(
     cursor: Union[Unset, str] = UNSET,
     limit: Union[Unset, int] = UNSET,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, DelegationListResponse]]:
-    """ List delegation tokens for the current tenant
+    """List delegation tokens for the current tenant
 
     Args:
         status (Union[Unset, ListDelegationsStatus]):
@@ -245,26 +233,23 @@ async def asyncio_detailed(
 
     Returns:
         Response[Union[Any, DelegationListResponse]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         status=status,
-scope=scope,
-before_expiry=before_expiry,
-since_issued=since_issued,
-until_issued=until_issued,
-cursor=cursor,
-limit=limit,
-x_tenant_id=x_tenant_id,
-
+        scope=scope,
+        before_expiry=before_expiry,
+        since_issued=since_issued,
+        until_issued=until_issued,
+        cursor=cursor,
+        limit=limit,
+        x_tenant_id=x_tenant_id,
     )
 
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
+
 
 async def asyncio(
     *,
@@ -277,9 +262,8 @@ async def asyncio(
     cursor: Union[Unset, str] = UNSET,
     limit: Union[Unset, int] = UNSET,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, DelegationListResponse]]:
-    """ List delegation tokens for the current tenant
+    """List delegation tokens for the current tenant
 
     Args:
         status (Union[Unset, ListDelegationsStatus]):
@@ -297,18 +281,18 @@ async def asyncio(
 
     Returns:
         Union[Any, DelegationListResponse]
-     """
+    """
 
-
-    return (await asyncio_detailed(
-        client=client,
-status=status,
-scope=scope,
-before_expiry=before_expiry,
-since_issued=since_issued,
-until_issued=until_issued,
-cursor=cursor,
-limit=limit,
-x_tenant_id=x_tenant_id,
-
-    )).parsed
+    return (
+        await asyncio_detailed(
+            client=client,
+            status=status,
+            scope=scope,
+            before_expiry=before_expiry,
+            since_issued=since_issued,
+            until_issued=until_issued,
+            cursor=cursor,
+            limit=limit,
+            x_tenant_id=x_tenant_id,
+        )
+    ).parsed

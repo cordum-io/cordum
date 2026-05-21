@@ -14,27 +14,19 @@ from typing import Dict
 from typing import Union
 
 
-
 def _get_kwargs(
     *,
     agent_id: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
     headers["X-Tenant-ID"] = x_tenant_id
-
-
-
-    
 
     params: Dict[str, Any] = {}
 
     params["agent_id"] = agent_id
 
-
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
-
 
     _kwargs: Dict[str, Any] = {
         "method": "get",
@@ -42,16 +34,15 @@ def _get_kwargs(
         "params": params,
     }
 
-
     _kwargs["headers"] = headers
     return _kwargs
 
 
-def _parse_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Optional[Union[Any, ListMcpToolsResponse200]]:
+def _parse_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Optional[Union[Any, ListMcpToolsResponse200]]:
     if response.status_code == 200:
         response_200 = ListMcpToolsResponse200.from_dict(response.json())
-
-
 
         return response_200
     if response.status_code == 401:
@@ -66,7 +57,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         return None
 
 
-def _build_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Response[Union[Any, ListMcpToolsResponse200]]:
+def _build_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Response[Union[Any, ListMcpToolsResponse200]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -80,9 +73,8 @@ def sync_detailed(
     client: AuthenticatedClient,
     agent_id: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, ListMcpToolsResponse200]]:
-    """ List MCP tools visible to an agent or the full catalogue
+    """List MCP tools visible to an agent or the full catalogue
 
      Returns the MCP tool catalogue. Without an `agent_id` query parameter, returns the unfiltered admin
     view. With `agent_id`, returns the subset of tools the identity is entitled to call after applying
@@ -98,13 +90,11 @@ def sync_detailed(
 
     Returns:
         Response[Union[Any, ListMcpToolsResponse200]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         agent_id=agent_id,
-x_tenant_id=x_tenant_id,
-
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -113,14 +103,14 @@ x_tenant_id=x_tenant_id,
 
     return _build_response(client=client, response=response)
 
+
 def sync(
     *,
     client: AuthenticatedClient,
     agent_id: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, ListMcpToolsResponse200]]:
-    """ List MCP tools visible to an agent or the full catalogue
+    """List MCP tools visible to an agent or the full catalogue
 
      Returns the MCP tool catalogue. Without an `agent_id` query parameter, returns the unfiltered admin
     view. With `agent_id`, returns the subset of tools the identity is entitled to call after applying
@@ -136,24 +126,22 @@ def sync(
 
     Returns:
         Union[Any, ListMcpToolsResponse200]
-     """
-
+    """
 
     return sync_detailed(
         client=client,
-agent_id=agent_id,
-x_tenant_id=x_tenant_id,
-
+        agent_id=agent_id,
+        x_tenant_id=x_tenant_id,
     ).parsed
+
 
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient,
     agent_id: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, ListMcpToolsResponse200]]:
-    """ List MCP tools visible to an agent or the full catalogue
+    """List MCP tools visible to an agent or the full catalogue
 
      Returns the MCP tool catalogue. Without an `agent_id` query parameter, returns the unfiltered admin
     view. With `agent_id`, returns the subset of tools the identity is entitled to call after applying
@@ -169,29 +157,25 @@ async def asyncio_detailed(
 
     Returns:
         Response[Union[Any, ListMcpToolsResponse200]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         agent_id=agent_id,
-x_tenant_id=x_tenant_id,
-
+        x_tenant_id=x_tenant_id,
     )
 
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
+
 
 async def asyncio(
     *,
     client: AuthenticatedClient,
     agent_id: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, ListMcpToolsResponse200]]:
-    """ List MCP tools visible to an agent or the full catalogue
+    """List MCP tools visible to an agent or the full catalogue
 
      Returns the MCP tool catalogue. Without an `agent_id` query parameter, returns the unfiltered admin
     view. With `agent_id`, returns the subset of tools the identity is entitled to call after applying
@@ -207,12 +191,12 @@ async def asyncio(
 
     Returns:
         Union[Any, ListMcpToolsResponse200]
-     """
+    """
 
-
-    return (await asyncio_detailed(
-        client=client,
-agent_id=agent_id,
-x_tenant_id=x_tenant_id,
-
-    )).parsed
+    return (
+        await asyncio_detailed(
+            client=client,
+            agent_id=agent_id,
+            x_tenant_id=x_tenant_id,
+        )
+    ).parsed

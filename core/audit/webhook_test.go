@@ -1,11 +1,13 @@
 package audit
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -180,5 +182,95 @@ func TestWebhookExporter_CustomHeaders(t *testing.T) {
 	}
 	if capturedAuth != "Bearer test-token" {
 		t.Errorf("Authorization = %q, want Bearer test-token", capturedAuth)
+	}
+}
+
+type webhookSecretEnvCase struct {
+	name      string
+	typ       string
+	secret    string
+	wantErr   string
+	wantWarn  string
+	wantClean bool
+}
+
+func TestWithWebhookSecret_RejectsEmptyAndShortSecrets(t *testing.T) {
+	tests := []webhookSecretEnvCase{
+		{
+			name:    "webhook_empty_rejected",
+			typ:     "webhook",
+			secret:  "",
+			wantErr: "CORDUM_AUDIT_EXPORT_WEBHOOK_SECRET required",
+		},
+		{
+			name:    "webhook_short_rejected",
+			typ:     "webhook",
+			secret:  "short",
+			wantErr: "webhook secret must be >=32 chars",
+		},
+		{
+			name:      "webhook_min_length_ok",
+			typ:       "webhook",
+			secret:    "12345678901234567890123456789012",
+			wantClean: true,
+		},
+		{
+			name:      "datadog_empty_irrelevant",
+			typ:       "datadog",
+			secret:    "",
+			wantClean: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			runWebhookSecretEnvCase(t, tc)
+		})
+	}
+}
+
+func runWebhookSecretEnvCase(t *testing.T, tc webhookSecretEnvCase) {
+	t.Helper()
+	t.Setenv("CORDUM_AUDIT_EXPORT_TYPE", tc.typ)
+	t.Setenv("CORDUM_AUDIT_EXPORT_WEBHOOK_URL", "https://example.com/hook")
+	t.Setenv("CORDUM_AUDIT_EXPORT_WEBHOOK_SECRET", tc.secret)
+	t.Setenv("CORDUM_AUDIT_EXPORT_DD_API_KEY", "dd-api-key")
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	exp, err := NewExporterFromEnv()
+	if exp != nil {
+		t.Cleanup(func() { _ = exp.Close() })
+	}
+	if tc.wantErr != "" {
+		assertWebhookSecretEnvError(t, err, tc.wantErr)
+		return
+	}
+	assertWebhookSecretEnvOK(t, exp, err, buf.String(), tc)
+}
+
+func assertWebhookSecretEnvError(t *testing.T, err error, want string) {
+	t.Helper()
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("NewExporterFromEnv() err = %v, want containing %q", err, want)
+	}
+}
+
+func assertWebhookSecretEnvOK(t *testing.T, exp *BufferedExporter, err error, logs string, tc webhookSecretEnvCase) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("NewExporterFromEnv() unexpected err: %v", err)
+	}
+	if tc.wantClean && exp == nil {
+		t.Fatal("NewExporterFromEnv() returned nil exporter")
+	}
+	if tc.wantWarn != "" && !strings.Contains(logs, tc.wantWarn) {
+		t.Fatalf("expected warning %q, got logs:\n%s", tc.wantWarn, logs)
+	}
+	if tc.wantWarn == "" && strings.Contains(logs, "payloads will be UNSIGNED") {
+		t.Fatalf("unexpected unsigned webhook warning for type %q logs:\n%s", tc.typ, logs)
 	}
 }

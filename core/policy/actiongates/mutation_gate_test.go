@@ -15,8 +15,9 @@ import (
 
 // fakeApprovalLookup is a minimal ApprovalLookup implementation for tests.
 type fakeApprovalLookup struct {
-	records map[string]*edge.EdgeApproval // key: tenant + ":" + hash
-	err     error
+	records    map[string]*edge.EdgeApproval // key: tenant + ":" + hash
+	refRecords map[string]*edge.EdgeApproval // key: tenant + ":" + approval ref
+	err        error
 }
 
 func (f *fakeApprovalLookup) LookupByActionHash(_ context.Context, tenant, hash string) (*edge.EdgeApproval, bool, error) {
@@ -27,6 +28,29 @@ func (f *fakeApprovalLookup) LookupByActionHash(_ context.Context, tenant, hash 
 		return a, true, nil
 	}
 	return nil, false, nil
+}
+
+func (f *fakeApprovalLookup) LookupByApprovalRef(_ context.Context, tenant, ref string) (*edge.EdgeApproval, bool, error) {
+	if f.err != nil {
+		return nil, false, f.err
+	}
+	if a, ok := f.refRecords[approvalRefKey(tenant, ref)]; ok {
+		return a, true, nil
+	}
+	for key, a := range f.records {
+		if a != nil && strings.HasPrefix(key, tenant+":") && a.ApprovalRef == ref {
+			return a, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
+func approvalHashKey(tenant, hash string) string {
+	return tenant + ":" + hash
+}
+
+func approvalRefKey(tenant, ref string) string {
+	return tenant + ":" + ref
 }
 
 // fakeResourceLookup says any resource exists unless its ID is in missing.
@@ -57,6 +81,34 @@ func mutDeleteAction() *config.ActionDescriptor {
 
 func mutCtx() context.Context {
 	return ctxWithAuth(&auth.AuthContext{Tenant: "tnt_a", PrincipalID: "p1", Role: "user"})
+}
+
+func approvedMutationApproval(ref string, action *config.ActionDescriptor) *edge.EdgeApproval {
+	return &edge.EdgeApproval{
+		ApprovalRef: ref,
+		TenantID:    "tnt_a",
+		PrincipalID: "p1",
+		ResolverID:  "p2",
+		Status:      edge.ApprovalStatusApproved,
+		Decision:    edge.ApprovalDecisionApprove,
+		ActionHash:  CanonicalActionHash(action),
+	}
+}
+
+func assertMutationDecision(
+	t *testing.T,
+	dec ActionGateDecision,
+	wantDecision pb.DecisionType,
+	wantCode string,
+	subReasonHas string,
+) {
+	t.Helper()
+	if dec.Decision != wantDecision || dec.Code != wantCode {
+		t.Fatalf("got %v / %q, want %v / %q", dec.Decision, dec.Code, wantDecision, wantCode)
+	}
+	if subReasonHas != "" && !strings.Contains(dec.SubReason, subReasonHas) {
+		t.Fatalf("subReason = %q, want substring %q", dec.SubReason, subReasonHas)
+	}
 }
 
 func TestMutationGate_NonDestructiveSkips(t *testing.T) {
@@ -113,6 +165,64 @@ func TestMutationGate_ClaimTextOnlyStillRequiresHuman(t *testing.T) {
 	}
 	if !strings.Contains(dec.SubReason, "missing_approval") {
 		t.Fatalf("subReason = %q, want missing_approval", dec.SubReason)
+	}
+}
+
+func TestMutationGate_ApprovalRefBinding(t *testing.T) {
+	t.Parallel()
+	action := mutDeleteAction()
+	hash := CanonicalActionHash(action)
+	real := approvedMutationApproval("appr_real", action)
+	mismatched := approvedMutationApproval("appr_mismatch", action)
+	mismatched.ActionHash = "DIFFERENT_HASH"
+	consumed := approvedMutationApproval("appr_consumed", action)
+	expired := approvedMutationApproval("appr_expired", action)
+	foreign := approvedMutationApproval("appr_foreign", action)
+	foreign.TenantID = "tnt_b"
+	consumedAt := time.Now().UTC().Add(-1 * time.Hour)
+	expiresAt := time.Now().UTC().Add(-1 * time.Minute)
+	consumed.ConsumedAt = &consumedAt
+	expired.ExpiresAt = &expiresAt
+
+	cases := []struct {
+		name         string
+		approvalRef  string
+		refApproval  *edge.EdgeApproval
+		wantDecision pb.DecisionType
+		wantCode     string
+		subReasonHas string
+		wantExtraRef string
+	}{
+		{"real_ref_allows", "appr_real", real, pb.DecisionType_DECISION_TYPE_ALLOW, "", "", "appr_real"},
+		{"fake_ref_denies_not_found", "appr_fake", nil, pb.DecisionType_DECISION_TYPE_DENY, CodeNotFound, "approval_not_found", ""},
+		{"mismatched_ref_conflicts", "appr_mismatch", mismatched, pb.DecisionType_DECISION_TYPE_DENY, CodeConflict, "approval_mismatch", ""},
+		{"consumed_ref_conflicts", "appr_consumed", consumed, pb.DecisionType_DECISION_TYPE_DENY, CodeConflict, "consumed", ""},
+		{"expired_ref_conflicts", "appr_expired", expired, pb.DecisionType_DECISION_TYPE_DENY, CodeConflict, "expired", ""},
+		{"tenant_mismatch_denies", "appr_foreign", foreign, pb.DecisionType_DECISION_TYPE_DENY, CodeAccessDenied, "approval_tenant_mismatch", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			act := mutDeleteAction()
+			act.ApprovalClaim = &config.ActionApprovalClaim{ApprovalRef: tc.approvalRef}
+			refRecords := map[string]*edge.EdgeApproval{approvalRefKey("tnt_a", real.ApprovalRef): real}
+			if tc.refApproval != nil {
+				refRecords[approvalRefKey("tnt_a", tc.approvalRef)] = tc.refApproval
+			}
+			lookup := &fakeApprovalLookup{
+				records:    map[string]*edge.EdgeApproval{approvalHashKey("tnt_a", hash): real},
+				refRecords: refRecords,
+			}
+			gate := NewMutationGate(MutationGateOptions{Approvals: lookup, Resources: &fakeResourceLookup{}})
+			dec := gate.Evaluate(mutCtx(), &config.PolicyInput{Action: act})
+			assertMutationDecision(t, dec, tc.wantDecision, tc.wantCode, tc.subReasonHas)
+			if tc.wantExtraRef != "" && dec.Extra["approval_ref"] != tc.wantExtraRef {
+				t.Fatalf("extra.approval_ref = %q, want %q", dec.Extra["approval_ref"], tc.wantExtraRef)
+			}
+			if tc.wantExtraRef != "" && len(dec.Constraints) != 0 {
+				t.Fatalf("valid approval must not imply unenforced constraints, got %v", dec.Constraints)
+			}
+		})
 	}
 }
 
@@ -298,14 +408,17 @@ func TestMutationGate_ValidApprovalAllows(t *testing.T) {
 	lookup := &fakeApprovalLookup{records: map[string]*edge.EdgeApproval{"tnt_a:" + hash: approval}}
 	gate := NewMutationGate(MutationGateOptions{Approvals: lookup, Resources: &fakeResourceLookup{}})
 	dec := gate.Evaluate(mutCtx(), &config.PolicyInput{Action: action})
-	if dec.Decision != pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS {
-		t.Fatalf("got %v, want ALLOW_WITH_CONSTRAINTS", dec.Decision)
+	if dec.Decision != pb.DecisionType_DECISION_TYPE_ALLOW {
+		t.Fatalf("got %v, want ALLOW", dec.Decision)
 	}
 	if dec.Extra["approval_ref"] != "appr_1" {
 		t.Fatalf("extra.approval_ref = %q, want appr_1", dec.Extra["approval_ref"])
 	}
 	if dec.Extra["single_use"] != "true" {
 		t.Fatalf("extra.single_use = %q, want true", dec.Extra["single_use"])
+	}
+	if len(dec.Constraints) != 0 {
+		t.Fatalf("valid approval must not imply unenforced constraints, got %v", dec.Constraints)
 	}
 }
 

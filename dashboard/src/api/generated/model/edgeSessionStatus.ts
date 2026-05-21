@@ -6,15 +6,15 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type EdgeSessionStatus = typeof EdgeSessionStatus[keyof typeof EdgeSessionStatus];
-
+export type EdgeSessionStatus =
+  (typeof EdgeSessionStatus)[keyof typeof EdgeSessionStatus];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const EdgeSessionStatus = {
-  starting: 'starting',
-  running: 'running',
-  waiting_for_approval: 'waiting_for_approval',
-  degraded: 'degraded',
-  ended: 'ended',
-  failed: 'failed',
+  starting: "starting",
+  running: "running",
+  waiting_for_approval: "waiting_for_approval",
+  degraded: "degraded",
+  ended: "ended",
+  failed: "failed",
 } as const;

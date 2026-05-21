@@ -1,0 +1,36 @@
+# CI-only override for the strict-mode edge_fake_hook_e2e.sh integration job.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d
+#
+# Only `.github/workflows/edge-fake-hook-e2e.yml` is expected to use this
+# override. It is NOT part of the default contributor path or any compose
+# adoption story — `docker compose up -d` (no override) is the documented
+# single-key default and stays intact.
+#
+# Why this exists
+# ---------------
+# The strict-mode edge_fake_hook_e2e.sh approval gates exercise the
+# require-approval lifecycle (gate_approval_flow / gate_approval_rejected /
+# gate_approval_expired). Each issues a /api/v1/edge/evaluate POST as the
+# REQUESTER principal, then a /api/v1/edge/approvals/{ref}/{approve,reject}
+# POST as the APPROVER principal. The gateway's
+# edgeApprovalRequesterMatchesResolver + identitiesOverlap
+# (core/controlplane/gateway/helpers.go:1428-1434) match on the first 4 bytes
+# of sha256(api_key) and reject self-approval — even with distinct
+# X-Principal-Id headers, a single shared API key trips the guard.
+#
+# The default docker-compose.yml only passes CORDUM_API_KEY through to the
+# gateway container (line 259). This override adds CORDUM_API_KEYS so the
+# CI workflow can inject a second key alongside the existing single-key env
+# without mutating docker-compose.yml defaults or weakening the production
+# adoption-friction.
+#
+# The gateway's loadBasicAPIKeys (auth/basic.go:539-555) merges entries from
+# both env vars into a single allow-list, so this override is strictly
+# additive — when CORDUM_API_KEYS is empty (every non-CI deployment), the
+# behaviour is identical to docker-compose.yml alone.
+services:
+  api-gateway:
+    environment:
+      - CORDUM_API_KEYS=${CORDUM_API_KEYS:-}

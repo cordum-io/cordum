@@ -12,38 +12,29 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="RerunWorkflowResponse200")
 
 
 @_attrs_define
 class RerunWorkflowResponse200:
-    """ 
-        Attributes:
-            run_id (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        run_id (Union[Unset, str]):
+    """
 
     run_id: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
         run_id = self.run_id
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if run_id is not UNSET:
             field_dict["run_id"] = run_id
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -53,7 +44,6 @@ class RerunWorkflowResponse200:
         rerun_workflow_response_200 = cls(
             run_id=run_id,
         )
-
 
         rerun_workflow_response_200.additional_properties = d
         return rerun_workflow_response_200

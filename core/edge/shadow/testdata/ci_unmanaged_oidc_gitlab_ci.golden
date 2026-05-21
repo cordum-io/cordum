@@ -1,0 +1,41 @@
+{
+  "finding_id": "edge_shadow_ci-oidc-gitlab_ci",
+  "tenant_id": "tenant-ci",
+  "audience": "enterprise",
+  "severity": "medium",
+  "action_kind": "configure_oidc_trust",
+  "summary": "Configure the CI provider's OIDC trust root and audience in Cordum Edge.",
+  "risk_explanation": "The CI provider's OIDC trust root or audience is not configured in Cordum Edge. Without trust + audience, cordum-edge cannot verify CI job identity at attach time. Signals: unmanaged_oidc.",
+  "recommended_action": "Set the CORDUM_EDGE_SHADOW_OIDC_TRUST_\u003cprovider\u003e + CORDUM_EDGE_SHADOW_OIDC_AUDIENCE_\u003cprovider\u003e env vars on the Cordum Edge service, then redeploy.",
+  "safety_notes": [
+    "All steps are advisory — Cordum Edge does not auto-execute remediation.",
+    "Never substitute live secrets into the placeholders shown below; use your secret-manager / api-key-helper.",
+    "Cordum NEVER mutates CI provider repos, workflows, or trust roots; operator opens the PR / sets the env var.",
+    "For exception flows, route through POST /api/v1/edge/shadow/exception (EDGE-143.6) so the operator-acked decision is audited."
+  ],
+  "steps": [
+    {
+      "id": "configure_oidc_trust.env_block",
+      "title": "Set OIDC trust root + audience for GitLab CI on the Cordum Edge service",
+      "kind": "configure_oidc_trust",
+      "command": "# Add to the Cordum Edge service deployment env block:\nCORDUM_EDGE_SHADOW_OIDC_TRUST_gitlab=https://gitlab.com\nCORDUM_EDGE_SHADOW_OIDC_AUDIENCE_gitlab=cordum-edge",
+      "docs_url": "docs/edge/managed-settings-deploy.md",
+      "conditions": [
+        "the issuer URL above is the provider's default OIDC root; replace only if your CI fleet runs a self-hosted OIDC token issuer",
+        "audience MUST match what cordum-edge-attach@v1 requests at runtime (default: `cordum-edge`)"
+      ]
+    },
+    {
+      "id": "configure_oidc_trust.restart",
+      "title": "Restart the Cordum Edge service so the new OIDC config is picked up",
+      "kind": "configure_oidc_trust",
+      "conditions": [
+        "rolling-restart the Edge service deployment (kubectl rollout restart, systemctl restart, etc.)",
+        "verify with `cordumctl edge doctor --gateway \u003cgateway-url\u003e` that OIDC trust is loaded"
+      ]
+    }
+  ],
+  "generator_version": "1.0.0",
+  "generated_at": "2026-05-17T16:00:00Z",
+  "advisory_only": true
+}

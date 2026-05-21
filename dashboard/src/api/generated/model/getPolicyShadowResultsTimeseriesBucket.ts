@@ -6,14 +6,14 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type GetPolicyShadowResultsTimeseriesBucket = typeof GetPolicyShadowResultsTimeseriesBucket[keyof typeof GetPolicyShadowResultsTimeseriesBucket];
-
+export type GetPolicyShadowResultsTimeseriesBucket =
+  (typeof GetPolicyShadowResultsTimeseriesBucket)[keyof typeof GetPolicyShadowResultsTimeseriesBucket];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const GetPolicyShadowResultsTimeseriesBucket = {
-  '1m': '1m',
-  '5m': '5m',
-  '15m': '15m',
-  '1h': '1h',
-  '1d': '1d',
+  "1m": "1m",
+  "5m": "5m",
+  "15m": "15m",
+  "1h": "1h",
+  "1d": "1d",
 } as const;

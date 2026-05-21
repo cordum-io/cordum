@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/model"
 )
 
 // Recorder is the EDGE-014 Edge observability surface. Every Edge call
@@ -76,6 +77,8 @@ type Recorder interface {
 	// Approval lifecycle.
 	RecordApprovalRequested(tenant, layer, kind string)
 	RecordApprovalResolved(tenant, layer, kind, outcome string) // approved | rejected | expired | timeout | invalidated
+	ObserveApprovalSweepDuration(duration time.Duration)
+	AddApprovalSweepExpired(count int)
 
 	// RecordApprovalEnqueueAborted emits a metric counter when EnqueueApproval
 	// refuses to enqueue a new approval because of a fail-closed safety guard
@@ -109,6 +112,14 @@ type Recorder interface {
 	// surface). `phase` is bounded via boundedIdempotencyWindowExpiredPhase
 	// to {"reserve", "complete", "append", "other", "unknown"}.
 	RecordIdempotencyWindowExpired(phase string)
+
+	// Runtime ingest replay-window metrics. Implementations MUST NOT expose
+	// raw nonce values or raw collector identifiers as labels; tenant and
+	// collector are accepted only so implementations can emit bounded presence
+	// labels or correlated safe logs.
+	RecordRuntimeReplayFirstSeen(tenant, collector string)
+	RecordRuntimeReplayReplayed(tenant, collector string)
+	RecordRuntimeReplayWindowFull(tenant, collector string)
 
 	// Degraded / fail-closed outcomes.
 	RecordDegraded(tenant, mode, component, reasonCode string)
@@ -190,10 +201,15 @@ func (NoopRecorder) RecordActionDecision(string, string, string, string, string)
 func (NoopRecorder) RecordActionDenied(string, string, string, string)           {}
 func (NoopRecorder) RecordApprovalRequested(string, string, string)              {}
 func (NoopRecorder) RecordApprovalResolved(string, string, string, string)       {}
+func (NoopRecorder) ObserveApprovalSweepDuration(time.Duration)                  {}
+func (NoopRecorder) AddApprovalSweepExpired(int)                                 {}
 func (NoopRecorder) RecordApprovalEnqueueAborted(string)                         {}
 func (NoopRecorder) RecordAppendEventsAborted(string)                            {}
 func (NoopRecorder) RecordIdempotencyTTLExtended(string)                         {}
 func (NoopRecorder) RecordIdempotencyWindowExpired(string)                       {}
+func (NoopRecorder) RecordRuntimeReplayFirstSeen(string, string)                 {}
+func (NoopRecorder) RecordRuntimeReplayReplayed(string, string)                  {}
+func (NoopRecorder) RecordRuntimeReplayWindowFull(string, string)                {}
 func (NoopRecorder) RecordDegraded(string, string, string, string)               {}
 func (NoopRecorder) RecordFailClosed(string, string, string)                     {}
 func (NoopRecorder) RecordAgentdResponseWriteAborted(string)                     {}
@@ -673,6 +689,16 @@ func SendSIEMEvent(sender audit.AuditSender, event audit.SIEMEvent) {
 	if sender == nil {
 		return
 	}
+	// Defensive producer-side default: SIEMEvent builders in this
+	// package (SIEMEventForAction, SIEMEventForSessionStarted, ...)
+	// propagate event.TenantID verbatim from the source AgentActionEvent
+	// / EdgeSession; an event that arrived tenantless (anonymous hook
+	// bridge, system bootstrap, future producer regression) would land
+	// at the sink-level fallback at slog.Warn. Defaulting here keeps
+	// the chain populated without per-event log noise. task-3fad45d3.
+	if strings.TrimSpace(event.TenantID) == "" {
+		event.TenantID = model.DefaultTenant
+	}
 	defer func() {
 		// AuditSender.Send is documented as non-error-returning, but we
 		// guard against panics defensively because audit-pipeline outage
@@ -905,6 +931,12 @@ func SIEMEventForApprovalRequested(apr EdgeApproval) audit.SIEMEvent {
 	}
 	if v := strings.TrimSpace(apr.PolicySnapshot); v != "" {
 		extra["policy_snapshot"] = boundedShortString(v, 80)
+	}
+	if v := strings.TrimSpace(apr.ActionHash); v != "" {
+		extra["action_hash"] = boundedShortString(v, 80)
+	}
+	if v := strings.TrimSpace(apr.InputHash); v != "" {
+		extra["input_hash"] = boundedShortString(v, 80)
 	}
 	return audit.SIEMEvent{
 		Timestamp:   timestamp,

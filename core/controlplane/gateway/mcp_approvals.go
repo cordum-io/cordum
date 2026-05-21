@@ -130,6 +130,21 @@ type MCPApprovalStore struct {
 	auditHook MCPAuditHook
 }
 
+var ErrMCPApprovalAlreadyResolved = errors.New("mcp approval already resolved")
+
+type MCPApprovalStateConflictError struct {
+	ID     string
+	Status model.ApprovalStatus
+}
+
+func (e *MCPApprovalStateConflictError) Error() string {
+	return "mcp approval cannot resolve in its current state"
+}
+
+func (e *MCPApprovalStateConflictError) Is(target error) bool {
+	return target == ErrMCPApprovalAlreadyResolved
+}
+
 // MCPAuditHook receives every MCP-approval lifecycle event as a fully
 // populated audit.SIEMEvent. The gateway wires it to the audit chain +
 // SIEM exporter; tests inject a capturing stub to assert emission.
@@ -530,7 +545,7 @@ func (s *MCPApprovalStore) Resolve(ctx context.Context, id string, decision mode
 			return err
 		}
 		if rec.Status != model.ApprovalStatusPending {
-			resolveErr = fmt.Errorf("mcp approval %s: cannot resolve in state %s", id, rec.Status)
+			resolveErr = &MCPApprovalStateConflictError{ID: id, Status: rec.Status}
 			result = &rec
 			return nil
 		}

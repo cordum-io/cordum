@@ -7,6 +7,7 @@ import (
 	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
+	"github.com/cordum/cordum/core/internal/testredis"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -18,8 +19,7 @@ func newTestAgentIdentityStore(t *testing.T) *AgentIdentityStore {
 	}
 	t.Cleanup(srv.Close)
 
-	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
+	client := testredis.NewClient(t, srv.Addr())
 
 	return NewAgentIdentityStoreFromClient(client)
 }
@@ -58,7 +58,7 @@ func TestAgentIdentityCreateAndGet(t *testing.T) {
 		t.Fatalf("expected 2 data classifications, got %d", len(created.DataClassifications))
 	}
 
-	got, err := s.Get(ctx, created.ID)
+	got, err := s.Get(ctx, "", created.ID)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -131,6 +131,7 @@ func TestAgentIdentityList(t *testing.T) {
 
 	for _, name := range []string{"agent-a", "agent-b", "agent-c"} {
 		_, err := s.Create(ctx, AgentIdentity{
+			TenantID: "tenant-a",
 			Name:     name,
 			Owner:    "admin",
 			RiskTier: "low",
@@ -139,8 +140,16 @@ func TestAgentIdentityList(t *testing.T) {
 			t.Fatalf("Create %s: %v", name, err)
 		}
 	}
+	if _, err := s.Create(ctx, AgentIdentity{
+		TenantID: "tenant-b",
+		Name:     "agent-foreign",
+		Owner:    "admin",
+		RiskTier: "low",
+	}); err != nil {
+		t.Fatalf("Create foreign tenant agent: %v", err)
+	}
 
-	results, _, err := s.List(ctx, "", 10, AgentIdentityFilter{})
+	results, _, err := s.List(ctx, "tenant-a", "", 10, AgentIdentityFilter{})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -150,6 +159,7 @@ func TestAgentIdentityList(t *testing.T) {
 
 	// Test filter by risk_tier
 	_, err = s.Create(ctx, AgentIdentity{
+		TenantID: "tenant-a",
 		Name:     "agent-critical",
 		Owner:    "admin",
 		RiskTier: "critical",
@@ -158,7 +168,7 @@ func TestAgentIdentityList(t *testing.T) {
 		t.Fatalf("Create agent-critical: %v", err)
 	}
 
-	filtered, _, err := s.List(ctx, "", 10, AgentIdentityFilter{RiskTier: "critical"})
+	filtered, _, err := s.List(ctx, "tenant-a", "", 10, AgentIdentityFilter{RiskTier: "critical"})
 	if err != nil {
 		t.Fatalf("List filtered: %v", err)
 	}
@@ -167,6 +177,53 @@ func TestAgentIdentityList(t *testing.T) {
 	}
 	if filtered[0].Name != "agent-critical" {
 		t.Fatalf("expected agent-critical, got %q", filtered[0].Name)
+	}
+}
+
+func TestAgentIdentityListTenantScoped(t *testing.T) {
+	s := newTestAgentIdentityStore(t)
+	ctx := context.Background()
+	for _, tc := range []struct {
+		tenant string
+		name   string
+		server string
+	}{
+		{"tenant-a", "agent-a", "a-mcp"},
+		{"tenant-b", "agent-b", "b-mcp"},
+	} {
+		if _, err := s.Create(ctx, AgentIdentity{
+			TenantID:       tc.tenant,
+			Name:           tc.name,
+			Owner:          "admin",
+			RiskTier:       "high",
+			AllowedServers: []string{tc.server},
+			AllowedTools:   []string{tc.tenant + "-tool"},
+			Entitlements:   []string{tc.tenant + ".entitlement"},
+		}); err != nil {
+			t.Fatalf("Create %s: %v", tc.name, err)
+		}
+	}
+	if _, _, err := s.List(ctx, "", "", 10, AgentIdentityFilter{}); err == nil {
+		t.Fatal("expected empty-tenant list to fail closed")
+	}
+	for _, tc := range []struct {
+		tenant string
+		name   string
+		server string
+	}{
+		{"tenant-a", "agent-a", "a-mcp"},
+		{"tenant-b", "agent-b", "b-mcp"},
+	} {
+		got, _, err := s.List(ctx, tc.tenant, "", 10, AgentIdentityFilter{})
+		if err != nil {
+			t.Fatalf("List %s: %v", tc.tenant, err)
+		}
+		if len(got) != 1 || got[0].Name != tc.name {
+			t.Fatalf("List %s = %#v, want only %s", tc.tenant, got, tc.name)
+		}
+		if len(got[0].AllowedServers) != 1 || got[0].AllowedServers[0] != tc.server {
+			t.Fatalf("List %s allowed servers leaked/missing: %#v", tc.tenant, got[0].AllowedServers)
+		}
 	}
 }
 
@@ -182,7 +239,7 @@ func TestAgentIdentityUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	updated, err := s.Update(ctx, created.ID, AgentIdentity{
+	updated, err := s.Update(ctx, "", created.ID, AgentIdentity{
 		Name:     "updated-name",
 		RiskTier: "high",
 	})
@@ -203,7 +260,7 @@ func TestAgentIdentityUpdate(t *testing.T) {
 	}
 
 	// Verify persisted correctly by re-reading
-	refetched, err := s.Get(ctx, created.ID)
+	refetched, err := s.Get(ctx, "", created.ID)
 	if err != nil {
 		t.Fatalf("Get after update: %v", err)
 	}
@@ -215,16 +272,74 @@ func TestAgentIdentityUpdate(t *testing.T) {
 	}
 
 	// Verify invalid update is rejected
-	_, err = s.Update(ctx, created.ID, AgentIdentity{RiskTier: "extreme"})
+	_, err = s.Update(ctx, "", created.ID, AgentIdentity{RiskTier: "extreme"})
 	if err == nil {
 		t.Fatal("expected error for invalid risk_tier")
 	}
 
 	// Verify update of non-existent identity returns error
-	_, err = s.Update(ctx, "nonexistent", AgentIdentity{Name: "x"})
+	_, err = s.Update(ctx, "", "nonexistent", AgentIdentity{Name: "x"})
 	if err == nil {
 		t.Fatal("expected error for nonexistent identity")
 	}
+}
+
+func TestAgentIdentityMCPAllowlistsCreateAndUpdate(t *testing.T) {
+	s := newTestAgentIdentityStore(t)
+	ctx := context.Background()
+
+	created, err := s.Create(ctx, AgentIdentity{
+		Name:             "mcp-agent",
+		Owner:            "admin",
+		RiskTier:         "high",
+		AllowedServers:   []string{" prod-mcp ", "prod-mcp", "ci-mcp"},
+		AllowedTools:     []string{"repo.*"},
+		AllowedResources: []string{"cordum://repos/*", " cordum://docs/* "},
+		Entitlements:     []string{"repo.read", "repo.read", "billing.export"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	assertStoreStrings(t, "AllowedServers", created.AllowedServers, []string{"ci-mcp", "prod-mcp"})
+	assertStoreStrings(t, "AllowedResources", created.AllowedResources, []string{"cordum://docs/*", "cordum://repos/*"})
+	assertStoreStrings(t, "Entitlements", created.Entitlements, []string{"billing.export", "repo.read"})
+
+	updated, err := s.Update(ctx, "", created.ID, AgentIdentity{
+		AllowedServers:   []string{"staging-mcp"},
+		AllowedResources: []string{},
+		Entitlements:     []string{"repo.write"},
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	assertStoreStrings(t, "AllowedServers update", updated.AllowedServers, []string{"staging-mcp"})
+	assertStoreStrings(t, "AllowedResources clear", updated.AllowedResources, []string{})
+	assertStoreStrings(t, "Entitlements update", updated.Entitlements, []string{"repo.write"})
+	assertStoreStrings(t, "AllowedTools preserved", updated.AllowedTools, []string{"repo.*"})
+}
+
+func TestAgentIdentityGetNormalizesMissingMCPAllowlists(t *testing.T) {
+	s := newTestAgentIdentityStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	raw := fmt.Sprintf(`{
+		"id":"legacy-agent","name":"legacy","owner":"admin","risk_tier":"high",
+		"status":"active","created_at":%q,"updated_at":%q
+	}`, now, now)
+	if err := s.client.Set(ctx, agentIdentityKeyPrefix+"legacy-agent", raw, 0).Err(); err != nil {
+		t.Fatalf("seed legacy identity: %v", err)
+	}
+
+	got, err := s.Get(ctx, "", "legacy-agent")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected legacy identity")
+	}
+	assertStoreStrings(t, "AllowedServers legacy", got.AllowedServers, []string{})
+	assertStoreStrings(t, "AllowedResources legacy", got.AllowedResources, []string{})
+	assertStoreStrings(t, "Entitlements legacy", got.Entitlements, []string{})
 }
 
 func TestAgentIdentityDelete(t *testing.T) {
@@ -240,12 +355,12 @@ func TestAgentIdentityDelete(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	if err := s.Delete(ctx, created.ID); err != nil {
+	if err := s.Delete(ctx, "", created.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 
 	// Should still be retrievable with revoked status
-	got, err := s.Get(ctx, created.ID)
+	got, err := s.Get(ctx, "", created.ID)
 	if err != nil {
 		t.Fatalf("Get after delete: %v", err)
 	}
@@ -257,7 +372,7 @@ func TestAgentIdentityDelete(t *testing.T) {
 	}
 
 	// Delete of non-existent should error
-	if err := s.Delete(ctx, "nonexistent"); err == nil {
+	if err := s.Delete(ctx, "", "nonexistent"); err == nil {
 		t.Fatal("expected error for nonexistent identity")
 	}
 }
@@ -327,8 +442,7 @@ func TestAgentIdentityListPaginationSameScore(t *testing.T) {
 	}
 	t.Cleanup(srv.Close)
 
-	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
+	client := testredis.NewClient(t, srv.Addr())
 
 	s := NewAgentIdentityStoreFromClient(client)
 	ctx := context.Background()
@@ -337,6 +451,7 @@ func TestAgentIdentityListPaginationSameScore(t *testing.T) {
 	var ids []string
 	for i := 0; i < 5; i++ {
 		created, err := s.Create(ctx, AgentIdentity{
+			TenantID: "tenant-a",
 			Name:     fmt.Sprintf("agent-%d", i),
 			Owner:    "admin",
 			RiskTier: "low",
@@ -362,7 +477,7 @@ func TestAgentIdentityListPaginationSameScore(t *testing.T) {
 	cursor := ""
 	pages := 0
 	for {
-		results, nextCursor, err := s.List(ctx, cursor, 2, AgentIdentityFilter{})
+		results, nextCursor, err := s.List(ctx, "tenant-a", cursor, 2, AgentIdentityFilter{})
 		if err != nil {
 			t.Fatalf("List page %d: %v", pages+1, err)
 		}
@@ -395,7 +510,7 @@ func TestAgentIdentityGetNotFound(t *testing.T) {
 	s := newTestAgentIdentityStore(t)
 	ctx := context.Background()
 
-	got, err := s.Get(ctx, "nonexistent-id")
+	got, err := s.Get(ctx, "", "nonexistent-id")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -406,6 +521,18 @@ func TestAgentIdentityGetNotFound(t *testing.T) {
 
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && containsSubstr(s, substr)
+}
+
+func assertStoreStrings(t *testing.T, name string, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s length = %d (%v), want %d (%v)", name, len(got), got, len(want), want)
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Fatalf("%s[%d] = %q, want %q (full=%v)", name, i, got[i], want[i], got)
+		}
+	}
 }
 
 func TestAgentIdentityListPaginationLargeSameScore(t *testing.T) {
@@ -421,6 +548,7 @@ func TestAgentIdentityListPaginationLargeSameScore(t *testing.T) {
 	for i := range totalItems {
 		id := fmt.Sprintf("agent-%03d", i)
 		identity := AgentIdentity{
+			TenantID: "tenant-a",
 			ID:       id,
 			Name:     fmt.Sprintf("agent-%d", i),
 			Owner:    "admin",
@@ -444,7 +572,7 @@ func TestAgentIdentityListPaginationLargeSameScore(t *testing.T) {
 	cursor := ""
 	pages := 0
 	for {
-		results, nextCursor, err := s.List(ctx, cursor, limit, AgentIdentityFilter{})
+		results, nextCursor, err := s.List(ctx, "tenant-a", cursor, limit, AgentIdentityFilter{})
 		if err != nil {
 			t.Fatalf("List page %d: %v", pages+1, err)
 		}
@@ -475,6 +603,83 @@ func TestAgentIdentityListPaginationLargeSameScore(t *testing.T) {
 	}
 }
 
+func TestAgentIdentityListPaginationLimitFillsInsideFetchedBatch(t *testing.T) {
+	s := newTestAgentIdentityStore(t)
+	ctx := context.Background()
+
+	const (
+		totalItems = 75
+		pageLimit  = 50
+		tenantID   = "tenant-a"
+		score      = 1000000000.0
+	)
+	expected := make(map[string]struct{}, totalItems)
+	for i := range totalItems {
+		id := fmt.Sprintf("agent-midbatch-%03d", i)
+		identity := AgentIdentity{
+			TenantID: tenantID,
+			ID:       id,
+			Name:     fmt.Sprintf("agent midbatch %03d", i),
+			Owner:    "admin",
+			RiskTier: "low",
+			Status:   "active",
+		}
+		if _, err := s.Create(ctx, identity); err != nil {
+			t.Fatalf("Create %s: %v", id, err)
+		}
+		if err := s.client.ZAdd(ctx, agentIdentityIndexKey, redis.Z{
+			Score:  score,
+			Member: id,
+		}).Err(); err != nil {
+			t.Fatalf("force score for %s: %v", id, err)
+		}
+		expected[id] = struct{}{}
+	}
+
+	first, cursor, err := s.List(ctx, tenantID, "", pageLimit, AgentIdentityFilter{})
+	if err != nil {
+		t.Fatalf("List first page: %v", err)
+	}
+	if len(first) != pageLimit {
+		t.Fatalf("first page length = %d, want %d", len(first), pageLimit)
+	}
+	if cursor == "" {
+		t.Fatal("first page cursor is empty; expected cursor for remaining records")
+	}
+	second, nextCursor, err := s.List(ctx, tenantID, cursor, pageLimit, AgentIdentityFilter{})
+	if err != nil {
+		t.Fatalf("List second page: %v", err)
+	}
+	if len(second) != totalItems-pageLimit {
+		t.Fatalf("second page length = %d, want %d", len(second), totalItems-pageLimit)
+	}
+	if nextCursor != "" {
+		t.Fatalf("second page cursor = %q, want empty after exhausting records", nextCursor)
+	}
+	assertAgentIDPagesCoverExpected(t, [][]*AgentIdentity{first, second}, expected)
+}
+
+func assertAgentIDPagesCoverExpected(t *testing.T, pages [][]*AgentIdentity, expected map[string]struct{}) {
+	t.Helper()
+	seen := make(map[string]struct{}, len(expected))
+	for _, page := range pages {
+		for _, identity := range page {
+			if _, duplicate := seen[identity.ID]; duplicate {
+				t.Fatalf("duplicate ID in pagination: %s", identity.ID)
+			}
+			seen[identity.ID] = struct{}{}
+		}
+	}
+	if len(seen) != len(expected) {
+		t.Fatalf("paginated ID count = %d, want %d", len(seen), len(expected))
+	}
+	for id := range expected {
+		if _, ok := seen[id]; !ok {
+			t.Fatalf("missing identity %s in paginated results", id)
+		}
+	}
+}
+
 func TestAgentIdentityListPaginationMixedScores(t *testing.T) {
 	// Regression test: pagination must work when pages cross score boundaries.
 	// Repro from QA: scores [1,1,2,2,2,3] with limit=2 must return all 6 items.
@@ -493,7 +698,7 @@ func TestAgentIdentityListPaginationMixedScores(t *testing.T) {
 	}
 	for _, e := range entries {
 		identity := AgentIdentity{
-			ID: e.id, Name: e.id, Owner: "admin", RiskTier: "low", Status: "active",
+			TenantID: "tenant-a", ID: e.id, Name: e.id, Owner: "admin", RiskTier: "low", Status: "active",
 		}
 		if _, err := s.Create(ctx, identity); err != nil {
 			t.Fatalf("Create %s: %v", e.id, err)
@@ -508,7 +713,7 @@ func TestAgentIdentityListPaginationMixedScores(t *testing.T) {
 	cursor := ""
 	pages := 0
 	for {
-		results, nextCursor, err := s.List(ctx, cursor, limit, AgentIdentityFilter{})
+		results, nextCursor, err := s.List(ctx, "tenant-a", cursor, limit, AgentIdentityFilter{})
 		if err != nil {
 			t.Fatalf("List page %d: %v", pages+1, err)
 		}
@@ -561,6 +766,7 @@ func TestAgentIdentityListFilteredLateMatch(t *testing.T) {
 			tier = "critical"
 		}
 		identity := AgentIdentity{
+			TenantID: "tenant-a",
 			ID:       fmt.Sprintf("agent-%03d", i),
 			Name:     fmt.Sprintf("agent-%d", i),
 			Owner:    "admin",
@@ -573,7 +779,7 @@ func TestAgentIdentityListFilteredLateMatch(t *testing.T) {
 	}
 
 	// Filter for critical — should find the 1 matching identity.
-	results, nextCursor, err := s.List(ctx, "", 10, AgentIdentityFilter{RiskTier: "critical"})
+	results, nextCursor, err := s.List(ctx, "tenant-a", "", 10, AgentIdentityFilter{RiskTier: "critical"})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}

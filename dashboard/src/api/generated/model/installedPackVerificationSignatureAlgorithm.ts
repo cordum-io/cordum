@@ -9,10 +9,10 @@
 /**
  * Algorithm advertised by the verified envelope. Always ed25519 today.
  */
-export type InstalledPackVerificationSignatureAlgorithm = typeof InstalledPackVerificationSignatureAlgorithm[keyof typeof InstalledPackVerificationSignatureAlgorithm];
-
+export type InstalledPackVerificationSignatureAlgorithm =
+  (typeof InstalledPackVerificationSignatureAlgorithm)[keyof typeof InstalledPackVerificationSignatureAlgorithm];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const InstalledPackVerificationSignatureAlgorithm = {
-  ed25519: 'ed25519',
+  ed25519: "ed25519",
 } as const;

@@ -18,13 +18,10 @@ from typing import Union
 import datetime
 
 if TYPE_CHECKING:
-  from ..models.job_detail_result_type_0 import JobDetailResultType0
-  from ..models.safety_decision import SafetyDecision
-  from ..models.job_detail_labels import JobDetailLabels
-  from ..models.delegation_lineage_view import DelegationLineageView
-
-
-
+    from ..models.job_detail_result_type_0 import JobDetailResultType0
+    from ..models.delegation_lineage_view import DelegationLineageView
+    from ..models.job_detail_labels import JobDetailLabels
+    from ..models.safety_decision import SafetyDecision
 
 
 T = TypeVar("T", bound="JobDetail")
@@ -32,31 +29,31 @@ T = TypeVar("T", bound="JobDetail")
 
 @_attrs_define
 class JobDetail:
-    """ 
-        Attributes:
-            id (Union[Unset, str]):
-            state (Union[Unset, str]):
-            topic (Union[Unset, str]):
-            tenant (Union[Unset, str]):
-            updated_at (Union[Unset, datetime.datetime]):
-            trace_id (Union[Unset, str]):
-            prompt (Union[Unset, str]):
-            context_ptr (Union[None, Unset, str]):
-            result_ptr (Union[None, Unset, str]):
-            result (Union['JobDetailResultType0', None, Unset]):
-            capability (Union[Unset, str]):
-            risk_tags (Union[Unset, List[str]]):
-            labels (Union[Unset, JobDetailLabels]):
-            adapter_id (Union[Unset, str]):
-            priority (Union[Unset, int]):
-            created_at (Union[Unset, datetime.datetime]):
-            started_at (Union[None, Unset, datetime.datetime]):
-            completed_at (Union[None, Unset, datetime.datetime]):
-            error (Union[None, Unset, str]):
-            retry_count (Union[Unset, int]):
-            decisions (Union[List['SafetyDecision'], None, Unset]):
-            delegation (Union[Unset, DelegationLineageView]):
-     """
+    """
+    Attributes:
+        id (Union[Unset, str]):
+        state (Union[Unset, str]):
+        topic (Union[Unset, str]):
+        tenant (Union[Unset, str]):
+        updated_at (Union[Unset, datetime.datetime]):
+        trace_id (Union[Unset, str]):
+        prompt (Union[Unset, str]):
+        context_ptr (Union[None, Unset, str]):
+        result_ptr (Union[None, Unset, str]):
+        result (Union['JobDetailResultType0', None, Unset]):
+        capability (Union[Unset, str]):
+        risk_tags (Union[Unset, List[str]]):
+        labels (Union[Unset, JobDetailLabels]):
+        adapter_id (Union[Unset, str]):
+        priority (Union[Unset, int]):
+        created_at (Union[Unset, datetime.datetime]):
+        started_at (Union[None, Unset, datetime.datetime]):
+        completed_at (Union[None, Unset, datetime.datetime]):
+        error (Union[None, Unset, str]):
+        retry_count (Union[Unset, int]):
+        decisions (Union[List['SafetyDecision'], None, Unset]):
+        delegation (Union[Unset, DelegationLineageView]):
+    """
 
     id: Union[Unset, str] = UNSET
     state: Union[Unset, str] = UNSET
@@ -67,10 +64,10 @@ class JobDetail:
     prompt: Union[Unset, str] = UNSET
     context_ptr: Union[None, Unset, str] = UNSET
     result_ptr: Union[None, Unset, str] = UNSET
-    result: Union['JobDetailResultType0', None, Unset] = UNSET
+    result: Union["JobDetailResultType0", None, Unset] = UNSET
     capability: Union[Unset, str] = UNSET
     risk_tags: Union[Unset, List[str]] = UNSET
-    labels: Union[Unset, 'JobDetailLabels'] = UNSET
+    labels: Union[Unset, "JobDetailLabels"] = UNSET
     adapter_id: Union[Unset, str] = UNSET
     priority: Union[Unset, int] = UNSET
     created_at: Union[Unset, datetime.datetime] = UNSET
@@ -78,16 +75,16 @@ class JobDetail:
     completed_at: Union[None, Unset, datetime.datetime] = UNSET
     error: Union[None, Unset, str] = UNSET
     retry_count: Union[Unset, int] = UNSET
-    decisions: Union[List['SafetyDecision'], None, Unset] = UNSET
-    delegation: Union[Unset, 'DelegationLineageView'] = UNSET
+    decisions: Union[List["SafetyDecision"], None, Unset] = UNSET
+    delegation: Union[Unset, "DelegationLineageView"] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         from ..models.job_detail_result_type_0 import JobDetailResultType0
-        from ..models.safety_decision import SafetyDecision
-        from ..models.job_detail_labels import JobDetailLabels
         from ..models.delegation_lineage_view import DelegationLineageView
+        from ..models.job_detail_labels import JobDetailLabels
+        from ..models.safety_decision import SafetyDecision
+
         id = self.id
 
         state = self.state
@@ -129,8 +126,6 @@ class JobDetail:
         risk_tags: Union[Unset, List[str]] = UNSET
         if not isinstance(self.risk_tags, Unset):
             risk_tags = self.risk_tags
-
-
 
         labels: Union[Unset, Dict[str, Any]] = UNSET
         if not isinstance(self.labels, Unset):
@@ -177,7 +172,6 @@ class JobDetail:
                 decisions_type_0_item = decisions_type_0_item_data.to_dict()
                 decisions.append(decisions_type_0_item)
 
-
         else:
             decisions = self.decisions
 
@@ -185,11 +179,9 @@ class JobDetail:
         if not isinstance(self.delegation, Unset):
             delegation = self.delegation.to_dict()
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if id is not UNSET:
             field_dict["id"] = id
         if state is not UNSET:
@@ -237,14 +229,13 @@ class JobDetail:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.job_detail_result_type_0 import JobDetailResultType0
-        from ..models.safety_decision import SafetyDecision
-        from ..models.job_detail_labels import JobDetailLabels
         from ..models.delegation_lineage_view import DelegationLineageView
+        from ..models.job_detail_labels import JobDetailLabels
+        from ..models.safety_decision import SafetyDecision
+
         d = src_dict.copy()
         id = d.pop("id", UNSET)
 
@@ -256,13 +247,10 @@ class JobDetail:
 
         _updated_at = d.pop("updated_at", UNSET)
         updated_at: Union[Unset, datetime.datetime]
-        if isinstance(_updated_at,  Unset):
+        if isinstance(_updated_at, Unset):
             updated_at = UNSET
         else:
             updated_at = isoparse(_updated_at)
-
-
-
 
         trace_id = d.pop("trace_id", UNSET)
 
@@ -277,7 +265,6 @@ class JobDetail:
 
         context_ptr = _parse_context_ptr(d.pop("context_ptr", UNSET))
 
-
         def _parse_result_ptr(data: object) -> Union[None, Unset, str]:
             if data is None:
                 return data
@@ -287,8 +274,7 @@ class JobDetail:
 
         result_ptr = _parse_result_ptr(d.pop("result_ptr", UNSET))
 
-
-        def _parse_result(data: object) -> Union['JobDetailResultType0', None, Unset]:
+        def _parse_result(data: object) -> Union["JobDetailResultType0", None, Unset]:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -298,30 +284,23 @@ class JobDetail:
                     raise TypeError()
                 result_type_0 = JobDetailResultType0.from_dict(data)
 
-
-
                 return result_type_0
-            except: # noqa: E722
+            except:  # noqa: E722
                 pass
-            return cast(Union['JobDetailResultType0', None, Unset], data)
+            return cast(Union["JobDetailResultType0", None, Unset], data)
 
         result = _parse_result(d.pop("result", UNSET))
-
 
         capability = d.pop("capability", UNSET)
 
         risk_tags = cast(List[str], d.pop("risk_tags", UNSET))
 
-
         _labels = d.pop("labels", UNSET)
         labels: Union[Unset, JobDetailLabels]
-        if isinstance(_labels,  Unset):
+        if isinstance(_labels, Unset):
             labels = UNSET
         else:
             labels = JobDetailLabels.from_dict(_labels)
-
-
-
 
         adapter_id = d.pop("adapter_id", UNSET)
 
@@ -329,13 +308,10 @@ class JobDetail:
 
         _created_at = d.pop("created_at", UNSET)
         created_at: Union[Unset, datetime.datetime]
-        if isinstance(_created_at,  Unset):
+        if isinstance(_created_at, Unset):
             created_at = UNSET
         else:
             created_at = isoparse(_created_at)
-
-
-
 
         def _parse_started_at(data: object) -> Union[None, Unset, datetime.datetime]:
             if data is None:
@@ -347,15 +323,12 @@ class JobDetail:
                     raise TypeError()
                 started_at_type_0 = isoparse(data)
 
-
-
                 return started_at_type_0
-            except: # noqa: E722
+            except:  # noqa: E722
                 pass
             return cast(Union[None, Unset, datetime.datetime], data)
 
         started_at = _parse_started_at(d.pop("started_at", UNSET))
-
 
         def _parse_completed_at(data: object) -> Union[None, Unset, datetime.datetime]:
             if data is None:
@@ -367,15 +340,12 @@ class JobDetail:
                     raise TypeError()
                 completed_at_type_0 = isoparse(data)
 
-
-
                 return completed_at_type_0
-            except: # noqa: E722
+            except:  # noqa: E722
                 pass
             return cast(Union[None, Unset, datetime.datetime], data)
 
         completed_at = _parse_completed_at(d.pop("completed_at", UNSET))
-
 
         def _parse_error(data: object) -> Union[None, Unset, str]:
             if data is None:
@@ -386,10 +356,9 @@ class JobDetail:
 
         error = _parse_error(d.pop("error", UNSET))
 
-
         retry_count = d.pop("retry_count", UNSET)
 
-        def _parse_decisions(data: object) -> Union[List['SafetyDecision'], None, Unset]:
+        def _parse_decisions(data: object) -> Union[List["SafetyDecision"], None, Unset]:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -399,30 +368,24 @@ class JobDetail:
                     raise TypeError()
                 decisions_type_0 = []
                 _decisions_type_0 = data
-                for decisions_type_0_item_data in (_decisions_type_0):
+                for decisions_type_0_item_data in _decisions_type_0:
                     decisions_type_0_item = SafetyDecision.from_dict(decisions_type_0_item_data)
-
-
 
                     decisions_type_0.append(decisions_type_0_item)
 
                 return decisions_type_0
-            except: # noqa: E722
+            except:  # noqa: E722
                 pass
-            return cast(Union[List['SafetyDecision'], None, Unset], data)
+            return cast(Union[List["SafetyDecision"], None, Unset], data)
 
         decisions = _parse_decisions(d.pop("decisions", UNSET))
 
-
         _delegation = d.pop("delegation", UNSET)
         delegation: Union[Unset, DelegationLineageView]
-        if isinstance(_delegation,  Unset):
+        if isinstance(_delegation, Unset):
             delegation = UNSET
         else:
             delegation = DelegationLineageView.from_dict(_delegation)
-
-
-
 
         job_detail = cls(
             id=id,
@@ -448,7 +411,6 @@ class JobDetail:
             decisions=decisions,
             delegation=delegation,
         )
-
 
         job_detail.additional_properties = d
         return job_detail

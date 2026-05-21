@@ -129,6 +129,7 @@ func TestInitAuditPipeline_ChainerOnChainOnlyMode(t *testing.T) {
 func TestInitAuditPipeline_DirectTransportFeedsChain(t *testing.T) {
 	t.Setenv("CORDUM_AUDIT_EXPORT_TYPE", "webhook")
 	t.Setenv("CORDUM_AUDIT_EXPORT_WEBHOOK_URL", "https://test.local/hook")
+	t.Setenv("CORDUM_AUDIT_EXPORT_WEBHOOK_SECRET", "12345678901234567890123456789012")
 	t.Setenv("AUDIT_TRANSPORT", "")
 
 	s, _, _ := newTestGateway(t)

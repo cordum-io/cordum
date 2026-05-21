@@ -196,7 +196,7 @@ func demoQuickstartInput() map[string]any {
 // MSYS/cmd on Windows render correctly regardless of code page.
 func renderVerdictTable(out io.Writer, rows []demoVerdict) {
 	const (
-		stepW    = 18
+		stepW = 18
 		// topicW fits the longest demo topic (`job.demo-quickstart.delete-all`
 		// is 30 chars) without truncation. Widening from 24 keeps the
 		// ASCII table readable on a standard 120-col terminal.

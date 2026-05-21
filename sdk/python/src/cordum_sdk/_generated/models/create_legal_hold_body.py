@@ -12,43 +12,37 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="CreateLegalHoldBody")
 
 
 @_attrs_define
 class CreateLegalHoldBody:
-    """ 
-        Attributes:
-            reason (str):
-            tenant_id (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        reason (str):
+        tenant_id (Union[Unset, str]):
+    """
 
     reason: str
     tenant_id: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         reason = self.reason
 
         tenant_id = self.tenant_id
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "reason": reason,
-        })
+        field_dict.update(
+            {
+                "reason": reason,
+            }
+        )
         if tenant_id is not UNSET:
             field_dict["tenant_id"] = tenant_id
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -61,7 +55,6 @@ class CreateLegalHoldBody:
             reason=reason,
             tenant_id=tenant_id,
         )
-
 
         create_legal_hold_body.additional_properties = d
         return create_legal_hold_body

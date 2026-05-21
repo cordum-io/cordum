@@ -6,13 +6,13 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type ShadowComparisonEntryDiff = typeof ShadowComparisonEntryDiff[keyof typeof ShadowComparisonEntryDiff];
-
+export type ShadowComparisonEntryDiff =
+  (typeof ShadowComparisonEntryDiff)[keyof typeof ShadowComparisonEntryDiff];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const ShadowComparisonEntryDiff = {
-  escalated: 'escalated',
-  relaxed: 'relaxed',
-  approval_differ: 'approval_differ',
-  unchanged: 'unchanged',
+  escalated: "escalated",
+  relaxed: "relaxed",
+  approval_differ: "approval_differ",
+  unchanged: "unchanged",
 } as const;

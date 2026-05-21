@@ -6,15 +6,15 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type EdgeAgentActionEventWriteRequestLayer = typeof EdgeAgentActionEventWriteRequestLayer[keyof typeof EdgeAgentActionEventWriteRequestLayer];
-
+export type EdgeAgentActionEventWriteRequestLayer =
+  (typeof EdgeAgentActionEventWriteRequestLayer)[keyof typeof EdgeAgentActionEventWriteRequestLayer];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const EdgeAgentActionEventWriteRequestLayer = {
-  hook: 'hook',
-  mcp: 'mcp',
-  llm: 'llm',
-  runtime: 'runtime',
-  workflow: 'workflow',
-  system: 'system',
+  hook: "hook",
+  mcp: "mcp",
+  llm: "llm",
+  runtime: "runtime",
+  workflow: "workflow",
+  system: "system",
 } as const;

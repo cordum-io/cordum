@@ -227,3 +227,50 @@ func TestGateFallsBackToAgentIDWhenPrincipalMissing(t *testing.T) {
 		t.Errorf("Requester = %q; want agent-alpha fallback", rec.Requester)
 	}
 }
+
+// TestGate_ApprovalRequiredCarriesResumeMetadata is the EDGE-103 reopen #1
+// regression: the gate's ApprovalRequired payload MUST carry the metadata
+// a client needs to resume — approval_ref, args_hash, expires_at, and
+// a machine-readable retry_hint. Without these, the JSON-RPC -32099
+// envelope would not document how the caller is supposed to retry, and
+// the new `_approval_ref` consume path could not be exercised by any
+// off-the-shelf MCP client.
+//
+// approval_id stays populated for backward-compatibility with existing
+// SIEM correlation; approval_ref is the EDGE-103 handle (legacy ID when
+// the gate's downstream is MCPApprovalStore, Edge ref when the gate is
+// wired to an EdgeApprovalMinter).
+func TestGate_ApprovalRequiredCarriesResumeMetadata(t *testing.T) {
+	t.Parallel()
+	store := newTestMCPStore(t)
+	gate := NewGatewayApprovalGate(store)
+	ctx := WithMCPCallMetadata(context.Background(), MCPCallMetadata{
+		Tenant:    "tnt_a",
+		AgentID:   "agent_alpha",
+		Principal: "alice@corp",
+	})
+	got, err := gate.Check(ctx,
+		mcp.Tool{Name: "fs.write", RequiresApproval: true},
+		json.RawMessage(`{"path":"/etc/hostname"}`))
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected ApprovalRequired")
+	}
+	if got.ApprovalID == "" {
+		t.Error("ApprovalID empty (legacy correlation handle)")
+	}
+	if got.ApprovalRef == "" {
+		t.Error("ApprovalRef empty; EDGE-103 resume protocol cannot bind to ApprovalRef=\"\"")
+	}
+	if got.ArgsHash == "" {
+		t.Error("ArgsHash empty; DoD #2 (args hash match on resume) cannot be checked without it")
+	}
+	if got.RetryHint == "" {
+		t.Error("RetryHint empty; clients have no machine-readable signal to retry with _approval_ref")
+	}
+	if got.ExpiresAt.IsZero() {
+		t.Error("ExpiresAt zero; DoD #3 (bounded timeout) requires the client to see the hold window")
+	}
+}

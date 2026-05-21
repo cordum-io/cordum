@@ -5,8 +5,8 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { WorkflowDefinitionSteps } from './workflowDefinitionSteps';
-import type { WorkflowDefinitionConfig } from './workflowDefinitionConfig';
+import type { WorkflowDefinitionSteps } from "./workflowDefinitionSteps";
+import type { WorkflowDefinitionConfig } from "./workflowDefinitionConfig";
 
 export interface WorkflowDefinition {
   id: string;

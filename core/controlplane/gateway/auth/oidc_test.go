@@ -33,6 +33,11 @@ type mockOIDCServer struct {
 
 func newMockOIDCServer(t *testing.T) *mockOIDCServer {
 	t.Helper()
+	// Mock OIDC server binds to 127.0.0.1 via httptest. The OIDC provider
+	// refuses private/loopback issuer URLs by default in all envs; opt
+	// the test scope into the dev/test escape hatch so the fixture works.
+	t.Setenv("CORDUM_OIDC_ALLOW_PRIVATE", "true")
+	t.Setenv("CORDUM_OIDC_ALLOW_HTTP", "true")
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("generate RSA key: %v", err)
@@ -106,7 +111,38 @@ func (m *mockOIDCServer) validClaims() map[string]any {
 	}
 }
 
+type closeTrackingTransport struct {
+	closed atomic.Bool
+}
+
+func (t *closeTrackingTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, fmt.Errorf("unexpected test RoundTrip")
+}
+
+func (t *closeTrackingTransport) CloseIdleConnections() {
+	t.closed.Store(true)
+}
+
 // ---------- OIDCProvider tests ----------
+
+func TestOIDCProviderCloseClosesIdleHTTPConnections(t *testing.T) {
+	transport := &closeTrackingTransport{}
+	provider := &OIDCProvider{
+		httpClient: &http.Client{Transport: transport},
+		stopCh:     make(chan struct{}),
+		done:       make(chan struct{}),
+	}
+	go func() {
+		<-provider.stopCh
+		close(provider.done)
+	}()
+
+	provider.Close()
+
+	if !transport.closed.Load() {
+		t.Fatal("Close did not close idle OIDC HTTP connections")
+	}
+}
 
 func TestOIDC_ValidJWT(t *testing.T) {
 	m := newMockOIDCServer(t)
@@ -1002,6 +1038,8 @@ type mockOIDCServerWithCounter struct {
 
 func newMockOIDCServerWithCounter(t *testing.T) *mockOIDCServerWithCounter {
 	t.Helper()
+	t.Setenv("CORDUM_OIDC_ALLOW_PRIVATE", "true")
+	t.Setenv("CORDUM_OIDC_ALLOW_HTTP", "true")
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("generate RSA key: %v", err)
@@ -1213,6 +1251,8 @@ func TestJWKSWithRedisNil(t *testing.T) {
 // TestRefreshJWKSRespectsContextCancellation verifies that refreshJWKS
 // honours context cancellation instead of using an unbounded context.
 func TestRefreshJWKSRespectsContextCancellation(t *testing.T) {
+	t.Setenv("CORDUM_OIDC_ALLOW_PRIVATE", "true")
+	t.Setenv("CORDUM_OIDC_ALLOW_HTTP", "true")
 	// Slow server that delays JWKS response by 5 seconds.
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
 	mux := http.NewServeMux()
@@ -1268,6 +1308,8 @@ func TestRefreshJWKSRespectsContextCancellation(t *testing.T) {
 // TestRefreshJWKSContextTimeout verifies that refreshJWKS respects a short
 // context timeout instead of running unbounded.
 func TestRefreshJWKSContextTimeout(t *testing.T) {
+	t.Setenv("CORDUM_OIDC_ALLOW_PRIVATE", "true")
+	t.Setenv("CORDUM_OIDC_ALLOW_HTTP", "true")
 	// Server that never responds to JWKS requests.
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
 	mux := http.NewServeMux()

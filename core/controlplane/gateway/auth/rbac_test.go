@@ -2,9 +2,11 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"sync"
 	"testing"
 
 	miniredis "github.com/alicebob/miniredis/v2"
@@ -26,6 +28,21 @@ func bootstrapRoles(t *testing.T, store *RBACStore) {
 	t.Helper()
 	if err := store.BootstrapDefaultRoles(context.Background()); err != nil {
 		t.Fatalf("bootstrap: %v", err)
+	}
+}
+
+func seedRBACRoleRaw(t *testing.T, store *RBACStore, role *RoleDefinition) {
+	t.Helper()
+	data, err := json.Marshal(role)
+	if err != nil {
+		t.Fatalf("marshal role: %v", err)
+	}
+	ctx := context.Background()
+	if err := store.client.Set(ctx, rbacRoleKeyPrefix+role.Name, data, 0).Err(); err != nil {
+		t.Fatalf("seed role %s: %v", role.Name, err)
+	}
+	if err := store.client.SAdd(ctx, rbacRoleSetKey, role.Name).Err(); err != nil {
+		t.Fatalf("seed role set %s: %v", role.Name, err)
 	}
 }
 
@@ -152,6 +169,27 @@ func TestInheritanceChain_Flattening(t *testing.T) {
 	}
 }
 
+func TestResolvePermissions_DiamondInheritance(t *testing.T) {
+	store, _ := newTestRBACStore(t)
+	ctx := context.Background()
+
+	roles := []*RoleDefinition{
+		{Name: "role_d", Permissions: []string{PermAuditRead}},
+		{Name: "role_b", Inherits: []string{"role_d"}},
+		{Name: "role_c", Inherits: []string{"role_d"}},
+		{Name: "role_a", Inherits: []string{"role_b", "role_c"}},
+	}
+	for _, role := range roles {
+		if err := store.PutRole(ctx, role); err != nil {
+			t.Fatalf("put %s: %v", role.Name, err)
+		}
+	}
+
+	if !HasPermission(ctx, store, "role_a", PermAuditRead, true) {
+		t.Fatalf("diamond inheritance did not resolve %q through B/C -> D", PermAuditRead)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // (4) Circular inheritance detection
 // ---------------------------------------------------------------------------
@@ -168,12 +206,8 @@ func TestCircularInheritance_Detection(t *testing.T) {
 		Name:     "role_b",
 		Inherits: []string{"role_a"},
 	}
-	if err := store.PutRole(context.Background(), roleA); err != nil {
-		t.Fatalf("put role_a: %v", err)
-	}
-	if err := store.PutRole(context.Background(), roleB); err != nil {
-		t.Fatalf("put role_b: %v", err)
-	}
+	seedRBACRoleRaw(t, store, roleA)
+	seedRBACRoleRaw(t, store, roleB)
 
 	_, err := store.ResolvePermissions(context.Background(), "role_a")
 	if err == nil {
@@ -187,14 +221,8 @@ func TestValidateInheritance_DetectsCycle(t *testing.T) {
 
 	// Try to make viewer inherit admin (which doesn't inherit anything, but
 	// then if we set admin to inherit viewer it would cycle)
-	roleX := &RoleDefinition{
-		Name:     "role_x",
-		Inherits: []string{"role_y"},
-	}
-	roleY := &RoleDefinition{
-		Name:     "role_y",
-		Inherits: []string{},
-	}
+	roleX := &RoleDefinition{Name: "role_x"}
+	roleY := &RoleDefinition{Name: "role_y", Inherits: []string{"role_x"}}
 	if err := store.PutRole(context.Background(), roleX); err != nil {
 		t.Fatalf("put role_x: %v", err)
 	}
@@ -202,10 +230,29 @@ func TestValidateInheritance_DetectsCycle(t *testing.T) {
 		t.Fatalf("put role_y: %v", err)
 	}
 
-	// Now try to validate making role_y inherit role_x — should detect cycle
-	err := store.ValidateInheritance(context.Background(), "role_y", []string{"role_x"})
+	// Now try to validate making role_x inherit role_y — should detect cycle
+	err := store.ValidateInheritance(context.Background(), "role_x", []string{"role_y"})
 	if err == nil {
 		t.Fatal("expected cycle detection error, got nil")
+	}
+}
+
+func TestValidateInheritance_AllowsDiamond(t *testing.T) {
+	store, _ := newTestRBACStore(t)
+	ctx := context.Background()
+
+	for _, role := range []*RoleDefinition{
+		{Name: "role_d", Permissions: []string{PermAuditRead}},
+		{Name: "role_b", Inherits: []string{"role_d"}},
+		{Name: "role_c", Inherits: []string{"role_d"}},
+	} {
+		if err := store.PutRole(ctx, role); err != nil {
+			t.Fatalf("put %s: %v", role.Name, err)
+		}
+	}
+
+	if err := store.ValidateInheritance(ctx, "role_a", []string{"role_b", "role_c"}); err != nil {
+		t.Fatalf("diamond inheritance should be valid: %v", err)
 	}
 }
 
@@ -341,6 +388,42 @@ func TestRoleCRUD(t *testing.T) {
 	// Cannot delete built-in role
 	if err := store.DeleteRole(ctx, "admin"); err == nil {
 		t.Fatal("should not be able to delete built-in admin role")
+	}
+}
+
+func TestPutRole_DeleteRole_OptimisticLocking(t *testing.T) {
+	store, _ := newTestRBACStore(t)
+	ctx := context.Background()
+	if err := store.PutRole(ctx, &RoleDefinition{Name: "role_b", Permissions: []string{PermJobsRead}}); err != nil {
+		t.Fatalf("put role_b: %v", err)
+	}
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	var putErr, deleteErr error
+	go func() {
+		defer wg.Done()
+		<-start
+		putErr = store.PutRole(ctx, &RoleDefinition{Name: "role_a", Inherits: []string{"role_b"}})
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		deleteErr = store.DeleteRole(ctx, "role_b")
+	}()
+	close(start)
+	wg.Wait()
+
+	successes := 0
+	if putErr == nil {
+		successes++
+	}
+	if deleteErr == nil {
+		successes++
+	}
+	if successes != 1 {
+		t.Fatalf("expected exactly one concurrent role mutation to commit, got putErr=%v deleteErr=%v", putErr, deleteErr)
 	}
 }
 

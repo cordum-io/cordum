@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class EvalRunAcceptedResponseStatus(str, Enum):
     FAILED = "failed"
     PENDING = "pending"

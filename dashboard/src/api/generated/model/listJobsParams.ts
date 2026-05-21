@@ -7,9 +7,9 @@
  */
 
 export type ListJobsParams = {
-limit?: number;
-cursor?: string;
-state?: string;
-topic?: string;
-tenant?: string;
+  limit?: number;
+  cursor?: string;
+  state?: string;
+  topic?: string;
+  tenant?: string;
 };

@@ -97,18 +97,39 @@ func mapLabelsForPolicy(event AgentActionEvent, classification ActionClassificat
 	// EDGE-069 — surface classifier completeness in the policy
 	// labels so audit-evidence consumers (dashboard, SIEM, governance
 	// timeline) can distinguish full classifications from partial.
-	// Backward-compat: absent label means "complete" — only emit when
-	// the field is meaningful, i.e. always emit complete state and
-	// only emit missing_fields when non-empty.
-	if classification.Complete {
+	// Backward-compat: legacy callers may construct ActionClassification
+	// before Complete existed. Use MissingFields as authoritative
+	// fail-closed evidence; otherwise recompute required fields before
+	// emitting classifier.complete.
+	complete, missingFields := classificationCompletenessForPolicy(classification)
+	if complete {
 		putPolicyLabel(labels, "classifier.complete", "true", true)
 	} else {
 		putPolicyLabel(labels, "classifier.complete", "false", true)
-		if len(classification.MissingFields) > 0 {
-			putPolicyLabel(labels, "classifier.missing_fields", strings.Join(classification.MissingFields, ","), true)
+		if len(missingFields) > 0 {
+			putPolicyLabel(labels, "classifier.missing_fields", strings.Join(missingFields, ","), true)
 		}
 	}
 	return labels
+}
+
+// classificationCompletenessForPolicy preserves the exported
+// ActionClassification shape while making mapper labels compatible with
+// legacy manual structs. Classifier-produced MissingFields are
+// fail-closed; when absent, Complete=true is trusted, and zero-value
+// Complete=false is treated as unknown/legacy and recomputed from the
+// required fields.
+func classificationCompletenessForPolicy(c ActionClassification) (bool, []string) {
+	if len(c.MissingFields) > 0 {
+		missing := sortedUniqueStrings(c.MissingFields)
+		if len(missing) > 0 {
+			return false, missing
+		}
+	}
+	if c.Complete {
+		return true, nil
+	}
+	return computeClassificationCompleteness(c)
 }
 
 func putTrustedPolicyAttachmentLabel(labels map[string]string, event AgentActionEvent) {

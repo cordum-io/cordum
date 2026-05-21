@@ -6,12 +6,12 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type EvalRunAcceptedResponseStatus = typeof EvalRunAcceptedResponseStatus[keyof typeof EvalRunAcceptedResponseStatus];
-
+export type EvalRunAcceptedResponseStatus =
+  (typeof EvalRunAcceptedResponseStatus)[keyof typeof EvalRunAcceptedResponseStatus];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const EvalRunAcceptedResponseStatus = {
-  pending: 'pending',
-  running: 'running',
-  failed: 'failed',
+  pending: "pending",
+  running: "running",
+  failed: "failed",
 } as const;

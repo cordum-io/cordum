@@ -117,7 +117,7 @@ func TestDefaultRunReadsCordumAgentdNonceEnv(t *testing.T) {
 	setDefaultRunRequiredEnv(t)
 	t.Setenv("CORDUM_AGENTD_NONCE", nonce)
 
-	opts, err := defaultRunOptionsWithRecorder(runConfig{}, edgecore.NewNoopRecorder())
+	opts, err := defaultRunOptionsWithRecorder(context.Background(), runConfig{}, edgecore.NewNoopRecorder())
 	if err != nil {
 		t.Fatalf("defaultRunOptionsWithRecorder returned error: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestDefaultRunRejectsInvalidCordumAgentdNonceEnv(t *testing.T) {
 			setDefaultRunRequiredEnv(t)
 			t.Setenv("CORDUM_AGENTD_NONCE", nonce)
 
-			_, err := defaultRunOptionsWithRecorder(runConfig{}, edgecore.NewNoopRecorder())
+			_, err := defaultRunOptionsWithRecorder(context.Background(), runConfig{}, edgecore.NewNoopRecorder())
 			if err == nil {
 				t.Fatal("defaultRunOptionsWithRecorder error = nil, want nonce validation error")
 			}
@@ -156,7 +156,7 @@ func TestDefaultRunLeavesNonceEmptyWhenCordumAgentdNonceUnset(t *testing.T) {
 	setDefaultRunRequiredEnv(t)
 	t.Setenv("CORDUM_AGENTD_NONCE", "")
 
-	opts, err := defaultRunOptionsWithRecorder(runConfig{}, edgecore.NewNoopRecorder())
+	opts, err := defaultRunOptionsWithRecorder(context.Background(), runConfig{}, edgecore.NewNoopRecorder())
 	if err != nil {
 		t.Fatalf("defaultRunOptionsWithRecorder returned error: %v", err)
 	}

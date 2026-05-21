@@ -1,6 +1,8 @@
 package claude
 
 import (
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -97,6 +99,41 @@ func TestFilepathExt(t *testing.T) {
 		t.Run(tc.in, func(t *testing.T) {
 			if got := filepathExt(tc.in); got != tc.want {
 				t.Fatalf("filepathExt(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestLoopbackReservationNoTOCTOU(t *testing.T) {
+	rawURL, err := reserveLoopbackHookURL()
+	if err != nil {
+		t.Fatalf("reserveLoopbackHookURL: %v", err)
+	}
+	t.Cleanup(func() { releaseReservedLoopbackHookURL(rawURL) })
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatalf("parse reserved URL: %v", err)
+	}
+
+	attacker, err := net.Listen("tcp", u.Host)
+	if err == nil {
+		_ = attacker.Close()
+		t.Fatalf("reserved loopback port %s was bindable after reservation; launcher has a TOCTOU window", u.Host)
+	}
+}
+
+func TestRejectSettingsOverrideBlocksAllSettingsVariants(t *testing.T) {
+	for _, args := range [][]string{
+		{"--settings", "/tmp/settings.json"},
+		{"--settings=/tmp/settings.json"},
+		{"--settings-path", "/tmp/settings.json"},
+		{"--settings-path=/tmp/settings.json"},
+		{"--settings-file", "/tmp/settings.json"},
+		{"--settings-file=/tmp/settings.json"},
+	} {
+		t.Run(args[0], func(t *testing.T) {
+			if err := rejectSettingsOverride(args); err == nil {
+				t.Fatalf("rejectSettingsOverride(%v) returned nil, want settings override rejection", args)
 			}
 		})
 	}

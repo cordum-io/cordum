@@ -12,9 +12,9 @@ import (
 
 // mockFailModeProvider implements FailModeConfigProvider for tests.
 type mockFailModeProvider struct {
-	configs    map[string]map[string]any // orgID → merged config
-	calls      atomic.Int64
-	err        error
+	configs        map[string]map[string]any // orgID → merged config
+	calls          atomic.Int64
+	err            error
 	effectiveDelay time.Duration
 }
 

@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class PolicyCheckResponseDecision(str, Enum):
     ALLOW = "ALLOW"
     DENY = "DENY"

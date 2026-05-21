@@ -1,9 +1,11 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -281,8 +283,95 @@ func TestValidateKey_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate raw key: %v", err)
 	}
-	if _, err := store.ValidateKey(ctx, rawKey); err == nil {
-		t.Fatalf("expected key not found error")
+	got, err := store.ValidateKey(ctx, rawKey)
+	if err == nil {
+		t.Fatalf("expected error for unknown key, got nil (returned %+v)", got)
+	}
+	if !errors.Is(err, ErrInvalidKey) {
+		t.Fatalf("expected ErrInvalidKey sentinel for unknown key, got %v (%T)", err, err)
+	}
+}
+
+// TestValidateKey_RejectionUsesSingleSentinel asserts that ValidateKey returns
+// the same ErrInvalidKey sentinel for revoked, expired, and not-found keys —
+// closing the SIEM-visible "key formerly existed" oracle described in the
+// PR #276 audit — while server-side slog.Warn retains the specific cause
+// (revoked / expired / not_found) for ops debugging.
+func TestValidateKey_RejectionUsesSingleSentinel(t *testing.T) {
+	store, _ := newTestKeyStore(t)
+	ctx := context.Background()
+
+	// Capture slog output through a buffer-backed handler so we can assert the
+	// audit retention claim. Restore the previous default on test exit.
+	var logBuf bytes.Buffer
+	prevDefault := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prevDefault) })
+
+	rawRevoked, err := GenerateRawKey()
+	if err != nil {
+		t.Fatalf("generate revoked raw: %v", err)
+	}
+	revoked := &ManagedKey{Name: "rev", Tenant: "tenant-a", Scopes: []string{"read"}, CreatedAt: time.Now().UTC(), Revoked: true}
+	if err := store.Create(ctx, revoked, rawRevoked); err != nil {
+		t.Fatalf("create revoked key: %v", err)
+	}
+
+	rawExpired, err := GenerateRawKey()
+	if err != nil {
+		t.Fatalf("generate expired raw: %v", err)
+	}
+	expired := &ManagedKey{
+		Name:      "exp",
+		Tenant:    "tenant-a",
+		Scopes:    []string{"read"},
+		CreatedAt: time.Now().UTC(),
+		ExpiresAt: time.Now().Add(-1 * time.Hour).UTC(),
+	}
+	if err := store.Create(ctx, expired, rawExpired); err != nil {
+		t.Fatalf("create expired key: %v", err)
+	}
+
+	rawMissing, err := GenerateRawKey()
+	if err != nil {
+		t.Fatalf("generate missing raw: %v", err)
+	}
+
+	cases := []struct {
+		name      string
+		rawKey    string
+		wantCause string // substring expected in slog output for ops audit
+	}{
+		{"revoked", rawRevoked, "revoked"},
+		{"expired", rawExpired, "expired"},
+		{"not_found", rawMissing, "not_found"},
+	}
+
+	for _, c := range cases {
+		logBuf.Reset()
+		got, err := store.ValidateKey(ctx, c.rawKey)
+		if err == nil {
+			t.Fatalf("%s: expected error, got nil (returned %+v)", c.name, got)
+		}
+		if !errors.Is(err, ErrInvalidKey) {
+			t.Fatalf("%s: expected ErrInvalidKey sentinel returned to caller, got %v (%T)",
+				c.name, err, err)
+		}
+		// Caller-facing error message must NOT distinguish revoked / expired /
+		// not_found — that's the SIEM-visible oracle we're closing.
+		msg := err.Error()
+		for _, leak := range []string{"revoked", "expired"} {
+			if strings.Contains(msg, leak) {
+				t.Fatalf("%s: ErrInvalidKey leaked %q in caller-visible message %q",
+					c.name, leak, msg)
+			}
+		}
+		// Server-side slog must capture the specific cause so ops can debug.
+		logged := logBuf.String()
+		if !strings.Contains(logged, c.wantCause) {
+			t.Fatalf("%s: expected slog to capture cause %q, got log=%q",
+				c.name, c.wantCause, logged)
+		}
 	}
 }
 

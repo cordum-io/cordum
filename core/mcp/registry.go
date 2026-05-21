@@ -64,11 +64,41 @@ type ApprovalGate interface {
 }
 
 // ApprovalRequired is the structured payload the gate returns when a
-// tools/call must wait for human approval.
+// tools/call must wait for human approval. It serialises to JSON-RPC
+// -32099 error.data so MCP clients can branch retry logic on the
+// resume contract.
+//
+// EDGE-103 reopen #1: extended with ApprovalRef / ArgsHash / RetryHint /
+// ExpiresAt / PolicySnapshot so the response documents exactly how the
+// caller resumes. Resume authority is ApprovalRef (the EDGE-103
+// `_approval_ref` arg); ApprovalID stays for backward-compat SIEM
+// correlation only.
 type ApprovalRequired struct {
+	// ApprovalID is the legacy MCPApprovalStore record id retained for
+	// SIEM correlation. New clients should NOT use it to resume.
 	ApprovalID string `json:"approval_id"`
-	Reason     string `json:"reason,omitempty"`
-	Tool       string `json:"tool"`
+	// ApprovalRef is the EDGE-103 resume handle. Clients echo it back
+	// via the `_approval_ref` argument on a follow-up tools/call;
+	// MCPServer.handleToolsCall consumes it before dispatch.
+	ApprovalRef string `json:"approval_ref,omitempty"`
+	// ArgsHash is the canonical SHA-256 (hex) over the gated args.
+	// Clients MUST resend identical args on resume — the gate refuses
+	// drift with kind=args_mismatch.
+	ArgsHash string `json:"args_hash,omitempty"`
+	// ExpiresAt is the hard deadline beyond which the approval cannot be
+	// resumed. RFC3339 / UTC. Empty/zero on the legacy path that does
+	// not have a TTL window recorded.
+	ExpiresAt time.Time `json:"expires_at,omitempty"`
+	// PolicySnapshot is the bundle-updated-at marker bound to the
+	// approval. ClaimApproval rejects with kind=policy_mismatch when
+	// the active snapshot drifted between hold and resume.
+	PolicySnapshot string `json:"policy_snapshot,omitempty"`
+	// RetryHint is the machine-readable instruction for the client.
+	// Today: "retry_with_approval_ref" — clients echo ApprovalRef in
+	// the next call's args under `_approval_ref`.
+	RetryHint string `json:"retry_hint,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+	Tool      string `json:"tool"`
 }
 
 // Error satisfies the error interface so ApprovalRequired can flow

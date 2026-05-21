@@ -69,6 +69,50 @@ func TestToolInvocationAuditor_InboundSuccess(t *testing.T) {
 	}
 }
 
+// TestToolInvocationAuditor_DefaultsEmptyTenantInbound asserts the
+// EDGE / EDGE-104 follow-up contract: a StartInbound call with empty
+// tenantID must produce a SIEMEvent attributed to model.DefaultTenant
+// rather than echoing an empty TenantID through to the audit chain
+// (where the sink-level fallback would catch it but at slog.Warn).
+// Mutation-resistant: asserts the exact "default" string, not just
+// non-empty.
+func TestToolInvocationAuditor_DefaultsEmptyTenantInbound(t *testing.T) {
+	t.Parallel()
+	sender := &recordingSender{}
+	a := NewToolInvocationAuditor(sender, DefaultRedactor())
+
+	_, h := a.StartInbound(context.Background(), "agent-1", "" /* empty tenant */, "jobs.submit", json.RawMessage(`{}`))
+	a.FinishInbound(h, &ToolCallResult{Content: []ContentItem{{Type: "text", Text: "ok"}}}, nil)
+
+	ev := sender.last()
+	if ev == nil {
+		t.Fatal("no event emitted")
+	}
+	if ev.TenantID != "default" {
+		t.Fatalf("ev.TenantID = %q; want %q (model.DefaultTenant — producer must default empty tenant)", ev.TenantID, "default")
+	}
+}
+
+// TestToolInvocationAuditor_DefaultsEmptyTenantOutbound mirrors the
+// inbound test for StartOutbound — both code paths feed into emit()
+// which stamps TenantID from the handle, so both must default empty.
+func TestToolInvocationAuditor_DefaultsEmptyTenantOutbound(t *testing.T) {
+	t.Parallel()
+	sender := &recordingSender{}
+	a := NewToolInvocationAuditor(sender, DefaultRedactor())
+
+	_, h := a.StartOutbound(context.Background(), "agent-1", "" /* empty tenant */, "srv-1", "fetch", json.RawMessage(`{}`))
+	a.FinishOutbound(h, &ToolCallResult{Content: []ContentItem{{Type: "text", Text: "ok"}}}, nil)
+
+	ev := sender.last()
+	if ev == nil {
+		t.Fatal("no event emitted")
+	}
+	if ev.TenantID != "default" {
+		t.Fatalf("ev.TenantID = %q; want %q (model.DefaultTenant)", ev.TenantID, "default")
+	}
+}
+
 func TestToolInvocationAuditor_InboundError(t *testing.T) {
 	t.Parallel()
 	sender := &recordingSender{}

@@ -72,7 +72,17 @@ func TestPoolLifecycle_CreateAddTopicDrainDelete(t *testing.T) {
 		t.Fatalf("expected draining, got %s", poolMap2["test-pool"].EffectiveStatus())
 	}
 
-	// 6. Delete pool with force
+	// 6. Mark inactive before force delete; force still refuses active/draining pools.
+	reqInactive := withPathValues(adminRequest("PATCH", "/api/v1/pools/test-pool", map[string]any{
+		"status": config.PoolStatusInactive,
+	}), "name", "test-pool")
+	wInactive := httptest.NewRecorder()
+	s.handleUpdatePool(wInactive, reqInactive)
+	if wInactive.Code != http.StatusOK {
+		t.Fatalf("mark inactive: expected 200, got %d: %s", wInactive.Code, wInactive.Body.String())
+	}
+
+	// 7. Delete pool with force
 	req4 := withPathValues(adminRequest("DELETE", "/api/v1/pools/test-pool?force=true", nil),
 		"name", "test-pool")
 	w4 := httptest.NewRecorder()
@@ -81,7 +91,7 @@ func TestPoolLifecycle_CreateAddTopicDrainDelete(t *testing.T) {
 		t.Fatalf("delete: expected 204, got %d: %s", w4.Code, w4.Body.String())
 	}
 
-	// 7. Verify pool gone
+	// 8. Verify pool gone
 	doc3, _ := s.configSvc.Get(context.Background(), configsvc.ScopeSystem, "default")
 	_, poolMap3, _ := extractPoolsFromConfig(doc3)
 	if _, ok := poolMap3["test-pool"]; ok {

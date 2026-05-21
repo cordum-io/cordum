@@ -34,6 +34,7 @@ import {
 import { EdgeApprovalsDrawer } from "@/components/edge/EdgeApprovalsDrawer";
 import { EdgeArtifactsPanel } from "@/components/edge/EdgeArtifactsPanel";
 import { EdgeEventInspector } from "@/components/edge/EdgeEventInspector";
+import { MCPLane } from "@/components/timeline/lanes/MCPLane";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import { groupEdgeEvents, type EdgeEventGroup } from "@/lib/edge-event-groups";
 
@@ -243,6 +244,8 @@ export default function EdgeSessionDetailPage() {
           </ol>
         )}
       </section>
+
+      <MCPLane events={events} />
 
       <EdgeArtifactsPanel sessionId={session.sessionId} events={events} />
 

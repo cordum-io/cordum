@@ -5,9 +5,9 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { PolicyAnalytics200TimeRange } from './policyAnalytics200TimeRange';
-import type { PolicyAnalytics200RulesItem } from './policyAnalytics200RulesItem';
-import type { PolicyAnalytics200Summary } from './policyAnalytics200Summary';
+import type { PolicyAnalytics200TimeRange } from "./policyAnalytics200TimeRange";
+import type { PolicyAnalytics200RulesItem } from "./policyAnalytics200RulesItem";
+import type { PolicyAnalytics200Summary } from "./policyAnalytics200Summary";
 
 export type PolicyAnalytics200 = {
   time_range?: PolicyAnalytics200TimeRange;

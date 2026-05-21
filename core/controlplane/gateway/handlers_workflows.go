@@ -33,6 +33,12 @@ const (
 	workflowAdmissionLockMaxWait    = 2 * time.Second
 )
 
+const (
+	errorCodeRunNotRunnable         = "RUN_NOT_RUNNABLE"
+	errorCodeRunNotCancellable      = "RUN_NOT_CANCELLABLE"
+	errorCodeRunIdempotencyConflict = "RUN_IDEMPOTENCY_CONFLICT"
+)
+
 func workflowAdmissionLockKey(orgID string) string {
 	return "cordum:wf:run:admission:" + strings.TrimSpace(orgID)
 }
@@ -405,7 +411,7 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 			if err := s.enforceMemoryID(r.Context(), orgID, teamID, wfID, "", norm); err != nil {
 				var perr memoryPolicyError
 				if errors.As(err, &perr) {
-					writeErrorJSON(w, perr.status, perr.msg)
+					writeJSONError(w, perr.status, errorCodeMemoryPolicyViolation, perr.msg)
 					return
 				}
 				writeErrorJSON(w, http.StatusInternalServerError, "memory policy check failed")
@@ -448,7 +454,7 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 			} else if err != nil && !errors.Is(err, redis.Nil) {
 				slog.Error("run idempotency lookup failed", "error", err)
 			}
-			writeErrorJSON(w, http.StatusConflict, "idempotency key already used")
+			writeJSONError(w, http.StatusConflict, errorCodeRunIdempotencyConflict, "idempotency key already used")
 			return
 		}
 		reservedKey = true
@@ -483,6 +489,7 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusTooManyRequests)
 			writeJSON(w, map[string]any{
 				"error":   "max concurrent workflow runs exceeded",
+				"code":    errorCodeRunNotRunnable,
 				"status":  http.StatusTooManyRequests,
 				"current": count,
 				"limit":   configLimit,
@@ -642,6 +649,7 @@ func (s *server) handleRerunRun(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusTooManyRequests)
 			writeJSON(w, map[string]any{
 				"error":   "max concurrent workflow runs exceeded",
+				"code":    errorCodeRunNotRunnable,
 				"status":  http.StatusTooManyRequests,
 				"current": count,
 				"limit":   configLimit,
@@ -661,7 +669,7 @@ func (s *server) handleRerunRun(w http.ResponseWriter, r *http.Request) {
 	newID, err := s.workflowEng.RerunFrom(r.Context(), runID, strings.TrimSpace(req.FromStep), req.DryRun)
 	if err != nil {
 		slog.Error("run rerun failed", "error", err, "run_id", runID)
-		writeErrorJSON(w, http.StatusBadRequest, "rerun failed")
+		writeJSONError(w, http.StatusBadRequest, errorCodeRunNotRunnable, "rerun failed")
 		return
 	}
 	if releaseAdmissionLock != nil {

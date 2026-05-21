@@ -8,35 +8,30 @@ from ...types import Response, UNSET
 from ... import errors
 
 
-
-
 def _get_kwargs(
     name: str,
     topic: str,
     *,
     x_tenant_id: str,
-
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
     headers["X-Tenant-ID"] = x_tenant_id
 
-
-
-    
-
-    
-
     _kwargs: Dict[str, Any] = {
         "method": "put",
-        "url": "/api/v1/pools/{name}/topics/{topic}".format(name=name,topic=topic,),
+        "url": "/api/v1/pools/{name}/topics/{topic}".format(
+            name=name,
+            topic=topic,
+        ),
     }
-
 
     _kwargs["headers"] = headers
     return _kwargs
 
 
-def _parse_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Optional[Any]:
+def _parse_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Optional[Any]:
     if response.status_code == 204:
         return None
     if response.status_code == 400:
@@ -55,7 +50,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         return None
 
 
-def _build_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Response[Any]:
+def _build_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Response[Any]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -70,9 +67,8 @@ def sync_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     x_tenant_id: str,
-
 ) -> Response[Any]:
-    """ Add a topic mapping to a pool
+    """Add a topic mapping to a pool
 
     Args:
         name (str):
@@ -85,14 +81,12 @@ def sync_detailed(
 
     Returns:
         Response[Any]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         name=name,
-topic=topic,
-x_tenant_id=x_tenant_id,
-
+        topic=topic,
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -108,9 +102,8 @@ async def asyncio_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     x_tenant_id: str,
-
 ) -> Response[Any]:
-    """ Add a topic mapping to a pool
+    """Add a topic mapping to a pool
 
     Args:
         name (str):
@@ -123,19 +116,14 @@ async def asyncio_detailed(
 
     Returns:
         Response[Any]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         name=name,
-topic=topic,
-x_tenant_id=x_tenant_id,
-
+        topic=topic,
+        x_tenant_id=x_tenant_id,
     )
 
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
-

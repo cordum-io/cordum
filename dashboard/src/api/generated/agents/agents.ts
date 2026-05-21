@@ -5,10 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import {
-  useMutation,
-  useQuery
-} from '@tanstack/react-query';
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
   DataTag,
   DefinedInitialDataOptions,
@@ -21,8 +18,8 @@ import type {
   UseMutationOptions,
   UseMutationResult,
   UseQueryOptions,
-  UseQueryResult
-} from '@tanstack/react-query';
+  UseQueryResult,
+} from "@tanstack/react-query";
 
 import type {
   BadRequestResponse,
@@ -30,6 +27,7 @@ import type {
   CreateAgent201,
   CreateAgentBody,
   DelegationListResponse,
+  Error,
   ForbiddenResponse,
   GetAgent200,
   GetAgentStats200,
@@ -40,7 +38,6 @@ import type {
   ListDelegationsForAgentParams,
   ListDelegationsParams,
   NotFoundResponse,
-  RateLimitedResponse,
   RevokeDelegationToken200,
   RevokeDelegationTokenBody,
   ServiceUnavailableResponse,
@@ -48,864 +45,1411 @@ import type {
   UpdateAgent200,
   UpdateAgentBody,
   VerifyDelegationToken200,
-  VerifyDelegationTokenBody
-} from '.././model';
+  VerifyDelegationTokenBody,
+} from ".././model";
 
-import { apiClient } from '../../client';
-
-
-
+import { apiClient } from "../../client";
 
 /**
  * @summary List agent identities
  */
-export const listAgents = (
-    params?: ListAgentsParams,
- signal?: AbortSignal
+export const listAgents = (params?: ListAgentsParams, signal?: AbortSignal) => {
+  return apiClient<ListAgents200>({
+    url: `/api/v1/agents`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
+
+export const getListAgentsQueryKey = (params?: ListAgentsParams) => {
+  return [`/api/v1/agents`, ...(params ? [params] : [])] as const;
+};
+
+export const getListAgentsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listAgents>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListAgentsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listAgents>>, TError, TData>
+    >;
+  },
 ) => {
-      
-      
-      return apiClient<ListAgents200>(
-      {url: `/api/v1/agents`, method: 'GET',
-        params, signal
-    },
-      );
-    }
-  
+  const { query: queryOptions } = options ?? {};
 
+  const queryKey = queryOptions?.queryKey ?? getListAgentsQueryKey(params);
 
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listAgents>>> = ({
+    signal,
+  }) => listAgents(params, signal);
 
-export const getListAgentsQueryKey = (params?: ListAgentsParams,) => {
-    return [
-    `/api/v1/agents`, ...(params ? [params]: [])
-    ] as const;
-    }
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listAgents>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    
-export const getListAgentsQueryOptions = <TData = Awaited<ReturnType<typeof listAgents>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(params?: ListAgentsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAgents>>, TError, TData>>, }
-) => {
+export type ListAgentsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listAgents>>
+>;
+export type ListAgentsQueryError =
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | ServiceUnavailableResponse;
 
-const {query: queryOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getListAgentsQueryKey(params);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAgents>>> = ({ signal }) => listAgents(params, signal);
-
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAgents>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type ListAgentsQueryResult = NonNullable<Awaited<ReturnType<typeof listAgents>>>
-export type ListAgentsQueryError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse
-
-
-export function useListAgents<TData = Awaited<ReturnType<typeof listAgents>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- params: undefined |  ListAgentsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAgents>>, TError, TData>> & Pick<
+export function useListAgents<
+  TData = Awaited<ReturnType<typeof listAgents>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params: undefined | ListAgentsParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listAgents>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listAgents>>,
           TError,
           Awaited<ReturnType<typeof listAgents>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListAgents<TData = Awaited<ReturnType<typeof listAgents>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- params?: ListAgentsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAgents>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListAgents<
+  TData = Awaited<ReturnType<typeof listAgents>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListAgentsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listAgents>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listAgents>>,
           TError,
           Awaited<ReturnType<typeof listAgents>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListAgents<TData = Awaited<ReturnType<typeof listAgents>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- params?: ListAgentsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAgents>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListAgents<
+  TData = Awaited<ReturnType<typeof listAgents>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListAgentsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listAgents>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary List agent identities
  */
 
-export function useListAgents<TData = Awaited<ReturnType<typeof listAgents>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- params?: ListAgentsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAgents>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useListAgents<
+  TData = Awaited<ReturnType<typeof listAgents>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListAgentsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listAgents>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListAgentsQueryOptions(params, options);
 
-  const queryOptions = getListAgentsQueryOptions(params,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * @summary Create an agent identity
  */
 export const createAgent = (
-    createAgentBody: CreateAgentBody,
- signal?: AbortSignal
+  createAgentBody: CreateAgentBody,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<CreateAgent201>(
-      {url: `/api/v1/agents`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: createAgentBody, signal
-    },
-      );
-    }
-  
+  return apiClient<CreateAgent201>({
+    url: `/api/v1/agents`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: createAgentBody,
+    signal,
+  });
+};
 
+export const getCreateAgentMutationOptions = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ConflictResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createAgent>>,
+    TError,
+    { data: CreateAgentBody },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createAgent>>,
+  TError,
+  { data: CreateAgentBody },
+  TContext
+> => {
+  const mutationKey = ["createAgent"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getCreateAgentMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ConflictResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAgent>>, TError,{data: CreateAgentBody}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof createAgent>>, TError,{data: CreateAgentBody}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createAgent>>,
+    { data: CreateAgentBody }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['createAgent'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return createAgent(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type CreateAgentMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createAgent>>
+>;
+export type CreateAgentMutationBody = CreateAgentBody;
+export type CreateAgentMutationError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | ConflictResponse
+  | ServiceUnavailableResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createAgent>>, {data: CreateAgentBody}> = (props) => {
-          const {data} = props ?? {};
-
-          return  createAgent(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type CreateAgentMutationResult = NonNullable<Awaited<ReturnType<typeof createAgent>>>
-    export type CreateAgentMutationBody = CreateAgentBody
-    export type CreateAgentMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ConflictResponse | ServiceUnavailableResponse
-
-    /**
+/**
  * @summary Create an agent identity
  */
-export const useCreateAgent = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ConflictResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAgent>>, TError,{data: CreateAgentBody}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof createAgent>>,
-        TError,
-        {data: CreateAgentBody},
-        TContext
-      > => {
+export const useCreateAgent = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ConflictResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof createAgent>>,
+      TError,
+      { data: CreateAgentBody },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof createAgent>>,
+  TError,
+  { data: CreateAgentBody },
+  TContext
+> => {
+  const mutationOptions = getCreateAgentMutationOptions(options);
 
-      const mutationOptions = getCreateAgentMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary Get one agent identity
  */
-export const getAgent = (
-    id: string,
- signal?: AbortSignal
+export const getAgent = (id: string, signal?: AbortSignal) => {
+  return apiClient<GetAgent200>({
+    url: `/api/v1/agents/${id}`,
+    method: "GET",
+    signal,
+  });
+};
+
+export const getGetAgentQueryKey = (id?: string) => {
+  return [`/api/v1/agents/${id}`] as const;
+};
+
+export const getGetAgentQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAgent>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getAgent>>, TError, TData>
+    >;
+  },
 ) => {
-      
-      
-      return apiClient<GetAgent200>(
-      {url: `/api/v1/agents/${id}`, method: 'GET', signal
-    },
-      );
-    }
-  
+  const { query: queryOptions } = options ?? {};
 
+  const queryKey = queryOptions?.queryKey ?? getGetAgentQueryKey(id);
 
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getAgent>>> = ({
+    signal,
+  }) => getAgent(id, signal);
 
-export const getGetAgentQueryKey = (id?: string,) => {
-    return [
-    `/api/v1/agents/${id}`
-    ] as const;
-    }
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof getAgent>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData>;
+  };
+};
 
-    
-export const getGetAgentQueryOptions = <TData = Awaited<ReturnType<typeof getAgent>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgent>>, TError, TData>>, }
-) => {
+export type GetAgentQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAgent>>
+>;
+export type GetAgentQueryError =
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse
+  | ServiceUnavailableResponse;
 
-const {query: queryOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetAgentQueryKey(id);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAgent>>> = ({ signal }) => getAgent(id, signal);
-
-      
-
-      
-
-   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAgent>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetAgentQueryResult = NonNullable<Awaited<ReturnType<typeof getAgent>>>
-export type GetAgentQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse
-
-
-export function useGetAgent<TData = Awaited<ReturnType<typeof getAgent>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgent>>, TError, TData>> & Pick<
+export function useGetAgent<
+  TData = Awaited<ReturnType<typeof getAgent>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getAgent>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getAgent>>,
           TError,
           Awaited<ReturnType<typeof getAgent>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetAgent<TData = Awaited<ReturnType<typeof getAgent>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgent>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetAgent<
+  TData = Awaited<ReturnType<typeof getAgent>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getAgent>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getAgent>>,
           TError,
           Awaited<ReturnType<typeof getAgent>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetAgent<TData = Awaited<ReturnType<typeof getAgent>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgent>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetAgent<
+  TData = Awaited<ReturnType<typeof getAgent>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getAgent>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Get one agent identity
  */
 
-export function useGetAgent<TData = Awaited<ReturnType<typeof getAgent>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgent>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetAgent<
+  TData = Awaited<ReturnType<typeof getAgent>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getAgent>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetAgentQueryOptions(id, options);
 
-  const queryOptions = getGetAgentQueryOptions(id,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
 
+/**
+ * @summary Update an agent identity
+ */
+export const updateAgent = (id: string, updateAgentBody: UpdateAgentBody) => {
+  return apiClient<UpdateAgent200>({
+    url: `/api/v1/agents/${id}`,
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    data: updateAgentBody,
+  });
+};
 
+export const getUpdateAgentMutationOptions = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateAgent>>,
+    TError,
+    { id: string; data: UpdateAgentBody },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateAgent>>,
+  TError,
+  { id: string; data: UpdateAgentBody },
+  TContext
+> => {
+  const mutationKey = ["updateAgent"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateAgent>>,
+    { id: string; data: UpdateAgentBody }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return updateAgent(id, data);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateAgentMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateAgent>>
+>;
+export type UpdateAgentMutationBody = UpdateAgentBody;
+export type UpdateAgentMutationError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse
+  | ServiceUnavailableResponse;
 
 /**
  * @summary Update an agent identity
  */
-export const updateAgent = (
-    id: string,
-    updateAgentBody: UpdateAgentBody,
- ) => {
-      
-      
-      return apiClient<UpdateAgent200>(
-      {url: `/api/v1/agents/${id}`, method: 'PUT',
-      headers: {'Content-Type': 'application/json', },
-      data: updateAgentBody
-    },
-      );
-    }
-  
+export const useUpdateAgent = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof updateAgent>>,
+      TError,
+      { id: string; data: UpdateAgentBody },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof updateAgent>>,
+  TError,
+  { id: string; data: UpdateAgentBody },
+  TContext
+> => {
+  const mutationOptions = getUpdateAgentMutationOptions(options);
 
-
-export const getUpdateAgentMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAgent>>, TError,{id: string;data: UpdateAgentBody}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof updateAgent>>, TError,{id: string;data: UpdateAgentBody}, TContext> => {
-
-const mutationKey = ['updateAgent'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
-
-      
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateAgent>>, {id: string;data: UpdateAgentBody}> = (props) => {
-          const {id,data} = props ?? {};
-
-          return  updateAgent(id,data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type UpdateAgentMutationResult = NonNullable<Awaited<ReturnType<typeof updateAgent>>>
-    export type UpdateAgentMutationBody = UpdateAgentBody
-    export type UpdateAgentMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse
-
-    /**
- * @summary Update an agent identity
- */
-export const useUpdateAgent = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAgent>>, TError,{id: string;data: UpdateAgentBody}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof updateAgent>>,
-        TError,
-        {id: string;data: UpdateAgentBody},
-        TContext
-      > => {
-
-      const mutationOptions = getUpdateAgentMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary Delete an agent identity
  */
-export const deleteAgent = (
-    id: string,
- ) => {
-      
-      
-      return apiClient<void>(
-      {url: `/api/v1/agents/${id}`, method: 'DELETE'
-    },
-      );
-    }
-  
+export const deleteAgent = (id: string) => {
+  return apiClient<void>({ url: `/api/v1/agents/${id}`, method: "DELETE" });
+};
 
+export const getDeleteAgentMutationOptions = <
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteAgent>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteAgent>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["deleteAgent"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getDeleteAgentMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAgent>>, TError,{id: string}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof deleteAgent>>, TError,{id: string}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteAgent>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
 
-const mutationKey = ['deleteAgent'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return deleteAgent(id);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type DeleteAgentMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteAgent>>
+>;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteAgent>>, {id: string}> = (props) => {
-          const {id} = props ?? {};
+export type DeleteAgentMutationError =
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse
+  | ServiceUnavailableResponse;
 
-          return  deleteAgent(id,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type DeleteAgentMutationResult = NonNullable<Awaited<ReturnType<typeof deleteAgent>>>
-    
-    export type DeleteAgentMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse
-
-    /**
+/**
  * @summary Delete an agent identity
  */
-export const useDeleteAgent = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAgent>>, TError,{id: string}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof deleteAgent>>,
-        TError,
-        {id: string},
-        TContext
-      > => {
+export const useDeleteAgent = <
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof deleteAgent>>,
+      TError,
+      { id: string },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof deleteAgent>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationOptions = getDeleteAgentMutationOptions(options);
 
-      const mutationOptions = getDeleteAgentMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary Get per-agent runtime statistics
  */
-export const getAgentStats = (
-    id: string,
- signal?: AbortSignal
+export const getAgentStats = (id: string, signal?: AbortSignal) => {
+  return apiClient<GetAgentStats200>({
+    url: `/api/v1/agents/${id}/stats`,
+    method: "GET",
+    signal,
+  });
+};
+
+export const getGetAgentStatsQueryKey = (id?: string) => {
+  return [`/api/v1/agents/${id}/stats`] as const;
+};
+
+export const getGetAgentStatsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAgentStats>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getAgentStats>>, TError, TData>
+    >;
+  },
 ) => {
-      
-      
-      return apiClient<GetAgentStats200>(
-      {url: `/api/v1/agents/${id}/stats`, method: 'GET', signal
-    },
-      );
-    }
-  
+  const { query: queryOptions } = options ?? {};
 
+  const queryKey = queryOptions?.queryKey ?? getGetAgentStatsQueryKey(id);
 
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getAgentStats>>> = ({
+    signal,
+  }) => getAgentStats(id, signal);
 
-export const getGetAgentStatsQueryKey = (id?: string,) => {
-    return [
-    `/api/v1/agents/${id}/stats`
-    ] as const;
-    }
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAgentStats>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    
-export const getGetAgentStatsQueryOptions = <TData = Awaited<ReturnType<typeof getAgentStats>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgentStats>>, TError, TData>>, }
-) => {
+export type GetAgentStatsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAgentStats>>
+>;
+export type GetAgentStatsQueryError =
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse
+  | ServiceUnavailableResponse;
 
-const {query: queryOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetAgentStatsQueryKey(id);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAgentStats>>> = ({ signal }) => getAgentStats(id, signal);
-
-      
-
-      
-
-   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAgentStats>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetAgentStatsQueryResult = NonNullable<Awaited<ReturnType<typeof getAgentStats>>>
-export type GetAgentStatsQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse
-
-
-export function useGetAgentStats<TData = Awaited<ReturnType<typeof getAgentStats>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgentStats>>, TError, TData>> & Pick<
+export function useGetAgentStats<
+  TData = Awaited<ReturnType<typeof getAgentStats>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getAgentStats>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getAgentStats>>,
           TError,
           Awaited<ReturnType<typeof getAgentStats>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetAgentStats<TData = Awaited<ReturnType<typeof getAgentStats>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgentStats>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetAgentStats<
+  TData = Awaited<ReturnType<typeof getAgentStats>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getAgentStats>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getAgentStats>>,
           TError,
           Awaited<ReturnType<typeof getAgentStats>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetAgentStats<TData = Awaited<ReturnType<typeof getAgentStats>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgentStats>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetAgentStats<
+  TData = Awaited<ReturnType<typeof getAgentStats>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getAgentStats>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Get per-agent runtime statistics
  */
 
-export function useGetAgentStats<TData = Awaited<ReturnType<typeof getAgentStats>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgentStats>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetAgentStats<
+  TData = Awaited<ReturnType<typeof getAgentStats>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getAgentStats>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetAgentStatsQueryOptions(id, options);
 
-  const queryOptions = getGetAgentStatsQueryOptions(id,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * @summary Issue a delegation token from one agent to another
  */
 export const issueDelegationToken = (
-    id: string,
-    issueDelegationTokenBody: IssueDelegationTokenBody,
- signal?: AbortSignal
+  id: string,
+  issueDelegationTokenBody: IssueDelegationTokenBody,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<IssueDelegationToken201>(
-      {url: `/api/v1/agents/${id}/delegate`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: issueDelegationTokenBody, signal
-    },
-      );
-    }
-  
+  return apiClient<IssueDelegationToken201>({
+    url: `/api/v1/agents/${id}/delegate`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: issueDelegationTokenBody,
+    signal,
+  });
+};
 
+export const getIssueDelegationTokenMutationOptions = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ConflictResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof issueDelegationToken>>,
+    TError,
+    { id: string; data: IssueDelegationTokenBody },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof issueDelegationToken>>,
+  TError,
+  { id: string; data: IssueDelegationTokenBody },
+  TContext
+> => {
+  const mutationKey = ["issueDelegationToken"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getIssueDelegationTokenMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse | RateLimitedResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof issueDelegationToken>>, TError,{id: string;data: IssueDelegationTokenBody}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof issueDelegationToken>>, TError,{id: string;data: IssueDelegationTokenBody}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof issueDelegationToken>>,
+    { id: string; data: IssueDelegationTokenBody }
+  > = (props) => {
+    const { id, data } = props ?? {};
 
-const mutationKey = ['issueDelegationToken'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return issueDelegationToken(id, data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type IssueDelegationTokenMutationResult = NonNullable<
+  Awaited<ReturnType<typeof issueDelegationToken>>
+>;
+export type IssueDelegationTokenMutationBody = IssueDelegationTokenBody;
+export type IssueDelegationTokenMutationError =
+  | Error
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | ConflictResponse
+  | ServiceUnavailableResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof issueDelegationToken>>, {id: string;data: IssueDelegationTokenBody}> = (props) => {
-          const {id,data} = props ?? {};
-
-          return  issueDelegationToken(id,data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type IssueDelegationTokenMutationResult = NonNullable<Awaited<ReturnType<typeof issueDelegationToken>>>
-    export type IssueDelegationTokenMutationBody = IssueDelegationTokenBody
-    export type IssueDelegationTokenMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse | RateLimitedResponse | ServiceUnavailableResponse
-
-    /**
+/**
  * @summary Issue a delegation token from one agent to another
  */
-export const useIssueDelegationToken = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse | RateLimitedResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof issueDelegationToken>>, TError,{id: string;data: IssueDelegationTokenBody}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof issueDelegationToken>>,
-        TError,
-        {id: string;data: IssueDelegationTokenBody},
-        TContext
-      > => {
+export const useIssueDelegationToken = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ConflictResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof issueDelegationToken>>,
+      TError,
+      { id: string; data: IssueDelegationTokenBody },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof issueDelegationToken>>,
+  TError,
+  { id: string; data: IssueDelegationTokenBody },
+  TContext
+> => {
+  const mutationOptions = getIssueDelegationTokenMutationOptions(options);
 
-      const mutationOptions = getIssueDelegationTokenMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary Verify a delegation token for an expected audience
  */
 export const verifyDelegationToken = (
-    verifyDelegationTokenBody: VerifyDelegationTokenBody,
- signal?: AbortSignal
+  verifyDelegationTokenBody: VerifyDelegationTokenBody,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<VerifyDelegationToken200>(
-      {url: `/api/v1/agents/verify-delegation`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: verifyDelegationTokenBody, signal
-    },
-      );
-    }
-  
+  return apiClient<VerifyDelegationToken200>({
+    url: `/api/v1/agents/verify-delegation`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: verifyDelegationTokenBody,
+    signal,
+  });
+};
 
+export const getVerifyDelegationTokenMutationOptions = <
+  TError = Error | UnauthorizedResponse | ServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof verifyDelegationToken>>,
+    TError,
+    { data: VerifyDelegationTokenBody },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof verifyDelegationToken>>,
+  TError,
+  { data: VerifyDelegationTokenBody },
+  TContext
+> => {
+  const mutationKey = ["verifyDelegationToken"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getVerifyDelegationTokenMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyDelegationToken>>, TError,{data: VerifyDelegationTokenBody}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof verifyDelegationToken>>, TError,{data: VerifyDelegationTokenBody}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof verifyDelegationToken>>,
+    { data: VerifyDelegationTokenBody }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['verifyDelegationToken'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return verifyDelegationToken(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type VerifyDelegationTokenMutationResult = NonNullable<
+  Awaited<ReturnType<typeof verifyDelegationToken>>
+>;
+export type VerifyDelegationTokenMutationBody = VerifyDelegationTokenBody;
+export type VerifyDelegationTokenMutationError =
+  | Error
+  | UnauthorizedResponse
+  | ServiceUnavailableResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof verifyDelegationToken>>, {data: VerifyDelegationTokenBody}> = (props) => {
-          const {data} = props ?? {};
-
-          return  verifyDelegationToken(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type VerifyDelegationTokenMutationResult = NonNullable<Awaited<ReturnType<typeof verifyDelegationToken>>>
-    export type VerifyDelegationTokenMutationBody = VerifyDelegationTokenBody
-    export type VerifyDelegationTokenMutationError = BadRequestResponse | UnauthorizedResponse | ServiceUnavailableResponse
-
-    /**
+/**
  * @summary Verify a delegation token for an expected audience
  */
-export const useVerifyDelegationToken = <TError = BadRequestResponse | UnauthorizedResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyDelegationToken>>, TError,{data: VerifyDelegationTokenBody}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof verifyDelegationToken>>,
-        TError,
-        {data: VerifyDelegationTokenBody},
-        TContext
-      > => {
+export const useVerifyDelegationToken = <
+  TError = Error | UnauthorizedResponse | ServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof verifyDelegationToken>>,
+      TError,
+      { data: VerifyDelegationTokenBody },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof verifyDelegationToken>>,
+  TError,
+  { data: VerifyDelegationTokenBody },
+  TContext
+> => {
+  const mutationOptions = getVerifyDelegationTokenMutationOptions(options);
 
-      const mutationOptions = getVerifyDelegationTokenMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * By default revoking a token cascades to every downstream delegation that extended it. Set `cascade=false` for narrow-scoped revocation.
  * @summary Revoke a delegation token by JTI
  */
 export const revokeDelegationToken = (
-    revokeDelegationTokenBody: RevokeDelegationTokenBody,
- signal?: AbortSignal
+  revokeDelegationTokenBody: RevokeDelegationTokenBody,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<RevokeDelegationToken200>(
-      {url: `/api/v1/agents/revoke-delegation`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: revokeDelegationTokenBody, signal
-    },
-      );
-    }
-  
+  return apiClient<RevokeDelegationToken200>({
+    url: `/api/v1/agents/revoke-delegation`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: revokeDelegationTokenBody,
+    signal,
+  });
+};
 
+export const getRevokeDelegationTokenMutationOptions = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof revokeDelegationToken>>,
+    TError,
+    { data: RevokeDelegationTokenBody },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof revokeDelegationToken>>,
+  TError,
+  { data: RevokeDelegationTokenBody },
+  TContext
+> => {
+  const mutationKey = ["revokeDelegationToken"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getRevokeDelegationTokenMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof revokeDelegationToken>>, TError,{data: RevokeDelegationTokenBody}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof revokeDelegationToken>>, TError,{data: RevokeDelegationTokenBody}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof revokeDelegationToken>>,
+    { data: RevokeDelegationTokenBody }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['revokeDelegationToken'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return revokeDelegationToken(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type RevokeDelegationTokenMutationResult = NonNullable<
+  Awaited<ReturnType<typeof revokeDelegationToken>>
+>;
+export type RevokeDelegationTokenMutationBody = RevokeDelegationTokenBody;
+export type RevokeDelegationTokenMutationError =
+  | Error
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | ServiceUnavailableResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof revokeDelegationToken>>, {data: RevokeDelegationTokenBody}> = (props) => {
-          const {data} = props ?? {};
-
-          return  revokeDelegationToken(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type RevokeDelegationTokenMutationResult = NonNullable<Awaited<ReturnType<typeof revokeDelegationToken>>>
-    export type RevokeDelegationTokenMutationBody = RevokeDelegationTokenBody
-    export type RevokeDelegationTokenMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse
-
-    /**
+/**
  * @summary Revoke a delegation token by JTI
  */
-export const useRevokeDelegationToken = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof revokeDelegationToken>>, TError,{data: RevokeDelegationTokenBody}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof revokeDelegationToken>>,
-        TError,
-        {data: RevokeDelegationTokenBody},
-        TContext
-      > => {
+export const useRevokeDelegationToken = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof revokeDelegationToken>>,
+      TError,
+      { data: RevokeDelegationTokenBody },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof revokeDelegationToken>>,
+  TError,
+  { data: RevokeDelegationTokenBody },
+  TContext
+> => {
+  const mutationOptions = getRevokeDelegationTokenMutationOptions(options);
 
-      const mutationOptions = getRevokeDelegationTokenMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary List delegation tokens issued by a specific agent
  */
 export const listDelegationsForAgent = (
-    id: string,
-    params?: ListDelegationsForAgentParams,
- signal?: AbortSignal
+  id: string,
+  params?: ListDelegationsForAgentParams,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<DelegationListResponse>(
-      {url: `/api/v1/agents/${id}/delegations`, method: 'GET',
-        params, signal
-    },
-      );
-    }
-  
+  return apiClient<DelegationListResponse>({
+    url: `/api/v1/agents/${id}/delegations`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
 
-
-
-export const getListDelegationsForAgentQueryKey = (id?: string,
-    params?: ListDelegationsForAgentParams,) => {
-    return [
-    `/api/v1/agents/${id}/delegations`, ...(params ? [params]: [])
-    ] as const;
-    }
-
-    
-export const getListDelegationsForAgentQueryOptions = <TData = Awaited<ReturnType<typeof listDelegationsForAgent>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(id: string,
-    params?: ListDelegationsForAgentParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDelegationsForAgent>>, TError, TData>>, }
+export const getListDelegationsForAgentQueryKey = (
+  id?: string,
+  params?: ListDelegationsForAgentParams,
 ) => {
+  return [
+    `/api/v1/agents/${id}/delegations`,
+    ...(params ? [params] : []),
+  ] as const;
+};
 
-const {query: queryOptions} = options ?? {};
+export const getListDelegationsForAgentQueryOptions = <
+  TData = Awaited<ReturnType<typeof listDelegationsForAgent>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  params?: ListDelegationsForAgentParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listDelegationsForAgent>>,
+        TError,
+        TData
+      >
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListDelegationsForAgentQueryKey(id,params);
+  const queryKey =
+    queryOptions?.queryKey ?? getListDelegationsForAgentQueryKey(id, params);
 
-  
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listDelegationsForAgent>>
+  > = ({ signal }) => listDelegationsForAgent(id, params, signal);
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listDelegationsForAgent>>> = ({ signal }) => listDelegationsForAgent(id,params, signal);
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof listDelegationsForAgent>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-      
+export type ListDelegationsForAgentQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listDelegationsForAgent>>
+>;
+export type ListDelegationsForAgentQueryError =
+  | Error
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | ServiceUnavailableResponse;
 
-      
-
-   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listDelegationsForAgent>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type ListDelegationsForAgentQueryResult = NonNullable<Awaited<ReturnType<typeof listDelegationsForAgent>>>
-export type ListDelegationsForAgentQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse
-
-
-export function useListDelegationsForAgent<TData = Awaited<ReturnType<typeof listDelegationsForAgent>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- id: string,
-    params: undefined |  ListDelegationsForAgentParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDelegationsForAgent>>, TError, TData>> & Pick<
+export function useListDelegationsForAgent<
+  TData = Awaited<ReturnType<typeof listDelegationsForAgent>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  params: undefined | ListDelegationsForAgentParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listDelegationsForAgent>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listDelegationsForAgent>>,
           TError,
           Awaited<ReturnType<typeof listDelegationsForAgent>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListDelegationsForAgent<TData = Awaited<ReturnType<typeof listDelegationsForAgent>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- id: string,
-    params?: ListDelegationsForAgentParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDelegationsForAgent>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListDelegationsForAgent<
+  TData = Awaited<ReturnType<typeof listDelegationsForAgent>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  params?: ListDelegationsForAgentParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listDelegationsForAgent>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listDelegationsForAgent>>,
           TError,
           Awaited<ReturnType<typeof listDelegationsForAgent>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListDelegationsForAgent<TData = Awaited<ReturnType<typeof listDelegationsForAgent>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- id: string,
-    params?: ListDelegationsForAgentParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDelegationsForAgent>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListDelegationsForAgent<
+  TData = Awaited<ReturnType<typeof listDelegationsForAgent>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  params?: ListDelegationsForAgentParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listDelegationsForAgent>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary List delegation tokens issued by a specific agent
  */
 
-export function useListDelegationsForAgent<TData = Awaited<ReturnType<typeof listDelegationsForAgent>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- id: string,
-    params?: ListDelegationsForAgentParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDelegationsForAgent>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useListDelegationsForAgent<
+  TData = Awaited<ReturnType<typeof listDelegationsForAgent>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  params?: ListDelegationsForAgentParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listDelegationsForAgent>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListDelegationsForAgentQueryOptions(
+    id,
+    params,
+    options,
+  );
 
-  const queryOptions = getListDelegationsForAgentQueryOptions(id,params,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * @summary List delegation tokens for the current tenant
  */
 export const listDelegations = (
-    params?: ListDelegationsParams,
- signal?: AbortSignal
+  params?: ListDelegationsParams,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<DelegationListResponse>(
-      {url: `/api/v1/delegations`, method: 'GET',
-        params, signal
-    },
-      );
-    }
-  
+  return apiClient<DelegationListResponse>({
+    url: `/api/v1/delegations`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
 
+export const getListDelegationsQueryKey = (params?: ListDelegationsParams) => {
+  return [`/api/v1/delegations`, ...(params ? [params] : [])] as const;
+};
 
-
-export const getListDelegationsQueryKey = (params?: ListDelegationsParams,) => {
-    return [
-    `/api/v1/delegations`, ...(params ? [params]: [])
-    ] as const;
-    }
-
-    
-export const getListDelegationsQueryOptions = <TData = Awaited<ReturnType<typeof listDelegations>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(params?: ListDelegationsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDelegations>>, TError, TData>>, }
+export const getListDelegationsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listDelegations>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListDelegationsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listDelegations>>,
+        TError,
+        TData
+      >
+    >;
+  },
 ) => {
+  const { query: queryOptions } = options ?? {};
 
-const {query: queryOptions} = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getListDelegationsQueryKey(params);
 
-  const queryKey =  queryOptions?.queryKey ?? getListDelegationsQueryKey(params);
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listDelegations>>> = ({
+    signal,
+  }) => listDelegations(params, signal);
 
-  
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listDelegations>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listDelegations>>> = ({ signal }) => listDelegations(params, signal);
+export type ListDelegationsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listDelegations>>
+>;
+export type ListDelegationsQueryError =
+  | Error
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | ServiceUnavailableResponse;
 
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listDelegations>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type ListDelegationsQueryResult = NonNullable<Awaited<ReturnType<typeof listDelegations>>>
-export type ListDelegationsQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse
-
-
-export function useListDelegations<TData = Awaited<ReturnType<typeof listDelegations>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- params: undefined |  ListDelegationsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDelegations>>, TError, TData>> & Pick<
+export function useListDelegations<
+  TData = Awaited<ReturnType<typeof listDelegations>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params: undefined | ListDelegationsParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listDelegations>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listDelegations>>,
           TError,
           Awaited<ReturnType<typeof listDelegations>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListDelegations<TData = Awaited<ReturnType<typeof listDelegations>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- params?: ListDelegationsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDelegations>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListDelegations<
+  TData = Awaited<ReturnType<typeof listDelegations>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListDelegationsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listDelegations>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listDelegations>>,
           TError,
           Awaited<ReturnType<typeof listDelegations>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListDelegations<TData = Awaited<ReturnType<typeof listDelegations>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- params?: ListDelegationsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDelegations>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListDelegations<
+  TData = Awaited<ReturnType<typeof listDelegations>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListDelegationsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listDelegations>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary List delegation tokens for the current tenant
  */
 
-export function useListDelegations<TData = Awaited<ReturnType<typeof listDelegations>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- params?: ListDelegationsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDelegations>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useListDelegations<
+  TData = Awaited<ReturnType<typeof listDelegations>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListDelegationsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listDelegations>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListDelegationsQueryOptions(params, options);
 
-  const queryOptions = getListDelegationsQueryOptions(params,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
-

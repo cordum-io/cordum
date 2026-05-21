@@ -90,14 +90,14 @@ func (s *server) handleMCPOutbound(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	since, until, herr := parseMCPRange(q, now, mcpOutboundDefaultLookback)
 	if herr != nil {
-		writeErrorJSON(w, herr.status, herr.message)
+		writeJSONError(w, herr.status, herr.code, herr.message)
 		return
 	}
 	agentFilter := strings.TrimSpace(q.Get("agent"))
 	serverFilter := strings.TrimSpace(q.Get("server"))
 	sigFilter := normaliseSigFilter(q.Get("sig_status"))
 	if sigFilter == "invalid_value" {
-		writeErrorJSON(w, http.StatusBadRequest, "sig_status must be one of verified|unverified|invalid|all")
+		writeJSONError(w, http.StatusBadRequest, errorCodeMCPSignatureStatusInvalid, "sig_status must be one of verified|unverified|invalid|all")
 		return
 	}
 
@@ -105,7 +105,7 @@ func (s *server) handleMCPOutbound(w http.ResponseWriter, r *http.Request) {
 	if raw := strings.TrimSpace(q.Get("limit")); raw != "" {
 		v, perr := strconv.ParseInt(raw, 10, 64)
 		if perr != nil || v <= 0 {
-			writeErrorJSON(w, http.StatusBadRequest, "limit must be a positive integer")
+			writeJSONError(w, http.StatusBadRequest, errorCodeMCPLimitInvalid, "limit must be a positive integer")
 			return
 		}
 		if v > mcpOutboundMaxPageSize {

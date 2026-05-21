@@ -1,9 +1,13 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -429,6 +433,50 @@ func TestEvaluateToolCall_DefenseInDepthRefusesPartialRedaction(t *testing.T) {
 	}
 }
 
+func TestEvaluateToolCall_DefenseInDepthRefusesPEMPrivateKeyFamilies(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name        string
+		labelPrefix string
+	}{
+		{name: "rsa", labelPrefix: "RSA "},
+		{name: "pkcs8_bare", labelPrefix: ""},
+		{name: "ec", labelPrefix: "EC "},
+		{name: "openssh", labelPrefix: "OPENSSH "},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pipeline := &fakePolicyDispatcher{}
+			emitter := &fakeEventEmitter{}
+			deps := newToolCallDepsFixture(pipeline, emitter, &fakeArtifactStore{})
+			deps.Redactor = stubRedactor{}
+			_, err := EvaluateToolCall(newAuthedToolCallCtx(), deps, ToolCallParams{
+				Name: "bash.exec",
+				Arguments: json.RawMessage(`{"cmd":` +
+					mustMarshalStringForTest(syntheticPrivateKeyPEMForRedactionTest(tc.labelPrefix)) + `}`),
+			}, "local-shell")
+			if err == nil {
+				t.Fatal("expected redaction_failed error from PEM completeness check, got nil")
+			}
+			if !strings.Contains(err.Error(), "redaction_failed") {
+				t.Fatalf("expected redaction_failed sentinel, got %q", err.Error())
+			}
+			if len(emitter.events) != 0 {
+				t.Fatalf("must emit zero events when PEM completeness check fails; got %d", len(emitter.events))
+			}
+		})
+	}
+}
+
+func mustMarshalStringForTest(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}
+
 // TestBuildActionDescriptor_NormalizesTargetPathFromArgs asserts that a
 // Windows backslash path supplied in arg["path"] surfaces on
 // descriptor.TargetPath as a normalized forward-slash form. Without this,
@@ -469,8 +517,8 @@ func TestBuildActionDescriptor_PathBackslashAndForwardSlashSameHash(t *testing.T
 	if descB.TargetPath != descF.TargetPath {
 		t.Fatalf("TargetPath divergence: %q vs %q", descB.TargetPath, descF.TargetPath)
 	}
-	hashB := CanonicalActionHash("tnt_a", "local-fs", "fs.write", descB.TargetPath)
-	hashF := CanonicalActionHash("tnt_a", "local-fs", "fs.write", descF.TargetPath)
+	hashB := ActionTupleHash("tnt_a", "local-fs", "fs.write", descB.TargetPath)
+	hashF := ActionTupleHash("tnt_a", "local-fs", "fs.write", descF.TargetPath)
 	if hashB != hashF {
 		t.Fatalf("canonical hash diverged for equivalent paths: %s vs %s", hashB, hashF)
 	}
@@ -540,6 +588,107 @@ func TestEvaluateToolCall_HighSeverityFindingTriggersArtifact(t *testing.T) {
 	}
 }
 
+// TestEvaluateToolCall_AllowWithConstraintsPreCarriesConstraints asserts
+// that a gate returning ALLOW_WITH_CONSTRAINTS with a structured
+// constraint map propagates the map through to the emitted mcp.tool.pre
+// event AND that event.Decision is `constrain` (NOT `allow`). Without
+// this propagation, downstream audit consumers can't distinguish an
+// AWC-bounded allow from an unconstrained allow and the constraint
+// metadata is silently dropped.
+func TestEvaluateToolCall_AllowWithConstraintsPreCarriesConstraints(t *testing.T) {
+	t.Parallel()
+	constraints := map[string]any{
+		"max_bytes":    float64(1024),
+		"allowed_tags": []any{"safe", "preview"},
+		"redaction":    "strict",
+	}
+	pipeline := &fakePolicyDispatcher{
+		decision: PolicyDecision{
+			Decision:    pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS,
+			GateID:      "actiongate.mcp",
+			Code:        "constrained",
+			Reason:      "tier ceiling applied",
+			Constraints: constraints,
+		},
+		fired: true,
+	}
+	emitter := &fakeEventEmitter{}
+	deps := newToolCallDepsFixture(pipeline, emitter, &fakeArtifactStore{})
+	result, err := EvaluateToolCall(newAuthedToolCallCtx(), deps, ToolCallParams{
+		Name:      "fs.read_file",
+		Arguments: json.RawMessage(`{"path":"/etc/hostname"}`),
+	}, "local-fs")
+	if err != nil {
+		t.Fatalf("EvaluateToolCall returned err: %v", err)
+	}
+	if result.Decision.Decision != pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS {
+		t.Fatalf("result.Decision = %v, want ALLOW_WITH_CONSTRAINTS", result.Decision.Decision)
+	}
+	if !reflect.DeepEqual(result.Decision.Constraints, constraints) {
+		t.Fatalf("result.Decision.Constraints = %#v, want %#v (adapter must propagate AWC constraint map)", result.Decision.Constraints, constraints)
+	}
+	if len(emitter.events) != 1 {
+		t.Fatalf("expected exactly 1 pre event, got %d", len(emitter.events))
+	}
+	pre := emitter.events[0]
+	if pre.Kind != edge.EventKindMCPToolPre {
+		t.Fatalf("pre.Kind = %q, want %q", pre.Kind, edge.EventKindMCPToolPre)
+	}
+	if pre.Decision != edge.DecisionConstrain {
+		t.Fatalf("pre.Decision = %q, want %q (AWC must NOT degrade to allow)", pre.Decision, edge.DecisionConstrain)
+	}
+	if !reflect.DeepEqual(pre.Constraints, constraints) {
+		t.Fatalf("pre.Constraints = %#v, want %#v (event must carry the same constraint map the gate emitted)", pre.Constraints, constraints)
+	}
+}
+
+// TestLogToolCallDecision_OmitsConstraintValues locks the security
+// contract that operator-facing slog lines record constraint COUNTS
+// (so deny/AWC spikes are greppable) but never the constraint VALUES
+// themselves. Constraint values may carry sensitive policy detail
+// (redaction levels, allowed hosts) that belong in the artifact-bound
+// event, not the live log stream. Adversarial-self-review item (e).
+func TestLogToolCallDecision_OmitsConstraintValues(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	event := &edge.AgentActionEvent{
+		EventID:     "evt_42",
+		TenantID:    "tnt_a",
+		PrincipalID: "p1",
+		SessionID:   "sess_1",
+		ExecutionID: "exec_1",
+		Decision:    edge.DecisionConstrain,
+	}
+	desc := &config.ActionDescriptor{Server: "local-fs", Tool: "fs.read_file"}
+	dec := PolicyDecision{
+		Decision: pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS,
+		GateID:   "actiongate.mcp",
+		Code:     "constrained",
+		Reason:   "tier ceiling applied",
+		Constraints: map[string]any{
+			"redaction_level":   "extra_secret_redaction_value",
+			"allowed_hostnames": []any{"super-secret-host.internal"},
+		},
+	}
+	logToolCallDecision(context.Background(), event, desc, dec)
+
+	out := buf.String()
+	// VALUES must not appear at any log level.
+	if strings.Contains(out, "extra_secret_redaction_value") {
+		t.Fatalf("slog leaked constraint VALUE 'extra_secret_redaction_value': %s", out)
+	}
+	if strings.Contains(out, "super-secret-host.internal") {
+		t.Fatalf("slog leaked constraint VALUE 'super-secret-host.internal': %s", out)
+	}
+	// COUNT must appear so operators can grep AWC bursts.
+	if !strings.Contains(out, "constraint_count=2") {
+		t.Fatalf("slog missing constraint_count=2 (operator must see AWC volume): %s", out)
+	}
+}
+
 // TestEvaluateToolCall_ArtifactStoreFailureFailsClosed asserts that when
 // the artifact store cannot accept an oversized payload, the call fails
 // closed and no event is emitted. Allowing a silent inline-truncation
@@ -562,4 +711,278 @@ func TestEvaluateToolCall_ArtifactStoreFailureFailsClosed(t *testing.T) {
 	if len(emitter.events) != 0 {
 		t.Fatalf("expected zero events when artifact store fails, got %d", len(emitter.events))
 	}
+}
+
+func TestPolicy_AKIAPatternAlignment(t *testing.T) {
+	redactor := awsUpstreamErrorPattern(t)
+	completeness := awsCompletenessPattern(t)
+
+	canonical := "AKIA" + "ABCDEFGHIJKLMNOP"
+	truncated := "AKIA" + "ABCDEFGHIJKLM"
+	for _, token := range []string{canonical, truncated} {
+		if !redactor.MatchString(token) {
+			t.Fatalf("upstream redactor AKIA pattern did not catch %q (%s)", token, redactor)
+		}
+		if !completeness.MatchString(token) {
+			t.Fatalf("completeness AKIA pattern did not catch %q (%s)", token, completeness)
+		}
+	}
+}
+
+func awsUpstreamErrorPattern(t *testing.T) *regexp.Regexp {
+	t.Helper()
+	for _, rule := range upstreamErrorRedactPatterns {
+		if rule.replacement == "[REDACTED:aws_key]" {
+			return rule.pattern
+		}
+	}
+	t.Fatal("upstream AKIA redaction pattern not found")
+	return nil
+}
+
+func awsCompletenessPattern(t *testing.T) *regexp.Regexp {
+	t.Helper()
+	for _, pattern := range redactionCompletenessPatterns {
+		if strings.Contains(pattern.String(), "AKIA") {
+			return pattern
+		}
+	}
+	t.Fatal("completeness AKIA pattern not found")
+	return nil
+}
+
+// TestPolicyEvaluate_BlankLinkage_FailsClosed is the PR #276 Sub-E
+// finding #26 regression: EvaluateToolCall MUST refuse the call when ANY
+// of the (Tenant, SessionID, ExecutionID, AgentID) identity fields is
+// blank. The audit row is keyed on that tuple; a single missing component
+// produces unattributed events and silently breaks tenant-scoped audit
+// filters. Fail-closed means: return errMissingMCPMetadata, emit zero
+// events, never reach the gate pipeline.
+func TestPolicyEvaluate_BlankLinkage_FailsClosed(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		meta CallMetadata
+	}{
+		{"blank_tenant", CallMetadata{Tenant: "", Principal: "p1", AgentID: "a1", SessionID: "s1", ExecutionID: "e1"}},
+		{"blank_session_id", CallMetadata{Tenant: "tnt_a", Principal: "p1", AgentID: "a1", SessionID: "", ExecutionID: "e1"}},
+		{"blank_execution_id", CallMetadata{Tenant: "tnt_a", Principal: "p1", AgentID: "a1", SessionID: "s1", ExecutionID: ""}},
+		{"blank_agent_id", CallMetadata{Tenant: "tnt_a", Principal: "p1", AgentID: "", SessionID: "s1", ExecutionID: "e1"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pipeline := &fakePolicyDispatcher{}
+			emitter := &fakeEventEmitter{}
+			deps := newToolCallDepsFixture(pipeline, emitter, &fakeArtifactStore{})
+			ctx := WithCallMetadata(context.Background(), tc.meta)
+			_, err := EvaluateToolCall(ctx, deps, ToolCallParams{
+				Name:      "fs.read_file",
+				Arguments: json.RawMessage(`{"path":"/etc/hostname"}`),
+			}, "local-fs")
+			if err == nil {
+				t.Fatal("expected fail-closed error on blank linkage; got nil")
+			}
+			if !errors.Is(err, errMissingMCPMetadata) {
+				t.Fatalf("expected errMissingMCPMetadata, got %v", err)
+			}
+			if len(emitter.events) != 0 {
+				t.Fatalf("blank-linkage path emitted %d events; want 0 (unattributed events forbidden)", len(emitter.events))
+			}
+			if len(pipeline.calls) != 0 {
+				t.Fatalf("blank-linkage path dispatched %d gate calls; want 0 (must not reach gate)", len(pipeline.calls))
+			}
+		})
+	}
+}
+
+// TestInvokeToolWithPolicy_ApprovalHandoffUsesCaller is the PR #276 Sub-E
+// finding #27 regression: when REQUIRE_HUMAN routes through ApprovalHandoff,
+// the ToolCallApprovalContext MUST carry caller identity sourced from
+// CallMetadata (AgentID + Tenant), NOT the MCP server identity. Keying
+// the approval handoff on server name would let two distinct agents share
+// an approval slot (cross-agent approval bypass).
+func TestInvokeToolWithPolicy_ApprovalHandoffUsesCaller(t *testing.T) {
+	t.Parallel()
+	pipeline := &fakePolicyDispatcher{
+		decision: PolicyDecision{
+			Decision:  pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN,
+			GateID:    "actiongate.mutation",
+			Code:      "require_human",
+			Reason:    "needs human approval",
+			SubReason: "require_human",
+		},
+		fired: true,
+	}
+	emitter := &fakeEventEmitter{}
+	upstream := &fakeUpstreamToolCaller{}
+	handoff := &capturingApprovalHandoff{ref: "appr_pending_42"}
+	deps := newToolCallDepsFixture(pipeline, emitter, &fakeArtifactStore{})
+	deps.Upstream = upstream
+	deps.ApprovalHandoff = handoff
+	const server = "cordum.builtin"
+	_, err := InvokeToolWithPolicy(newAuthedToolCallCtx(), deps, ToolCallParams{
+		Name:      "fs.delete",
+		Arguments: json.RawMessage(`{"path":"/var/data/x.db"}`),
+	}, server)
+	if err != nil {
+		t.Fatalf("InvokeToolWithPolicy returned err: %v", err)
+	}
+	if handoff.calls != 1 {
+		t.Fatalf("approval handoff invoked %d times; want 1", handoff.calls)
+	}
+	captured := handoff.lastCtx
+	// Caller identity: AgentID from CallMetadata, tenant from CallMetadata.
+	if captured.AgentID != "agent_alpha" {
+		t.Errorf("ToolCallApprovalContext.AgentID = %q; want %q (CallMetadata.AgentID — caller identity)",
+			captured.AgentID, "agent_alpha")
+	}
+	if captured.Tenant != "tnt_a" {
+		t.Errorf("ToolCallApprovalContext.Tenant = %q; want %q (CallMetadata.Tenant)",
+			captured.Tenant, "tnt_a")
+	}
+	// Server: the MCP server identity, NOT the caller identity.
+	if captured.Server != server {
+		t.Errorf("ToolCallApprovalContext.Server = %q; want %q", captured.Server, server)
+	}
+	// Cross-check: the caller identity field MUST NOT be the server name
+	// (otherwise the gateway adapter could mis-key the approval handoff
+	// on server identity and let two agents share an approval slot).
+	if captured.AgentID == captured.Server {
+		t.Errorf("ToolCallApprovalContext.AgentID equals Server (%q) — caller identity must not collapse onto server identity",
+			captured.AgentID)
+	}
+	// Tool: forwarded from the call.
+	if captured.Tool != "fs.delete" {
+		t.Errorf("ToolCallApprovalContext.Tool = %q; want fs.delete", captured.Tool)
+	}
+	// ApprovalHandoff is required: zero handoff means we never minted —
+	// finding #27 includes "Should be required". Locked by the fakePolicyHandoff=nil
+	// branch returning a clear error; covered separately in
+	// TestInvokeToolWithPolicy_RequireApproval_RequiresHandoff below.
+}
+
+// TestInvokeToolWithPolicy_RequireApproval_RequiresHandoff locks the
+// other half of finding #27: REQUIRE_HUMAN with no ApprovalHandoff wired
+// MUST return an error rather than silently bypassing the approval step.
+func TestInvokeToolWithPolicy_RequireApproval_RequiresHandoff(t *testing.T) {
+	t.Parallel()
+	pipeline := &fakePolicyDispatcher{
+		decision: PolicyDecision{
+			Decision: pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN,
+			GateID:   "actiongate.mutation",
+			Code:     "require_human",
+		},
+		fired: true,
+	}
+	emitter := &fakeEventEmitter{}
+	upstream := &fakeUpstreamToolCaller{}
+	deps := newToolCallDepsFixture(pipeline, emitter, &fakeArtifactStore{})
+	deps.Upstream = upstream
+	// ApprovalHandoff deliberately nil.
+	_, err := InvokeToolWithPolicy(newAuthedToolCallCtx(), deps, ToolCallParams{
+		Name:      "fs.delete",
+		Arguments: json.RawMessage(`{"path":"/x"}`),
+	}, "local-fs")
+	if err == nil {
+		t.Fatal("expected error when ApprovalHandoff is nil on REQUIRE_HUMAN; got nil (would silently bypass approval)")
+	}
+	if !strings.Contains(err.Error(), "ApprovalHandoff") {
+		t.Errorf("error %q should mention ApprovalHandoff", err)
+	}
+	if upstream.calls != 0 {
+		t.Fatalf("upstream invoked %d times; want 0 (no handoff means no upstream)", upstream.calls)
+	}
+}
+
+// TestSanitizeUpstreamError_GitHubTokenFamilies is the PR #276 Sub-E
+// finding #25 regression: the failed-event upstream-error sanitizer
+// MUST redact every GitHub token family before the error message lands
+// in a Redis-persisted audit row. Coverage:
+//   - classic PAT (ghp_)
+//   - OAuth user-server (gho_)
+//   - user-server (ghu_)
+//   - server-server (ghs_)
+//   - refresh (ghr_)
+//   - fine-grained PAT (github_pat_)
+//   - Enterprise (ghe_)
+//
+// Without this, an upstream that returns an error embedding the token
+// (common for failed git/github.com requests) leaks the raw credential
+// into the failed-event ErrorMessage column.
+func TestSanitizeUpstreamError_GitHubTokenFamilies(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name      string
+		raw       string
+		sensitive string
+	}{
+		// Fixtures assembled from fragments so GitHub secret-scanning push
+		// protection does not flag the source as a leaked token.
+		{"classic_pat", "auth failed with " + "ghp_" + "0123456789abcdef0123456789abcdef0123", "ghp_" + "0123456789abcdef"},
+		{"oauth", "auth failed with " + "gho_" + "0123456789abcdef0123456789abcdef0123", "gho_" + "0123456789abcdef"},
+		{"user_server", "auth failed with " + "ghu_" + "0123456789abcdef0123456789abcdef0123", "ghu_" + "0123456789abcdef"},
+		{"server_server", "auth failed with " + "ghs_" + "0123456789abcdef0123456789abcdef0123", "ghs_" + "0123456789abcdef"},
+		{"refresh", "auth failed with " + "ghr_" + "0123456789abcdef0123456789abcdef0123", "ghr_" + "0123456789abcdef"},
+		{"fine_grained_pat", "auth failed with " + "github_pat_" + "11A0123456789_0123456789abcdef0123456789abcdef0123456789abcdef0123", "github_pat_" + "11A"},
+		{"enterprise", "auth failed with " + "ghe_" + "0123456789abcdef0123456789abcdef0123", "ghe_" + "0123456789abcdef"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := sanitizeUpstreamError(errors.New(tc.raw))
+			if strings.Contains(out, tc.sensitive) {
+				t.Errorf("sanitized output leaks %s token: %q", tc.name, out)
+			}
+			if !strings.Contains(out, "[REDACTED:github_token]") {
+				t.Errorf("sanitized output missing [REDACTED:github_token] marker for %s: %q", tc.name, out)
+			}
+		})
+	}
+}
+
+// TestVerifyRedactionCompleteness_GitHubTokenFamilies locks the
+// defense-in-depth backstop for finding #25: even if a custom redactor
+// were misconfigured and let a GitHub token survive its pass,
+// verifyRedactionCompleteness MUST trip and refuse to emit the event.
+// The completeness check is the last line of defense before persistence.
+func TestVerifyRedactionCompleteness_GitHubTokenFamilies(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		raw  string
+	}{
+		{"classic_pat", `{"note":"` + "ghp_" + "0123456789abcdef0123456789abcdef0123" + `"}`},
+		{"oauth", `{"note":"` + "gho_" + "0123456789abcdef0123456789abcdef0123" + `"}`},
+		{"user_server", `{"note":"` + "ghu_" + "0123456789abcdef0123456789abcdef0123" + `"}`},
+		{"server_server", `{"note":"` + "ghs_" + "0123456789abcdef0123456789abcdef0123" + `"}`},
+		{"refresh", `{"note":"` + "ghr_" + "0123456789abcdef0123456789abcdef0123" + `"}`},
+		{"fine_grained_pat", `{"note":"` + "github_pat_" + "11A0123456789_0123456789abcdef0123456789abcdef0123456789abcdef0123" + `"}`},
+		{"enterprise", `{"note":"` + "ghe_" + "0123456789abcdef0123456789abcdef0123" + `"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := verifyRedactionCompleteness([]byte(tc.raw))
+			if err == nil {
+				t.Fatalf("verifyRedactionCompleteness allowed %s token to survive: %s", tc.name, tc.raw)
+			}
+			if !strings.Contains(err.Error(), "redaction_failed") {
+				t.Errorf("expected redaction_failed sentinel in error, got %q", err)
+			}
+		})
+	}
+}
+
+// capturingApprovalHandoff is a fakeApprovalHandoff that also records
+// the ToolCallApprovalContext it received so tests can assert the
+// caller identity routing contract (finding #27).
+type capturingApprovalHandoff struct {
+	calls   int
+	ref     string
+	err     error
+	lastCtx ToolCallApprovalContext
+}
+
+func (f *capturingApprovalHandoff) ConsumeActionGateDecision(_ context.Context, _ PolicyDecision, ctxData ToolCallApprovalContext) (string, error) {
+	f.calls++
+	f.lastCtx = ctxData
+	return f.ref, f.err
 }

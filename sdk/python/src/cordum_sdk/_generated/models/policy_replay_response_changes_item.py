@@ -12,26 +12,22 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="PolicyReplayResponseChangesItem")
 
 
 @_attrs_define
 class PolicyReplayResponseChangesItem:
-    """ 
-        Attributes:
-            job_id (str):
-            topic (str):
-            tenant (str):
-            original_decision (str):
-            new_decision (str):
-            direction (str):
-            new_rule_id (Union[Unset, str]):
-            new_reason (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        job_id (str):
+        topic (str):
+        tenant (str):
+        original_decision (str):
+        new_decision (str):
+        direction (str):
+        new_rule_id (Union[Unset, str]):
+        new_reason (Union[Unset, str]):
+    """
 
     job_id: str
     topic: str
@@ -42,7 +38,6 @@ class PolicyReplayResponseChangesItem:
     new_rule_id: Union[Unset, str] = UNSET
     new_reason: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         job_id = self.job_id
@@ -61,25 +56,24 @@ class PolicyReplayResponseChangesItem:
 
         new_reason = self.new_reason
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "job_id": job_id,
-            "topic": topic,
-            "tenant": tenant,
-            "original_decision": original_decision,
-            "new_decision": new_decision,
-            "direction": direction,
-        })
+        field_dict.update(
+            {
+                "job_id": job_id,
+                "topic": topic,
+                "tenant": tenant,
+                "original_decision": original_decision,
+                "new_decision": new_decision,
+                "direction": direction,
+            }
+        )
         if new_rule_id is not UNSET:
             field_dict["new_rule_id"] = new_rule_id
         if new_reason is not UNSET:
             field_dict["new_reason"] = new_reason
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -110,7 +104,6 @@ class PolicyReplayResponseChangesItem:
             new_rule_id=new_rule_id,
             new_reason=new_reason,
         )
-
 
         policy_replay_response_changes_item.additional_properties = d
         return policy_replay_response_changes_item

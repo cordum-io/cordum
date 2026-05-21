@@ -12,30 +12,20 @@ from typing import cast
 from typing import Dict
 
 
-
-def _get_kwargs(
-    
-) -> Dict[str, Any]:
-    
-
-    
-
-    
-
+def _get_kwargs() -> Dict[str, Any]:
     _kwargs: Dict[str, Any] = {
         "method": "get",
         "url": "/api/v1/auth/config",
     }
 
-
     return _kwargs
 
 
-def _parse_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Optional[Union[Any, AuthConfig]]:
+def _parse_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Optional[Union[Any, AuthConfig]]:
     if response.status_code == 200:
         response_200 = AuthConfig.from_dict(response.json())
-
-
 
         return response_200
     if response.status_code == 500:
@@ -47,7 +37,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         return None
 
 
-def _build_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Response[Union[Any, AuthConfig]]:
+def _build_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Response[Union[Any, AuthConfig]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -59,9 +51,8 @@ def _build_response(*, client: Union[AuthenticatedClient, Client], response: htt
 def sync_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
-
 ) -> Response[Union[Any, AuthConfig]]:
-    """ Get authentication configuration
+    """Get authentication configuration
 
      Returns the authentication methods enabled for the deployment.
 
@@ -71,12 +62,9 @@ def sync_detailed(
 
     Returns:
         Response[Union[Any, AuthConfig]]
-     """
+    """
 
-
-    kwargs = _get_kwargs(
-        
-    )
+    kwargs = _get_kwargs()
 
     response = client.get_httpx_client().request(
         **kwargs,
@@ -84,12 +72,12 @@ def sync_detailed(
 
     return _build_response(client=client, response=response)
 
+
 def sync(
     *,
     client: Union[AuthenticatedClient, Client],
-
 ) -> Optional[Union[Any, AuthConfig]]:
-    """ Get authentication configuration
+    """Get authentication configuration
 
      Returns the authentication methods enabled for the deployment.
 
@@ -99,20 +87,18 @@ def sync(
 
     Returns:
         Union[Any, AuthConfig]
-     """
-
+    """
 
     return sync_detailed(
         client=client,
-
     ).parsed
+
 
 async def asyncio_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
-
 ) -> Response[Union[Any, AuthConfig]]:
-    """ Get authentication configuration
+    """Get authentication configuration
 
      Returns the authentication methods enabled for the deployment.
 
@@ -122,25 +108,20 @@ async def asyncio_detailed(
 
     Returns:
         Response[Union[Any, AuthConfig]]
-     """
+    """
 
+    kwargs = _get_kwargs()
 
-    kwargs = _get_kwargs(
-        
-    )
-
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
+
 
 async def asyncio(
     *,
     client: Union[AuthenticatedClient, Client],
-
 ) -> Optional[Union[Any, AuthConfig]]:
-    """ Get authentication configuration
+    """Get authentication configuration
 
      Returns the authentication methods enabled for the deployment.
 
@@ -150,10 +131,10 @@ async def asyncio(
 
     Returns:
         Union[Any, AuthConfig]
-     """
+    """
 
-
-    return (await asyncio_detailed(
-        client=client,
-
-    )).parsed
+    return (
+        await asyncio_detailed(
+            client=client,
+        )
+    ).parsed

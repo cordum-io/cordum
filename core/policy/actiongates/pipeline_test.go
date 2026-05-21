@@ -65,6 +65,19 @@ func pipelineDeleteAction() *config.ActionDescriptor {
 	}
 }
 
+type staticPipelineGate struct {
+	id  string
+	dec ActionGateDecision
+}
+
+func (g staticPipelineGate) ID() string {
+	return g.id
+}
+
+func (g staticPipelineGate) Evaluate(context.Context, *config.PolicyInput) ActionGateDecision {
+	return g.dec
+}
+
 // DoD-7 shape #1: allowed — valid backed approval, all gates clear, no fire.
 func TestPipeline_AllowedShape(t *testing.T) {
 	t.Parallel()
@@ -84,8 +97,8 @@ func TestPipeline_AllowedShape(t *testing.T) {
 		f.approvals.records["tnt_a:"+hash] = approval
 	})
 	dec, fired := f.pipeline.Run(pipelineAuthCtx(), &config.PolicyInput{Tenant: "tnt_a", Action: act})
-	// Mutation gate may emit ALLOW_WITH_CONSTRAINTS but pipeline considers
-	// that an "allow" — fired must be false (no blocking decision).
+	// Mutation gate emits ALLOW for a valid backend approval; fired must be
+	// false because there is no blocking decision.
 	if fired || dec.Fired() {
 		t.Fatalf("expected pipeline to clear; got fired=%v dec=%v sub=%q", fired, dec.Decision, dec.SubReason)
 	}
@@ -243,11 +256,11 @@ func TestPipeline_CanceledContextFailsClosed(t *testing.T) {
 }
 
 // TestPipeline_AllowedExtraSurvivesPastLaterAllow asserts the QA-flagged
-// invariant: when an early gate emits ALLOW_WITH_CONSTRAINTS with breadcrumb
-// Extras (mutation gate's `single_use=true`) and a later gate also passes,
-// the merged Extra MUST survive on the returned decision even though
-// fired=false. Before the merge fix, the later gate's Allow simply
-// overwrote prior breadcrumbs by returning the zero decision.
+// invariant: when an early gate emits ALLOW with breadcrumb Extras (mutation
+// gate's `single_use=true`) and a later gate also passes, the merged Extra
+// MUST survive on the returned decision even though fired=false. Before the
+// merge fix, the later gate's Allow simply overwrote prior breadcrumbs by
+// returning the zero decision.
 func TestPipeline_AllowedExtraSurvivesPastLaterAllow(t *testing.T) {
 	t.Parallel()
 	act := pipelineDeleteAction()
@@ -302,6 +315,47 @@ func TestPipeline_AllowedExtraEmptyOnPlainAllow(t *testing.T) {
 	if len(dec.Extra) != 0 {
 		t.Fatalf("plain allow should not leak Extra entries, got %v", dec.Extra)
 	}
+}
+
+func TestPipeline_AllowedWithConstraintsIsAllowOnlyAnomaly(t *testing.T) {
+	t.Parallel()
+	p := NewPipeline(
+		staticPipelineGate{
+			id: "test.constraints",
+			dec: ActionGateDecision{
+				Decision: pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS,
+				Extra: map[string]string{
+					"gate":       "test.constraints",
+					"single_use": "true",
+				},
+				Constraints: map[string]any{"sandbox": "read_only"},
+			},
+		},
+		staticPipelineGate{
+			id: "test.later",
+			dec: ActionGateDecision{
+				Decision: pb.DecisionType_DECISION_TYPE_ALLOW,
+				Extra:    map[string]string{"later_gate": "allowed"},
+			},
+		},
+	)
+
+	dec, fired := p.Run(context.Background(), &config.PolicyInput{Action: pipelineDeleteAction()})
+	if fired || dec.Fired() {
+		t.Fatalf("allow-with-constraints must not become a terminal enforcement claim; fired=%v dec=%v", fired, dec.Decision)
+	}
+	if len(dec.Constraints) != 0 {
+		t.Fatalf("action-gate constraints are not an enforced pipeline output; got %v", dec.Constraints)
+	}
+	if got := dec.Extra["single_use"]; got != "true" {
+		t.Fatalf("safe Extra breadcrumb single_use = %q, want true", got)
+	}
+	if got := dec.Extra["later_gate"]; got != "allowed" {
+		t.Fatalf("safe Extra breadcrumb later_gate = %q, want allowed", got)
+	}
+	// Policy-bundle constraints remain the typed enforcement path; this action
+	// gate regression only guarantees generic action-gate constraints are not
+	// silently advertised as enforced by the production pipeline.
 }
 
 func TestPipeline_GatesReturnsOrderedCopy(t *testing.T) {

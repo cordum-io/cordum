@@ -12,29 +12,24 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="UpdatePolicyBundleRequest")
 
 
 @_attrs_define
 class UpdatePolicyBundleRequest:
-    """ 
-        Attributes:
-            content (Union[Unset, str]):
-            enabled (Union[Unset, bool]):
-            author (Union[Unset, str]):
-            message (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        content (Union[Unset, str]):
+        enabled (Union[Unset, bool]):
+        author (Union[Unset, str]):
+        message (Union[Unset, str]):
+    """
 
     content: Union[Unset, str] = UNSET
     enabled: Union[Unset, bool] = UNSET
     author: Union[Unset, str] = UNSET
     message: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         content = self.content
@@ -45,11 +40,9 @@ class UpdatePolicyBundleRequest:
 
         message = self.message
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if content is not UNSET:
             field_dict["content"] = content
         if enabled is not UNSET:
@@ -60,8 +53,6 @@ class UpdatePolicyBundleRequest:
             field_dict["message"] = message
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -80,7 +71,6 @@ class UpdatePolicyBundleRequest:
             author=author,
             message=message,
         )
-
 
         update_policy_bundle_request.additional_properties = d
         return update_policy_bundle_request

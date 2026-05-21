@@ -17,21 +17,15 @@ from typing import Union
 import datetime
 
 
-
 def _get_kwargs(
     *,
     since: Union[Unset, datetime.datetime] = UNSET,
     until: Union[Unset, datetime.datetime] = UNSET,
     group_by: Union[Unset, GetMcpUsageGroupBy] = GetMcpUsageGroupBy.SUBJECT,
     x_tenant_id: str,
-
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
     headers["X-Tenant-ID"] = x_tenant_id
-
-
-
-    
 
     params: Dict[str, Any] = {}
 
@@ -51,9 +45,7 @@ def _get_kwargs(
 
     params["group_by"] = json_group_by
 
-
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
-
 
     _kwargs: Dict[str, Any] = {
         "method": "get",
@@ -61,16 +53,15 @@ def _get_kwargs(
         "params": params,
     }
 
-
     _kwargs["headers"] = headers
     return _kwargs
 
 
-def _parse_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Optional[Union[Any, GetMcpUsageResponse200]]:
+def _parse_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Optional[Union[Any, GetMcpUsageResponse200]]:
     if response.status_code == 200:
         response_200 = GetMcpUsageResponse200.from_dict(response.json())
-
-
 
         return response_200
     if response.status_code == 401:
@@ -88,7 +79,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         return None
 
 
-def _build_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Response[Union[Any, GetMcpUsageResponse200]]:
+def _build_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Response[Union[Any, GetMcpUsageResponse200]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -104,9 +97,8 @@ def sync_detailed(
     until: Union[Unset, datetime.datetime] = UNSET,
     group_by: Union[Unset, GetMcpUsageGroupBy] = GetMcpUsageGroupBy.SUBJECT,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, GetMcpUsageResponse200]]:
-    """ Outbound MCP usage buckets from the audit chain
+    """Outbound MCP usage buckets from the audit chain
 
      Walks the tenant's audit chain and buckets outbound MCP calls by subject, method, and tool for usage
     analytics. Admin-only.
@@ -123,15 +115,13 @@ def sync_detailed(
 
     Returns:
         Response[Union[Any, GetMcpUsageResponse200]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         since=since,
-until=until,
-group_by=group_by,
-x_tenant_id=x_tenant_id,
-
+        until=until,
+        group_by=group_by,
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -140,6 +130,7 @@ x_tenant_id=x_tenant_id,
 
     return _build_response(client=client, response=response)
 
+
 def sync(
     *,
     client: AuthenticatedClient,
@@ -147,9 +138,8 @@ def sync(
     until: Union[Unset, datetime.datetime] = UNSET,
     group_by: Union[Unset, GetMcpUsageGroupBy] = GetMcpUsageGroupBy.SUBJECT,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, GetMcpUsageResponse200]]:
-    """ Outbound MCP usage buckets from the audit chain
+    """Outbound MCP usage buckets from the audit chain
 
      Walks the tenant's audit chain and buckets outbound MCP calls by subject, method, and tool for usage
     analytics. Admin-only.
@@ -166,17 +156,16 @@ def sync(
 
     Returns:
         Union[Any, GetMcpUsageResponse200]
-     """
-
+    """
 
     return sync_detailed(
         client=client,
-since=since,
-until=until,
-group_by=group_by,
-x_tenant_id=x_tenant_id,
-
+        since=since,
+        until=until,
+        group_by=group_by,
+        x_tenant_id=x_tenant_id,
     ).parsed
+
 
 async def asyncio_detailed(
     *,
@@ -185,9 +174,8 @@ async def asyncio_detailed(
     until: Union[Unset, datetime.datetime] = UNSET,
     group_by: Union[Unset, GetMcpUsageGroupBy] = GetMcpUsageGroupBy.SUBJECT,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, GetMcpUsageResponse200]]:
-    """ Outbound MCP usage buckets from the audit chain
+    """Outbound MCP usage buckets from the audit chain
 
      Walks the tenant's audit chain and buckets outbound MCP calls by subject, method, and tool for usage
     analytics. Admin-only.
@@ -204,22 +192,19 @@ async def asyncio_detailed(
 
     Returns:
         Response[Union[Any, GetMcpUsageResponse200]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         since=since,
-until=until,
-group_by=group_by,
-x_tenant_id=x_tenant_id,
-
+        until=until,
+        group_by=group_by,
+        x_tenant_id=x_tenant_id,
     )
 
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
+
 
 async def asyncio(
     *,
@@ -228,9 +213,8 @@ async def asyncio(
     until: Union[Unset, datetime.datetime] = UNSET,
     group_by: Union[Unset, GetMcpUsageGroupBy] = GetMcpUsageGroupBy.SUBJECT,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, GetMcpUsageResponse200]]:
-    """ Outbound MCP usage buckets from the audit chain
+    """Outbound MCP usage buckets from the audit chain
 
      Walks the tenant's audit chain and buckets outbound MCP calls by subject, method, and tool for usage
     analytics. Admin-only.
@@ -247,14 +231,14 @@ async def asyncio(
 
     Returns:
         Union[Any, GetMcpUsageResponse200]
-     """
+    """
 
-
-    return (await asyncio_detailed(
-        client=client,
-since=since,
-until=until,
-group_by=group_by,
-x_tenant_id=x_tenant_id,
-
-    )).parsed
+    return (
+        await asyncio_detailed(
+            client=client,
+            since=since,
+            until=until,
+            group_by=group_by,
+            x_tenant_id=x_tenant_id,
+        )
+    ).parsed

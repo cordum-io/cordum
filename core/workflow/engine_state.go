@@ -199,6 +199,12 @@ func (e *Engine) ApproveStep(ctx context.Context, runID, stepID string, approved
 	} else if timedOut {
 		return fmt.Errorf("run timed out")
 	}
+	if isTerminalRunStatus(run.Status) {
+		// Approval arrived after the run reached a terminal state (e.g. the run
+		// was cancelled while the approval was in flight). Reject — dispatching
+		// an approved step into a cancelled run produces orphan job state.
+		return fmt.Errorf("run terminal: cannot approve step in run with status %s", run.Status)
+	}
 	sr := run.Steps[stepID]
 	if sr == nil {
 		return fmt.Errorf("step not found")
@@ -262,6 +268,12 @@ func (e *Engine) ApproveStep(ctx context.Context, runID, stepID string, approved
 }
 
 // CancelRun marks a run and all non-terminal steps as cancelled to prevent further dispatch.
+//
+// If the run is already in a terminal state (Succeeded/Failed/Denied/TimedOut/
+// Cancelled), CancelRun is a no-op — it returns nil without clobbering the
+// existing run status, CompletedAt, or cascading cancellation to terminal
+// steps. Callers can safely invoke CancelRun without first reading and
+// branching on run.Status.
 func (e *Engine) CancelRun(ctx context.Context, runID string) error {
 	unlock, ok := e.lockRun(runID)
 	if !ok {
@@ -272,6 +284,9 @@ func (e *Engine) CancelRun(ctx context.Context, runID string) error {
 	run, err := e.store.GetRun(ctx, runID)
 	if err != nil {
 		return fmt.Errorf("get run: %w", err)
+	}
+	if isTerminalRunStatus(run.Status) {
+		return nil
 	}
 	wfDef, err := e.store.GetWorkflow(ctx, run.WorkflowID)
 	if err != nil {
@@ -522,7 +537,15 @@ func applyResult(sr *StepRun, res *pb.JobResult, step *Step) (retry bool, delay 
 			sr.Output = res.ResultPtr
 		}
 		sr.Error = nil
-	case pb.JobStatus_JOB_STATUS_FAILED, pb.JobStatus_JOB_STATUS_DENIED, pb.JobStatus_JOB_STATUS_TIMEOUT, pb.JobStatus_JOB_STATUS_FAILED_RETRYABLE:
+	case pb.JobStatus_JOB_STATUS_DENIED:
+		// Policy denials are terminal-on-arrival. They MUST NOT consume retry
+		// budget — re-evaluating a denial just re-runs the same safety check
+		// against the same inputs, wasting safety-kernel calls and risking
+		// throttle-bypass via repeated drift evaluations.
+		sr.Status = StepStatusDenied
+		sr.CompletedAt = &now
+		sr.Error = map[string]any{"message": res.ErrorMessage}
+	case pb.JobStatus_JOB_STATUS_FAILED, pb.JobStatus_JOB_STATUS_TIMEOUT, pb.JobStatus_JOB_STATUS_FAILED_RETRYABLE:
 		if shouldRetry(step, sr) {
 			delay = computeBackoff(step, sr)
 			next := now.Add(delay)
@@ -534,8 +557,6 @@ func applyResult(sr *StepRun, res *pb.JobResult, step *Step) (retry bool, delay 
 		switch res.Status {
 		case pb.JobStatus_JOB_STATUS_TIMEOUT:
 			sr.Status = StepStatusTimedOut
-		case pb.JobStatus_JOB_STATUS_DENIED:
-			sr.Status = StepStatusDenied
 		default:
 			sr.Status = StepStatusFailed
 		}
@@ -556,6 +577,22 @@ func applyResult(sr *StepRun, res *pb.JobResult, step *Step) (retry bool, delay 
 	return false, 0
 }
 
+// shouldRetry reports whether a failed step may be retried.
+//
+// Semantics: the workflow caller pre-increments sr.Attempts inside the
+// scheduleReady dispatch path BEFORE invoking the worker (see engine.go where
+// parentSR.Attempts++ runs alongside the StepStatusRunning transition). The
+// guard `sr.Attempts <= max` therefore admits exactly MaxRetries retries after
+// the initial attempt — i.e. up to (MaxRetries+1) total attempts.
+//
+// CONVENTION NOTE: the scheduler-side counterpart at scheduler/engine.go uses
+// `attempts >= maxSchedulingRetries` (inverted polarity, no pre-increment
+// — IncrAttempts runs on each replay). The two predicates intentionally
+// guard different layers: this one bounds workflow-driven step retries
+// (per-step `step.Retry.MaxRetries`), the scheduler one bounds NAK-driven
+// re-deliveries of an unscheduled job. Do NOT unify into a single shared
+// helper without first auditing both call paths' Attempts-increment timing
+// — audit-fix 2026-05-20 task-2a52e7da (finding #12).
 func shouldRetry(step *Step, sr *StepRun) bool {
 	if step == nil || step.Retry == nil {
 		return false

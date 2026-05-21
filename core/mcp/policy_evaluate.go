@@ -12,7 +12,6 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/cordum/cordum/core/edge"
@@ -34,7 +33,12 @@ var upstreamErrorRedactPatterns = []struct {
 	{regexp.MustCompile(`(?i)bearer\s+[A-Za-z0-9._\-+/=]+`), "[REDACTED:bearer]"},
 	// API key tokens by common prefix (Anthropic sk-, GitHub ghp_, AWS AKIA).
 	{regexp.MustCompile(`\bsk-[A-Za-z0-9_\-]{4,}\b`), "[REDACTED:api_key]"},
-	{regexp.MustCompile(`\bghp_[A-Za-z0-9]{8,}\b`), "[REDACTED:github_token]"},
+	{regexp.MustCompile(`\bgh[opusr]_[A-Za-z0-9]{8,}\b`), "[REDACTED:github_token]"},
+	// GitHub fine-grained PAT (github_pat_…) carries underscores in
+	// the body, so the classic gh[opusr]_ rule above does not cover it.
+	{regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{8,}\b`), "[REDACTED:github_token]"},
+	// GitHub Enterprise (ghe_…) — same shape, different prefix letter.
+	{regexp.MustCompile(`\bghe_[A-Za-z0-9_]{8,}\b`), "[REDACTED:github_token]"},
 	{regexp.MustCompile(`\bAKIA[0-9A-Z]{12,}\b`), "[REDACTED:aws_key]"},
 }
 
@@ -49,12 +53,17 @@ var upstreamErrorRedactPatterns = []struct {
 // guardrail check here so a partial drop in either layer still trips
 // the closed-fail path.
 var redactionCompletenessPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`AKIA[0-9A-Z]{16}`),
+	regexp.MustCompile(`AKIA[0-9A-Z]{12,}`),
 	regexp.MustCompile(`sk_live_[a-zA-Z0-9]{24,}`),
 	regexp.MustCompile(`sk-[A-Za-z0-9_\-]{16,}`),
 	regexp.MustCompile(`gh[opusr]_[A-Za-z0-9]{16,}`),
+	// Fine-grained PAT body carries underscores; classic class above
+	// would let github_pat_ tokens through the completeness backstop.
+	regexp.MustCompile(`github_pat_[A-Za-z0-9_]{16,}`),
+	// Enterprise (ghe_) — same shape, distinct prefix letter.
+	regexp.MustCompile(`ghe_[A-Za-z0-9_]{16,}`),
 	regexp.MustCompile(`eyJ[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+`),
-	regexp.MustCompile(`-----BEGIN [A-Z ]+PRIVATE KEY-----`),
+	regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`),
 }
 
 // highSeverityFindingMarkers is the set of [REDACTED:...] family tags
@@ -151,13 +160,20 @@ func CallMetadataFromContext(ctx context.Context) (CallMetadata, bool) {
 // import cycle (core/policy/actiongates already imports core/mcp).
 // The gateway adapter converts between the two types so this layer
 // stays free of an actiongates dependency.
+//
+// Constraints carries the `_constraints` map that gates populate when
+// returning ALLOW_WITH_CONSTRAINTS. The shape mirrors the agentd wire
+// format (core/edge/agentd/evaluate_client.go EvaluateResponse.Constraints)
+// so audit-event consumers and downstream tools see a single canonical
+// constraint payload regardless of which surface produced it.
 type PolicyDecision struct {
-	Decision  pb.DecisionType
-	GateID    string
-	Code      string
-	Reason    string
-	SubReason string
-	Extra     map[string]string
+	Decision    pb.DecisionType
+	GateID      string
+	Code        string
+	Reason      string
+	SubReason   string
+	Extra       map[string]string
+	Constraints map[string]any
 }
 
 // PolicyDispatcher dispatches an MCP tool-call against the production
@@ -221,12 +237,20 @@ type ApprovalHandoff interface {
 // EdgeApproval. The ActionHash is the canonical hash the gate
 // already computed; reusing it (instead of recomputing) keeps the
 // gate and approval lifecycle bound to the same key.
+//
+// EDGE-103 reopen #1: Args carries the canonical (already-redacted)
+// tool-call arguments so the mint side can derive the same InputHash
+// that the consume side (ProcessApprovalClaim → BuildMCPApprovalBinding)
+// derives. Without this field the mint had no way to compute the
+// args hash and was storing ActionHash in its place — surfacing as
+// ApprovalConflictKindArgsMismatch on every legitimate retry.
 type ToolCallApprovalContext struct {
 	Tenant     string
 	AgentID    string
 	Server     string
 	Tool       string
 	ActionHash string
+	Args       json.RawMessage
 }
 
 // ToolCallDeps bundles the production wiring EvaluateToolCall and
@@ -246,11 +270,12 @@ type ToolCallDeps struct {
 	Clock           func() time.Time
 	EventIDFactory  func() string
 	// DedupeState scopes retry dedupe to a single caller (HTTP server,
-	// test fixture) instead of a global map. Production wires this to a
-	// per-server map keyed by (server, tool, EventID); tests inject a
-	// fresh map per fixture so -count=3 re-runs see a clean state. A
-	// nil map disables retry dedupe.
-	DedupeState *sync.Map
+	// test fixture) instead of a global map. Production wires this to
+	// either a NewInProcessDedupeStore (single-instance gateway) or a
+	// NewRedisDedupeStore (multi-instance HA behind a load balancer).
+	// Tests inject a fresh in-process store per fixture so -count=3
+	// re-runs see a clean state. A nil store disables retry dedupe.
+	DedupeState DedupeStore
 }
 
 // EvaluateToolCallResult bundles the artifacts a caller might want
@@ -333,14 +358,19 @@ func normalizeTargetPath(p string) string {
 	return strings.ReplaceAll(p, `\`, `/`)
 }
 
-// CanonicalActionHash returns the stable SHA-256 over the tuple that
-// identifies an MCP tool call for approval-lifecycle binding. Inputs
-// MUST be the normalized forms: tenant ID, server, tool name, and the
-// already-normalized TargetPath (or empty when no path-like arg
-// applies). Keeping the hash exported lets the gateway adapter and the
-// approval store derive the same key without re-implementing the
-// canonicalization.
-func CanonicalActionHash(tenant, server, tool, targetPath string) string {
+// ActionTupleHash returns the stable SHA-256 over the (tenant, server,
+// tool, target_path) tuple that identifies an MCP tool call for
+// approval-lifecycle binding. Inputs MUST be the normalized forms.
+//
+// Renamed from CanonicalActionHash (EDGE-103 reopen #2 DoD #3) so the
+// SINGLE definition of `func CanonicalActionHash` in the repo is the
+// one at `core/policy/actiongates/mutation_gate.go:218`. The two
+// helpers serve different scopes: mutation_gate's hashes the full
+// `*config.ActionDescriptor` (kind/verb/server/tool/target/args/filters/
+// wildcards/risk_tags) for the actiongates evaluation path; this one
+// hashes the per-(tenant, server, tool, target_path) tuple as the
+// approval-lifecycle action-key.
+func ActionTupleHash(tenant, server, tool, targetPath string) string {
 	canonical := fmt.Sprintf("%s|%s|%s|%s", tenant, server, tool, normalizeTargetPath(targetPath))
 	sum := sha256.Sum256([]byte(canonical))
 	return hex.EncodeToString(sum[:])
@@ -415,7 +445,14 @@ func parseArgsForDescriptor(args json.RawMessage) (map[string]any, string) {
 // so the audit trail records the policy-side failure.
 func EvaluateToolCall(ctx context.Context, deps ToolCallDeps, params ToolCallParams, server string) (EvaluateToolCallResult, error) {
 	meta, ok := CallMetadataFromContext(ctx)
-	if !ok || meta.Tenant == "" {
+	// Refuse the call when ANY identity field is blank — the audit row
+	// is keyed on (Tenant, SessionID, ExecutionID, AgentID), so a single
+	// missing component produces unattributed events that are useless for
+	// incident forensics and silently break tenant-scoped audit filters.
+	// Fail-closed is preferred over best-effort emission with synthetic
+	// placeholders: an upstream bridge that forgot to call
+	// ContextWithCallMetadata is a bug, not a soft warning.
+	if !ok || meta.Tenant == "" || meta.SessionID == "" || meta.ExecutionID == "" || meta.AgentID == "" {
 		return EvaluateToolCallResult{}, errMissingMCPMetadata
 	}
 	// Reject oversized args before running the redactor so a 10 MB
@@ -477,6 +514,13 @@ func EvaluateToolCall(ctx context.Context, deps ToolCallDeps, params ToolCallPar
 		})
 	}
 	event.Decision = mapPolicyDecisionToEdge(decision)
+	// Constraints carry through from the gate's AWC verdict so audit
+	// consumers and downstream tools see the constraint map that
+	// authorized the call. Empty/nil for ALLOW / DENY / REQUIRE_HUMAN /
+	// THROTTLE — only AWC populates this surface today.
+	if len(decision.Constraints) > 0 {
+		event.Constraints = decision.Constraints
+	}
 	// DENY / THROTTLE flip the kind to failed because the call will not
 	// reach upstream. REQUIRE_HUMAN keeps kind=pre because the call is
 	// awaiting an approval decision; the matching post or failed will
@@ -485,9 +529,13 @@ func EvaluateToolCall(ctx context.Context, deps ToolCallDeps, params ToolCallPar
 	// the matching post in the InvokeToolWithPolicy wrapper.
 	if !decision.Allowed() && !decision.requiresHuman() && decision.Decision != pb.DecisionType_DECISION_TYPE_UNSPECIFIED {
 		event.Kind = edge.EventKindMCPToolFailed
+		event.Status = edge.ActionStatusBlocked
 		event.DecisionReason = decision.Reason
-	} else if decision.Reason != "" {
-		event.DecisionReason = decision.Reason
+	} else {
+		event.Status = edge.ActionStatusOK
+		if decision.Reason != "" {
+			event.DecisionReason = decision.Reason
+		}
 	}
 
 	if deps.EventEmitter == nil {
@@ -535,6 +583,14 @@ func logToolCallDecision(ctx context.Context, event *edge.AgentActionEvent, desc
 		slog.String("decision", string(event.Decision)),
 		slog.String("gate_id", dec.GateID),
 		slog.String("code", dec.Code),
+		// constraint_count surfaces AWC volume to operator-facing log
+		// streams (greppable for AWC bursts / dashboards) without
+		// leaking the structured constraint VALUES, which may carry
+		// sensitive policy detail (allowed hosts, redaction levels)
+		// per CLAUDE.md security rails and feedback_no_ai_slop. The
+		// full constraint map lives on the audit-bound event +
+		// artifact pointer, not the live log stream.
+		slog.Int("constraint_count", len(dec.Constraints)),
 	)
 }
 
@@ -646,8 +702,11 @@ func (d PolicyDecision) requiresHuman() bool {
 }
 
 // defaultEventIDFactory returns a uuid-shaped 32-hex-char ID seeded
-// from crypto/rand. Compact + collision-resistant enough for retry
-// dedupe; not a security boundary.
+// from crypto/rand. EventID is for tracing / event payload identity;
+// retry dedupe identity is semantic, derived in dedupeBegin from
+// (tenant, server, tool, action_hash, session, execution, principal).
+// Two retries with the same EventID would still dedupe; two retries
+// with different EventIDs but identical semantic inputs ALSO dedupe.
 func defaultEventIDFactory() string {
 	var buf [16]byte
 	if _, err := rand.Read(buf[:]); err != nil {
@@ -679,8 +738,9 @@ func defaultEventIDFactory() string {
 // (or pre+failed) pair in the emitter.
 func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCallParams, server string) (*ToolCallResult, error) {
 	// Apply zero-value defaults consistently across InvokeToolWithPolicy
-	// and EvaluateToolCall so downstream helpers (newPostEvent,
-	// sanitizeUpstreamError) never see a nil Clock or Redactor.
+	// and EvaluateToolCall so downstream helpers (newPostEvent and the
+	// redactor pass inside EvaluateToolCall) never see a nil Clock or
+	// Redactor.
 	if deps.Clock == nil {
 		deps.Clock = func() time.Time { return time.Now().UTC() }
 	}
@@ -690,70 +750,169 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 	if deps.EventIDFactory == nil {
 		deps.EventIDFactory = defaultEventIDFactory
 	}
-	if dedupedResult, hit, err := dedupeLookup(ctx, deps, params, server); hit {
-		return dedupedResult, err
+	// Pin the EventID for the entire InvokeToolWithPolicy lifecycle so
+	// the pre event and any post/failed event share a single tracing
+	// identifier. deps is passed by value here so overriding the factory
+	// does not leak to other callers. The EventID is no longer part of
+	// the retry-dedupe identity (dedupeBegin derives that from semantic
+	// inputs); the pin is purely for correlated tracing.
+	stableEventID := deps.EventIDFactory()
+	deps.EventIDFactory = func() string { return stableEventID }
+	// Compute the semantic dedupe key from CallMetadata + params BEFORE
+	// EvaluateToolCall so two retries with the same caller identity +
+	// tool + canonical action share a single slot regardless of the
+	// EventIDs the factory emits per call. Empty key means metadata was
+	// not stashed; dedupeBegin then short-circuits and EvaluateToolCall
+	// surfaces the real missing_mcp_metadata error below.
+	dedupeID := semanticDedupeKeyForCall(ctx, params, server)
+	winner, hit := dedupeBegin(ctx, deps, dedupeID)
+	if hit != nil {
+		return hit.result, hit.err
+	}
+	// dedupeFinish must run on every return path below when we won the
+	// slot. Use a named return + deferred publisher so the singleflight
+	// waiters never deadlock on a panic or early-return path. The
+	// skipDedupeCache flag tells the defer to publish the outcome to
+	// in-process waiters AND delete the cross-process slot so a later
+	// retry re-evaluates: required for DENY decisions so a policy-bundle
+	// update flips behavior immediately instead of returning the cached
+	// DENY for the full MCPDedupeTTL.
+	var (
+		finalResult     *ToolCallResult
+		finalErr        error
+		skipDedupeCache bool
+	)
+	if winner != nil {
+		defer func() {
+			if rec := recover(); rec != nil {
+				finalErr = fmt.Errorf("panic: %v", rec)
+				if skipDedupeCache {
+					dedupeFinishNoCache(deps, dedupeID, winner, finalResult, finalErr)
+				} else {
+					dedupeFinish(deps, dedupeID, winner, finalResult, finalErr)
+				}
+				panic(rec)
+			}
+			if skipDedupeCache {
+				dedupeFinishNoCache(deps, dedupeID, winner, finalResult, finalErr)
+				return
+			}
+			dedupeFinish(deps, dedupeID, winner, finalResult, finalErr)
+		}()
 	}
 	evalResult, err := EvaluateToolCall(ctx, deps, params, server)
 	if err != nil {
+		finalErr = err
 		return nil, err
 	}
 	dec := evalResult.Decision
 	switch {
 	case dec.requiresHuman():
-		ref := ""
-		if deps.ApprovalHandoff != nil {
-			actionHash := canonicalActionHashFromEvent(evalResult.PreEvent, params, server)
-			r, herr := deps.ApprovalHandoff.ConsumeActionGateDecision(ctx, dec, ToolCallApprovalContext{
-				Tenant:     evalResult.PreEvent.TenantID,
-				AgentID:    evalResult.PreEvent.PrincipalID,
-				Server:     server,
-				Tool:       params.Name,
-				ActionHash: actionHash,
-			})
-			if herr != nil {
-				return nil, fmt.Errorf("approval handoff: %w", herr)
-			}
-			ref = r
+		// Require deps.ApprovalHandoff: without it we cannot mint an
+		// approval reference, so returning "approval pending: " with an
+		// empty ref leaves the caller no way to resume — the only safe
+		// outcome is a misconfiguration error so deployment notices.
+		// AgentID is sourced from CallMetadata, not from PreEvent.PrincipalID:
+		// PrincipalID identifies WHO called (user / service principal),
+		// while the approval-hold resume contract is keyed on the agent
+		// identity that the tool-call is being attributed to.
+		if deps.ApprovalHandoff == nil {
+			finalErr = errors.New("deps.ApprovalHandoff is required for REQUIRE_HUMAN decisions")
+			return nil, finalErr
 		}
-		return &ToolCallResult{
+		callMeta, _ := CallMetadataFromContext(ctx)
+		// Sub-E #15: route the mint-side ActionHash through the SAME
+		// BuildMCPApprovalBinding helper the consume side
+		// (ProcessApprovalClaim) uses. The gateway adapter
+		// (mintEdgeApprovalForActionGate) ALSO calls this helper, so all
+		// three approval-lifecycle hash sites resolve to a single
+		// definition. Drift here previously surfaced as
+		// ApprovalConflictKindArgsMismatch on retries with `_approval_ref`.
+		actionHash, _ := BuildMCPApprovalBinding(callMeta.Tenant, server, params, "")
+		ref, herr := deps.ApprovalHandoff.ConsumeActionGateDecision(ctx, dec, ToolCallApprovalContext{
+			Tenant:     evalResult.PreEvent.TenantID,
+			AgentID:    callMeta.AgentID,
+			Server:     server,
+			Tool:       params.Name,
+			ActionHash: actionHash,
+			// EDGE-103 reopen #1: plumb raw args through so the gate's
+			// mint side can compute the same InputHash that
+			// ProcessApprovalClaim's BuildMCPApprovalBinding produces.
+			Args: params.Arguments,
+		})
+		if herr != nil {
+			finalErr = fmt.Errorf("approval handoff: %w", herr)
+			return nil, finalErr
+		}
+		approvalPending := &ToolCallResult{
 			Content: []ContentItem{{
 				Type: "text",
 				Text: fmt.Sprintf("approval pending: %s", ref),
 			}},
 			IsError: false,
-		}, dedupeStore(deps, params, server, nil, nil)
+		}
+		finalResult = approvalPending
+		return approvalPending, nil
 	case !dec.Allowed():
 		// EvaluateToolCall already emitted mcp.tool.failed for the deny.
-		result := &ToolCallResult{
+		// Do NOT cache the denial: a subsequent policy-bundle update that
+		// flips the tuple to ALLOW must take effect on the next call, not
+		// after MCPDedupeTTL expires (HIGH audit finding 2026-05-20).
+		// skipDedupeCache routes the defer through dedupeFinishNoCache so
+		// in-process waiters still observe the DENY outcome (no semantic
+		// drift between winner and waiter) but the cross-process slot is
+		// removed instead of being re-stored as a completed record.
+		denyResult := &ToolCallResult{
 			Content: []ContentItem{{Type: "text", Text: dec.Reason}},
 			IsError: true,
 		}
-		return result, dedupeStore(deps, params, server, result, nil)
+		finalResult = denyResult
+		skipDedupeCache = true
+		return denyResult, nil
 	}
 	if deps.Upstream == nil {
-		return nil, errors.New("deps.Upstream is required for ALLOW decisions")
+		finalErr = errors.New("deps.Upstream is required for ALLOW decisions")
+		return nil, finalErr
 	}
 	upstreamResult, upstreamErr := deps.Upstream.Invoke(ctx, params)
 	if upstreamErr != nil {
-		failed := newPostEvent(evalResult.PreEvent, deps.Clock, edge.EventKindMCPToolFailed, edge.DecisionAllow)
-		failed.ErrorMessage = sanitizeUpstreamError(deps.Redactor, upstreamErr)
+		failed := newPostEvent(evalResult.PreEvent, deps.Clock, edge.EventKindMCPToolFailed, dec)
+		failed.ErrorMessage = sanitizeUpstreamError(upstreamErr)
 		if emitErr := deps.EventEmitter.Emit(ctx, failed); emitErr != nil {
-			return nil, fmt.Errorf("emit failed event: %w", emitErr)
+			finalErr = fmt.Errorf("emit failed event: %w", emitErr)
+			return nil, finalErr
 		}
+		finalErr = upstreamErr
 		return nil, upstreamErr
 	}
-	post := newPostEvent(evalResult.PreEvent, deps.Clock, edge.EventKindMCPToolPost, edge.DecisionAllow)
+	post := newPostEvent(evalResult.PreEvent, deps.Clock, edge.EventKindMCPToolPost, dec)
 	if err := deps.EventEmitter.Emit(ctx, post); err != nil {
-		return nil, fmt.Errorf("emit post event: %w", err)
+		finalErr = fmt.Errorf("emit post event: %w", err)
+		return nil, finalErr
 	}
-	return upstreamResult, dedupeStore(deps, params, server, upstreamResult, nil)
+	finalResult = upstreamResult
+	return upstreamResult, nil
 }
 
 // newPostEvent clones the identity/session fields from the pre event
 // onto the post/failed event. EventID is reused so retry dedupe via
-// EventID-keyed state stays consistent across the pre/post pair.
-func newPostEvent(pre *edge.AgentActionEvent, clock func() time.Time, kind edge.EventKind, dec edge.EdgeDecision) *edge.AgentActionEvent {
-	return &edge.AgentActionEvent{
+// EventID-keyed state stays consistent across the pre/post pair. The
+// PolicyDecision sources both the EdgeDecision shape (via
+// mapPolicyDecisionToEdge so an AWC verdict records `constrain` not
+// `allow`) and the Constraints map (bundled scope from task-3d5c4f37
+// so AWC constraint metadata survives into the post-event audit row).
+// Empty/nil Constraints map leaves event.Constraints nil so the
+// JSON wire payload stays identical to legacy ALLOW events.
+//
+// Status defaults to `failed` for mcp.tool.failed kind, `ok` for any
+// other kind. The edge.Store validation rejects empty Status, so any
+// post/failed event MUST carry a known-good value before AppendEvent.
+func newPostEvent(pre *edge.AgentActionEvent, clock func() time.Time, kind edge.EventKind, dec PolicyDecision) *edge.AgentActionEvent {
+	status := edge.ActionStatusOK
+	if kind == edge.EventKindMCPToolFailed {
+		status = edge.ActionStatusFailed
+	}
+	evt := &edge.AgentActionEvent{
 		EventID:     pre.EventID,
 		SessionID:   pre.SessionID,
 		ExecutionID: pre.ExecutionID,
@@ -764,23 +923,13 @@ func newPostEvent(pre *edge.AgentActionEvent, clock func() time.Time, kind edge.
 		Kind:        kind,
 		ToolName:    pre.ToolName,
 		ActionName:  pre.ActionName,
-		Decision:    dec,
+		Decision:    mapPolicyDecisionToEdge(dec),
+		Status:      status,
 	}
-}
-
-// canonicalActionHashFromEvent computes a stable hash over the tool
-// invocation so the approval-store lifecycle binds to the same key
-// the gate used. The key is tenant+server+tool+normalized-target-path
-// (CanonicalActionHash). Same logical file produces one key regardless
-// of whether the caller spelled the path with backslashes or forward
-// slashes — Windows and POSIX callers cannot race to create two
-// pending approvals for the same action.
-func canonicalActionHashFromEvent(pre *edge.AgentActionEvent, params ToolCallParams, server string) string {
-	var targetPath string
-	if parsed, _ := parseArgsForDescriptor(params.Arguments); parsed != nil {
-		targetPath = extractTargetPathFromArgs(parsed)
+	if len(dec.Constraints) > 0 {
+		evt.Constraints = dec.Constraints
 	}
-	return CanonicalActionHash(pre.TenantID, server, params.Name, targetPath)
+	return evt
 }
 
 // sanitizeUpstreamError redacts URL hosts, query strings, and known
@@ -789,7 +938,7 @@ func canonicalActionHashFromEvent(pre *edge.AgentActionEvent, params ToolCallPar
 // include leak vectors (full URLs with `?token=...` query strings,
 // `Bearer` headers, `sk-*`/`ghp_*`/AWS keys); the contract is that
 // no such substring lands in a Redis event.
-func sanitizeUpstreamError(_ ArgumentRedactor, err error) string {
+func sanitizeUpstreamError(err error) string {
 	if err == nil {
 		return ""
 	}
@@ -809,45 +958,495 @@ func sanitizeUpstreamError(_ ArgumentRedactor, err error) string {
 // state lives on ToolCallDeps so each caller scope (test fixture,
 // HTTP server instance) gets isolated tracking — no package-globals
 // that would bleed across -count=N runs.
+// dedupeEntry is the singleflight cell stored in deps.DedupeState. The
+// first caller to LoadOrStore wins the slot, runs the upstream once,
+// then closes done. Concurrent callers with the same stable EventID see
+// the same entry, block on done, and read the result the winner stored.
+// On error, the winner deletes the entry so the next retry can fire
+// fresh — only successful (non-error) outcomes are cached.
 type dedupeEntry struct {
+	done   chan struct{}
 	result *ToolCallResult
 	err    error
 }
 
-func dedupeKey(deps ToolCallDeps, server, tool string) string {
-	id := ""
-	if deps.EventIDFactory != nil {
-		id = deps.EventIDFactory()
-	}
-	return server + "|" + tool + "|" + id
+// semanticDedupeSeparator is the unit-separator byte (0x1F) used to
+// join fields in the canonical form fed to SHA-256. Using a
+// non-printable control byte instead of `|` prevents pipe-bearing
+// tenant IDs or tool names from colliding with neighboring fields
+// (tenant=`foo|bar`+tool=`baz` no longer hashes the same as
+// tenant=`foo`+tool=`bar|baz`).
+const semanticDedupeSeparator = "\x1f"
+
+// computeSemanticDedupeKey returns the hex SHA-256 over the canonical
+// (tenant, server, tool, action_hash, session, execution, principal)
+// tuple. Two calls with identical semantic inputs produce the same
+// key across process retries even when the EventIDFactory emits a
+// different ID per call. Empty fields are allowed — the gate-level
+// validation (errMissingMCPMetadata) catches missing identity before
+// this function ever runs in the InvokeToolWithPolicy path.
+func computeSemanticDedupeKey(tenant, server, tool, actionHash, session, execution, principal string) string {
+	var b strings.Builder
+	b.Grow(len(tenant) + len(server) + len(tool) + len(actionHash) + len(session) + len(execution) + len(principal) + 6)
+	b.WriteString(tenant)
+	b.WriteString(semanticDedupeSeparator)
+	b.WriteString(server)
+	b.WriteString(semanticDedupeSeparator)
+	b.WriteString(tool)
+	b.WriteString(semanticDedupeSeparator)
+	b.WriteString(actionHash)
+	b.WriteString(semanticDedupeSeparator)
+	b.WriteString(session)
+	b.WriteString(semanticDedupeSeparator)
+	b.WriteString(execution)
+	b.WriteString(semanticDedupeSeparator)
+	b.WriteString(principal)
+	sum := sha256.Sum256([]byte(b.String()))
+	return hex.EncodeToString(sum[:])
 }
 
-// dedupeLookup returns the cached outcome for a stable EventID. The
-// boolean signals whether the lookup was a hit; on hit the caller
-// short-circuits without re-emitting events.
-func dedupeLookup(_ context.Context, deps ToolCallDeps, params ToolCallParams, server string) (*ToolCallResult, bool, error) {
-	if deps.EventIDFactory == nil || deps.DedupeState == nil {
-		return nil, false, nil
+// semanticDedupeKeyForCall derives the dedupe key from the CallMetadata
+// stashed in ctx plus the tool-call's full canonical-arguments hash.
+// Returns the empty string when metadata is missing or any identity
+// field is blank; dedupeBegin treats an empty key as "dedupe disabled"
+// so the real fail-closed path (errMissingMCPMetadata in EvaluateToolCall)
+// stays the single source of identity validation.
+//
+// The action hash combines the (tenant, server, tool, targetPath) tuple
+// AND a SHA-256 over the canonical-JSON of params.Arguments. Without
+// the args-hash component, tools whose args carry no path-like key
+// (cordum_audit_query?q=, cordum_query_policy?bundle=, generic SQL
+// `query=`, any cordum_* tool with non-path args) collapsed every
+// distinct arg set into ONE dedupe slot for MCPDedupeTTL — call #2
+// with attacker-chosen args would receive call #1's cached result
+// without re-evaluating policy, calling upstream, or emitting a
+// pre-event audit row (CRITICAL audit finding 2026-05-20).
+func semanticDedupeKeyForCall(ctx context.Context, params ToolCallParams, server string) string {
+	meta, ok := CallMetadataFromContext(ctx)
+	if !ok || meta.Tenant == "" || meta.SessionID == "" || meta.ExecutionID == "" {
+		return ""
 	}
-	key := dedupeKey(deps, server, params.Name)
-	if entry, ok := deps.DedupeState.Load(key); ok {
-		if e, ok := entry.(dedupeEntry); ok {
-			return e.result, true, e.err
+	var targetPath string
+	if parsed, _ := parseArgsForDescriptor(params.Arguments); parsed != nil {
+		targetPath = extractTargetPathFromArgs(parsed)
+	}
+	argsHash := canonicalArgumentsHash(params.Arguments)
+	actionHash := actionTupleHashWithArgs(meta.Tenant, server, params.Name, targetPath, argsHash)
+	return computeSemanticDedupeKey(meta.Tenant, server, params.Name, actionHash, meta.SessionID, meta.ExecutionID, meta.Principal)
+}
+
+// canonicalArgumentsHash returns the hex SHA-256 over the canonical-JSON
+// form of params.Arguments. Re-marshalling through json.Unmarshal +
+// json.Marshal normalises whitespace and key order so two retries with
+// equivalent JSON produce the same hash, while distinct argument values
+// produce distinct hashes regardless of which keys they live under.
+// Empty / unmarshalable args fall back to the raw byte hash so the
+// caller cannot opt out of args-hashing by sending malformed JSON.
+func canonicalArgumentsHash(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		sum := sha256.Sum256([]byte("{}"))
+		return hex.EncodeToString(sum[:])
+	}
+	var decoded any
+	if err := json.Unmarshal(raw, &decoded); err == nil {
+		if canonical, err := json.Marshal(decoded); err == nil {
+			sum := sha256.Sum256(canonical)
+			return hex.EncodeToString(sum[:])
 		}
 	}
-	return nil, false, nil
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
 }
 
-// dedupeStore records the outcome under the EventID key so the next
-// retry with the same EventID short-circuits via dedupeLookup. Errors
-// from the upstream are NOT cached — a transient failure on attempt
-// N should still allow attempt N+1 to fire if the caller chose to
-// rotate the EventID.
-func dedupeStore(deps ToolCallDeps, params ToolCallParams, server string, result *ToolCallResult, err error) error {
-	if deps.EventIDFactory == nil || deps.DedupeState == nil {
+// actionTupleHashWithArgs binds the (tenant, server, tool, target_path,
+// args_hash) tuple into a single hex SHA-256. Mirrors ActionTupleHash
+// but folds the canonical-args hash into the canonical form so retries
+// with the same args dedupe and retries with different args do not.
+func actionTupleHashWithArgs(tenant, server, tool, targetPath, argsHash string) string {
+	canonical := fmt.Sprintf("%s|%s|%s|%s|%s", tenant, server, tool, normalizeTargetPath(targetPath), argsHash)
+	sum := sha256.Sum256([]byte(canonical))
+	return hex.EncodeToString(sum[:])
+}
+
+// dedupeOutcome bundles the cached result a loser observes when the
+// dedupe entry was already completed by another caller. Mirrors the
+// (result, err) pair dedupeFinish published for the winner.
+type dedupeOutcome struct {
+	result *ToolCallResult
+	err    error
+}
+
+// dedupeWinner carries per-backend state dedupeFinish needs to publish
+// the completed outcome. The caller treats this as opaque — the only
+// thing that matters at the call site is "did we win?" (winner != nil)
+// and "do we have a cached hit?" (handled by the outcome return).
+//
+// Exactly one of inProcessEntry / redisBacked is non-zero per backend
+// type. A winner from the in-process backend holds the *dedupeEntry
+// whose done channel must be closed when finishing; a Redis-backed
+// winner publishes a completed wire record (or deletes on error).
+type dedupeWinner struct {
+	inProcessEntry *dedupeEntry
+	redisBacked    bool
+}
+
+// dedupeBegin reserves the singleflight slot for the supplied semantic
+// dedupe key. Two returns:
+//
+//   - (winner, nil)   caller is the winner; runs the body, then MUST
+//     call dedupeFinish so waiters unblock and the cache fills (or
+//     clears, on error).
+//   - (nil, outcome)  caller observed an already-completed entry;
+//     short-circuits with outcome.result / outcome.err.
+//   - (nil, nil)      dedupe is disabled (no state or empty key).
+//
+// In-process: a loser blocks on the winner's done channel until the
+// winner closes it. Ctx cancellation surfaces as ctx.Err() so a
+// SIGTERM-bound caller doesn't get stuck waiting for a peer.
+//
+// Redis-backed: a loser observing a pending wire record polls every
+// redisDedupePollInterval (default 50ms) until one of: the record
+// transitions to completed (short-circuit), the key is deleted by the
+// winner's error path (become the new winner), the TTL elapses
+// (become the new winner — deadlock-breaker), or ctx is cancelled.
+func dedupeBegin(ctx context.Context, deps ToolCallDeps, key string) (*dedupeWinner, *dedupeOutcome) {
+	if deps.DedupeState == nil || key == "" {
+		return nil, nil
+	}
+	_, isRedis := deps.DedupeState.(*RedisDedupeStore)
+	fresh := newPendingDedupeValue(isRedis)
+	existing, loaded := deps.DedupeState.LoadOrStore(key, fresh)
+	if !loaded {
+		return makeWinner(fresh, isRedis), nil
+	}
+	switch e := existing.(type) {
+	case *dedupeEntry:
+		select {
+		case <-e.done:
+			return nil, &dedupeOutcome{result: e.result, err: e.err}
+		case <-ctx.Done():
+			return nil, &dedupeOutcome{err: ctx.Err()}
+		}
+	case *redisDedupeRecord:
+		if e.State == redisDedupeStateCompleted {
+			return completedRedisDedupeOutcome(deps.DedupeState, key, e)
+		}
+		return waitForRedisDedupe(ctx, deps.DedupeState, key)
+	default:
+		// Defensive: a malformed wire value cannot be safely waited on.
+		// Overwrite under our key and proceed as the winner; the new
+		// caller's dedupeFinish will publish the canonical record.
+		deps.DedupeState.Store(key, fresh)
+		return makeWinner(fresh, isRedis), nil
+	}
+}
+
+// newPendingDedupeValue returns the value the winner-selection LoadOrStore
+// passes to the backing store. The two backends accept distinct wire
+// types so the loser-side type switch in dedupeBegin can dispatch on
+// the returned value without a second type-probe round trip.
+func newPendingDedupeValue(isRedis bool) any {
+	if isRedis {
+		return &redisDedupeRecord{State: redisDedupeStatePending}
+	}
+	return &dedupeEntry{done: make(chan struct{})}
+}
+
+// makeWinner promotes the pending value the caller submitted into the
+// opaque dedupeWinner handle dedupeFinish consumes.
+func makeWinner(fresh any, isRedis bool) *dedupeWinner {
+	if isRedis {
+		return &dedupeWinner{redisBacked: true}
+	}
+	entry, _ := fresh.(*dedupeEntry)
+	return &dedupeWinner{inProcessEntry: entry}
+}
+
+// decodeRedisCompletedOutcome reconstructs the safe duplicate
+// *ToolCallResult a Redis loser short-circuits with from the bounded
+// metadata the winner published. A malformed metadata record returns nil
+// so the caller can promote itself to winner and re-run upstream rather
+// than treating an unreadable Redis row as a nil success.
+func decodeRedisCompletedOutcome(rec *redisDedupeRecord) *dedupeOutcome {
+	if rec == nil {
 		return nil
 	}
-	key := dedupeKey(deps, server, params.Name)
-	deps.DedupeState.Store(key, dedupeEntry{result: result, err: err})
-	return nil
+	out := &dedupeOutcome{}
+	if rec.ErrorClass != "" {
+		out.err = errors.New(rec.ErrorClass)
+	}
+	if rec.Result == nil {
+		if out.err != nil {
+			return out
+		}
+		return nil
+	}
+	if strings.TrimSpace(rec.Result.ResultSHA256) == "" {
+		return nil
+	}
+	if len(rec.Result.ResultSHA256) != sha256.Size*2 {
+		return nil
+	}
+	out.result = toolCallResultFromRedisDedupeMetadata(*rec.Result)
+	return out
+}
+
+func redisDedupeResultMetadataFor(result *ToolCallResult) (*redisDedupeResultMetadata, bool) {
+	payload, err := json.Marshal(result)
+	if err != nil {
+		return nil, false
+	}
+	sum := sha256.Sum256(payload)
+	meta := &redisDedupeResultMetadata{
+		ResultSHA256: hex.EncodeToString(sum[:]),
+	}
+	if result != nil {
+		meta.IsError = result.IsError
+		meta.ContentCount = len(result.Content)
+		meta.HasStructuredContent = result.StructuredContent != nil
+	}
+	return meta, true
+}
+
+func toolCallResultFromRedisDedupeMetadata(meta redisDedupeResultMetadata) *ToolCallResult {
+	contentCount := meta.ContentCount
+	if contentCount < 0 {
+		contentCount = 0
+	}
+	hash := strings.TrimSpace(meta.ResultSHA256)
+	text := fmt.Sprintf(
+		"duplicate MCP tool result suppressed from Redis dedupe; result_sha256=%s content_count=%d has_structured_content=%t",
+		hash,
+		contentCount,
+		meta.HasStructuredContent,
+	)
+	return &ToolCallResult{
+		Content: []ContentItem{{
+			Type: "text",
+			Text: text,
+		}},
+		IsError: meta.IsError,
+	}
+}
+
+func completedRedisDedupeOutcome(store DedupeStore, key string, rec *redisDedupeRecord) (*dedupeWinner, *dedupeOutcome) {
+	if out := decodeRedisCompletedOutcome(rec); out != nil {
+		return nil, out
+	}
+	fresh := newPendingDedupeValue(true)
+	store.Store(key, fresh)
+	return makeWinner(fresh, true), nil
+}
+
+func redisDedupeRecordResultIsTooLarge(rec *redisDedupeRecord) bool {
+	if rec == nil || rec.Result == nil {
+		return false
+	}
+	payload, err := json.Marshal(rec)
+	if err != nil {
+		return true
+	}
+	return len(payload) > maxRedisDedupeRecordBytes
+}
+
+func validateRedisDedupeRecordForStore(rec *redisDedupeRecord) bool {
+	if rec == nil {
+		return false
+	}
+	if rec.State != redisDedupeStateCompleted {
+		return true
+	}
+	if rec.Result == nil && rec.ErrorClass == "" {
+		return false
+	}
+	if rec.Result != nil && strings.TrimSpace(rec.Result.ResultSHA256) == "" {
+		return false
+	}
+	return !redisDedupeRecordResultIsTooLarge(rec)
+}
+
+func redisDedupeRecordForResult(result *ToolCallResult) (*redisDedupeRecord, bool) {
+	meta, ok := redisDedupeResultMetadataFor(result)
+	if !ok {
+		return nil, false
+	}
+	rec := &redisDedupeRecord{
+		State:  redisDedupeStateCompleted,
+		Result: meta,
+	}
+	if !validateRedisDedupeRecordForStore(rec) {
+		return nil, false
+	}
+	return rec, true
+}
+
+// redisDedupeLoserDeadlineBudget keeps Redis losers aligned with the
+// actual cross-process pending marker. A positive PTTL caps the local
+// deadlock-breaker to the key's remaining Redis TTL; missing/expired
+// keys use a near-immediate budget so the final steal path runs without
+// waiting for another poll tick. Non-Redis stores, PTTL errors, and
+// no-TTL keys retain the historical MCPDedupeTTL fallback.
+func redisDedupeLoserDeadlineBudget(ctx context.Context, store DedupeStore, key string) time.Duration {
+	redisStore, ok := store.(*RedisDedupeStore)
+	if !ok || redisStore == nil || redisStore.client == nil {
+		return MCPDedupeTTL
+	}
+	pttlCtx, cancel := context.WithTimeout(ctx, redisDedupeCommandTimeout)
+	defer cancel()
+	remaining, err := redisStore.client.PTTL(pttlCtx, MCPDedupeKeyPrefix+key).Result()
+	if err != nil {
+		return MCPDedupeTTL
+	}
+	switch {
+	case remaining > 0:
+		return remaining
+	case remaining == time.Duration(-1):
+		return MCPDedupeTTL
+	default:
+		return time.Nanosecond
+	}
+}
+
+// waitForRedisDedupe is the Redis-backed loser polling loop. It polls
+// every redisDedupePollInterval, respects ctx.Done(), and stops when
+// the entry becomes completed/deleted/expired.
+//
+// Termination outcomes:
+//   - loser observes completed wire record  → short-circuit with cached
+//   - loser observes a deleted key (winner errored)  → become new winner
+//   - loser observes an expired key (Redis TTL)  → become new winner
+//   - ctx cancelled  → outcome carrying ctx.Err()
+//
+// Redis-backed waits are locally bounded by the key's remaining Redis
+// PTTL sampled on loser entry plus the caller context. Non-Redis,
+// PTTL-error, and no-TTL cases keep MCPDedupeTTL as the fallback
+// deadlock breaker so failures never become unbounded waits.
+func waitForRedisDedupe(ctx context.Context, store DedupeStore, key string) (*dedupeWinner, *dedupeOutcome) {
+	ticker := time.NewTicker(redisDedupePollInterval)
+	defer ticker.Stop()
+	deadline := time.NewTimer(redisDedupeLoserDeadlineBudget(ctx, store, key))
+	defer func() {
+		if !deadline.Stop() {
+			select {
+			case <-deadline.C:
+			default:
+			}
+		}
+	}()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, &dedupeOutcome{err: ctx.Err()}
+		case <-deadline.C:
+			// Deadline-breaker: TTL elapsed without resolution. Race-
+			// safe final check before stealing the slot — a winner
+			// that published a completed record in the last polling
+			// interval should still short-circuit the loser. Only
+			// force-take when the slot is still pending (the genuine
+			// crashed-winner case).
+			fresh := newPendingDedupeValue(true)
+			existing, loaded := store.LoadOrStore(key, fresh)
+			if !loaded {
+				return makeWinner(existing, true), nil
+			}
+			if rec, ok := existing.(*redisDedupeRecord); ok && rec.State == redisDedupeStateCompleted {
+				return completedRedisDedupeOutcome(store, key, rec)
+			}
+			store.Store(key, fresh)
+			return makeWinner(fresh, true), nil
+		case <-ticker.C:
+			again, stillLoaded := store.LoadOrStore(key, newPendingDedupeValue(true))
+			if !stillLoaded {
+				// Key was deleted or expired — our pending write won;
+				// proceed as the new winner.
+				return makeWinner(again, true), nil
+			}
+			rec, ok := again.(*redisDedupeRecord)
+			if !ok {
+				continue
+			}
+			if rec.State == redisDedupeStateCompleted {
+				return completedRedisDedupeOutcome(store, key, rec)
+			}
+			// Still pending — keep polling.
+		}
+	}
+}
+
+// dedupeFinish publishes the outcome for the singleflight winner. On
+// success (err == nil) the entry stays in the store so subsequent
+// retries short-circuit. On error the entry is removed so the next
+// attempt fires upstream fresh — transient failures must not become
+// sticky.
+//
+// In-process: closes the winner's done channel after stashing result/
+// err so waiters unblock with the right outcome.
+//
+// Redis-backed: writes a completed metadata-only wire record
+// (re-applying MCPDedupeTTL) on success, deletes the key on error.
+// Unserializable metadata is dropped from the cache (delete-on-error
+// fallback) so Redis never stores raw tool-result bodies.
+func dedupeFinish(deps ToolCallDeps, key string, winner *dedupeWinner, result *ToolCallResult, err error) {
+	if winner == nil {
+		return
+	}
+	if winner.inProcessEntry != nil {
+		entry := winner.inProcessEntry
+		if entry.done == nil {
+			return
+		}
+		entry.result = result
+		entry.err = err
+		if err != nil && deps.DedupeState != nil && key != "" {
+			// Delete before close prevents fresh arrivals from finding
+			// a completed error entry. Existing waiters already hold
+			// entry and still observe result/err via close's happens-before.
+			deps.DedupeState.Delete(key)
+		}
+		close(entry.done)
+		return
+	}
+	if winner.redisBacked {
+		if deps.DedupeState == nil || key == "" {
+			return
+		}
+		if err != nil {
+			deps.DedupeState.Delete(key)
+			return
+		}
+		rec, ok := redisDedupeRecordForResult(result)
+		if !ok {
+			// Cannot persist a usable completed record cross-process;
+			// delete so subsequent retries fire fresh upstream rather
+			// than block on a pending record that will never resolve.
+			deps.DedupeState.Delete(key)
+			return
+		}
+		deps.DedupeState.Store(key, rec)
+	}
+}
+
+// dedupeFinishNoCache publishes the outcome to in-process waiters but
+// deletes the cross-process slot — no completed record is written. Used
+// for DENY decisions so a later policy-bundle flip is observed on the
+// next call instead of being shadowed by a stale cached denial for the
+// full MCPDedupeTTL. In-process semantics match dedupeFinish: the done
+// channel still closes with (result, err) so concurrent waiters observe
+// the DENY outcome, but the cross-process Redis slot is cleared.
+func dedupeFinishNoCache(deps ToolCallDeps, key string, winner *dedupeWinner, result *ToolCallResult, err error) {
+	if winner == nil {
+		return
+	}
+	if deps.DedupeState != nil && key != "" {
+		deps.DedupeState.Delete(key)
+	}
+	if winner.inProcessEntry != nil {
+		entry := winner.inProcessEntry
+		if entry.done == nil {
+			return
+		}
+		entry.result = result
+		entry.err = err
+		close(entry.done)
+	}
 }

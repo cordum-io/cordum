@@ -1,0 +1,7 @@
+version: 2
+updates:
+  # Keep SHA-pinned third-party GitHub Actions current via reviewable PRs.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

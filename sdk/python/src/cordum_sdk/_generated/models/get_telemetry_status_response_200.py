@@ -15,29 +15,24 @@ from typing import Union
 import datetime
 
 
-
-
-
-
 T = TypeVar("T", bound="GetTelemetryStatusResponse200")
 
 
 @_attrs_define
 class GetTelemetryStatusResponse200:
-    """ 
-        Attributes:
-            mode (str):
-            endpoint (Union[Unset, str]):
-            last_collected_at (Union[Unset, datetime.datetime]):
-            last_reported_at (Union[Unset, datetime.datetime]):
-     """
+    """
+    Attributes:
+        mode (str):
+        endpoint (Union[Unset, str]):
+        last_collected_at (Union[Unset, datetime.datetime]):
+        last_reported_at (Union[Unset, datetime.datetime]):
+    """
 
     mode: str
     endpoint: Union[Unset, str] = UNSET
     last_collected_at: Union[Unset, datetime.datetime] = UNSET
     last_reported_at: Union[Unset, datetime.datetime] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         mode = self.mode
@@ -52,12 +47,13 @@ class GetTelemetryStatusResponse200:
         if not isinstance(self.last_reported_at, Unset):
             last_reported_at = self.last_reported_at.isoformat()
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "mode": mode,
-        })
+        field_dict.update(
+            {
+                "mode": mode,
+            }
+        )
         if endpoint is not UNSET:
             field_dict["endpoint"] = endpoint
         if last_collected_at is not UNSET:
@@ -66,8 +62,6 @@ class GetTelemetryStatusResponse200:
             field_dict["last_reported_at"] = last_reported_at
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -78,23 +72,17 @@ class GetTelemetryStatusResponse200:
 
         _last_collected_at = d.pop("last_collected_at", UNSET)
         last_collected_at: Union[Unset, datetime.datetime]
-        if isinstance(_last_collected_at,  Unset):
+        if isinstance(_last_collected_at, Unset):
             last_collected_at = UNSET
         else:
             last_collected_at = isoparse(_last_collected_at)
 
-
-
-
         _last_reported_at = d.pop("last_reported_at", UNSET)
         last_reported_at: Union[Unset, datetime.datetime]
-        if isinstance(_last_reported_at,  Unset):
+        if isinstance(_last_reported_at, Unset):
             last_reported_at = UNSET
         else:
             last_reported_at = isoparse(_last_reported_at)
-
-
-
 
         get_telemetry_status_response_200 = cls(
             mode=mode,
@@ -102,7 +90,6 @@ class GetTelemetryStatusResponse200:
             last_collected_at=last_collected_at,
             last_reported_at=last_reported_at,
         )
-
 
         get_telemetry_status_response_200.additional_properties = d
         return get_telemetry_status_response_200

@@ -9,4 +9,4 @@
 /**
  * Arbitrary operator-supplied key/value pairs (e.g. ticket refs).
  */
-export type PolicyShadowMetadata = {[key: string]: string};
+export type PolicyShadowMetadata = { [key: string]: string };

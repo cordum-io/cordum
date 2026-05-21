@@ -9,12 +9,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/licensing"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/argon2"
 )
@@ -23,6 +25,7 @@ const (
 	scopeIDWorkers = "workers"
 
 	defaultCreatedBy = "api"
+	defaultTenantID  = "default"
 
 	tokenBytes = 32
 	saltBytes  = 16
@@ -38,6 +41,11 @@ const (
 	maxPHCIterations   = uint64(10_000)
 	maxPHCParallelism  = uint64(16)
 	maxPHCEncodedBytes = 1024
+
+	// CreateWithLimit is intentionally exercised with many concurrent issuers:
+	// use enough CAS retries for legitimate contenders to observe the filled
+	// worker limit instead of surfacing transient config revision conflicts.
+	workerCredentialCreateCASAttempts = 32
 )
 
 var ErrCredentialNotFound = errors.New("worker credential not found")
@@ -45,6 +53,7 @@ var ErrCredentialNotFound = errors.New("worker credential not found")
 // Credential is the canonical worker identity record stored at cfg:system:workers.
 type Credential struct {
 	WorkerID       string   `json:"worker_id"`
+	TenantID       string   `json:"tenant_id"`
 	CredentialHash string   `json:"credential_hash"`
 	AllowedPools   []string `json:"allowed_pools,omitempty"`
 	AllowedTopics  []string `json:"allowed_topics,omitempty"`
@@ -57,6 +66,7 @@ type Credential struct {
 
 // IssueInput describes a new or rotated worker credential.
 type IssueInput struct {
+	TenantID      string
 	WorkerID      string
 	AllowedPools  []string
 	AllowedTopics []string
@@ -64,6 +74,11 @@ type IssueInput struct {
 	AgentID       string
 	CreatedBy     string
 	CreatedAt     time.Time
+}
+
+type CreateLimit struct {
+	Entitlements     licensing.Entitlements
+	ConnectedWorkers int
 }
 
 // IssuedCredential returns the stored record plus the plaintext token that is
@@ -89,6 +104,14 @@ func NewService(cfg *configsvc.Service) *Service {
 // resulting canonical credential record. Existing records for the same worker ID
 // are replaced, which allows credential rotation.
 func (s *Service) Create(ctx context.Context, input IssueInput) (IssuedCredential, error) {
+	return s.create(ctx, input, nil)
+}
+
+func (s *Service) CreateWithLimit(ctx context.Context, input IssueInput, limit CreateLimit) (IssuedCredential, error) {
+	return s.create(ctx, input, &limit)
+}
+
+func (s *Service) create(ctx context.Context, input IssueInput, limit *CreateLimit) (IssuedCredential, error) {
 	if s == nil || s.config == nil {
 		return IssuedCredential{}, fmt.Errorf("worker credential store unavailable")
 	}
@@ -107,10 +130,19 @@ func (s *Service) Create(ctx context.Context, input IssueInput) (IssuedCredentia
 		return IssuedCredential{}, err
 	}
 
-	if err := s.config.SetWithRetry(ctx, configsvc.ScopeSystem, scopeIDWorkers, 3, func(doc *configsvc.Document) error {
+	if err := s.config.SetWithRetry(ctx, configsvc.ScopeSystem, scopeIDWorkers, workerCredentialCreateCASAttempts, func(doc *configsvc.Document) error {
 		existing, err := decodeDocument(doc)
 		if err != nil {
 			return err
+		}
+		if current, ok := existing[record.WorkerID]; ok && !credentialVisibleToTenant(current, record.TenantID) {
+			return ErrCredentialNotFound
+		}
+		current, replacing := existing[record.WorkerID]
+		if limit != nil && (!replacing || current.Revoked()) {
+			if err := checkCreateLimit(existing, record.TenantID, *limit); err != nil {
+				return err
+			}
 		}
 		existing[record.WorkerID] = record
 		doc.Scope = configsvc.ScopeSystem
@@ -126,10 +158,11 @@ func (s *Service) Create(ctx context.Context, input IssueInput) (IssuedCredentia
 
 // Get returns the stored worker credential, or nil when the worker has not
 // been provisioned.
-func (s *Service) Get(ctx context.Context, workerID string) (*Credential, error) {
+func (s *Service) Get(ctx context.Context, tenantID, workerID string) (*Credential, error) {
 	if s == nil || s.config == nil {
 		return nil, fmt.Errorf("worker credential store unavailable")
 	}
+	tenantID = strings.TrimSpace(tenantID)
 	workerID = strings.TrimSpace(workerID)
 	if workerID == "" {
 		return nil, fmt.Errorf("worker id required")
@@ -142,12 +175,17 @@ func (s *Service) Get(ctx context.Context, workerID string) (*Credential, error)
 		}
 		return nil, fmt.Errorf("get worker credentials: %w", err)
 	}
-	records, err := decodeDocument(doc)
+	records, migrated, err := decodeDocumentWithLegacy(doc)
 	if err != nil {
 		return nil, err
 	}
+	if migrated {
+		if err := s.persistMigratedTenants(ctx); err != nil {
+			return nil, err
+		}
+	}
 	record, ok := records[workerID]
-	if !ok {
+	if !ok || !credentialVisibleToTenant(record, tenantID) {
 		return nil, nil
 	}
 	out := record
@@ -155,10 +193,11 @@ func (s *Service) Get(ctx context.Context, workerID string) (*Credential, error)
 }
 
 // List returns all worker credentials sorted by worker ID.
-func (s *Service) List(ctx context.Context) ([]Credential, error) {
+func (s *Service) List(ctx context.Context, tenantID string) ([]Credential, error) {
 	if s == nil || s.config == nil {
 		return nil, fmt.Errorf("worker credential store unavailable")
 	}
+	tenantID = strings.TrimSpace(tenantID)
 
 	doc, err := s.config.Get(ctx, configsvc.ScopeSystem, scopeIDWorkers)
 	if err != nil {
@@ -168,14 +207,21 @@ func (s *Service) List(ctx context.Context) ([]Credential, error) {
 		return nil, fmt.Errorf("list worker credentials: %w", err)
 	}
 
-	records, err := decodeDocument(doc)
+	records, migrated, err := decodeDocumentWithLegacy(doc)
 	if err != nil {
 		return nil, err
+	}
+	if migrated {
+		if err := s.persistMigratedTenants(ctx); err != nil {
+			return nil, err
+		}
 	}
 
 	out := make([]Credential, 0, len(records))
 	for _, record := range records {
-		out = append(out, record)
+		if credentialVisibleToTenant(record, tenantID) {
+			out = append(out, record)
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].WorkerID < out[j].WorkerID })
 	return out, nil
@@ -183,10 +229,11 @@ func (s *Service) List(ctx context.Context) ([]Credential, error) {
 
 // Revoke marks a worker credential as revoked while preserving the record for
 // auditability and incident response.
-func (s *Service) Revoke(ctx context.Context, workerID string) error {
+func (s *Service) Revoke(ctx context.Context, tenantID, workerID string) error {
 	if s == nil || s.config == nil {
 		return fmt.Errorf("worker credential store unavailable")
 	}
+	tenantID = strings.TrimSpace(tenantID)
 	workerID = strings.TrimSpace(workerID)
 	if workerID == "" {
 		return fmt.Errorf("worker id required")
@@ -200,7 +247,7 @@ func (s *Service) Revoke(ctx context.Context, workerID string) error {
 			return err
 		}
 		record, ok := existing[workerID]
-		if !ok {
+		if !ok || !credentialVisibleToTenant(record, tenantID) {
 			return ErrCredentialNotFound
 		}
 		found = true
@@ -227,7 +274,7 @@ func (s *Service) Revoke(ctx context.Context, workerID string) error {
 // Verify checks a plaintext token against the stored Argon2id hash for the
 // given worker ID. Revoked or missing records are treated as invalid.
 func (s *Service) Verify(ctx context.Context, workerID, token string) (*Credential, bool, error) {
-	record, err := s.Get(ctx, workerID)
+	record, err := s.Get(ctx, "", workerID)
 	if err != nil || record == nil {
 		return record, false, err
 	}
@@ -267,6 +314,7 @@ func credentialFromIssueInput(input IssueInput, hash string) (Credential, error)
 	}
 	record := Credential{
 		WorkerID:       strings.TrimSpace(input.WorkerID),
+		TenantID:       tenantOrDefault(input.TenantID),
 		CredentialHash: strings.TrimSpace(hash),
 		AllowedPools:   normalizeStrings(input.AllowedPools),
 		AllowedTopics:  normalizeStrings(input.AllowedTopics),
@@ -282,30 +330,42 @@ func credentialFromIssueInput(input IssueInput, hash string) (Credential, error)
 }
 
 func decodeDocument(doc *configsvc.Document) (map[string]Credential, error) {
+	records, _, err := decodeDocumentWithLegacy(doc)
+	return records, err
+}
+
+func decodeDocumentWithLegacy(doc *configsvc.Document) (map[string]Credential, bool, error) {
 	if doc == nil || len(doc.Data) == 0 {
-		return map[string]Credential{}, nil
+		return map[string]Credential{}, false, nil
 	}
 
 	out := make(map[string]Credential, len(doc.Data))
+	migrated := false
 	for workerID, raw := range doc.Data {
 		blob, err := json.Marshal(raw)
 		if err != nil {
-			return nil, fmt.Errorf("marshal worker credential %s: %w", workerID, err)
+			return nil, false, fmt.Errorf("marshal worker credential %s: %w", workerID, err)
 		}
 		var record Credential
 		if err := json.Unmarshal(blob, &record); err != nil {
-			return nil, fmt.Errorf("decode worker credential %s: %w", workerID, err)
+			return nil, false, fmt.Errorf("decode worker credential %s: %w", workerID, err)
 		}
 		if strings.TrimSpace(record.WorkerID) == "" {
 			record.WorkerID = workerID
 		}
+		if strings.TrimSpace(record.TenantID) == "" {
+			record.TenantID = defaultTenantID
+			migrated = true
+			slog.Warn("worker credential missing tenant_id; assigning default tenant",
+				"worker_id", record.WorkerID, "tenant_id", record.TenantID)
+		}
 		record, err = validateCredential(record)
 		if err != nil {
-			return nil, fmt.Errorf("decode worker credential %s: %w", workerID, err)
+			return nil, false, fmt.Errorf("decode worker credential %s: %w", workerID, err)
 		}
 		out[record.WorkerID] = record
 	}
-	return out, nil
+	return out, migrated, nil
 }
 
 func encodeDocument(records map[string]Credential) map[string]any {
@@ -330,6 +390,9 @@ func validateCredential(record Credential) (Credential, error) {
 	if record.WorkerID == "" {
 		return Credential{}, fmt.Errorf("worker id required")
 	}
+	if record.TenantID == "" {
+		return Credential{}, fmt.Errorf("tenant id required")
+	}
 	if record.CredentialHash == "" {
 		return Credential{}, fmt.Errorf("credential hash required")
 	}
@@ -352,6 +415,7 @@ func validateCredential(record Credential) (Credential, error) {
 
 func normalizeCredential(record Credential) Credential {
 	record.WorkerID = strings.TrimSpace(record.WorkerID)
+	record.TenantID = tenantOrDefault(record.TenantID)
 	record.CredentialHash = strings.TrimSpace(record.CredentialHash)
 	record.AllowedPools = normalizeStrings(record.AllowedPools)
 	record.AllowedTopics = normalizeStrings(record.AllowedTopics)
@@ -361,6 +425,55 @@ func normalizeCredential(record Credential) Credential {
 	record.CreatedAt = strings.TrimSpace(record.CreatedAt)
 	record.RevokedAt = strings.TrimSpace(record.RevokedAt)
 	return record
+}
+
+func tenantOrDefault(tenantID string) string {
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		return defaultTenantID
+	}
+	return tenantID
+}
+
+func credentialVisibleToTenant(record Credential, tenantID string) bool {
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		return true
+	}
+	return tenantOrDefault(record.TenantID) == tenantID
+}
+
+func checkCreateLimit(records map[string]Credential, tenantID string, limit CreateLimit) error {
+	active := 0
+	for _, record := range records {
+		if credentialVisibleToTenant(record, tenantID) && !record.Revoked() {
+			active++
+		}
+	}
+	projected := limit.ConnectedWorkers
+	if active+1 > projected {
+		projected = active + 1
+	}
+	if limitErr := licensing.CheckWorkerLimit(int64(projected), limit.Entitlements); limitErr != nil {
+		return limitErr
+	}
+	return nil
+}
+
+func (s *Service) persistMigratedTenants(ctx context.Context) error {
+	if s == nil || s.config == nil {
+		return nil
+	}
+	return s.config.SetWithRetry(ctx, configsvc.ScopeSystem, scopeIDWorkers, 3, func(doc *configsvc.Document) error {
+		records, _, err := decodeDocumentWithLegacy(doc)
+		if err != nil {
+			return err
+		}
+		doc.Scope = configsvc.ScopeSystem
+		doc.ScopeID = scopeIDWorkers
+		doc.Data = encodeDocument(records)
+		return nil
+	})
 }
 
 func normalizeStrings(items []string) []string {

@@ -5,10 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import {
-  useMutation,
-  useQuery
-} from '@tanstack/react-query';
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
   DataTag,
   DefinedInitialDataOptions,
@@ -21,8 +18,8 @@ import type {
   UseMutationOptions,
   UseMutationResult,
   UseQueryOptions,
-  UseQueryResult
-} from '@tanstack/react-query';
+  UseQueryResult,
+} from "@tanstack/react-query";
 
 import type {
   BadRequestResponse,
@@ -31,327 +28,488 @@ import type {
   GetConfigParams,
   GetEffectiveConfigParams,
   InternalServerErrorResponse,
-  UnauthorizedResponse
-} from '.././model';
+  UnauthorizedResponse,
+} from ".././model";
 
-import { apiClient } from '../../client';
-
-
-
+import { apiClient } from "../../client";
 
 /**
  * @summary Get configuration
  */
-export const getConfig = (
-    params?: GetConfigParams,
- signal?: AbortSignal
+export const getConfig = (params?: GetConfigParams, signal?: AbortSignal) => {
+  return apiClient<ConfigDocument>({
+    url: `/api/v1/config`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
+
+export const getGetConfigQueryKey = (params?: GetConfigParams) => {
+  return [`/api/v1/config`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetConfigQueryOptions = <
+  TData = Awaited<ReturnType<typeof getConfig>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  params?: GetConfigParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getConfig>>, TError, TData>
+    >;
+  },
 ) => {
-      
-      
-      return apiClient<ConfigDocument>(
-      {url: `/api/v1/config`, method: 'GET',
-        params, signal
-    },
-      );
-    }
-  
+  const { query: queryOptions } = options ?? {};
 
+  const queryKey = queryOptions?.queryKey ?? getGetConfigQueryKey(params);
 
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getConfig>>> = ({
+    signal,
+  }) => getConfig(params, signal);
 
-export const getGetConfigQueryKey = (params?: GetConfigParams,) => {
-    return [
-    `/api/v1/config`, ...(params ? [params]: [])
-    ] as const;
-    }
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getConfig>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    
-export const getGetConfigQueryOptions = <TData = Awaited<ReturnType<typeof getConfig>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(params?: GetConfigParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getConfig>>, TError, TData>>, }
-) => {
+export type GetConfigQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getConfig>>
+>;
+export type GetConfigQueryError =
+  | UnauthorizedResponse
+  | InternalServerErrorResponse;
 
-const {query: queryOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetConfigQueryKey(params);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getConfig>>> = ({ signal }) => getConfig(params, signal);
-
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getConfig>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetConfigQueryResult = NonNullable<Awaited<ReturnType<typeof getConfig>>>
-export type GetConfigQueryError = UnauthorizedResponse | InternalServerErrorResponse
-
-
-export function useGetConfig<TData = Awaited<ReturnType<typeof getConfig>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
- params: undefined |  GetConfigParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getConfig>>, TError, TData>> & Pick<
+export function useGetConfig<
+  TData = Awaited<ReturnType<typeof getConfig>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  params: undefined | GetConfigParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getConfig>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getConfig>>,
           TError,
           Awaited<ReturnType<typeof getConfig>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetConfig<TData = Awaited<ReturnType<typeof getConfig>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
- params?: GetConfigParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getConfig>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetConfig<
+  TData = Awaited<ReturnType<typeof getConfig>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  params?: GetConfigParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getConfig>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getConfig>>,
           TError,
           Awaited<ReturnType<typeof getConfig>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetConfig<TData = Awaited<ReturnType<typeof getConfig>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
- params?: GetConfigParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getConfig>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetConfig<
+  TData = Awaited<ReturnType<typeof getConfig>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  params?: GetConfigParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getConfig>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Get configuration
  */
 
-export function useGetConfig<TData = Awaited<ReturnType<typeof getConfig>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
- params?: GetConfigParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getConfig>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetConfig<
+  TData = Awaited<ReturnType<typeof getConfig>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  params?: GetConfigParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getConfig>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetConfigQueryOptions(params, options);
 
-  const queryOptions = getGetConfigQueryOptions(params,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * @summary Set configuration
  */
 export const setConfig = (
-    configDocument: ConfigDocument,
- signal?: AbortSignal
+  configDocument: ConfigDocument,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<void>(
-      {url: `/api/v1/config`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: configDocument, signal
-    },
-      );
-    }
-  
+  return apiClient<void>({
+    url: `/api/v1/config`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: configDocument,
+    signal,
+  });
+};
 
+export const getSetConfigMutationOptions = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof setConfig>>,
+    TError,
+    { data: ConfigDocument },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof setConfig>>,
+  TError,
+  { data: ConfigDocument },
+  TContext
+> => {
+  const mutationKey = ["setConfig"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getSetConfigMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setConfig>>, TError,{data: ConfigDocument}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof setConfig>>, TError,{data: ConfigDocument}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof setConfig>>,
+    { data: ConfigDocument }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['setConfig'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return setConfig(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type SetConfigMutationResult = NonNullable<
+  Awaited<ReturnType<typeof setConfig>>
+>;
+export type SetConfigMutationBody = ConfigDocument;
+export type SetConfigMutationError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | InternalServerErrorResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setConfig>>, {data: ConfigDocument}> = (props) => {
-          const {data} = props ?? {};
-
-          return  setConfig(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type SetConfigMutationResult = NonNullable<Awaited<ReturnType<typeof setConfig>>>
-    export type SetConfigMutationBody = ConfigDocument
-    export type SetConfigMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse
-
-    /**
+/**
  * @summary Set configuration
  */
-export const useSetConfig = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setConfig>>, TError,{data: ConfigDocument}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof setConfig>>,
-        TError,
-        {data: ConfigDocument},
-        TContext
-      > => {
+export const useSetConfig = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof setConfig>>,
+      TError,
+      { data: ConfigDocument },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof setConfig>>,
+  TError,
+  { data: ConfigDocument },
+  TContext
+> => {
+  const mutationOptions = getSetConfigMutationOptions(options);
 
-      const mutationOptions = getSetConfigMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary Replace configuration
  */
-export const replaceConfig = (
-    configDocument: ConfigDocument,
- ) => {
-      
-      
-      return apiClient<void>(
-      {url: `/api/v1/config`, method: 'PUT',
-      headers: {'Content-Type': 'application/json', },
-      data: configDocument
-    },
-      );
-    }
-  
+export const replaceConfig = (configDocument: ConfigDocument) => {
+  return apiClient<void>({
+    url: `/api/v1/config`,
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    data: configDocument,
+  });
+};
 
+export const getReplaceConfigMutationOptions = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof replaceConfig>>,
+    TError,
+    { data: ConfigDocument },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof replaceConfig>>,
+  TError,
+  { data: ConfigDocument },
+  TContext
+> => {
+  const mutationKey = ["replaceConfig"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getReplaceConfigMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof replaceConfig>>, TError,{data: ConfigDocument}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof replaceConfig>>, TError,{data: ConfigDocument}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof replaceConfig>>,
+    { data: ConfigDocument }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['replaceConfig'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return replaceConfig(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type ReplaceConfigMutationResult = NonNullable<
+  Awaited<ReturnType<typeof replaceConfig>>
+>;
+export type ReplaceConfigMutationBody = ConfigDocument;
+export type ReplaceConfigMutationError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | InternalServerErrorResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof replaceConfig>>, {data: ConfigDocument}> = (props) => {
-          const {data} = props ?? {};
-
-          return  replaceConfig(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type ReplaceConfigMutationResult = NonNullable<Awaited<ReturnType<typeof replaceConfig>>>
-    export type ReplaceConfigMutationBody = ConfigDocument
-    export type ReplaceConfigMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse
-
-    /**
+/**
  * @summary Replace configuration
  */
-export const useReplaceConfig = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof replaceConfig>>, TError,{data: ConfigDocument}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof replaceConfig>>,
-        TError,
-        {data: ConfigDocument},
-        TContext
-      > => {
+export const useReplaceConfig = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof replaceConfig>>,
+      TError,
+      { data: ConfigDocument },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof replaceConfig>>,
+  TError,
+  { data: ConfigDocument },
+  TContext
+> => {
+  const mutationOptions = getReplaceConfigMutationOptions(options);
 
-      const mutationOptions = getReplaceConfigMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * Returns the effective configuration after merging all scopes
 (global -> org -> team -> workflow -> step).
 
  * @summary Get merged effective configuration
  */
 export const getEffectiveConfig = (
-    params?: GetEffectiveConfigParams,
- signal?: AbortSignal
+  params?: GetEffectiveConfigParams,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<ConfigDocument>(
-      {url: `/api/v1/config/effective`, method: 'GET',
-        params, signal
-    },
-      );
-    }
-  
+  return apiClient<ConfigDocument>({
+    url: `/api/v1/config/effective`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
 
-
-
-export const getGetEffectiveConfigQueryKey = (params?: GetEffectiveConfigParams,) => {
-    return [
-    `/api/v1/config/effective`, ...(params ? [params]: [])
-    ] as const;
-    }
-
-    
-export const getGetEffectiveConfigQueryOptions = <TData = Awaited<ReturnType<typeof getEffectiveConfig>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(params?: GetEffectiveConfigParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEffectiveConfig>>, TError, TData>>, }
+export const getGetEffectiveConfigQueryKey = (
+  params?: GetEffectiveConfigParams,
 ) => {
+  return [`/api/v1/config/effective`, ...(params ? [params] : [])] as const;
+};
 
-const {query: queryOptions} = options ?? {};
+export const getGetEffectiveConfigQueryOptions = <
+  TData = Awaited<ReturnType<typeof getEffectiveConfig>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  params?: GetEffectiveConfigParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEffectiveConfig>>,
+        TError,
+        TData
+      >
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetEffectiveConfigQueryKey(params);
+  const queryKey =
+    queryOptions?.queryKey ?? getGetEffectiveConfigQueryKey(params);
 
-  
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getEffectiveConfig>>
+  > = ({ signal }) => getEffectiveConfig(params, signal);
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getEffectiveConfig>>> = ({ signal }) => getEffectiveConfig(params, signal);
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getEffectiveConfig>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-      
+export type GetEffectiveConfigQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getEffectiveConfig>>
+>;
+export type GetEffectiveConfigQueryError =
+  | UnauthorizedResponse
+  | InternalServerErrorResponse;
 
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getEffectiveConfig>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetEffectiveConfigQueryResult = NonNullable<Awaited<ReturnType<typeof getEffectiveConfig>>>
-export type GetEffectiveConfigQueryError = UnauthorizedResponse | InternalServerErrorResponse
-
-
-export function useGetEffectiveConfig<TData = Awaited<ReturnType<typeof getEffectiveConfig>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
- params: undefined |  GetEffectiveConfigParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEffectiveConfig>>, TError, TData>> & Pick<
+export function useGetEffectiveConfig<
+  TData = Awaited<ReturnType<typeof getEffectiveConfig>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  params: undefined | GetEffectiveConfigParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEffectiveConfig>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getEffectiveConfig>>,
           TError,
           Awaited<ReturnType<typeof getEffectiveConfig>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetEffectiveConfig<TData = Awaited<ReturnType<typeof getEffectiveConfig>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
- params?: GetEffectiveConfigParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEffectiveConfig>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetEffectiveConfig<
+  TData = Awaited<ReturnType<typeof getEffectiveConfig>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  params?: GetEffectiveConfigParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEffectiveConfig>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getEffectiveConfig>>,
           TError,
           Awaited<ReturnType<typeof getEffectiveConfig>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetEffectiveConfig<TData = Awaited<ReturnType<typeof getEffectiveConfig>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
- params?: GetEffectiveConfigParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEffectiveConfig>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetEffectiveConfig<
+  TData = Awaited<ReturnType<typeof getEffectiveConfig>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  params?: GetEffectiveConfigParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEffectiveConfig>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Get merged effective configuration
  */
 
-export function useGetEffectiveConfig<TData = Awaited<ReturnType<typeof getEffectiveConfig>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
- params?: GetEffectiveConfigParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEffectiveConfig>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetEffectiveConfig<
+  TData = Awaited<ReturnType<typeof getEffectiveConfig>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  params?: GetEffectiveConfigParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEffectiveConfig>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetEffectiveConfigQueryOptions(params, options);
 
-  const queryOptions = getGetEffectiveConfigQueryOptions(params,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
-

@@ -30,7 +30,20 @@ func runTenantGate(t *testing.T, tc tenantGateCase) {
 	if tc.actx != nil {
 		in.Tenant = tc.actx.Tenant
 	}
-	ctx := ctxWithAuth(tc.actx)
+	// EXPLICIT-BYPASS: when tc.actx is nil we hand the gate a context
+	// with NO auth.ContextKey{} value attached. This is intentional —
+	// the gate is the SECURITY FLOOR for "the request reached us with
+	// no AuthContext at all" (auth middleware bug, replay attempt,
+	// internal caller forgot to plumb the context value). The bypass
+	// is therefore the *positive* exercise of that path; using
+	// `ctxWithAuth(nil)` instead would wrap a typed-nil *AuthContext
+	// pointer and the gate's `actx, ok := ctx.Value(...)` check would
+	// succeed with ok=true — masking the missing-auth code path the
+	// `no_authcontext` case in TestTenantGate_UnauthDenies asserts on.
+	ctx := context.Background()
+	if tc.actx != nil {
+		ctx = ctxWithAuth(tc.actx)
+	}
 	dec := gate.Evaluate(ctx, in)
 	if dec.Decision != tc.wantDecision {
 		t.Fatalf("decision = %v, want %v (reason=%q subReason=%q)", dec.Decision, tc.wantDecision, dec.Reason, dec.SubReason)

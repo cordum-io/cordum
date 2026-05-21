@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class PolicyRuleAction(str, Enum):
     ALLOW = "ALLOW"
     DENY = "DENY"

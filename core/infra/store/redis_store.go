@@ -61,6 +61,28 @@ func NewRedisStore(url string) (*RedisStore, error) {
 		url = defaultRedisURL
 	}
 
+	ttl := redisStoreDataTTL()
+	client, err := redisutil.NewClient(url)
+	if err != nil {
+		return nil, fmt.Errorf("create redis client: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := client.Ping(ctx).Err(); err != nil {
+		return nil, fmt.Errorf("connect redis: %w", err)
+	}
+
+	slog.Debug("redis store connected", "component", "store", "dataTTL", ttl.String())
+	return &RedisStore{client: client, dataTTL: ttl}, nil
+}
+
+// NewRedisStoreFromClient constructs a Redis-backed store from a shared client.
+func NewRedisStoreFromClient(client redis.UniversalClient) *RedisStore {
+	return &RedisStore{client: client, dataTTL: redisStoreDataTTL()}
+}
+
+func redisStoreDataTTL() time.Duration {
 	ttl := defaultDataTTL
 	if ttlSeconds := os.Getenv(envRedisDataTTLInSeconds); ttlSeconds != "" {
 		secs, err := strconv.Atoi(ttlSeconds)
@@ -82,20 +104,7 @@ func NewRedisStore(url string) (*RedisStore, error) {
 			ttl = parsed
 		}
 	}
-
-	client, err := redisutil.NewClient(url)
-	if err != nil {
-		return nil, fmt.Errorf("create redis client: %w", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if err := client.Ping(ctx).Err(); err != nil {
-		return nil, fmt.Errorf("connect redis: %w", err)
-	}
-
-	slog.Debug("redis store connected", "component", "store", "dataTTL", ttl.String())
-	return &RedisStore{client: client, dataTTL: ttl}, nil
+	return ttl
 }
 
 func (s *RedisStore) PutContext(ctx context.Context, key string, data []byte) error {

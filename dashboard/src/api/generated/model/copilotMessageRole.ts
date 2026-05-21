@@ -6,13 +6,13 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type CopilotMessageRole = typeof CopilotMessageRole[keyof typeof CopilotMessageRole];
-
+export type CopilotMessageRole =
+  (typeof CopilotMessageRole)[keyof typeof CopilotMessageRole];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const CopilotMessageRole = {
-  user: 'user',
-  assistant: 'assistant',
-  tool: 'tool',
-  system: 'system',
+  user: "user",
+  assistant: "assistant",
+  tool: "tool",
+  system: "system",
 } as const;

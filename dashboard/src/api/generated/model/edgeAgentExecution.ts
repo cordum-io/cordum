@@ -5,11 +5,11 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { EdgeAgentExecutionAdapter } from './edgeAgentExecutionAdapter';
-import type { EdgeAgentExecutionMode } from './edgeAgentExecutionMode';
-import type { EdgeAgentExecutionStatus } from './edgeAgentExecutionStatus';
-import type { EdgeExecutionMetrics } from './edgeExecutionMetrics';
-import type { EdgeLabels } from './edgeLabels';
+import type { EdgeAgentExecutionAdapter } from "./edgeAgentExecutionAdapter";
+import type { EdgeAgentExecutionMode } from "./edgeAgentExecutionMode";
+import type { EdgeAgentExecutionStatus } from "./edgeAgentExecutionStatus";
+import type { EdgeExecutionMetrics } from "./edgeExecutionMetrics";
+import type { EdgeLabels } from "./edgeLabels";
 
 export interface EdgeAgentExecution {
   execution_id: string;

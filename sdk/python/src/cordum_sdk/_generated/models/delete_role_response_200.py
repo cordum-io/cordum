@@ -12,43 +12,37 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="DeleteRoleResponse200")
 
 
 @_attrs_define
 class DeleteRoleResponse200:
-    """ 
-        Attributes:
-            deleted (bool):
-            name (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        deleted (bool):
+        name (Union[Unset, str]):
+    """
 
     deleted: bool
     name: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         deleted = self.deleted
 
         name = self.name
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "deleted": deleted,
-        })
+        field_dict.update(
+            {
+                "deleted": deleted,
+            }
+        )
         if name is not UNSET:
             field_dict["name"] = name
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -61,7 +55,6 @@ class DeleteRoleResponse200:
             deleted=deleted,
             name=name,
         )
-
 
         delete_role_response_200.additional_properties = d
         return delete_role_response_200

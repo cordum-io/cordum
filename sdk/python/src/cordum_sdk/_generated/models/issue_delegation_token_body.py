@@ -13,23 +13,19 @@ from typing import cast, List
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="IssueDelegationTokenBody")
 
 
 @_attrs_define
 class IssueDelegationTokenBody:
-    """ 
-        Attributes:
-            target_agent_id (str):
-            allowed_actions (Union[Unset, List[str]]):
-            allowed_topics (Union[Unset, List[str]]):
-            ttl_seconds (Union[Unset, int]):
-            parent_token (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        target_agent_id (str):
+        allowed_actions (Union[Unset, List[str]]):
+        allowed_topics (Union[Unset, List[str]]):
+        ttl_seconds (Union[Unset, int]):
+        parent_token (Union[Unset, str]):
+    """
 
     target_agent_id: str
     allowed_actions: Union[Unset, List[str]] = UNSET
@@ -38,7 +34,6 @@ class IssueDelegationTokenBody:
     parent_token: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
         target_agent_id = self.target_agent_id
 
@@ -46,24 +41,21 @@ class IssueDelegationTokenBody:
         if not isinstance(self.allowed_actions, Unset):
             allowed_actions = self.allowed_actions
 
-
-
         allowed_topics: Union[Unset, List[str]] = UNSET
         if not isinstance(self.allowed_topics, Unset):
             allowed_topics = self.allowed_topics
-
-
 
         ttl_seconds = self.ttl_seconds
 
         parent_token = self.parent_token
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "target_agent_id": target_agent_id,
-        })
+        field_dict.update(
+            {
+                "target_agent_id": target_agent_id,
+            }
+        )
         if allowed_actions is not UNSET:
             field_dict["allowed_actions"] = allowed_actions
         if allowed_topics is not UNSET:
@@ -75,8 +67,6 @@ class IssueDelegationTokenBody:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
@@ -84,9 +74,7 @@ class IssueDelegationTokenBody:
 
         allowed_actions = cast(List[str], d.pop("allowed_actions", UNSET))
 
-
         allowed_topics = cast(List[str], d.pop("allowed_topics", UNSET))
-
 
         ttl_seconds = d.pop("ttl_seconds", UNSET)
 
@@ -99,7 +87,6 @@ class IssueDelegationTokenBody:
             ttl_seconds=ttl_seconds,
             parent_token=parent_token,
         )
-
 
         issue_delegation_token_body.additional_properties = d
         return issue_delegation_token_body

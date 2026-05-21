@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import type { User } from "../api/types";
-import { useConfigStore } from "../state/config";
+import { useConfigStore, type AuthCredentials } from "../state/config";
 import { useUiStore } from "../state/ui";
 
 // ---------------------------------------------------------------------------
@@ -10,7 +10,7 @@ import { useUiStore } from "../state/ui";
 
 type SyncMessage =
   | { type: "auth-logout" }
-  | { type: "auth-login"; token: string; user: User }
+  | { type: "auth-login"; creds: AuthCredentials; user: User }
   | { type: "theme-change"; theme: "light" | "dark" | "system" };
 
 let channel: BroadcastChannel | null = null;
@@ -52,8 +52,8 @@ export function useCrossTabSync(): void {
             navigate("/login", { replace: true });
             break;
           case "auth-login":
-            if (msg.token && msg.user) {
-              useConfigStore.getState().login(msg.token, msg.user);
+            if (msg.creds && msg.user) {
+              useConfigStore.getState().login(msg.creds, msg.user);
             }
             break;
           case "theme-change":
@@ -72,18 +72,31 @@ export function useCrossTabSync(): void {
       handleMessage(e.data);
     }
 
-    // localStorage fallback for browsers without BroadcastChannel
+    // localStorage fallback for browsers without BroadcastChannel.
+    //
+    // The active code paths now write user metadata (cordum-user) but NEVER
+    // write the auth token to localStorage (session cookies sync across tabs
+    // automatically via the browser; apikey mode keeps the key in memory).
+    // Watch cordum-user instead of the legacy cordum-api-key: any tab that
+    // logs in/out toggles that key, and the cookie carries the actual auth.
+    //
+    // Since we can't recover the original creds shape from a storage event,
+    // we conservatively assume session mode on user-write (cookie is the auth
+    // artefact); a tab that wanted apikey mode is handled by the primary
+    // BroadcastChannel path above.
     function onStorage(e: StorageEvent) {
-      if (e.key === "cordum-api-key") {
+      if (e.key === "cordum-user") {
         if (!e.newValue) {
           handleMessage({ type: "auth-logout" });
         } else {
-          // Read user from localStorage since StorageEvent doesn't carry full payload
-          const rawUser = window.localStorage.getItem("cordum-user");
           try {
-            const user = rawUser ? (JSON.parse(rawUser) as User) : null;
-            if (user) {
-              handleMessage({ type: "auth-login", token: e.newValue, user });
+            const user = JSON.parse(e.newValue) as User;
+            if (user && user.id) {
+              handleMessage({
+                type: "auth-login",
+                creds: { mode: "session" },
+                user,
+              });
             }
           } catch {
             // corrupt user data — ignore

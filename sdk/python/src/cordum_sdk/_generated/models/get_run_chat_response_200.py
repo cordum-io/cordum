@@ -16,10 +16,7 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.chat_message import ChatMessage
-
-
-
+    from ..models.chat_message import ChatMessage
 
 
 T = TypeVar("T", bound="GetRunChatResponse200")
@@ -27,19 +24,19 @@ T = TypeVar("T", bound="GetRunChatResponse200")
 
 @_attrs_define
 class GetRunChatResponse200:
-    """ 
-        Attributes:
-            next_cursor (Union[None, Unset, str]): Cursor for the next page (null if no more pages)
-            items (Union[Unset, List['ChatMessage']]):
-     """
+    """
+    Attributes:
+        next_cursor (Union[None, Unset, str]): Cursor for the next page (null if no more pages)
+        items (Union[Unset, List['ChatMessage']]):
+    """
 
     next_cursor: Union[None, Unset, str] = UNSET
-    items: Union[Unset, List['ChatMessage']] = UNSET
+    items: Union[Unset, List["ChatMessage"]] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         from ..models.chat_message import ChatMessage
+
         next_cursor: Union[None, Unset, str]
         if isinstance(self.next_cursor, Unset):
             next_cursor = UNSET
@@ -53,13 +50,9 @@ class GetRunChatResponse200:
                 items_item = items_item_data.to_dict()
                 items.append(items_item)
 
-
-
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if next_cursor is not UNSET:
             field_dict["next_cursor"] = next_cursor
         if items is not UNSET:
@@ -67,12 +60,12 @@ class GetRunChatResponse200:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.chat_message import ChatMessage
+
         d = src_dict.copy()
+
         def _parse_next_cursor(data: object) -> Union[None, Unset, str]:
             if data is None:
                 return data
@@ -82,22 +75,17 @@ class GetRunChatResponse200:
 
         next_cursor = _parse_next_cursor(d.pop("next_cursor", UNSET))
 
-
         items = []
         _items = d.pop("items", UNSET)
-        for items_item_data in (_items or []):
+        for items_item_data in _items or []:
             items_item = ChatMessage.from_dict(items_item_data)
 
-
-
             items.append(items_item)
-
 
         get_run_chat_response_200 = cls(
             next_cursor=next_cursor,
             items=items,
         )
-
 
         get_run_chat_response_200.additional_properties = d
         return get_run_chat_response_200

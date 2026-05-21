@@ -5,10 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import {
-  useMutation,
-  useQuery
-} from '@tanstack/react-query';
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
   DataTag,
   DefinedInitialDataOptions,
@@ -21,13 +18,14 @@ import type {
   UseMutationOptions,
   UseMutationResult,
   UseQueryOptions,
-  UseQueryResult
-} from '@tanstack/react-query';
+  UseQueryResult,
+} from "@tanstack/react-query";
 
 import type {
   BadRequestResponse,
-  ConflictResponse,
   CreateBundleSnapshotBody,
+  EdgeConflictResponse,
+  Error,
   ForbiddenResponse,
   GetOutputPolicyStats200,
   GetOutputPolicyStatsParams,
@@ -67,548 +65,820 @@ import type {
   UnauthorizedResponse,
   UpdatePolicyBundleRequest,
   UpdatePolicyGlobalRequest,
-  VelocityRule
-} from '.././model';
+  VelocityRule,
+} from ".././model";
 
-import { apiClient } from '../../client';
-
-
-
+import { apiClient } from "../../client";
 
 /**
  * @summary Evaluate safety policy against a request
  */
 export const evaluatePolicy = (
-    policyCheckRequest: PolicyCheckRequest,
- signal?: AbortSignal
+  policyCheckRequest: PolicyCheckRequest,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<PolicyCheckResponse>(
-      {url: `/api/v1/policy/evaluate`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: policyCheckRequest, signal
-    },
-      );
-    }
-  
+  return apiClient<PolicyCheckResponse>({
+    url: `/api/v1/policy/evaluate`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: policyCheckRequest,
+    signal,
+  });
+};
 
+export const getEvaluatePolicyMutationOptions = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | EdgeConflictResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof evaluatePolicy>>,
+    TError,
+    { data: PolicyCheckRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof evaluatePolicy>>,
+  TError,
+  { data: PolicyCheckRequest },
+  TContext
+> => {
+  const mutationKey = ["evaluatePolicy"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getEvaluatePolicyMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof evaluatePolicy>>, TError,{data: PolicyCheckRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof evaluatePolicy>>, TError,{data: PolicyCheckRequest}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof evaluatePolicy>>,
+    { data: PolicyCheckRequest }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['evaluatePolicy'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return evaluatePolicy(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type EvaluatePolicyMutationResult = NonNullable<
+  Awaited<ReturnType<typeof evaluatePolicy>>
+>;
+export type EvaluatePolicyMutationBody = PolicyCheckRequest;
+export type EvaluatePolicyMutationError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | EdgeConflictResponse
+  | InternalServerErrorResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof evaluatePolicy>>, {data: PolicyCheckRequest}> = (props) => {
-          const {data} = props ?? {};
-
-          return  evaluatePolicy(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type EvaluatePolicyMutationResult = NonNullable<Awaited<ReturnType<typeof evaluatePolicy>>>
-    export type EvaluatePolicyMutationBody = PolicyCheckRequest
-    export type EvaluatePolicyMutationError = BadRequestResponse | UnauthorizedResponse | InternalServerErrorResponse
-
-    /**
+/**
  * @summary Evaluate safety policy against a request
  */
-export const useEvaluatePolicy = <TError = BadRequestResponse | UnauthorizedResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof evaluatePolicy>>, TError,{data: PolicyCheckRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof evaluatePolicy>>,
-        TError,
-        {data: PolicyCheckRequest},
-        TContext
-      > => {
+export const useEvaluatePolicy = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | EdgeConflictResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof evaluatePolicy>>,
+      TError,
+      { data: PolicyCheckRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof evaluatePolicy>>,
+  TError,
+  { data: PolicyCheckRequest },
+  TContext
+> => {
+  const mutationOptions = getEvaluatePolicyMutationOptions(options);
 
-      const mutationOptions = getEvaluatePolicyMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary Simulate policy evaluation (no side effects)
  */
 export const simulatePolicy = (
-    policyCheckRequest: PolicyCheckRequest,
- signal?: AbortSignal
+  policyCheckRequest: PolicyCheckRequest,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<PolicyCheckResponse>(
-      {url: `/api/v1/policy/simulate`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: policyCheckRequest, signal
-    },
-      );
-    }
-  
+  return apiClient<PolicyCheckResponse>({
+    url: `/api/v1/policy/simulate`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: policyCheckRequest,
+    signal,
+  });
+};
 
+export const getSimulatePolicyMutationOptions = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof simulatePolicy>>,
+    TError,
+    { data: PolicyCheckRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof simulatePolicy>>,
+  TError,
+  { data: PolicyCheckRequest },
+  TContext
+> => {
+  const mutationKey = ["simulatePolicy"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getSimulatePolicyMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof simulatePolicy>>, TError,{data: PolicyCheckRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof simulatePolicy>>, TError,{data: PolicyCheckRequest}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof simulatePolicy>>,
+    { data: PolicyCheckRequest }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['simulatePolicy'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return simulatePolicy(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type SimulatePolicyMutationResult = NonNullable<
+  Awaited<ReturnType<typeof simulatePolicy>>
+>;
+export type SimulatePolicyMutationBody = PolicyCheckRequest;
+export type SimulatePolicyMutationError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | InternalServerErrorResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof simulatePolicy>>, {data: PolicyCheckRequest}> = (props) => {
-          const {data} = props ?? {};
-
-          return  simulatePolicy(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type SimulatePolicyMutationResult = NonNullable<Awaited<ReturnType<typeof simulatePolicy>>>
-    export type SimulatePolicyMutationBody = PolicyCheckRequest
-    export type SimulatePolicyMutationError = BadRequestResponse | UnauthorizedResponse | InternalServerErrorResponse
-
-    /**
+/**
  * @summary Simulate policy evaluation (no side effects)
  */
-export const useSimulatePolicy = <TError = BadRequestResponse | UnauthorizedResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof simulatePolicy>>, TError,{data: PolicyCheckRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof simulatePolicy>>,
-        TError,
-        {data: PolicyCheckRequest},
-        TContext
-      > => {
+export const useSimulatePolicy = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof simulatePolicy>>,
+      TError,
+      { data: PolicyCheckRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof simulatePolicy>>,
+  TError,
+  { data: PolicyCheckRequest },
+  TContext
+> => {
+  const mutationOptions = getSimulatePolicyMutationOptions(options);
 
-      const mutationOptions = getSimulatePolicyMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary Explain policy evaluation reasoning
  */
 export const explainPolicy = (
-    policyCheckRequest: PolicyCheckRequest,
- signal?: AbortSignal
+  policyCheckRequest: PolicyCheckRequest,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<PolicyCheckResponse>(
-      {url: `/api/v1/policy/explain`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: policyCheckRequest, signal
-    },
-      );
-    }
-  
+  return apiClient<PolicyCheckResponse>({
+    url: `/api/v1/policy/explain`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: policyCheckRequest,
+    signal,
+  });
+};
 
+export const getExplainPolicyMutationOptions = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | EdgeConflictResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof explainPolicy>>,
+    TError,
+    { data: PolicyCheckRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof explainPolicy>>,
+  TError,
+  { data: PolicyCheckRequest },
+  TContext
+> => {
+  const mutationKey = ["explainPolicy"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getExplainPolicyMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof explainPolicy>>, TError,{data: PolicyCheckRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof explainPolicy>>, TError,{data: PolicyCheckRequest}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof explainPolicy>>,
+    { data: PolicyCheckRequest }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['explainPolicy'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return explainPolicy(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type ExplainPolicyMutationResult = NonNullable<
+  Awaited<ReturnType<typeof explainPolicy>>
+>;
+export type ExplainPolicyMutationBody = PolicyCheckRequest;
+export type ExplainPolicyMutationError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | EdgeConflictResponse
+  | InternalServerErrorResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof explainPolicy>>, {data: PolicyCheckRequest}> = (props) => {
-          const {data} = props ?? {};
-
-          return  explainPolicy(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type ExplainPolicyMutationResult = NonNullable<Awaited<ReturnType<typeof explainPolicy>>>
-    export type ExplainPolicyMutationBody = PolicyCheckRequest
-    export type ExplainPolicyMutationError = BadRequestResponse | UnauthorizedResponse | InternalServerErrorResponse
-
-    /**
+/**
  * @summary Explain policy evaluation reasoning
  */
-export const useExplainPolicy = <TError = BadRequestResponse | UnauthorizedResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof explainPolicy>>, TError,{data: PolicyCheckRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof explainPolicy>>,
-        TError,
-        {data: PolicyCheckRequest},
-        TContext
-      > => {
+export const useExplainPolicy = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | EdgeConflictResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof explainPolicy>>,
+      TError,
+      { data: PolicyCheckRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof explainPolicy>>,
+  TError,
+  { data: PolicyCheckRequest },
+  TContext
+> => {
+  const mutationOptions = getExplainPolicyMutationOptions(options);
 
-      const mutationOptions = getExplainPolicyMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary List policy snapshots
  */
-export const listPolicySnapshots = (
-    
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<PolicySnapshot[]>(
-      {url: `/api/v1/policy/snapshots`, method: 'GET', signal
-    },
-      );
-    }
-  
-
-
+export const listPolicySnapshots = (signal?: AbortSignal) => {
+  return apiClient<PolicySnapshot[]>({
+    url: `/api/v1/policy/snapshots`,
+    method: "GET",
+    signal,
+  });
+};
 
 export const getListPolicySnapshotsQueryKey = () => {
-    return [
-    `/api/v1/policy/snapshots`
-    ] as const;
-    }
+  return [`/api/v1/policy/snapshots`] as const;
+};
 
-    
-export const getListPolicySnapshotsQueryOptions = <TData = Awaited<ReturnType<typeof listPolicySnapshots>>, TError = UnauthorizedResponse | InternalServerErrorResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPolicySnapshots>>, TError, TData>>, }
-) => {
+export const getListPolicySnapshotsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listPolicySnapshots>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(options?: {
+  query?: Partial<
+    UseQueryOptions<
+      Awaited<ReturnType<typeof listPolicySnapshots>>,
+      TError,
+      TData
+    >
+  >;
+}) => {
+  const { query: queryOptions } = options ?? {};
 
-const {query: queryOptions} = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getListPolicySnapshotsQueryKey();
 
-  const queryKey =  queryOptions?.queryKey ?? getListPolicySnapshotsQueryKey();
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listPolicySnapshots>>
+  > = ({ signal }) => listPolicySnapshots(signal);
 
-  
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listPolicySnapshots>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listPolicySnapshots>>> = ({ signal }) => listPolicySnapshots(signal);
+export type ListPolicySnapshotsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listPolicySnapshots>>
+>;
+export type ListPolicySnapshotsQueryError =
+  | UnauthorizedResponse
+  | InternalServerErrorResponse;
 
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listPolicySnapshots>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type ListPolicySnapshotsQueryResult = NonNullable<Awaited<ReturnType<typeof listPolicySnapshots>>>
-export type ListPolicySnapshotsQueryError = UnauthorizedResponse | InternalServerErrorResponse
-
-
-export function useListPolicySnapshots<TData = Awaited<ReturnType<typeof listPolicySnapshots>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPolicySnapshots>>, TError, TData>> & Pick<
+export function useListPolicySnapshots<
+  TData = Awaited<ReturnType<typeof listPolicySnapshots>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listPolicySnapshots>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listPolicySnapshots>>,
           TError,
           Awaited<ReturnType<typeof listPolicySnapshots>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListPolicySnapshots<TData = Awaited<ReturnType<typeof listPolicySnapshots>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPolicySnapshots>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListPolicySnapshots<
+  TData = Awaited<ReturnType<typeof listPolicySnapshots>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listPolicySnapshots>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listPolicySnapshots>>,
           TError,
           Awaited<ReturnType<typeof listPolicySnapshots>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListPolicySnapshots<TData = Awaited<ReturnType<typeof listPolicySnapshots>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPolicySnapshots>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListPolicySnapshots<
+  TData = Awaited<ReturnType<typeof listPolicySnapshots>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listPolicySnapshots>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary List policy snapshots
  */
 
-export function useListPolicySnapshots<TData = Awaited<ReturnType<typeof listPolicySnapshots>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPolicySnapshots>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useListPolicySnapshots<
+  TData = Awaited<ReturnType<typeof listPolicySnapshots>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listPolicySnapshots>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListPolicySnapshotsQueryOptions(options);
 
-  const queryOptions = getListPolicySnapshotsQueryOptions(options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * @summary List policy rules
  */
 export const listPolicyRules = (
-    params?: ListPolicyRulesParams,
- signal?: AbortSignal
+  params?: ListPolicyRulesParams,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<ListPolicyRules200>(
-      {url: `/api/v1/policy/rules`, method: 'GET',
-        params, signal
-    },
-      );
-    }
-  
+  return apiClient<ListPolicyRules200>({
+    url: `/api/v1/policy/rules`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
 
+export const getListPolicyRulesQueryKey = (params?: ListPolicyRulesParams) => {
+  return [`/api/v1/policy/rules`, ...(params ? [params] : [])] as const;
+};
 
-
-export const getListPolicyRulesQueryKey = (params?: ListPolicyRulesParams,) => {
-    return [
-    `/api/v1/policy/rules`, ...(params ? [params]: [])
-    ] as const;
-    }
-
-    
-export const getListPolicyRulesQueryOptions = <TData = Awaited<ReturnType<typeof listPolicyRules>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(params?: ListPolicyRulesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPolicyRules>>, TError, TData>>, }
+export const getListPolicyRulesQueryOptions = <
+  TData = Awaited<ReturnType<typeof listPolicyRules>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  params?: ListPolicyRulesParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listPolicyRules>>,
+        TError,
+        TData
+      >
+    >;
+  },
 ) => {
+  const { query: queryOptions } = options ?? {};
 
-const {query: queryOptions} = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getListPolicyRulesQueryKey(params);
 
-  const queryKey =  queryOptions?.queryKey ?? getListPolicyRulesQueryKey(params);
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listPolicyRules>>> = ({
+    signal,
+  }) => listPolicyRules(params, signal);
 
-  
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listPolicyRules>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listPolicyRules>>> = ({ signal }) => listPolicyRules(params, signal);
+export type ListPolicyRulesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listPolicyRules>>
+>;
+export type ListPolicyRulesQueryError =
+  | UnauthorizedResponse
+  | InternalServerErrorResponse;
 
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listPolicyRules>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type ListPolicyRulesQueryResult = NonNullable<Awaited<ReturnType<typeof listPolicyRules>>>
-export type ListPolicyRulesQueryError = UnauthorizedResponse | InternalServerErrorResponse
-
-
-export function useListPolicyRules<TData = Awaited<ReturnType<typeof listPolicyRules>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
- params: undefined |  ListPolicyRulesParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPolicyRules>>, TError, TData>> & Pick<
+export function useListPolicyRules<
+  TData = Awaited<ReturnType<typeof listPolicyRules>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  params: undefined | ListPolicyRulesParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listPolicyRules>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listPolicyRules>>,
           TError,
           Awaited<ReturnType<typeof listPolicyRules>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListPolicyRules<TData = Awaited<ReturnType<typeof listPolicyRules>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
- params?: ListPolicyRulesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPolicyRules>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListPolicyRules<
+  TData = Awaited<ReturnType<typeof listPolicyRules>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  params?: ListPolicyRulesParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listPolicyRules>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listPolicyRules>>,
           TError,
           Awaited<ReturnType<typeof listPolicyRules>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListPolicyRules<TData = Awaited<ReturnType<typeof listPolicyRules>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
- params?: ListPolicyRulesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPolicyRules>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListPolicyRules<
+  TData = Awaited<ReturnType<typeof listPolicyRules>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  params?: ListPolicyRulesParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listPolicyRules>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary List policy rules
  */
 
-export function useListPolicyRules<TData = Awaited<ReturnType<typeof listPolicyRules>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
- params?: ListPolicyRulesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPolicyRules>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useListPolicyRules<
+  TData = Awaited<ReturnType<typeof listPolicyRules>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  params?: ListPolicyRulesParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listPolicyRules>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListPolicyRulesQueryOptions(params, options);
 
-  const queryOptions = getListPolicyRulesQueryOptions(params,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
 
-
-
-
 /**
  * @summary List output policy rules
  */
-export const listOutputRules = (
-    
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<OutputRule[]>(
-      {url: `/api/v1/policy/output/rules`, method: 'GET', signal
-    },
-      );
-    }
-  
-
-
+export const listOutputRules = (signal?: AbortSignal) => {
+  return apiClient<OutputRule[]>({
+    url: `/api/v1/policy/output/rules`,
+    method: "GET",
+    signal,
+  });
+};
 
 export const getListOutputRulesQueryKey = () => {
-    return [
-    `/api/v1/policy/output/rules`
-    ] as const;
-    }
+  return [`/api/v1/policy/output/rules`] as const;
+};
 
-    
-export const getListOutputRulesQueryOptions = <TData = Awaited<ReturnType<typeof listOutputRules>>, TError = UnauthorizedResponse | InternalServerErrorResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listOutputRules>>, TError, TData>>, }
-) => {
+export const getListOutputRulesQueryOptions = <
+  TData = Awaited<ReturnType<typeof listOutputRules>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(options?: {
+  query?: Partial<
+    UseQueryOptions<Awaited<ReturnType<typeof listOutputRules>>, TError, TData>
+  >;
+}) => {
+  const { query: queryOptions } = options ?? {};
 
-const {query: queryOptions} = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getListOutputRulesQueryKey();
 
-  const queryKey =  queryOptions?.queryKey ?? getListOutputRulesQueryKey();
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listOutputRules>>> = ({
+    signal,
+  }) => listOutputRules(signal);
 
-  
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listOutputRules>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listOutputRules>>> = ({ signal }) => listOutputRules(signal);
+export type ListOutputRulesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listOutputRules>>
+>;
+export type ListOutputRulesQueryError =
+  | UnauthorizedResponse
+  | InternalServerErrorResponse;
 
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listOutputRules>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type ListOutputRulesQueryResult = NonNullable<Awaited<ReturnType<typeof listOutputRules>>>
-export type ListOutputRulesQueryError = UnauthorizedResponse | InternalServerErrorResponse
-
-
-export function useListOutputRules<TData = Awaited<ReturnType<typeof listOutputRules>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listOutputRules>>, TError, TData>> & Pick<
+export function useListOutputRules<
+  TData = Awaited<ReturnType<typeof listOutputRules>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listOutputRules>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listOutputRules>>,
           TError,
           Awaited<ReturnType<typeof listOutputRules>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListOutputRules<TData = Awaited<ReturnType<typeof listOutputRules>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listOutputRules>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListOutputRules<
+  TData = Awaited<ReturnType<typeof listOutputRules>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listOutputRules>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listOutputRules>>,
           TError,
           Awaited<ReturnType<typeof listOutputRules>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListOutputRules<TData = Awaited<ReturnType<typeof listOutputRules>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listOutputRules>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListOutputRules<
+  TData = Awaited<ReturnType<typeof listOutputRules>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listOutputRules>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary List output policy rules
  */
 
-export function useListOutputRules<TData = Awaited<ReturnType<typeof listOutputRules>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listOutputRules>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useListOutputRules<
+  TData = Awaited<ReturnType<typeof listOutputRules>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listOutputRules>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListOutputRulesQueryOptions(options);
 
-  const queryOptions = getListOutputRulesQueryOptions(options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
 
+/**
+ * @summary Create or update an output policy rule
+ */
+export const upsertOutputRule = (id: string, outputRule: OutputRule) => {
+  return apiClient<OutputRule>({
+    url: `/api/v1/policy/output/rules/${id}`,
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    data: outputRule,
+  });
+};
 
+export const getUpsertOutputRuleMutationOptions = <
+  TError = Error | UnauthorizedResponse | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof upsertOutputRule>>,
+    TError,
+    { id: string; data: OutputRule },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof upsertOutputRule>>,
+  TError,
+  { id: string; data: OutputRule },
+  TContext
+> => {
+  const mutationKey = ["upsertOutputRule"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof upsertOutputRule>>,
+    { id: string; data: OutputRule }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return upsertOutputRule(id, data);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpsertOutputRuleMutationResult = NonNullable<
+  Awaited<ReturnType<typeof upsertOutputRule>>
+>;
+export type UpsertOutputRuleMutationBody = OutputRule;
+export type UpsertOutputRuleMutationError =
+  | Error
+  | UnauthorizedResponse
+  | InternalServerErrorResponse;
 
 /**
  * @summary Create or update an output policy rule
  */
-export const upsertOutputRule = (
-    id: string,
-    outputRule: OutputRule,
- ) => {
-      
-      
-      return apiClient<OutputRule>(
-      {url: `/api/v1/policy/output/rules/${id}`, method: 'PUT',
-      headers: {'Content-Type': 'application/json', },
-      data: outputRule
-    },
-      );
-    }
-  
+export const useUpsertOutputRule = <
+  TError = Error | UnauthorizedResponse | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof upsertOutputRule>>,
+      TError,
+      { id: string; data: OutputRule },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof upsertOutputRule>>,
+  TError,
+  { id: string; data: OutputRule },
+  TContext
+> => {
+  const mutationOptions = getUpsertOutputRuleMutationOptions(options);
 
-
-export const getUpsertOutputRuleMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof upsertOutputRule>>, TError,{id: string;data: OutputRule}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof upsertOutputRule>>, TError,{id: string;data: OutputRule}, TContext> => {
-
-const mutationKey = ['upsertOutputRule'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
-
-      
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof upsertOutputRule>>, {id: string;data: OutputRule}> = (props) => {
-          const {id,data} = props ?? {};
-
-          return  upsertOutputRule(id,data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type UpsertOutputRuleMutationResult = NonNullable<Awaited<ReturnType<typeof upsertOutputRule>>>
-    export type UpsertOutputRuleMutationBody = OutputRule
-    export type UpsertOutputRuleMutationError = BadRequestResponse | UnauthorizedResponse | InternalServerErrorResponse
-
-    /**
- * @summary Create or update an output policy rule
- */
-export const useUpsertOutputRule = <TError = BadRequestResponse | UnauthorizedResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof upsertOutputRule>>, TError,{id: string;data: OutputRule}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof upsertOutputRule>>,
-        TError,
-        {id: string;data: OutputRule},
-        TContext
-      > => {
-
-      const mutationOptions = getUpsertOutputRuleMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * EDGE-052 — returns the five-section view of the Global policy
 authority that all four evaluators (Cordum job, Edge action, MCP
 tool, output scan) consult. Each section is a YAML SafetyPolicy
@@ -616,94 +886,141 @@ fragment persisted under a dedicated `secops/`-prefixed bundle key.
 
  * @summary Read the unified Global policy authority
  */
-export const getPolicyGlobal = (
-    
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<PolicyGlobalDocument>(
-      {url: `/api/v1/policy/global`, method: 'GET', signal
-    },
-      );
-    }
-  
-
-
+export const getPolicyGlobal = (signal?: AbortSignal) => {
+  return apiClient<PolicyGlobalDocument>({
+    url: `/api/v1/policy/global`,
+    method: "GET",
+    signal,
+  });
+};
 
 export const getGetPolicyGlobalQueryKey = () => {
-    return [
-    `/api/v1/policy/global`
-    ] as const;
-    }
+  return [`/api/v1/policy/global`] as const;
+};
 
-    
-export const getGetPolicyGlobalQueryOptions = <TData = Awaited<ReturnType<typeof getPolicyGlobal>>, TError = UnauthorizedResponse | InternalServerErrorResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyGlobal>>, TError, TData>>, }
-) => {
+export const getGetPolicyGlobalQueryOptions = <
+  TData = Awaited<ReturnType<typeof getPolicyGlobal>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(options?: {
+  query?: Partial<
+    UseQueryOptions<Awaited<ReturnType<typeof getPolicyGlobal>>, TError, TData>
+  >;
+}) => {
+  const { query: queryOptions } = options ?? {};
 
-const {query: queryOptions} = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getGetPolicyGlobalQueryKey();
 
-  const queryKey =  queryOptions?.queryKey ?? getGetPolicyGlobalQueryKey();
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getPolicyGlobal>>> = ({
+    signal,
+  }) => getPolicyGlobal(signal);
 
-  
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getPolicyGlobal>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPolicyGlobal>>> = ({ signal }) => getPolicyGlobal(signal);
+export type GetPolicyGlobalQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getPolicyGlobal>>
+>;
+export type GetPolicyGlobalQueryError =
+  | UnauthorizedResponse
+  | InternalServerErrorResponse;
 
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPolicyGlobal>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetPolicyGlobalQueryResult = NonNullable<Awaited<ReturnType<typeof getPolicyGlobal>>>
-export type GetPolicyGlobalQueryError = UnauthorizedResponse | InternalServerErrorResponse
-
-
-export function useGetPolicyGlobal<TData = Awaited<ReturnType<typeof getPolicyGlobal>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyGlobal>>, TError, TData>> & Pick<
+export function useGetPolicyGlobal<
+  TData = Awaited<ReturnType<typeof getPolicyGlobal>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getPolicyGlobal>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getPolicyGlobal>>,
           TError,
           Awaited<ReturnType<typeof getPolicyGlobal>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetPolicyGlobal<TData = Awaited<ReturnType<typeof getPolicyGlobal>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyGlobal>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetPolicyGlobal<
+  TData = Awaited<ReturnType<typeof getPolicyGlobal>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getPolicyGlobal>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getPolicyGlobal>>,
           TError,
           Awaited<ReturnType<typeof getPolicyGlobal>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetPolicyGlobal<TData = Awaited<ReturnType<typeof getPolicyGlobal>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyGlobal>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetPolicyGlobal<
+  TData = Awaited<ReturnType<typeof getPolicyGlobal>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getPolicyGlobal>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Read the unified Global policy authority
  */
 
-export function useGetPolicyGlobal<TData = Awaited<ReturnType<typeof getPolicyGlobal>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyGlobal>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetPolicyGlobal<
+  TData = Awaited<ReturnType<typeof getPolicyGlobal>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getPolicyGlobal>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetPolicyGlobalQueryOptions(options);
 
-  const queryOptions = getGetPolicyGlobalQueryOptions(options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * EDGE-052 — atomically writes one or more sections of the Global
@@ -715,686 +1032,1099 @@ snapshot the request is rejected with 409 Conflict.
  * @summary Atomically update the unified Global policy authority
  */
 export const updatePolicyGlobal = (
-    updatePolicyGlobalRequest: UpdatePolicyGlobalRequest,
- ) => {
-      
-      
-      return apiClient<PolicyGlobalDocument>(
-      {url: `/api/v1/policy/global`, method: 'PUT',
-      headers: {'Content-Type': 'application/json', },
-      data: updatePolicyGlobalRequest
-    },
-      );
-    }
-  
+  updatePolicyGlobalRequest: UpdatePolicyGlobalRequest,
+) => {
+  return apiClient<PolicyGlobalDocument>({
+    url: `/api/v1/policy/global`,
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    data: updatePolicyGlobalRequest,
+  });
+};
 
+export const getUpdatePolicyGlobalMutationOptions = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updatePolicyGlobal>>,
+    TError,
+    { data: UpdatePolicyGlobalRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updatePolicyGlobal>>,
+  TError,
+  { data: UpdatePolicyGlobalRequest },
+  TContext
+> => {
+  const mutationKey = ["updatePolicyGlobal"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getUpdatePolicyGlobalMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | void | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updatePolicyGlobal>>, TError,{data: UpdatePolicyGlobalRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof updatePolicyGlobal>>, TError,{data: UpdatePolicyGlobalRequest}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updatePolicyGlobal>>,
+    { data: UpdatePolicyGlobalRequest }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['updatePolicyGlobal'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return updatePolicyGlobal(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type UpdatePolicyGlobalMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updatePolicyGlobal>>
+>;
+export type UpdatePolicyGlobalMutationBody = UpdatePolicyGlobalRequest;
+export type UpdatePolicyGlobalMutationError =
+  | Error
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | InternalServerErrorResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updatePolicyGlobal>>, {data: UpdatePolicyGlobalRequest}> = (props) => {
-          const {data} = props ?? {};
-
-          return  updatePolicyGlobal(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type UpdatePolicyGlobalMutationResult = NonNullable<Awaited<ReturnType<typeof updatePolicyGlobal>>>
-    export type UpdatePolicyGlobalMutationBody = UpdatePolicyGlobalRequest
-    export type UpdatePolicyGlobalMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | void | InternalServerErrorResponse
-
-    /**
+/**
  * @summary Atomically update the unified Global policy authority
  */
-export const useUpdatePolicyGlobal = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | void | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updatePolicyGlobal>>, TError,{data: UpdatePolicyGlobalRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof updatePolicyGlobal>>,
-        TError,
-        {data: UpdatePolicyGlobalRequest},
-        TContext
-      > => {
+export const useUpdatePolicyGlobal = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof updatePolicyGlobal>>,
+      TError,
+      { data: UpdatePolicyGlobalRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof updatePolicyGlobal>>,
+  TError,
+  { data: UpdatePolicyGlobalRequest },
+  TContext
+> => {
+  const mutationOptions = getUpdatePolicyGlobalMutationOptions(options);
 
-      const mutationOptions = getUpdatePolicyGlobalMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary List policy bundles
  */
-export const listPolicyBundles = (
-    
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<ListPolicyBundles200>(
-      {url: `/api/v1/policy/bundles`, method: 'GET', signal
-    },
-      );
-    }
-  
-
-
+export const listPolicyBundles = (signal?: AbortSignal) => {
+  return apiClient<ListPolicyBundles200>({
+    url: `/api/v1/policy/bundles`,
+    method: "GET",
+    signal,
+  });
+};
 
 export const getListPolicyBundlesQueryKey = () => {
-    return [
-    `/api/v1/policy/bundles`
-    ] as const;
-    }
+  return [`/api/v1/policy/bundles`] as const;
+};
 
-    
-export const getListPolicyBundlesQueryOptions = <TData = Awaited<ReturnType<typeof listPolicyBundles>>, TError = UnauthorizedResponse | InternalServerErrorResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPolicyBundles>>, TError, TData>>, }
-) => {
+export const getListPolicyBundlesQueryOptions = <
+  TData = Awaited<ReturnType<typeof listPolicyBundles>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(options?: {
+  query?: Partial<
+    UseQueryOptions<
+      Awaited<ReturnType<typeof listPolicyBundles>>,
+      TError,
+      TData
+    >
+  >;
+}) => {
+  const { query: queryOptions } = options ?? {};
 
-const {query: queryOptions} = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getListPolicyBundlesQueryKey();
 
-  const queryKey =  queryOptions?.queryKey ?? getListPolicyBundlesQueryKey();
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listPolicyBundles>>
+  > = ({ signal }) => listPolicyBundles(signal);
 
-  
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listPolicyBundles>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listPolicyBundles>>> = ({ signal }) => listPolicyBundles(signal);
+export type ListPolicyBundlesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listPolicyBundles>>
+>;
+export type ListPolicyBundlesQueryError =
+  | UnauthorizedResponse
+  | InternalServerErrorResponse;
 
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listPolicyBundles>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type ListPolicyBundlesQueryResult = NonNullable<Awaited<ReturnType<typeof listPolicyBundles>>>
-export type ListPolicyBundlesQueryError = UnauthorizedResponse | InternalServerErrorResponse
-
-
-export function useListPolicyBundles<TData = Awaited<ReturnType<typeof listPolicyBundles>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPolicyBundles>>, TError, TData>> & Pick<
+export function useListPolicyBundles<
+  TData = Awaited<ReturnType<typeof listPolicyBundles>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listPolicyBundles>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listPolicyBundles>>,
           TError,
           Awaited<ReturnType<typeof listPolicyBundles>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListPolicyBundles<TData = Awaited<ReturnType<typeof listPolicyBundles>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPolicyBundles>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListPolicyBundles<
+  TData = Awaited<ReturnType<typeof listPolicyBundles>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listPolicyBundles>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listPolicyBundles>>,
           TError,
           Awaited<ReturnType<typeof listPolicyBundles>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListPolicyBundles<TData = Awaited<ReturnType<typeof listPolicyBundles>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPolicyBundles>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListPolicyBundles<
+  TData = Awaited<ReturnType<typeof listPolicyBundles>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listPolicyBundles>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary List policy bundles
  */
 
-export function useListPolicyBundles<TData = Awaited<ReturnType<typeof listPolicyBundles>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPolicyBundles>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useListPolicyBundles<
+  TData = Awaited<ReturnType<typeof listPolicyBundles>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listPolicyBundles>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListPolicyBundlesQueryOptions(options);
 
-  const queryOptions = getListPolicyBundlesQueryOptions(options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
 
-
-
-
 /**
  * @summary Get a policy bundle with content
  */
-export const getPolicyBundle = (
-    id: string,
- signal?: AbortSignal
+export const getPolicyBundle = (id: string, signal?: AbortSignal) => {
+  return apiClient<PolicyBundleDetail>({
+    url: `/api/v1/policy/bundles/${id}`,
+    method: "GET",
+    signal,
+  });
+};
+
+export const getGetPolicyBundleQueryKey = (id?: string) => {
+  return [`/api/v1/policy/bundles/${id}`] as const;
+};
+
+export const getGetPolicyBundleQueryOptions = <
+  TData = Awaited<ReturnType<typeof getPolicyBundle>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getPolicyBundle>>,
+        TError,
+        TData
+      >
+    >;
+  },
 ) => {
-      
-      
-      return apiClient<PolicyBundleDetail>(
-      {url: `/api/v1/policy/bundles/${id}`, method: 'GET', signal
-    },
-      );
-    }
-  
+  const { query: queryOptions } = options ?? {};
 
+  const queryKey = queryOptions?.queryKey ?? getGetPolicyBundleQueryKey(id);
 
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getPolicyBundle>>> = ({
+    signal,
+  }) => getPolicyBundle(id, signal);
 
-export const getGetPolicyBundleQueryKey = (id?: string,) => {
-    return [
-    `/api/v1/policy/bundles/${id}`
-    ] as const;
-    }
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getPolicyBundle>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    
-export const getGetPolicyBundleQueryOptions = <TData = Awaited<ReturnType<typeof getPolicyBundle>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyBundle>>, TError, TData>>, }
-) => {
+export type GetPolicyBundleQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getPolicyBundle>>
+>;
+export type GetPolicyBundleQueryError =
+  | UnauthorizedResponse
+  | NotFoundResponse
+  | InternalServerErrorResponse;
 
-const {query: queryOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetPolicyBundleQueryKey(id);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPolicyBundle>>> = ({ signal }) => getPolicyBundle(id, signal);
-
-      
-
-      
-
-   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPolicyBundle>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetPolicyBundleQueryResult = NonNullable<Awaited<ReturnType<typeof getPolicyBundle>>>
-export type GetPolicyBundleQueryError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse
-
-
-export function useGetPolicyBundle<TData = Awaited<ReturnType<typeof getPolicyBundle>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyBundle>>, TError, TData>> & Pick<
+export function useGetPolicyBundle<
+  TData = Awaited<ReturnType<typeof getPolicyBundle>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getPolicyBundle>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getPolicyBundle>>,
           TError,
           Awaited<ReturnType<typeof getPolicyBundle>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetPolicyBundle<TData = Awaited<ReturnType<typeof getPolicyBundle>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyBundle>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetPolicyBundle<
+  TData = Awaited<ReturnType<typeof getPolicyBundle>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getPolicyBundle>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getPolicyBundle>>,
           TError,
           Awaited<ReturnType<typeof getPolicyBundle>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetPolicyBundle<TData = Awaited<ReturnType<typeof getPolicyBundle>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyBundle>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetPolicyBundle<
+  TData = Awaited<ReturnType<typeof getPolicyBundle>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getPolicyBundle>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Get a policy bundle with content
  */
 
-export function useGetPolicyBundle<TData = Awaited<ReturnType<typeof getPolicyBundle>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyBundle>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetPolicyBundle<
+  TData = Awaited<ReturnType<typeof getPolicyBundle>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getPolicyBundle>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetPolicyBundleQueryOptions(id, options);
 
-  const queryOptions = getGetPolicyBundleQueryOptions(id,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * @summary Update a policy bundle
  */
 export const updatePolicyBundle = (
-    id: string,
-    updatePolicyBundleRequest: UpdatePolicyBundleRequest,
- ) => {
-      
-      
-      return apiClient<PolicyBundleDetail>(
-      {url: `/api/v1/policy/bundles/${id}`, method: 'PUT',
-      headers: {'Content-Type': 'application/json', },
-      data: updatePolicyBundleRequest
-    },
-      );
-    }
-  
+  id: string,
+  updatePolicyBundleRequest: UpdatePolicyBundleRequest,
+) => {
+  return apiClient<PolicyBundleDetail>({
+    url: `/api/v1/policy/bundles/${id}`,
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    data: updatePolicyBundleRequest,
+  });
+};
 
+export const getUpdatePolicyBundleMutationOptions = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updatePolicyBundle>>,
+    TError,
+    { id: string; data: UpdatePolicyBundleRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updatePolicyBundle>>,
+  TError,
+  { id: string; data: UpdatePolicyBundleRequest },
+  TContext
+> => {
+  const mutationKey = ["updatePolicyBundle"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getUpdatePolicyBundleMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updatePolicyBundle>>, TError,{id: string;data: UpdatePolicyBundleRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof updatePolicyBundle>>, TError,{id: string;data: UpdatePolicyBundleRequest}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updatePolicyBundle>>,
+    { id: string; data: UpdatePolicyBundleRequest }
+  > = (props) => {
+    const { id, data } = props ?? {};
 
-const mutationKey = ['updatePolicyBundle'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return updatePolicyBundle(id, data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type UpdatePolicyBundleMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updatePolicyBundle>>
+>;
+export type UpdatePolicyBundleMutationBody = UpdatePolicyBundleRequest;
+export type UpdatePolicyBundleMutationError =
+  | Error
+  | UnauthorizedResponse
+  | NotFoundResponse
+  | InternalServerErrorResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updatePolicyBundle>>, {id: string;data: UpdatePolicyBundleRequest}> = (props) => {
-          const {id,data} = props ?? {};
-
-          return  updatePolicyBundle(id,data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type UpdatePolicyBundleMutationResult = NonNullable<Awaited<ReturnType<typeof updatePolicyBundle>>>
-    export type UpdatePolicyBundleMutationBody = UpdatePolicyBundleRequest
-    export type UpdatePolicyBundleMutationError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse
-
-    /**
+/**
  * @summary Update a policy bundle
  */
-export const useUpdatePolicyBundle = <TError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updatePolicyBundle>>, TError,{id: string;data: UpdatePolicyBundleRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof updatePolicyBundle>>,
-        TError,
-        {id: string;data: UpdatePolicyBundleRequest},
-        TContext
-      > => {
+export const useUpdatePolicyBundle = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof updatePolicyBundle>>,
+      TError,
+      { id: string; data: UpdatePolicyBundleRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof updatePolicyBundle>>,
+  TError,
+  { id: string; data: UpdatePolicyBundleRequest },
+  TContext
+> => {
+  const mutationOptions = getUpdatePolicyBundleMutationOptions(options);
 
-      const mutationOptions = getUpdatePolicyBundleMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary Delete a policy bundle
  */
-export const deletePolicyBundle = (
-    id: string,
- ) => {
-      
-      
-      return apiClient<void>(
-      {url: `/api/v1/policy/bundles/${id}`, method: 'DELETE'
-    },
-      );
-    }
-  
+export const deletePolicyBundle = (id: string) => {
+  return apiClient<void>({
+    url: `/api/v1/policy/bundles/${id}`,
+    method: "DELETE",
+  });
+};
 
+export const getDeletePolicyBundleMutationOptions = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deletePolicyBundle>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deletePolicyBundle>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["deletePolicyBundle"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getDeletePolicyBundleMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deletePolicyBundle>>, TError,{id: string}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof deletePolicyBundle>>, TError,{id: string}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deletePolicyBundle>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
 
-const mutationKey = ['deletePolicyBundle'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return deletePolicyBundle(id);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type DeletePolicyBundleMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deletePolicyBundle>>
+>;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deletePolicyBundle>>, {id: string}> = (props) => {
-          const {id} = props ?? {};
+export type DeletePolicyBundleMutationError =
+  | Error
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse
+  | InternalServerErrorResponse;
 
-          return  deletePolicyBundle(id,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type DeletePolicyBundleMutationResult = NonNullable<Awaited<ReturnType<typeof deletePolicyBundle>>>
-    
-    export type DeletePolicyBundleMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse
-
-    /**
+/**
  * @summary Delete a policy bundle
  */
-export const useDeletePolicyBundle = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deletePolicyBundle>>, TError,{id: string}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof deletePolicyBundle>>,
-        TError,
-        {id: string},
-        TContext
-      > => {
+export const useDeletePolicyBundle = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof deletePolicyBundle>>,
+      TError,
+      { id: string },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof deletePolicyBundle>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationOptions = getDeletePolicyBundleMutationOptions(options);
 
-      const mutationOptions = getDeletePolicyBundleMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary Simulate a policy bundle against a request
  */
 export const simulatePolicyBundle = (
-    id: string,
-    simulatePolicyBundleBody: SimulatePolicyBundleBody,
- signal?: AbortSignal
+  id: string,
+  simulatePolicyBundleBody: SimulatePolicyBundleBody,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<PolicyCheckResponse>(
-      {url: `/api/v1/policy/bundles/${id}/simulate`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: simulatePolicyBundleBody, signal
-    },
-      );
-    }
-  
+  return apiClient<PolicyCheckResponse>({
+    url: `/api/v1/policy/bundles/${id}/simulate`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: simulatePolicyBundleBody,
+    signal,
+  });
+};
 
+export const getSimulatePolicyBundleMutationOptions = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof simulatePolicyBundle>>,
+    TError,
+    { id: string; data: SimulatePolicyBundleBody },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof simulatePolicyBundle>>,
+  TError,
+  { id: string; data: SimulatePolicyBundleBody },
+  TContext
+> => {
+  const mutationKey = ["simulatePolicyBundle"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getSimulatePolicyBundleMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof simulatePolicyBundle>>, TError,{id: string;data: SimulatePolicyBundleBody}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof simulatePolicyBundle>>, TError,{id: string;data: SimulatePolicyBundleBody}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof simulatePolicyBundle>>,
+    { id: string; data: SimulatePolicyBundleBody }
+  > = (props) => {
+    const { id, data } = props ?? {};
 
-const mutationKey = ['simulatePolicyBundle'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return simulatePolicyBundle(id, data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type SimulatePolicyBundleMutationResult = NonNullable<
+  Awaited<ReturnType<typeof simulatePolicyBundle>>
+>;
+export type SimulatePolicyBundleMutationBody = SimulatePolicyBundleBody;
+export type SimulatePolicyBundleMutationError =
+  | Error
+  | UnauthorizedResponse
+  | NotFoundResponse
+  | InternalServerErrorResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof simulatePolicyBundle>>, {id: string;data: SimulatePolicyBundleBody}> = (props) => {
-          const {id,data} = props ?? {};
-
-          return  simulatePolicyBundle(id,data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type SimulatePolicyBundleMutationResult = NonNullable<Awaited<ReturnType<typeof simulatePolicyBundle>>>
-    export type SimulatePolicyBundleMutationBody = SimulatePolicyBundleBody
-    export type SimulatePolicyBundleMutationError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse
-
-    /**
+/**
  * @summary Simulate a policy bundle against a request
  */
-export const useSimulatePolicyBundle = <TError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof simulatePolicyBundle>>, TError,{id: string;data: SimulatePolicyBundleBody}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof simulatePolicyBundle>>,
-        TError,
-        {id: string;data: SimulatePolicyBundleBody},
-        TContext
-      > => {
+export const useSimulatePolicyBundle = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof simulatePolicyBundle>>,
+      TError,
+      { id: string; data: SimulatePolicyBundleBody },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof simulatePolicyBundle>>,
+  TError,
+  { id: string; data: SimulatePolicyBundleBody },
+  TContext
+> => {
+  const mutationOptions = getSimulatePolicyBundleMutationOptions(options);
 
-      const mutationOptions = getSimulatePolicyBundleMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary List policy bundle snapshots
  */
-export const listBundleSnapshots = (
-    
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<ListBundleSnapshots200>(
-      {url: `/api/v1/policy/bundles/snapshots`, method: 'GET', signal
-    },
-      );
-    }
-  
-
-
+export const listBundleSnapshots = (signal?: AbortSignal) => {
+  return apiClient<ListBundleSnapshots200>({
+    url: `/api/v1/policy/bundles/snapshots`,
+    method: "GET",
+    signal,
+  });
+};
 
 export const getListBundleSnapshotsQueryKey = () => {
-    return [
-    `/api/v1/policy/bundles/snapshots`
-    ] as const;
-    }
+  return [`/api/v1/policy/bundles/snapshots`] as const;
+};
 
-    
-export const getListBundleSnapshotsQueryOptions = <TData = Awaited<ReturnType<typeof listBundleSnapshots>>, TError = UnauthorizedResponse | InternalServerErrorResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listBundleSnapshots>>, TError, TData>>, }
-) => {
+export const getListBundleSnapshotsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listBundleSnapshots>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(options?: {
+  query?: Partial<
+    UseQueryOptions<
+      Awaited<ReturnType<typeof listBundleSnapshots>>,
+      TError,
+      TData
+    >
+  >;
+}) => {
+  const { query: queryOptions } = options ?? {};
 
-const {query: queryOptions} = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getListBundleSnapshotsQueryKey();
 
-  const queryKey =  queryOptions?.queryKey ?? getListBundleSnapshotsQueryKey();
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listBundleSnapshots>>
+  > = ({ signal }) => listBundleSnapshots(signal);
 
-  
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listBundleSnapshots>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listBundleSnapshots>>> = ({ signal }) => listBundleSnapshots(signal);
+export type ListBundleSnapshotsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listBundleSnapshots>>
+>;
+export type ListBundleSnapshotsQueryError =
+  | UnauthorizedResponse
+  | InternalServerErrorResponse;
 
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listBundleSnapshots>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type ListBundleSnapshotsQueryResult = NonNullable<Awaited<ReturnType<typeof listBundleSnapshots>>>
-export type ListBundleSnapshotsQueryError = UnauthorizedResponse | InternalServerErrorResponse
-
-
-export function useListBundleSnapshots<TData = Awaited<ReturnType<typeof listBundleSnapshots>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listBundleSnapshots>>, TError, TData>> & Pick<
+export function useListBundleSnapshots<
+  TData = Awaited<ReturnType<typeof listBundleSnapshots>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listBundleSnapshots>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listBundleSnapshots>>,
           TError,
           Awaited<ReturnType<typeof listBundleSnapshots>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListBundleSnapshots<TData = Awaited<ReturnType<typeof listBundleSnapshots>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listBundleSnapshots>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListBundleSnapshots<
+  TData = Awaited<ReturnType<typeof listBundleSnapshots>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listBundleSnapshots>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listBundleSnapshots>>,
           TError,
           Awaited<ReturnType<typeof listBundleSnapshots>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListBundleSnapshots<TData = Awaited<ReturnType<typeof listBundleSnapshots>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listBundleSnapshots>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListBundleSnapshots<
+  TData = Awaited<ReturnType<typeof listBundleSnapshots>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listBundleSnapshots>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary List policy bundle snapshots
  */
 
-export function useListBundleSnapshots<TData = Awaited<ReturnType<typeof listBundleSnapshots>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listBundleSnapshots>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useListBundleSnapshots<
+  TData = Awaited<ReturnType<typeof listBundleSnapshots>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listBundleSnapshots>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListBundleSnapshotsQueryOptions(options);
 
-  const queryOptions = getListBundleSnapshotsQueryOptions(options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * @summary Create a policy bundle snapshot
  */
 export const createBundleSnapshot = (
-    createBundleSnapshotBody: CreateBundleSnapshotBody,
- signal?: AbortSignal
+  createBundleSnapshotBody: CreateBundleSnapshotBody,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<PolicySnapshot>(
-      {url: `/api/v1/policy/bundles/snapshots`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: createBundleSnapshotBody, signal
-    },
-      );
-    }
-  
+  return apiClient<PolicySnapshot>({
+    url: `/api/v1/policy/bundles/snapshots`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: createBundleSnapshotBody,
+    signal,
+  });
+};
 
+export const getCreateBundleSnapshotMutationOptions = <
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createBundleSnapshot>>,
+    TError,
+    { data: CreateBundleSnapshotBody },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createBundleSnapshot>>,
+  TError,
+  { data: CreateBundleSnapshotBody },
+  TContext
+> => {
+  const mutationKey = ["createBundleSnapshot"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getCreateBundleSnapshotMutationOptions = <TError = UnauthorizedResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createBundleSnapshot>>, TError,{data: CreateBundleSnapshotBody}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof createBundleSnapshot>>, TError,{data: CreateBundleSnapshotBody}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createBundleSnapshot>>,
+    { data: CreateBundleSnapshotBody }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['createBundleSnapshot'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return createBundleSnapshot(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type CreateBundleSnapshotMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createBundleSnapshot>>
+>;
+export type CreateBundleSnapshotMutationBody = CreateBundleSnapshotBody;
+export type CreateBundleSnapshotMutationError =
+  | UnauthorizedResponse
+  | InternalServerErrorResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createBundleSnapshot>>, {data: CreateBundleSnapshotBody}> = (props) => {
-          const {data} = props ?? {};
-
-          return  createBundleSnapshot(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type CreateBundleSnapshotMutationResult = NonNullable<Awaited<ReturnType<typeof createBundleSnapshot>>>
-    export type CreateBundleSnapshotMutationBody = CreateBundleSnapshotBody
-    export type CreateBundleSnapshotMutationError = UnauthorizedResponse | InternalServerErrorResponse
-
-    /**
+/**
  * @summary Create a policy bundle snapshot
  */
-export const useCreateBundleSnapshot = <TError = UnauthorizedResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createBundleSnapshot>>, TError,{data: CreateBundleSnapshotBody}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof createBundleSnapshot>>,
-        TError,
-        {data: CreateBundleSnapshotBody},
-        TContext
-      > => {
+export const useCreateBundleSnapshot = <
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof createBundleSnapshot>>,
+      TError,
+      { data: CreateBundleSnapshotBody },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof createBundleSnapshot>>,
+  TError,
+  { data: CreateBundleSnapshotBody },
+  TContext
+> => {
+  const mutationOptions = getCreateBundleSnapshotMutationOptions(options);
 
-      const mutationOptions = getCreateBundleSnapshotMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary Get a policy bundle snapshot
  */
-export const getBundleSnapshot = (
-    id: string,
- signal?: AbortSignal
+export const getBundleSnapshot = (id: string, signal?: AbortSignal) => {
+  return apiClient<PolicySnapshot>({
+    url: `/api/v1/policy/bundles/snapshots/${id}`,
+    method: "GET",
+    signal,
+  });
+};
+
+export const getGetBundleSnapshotQueryKey = (id?: string) => {
+  return [`/api/v1/policy/bundles/snapshots/${id}`] as const;
+};
+
+export const getGetBundleSnapshotQueryOptions = <
+  TData = Awaited<ReturnType<typeof getBundleSnapshot>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getBundleSnapshot>>,
+        TError,
+        TData
+      >
+    >;
+  },
 ) => {
-      
-      
-      return apiClient<PolicySnapshot>(
-      {url: `/api/v1/policy/bundles/snapshots/${id}`, method: 'GET', signal
-    },
-      );
-    }
-  
+  const { query: queryOptions } = options ?? {};
 
+  const queryKey = queryOptions?.queryKey ?? getGetBundleSnapshotQueryKey(id);
 
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getBundleSnapshot>>
+  > = ({ signal }) => getBundleSnapshot(id, signal);
 
-export const getGetBundleSnapshotQueryKey = (id?: string,) => {
-    return [
-    `/api/v1/policy/bundles/snapshots/${id}`
-    ] as const;
-    }
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getBundleSnapshot>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    
-export const getGetBundleSnapshotQueryOptions = <TData = Awaited<ReturnType<typeof getBundleSnapshot>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBundleSnapshot>>, TError, TData>>, }
-) => {
+export type GetBundleSnapshotQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getBundleSnapshot>>
+>;
+export type GetBundleSnapshotQueryError =
+  | UnauthorizedResponse
+  | NotFoundResponse
+  | InternalServerErrorResponse;
 
-const {query: queryOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetBundleSnapshotQueryKey(id);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getBundleSnapshot>>> = ({ signal }) => getBundleSnapshot(id, signal);
-
-      
-
-      
-
-   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getBundleSnapshot>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetBundleSnapshotQueryResult = NonNullable<Awaited<ReturnType<typeof getBundleSnapshot>>>
-export type GetBundleSnapshotQueryError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse
-
-
-export function useGetBundleSnapshot<TData = Awaited<ReturnType<typeof getBundleSnapshot>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBundleSnapshot>>, TError, TData>> & Pick<
+export function useGetBundleSnapshot<
+  TData = Awaited<ReturnType<typeof getBundleSnapshot>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getBundleSnapshot>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getBundleSnapshot>>,
           TError,
           Awaited<ReturnType<typeof getBundleSnapshot>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetBundleSnapshot<TData = Awaited<ReturnType<typeof getBundleSnapshot>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBundleSnapshot>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetBundleSnapshot<
+  TData = Awaited<ReturnType<typeof getBundleSnapshot>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getBundleSnapshot>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getBundleSnapshot>>,
           TError,
           Awaited<ReturnType<typeof getBundleSnapshot>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetBundleSnapshot<TData = Awaited<ReturnType<typeof getBundleSnapshot>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBundleSnapshot>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetBundleSnapshot<
+  TData = Awaited<ReturnType<typeof getBundleSnapshot>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getBundleSnapshot>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Get a policy bundle snapshot
  */
 
-export function useGetBundleSnapshot<TData = Awaited<ReturnType<typeof getBundleSnapshot>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getBundleSnapshot>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetBundleSnapshot<
+  TData = Awaited<ReturnType<typeof getBundleSnapshot>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getBundleSnapshot>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetBundleSnapshotQueryOptions(id, options);
 
-  const queryOptions = getGetBundleSnapshotQueryOptions(id,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * PUT upserts the shadow policy for the given bundle. A bundle has at
@@ -1405,161 +2135,293 @@ YAML returns 400 before any Redis write.
  * @summary Activate or replace the shadow policy for a bundle
  */
 export const activatePolicyShadow = (
-    id: string,
-    policyShadowUpsertRequest: PolicyShadowUpsertRequest,
- ) => {
-      
-      
-      return apiClient<PolicyShadow>(
-      {url: `/api/v1/policy/shadows/${id}`, method: 'PUT',
-      headers: {'Content-Type': 'application/json', },
-      data: policyShadowUpsertRequest
-    },
-      );
-    }
-  
+  id: string,
+  policyShadowUpsertRequest: PolicyShadowUpsertRequest,
+) => {
+  return apiClient<PolicyShadow>({
+    url: `/api/v1/policy/shadows/${id}`,
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    data: policyShadowUpsertRequest,
+  });
+};
 
+export const getActivatePolicyShadowMutationOptions = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof activatePolicyShadow>>,
+    TError,
+    { id: string; data: PolicyShadowUpsertRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof activatePolicyShadow>>,
+  TError,
+  { id: string; data: PolicyShadowUpsertRequest },
+  TContext
+> => {
+  const mutationKey = ["activatePolicyShadow"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getActivatePolicyShadowMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ConflictResponse | InternalServerErrorResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof activatePolicyShadow>>, TError,{id: string;data: PolicyShadowUpsertRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof activatePolicyShadow>>, TError,{id: string;data: PolicyShadowUpsertRequest}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof activatePolicyShadow>>,
+    { id: string; data: PolicyShadowUpsertRequest }
+  > = (props) => {
+    const { id, data } = props ?? {};
 
-const mutationKey = ['activatePolicyShadow'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return activatePolicyShadow(id, data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type ActivatePolicyShadowMutationResult = NonNullable<
+  Awaited<ReturnType<typeof activatePolicyShadow>>
+>;
+export type ActivatePolicyShadowMutationBody = PolicyShadowUpsertRequest;
+export type ActivatePolicyShadowMutationError =
+  | Error
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | InternalServerErrorResponse
+  | ServiceUnavailableResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof activatePolicyShadow>>, {id: string;data: PolicyShadowUpsertRequest}> = (props) => {
-          const {id,data} = props ?? {};
-
-          return  activatePolicyShadow(id,data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type ActivatePolicyShadowMutationResult = NonNullable<Awaited<ReturnType<typeof activatePolicyShadow>>>
-    export type ActivatePolicyShadowMutationBody = PolicyShadowUpsertRequest
-    export type ActivatePolicyShadowMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ConflictResponse | InternalServerErrorResponse | ServiceUnavailableResponse
-
-    /**
+/**
  * @summary Activate or replace the shadow policy for a bundle
  */
-export const useActivatePolicyShadow = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ConflictResponse | InternalServerErrorResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof activatePolicyShadow>>, TError,{id: string;data: PolicyShadowUpsertRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof activatePolicyShadow>>,
-        TError,
-        {id: string;data: PolicyShadowUpsertRequest},
-        TContext
-      > => {
+export const useActivatePolicyShadow = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof activatePolicyShadow>>,
+      TError,
+      { id: string; data: PolicyShadowUpsertRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof activatePolicyShadow>>,
+  TError,
+  { id: string; data: PolicyShadowUpsertRequest },
+  TContext
+> => {
+  const mutationOptions = getActivatePolicyShadowMutationOptions(options);
 
-      const mutationOptions = getActivatePolicyShadowMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * Returns the active shadow policy for `{id}` or 404 if none is set.
 Requires `policy.read` (admin role bypasses). Dashboards translate
 the 404 into an empty-state render rather than an error.
 
  * @summary Get the shadow policy for a bundle
  */
-export const getPolicyShadow = (
-    id: string,
- signal?: AbortSignal
+export const getPolicyShadow = (id: string, signal?: AbortSignal) => {
+  return apiClient<PolicyShadow>({
+    url: `/api/v1/policy/shadows/${id}`,
+    method: "GET",
+    signal,
+  });
+};
+
+export const getGetPolicyShadowQueryKey = (id?: string) => {
+  return [`/api/v1/policy/shadows/${id}`] as const;
+};
+
+export const getGetPolicyShadowQueryOptions = <
+  TData = Awaited<ReturnType<typeof getPolicyShadow>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getPolicyShadow>>,
+        TError,
+        TData
+      >
+    >;
+  },
 ) => {
-      
-      
-      return apiClient<PolicyShadow>(
-      {url: `/api/v1/policy/shadows/${id}`, method: 'GET', signal
-    },
-      );
-    }
-  
+  const { query: queryOptions } = options ?? {};
 
+  const queryKey = queryOptions?.queryKey ?? getGetPolicyShadowQueryKey(id);
 
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getPolicyShadow>>> = ({
+    signal,
+  }) => getPolicyShadow(id, signal);
 
-export const getGetPolicyShadowQueryKey = (id?: string,) => {
-    return [
-    `/api/v1/policy/shadows/${id}`
-    ] as const;
-    }
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getPolicyShadow>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    
-export const getGetPolicyShadowQueryOptions = <TData = Awaited<ReturnType<typeof getPolicyShadow>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse | ServiceUnavailableResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyShadow>>, TError, TData>>, }
-) => {
+export type GetPolicyShadowQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getPolicyShadow>>
+>;
+export type GetPolicyShadowQueryError =
+  | Error
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse
+  | InternalServerErrorResponse
+  | ServiceUnavailableResponse;
 
-const {query: queryOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetPolicyShadowQueryKey(id);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPolicyShadow>>> = ({ signal }) => getPolicyShadow(id, signal);
-
-      
-
-      
-
-   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPolicyShadow>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetPolicyShadowQueryResult = NonNullable<Awaited<ReturnType<typeof getPolicyShadow>>>
-export type GetPolicyShadowQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse | ServiceUnavailableResponse
-
-
-export function useGetPolicyShadow<TData = Awaited<ReturnType<typeof getPolicyShadow>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse | ServiceUnavailableResponse>(
- id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyShadow>>, TError, TData>> & Pick<
+export function useGetPolicyShadow<
+  TData = Awaited<ReturnType<typeof getPolicyShadow>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getPolicyShadow>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getPolicyShadow>>,
           TError,
           Awaited<ReturnType<typeof getPolicyShadow>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetPolicyShadow<TData = Awaited<ReturnType<typeof getPolicyShadow>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse | ServiceUnavailableResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyShadow>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetPolicyShadow<
+  TData = Awaited<ReturnType<typeof getPolicyShadow>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getPolicyShadow>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getPolicyShadow>>,
           TError,
           Awaited<ReturnType<typeof getPolicyShadow>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetPolicyShadow<TData = Awaited<ReturnType<typeof getPolicyShadow>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse | ServiceUnavailableResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyShadow>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetPolicyShadow<
+  TData = Awaited<ReturnType<typeof getPolicyShadow>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getPolicyShadow>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Get the shadow policy for a bundle
  */
 
-export function useGetPolicyShadow<TData = Awaited<ReturnType<typeof getPolicyShadow>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse | ServiceUnavailableResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyShadow>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetPolicyShadow<
+  TData = Awaited<ReturnType<typeof getPolicyShadow>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getPolicyShadow>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetPolicyShadowQueryOptions(id, options);
 
-  const queryOptions = getGetPolicyShadowQueryOptions(id,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * Deactivates the shadow. Emits a `safety.policy_change` audit event
@@ -1568,65 +2430,101 @@ with `action=shadow_deactivate` and the outgoing shadow's
 
  * @summary Remove the shadow policy for a bundle
  */
-export const deletePolicyShadow = (
-    id: string,
- ) => {
-      
-      
-      return apiClient<void>(
-      {url: `/api/v1/policy/shadows/${id}`, method: 'DELETE'
-    },
-      );
-    }
-  
+export const deletePolicyShadow = (id: string) => {
+  return apiClient<void>({
+    url: `/api/v1/policy/shadows/${id}`,
+    method: "DELETE",
+  });
+};
 
+export const getDeletePolicyShadowMutationOptions = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deletePolicyShadow>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deletePolicyShadow>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["deletePolicyShadow"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getDeletePolicyShadowMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse | InternalServerErrorResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deletePolicyShadow>>, TError,{id: string}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof deletePolicyShadow>>, TError,{id: string}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deletePolicyShadow>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
 
-const mutationKey = ['deletePolicyShadow'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return deletePolicyShadow(id);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type DeletePolicyShadowMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deletePolicyShadow>>
+>;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deletePolicyShadow>>, {id: string}> = (props) => {
-          const {id} = props ?? {};
+export type DeletePolicyShadowMutationError =
+  | Error
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse
+  | InternalServerErrorResponse
+  | ServiceUnavailableResponse;
 
-          return  deletePolicyShadow(id,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type DeletePolicyShadowMutationResult = NonNullable<Awaited<ReturnType<typeof deletePolicyShadow>>>
-    
-    export type DeletePolicyShadowMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse | InternalServerErrorResponse | ServiceUnavailableResponse
-
-    /**
+/**
  * @summary Remove the shadow policy for a bundle
  */
-export const useDeletePolicyShadow = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse | InternalServerErrorResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deletePolicyShadow>>, TError,{id: string}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof deletePolicyShadow>>,
-        TError,
-        {id: string},
-        TContext
-      > => {
+export const useDeletePolicyShadow = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof deletePolicyShadow>>,
+      TError,
+      { id: string },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof deletePolicyShadow>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationOptions = getDeletePolicyShadowMutationOptions(options);
 
-      const mutationOptions = getDeletePolicyShadowMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * Counts shadow-eval outcomes (escalated / relaxed / approval_differ /
 unchanged) across the audit stream between `from` and `to`.
 Memoised for 60 s per (tenant, bundle, window) so dashboard polling
@@ -1635,101 +2533,200 @@ doesn't thrash Redis XRANGE. Requires `policy.read`.
  * @summary Aggregate shadow-evaluation counts over a time window
  */
 export const getPolicyShadowResultsSummary = (
-    id: string,
-    params: GetPolicyShadowResultsSummaryParams,
- signal?: AbortSignal
+  id: string,
+  params: GetPolicyShadowResultsSummaryParams,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<ShadowResultsSummary>(
-      {url: `/api/v1/policy/shadows/${id}/results/summary`, method: 'GET',
-        params, signal
-    },
-      );
-    }
-  
+  return apiClient<ShadowResultsSummary>({
+    url: `/api/v1/policy/shadows/${id}/results/summary`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
 
-
-
-export const getGetPolicyShadowResultsSummaryQueryKey = (id?: string,
-    params?: GetPolicyShadowResultsSummaryParams,) => {
-    return [
-    `/api/v1/policy/shadows/${id}/results/summary`, ...(params ? [params]: [])
-    ] as const;
-    }
-
-    
-export const getGetPolicyShadowResultsSummaryQueryOptions = <TData = Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(id: string,
-    params: GetPolicyShadowResultsSummaryParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>, TError, TData>>, }
+export const getGetPolicyShadowResultsSummaryQueryKey = (
+  id?: string,
+  params?: GetPolicyShadowResultsSummaryParams,
 ) => {
+  return [
+    `/api/v1/policy/shadows/${id}/results/summary`,
+    ...(params ? [params] : []),
+  ] as const;
+};
 
-const {query: queryOptions} = options ?? {};
+export const getGetPolicyShadowResultsSummaryQueryOptions = <
+  TData = Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  params: GetPolicyShadowResultsSummaryParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>,
+        TError,
+        TData
+      >
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetPolicyShadowResultsSummaryQueryKey(id,params);
+  const queryKey =
+    queryOptions?.queryKey ??
+    getGetPolicyShadowResultsSummaryQueryKey(id, params);
 
-  
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>
+  > = ({ signal }) => getPolicyShadowResultsSummary(id, params, signal);
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>> = ({ signal }) => getPolicyShadowResultsSummary(id,params, signal);
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-      
+export type GetPolicyShadowResultsSummaryQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>
+>;
+export type GetPolicyShadowResultsSummaryQueryError =
+  | Error
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | ServiceUnavailableResponse;
 
-      
-
-   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetPolicyShadowResultsSummaryQueryResult = NonNullable<Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>>
-export type GetPolicyShadowResultsSummaryQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse
-
-
-export function useGetPolicyShadowResultsSummary<TData = Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- id: string,
-    params: GetPolicyShadowResultsSummaryParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>, TError, TData>> & Pick<
+export function useGetPolicyShadowResultsSummary<
+  TData = Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  params: GetPolicyShadowResultsSummaryParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>,
           TError,
           Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetPolicyShadowResultsSummary<TData = Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- id: string,
-    params: GetPolicyShadowResultsSummaryParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetPolicyShadowResultsSummary<
+  TData = Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  params: GetPolicyShadowResultsSummaryParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>,
           TError,
           Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetPolicyShadowResultsSummary<TData = Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- id: string,
-    params: GetPolicyShadowResultsSummaryParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetPolicyShadowResultsSummary<
+  TData = Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  params: GetPolicyShadowResultsSummaryParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Aggregate shadow-evaluation counts over a time window
  */
 
-export function useGetPolicyShadowResultsSummary<TData = Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- id: string,
-    params: GetPolicyShadowResultsSummaryParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetPolicyShadowResultsSummary<
+  TData = Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  params: GetPolicyShadowResultsSummaryParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetPolicyShadowResultsSummaryQueryOptions(
+    id,
+    params,
+    options,
+  );
 
-  const queryOptions = getGetPolicyShadowResultsSummaryQueryOptions(id,params,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * Returns individual shadow-eval entries with both the active verdict
@@ -1741,101 +2738,200 @@ its budget before reaching `to`.
  * @summary Paginated shadow-vs-active decision comparisons
  */
 export const getPolicyShadowResultsComparisons = (
-    id: string,
-    params: GetPolicyShadowResultsComparisonsParams,
- signal?: AbortSignal
+  id: string,
+  params: GetPolicyShadowResultsComparisonsParams,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<ShadowComparisonsResponse>(
-      {url: `/api/v1/policy/shadows/${id}/results/comparisons`, method: 'GET',
-        params, signal
-    },
-      );
-    }
-  
+  return apiClient<ShadowComparisonsResponse>({
+    url: `/api/v1/policy/shadows/${id}/results/comparisons`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
 
-
-
-export const getGetPolicyShadowResultsComparisonsQueryKey = (id?: string,
-    params?: GetPolicyShadowResultsComparisonsParams,) => {
-    return [
-    `/api/v1/policy/shadows/${id}/results/comparisons`, ...(params ? [params]: [])
-    ] as const;
-    }
-
-    
-export const getGetPolicyShadowResultsComparisonsQueryOptions = <TData = Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(id: string,
-    params: GetPolicyShadowResultsComparisonsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>, TError, TData>>, }
+export const getGetPolicyShadowResultsComparisonsQueryKey = (
+  id?: string,
+  params?: GetPolicyShadowResultsComparisonsParams,
 ) => {
+  return [
+    `/api/v1/policy/shadows/${id}/results/comparisons`,
+    ...(params ? [params] : []),
+  ] as const;
+};
 
-const {query: queryOptions} = options ?? {};
+export const getGetPolicyShadowResultsComparisonsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  params: GetPolicyShadowResultsComparisonsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>,
+        TError,
+        TData
+      >
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetPolicyShadowResultsComparisonsQueryKey(id,params);
+  const queryKey =
+    queryOptions?.queryKey ??
+    getGetPolicyShadowResultsComparisonsQueryKey(id, params);
 
-  
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>
+  > = ({ signal }) => getPolicyShadowResultsComparisons(id, params, signal);
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>> = ({ signal }) => getPolicyShadowResultsComparisons(id,params, signal);
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-      
+export type GetPolicyShadowResultsComparisonsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>
+>;
+export type GetPolicyShadowResultsComparisonsQueryError =
+  | Error
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | ServiceUnavailableResponse;
 
-      
-
-   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetPolicyShadowResultsComparisonsQueryResult = NonNullable<Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>>
-export type GetPolicyShadowResultsComparisonsQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse
-
-
-export function useGetPolicyShadowResultsComparisons<TData = Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- id: string,
-    params: GetPolicyShadowResultsComparisonsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>, TError, TData>> & Pick<
+export function useGetPolicyShadowResultsComparisons<
+  TData = Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  params: GetPolicyShadowResultsComparisonsParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>,
           TError,
           Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetPolicyShadowResultsComparisons<TData = Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- id: string,
-    params: GetPolicyShadowResultsComparisonsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetPolicyShadowResultsComparisons<
+  TData = Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  params: GetPolicyShadowResultsComparisonsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>,
           TError,
           Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetPolicyShadowResultsComparisons<TData = Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- id: string,
-    params: GetPolicyShadowResultsComparisonsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetPolicyShadowResultsComparisons<
+  TData = Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  params: GetPolicyShadowResultsComparisonsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Paginated shadow-vs-active decision comparisons
  */
 
-export function useGetPolicyShadowResultsComparisons<TData = Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- id: string,
-    params: GetPolicyShadowResultsComparisonsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetPolicyShadowResultsComparisons<
+  TData = Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  params: GetPolicyShadowResultsComparisonsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetPolicyShadowResultsComparisonsQueryOptions(
+    id,
+    params,
+    options,
+  );
 
-  const queryOptions = getGetPolicyShadowResultsComparisonsQueryOptions(id,params,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * Returns one row per bucket (including empty buckets) so the
@@ -1846,231 +2942,387 @@ fine-grained requests blowing out the 2000-bucket ceiling.
  * @summary Zero-filled bucketed timeseries of shadow outcomes
  */
 export const getPolicyShadowResultsTimeseries = (
-    id: string,
-    params: GetPolicyShadowResultsTimeseriesParams,
- signal?: AbortSignal
+  id: string,
+  params: GetPolicyShadowResultsTimeseriesParams,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<ShadowTimeseriesResponse>(
-      {url: `/api/v1/policy/shadows/${id}/results/timeseries`, method: 'GET',
-        params, signal
-    },
-      );
-    }
-  
+  return apiClient<ShadowTimeseriesResponse>({
+    url: `/api/v1/policy/shadows/${id}/results/timeseries`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
 
-
-
-export const getGetPolicyShadowResultsTimeseriesQueryKey = (id?: string,
-    params?: GetPolicyShadowResultsTimeseriesParams,) => {
-    return [
-    `/api/v1/policy/shadows/${id}/results/timeseries`, ...(params ? [params]: [])
-    ] as const;
-    }
-
-    
-export const getGetPolicyShadowResultsTimeseriesQueryOptions = <TData = Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(id: string,
-    params: GetPolicyShadowResultsTimeseriesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>, TError, TData>>, }
+export const getGetPolicyShadowResultsTimeseriesQueryKey = (
+  id?: string,
+  params?: GetPolicyShadowResultsTimeseriesParams,
 ) => {
+  return [
+    `/api/v1/policy/shadows/${id}/results/timeseries`,
+    ...(params ? [params] : []),
+  ] as const;
+};
 
-const {query: queryOptions} = options ?? {};
+export const getGetPolicyShadowResultsTimeseriesQueryOptions = <
+  TData = Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  params: GetPolicyShadowResultsTimeseriesParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>,
+        TError,
+        TData
+      >
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetPolicyShadowResultsTimeseriesQueryKey(id,params);
+  const queryKey =
+    queryOptions?.queryKey ??
+    getGetPolicyShadowResultsTimeseriesQueryKey(id, params);
 
-  
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>
+  > = ({ signal }) => getPolicyShadowResultsTimeseries(id, params, signal);
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>> = ({ signal }) => getPolicyShadowResultsTimeseries(id,params, signal);
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-      
+export type GetPolicyShadowResultsTimeseriesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>
+>;
+export type GetPolicyShadowResultsTimeseriesQueryError =
+  | Error
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | ServiceUnavailableResponse;
 
-      
-
-   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetPolicyShadowResultsTimeseriesQueryResult = NonNullable<Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>>
-export type GetPolicyShadowResultsTimeseriesQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse
-
-
-export function useGetPolicyShadowResultsTimeseries<TData = Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- id: string,
-    params: GetPolicyShadowResultsTimeseriesParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>, TError, TData>> & Pick<
+export function useGetPolicyShadowResultsTimeseries<
+  TData = Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  params: GetPolicyShadowResultsTimeseriesParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>,
           TError,
           Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetPolicyShadowResultsTimeseries<TData = Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- id: string,
-    params: GetPolicyShadowResultsTimeseriesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetPolicyShadowResultsTimeseries<
+  TData = Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  params: GetPolicyShadowResultsTimeseriesParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>,
           TError,
           Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetPolicyShadowResultsTimeseries<TData = Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- id: string,
-    params: GetPolicyShadowResultsTimeseriesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetPolicyShadowResultsTimeseries<
+  TData = Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  params: GetPolicyShadowResultsTimeseriesParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Zero-filled bucketed timeseries of shadow outcomes
  */
 
-export function useGetPolicyShadowResultsTimeseries<TData = Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- id: string,
-    params: GetPolicyShadowResultsTimeseriesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetPolicyShadowResultsTimeseries<
+  TData = Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  params: GetPolicyShadowResultsTimeseriesParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetPolicyShadowResultsTimeseriesQueryOptions(
+    id,
+    params,
+    options,
+  );
 
-  const queryOptions = getGetPolicyShadowResultsTimeseriesQueryOptions(id,params,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * @summary Publish policy bundles to production
  */
 export const publishPolicy = (
-    publishPolicyRequest: PublishPolicyRequest,
- signal?: AbortSignal
+  publishPolicyRequest: PublishPolicyRequest,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<PolicySnapshot>(
-      {url: `/api/v1/policy/publish`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: publishPolicyRequest, signal
-    },
-      );
-    }
-  
+  return apiClient<PolicySnapshot>({
+    url: `/api/v1/policy/publish`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: publishPolicyRequest,
+    signal,
+  });
+};
 
+export const getPublishPolicyMutationOptions = <
+  TError = Error | UnauthorizedResponse | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof publishPolicy>>,
+    TError,
+    { data: PublishPolicyRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof publishPolicy>>,
+  TError,
+  { data: PublishPolicyRequest },
+  TContext
+> => {
+  const mutationKey = ["publishPolicy"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getPublishPolicyMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof publishPolicy>>, TError,{data: PublishPolicyRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof publishPolicy>>, TError,{data: PublishPolicyRequest}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof publishPolicy>>,
+    { data: PublishPolicyRequest }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['publishPolicy'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return publishPolicy(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type PublishPolicyMutationResult = NonNullable<
+  Awaited<ReturnType<typeof publishPolicy>>
+>;
+export type PublishPolicyMutationBody = PublishPolicyRequest;
+export type PublishPolicyMutationError =
+  | Error
+  | UnauthorizedResponse
+  | InternalServerErrorResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof publishPolicy>>, {data: PublishPolicyRequest}> = (props) => {
-          const {data} = props ?? {};
-
-          return  publishPolicy(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type PublishPolicyMutationResult = NonNullable<Awaited<ReturnType<typeof publishPolicy>>>
-    export type PublishPolicyMutationBody = PublishPolicyRequest
-    export type PublishPolicyMutationError = BadRequestResponse | UnauthorizedResponse | InternalServerErrorResponse
-
-    /**
+/**
  * @summary Publish policy bundles to production
  */
-export const usePublishPolicy = <TError = BadRequestResponse | UnauthorizedResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof publishPolicy>>, TError,{data: PublishPolicyRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof publishPolicy>>,
-        TError,
-        {data: PublishPolicyRequest},
-        TContext
-      > => {
+export const usePublishPolicy = <
+  TError = Error | UnauthorizedResponse | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof publishPolicy>>,
+      TError,
+      { data: PublishPolicyRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof publishPolicy>>,
+  TError,
+  { data: PublishPolicyRequest },
+  TContext
+> => {
+  const mutationOptions = getPublishPolicyMutationOptions(options);
 
-      const mutationOptions = getPublishPolicyMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary Rollback policy to a previous snapshot
  */
 export const rollbackPolicy = (
-    rollbackPolicyRequest: RollbackPolicyRequest,
- signal?: AbortSignal
+  rollbackPolicyRequest: RollbackPolicyRequest,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<PolicySnapshot>(
-      {url: `/api/v1/policy/rollback`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: rollbackPolicyRequest, signal
-    },
-      );
-    }
-  
+  return apiClient<PolicySnapshot>({
+    url: `/api/v1/policy/rollback`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: rollbackPolicyRequest,
+    signal,
+  });
+};
 
+export const getRollbackPolicyMutationOptions = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof rollbackPolicy>>,
+    TError,
+    { data: RollbackPolicyRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof rollbackPolicy>>,
+  TError,
+  { data: RollbackPolicyRequest },
+  TContext
+> => {
+  const mutationKey = ["rollbackPolicy"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getRollbackPolicyMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rollbackPolicy>>, TError,{data: RollbackPolicyRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof rollbackPolicy>>, TError,{data: RollbackPolicyRequest}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof rollbackPolicy>>,
+    { data: RollbackPolicyRequest }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['rollbackPolicy'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return rollbackPolicy(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type RollbackPolicyMutationResult = NonNullable<
+  Awaited<ReturnType<typeof rollbackPolicy>>
+>;
+export type RollbackPolicyMutationBody = RollbackPolicyRequest;
+export type RollbackPolicyMutationError =
+  | Error
+  | UnauthorizedResponse
+  | NotFoundResponse
+  | InternalServerErrorResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof rollbackPolicy>>, {data: RollbackPolicyRequest}> = (props) => {
-          const {data} = props ?? {};
-
-          return  rollbackPolicy(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type RollbackPolicyMutationResult = NonNullable<Awaited<ReturnType<typeof rollbackPolicy>>>
-    export type RollbackPolicyMutationBody = RollbackPolicyRequest
-    export type RollbackPolicyMutationError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse
-
-    /**
+/**
  * @summary Rollback policy to a previous snapshot
  */
-export const useRollbackPolicy = <TError = BadRequestResponse | UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rollbackPolicy>>, TError,{data: RollbackPolicyRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof rollbackPolicy>>,
-        TError,
-        {data: RollbackPolicyRequest},
-        TContext
-      > => {
+export const useRollbackPolicy = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof rollbackPolicy>>,
+      TError,
+      { data: RollbackPolicyRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof rollbackPolicy>>,
+  TError,
+  { data: RollbackPolicyRequest },
+  TContext
+> => {
+  const mutationOptions = getRollbackPolicyMutationOptions(options);
 
-      const mutationOptions = getRollbackPolicyMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * Returns a filtered, paginated list of policy audit events. Filters
 match the gateway handler `handleListPolicyAudit` semantics: `action`
 / `agent_id` / `rule_id` / `type` are case-insensitive exact matches;
@@ -2081,689 +3333,1104 @@ resource_type + resource_id + message` lowercased.
  * @summary Get policy audit log
  */
 export const getPolicyAudit = (
-    params?: GetPolicyAuditParams,
- signal?: AbortSignal
+  params?: GetPolicyAuditParams,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<PolicyAuditEnvelope>(
-      {url: `/api/v1/policy/audit`, method: 'GET',
-        params, signal
-    },
-      );
-    }
-  
+  return apiClient<PolicyAuditEnvelope>({
+    url: `/api/v1/policy/audit`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
 
+export const getGetPolicyAuditQueryKey = (params?: GetPolicyAuditParams) => {
+  return [`/api/v1/policy/audit`, ...(params ? [params] : [])] as const;
+};
 
-
-export const getGetPolicyAuditQueryKey = (params?: GetPolicyAuditParams,) => {
-    return [
-    `/api/v1/policy/audit`, ...(params ? [params]: [])
-    ] as const;
-    }
-
-    
-export const getGetPolicyAuditQueryOptions = <TData = Awaited<ReturnType<typeof getPolicyAudit>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(params?: GetPolicyAuditParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyAudit>>, TError, TData>>, }
+export const getGetPolicyAuditQueryOptions = <
+  TData = Awaited<ReturnType<typeof getPolicyAudit>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  params?: GetPolicyAuditParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getPolicyAudit>>, TError, TData>
+    >;
+  },
 ) => {
+  const { query: queryOptions } = options ?? {};
 
-const {query: queryOptions} = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getGetPolicyAuditQueryKey(params);
 
-  const queryKey =  queryOptions?.queryKey ?? getGetPolicyAuditQueryKey(params);
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getPolicyAudit>>> = ({
+    signal,
+  }) => getPolicyAudit(params, signal);
 
-  
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getPolicyAudit>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPolicyAudit>>> = ({ signal }) => getPolicyAudit(params, signal);
+export type GetPolicyAuditQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getPolicyAudit>>
+>;
+export type GetPolicyAuditQueryError =
+  | UnauthorizedResponse
+  | InternalServerErrorResponse;
 
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPolicyAudit>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetPolicyAuditQueryResult = NonNullable<Awaited<ReturnType<typeof getPolicyAudit>>>
-export type GetPolicyAuditQueryError = UnauthorizedResponse | InternalServerErrorResponse
-
-
-export function useGetPolicyAudit<TData = Awaited<ReturnType<typeof getPolicyAudit>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
- params: undefined |  GetPolicyAuditParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyAudit>>, TError, TData>> & Pick<
+export function useGetPolicyAudit<
+  TData = Awaited<ReturnType<typeof getPolicyAudit>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  params: undefined | GetPolicyAuditParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getPolicyAudit>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getPolicyAudit>>,
           TError,
           Awaited<ReturnType<typeof getPolicyAudit>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetPolicyAudit<TData = Awaited<ReturnType<typeof getPolicyAudit>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
- params?: GetPolicyAuditParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyAudit>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetPolicyAudit<
+  TData = Awaited<ReturnType<typeof getPolicyAudit>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  params?: GetPolicyAuditParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getPolicyAudit>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getPolicyAudit>>,
           TError,
           Awaited<ReturnType<typeof getPolicyAudit>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetPolicyAudit<TData = Awaited<ReturnType<typeof getPolicyAudit>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
- params?: GetPolicyAuditParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyAudit>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetPolicyAudit<
+  TData = Awaited<ReturnType<typeof getPolicyAudit>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  params?: GetPolicyAuditParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getPolicyAudit>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Get policy audit log
  */
 
-export function useGetPolicyAudit<TData = Awaited<ReturnType<typeof getPolicyAudit>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
- params?: GetPolicyAuditParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyAudit>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetPolicyAudit<
+  TData = Awaited<ReturnType<typeof getPolicyAudit>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  params?: GetPolicyAuditParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getPolicyAudit>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetPolicyAuditQueryOptions(params, options);
 
-  const queryOptions = getGetPolicyAuditQueryOptions(params,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * @summary Get aggregate output policy statistics
  */
 export const getOutputPolicyStats = (
-    params?: GetOutputPolicyStatsParams,
- signal?: AbortSignal
+  params?: GetOutputPolicyStatsParams,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<GetOutputPolicyStats200>(
-      {url: `/api/v1/policy/output/stats`, method: 'GET',
-        params, signal
-    },
-      );
-    }
-  
+  return apiClient<GetOutputPolicyStats200>({
+    url: `/api/v1/policy/output/stats`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
 
-
-
-export const getGetOutputPolicyStatsQueryKey = (params?: GetOutputPolicyStatsParams,) => {
-    return [
-    `/api/v1/policy/output/stats`, ...(params ? [params]: [])
-    ] as const;
-    }
-
-    
-export const getGetOutputPolicyStatsQueryOptions = <TData = Awaited<ReturnType<typeof getOutputPolicyStats>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(params?: GetOutputPolicyStatsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOutputPolicyStats>>, TError, TData>>, }
+export const getGetOutputPolicyStatsQueryKey = (
+  params?: GetOutputPolicyStatsParams,
 ) => {
+  return [`/api/v1/policy/output/stats`, ...(params ? [params] : [])] as const;
+};
 
-const {query: queryOptions} = options ?? {};
+export const getGetOutputPolicyStatsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getOutputPolicyStats>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  params?: GetOutputPolicyStatsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getOutputPolicyStats>>,
+        TError,
+        TData
+      >
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetOutputPolicyStatsQueryKey(params);
+  const queryKey =
+    queryOptions?.queryKey ?? getGetOutputPolicyStatsQueryKey(params);
 
-  
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getOutputPolicyStats>>
+  > = ({ signal }) => getOutputPolicyStats(params, signal);
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getOutputPolicyStats>>> = ({ signal }) => getOutputPolicyStats(params, signal);
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getOutputPolicyStats>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-      
+export type GetOutputPolicyStatsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getOutputPolicyStats>>
+>;
+export type GetOutputPolicyStatsQueryError =
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | InternalServerErrorResponse;
 
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getOutputPolicyStats>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetOutputPolicyStatsQueryResult = NonNullable<Awaited<ReturnType<typeof getOutputPolicyStats>>>
-export type GetOutputPolicyStatsQueryError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse
-
-
-export function useGetOutputPolicyStats<TData = Awaited<ReturnType<typeof getOutputPolicyStats>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
- params: undefined |  GetOutputPolicyStatsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOutputPolicyStats>>, TError, TData>> & Pick<
+export function useGetOutputPolicyStats<
+  TData = Awaited<ReturnType<typeof getOutputPolicyStats>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  params: undefined | GetOutputPolicyStatsParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getOutputPolicyStats>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getOutputPolicyStats>>,
           TError,
           Awaited<ReturnType<typeof getOutputPolicyStats>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetOutputPolicyStats<TData = Awaited<ReturnType<typeof getOutputPolicyStats>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
- params?: GetOutputPolicyStatsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOutputPolicyStats>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetOutputPolicyStats<
+  TData = Awaited<ReturnType<typeof getOutputPolicyStats>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  params?: GetOutputPolicyStatsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getOutputPolicyStats>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getOutputPolicyStats>>,
           TError,
           Awaited<ReturnType<typeof getOutputPolicyStats>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetOutputPolicyStats<TData = Awaited<ReturnType<typeof getOutputPolicyStats>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
- params?: GetOutputPolicyStatsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOutputPolicyStats>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetOutputPolicyStats<
+  TData = Awaited<ReturnType<typeof getOutputPolicyStats>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  params?: GetOutputPolicyStatsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getOutputPolicyStats>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Get aggregate output policy statistics
  */
 
-export function useGetOutputPolicyStats<TData = Awaited<ReturnType<typeof getOutputPolicyStats>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
- params?: GetOutputPolicyStatsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getOutputPolicyStats>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetOutputPolicyStats<
+  TData = Awaited<ReturnType<typeof getOutputPolicyStats>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  params?: GetOutputPolicyStatsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getOutputPolicyStats>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetOutputPolicyStatsQueryOptions(params, options);
 
-  const queryOptions = getGetOutputPolicyStatsQueryOptions(params,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
 
-
-
-
 /**
  * @summary List velocity rules
  */
-export const listVelocityRules = (
-    
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<ListVelocityRules200>(
-      {url: `/api/v1/policy/velocity-rules`, method: 'GET', signal
-    },
-      );
-    }
-  
-
-
+export const listVelocityRules = (signal?: AbortSignal) => {
+  return apiClient<ListVelocityRules200>({
+    url: `/api/v1/policy/velocity-rules`,
+    method: "GET",
+    signal,
+  });
+};
 
 export const getListVelocityRulesQueryKey = () => {
-    return [
-    `/api/v1/policy/velocity-rules`
-    ] as const;
-    }
+  return [`/api/v1/policy/velocity-rules`] as const;
+};
 
-    
-export const getListVelocityRulesQueryOptions = <TData = Awaited<ReturnType<typeof listVelocityRules>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listVelocityRules>>, TError, TData>>, }
-) => {
+export const getListVelocityRulesQueryOptions = <
+  TData = Awaited<ReturnType<typeof listVelocityRules>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(options?: {
+  query?: Partial<
+    UseQueryOptions<
+      Awaited<ReturnType<typeof listVelocityRules>>,
+      TError,
+      TData
+    >
+  >;
+}) => {
+  const { query: queryOptions } = options ?? {};
 
-const {query: queryOptions} = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getListVelocityRulesQueryKey();
 
-  const queryKey =  queryOptions?.queryKey ?? getListVelocityRulesQueryKey();
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listVelocityRules>>
+  > = ({ signal }) => listVelocityRules(signal);
 
-  
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listVelocityRules>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listVelocityRules>>> = ({ signal }) => listVelocityRules(signal);
+export type ListVelocityRulesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listVelocityRules>>
+>;
+export type ListVelocityRulesQueryError =
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | InternalServerErrorResponse;
 
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listVelocityRules>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type ListVelocityRulesQueryResult = NonNullable<Awaited<ReturnType<typeof listVelocityRules>>>
-export type ListVelocityRulesQueryError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse
-
-
-export function useListVelocityRules<TData = Awaited<ReturnType<typeof listVelocityRules>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listVelocityRules>>, TError, TData>> & Pick<
+export function useListVelocityRules<
+  TData = Awaited<ReturnType<typeof listVelocityRules>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listVelocityRules>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listVelocityRules>>,
           TError,
           Awaited<ReturnType<typeof listVelocityRules>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListVelocityRules<TData = Awaited<ReturnType<typeof listVelocityRules>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listVelocityRules>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListVelocityRules<
+  TData = Awaited<ReturnType<typeof listVelocityRules>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listVelocityRules>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listVelocityRules>>,
           TError,
           Awaited<ReturnType<typeof listVelocityRules>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListVelocityRules<TData = Awaited<ReturnType<typeof listVelocityRules>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listVelocityRules>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListVelocityRules<
+  TData = Awaited<ReturnType<typeof listVelocityRules>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listVelocityRules>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary List velocity rules
  */
 
-export function useListVelocityRules<TData = Awaited<ReturnType<typeof listVelocityRules>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listVelocityRules>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useListVelocityRules<
+  TData = Awaited<ReturnType<typeof listVelocityRules>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listVelocityRules>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListVelocityRulesQueryOptions(options);
 
-  const queryOptions = getListVelocityRulesQueryOptions(options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * @summary Create a velocity rule
  */
 export const createVelocityRule = (
-    velocityRule: VelocityRule,
- signal?: AbortSignal
+  velocityRule: VelocityRule,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<VelocityRule>(
-      {url: `/api/v1/policy/velocity-rules`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: velocityRule, signal
-    },
-      );
-    }
-  
+  return apiClient<VelocityRule>({
+    url: `/api/v1/policy/velocity-rules`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: velocityRule,
+    signal,
+  });
+};
 
+export const getCreateVelocityRuleMutationOptions = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | TierLimitResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createVelocityRule>>,
+    TError,
+    { data: VelocityRule },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createVelocityRule>>,
+  TError,
+  { data: VelocityRule },
+  TContext
+> => {
+  const mutationKey = ["createVelocityRule"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getCreateVelocityRuleMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | TierLimitResponse | ConflictResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createVelocityRule>>, TError,{data: VelocityRule}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof createVelocityRule>>, TError,{data: VelocityRule}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createVelocityRule>>,
+    { data: VelocityRule }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['createVelocityRule'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return createVelocityRule(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type CreateVelocityRuleMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createVelocityRule>>
+>;
+export type CreateVelocityRuleMutationBody = VelocityRule;
+export type CreateVelocityRuleMutationError =
+  | Error
+  | UnauthorizedResponse
+  | TierLimitResponse
+  | InternalServerErrorResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createVelocityRule>>, {data: VelocityRule}> = (props) => {
-          const {data} = props ?? {};
-
-          return  createVelocityRule(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type CreateVelocityRuleMutationResult = NonNullable<Awaited<ReturnType<typeof createVelocityRule>>>
-    export type CreateVelocityRuleMutationBody = VelocityRule
-    export type CreateVelocityRuleMutationError = BadRequestResponse | UnauthorizedResponse | TierLimitResponse | ConflictResponse | InternalServerErrorResponse
-
-    /**
+/**
  * @summary Create a velocity rule
  */
-export const useCreateVelocityRule = <TError = BadRequestResponse | UnauthorizedResponse | TierLimitResponse | ConflictResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createVelocityRule>>, TError,{data: VelocityRule}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof createVelocityRule>>,
-        TError,
-        {data: VelocityRule},
-        TContext
-      > => {
+export const useCreateVelocityRule = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | TierLimitResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof createVelocityRule>>,
+      TError,
+      { data: VelocityRule },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof createVelocityRule>>,
+  TError,
+  { data: VelocityRule },
+  TContext
+> => {
+  const mutationOptions = getCreateVelocityRuleMutationOptions(options);
 
-      const mutationOptions = getCreateVelocityRuleMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary Get velocity rule statistics
  */
-export const getVelocityRuleStats = (
-    
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<GetVelocityRuleStats200>(
-      {url: `/api/v1/policy/velocity-rules/stats`, method: 'GET', signal
-    },
-      );
-    }
-  
-
-
+export const getVelocityRuleStats = (signal?: AbortSignal) => {
+  return apiClient<GetVelocityRuleStats200>({
+    url: `/api/v1/policy/velocity-rules/stats`,
+    method: "GET",
+    signal,
+  });
+};
 
 export const getGetVelocityRuleStatsQueryKey = () => {
-    return [
-    `/api/v1/policy/velocity-rules/stats`
-    ] as const;
-    }
+  return [`/api/v1/policy/velocity-rules/stats`] as const;
+};
 
-    
-export const getGetVelocityRuleStatsQueryOptions = <TData = Awaited<ReturnType<typeof getVelocityRuleStats>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getVelocityRuleStats>>, TError, TData>>, }
-) => {
+export const getGetVelocityRuleStatsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getVelocityRuleStats>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(options?: {
+  query?: Partial<
+    UseQueryOptions<
+      Awaited<ReturnType<typeof getVelocityRuleStats>>,
+      TError,
+      TData
+    >
+  >;
+}) => {
+  const { query: queryOptions } = options ?? {};
 
-const {query: queryOptions} = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getGetVelocityRuleStatsQueryKey();
 
-  const queryKey =  queryOptions?.queryKey ?? getGetVelocityRuleStatsQueryKey();
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getVelocityRuleStats>>
+  > = ({ signal }) => getVelocityRuleStats(signal);
 
-  
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getVelocityRuleStats>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getVelocityRuleStats>>> = ({ signal }) => getVelocityRuleStats(signal);
+export type GetVelocityRuleStatsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getVelocityRuleStats>>
+>;
+export type GetVelocityRuleStatsQueryError =
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | InternalServerErrorResponse;
 
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getVelocityRuleStats>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetVelocityRuleStatsQueryResult = NonNullable<Awaited<ReturnType<typeof getVelocityRuleStats>>>
-export type GetVelocityRuleStatsQueryError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse
-
-
-export function useGetVelocityRuleStats<TData = Awaited<ReturnType<typeof getVelocityRuleStats>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getVelocityRuleStats>>, TError, TData>> & Pick<
+export function useGetVelocityRuleStats<
+  TData = Awaited<ReturnType<typeof getVelocityRuleStats>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getVelocityRuleStats>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getVelocityRuleStats>>,
           TError,
           Awaited<ReturnType<typeof getVelocityRuleStats>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetVelocityRuleStats<TData = Awaited<ReturnType<typeof getVelocityRuleStats>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getVelocityRuleStats>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetVelocityRuleStats<
+  TData = Awaited<ReturnType<typeof getVelocityRuleStats>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getVelocityRuleStats>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getVelocityRuleStats>>,
           TError,
           Awaited<ReturnType<typeof getVelocityRuleStats>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetVelocityRuleStats<TData = Awaited<ReturnType<typeof getVelocityRuleStats>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getVelocityRuleStats>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetVelocityRuleStats<
+  TData = Awaited<ReturnType<typeof getVelocityRuleStats>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getVelocityRuleStats>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Get velocity rule statistics
  */
 
-export function useGetVelocityRuleStats<TData = Awaited<ReturnType<typeof getVelocityRuleStats>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getVelocityRuleStats>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetVelocityRuleStats<
+  TData = Awaited<ReturnType<typeof getVelocityRuleStats>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getVelocityRuleStats>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetVelocityRuleStatsQueryOptions(options);
 
-  const queryOptions = getGetVelocityRuleStatsQueryOptions(options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
 
+/**
+ * @summary Update a velocity rule
+ */
+export const updateVelocityRule = (id: string, velocityRule: VelocityRule) => {
+  return apiClient<VelocityRule>({
+    url: `/api/v1/policy/velocity-rules/${id}`,
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    data: velocityRule,
+  });
+};
 
+export const getUpdateVelocityRuleMutationOptions = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | TierLimitResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateVelocityRule>>,
+    TError,
+    { id: string; data: VelocityRule },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateVelocityRule>>,
+  TError,
+  { id: string; data: VelocityRule },
+  TContext
+> => {
+  const mutationKey = ["updateVelocityRule"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateVelocityRule>>,
+    { id: string; data: VelocityRule }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return updateVelocityRule(id, data);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateVelocityRuleMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateVelocityRule>>
+>;
+export type UpdateVelocityRuleMutationBody = VelocityRule;
+export type UpdateVelocityRuleMutationError =
+  | Error
+  | UnauthorizedResponse
+  | TierLimitResponse
+  | InternalServerErrorResponse;
 
 /**
  * @summary Update a velocity rule
  */
-export const updateVelocityRule = (
-    id: string,
-    velocityRule: VelocityRule,
- ) => {
-      
-      
-      return apiClient<VelocityRule>(
-      {url: `/api/v1/policy/velocity-rules/${id}`, method: 'PUT',
-      headers: {'Content-Type': 'application/json', },
-      data: velocityRule
-    },
-      );
-    }
-  
+export const useUpdateVelocityRule = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | TierLimitResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof updateVelocityRule>>,
+      TError,
+      { id: string; data: VelocityRule },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof updateVelocityRule>>,
+  TError,
+  { id: string; data: VelocityRule },
+  TContext
+> => {
+  const mutationOptions = getUpdateVelocityRuleMutationOptions(options);
 
-
-export const getUpdateVelocityRuleMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | TierLimitResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateVelocityRule>>, TError,{id: string;data: VelocityRule}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof updateVelocityRule>>, TError,{id: string;data: VelocityRule}, TContext> => {
-
-const mutationKey = ['updateVelocityRule'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
-
-      
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateVelocityRule>>, {id: string;data: VelocityRule}> = (props) => {
-          const {id,data} = props ?? {};
-
-          return  updateVelocityRule(id,data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type UpdateVelocityRuleMutationResult = NonNullable<Awaited<ReturnType<typeof updateVelocityRule>>>
-    export type UpdateVelocityRuleMutationBody = VelocityRule
-    export type UpdateVelocityRuleMutationError = BadRequestResponse | UnauthorizedResponse | TierLimitResponse | NotFoundResponse | InternalServerErrorResponse
-
-    /**
- * @summary Update a velocity rule
- */
-export const useUpdateVelocityRule = <TError = BadRequestResponse | UnauthorizedResponse | TierLimitResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateVelocityRule>>, TError,{id: string;data: VelocityRule}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof updateVelocityRule>>,
-        TError,
-        {id: string;data: VelocityRule},
-        TContext
-      > => {
-
-      const mutationOptions = getUpdateVelocityRuleMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary Delete a velocity rule
  */
-export const deleteVelocityRule = (
-    id: string,
- ) => {
-      
-      
-      return apiClient<void>(
-      {url: `/api/v1/policy/velocity-rules/${id}`, method: 'DELETE'
-    },
-      );
-    }
-  
+export const deleteVelocityRule = (id: string) => {
+  return apiClient<void>({
+    url: `/api/v1/policy/velocity-rules/${id}`,
+    method: "DELETE",
+  });
+};
 
+export const getDeleteVelocityRuleMutationOptions = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | TierLimitResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteVelocityRule>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteVelocityRule>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["deleteVelocityRule"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getDeleteVelocityRuleMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | TierLimitResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteVelocityRule>>, TError,{id: string}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof deleteVelocityRule>>, TError,{id: string}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteVelocityRule>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
 
-const mutationKey = ['deleteVelocityRule'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return deleteVelocityRule(id);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type DeleteVelocityRuleMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteVelocityRule>>
+>;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteVelocityRule>>, {id: string}> = (props) => {
-          const {id} = props ?? {};
+export type DeleteVelocityRuleMutationError =
+  | Error
+  | UnauthorizedResponse
+  | TierLimitResponse
+  | InternalServerErrorResponse;
 
-          return  deleteVelocityRule(id,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type DeleteVelocityRuleMutationResult = NonNullable<Awaited<ReturnType<typeof deleteVelocityRule>>>
-    
-    export type DeleteVelocityRuleMutationError = BadRequestResponse | UnauthorizedResponse | TierLimitResponse | NotFoundResponse | InternalServerErrorResponse
-
-    /**
+/**
  * @summary Delete a velocity rule
  */
-export const useDeleteVelocityRule = <TError = BadRequestResponse | UnauthorizedResponse | TierLimitResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteVelocityRule>>, TError,{id: string}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof deleteVelocityRule>>,
-        TError,
-        {id: string},
-        TContext
-      > => {
+export const useDeleteVelocityRule = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | TierLimitResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof deleteVelocityRule>>,
+      TError,
+      { id: string },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof deleteVelocityRule>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationOptions = getDeleteVelocityRuleMutationOptions(options);
 
-      const mutationOptions = getDeleteVelocityRuleMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * Analyzes policy rule quality over a time range. Returns per-rule metrics including hit counts, override rates, approval latency, and daily trends. Read-only — no side effects.
 
  * @summary Compute per-rule quality analytics (false positive rates, approval fatigue)
  */
 export const policyAnalytics = (
-    policyAnalyticsBody: PolicyAnalyticsBody,
- signal?: AbortSignal
+  policyAnalyticsBody: PolicyAnalyticsBody,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<PolicyAnalytics200>(
-      {url: `/api/v1/policy/analytics`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: policyAnalyticsBody, signal
-    },
-      );
-    }
-  
+  return apiClient<PolicyAnalytics200>({
+    url: `/api/v1/policy/analytics`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: policyAnalyticsBody,
+    signal,
+  });
+};
 
+export const getPolicyAnalyticsMutationOptions = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof policyAnalytics>>,
+    TError,
+    { data: PolicyAnalyticsBody },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof policyAnalytics>>,
+  TError,
+  { data: PolicyAnalyticsBody },
+  TContext
+> => {
+  const mutationKey = ["policyAnalytics"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getPolicyAnalyticsMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof policyAnalytics>>, TError,{data: PolicyAnalyticsBody}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof policyAnalytics>>, TError,{data: PolicyAnalyticsBody}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof policyAnalytics>>,
+    { data: PolicyAnalyticsBody }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['policyAnalytics'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return policyAnalytics(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type PolicyAnalyticsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof policyAnalytics>>
+>;
+export type PolicyAnalyticsMutationBody = PolicyAnalyticsBody;
+export type PolicyAnalyticsMutationError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | InternalServerErrorResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof policyAnalytics>>, {data: PolicyAnalyticsBody}> = (props) => {
-          const {data} = props ?? {};
-
-          return  policyAnalytics(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type PolicyAnalyticsMutationResult = NonNullable<Awaited<ReturnType<typeof policyAnalytics>>>
-    export type PolicyAnalyticsMutationBody = PolicyAnalyticsBody
-    export type PolicyAnalyticsMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse
-
-    /**
+/**
  * @summary Compute per-rule quality analytics (false positive rates, approval fatigue)
  */
-export const usePolicyAnalytics = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof policyAnalytics>>, TError,{data: PolicyAnalyticsBody}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof policyAnalytics>>,
-        TError,
-        {data: PolicyAnalyticsBody},
-        TContext
-      > => {
+export const usePolicyAnalytics = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof policyAnalytics>>,
+      TError,
+      { data: PolicyAnalyticsBody },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof policyAnalytics>>,
+  TError,
+  { data: PolicyAnalyticsBody },
+  TContext
+> => {
+  const mutationOptions = getPolicyAnalyticsMutationOptions(options);
 
-      const mutationOptions = getPolicyAnalyticsMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary Replay historical jobs against a candidate policy
  */
 export const replayPolicyDecisions = (
-    policyReplayRequest: PolicyReplayRequest,
- signal?: AbortSignal
+  policyReplayRequest: PolicyReplayRequest,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<PolicyReplayResponse>(
-      {url: `/api/v1/policy/replay`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: policyReplayRequest, signal
-    },
-      );
-    }
-  
+  return apiClient<PolicyReplayResponse>({
+    url: `/api/v1/policy/replay`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: policyReplayRequest,
+    signal,
+  });
+};
 
+export const getReplayPolicyDecisionsMutationOptions = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof replayPolicyDecisions>>,
+    TError,
+    { data: PolicyReplayRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof replayPolicyDecisions>>,
+  TError,
+  { data: PolicyReplayRequest },
+  TContext
+> => {
+  const mutationKey = ["replayPolicyDecisions"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getReplayPolicyDecisionsMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof replayPolicyDecisions>>, TError,{data: PolicyReplayRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof replayPolicyDecisions>>, TError,{data: PolicyReplayRequest}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof replayPolicyDecisions>>,
+    { data: PolicyReplayRequest }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['replayPolicyDecisions'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return replayPolicyDecisions(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type ReplayPolicyDecisionsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof replayPolicyDecisions>>
+>;
+export type ReplayPolicyDecisionsMutationBody = PolicyReplayRequest;
+export type ReplayPolicyDecisionsMutationError =
+  | Error
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | InternalServerErrorResponse
+  | ServiceUnavailableResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof replayPolicyDecisions>>, {data: PolicyReplayRequest}> = (props) => {
-          const {data} = props ?? {};
-
-          return  replayPolicyDecisions(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type ReplayPolicyDecisionsMutationResult = NonNullable<Awaited<ReturnType<typeof replayPolicyDecisions>>>
-    export type ReplayPolicyDecisionsMutationBody = PolicyReplayRequest
-    export type ReplayPolicyDecisionsMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse | ServiceUnavailableResponse
-
-    /**
+/**
  * @summary Replay historical jobs against a candidate policy
  */
-export const useReplayPolicyDecisions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof replayPolicyDecisions>>, TError,{data: PolicyReplayRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof replayPolicyDecisions>>,
-        TError,
-        {data: PolicyReplayRequest},
-        TContext
-      > => {
+export const useReplayPolicyDecisions = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof replayPolicyDecisions>>,
+      TError,
+      { data: PolicyReplayRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof replayPolicyDecisions>>,
+  TError,
+  { data: PolicyReplayRequest },
+  TContext
+> => {
+  const mutationOptions = getReplayPolicyDecisionsMutationOptions(options);
 
-      const mutationOptions = getReplayPolicyDecisionsMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    
+  return useMutation(mutationOptions, queryClient);
+};

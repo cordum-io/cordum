@@ -33,7 +33,7 @@ import (
 // reads the tenant's own bundles (configsvc document is system-scoped
 // but bundle IDs are tenant-prefixed in the Cordum convention — the
 // ctx carries the caller's tenant and the handler pre-filters).
-func (s *server) listSignedBundleSnapshots(ctx context.Context, tenantID string, from, to time.Time) ([]audit.SignedBundleSnapshot, error) {
+func (s *server) listSignedBundleSnapshots(ctx context.Context, from, to time.Time) ([]audit.SignedBundleSnapshot, error) {
 	if s == nil || s.configSvc == nil {
 		return []audit.SignedBundleSnapshot{}, nil
 	}

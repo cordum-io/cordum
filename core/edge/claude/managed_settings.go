@@ -1,9 +1,12 @@
 package claude
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/cordum/cordum/core/edge"
 )
 
 const (
@@ -25,7 +28,9 @@ type managedSettingsDocument struct {
 }
 
 type managedMCPAllow struct {
-	ServerName string `json:"serverName"`
+	ServerName string   `json:"serverName"`
+	Command    string   `json:"command,omitempty"`
+	Args       []string `json:"args,omitempty"`
 }
 
 type managedMCPDocument struct {
@@ -42,7 +47,8 @@ type managedMCPServer struct {
 // managed-mcp.json templates. The templates intentionally contain placeholders
 // and helper commands rather than long-lived tokens.
 func GenerateManagedSettingsTemplate(opts ManagedSettingsOptions) (ManagedSettingsBundle, error) {
-	if err := validateManagedSettingsOptions(opts); err != nil {
+	llmProxyBaseURL, err := validateManagedSettingsOptions(opts)
+	if err != nil {
 		return ManagedSettingsBundle{}, err
 	}
 	hookCommand := hookCommandOrDefault(opts.HookCommand)
@@ -54,7 +60,7 @@ func GenerateManagedSettingsTemplate(opts ManagedSettingsOptions) (ManagedSettin
 		"CORDUM_AGENTD_FAIL_CLOSED":  "true",
 		"CORDUM_AGENTD_URL":          agentdURLForSettings(opts.AgentdURL),
 		"CORDUM_AGENTD_HOOK_TIMEOUT": durationForEnv(timeout),
-		"ANTHROPIC_BASE_URL":         strings.TrimSpace(opts.LLMProxyBaseURL),
+		"ANTHROPIC_BASE_URL":         llmProxyBaseURL,
 	}
 	if strings.TrimSpace(opts.Platform) != "" {
 		env["CORDUM_EDGE_PLATFORM"] = strings.TrimSpace(opts.Platform)
@@ -98,7 +104,7 @@ func GenerateManagedSettingsTemplate(opts ManagedSettingsOptions) (ManagedSettin
 	}, nil
 }
 
-func validateManagedSettingsOptions(opts ManagedSettingsOptions) error {
+func validateManagedSettingsOptions(opts ManagedSettingsOptions) (string, error) {
 	// hook_command is intentionally absent: GenerateManagedSettingsTemplate
 	// fills in the built-in default via hookCommandOrDefault when the caller
 	// leaves opts.HookCommand empty, so requiring it here would make the
@@ -111,17 +117,21 @@ func validateManagedSettingsOptions(opts ManagedSettingsOptions) error {
 		"api_key_helper_command": opts.APIKeyHelperCommand,
 	}
 	if opts.HookCommand != "" && containsSensitiveValue(opts.HookCommand) {
-		return fmt.Errorf("hook_command contains sensitive value")
+		return "", fmt.Errorf("hook_command contains sensitive value")
 	}
 	for name, value := range required {
 		if strings.TrimSpace(value) == "" {
-			return fmt.Errorf("%s required", name)
+			return "", fmt.Errorf("%s required", name)
 		}
 		if containsSensitiveValue(value) {
-			return fmt.Errorf("%s contains sensitive value", name)
+			return "", fmt.Errorf("%s contains sensitive value", name)
 		}
 	}
-	return nil
+	llmProxyBaseURL, err := edge.ValidateProviderBaseURL(context.Background(), opts.LLMProxyBaseURL)
+	if err != nil {
+		return "", fmt.Errorf("llm_proxy_base_url: %w", err)
+	}
+	return llmProxyBaseURL, nil
 }
 
 func containsSensitiveValue(value string) bool {

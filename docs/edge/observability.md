@@ -77,6 +77,32 @@ for EDGE-072.
 | `cordum_edge_ws_events_sent_total` | counter | `tenant_present` | Gateway stream bridge when an Edge event is accepted into the broadcast queue. | Backend-only for now. |
 | `cordum_edge_stream_drops_total` | counter | `reason` | Gateway stream bridge drop paths. | Backend-only alert candidate. |
 
+### Shadow detector metrics (EDGE-143 design — proposed, not yet emitted)
+
+The six metrics below are reserved by the EDGE-143 design at
+[`kubernetes-ci-shadow-detector-design.md`](kubernetes-ci-shadow-detector-design.md)
+§13.1. No call site emits them in the current build; they will land
+with the EDGE-143.1 / EDGE-143.5 / EDGE-143.6 / EDGE-143.7 follow-up
+tasks (`task-8f72d421`, `task-973d8bd7`, `task-cb1f5f2f`,
+`task-8ab4001f`). Names, types, and labels are pinned here so the
+inventory is stable when those tasks wire emission. All labels honor
+the `### Bounded label sets` discipline below — tenant IDs are never
+label values, in line with this file's invariant.
+
+| Metric | Labels | Type | Unit | Meaning |
+| --- | --- | --- | --- | --- |
+| `cordum_edge_shadow_findings_total` | `source_type`, `risk`, `status` | counter | 1 | Total shadow findings emitted by detectors. One increment per finding write (mirrors PRD §17.1). |
+| `cordum_edge_shadow_findings_active` | `source_type`, `tenant_present` | gauge | 1 | Active (non-resolved, non-expired) findings, periodically re-derived from the store. `tenant_present` is `true`/`false` only — never the tenant value. |
+| `cordum_edge_shadow_detector_poll_duration_seconds` | `source_type` | histogram | seconds | Per-detector scan-cycle wall-clock duration. |
+| `cordum_edge_shadow_detector_failures_total` | `source_type`, `reason_code` | counter | 1 | Detector scan failures (transient or persistent). `reason_code` is bounded — `k8s_api_unavailable`, `ci_api_rate_limited`, `auth_failed`, `redacted`, plus the universal `unknown` / `other`. |
+| `cordum_edge_shadow_exceptions_active` | none | gauge | 1 | Operator-declared exceptions currently in effect, periodically re-derived from the store. |
+| `cordum_edge_shadow_remediations_emitted_total` | `class` | counter | 1 | One increment per remediation template emitted by the EDGE-142 generator (`class` is the bounded remediation-class enum from `§12.1`). |
+
+The cluster / namespace / workload / pod-UID / repo / run-ID / signal
+identifiers from the `§13.1` audit-extra catalog are intentionally
+**not** label values — they live in finding records and audit `extra`
+fields, where high cardinality is acceptable.
+
 ### Bounded label sets
 
 Recorder normalizers collapse unrecognized values to `other` or `unknown`.
@@ -95,7 +121,10 @@ or tenant IDs as labels.
 | `outcome` | Redaction: `applied`, `skipped`, `partial`, `failed`, `unknown`, `other`; approval outcomes use the approval enum. |
 | `phase` | Hook timeout: `request`, `gateway`, `kernel`, `unknown`, `other`. |
 | `tenant_present` | `true` or `false`; never the tenant value. |
-| `reason`, `reason_code`, `site`, `component`, `artifact_type`, `result`, `hook_event`, `cache result` | Bounded per helper in `observability_prom.go`; unknown input collapses. |
+| `reason`, `reason_code`, `site`, `component`, `artifact_type`, `result`, `hook_event`, `cache result` | Bounded per helper in `observability_prom.go`; unknown input collapses. New `reason_code` values reserved by EDGE-143: `k8s_api_unavailable`, `ci_api_rate_limited`, `auth_failed`, `redacted` (see `### Shadow detector metrics`). |
+| `source_type` | EDGE-143 shadow-detector label. Bounded: `local`, `kubernetes`, `ci`, `network`, plus `unknown` / `other`. Reserved for the shadow-detector metrics above; not yet emitted. |
+| `risk` | EDGE-143 shadow-detector label. Bounded: `low`, `medium`, `high`, plus `unknown` / `other`. Mirrors the `risk` field on `ShadowAgentFinding`. |
+| `class` | EDGE-143 remediation label. Bounded: `attach_mcp_gateway`, `attach_edge_session`, `deploy_managed_settings`, `route_via_llm_proxy`, `register_ci_workflow`, `declare_exception`, `resolve_manually`, plus `unknown` / `other` (matches `kubernetes-ci-shadow-detector-design.md` §12.1). |
 
 ## Structured logs
 
@@ -113,6 +142,43 @@ Authorization headers, API keys, or hook nonces.
 Edge reuses the existing audit pipeline (`core/audit.AuditSender` and
 `audit.SIEMEvent`). Audit emission is best-effort and must not change
 policy/evaluate/hook decisions if the audit pipeline is unavailable.
+
+### ProvenanceGate audit-chain verification
+
+For destructive actions that present a backend `approval_ref`, the gateway's
+production action-gate pipeline wires `ProvenanceGate` to the existing
+per-tenant audit hash chain (`server.auditChainer` +
+`core/audit.VerifyChain`). The verifier bounds each check to the approval
+window (`CreatedAt` through max of `ResolvedAt`, `ConsumedAt`, and now) and
+uses the tenant stream (`audit:chain:<tenant>`) rather than scanning unrelated
+tenant history.
+
+The accepted provenance event is resolved-only. The audit chain must contain a
+canonical `EventEdgeApprovalResolved` / `edge.approval_resolved` event with
+decision `approved` or `approve`, the same tenant, and bounded `extra` values
+whose `approval_ref` and `action_hash` exactly match the `EdgeApproval`. An
+`EventEdgeApprovalRequested` / `edge.approval_requested` row proves that review
+was requested, but it does not prove that the destructive retry was approved and
+does not satisfy `ProvenanceGate` by itself.
+
+Verifier dependencies fail closed. If Redis or the audit chainer/verifier is
+missing or unavailable, the gate returns `service_unavailable` with an
+`audit_chain_verifier_unavailable` / `audit_chain_verify_failed` sub-reason so
+operators see a dependency outage instead of a surprise `internal_error` after
+human approval. Tampering signals still deny hard as integrity failures:
+compromised hash/HMAC/linkage returns `audit_chain_compromised`, and a missing
+resolved approval event, malformed event JSON, wrong tenant/ref/hash, or
+non-approved terminal decision returns `audit_evidence_missing`.
+
+Retention-trimmed history can produce a `partial` verifier status. Partial is
+acceptable only when the requested window still has authenticated in-window
+resolved approval evidence; a zero-event window or explicit
+missing/out-of-order gap is treated as an evidence gap and fails closed. The
+stream scan and chain verification are capped by the shared audit verification
+limit, so high-volume tenants cannot trigger unbounded Redis work. When
+`CORDUM_AUDIT_HMAC_KEY` is configured, the verifier uses
+`Chainer.HMACKeyForVerify`; key material is never logged, returned in API
+errors, or copied into audit `extra`.
 
 | Event type | Builder / source | Severity source |
 | --- | --- | --- |
@@ -173,7 +239,8 @@ policy/evaluate/hook decisions if the audit pipeline is unavailable.
 | `actionExtra` | `session_id`, `execution_id`, `event_id`, `layer`, `kind`, `tool_name`, `input_hash`, `policy_snapshot`, `tier`, `approval_ref`, `redaction_status`. |
 | `sessionExtra` | `session_id`, `mode`, `status`, `agent_product`. |
 | `executionExtra` | `execution_id`, `session_id`, `adapter`, `mode`, `status`, `workflow_run_id`, `step_id`, `attempt`, `event_counts`. |
-| `approvalExtra` / approval requested | `approval_ref`, `session_id`, `execution_id`, `event_id`, `rule_id`, `policy_snapshot`, plus caller-supplied bounded terminal metadata. |
+| `approvalExtra` / approval requested | `approval_ref`, `session_id`, `execution_id`, `event_id`, `rule_id`, `policy_snapshot`, plus bounded `action_hash` / `input_hash` when available. |
+| `approvalExtra` / approval resolved | `approval_ref` plus bounded terminal metadata such as `action_hash`, `input_hash`, and `policy_snapshot`. This is the only approval lifecycle event kind that can satisfy `ProvenanceGate` for approved destructive actions. |
 | `artifact` export | `artifact_type`, `result`, `session_id`, `execution_id`, `event_id`, `sha256`, `redaction_level`, `retention_class`. Raw artifact URI is never included. |
 | degraded / fail-closed | `mode`, `component`, `reason_code`. |
 

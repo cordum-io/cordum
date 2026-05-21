@@ -5,11 +5,11 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { EdgeSessionCreateRequestPrincipalType } from './edgeSessionCreateRequestPrincipalType';
-import type { EdgeSessionCreateRequestMode } from './edgeSessionCreateRequestMode';
-import type { EdgeEnforcementLayers } from './edgeEnforcementLayers';
-import type { EdgeSessionCreateRequestPolicyMode } from './edgeSessionCreateRequestPolicyMode';
-import type { EdgeLabels } from './edgeLabels';
+import type { EdgeSessionCreateRequestPrincipalType } from "./edgeSessionCreateRequestPrincipalType";
+import type { EdgeSessionCreateRequestMode } from "./edgeSessionCreateRequestMode";
+import type { EdgeEnforcementLayers } from "./edgeEnforcementLayers";
+import type { EdgeSessionCreateRequestPolicyMode } from "./edgeSessionCreateRequestPolicyMode";
+import type { EdgeLabels } from "./edgeLabels";
 
 export interface EdgeSessionCreateRequest {
   /** Optional body tenant; when present it must match X-Tenant-ID. */

@@ -16,10 +16,7 @@ from typing import Union
 import datetime
 
 if TYPE_CHECKING:
-  from ..models.auth_user import AuthUser
-
-
-
+    from ..models.auth_user import AuthUser
 
 
 T = TypeVar("T", bound="LoginResponse")
@@ -27,21 +24,21 @@ T = TypeVar("T", bound="LoginResponse")
 
 @_attrs_define
 class LoginResponse:
-    """ 
-        Attributes:
-            token (Union[Unset, str]):
-            expires_at (Union[Unset, datetime.datetime]):
-            user (Union[Unset, AuthUser]):
-     """
+    """
+    Attributes:
+        token (Union[Unset, str]):
+        expires_at (Union[Unset, datetime.datetime]):
+        user (Union[Unset, AuthUser]):
+    """
 
     token: Union[Unset, str] = UNSET
     expires_at: Union[Unset, datetime.datetime] = UNSET
-    user: Union[Unset, 'AuthUser'] = UNSET
+    user: Union[Unset, "AuthUser"] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         from ..models.auth_user import AuthUser
+
         token = self.token
 
         expires_at: Union[Unset, str] = UNSET
@@ -52,11 +49,9 @@ class LoginResponse:
         if not isinstance(self.user, Unset):
             user = self.user.to_dict()
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if token is not UNSET:
             field_dict["token"] = token
         if expires_at is not UNSET:
@@ -66,40 +61,32 @@ class LoginResponse:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.auth_user import AuthUser
+
         d = src_dict.copy()
         token = d.pop("token", UNSET)
 
         _expires_at = d.pop("expires_at", UNSET)
         expires_at: Union[Unset, datetime.datetime]
-        if isinstance(_expires_at,  Unset):
+        if isinstance(_expires_at, Unset):
             expires_at = UNSET
         else:
             expires_at = isoparse(_expires_at)
 
-
-
-
         _user = d.pop("user", UNSET)
         user: Union[Unset, AuthUser]
-        if isinstance(_user,  Unset):
+        if isinstance(_user, Unset):
             user = UNSET
         else:
             user = AuthUser.from_dict(_user)
-
-
-
 
         login_response = cls(
             token=token,
             expires_at=expires_at,
             user=user,
         )
-
 
         login_response.additional_properties = d
         return login_response

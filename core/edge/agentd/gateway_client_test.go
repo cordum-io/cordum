@@ -312,6 +312,37 @@ func TestGatewayClientMarkSessionDegradedWritesBoundedEdgeEventNoSecretEcho(t *t
 	}
 }
 
+func TestAgentdSecretRedactionUnifiedPatterns(t *testing.T) {
+	syntheticPEM := "-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAKsyntheticfixtureonly\n-----END RSA PRIVATE KEY-----"
+	cases := []struct {
+		name      string
+		input     string
+		forbidden []string
+	}{
+		{name: "aws_access_key", input: "metadata returned AKIAIOSFODNN7EXAMPLE", forbidden: []string{"AKIAIOSFODNN7EXAMPLE"}},
+		{name: "github_pat", input: "token ghp_testabcdefghijklmnopqrstuvwxyz1234", forbidden: []string{"ghp_test"}},
+		{name: "jwt", input: "jwt eyJhbGciSENT.eyJzdWIiSENT.SIG_SENTINEL_3f9b2c11e4a87de9", forbidden: []string{"eyJhbGciSENT"}},
+		{name: "aws_secret_assignment", input: "AWS_SECRET_ACCESS_KEY=syntheticSecretValue12345", forbidden: []string{"syntheticSecretValue12345"}},
+		{name: "password_assignment", input: "password=hunter2", forbidden: []string{"hunter2"}},
+		{name: "pem", input: syntheticPEM, forbidden: []string{"BEGIN RSA PRIVATE KEY", "syntheticfixtureonly"}},
+		{name: "long_hex", input: "digest=0123456789abcdef0123456789abcdef", forbidden: []string{"0123456789abcdef0123456789abcdef"}},
+		{name: "long_base64", input: "token c3ludGhldGljLXJhd19iYXNlNjQtdG9rZW4=", forbidden: []string{"c3ludGhldGlj"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := redactSecretLike(tc.input)
+			for _, forbidden := range tc.forbidden {
+				if strings.Contains(got, forbidden) {
+					t.Fatalf("redactSecretLike(%q) = %q still contains %q", tc.name, got, forbidden)
+				}
+			}
+			if !strings.Contains(got, "REDACTED") {
+				t.Fatalf("redactSecretLike(%q) = %q, want redaction marker", tc.name, got)
+			}
+		})
+	}
+}
+
 func TestGatewayClientWriteEventsUsesAtomicBatchEndpoint(t *testing.T) {
 	t.Parallel()
 

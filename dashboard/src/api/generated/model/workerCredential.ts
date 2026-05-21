@@ -8,6 +8,7 @@
 
 export interface WorkerCredential {
   worker_id: string;
+  tenant_id: string;
   allowed_pools?: string[];
   allowed_topics?: string[];
   pack_id?: string;

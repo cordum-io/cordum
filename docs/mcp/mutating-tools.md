@@ -178,7 +178,10 @@ MCP gateway. Targets `POST /api/v1/agents`.
 | `team` | string | no | Department label. |
 | `allowed_topics` | array | no | Topics this agent may drive jobs into. |
 | `allowed_pools` | array | no | Worker pools this agent may schedule against. |
+| `allowed_servers` | array | no | MCP server-name globs this agent may call. Omitted/empty fail-closes server-guarded MCP actions. |
 | `allowed_tools` | array | no | MCP tools the agent may call. |
+| `allowed_resources` | array | no | `cordum://` resource URI globs this agent may target. Omitted/empty fail-closes resource-guarded MCP actions. |
+| `entitlements` | array | no | Capability tokens for MCP actions that declare `required_entitlement`. |
 | `data_classifications` | array | no | Clearance labels. |
 | `idempotency_key` | string | no | Retry-safe key. |
 
@@ -247,8 +250,8 @@ retry safely.
 
 ### cordum_set_agent_scope
 
-**Purpose.** Update an agent's authorized tool list and mutating-tool
-preapproval allowlist.
+**Purpose.** Update an agent's authorized MCP scope, including tool/server/
+resource/entitlement allowlists and mutating-tool preapproval.
 
 **Input schema.**
 
@@ -256,8 +259,17 @@ preapproval allowlist.
 |-------|------|----------|-------------|
 | `agent_id` | string | yes | Agent to update |
 | `allowed_tools` | array<string> | yes (pass `[]` to clear) | Full replacement list of MCP tool names |
+| `allowed_servers` | array<string> | no (pass `[]` to clear) | Full replacement list of MCP server-name globs |
+| `allowed_resources` | array<string> | no (pass `[]` to clear) | Full replacement list of `cordum://` resource URI globs |
+| `entitlements` | array<string> | no (pass `[]` to clear) | Full replacement list of required-entitlement tokens |
 | `preapproved_mutating_tools` | array<string> | yes (pass `[]` to clear) | Tools this agent may call without human approval |
 | `idempotency_key` | string | no | Retry-safe key |
+
+**MCPGate fail-closed semantics.** `AllowedServers`, `AllowedResources`, and
+`Entitlements` are enforced by the action-gate layer after identity resolution.
+Leaving a list absent or empty does **not** mean wildcard; server-guarded,
+resource-guarded, and required-entitlement MCP actions deny with
+`server_not_allowlisted`, `resource_not_allowlisted`, or `unlicensed`.
 
 **Approval scope.** `mcp_write_admin` (high risk tier).
 

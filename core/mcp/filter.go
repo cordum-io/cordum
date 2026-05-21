@@ -7,6 +7,25 @@ import "strings"
 // core/infra/store.AgentIdentity so callers can copy values directly
 // without taking a heavy import into core/mcp. A nil pointer or a
 // zero-value identity fails closed — no tools are visible.
+//
+// Immutable after publish. Once a producer hands an *AgentIdentity
+// off — typically by stashing it in a request context via
+// ContextWithIdentity — no field MAY be reassigned and the backing
+// arrays of AllowedTools / AllowedServers / AllowedResources /
+// Entitlements / DataClassifications MUST NOT be mutated. The
+// filterCache's keyFor reads these slice fields without any lock,
+// relying on this contract; concurrent mutation would race
+// slice-header reads against writes.
+//
+// Producers MUST construct a fresh struct, copy any caller-owned
+// slice via `append([]string{}, src.Xs...)`, and never offer a write
+// path on a published pointer. The two production producers
+// (gateway.mcpIdentityFromStore in
+// core/controlplane/gateway/mcp_identity.go and the gateway-fetched
+// identity in core/mcp/tools/register.go) satisfy this; an
+// identity-store refresh constructs a NEW *AgentIdentity rather than
+// mutating an existing one. Refreshing an in-flight identity must
+// follow the same copy-on-publish pattern.
 type AgentIdentity struct {
 	// ID is used for audit events when a call is denied. Not load-bearing
 	// for filtering itself.

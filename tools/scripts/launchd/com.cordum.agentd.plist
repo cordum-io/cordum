@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  cordum-agentd user-mode launch agent for macOS.
+
+  Place this file at:
+    ~/Library/LaunchAgents/com.cordum.agentd.plist
+
+  Provision the boot-time secrets in the user's Keychain BEFORE loading the
+  agent — the launch agent intentionally carries NO secrets in its
+  EnvironmentVariables block. Use the `security` CLI with the per-secret
+  account names cordum-agentd reads via the keychain bootstrap path:
+
+    security add-generic-password -a cordum_agentd_nonce -s cordum-agentd \
+        -w "<base64-nonce>" -T /usr/local/bin/cordum-agentd
+    security add-generic-password -a cordum_api_key -s cordum-agentd \
+        -w "<api-key>" -T /usr/local/bin/cordum-agentd
+
+  The `-T` flag scopes the Keychain ACL to the cordum-agentd binary so
+  Console.app prompts are avoided on first read. Re-run with the new value
+  to rotate; cordum-agentd reads on next restart.
+
+  Load + start:
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.cordum.agentd.plist
+    launchctl kickstart gui/$(id -u)/com.cordum.agentd
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.cordum.agentd</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/cordum-agentd</string>
+    </array>
+
+    <!--
+      Non-secret operational environment. CORDUM_AGENTD_STRICT=true tells
+      the keychain bootstrap to fail closed if cordum_agentd_nonce or
+      cordum_api_key cannot be sourced from the Keychain — secrets must
+      NOT appear here.
+    -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>CORDUM_AGENTD_STRICT</key>
+        <string>true</string>
+        <key>CORDUM_AGENTD_LOG_LEVEL</key>
+        <string>info</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>ProcessType</key>
+    <string>Interactive</string>
+
+    <!--
+      Per-user logs under ~/Library/Logs/Cordum/. cordum-agentd applies
+      its own structured redaction before any line is written; the launch
+      agent does not redact stdout/stderr again on its own.
+    -->
+    <key>StandardOutPath</key>
+    <string>/Users/REPLACE_WITH_USERNAME/Library/Logs/Cordum/cordum-agentd.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/REPLACE_WITH_USERNAME/Library/Logs/Cordum/cordum-agentd.stderr.log</string>
+</dict>
+</plist>

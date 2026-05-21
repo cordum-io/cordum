@@ -421,6 +421,8 @@ type abortRecorder struct {
 	cleanupKeysDeleted       int
 	cleanupDeadlines         int
 	sessionsSwept            int
+	approvalSweepDurations   []time.Duration
+	approvalSweepExpired     int
 	idempotencyTTLExtended   []string
 	idempotencyWindowExpired []string
 }
@@ -477,6 +479,18 @@ func (r *abortRecorder) RecordSessionSwept() {
 	r.sessionsSwept++
 }
 
+func (r *abortRecorder) ObserveApprovalSweepDuration(duration time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.approvalSweepDurations = append(r.approvalSweepDurations, duration)
+}
+
+func (r *abortRecorder) AddApprovalSweepExpired(count int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.approvalSweepExpired += count
+}
+
 func (r *abortRecorder) Snapshot() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -511,6 +525,12 @@ func (r *abortRecorder) SnapshotSessionsSwept() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.sessionsSwept
+}
+
+func (r *abortRecorder) SnapshotApprovalSweepMetrics() (int, int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.approvalSweepDurations), r.approvalSweepExpired
 }
 
 // EDGE-061 — extend abortRecorder with idempotency-metric capture so the

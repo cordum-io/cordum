@@ -2,7 +2,7 @@
  * DESIGN: "Control Surface" — Agent Fleet
  * Matches cordumds-gj5mw4zm.manus.space showcase patterns
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { get } from "@/api/client";
@@ -24,7 +24,6 @@ import { cn, formatRelativeTime, clickableRowProps } from "@/lib/utils";
 import { EntitlementGate } from "@/components/EntitlementGate";
 import { useAgentIdentities } from "@/hooks/useAgentIdentities";
 import type { AgentIdentity } from "@/api/types";
-import { useWorkers } from "@/hooks/useWorkers";
 import { PoolGroupedView } from "@/components/agents/PoolGroupedView";
 import { WorkerDetailDrawer } from "@/components/agents/WorkerDetailDrawer";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
@@ -53,15 +52,61 @@ const tableRowVariants = {
   visible: { opacity: 1, y: 0 },
 };
 
+type AgentsTab = "fleet" | "identities";
+type FleetView = "table" | "by-pool";
+
+// Migrate legacy ?tab= values (pre task-083581ca consolidation) so old
+// bookmarks/deep-links resolve to the new 2-tab IA. Pool Topology folds
+// into Fleet Overview's view-toggle; Agent Registry was a redundant
+// worker table; Identity Directory becomes Identities (rename only).
+function migrateTabParam(raw: string | null): { tab: AgentsTab; view?: FleetView } {
+  switch ((raw ?? "").toLowerCase()) {
+    case "pools":
+      return { tab: "fleet", view: "by-pool" };
+    case "registry":
+      return { tab: "fleet" };
+    case "identity":
+    case "identities":
+      return { tab: "identities" };
+    case "fleet":
+    case "":
+      return { tab: "fleet" };
+    default:
+      return { tab: "fleet" };
+  }
+}
+
+function parseFleetView(raw: string | null): FleetView {
+  return raw === "by-pool" ? "by-pool" : "table";
+}
+
 export default function AgentsPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [tab, setTab] = useState<"fleet" | "registry" | "pools" | "identity">("fleet");
-  const [drawerWorkerId, setDrawerWorkerId] = useState<string | null>(null);
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const migrated = migrateTabParam(searchParams.get("tab"));
+  const [tab, setTab] = useState<AgentsTab>(migrated.tab);
+  const [view, setView] = useState<FleetView>(
+    migrated.view ?? parseFleetView(searchParams.get("view")),
+  );
+  const [drawerWorkerId, setDrawerWorkerId] = useState<string | null>(null);
   const poolFilter = searchParams.get("pool")?.trim() ?? "";
   const topicFilter = searchParams.get("topic")?.trim() ?? "";
+
+  // One-shot URL migration on mount: rewrite legacy ?tab=pools|registry|identity
+  // to the new tab+view combination so existing bookmarks don't 404 visually.
+  // replace:true so the rewrite isn't added to browser history.
+  useEffect(() => {
+    const raw = searchParams.get("tab");
+    if (raw === null) return;
+    const m = migrateTabParam(raw);
+    if (m.tab === raw && (!m.view || m.view === searchParams.get("view"))) return;
+    const next = new URLSearchParams(searchParams);
+    next.set("tab", m.tab);
+    if (m.view) next.set("view", m.view);
+    setSearchParams(next, { replace: true });
+  }, []);
 
   const { data: workers, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["workers"],
@@ -105,11 +150,19 @@ export default function AgentsPage() {
     navigate("/agents");
   };
 
+  // task-083581ca: consolidated from 4 tabs to 2. Pool Topology folded
+  // into Fleet Overview's view-toggle (Table / By Pool); Agent Registry
+  // removed as redundant (its worker table duplicated Fleet Overview's);
+  // Identity Directory renamed to Identities. Legacy ?tab= values
+  // migrate via migrateTabParam so old bookmarks resolve.
   const topTabs = [
     { id: "fleet", label: "Fleet Overview" },
-    { id: "registry", label: "Agent Registry" },
-    { id: "pools", label: "Pool Topology" },
-    { id: "identity", label: "Identity Directory", icon: <Fingerprint className="h-3.5 w-3.5" /> },
+    { id: "identities", label: "Identities", icon: <Fingerprint className="h-3.5 w-3.5" /> },
+  ];
+
+  const fleetViewTabs = [
+    { id: "table", label: "Table" },
+    { id: "by-pool", label: "By Pool" },
   ];
 
   const statusTabs = ["all", "idle", "busy", "draining", "offline"].map((status) => ({
@@ -228,8 +281,32 @@ export default function AgentsPage() {
         />
       </div>
 
-      {/* Worker Table — showcase style */}
-      {isLoading ? (
+      {/* task-083581ca: view-mode toggle absorbs the deleted "Pool
+          Topology" tab — same worker data, two layout choices. URL
+          state syncs via setSearchParams so refresh keeps the choice. */}
+      <Tabs
+        tabs={fleetViewTabs}
+        activeTab={view}
+        onChange={(id) => {
+          const next = (id === "by-pool" ? "by-pool" : "table") as FleetView;
+          setView(next);
+          const params = new URLSearchParams(searchParams);
+          if (next === "table") params.delete("view");
+          else params.set("view", next);
+          setSearchParams(params, { replace: true });
+        }}
+        variant="segmented"
+        ariaLabel="Fleet view mode"
+        className="w-full md:w-auto"
+      />
+
+      {/* Worker content — Table vs By Pool view */}
+      {view === "by-pool" ? (
+        <PoolGroupedView
+          workers={allWorkers}
+          onWorkerClick={(id) => setDrawerWorkerId(id)}
+        />
+      ) : isLoading ? (
         <SkeletonTable rows={6} />
       ) : filtered.length === 0 ? (
         <EmptyState
@@ -312,19 +389,8 @@ export default function AgentsPage() {
 
       </>)}
 
-      {tab === "registry" && (
-        <AgentRegistryTab />
-      )}
-
-      {tab === "pools" && (
-        <PoolGroupedView
-          workers={allWorkers}
-          onWorkerClick={(id) => setDrawerWorkerId(id)}
-        />
-      )}
-
-      {tab === "identity" && (
-        <EntitlementGate entitlement="agentIdentity" label="Agent Identity Directory" description="Agent identity management requires an Enterprise license.">
+      {tab === "identities" && (
+        <EntitlementGate entitlement="agentIdentity" label="Agent Identities" description="Agent identity management requires an Enterprise license.">
           <AgentIdentityTab />
         </EntitlementGate>
       )}
@@ -445,78 +511,6 @@ function AgentIdentityTab() {
   );
 }
 
-/* --- Agent Registry Tab --- */
-function AgentRegistryTab() {
-  const navigate = useNavigate();
-  const { data: workers = [], isLoading } = useWorkers();
-
-  if (isLoading) {
-    return <SkeletonTable rows={6} />;
-  }
-
-  if (workers.length === 0) {
-    return (
-      <EmptyState icon={<Shield className="w-8 h-8" />} title="No agents registered" description="Agents will appear here after they connect and send heartbeats." action={<Button variant="outline" size="sm" onClick={() => navigate("/settings/keys")}>View API keys</Button>} />
-    );
-  }
-
-  return (
-    <div className="space-y-4">
-      <p className="text-xs text-muted-foreground">Agents that have submitted jobs, with their safety decision breakdown and policy bindings.</p>
-      <div className="instrument-card overflow-hidden">
-        <div className="overflow-x-auto">
-        <table className="w-full min-w-[800px]">
-          <thead>
-            <tr className="border-b border-border bg-surface-0">
-              <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Agent</th>
-              <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Pool</th>
-              <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Status</th>
-              <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Active Jobs</th>
-              <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Capacity</th>
-              <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Capabilities</th>
-              <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Last Active</th>
-            </tr>
-          </thead>
-          <motion.tbody initial="hidden" animate="visible" variants={tableBodyVariants}>
-            {workers.map((w) => (
-              <motion.tr
-                key={w.id}
-                variants={tableRowVariants}
-                {...clickableRowProps(() => navigate(`/agents/${w.id}`))}
-                className="border-b border-border hover:bg-surface-1 transition-colors cursor-pointer"
-              >
-                <td className="px-5 py-3">
-                  <div className="flex items-center gap-2">
-                    <Shield className="w-3.5 h-3.5 text-cordum" />
-                    <div>
-                      <p className="text-sm font-medium text-foreground">{w.name || w.id}</p>
-                      <p className="text-xs font-mono text-muted-foreground">{w.id}</p>
-                    </div>
-                  </div>
-                </td>
-                <td className="px-5 py-3 font-mono text-sm text-foreground">{w.pool || "—"}</td>
-                <td className="px-5 py-3">
-                  <StatusBadge variant={w.status === "busy" ? "warning" : w.status === "idle" ? "healthy" : "muted"}>{w.status}</StatusBadge>
-                </td>
-                <td className="px-5 py-3 font-mono text-sm text-foreground">{w.activeJobs}</td>
-                <td className="px-5 py-3 font-mono text-sm text-foreground">{w.capacity}</td>
-                <td className="px-5 py-3">
-                  <div className="flex flex-wrap gap-1">
-                    {w.capabilities?.slice(0, 3).map((c) => (
-                      <span key={c} className="text-xs font-mono px-1.5 py-0.5 rounded bg-cordum/10 text-cordum">{c}</span>
-                    ))}
-                    {(w.capabilities?.length ?? 0) > 3 && (
-                      <span className="text-xs font-mono text-muted-foreground">+{(w.capabilities?.length ?? 0) - 3}</span>
-                    )}
-                  </div>
-                </td>
-                <td className="px-5 py-3 text-sm text-muted-foreground">{w.lastHeartbeat ? formatRelativeTime(w.lastHeartbeat) : "—"}</td>
-              </motion.tr>
-            ))}
-          </motion.tbody>
-        </table>
-        </div>
-      </div>
-    </div>
-  );
-}
+/* AgentRegistryTab removed by task-083581ca — its worker table duplicated
+   Fleet Overview's. Workers data is fully surfaced via the consolidated
+   Fleet Overview tab (Table / By Pool view-modes). */

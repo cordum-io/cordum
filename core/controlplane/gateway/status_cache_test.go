@@ -26,6 +26,26 @@ func TestStatusCache_HitWithinTTL(t *testing.T) {
 	}
 }
 
+func TestStatusCache_GetReadOnlyDoesNotMutateCaller(t *testing.T) {
+	c := newStatusCache(5 * time.Second)
+	c.Set(map[string]any{"workers": 3, "uptime": 100})
+
+	got := c.Get()
+	if got == nil {
+		t.Fatal("cache should return data within TTL")
+	}
+	got["workers"] = 99
+	got["new_key"] = "caller-local"
+
+	again := c.Get()
+	if again["workers"] != 3 {
+		t.Fatalf("caller mutation changed cached workers = %v, want 3", again["workers"])
+	}
+	if _, ok := again["new_key"]; ok {
+		t.Fatalf("caller-added key leaked into cache: %#v", again)
+	}
+}
+
 func TestStatusCache_MissAfterTTL(t *testing.T) {
 	c := newStatusCache(10 * time.Millisecond)
 	c.Set(map[string]any{"test": true})

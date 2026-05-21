@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/model"
 )
 
 // InvocationHandle carries the context of a started invocation to
@@ -194,6 +195,12 @@ func (a *auditor) StartInbound(ctx context.Context, agentID, tenantID, toolName 
 	if agentID == "" {
 		agentID = "unknown"
 	}
+	// Default empty tenant to model.DefaultTenant at handle creation
+	// time so every downstream emit (including the recover() path) sees
+	// a non-empty TenantID. Anonymous-session tool calls (no auth ctx,
+	// no header) land on the default tenant chain rather than tripping
+	// the chain sender's slog.Warn. task-3fad45d3.
+	tenantID = model.ResolveTenantForAudit(tenantID, "")
 	h := &InvocationHandle{
 		startedAt:  a.now(),
 		direction:  "inbound",
@@ -227,6 +234,8 @@ func (a *auditor) StartOutbound(ctx context.Context, agentID, tenantID, serverID
 	if agentID == "" {
 		agentID = "unknown"
 	}
+	// Same producer-side default as StartInbound; see comment there.
+	tenantID = model.ResolveTenantForAudit(tenantID, "")
 	h := &InvocationHandle{
 		startedAt:  a.now(),
 		direction:  "outbound",

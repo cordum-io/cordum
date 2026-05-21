@@ -5,31 +5,31 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { GetPolicyShadowResultsComparisonsDiff } from './getPolicyShadowResultsComparisonsDiff';
+import type { GetPolicyShadowResultsComparisonsDiff } from "./getPolicyShadowResultsComparisonsDiff";
 
 export type GetPolicyShadowResultsComparisonsParams = {
-/**
- * Inclusive lower bound, unix milliseconds.
- * @minimum 0
- */
-from: number;
-/**
- * Exclusive upper bound, unix milliseconds (≤ 30 days after `from`).
- * @minimum 0
- */
-to: number;
-/**
- * Filter to one diff class (omit for all classes).
- */
-diff?: GetPolicyShadowResultsComparisonsDiff;
-/**
- * Redis stream ID (`<ms>-<seq>`) returned as `next_cursor` from the previous page.
- */
-cursor?: string;
-/**
- * Page size. Default 50, maximum 500.
- * @minimum 1
- * @maximum 500
- */
-limit?: number;
+  /**
+   * Inclusive lower bound, unix milliseconds.
+   * @minimum 0
+   */
+  from: number;
+  /**
+   * Exclusive upper bound, unix milliseconds (≤ 30 days after `from`).
+   * @minimum 0
+   */
+  to: number;
+  /**
+   * Filter to one diff class (omit for all classes).
+   */
+  diff?: GetPolicyShadowResultsComparisonsDiff;
+  /**
+   * Redis stream ID (`<ms>-<seq>`) returned as `next_cursor` from the previous page.
+   */
+  cursor?: string;
+  /**
+   * Page size. Default 50, maximum 500.
+   * @minimum 1
+   * @maximum 500
+   */
+  limit?: number;
 };

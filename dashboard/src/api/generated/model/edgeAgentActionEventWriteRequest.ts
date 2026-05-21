@@ -5,12 +5,12 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { EdgeAgentActionEventWriteRequestLayer } from './edgeAgentActionEventWriteRequestLayer';
-import type { EdgeAgentActionEventWriteRequestInputRedacted } from './edgeAgentActionEventWriteRequestInputRedacted';
-import type { EdgeAgentActionEventWriteRequestDecision } from './edgeAgentActionEventWriteRequestDecision';
-import type { EdgeArtifactPointer } from './edgeArtifactPointer';
-import type { EdgeAgentActionEventWriteRequestStatus } from './edgeAgentActionEventWriteRequestStatus';
-import type { EdgeLabels } from './edgeLabels';
+import type { EdgeAgentActionEventWriteRequestLayer } from "./edgeAgentActionEventWriteRequestLayer";
+import type { EdgeAgentActionEventWriteRequestInputRedacted } from "./edgeAgentActionEventWriteRequestInputRedacted";
+import type { EdgeAgentActionEventWriteRequestDecision } from "./edgeAgentActionEventWriteRequestDecision";
+import type { EdgeArtifactPointer } from "./edgeArtifactPointer";
+import type { EdgeAgentActionEventWriteRequestStatus } from "./edgeAgentActionEventWriteRequestStatus";
+import type { EdgeLabels } from "./edgeLabels";
 
 /**
  * Redacted event write payload. Do not send raw `tool_input`, `tool_result`, `raw_input`, `raw_transcript`, or `transcript` fields; large evidence belongs in `artifact_ptrs`.

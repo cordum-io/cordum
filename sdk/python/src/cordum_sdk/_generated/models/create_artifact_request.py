@@ -14,10 +14,7 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.create_artifact_request_labels import CreateArtifactRequestLabels
-
-
-
+    from ..models.create_artifact_request_labels import CreateArtifactRequestLabels
 
 
 T = TypeVar("T", bound="CreateArtifactRequest")
@@ -25,23 +22,23 @@ T = TypeVar("T", bound="CreateArtifactRequest")
 
 @_attrs_define
 class CreateArtifactRequest:
-    """ 
-        Attributes:
-            content_base64 (str):
-            content_type (str):
-            retention (Union[Unset, str]): Retention policy (e.g., "30d", "permanent")
-            labels (Union[Unset, CreateArtifactRequestLabels]):
-     """
+    """
+    Attributes:
+        content_base64 (str):
+        content_type (str):
+        retention (Union[Unset, str]): Retention policy (e.g., "30d", "permanent")
+        labels (Union[Unset, CreateArtifactRequestLabels]):
+    """
 
     content_base64: str
     content_type: str
     retention: Union[Unset, str] = UNSET
-    labels: Union[Unset, 'CreateArtifactRequestLabels'] = UNSET
+    labels: Union[Unset, "CreateArtifactRequestLabels"] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         from ..models.create_artifact_request_labels import CreateArtifactRequestLabels
+
         content_base64 = self.content_base64
 
         content_type = self.content_type
@@ -52,13 +49,14 @@ class CreateArtifactRequest:
         if not isinstance(self.labels, Unset):
             labels = self.labels.to_dict()
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "content_base64": content_base64,
-            "content_type": content_type,
-        })
+        field_dict.update(
+            {
+                "content_base64": content_base64,
+                "content_type": content_type,
+            }
+        )
         if retention is not UNSET:
             field_dict["retention"] = retention
         if labels is not UNSET:
@@ -66,11 +64,10 @@ class CreateArtifactRequest:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.create_artifact_request_labels import CreateArtifactRequestLabels
+
         d = src_dict.copy()
         content_base64 = d.pop("content_base64")
 
@@ -80,13 +77,10 @@ class CreateArtifactRequest:
 
         _labels = d.pop("labels", UNSET)
         labels: Union[Unset, CreateArtifactRequestLabels]
-        if isinstance(_labels,  Unset):
+        if isinstance(_labels, Unset):
             labels = UNSET
         else:
             labels = CreateArtifactRequestLabels.from_dict(_labels)
-
-
-
 
         create_artifact_request = cls(
             content_base64=content_base64,
@@ -94,7 +88,6 @@ class CreateArtifactRequest:
             retention=retention,
             labels=labels,
         )
-
 
         create_artifact_request.additional_properties = d
         return create_artifact_request

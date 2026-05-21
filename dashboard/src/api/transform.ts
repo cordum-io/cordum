@@ -1590,6 +1590,116 @@ export function mapPolicyAuditEntry(entry: BackendPolicyAuditEntry): AuditEntry 
   };
 }
 
+// ---------------------------------------------------------------------------
+// SIEM audit feed (GET /api/v1/audit/events)
+// ---------------------------------------------------------------------------
+
+// SiemAuditEventInput captures the SIEM feed wire shape consumed by
+// mapAuditEvent. Mirrors the orval-generated `AuditEvent` interface but
+// stays local so transform.ts isn't tied to the regenerated module's
+// re-export shuffles. Optional fields use `undefined`-safe defaults so
+// a partial backend payload still produces a valid AuditEntry.
+export interface SiemAuditEventInput {
+  id: string;
+  seq?: number;
+  timestamp: string;
+  event_type: string;
+  severity?: string;
+  tenant_id?: string;
+  agent_id?: string;
+  agent_name?: string;
+  agent_risk_tier?: string;
+  job_id?: string;
+  action: string;
+  decision?: string;
+  matched_rule?: string;
+  reason?: string;
+  identity?: string;
+  extra?: Record<string, string>;
+  event_hash?: string;
+  prev_hash?: string;
+}
+
+// Map an SIEM event type onto an AuditEntry resourceType. Derived from
+// the `<resource>.<verb>` event-type convention used by the audit
+// exporter; everything before the first separator (`.` or `_`) is the
+// resource family. Falls back to the raw event_type when the split
+// yields nothing useful.
+function siemEventResourceType(eventType: string): string {
+  const trimmed = eventType.trim();
+  if (!trimmed) return "audit";
+  const dotIdx = trimmed.indexOf(".");
+  const usIdx = trimmed.indexOf("_");
+  const candidates = [dotIdx, usIdx].filter((i) => i > 0);
+  if (candidates.length === 0) return trimmed.toLowerCase();
+  const cut = Math.min(...candidates);
+  return trimmed.slice(0, cut).toLowerCase();
+}
+
+// Derive the AuditEntry severity from the SIEM event severity. The
+// backend emits CRITICAL/HIGH/MEDIUM/LOW/INFO; the dashboard's
+// AuditSeverity is `high|medium|low`. Map CRITICAL→high, INFO→low; the
+// middle three pass through.
+function siemSeverityToAuditSeverity(raw?: string): AuditSeverity {
+  switch ((raw ?? "").toUpperCase()) {
+    case "CRITICAL":
+    case "HIGH":
+      return "high";
+    case "MEDIUM":
+      return "medium";
+    case "LOW":
+    case "INFO":
+    case "":
+    default:
+      return "low";
+  }
+}
+
+// mapAuditEvent translates one SIEM audit event into the dashboard's
+// AuditEntry shape. Used by useAuditEvents to feed the Audit Log page
+// with the FULL chained event feed (MCP, edge, worker, output policy,
+// delegation, ...) — the previous /policy/audit-only path missed every
+// non-policy-bundle subsystem.
+//
+// Resolution order for fields that have multiple sources:
+//   actor       = identity → agent_id → "unknown"
+//   resourceId  = extra.resource_id → extra.session_id → extra.job_id → job_id
+//   payload     = the full extra map (post-server-side redaction)
+export function mapAuditEvent(event: SiemAuditEventInput): AuditEntry {
+  const extra = event.extra ?? {};
+  const actor =
+    (event.identity && event.identity.trim()) ||
+    (event.agent_id && event.agent_id.trim()) ||
+    "unknown";
+  const resourceType = siemEventResourceType(event.event_type);
+  const resourceId =
+    extra.resource_id ||
+    extra.session_id ||
+    extra.execution_id ||
+    extra.job_id ||
+    event.job_id ||
+    "";
+
+  return {
+    id: event.id,
+    timestamp: event.timestamp,
+    eventType: event.event_type,
+    actor,
+    resourceType,
+    resourceId,
+    action: event.action || "",
+    message: event.reason || "",
+    payload: { ...extra },
+    severity: siemSeverityToAuditSeverity(event.severity),
+    actorInfo: deriveAuditActor(actor),
+    resourceInfo: {
+      type: resourceType,
+      id: resourceId,
+      link: auditResourceLink(resourceType, resourceId),
+    },
+  };
+}
+
 export function mapPolicySnapshotSummary(snapshot: BackendPolicySnapshotSummary) {
   return {
     id: snapshot.id,

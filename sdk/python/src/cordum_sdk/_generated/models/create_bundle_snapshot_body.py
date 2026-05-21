@@ -12,38 +12,29 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="CreateBundleSnapshotBody")
 
 
 @_attrs_define
 class CreateBundleSnapshotBody:
-    """ 
-        Attributes:
-            note (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        note (Union[Unset, str]):
+    """
 
     note: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
         note = self.note
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if note is not UNSET:
             field_dict["note"] = note
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -53,7 +44,6 @@ class CreateBundleSnapshotBody:
         create_bundle_snapshot_body = cls(
             note=note,
         )
-
 
         create_bundle_snapshot_body.additional_properties = d
         return create_bundle_snapshot_body

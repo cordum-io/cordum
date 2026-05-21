@@ -12,37 +12,30 @@ from typing import cast
 from typing import Dict
 
 
-
 def _get_kwargs(
     job_id: str,
     *,
     x_tenant_id: str,
-
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
     headers["X-Tenant-ID"] = x_tenant_id
 
-
-
-    
-
-    
-
     _kwargs: Dict[str, Any] = {
         "method": "post",
-        "url": "/api/v1/dlq/{job_id}/retry".format(job_id=job_id,),
+        "url": "/api/v1/dlq/{job_id}/retry".format(
+            job_id=job_id,
+        ),
     }
-
 
     _kwargs["headers"] = headers
     return _kwargs
 
 
-def _parse_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Optional[Union[Any, RetryDLQEntryResponse200]]:
+def _parse_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Optional[Union[Any, RetryDLQEntryResponse200]]:
     if response.status_code == 200:
         response_200 = RetryDLQEntryResponse200.from_dict(response.json())
-
-
 
         return response_200
     if response.status_code == 401:
@@ -63,7 +56,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         return None
 
 
-def _build_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Response[Union[Any, RetryDLQEntryResponse200]]:
+def _build_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Response[Union[Any, RetryDLQEntryResponse200]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -77,9 +72,8 @@ def sync_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     x_tenant_id: str,
-
 ) -> Response[Union[Any, RetryDLQEntryResponse200]]:
-    """ Retry a dead-lettered job
+    """Retry a dead-lettered job
 
     Args:
         job_id (str):
@@ -91,13 +85,11 @@ def sync_detailed(
 
     Returns:
         Response[Union[Any, RetryDLQEntryResponse200]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         job_id=job_id,
-x_tenant_id=x_tenant_id,
-
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -106,14 +98,14 @@ x_tenant_id=x_tenant_id,
 
     return _build_response(client=client, response=response)
 
+
 def sync(
     job_id: str,
     *,
     client: Union[AuthenticatedClient, Client],
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, RetryDLQEntryResponse200]]:
-    """ Retry a dead-lettered job
+    """Retry a dead-lettered job
 
     Args:
         job_id (str):
@@ -125,24 +117,22 @@ def sync(
 
     Returns:
         Union[Any, RetryDLQEntryResponse200]
-     """
-
+    """
 
     return sync_detailed(
         job_id=job_id,
-client=client,
-x_tenant_id=x_tenant_id,
-
+        client=client,
+        x_tenant_id=x_tenant_id,
     ).parsed
+
 
 async def asyncio_detailed(
     job_id: str,
     *,
     client: Union[AuthenticatedClient, Client],
     x_tenant_id: str,
-
 ) -> Response[Union[Any, RetryDLQEntryResponse200]]:
-    """ Retry a dead-lettered job
+    """Retry a dead-lettered job
 
     Args:
         job_id (str):
@@ -154,29 +144,25 @@ async def asyncio_detailed(
 
     Returns:
         Response[Union[Any, RetryDLQEntryResponse200]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         job_id=job_id,
-x_tenant_id=x_tenant_id,
-
+        x_tenant_id=x_tenant_id,
     )
 
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
+
 
 async def asyncio(
     job_id: str,
     *,
     client: Union[AuthenticatedClient, Client],
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, RetryDLQEntryResponse200]]:
-    """ Retry a dead-lettered job
+    """Retry a dead-lettered job
 
     Args:
         job_id (str):
@@ -188,12 +174,12 @@ async def asyncio(
 
     Returns:
         Union[Any, RetryDLQEntryResponse200]
-     """
+    """
 
-
-    return (await asyncio_detailed(
-        job_id=job_id,
-client=client,
-x_tenant_id=x_tenant_id,
-
-    )).parsed
+    return (
+        await asyncio_detailed(
+            job_id=job_id,
+            client=client,
+            x_tenant_id=x_tenant_id,
+        )
+    ).parsed

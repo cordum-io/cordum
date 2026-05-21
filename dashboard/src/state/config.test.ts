@@ -64,6 +64,9 @@ describe("useConfigStore", () => {
     expect(state.traceUrlTemplate).toBe("");
     expect(state.approvalSlaMs).toBe(900_000);
     expect(state.isAuthenticated).toBe(true); // based on user, not token
+    // Persisted user implies a prior session-mode login; cookie is the auth
+    // artefact and is preserved across tab reloads by the browser.
+    expect(state.authMode).toBe("session");
     expect(state.isLoggingOut).toBe(false);
     expect(state.loginTimestamp).toBe(1700000000000);
     // Legacy token should have been cleared
@@ -83,6 +86,9 @@ describe("useConfigStore", () => {
     expect(state.apiKey).toBe("new-token");
     expect(state.tenantId).toBe("tenant-x");
     expect(state.isAuthenticated).toBe(true);
+    // Patching apiKey via update() is the embedded-mode escape hatch (runtime
+    // config). Authmode must flip to "apikey" so apiClient sends X-API-Key.
+    expect(state.authMode).toBe("apikey");
     // Token should NOT be in localStorage (httpOnly cookie handles persistence)
     expect(window.localStorage.getItem(TOKEN_KEY)).toBeNull();
 
@@ -90,6 +96,7 @@ describe("useConfigStore", () => {
     state = useConfigStore.getState();
     expect(state.apiKey).toBe("");
     expect(state.isAuthenticated).toBe(false);
+    expect(state.authMode).toBe("anonymous");
   });
 
   it("login sets auth fields, persists state, and broadcasts auth-login", async () => {
@@ -97,17 +104,21 @@ describe("useConfigStore", () => {
     vi.setSystemTime(new Date("2026-02-13T06:00:00.000Z"));
 
     const { useConfigStore } = await loadConfigModule();
-    useConfigStore.getState().login("login-token", {
-      id: "user-2",
-      username: "bob",
-      email: "bob@example.com",
-      display_name: "Bob",
-      roles: ["operator", "viewer"],
-      tenant: "tenant-b",
-    });
+    useConfigStore.getState().login(
+      { mode: "apikey", key: "login-token" },
+      {
+        id: "user-2",
+        username: "bob",
+        email: "bob@example.com",
+        display_name: "Bob",
+        roles: ["operator", "viewer"],
+        tenant: "tenant-b",
+      },
+    );
 
     const state = useConfigStore.getState();
     expect(state.apiKey).toBe("login-token");
+    expect(state.authMode).toBe("apikey");
     expect(state.user?.id).toBe("user-2");
     expect(state.isAuthenticated).toBe(true);
     expect(state.isLoggingOut).toBe(false);
@@ -125,8 +136,44 @@ describe("useConfigStore", () => {
     );
     expect(broadcastSyncMock).toHaveBeenCalledWith({
       type: "auth-login",
-      token: "login-token",
+      creds: { mode: "apikey", key: "login-token" },
       user: expect.objectContaining({ id: "user-2", tenant: "tenant-b" }),
+    });
+  });
+
+  it("session-mode login does NOT store any value as apiKey (prevents X-API-Key login-loop)", async () => {
+    // Customer-reported bug regression: password and SSO login flows are
+    // session-based. The gateway sets the httpOnly `cordum_session` cookie;
+    // the dashboard must NOT store the session token (echoed in the response
+    // body for non-browser clients) as `apiKey`. If it did, apiClient would
+    // send it as `X-API-Key: session-xxx` on every subsequent request, the
+    // gateway would reject that header (it's for real API keys only), and
+    // the dashboard would interpret 401 → logout → /login → infinite loop.
+    const { useConfigStore } = await loadConfigModule();
+    useConfigStore.getState().login(
+      { mode: "session" },
+      {
+        id: "admin",
+        username: "admin",
+        email: "",
+        display_name: "admin",
+        roles: ["admin"],
+        tenant: "default",
+      },
+    );
+
+    const state = useConfigStore.getState();
+    expect(state.apiKey).toBe(""); // CRITICAL: no token in apiKey slot
+    expect(state.authMode).toBe("session");
+    expect(state.isAuthenticated).toBe(true);
+    expect(state.user?.id).toBe("admin");
+    expect(state.tenantId).toBe("default");
+    // Broadcast carries the discriminator only — no token to leak across tabs
+    // (session cookie syncs automatically; nothing for apikey-bound header).
+    expect(broadcastSyncMock).toHaveBeenCalledWith({
+      type: "auth-login",
+      creds: { mode: "session" },
+      user: expect.objectContaining({ id: "admin" }),
     });
   });
 
@@ -159,6 +206,7 @@ describe("useConfigStore", () => {
     const state = useConfigStore.getState();
 
     expect(state.apiKey).toBe("");
+    expect(state.authMode).toBe("anonymous");
     expect(state.user).toBeNull();
     expect(state.isAuthenticated).toBe(false);
     expect(state.isLoggingOut).toBe(true);
@@ -175,14 +223,17 @@ describe("useConfigStore", () => {
 
   it("ignores duplicate logout calls until the next login", async () => {
     const { useConfigStore } = await loadConfigModule();
-    useConfigStore.getState().login("token-1", {
-      id: "user-1",
-      username: "alice",
-      email: "alice@example.com",
-      display_name: "Alice",
-      roles: ["admin"],
-      tenant: "tenant-a",
-    });
+    useConfigStore.getState().login(
+      { mode: "apikey", key: "token-1" },
+      {
+        id: "user-1",
+        username: "alice",
+        email: "alice@example.com",
+        display_name: "Alice",
+        roles: ["admin"],
+        tenant: "tenant-a",
+      },
+    );
 
     useConfigStore.getState().logout();
     useConfigStore.getState().logout();
@@ -191,19 +242,22 @@ describe("useConfigStore", () => {
     expect(broadcastSyncMock).toHaveBeenCalledTimes(2);
     expect(broadcastSyncMock).toHaveBeenNthCalledWith(1, {
       type: "auth-login",
-      token: "token-1",
+      creds: { mode: "apikey", key: "token-1" },
       user: expect.objectContaining({ id: "user-1", tenant: "tenant-a" }),
     });
     expect(broadcastSyncMock).toHaveBeenNthCalledWith(2, { type: "auth-logout" });
 
-    useConfigStore.getState().login("token-2", {
-      id: "user-2",
-      username: "bob",
-      email: "bob@example.com",
-      display_name: "Bob",
-      roles: ["operator"],
-      tenant: "tenant-b",
-    });
+    useConfigStore.getState().login(
+      { mode: "apikey", key: "token-2" },
+      {
+        id: "user-2",
+        username: "bob",
+        email: "bob@example.com",
+        display_name: "Bob",
+        roles: ["operator"],
+        tenant: "tenant-b",
+      },
+    );
 
     expect(useConfigStore.getState().isLoggingOut).toBe(false);
   });
@@ -229,14 +283,17 @@ describe("tenant lock (defense-in-depth)", () => {
 
   it("locks tenantId after login and blocks subsequent changes via update()", async () => {
     const { useConfigStore } = await loadConfigModule();
-    useConfigStore.getState().login("token-1", {
-      id: "user-1",
-      username: "alice",
-      email: "a@example.com",
-      display_name: "Alice",
-      roles: ["admin"],
-      tenant: "tenant-a",
-    });
+    useConfigStore.getState().login(
+      { mode: "apikey", key: "token-1" },
+      {
+        id: "user-1",
+        username: "alice",
+        email: "a@example.com",
+        display_name: "Alice",
+        roles: ["admin"],
+        tenant: "tenant-a",
+      },
+    );
 
     expect(useConfigStore.getState().tenantLocked).toBe(true);
     expect(useConfigStore.getState().tenantId).toBe("tenant-a");
@@ -262,14 +319,17 @@ describe("tenant lock (defense-in-depth)", () => {
 
   it("resets tenantLocked on logout so a new login can set tenant", async () => {
     const { useConfigStore } = await loadConfigModule();
-    useConfigStore.getState().login("token-1", {
-      id: "user-1",
-      username: "alice",
-      email: "a@example.com",
-      display_name: "Alice",
-      roles: ["admin"],
-      tenant: "tenant-a",
-    });
+    useConfigStore.getState().login(
+      { mode: "apikey", key: "token-1" },
+      {
+        id: "user-1",
+        username: "alice",
+        email: "a@example.com",
+        display_name: "Alice",
+        roles: ["admin"],
+        tenant: "tenant-a",
+      },
+    );
     expect(useConfigStore.getState().tenantLocked).toBe(true);
 
     useConfigStore.getState().logout();
@@ -277,28 +337,34 @@ describe("tenant lock (defense-in-depth)", () => {
     expect(useConfigStore.getState().tenantId).toBe("");
 
     // Can now set a different tenant
-    useConfigStore.getState().login("token-2", {
-      id: "user-2",
-      username: "bob",
-      email: "b@example.com",
-      display_name: "Bob",
-      roles: ["operator"],
-      tenant: "tenant-b",
-    });
+    useConfigStore.getState().login(
+      { mode: "apikey", key: "token-2" },
+      {
+        id: "user-2",
+        username: "bob",
+        email: "b@example.com",
+        display_name: "Bob",
+        roles: ["operator"],
+        tenant: "tenant-b",
+      },
+    );
     expect(useConfigStore.getState().tenantId).toBe("tenant-b");
     expect(useConfigStore.getState().tenantLocked).toBe(true);
   });
 
   it("still applies non-tenant fields from a patch that includes a blocked tenant change", async () => {
     const { useConfigStore } = await loadConfigModule();
-    useConfigStore.getState().login("token-1", {
-      id: "user-1",
-      username: "alice",
-      email: "a@example.com",
-      display_name: "Alice",
-      roles: ["admin"],
-      tenant: "tenant-a",
-    });
+    useConfigStore.getState().login(
+      { mode: "apikey", key: "token-1" },
+      {
+        id: "user-1",
+        username: "alice",
+        email: "a@example.com",
+        display_name: "Alice",
+        roles: ["admin"],
+        tenant: "tenant-a",
+      },
+    );
 
     useConfigStore.getState().update({ tenantId: "tenant-evil", apiBaseUrl: "https://new-api.test" });
     expect(useConfigStore.getState().tenantId).toBe("tenant-a");

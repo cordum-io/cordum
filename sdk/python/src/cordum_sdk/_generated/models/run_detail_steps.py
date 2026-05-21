@@ -12,10 +12,7 @@ from typing import cast
 from typing import Dict
 
 if TYPE_CHECKING:
-  from ..models.run_step_status import RunStepStatus
-
-
-
+    from ..models.run_step_status import RunStepStatus
 
 
 T = TypeVar("T", bound="RunDetailSteps")
@@ -23,37 +20,29 @@ T = TypeVar("T", bound="RunDetailSteps")
 
 @_attrs_define
 class RunDetailSteps:
-    """ Map of step ID to step run status
+    """Map of step ID to step run status"""
 
-     """
-
-    additional_properties: Dict[str, 'RunStepStatus'] = _attrs_field(init=False, factory=dict)
-
+    additional_properties: Dict[str, "RunStepStatus"] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         from ..models.run_step_status import RunStepStatus
-        
+
         field_dict: Dict[str, Any] = {}
         for prop_name, prop in self.additional_properties.items():
             field_dict[prop_name] = prop.to_dict()
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.run_step_status import RunStepStatus
-        d = src_dict.copy()
-        run_detail_steps = cls(
-        )
 
+        d = src_dict.copy()
+        run_detail_steps = cls()
 
         additional_properties = {}
         for prop_name, prop_dict in d.items():
             additional_property = RunStepStatus.from_dict(prop_dict)
-
-
 
             additional_properties[prop_name] = additional_property
 
@@ -64,10 +53,10 @@ class RunDetailSteps:
     def additional_keys(self) -> List[str]:
         return list(self.additional_properties.keys())
 
-    def __getitem__(self, key: str) -> 'RunStepStatus':
+    def __getitem__(self, key: str) -> "RunStepStatus":
         return self.additional_properties[key]
 
-    def __setitem__(self, key: str, value: 'RunStepStatus') -> None:
+    def __setitem__(self, key: str, value: "RunStepStatus") -> None:
         self.additional_properties[key] = value
 
     def __delitem__(self, key: str) -> None:

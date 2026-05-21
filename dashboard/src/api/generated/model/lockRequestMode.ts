@@ -6,11 +6,11 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type LockRequestMode = typeof LockRequestMode[keyof typeof LockRequestMode];
-
+export type LockRequestMode =
+  (typeof LockRequestMode)[keyof typeof LockRequestMode];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const LockRequestMode = {
-  EXCLUSIVE: 'EXCLUSIVE',
-  SHARED: 'SHARED',
+  EXCLUSIVE: "EXCLUSIVE",
+  SHARED: "SHARED",
 } as const;

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
+	"github.com/cordum/cordum/core/internal/testredis"
 	"github.com/cordum/cordum/core/model"
 	"github.com/redis/go-redis/v9"
 )
@@ -22,8 +23,7 @@ func newTestEvalDatasetStore(t *testing.T) (*EvalDatasetStore, *miniredis.Minire
 	}
 	t.Cleanup(srv.Close)
 
-	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
+	client := testredis.NewClient(t, srv.Addr())
 
 	return NewEvalDatasetStoreFromClient(client), srv
 }
@@ -790,9 +790,8 @@ func BenchmarkListEvalDatasets1k(b *testing.B) {
 	if err != nil {
 		b.Fatalf("miniredis: %v", err)
 	}
-	defer srv.Close()
-	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
-	defer func() { _ = client.Close() }()
+	b.Cleanup(srv.Close)
+	client := testredis.NewClient(b, srv.Addr())
 	s := NewEvalDatasetStoreFromClient(client)
 	ctx := context.Background()
 

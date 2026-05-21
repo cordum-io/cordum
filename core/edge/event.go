@@ -96,4 +96,12 @@ type AgentActionEvent struct {
 	ErrorCode        string            `json:"error_code"`
 	ErrorMessage     string            `json:"error_message"`
 	Labels           Labels            `json:"labels"`
+	// Constraints carries the structured `_constraints` map emitted by a
+	// policy gate when its decision was ALLOW_WITH_CONSTRAINTS. Only set on
+	// pre/post/failed events whose decision is `constrain`; omitempty keeps
+	// the wire payload identical to legacy ALLOW events. The shape mirrors
+	// the agentd evaluate response (core/edge/agentd EvaluateResponse) so
+	// downstream consumers see one canonical constraint payload across the
+	// hook and MCP surfaces.
+	Constraints map[string]any `json:"constraints,omitempty"`
 }

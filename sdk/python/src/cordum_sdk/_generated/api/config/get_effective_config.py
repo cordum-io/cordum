@@ -14,7 +14,6 @@ from typing import Dict
 from typing import Union
 
 
-
 def _get_kwargs(
     *,
     org_id: Union[Unset, str] = UNSET,
@@ -22,14 +21,9 @@ def _get_kwargs(
     workflow_id: Union[Unset, str] = UNSET,
     step_id: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
     headers["X-Tenant-ID"] = x_tenant_id
-
-
-
-    
 
     params: Dict[str, Any] = {}
 
@@ -41,9 +35,7 @@ def _get_kwargs(
 
     params["step_id"] = step_id
 
-
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
-
 
     _kwargs: Dict[str, Any] = {
         "method": "get",
@@ -51,16 +43,15 @@ def _get_kwargs(
         "params": params,
     }
 
-
     _kwargs["headers"] = headers
     return _kwargs
 
 
-def _parse_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Optional[Union[Any, ConfigDocument]]:
+def _parse_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Optional[Union[Any, ConfigDocument]]:
     if response.status_code == 200:
         response_200 = ConfigDocument.from_dict(response.json())
-
-
 
         return response_200
     if response.status_code == 401:
@@ -75,7 +66,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         return None
 
 
-def _build_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Response[Union[Any, ConfigDocument]]:
+def _build_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Response[Union[Any, ConfigDocument]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -92,9 +85,8 @@ def sync_detailed(
     workflow_id: Union[Unset, str] = UNSET,
     step_id: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, ConfigDocument]]:
-    """ Get merged effective configuration
+    """Get merged effective configuration
 
      Returns the effective configuration after merging all scopes
     (global -> org -> team -> workflow -> step).
@@ -112,16 +104,14 @@ def sync_detailed(
 
     Returns:
         Response[Union[Any, ConfigDocument]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         org_id=org_id,
-team_id=team_id,
-workflow_id=workflow_id,
-step_id=step_id,
-x_tenant_id=x_tenant_id,
-
+        team_id=team_id,
+        workflow_id=workflow_id,
+        step_id=step_id,
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -129,6 +119,7 @@ x_tenant_id=x_tenant_id,
     )
 
     return _build_response(client=client, response=response)
+
 
 def sync(
     *,
@@ -138,9 +129,8 @@ def sync(
     workflow_id: Union[Unset, str] = UNSET,
     step_id: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, ConfigDocument]]:
-    """ Get merged effective configuration
+    """Get merged effective configuration
 
      Returns the effective configuration after merging all scopes
     (global -> org -> team -> workflow -> step).
@@ -158,18 +148,17 @@ def sync(
 
     Returns:
         Union[Any, ConfigDocument]
-     """
-
+    """
 
     return sync_detailed(
         client=client,
-org_id=org_id,
-team_id=team_id,
-workflow_id=workflow_id,
-step_id=step_id,
-x_tenant_id=x_tenant_id,
-
+        org_id=org_id,
+        team_id=team_id,
+        workflow_id=workflow_id,
+        step_id=step_id,
+        x_tenant_id=x_tenant_id,
     ).parsed
+
 
 async def asyncio_detailed(
     *,
@@ -179,9 +168,8 @@ async def asyncio_detailed(
     workflow_id: Union[Unset, str] = UNSET,
     step_id: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, ConfigDocument]]:
-    """ Get merged effective configuration
+    """Get merged effective configuration
 
      Returns the effective configuration after merging all scopes
     (global -> org -> team -> workflow -> step).
@@ -199,23 +187,20 @@ async def asyncio_detailed(
 
     Returns:
         Response[Union[Any, ConfigDocument]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         org_id=org_id,
-team_id=team_id,
-workflow_id=workflow_id,
-step_id=step_id,
-x_tenant_id=x_tenant_id,
-
+        team_id=team_id,
+        workflow_id=workflow_id,
+        step_id=step_id,
+        x_tenant_id=x_tenant_id,
     )
 
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
+
 
 async def asyncio(
     *,
@@ -225,9 +210,8 @@ async def asyncio(
     workflow_id: Union[Unset, str] = UNSET,
     step_id: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, ConfigDocument]]:
-    """ Get merged effective configuration
+    """Get merged effective configuration
 
      Returns the effective configuration after merging all scopes
     (global -> org -> team -> workflow -> step).
@@ -245,15 +229,15 @@ async def asyncio(
 
     Returns:
         Union[Any, ConfigDocument]
-     """
+    """
 
-
-    return (await asyncio_detailed(
-        client=client,
-org_id=org_id,
-team_id=team_id,
-workflow_id=workflow_id,
-step_id=step_id,
-x_tenant_id=x_tenant_id,
-
-    )).parsed
+    return (
+        await asyncio_detailed(
+            client=client,
+            org_id=org_id,
+            team_id=team_id,
+            workflow_id=workflow_id,
+            step_id=step_id,
+            x_tenant_id=x_tenant_id,
+        )
+    ).parsed

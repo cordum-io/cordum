@@ -12,23 +12,19 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="IssueDelegationTokenResponse201")
 
 
 @_attrs_define
 class IssueDelegationTokenResponse201:
-    """ 
-        Attributes:
-            token (Union[Unset, str]):
-            kid (Union[Unset, str]):
-            expires_at (Union[Unset, str]):
-            chain_depth (Union[Unset, int]):
-            jti (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        token (Union[Unset, str]):
+        kid (Union[Unset, str]):
+        expires_at (Union[Unset, str]):
+        chain_depth (Union[Unset, int]):
+        jti (Union[Unset, str]):
+    """
 
     token: Union[Unset, str] = UNSET
     kid: Union[Unset, str] = UNSET
@@ -36,7 +32,6 @@ class IssueDelegationTokenResponse201:
     chain_depth: Union[Unset, int] = UNSET
     jti: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         token = self.token
@@ -49,11 +44,9 @@ class IssueDelegationTokenResponse201:
 
         jti = self.jti
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if token is not UNSET:
             field_dict["token"] = token
         if kid is not UNSET:
@@ -66,8 +59,6 @@ class IssueDelegationTokenResponse201:
             field_dict["jti"] = jti
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -89,7 +80,6 @@ class IssueDelegationTokenResponse201:
             chain_depth=chain_depth,
             jti=jti,
         )
-
 
         issue_delegation_token_response_201.additional_properties = d
         return issue_delegation_token_response_201

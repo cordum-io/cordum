@@ -11,50 +11,40 @@ from ..types import UNSET, Unset
 from ..models.set_telemetry_consent_body_mode import SetTelemetryConsentBodyMode
 
 
-
-
-
-
 T = TypeVar("T", bound="SetTelemetryConsentBody")
 
 
 @_attrs_define
 class SetTelemetryConsentBody:
-    """ 
-        Attributes:
-            mode (SetTelemetryConsentBodyMode):
-     """
+    """
+    Attributes:
+        mode (SetTelemetryConsentBodyMode):
+    """
 
     mode: SetTelemetryConsentBodyMode
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
         mode = self.mode.value
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "mode": mode,
-        })
+        field_dict.update(
+            {
+                "mode": mode,
+            }
+        )
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
         mode = SetTelemetryConsentBodyMode(d.pop("mode"))
 
-
-
-
         set_telemetry_consent_body = cls(
             mode=mode,
         )
-
 
         set_telemetry_consent_body.additional_properties = d
         return set_telemetry_consent_body

@@ -5,21 +5,21 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { GetPolicyShadowResultsTimeseriesBucket } from './getPolicyShadowResultsTimeseriesBucket';
+import type { GetPolicyShadowResultsTimeseriesBucket } from "./getPolicyShadowResultsTimeseriesBucket";
 
 export type GetPolicyShadowResultsTimeseriesParams = {
-/**
- * Inclusive lower bound, unix milliseconds.
- * @minimum 0
- */
-from: number;
-/**
- * Exclusive upper bound, unix milliseconds (≤ 30 days after `from`).
- * @minimum 0
- */
-to: number;
-/**
- * Bucket width (closed whitelist).
- */
-bucket: GetPolicyShadowResultsTimeseriesBucket;
+  /**
+   * Inclusive lower bound, unix milliseconds.
+   * @minimum 0
+   */
+  from: number;
+  /**
+   * Exclusive upper bound, unix milliseconds (≤ 30 days after `from`).
+   * @minimum 0
+   */
+  to: number;
+  /**
+   * Bucket width (closed whitelist).
+   */
+  bucket: GetPolicyShadowResultsTimeseriesBucket;
 };

@@ -13,29 +13,25 @@ from typing import cast, Union
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="ApprovalAnalyticsSummary")
 
 
 @_attrs_define
 class ApprovalAnalyticsSummary:
-    """ 
-        Attributes:
-            total (int): Total decisions with verdict=require_approval in the window (includes still-pending).
-            approved (int):
-            rejected (int):
-            expired (int):
-            auto_resolved (int): Resolutions driven by lifecycle events (expire/invalidate/repair), not human decision.
-            manual_resolved (int): Resolutions where a human approver entered approve or reject.
-            avg_time_to_approve_seconds (Union[None, Unset, float]): Null when no approvals resolved in the window —
-                distinguishes "no data" from "all resolved in 0 s".
-            p50 (Union[None, Unset, float]):
-            p90 (Union[None, Unset, float]):
-            p99 (Union[None, Unset, float]):
-     """
+    """
+    Attributes:
+        total (int): Total decisions with verdict=require_approval in the window (includes still-pending).
+        approved (int):
+        rejected (int):
+        expired (int):
+        auto_resolved (int): Resolutions driven by lifecycle events (expire/invalidate/repair), not human decision.
+        manual_resolved (int): Resolutions where a human approver entered approve or reject.
+        avg_time_to_approve_seconds (Union[None, Unset, float]): Null when no approvals resolved in the window —
+            distinguishes "no data" from "all resolved in 0 s".
+        p50 (Union[None, Unset, float]):
+        p90 (Union[None, Unset, float]):
+        p99 (Union[None, Unset, float]):
+    """
 
     total: int
     approved: int
@@ -48,7 +44,6 @@ class ApprovalAnalyticsSummary:
     p90: Union[None, Unset, float] = UNSET
     p99: Union[None, Unset, float] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         total = self.total
@@ -87,17 +82,18 @@ class ApprovalAnalyticsSummary:
         else:
             p99 = self.p99
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "total": total,
-            "approved": approved,
-            "rejected": rejected,
-            "expired": expired,
-            "auto_resolved": auto_resolved,
-            "manual_resolved": manual_resolved,
-        })
+        field_dict.update(
+            {
+                "total": total,
+                "approved": approved,
+                "rejected": rejected,
+                "expired": expired,
+                "auto_resolved": auto_resolved,
+                "manual_resolved": manual_resolved,
+            }
+        )
         if avg_time_to_approve_seconds is not UNSET:
             field_dict["avg_time_to_approve_seconds"] = avg_time_to_approve_seconds
         if p50 is not UNSET:
@@ -108,8 +104,6 @@ class ApprovalAnalyticsSummary:
             field_dict["p99"] = p99
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -133,8 +127,9 @@ class ApprovalAnalyticsSummary:
                 return data
             return cast(Union[None, Unset, float], data)
 
-        avg_time_to_approve_seconds = _parse_avg_time_to_approve_seconds(d.pop("avg_time_to_approve_seconds", UNSET))
-
+        avg_time_to_approve_seconds = _parse_avg_time_to_approve_seconds(
+            d.pop("avg_time_to_approve_seconds", UNSET)
+        )
 
         def _parse_p50(data: object) -> Union[None, Unset, float]:
             if data is None:
@@ -145,7 +140,6 @@ class ApprovalAnalyticsSummary:
 
         p50 = _parse_p50(d.pop("p50", UNSET))
 
-
         def _parse_p90(data: object) -> Union[None, Unset, float]:
             if data is None:
                 return data
@@ -155,7 +149,6 @@ class ApprovalAnalyticsSummary:
 
         p90 = _parse_p90(d.pop("p90", UNSET))
 
-
         def _parse_p99(data: object) -> Union[None, Unset, float]:
             if data is None:
                 return data
@@ -164,7 +157,6 @@ class ApprovalAnalyticsSummary:
             return cast(Union[None, Unset, float], data)
 
         p99 = _parse_p99(d.pop("p99", UNSET))
-
 
         approval_analytics_summary = cls(
             total=total,
@@ -178,7 +170,6 @@ class ApprovalAnalyticsSummary:
             p90=p90,
             p99=p99,
         )
-
 
         approval_analytics_summary.additional_properties = d
         return approval_analytics_summary

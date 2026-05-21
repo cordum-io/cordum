@@ -163,10 +163,18 @@ func (s *server) emitAuthFailure(r *http.Request, username, authMethod, reason s
 		Extra: map[string]string{
 			"source_ip":   ip,
 			"auth_method": authMethod,
-			"path":        r.URL.Path,
+			"path":        sanitizeAuthFailurePath(r.URL.Path),
 		},
 	})
 	slog.Warn("auth failure audited", "ip", ip, "username", redactUsername(username), "method", authMethod, "reason", reason)
+}
+
+func sanitizeAuthFailurePath(path string) string {
+	path = strings.TrimSpace(path)
+	if strings.HasPrefix(path, "/api/v1/auth/keys/") {
+		return "/api/v1/auth/keys/{id}"
+	}
+	return path
 }
 
 // ---------------------------------------------------------------------------
@@ -285,6 +293,9 @@ func (s *server) handleUpdateOIDCGroupRoleMapping(w http.ResponseWriter, r *http
 		return
 	}
 
+	s.oidcMappingMu.Lock()
+	defer s.oidcMappingMu.Unlock()
+
 	// Capture the live provider's pre-update state so we can roll the live
 	// provider back if persistence subsequently fails. Without this rollback
 	// the running provider would silently diverge from the persisted config:
@@ -299,7 +310,7 @@ func (s *server) handleUpdateOIDCGroupRoleMapping(w http.ResponseWriter, r *http
 
 	cfg, err := updater.UpdateOIDCGroupRoleMapping(req.OIDCGroupsClaim, req.OIDCGroupRoleMapping)
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid oidc group role mapping")
+		writeJSONError(w, http.StatusBadRequest, errorCodeAuthOIDCCallbackFailed, "invalid oidc group role mapping")
 		return
 	}
 	groupsClaim := strings.TrimSpace(cfg.OIDCGroupsClaim)
@@ -377,6 +388,14 @@ func init() {
 	loginTimingDummyHash = hash
 }
 
+func (s *server) spendLoginTimingHash(password string) {
+	compare := bcrypt.CompareHashAndPassword
+	if s.loginTimingCompare != nil {
+		compare = s.loginTimingCompare
+	}
+	_ = compare(loginTimingDummyHash, []byte(password)) //nolint:errcheck
+}
+
 // AuthUser represents the authenticated user info returned to clients.
 type AuthUser struct {
 	ID          string   `json:"id"`
@@ -435,8 +454,13 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	password := strings.TrimSpace(req.Password)
 	if password == "" {
+		// Run bcrypt against the timing-pad so empty-password attempts spend
+		// the same wall-clock time as wrong-password attempts. Without this,
+		// an attacker can distinguish "blank field" from "credential check"
+		// purely from response latency.
+		s.spendLoginTimingHash(password)
 		s.emitAuthFailure(r, req.Username, "password", "empty_password")
-		writeErrorJSON(w, http.StatusUnauthorized, "password required")
+		writeJSONError(w, http.StatusUnauthorized, errorCodeAuthInvalidCredentials, "invalid credentials")
 		return
 	}
 
@@ -457,20 +481,34 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err == nil && user != nil {
-			if user.Disabled {
-				s.emitAuthFailure(r, username, "password", "user_disabled")
-				writeErrorJSON(w, http.StatusForbidden, "user is disabled")
-				return
-			}
-
 			// Brute-force protection: check throttle before password validation.
 			if redisStore, ok := userStore.(*auth.RedisUserStore); ok {
 				if err := redisStore.CheckLoginThrottle(r.Context(), username, clientIP(r)); err != nil {
+					// Same shape as wrong-password — rate-limit must not be a
+					// user-enumeration oracle. Spend bcrypt time and emit
+					// AUTH_INVALID_CREDENTIALS; slog.Warn retains the throttle
+					// detail for ops.
+					s.spendLoginTimingHash(password)
 					s.emitAuthFailure(r, username, "password", "rate_limited")
 					slog.Warn("rate limit exceeded", "method", r.Method, "path", r.URL.Path, "error", err)
-					writeErrorJSON(w, http.StatusTooManyRequests, "rate limit exceeded")
+					writeJSONError(w, http.StatusUnauthorized, errorCodeAuthInvalidCredentials, "invalid credentials")
 					return
 				}
+			}
+			if user.Disabled {
+				// Burn a bcrypt cycle so the disabled path takes the same
+				// wall-clock time as a real wrong-password check; collapse the
+				// response shape to AUTH_INVALID_CREDENTIALS so the caller
+				// cannot distinguish "user disabled" from "wrong password".
+				// emitAuthFailure already records the specific reason in slog
+				// for server-side ops debugging.
+				s.spendLoginTimingHash(password)
+				s.emitAuthFailure(r, username, "password", "user_disabled")
+				if redisStore, ok := userStore.(*auth.RedisUserStore); ok {
+					redisStore.RecordFailedLogin(r.Context(), username, clientIP(r))
+				}
+				writeJSONError(w, http.StatusUnauthorized, errorCodeAuthInvalidCredentials, "invalid credentials")
+				return
 			}
 
 			if userStore.ValidatePassword(r.Context(), user, password) {
@@ -503,10 +541,15 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			if redisStore, ok := userStore.(*auth.RedisUserStore); ok {
 				redisStore.RecordFailedLogin(r.Context(), username, clientIP(r))
 			}
+		} else if err != nil && !errors.Is(err, auth.ErrUserNotFound) {
+			s.spendLoginTimingHash(password)
+			s.emitAuthFailure(r, username, "password", "user_store_error")
+			writeInternalError(w, r, "login user lookup", err)
+			return
 		} else if username != "" {
 			// Timing equalization: spend bcrypt time even when user is not found,
 			// preventing username enumeration via response time side-channel.
-			_ = bcrypt.CompareHashAndPassword(loginTimingDummyHash, []byte(password)) //nolint:errcheck
+			s.spendLoginTimingHash(password)
 		}
 	}
 
@@ -527,13 +570,13 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// Authenticate using existing provider
 	if s.auth == nil {
 		s.emitAuthFailure(r, req.Username, "apikey", "auth_not_configured")
-		writeErrorJSON(w, http.StatusUnauthorized, "invalid credentials")
+		writeJSONError(w, http.StatusUnauthorized, errorCodeAuthInvalidCredentials, "invalid credentials")
 		return
 	}
 	authCtx, err := s.auth.AuthenticateHTTP(authReq)
 	if err != nil {
 		s.emitAuthFailure(r, req.Username, "apikey", "invalid_credentials")
-		writeErrorJSON(w, http.StatusUnauthorized, "invalid credentials")
+		writeJSONError(w, http.StatusUnauthorized, errorCodeAuthInvalidCredentials, "invalid credentials")
 		return
 	}
 
@@ -552,7 +595,7 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	// Get auth context from middleware (already validated)
 	authCtx := auth.FromRequest(r)
 	if authCtx == nil {
-		writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
+		writeJSONError(w, http.StatusUnauthorized, errorCodeAuthTokenInvalid, "unauthorized")
 		return
 	}
 	if !s.requireLicensePermission(w, r, licensing.BreakGlassPermissionAuthSession) {
@@ -718,7 +761,7 @@ func safePrefix(s string, n int) string {
 func (s *server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	authCtx := auth.FromRequest(r)
 	if authCtx == nil {
-		writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
+		writeJSONError(w, http.StatusUnauthorized, errorCodeAuthTokenInvalid, "unauthorized")
 		return
 	}
 	if !s.requireLicensePermission(w, r, licensing.BreakGlassPermissionAuthPassword) {
@@ -727,7 +770,7 @@ func (s *server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 
 	basicAuth := s.extractBasicAuth()
 	if basicAuth == nil || basicAuth.UserStore() == nil {
-		writeErrorJSON(w, http.StatusBadRequest, "user authentication not enabled")
+		writeJSONError(w, http.StatusBadRequest, errorCodeAuthRequestInvalid, "user authentication not enabled")
 		return
 	}
 
@@ -738,11 +781,11 @@ func (s *server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if strings.TrimSpace(req.CurrentPassword) == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "current_password required")
+		writeJSONError(w, http.StatusBadRequest, errorCodeAuthRequestInvalid, "current_password required")
 		return
 	}
 	if strings.TrimSpace(req.NewPassword) == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "new_password required")
+		writeJSONError(w, http.StatusBadRequest, errorCodeAuthRequestInvalid, "new_password required")
 		return
 	}
 
@@ -751,19 +794,23 @@ func (s *server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	// Get user by principal ID
 	user, err := userStore.GetByID(r.Context(), authCtx.PrincipalID)
 	if err != nil {
-		writeErrorJSON(w, http.StatusNotFound, "user not found")
+		writeJSONError(w, http.StatusNotFound, errorCodeAuthUserNotFound, "user not found")
 		return
 	}
 
 	// Validate current password
 	if !userStore.ValidatePassword(r.Context(), user, req.CurrentPassword) {
-		writeErrorJSON(w, http.StatusUnauthorized, "invalid current password")
+		writeJSONError(w, http.StatusUnauthorized, errorCodeAuthInvalidCredentials, "invalid current password")
+		return
+	}
+	if err := auth.ValidatePassword(req.NewPassword); err != nil {
+		writeJSONError(w, http.StatusBadRequest, errorCodeAuthPasswordInvalid, err.Error())
 		return
 	}
 
 	// Update password
 	if err := userStore.UpdatePassword(r.Context(), user.ID, req.NewPassword); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeInternalError(w, r, "change password", err)
 		return
 	}
 
@@ -811,11 +858,11 @@ func userResponse(u *auth.User) AuthUser {
 func (s *server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	authCtx := auth.FromRequest(r)
 	if authCtx == nil {
-		writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
+		writeJSONError(w, http.StatusUnauthorized, errorCodeAuthTokenInvalid, "unauthorized")
 		return
 	}
 	if authCtx.Tenant == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "tenant required")
+		writeJSONError(w, http.StatusBadRequest, errorCodeAuthRequestInvalid, "tenant required")
 		return
 	}
 
@@ -825,7 +872,7 @@ func (s *server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 
 	basicAuth := s.extractBasicAuth()
 	if basicAuth == nil || basicAuth.UserStore() == nil {
-		writeErrorJSON(w, http.StatusBadRequest, "user authentication not enabled")
+		writeJSONError(w, http.StatusBadRequest, errorCodeAuthRequestInvalid, "user authentication not enabled")
 		return
 	}
 
@@ -836,11 +883,11 @@ func (s *server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if strings.TrimSpace(req.Username) == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "username required")
+		writeJSONError(w, http.StatusBadRequest, errorCodeAuthRequestInvalid, "username required")
 		return
 	}
 	if strings.TrimSpace(req.Password) == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "password required")
+		writeJSONError(w, http.StatusBadRequest, errorCodeAuthRequestInvalid, "password required")
 		return
 	}
 
@@ -864,10 +911,10 @@ func (s *server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	userStore := basicAuth.UserStore()
 	if err := userStore.Create(r.Context(), user, req.Password); err != nil {
 		if errors.Is(err, auth.ErrUserAlreadyExists) {
-			writeErrorJSON(w, http.StatusConflict, "user already exists")
+			writeJSONError(w, http.StatusConflict, errorCodeAuthUserConflict, "user already exists")
 			return
 		}
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodeAuthRequestInvalid, err.Error())
 		return
 	}
 
@@ -890,11 +937,11 @@ func (s *server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 	authCtx := auth.FromRequest(r)
 	if authCtx == nil {
-		writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
+		writeJSONError(w, http.StatusUnauthorized, errorCodeAuthTokenInvalid, "unauthorized")
 		return
 	}
 	if authCtx.Tenant == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "tenant required")
+		writeJSONError(w, http.StatusBadRequest, errorCodeAuthRequestInvalid, "tenant required")
 		return
 	}
 	if !s.requirePermissionOrRole(w, r, auth.PermUsersRead, "admin") {
@@ -903,7 +950,7 @@ func (s *server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 
 	usp, ok := s.auth.(auth.UserStoreProvider)
 	if !ok || usp.UserStore() == nil {
-		writeErrorJSON(w, http.StatusBadRequest, "user authentication not enabled")
+		writeJSONError(w, http.StatusBadRequest, errorCodeAuthRequestInvalid, "user authentication not enabled")
 		return
 	}
 
@@ -927,11 +974,11 @@ func (s *server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	authCtx := auth.FromRequest(r)
 	if authCtx == nil {
-		writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
+		writeJSONError(w, http.StatusUnauthorized, errorCodeAuthTokenInvalid, "unauthorized")
 		return
 	}
 	if authCtx.Tenant == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "tenant required")
+		writeJSONError(w, http.StatusBadRequest, errorCodeAuthRequestInvalid, "tenant required")
 		return
 	}
 	if !s.requirePermissionOrRole(w, r, auth.PermUsersWrite, "admin") {
@@ -940,13 +987,13 @@ func (s *server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 
 	usp, ok := s.auth.(auth.UserStoreProvider)
 	if !ok || usp.UserStore() == nil {
-		writeErrorJSON(w, http.StatusBadRequest, "user authentication not enabled")
+		writeJSONError(w, http.StatusBadRequest, errorCodeAuthRequestInvalid, "user authentication not enabled")
 		return
 	}
 
 	userID := r.PathValue("id")
 	if userID == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "user id required")
+		writeJSONError(w, http.StatusBadRequest, errorCodeAuthRequestInvalid, "user id required")
 		return
 	}
 
@@ -956,14 +1003,14 @@ func (s *server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	existing, err := userStore.GetByID(r.Context(), userID)
 	if err != nil {
 		if errors.Is(err, auth.ErrUserNotFound) {
-			writeErrorJSON(w, http.StatusNotFound, "user not found")
+			writeJSONError(w, http.StatusNotFound, errorCodeAuthUserNotFound, "user not found")
 			return
 		}
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to get user")
 		return
 	}
 	if existing.Tenant != authCtx.Tenant {
-		writeErrorJSON(w, http.StatusNotFound, "user not found")
+		writeJSONError(w, http.StatusNotFound, errorCodeAuthUserNotFound, "user not found")
 		return
 	}
 
@@ -973,8 +1020,10 @@ func (s *server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build update user with only the fields to change
-	update := &auth.User{ID: userID}
+	// Build update user with existing immutable identity fields plus only the
+	// mutable fields requested by the client. Passing username/tenant through
+	// avoids future store refactors losing the key context they need.
+	update := &auth.User{ID: userID, Username: existing.Username, Tenant: existing.Tenant}
 	if strings.TrimSpace(req.Email) != "" {
 		update.Email = strings.TrimSpace(req.Email)
 	}
@@ -1007,11 +1056,11 @@ func (s *server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	authCtx := auth.FromRequest(r)
 	if authCtx == nil {
-		writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
+		writeJSONError(w, http.StatusUnauthorized, errorCodeAuthTokenInvalid, "unauthorized")
 		return
 	}
 	if authCtx.Tenant == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "tenant required")
+		writeJSONError(w, http.StatusBadRequest, errorCodeAuthRequestInvalid, "tenant required")
 		return
 	}
 	if !s.requirePermissionOrRole(w, r, auth.PermUsersWrite, "admin") {
@@ -1020,13 +1069,13 @@ func (s *server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 
 	usp, ok := s.auth.(auth.UserStoreProvider)
 	if !ok || usp.UserStore() == nil {
-		writeErrorJSON(w, http.StatusBadRequest, "user authentication not enabled")
+		writeJSONError(w, http.StatusBadRequest, errorCodeAuthRequestInvalid, "user authentication not enabled")
 		return
 	}
 
 	userID := r.PathValue("id")
 	if userID == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "user id required")
+		writeJSONError(w, http.StatusBadRequest, errorCodeAuthRequestInvalid, "user id required")
 		return
 	}
 
@@ -1036,20 +1085,20 @@ func (s *server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	user, err := userStore.GetByID(r.Context(), userID)
 	if err != nil {
 		if errors.Is(err, auth.ErrUserNotFound) {
-			writeErrorJSON(w, http.StatusNotFound, "user not found")
+			writeJSONError(w, http.StatusNotFound, errorCodeAuthUserNotFound, "user not found")
 			return
 		}
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to get user")
 		return
 	}
 	if user.Tenant != authCtx.Tenant {
-		writeErrorJSON(w, http.StatusNotFound, "user not found")
+		writeJSONError(w, http.StatusNotFound, errorCodeAuthUserNotFound, "user not found")
 		return
 	}
 
 	// Prevent self-deletion
 	if user.ID == authCtx.PrincipalID {
-		writeErrorJSON(w, http.StatusBadRequest, "cannot delete your own account")
+		writeJSONError(w, http.StatusBadRequest, errorCodeAuthRequestInvalid, "cannot delete your own account")
 		return
 	}
 
@@ -1067,11 +1116,11 @@ func (s *server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleChangeUserPassword(w http.ResponseWriter, r *http.Request) {
 	authCtx := auth.FromRequest(r)
 	if authCtx == nil {
-		writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
+		writeJSONError(w, http.StatusUnauthorized, errorCodeAuthTokenInvalid, "unauthorized")
 		return
 	}
 	if authCtx.Tenant == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "tenant required")
+		writeJSONError(w, http.StatusBadRequest, errorCodeAuthRequestInvalid, "tenant required")
 		return
 	}
 	if !s.requirePermissionOrRole(w, r, auth.PermUsersWrite, "admin") {
@@ -1080,13 +1129,13 @@ func (s *server) handleChangeUserPassword(w http.ResponseWriter, r *http.Request
 
 	usp, ok := s.auth.(auth.UserStoreProvider)
 	if !ok || usp.UserStore() == nil {
-		writeErrorJSON(w, http.StatusBadRequest, "user authentication not enabled")
+		writeJSONError(w, http.StatusBadRequest, errorCodeAuthRequestInvalid, "user authentication not enabled")
 		return
 	}
 
 	userID := r.PathValue("id")
 	if userID == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "user id required")
+		writeJSONError(w, http.StatusBadRequest, errorCodeAuthRequestInvalid, "user id required")
 		return
 	}
 
@@ -1096,14 +1145,14 @@ func (s *server) handleChangeUserPassword(w http.ResponseWriter, r *http.Request
 	user, err := userStore.GetByID(r.Context(), userID)
 	if err != nil {
 		if errors.Is(err, auth.ErrUserNotFound) {
-			writeErrorJSON(w, http.StatusNotFound, "user not found")
+			writeJSONError(w, http.StatusNotFound, errorCodeAuthUserNotFound, "user not found")
 			return
 		}
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to get user")
 		return
 	}
 	if user.Tenant != authCtx.Tenant {
-		writeErrorJSON(w, http.StatusNotFound, "user not found")
+		writeJSONError(w, http.StatusNotFound, errorCodeAuthUserNotFound, "user not found")
 		return
 	}
 
@@ -1115,7 +1164,7 @@ func (s *server) handleChangeUserPassword(w http.ResponseWriter, r *http.Request
 
 	password := strings.TrimSpace(req.Password)
 	if err := auth.ValidatePassword(password); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodeAuthPasswordInvalid, err.Error())
 		return
 	}
 
@@ -1248,14 +1297,14 @@ func (s *server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 
 	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "name is required")
+		writeJSONError(w, http.StatusBadRequest, errorCodeAuthKeyInvalid, "name is required")
 		return
 	}
 
 	// Validate scopes
 	for _, scope := range req.Scopes {
 		if _, ok := allowedKeyScopes[scope]; !ok {
-			writeErrorJSON(w, http.StatusBadRequest, "invalid scope: "+scope)
+			writeJSONError(w, http.StatusBadRequest, errorCodeAuthKeyInvalid, "invalid scope: "+scope)
 			return
 		}
 	}
@@ -1264,11 +1313,11 @@ func (s *server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 	if req.ExpiresAt != "" {
 		parsed, err := time.Parse(time.RFC3339, req.ExpiresAt)
 		if err != nil {
-			writeErrorJSON(w, http.StatusBadRequest, "invalid expiresAt format, use RFC3339")
+			writeJSONError(w, http.StatusBadRequest, errorCodeAuthKeyInvalid, "invalid expiresAt format, use RFC3339")
 			return
 		}
 		if parsed.Before(time.Now().UTC()) {
-			writeErrorJSON(w, http.StatusBadRequest, "expiresAt must be in the future")
+			writeJSONError(w, http.StatusBadRequest, errorCodeAuthKeyInvalid, "expiresAt must be in the future")
 			return
 		}
 		expiresAt = parsed
@@ -1324,7 +1373,7 @@ func (s *server) handleRevokeKey(w http.ResponseWriter, r *http.Request) {
 
 	id := r.PathValue("id")
 	if id == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "missing key id")
+		writeJSONError(w, http.StatusBadRequest, errorCodeAuthKeyInvalid, "missing key id")
 		return
 	}
 
@@ -1335,7 +1384,7 @@ func (s *server) handleRevokeKey(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.keyStore.Revoke(r.Context(), id, tenant); err != nil {
 		if errors.Is(err, auth.ErrKeyNotFound) {
-			writeErrorJSON(w, http.StatusNotFound, "key not found")
+			writeJSONError(w, http.StatusNotFound, errorCodeAuthKeyNotFound, "key not found")
 			return
 		}
 		slog.Error("revoke key failed", "error", err, "key_id", id) // #nosec -- key id is validated and safe for logs.

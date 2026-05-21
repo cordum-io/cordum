@@ -140,6 +140,13 @@ shows decisions, approval refs, and artifact pointer metadata. It deliberately
 does not render raw payloads, raw prompts, or command output; that data does
 not enter the dashboard cache.
 
+When the approval retry succeeds, provenance is resolved-only: the backend
+approval must be approved and the audit chain must contain a matching
+`EventEdgeApprovalResolved` / `edge.approval_resolved` event for the same
+tenant, `approval_ref`, and `action_hash`. The earlier
+`edge.approval_requested` row is useful timeline context, but requested-only
+evidence does not authorize a destructive retry.
+
 ---
 
 ## 5. Optional: run real Claude Code through Cordum
@@ -167,7 +174,7 @@ Inside Claude, try:
 | Prompt | Expected outcome |
 | --- | --- |
 | `read .env` | **Denied** before the tool runs. Claude sees the deny reason. |
-| `edit README.md` (or another guarded path per the demo policy) | `REQUIRE_APPROVAL`. The dashboard shows a pending approval; approve there, then retry in Claude. The retry consumes the approval once. |
+| `edit README.md` (or another guarded path per the demo policy) | `REQUIRE_APPROVAL`. The dashboard shows a pending approval; approve there, then retry in Claude. The retry consumes the approval once after the audit chain has resolved approval evidence for the same tenant/ref/hash. |
 | Any safe action (`ls`, `grep` in a non-guarded path) | Allowed quietly. Cordum stays out of the way. |
 
 Watch the dashboard Edge Session timeline update as you go. When done, exit

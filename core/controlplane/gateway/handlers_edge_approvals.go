@@ -85,6 +85,24 @@ func (s *server) handleGetEdgeApproval(w http.ResponseWriter, r *http.Request) {
 		writeEdgeApprovalNotFound(w, r)
 		return
 	}
+	if approval.Status == edgecore.ApprovalStatusPending && approval.ExpiresAt != nil {
+		now := time.Now().UTC()
+		if !approval.ExpiresAt.After(now) {
+			if _, err := store.ExpireApprovals(r.Context(), tenantID, now); err != nil {
+				writeEdgeApprovalStoreError(w, r, err, "expire edge approvals before get")
+				return
+			}
+			approval, found, err = store.GetApproval(r.Context(), tenantID, approvalRef)
+			if err != nil {
+				writeEdgeApprovalStoreError(w, r, err, "get expired edge approval")
+				return
+			}
+			if !found || approval == nil || !s.edgeApprovalVisibleToCaller(r, approval) {
+				writeEdgeApprovalNotFound(w, r)
+				return
+			}
+		}
+	}
 	writeJSON(w, approval)
 }
 
@@ -122,6 +140,7 @@ func (s *server) handleResolveEdgeApproval(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if edgeApprovalRequesterMatchesResolver(existing, r) {
+		s.auditEdgeApprovalSelfApprovalDenied(tenantID, *existing, "caller_is_requester")
 		writeEdgeError(w, r, http.StatusForbidden, "self_approval_denied", "self-approval not permitted: the resolver cannot be the same principal as the approval requester", nil)
 		return
 	}
@@ -148,12 +167,12 @@ func (s *server) handleResolveEdgeApproval(w http.ResponseWriter, r *http.Reques
 		endpoint = edgeApprovalRejectEndpoint
 	}
 	normalizedReq := struct {
-		TenantID    string                     `json:"tenant_id"`
-		ApprovalRef string                     `json:"approval_ref"`
-		Decision    edgecore.ApprovalDecision  `json:"decision"`
-		ResolverID  string                     `json:"resolver_id"`
-		ResolvedBy  string                     `json:"resolved_by"`
-		Reason      string                     `json:"reason"`
+		TenantID    string                    `json:"tenant_id"`
+		ApprovalRef string                    `json:"approval_ref"`
+		Decision    edgecore.ApprovalDecision `json:"decision"`
+		ResolverID  string                    `json:"resolver_id"`
+		ResolvedBy  string                    `json:"resolved_by"`
+		Reason      string                    `json:"reason"`
 	}{
 		TenantID:    tenantID,
 		ApprovalRef: strings.TrimSpace(approvalRef),
@@ -237,7 +256,7 @@ func (s *server) executeResolveEdgeApproval(r *http.Request, store edgecore.Stor
 			outcome,
 			resolverID,
 			resolvedAt,
-			nil,
+			edgeApprovalEvidenceAuditExtra(approval),
 		))
 	}
 	body, err := json.Marshal(approval)
@@ -249,6 +268,44 @@ func (s *server) executeResolveEdgeApproval(r *http.Request, store edgecore.Stor
 		ContentType: "application/json",
 		Body:        body,
 	}, nil
+}
+
+func (s *server) auditEdgeApprovalSelfApprovalDenied(tenantID string, approval edgecore.EdgeApproval, reasonCode string) {
+	extra := edgeApprovalEvidenceAuditExtra(&approval)
+	if extra == nil {
+		extra = map[string]string{}
+	}
+	extra["conflict_kind"] = string(edgecore.ApprovalConflictKindSelfApproval)
+	extra["reason_code"] = reasonCode
+	edgecore.SendSIEMEvent(s.auditExporter, edgecore.SIEMEventForApprovalResolved(
+		tenantID,
+		approval.ApprovalRef,
+		approval.RuleID,
+		"rejected",
+		"",
+		time.Now().UTC(),
+		extra,
+	))
+}
+
+func edgeApprovalEvidenceAuditExtra(approval *edgecore.EdgeApproval) map[string]string {
+	if approval == nil {
+		return nil
+	}
+	extra := map[string]string{}
+	if v := strings.TrimSpace(approval.ActionHash); v != "" {
+		extra["action_hash"] = v
+	}
+	if v := strings.TrimSpace(approval.InputHash); v != "" {
+		extra["input_hash"] = v
+	}
+	if v := strings.TrimSpace(approval.PolicySnapshot); v != "" {
+		extra["policy_snapshot"] = v
+	}
+	if len(extra) == 0 {
+		return nil
+	}
+	return extra
 }
 
 func edgeApprovalListQueryFromRequest(r *http.Request, tenantID string) (edgecore.ListApprovalsQuery, error) {

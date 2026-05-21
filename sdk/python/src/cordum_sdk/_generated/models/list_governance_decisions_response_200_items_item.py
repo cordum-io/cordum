@@ -14,10 +14,9 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.list_governance_decisions_response_200_items_item_constraints import ListGovernanceDecisionsResponse200ItemsItemConstraints
-
-
-
+    from ..models.list_governance_decisions_response_200_items_item_constraints import (
+        ListGovernanceDecisionsResponse200ItemsItemConstraints,
+    )
 
 
 T = TypeVar("T", bound="ListGovernanceDecisionsResponse200ItemsItem")
@@ -25,27 +24,27 @@ T = TypeVar("T", bound="ListGovernanceDecisionsResponse200ItemsItem")
 
 @_attrs_define
 class ListGovernanceDecisionsResponse200ItemsItem:
-    """ 
-        Attributes:
-            job_id (Union[Unset, str]):
-            topic (Union[Unset, str]):
-            matched_rule (Union[Unset, str]):
-            verdict (Union[Unset, str]):
-            reason (Union[Unset, str]):
-            constraints (Union[Unset, ListGovernanceDecisionsResponse200ItemsItemConstraints]):
-            approval_status (Union[Unset, str]):
-            approval_decision (Union[Unset, str]):
-            agent_id (Union[Unset, str]):
-            policy_version (Union[Unset, str]):
-            timestamp (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        job_id (Union[Unset, str]):
+        topic (Union[Unset, str]):
+        matched_rule (Union[Unset, str]):
+        verdict (Union[Unset, str]):
+        reason (Union[Unset, str]):
+        constraints (Union[Unset, ListGovernanceDecisionsResponse200ItemsItemConstraints]):
+        approval_status (Union[Unset, str]):
+        approval_decision (Union[Unset, str]):
+        agent_id (Union[Unset, str]):
+        policy_version (Union[Unset, str]):
+        timestamp (Union[Unset, str]):
+    """
 
     job_id: Union[Unset, str] = UNSET
     topic: Union[Unset, str] = UNSET
     matched_rule: Union[Unset, str] = UNSET
     verdict: Union[Unset, str] = UNSET
     reason: Union[Unset, str] = UNSET
-    constraints: Union[Unset, 'ListGovernanceDecisionsResponse200ItemsItemConstraints'] = UNSET
+    constraints: Union[Unset, "ListGovernanceDecisionsResponse200ItemsItemConstraints"] = UNSET
     approval_status: Union[Unset, str] = UNSET
     approval_decision: Union[Unset, str] = UNSET
     agent_id: Union[Unset, str] = UNSET
@@ -53,9 +52,11 @@ class ListGovernanceDecisionsResponse200ItemsItem:
     timestamp: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.list_governance_decisions_response_200_items_item_constraints import ListGovernanceDecisionsResponse200ItemsItemConstraints
+        from ..models.list_governance_decisions_response_200_items_item_constraints import (
+            ListGovernanceDecisionsResponse200ItemsItemConstraints,
+        )
+
         job_id = self.job_id
 
         topic = self.topic
@@ -80,11 +81,9 @@ class ListGovernanceDecisionsResponse200ItemsItem:
 
         timestamp = self.timestamp
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if job_id is not UNSET:
             field_dict["job_id"] = job_id
         if topic is not UNSET:
@@ -110,11 +109,12 @@ class ListGovernanceDecisionsResponse200ItemsItem:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.list_governance_decisions_response_200_items_item_constraints import ListGovernanceDecisionsResponse200ItemsItemConstraints
+        from ..models.list_governance_decisions_response_200_items_item_constraints import (
+            ListGovernanceDecisionsResponse200ItemsItemConstraints,
+        )
+
         d = src_dict.copy()
         job_id = d.pop("job_id", UNSET)
 
@@ -128,13 +128,12 @@ class ListGovernanceDecisionsResponse200ItemsItem:
 
         _constraints = d.pop("constraints", UNSET)
         constraints: Union[Unset, ListGovernanceDecisionsResponse200ItemsItemConstraints]
-        if isinstance(_constraints,  Unset):
+        if isinstance(_constraints, Unset):
             constraints = UNSET
         else:
-            constraints = ListGovernanceDecisionsResponse200ItemsItemConstraints.from_dict(_constraints)
-
-
-
+            constraints = ListGovernanceDecisionsResponse200ItemsItemConstraints.from_dict(
+                _constraints
+            )
 
         approval_status = d.pop("approval_status", UNSET)
 
@@ -159,7 +158,6 @@ class ListGovernanceDecisionsResponse200ItemsItem:
             policy_version=policy_version,
             timestamp=timestamp,
         )
-
 
         list_governance_decisions_response_200_items_item.additional_properties = d
         return list_governance_decisions_response_200_items_item

@@ -33,7 +33,8 @@ For every Claude action that crossed the gateway evaluate path:
 ### Why two records, not one
 
 The gateway records the authoritative decision (which rule fired, what
-the policy snapshot was, the constraints emitted). The agentd records
+the policy snapshot was, and any typed policy-bundle/SafetyKernel
+constraints emitted). The agentd records
 the local-context evidence (cache hit/miss, fail mode, agentd timing,
 hook env). Collapsing them as EDGE-039 attempted (sharing the gateway
 event_id) hit the idempotency window on the second write because both
@@ -133,6 +134,35 @@ ApprovalRef is the public-facing reference for an Edge approval —
 clients see it in the evaluate response, dashboard renders it in the
 URL, and resolvers act on it.
 
+During action-gate evaluation, a caller-presented `approval_ref` is the
+primary lookup key. The gateway resolves that exact ref inside the
+authenticated tenant and only then compares the resolved record's
+`action_hash` to the current canonical action hash. A fake or
+cross-tenant ref must miss/fail closed even if another approved record
+exists for the same `action_hash`.
+
+For destructive mutations, `approval_ref` is also bound to audit-chain
+provenance. After the mutation gate validates the backend approval, the
+production gateway pipeline verifies the tenant's audit hash-chain slice for
+that approval through `server.auditChainer` and `core/audit.VerifyChain`.
+The chain must contain a canonical resolved approval audit event
+(`EventEdgeApprovalResolved` / `edge.approval_resolved`) whose decision is
+`approved` or `approve` and whose tenant, `approval_ref`, and `action_hash`
+exactly match the stored approval. The earlier approval-requested event is not
+enough; it records that review was needed, not that the destructive retry is
+authorized.
+
+Missing Redis/audit-chainer/verifier dependencies return an explicit
+`service_unavailable` denial and never fail open. Compromised hash/HMAC/linkage,
+malformed event JSON, wrong tenant/ref/hash, non-approved terminal outcomes, or
+missing resolved approval-window evidence remain hard fail-closed provenance
+denials. If retention trims older history, a partial verifier result is allowed
+only when in-window resolved approval evidence is still present. Verification is
+bounded by the shared audit verify window and stream-scan caps. HMAC
+verification uses `CORDUM_AUDIT_HMAC_KEY` via `Chainer.HMACKeyForVerify`; the
+key itself is never logged or surfaced to clients, and raw payloads/transcripts
+are not copied into provenance evidence.
+
 ### States and transitions
 
 `core/edge/approval.go:5-13` `ApprovalStatus` has these values:
@@ -153,6 +183,10 @@ state — it is a one-time use marker. EDGE-042's
 consumes an `approved` record on the first matching retry; subsequent
 retries see no reusable approval and a fresh approval is enqueued
 under a NEW approval_ref.
+
+Evaluation does not consume. The single-use transition happens only in
+the existing `ClaimApproval` CAS path when execution/retry presents the
+bound `approval_ref` with the matching tuple and policy snapshot.
 
 ### Fresh-deny (no approval enqueued)
 

@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class GetApprovalAnalyticsGroupBy(str, Enum):
     AGENT = "agent"
     OVERALL = "overall"

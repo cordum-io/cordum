@@ -5,26 +5,26 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { ListEdgeApprovalsStatus } from './listEdgeApprovalsStatus';
+import type { ListEdgeApprovalsStatus } from "./listEdgeApprovalsStatus";
 
 export type ListEdgeApprovalsParams = {
-status?: ListEdgeApprovalsStatus;
-/**
- * Optional tuple filter; must be supplied with `execution_id` and `action_hash`.
- */
-session_id?: string;
-/**
- * Optional tuple filter; must be supplied with `session_id` and `action_hash`.
- */
-execution_id?: string;
-/**
- * Optional tuple filter; must be supplied with `session_id` and `execution_id`.
- */
-action_hash?: string;
-cursor?: string;
-/**
- * @minimum 1
- * @maximum 200
- */
-limit?: number;
+  status?: ListEdgeApprovalsStatus;
+  /**
+   * Optional tuple filter; must be supplied with `execution_id` and `action_hash`.
+   */
+  session_id?: string;
+  /**
+   * Optional tuple filter; must be supplied with `session_id` and `action_hash`.
+   */
+  execution_id?: string;
+  /**
+   * Optional tuple filter; must be supplied with `session_id` and `execution_id`.
+   */
+  action_hash?: string;
+  cursor?: string;
+  /**
+   * @minimum 1
+   * @maximum 200
+   */
+  limit?: number;
 };

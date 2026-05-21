@@ -5,10 +5,10 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { StatusResponseBuild } from './statusResponseBuild';
-import type { StatusResponseNats } from './statusResponseNats';
-import type { StatusResponseRedis } from './statusResponseRedis';
-import type { StatusResponseLicense } from './statusResponseLicense';
+import type { StatusResponseBuild } from "./statusResponseBuild";
+import type { StatusResponseNats } from "./statusResponseNats";
+import type { StatusResponseRedis } from "./statusResponseRedis";
+import type { StatusResponseLicense } from "./statusResponseLicense";
 
 export interface StatusResponse {
   time?: string;

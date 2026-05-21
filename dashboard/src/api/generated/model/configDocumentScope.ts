@@ -6,14 +6,14 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type ConfigDocumentScope = typeof ConfigDocumentScope[keyof typeof ConfigDocumentScope];
-
+export type ConfigDocumentScope =
+  (typeof ConfigDocumentScope)[keyof typeof ConfigDocumentScope];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const ConfigDocumentScope = {
-  system: 'system',
-  org: 'org',
-  team: 'team',
-  workflow: 'workflow',
-  step: 'step',
+  system: "system",
+  org: "org",
+  team: "team",
+  workflow: "workflow",
+  step: "step",
 } as const;

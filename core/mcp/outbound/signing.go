@@ -56,6 +56,7 @@
 package outbound
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -92,14 +93,14 @@ const DefaultClockSkew = 5 * time.Minute
 // after clock sync / new nonce) from "untrusted_key" (operator must
 // register the key).
 var (
-	ErrMissingHeaders      = errors.New("mcp outbound: required signature header missing")
-	ErrMalformedHeader     = errors.New("mcp outbound: malformed signature header")
-	ErrTimestampExpired    = errors.New("mcp outbound: timestamp outside clock skew window")
-	ErrNonceReplayed       = errors.New("mcp outbound: nonce already seen")
-	ErrUntrustedKey        = errors.New("mcp outbound: key_id is not trusted")
-	ErrSignatureInvalid    = errors.New("mcp outbound: signature does not verify")
-	ErrInvalidPrivateKey   = errors.New("mcp outbound: invalid private key")
-	ErrInvalidPublicKey    = errors.New("mcp outbound: invalid public key")
+	ErrMissingHeaders    = errors.New("mcp outbound: required signature header missing")
+	ErrMalformedHeader   = errors.New("mcp outbound: malformed signature header")
+	ErrTimestampExpired  = errors.New("mcp outbound: timestamp outside clock skew window")
+	ErrNonceReplayed     = errors.New("mcp outbound: nonce already seen")
+	ErrUntrustedKey      = errors.New("mcp outbound: key_id is not trusted")
+	ErrSignatureInvalid  = errors.New("mcp outbound: signature does not verify")
+	ErrInvalidPrivateKey = errors.New("mcp outbound: invalid private key")
+	ErrInvalidPublicKey  = errors.New("mcp outbound: invalid public key")
 )
 
 // Signer holds one ECDSA P-256 private key and the key_id it
@@ -197,9 +198,16 @@ func NewVerifier(trust map[string]*ecdsa.PublicKey, store NonceStore, clockSkew 
 // and verifies the ECDSA signature under the trust store. Non-nil
 // error implies the request MUST be rejected — caller maps the error
 // type to the right HTTP / JSON-RPC code via errors.Is.
-func (v *Verifier) VerifyRequest(headers map[string]string, method string, params []byte) error {
+//
+// The ctx parameter is propagated to NonceStore.SeenAndRecord so a
+// wedged backend cannot freeze the verifier indefinitely. A nil ctx
+// is treated as context.Background().
+func (v *Verifier) VerifyRequest(ctx context.Context, headers map[string]string, method string, params []byte) error {
 	if v == nil {
 		return ErrUntrustedKey
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	keyID := strings.TrimSpace(headers[HeaderKeyID])
 	tsStr := strings.TrimSpace(headers[HeaderTimestamp])
@@ -238,7 +246,14 @@ func (v *Verifier) VerifyRequest(headers map[string]string, method string, param
 	// Replay check last — verifying first ensures a forged request
 	// does NOT pollute the nonce store with attacker-chosen values.
 	if v.nonceStore != nil {
-		seen, err := v.nonceStore.SeenAndRecord(nonce, v.clockSkew)
+		// Nonce TTL is set to 2 * clockSkew so a nonce that arrives at
+		// the late edge of the acceptance window (clockSkew minutes after
+		// being signed) cannot be replayed at the EARLIEST edge of its
+		// window on retry. Pre-fix, TTL == clockSkew gave a replay window
+		// of up to clockSkew + clockSkew = 2 * clockSkew because the
+		// nonce-store entry expired before the timestamp window did
+		// (medium audit finding 2026-05-20).
+		seen, err := v.nonceStore.SeenAndRecord(ctx, nonce, 2*v.clockSkew)
 		if err != nil {
 			return fmt.Errorf("mcp outbound: nonce store: %w", err)
 		}

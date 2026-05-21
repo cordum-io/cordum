@@ -9,37 +9,25 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 
-
-
-
-
-
 T = TypeVar("T", bound="GenericObject")
 
 
 @_attrs_define
 class GenericObject:
-    """ 
-     """
+    """ """
 
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
-        
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
-        generic_object = cls(
-        )
-
+        generic_object = cls()
 
         generic_object.additional_properties = d
         return generic_object

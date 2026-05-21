@@ -233,12 +233,12 @@ func TestHashApprovalJobRequest_MatchesSchedulerHashJobRequest(t *testing.T) {
 		TenantId:   "default",
 		ContextPtr: "ctx:job-xcheck",
 		Labels: map[string]string{
-			"run_id":             "run-xcheck",
-			"step_id":            "approve",
-			"workflow_id":        "wf-xcheck",
-			"approval_granted":   "true",
-			"approval_reason":    "looks safe",
-			bus.LabelBusMsgID:    "approval:job-xcheck",
+			"run_id":           "run-xcheck",
+			"step_id":          "approve",
+			"workflow_id":      "wf-xcheck",
+			"approval_granted": "true",
+			"approval_reason":  "looks safe",
+			bus.LabelBusMsgID:  "approval:job-xcheck",
 		},
 		Env: map[string]string{
 			config.EffectiveConfigEnvVar: `{"tenant":"default","effective":true}`,

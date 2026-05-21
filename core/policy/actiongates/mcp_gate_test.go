@@ -2,6 +2,7 @@ package actiongates
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -272,6 +273,57 @@ func TestMCPGate_DangerousParamsDenied(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMCPGate_DangerousParamRule_TypedValueMatches(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name  string
+		param string
+		value any
+		args  string
+	}{
+		{"int_rule", "force_overwrite", int(1), `{"force_overwrite":1}`},
+		{"int64_rule", "delete_depth", int64(42), `{"delete_depth":42}`},
+		{"json_number_rule", "risk_score", json.Number("7"), `{"risk_score":7}`},
+		{
+			name:  "composite_json_shape",
+			param: "selector",
+			value: struct {
+				Mode  string `json:"mode"`
+				Count int    `json:"count"`
+			}{Mode: "force", Count: 2},
+			args: `{"selector":{"mode":"force","count":2}}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			id := mcpFullIdentity()
+			id.AllowedTools = append(id.AllowedTools, "delete_*")
+			rules := map[string][]DangerousParamRule{"*": {{Name: tc.param, Value: tc.value}}}
+			gate := newMCPGateWithIdentity(id, func(o *MCPGateOptions) { o.DangerousParamRules = rules })
+			in := withAgentIDLabel(mcpInputAction("vault", "delete_records"), mcpAgentA)
+			in.Action.Args = mustJSONArgs(t, tc.args)
+
+			dec := gate.Evaluate(mcpAuthCtx(), in)
+			if dec.Decision != pb.DecisionType_DECISION_TYPE_DENY || dec.Code != CodeAccessDenied {
+				t.Fatalf("got %v / %q, want DENY / access_denied", dec.Decision, dec.Code)
+			}
+			if !strings.Contains(dec.SubReason, "dangerous_param:"+tc.param) {
+				t.Fatalf("subReason = %q, want dangerous_param:%s", dec.SubReason, tc.param)
+			}
+		})
+	}
+}
+
+func mustJSONArgs(t *testing.T, raw string) map[string]any {
+	t.Helper()
+	var args map[string]any
+	if err := json.Unmarshal([]byte(raw), &args); err != nil {
+		t.Fatalf("decode args %s: %v", raw, err)
+	}
+	return args
 }
 
 func TestMCPGate_UnlicensedDenied(t *testing.T) {

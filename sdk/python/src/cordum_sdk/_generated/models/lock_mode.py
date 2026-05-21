@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class LockMode(str, Enum):
     EXCLUSIVE = "EXCLUSIVE"
     SHARED = "SHARED"

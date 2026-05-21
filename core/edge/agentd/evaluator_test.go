@@ -720,6 +720,9 @@ func (r *captureRecorder) RecordApprovalEnqueueAborted(string)                 {
 func (r *captureRecorder) RecordAppendEventsAborted(string)                    {}
 func (r *captureRecorder) RecordIdempotencyTTLExtended(string)                 {}
 func (r *captureRecorder) RecordIdempotencyWindowExpired(string)               {}
+func (r *captureRecorder) RecordRuntimeReplayFirstSeen(string, string)         {}
+func (r *captureRecorder) RecordRuntimeReplayReplayed(string, string)          {}
+func (r *captureRecorder) RecordRuntimeReplayWindowFull(string, string)        {}
 func (r *captureRecorder) RecordAgentdResponseWriteAborted(string)             {}
 func (r *captureRecorder) RecordEdgeExportRequestRejected(string)              {}
 func (r *captureRecorder) RecordRedactionFailed(string, string)                {}
@@ -748,6 +751,9 @@ func (r *captureRecorder) RecordApprovalRequested(tenant, layer, kind string) {
 func (r *captureRecorder) RecordApprovalResolved(tenant, layer, kind, outcome string) {
 	r.approvalResolved = append(r.approvalResolved, recordApprovalResolvedCall{tenant: tenant, layer: layer, kind: kind, outcome: outcome})
 }
+
+func (r *captureRecorder) ObserveApprovalSweepDuration(time.Duration) {}
+func (r *captureRecorder) AddApprovalSweepExpired(int)                {}
 
 func (r *captureRecorder) RecordDegraded(tenant, mode, component, reasonCode string) {
 	r.degraded = append(r.degraded, recordReasonCall{tenant: tenant, mode: mode, component: component, reason: reasonCode})

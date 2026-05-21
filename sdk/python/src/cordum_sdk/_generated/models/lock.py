@@ -17,23 +17,19 @@ from typing import Union
 import datetime
 
 
-
-
-
-
 T = TypeVar("T", bound="Lock")
 
 
 @_attrs_define
 class Lock:
-    """ 
-        Attributes:
-            resource (Union[Unset, str]):
-            mode (Union[Unset, LockMode]):
-            owners (Union[Unset, List[str]]):
-            updated_at (Union[Unset, datetime.datetime]):
-            expires_at (Union[Unset, datetime.datetime]):
-     """
+    """
+    Attributes:
+        resource (Union[Unset, str]):
+        mode (Union[Unset, LockMode]):
+        owners (Union[Unset, List[str]]):
+        updated_at (Union[Unset, datetime.datetime]):
+        expires_at (Union[Unset, datetime.datetime]):
+    """
 
     resource: Union[Unset, str] = UNSET
     mode: Union[Unset, LockMode] = UNSET
@@ -42,7 +38,6 @@ class Lock:
     expires_at: Union[Unset, datetime.datetime] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
         resource = self.resource
 
@@ -50,12 +45,9 @@ class Lock:
         if not isinstance(self.mode, Unset):
             mode = self.mode.value
 
-
         owners: Union[Unset, List[str]] = UNSET
         if not isinstance(self.owners, Unset):
             owners = self.owners
-
-
 
         updated_at: Union[Unset, str] = UNSET
         if not isinstance(self.updated_at, Unset):
@@ -65,11 +57,9 @@ class Lock:
         if not isinstance(self.expires_at, Unset):
             expires_at = self.expires_at.isoformat()
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if resource is not UNSET:
             field_dict["resource"] = resource
         if mode is not UNSET:
@@ -83,8 +73,6 @@ class Lock:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
@@ -92,36 +80,26 @@ class Lock:
 
         _mode = d.pop("mode", UNSET)
         mode: Union[Unset, LockMode]
-        if isinstance(_mode,  Unset):
+        if isinstance(_mode, Unset):
             mode = UNSET
         else:
             mode = LockMode(_mode)
 
-
-
-
         owners = cast(List[str], d.pop("owners", UNSET))
-
 
         _updated_at = d.pop("updated_at", UNSET)
         updated_at: Union[Unset, datetime.datetime]
-        if isinstance(_updated_at,  Unset):
+        if isinstance(_updated_at, Unset):
             updated_at = UNSET
         else:
             updated_at = isoparse(_updated_at)
 
-
-
-
         _expires_at = d.pop("expires_at", UNSET)
         expires_at: Union[Unset, datetime.datetime]
-        if isinstance(_expires_at,  Unset):
+        if isinstance(_expires_at, Unset):
             expires_at = UNSET
         else:
             expires_at = isoparse(_expires_at)
-
-
-
 
         lock = cls(
             resource=resource,
@@ -130,7 +108,6 @@ class Lock:
             updated_at=updated_at,
             expires_at=expires_at,
         )
-
 
         lock.additional_properties = d
         return lock

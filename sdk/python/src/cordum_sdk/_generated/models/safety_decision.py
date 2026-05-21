@@ -18,10 +18,7 @@ from typing import Union
 import datetime
 
 if TYPE_CHECKING:
-  from ..models.safety_decision_constraints_type_0 import SafetyDecisionConstraintsType0
-
-
-
+    from ..models.safety_decision_constraints_type_0 import SafetyDecisionConstraintsType0
 
 
 T = TypeVar("T", bound="SafetyDecision")
@@ -29,33 +26,32 @@ T = TypeVar("T", bound="SafetyDecision")
 
 @_attrs_define
 class SafetyDecision:
-    """ Result of safety kernel policy evaluation for a job
+    """Result of safety kernel policy evaluation for a job
 
-        Attributes:
-            rule_id (Union[Unset, str]): ID of the matched policy rule
-            action (Union[Unset, SafetyDecisionAction]): Safety decision outcome
-            reason (Union[Unset, str]): Human-readable explanation for the decision
-            constraints (Union['SafetyDecisionConstraintsType0', None, Unset]): Policy constraints applied if action is
-                ALLOW_WITH_CONSTRAINTS
-            evaluated_at (Union[Unset, datetime.datetime]): Timestamp of the policy evaluation
-     """
+    Attributes:
+        rule_id (Union[Unset, str]): ID of the matched policy rule
+        action (Union[Unset, SafetyDecisionAction]): Safety decision outcome
+        reason (Union[Unset, str]): Human-readable explanation for the decision
+        constraints (Union['SafetyDecisionConstraintsType0', None, Unset]): Policy constraints applied if action is
+            ALLOW_WITH_CONSTRAINTS
+        evaluated_at (Union[Unset, datetime.datetime]): Timestamp of the policy evaluation
+    """
 
     rule_id: Union[Unset, str] = UNSET
     action: Union[Unset, SafetyDecisionAction] = UNSET
     reason: Union[Unset, str] = UNSET
-    constraints: Union['SafetyDecisionConstraintsType0', None, Unset] = UNSET
+    constraints: Union["SafetyDecisionConstraintsType0", None, Unset] = UNSET
     evaluated_at: Union[Unset, datetime.datetime] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
         from ..models.safety_decision_constraints_type_0 import SafetyDecisionConstraintsType0
+
         rule_id = self.rule_id
 
         action: Union[Unset, str] = UNSET
         if not isinstance(self.action, Unset):
             action = self.action.value
-
 
         reason = self.reason
 
@@ -71,11 +67,9 @@ class SafetyDecision:
         if not isinstance(self.evaluated_at, Unset):
             evaluated_at = self.evaluated_at.isoformat()
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if rule_id is not UNSET:
             field_dict["rule_id"] = rule_id
         if action is not UNSET:
@@ -89,27 +83,25 @@ class SafetyDecision:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.safety_decision_constraints_type_0 import SafetyDecisionConstraintsType0
+
         d = src_dict.copy()
         rule_id = d.pop("rule_id", UNSET)
 
         _action = d.pop("action", UNSET)
         action: Union[Unset, SafetyDecisionAction]
-        if isinstance(_action,  Unset):
+        if isinstance(_action, Unset):
             action = UNSET
         else:
             action = SafetyDecisionAction(_action)
 
-
-
-
         reason = d.pop("reason", UNSET)
 
-        def _parse_constraints(data: object) -> Union['SafetyDecisionConstraintsType0', None, Unset]:
+        def _parse_constraints(
+            data: object,
+        ) -> Union["SafetyDecisionConstraintsType0", None, Unset]:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -119,25 +111,19 @@ class SafetyDecision:
                     raise TypeError()
                 constraints_type_0 = SafetyDecisionConstraintsType0.from_dict(data)
 
-
-
                 return constraints_type_0
-            except: # noqa: E722
+            except:  # noqa: E722
                 pass
-            return cast(Union['SafetyDecisionConstraintsType0', None, Unset], data)
+            return cast(Union["SafetyDecisionConstraintsType0", None, Unset], data)
 
         constraints = _parse_constraints(d.pop("constraints", UNSET))
 
-
         _evaluated_at = d.pop("evaluated_at", UNSET)
         evaluated_at: Union[Unset, datetime.datetime]
-        if isinstance(_evaluated_at,  Unset):
+        if isinstance(_evaluated_at, Unset):
             evaluated_at = UNSET
         else:
             evaluated_at = isoparse(_evaluated_at)
-
-
-
 
         safety_decision = cls(
             rule_id=rule_id,
@@ -146,7 +132,6 @@ class SafetyDecision:
             constraints=constraints,
             evaluated_at=evaluated_at,
         )
-
 
         safety_decision.additional_properties = d
         return safety_decision

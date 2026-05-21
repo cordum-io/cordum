@@ -7,14 +7,14 @@ import (
 func TestParseHeartbeatMode(t *testing.T) {
 	t.Parallel()
 	cases := map[string]HeartbeatMode{
-		"":           HeartbeatModeAuthority,
-		"authority":  HeartbeatModeAuthority,
-		"AUTHORITY":  HeartbeatModeAuthority,
-		"warn":       HeartbeatModeWarn,
-		"  warn  ":   HeartbeatModeWarn,
-		"telemetry":  HeartbeatModeTelemetry,
+		"":            HeartbeatModeAuthority,
+		"authority":   HeartbeatModeAuthority,
+		"AUTHORITY":   HeartbeatModeAuthority,
+		"warn":        HeartbeatModeWarn,
+		"  warn  ":    HeartbeatModeWarn,
+		"telemetry":   HeartbeatModeTelemetry,
 		"  TELEMETRY": HeartbeatModeTelemetry,
-		"bogus":      HeartbeatModeAuthority,
+		"bogus":       HeartbeatModeAuthority,
 	}
 	for in, want := range cases {
 		if got := ParseHeartbeatMode(in); got != want {

@@ -51,8 +51,13 @@ func (s *server) handleListTopics(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "topic registry unavailable")
 		return
 	}
+	tenant, err := s.resolveTenant(r, "")
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, errorCodeTopicSchemaViolation, err.Error())
+		return
+	}
 
-	snap, err := s.topicRegistry.List(r.Context())
+	snap, err := s.topicRegistry.ListForTenant(r.Context(), tenant)
 	if err != nil {
 		writeInternalError(w, r, "list topics", err)
 		return
@@ -91,6 +96,11 @@ func (s *server) handleCreateTopic(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "topic registry unavailable")
 		return
 	}
+	tenant, err := s.resolveTenant(r, "")
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, errorCodeTopicSchemaViolation, err.Error())
+		return
+	}
 
 	var req createTopicRequest
 	if err := decodeJSONBody(w, r, &req); err != nil {
@@ -103,33 +113,33 @@ func (s *server) handleCreateTopic(w http.ResponseWriter, r *http.Request) {
 	req.Requires = trimStringSlice(req.Requires)
 	req.RiskTags = trimStringSlice(req.RiskTags)
 	if err := pools.ValidateTopicName(req.Name); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodeTopicSchemaViolation, err.Error())
 		return
 	}
 	if err := validateStringArray("requires", req.Requires, maxTopicArrayItems, maxTopicArrayString); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodeTopicSchemaViolation, err.Error())
 		return
 	}
 	if err := validateStringArray("risk_tags", req.RiskTags, maxTopicArrayItems, maxTopicArrayString); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodeTopicSchemaViolation, err.Error())
 		return
 	}
 	if req.Pool != "" {
 		if err := pools.ValidatePoolName(req.Pool); err != nil {
-			writeErrorJSON(w, http.StatusBadRequest, err.Error())
+			writeJSONError(w, http.StatusBadRequest, errorCodeTopicSchemaViolation, err.Error())
 			return
 		}
 		if err := s.ensurePoolExists(r.Context(), req.Pool); err != nil {
 			if errors.Is(err, ErrPoolNotFound) {
-				writeErrorJSON(w, http.StatusNotFound, err.Error())
+				writeJSONError(w, http.StatusNotFound, errorCodePoolNotFound, err.Error())
 				return
 			}
-			writeErrorJSON(w, http.StatusBadRequest, err.Error())
+			writeJSONError(w, http.StatusBadRequest, errorCodeTopicSchemaViolation, err.Error())
 			return
 		}
 	}
 
-	existing, _, err := s.topicRegistry.Get(r.Context(), req.Name)
+	existing, _, err := s.topicRegistry.GetForTenant(r.Context(), tenant, req.Name)
 	if err != nil {
 		writeInternalError(w, r, "get topic", err)
 		return
@@ -137,6 +147,7 @@ func (s *server) handleCreateTopic(w http.ResponseWriter, r *http.Request) {
 
 	record := topicregistry.Registration{
 		Name:           req.Name,
+		TenantID:       tenant,
 		Pool:           req.Pool,
 		InputSchemaID:  req.InputSchemaID,
 		OutputSchemaID: req.OutputSchemaID,
@@ -146,7 +157,7 @@ func (s *server) handleCreateTopic(w http.ResponseWriter, r *http.Request) {
 		Status:         req.Status,
 	}
 	if err := s.topicRegistry.Set(r.Context(), record); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodeTopicSchemaViolation, err.Error())
 		return
 	}
 
@@ -177,25 +188,41 @@ func (s *server) handleDeleteTopic(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "topic registry unavailable")
 		return
 	}
-	name := strings.TrimSpace(r.PathValue("name"))
-	if err := pools.ValidateTopicName(name); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+	tenant, err := s.resolveTenant(r, "")
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, errorCodeTopicSchemaViolation, err.Error())
 		return
 	}
-	existing, _, err := s.topicRegistry.Get(r.Context(), name)
+	name := strings.TrimSpace(r.PathValue("name"))
+	if err := pools.ValidateTopicName(name); err != nil {
+		writeJSONError(w, http.StatusBadRequest, errorCodeTopicSchemaViolation, err.Error())
+		return
+	}
+	// GetForTenant filters by tenant: an admin in another tenant sees the
+	// same response shape as if the topic does not exist (404 + no leak),
+	// which is the existence-oracle hardening the audit demanded.
+	existing, _, err := s.topicRegistry.GetForTenant(r.Context(), tenant, name)
 	if err != nil {
 		writeInternalError(w, r, "get topic", err)
 		return
 	}
-	if existing == nil {
-		writeErrorJSON(w, http.StatusNotFound, "topic not found")
+	if existing == nil || existing.TenantID != tenant {
+		writeJSONError(w, http.StatusNotFound, errorCodeTopicNotFound, "topic not found")
 		return
 	}
-	if err := s.topicRegistry.Delete(r.Context(), name); err != nil {
+	if err := s.topicRegistry.DeleteForTenant(r.Context(), tenant, []string{name}); err != nil {
 		writeInternalError(w, r, "delete topic", err)
 		return
 	}
+	removedMapping, err := s.removeTopicFromPoolConfig(r.Context(), name)
+	if err != nil {
+		writeInternalError(w, r, "remove topic pool mapping", err)
+		return
+	}
 	s.publishConfigChanged("system", "topics")
+	if removedMapping {
+		s.publishConfigChanged("system", "default")
+	}
 	slog.Warn("topic registration deleted",
 		"topic", name,
 		"pool", existing.Pool,
@@ -205,6 +232,43 @@ func (s *server) handleDeleteTopic(w http.ResponseWriter, r *http.Request) {
 	)
 	s.appendAuditEntryNamed(r.Context(), "delete", "topic", name, name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "delete topic "+name)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) removeTopicFromPoolConfig(ctx context.Context, topic string) (bool, error) {
+	if s.configSvc == nil {
+		return false, nil
+	}
+	for attempt := 0; attempt < 3; attempt++ {
+		removed, err := s.removeTopicFromPoolConfigOnce(ctx, topic)
+		if errors.Is(err, configsvc.ErrRevisionConflict) {
+			continue
+		}
+		return removed, err
+	}
+	return false, configsvc.ErrRevisionConflict
+}
+
+func (s *server) removeTopicFromPoolConfigOnce(ctx context.Context, topic string) (bool, error) {
+	doc, err := s.configSvc.Get(ctx, configsvc.ScopeSystem, "default")
+	if errors.Is(err, redis.Nil) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	topics, poolMap, err := extractPoolsFromConfig(doc)
+	if err != nil {
+		return false, err
+	}
+	if _, ok := topics[topic]; !ok {
+		return false, nil
+	}
+	delete(topics, topic)
+	writePoolsToConfig(doc, topics, poolMap)
+	if err := s.configSvc.Set(ctx, doc); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *server) ensurePoolExists(ctx context.Context, pool string) error {

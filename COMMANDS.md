@@ -58,6 +58,38 @@ go tool cover -html=coverage.out
 go test ./core/safety/...
 go test ./core/workflow/...
 
+# Windows/MSYS full gateway+edge flake sweep
+# Use serialized package execution locally to avoid localhost/miniredis port
+# exhaustion on shared Windows runners. Linux CI and focused package tests can keep default `go test`.
+go test -p 1 -count=3 -timeout 900s ./core/controlplane/gateway/... ./core/edge/...
+
+# WSL/Linux gateway race gate
+#
+# The monolithic race command below is still the canonical coverage target, but
+# it can exceed WSL memory on shared runners. When classifying a kill, capture
+# `/usr/bin/time -v` and `dmesg` so the result is distinguishable from a test
+# timeout or assertion failure.
+wsl.exe bash -lc 'set -o pipefail; cd /mnt/d/Cordum/cordum && mkdir -p /mnt/d/tmp/cordum-gateway-race && /usr/bin/time -v -o /mnt/d/tmp/cordum-gateway-race/full.time.txt go test -race ./core/controlplane/gateway -count=3 -timeout=15m -json > /mnt/d/tmp/cordum-gateway-race/full.jsonl 2>&1'
+wsl.exe bash -lc 'dmesg | tail -100 > /mnt/d/tmp/cordum-gateway-race/dmesg-tail.txt || true'
+
+# Resource-safe WSL shard gate. This preserves focused race coverage without
+# putting every gateway test in one race-detector process; logs include each
+# shard's regex, exit code, max RSS when `/usr/bin/time -v` is available, and
+# JSON output path.
+wsl.exe bash -lc 'cd /mnt/d/Cordum/cordum && bash tools/scripts/gateway_race_shards.sh --all'
+
+# Focused binary-integrity race regression. Run this explicitly when touching
+# gateway race/shard tooling; it is not replaced by normal non-race tests.
+wsl.exe bash -lc 'cd /mnt/d/Cordum/cordum && go test -race ./core/controlplane/gateway -run TestBinaryIntegrity_MaxBytesErrorTypedCheck -count=3 -v'
+
+# Normal non-race gateway tests and Docker builds do not satisfy race coverage.
+go test ./core/controlplane/gateway -count=3 -timeout=10m
+
+# Windows/MSYS shared runners: if a full-core local sweep fails only with
+# localhost/miniredis/httptest port-exhaustion errors, use the serialized gate.
+# Focused package tests should still run without -p 1.
+go test -p 1 ./core/... -count=1
+
 # Run tests with verbose output
 go test -v ./core/safety/...
 

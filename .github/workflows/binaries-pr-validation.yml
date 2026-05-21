@@ -1,0 +1,236 @@
+name: Binaries PR validation
+
+# EDGE-151 — every PR that touches tools/sign/, tools/scripts/install*,
+# tools/test-keys/, .github/workflows/release.yml, .github/workflows/
+# binaries-pr-validation.yml, or the cmd/cordum-{hook,agentd,claude}/
+# binaries must pass the Tier 1 verification gate before merge. This is
+# the gate that runs without production secrets — it uses the TEST-ONLY
+# key under tools/test-keys/ via `make release-local` and asserts that
+# install.sh refuses tampered and unsigned synthetic releases.
+
+on:
+  pull_request:
+    paths:
+      - 'tools/sign/**'
+      - 'tools/scripts/install*'
+      - 'tools/scripts/release-local.sh'
+      - 'tools/scripts/windows/**'
+      - 'tools/test-keys/**'
+      - '.github/workflows/release.yml'
+      - '.github/workflows/binaries-pr-validation.yml'
+      - 'cmd/cordum-hook/**'
+      - 'cmd/cordum-agentd/**'
+      - 'cmd/cordum-claude/**'
+      - 'Makefile'
+      - 'go.mod'
+      - 'go.sum'
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verifier-tests:
+    name: tools/sign unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: go test ./tools/sign/...
+        run: go test ./tools/sign/... -count=3 -timeout 90s
+      - name: gofmt
+        run: |
+          out=$(gofmt -l tools/sign/)
+          if [ -n "$out" ]; then
+            echo "::error::gofmt diff:"
+            echo "$out"
+            exit 1
+          fi
+      - name: go vet
+        run: go vet ./tools/sign/...
+
+  install-tamper:
+    name: install_test.sh synthetic-tampered
+    runs-on: ubuntu-latest
+    needs: [verifier-tests]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install GnuPG
+        run: sudo apt-get update && sudo apt-get install -y gnupg
+      - name: make release-local
+        run: make release-local
+      - name: install_test.sh — tamper + unsigned synthetics must FAIL install
+        run: bash tools/scripts/install_test.sh
+
+  install-tamper-windows:
+    # Windows-native validation for install.ps1 + install_test.ps1. The
+    # windows-latest runner ships both Git for Windows (MSYS gpg under
+    # C:\Program Files\Git\usr\bin\gpg.exe) and, after the choco step
+    # below, Gpg4Win/native gpg. EDGE-151 reopen #2 wires both flavors
+    # because MSYS gpg interprets `C:\...` paths as repo-relative and
+    # needs cygpath POSIX conversion; the gpg-path adapter under
+    # tools/scripts/windows/ handles the detection so install.ps1 works
+    # on either flavor.
+    name: install_test.ps1 synthetic-tampered (windows)
+    runs-on: windows-latest
+    needs: [verifier-tests]
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build release-local (bash)
+        shell: bash
+        run: bash tools/scripts/release-local.sh
+      - name: install_test.ps1 — Git/MSYS gpg (Tier 1)
+        shell: pwsh
+        run: |
+          $msysGpg = 'C:\Program Files\Git\usr\bin\gpg.exe'
+          if (-not (Test-Path -LiteralPath $msysGpg)) {
+            Write-Host "Git/MSYS gpg not present on runner; skipping MSYS flavor"
+            exit 0
+          }
+          Write-Host "Running install_test.ps1 against Git/MSYS gpg: $msysGpg"
+          pwsh -NoProfile -File tools/scripts/install_test.ps1 -GpgExe $msysGpg
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Install Gpg4Win
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+          # The full Gpg4Win NSIS installer stalls on GitHub's windows-2025
+          # runner. Keep using the pinned upstream Gpg4Win release, but install
+          # the bundled GnuPG payload directly so the native-gpg tier remains
+          # deterministic.
+          $gpg4winVersion = '4.4.1'
+          $gpgPayloadName = 'gnupg-w32-2.4.8_20250514-bin.exe'
+          $url = "https://files.gpg4win.org/gpg4win-$gpg4winVersion.exe"
+          $exe = Join-Path $env:RUNNER_TEMP "gpg4win-$gpg4winVersion.exe"
+          Write-Host "Downloading Gpg4Win $gpg4winVersion from $url"
+          & curl.exe --fail --location --retry 3 --connect-timeout 30 --max-time 180 --output $exe $url
+          if ($LASTEXITCODE -ne 0) {
+            throw "Gpg4Win download failed with curl.exe exit code $LASTEXITCODE"
+          }
+          if (-not (Test-Path -LiteralPath $exe)) {
+            throw "Gpg4Win installer was not downloaded to $exe"
+          }
+          $sizeBytes = (Get-Item -LiteralPath $exe).Length
+          if ($sizeBytes -lt 20MB) {
+            throw "Gpg4Win installer at $exe is only $sizeBytes bytes (< 20 MB); aborting"
+          }
+          Write-Host "Downloaded installer size: $sizeBytes bytes"
+
+          $sevenZip = @(
+            'C:\Program Files\7-Zip\7z.exe',
+            'C:\Program Files (x86)\7-Zip\7z.exe'
+          ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+          if (-not $sevenZip) {
+            throw 'Expected 7-Zip on the Windows runner, but 7z.exe was not found'
+          }
+
+          $outerDir = Join-Path $env:RUNNER_TEMP 'gpg4win-payload'
+          $innerDir = Join-Path $env:RUNNER_TEMP 'gnupg-payload'
+          foreach ($dir in @($outerDir, $innerDir)) {
+            if (Test-Path -LiteralPath $dir) {
+              Remove-Item -LiteralPath $dir -Recurse -Force
+            }
+            New-Item -ItemType Directory -Path $dir | Out-Null
+          }
+
+          $outerPayload = '$TEMP\' + $gpgPayloadName
+          Write-Host "Extracting bundled GnuPG payload from Gpg4Win: $outerPayload"
+          & $sevenZip x $exe "-o$outerDir" $outerPayload -y
+          if ($LASTEXITCODE -ne 0) {
+            throw "7-Zip failed to extract $outerPayload from Gpg4Win (exit $LASTEXITCODE)"
+          }
+
+          $payloadExe = Join-Path (Join-Path $outerDir '$TEMP') $gpgPayloadName
+          if (-not (Test-Path -LiteralPath $payloadExe)) {
+            throw "Expected bundled GnuPG payload not found at $payloadExe"
+          }
+
+          Write-Host "Extracting bundled GnuPG installer payload"
+          & $sevenZip x $payloadExe "-o$innerDir" -y
+          if ($LASTEXITCODE -ne 0) {
+            throw "7-Zip failed to extract bundled GnuPG payload (exit $LASTEXITCODE)"
+          }
+
+          $installDir = 'C:\Program Files (x86)\GnuPG'
+          New-Item -ItemType Directory -Path $installDir -Force | Out-Null
+          foreach ($name in @('bin', 'share', 'lib', 'include')) {
+            $source = Join-Path $innerDir $name
+            if (Test-Path -LiteralPath $source) {
+              Copy-Item -LiteralPath $source -Destination $installDir -Recurse -Force
+            }
+          }
+
+          $gpgBinDir = Join-Path $installDir 'bin'
+          $gpgExe = Join-Path $gpgBinDir 'gpg.exe'
+          if (-not (Test-Path -LiteralPath $gpgExe)) {
+            throw "Expected Gpg4Win-bundled gpg.exe not found at $gpgExe"
+          }
+
+          $env:Path = "$gpgBinDir;$env:Path"
+          if ($env:GITHUB_PATH) {
+            Add-Content -Path $env:GITHUB_PATH -Value $gpgBinDir
+          }
+          $versionOutput = & $gpgExe --version 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            throw "Gpg4Win-bundled gpg.exe --version failed with exit $LASTEXITCODE"
+          }
+          $versionOutput | ForEach-Object { Write-Host $_ }
+      - name: install_test.ps1 — Gpg4Win/native gpg
+        shell: pwsh
+        run: |
+          $env:Path = "C:\Program Files (x86)\GnuPG\bin;$env:Path"
+          pwsh -NoProfile -File tools/scripts/install_test.ps1
+
+  no-private-keys-leaked:
+    name: lint — no private keys outside tools/test-keys/TEST-ONLY-*
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: grep guard
+        run: |
+          set -euo pipefail
+          # The only acceptable PRIVATE blocks live under tools/test-keys/
+          # with the TEST-ONLY- prefix. The PEM pattern itself is constructed
+          # at runtime so this workflow file does not self-match. We scan
+          # only key-bearing extensions (.asc/.pem/.key/.crt/.pub/.pfx) so
+          # source files that mention the pattern in regex strings or
+          # detection rules are not flagged.
+          pem_pattern="-----BEGIN .*$(printf 'PRI')VATE|-----BEGIN $(printf 'CER')TIFICATE|-----BEGIN OPENSSH $(printf 'PRI')VATE"
+          mapfile -t candidates < <(find . \
+            \( -name '*.asc' -o -name '*.pem' -o -name '*.key' -o -name '*.crt' -o -name '*.pub' -o -name '*.pfx' \) \
+            -not -path './.git/*' \
+            -not -path './node_modules/*' \
+            -not -path './bin/*' \
+            -not -path './certs/*' \
+            -not -path '*/.venv/*' \
+            -not -path '*/node_modules/*')
+          hits=""
+          if [ "${#candidates[@]}" -gt 0 ]; then
+            hits=$(printf '%s\n' "${candidates[@]}" \
+              | xargs -r grep -lE -- "$pem_pattern" 2>/dev/null \
+              | grep -v -E '^./tools/test-keys/TEST-ONLY-' \
+              || true)
+          fi
+          if [ -n "$hits" ]; then
+            echo "::error::Private key material in committed key-file outside tools/test-keys/TEST-ONLY-*:"
+            echo "$hits"
+            exit 1
+          fi
+          echo "OK — no stray private keys in key-bearing files"

@@ -6,12 +6,12 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type EdgeSessionPrincipalType = typeof EdgeSessionPrincipalType[keyof typeof EdgeSessionPrincipalType];
-
+export type EdgeSessionPrincipalType =
+  (typeof EdgeSessionPrincipalType)[keyof typeof EdgeSessionPrincipalType];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const EdgeSessionPrincipalType = {
-  human: 'human',
-  service: 'service',
-  unknown: 'unknown',
+  human: "human",
+  service: "service",
+  unknown: "unknown",
 } as const;

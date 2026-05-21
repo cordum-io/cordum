@@ -301,6 +301,80 @@ func evaluateInputRule(rule compiledInputRule, req inputEvaluateRequest, scanner
 	return true, findings
 }
 
+// severityRank maps the severity string vocabulary to an ordinal so
+// "high" / "critical" thresholds can compare against finding severities.
+// Unknown values rank as 0 (below low) — fail-closed when a threshold
+// references an unrecognized severity floor.
+func severityRank(s string) int {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "low":
+		return 1
+	case "medium":
+		return 2
+	case "high":
+		return 3
+	case "critical":
+		return 4
+	}
+	return 0
+}
+
+// shouldDowngradeDenyToRequireHuman implements the REQUIRE_HUMAN threshold
+// per architect amendment comment-79a9e609 on task-96f931fe.
+//
+// Returns true (= downgrade to REQUIRE_HUMAN) when the matched input rule's
+// "deny" verdict is "truly ambiguous" per DoD #4. Three independent
+// conditions trigger downgrade (logical OR):
+//
+//  1. Prompt-only: request carries no ActionDescriptor (act == nil) AND the
+//     operator opted in via threshold.DowngradeWhenPromptOnly.
+//  2. Below severity floor: at least one matched finding has severity
+//     strictly lower than threshold.MinSeverityForDeny.
+//  3. Below confidence floor: at least one matched finding has confidence
+//     strictly lower than threshold.MinConfidenceForDeny.
+//
+// Zero values disable the corresponding floor — an empty MinSeverityForDeny
+// or zero MinConfidenceForDeny means "no floor", preserving legacy DENY-on-
+// match behavior unless the operator has opted in by setting the field.
+//
+// The "at least one below" semantics (not "all below") matches the architect's
+// intent: a single ambiguous finding in a multi-pattern rule downgrades the
+// whole rule, because the operator authored the rule expecting a clean
+// high-severity high-confidence match. Mixed bags route to human review.
+func shouldDowngradeDenyToRequireHuman(
+	rule compiledInputRule,
+	findings []outputFinding,
+	action *config.ActionDescriptor,
+	threshold config.RequireHumanThreshold,
+) bool {
+	if threshold.DowngradeWhenPromptOnly && action == nil {
+		return true
+	}
+	if minRank := severityRank(threshold.MinSeverityForDeny); minRank > 0 {
+		for _, f := range findings {
+			if severityRank(f.Severity) < minRank {
+				return true
+			}
+		}
+		// If the rule itself authored a severity below the floor, downgrade
+		// even when individual findings carry the higher synthesized severity
+		// (e.g. a "low"-tier rule emits "low"-severity findings; this floor
+		// captures operator intent that low-severity DENYs should be
+		// human-reviewable).
+		if severityRank(rule.severity) > 0 && severityRank(rule.severity) < minRank {
+			return true
+		}
+	}
+	if threshold.MinConfidenceForDeny > 0 {
+		for _, f := range findings {
+			if f.Confidence > 0 && f.Confidence < threshold.MinConfidenceForDeny {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // inputRuleReason builds a human-readable reason string from rule + findings.
 func inputRuleReason(rule compiledInputRule, findings []outputFinding) string {
 	if rule.reason != "" && len(findings) == 0 {

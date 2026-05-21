@@ -18,10 +18,7 @@ from typing import Union
 import datetime
 
 if TYPE_CHECKING:
-  from ..models.installed_pack_verification import InstalledPackVerification
-
-
-
+    from ..models.installed_pack_verification import InstalledPackVerification
 
 
 T = TypeVar("T", bound="PackRecord")
@@ -29,23 +26,23 @@ T = TypeVar("T", bound="PackRecord")
 
 @_attrs_define
 class PackRecord:
-    """ 
-        Attributes:
-            id (Union[Unset, str]):
-            name (Union[Unset, str]):
-            version (Union[Unset, str]):
-            status (Union[Unset, PackRecordStatus]):
-            description (Union[None, Unset, str]):
-            author (Union[None, Unset, str]):
-            installed_at (Union[Unset, datetime.datetime]):
-            updated_at (Union[Unset, datetime.datetime]):
-            verification (Union[Unset, InstalledPackVerification]): Pack-signature verification outcome computed by the
-                gateway at
-                install time. Never client-supplied — the gateway discards any
-                `verification` field on the install payload and computes its own.
-                Pre-existing installs default to {signed: false} when this object
-                is absent.
-     """
+    """
+    Attributes:
+        id (Union[Unset, str]):
+        name (Union[Unset, str]):
+        version (Union[Unset, str]):
+        status (Union[Unset, PackRecordStatus]):
+        description (Union[None, Unset, str]):
+        author (Union[None, Unset, str]):
+        installed_at (Union[Unset, datetime.datetime]):
+        updated_at (Union[Unset, datetime.datetime]):
+        verification (Union[Unset, InstalledPackVerification]): Pack-signature verification outcome computed by the
+            gateway at
+            install time. Never client-supplied — the gateway discards any
+            `verification` field on the install payload and computes its own.
+            Pre-existing installs default to {signed: false} when this object
+            is absent.
+    """
 
     id: Union[Unset, str] = UNSET
     name: Union[Unset, str] = UNSET
@@ -55,12 +52,12 @@ class PackRecord:
     author: Union[None, Unset, str] = UNSET
     installed_at: Union[Unset, datetime.datetime] = UNSET
     updated_at: Union[Unset, datetime.datetime] = UNSET
-    verification: Union[Unset, 'InstalledPackVerification'] = UNSET
+    verification: Union[Unset, "InstalledPackVerification"] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         from ..models.installed_pack_verification import InstalledPackVerification
+
         id = self.id
 
         name = self.name
@@ -70,7 +67,6 @@ class PackRecord:
         status: Union[Unset, str] = UNSET
         if not isinstance(self.status, Unset):
             status = self.status.value
-
 
         description: Union[None, Unset, str]
         if isinstance(self.description, Unset):
@@ -96,11 +92,9 @@ class PackRecord:
         if not isinstance(self.verification, Unset):
             verification = self.verification.to_dict()
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if id is not UNSET:
             field_dict["id"] = id
         if name is not UNSET:
@@ -122,11 +116,10 @@ class PackRecord:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.installed_pack_verification import InstalledPackVerification
+
         d = src_dict.copy()
         id = d.pop("id", UNSET)
 
@@ -136,13 +129,10 @@ class PackRecord:
 
         _status = d.pop("status", UNSET)
         status: Union[Unset, PackRecordStatus]
-        if isinstance(_status,  Unset):
+        if isinstance(_status, Unset):
             status = UNSET
         else:
             status = PackRecordStatus(_status)
-
-
-
 
         def _parse_description(data: object) -> Union[None, Unset, str]:
             if data is None:
@@ -153,7 +143,6 @@ class PackRecord:
 
         description = _parse_description(d.pop("description", UNSET))
 
-
         def _parse_author(data: object) -> Union[None, Unset, str]:
             if data is None:
                 return data
@@ -163,36 +152,26 @@ class PackRecord:
 
         author = _parse_author(d.pop("author", UNSET))
 
-
         _installed_at = d.pop("installed_at", UNSET)
         installed_at: Union[Unset, datetime.datetime]
-        if isinstance(_installed_at,  Unset):
+        if isinstance(_installed_at, Unset):
             installed_at = UNSET
         else:
             installed_at = isoparse(_installed_at)
 
-
-
-
         _updated_at = d.pop("updated_at", UNSET)
         updated_at: Union[Unset, datetime.datetime]
-        if isinstance(_updated_at,  Unset):
+        if isinstance(_updated_at, Unset):
             updated_at = UNSET
         else:
             updated_at = isoparse(_updated_at)
 
-
-
-
         _verification = d.pop("verification", UNSET)
         verification: Union[Unset, InstalledPackVerification]
-        if isinstance(_verification,  Unset):
+        if isinstance(_verification, Unset):
             verification = UNSET
         else:
             verification = InstalledPackVerification.from_dict(_verification)
-
-
-
 
         pack_record = cls(
             id=id,
@@ -205,7 +184,6 @@ class PackRecord:
             updated_at=updated_at,
             verification=verification,
         )
-
 
         pack_record.additional_properties = d
         return pack_record

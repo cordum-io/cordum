@@ -37,7 +37,7 @@ func (s *server) handlePutPolicyShadow(w http.ResponseWriter, r *http.Request) {
 	}
 	bundleID := policybundles.BundleIDFromRequest(r)
 	if bundleID == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "bundle id required")
+		writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, "bundle id required")
 		return
 	}
 	tenantID := strings.TrimSpace(tenantFromRequest(r))
@@ -53,14 +53,14 @@ func (s *server) handlePutPolicyShadow(w http.ResponseWriter, r *http.Request) {
 	}
 	content := policybundles.SanitizePolicyBundleYAML(strings.TrimSpace(body.Content))
 	if content == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "content required")
+		writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, "content required")
 		return
 	}
 	// Validate via the same path handlePutPolicyBundle uses — a malformed
 	// shadow would panic the kernel's dual-eval. Keep the error body
 	// identical so existing clients handle both endpoints the same way.
 	if _, err := config.ParseSafetyPolicy([]byte(content)); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, fmt.Sprintf("invalid policy content: %v", err))
+		writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, fmt.Sprintf("invalid policy content: %v", err))
 		return
 	}
 
@@ -78,7 +78,7 @@ func (s *server) handlePutPolicyShadow(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if strings.Contains(err.Error(), "exhausted retries") {
-			writeErrorJSON(w, http.StatusConflict, "shadow write conflict — retry")
+			writeJSONError(w, http.StatusConflict, errorCodePolicyShadowConflict, "shadow write conflict — retry")
 			return
 		}
 		writeInternalError(w, r, "policy shadow activate", err)
@@ -103,7 +103,7 @@ func (s *server) handleGetPolicyShadow(w http.ResponseWriter, r *http.Request) {
 	}
 	bundleID := policybundles.BundleIDFromRequest(r)
 	if bundleID == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "bundle id required")
+		writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, "bundle id required")
 		return
 	}
 	tenantID := strings.TrimSpace(tenantFromRequest(r))
@@ -136,7 +136,7 @@ func (s *server) handleDeletePolicyShadow(w http.ResponseWriter, r *http.Request
 	}
 	bundleID := policybundles.BundleIDFromRequest(r)
 	if bundleID == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "bundle id required")
+		writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, "bundle id required")
 		return
 	}
 	tenantID := strings.TrimSpace(tenantFromRequest(r))
@@ -160,7 +160,7 @@ func (s *server) handleDeletePolicyShadow(w http.ResponseWriter, r *http.Request
 	removed, err := s.policyShadowStore.Delete(r.Context(), tenantID, bundleID)
 	if err != nil {
 		if strings.Contains(err.Error(), "exhausted retries") {
-			writeErrorJSON(w, http.StatusConflict, "shadow write conflict — retry")
+			writeJSONError(w, http.StatusConflict, errorCodePolicyShadowConflict, "shadow write conflict — retry")
 			return
 		}
 		writeInternalError(w, r, "policy shadow delete", err)

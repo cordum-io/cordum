@@ -31,8 +31,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // WorkerTrustMetrics wraps the Prometheus gauges used by the
@@ -40,8 +40,8 @@ import (
 // package-level globals) so tests can inject a scoped registry
 // without leaking state across runs.
 type WorkerTrustMetrics struct {
-	sessionValid    *prometheus.GaugeVec
-	heartbeatAge    *prometheus.GaugeVec
+	sessionValid *prometheus.GaugeVec
+	heartbeatAge *prometheus.GaugeVec
 }
 
 var (

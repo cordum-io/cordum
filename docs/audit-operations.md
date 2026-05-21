@@ -191,6 +191,35 @@ for verification, OR events were forged by a process without the key.
 **Fix**: Verify all pods/replicas have `CORDUM_AUDIT_HMAC_KEY` set and
 restart any that don't.
 
+### Edge approval retry fails with `audit_evidence_missing`
+
+**Cause**: A destructive Edge action had a backend approval, but the audit-chain
+provenance check could not find a matching resolved approval event. The accepted
+event is `EventEdgeApprovalResolved` / `edge.approval_resolved` with decision
+`approved` or `approve`, matching tenant, matching `extra.approval_ref`, and
+matching `extra.action_hash`. `EventEdgeApprovalRequested` /
+`edge.approval_requested` only proves the approval was requested; requested-only
+evidence is not sufficient.
+
+**Investigation**:
+1. Confirm the approval was actually approved, not still pending, rejected,
+   expired, invalidated, or already consumed against a different action.
+2. Verify the retry used the same tenant and action. Compare the dashboard or
+   API approval detail `approval_ref`/`action_hash` with the bounded audit
+   event `extra` fields; do not copy raw prompts or tool payloads into the
+   incident notes.
+3. Run `GET /api/v1/audit/verify?tenant=<tenant>&since=<approval_created_ms>&until=<now_ms>`
+   (respecting the default 10,000 / max 100,000 scan cap) and check for
+   `compromised`, `missing`, or HMAC gaps.
+4. If verification reports `partial`, confirm retention trimming did not remove
+   the approval window. Partial history is acceptable only when the in-window
+   resolved approval evidence is still present.
+
+**Remediation**: Treat missing/malformed/mismatched provenance as fail-closed.
+Fix the audit pipeline or rerun the approval flow after the chain is healthy;
+do not bypass by relying on the approval-requested event or by pasting raw
+payloads into audit records.
+
 ## Legal Hold Integration
 
 When a legal hold is active (`POST /api/v1/audit/legal-holds`), audit events

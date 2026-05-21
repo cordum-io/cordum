@@ -52,6 +52,11 @@ func NewRedisWorkflowStore(url string) (*RedisStore, error) {
 	return &RedisStore{client: client}, nil
 }
 
+// NewRedisWorkflowStoreFromClient constructs a workflow store from a shared Redis client.
+func NewRedisWorkflowStoreFromClient(client redis.UniversalClient) *RedisStore {
+	return &RedisStore{client: client}
+}
+
 // Close closes the underlying Redis client.
 func (s *RedisStore) Close() error {
 	if s.client == nil {

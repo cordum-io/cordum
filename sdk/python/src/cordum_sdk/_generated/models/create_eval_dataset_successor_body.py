@@ -15,10 +15,9 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.create_eval_dataset_successor_body_entries_item import CreateEvalDatasetSuccessorBodyEntriesItem
-
-
-
+    from ..models.create_eval_dataset_successor_body_entries_item import (
+        CreateEvalDatasetSuccessorBodyEntriesItem,
+    )
 
 
 T = TypeVar("T", bound="CreateEvalDatasetSuccessorBody")
@@ -26,21 +25,23 @@ T = TypeVar("T", bound="CreateEvalDatasetSuccessorBody")
 
 @_attrs_define
 class CreateEvalDatasetSuccessorBody:
-    """ 
-        Attributes:
-            version (Union[Unset, int]):
-            description (Union[Unset, str]):
-            entries (Union[Unset, List['CreateEvalDatasetSuccessorBodyEntriesItem']]):
-     """
+    """
+    Attributes:
+        version (Union[Unset, int]):
+        description (Union[Unset, str]):
+        entries (Union[Unset, List['CreateEvalDatasetSuccessorBodyEntriesItem']]):
+    """
 
     version: Union[Unset, int] = UNSET
     description: Union[Unset, str] = UNSET
-    entries: Union[Unset, List['CreateEvalDatasetSuccessorBodyEntriesItem']] = UNSET
+    entries: Union[Unset, List["CreateEvalDatasetSuccessorBodyEntriesItem"]] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.create_eval_dataset_successor_body_entries_item import CreateEvalDatasetSuccessorBodyEntriesItem
+        from ..models.create_eval_dataset_successor_body_entries_item import (
+            CreateEvalDatasetSuccessorBodyEntriesItem,
+        )
+
         version = self.version
 
         description = self.description
@@ -52,13 +53,9 @@ class CreateEvalDatasetSuccessorBody:
                 entries_item = entries_item_data.to_dict()
                 entries.append(entries_item)
 
-
-
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if version is not UNSET:
             field_dict["version"] = version
         if description is not UNSET:
@@ -68,11 +65,12 @@ class CreateEvalDatasetSuccessorBody:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.create_eval_dataset_successor_body_entries_item import CreateEvalDatasetSuccessorBodyEntriesItem
+        from ..models.create_eval_dataset_successor_body_entries_item import (
+            CreateEvalDatasetSuccessorBodyEntriesItem,
+        )
+
         d = src_dict.copy()
         version = d.pop("version", UNSET)
 
@@ -80,20 +78,16 @@ class CreateEvalDatasetSuccessorBody:
 
         entries = []
         _entries = d.pop("entries", UNSET)
-        for entries_item_data in (_entries or []):
+        for entries_item_data in _entries or []:
             entries_item = CreateEvalDatasetSuccessorBodyEntriesItem.from_dict(entries_item_data)
 
-
-
             entries.append(entries_item)
-
 
         create_eval_dataset_successor_body = cls(
             version=version,
             description=description,
             entries=entries,
         )
-
 
         create_eval_dataset_successor_body.additional_properties = d
         return create_eval_dataset_successor_body

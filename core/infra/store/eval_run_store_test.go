@@ -10,7 +10,7 @@ import (
 
 	miniredis "github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/evals/runner"
-	"github.com/redis/go-redis/v9"
+	"github.com/cordum/cordum/core/internal/testredis"
 )
 
 func newTestEvalRunStore(t *testing.T) (*EvalRunStore, *miniredis.Miniredis) {
@@ -20,8 +20,7 @@ func newTestEvalRunStore(t *testing.T) (*EvalRunStore, *miniredis.Miniredis) {
 		t.Fatalf("miniredis: %v", err)
 	}
 	t.Cleanup(srv.Close)
-	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
+	client := testredis.NewClient(t, srv.Addr())
 	return NewEvalRunStoreFromClient(client), srv
 }
 

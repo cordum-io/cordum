@@ -12,27 +12,22 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="PolicyReplayRequestFilters")
 
 
 @_attrs_define
 class PolicyReplayRequestFilters:
-    """ 
-        Attributes:
-            tenant (Union[Unset, str]):
-            topic_pattern (Union[Unset, str]):
-            original_decision (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        tenant (Union[Unset, str]):
+        topic_pattern (Union[Unset, str]):
+        original_decision (Union[Unset, str]):
+    """
 
     tenant: Union[Unset, str] = UNSET
     topic_pattern: Union[Unset, str] = UNSET
     original_decision: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         tenant = self.tenant
@@ -41,11 +36,9 @@ class PolicyReplayRequestFilters:
 
         original_decision = self.original_decision
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if tenant is not UNSET:
             field_dict["tenant"] = tenant
         if topic_pattern is not UNSET:
@@ -54,8 +47,6 @@ class PolicyReplayRequestFilters:
             field_dict["original_decision"] = original_decision
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -71,7 +62,6 @@ class PolicyReplayRequestFilters:
             topic_pattern=topic_pattern,
             original_decision=original_decision,
         )
-
 
         policy_replay_request_filters.additional_properties = d
         return policy_replay_request_filters

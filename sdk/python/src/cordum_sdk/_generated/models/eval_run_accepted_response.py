@@ -17,29 +17,25 @@ from uuid import UUID
 import datetime
 
 
-
-
-
-
 T = TypeVar("T", bound="EvalRunAcceptedResponse")
 
 
 @_attrs_define
 class EvalRunAcceptedResponse:
-    """ 
-        Attributes:
-            run_id (UUID):
-            status (EvalRunAcceptedResponseStatus):
-            poll_url (Union[Unset, str]):
-            dataset_id (Union[Unset, str]):
-            dataset_name (Union[Unset, str]):
-            dataset_version (Union[Unset, int]):
-            tenant (Union[Unset, str]):
-            started_at (Union[Unset, datetime.datetime]):
-            completed_at (Union[Unset, datetime.datetime]):
-            policy_snapshot (Union[Unset, str]):
-            error (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        run_id (UUID):
+        status (EvalRunAcceptedResponseStatus):
+        poll_url (Union[Unset, str]):
+        dataset_id (Union[Unset, str]):
+        dataset_name (Union[Unset, str]):
+        dataset_version (Union[Unset, int]):
+        tenant (Union[Unset, str]):
+        started_at (Union[Unset, datetime.datetime]):
+        completed_at (Union[Unset, datetime.datetime]):
+        policy_snapshot (Union[Unset, str]):
+        error (Union[Unset, str]):
+    """
 
     run_id: UUID
     status: EvalRunAcceptedResponseStatus
@@ -53,7 +49,6 @@ class EvalRunAcceptedResponse:
     policy_snapshot: Union[Unset, str] = UNSET
     error: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         run_id = str(self.run_id)
@@ -82,13 +77,14 @@ class EvalRunAcceptedResponse:
 
         error = self.error
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "run_id": run_id,
-            "status": status,
-        })
+        field_dict.update(
+            {
+                "run_id": run_id,
+                "status": status,
+            }
+        )
         if poll_url is not UNSET:
             field_dict["poll_url"] = poll_url
         if dataset_id is not UNSET:
@@ -110,20 +106,12 @@ class EvalRunAcceptedResponse:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
         run_id = UUID(d.pop("run_id"))
 
-
-
-
         status = EvalRunAcceptedResponseStatus(d.pop("status"))
-
-
-
 
         poll_url = d.pop("poll_url", UNSET)
 
@@ -137,23 +125,17 @@ class EvalRunAcceptedResponse:
 
         _started_at = d.pop("started_at", UNSET)
         started_at: Union[Unset, datetime.datetime]
-        if isinstance(_started_at,  Unset):
+        if isinstance(_started_at, Unset):
             started_at = UNSET
         else:
             started_at = isoparse(_started_at)
 
-
-
-
         _completed_at = d.pop("completed_at", UNSET)
         completed_at: Union[Unset, datetime.datetime]
-        if isinstance(_completed_at,  Unset):
+        if isinstance(_completed_at, Unset):
             completed_at = UNSET
         else:
             completed_at = isoparse(_completed_at)
-
-
-
 
         policy_snapshot = d.pop("policy_snapshot", UNSET)
 
@@ -172,7 +154,6 @@ class EvalRunAcceptedResponse:
             policy_snapshot=policy_snapshot,
             error=error,
         )
-
 
         eval_run_accepted_response.additional_properties = d
         return eval_run_accepted_response

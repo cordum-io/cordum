@@ -5,9 +5,9 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { RunDetailAllOfInput } from './runDetailAllOfInput';
-import type { RunDetailAllOfOutput } from './runDetailAllOfOutput';
-import type { RunDetailAllOfSteps } from './runDetailAllOfSteps';
+import type { RunDetailAllOfInput } from "./runDetailAllOfInput";
+import type { RunDetailAllOfOutput } from "./runDetailAllOfOutput";
+import type { RunDetailAllOfSteps } from "./runDetailAllOfSteps";
 
 export type RunDetailAllOf = {
   input?: RunDetailAllOfInput;

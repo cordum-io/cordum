@@ -13,10 +13,7 @@ from typing import cast, List
 from typing import Dict
 
 if TYPE_CHECKING:
-  from ..models.worker_runtime import WorkerRuntime
-
-
-
+    from ..models.worker_runtime import WorkerRuntime
 
 
 T = TypeVar("T", bound="ListWorkersResponse200")
@@ -24,53 +21,47 @@ T = TypeVar("T", bound="ListWorkersResponse200")
 
 @_attrs_define
 class ListWorkersResponse200:
-    """ 
-        Attributes:
-            items (List['WorkerRuntime']):
-     """
+    """
+    Attributes:
+        items (List['WorkerRuntime']):
+    """
 
-    items: List['WorkerRuntime']
+    items: List["WorkerRuntime"]
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         from ..models.worker_runtime import WorkerRuntime
+
         items = []
         for items_item_data in self.items:
             items_item = items_item_data.to_dict()
             items.append(items_item)
 
-
-
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "items": items,
-        })
+        field_dict.update(
+            {
+                "items": items,
+            }
+        )
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.worker_runtime import WorkerRuntime
+
         d = src_dict.copy()
         items = []
         _items = d.pop("items")
-        for items_item_data in (_items):
+        for items_item_data in _items:
             items_item = WorkerRuntime.from_dict(items_item_data)
 
-
-
             items.append(items_item)
-
 
         list_workers_response_200 = cls(
             items=items,
         )
-
 
         list_workers_response_200.additional_properties = d
         return list_workers_response_200

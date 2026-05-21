@@ -26,14 +26,15 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/governance/evaluator"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
 	infraHealth "github.com/cordum/cordum/core/infra/health"
 	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	"github.com/cordum/cordum/core/infra/redisutil"
-	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/tlsreload"
 	"github.com/cordum/cordum/core/licensing"
@@ -80,19 +81,25 @@ type server struct {
 	invariantOutputRules []config.OutputPolicyRule
 	outputRules          []compiledOutputRule
 	inputRules           []compiledInputRule
-	scanners             map[string]OutputScanner
-	snapshot             string
-	snapshots            []string
-	resultClient         redis.UniversalClient
-	velocityChecker      *velocityChecker
-	policyVersion        atomic.Uint64
-	cacheMu              sync.Mutex
-	cacheTTL             time.Duration
-	cache                map[string]cacheEntry
-	cacheMaxSize         int
-	entitlements         *licensing.EntitlementResolver
-	customBundleCount    int
-	shadowEvaluator      *ShadowEvaluator
+	// requireHumanThreshold downgrades input-rule "deny" decisions to
+	// REQUIRE_HUMAN when the matched finding is below the configured
+	// severity/confidence floor OR the request has no ActionDescriptor.
+	// Loaded from policy.RequireHuman at policy-load time. Zero value
+	// preserves legacy DENY-everything behavior.
+	requireHumanThreshold config.RequireHumanThreshold
+	scanners              map[string]OutputScanner
+	snapshot              string
+	snapshots             []string
+	resultClient          redis.UniversalClient
+	velocityChecker       *velocityChecker
+	policyVersion         atomic.Uint64
+	cacheMu               sync.Mutex
+	cacheTTL              time.Duration
+	cache                 map[string]cacheEntry
+	cacheMaxSize          int
+	entitlements          *licensing.EntitlementResolver
+	customBundleCount     int
+	shadowEvaluator       *ShadowEvaluator
 
 	// Agent identity store for enriching policy evaluation with agent context.
 	agentStore    *store.AgentIdentityStore
@@ -119,6 +126,20 @@ type server struct {
 	// records the SIEMEvent into the BufferedExporter and appends to the
 	// audit Chainer. Nil = log-only.
 	actionGateAuditSink func(ctx context.Context, event audit.SIEMEvent)
+
+	// governanceEvaluator runs deterministic multi-agent governance
+	// rules over a typed config.GovernanceInput populated by the gateway
+	// from authenticated records. Exposed via the separate
+	// EvaluateGovernance method (not folded into Check) so gateway
+	// callers can short-circuit delegation/handoff/shared-memory ops
+	// before the rule loop. Unset = governance evaluation disabled
+	// (callers receive an unspecified Decision and proceed through
+	// normal rule eval).
+	governanceEvaluator evaluator.Evaluator
+	// governancePolicy is the operator-tunable expression that the
+	// governance evaluator consults. Loaded from safety.yaml; defaults
+	// are fail-closed (config.DefaultGovernancePolicy).
+	governancePolicy config.GovernancePolicy
 }
 
 // ActionDescriptorExtractor maps a PolicyCheckRequest to the structured
@@ -384,6 +405,7 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 	if err := wireActionGatePipeline(srv, nil); err != nil {
 		return fmt.Errorf("wire action gate pipeline: %w", err)
 	}
+	srv.SetGovernanceEvaluator(evaluator.New(), config.DefaultGovernancePolicy())
 
 	// Phase-2 shadow dual-evaluation: constructs the shadow loader +
 	// evaluator and attaches them to srv via SetShadowEvaluator so
@@ -637,6 +659,7 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	inputRules := s.inputRules
 	scanners := s.scanners
 	shadowEvaluator := s.shadowEvaluator
+	requireHumanThreshold := s.requireHumanThreshold
 	defaultTenant := ""
 	if policy != nil {
 		defaultTenant = strings.TrimSpace(policy.DefaultTenant)
@@ -652,8 +675,9 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	// request, so caching any result (even a fallthrough ALLOW) would prevent
 	// the window from advancing correctly.
 	policyHasVelocity := effectiveVelocityRuleCount(evalPolicy, s.velocityRuleLimit()) > 0
+	requestHasActionDescriptor := requestHasActionDescriptorLabel(req)
 	cacheKey := ""
-	if s.cacheTTL > 0 && !policyHasVelocity {
+	if s.cacheTTL > 0 && !policyHasVelocity && !requestHasActionDescriptor {
 		cacheKey = cacheKeyForRequest(req, snapshot)
 		if cacheKey != "" {
 			if cached := s.getCachedDecision(cacheKey); cached != nil {
@@ -890,11 +914,24 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 				matchedCount++
 				switch rule.decision {
 				case "deny":
-					decision = pb.DecisionType_DECISION_TYPE_DENY
-					reason = inputRuleReason(rule, findings)
-					ruleID = rule.id
-					ruleTier = rule.tier
-					inputDecision = "deny"
+					// Per task-96f931fe architect amendment comment-79a9e609:
+					// downgrade DENY → REQUIRE_HUMAN when the matched finding
+					// falls below the configured severity/confidence floor OR
+					// the request has no ActionDescriptor (prompt-only). DoD #4
+					// authorizes this routing for "truly ambiguous" cases.
+					if shouldDowngradeDenyToRequireHuman(rule, findings, input.Action, requireHumanThreshold) {
+						decision = pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN
+						reason = inputRuleReason(rule, findings)
+						ruleID = rule.id
+						ruleTier = rule.tier
+						inputDecision = "require_human"
+					} else {
+						decision = pb.DecisionType_DECISION_TYPE_DENY
+						reason = inputRuleReason(rule, findings)
+						ruleID = rule.id
+						ruleTier = rule.tier
+						inputDecision = "deny"
+					}
 				case "require_approval", "require-approval", "require_human":
 					decision = pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN
 					reason = inputRuleReason(rule, findings)
@@ -902,7 +939,7 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 					ruleTier = rule.tier
 					inputDecision = "require_human"
 				}
-				slog.Info("input rule matched", "component", "safety", "rule", rule.id, "ruleTier", rule.tier, "decision", rule.decision, "findings", len(findings))
+				slog.Info("input rule matched", "component", "safety", "rule", rule.id, "ruleTier", rule.tier, "decision", rule.decision, "findings", len(findings), "outputDecision", inputDecision)
 				break // first matching input rule wins
 			}
 			finishInput(inputDecision, matchedCount)
@@ -944,7 +981,7 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 
 	slog.Info("policy evaluation result", "component", "safety", "tenant", tenant, "topic", topic, "jobId", req.GetJobId(), "decision", resp.Decision.String(), "ruleId", resp.RuleId, "ruleTier", ruleTier)
 
-	if cacheKey != "" && s.cacheTTL > 0 {
+	if cacheKey != "" && s.cacheTTL > 0 && !requestHasActionDescriptor {
 		cacheResp := clonePolicyResponse(resp)
 		cacheResp.ApprovalRef = ""
 		s.setCachedDecision(cacheKey, cacheResp)
@@ -1148,7 +1185,7 @@ func (s *server) enrichAgentContext(ctx context.Context, labels map[string]strin
 	identity := s.getAgentFromCache(agentID)
 	if identity == nil {
 		var err error
-		identity, err = s.agentStore.Get(ctx, agentID)
+		identity, err = s.agentStore.Get(ctx, "", agentID)
 		if err != nil {
 			slog.Warn("safety-kernel: agent identity lookup failed", "agent_id", agentID, "error", err)
 			return
@@ -1458,6 +1495,11 @@ func (s *server) setPolicyWithInvariants(ctx context.Context, policy *config.Saf
 	s.invariantOutputRules = invariantOutputRules
 	s.outputRules = compileOutputRules(combined)
 	s.inputRules = compileInputRules(combined)
+	if combined != nil {
+		s.requireHumanThreshold = combined.RequireHuman
+	} else {
+		s.requireHumanThreshold = config.RequireHumanThreshold{}
+	}
 	s.snapshot = snapshot
 	s.customBundleCount = customBundleCount
 	if snapshot != "" {
@@ -1860,6 +1902,7 @@ func clonePolicy(policy *config.SafetyPolicy) *config.SafetyPolicy {
 		DefaultDecision: policy.DefaultDecision,
 		InputPolicy:     policy.InputPolicy,
 		OutputPolicy:    policy.OutputPolicy,
+		RequireHuman:    policy.RequireHuman,
 		Rules:           append([]config.PolicyRule{}, policy.Rules...),
 		OutputRules:     append([]config.OutputPolicyRule{}, policy.OutputRules...),
 		InputRules:      append([]config.InputPolicyRule{}, policy.InputRules...),

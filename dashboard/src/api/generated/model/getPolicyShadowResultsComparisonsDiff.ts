@@ -6,14 +6,14 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type GetPolicyShadowResultsComparisonsDiff = typeof GetPolicyShadowResultsComparisonsDiff[keyof typeof GetPolicyShadowResultsComparisonsDiff];
-
+export type GetPolicyShadowResultsComparisonsDiff =
+  (typeof GetPolicyShadowResultsComparisonsDiff)[keyof typeof GetPolicyShadowResultsComparisonsDiff];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const GetPolicyShadowResultsComparisonsDiff = {
-  escalated: 'escalated',
-  relaxed: 'relaxed',
-  approval_differ: 'approval_differ',
-  unchanged: 'unchanged',
-  all: 'all',
+  escalated: "escalated",
+  relaxed: "relaxed",
+  approval_differ: "approval_differ",
+  unchanged: "unchanged",
+  all: "all",
 } as const;

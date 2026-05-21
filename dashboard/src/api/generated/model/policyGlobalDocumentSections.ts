@@ -5,9 +5,11 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { PolicyGlobalSection } from './policyGlobalSection';
+import type { PolicyGlobalSection } from "./policyGlobalSection";
 
 /**
  * Keyed by section name — input_rules, output_rules, edge_action_rules, mcp_tool_rules, invariants.
  */
-export type PolicyGlobalDocumentSections = {[key: string]: PolicyGlobalSection};
+export type PolicyGlobalDocumentSections = {
+  [key: string]: PolicyGlobalSection;
+};

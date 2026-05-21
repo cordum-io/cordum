@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	miniredis "github.com/alicebob/miniredis/v2"
+	"github.com/cordum/cordum/core/internal/testredis"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -21,9 +22,8 @@ func TestChainer_HeadPoisonExhaustsCAS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("miniredis: %v", err)
 	}
-	defer srv.Close()
-	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
-	defer func() { _ = client.Close() }()
+	t.Cleanup(srv.Close)
+	client := testredis.NewClient(t, srv.Addr())
 	chainer := NewChainer(client, "")
 
 	ctx := context.Background()
@@ -88,9 +88,8 @@ func TestChainer_AppendLeavesEventCleanOnRetryFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("miniredis: %v", err)
 	}
-	defer srv.Close()
-	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
-	defer func() { _ = client.Close() }()
+	t.Cleanup(srv.Close)
+	client := testredis.NewClient(t, srv.Addr())
 	chainer := NewChainer(client, "")
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -128,9 +127,8 @@ func TestVerifyChain_CrossWindowLinkageDetectsMutation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("miniredis: %v", err)
 	}
-	defer srv.Close()
-	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
-	defer func() { _ = client.Close() }()
+	t.Cleanup(srv.Close)
+	client := testredis.NewClient(t, srv.Addr())
 	chainer := NewChainer(client, "")
 
 	ctx := context.Background()

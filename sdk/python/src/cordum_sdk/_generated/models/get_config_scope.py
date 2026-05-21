@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class GetConfigScope(str, Enum):
     ORG = "org"
     STEP = "step"

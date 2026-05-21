@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/cordum/cordum/core/internal/testredis"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	wf "github.com/cordum/cordum/core/workflow"
 	"github.com/redis/go-redis/v9"
@@ -38,8 +39,7 @@ func newConsumerChainer(t *testing.T) (*Chainer, *redis.Client) {
 		t.Fatalf("miniredis: %v", err)
 	}
 	t.Cleanup(mr.Close)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
+	client := testredis.NewClient(t, mr.Addr())
 	return NewChainer(client, "consumer:chain:"), client
 }
 
@@ -288,14 +288,13 @@ func TestNATSAuditConsumer_PopulatesWorkflowRunStepAuditHash(t *testing.T) {
 	}
 	t.Cleanup(mr.Close)
 
-	workflowStore, err := wf.NewRedisWorkflowStore("redis://" + mr.Addr())
+	workflowStore, err := wf.NewRedisWorkflowStore(testredis.URL(mr.Addr()))
 	if err != nil {
 		t.Fatalf("workflow store: %v", err)
 	}
 	t.Cleanup(func() { _ = workflowStore.Close() })
 
-	chainClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = chainClient.Close() })
+	chainClient := testredis.NewClient(t, mr.Addr())
 	chainer := NewChainer(chainClient, "consumer:workflow-chain:")
 
 	run := &wf.WorkflowRun{
@@ -349,13 +348,12 @@ func TestNATSAuditConsumer_StepHashSinkNoMatchAndReplayAreNonFatal(t *testing.T)
 	}
 	t.Cleanup(mr.Close)
 
-	workflowStore, err := wf.NewRedisWorkflowStore("redis://" + mr.Addr())
+	workflowStore, err := wf.NewRedisWorkflowStore(testredis.URL(mr.Addr()))
 	if err != nil {
 		t.Fatalf("workflow store: %v", err)
 	}
 	t.Cleanup(func() { _ = workflowStore.Close() })
-	chainClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = chainClient.Close() })
+	chainClient := testredis.NewClient(t, mr.Addr())
 
 	run := &wf.WorkflowRun{
 		ID:         "run-consumer-replay",

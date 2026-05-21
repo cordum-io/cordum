@@ -5,10 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import {
-  useMutation,
-  useQuery
-} from '@tanstack/react-query';
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
   DataTag,
   DefinedInitialDataOptions,
@@ -21,8 +18,8 @@ import type {
   UseMutationOptions,
   UseMutationResult,
   UseQueryOptions,
-  UseQueryResult
-} from '@tanstack/react-query';
+  UseQueryResult,
+} from "@tanstack/react-query";
 
 import type {
   BadRequestResponse,
@@ -33,230 +30,355 @@ import type {
   NotFoundResponse,
   ServiceUnavailableResponse,
   TierLimitResponse,
-  UnauthorizedResponse
-} from '.././model';
+  UnauthorizedResponse,
+} from ".././model";
 
-import { apiClient } from '../../client';
-
-
-
+import { apiClient } from "../../client";
 
 /**
  * @summary Create a legal hold
  */
 export const createLegalHold = (
-    createLegalHoldBody: CreateLegalHoldBody,
- signal?: AbortSignal
+  createLegalHoldBody: CreateLegalHoldBody,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<GenericObject>(
-      {url: `/api/v1/audit/legal-hold`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: createLegalHoldBody, signal
-    },
-      );
-    }
-  
+  return apiClient<GenericObject>({
+    url: `/api/v1/audit/legal-hold`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: createLegalHoldBody,
+    signal,
+  });
+};
 
+export const getCreateLegalHoldMutationOptions = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | TierLimitResponse
+    | ConflictResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createLegalHold>>,
+    TError,
+    { data: CreateLegalHoldBody },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createLegalHold>>,
+  TError,
+  { data: CreateLegalHoldBody },
+  TContext
+> => {
+  const mutationKey = ["createLegalHold"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getCreateLegalHoldMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | TierLimitResponse | ConflictResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createLegalHold>>, TError,{data: CreateLegalHoldBody}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof createLegalHold>>, TError,{data: CreateLegalHoldBody}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createLegalHold>>,
+    { data: CreateLegalHoldBody }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['createLegalHold'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return createLegalHold(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type CreateLegalHoldMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createLegalHold>>
+>;
+export type CreateLegalHoldMutationBody = CreateLegalHoldBody;
+export type CreateLegalHoldMutationError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | TierLimitResponse
+  | ConflictResponse
+  | ServiceUnavailableResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createLegalHold>>, {data: CreateLegalHoldBody}> = (props) => {
-          const {data} = props ?? {};
-
-          return  createLegalHold(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type CreateLegalHoldMutationResult = NonNullable<Awaited<ReturnType<typeof createLegalHold>>>
-    export type CreateLegalHoldMutationBody = CreateLegalHoldBody
-    export type CreateLegalHoldMutationError = BadRequestResponse | UnauthorizedResponse | TierLimitResponse | ConflictResponse | ServiceUnavailableResponse
-
-    /**
+/**
  * @summary Create a legal hold
  */
-export const useCreateLegalHold = <TError = BadRequestResponse | UnauthorizedResponse | TierLimitResponse | ConflictResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createLegalHold>>, TError,{data: CreateLegalHoldBody}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof createLegalHold>>,
-        TError,
-        {data: CreateLegalHoldBody},
-        TContext
-      > => {
+export const useCreateLegalHold = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | TierLimitResponse
+    | ConflictResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof createLegalHold>>,
+      TError,
+      { data: CreateLegalHoldBody },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof createLegalHold>>,
+  TError,
+  { data: CreateLegalHoldBody },
+  TContext
+> => {
+  const mutationOptions = getCreateLegalHoldMutationOptions(options);
 
-      const mutationOptions = getCreateLegalHoldMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary List legal holds
  */
 export const listLegalHolds = (
-    params?: ListLegalHoldsParams,
- signal?: AbortSignal
+  params?: ListLegalHoldsParams,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<GenericObject>(
-      {url: `/api/v1/audit/legal-holds`, method: 'GET',
-        params, signal
-    },
-      );
-    }
-  
+  return apiClient<GenericObject>({
+    url: `/api/v1/audit/legal-holds`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
 
+export const getListLegalHoldsQueryKey = (params?: ListLegalHoldsParams) => {
+  return [`/api/v1/audit/legal-holds`, ...(params ? [params] : [])] as const;
+};
 
-
-export const getListLegalHoldsQueryKey = (params?: ListLegalHoldsParams,) => {
-    return [
-    `/api/v1/audit/legal-holds`, ...(params ? [params]: [])
-    ] as const;
-    }
-
-    
-export const getListLegalHoldsQueryOptions = <TData = Awaited<ReturnType<typeof listLegalHolds>>, TError = UnauthorizedResponse | TierLimitResponse | ServiceUnavailableResponse>(params?: ListLegalHoldsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLegalHolds>>, TError, TData>>, }
+export const getListLegalHoldsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listLegalHolds>>,
+  TError =
+    | UnauthorizedResponse
+    | TierLimitResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListLegalHoldsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listLegalHolds>>, TError, TData>
+    >;
+  },
 ) => {
+  const { query: queryOptions } = options ?? {};
 
-const {query: queryOptions} = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getListLegalHoldsQueryKey(params);
 
-  const queryKey =  queryOptions?.queryKey ?? getListLegalHoldsQueryKey(params);
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listLegalHolds>>> = ({
+    signal,
+  }) => listLegalHolds(params, signal);
 
-  
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listLegalHolds>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listLegalHolds>>> = ({ signal }) => listLegalHolds(params, signal);
+export type ListLegalHoldsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listLegalHolds>>
+>;
+export type ListLegalHoldsQueryError =
+  | UnauthorizedResponse
+  | TierLimitResponse
+  | ServiceUnavailableResponse;
 
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listLegalHolds>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type ListLegalHoldsQueryResult = NonNullable<Awaited<ReturnType<typeof listLegalHolds>>>
-export type ListLegalHoldsQueryError = UnauthorizedResponse | TierLimitResponse | ServiceUnavailableResponse
-
-
-export function useListLegalHolds<TData = Awaited<ReturnType<typeof listLegalHolds>>, TError = UnauthorizedResponse | TierLimitResponse | ServiceUnavailableResponse>(
- params: undefined |  ListLegalHoldsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLegalHolds>>, TError, TData>> & Pick<
+export function useListLegalHolds<
+  TData = Awaited<ReturnType<typeof listLegalHolds>>,
+  TError =
+    | UnauthorizedResponse
+    | TierLimitResponse
+    | ServiceUnavailableResponse,
+>(
+  params: undefined | ListLegalHoldsParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listLegalHolds>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listLegalHolds>>,
           TError,
           Awaited<ReturnType<typeof listLegalHolds>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListLegalHolds<TData = Awaited<ReturnType<typeof listLegalHolds>>, TError = UnauthorizedResponse | TierLimitResponse | ServiceUnavailableResponse>(
- params?: ListLegalHoldsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLegalHolds>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListLegalHolds<
+  TData = Awaited<ReturnType<typeof listLegalHolds>>,
+  TError =
+    | UnauthorizedResponse
+    | TierLimitResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListLegalHoldsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listLegalHolds>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listLegalHolds>>,
           TError,
           Awaited<ReturnType<typeof listLegalHolds>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListLegalHolds<TData = Awaited<ReturnType<typeof listLegalHolds>>, TError = UnauthorizedResponse | TierLimitResponse | ServiceUnavailableResponse>(
- params?: ListLegalHoldsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLegalHolds>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListLegalHolds<
+  TData = Awaited<ReturnType<typeof listLegalHolds>>,
+  TError =
+    | UnauthorizedResponse
+    | TierLimitResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListLegalHoldsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listLegalHolds>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary List legal holds
  */
 
-export function useListLegalHolds<TData = Awaited<ReturnType<typeof listLegalHolds>>, TError = UnauthorizedResponse | TierLimitResponse | ServiceUnavailableResponse>(
- params?: ListLegalHoldsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listLegalHolds>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useListLegalHolds<
+  TData = Awaited<ReturnType<typeof listLegalHolds>>,
+  TError =
+    | UnauthorizedResponse
+    | TierLimitResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListLegalHoldsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listLegalHolds>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListLegalHoldsQueryOptions(params, options);
 
-  const queryOptions = getListLegalHoldsQueryOptions(params,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
 
+/**
+ * @summary Release a legal hold
+ */
+export const releaseLegalHold = (id: string) => {
+  return apiClient<GenericObject>({
+    url: `/api/v1/audit/legal-hold/${id}`,
+    method: "DELETE",
+  });
+};
 
+export const getReleaseLegalHoldMutationOptions = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | TierLimitResponse
+    | NotFoundResponse
+    | ConflictResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof releaseLegalHold>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof releaseLegalHold>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["releaseLegalHold"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof releaseLegalHold>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return releaseLegalHold(id);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ReleaseLegalHoldMutationResult = NonNullable<
+  Awaited<ReturnType<typeof releaseLegalHold>>
+>;
+
+export type ReleaseLegalHoldMutationError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | TierLimitResponse
+  | NotFoundResponse
+  | ConflictResponse
+  | ServiceUnavailableResponse;
 
 /**
  * @summary Release a legal hold
  */
-export const releaseLegalHold = (
-    id: string,
- ) => {
-      
-      
-      return apiClient<GenericObject>(
-      {url: `/api/v1/audit/legal-hold/${id}`, method: 'DELETE'
-    },
-      );
-    }
-  
+export const useReleaseLegalHold = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | TierLimitResponse
+    | NotFoundResponse
+    | ConflictResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof releaseLegalHold>>,
+      TError,
+      { id: string },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof releaseLegalHold>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationOptions = getReleaseLegalHoldMutationOptions(options);
 
-
-export const getReleaseLegalHoldMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | TierLimitResponse | NotFoundResponse | ConflictResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof releaseLegalHold>>, TError,{id: string}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof releaseLegalHold>>, TError,{id: string}, TContext> => {
-
-const mutationKey = ['releaseLegalHold'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
-
-      
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof releaseLegalHold>>, {id: string}> = (props) => {
-          const {id} = props ?? {};
-
-          return  releaseLegalHold(id,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type ReleaseLegalHoldMutationResult = NonNullable<Awaited<ReturnType<typeof releaseLegalHold>>>
-    
-    export type ReleaseLegalHoldMutationError = BadRequestResponse | UnauthorizedResponse | TierLimitResponse | NotFoundResponse | ConflictResponse | ServiceUnavailableResponse
-
-    /**
- * @summary Release a legal hold
- */
-export const useReleaseLegalHold = <TError = BadRequestResponse | UnauthorizedResponse | TierLimitResponse | NotFoundResponse | ConflictResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof releaseLegalHold>>, TError,{id: string}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof releaseLegalHold>>,
-        TError,
-        {id: string},
-        TContext
-      > => {
-
-      const mutationOptions = getReleaseLegalHoldMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    
+  return useMutation(mutationOptions, queryClient);
+};

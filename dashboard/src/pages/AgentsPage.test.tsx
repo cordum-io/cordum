@@ -99,6 +99,45 @@ function changeInput(element: HTMLInputElement, value: string) {
   });
 }
 
+describe("AgentsPage tab consolidation (task-083581ca)", () => {
+  beforeEach(() => {
+    hookState.workers = [makeWorker()];
+    hookState.isLoading = false;
+    hookState.isError = false;
+    hookState.error = null;
+    hookState.refetch = vi.fn();
+  });
+
+  it("renders exactly 2 top-level tabs (Fleet Overview + Identities) — Pool Topology + Agent Registry consolidated", () => {
+    const { container, cleanup } = renderPage();
+    try {
+      // tabs render with role=tab; assert label set is {Fleet Overview, Identities}
+      const tabButtons = Array.from(container.querySelectorAll('[role="tab"]'));
+      const labels = tabButtons.map((b) => (b.textContent ?? "").trim());
+      // Filter to tab labels visible in the top-level Tabs (statusTabs also use role=tab — these are status filters)
+      const topLevelLabels = labels.filter((l) =>
+        ["Fleet Overview", "Agent Registry", "Pool Topology", "Identity Directory", "Identities"].includes(l),
+      );
+      expect(topLevelLabels).toEqual(["Fleet Overview", "Identities"]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("DOES NOT render Pool Topology, Agent Registry, or Identity Directory top-level tabs", () => {
+    const { container, cleanup } = renderPage();
+    try {
+      const tabButtons = Array.from(container.querySelectorAll('[role="tab"]'));
+      const labels = tabButtons.map((b) => (b.textContent ?? "").trim());
+      expect(labels).not.toContain("Pool Topology");
+      expect(labels).not.toContain("Agent Registry");
+      expect(labels).not.toContain("Identity Directory");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
 describe("AgentsPage filter reset", () => {
   beforeEach(() => {
     hookState.workers = [makeWorker()];

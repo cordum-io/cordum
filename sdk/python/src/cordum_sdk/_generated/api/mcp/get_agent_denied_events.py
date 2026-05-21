@@ -12,37 +12,30 @@ from typing import cast
 from typing import Dict
 
 
-
 def _get_kwargs(
     id: str,
     *,
     x_tenant_id: str,
-
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
     headers["X-Tenant-ID"] = x_tenant_id
 
-
-
-    
-
-    
-
     _kwargs: Dict[str, Any] = {
         "method": "get",
-        "url": "/api/v1/agents/{id}/denied-events".format(id=id,),
+        "url": "/api/v1/agents/{id}/denied-events".format(
+            id=id,
+        ),
     }
-
 
     _kwargs["headers"] = headers
     return _kwargs
 
 
-def _parse_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Optional[Union[Any, GetAgentDeniedEventsResponse200]]:
+def _parse_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Optional[Union[Any, GetAgentDeniedEventsResponse200]]:
     if response.status_code == 200:
         response_200 = GetAgentDeniedEventsResponse200.from_dict(response.json())
-
-
 
         return response_200
     if response.status_code == 401:
@@ -57,7 +50,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         return None
 
 
-def _build_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Response[Union[Any, GetAgentDeniedEventsResponse200]]:
+def _build_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Response[Union[Any, GetAgentDeniedEventsResponse200]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -71,9 +66,8 @@ def sync_detailed(
     *,
     client: AuthenticatedClient,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, GetAgentDeniedEventsResponse200]]:
-    r""" Recent mcp_tool_denied events for an agent identity
+    r"""Recent mcp_tool_denied events for an agent identity
 
      Returns up to 50 of the most recent `mcp_tool_denied` audit events for the identity from the
     gateway's in-memory ring. Feeds the dashboard \"recent denials\" panel without requiring a SIEM
@@ -89,13 +83,11 @@ def sync_detailed(
 
     Returns:
         Response[Union[Any, GetAgentDeniedEventsResponse200]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         id=id,
-x_tenant_id=x_tenant_id,
-
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -104,14 +96,14 @@ x_tenant_id=x_tenant_id,
 
     return _build_response(client=client, response=response)
 
+
 def sync(
     id: str,
     *,
     client: AuthenticatedClient,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, GetAgentDeniedEventsResponse200]]:
-    r""" Recent mcp_tool_denied events for an agent identity
+    r"""Recent mcp_tool_denied events for an agent identity
 
      Returns up to 50 of the most recent `mcp_tool_denied` audit events for the identity from the
     gateway's in-memory ring. Feeds the dashboard \"recent denials\" panel without requiring a SIEM
@@ -127,24 +119,22 @@ def sync(
 
     Returns:
         Union[Any, GetAgentDeniedEventsResponse200]
-     """
-
+    """
 
     return sync_detailed(
         id=id,
-client=client,
-x_tenant_id=x_tenant_id,
-
+        client=client,
+        x_tenant_id=x_tenant_id,
     ).parsed
+
 
 async def asyncio_detailed(
     id: str,
     *,
     client: AuthenticatedClient,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, GetAgentDeniedEventsResponse200]]:
-    r""" Recent mcp_tool_denied events for an agent identity
+    r"""Recent mcp_tool_denied events for an agent identity
 
      Returns up to 50 of the most recent `mcp_tool_denied` audit events for the identity from the
     gateway's in-memory ring. Feeds the dashboard \"recent denials\" panel without requiring a SIEM
@@ -160,29 +150,25 @@ async def asyncio_detailed(
 
     Returns:
         Response[Union[Any, GetAgentDeniedEventsResponse200]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         id=id,
-x_tenant_id=x_tenant_id,
-
+        x_tenant_id=x_tenant_id,
     )
 
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
+
 
 async def asyncio(
     id: str,
     *,
     client: AuthenticatedClient,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, GetAgentDeniedEventsResponse200]]:
-    r""" Recent mcp_tool_denied events for an agent identity
+    r"""Recent mcp_tool_denied events for an agent identity
 
      Returns up to 50 of the most recent `mcp_tool_denied` audit events for the identity from the
     gateway's in-memory ring. Feeds the dashboard \"recent denials\" panel without requiring a SIEM
@@ -198,12 +184,12 @@ async def asyncio(
 
     Returns:
         Union[Any, GetAgentDeniedEventsResponse200]
-     """
+    """
 
-
-    return (await asyncio_detailed(
-        id=id,
-client=client,
-x_tenant_id=x_tenant_id,
-
-    )).parsed
+    return (
+        await asyncio_detailed(
+            id=id,
+            client=client,
+            x_tenant_id=x_tenant_id,
+        )
+    ).parsed

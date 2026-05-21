@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class EvalEntryResultDriftDirection(str, Enum):
     ESCALATED = "escalated"
     RELAXED = "relaxed"

@@ -734,3 +734,33 @@ func TestEdgeSessionRetentionDurationEnvDefaultsAndParses(t *testing.T) {
 		t.Fatalf("retention TTL = %s, want 48h", got)
 	}
 }
+
+func TestEdgeApprovalMaxTTLFromEnvDefaultsAndParses(t *testing.T) {
+	t.Setenv(envEdgeApprovalMaxTTL, "")
+	got, err := edgeApprovalMaxTTLFromEnv()
+	if err != nil {
+		t.Fatalf("edgeApprovalMaxTTLFromEnv default: %v", err)
+	}
+	if got != edgecore.DefaultApprovalMaxTTL {
+		t.Fatalf("default approval max TTL = %s, want %s", got, edgecore.DefaultApprovalMaxTTL)
+	}
+	t.Setenv(envEdgeApprovalMaxTTL, "45m")
+	got, err = edgeApprovalMaxTTLFromEnv()
+	if err != nil {
+		t.Fatalf("edgeApprovalMaxTTLFromEnv 45m: %v", err)
+	}
+	if got != 45*time.Minute {
+		t.Fatalf("approval max TTL = %s, want 45m", got)
+	}
+}
+
+func TestEdgeApprovalMaxTTLFromEnvRejectsInvalidAndNonPositive(t *testing.T) {
+	for _, value := range []string{"not-a-duration", "0", "-1s"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv(envEdgeApprovalMaxTTL, value)
+			if _, err := edgeApprovalMaxTTLFromEnv(); err == nil {
+				t.Fatalf("edgeApprovalMaxTTLFromEnv(%q) succeeded, want error", value)
+			}
+		})
+	}
+}

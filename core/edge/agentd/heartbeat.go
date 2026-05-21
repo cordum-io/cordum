@@ -128,13 +128,14 @@ func (s *HeartbeatService) InFlight() bool {
 
 func (s *HeartbeatService) recordResult(err error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if err == nil {
 		s.failures = 0
+		s.mu.Unlock()
 		return
 	}
 	s.failures++
 	if s.failures < s.cfg.MaxConsecutiveFailures {
+		s.mu.Unlock()
 		return
 	}
 	status := HeartbeatStatus{
@@ -144,8 +145,15 @@ func (s *HeartbeatService) recordResult(err error) {
 		Reason:              "gateway heartbeat failures exceeded threshold",
 	}
 	s.lastDegrade = status
-	if s.cfg.OnStatus != nil {
-		s.cfg.OnStatus(status)
+	cb := s.cfg.OnStatus
+	// Snapshot the callback + status under s.mu, then release the
+	// mutex BEFORE dispatching. The OnStatus implementation in
+	// app.go re-enters SessionManager.RecordHeartbeatStatus, which
+	// takes SessionManager.mu; holding s.mu across that call sets up
+	// a lock-order inversion the next maintainer would deadlock on.
+	s.mu.Unlock()
+	if cb != nil {
+		cb(status)
 	}
 }
 

@@ -131,18 +131,29 @@ help:
 	@echo "  make soak-ws            10-minute WebSocket soak test"
 	@echo "  make soak-ws-quick      2-minute quick WebSocket soak test"
 	@echo "  make soak-ws-full       2-hour full WebSocket soak test"
+	@echo "  make release-local      Build dev cordum-hook/agentd/claude + TEST-ONLY-signed manifest (EDGE-151)"
 	@echo ""
 
 soak-ws:
 	@echo "Running 10-minute WebSocket soak test..."
-	./tools/scripts/ws_soak_test.sh default
+	bash tools/scripts/ws_soak_test.sh default
 
 soak-ws-quick:
 	@echo "Running 2-minute quick WebSocket soak test..."
-	./tools/scripts/ws_soak_test.sh quick
+	bash tools/scripts/ws_soak_test.sh quick
 
 soak-ws-full:
 	@echo "Running 2-hour full WebSocket soak test..."
-	./tools/scripts/ws_soak_test.sh full
+	bash tools/scripts/ws_soak_test.sh full
 
-.PHONY: help proto build build-all $(SERVICES:%=build-%) test test-integration coverage coverage-core openapi openapi-validate docker smoke verify-images demo-quickstart-test demo-mock-bank-test dev-up dev-down dev-logs edge-rebuild-e2e soak-ws soak-ws-quick soak-ws-full
+# EDGE-151 — host-local dev release: cordum-hook + cordum-agentd +
+# cordum-claude with a SHA256SUMS manifest detached-signed by the
+# TEST-ONLY key under tools/test-keys/. NOT for production. install.sh
+# only accepts these via --dev-allow-unsigned AND a fingerprint match
+# against the TEST-ONLY value baked in via -ldflags. Invoked via `bash`
+# so the target works regardless of the script's filesystem executable
+# bit (git ls-files -s reports 100644 on some platforms / CI checkouts).
+release-local:
+	@bash tools/scripts/release-local.sh
+
+.PHONY: help proto build build-all $(SERVICES:%=build-%) test test-integration coverage coverage-core openapi openapi-validate docker smoke verify-images demo-quickstart-test demo-mock-bank-test dev-up dev-down dev-logs edge-rebuild-e2e soak-ws soak-ws-quick soak-ws-full release-local

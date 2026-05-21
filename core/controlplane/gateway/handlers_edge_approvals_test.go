@@ -58,6 +58,12 @@ func TestGatewayEdgeApprovalResolveEmitsAuditEvent(t *testing.T) {
 			if ev.Extra["approval_ref"] != approval.ApprovalRef {
 				t.Errorf("Extra[approval_ref] = %q, want %q", ev.Extra["approval_ref"], approval.ApprovalRef)
 			}
+			if ev.Extra["action_hash"] == "" || ev.Extra["input_hash"] == "" {
+				t.Errorf("approval evidence hashes missing from Extra: %#v", ev.Extra)
+			}
+			if ev.Extra["policy_snapshot"] != approval.PolicySnapshot {
+				t.Errorf("policy_snapshot = %q, want %q", ev.Extra["policy_snapshot"], approval.PolicySnapshot)
+			}
 			// Raw resolution Reason (with Bearer secret) must NEVER reach Extra.
 			for k, v := range ev.Extra {
 				if strings.Contains(v, "Authorization") || strings.Contains(v, "Bearer") {
@@ -70,10 +76,13 @@ func TestGatewayEdgeApprovalResolveEmitsAuditEvent(t *testing.T) {
 
 func TestGatewayEdgeApprovalRejectsSelfApproval(t *testing.T) {
 	s, handler := newEdgeRouteTestServer(t)
+	sink := &testAuditSender{}
+	s.auditExporter = sink
 
 	for _, action := range []string{"approve", "reject"} {
 		t.Run(action, func(t *testing.T) {
 			approval := seedGatewayEdgeApproval(t, s, edgeRouteTenant, "principal-edge-a", "self-"+action)
+			beforeAudits := sink.Len()
 			rr := edgeApprovalRoutePOSTAs(t, handler, edgeRouteTestAPIKey,
 				"/api/v1/edge/approvals/"+approval.ApprovalRef+"/"+action,
 				`{"reason":"resolve myself"}`)
@@ -85,6 +94,8 @@ func TestGatewayEdgeApprovalRejectsSelfApproval(t *testing.T) {
 			if body["code"] != "self_approval_denied" {
 				t.Fatalf("self %s code = %#v, want self_approval_denied body=%s", action, body["code"], rr.Body.String())
 			}
+			assertBodyOmits(t, rr.Body.String(), "principal-edge-a")
+			assertSelfApprovalAuditEvent(t, sink, beforeAudits, approval.ApprovalRef, "caller_is_requester")
 			stored, ok, err := s.edgeStore.GetApproval(context.Background(), edgeRouteTenant, approval.ApprovalRef)
 			if err != nil || !ok {
 				t.Fatalf("GetApproval after self-denied = (%#v,%v,%v)", stored, ok, err)
@@ -95,6 +106,65 @@ func TestGatewayEdgeApprovalRejectsSelfApproval(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEdgeApprovalSelfApprovalGuard_RejectsSameKeyDifferentPrincipal(t *testing.T) {
+	s, _ := newEdgeRouteTestServer(t)
+	sharedKey := "shared-edge-approval-key"
+	requesterIdentity := submitterIdentityForTest(sharedKey, "principal-edge-a")
+	approval := seedGatewayEdgeApprovalWithRequesterIdentity(t, s, edgeRouteTenant, "principal-edge-a", requesterIdentity, "same-key-spoof")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/edge/approvals/"+approval.ApprovalRef+"/approve", strings.NewReader(`{"reason":"spoofed principal"}`))
+	req.Header.Set("X-Tenant-ID", edgeRouteTenant)
+	req.SetPathValue("approval_ref", approval.ApprovalRef)
+	req = withAuth(req, &auth.AuthContext{
+		APIKey:      sharedKey,
+		PrincipalID: "principal-spoofed-bob",
+		Role:        "admin",
+		Tenant:      edgeRouteTenant,
+	})
+
+	rr := httptest.NewRecorder()
+	s.handleApproveEdgeApproval(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("same-key spoof status = %d, want 403 body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "self_approval_denied") {
+		t.Fatalf("body = %s, want self_approval_denied", rr.Body.String())
+	}
+}
+
+func assertSelfApprovalAuditEvent(t *testing.T, sink *testAuditSender, start int, approvalRef, reasonCode string) audit.SIEMEvent {
+	t.Helper()
+	for i := start; i < sink.Len(); i++ {
+		ev := sink.Get(i)
+		if ev.EventType != audit.EventEdgeApprovalRejected || ev.Extra["conflict_kind"] != string(edgecore.ApprovalConflictKindSelfApproval) {
+			continue
+		}
+		if ev.Severity != audit.SeverityHigh || ev.Decision != "rejected" {
+			t.Fatalf("self-approval audit severity/decision = %q/%q, want high/rejected", ev.Severity, ev.Decision)
+		}
+		if ev.Extra["approval_ref"] != approvalRef || ev.Extra["reason_code"] != reasonCode {
+			t.Fatalf("self-approval audit extra = %#v, want ref=%q reason_code=%q", ev.Extra, approvalRef, reasonCode)
+		}
+		if ev.Extra["action_hash"] == "" || ev.Extra["input_hash"] == "" {
+			t.Fatalf("self-approval audit missing evidence hashes: %#v", ev.Extra)
+		}
+		if strings.Contains(ev.Identity, "principal-edge-a") || strings.Contains(strings.Join(extraValues(ev.Extra), " "), "principal-edge-a") {
+			t.Fatalf("self-approval audit leaked raw caller principal: %#v", ev)
+		}
+		return ev
+	}
+	t.Fatalf("missing self-approval audit event after index %d for approval %q", start, approvalRef)
+	return audit.SIEMEvent{}
+}
+
+func extraValues(values map[string]string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		out = append(out, value)
+	}
+	return out
 }
 
 func TestGatewayEdgeApprovalStoresResolverOnApproval(t *testing.T) {
@@ -150,6 +220,36 @@ func TestGatewayEdgeApprovalTerminalMutationsReturnConflict(t *testing.T) {
 		stored.ResolutionReason != "approved once" ||
 		stored.ConsumedAt != nil {
 		t.Fatalf("stored approval after terminal mutations = %#v, want original approved state without consume", stored)
+	}
+}
+
+func TestGatewayEdgeApprovalGetAutoExpiresPendingApproval(t *testing.T) {
+	base := time.Now().UTC().Add(-10 * time.Second).Truncate(time.Microsecond)
+	s, handler := newEdgeRouteTestServer(t)
+	s.edgeStore = edgecore.NewRedisStoreFromClient(
+		s.jobStore.Client(),
+		edgecore.WithClock(func() time.Time { return base }),
+	)
+	approval := seedGatewayEdgeApprovalWithExpiresAt(
+		t,
+		s,
+		edgeRouteTenant,
+		"principal-edge-a",
+		"get-auto-expired",
+		base.Add(time.Second),
+	)
+
+	detail := edgeApprovalRouteGETAs(t, handler, edgeRouteTestAPIKey, edgeRouteTenant, "/api/v1/edge/approvals/"+approval.ApprovalRef)
+	if detail.Code != http.StatusOK {
+		t.Fatalf("detail status = %d, want 200 body=%s", detail.Code, detail.Body.String())
+	}
+	var got edgecore.EdgeApproval
+	decodeEdgeRouteJSON(t, detail, &got)
+	if got.Status != edgecore.ApprovalStatusExpired ||
+		got.Decision != edgecore.ApprovalDecisionExpire ||
+		got.ResolutionReason != "approval expired" ||
+		got.ResolvedAt == nil {
+		t.Fatalf("detail approval = %#v, want expired terminal state", got)
 	}
 }
 
@@ -424,6 +524,21 @@ func TestGatewayEdgeApprovalErrors(t *testing.T) {
 
 func seedGatewayEdgeApproval(t *testing.T, s *server, tenantID, requester, suffix string) edgecore.EdgeApproval {
 	t.Helper()
+	return seedGatewayEdgeApprovalWithRequesterIdentityAndExpires(t, s, tenantID, requester, requester, suffix, time.Now().UTC().Add(5*time.Minute))
+}
+
+func seedGatewayEdgeApprovalWithRequesterIdentity(t *testing.T, s *server, tenantID, principalID, requesterIdentity, suffix string) edgecore.EdgeApproval {
+	t.Helper()
+	return seedGatewayEdgeApprovalWithRequesterIdentityAndExpires(t, s, tenantID, principalID, requesterIdentity, suffix, time.Now().UTC().Add(5*time.Minute))
+}
+
+func seedGatewayEdgeApprovalWithExpiresAt(t *testing.T, s *server, tenantID, requester, suffix string, expires time.Time) edgecore.EdgeApproval {
+	t.Helper()
+	return seedGatewayEdgeApprovalWithRequesterIdentityAndExpires(t, s, tenantID, requester, requester, suffix, expires)
+}
+
+func seedGatewayEdgeApprovalWithRequesterIdentityAndExpires(t *testing.T, s *server, tenantID, requester, requesterIdentity, suffix string, expires time.Time) edgecore.EdgeApproval {
+	t.Helper()
 	ctx := context.Background()
 	started := time.Now().UTC().Add(-2 * time.Second).Truncate(time.Microsecond)
 	slug := strings.NewReplacer("/", "-", " ", "-").Replace(strings.ToLower(t.Name() + "-" + suffix))
@@ -488,14 +603,13 @@ func seedGatewayEdgeApproval(t *testing.T, s *server, tenantID, requester, suffi
 	if _, err := s.edgeStore.AppendEvent(ctx, event); err != nil {
 		t.Fatalf("AppendEvent: %v", err)
 	}
-	expires := time.Now().UTC().Add(5 * time.Minute)
 	approval, err := s.edgeStore.EnqueueApproval(ctx, edgecore.EdgeApprovalRequest{
 		TenantID:       tenantID,
 		SessionID:      sessionID,
 		ExecutionID:    executionID,
 		EventID:        eventID,
 		PrincipalID:    requester,
-		Requester:      requester,
+		Requester:      requesterIdentity,
 		Reason:         "gateway approval test",
 		RuleID:         "claude-code.require-approval-for-edits",
 		PolicySnapshot: "policy-v1",

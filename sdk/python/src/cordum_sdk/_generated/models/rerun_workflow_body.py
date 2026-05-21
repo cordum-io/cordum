@@ -12,44 +12,35 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="RerunWorkflowBody")
 
 
 @_attrs_define
 class RerunWorkflowBody:
-    """ 
-        Attributes:
-            from_step (Union[Unset, str]): Step ID to resume from
-            dry_run (Union[Unset, bool]):  Default: False.
-     """
+    """
+    Attributes:
+        from_step (Union[Unset, str]): Step ID to resume from
+        dry_run (Union[Unset, bool]):  Default: False.
+    """
 
     from_step: Union[Unset, str] = UNSET
     dry_run: Union[Unset, bool] = False
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         from_step = self.from_step
 
         dry_run = self.dry_run
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if from_step is not UNSET:
             field_dict["from_step"] = from_step
         if dry_run is not UNSET:
             field_dict["dry_run"] = dry_run
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -62,7 +53,6 @@ class RerunWorkflowBody:
             from_step=from_step,
             dry_run=dry_run,
         )
-
 
         rerun_workflow_body.additional_properties = d
         return rerun_workflow_body

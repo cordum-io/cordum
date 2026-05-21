@@ -5,9 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import {
-  useQuery
-} from '@tanstack/react-query';
+import { useQuery } from "@tanstack/react-query";
 import type {
   DataTag,
   DefinedInitialDataOptions,
@@ -17,8 +15,8 @@ import type {
   QueryKey,
   UndefinedInitialDataOptions,
   UseQueryOptions,
-  UseQueryResult
-} from '@tanstack/react-query';
+  UseQueryResult,
+} from "@tanstack/react-query";
 
 import type {
   ApprovalAnalyticsResponse,
@@ -32,106 +30,189 @@ import type {
   ListGovernanceDecisions200,
   ListGovernanceDecisionsParams,
   ServiceUnavailableResponse,
-  UnauthorizedResponse
-} from '.././model';
+  UnauthorizedResponse,
+} from ".././model";
 
-import { apiClient } from '../../client';
-
-
-
+import { apiClient } from "../../client";
 
 /**
  * @summary Query the governance decision log
  */
 export const listGovernanceDecisions = (
-    params?: ListGovernanceDecisionsParams,
- signal?: AbortSignal
+  params?: ListGovernanceDecisionsParams,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<ListGovernanceDecisions200>(
-      {url: `/api/v1/governance/decisions`, method: 'GET',
-        params, signal
-    },
-      );
-    }
-  
+  return apiClient<ListGovernanceDecisions200>({
+    url: `/api/v1/governance/decisions`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
 
-
-
-export const getListGovernanceDecisionsQueryKey = (params?: ListGovernanceDecisionsParams,) => {
-    return [
-    `/api/v1/governance/decisions`, ...(params ? [params]: [])
-    ] as const;
-    }
-
-    
-export const getListGovernanceDecisionsQueryOptions = <TData = Awaited<ReturnType<typeof listGovernanceDecisions>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(params?: ListGovernanceDecisionsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listGovernanceDecisions>>, TError, TData>>, }
+export const getListGovernanceDecisionsQueryKey = (
+  params?: ListGovernanceDecisionsParams,
 ) => {
+  return [`/api/v1/governance/decisions`, ...(params ? [params] : [])] as const;
+};
 
-const {query: queryOptions} = options ?? {};
+export const getListGovernanceDecisionsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listGovernanceDecisions>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListGovernanceDecisionsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listGovernanceDecisions>>,
+        TError,
+        TData
+      >
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListGovernanceDecisionsQueryKey(params);
+  const queryKey =
+    queryOptions?.queryKey ?? getListGovernanceDecisionsQueryKey(params);
 
-  
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listGovernanceDecisions>>
+  > = ({ signal }) => listGovernanceDecisions(params, signal);
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listGovernanceDecisions>>> = ({ signal }) => listGovernanceDecisions(params, signal);
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listGovernanceDecisions>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-      
+export type ListGovernanceDecisionsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listGovernanceDecisions>>
+>;
+export type ListGovernanceDecisionsQueryError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | ServiceUnavailableResponse;
 
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listGovernanceDecisions>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type ListGovernanceDecisionsQueryResult = NonNullable<Awaited<ReturnType<typeof listGovernanceDecisions>>>
-export type ListGovernanceDecisionsQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse
-
-
-export function useListGovernanceDecisions<TData = Awaited<ReturnType<typeof listGovernanceDecisions>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- params: undefined |  ListGovernanceDecisionsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listGovernanceDecisions>>, TError, TData>> & Pick<
+export function useListGovernanceDecisions<
+  TData = Awaited<ReturnType<typeof listGovernanceDecisions>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params: undefined | ListGovernanceDecisionsParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listGovernanceDecisions>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listGovernanceDecisions>>,
           TError,
           Awaited<ReturnType<typeof listGovernanceDecisions>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListGovernanceDecisions<TData = Awaited<ReturnType<typeof listGovernanceDecisions>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- params?: ListGovernanceDecisionsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listGovernanceDecisions>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListGovernanceDecisions<
+  TData = Awaited<ReturnType<typeof listGovernanceDecisions>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListGovernanceDecisionsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listGovernanceDecisions>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listGovernanceDecisions>>,
           TError,
           Awaited<ReturnType<typeof listGovernanceDecisions>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListGovernanceDecisions<TData = Awaited<ReturnType<typeof listGovernanceDecisions>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- params?: ListGovernanceDecisionsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listGovernanceDecisions>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListGovernanceDecisions<
+  TData = Awaited<ReturnType<typeof listGovernanceDecisions>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListGovernanceDecisionsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listGovernanceDecisions>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Query the governance decision log
  */
 
-export function useListGovernanceDecisions<TData = Awaited<ReturnType<typeof listGovernanceDecisions>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- params?: ListGovernanceDecisionsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listGovernanceDecisions>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useListGovernanceDecisions<
+  TData = Awaited<ReturnType<typeof listGovernanceDecisions>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListGovernanceDecisionsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listGovernanceDecisions>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListGovernanceDecisionsQueryOptions(params, options);
 
-  const queryOptions = getListGovernanceDecisionsQueryOptions(params,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * Returns the Command Center governance-health aggregate for the tenant:
@@ -146,94 +227,174 @@ back to a fresh per-request cache and the endpoint behaves as uncached.
  * @summary Composite governance health score per tenant
  */
 export const getGovernanceHealth = (
-    params?: GetGovernanceHealthParams,
- signal?: AbortSignal
+  params?: GetGovernanceHealthParams,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<GovernanceHealthResponseResponse>(
-      {url: `/api/v1/governance/health`, method: 'GET',
-        params, signal
-    },
-      );
-    }
-  
+  return apiClient<GovernanceHealthResponseResponse>({
+    url: `/api/v1/governance/health`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
 
-
-
-export const getGetGovernanceHealthQueryKey = (params?: GetGovernanceHealthParams,) => {
-    return [
-    `/api/v1/governance/health`, ...(params ? [params]: [])
-    ] as const;
-    }
-
-    
-export const getGetGovernanceHealthQueryOptions = <TData = Awaited<ReturnType<typeof getGovernanceHealth>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(params?: GetGovernanceHealthParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGovernanceHealth>>, TError, TData>>, }
+export const getGetGovernanceHealthQueryKey = (
+  params?: GetGovernanceHealthParams,
 ) => {
+  return [`/api/v1/governance/health`, ...(params ? [params] : [])] as const;
+};
 
-const {query: queryOptions} = options ?? {};
+export const getGetGovernanceHealthQueryOptions = <
+  TData = Awaited<ReturnType<typeof getGovernanceHealth>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  params?: GetGovernanceHealthParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getGovernanceHealth>>,
+        TError,
+        TData
+      >
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetGovernanceHealthQueryKey(params);
+  const queryKey =
+    queryOptions?.queryKey ?? getGetGovernanceHealthQueryKey(params);
 
-  
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getGovernanceHealth>>
+  > = ({ signal }) => getGovernanceHealth(params, signal);
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getGovernanceHealth>>> = ({ signal }) => getGovernanceHealth(params, signal);
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getGovernanceHealth>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-      
+export type GetGovernanceHealthQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getGovernanceHealth>>
+>;
+export type GetGovernanceHealthQueryError =
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | InternalServerErrorResponse;
 
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getGovernanceHealth>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetGovernanceHealthQueryResult = NonNullable<Awaited<ReturnType<typeof getGovernanceHealth>>>
-export type GetGovernanceHealthQueryError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse
-
-
-export function useGetGovernanceHealth<TData = Awaited<ReturnType<typeof getGovernanceHealth>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
- params: undefined |  GetGovernanceHealthParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGovernanceHealth>>, TError, TData>> & Pick<
+export function useGetGovernanceHealth<
+  TData = Awaited<ReturnType<typeof getGovernanceHealth>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  params: undefined | GetGovernanceHealthParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getGovernanceHealth>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getGovernanceHealth>>,
           TError,
           Awaited<ReturnType<typeof getGovernanceHealth>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetGovernanceHealth<TData = Awaited<ReturnType<typeof getGovernanceHealth>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
- params?: GetGovernanceHealthParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGovernanceHealth>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetGovernanceHealth<
+  TData = Awaited<ReturnType<typeof getGovernanceHealth>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  params?: GetGovernanceHealthParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getGovernanceHealth>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getGovernanceHealth>>,
           TError,
           Awaited<ReturnType<typeof getGovernanceHealth>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetGovernanceHealth<TData = Awaited<ReturnType<typeof getGovernanceHealth>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
- params?: GetGovernanceHealthParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGovernanceHealth>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetGovernanceHealth<
+  TData = Awaited<ReturnType<typeof getGovernanceHealth>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  params?: GetGovernanceHealthParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getGovernanceHealth>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Composite governance health score per tenant
  */
 
-export function useGetGovernanceHealth<TData = Awaited<ReturnType<typeof getGovernanceHealth>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
- params?: GetGovernanceHealthParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getGovernanceHealth>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetGovernanceHealth<
+  TData = Awaited<ReturnType<typeof getGovernanceHealth>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  params?: GetGovernanceHealthParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getGovernanceHealth>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetGovernanceHealthQueryOptions(params, options);
 
-  const queryOptions = getGetGovernanceHealthQueryOptions(params,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * Aggregated approval KPIs for the requested window. Consumes the
@@ -251,92 +412,180 @@ the decision-log index.
  * @summary Approval analytics (time-to-approve, auto vs manual, bottlenecks)
  */
 export const getApprovalAnalytics = (
-    params?: GetApprovalAnalyticsParams,
- signal?: AbortSignal
+  params?: GetApprovalAnalyticsParams,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<ApprovalAnalyticsResponse>(
-      {url: `/api/v1/governance/approvals/analytics`, method: 'GET',
-        params, signal
-    },
-      );
-    }
-  
+  return apiClient<ApprovalAnalyticsResponse>({
+    url: `/api/v1/governance/approvals/analytics`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
 
-
-
-export const getGetApprovalAnalyticsQueryKey = (params?: GetApprovalAnalyticsParams,) => {
-    return [
-    `/api/v1/governance/approvals/analytics`, ...(params ? [params]: [])
-    ] as const;
-    }
-
-    
-export const getGetApprovalAnalyticsQueryOptions = <TData = Awaited<ReturnType<typeof getApprovalAnalytics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error>(params?: GetApprovalAnalyticsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApprovalAnalytics>>, TError, TData>>, }
+export const getGetApprovalAnalyticsQueryKey = (
+  params?: GetApprovalAnalyticsParams,
 ) => {
+  return [
+    `/api/v1/governance/approvals/analytics`,
+    ...(params ? [params] : []),
+  ] as const;
+};
 
-const {query: queryOptions} = options ?? {};
+export const getGetApprovalAnalyticsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getApprovalAnalytics>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | Error,
+>(
+  params?: GetApprovalAnalyticsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getApprovalAnalytics>>,
+        TError,
+        TData
+      >
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetApprovalAnalyticsQueryKey(params);
+  const queryKey =
+    queryOptions?.queryKey ?? getGetApprovalAnalyticsQueryKey(params);
 
-  
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getApprovalAnalytics>>
+  > = ({ signal }) => getApprovalAnalytics(params, signal);
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getApprovalAnalytics>>> = ({ signal }) => getApprovalAnalytics(params, signal);
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getApprovalAnalytics>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-      
+export type GetApprovalAnalyticsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getApprovalAnalytics>>
+>;
+export type GetApprovalAnalyticsQueryError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | Error;
 
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getApprovalAnalytics>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetApprovalAnalyticsQueryResult = NonNullable<Awaited<ReturnType<typeof getApprovalAnalytics>>>
-export type GetApprovalAnalyticsQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error
-
-
-export function useGetApprovalAnalytics<TData = Awaited<ReturnType<typeof getApprovalAnalytics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error>(
- params: undefined |  GetApprovalAnalyticsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApprovalAnalytics>>, TError, TData>> & Pick<
+export function useGetApprovalAnalytics<
+  TData = Awaited<ReturnType<typeof getApprovalAnalytics>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | Error,
+>(
+  params: undefined | GetApprovalAnalyticsParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getApprovalAnalytics>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getApprovalAnalytics>>,
           TError,
           Awaited<ReturnType<typeof getApprovalAnalytics>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetApprovalAnalytics<TData = Awaited<ReturnType<typeof getApprovalAnalytics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error>(
- params?: GetApprovalAnalyticsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApprovalAnalytics>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetApprovalAnalytics<
+  TData = Awaited<ReturnType<typeof getApprovalAnalytics>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | Error,
+>(
+  params?: GetApprovalAnalyticsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getApprovalAnalytics>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getApprovalAnalytics>>,
           TError,
           Awaited<ReturnType<typeof getApprovalAnalytics>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetApprovalAnalytics<TData = Awaited<ReturnType<typeof getApprovalAnalytics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error>(
- params?: GetApprovalAnalyticsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApprovalAnalytics>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetApprovalAnalytics<
+  TData = Awaited<ReturnType<typeof getApprovalAnalytics>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | Error,
+>(
+  params?: GetApprovalAnalyticsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getApprovalAnalytics>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Approval analytics (time-to-approve, auto vs manual, bottlenecks)
  */
 
-export function useGetApprovalAnalytics<TData = Awaited<ReturnType<typeof getApprovalAnalytics>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error>(
- params?: GetApprovalAnalyticsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApprovalAnalytics>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetApprovalAnalytics<
+  TData = Awaited<ReturnType<typeof getApprovalAnalytics>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | Error,
+>(
+  params?: GetApprovalAnalyticsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getApprovalAnalytics>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetApprovalAnalyticsQueryOptions(params, options);
 
-  const queryOptions = getGetApprovalAnalyticsQueryOptions(params,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
-

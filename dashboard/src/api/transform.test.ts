@@ -1531,3 +1531,101 @@ describe("api/transform evals mappers", () => {
     ).toBe(false);
   });
 });
+
+describe("mapAuditEvent", () => {
+  it("maps a SIEM event from the new /audit/events feed to AuditEntry", async () => {
+    const { mapAuditEvent } = await import("./transform");
+    const entry = mapAuditEvent({
+      id: "ev-1",
+      seq: 42,
+      timestamp: "2026-05-15T12:00:00Z",
+      event_type: "mcp.tool_invocation",
+      severity: "INFO",
+      tenant_id: "default",
+      action: "invoke",
+      identity: "alice",
+      decision: "allow",
+      reason: "ok",
+      extra: { tool_name: "search.web", duration_ms: "12" },
+    });
+
+    expect(entry.id).toBe("ev-1");
+    expect(entry.eventType).toBe("mcp.tool_invocation");
+    expect(entry.timestamp).toBe("2026-05-15T12:00:00Z");
+    expect(entry.actor).toBe("alice");
+    // resourceType derived from event_type prefix.
+    expect(entry.resourceType).toBe("mcp");
+    expect(entry.action).toBe("invoke");
+    expect(entry.message).toBe("ok");
+    // payload preserves extra so the drawer can show forensic context.
+    expect(entry.payload).toMatchObject({ tool_name: "search.web", duration_ms: "12" });
+  });
+
+  it("derives resourceType from the event_type prefix across MCP/Edge/Worker/Policy/Job/Auth", async () => {
+    const { mapAuditEvent } = await import("./transform");
+    const cases: Array<[string, string]> = [
+      ["mcp.tool_invocation", "mcp"],
+      ["edge.action_attempted", "edge"],
+      ["worker_trust_change", "worker"],
+      ["job.submit", "job"],
+      ["policy.audit.event", "policy"],
+      ["auth.api_key_created", "auth"],
+      ["delegation.lineage", "delegation"],
+      ["safety.decision", "safety"],
+    ];
+    for (const [eventType, expected] of cases) {
+      const entry = mapAuditEvent({
+        id: "x",
+        timestamp: "2026-05-15T12:00:00Z",
+        event_type: eventType,
+        severity: "INFO",
+        tenant_id: "t",
+        action: "a",
+      });
+      expect(entry.resourceType, eventType).toBe(expected);
+    }
+  });
+
+  it("falls back to agent_id when identity is missing", async () => {
+    const { mapAuditEvent } = await import("./transform");
+    const entry = mapAuditEvent({
+      id: "x",
+      timestamp: "2026-05-15T12:00:00Z",
+      event_type: "edge.action_attempted",
+      severity: "INFO",
+      tenant_id: "t",
+      action: "attempt",
+      agent_id: "agent-7",
+    });
+    expect(entry.actor).toBe("agent-7");
+  });
+
+  it("propagates resource_id from extra when present", async () => {
+    const { mapAuditEvent } = await import("./transform");
+    const entry = mapAuditEvent({
+      id: "x",
+      timestamp: "2026-05-15T12:00:00Z",
+      event_type: "job.submit",
+      severity: "INFO",
+      tenant_id: "t",
+      action: "submit",
+      job_id: "job-42",
+      extra: { resource_id: "rid-9" },
+    });
+    expect(entry.resourceId).toBe("rid-9");
+  });
+
+  it("falls back to job_id when extra.resource_id is absent", async () => {
+    const { mapAuditEvent } = await import("./transform");
+    const entry = mapAuditEvent({
+      id: "x",
+      timestamp: "2026-05-15T12:00:00Z",
+      event_type: "job.submit",
+      severity: "INFO",
+      tenant_id: "t",
+      action: "submit",
+      job_id: "job-42",
+    });
+    expect(entry.resourceId).toBe("job-42");
+  });
+});

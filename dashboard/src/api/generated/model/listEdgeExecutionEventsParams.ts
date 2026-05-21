@@ -5,26 +5,26 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { ListEdgeExecutionEventsDecision } from './listEdgeExecutionEventsDecision';
+import type { ListEdgeExecutionEventsDecision } from "./listEdgeExecutionEventsDecision";
 
 export type ListEdgeExecutionEventsParams = {
-cursor?: string;
-/**
- * @minimum 1
- * @maximum 200
- */
-limit?: number;
-/**
- * Optional event kind filter; event kinds are open-ended non-empty strings such as `hook.pre_tool_use`.
- */
-kind?: string;
-decision?: ListEdgeExecutionEventsDecision;
-/**
- * Inclusive lower timestamp bound.
- */
-since?: string;
-/**
- * Inclusive upper timestamp bound.
- */
-until?: string;
+  cursor?: string;
+  /**
+   * @minimum 1
+   * @maximum 200
+   */
+  limit?: number;
+  /**
+   * Optional event kind filter; event kinds are open-ended non-empty strings such as `hook.pre_tool_use`.
+   */
+  kind?: string;
+  decision?: ListEdgeExecutionEventsDecision;
+  /**
+   * Inclusive lower timestamp bound.
+   */
+  since?: string;
+  /**
+   * Inclusive upper timestamp bound.
+   */
+  until?: string;
 };

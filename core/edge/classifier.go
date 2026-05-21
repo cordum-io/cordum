@@ -42,10 +42,11 @@ const (
 // ActionName empty, or RiskTags empty/only-default-sentinels) is
 // flagged so downstream evaluators can route to deny-with-reason
 // "classifier_incomplete" rather than allowing a policy match against
-// a half-populated input. Backward-compat: existing consumers that do
-// not inspect Complete see the field default-false; the gateway
-// evaluator path treats an absent field as Complete=true so historic
-// callers unaware of the field continue to function.
+// a half-populated input. Backward-compat: Complete is an exported bool,
+// so historic/manual callers may leave it at the zero value. Mapper
+// policy labels treat zero Complete plus empty MissingFields as legacy
+// unknown and recompute required-field completeness; non-empty
+// MissingFields remains authoritative fail-closed evidence.
 type ActionClassification struct {
 	ActionName       string
 	Capability       string
@@ -574,6 +575,15 @@ func isSecretPath(path string) bool {
 		strings.Contains(padded, "/.pypirc") ||
 		strings.Contains(padded, "/.dockercfg") ||
 		strings.Contains(padded, "/.htpasswd") ||
+		// /etc/passwd + sibling OS-credential paths (EDGE-064-FOLLOWUP, task-98ad858f).
+		// Contains match (not HasPrefix) so nested fixtures like /tmp/etc/passwd
+		// still classify as secret; the negative guard
+		// TestIsSecretPathDoesNotFlagBenignPaths pins that hyphenated tokens like
+		// /var/log/foo-etc-passwd.log don't false-positive.
+		strings.Contains(padded, "/etc/passwd") ||
+		strings.Contains(padded, "/etc/shadow") ||
+		strings.Contains(padded, "/etc/sudoers") ||
+		strings.Contains(padded, "/etc/gshadow") ||
 		strings.Contains(padded, "/application_default_credentials") ||
 		strings.Contains(path, "id_rsa") ||
 		strings.Contains(path, "id_ed25519") ||

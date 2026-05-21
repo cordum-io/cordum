@@ -6,12 +6,12 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type EdgeSessionPolicyMode = typeof EdgeSessionPolicyMode[keyof typeof EdgeSessionPolicyMode];
-
+export type EdgeSessionPolicyMode =
+  (typeof EdgeSessionPolicyMode)[keyof typeof EdgeSessionPolicyMode];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const EdgeSessionPolicyMode = {
-  observe: 'observe',
-  enforce: 'enforce',
-  'enterprise-strict': 'enterprise-strict',
+  observe: "observe",
+  enforce: "enforce",
+  "enterprise-strict": "enterprise-strict",
 } as const;

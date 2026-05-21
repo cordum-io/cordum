@@ -9,43 +9,36 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 
-
-
-
-
-
 T = TypeVar("T", bound="RevokeDelegationTokenResponse200")
 
 
 @_attrs_define
 class RevokeDelegationTokenResponse200:
-    """ 
-        Attributes:
-            jti (str):
-            cascaded_count (int): Number of downstream delegations revoked in addition to the root token.
-     """
+    """
+    Attributes:
+        jti (str):
+        cascaded_count (int): Number of downstream delegations revoked in addition to the root token.
+    """
 
     jti: str
     cascaded_count: int
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         jti = self.jti
 
         cascaded_count = self.cascaded_count
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "jti": jti,
-            "cascaded_count": cascaded_count,
-        })
+        field_dict.update(
+            {
+                "jti": jti,
+                "cascaded_count": cascaded_count,
+            }
+        )
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -58,7 +51,6 @@ class RevokeDelegationTokenResponse200:
             jti=jti,
             cascaded_count=cascaded_count,
         )
-
 
         revoke_delegation_token_response_200.additional_properties = d
         return revoke_delegation_token_response_200

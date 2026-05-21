@@ -125,4 +125,3 @@ func scoreOverlap(tokens []string, text string) int {
 	}
 	return score
 }
-

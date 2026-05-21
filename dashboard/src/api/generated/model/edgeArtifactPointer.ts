@@ -5,9 +5,9 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { EdgeArtifactPointerArtifactType } from './edgeArtifactPointerArtifactType';
-import type { EdgeArtifactPointerRetentionClass } from './edgeArtifactPointerRetentionClass';
-import type { EdgeArtifactPointerRedactionLevel } from './edgeArtifactPointerRedactionLevel';
+import type { EdgeArtifactPointerArtifactType } from "./edgeArtifactPointerArtifactType";
+import type { EdgeArtifactPointerRetentionClass } from "./edgeArtifactPointerRetentionClass";
+import type { EdgeArtifactPointerRedactionLevel } from "./edgeArtifactPointerRedactionLevel";
 
 /**
  * Pointer to redacted evidence stored outside the event row. Its tenant/session/execution/event IDs must match the enclosing event, and the URI must be an internal artifact reference rather than a signed URL or token-bearing external URI.

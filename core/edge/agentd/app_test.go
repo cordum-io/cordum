@@ -102,13 +102,7 @@ func waitForHookStatus(t *testing.T, done <-chan error, bindURL, nonce, body str
 func TestNewHTTPServerSetsBoundedWriteAndIdleTimeouts(t *testing.T) {
 	bindURL := "http://" + freeLoopbackAddr(t) + "/v1/edge/hooks/claude"
 	cfg := testRunConfig(t, bindURL)
-	local, err := NewLocalServer(LocalServerConfig{
-		BindURL: bindURL,
-		Nonce:   base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
-	})
-	if err != nil {
-		t.Fatalf("NewLocalServer: %v", err)
-	}
+	local := testLocalServerForBind(t, bindURL)
 	srv, ln, err := newHTTPServer(cfg, local)
 	if err != nil {
 		t.Fatalf("newHTTPServer: %v", err)
@@ -130,6 +124,63 @@ func TestNewHTTPServerSetsBoundedWriteAndIdleTimeouts(t *testing.T) {
 	}
 	if srv.IdleTimeout <= 0 {
 		t.Fatalf("IdleTimeout = %v, want > 0 (defense-in-depth lurker guard); pre-fix value was 0 (infinite)", srv.IdleTimeout)
+	}
+}
+
+func TestNewHTTPServerUsesMatchingInheritedLoopbackListener(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen inherited loopback: %v", err)
+	}
+	bindURL := "http://" + ln.Addr().String() + "/v1/edge/hooks/claude"
+	local := testLocalServerForBind(t, bindURL)
+
+	_, got, err := newHTTPServer(testRunConfig(t, bindURL), local, ln)
+	if err != nil {
+		t.Fatalf("newHTTPServer with inherited listener returned error: %v", err)
+	}
+	if got != ln {
+		t.Fatalf("listener = %p, want inherited %p", got, ln)
+	}
+	defer func() { _ = got.Close() }()
+}
+
+func TestNewHTTPServerRejectsMismatchedInheritedListenerAndClosesIt(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen inherited loopback: %v", err)
+	}
+	addr := ln.Addr().String()
+	bindURL := "http://" + freeLoopbackAddr(t) + "/v1/edge/hooks/claude"
+	local := testLocalServerForBind(t, bindURL)
+
+	_, _, err = newHTTPServer(testRunConfig(t, bindURL), local, ln)
+	if err == nil || !strings.Contains(err.Error(), "inherited agentd listener address does not match") {
+		t.Fatalf("error = %v, want inherited listener mismatch", err)
+	}
+	attacker, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatalf("mismatched inherited listener was not closed; re-listen %s: %v", addr, err)
+	}
+	_ = attacker.Close()
+}
+
+func TestNewHTTPServerRejectsNonLoopbackInheritedListener(t *testing.T) {
+	ln, err := net.Listen("tcp", "0.0.0.0:0")
+	if err != nil {
+		t.Fatalf("listen non-loopback inherited listener: %v", err)
+	}
+	_, port, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		_ = ln.Close()
+		t.Fatalf("split listener addr: %v", err)
+	}
+	bindURL := "http://127.0.0.1:" + port + "/v1/edge/hooks/claude"
+	local := testLocalServerForBind(t, bindURL)
+
+	_, _, err = newHTTPServer(testRunConfig(t, bindURL), local, ln)
+	if err == nil || !strings.Contains(err.Error(), "inherited agentd listener must be bound to loopback") {
+		t.Fatalf("error = %v, want non-loopback inherited listener rejection", err)
 	}
 }
 
@@ -630,6 +681,18 @@ func testRunConfig(t *testing.T, bindURL string) Config {
 	}
 }
 
+func testLocalServerForBind(t *testing.T, bindURL string) *LocalServer {
+	t.Helper()
+	local, err := NewLocalServer(LocalServerConfig{
+		BindURL: bindURL,
+		Nonce:   base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
+	})
+	if err != nil {
+		t.Fatalf("NewLocalServer: %v", err)
+	}
+	return local
+}
+
 type shutdownRaceStateStore struct {
 	inner         *MemoryStateStore
 	terminalOnce  sync.Once
@@ -772,6 +835,79 @@ func TestRunCleanShutdownDoesNotEmitForcedMetric(t *testing.T) {
 	if hbDrain > 5 {
 		t.Fatalf("heartbeat_drain emitted %d times on clean shutdown — bound looks broken: %#v", hbDrain, got)
 	}
+}
+
+func TestOnStatusHeartbeatNoFalsePositiveOnCleanShutdown(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	gateway, thirdHeartbeatStarted := lateHeartbeatGatewayForCleanShutdown()
+	recorder := &captureRecorder{}
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, RunOptions{
+			Config: testRunConfig(t, "http://127.0.0.1:0/v1/edge/hooks/claude"),
+			Metadata: LocalSessionMetadata{
+				TenantID:      "tenant-a",
+				PrincipalID:   "principal-a",
+				PrincipalType: edgecore.PrincipalTypeHuman,
+				CWD:           "D:/Cordum/cordum",
+			},
+			Gateway:    gateway,
+			StateStore: NewMemoryStateStore(),
+			Recorder:   recorder,
+			Clock:      realClock{},
+		})
+	}()
+
+	select {
+	case <-thirdHeartbeatStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("third heartbeat did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after clean cancellation")
+	}
+	if got := recorder.shutdownForcedSnapshot(); len(got) != 0 {
+		t.Fatalf("clean shutdown emitted forced-shutdown metrics: %#v", got)
+	}
+}
+
+func lateHeartbeatGatewayForCleanShutdown() (*stubRunGateway, <-chan struct{}) {
+	var callsMu sync.Mutex
+	var calls int
+	thirdHeartbeatStarted := make(chan struct{})
+	var closeThird sync.Once
+	gateway := &stubRunGateway{
+		createSession: func(context.Context, CreateSessionRequest) (CreateSessionResponse, error) {
+			return CreateSessionResponse{
+				SessionID:      "sess-clean-late-heartbeat",
+				ExecutionID:    "exec-clean-late-heartbeat",
+				TraceID:        "trace-clean-late-heartbeat",
+				PolicySnapshot: "snap-clean-late-heartbeat",
+				DashboardURL:   "/edge/sessions/sess-clean-late-heartbeat",
+			}, nil
+		},
+		heartbeat: func(ctx context.Context, _ string) (HeartbeatResponse, error) {
+			callsMu.Lock()
+			calls++
+			current := calls
+			callsMu.Unlock()
+			if current < 3 {
+				return HeartbeatResponse{}, ErrGatewayTimeout
+			}
+			closeThird.Do(func() { close(thirdHeartbeatStarted) })
+			<-ctx.Done()
+			return HeartbeatResponse{}, ErrGatewayTimeout
+		},
+	}
+	return gateway, thirdHeartbeatStarted
 }
 
 func freeLoopbackAddr(t *testing.T) string {

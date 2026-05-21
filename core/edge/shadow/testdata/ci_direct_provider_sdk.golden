@@ -1,0 +1,56 @@
+{
+  "finding_id": "edge_shadow_ci-sdk-1",
+  "tenant_id": "tenant-ci",
+  "audience": "enterprise",
+  "severity": "high",
+  "action_kind": "route_ci_sdk_through_proxy",
+  "summary": "Route CI provider-SDK calls through the Cordum LLM proxy or file an operator-acked exception.",
+  "risk_explanation": "A CI job invoked a provider SDK directly, bypassing the Cordum LLM proxy. Direct provider calls evade Safety Kernel output policy and Cordum audit. Signals: direct_provider_endpoint.",
+  "recommended_action": "Update the CI job env to route SDK calls through the Cordum LLM proxy, OR file an operator-acked exception via POST /api/v1/edge/shadow/exception (EDGE-143.6).",
+  "safety_notes": [
+    "All steps are advisory — Cordum Edge does not auto-execute remediation.",
+    "Never substitute live secrets into the placeholders shown below; use your secret-manager / api-key-helper.",
+    "Cordum NEVER mutates CI provider repos, workflows, or trust roots; operator opens the PR / sets the env var.",
+    "For exception flows, route through POST /api/v1/edge/shadow/exception (EDGE-143.6) so the operator-acked decision is audited."
+  ],
+  "steps": [
+    {
+      "id": "route_ci_sdk_through_proxy.env_snippet",
+      "title": "Option A — Route the GitHub Actions job through the Cordum LLM proxy",
+      "kind": "route_ci_sdk_through_proxy",
+      "command": "# In .github/workflows/\u003cworkflow\u003e.yml, set the provider SDK base URL to the Cordum LLM proxy (yaml):\nenv:\n  ANTHROPIC_BASE_URL: ${{ secrets.CORDUM_LLM_PROXY_URL }}\n  OPENAI_BASE_URL: ${{ secrets.CORDUM_LLM_PROXY_URL }}",
+      "docs_url": "docs/edge/shadow-remediation.md",
+      "conditions": [
+        "obtain \u003cllm-proxy-url\u003e from your Cordum administrator",
+        "do NOT inline the API key; reuse the existing provider-key secret and let Cordum redact / re-issue"
+      ]
+    },
+    {
+      "id": "route_ci_sdk_through_proxy.exception_request",
+      "title": "Option B — File an operator-acked exception (only if proxy routing is infeasible)",
+      "kind": "route_ci_sdk_through_proxy",
+      "api_request": {
+        "method": "POST",
+        "path": "/api/v1/edge/shadow/exception",
+        "body": "{\n  \"finding_id\": \"\u003cfinding-id\u003e\",\n  \"tenant_id\": \"\u003ctenant-id\u003e\",\n  \"reason\": \"\u003coperator-justification\u003e\",\n  \"expires_at\": \"\u003crfc3339-timestamp\u003e\"\n}"
+      },
+      "docs_url": "docs/edge/shadow-remediation.md",
+      "conditions": [
+        "exception is an operator decision — Cordum emits an audit event at file time",
+        "set a non-empty `expires_at` so the exception auto-lapses; never file open-ended exceptions"
+      ]
+    },
+    {
+      "id": "route_ci_sdk_through_proxy.enterprise.policy",
+      "title": "Roll the proxy-routing env block into your CI-template repo so new repos inherit it",
+      "kind": "route_ci_sdk_through_proxy",
+      "docs_url": "docs/edge/managed-settings-deploy.md",
+      "conditions": [
+        "central CI templates avoid per-repo drift; align with your platform team's workflow strategy"
+      ]
+    }
+  ],
+  "generator_version": "1.0.0",
+  "generated_at": "2026-05-17T16:00:00Z",
+  "advisory_only": true
+}

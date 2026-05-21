@@ -17,11 +17,10 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.safety_decision import SafetyDecision
-  from ..models.policy_check_response_constraints_type_0 import PolicyCheckResponseConstraintsType0
-
-
-
+    from ..models.policy_check_response_constraints_type_0 import (
+        PolicyCheckResponseConstraintsType0,
+    )
+    from ..models.safety_decision import SafetyDecision
 
 
 T = TypeVar("T", bound="PolicyCheckResponse")
@@ -29,30 +28,31 @@ T = TypeVar("T", bound="PolicyCheckResponse")
 
 @_attrs_define
 class PolicyCheckResponse:
-    """ 
-        Attributes:
-            decision (Union[Unset, PolicyCheckResponseDecision]):
-            reason (Union[Unset, str]):
-            rule_id (Union[None, Unset, str]):
-            constraints (Union['PolicyCheckResponseConstraintsType0', None, Unset]):
-            evaluations (Union[List['SafetyDecision'], None, Unset]):
-     """
+    """
+    Attributes:
+        decision (Union[Unset, PolicyCheckResponseDecision]):
+        reason (Union[Unset, str]):
+        rule_id (Union[None, Unset, str]):
+        constraints (Union['PolicyCheckResponseConstraintsType0', None, Unset]):
+        evaluations (Union[List['SafetyDecision'], None, Unset]):
+    """
 
     decision: Union[Unset, PolicyCheckResponseDecision] = UNSET
     reason: Union[Unset, str] = UNSET
     rule_id: Union[None, Unset, str] = UNSET
-    constraints: Union['PolicyCheckResponseConstraintsType0', None, Unset] = UNSET
-    evaluations: Union[List['SafetyDecision'], None, Unset] = UNSET
+    constraints: Union["PolicyCheckResponseConstraintsType0", None, Unset] = UNSET
+    evaluations: Union[List["SafetyDecision"], None, Unset] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
+        from ..models.policy_check_response_constraints_type_0 import (
+            PolicyCheckResponseConstraintsType0,
+        )
         from ..models.safety_decision import SafetyDecision
-        from ..models.policy_check_response_constraints_type_0 import PolicyCheckResponseConstraintsType0
+
         decision: Union[Unset, str] = UNSET
         if not isinstance(self.decision, Unset):
             decision = self.decision.value
-
 
         reason = self.reason
 
@@ -79,15 +79,12 @@ class PolicyCheckResponse:
                 evaluations_type_0_item = evaluations_type_0_item_data.to_dict()
                 evaluations.append(evaluations_type_0_item)
 
-
         else:
             evaluations = self.evaluations
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if decision is not UNSET:
             field_dict["decision"] = decision
         if reason is not UNSET:
@@ -101,22 +98,20 @@ class PolicyCheckResponse:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
+        from ..models.policy_check_response_constraints_type_0 import (
+            PolicyCheckResponseConstraintsType0,
+        )
         from ..models.safety_decision import SafetyDecision
-        from ..models.policy_check_response_constraints_type_0 import PolicyCheckResponseConstraintsType0
+
         d = src_dict.copy()
         _decision = d.pop("decision", UNSET)
         decision: Union[Unset, PolicyCheckResponseDecision]
-        if isinstance(_decision,  Unset):
+        if isinstance(_decision, Unset):
             decision = UNSET
         else:
             decision = PolicyCheckResponseDecision(_decision)
-
-
-
 
         reason = d.pop("reason", UNSET)
 
@@ -129,8 +124,9 @@ class PolicyCheckResponse:
 
         rule_id = _parse_rule_id(d.pop("rule_id", UNSET))
 
-
-        def _parse_constraints(data: object) -> Union['PolicyCheckResponseConstraintsType0', None, Unset]:
+        def _parse_constraints(
+            data: object,
+        ) -> Union["PolicyCheckResponseConstraintsType0", None, Unset]:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -140,17 +136,14 @@ class PolicyCheckResponse:
                     raise TypeError()
                 constraints_type_0 = PolicyCheckResponseConstraintsType0.from_dict(data)
 
-
-
                 return constraints_type_0
-            except: # noqa: E722
+            except:  # noqa: E722
                 pass
-            return cast(Union['PolicyCheckResponseConstraintsType0', None, Unset], data)
+            return cast(Union["PolicyCheckResponseConstraintsType0", None, Unset], data)
 
         constraints = _parse_constraints(d.pop("constraints", UNSET))
 
-
-        def _parse_evaluations(data: object) -> Union[List['SafetyDecision'], None, Unset]:
+        def _parse_evaluations(data: object) -> Union[List["SafetyDecision"], None, Unset]:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -160,20 +153,17 @@ class PolicyCheckResponse:
                     raise TypeError()
                 evaluations_type_0 = []
                 _evaluations_type_0 = data
-                for evaluations_type_0_item_data in (_evaluations_type_0):
+                for evaluations_type_0_item_data in _evaluations_type_0:
                     evaluations_type_0_item = SafetyDecision.from_dict(evaluations_type_0_item_data)
-
-
 
                     evaluations_type_0.append(evaluations_type_0_item)
 
                 return evaluations_type_0
-            except: # noqa: E722
+            except:  # noqa: E722
                 pass
-            return cast(Union[List['SafetyDecision'], None, Unset], data)
+            return cast(Union[List["SafetyDecision"], None, Unset], data)
 
         evaluations = _parse_evaluations(d.pop("evaluations", UNSET))
-
 
         policy_check_response = cls(
             decision=decision,
@@ -182,7 +172,6 @@ class PolicyCheckResponse:
             constraints=constraints,
             evaluations=evaluations,
         )
-
 
         policy_check_response.additional_properties = d
         return policy_check_response

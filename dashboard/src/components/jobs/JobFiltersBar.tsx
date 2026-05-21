@@ -116,6 +116,163 @@ function MultiSelect({
 }
 
 // ---------------------------------------------------------------------------
+// Advanced filters popover
+// ---------------------------------------------------------------------------
+// Collects the 5 free-text filters (Topic/Pool/Tenant/Session/Run) behind a
+// single "Filter" trigger so the always-visible JobFiltersBar surface stays
+// quiet. Mirrors MultiSelect's click-outside / position semantics so the
+// affordance reads consistently with the rest of the bar.
+
+interface AdvancedFiltersPopoverProps {
+  activeCount: number;
+  topicLocal: string;
+  poolLocal: string;
+  tenantLocal: string;
+  sessionIdLocal: string;
+  runIdLocal: string;
+  onTopicChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onPoolChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onTenantChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onSessionIdChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onRunIdChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onClearAdvanced: () => void;
+}
+
+function AdvancedFiltersPopover({
+  activeCount,
+  topicLocal,
+  poolLocal,
+  tenantLocal,
+  sessionIdLocal,
+  runIdLocal,
+  onTopicChange,
+  onPoolChange,
+  onTenantChange,
+  onSessionIdChange,
+  onRunIdChange,
+  onClearAdvanced,
+}: AdvancedFiltersPopoverProps) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  const inputClass =
+    "w-full rounded-xl border border-border bg-card/70 px-3 py-1.5 text-xs text-ink placeholder:text-muted/60 transition hover:border-accent/40 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30";
+  const labelClass = "block text-[11px] font-medium text-muted-foreground";
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-controls="job-filters-advanced-popover"
+        className={cn(
+          "inline-flex items-center gap-1.5 rounded-xl border border-border bg-card/70 px-3 py-1.5 text-xs font-medium text-ink transition hover:border-accent/40",
+          activeCount > 0 && "border-accent/50 bg-accent/5",
+        )}
+      >
+        Filter
+        {activeCount > 0 && (
+          <span
+            data-testid="advanced-filters-count"
+            className="inline-flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-accent px-1 text-xs font-bold text-primary-foreground"
+          >
+            {activeCount}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div
+          id="job-filters-advanced-popover"
+          role="dialog"
+          aria-label="Advanced filters"
+          className="absolute left-0 top-full z-20 mt-1 w-64 rounded-xl border border-border bg-card p-3 shadow-lg"
+        >
+          <div className="space-y-2">
+            <div>
+              <label className={labelClass} htmlFor="adv-topic">Topic</label>
+              <input
+                id="adv-topic"
+                type="text"
+                placeholder="Topic"
+                value={topicLocal}
+                onChange={onTopicChange}
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label className={labelClass} htmlFor="adv-pool">Pool</label>
+              <input
+                id="adv-pool"
+                type="text"
+                placeholder="Pool"
+                value={poolLocal}
+                onChange={onPoolChange}
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label className={labelClass} htmlFor="adv-tenant">Tenant</label>
+              <input
+                id="adv-tenant"
+                type="text"
+                placeholder="Tenant"
+                value={tenantLocal}
+                onChange={onTenantChange}
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label className={labelClass} htmlFor="adv-session-id">Session ID</label>
+              <input
+                id="adv-session-id"
+                type="text"
+                placeholder="Session ID"
+                value={sessionIdLocal}
+                onChange={onSessionIdChange}
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label className={labelClass} htmlFor="adv-run-id">Run ID</label>
+              <input
+                id="adv-run-id"
+                type="text"
+                placeholder="Run ID"
+                value={runIdLocal}
+                onChange={onRunIdChange}
+                className={inputClass}
+              />
+            </div>
+          </div>
+          {activeCount > 0 && (
+            <div className="mt-3 flex justify-end border-t border-border pt-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onClearAdvanced}
+              >
+                Clear advanced filters
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // JobFiltersBar
 // ---------------------------------------------------------------------------
 
@@ -339,6 +496,39 @@ export function JobFiltersBar({
     });
   }, [setFilters]);
 
+  // Clear ONLY the 5 advanced text filters (Topic/Pool/Tenant/Session/Run).
+  // Keeps state/decision/timeRange untouched — those are owned by visible
+  // controls. Mirrors clearAll's debounce-cancel pattern so a stale pending
+  // setFilters can't re-populate the URL after Clear advanced.
+  const clearAdvancedTextFilters = useCallback(() => {
+    clearTimeout(topicTimer.current);
+    clearTimeout(poolTimer.current);
+    clearTimeout(tenantTimer.current);
+    clearTimeout(sessionIdTimer.current);
+    clearTimeout(runIdTimer.current);
+    setTopicLocal("");
+    setPoolLocal("");
+    setTenantLocal("");
+    setSessionIdLocal("");
+    setRunIdLocal("");
+    setFilters({
+      topic: "",
+      pool: "",
+      tenant: "",
+      sessionId: "",
+      runId: "",
+    });
+  }, [setFilters]);
+
+  // Count of active advanced text filters — drives the Filter trigger chip.
+  // Derived from the URL state so back/forward navigation updates it.
+  const advancedTextActiveCount =
+    (topicFilter ? 1 : 0) +
+    (poolFilter ? 1 : 0) +
+    (tenantFilter ? 1 : 0) +
+    (sessionIdFilter ? 1 : 0) +
+    (runIdFilter ? 1 : 0);
+
   const statusOptions = JOB_STATUSES.map((s) => ({
     value: s,
     label: s.charAt(0).toUpperCase() + s.slice(1),
@@ -362,49 +552,25 @@ export function JobFiltersBar({
         onChange={handleDecisionChange}
       />
 
-      {/* Topic text input (debounced) */}
-      <input
-        type="text"
-        placeholder="Topic"
-        value={topicLocal}
-        onChange={handleTopicChange}
-        className="w-28 rounded-xl border border-border bg-card/70 px-3 py-1.5 text-xs text-ink placeholder:text-muted/60 transition hover:border-accent/40 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30"
-      />
-
-      {/* Pool text input (debounced) */}
-      <input
-        type="text"
-        placeholder="Pool"
-        value={poolLocal}
-        onChange={handlePoolChange}
-        className="w-24 rounded-xl border border-border bg-card/70 px-3 py-1.5 text-xs text-ink placeholder:text-muted/60 transition hover:border-accent/40 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30"
-      />
-
-      {/* Tenant text input (debounced) */}
-      <input
-        type="text"
-        placeholder="Tenant"
-        value={tenantLocal}
-        onChange={handleTenantChange}
-        className="w-24 rounded-xl border border-border bg-card/70 px-3 py-1.5 text-xs text-ink placeholder:text-muted/60 transition hover:border-accent/40 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30"
-      />
-
-      {/* Session ID text input (debounced) */}
-      <input
-        type="text"
-        placeholder="Session ID"
-        value={sessionIdLocal}
-        onChange={handleSessionIdChange}
-        className="w-28 rounded-xl border border-border bg-card/70 px-3 py-1.5 text-xs text-ink placeholder:text-muted/60 transition hover:border-accent/40 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30"
-      />
-
-      {/* Run ID text input (debounced) */}
-      <input
-        type="text"
-        placeholder="Run ID"
-        value={runIdLocal}
-        onChange={handleRunIdChange}
-        className="w-28 rounded-xl border border-border bg-card/70 px-3 py-1.5 text-xs text-ink placeholder:text-muted/60 transition hover:border-accent/40 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30"
+      {/* Advanced text filters — Topic/Pool/Tenant/Session/Run — collapsed
+          behind a Filter popover trigger. The 5 inputs moved here so the
+          always-visible bar shows the main search + categorical controls
+          only; the popover shows the typed-token controls when needed.
+          URL state for the 5 fields is preserved (nuqs/searchParams) so
+          deep-links still work and reload through the popover. */}
+      <AdvancedFiltersPopover
+        activeCount={advancedTextActiveCount}
+        topicLocal={topicLocal}
+        poolLocal={poolLocal}
+        tenantLocal={tenantLocal}
+        sessionIdLocal={sessionIdLocal}
+        runIdLocal={runIdLocal}
+        onTopicChange={handleTopicChange}
+        onPoolChange={handlePoolChange}
+        onTenantChange={handleTenantChange}
+        onSessionIdChange={handleSessionIdChange}
+        onRunIdChange={handleRunIdChange}
+        onClearAdvanced={clearAdvancedTextFilters}
       />
 
       {/* Time range preset buttons */}

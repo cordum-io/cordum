@@ -66,6 +66,11 @@ func New(url string) (*Service, error) {
 	return &Service{client: client}, nil
 }
 
+// NewFromClient constructs a config service from a shared Redis client.
+func NewFromClient(client redis.UniversalClient) *Service {
+	return &Service{client: client}
+}
+
 func (s *Service) Close() error {
 	if s.client == nil {
 		return nil

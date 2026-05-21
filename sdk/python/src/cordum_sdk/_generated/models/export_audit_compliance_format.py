@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class ExportAuditComplianceFormat(str, Enum):
     CSV = "csv"
     NDJSON = "ndjson"

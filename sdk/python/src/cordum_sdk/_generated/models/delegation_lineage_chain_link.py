@@ -15,23 +15,19 @@ from typing import Union
 import datetime
 
 
-
-
-
-
 T = TypeVar("T", bound="DelegationLineageChainLink")
 
 
 @_attrs_define
 class DelegationLineageChainLink:
-    """ 
-        Attributes:
-            agent_id (Union[Unset, str]):
-            issued_at (Union[Unset, datetime.datetime]):
-            expires_at (Union[Unset, datetime.datetime]):
-            jti (Union[Unset, str]):
-            parent_jti (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        agent_id (Union[Unset, str]):
+        issued_at (Union[Unset, datetime.datetime]):
+        expires_at (Union[Unset, datetime.datetime]):
+        jti (Union[Unset, str]):
+        parent_jti (Union[Unset, str]):
+    """
 
     agent_id: Union[Unset, str] = UNSET
     issued_at: Union[Unset, datetime.datetime] = UNSET
@@ -39,7 +35,6 @@ class DelegationLineageChainLink:
     jti: Union[Unset, str] = UNSET
     parent_jti: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         agent_id = self.agent_id
@@ -56,11 +51,9 @@ class DelegationLineageChainLink:
 
         parent_jti = self.parent_jti
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if agent_id is not UNSET:
             field_dict["agent_id"] = agent_id
         if issued_at is not UNSET:
@@ -74,8 +67,6 @@ class DelegationLineageChainLink:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
@@ -83,23 +74,17 @@ class DelegationLineageChainLink:
 
         _issued_at = d.pop("issued_at", UNSET)
         issued_at: Union[Unset, datetime.datetime]
-        if isinstance(_issued_at,  Unset):
+        if isinstance(_issued_at, Unset):
             issued_at = UNSET
         else:
             issued_at = isoparse(_issued_at)
 
-
-
-
         _expires_at = d.pop("expires_at", UNSET)
         expires_at: Union[Unset, datetime.datetime]
-        if isinstance(_expires_at,  Unset):
+        if isinstance(_expires_at, Unset):
             expires_at = UNSET
         else:
             expires_at = isoparse(_expires_at)
-
-
-
 
         jti = d.pop("jti", UNSET)
 
@@ -112,7 +97,6 @@ class DelegationLineageChainLink:
             jti=jti,
             parent_jti=parent_jti,
         )
-
 
         delegation_lineage_chain_link.additional_properties = d
         return delegation_lineage_chain_link

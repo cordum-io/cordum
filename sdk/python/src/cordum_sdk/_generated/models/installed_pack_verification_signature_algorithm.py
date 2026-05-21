@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class InstalledPackVerificationSignatureAlgorithm(str, Enum):
     ED25519 = "ed25519"
 

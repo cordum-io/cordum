@@ -1,0 +1,39 @@
+{
+  "finding_id": "edge_shadow_ci-attach-jenkins",
+  "tenant_id": "tenant-ci",
+  "audience": "enterprise",
+  "severity": "medium",
+  "action_kind": "add_cordum_edge_attach",
+  "summary": "Add the cordum-edge-attach step to the CI workflow so the job runs under Cordum Edge governance.",
+  "risk_explanation": "A CI workflow invokes an agent action without first attaching cordum-edge. The job runs without Cordum policy, audit, or redaction. Signals: missing_cordum_attach.",
+  "recommended_action": "Open a PR adding the `cordum-edge-attach@v1` step (or provider equivalent) ahead of any agent step in the workflow.",
+  "safety_notes": [
+    "All steps are advisory — Cordum Edge does not auto-execute remediation.",
+    "Never substitute live secrets into the placeholders shown below; use your secret-manager / api-key-helper.",
+    "Cordum NEVER mutates CI provider repos, workflows, or trust roots; operator opens the PR / sets the env var.",
+    "For exception flows, route through POST /api/v1/edge/shadow/exception (EDGE-143.6) so the operator-acked decision is audited."
+  ],
+  "steps": [
+    {
+      "id": "add_cordum_edge_attach.snippet",
+      "title": "Add cordum-edge-attach to Jenkins workflow",
+      "kind": "add_cordum_edge_attach",
+      "command": "# In Jenkinsfile, insert this snippet BEFORE the agent step (groovy):\nstage('Cordum Edge Attach') {\n  steps {\n    sh 'curl -sSL https://cordum.io/install/cordum-edge-attach@v1.sh | bash'\n    withCredentials([string(credentialsId: 'cordum-edge-gateway', variable: 'CORDUM_EDGE_GATEWAY'),\n                     string(credentialsId: 'cordum-edge-tenant', variable: 'CORDUM_EDGE_TENANT_ID')]) {\n      sh 'cordum-edge-attach'\n    }\n  }\n}",
+      "docs_url": "docs/edge/shadow-remediation.md",
+      "conditions": [
+        "open a PR against the workflow file; do not commit directly to default branch",
+        "verify CORDUM_EDGE_GATEWAY + CORDUM_EDGE_TENANT_ID secrets exist in the CI provider's secret store"
+      ]
+    },
+    {
+      "id": "add_cordum_edge_attach.verify_attach",
+      "title": "After merge, verify the next run attaches under Cordum Edge",
+      "kind": "add_cordum_edge_attach",
+      "command": "# Re-run the workflow and check the Cordum Edge dashboard for the new run id under `/edge/sessions` (filter source_type=ci).",
+      "docs_url": "docs/edge/shadow-remediation.md"
+    }
+  ],
+  "generator_version": "1.0.0",
+  "generated_at": "2026-05-17T16:00:00Z",
+  "advisory_only": true
+}

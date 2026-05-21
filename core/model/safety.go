@@ -110,4 +110,34 @@ type SafetyDecisionRecord struct {
 	Actionability    ApprovalActionability   `json:"approval_actionability,omitempty"`
 	ApprovalRevision int64                   `json:"approval_revision,omitempty"`
 	ApprovalDecision ApprovalDecision        `json:"approval_decision,omitempty"`
+	// Governance carries compact multi-agent governance evidence when
+	// the decision was produced by core/governance/evaluator. Always
+	// nil for purely rule-based decisions. Cardinality-bounded:
+	// IDs/hashes/refs only, never raw tokens / prompts / payloads.
+	Governance *GovernanceDecisionEvidence `json:"governance,omitempty"`
+}
+
+// GovernanceDecisionEvidence is the compact non-secret audit record
+// produced by core/governance/evaluator. It is intentionally
+// cardinality-bounded — every field is an ID, a stable rule constant,
+// a sanitized reason string, or a small, enumerated value. Raw tokens,
+// private prompts, secrets, and full shared-memory payloads are NEVER
+// copied here.
+type GovernanceDecisionEvidence struct {
+	Operation             string   `json:"operation,omitempty"`
+	RuleID                string   `json:"rule_id,omitempty"`
+	Decision              string   `json:"decision,omitempty"`
+	Reason                string   `json:"reason,omitempty"`
+	SubReason             string   `json:"sub_reason,omitempty"`
+	ParentAgentID         string   `json:"parent_agent_id,omitempty"`
+	ChildAgentID          string   `json:"child_agent_id,omitempty"`
+	IssuerRoot            string   `json:"issuer_root,omitempty"`
+	ParentIssuer          string   `json:"parent_issuer,omitempty"`
+	JTI                   string   `json:"jti,omitempty"`
+	ProvenanceRef         string   `json:"provenance_ref,omitempty"`
+	ProvenanceVerified    bool     `json:"provenance_verified,omitempty"`
+	ApprovalRef           string   `json:"approval_ref,omitempty"`
+	ApprovalStatus        string   `json:"approval_status,omitempty"`
+	RequestedCapabilities []string `json:"requested_capabilities,omitempty"`
+	ResourceScopes        []string `json:"resource_scopes,omitempty"`
 }

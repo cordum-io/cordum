@@ -13,40 +13,33 @@ from typing import cast, List
 from typing import Dict
 
 
-
 def _get_kwargs(
     id: str,
     *,
     x_tenant_id: str,
-
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
     headers["X-Tenant-ID"] = x_tenant_id
 
-
-
-    
-
-    
-
     _kwargs: Dict[str, Any] = {
         "method": "get",
-        "url": "/api/v1/workflow-runs/{id}/timeline".format(id=id,),
+        "url": "/api/v1/workflow-runs/{id}/timeline".format(
+            id=id,
+        ),
     }
-
 
     _kwargs["headers"] = headers
     return _kwargs
 
 
-def _parse_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Optional[Union[Any, List['TimelineEvent']]]:
+def _parse_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Optional[Union[Any, List["TimelineEvent"]]]:
     if response.status_code == 200:
         response_200 = []
         _response_200 = response.json()
-        for response_200_item_data in (_response_200):
+        for response_200_item_data in _response_200:
             response_200_item = TimelineEvent.from_dict(response_200_item_data)
-
-
 
             response_200.append(response_200_item)
 
@@ -66,7 +59,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         return None
 
 
-def _build_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Response[Union[Any, List['TimelineEvent']]]:
+def _build_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Response[Union[Any, List["TimelineEvent"]]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -80,9 +75,8 @@ def sync_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     x_tenant_id: str,
-
-) -> Response[Union[Any, List['TimelineEvent']]]:
-    """ Get timeline events for a run
+) -> Response[Union[Any, List["TimelineEvent"]]]:
+    """Get timeline events for a run
 
     Args:
         id (str):
@@ -94,13 +88,11 @@ def sync_detailed(
 
     Returns:
         Response[Union[Any, List['TimelineEvent']]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         id=id,
-x_tenant_id=x_tenant_id,
-
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -109,14 +101,14 @@ x_tenant_id=x_tenant_id,
 
     return _build_response(client=client, response=response)
 
+
 def sync(
     id: str,
     *,
     client: Union[AuthenticatedClient, Client],
     x_tenant_id: str,
-
-) -> Optional[Union[Any, List['TimelineEvent']]]:
-    """ Get timeline events for a run
+) -> Optional[Union[Any, List["TimelineEvent"]]]:
+    """Get timeline events for a run
 
     Args:
         id (str):
@@ -128,24 +120,22 @@ def sync(
 
     Returns:
         Union[Any, List['TimelineEvent']]
-     """
-
+    """
 
     return sync_detailed(
         id=id,
-client=client,
-x_tenant_id=x_tenant_id,
-
+        client=client,
+        x_tenant_id=x_tenant_id,
     ).parsed
+
 
 async def asyncio_detailed(
     id: str,
     *,
     client: Union[AuthenticatedClient, Client],
     x_tenant_id: str,
-
-) -> Response[Union[Any, List['TimelineEvent']]]:
-    """ Get timeline events for a run
+) -> Response[Union[Any, List["TimelineEvent"]]]:
+    """Get timeline events for a run
 
     Args:
         id (str):
@@ -157,29 +147,25 @@ async def asyncio_detailed(
 
     Returns:
         Response[Union[Any, List['TimelineEvent']]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         id=id,
-x_tenant_id=x_tenant_id,
-
+        x_tenant_id=x_tenant_id,
     )
 
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
+
 
 async def asyncio(
     id: str,
     *,
     client: Union[AuthenticatedClient, Client],
     x_tenant_id: str,
-
-) -> Optional[Union[Any, List['TimelineEvent']]]:
-    """ Get timeline events for a run
+) -> Optional[Union[Any, List["TimelineEvent"]]]:
+    """Get timeline events for a run
 
     Args:
         id (str):
@@ -191,12 +177,12 @@ async def asyncio(
 
     Returns:
         Union[Any, List['TimelineEvent']]
-     """
+    """
 
-
-    return (await asyncio_detailed(
-        id=id,
-client=client,
-x_tenant_id=x_tenant_id,
-
-    )).parsed
+    return (
+        await asyncio_detailed(
+            id=id,
+            client=client,
+            x_tenant_id=x_tenant_id,
+        )
+    ).parsed

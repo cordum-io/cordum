@@ -20,13 +20,13 @@ type RedisCircuitBreaker struct {
 	closeAfter    int
 
 	// Local fallback state (used when Redis is unavailable).
-	mu              sync.Mutex
-	localState      circuitState
-	localFailures   int
-	localSuccesses  int
-	localOpenUntil  time.Time
-	localHalfOpen   int
-	halfOpenMax     int
+	mu             sync.Mutex
+	localState     circuitState
+	localFailures  int
+	localSuccesses int
+	localOpenUntil time.Time
+	localHalfOpen  int
+	halfOpenMax    int
 }
 
 // CircuitBreakerOpts configures the circuit breaker thresholds.

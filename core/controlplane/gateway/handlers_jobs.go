@@ -40,6 +40,12 @@ import (
 
 const workerHeartbeatTTL = 30 * time.Second
 
+const (
+	errorCodeJobIdempotencyConflict = "IDEMPOTENCY_CONFLICT"
+	errorCodeJobBackpressure        = "BACKPRESSURE"
+	errorCodeMemoryPolicyViolation  = "MEMORY_POLICY_VIOLATION"
+)
+
 // statusPipelineSampleLimit bounds the status pipeline aggregation scan cost.
 const statusPipelineSampleLimit = int64(500)
 
@@ -1495,7 +1501,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]any{
 				"error":             "unknown topic",
 				"status":            http.StatusBadRequest,
-				"error_code":        "unknown_topic",
+				"code":              "unknown_topic",
 				"registered_topics": registeredTopics,
 				"truncated":         truncated,
 				"topics_endpoint":   "/api/v1/topics",
@@ -1506,9 +1512,9 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			writeJSON(w, map[string]any{
-				"error":      "topic is disabled",
-				"status":     http.StatusBadRequest,
-				"error_code": "topic_disabled",
+				"error":  "topic is disabled",
+				"status": http.StatusBadRequest,
+				"code":   "topic_disabled",
 			})
 			return
 		}
@@ -1525,7 +1531,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]any{
 				"error":      "schema_validation_failed",
 				"status":     http.StatusBadRequest,
-				"error_code": "schema_validation_failed",
+				"code":       "schema_validation_failed",
 				"violations": violations,
 			})
 			return
@@ -1565,7 +1571,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := s.enforceJobBackpressure(r.Context(), orgID, teamID); err != nil {
 		var bp jobBackpressureError
 		if errors.As(err, &bp) {
-			writeErrorJSON(w, http.StatusTooManyRequests, bp.Error())
+			writeJSONError(w, http.StatusTooManyRequests, errorCodeJobBackpressure, bp.Error())
 			return
 		}
 		slog.Error("job backpressure check failed", "error", err)
@@ -1576,6 +1582,15 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	jobID := uuid.NewString()
 	traceID := uuid.NewString()
 
+	// Loud reject for the two governance-spoofable prefixes BEFORE the
+	// silent strip below. _governance.* and _ma.* labels can spoof
+	// backend-verified provenance/tenant/issuer-chain fields the
+	// evaluator consults — fail closed with a 400 so a spoofing attempt
+	// surfaces as an explicit client error rather than being swallowed.
+	if err := rejectReservedGovernanceLabels(req.Labels); err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	// Strip reserved labels (underscore prefix) from client input. These are
 	// system-controlled labels used by the gateway and safety kernel (e.g.,
 	// _internal, _content.prompt). Without this, clients can spoof privileged
@@ -1614,7 +1629,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		if err := s.enforceMemoryID(r.Context(), orgID, teamID, "", "", explicitMemoryID); err != nil {
 			var perr memoryPolicyError
 			if errors.As(err, &perr) {
-				writeErrorJSON(w, perr.status, perr.msg)
+				writeJSONError(w, perr.status, errorCodeMemoryPolicyViolation, perr.msg)
 				return
 			}
 			writeErrorJSON(w, http.StatusInternalServerError, "memory policy check failed")
@@ -1778,7 +1793,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 					})
 					return
 				}
-				writeErrorJSON(w, http.StatusConflict, "idempotency key already used")
+				writeJSONError(w, http.StatusConflict, errorCodeJobIdempotencyConflict, "idempotency key already used")
 				return
 			}
 		}
@@ -1837,7 +1852,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 					})
 					return
 				}
-				writeErrorJSON(w, http.StatusConflict, "idempotency key already used")
+				writeJSONError(w, http.StatusConflict, errorCodeJobIdempotencyConflict, "idempotency key already used")
 				return
 			}
 		}
@@ -1913,7 +1928,16 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := s.persistSubmitDelegationToken(r.Context(), jobID, req.DelegationToken, delegationExpectedAudience); err != nil {
 				slog.Error("failed to persist approval delegation token", "job_id", jobID, "error", err)
-				_ = s.jobStore.SetState(r.Context(), jobID, model.JobStateFailed)
+				// Cleanup half-persisted approval state. The job hash, topic,
+				// tenant, etc. were written before the delegation persist; pin
+				// the job into Failed so it does not stick in Approval with no
+				// valid delegation token (a 503 loop for the caller's retries).
+				// We surface 503 either way — the cleanup is best-effort and
+				// observability-only on its failure path.
+				if cleanupErr := s.jobStore.SetState(r.Context(), jobID, model.JobStateFailed); cleanupErr != nil {
+					slog.Error("failed to clean up half-persisted approval state after delegation persist failure",
+						"job_id", jobID, "delegation_err", err, "set_state_err", cleanupErr)
+				}
 				writeErrorJSON(w, http.StatusServiceUnavailable, "failed to persist delegation metadata")
 				return
 			}
@@ -1981,7 +2005,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			if err != nil && !errors.Is(err, redis.Nil) {
 				slog.Error("idempotency lookup failed", "error", err)
 			}
-			writeErrorJSON(w, http.StatusConflict, "idempotency key already used")
+			writeJSONError(w, http.StatusConflict, errorCodeJobIdempotencyConflict, "idempotency key already used")
 			return
 		}
 	}

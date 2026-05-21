@@ -4,7 +4,7 @@
  * Secondary hierarchy: workflow/job audit metadata and raw payloads for drill-down.
  */
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import type { Approval } from "@/api/types";
 import {
@@ -529,7 +529,25 @@ export default function ApprovalsPage() {
     error,
     refetch,
   } = useApprovals();
-  const approvals = approvalsData?.items ?? [];
+  // task-266f21ad: `?lane=edge` is the URL contract the new Edge sidebar
+  // item lands on (via /edge/approvals → /approvals?lane=edge redirect).
+  // Today's /approvals feed does not yet carry Edge-sourced approvals
+  // (those flow through EdgeApprovalsDrawer on EdgeSessionDetailPage);
+  // the lane filter is wired here so the URL contract is correct now and
+  // will surface real items the moment a future task wires edge approvals
+  // into the global feed. Predicate matches the existing `source` /
+  // `kind` strings used by getApprovalSourceMeta — extend the OR-list as
+  // new edge-source labels appear in `decisionSummary.source`.
+  const [searchParams] = useSearchParams();
+  const lane = searchParams.get("lane")?.trim().toLowerCase() ?? "";
+  const allApprovals = approvalsData?.items ?? [];
+  const approvals = useMemo(() => {
+    if (lane !== "edge") return allApprovals;
+    return allApprovals.filter((a) => {
+      const src = a.decisionSummary?.source?.toLowerCase() ?? "";
+      return src.startsWith("edge");
+    });
+  }, [allApprovals, lane]);
   const approveMutation = useApproveJob();
   const rejectMutation = useRejectJob();
 

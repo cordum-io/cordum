@@ -5,10 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import {
-  useMutation,
-  useQuery
-} from '@tanstack/react-query';
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
   DataTag,
   DefinedInitialDataOptions,
@@ -21,11 +18,11 @@ import type {
   UseMutationOptions,
   UseMutationResult,
   UseQueryOptions,
-  UseQueryResult
-} from '@tanstack/react-query';
+  UseQueryResult,
+} from "@tanstack/react-query";
 
 import type {
-  BadRequestResponse,
+  Error,
   ForbiddenResponse,
   InstallPackBody,
   InternalServerErrorResponse,
@@ -35,389 +32,598 @@ import type {
   PackVerification,
   PayloadTooLargeResponse,
   UnauthorizedResponse,
-  UninstallPackBody
-} from '.././model';
+  UninstallPackBody,
+} from ".././model";
 
-import { apiClient } from '../../client';
-
-
-
+import { apiClient } from "../../client";
 
 /**
  * @summary List installed packs
  */
-export const listPacks = (
-    
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<ListPacks200>(
-      {url: `/api/v1/packs`, method: 'GET', signal
-    },
-      );
-    }
-  
-
-
+export const listPacks = (signal?: AbortSignal) => {
+  return apiClient<ListPacks200>({
+    url: `/api/v1/packs`,
+    method: "GET",
+    signal,
+  });
+};
 
 export const getListPacksQueryKey = () => {
-    return [
-    `/api/v1/packs`
-    ] as const;
-    }
+  return [`/api/v1/packs`] as const;
+};
 
-    
-export const getListPacksQueryOptions = <TData = Awaited<ReturnType<typeof listPacks>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPacks>>, TError, TData>>, }
-) => {
+export const getListPacksQueryOptions = <
+  TData = Awaited<ReturnType<typeof listPacks>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(options?: {
+  query?: Partial<
+    UseQueryOptions<Awaited<ReturnType<typeof listPacks>>, TError, TData>
+  >;
+}) => {
+  const { query: queryOptions } = options ?? {};
 
-const {query: queryOptions} = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getListPacksQueryKey();
 
-  const queryKey =  queryOptions?.queryKey ?? getListPacksQueryKey();
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listPacks>>> = ({
+    signal,
+  }) => listPacks(signal);
 
-  
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listPacks>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listPacks>>> = ({ signal }) => listPacks(signal);
+export type ListPacksQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listPacks>>
+>;
+export type ListPacksQueryError =
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | InternalServerErrorResponse;
 
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listPacks>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type ListPacksQueryResult = NonNullable<Awaited<ReturnType<typeof listPacks>>>
-export type ListPacksQueryError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse
-
-
-export function useListPacks<TData = Awaited<ReturnType<typeof listPacks>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPacks>>, TError, TData>> & Pick<
+export function useListPacks<
+  TData = Awaited<ReturnType<typeof listPacks>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listPacks>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listPacks>>,
           TError,
           Awaited<ReturnType<typeof listPacks>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListPacks<TData = Awaited<ReturnType<typeof listPacks>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPacks>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListPacks<
+  TData = Awaited<ReturnType<typeof listPacks>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listPacks>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listPacks>>,
           TError,
           Awaited<ReturnType<typeof listPacks>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListPacks<TData = Awaited<ReturnType<typeof listPacks>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPacks>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListPacks<
+  TData = Awaited<ReturnType<typeof listPacks>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listPacks>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary List installed packs
  */
 
-export function useListPacks<TData = Awaited<ReturnType<typeof listPacks>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPacks>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useListPacks<
+  TData = Awaited<ReturnType<typeof listPacks>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listPacks>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListPacksQueryOptions(options);
 
-  const queryOptions = getListPacksQueryOptions(options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
 
-
-
-
 /**
  * @summary Get a pack by ID
  */
-export const getPack = (
-    id: string,
- signal?: AbortSignal
+export const getPack = (id: string, signal?: AbortSignal) => {
+  return apiClient<PackRecord>({
+    url: `/api/v1/packs/${id}`,
+    method: "GET",
+    signal,
+  });
+};
+
+export const getGetPackQueryKey = (id?: string) => {
+  return [`/api/v1/packs/${id}`] as const;
+};
+
+export const getGetPackQueryOptions = <
+  TData = Awaited<ReturnType<typeof getPack>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getPack>>, TError, TData>
+    >;
+  },
 ) => {
-      
-      
-      return apiClient<PackRecord>(
-      {url: `/api/v1/packs/${id}`, method: 'GET', signal
-    },
-      );
-    }
-  
+  const { query: queryOptions } = options ?? {};
 
+  const queryKey = queryOptions?.queryKey ?? getGetPackQueryKey(id);
 
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getPack>>> = ({
+    signal,
+  }) => getPack(id, signal);
 
-export const getGetPackQueryKey = (id?: string,) => {
-    return [
-    `/api/v1/packs/${id}`
-    ] as const;
-    }
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof getPack>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData>;
+  };
+};
 
-    
-export const getGetPackQueryOptions = <TData = Awaited<ReturnType<typeof getPack>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPack>>, TError, TData>>, }
-) => {
+export type GetPackQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getPack>>
+>;
+export type GetPackQueryError =
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse
+  | InternalServerErrorResponse;
 
-const {query: queryOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetPackQueryKey(id);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPack>>> = ({ signal }) => getPack(id, signal);
-
-      
-
-      
-
-   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPack>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetPackQueryResult = NonNullable<Awaited<ReturnType<typeof getPack>>>
-export type GetPackQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse
-
-
-export function useGetPack<TData = Awaited<ReturnType<typeof getPack>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse>(
- id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPack>>, TError, TData>> & Pick<
+export function useGetPack<
+  TData = Awaited<ReturnType<typeof getPack>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getPack>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getPack>>,
           TError,
           Awaited<ReturnType<typeof getPack>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetPack<TData = Awaited<ReturnType<typeof getPack>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPack>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetPack<
+  TData = Awaited<ReturnType<typeof getPack>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getPack>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getPack>>,
           TError,
           Awaited<ReturnType<typeof getPack>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetPack<TData = Awaited<ReturnType<typeof getPack>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPack>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetPack<
+  TData = Awaited<ReturnType<typeof getPack>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getPack>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Get a pack by ID
  */
 
-export function useGetPack<TData = Awaited<ReturnType<typeof getPack>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPack>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetPack<
+  TData = Awaited<ReturnType<typeof getPack>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getPack>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetPackQueryOptions(id, options);
 
-  const queryOptions = getGetPackQueryOptions(id,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * @summary Install a pack from a bundle file
  */
 export const installPack = (
-    installPackBody: InstallPackBody,
- signal?: AbortSignal
+  installPackBody: InstallPackBody,
+  signal?: AbortSignal,
 ) => {
-      
-      const formData = new FormData();
-formData.append(`bundle`, installPackBody.bundle)
+  const formData = new FormData();
+  formData.append(`bundle`, installPackBody.bundle);
 
-      return apiClient<PackRecord>(
-      {url: `/api/v1/packs/install`, method: 'POST',
-      headers: {'Content-Type': 'multipart/form-data', },
-       data: formData, signal
-    },
-      );
-    }
-  
+  return apiClient<PackRecord>({
+    url: `/api/v1/packs/install`,
+    method: "POST",
+    headers: { "Content-Type": "multipart/form-data" },
+    data: formData,
+    signal,
+  });
+};
 
+export const getInstallPackMutationOptions = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | PayloadTooLargeResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof installPack>>,
+    TError,
+    { data: InstallPackBody },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof installPack>>,
+  TError,
+  { data: InstallPackBody },
+  TContext
+> => {
+  const mutationKey = ["installPack"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getInstallPackMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | PayloadTooLargeResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof installPack>>, TError,{data: InstallPackBody}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof installPack>>, TError,{data: InstallPackBody}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof installPack>>,
+    { data: InstallPackBody }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['installPack'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return installPack(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type InstallPackMutationResult = NonNullable<
+  Awaited<ReturnType<typeof installPack>>
+>;
+export type InstallPackMutationBody = InstallPackBody;
+export type InstallPackMutationError =
+  | Error
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | PayloadTooLargeResponse
+  | InternalServerErrorResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof installPack>>, {data: InstallPackBody}> = (props) => {
-          const {data} = props ?? {};
-
-          return  installPack(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type InstallPackMutationResult = NonNullable<Awaited<ReturnType<typeof installPack>>>
-    export type InstallPackMutationBody = InstallPackBody
-    export type InstallPackMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | PayloadTooLargeResponse | InternalServerErrorResponse
-
-    /**
+/**
  * @summary Install a pack from a bundle file
  */
-export const useInstallPack = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | PayloadTooLargeResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof installPack>>, TError,{data: InstallPackBody}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof installPack>>,
-        TError,
-        {data: InstallPackBody},
-        TContext
-      > => {
+export const useInstallPack = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | PayloadTooLargeResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof installPack>>,
+      TError,
+      { data: InstallPackBody },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof installPack>>,
+  TError,
+  { data: InstallPackBody },
+  TContext
+> => {
+  const mutationOptions = getInstallPackMutationOptions(options);
 
-      const mutationOptions = getInstallPackMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary Uninstall a pack
  */
 export const uninstallPack = (
-    id: string,
-    uninstallPackBody: UninstallPackBody,
- signal?: AbortSignal
+  id: string,
+  uninstallPackBody: UninstallPackBody,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<PackRecord>(
-      {url: `/api/v1/packs/${id}/uninstall`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: uninstallPackBody, signal
-    },
-      );
-    }
-  
+  return apiClient<PackRecord>({
+    url: `/api/v1/packs/${id}/uninstall`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: uninstallPackBody,
+    signal,
+  });
+};
 
+export const getUninstallPackMutationOptions = <
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | Error
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof uninstallPack>>,
+    TError,
+    { id: string; data: UninstallPackBody },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof uninstallPack>>,
+  TError,
+  { id: string; data: UninstallPackBody },
+  TContext
+> => {
+  const mutationKey = ["uninstallPack"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getUninstallPackMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof uninstallPack>>, TError,{id: string;data: UninstallPackBody}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof uninstallPack>>, TError,{id: string;data: UninstallPackBody}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof uninstallPack>>,
+    { id: string; data: UninstallPackBody }
+  > = (props) => {
+    const { id, data } = props ?? {};
 
-const mutationKey = ['uninstallPack'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return uninstallPack(id, data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type UninstallPackMutationResult = NonNullable<
+  Awaited<ReturnType<typeof uninstallPack>>
+>;
+export type UninstallPackMutationBody = UninstallPackBody;
+export type UninstallPackMutationError =
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse
+  | Error
+  | InternalServerErrorResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof uninstallPack>>, {id: string;data: UninstallPackBody}> = (props) => {
-          const {id,data} = props ?? {};
-
-          return  uninstallPack(id,data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type UninstallPackMutationResult = NonNullable<Awaited<ReturnType<typeof uninstallPack>>>
-    export type UninstallPackMutationBody = UninstallPackBody
-    export type UninstallPackMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse
-
-    /**
+/**
  * @summary Uninstall a pack
  */
-export const useUninstallPack = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof uninstallPack>>, TError,{id: string;data: UninstallPackBody}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof uninstallPack>>,
-        TError,
-        {id: string;data: UninstallPackBody},
-        TContext
-      > => {
+export const useUninstallPack = <
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | Error
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof uninstallPack>>,
+      TError,
+      { id: string; data: UninstallPackBody },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof uninstallPack>>,
+  TError,
+  { id: string; data: UninstallPackBody },
+  TContext
+> => {
+  const mutationOptions = getUninstallPackMutationOptions(options);
 
-      const mutationOptions = getUninstallPackMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary Verify a pack's integrity
  */
-export const verifyPack = (
-    id: string,
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<PackVerification>(
-      {url: `/api/v1/packs/${id}/verify`, method: 'POST', signal
-    },
-      );
-    }
-  
+export const verifyPack = (id: string, signal?: AbortSignal) => {
+  return apiClient<PackVerification>({
+    url: `/api/v1/packs/${id}/verify`,
+    method: "POST",
+    signal,
+  });
+};
 
+export const getVerifyPackMutationOptions = <
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof verifyPack>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof verifyPack>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["verifyPack"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getVerifyPackMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyPack>>, TError,{id: string}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof verifyPack>>, TError,{id: string}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof verifyPack>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
 
-const mutationKey = ['verifyPack'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return verifyPack(id);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type VerifyPackMutationResult = NonNullable<
+  Awaited<ReturnType<typeof verifyPack>>
+>;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof verifyPack>>, {id: string}> = (props) => {
-          const {id} = props ?? {};
+export type VerifyPackMutationError =
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse
+  | InternalServerErrorResponse;
 
-          return  verifyPack(id,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type VerifyPackMutationResult = NonNullable<Awaited<ReturnType<typeof verifyPack>>>
-    
-    export type VerifyPackMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse
-
-    /**
+/**
  * @summary Verify a pack's integrity
  */
-export const useVerifyPack = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyPack>>, TError,{id: string}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof verifyPack>>,
-        TError,
-        {id: string},
-        TContext
-      > => {
+export const useVerifyPack = <
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof verifyPack>>,
+      TError,
+      { id: string },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof verifyPack>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationOptions = getVerifyPackMutationOptions(options);
 
-      const mutationOptions = getVerifyPackMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    
+  return useMutation(mutationOptions, queryClient);
+};

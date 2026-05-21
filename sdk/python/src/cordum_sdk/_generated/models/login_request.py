@@ -12,27 +12,22 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="LoginRequest")
 
 
 @_attrs_define
 class LoginRequest:
-    """ 
-        Attributes:
-            username (str):
-            password (str):
-            tenant (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        username (str):
+        password (str):
+        tenant (Union[Unset, str]):
+    """
 
     username: str
     password: str
     tenant: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         username = self.username
@@ -41,19 +36,18 @@ class LoginRequest:
 
         tenant = self.tenant
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "username": username,
-            "password": password,
-        })
+        field_dict.update(
+            {
+                "username": username,
+                "password": password,
+            }
+        )
         if tenant is not UNSET:
             field_dict["tenant"] = tenant
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -69,7 +63,6 @@ class LoginRequest:
             password=password,
             tenant=tenant,
         )
-
 
         login_request.additional_properties = d
         return login_request

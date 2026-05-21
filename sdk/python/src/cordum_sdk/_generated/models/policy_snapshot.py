@@ -17,23 +17,19 @@ from typing import Union
 import datetime
 
 
-
-
-
-
 T = TypeVar("T", bound="PolicySnapshot")
 
 
 @_attrs_define
 class PolicySnapshot:
-    """ 
-        Attributes:
-            id (Union[Unset, str]):
-            note (Union[Unset, str]):
-            author (Union[Unset, str]):
-            created_at (Union[Unset, datetime.datetime]):
-            bundle_ids (Union[List[str], None, Unset]):
-     """
+    """
+    Attributes:
+        id (Union[Unset, str]):
+        note (Union[Unset, str]):
+        author (Union[Unset, str]):
+        created_at (Union[Unset, datetime.datetime]):
+        bundle_ids (Union[List[str], None, Unset]):
+    """
 
     id: Union[Unset, str] = UNSET
     note: Union[Unset, str] = UNSET
@@ -41,7 +37,6 @@ class PolicySnapshot:
     created_at: Union[Unset, datetime.datetime] = UNSET
     bundle_ids: Union[List[str], None, Unset] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         id = self.id
@@ -60,15 +55,12 @@ class PolicySnapshot:
         elif isinstance(self.bundle_ids, list):
             bundle_ids = self.bundle_ids
 
-
         else:
             bundle_ids = self.bundle_ids
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if id is not UNSET:
             field_dict["id"] = id
         if note is not UNSET:
@@ -82,8 +74,6 @@ class PolicySnapshot:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
@@ -95,13 +85,10 @@ class PolicySnapshot:
 
         _created_at = d.pop("created_at", UNSET)
         created_at: Union[Unset, datetime.datetime]
-        if isinstance(_created_at,  Unset):
+        if isinstance(_created_at, Unset):
             created_at = UNSET
         else:
             created_at = isoparse(_created_at)
-
-
-
 
         def _parse_bundle_ids(data: object) -> Union[List[str], None, Unset]:
             if data is None:
@@ -114,12 +101,11 @@ class PolicySnapshot:
                 bundle_ids_type_0 = cast(List[str], data)
 
                 return bundle_ids_type_0
-            except: # noqa: E722
+            except:  # noqa: E722
                 pass
             return cast(Union[List[str], None, Unset], data)
 
         bundle_ids = _parse_bundle_ids(d.pop("bundle_ids", UNSET))
-
 
         policy_snapshot = cls(
             id=id,
@@ -128,7 +114,6 @@ class PolicySnapshot:
             created_at=created_at,
             bundle_ids=bundle_ids,
         )
-
 
         policy_snapshot.additional_properties = d
         return policy_snapshot

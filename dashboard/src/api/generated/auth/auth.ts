@@ -5,10 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import {
-  useMutation,
-  useQuery
-} from '@tanstack/react-query';
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
   DataTag,
   DefinedInitialDataOptions,
@@ -21,8 +18,8 @@ import type {
   UseMutationOptions,
   UseMutationResult,
   UseQueryOptions,
-  UseQueryResult
-} from '@tanstack/react-query';
+  UseQueryResult,
+} from "@tanstack/react-query";
 
 import type {
   AuthConfig,
@@ -42,761 +39,1104 @@ import type {
   RoleRequest,
   ServiceUnavailableResponse,
   TierLimitResponse,
-  UnauthorizedResponse
-} from '.././model';
+  UnauthorizedResponse,
+} from ".././model";
 
-import { apiClient } from '../../client';
-
-
-
+import { apiClient } from "../../client";
 
 /**
  * Returns the authentication methods enabled for the deployment.
  * @summary Get authentication configuration
  */
-export const getAuthConfig = (
-    
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<AuthConfig>(
-      {url: `/api/v1/auth/config`, method: 'GET', signal
-    },
-      );
-    }
-  
-
-
+export const getAuthConfig = (signal?: AbortSignal) => {
+  return apiClient<AuthConfig>({
+    url: `/api/v1/auth/config`,
+    method: "GET",
+    signal,
+  });
+};
 
 export const getGetAuthConfigQueryKey = () => {
-    return [
-    `/api/v1/auth/config`
-    ] as const;
-    }
+  return [`/api/v1/auth/config`] as const;
+};
 
-    
-export const getGetAuthConfigQueryOptions = <TData = Awaited<ReturnType<typeof getAuthConfig>>, TError = InternalServerErrorResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAuthConfig>>, TError, TData>>, }
-) => {
+export const getGetAuthConfigQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAuthConfig>>,
+  TError = InternalServerErrorResponse,
+>(options?: {
+  query?: Partial<
+    UseQueryOptions<Awaited<ReturnType<typeof getAuthConfig>>, TError, TData>
+  >;
+}) => {
+  const { query: queryOptions } = options ?? {};
 
-const {query: queryOptions} = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getGetAuthConfigQueryKey();
 
-  const queryKey =  queryOptions?.queryKey ?? getGetAuthConfigQueryKey();
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getAuthConfig>>> = ({
+    signal,
+  }) => getAuthConfig(signal);
 
-  
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAuthConfig>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAuthConfig>>> = ({ signal }) => getAuthConfig(signal);
+export type GetAuthConfigQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAuthConfig>>
+>;
+export type GetAuthConfigQueryError = InternalServerErrorResponse;
 
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAuthConfig>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetAuthConfigQueryResult = NonNullable<Awaited<ReturnType<typeof getAuthConfig>>>
-export type GetAuthConfigQueryError = InternalServerErrorResponse
-
-
-export function useGetAuthConfig<TData = Awaited<ReturnType<typeof getAuthConfig>>, TError = InternalServerErrorResponse>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAuthConfig>>, TError, TData>> & Pick<
+export function useGetAuthConfig<
+  TData = Awaited<ReturnType<typeof getAuthConfig>>,
+  TError = InternalServerErrorResponse,
+>(
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getAuthConfig>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getAuthConfig>>,
           TError,
           Awaited<ReturnType<typeof getAuthConfig>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetAuthConfig<TData = Awaited<ReturnType<typeof getAuthConfig>>, TError = InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAuthConfig>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetAuthConfig<
+  TData = Awaited<ReturnType<typeof getAuthConfig>>,
+  TError = InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getAuthConfig>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getAuthConfig>>,
           TError,
           Awaited<ReturnType<typeof getAuthConfig>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetAuthConfig<TData = Awaited<ReturnType<typeof getAuthConfig>>, TError = InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAuthConfig>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetAuthConfig<
+  TData = Awaited<ReturnType<typeof getAuthConfig>>,
+  TError = InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getAuthConfig>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Get authentication configuration
  */
 
-export function useGetAuthConfig<TData = Awaited<ReturnType<typeof getAuthConfig>>, TError = InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAuthConfig>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetAuthConfig<
+  TData = Awaited<ReturnType<typeof getAuthConfig>>,
+  TError = InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getAuthConfig>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetAuthConfigQueryOptions(options);
 
-  const queryOptions = getGetAuthConfigQueryOptions(options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * Admin-only endpoint for updating the active Okta/OIDC groups claim and Cordum role mapping. Values are validated, applied to the live provider, and persisted into system/default config.
  * @summary Update OIDC groups-to-roles mapping
  */
 export const updateOIDCGroupRoleMapping = (
-    oIDCGroupRoleMappingUpdateRequest: OIDCGroupRoleMappingUpdateRequest,
- ) => {
-      
-      
-      return apiClient<AuthConfig>(
-      {url: `/api/v1/auth/oidc/group-role-mapping`, method: 'PUT',
-      headers: {'Content-Type': 'application/json', },
-      data: oIDCGroupRoleMappingUpdateRequest
-    },
-      );
-    }
-  
+  oIDCGroupRoleMappingUpdateRequest: OIDCGroupRoleMappingUpdateRequest,
+) => {
+  return apiClient<AuthConfig>({
+    url: `/api/v1/auth/oidc/group-role-mapping`,
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    data: oIDCGroupRoleMappingUpdateRequest,
+  });
+};
 
+export const getUpdateOIDCGroupRoleMappingMutationOptions = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateOIDCGroupRoleMapping>>,
+    TError,
+    { data: OIDCGroupRoleMappingUpdateRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateOIDCGroupRoleMapping>>,
+  TError,
+  { data: OIDCGroupRoleMappingUpdateRequest },
+  TContext
+> => {
+  const mutationKey = ["updateOIDCGroupRoleMapping"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getUpdateOIDCGroupRoleMappingMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateOIDCGroupRoleMapping>>, TError,{data: OIDCGroupRoleMappingUpdateRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof updateOIDCGroupRoleMapping>>, TError,{data: OIDCGroupRoleMappingUpdateRequest}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateOIDCGroupRoleMapping>>,
+    { data: OIDCGroupRoleMappingUpdateRequest }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['updateOIDCGroupRoleMapping'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return updateOIDCGroupRoleMapping(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type UpdateOIDCGroupRoleMappingMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateOIDCGroupRoleMapping>>
+>;
+export type UpdateOIDCGroupRoleMappingMutationBody =
+  OIDCGroupRoleMappingUpdateRequest;
+export type UpdateOIDCGroupRoleMappingMutationError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | InternalServerErrorResponse
+  | ServiceUnavailableResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateOIDCGroupRoleMapping>>, {data: OIDCGroupRoleMappingUpdateRequest}> = (props) => {
-          const {data} = props ?? {};
-
-          return  updateOIDCGroupRoleMapping(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type UpdateOIDCGroupRoleMappingMutationResult = NonNullable<Awaited<ReturnType<typeof updateOIDCGroupRoleMapping>>>
-    export type UpdateOIDCGroupRoleMappingMutationBody = OIDCGroupRoleMappingUpdateRequest
-    export type UpdateOIDCGroupRoleMappingMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse | ServiceUnavailableResponse
-
-    /**
+/**
  * @summary Update OIDC groups-to-roles mapping
  */
-export const useUpdateOIDCGroupRoleMapping = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateOIDCGroupRoleMapping>>, TError,{data: OIDCGroupRoleMappingUpdateRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof updateOIDCGroupRoleMapping>>,
-        TError,
-        {data: OIDCGroupRoleMappingUpdateRequest},
-        TContext
-      > => {
+export const useUpdateOIDCGroupRoleMapping = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof updateOIDCGroupRoleMapping>>,
+      TError,
+      { data: OIDCGroupRoleMappingUpdateRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof updateOIDCGroupRoleMapping>>,
+  TError,
+  { data: OIDCGroupRoleMappingUpdateRequest },
+  TContext
+> => {
+  const mutationOptions = getUpdateOIDCGroupRoleMappingMutationOptions(options);
 
-      const mutationOptions = getUpdateOIDCGroupRoleMappingMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary Authenticate with username and password
  */
-export const login = (
-    loginRequest: LoginRequest,
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<LoginResponse>(
-      {url: `/api/v1/auth/login`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: loginRequest, signal
-    },
-      );
-    }
-  
+export const login = (loginRequest: LoginRequest, signal?: AbortSignal) => {
+  return apiClient<LoginResponse>({
+    url: `/api/v1/auth/login`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: loginRequest,
+    signal,
+  });
+};
 
+export const getLoginMutationOptions = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | RateLimitedResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof login>>,
+    TError,
+    { data: LoginRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof login>>,
+  TError,
+  { data: LoginRequest },
+  TContext
+> => {
+  const mutationKey = ["login"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getLoginMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | RateLimitedResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof login>>, TError,{data: LoginRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof login>>, TError,{data: LoginRequest}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof login>>,
+    { data: LoginRequest }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['login'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return login(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type LoginMutationResult = NonNullable<
+  Awaited<ReturnType<typeof login>>
+>;
+export type LoginMutationBody = LoginRequest;
+export type LoginMutationError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | RateLimitedResponse
+  | InternalServerErrorResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof login>>, {data: LoginRequest}> = (props) => {
-          const {data} = props ?? {};
-
-          return  login(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type LoginMutationResult = NonNullable<Awaited<ReturnType<typeof login>>>
-    export type LoginMutationBody = LoginRequest
-    export type LoginMutationError = BadRequestResponse | UnauthorizedResponse | RateLimitedResponse | InternalServerErrorResponse
-
-    /**
+/**
  * @summary Authenticate with username and password
  */
-export const useLogin = <TError = BadRequestResponse | UnauthorizedResponse | RateLimitedResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof login>>, TError,{data: LoginRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof login>>,
-        TError,
-        {data: LoginRequest},
-        TContext
-      > => {
+export const useLogin = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | RateLimitedResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof login>>,
+      TError,
+      { data: LoginRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof login>>,
+  TError,
+  { data: LoginRequest },
+  TContext
+> => {
+  const mutationOptions = getLoginMutationOptions(options);
 
-      const mutationOptions = getLoginMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * Returns the authenticated user and token metadata.
  * @summary Get current session
  */
-export const getSession = (
-    
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<LoginResponse>(
-      {url: `/api/v1/auth/session`, method: 'GET', signal
-    },
-      );
-    }
-  
-
-
+export const getSession = (signal?: AbortSignal) => {
+  return apiClient<LoginResponse>({
+    url: `/api/v1/auth/session`,
+    method: "GET",
+    signal,
+  });
+};
 
 export const getGetSessionQueryKey = () => {
-    return [
-    `/api/v1/auth/session`
-    ] as const;
-    }
+  return [`/api/v1/auth/session`] as const;
+};
 
-    
-export const getGetSessionQueryOptions = <TData = Awaited<ReturnType<typeof getSession>>, TError = UnauthorizedResponse | InternalServerErrorResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSession>>, TError, TData>>, }
-) => {
+export const getGetSessionQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSession>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(options?: {
+  query?: Partial<
+    UseQueryOptions<Awaited<ReturnType<typeof getSession>>, TError, TData>
+  >;
+}) => {
+  const { query: queryOptions } = options ?? {};
 
-const {query: queryOptions} = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getGetSessionQueryKey();
 
-  const queryKey =  queryOptions?.queryKey ?? getGetSessionQueryKey();
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getSession>>> = ({
+    signal,
+  }) => getSession(signal);
 
-  
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSession>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSession>>> = ({ signal }) => getSession(signal);
+export type GetSessionQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSession>>
+>;
+export type GetSessionQueryError =
+  | UnauthorizedResponse
+  | InternalServerErrorResponse;
 
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSession>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetSessionQueryResult = NonNullable<Awaited<ReturnType<typeof getSession>>>
-export type GetSessionQueryError = UnauthorizedResponse | InternalServerErrorResponse
-
-
-export function useGetSession<TData = Awaited<ReturnType<typeof getSession>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSession>>, TError, TData>> & Pick<
+export function useGetSession<
+  TData = Awaited<ReturnType<typeof getSession>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getSession>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getSession>>,
           TError,
           Awaited<ReturnType<typeof getSession>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetSession<TData = Awaited<ReturnType<typeof getSession>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSession>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetSession<
+  TData = Awaited<ReturnType<typeof getSession>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getSession>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getSession>>,
           TError,
           Awaited<ReturnType<typeof getSession>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetSession<TData = Awaited<ReturnType<typeof getSession>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSession>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetSession<
+  TData = Awaited<ReturnType<typeof getSession>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getSession>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Get current session
  */
 
-export function useGetSession<TData = Awaited<ReturnType<typeof getSession>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSession>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetSession<
+  TData = Awaited<ReturnType<typeof getSession>>,
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getSession>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetSessionQueryOptions(options);
 
-  const queryOptions = getGetSessionQueryOptions(options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
 
+/**
+ * @summary Logout and invalidate session
+ */
+export const logout = (signal?: AbortSignal) => {
+  return apiClient<void>({
+    url: `/api/v1/auth/logout`,
+    method: "POST",
+    signal,
+  });
+};
 
+export const getLogoutMutationOptions = <
+  TError = UnauthorizedResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof logout>>,
+    TError,
+    void,
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof logout>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["logout"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof logout>>,
+    void
+  > = () => {
+    return logout();
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type LogoutMutationResult = NonNullable<
+  Awaited<ReturnType<typeof logout>>
+>;
+
+export type LogoutMutationError = UnauthorizedResponse;
 
 /**
  * @summary Logout and invalidate session
  */
-export const logout = (
-    
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<void>(
-      {url: `/api/v1/auth/logout`, method: 'POST', signal
-    },
-      );
-    }
-  
+export const useLogout = <TError = UnauthorizedResponse, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof logout>>,
+      TError,
+      void,
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof logout>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationOptions = getLogoutMutationOptions(options);
 
-
-export const getLogoutMutationOptions = <TError = UnauthorizedResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof logout>>, TError,void, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof logout>>, TError,void, TContext> => {
-
-const mutationKey = ['logout'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
-
-      
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof logout>>, void> = () => {
-          
-
-          return  logout()
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type LogoutMutationResult = NonNullable<Awaited<ReturnType<typeof logout>>>
-    
-    export type LogoutMutationError = UnauthorizedResponse
-
-    /**
- * @summary Logout and invalidate session
- */
-export const useLogout = <TError = UnauthorizedResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof logout>>, TError,void, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof logout>>,
-        TError,
-        void,
-        TContext
-      > => {
-
-      const mutationOptions = getLogoutMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary Change own password
  */
 export const changeOwnPassword = (
-    changePasswordRequest: ChangePasswordRequest,
- signal?: AbortSignal
+  changePasswordRequest: ChangePasswordRequest,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<void>(
-      {url: `/api/v1/auth/password`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: changePasswordRequest, signal
-    },
-      );
-    }
-  
+  return apiClient<void>({
+    url: `/api/v1/auth/password`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: changePasswordRequest,
+    signal,
+  });
+};
 
+export const getChangeOwnPasswordMutationOptions = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof changeOwnPassword>>,
+    TError,
+    { data: ChangePasswordRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof changeOwnPassword>>,
+  TError,
+  { data: ChangePasswordRequest },
+  TContext
+> => {
+  const mutationKey = ["changeOwnPassword"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getChangeOwnPasswordMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof changeOwnPassword>>, TError,{data: ChangePasswordRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof changeOwnPassword>>, TError,{data: ChangePasswordRequest}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof changeOwnPassword>>,
+    { data: ChangePasswordRequest }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['changeOwnPassword'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return changeOwnPassword(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type ChangeOwnPasswordMutationResult = NonNullable<
+  Awaited<ReturnType<typeof changeOwnPassword>>
+>;
+export type ChangeOwnPasswordMutationBody = ChangePasswordRequest;
+export type ChangeOwnPasswordMutationError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | InternalServerErrorResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof changeOwnPassword>>, {data: ChangePasswordRequest}> = (props) => {
-          const {data} = props ?? {};
-
-          return  changeOwnPassword(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type ChangeOwnPasswordMutationResult = NonNullable<Awaited<ReturnType<typeof changeOwnPassword>>>
-    export type ChangeOwnPasswordMutationBody = ChangePasswordRequest
-    export type ChangeOwnPasswordMutationError = BadRequestResponse | UnauthorizedResponse | InternalServerErrorResponse
-
-    /**
+/**
  * @summary Change own password
  */
-export const useChangeOwnPassword = <TError = BadRequestResponse | UnauthorizedResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof changeOwnPassword>>, TError,{data: ChangePasswordRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof changeOwnPassword>>,
-        TError,
-        {data: ChangePasswordRequest},
-        TContext
-      > => {
+export const useChangeOwnPassword = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof changeOwnPassword>>,
+      TError,
+      { data: ChangePasswordRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof changeOwnPassword>>,
+  TError,
+  { data: ChangePasswordRequest },
+  TContext
+> => {
+  const mutationOptions = getChangeOwnPasswordMutationOptions(options);
 
-      const mutationOptions = getChangeOwnPasswordMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary List RBAC roles
  */
-export const listRoles = (
-    
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<RoleListResponse>(
-      {url: `/api/v1/auth/roles`, method: 'GET', signal
-    },
-      );
-    }
-  
-
-
+export const listRoles = (signal?: AbortSignal) => {
+  return apiClient<RoleListResponse>({
+    url: `/api/v1/auth/roles`,
+    method: "GET",
+    signal,
+  });
+};
 
 export const getListRolesQueryKey = () => {
-    return [
-    `/api/v1/auth/roles`
-    ] as const;
-    }
+  return [`/api/v1/auth/roles`] as const;
+};
 
-    
-export const getListRolesQueryOptions = <TData = Awaited<ReturnType<typeof listRoles>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRoles>>, TError, TData>>, }
-) => {
+export const getListRolesQueryOptions = <
+  TData = Awaited<ReturnType<typeof listRoles>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(options?: {
+  query?: Partial<
+    UseQueryOptions<Awaited<ReturnType<typeof listRoles>>, TError, TData>
+  >;
+}) => {
+  const { query: queryOptions } = options ?? {};
 
-const {query: queryOptions} = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getListRolesQueryKey();
 
-  const queryKey =  queryOptions?.queryKey ?? getListRolesQueryKey();
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listRoles>>> = ({
+    signal,
+  }) => listRoles(signal);
 
-  
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listRoles>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listRoles>>> = ({ signal }) => listRoles(signal);
+export type ListRolesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listRoles>>
+>;
+export type ListRolesQueryError =
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | ServiceUnavailableResponse;
 
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listRoles>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type ListRolesQueryResult = NonNullable<Awaited<ReturnType<typeof listRoles>>>
-export type ListRolesQueryError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse
-
-
-export function useListRoles<TData = Awaited<ReturnType<typeof listRoles>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRoles>>, TError, TData>> & Pick<
+export function useListRoles<
+  TData = Awaited<ReturnType<typeof listRoles>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listRoles>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listRoles>>,
           TError,
           Awaited<ReturnType<typeof listRoles>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListRoles<TData = Awaited<ReturnType<typeof listRoles>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRoles>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListRoles<
+  TData = Awaited<ReturnType<typeof listRoles>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listRoles>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listRoles>>,
           TError,
           Awaited<ReturnType<typeof listRoles>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListRoles<TData = Awaited<ReturnType<typeof listRoles>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRoles>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListRoles<
+  TData = Awaited<ReturnType<typeof listRoles>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listRoles>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary List RBAC roles
  */
 
-export function useListRoles<TData = Awaited<ReturnType<typeof listRoles>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listRoles>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useListRoles<
+  TData = Awaited<ReturnType<typeof listRoles>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listRoles>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListRolesQueryOptions(options);
 
-  const queryOptions = getListRolesQueryOptions(options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
 
-
-
-
 /**
  * @summary Get a single RBAC role
  */
-export const getRole = (
-    name: string,
- signal?: AbortSignal
+export const getRole = (name: string, signal?: AbortSignal) => {
+  return apiClient<RoleDetailResponse>({
+    url: `/api/v1/auth/roles/${name}`,
+    method: "GET",
+    signal,
+  });
+};
+
+export const getGetRoleQueryKey = (name?: string) => {
+  return [`/api/v1/auth/roles/${name}`] as const;
+};
+
+export const getGetRoleQueryOptions = <
+  TData = Awaited<ReturnType<typeof getRole>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  name: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getRole>>, TError, TData>
+    >;
+  },
 ) => {
-      
-      
-      return apiClient<RoleDetailResponse>(
-      {url: `/api/v1/auth/roles/${name}`, method: 'GET', signal
-    },
-      );
-    }
-  
+  const { query: queryOptions } = options ?? {};
 
+  const queryKey = queryOptions?.queryKey ?? getGetRoleQueryKey(name);
 
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getRole>>> = ({
+    signal,
+  }) => getRole(name, signal);
 
-export const getGetRoleQueryKey = (name?: string,) => {
-    return [
-    `/api/v1/auth/roles/${name}`
-    ] as const;
-    }
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!name,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof getRole>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData>;
+  };
+};
 
-    
-export const getGetRoleQueryOptions = <TData = Awaited<ReturnType<typeof getRole>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRole>>, TError, TData>>, }
-) => {
+export type GetRoleQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getRole>>
+>;
+export type GetRoleQueryError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse
+  | ServiceUnavailableResponse;
 
-const {query: queryOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetRoleQueryKey(name);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getRole>>> = ({ signal }) => getRole(name, signal);
-
-      
-
-      
-
-   return  { queryKey, queryFn, enabled: !!(name), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getRole>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetRoleQueryResult = NonNullable<Awaited<ReturnType<typeof getRole>>>
-export type GetRoleQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse
-
-
-export function useGetRole<TData = Awaited<ReturnType<typeof getRole>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- name: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRole>>, TError, TData>> & Pick<
+export function useGetRole<
+  TData = Awaited<ReturnType<typeof getRole>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  name: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getRole>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getRole>>,
           TError,
           Awaited<ReturnType<typeof getRole>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetRole<TData = Awaited<ReturnType<typeof getRole>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRole>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetRole<
+  TData = Awaited<ReturnType<typeof getRole>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  name: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getRole>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getRole>>,
           TError,
           Awaited<ReturnType<typeof getRole>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetRole<TData = Awaited<ReturnType<typeof getRole>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRole>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetRole<
+  TData = Awaited<ReturnType<typeof getRole>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  name: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getRole>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Get a single RBAC role
  */
 
-export function useGetRole<TData = Awaited<ReturnType<typeof getRole>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getRole>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetRole<
+  TData = Awaited<ReturnType<typeof getRole>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  name: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getRole>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetRoleQueryOptions(name, options);
 
-  const queryOptions = getGetRoleQueryOptions(name,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
 
+/**
+ * @summary Create or update an RBAC role
+ */
+export const putRole = (name: string, roleRequest: RoleRequest) => {
+  return apiClient<PutRole200>({
+    url: `/api/v1/auth/roles/${name}`,
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    data: roleRequest,
+  });
+};
 
+export const getPutRoleMutationOptions = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | TierLimitResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof putRole>>,
+    TError,
+    { name: string; data: RoleRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof putRole>>,
+  TError,
+  { name: string; data: RoleRequest },
+  TContext
+> => {
+  const mutationKey = ["putRole"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof putRole>>,
+    { name: string; data: RoleRequest }
+  > = (props) => {
+    const { name, data } = props ?? {};
+
+    return putRole(name, data);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PutRoleMutationResult = NonNullable<
+  Awaited<ReturnType<typeof putRole>>
+>;
+export type PutRoleMutationBody = RoleRequest;
+export type PutRoleMutationError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | TierLimitResponse
+  | ServiceUnavailableResponse;
 
 /**
  * @summary Create or update an RBAC role
  */
-export const putRole = (
-    name: string,
-    roleRequest: RoleRequest,
- ) => {
-      
-      
-      return apiClient<PutRole200>(
-      {url: `/api/v1/auth/roles/${name}`, method: 'PUT',
-      headers: {'Content-Type': 'application/json', },
-      data: roleRequest
-    },
-      );
-    }
-  
+export const usePutRole = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | TierLimitResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof putRole>>,
+      TError,
+      { name: string; data: RoleRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof putRole>>,
+  TError,
+  { name: string; data: RoleRequest },
+  TContext
+> => {
+  const mutationOptions = getPutRoleMutationOptions(options);
 
-
-export const getPutRoleMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | TierLimitResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof putRole>>, TError,{name: string;data: RoleRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof putRole>>, TError,{name: string;data: RoleRequest}, TContext> => {
-
-const mutationKey = ['putRole'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
-
-      
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof putRole>>, {name: string;data: RoleRequest}> = (props) => {
-          const {name,data} = props ?? {};
-
-          return  putRole(name,data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type PutRoleMutationResult = NonNullable<Awaited<ReturnType<typeof putRole>>>
-    export type PutRoleMutationBody = RoleRequest
-    export type PutRoleMutationError = BadRequestResponse | UnauthorizedResponse | TierLimitResponse | ServiceUnavailableResponse
-
-    /**
- * @summary Create or update an RBAC role
- */
-export const usePutRole = <TError = BadRequestResponse | UnauthorizedResponse | TierLimitResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof putRole>>, TError,{name: string;data: RoleRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof putRole>>,
-        TError,
-        {name: string;data: RoleRequest},
-        TContext
-      > => {
-
-      const mutationOptions = getPutRoleMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary Delete a custom RBAC role
  */
-export const deleteRole = (
-    name: string,
- ) => {
-      
-      
-      return apiClient<DeleteRole200>(
-      {url: `/api/v1/auth/roles/${name}`, method: 'DELETE'
-    },
-      );
-    }
-  
+export const deleteRole = (name: string) => {
+  return apiClient<DeleteRole200>({
+    url: `/api/v1/auth/roles/${name}`,
+    method: "DELETE",
+  });
+};
 
+export const getDeleteRoleMutationOptions = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | TierLimitResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteRole>>,
+    TError,
+    { name: string },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteRole>>,
+  TError,
+  { name: string },
+  TContext
+> => {
+  const mutationKey = ["deleteRole"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getDeleteRoleMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | TierLimitResponse | NotFoundResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteRole>>, TError,{name: string}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof deleteRole>>, TError,{name: string}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteRole>>,
+    { name: string }
+  > = (props) => {
+    const { name } = props ?? {};
 
-const mutationKey = ['deleteRole'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return deleteRole(name);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type DeleteRoleMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteRole>>
+>;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteRole>>, {name: string}> = (props) => {
-          const {name} = props ?? {};
+export type DeleteRoleMutationError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | TierLimitResponse
+  | NotFoundResponse
+  | ServiceUnavailableResponse;
 
-          return  deleteRole(name,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type DeleteRoleMutationResult = NonNullable<Awaited<ReturnType<typeof deleteRole>>>
-    
-    export type DeleteRoleMutationError = BadRequestResponse | UnauthorizedResponse | TierLimitResponse | NotFoundResponse | ServiceUnavailableResponse
-
-    /**
+/**
  * @summary Delete a custom RBAC role
  */
-export const useDeleteRole = <TError = BadRequestResponse | UnauthorizedResponse | TierLimitResponse | NotFoundResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteRole>>, TError,{name: string}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof deleteRole>>,
-        TError,
-        {name: string},
-        TContext
-      > => {
+export const useDeleteRole = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | TierLimitResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof deleteRole>>,
+      TError,
+      { name: string },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof deleteRole>>,
+  TError,
+  { name: string },
+  TContext
+> => {
+  const mutationOptions = getDeleteRoleMutationOptions(options);
 
-      const mutationOptions = getDeleteRoleMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    
+  return useMutation(mutationOptions, queryClient);
+};

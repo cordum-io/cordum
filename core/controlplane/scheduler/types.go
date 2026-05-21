@@ -149,6 +149,7 @@ const (
 	JobStateScheduled   = model.JobStateScheduled
 	JobStateDispatched  = model.JobStateDispatched
 	JobStateRunning     = model.JobStateRunning
+	JobStateRetrying    = model.JobStateRetrying
 	JobStateSucceeded   = model.JobStateSucceeded
 	JobStateFailed      = model.JobStateFailed
 	JobStateCancelled   = model.JobStateCancelled

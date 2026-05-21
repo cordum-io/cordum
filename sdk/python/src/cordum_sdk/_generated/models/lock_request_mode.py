@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class LockRequestMode(str, Enum):
     EXCLUSIVE = "EXCLUSIVE"
     SHARED = "SHARED"

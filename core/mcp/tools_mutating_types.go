@@ -19,18 +19,18 @@ package mcp
 // `spec` object. An earlier version of this tool wrapped everything
 // under `spec` and the gateway silently dropped it (QA reopen).
 type CreateWorkflowInput struct {
-	ID             string             `json:"id,omitempty"`
-	Name           string             `json:"name,omitempty"`
-	Description    string             `json:"description,omitempty"`
-	OrgID          string             `json:"org_id,omitempty"`
-	TeamID         string             `json:"team_id,omitempty"`
-	Version        string             `json:"version,omitempty"`
-	TimeoutSec     int64              `json:"timeout_sec,omitempty"`
-	Steps          map[string]any     `json:"steps"`
-	Config         map[string]any     `json:"config,omitempty"`
-	Parameters     []map[string]any   `json:"parameters,omitempty"`
-	InputSchema    map[string]any     `json:"input_schema,omitempty"`
-	IdempotencyKey string             `json:"idempotency_key,omitempty"`
+	ID             string           `json:"id,omitempty"`
+	Name           string           `json:"name,omitempty"`
+	Description    string           `json:"description,omitempty"`
+	OrgID          string           `json:"org_id,omitempty"`
+	TeamID         string           `json:"team_id,omitempty"`
+	Version        string           `json:"version,omitempty"`
+	TimeoutSec     int64            `json:"timeout_sec,omitempty"`
+	Steps          map[string]any   `json:"steps"`
+	Config         map[string]any   `json:"config,omitempty"`
+	Parameters     []map[string]any `json:"parameters,omitempty"`
+	InputSchema    map[string]any   `json:"input_schema,omitempty"`
+	IdempotencyKey string           `json:"idempotency_key,omitempty"`
 }
 
 type CreateWorkflowOutput struct {
@@ -89,7 +89,10 @@ type RegisterAgentInput struct {
 	RiskTier            string   `json:"risk_tier"`
 	AllowedTopics       []string `json:"allowed_topics,omitempty"`
 	AllowedPools        []string `json:"allowed_pools,omitempty"`
+	AllowedServers      []string `json:"allowed_servers,omitempty"`
 	AllowedTools        []string `json:"allowed_tools,omitempty"`
+	AllowedResources    []string `json:"allowed_resources,omitempty"`
+	Entitlements        []string `json:"entitlements,omitempty"`
 	DataClassifications []string `json:"data_classifications,omitempty"`
 	IdempotencyKey      string   `json:"idempotency_key,omitempty"`
 }
@@ -147,6 +150,9 @@ type SetAgentScopeInput struct {
 	AllowedTools             []string `json:"allowed_tools,omitempty"`
 	AllowedTopics            []string `json:"allowed_topics,omitempty"`
 	AllowedPools             []string `json:"allowed_pools,omitempty"`
+	AllowedServers           []string `json:"allowed_servers,omitempty"`
+	AllowedResources         []string `json:"allowed_resources,omitempty"`
+	Entitlements             []string `json:"entitlements,omitempty"`
 	DataClassifications      []string `json:"data_classifications,omitempty"`
 	PreapprovedMutatingTools []string `json:"preapproved_mutating_tools,omitempty"`
 	Status                   string   `json:"status,omitempty"`
@@ -158,6 +164,9 @@ type SetAgentScopeOutput struct {
 	AllowedTools             []string `json:"allowed_tools,omitempty"`
 	AllowedTopics            []string `json:"allowed_topics,omitempty"`
 	AllowedPools             []string `json:"allowed_pools,omitempty"`
+	AllowedServers           []string `json:"allowed_servers,omitempty"`
+	AllowedResources         []string `json:"allowed_resources,omitempty"`
+	Entitlements             []string `json:"entitlements,omitempty"`
 	DataClassifications      []string `json:"data_classifications,omitempty"`
 	PreapprovedMutatingTools []string `json:"preapproved_mutating_tools,omitempty"`
 	Status                   string   `json:"status,omitempty"`

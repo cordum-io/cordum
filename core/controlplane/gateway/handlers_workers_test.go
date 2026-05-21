@@ -119,6 +119,7 @@ func TestHandleGetWorker_NotFound(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
 	}
+	requireStableErrorCode(t, rec, http.StatusNotFound, "WORKER_NOT_FOUND")
 }
 
 func TestHandleGetWorker_EmptyID(t *testing.T) {
@@ -132,6 +133,7 @@ func TestHandleGetWorker_EmptyID(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
 	}
+	requireStableErrorCode(t, rec, http.StatusBadRequest, "WORKER_SESSION_INVALID")
 }
 
 func TestHandleGetWorker_FallbackToInMemory(t *testing.T) {
@@ -207,6 +209,7 @@ func TestHandleGetWorkerJobs_NotFound(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
 	}
+	requireStableErrorCode(t, rec, http.StatusNotFound, "WORKER_NOT_FOUND")
 }
 
 func TestHandleListPools(t *testing.T) {
@@ -345,6 +348,7 @@ func TestHandleGetPool_NotFound(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
 	}
+	requireStableErrorCode(t, rec, http.StatusNotFound, "POOL_NOT_FOUND")
 }
 
 func TestPoolUtilization(t *testing.T) {

@@ -531,7 +531,7 @@ func (s *RedisUserStore) Delete(ctx context.Context, id string) error {
 		pipe.Del(ctx, userEmailKey(user.Tenant, user.Email))
 	}
 	// Remove from tenant index so the user no longer appears in listings.
-	pipe.SRem(ctx, userTenantIndexPrefix+user.Tenant, user.Username)
+	pipe.SRem(ctx, userTenantIndexPrefix+user.Tenant, user.ID)
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("redis soft-delete user: %w", err)
 	}

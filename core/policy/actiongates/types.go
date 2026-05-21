@@ -21,7 +21,7 @@ const (
 
 // Decision Codes carried on ActionGateDecision. These map to HTTP status at
 // the gateway boundary; do not invent new codes without updating the mapping
-// in handlers_edge_errors.go.
+// in core/controlplane/gateway/actiongates_http.go.
 const (
 	CodeUnauthorized       = "unauthorized"
 	CodeAccessDenied       = "access_denied"
@@ -29,24 +29,36 @@ const (
 	CodeConflict           = "conflict"
 	CodeInternalError      = "internal_error"
 	CodeServiceUnavailable = "service_unavailable"
-	CodeRequireHuman       = "require_human"
+	// CodeResolverError maps DNS validation failures to HTTP 503 at the
+	// gateway boundary; URLGate uses it to fail closed on uncertain hosts.
+	CodeResolverError = "RESOLVER_ERROR"
+	CodeRequireHuman  = "require_human"
 )
 
 // ActionGateDecision is the output of a single gate. A zero-value decision
 // (Decision == DECISION_TYPE_UNSPECIFIED) indicates the gate did not fire and
-// the pipeline continues. A populated Decision short-circuits the pipeline.
+// the pipeline continues. A populated non-allow Decision short-circuits the
+// pipeline. Production action gates are blockers / approval checks: they allow,
+// deny, throttle, or require human approval, but they do not emit enforceable
+// runtime constraints.
 //
 // Reason MUST be sanitized for user/client display. SubReason is for audit
 // only and may carry the internal "why" (e.g. "approval_consumed",
 // "self_approval", "cross_tenant"). Extra holds non-PII gate-specific
 // breadcrumbs (gate, sub_reason, sanitized target_type) for SIEM.
+//
+// Constraints is reserved for non-production/test adapters or a future typed
+// action-gate design. Production action gates must not populate it or imply
+// that generic map entries are enforced; typed runtime constraints are owned
+// by policy bundles and SafetyKernel PolicyConstraints.
 type ActionGateDecision struct {
-	Decision  pb.DecisionType
-	GateID    string
-	Code      string
-	Reason    string
-	SubReason string
-	Extra     map[string]string
+	Decision    pb.DecisionType
+	GateID      string
+	Code        string
+	Reason      string
+	SubReason   string
+	Extra       map[string]string
+	Constraints map[string]any
 }
 
 // Fired reports whether the gate produced a real outcome. Gates that don't
@@ -74,11 +86,18 @@ type ActionGate interface {
 	Evaluate(ctx context.Context, input *config.PolicyInput) ActionGateDecision
 }
 
-// ApprovalLookup resolves a CanonicalActionHash (or scoped tenant key) to the
-// most recent matching Cordum EdgeApproval record. Implementations MUST be
-// safe for concurrent use and MUST respect ctx cancellation. A miss is
-// signalled by (nil, false, nil); errors propagate as (nil, false, err).
+// ApprovalLookup resolves Cordum EdgeApproval records for action gates.
+// Authorization gates MUST resolve the caller-supplied approval_ref with
+// LookupByApprovalRef, then compare the returned record's ActionHash against
+// CanonicalActionHash(input.Action) before allowing. LookupByActionHash is kept
+// for explicit audit / legacy lookup needs and must not be used as a substitute
+// for binding a user-supplied approval_ref. Implementations MUST be safe for
+// concurrent use and MUST respect ctx cancellation. A miss is signalled by
+// (nil, false, nil); errors propagate as (nil, false, err) and gates fail
+// closed. Lookup methods must not consume approvals; single-use mutation is
+// owned by the Edge approval claim/CAS path at execute time.
 type ApprovalLookup interface {
+	LookupByApprovalRef(ctx context.Context, tenant string, approvalRef string) (*edge.EdgeApproval, bool, error)
 	LookupByActionHash(ctx context.Context, tenant string, actionHash string) (*edge.EdgeApproval, bool, error)
 }
 

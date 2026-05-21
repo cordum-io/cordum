@@ -101,6 +101,8 @@ paths:
   /api/v1/auth/oidc/group-role-mapping:
     put:
       operationId: updateOIDCGroupRoleMapping
+      x-cordum-error-codes:
+      - AUTH_OIDC_CALLBACK_FAILED
       summary: Update OIDC groups-to-roles mapping
       description: Admin-only endpoint for updating the active Okta/OIDC groups claim and Cordum role mapping. Values are validated, applied to the live provider, and persisted into system/default config.
       tags:
@@ -133,6 +135,8 @@ paths:
   /api/v1/auth/login:
     post:
       operationId: login
+      x-cordum-error-codes:
+      - AUTH_INVALID_CREDENTIALS
       summary: Authenticate with username and password
       tags:
       - Auth
@@ -161,6 +165,8 @@ paths:
   /api/v1/auth/session:
     get:
       operationId: getSession
+      x-cordum-error-codes:
+      - AUTH_TOKEN_INVALID
       summary: Get current session
       description: Returns the authenticated user and token metadata.
       tags:
@@ -194,6 +200,11 @@ paths:
   /api/v1/auth/password:
     post:
       operationId: changeOwnPassword
+      x-cordum-error-codes:
+      - AUTH_REQUEST_INVALID
+      - AUTH_INVALID_CREDENTIALS
+      - AUTH_PASSWORD_INVALID
+      - AUTH_USER_NOT_FOUND
       summary: Change own password
       tags:
       - Auth
@@ -217,6 +228,9 @@ paths:
   /api/v1/users:
     post:
       operationId: createUser
+      x-cordum-error-codes:
+      - AUTH_REQUEST_INVALID
+      - AUTH_USER_CONFLICT
       summary: Create a user
       tags:
       - Users
@@ -247,6 +261,9 @@ paths:
           $ref: '#/components/responses/InternalServerError'
     get:
       operationId: listUsers
+      x-cordum-error-codes:
+      - AUTH_TOKEN_INVALID
+      - AUTH_REQUEST_INVALID
       summary: List all users
       tags:
       - Users
@@ -278,6 +295,9 @@ paths:
     - $ref: '#/components/parameters/TenantID'
     put:
       operationId: updateUser
+      x-cordum-error-codes:
+      - AUTH_REQUEST_INVALID
+      - AUTH_USER_NOT_FOUND
       summary: Update a user
       tags:
       - Users
@@ -306,6 +326,9 @@ paths:
           $ref: '#/components/responses/InternalServerError'
     delete:
       operationId: deleteUser
+      x-cordum-error-codes:
+      - AUTH_REQUEST_INVALID
+      - AUTH_USER_NOT_FOUND
       summary: Delete a user
       tags:
       - Users
@@ -323,6 +346,10 @@ paths:
   /api/v1/users/{id}/password:
     post:
       operationId: resetUserPassword
+      x-cordum-error-codes:
+      - AUTH_REQUEST_INVALID
+      - AUTH_PASSWORD_INVALID
+      - AUTH_USER_NOT_FOUND
       summary: Reset a user's password (admin)
       tags:
       - Users
@@ -384,6 +411,8 @@ paths:
           $ref: '#/components/responses/InternalServerError'
     post:
       operationId: createAPIKey
+      x-cordum-error-codes:
+      - AUTH_KEY_INVALID
       summary: Create an API key
       description: 'The raw secret is returned **only once** in the response. Store it
 
@@ -418,6 +447,9 @@ paths:
   /api/v1/auth/keys/{id}:
     delete:
       operationId: deleteAPIKey
+      x-cordum-error-codes:
+      - AUTH_KEY_INVALID
+      - AUTH_KEY_NOT_FOUND
       summary: Revoke an API key
       tags:
       - APIKeys
@@ -1142,6 +1174,257 @@ paths:
           $ref: '#/components/responses/EdgeServiceUnavailable'
         '500':
           $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/mcp/upstreams:
+    get:
+      operationId: listEdgeMCPUpstreams
+      summary: List approved upstream MCP servers
+      description: Lists tenant-scoped upstream MCP registry entries plus system-wide entries. Secret material is never resolved; `auth_secret_ref` is returned only as a redacted `secret://` reference.
+      tags:
+      - Edge
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: enabled
+        in: query
+        required: false
+        schema:
+          type: boolean
+        description: Optional visibility filter. Omit to return enabled and disabled records for admin visibility.
+      responses:
+        '200':
+          description: Upstream MCP registry entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPUpstreamListResponse'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+    post:
+      operationId: createEdgeMCPUpstream
+      summary: Create or validate an upstream MCP server entry
+      description: Creates a tenant-scoped upstream MCP registry entry. With `validate_only=true`, validates the entry without storing it and returns a validation verdict. Raw secrets are rejected; use `secret://` auth references.
+      tags:
+      - Edge
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: validate_only
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MCPUpstreamServerWriteRequest'
+      responses:
+        '200':
+          description: Validation-only verdict when `validate_only=true`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPUpstreamValidationResponse'
+        '201':
+          description: Upstream MCP registry entry created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPUpstreamServer'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '409':
+          $ref: '#/components/responses/EdgeConflict'
+        '413':
+          $ref: '#/components/responses/EdgePayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/EdgeConflict'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/mcp/upstreams/list:
+    get:
+      operationId: listEdgeMCPUpstreamsLegacy
+      summary: List approved upstream MCP servers (compatibility path)
+      description: Compatibility alias for `GET /api/v1/edge/mcp/upstreams`.
+      tags:
+      - Edge
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: enabled
+        in: query
+        required: false
+        schema:
+          type: boolean
+        description: Optional visibility filter. Omit to return enabled and disabled records for admin visibility.
+      responses:
+        '200':
+          description: Upstream MCP registry entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPUpstreamListResponse'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/mcp/upstreams/{name}:
+    get:
+      operationId: getEdgeMCPUpstream
+      summary: Get an upstream MCP server entry
+      tags:
+      - Edge
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Upstream MCP registry entry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPUpstreamServer'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '404':
+          $ref: '#/components/responses/EdgeNotFound'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+    put:
+      operationId: updateEdgeMCPUpstream
+      summary: Update an upstream MCP server entry
+      description: Updates a tenant-scoped upstream MCP registry entry and stores a best-effort backup of the prior entry before overwrite.
+      tags:
+      - Edge
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MCPUpstreamServerWriteRequest'
+      responses:
+        '200':
+          description: Updated upstream MCP registry entry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPUpstreamServer'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '404':
+          $ref: '#/components/responses/EdgeNotFound'
+        '409':
+          $ref: '#/components/responses/EdgeConflict'
+        '413':
+          $ref: '#/components/responses/EdgePayloadTooLarge'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/mcp/upstreams/{name}/disable:
+    post:
+      operationId: disableEdgeMCPUpstream
+      summary: Disable an upstream MCP server entry
+      tags:
+      - Edge
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Disabled upstream MCP registry entry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPUpstreamServer'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '404':
+          $ref: '#/components/responses/EdgeNotFound'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/mcp/upstreams/{name}/enable:
+    post:
+      operationId: enableEdgeMCPUpstream
+      summary: Enable an upstream MCP server entry
+      tags:
+      - Edge
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Enabled upstream MCP registry entry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPUpstreamServer'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '404':
+          $ref: '#/components/responses/EdgeNotFound'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
   /api/v1/edge/events:
     post:
       operationId: createEdgeEvent
@@ -1238,6 +1521,72 @@ paths:
           $ref: '#/components/responses/EdgeConflict'
         '413':
           $ref: '#/components/responses/EdgePayloadTooLarge'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/runtime/events:
+    post:
+      operationId: ingestEdgeRuntimeEvents
+      summary: Ingest bounded runtime telemetry from a trusted sidecar
+      description: >-
+        Disabled by default. When `CORDUM_EDGE_RUNTIME_INGEST_ENABLED` is unset
+        (or set to a non-truthy value), the route returns 503 `service_unavailable`
+        and persists nothing. When enabled, the endpoint accepts a bounded,
+        redacted runtime event batch (process exec, file read/write, network
+        connect, DNS query) from an authenticated runtime collector holding
+        `edge.runtime.ingest`; generic job writers are forbidden. A bounded
+        `nonce` is required by default and is checked against a Redis replay
+        window scoped to `(tenant, collector)`; duplicate nonce submissions
+        return idempotent success without appending another copy. The request
+        `source.source_id` must match the authenticated collector principal and
+        the referenced session/execution must be bound to that collector before
+        mapped `AgentActionEvent` records with `layer=runtime` and
+        `decision=RECORDED` are persisted through the existing Edge store. Raw
+        argv, file contents, packet
+        payloads, DNS response bodies, request bodies, headers, secrets, and
+        tokens are rejected at the strict-schema decode boundary. All-or-nothing
+        batch acceptance — a single invalid envelope aborts the whole batch.
+        See `docs/edge/runtime-ingestion.md` for the full contract.
+      tags:
+      - Edge
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EdgeRuntimeIngestRequest'
+      responses:
+        '200':
+          description: Duplicate nonce detected; replay suppressed idempotently
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeRuntimeIngestResponse'
+        '201':
+          description: Runtime events appended
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeRuntimeIngestResponse'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '404':
+          $ref: '#/components/responses/EdgeNotFound'
+        '413':
+          $ref: '#/components/responses/EdgePayloadTooLarge'
+        '429':
+          description: Per-execution event cap exceeded, or runtime replay window cardinality exceeded (`replay_window_full`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeError'
         '503':
           $ref: '#/components/responses/EdgeServiceUnavailable'
         '500':
@@ -1461,6 +1810,708 @@ paths:
           $ref: '#/components/responses/EdgeServiceUnavailable'
         '500':
           $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/shadow-agents:
+    post:
+      operationId: createShadowAgentFinding
+      summary: Ingest one redacted shadow-agent finding
+      description: Persists a single ShadowAgentFinding lifecycle record. Evidence must be either a bounded redacted summary or an artifact pointer; raw payloads are rejected. Observe/warn only — no enforcement, no remediation execution, no Cordum Job creation. Audit event `shadow_agent.detected` is emitted on success.
+      tags:
+      - Edge
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateShadowAgentFindingRequest'
+      responses:
+        '201':
+          description: Shadow finding persisted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShadowAgentFinding'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '409':
+          $ref: '#/components/responses/EdgeConflict'
+        '413':
+          $ref: '#/components/responses/EdgePayloadTooLarge'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+    get:
+      operationId: listShadowAgentFindings
+      summary: List shadow-agent findings
+      description: Returns a tenant-scoped cursor-paginated page of ShadowAgentFinding records. Filters narrow the result set; the narrowest filter is selected as the primary index path. Resolved/suppressed records past terminal retention are hidden.
+      tags:
+      - Edge
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: status
+        in: query
+        description: Filter by triage status. Managed-skip rows are not filterable with `status=managed_skip`; request `include_managed_skip=true` to include findings whose response status is `managed_skip`.
+        schema:
+          type: string
+          enum: [detected, resolved, suppressed]
+      - name: risk
+        in: query
+        schema:
+          type: string
+          enum: [low, medium, high, critical]
+      - name: agent
+        in: query
+        description: Alias for `agent_product`. The two parameter names are interchangeable.
+        schema:
+          type: string
+      - name: agent_product
+        in: query
+        schema:
+          type: string
+      - name: owner
+        in: query
+        description: Filter by `owner_principal_id`.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - name: cursor
+        in: query
+        schema:
+          type: string
+      - name: source_type
+        in: query
+        description: EDGE-143.5 — restrict to findings emitted by one detector family. `local` falls back to a broad tenant index + post-filter so legacy EDGE-141 findings without `source_type` surface (defaults-on-read map to `local`).
+        schema:
+          type: string
+          enum: [local, kubernetes, ci, network]
+      - name: cluster_id
+        in: query
+        description: EDGE-143.5 — Kubernetes cluster id (Q7 cross-cluster slicing). Shared (cross-tenant) index; tenant isolation enforced at read time.
+        schema:
+          type: string
+          maxLength: 64
+      - name: namespace
+        in: query
+        description: EDGE-143.5 — Kubernetes namespace.
+        schema:
+          type: string
+          maxLength: 63
+      - name: ci_provider
+        in: query
+        description: EDGE-143.5 — CI provider enum; required when `repo` is set.
+        schema:
+          type: string
+          enum: [github_actions, gitlab_ci, jenkins, buildkite, circleci, other]
+      - name: repo
+        in: query
+        description: EDGE-143.5 — `org/repo` for CI findings; `ci_provider` MUST also be set or the request is rejected with 400.
+        schema:
+          type: string
+          maxLength: 256
+      - name: signal
+        in: query
+        description: EDGE-143.5 — any-of filter on `signal_set`. Repeatable up to 16 times; each entry must match `[a-z0-9_]{1,32}`. Multi-signal queries do not support cursor pagination.
+        explode: true
+        schema:
+          type: array
+          maxItems: 16
+          items:
+            type: string
+            pattern: '^[a-z0-9_]{1,32}$'
+      - name: confidence_min
+        in: query
+        description: EDGE-143.5 — minimum detector self-confidence in [0, 1].
+        schema:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+      - name: first_seen_after
+        in: query
+        description: EDGE-143.5 — return findings whose `first_seen` is strictly after this RFC3339 timestamp.
+        schema:
+          type: string
+          format: date-time
+      - name: last_seen_before
+        in: query
+        description: EDGE-143.5 — return findings whose `last_seen` is strictly before this RFC3339 timestamp.
+        schema:
+          type: string
+          format: date-time
+      - name: exception_id
+        in: query
+        description: EDGE-143.5 — filter to findings joined to a specific operator exception declaration.
+        schema:
+          type: string
+          maxLength: 64
+      - name: include_managed_skip
+        in: query
+        description: EDGE-143.5 — include findings carrying `false_positive_reason` (§10.3 managed_skip). Defaults to false; default behavior excludes them from operator dashboards. When true, responses may contain `status=managed_skip`.
+        schema:
+          type: boolean
+          default: false
+      responses:
+        '200':
+          description: Shadow finding page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShadowAgentFindingPage'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/shadow-agents/{finding_id}:
+    get:
+      operationId: getShadowAgentFinding
+      summary: Get a shadow-agent finding by id
+      description: Returns one ShadowAgentFinding scoped to the caller's tenant. Cross-tenant lookups return 404 (not 403) to prevent tuple-existence probing.
+      tags:
+      - Edge
+      parameters:
+      - name: finding_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantID'
+      responses:
+        '200':
+          description: Shadow finding
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShadowAgentFinding'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '404':
+          $ref: '#/components/responses/EdgeNotFound'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/shadow-agents/{finding_id}/resolve:
+    post:
+      operationId: resolveShadowAgentFinding
+      summary: Resolve a shadow-agent finding
+      description: Flips a detected finding to resolved. Idempotent on a resolved finding; returns 409 when called on a suppressed terminal record. Emits `shadow_agent.resolved` audit event on success.
+      tags:
+      - Edge
+      parameters:
+      - name: finding_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveShadowAgentFindingRequest'
+      responses:
+        '200':
+          description: Updated shadow finding
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShadowAgentFinding'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '404':
+          $ref: '#/components/responses/EdgeNotFound'
+        '409':
+          $ref: '#/components/responses/EdgeConflict'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/shadow-agents/{finding_id}/suppress:
+    post:
+      operationId: suppressShadowAgentFinding
+      summary: Suppress a shadow-agent finding
+      description: Flips a detected finding to suppressed. Idempotent on a suppressed finding; returns 409 when called on a resolved terminal record. Optional `suppressed_until` records a time-bound exception for downstream re-evaluation. Emits `shadow_agent.suppressed` audit event on success.
+      tags:
+      - Edge
+      parameters:
+      - name: finding_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SuppressShadowAgentFindingRequest'
+      responses:
+        '200':
+          description: Updated shadow finding
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShadowAgentFinding'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '404':
+          $ref: '#/components/responses/EdgeNotFound'
+        '409':
+          $ref: '#/components/responses/EdgeConflict'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/shadow-agents/{finding_id}/ignore:
+    post:
+      operationId: ignoreShadowAgentFinding
+      summary: Suppress a shadow-agent finding (compat alias for /suppress)
+      description: Compatibility alias for POST /api/v1/edge/shadow-agents/{finding_id}/suppress. Shares the same handler and emits the same audit event; new clients should use /suppress.
+      tags:
+      - Edge
+      parameters:
+      - name: finding_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SuppressShadowAgentFindingRequest'
+      responses:
+        '200':
+          description: Updated shadow finding
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShadowAgentFinding'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '404':
+          $ref: '#/components/responses/EdgeNotFound'
+        '409':
+          $ref: '#/components/responses/EdgeConflict'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/shadow-agents/{finding_id}/remediation:
+    post:
+      operationId: generateShadowAgentRemediation
+      summary: Generate an advisory remediation plan for a shadow-agent finding (EDGE-142)
+      description: |
+        Returns a deterministic, redacted RemediationPlan for the referenced finding.
+        Read-only: the handler does not mutate finding state, does not enqueue Cordum
+        Jobs, does not emit audit events, and does not call the Safety Kernel. All
+        commands inside the plan use literal placeholders (`<gateway-url>`,
+        `<tenant-id>`, etc.) and never carry live secrets or developer paths.
+      tags:
+      - Edge
+      parameters:
+      - name: finding_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShadowAgentRemediationRequest'
+      responses:
+        '200':
+          description: Advisory remediation plan for the referenced finding.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShadowAgentRemediationResponse'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '404':
+          $ref: '#/components/responses/EdgeNotFound'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/shadow/exception:
+    post:
+      operationId: createShadowException
+      summary: Create an operator-defined shadow exception (EDGE-143.6)
+      description: |
+        Persists an operator-signed exception declaration that suppresses
+        future ShadowAgent findings matching its scope predicate
+        (source_type + source_id + risk_level + signal_set). Matching is
+        applied at finding emit time: matching findings are stamped with
+        exception_id, false_positive_reason="operator_exception", and
+        status=managed_skip; they are excluded from default-filter list
+        queries.
+
+        Q8 step-up auth: when scope_risk_level is "high", the caller MUST
+        hold the `admin` legacy role OR the `shadow.exception.high_risk`
+        permission. Failure returns 403 with code `step_up_required` and
+        details.required = "mfa_recent|signed_admin_token". The persisted
+        Exception records which factor satisfied the gate so SIEM rules
+        can pivot on the auth tier at the time of action.
+
+        expires_at MUST be in the future and within 90 days (§10.3
+        "longer requires re-affirmation").
+      tags:
+      - Edge
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateShadowExceptionRequest'
+      responses:
+        '201':
+          description: Exception accepted and persisted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShadowException'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '429':
+          description: Per-tenant exception cap reached (code=limit_exceeded).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeError'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/shadow/exception/{exception_id}:
+    get:
+      operationId: getShadowException
+      summary: Read a single shadow exception (EDGE-143.6)
+      description: |
+        Returns the exception record scoped to the caller's tenant.
+        Cross-tenant probes return 404 (never 403) to avoid leaking
+        tuple existence.
+      tags:
+      - Edge
+      parameters:
+      - name: exception_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantID'
+      responses:
+        '200':
+          description: Exception record.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShadowException'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '404':
+          $ref: '#/components/responses/EdgeNotFound'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+    delete:
+      operationId: revokeShadowException
+      summary: Revoke an active shadow exception (EDGE-143.6)
+      description: |
+        Transitions an active exception to revoked. Revoke uses the SAME
+        auth tier as the original create: if the exception's
+        scope_risk_level is "high", the caller MUST satisfy the step-up
+        gate. Failure returns 403 with code `step_up_required`.
+
+        Idempotent when the exception is already revoked AND the caller
+        principal matches the original revoker; conflicting double-revoke
+        returns 409.
+      tags:
+      - Edge
+      parameters:
+      - name: exception_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RevokeShadowExceptionRequest'
+      responses:
+        '204':
+          description: Exception revoked.
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '404':
+          $ref: '#/components/responses/EdgeNotFound'
+        '409':
+          $ref: '#/components/responses/EdgeConflict'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/shadow/exceptions:
+    get:
+      operationId: listShadowExceptions
+      summary: List shadow exceptions for the caller's tenant (EDGE-143.6)
+      description: |
+        Returns a bounded, cursor-paginated page of exceptions for the
+        requested tenant. Optional filters: status (active|revoked|
+        expired), source_type (local|kubernetes|ci|network), risk
+        (low|medium|high|critical).
+      tags:
+      - Edge
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: [active, revoked, expired]
+      - name: source_type
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: [local, kubernetes, ci, network]
+      - name: risk
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: [low, medium, high, critical]
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 1000
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Page of exceptions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListShadowExceptionsResponse'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/binary-integrity/events:
+    post:
+      operationId: ingestBinaryVerify
+      summary: Ingest install-time binary-verify outcomes
+      description: |
+        Persists structured binary-verify outcomes emitted by
+        `tools/scripts/install.{sh,ps1}` (the pre-activation integrity
+        gate documented in `docs/security/binary-signing.md` §8).
+        Operators capture install-script stderr (one JSON line per
+        binary verified), batch it into the `events` array, and POST
+        here. Each event is validated against `model.BinaryVerifyEvent`
+        and persisted through the existing audit chain as a SIEMEvent
+        with `EventType = binary-verify-ok | binary-verify-fail`.
+
+        Partial-success semantics: per-event validation failures are
+        reported in the response `errors[]` and counted in `rejected`;
+        accepted events are persisted. A request with zero accepted
+        events returns 400.
+
+        Auth: requires `audit.export` permission or `admin` role,
+        plus tenant access enforced via `X-Tenant-ID`.
+      tags:
+      - Edge
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IngestBinaryVerifyRequest'
+      responses:
+        '202':
+          description: At least one event was accepted and persisted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestBinaryVerifyResponse'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '413':
+          $ref: '#/components/responses/EdgePayloadTooLarge'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+    get:
+      operationId: listBinaryVerify
+      summary: List binary-verify outcomes for a tenant
+      description: |
+        Returns a tenant-scoped reverse-chronological page of
+        binary-verify outcomes recovered from the tenant audit
+        stream. Filters narrow the page; values that fall outside
+        the accepted enums return 400. The response envelope mirrors
+        `/api/v1/audit/events` (items / next_cursor / returned) but
+        each item carries the original BinaryVerifyEvent shape plus a
+        server-side timestamp and endpoint label.
+
+        Auth: requires `audit.read` permission or `admin` role,
+        plus tenant access enforced via `X-Tenant-ID`.
+      tags:
+      - Edge
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: tenant
+        in: query
+        required: false
+        description: |
+          Tenant id whose audit stream should be read. Must match
+          caller scope; defaults to the authenticated/header tenant.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: |
+          Maximum number of events in the response page. Default 100;
+          values above 200 are silently capped to 200 to bound the
+          Redis fetch cost.
+        schema:
+          type: integer
+          default: 100
+          minimum: 1
+          maximum: 200
+      - name: cursor
+        in: query
+        required: false
+        description: |
+          Opaque stream-id cursor returned as `next_cursor` from the
+          previous page. Format `<ms>-<seq>`; empty `next_cursor`
+          means end-of-stream.
+        schema:
+          type: string
+      - name: event
+        in: query
+        required: false
+        description: |
+          Filter by outcome. Short forms `ok` / `fail` are accepted
+          and normalized to the canonical `binary-verify-ok` /
+          `binary-verify-fail` event types.
+        schema:
+          type: string
+          enum: [ok, fail, binary-verify-ok, binary-verify-fail]
+      - name: sig_scheme
+        in: query
+        required: false
+        description: Filter by signing scheme.
+        schema:
+          type: string
+          enum: [gpg, codesign, authenticode, dev]
+      - name: endpoint
+        in: query
+        required: false
+        description: |
+          Filter by the endpoint label captured at ingest time
+          (operator-supplied; max 256 chars).
+        schema:
+          type: string
+          maxLength: 256
+      responses:
+        '200':
+          description: Binary-verify events page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BinaryVerifyEventsEnvelope'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
   /api/v1/jobs:
     post:
       operationId: submitJob
@@ -1487,10 +2538,37 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: >
+            Job submit was rejected by a semantic work-orchestration policy.
+            Stable error `code`: `MEMORY_POLICY_VIOLATION`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: >
+            Job submit idempotency key is already reserved without a replayable
+            job mapping. Stable error `code`: `IDEMPOTENCY_CONFLICT`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '429':
-          $ref: '#/components/responses/RateLimited'
+          description: >
+            Job submit backpressure or generic rate limit. Backpressure returns
+            stable error `code`: `BACKPRESSURE`.
+          headers:
+            Retry-After:
+              description: Seconds until retry is permitted when present.
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
           $ref: '#/components/responses/InternalServerError'
     get:
@@ -1869,8 +2947,12 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /api/v1/workflows/{id}:
     parameters:
     - $ref: '#/components/parameters/WorkflowID'
@@ -1903,10 +2985,14 @@ paths:
           description: Workflow deleted
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /api/v1/workflows/{id}/runs:
     parameters:
     - $ref: '#/components/parameters/WorkflowID'
@@ -1938,8 +3024,33 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: >
+            Workflow run start was rejected by a semantic work-orchestration
+            policy. Stable error `code`: `MEMORY_POLICY_VIOLATION`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          description: >
+            Workflow run start idempotency key is already reserved without a
+            replayable run mapping. Stable error `code`:
+            `RUN_IDEMPOTENCY_CONFLICT`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: >
+            Workflow run cannot be started because the active-run admission
+            limit is full. Stable error `code`: `RUN_NOT_RUNNABLE`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
           $ref: '#/components/responses/InternalServerError'
     get:
@@ -2189,11 +3300,25 @@ paths:
                   run_id:
                     type: string
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Workflow rerun request is not runnable, for example an invalid
+            resume step. Stable error `code`: `RUN_NOT_RUNNABLE`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+        '429':
+          description: >
+            Workflow rerun cannot be admitted because the active-run limit is
+            full. Stable error `code`: `RUN_NOT_RUNNABLE`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
           $ref: '#/components/responses/InternalServerError'
   /api/v1/workflows/{id}/runs/{run_id}/cancel:
@@ -2218,7 +3343,13 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/Conflict'
+          description: >
+            Workflow run is busy and cannot be cancelled right now. Stable
+            error `code`: `RUN_NOT_CANCELLABLE`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
           $ref: '#/components/responses/InternalServerError'
   /api/v1/approvals:
@@ -2289,9 +3420,33 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          description: >
+            Approval cannot be performed. Self-approval returns existing stable
+            `code`: `self_approval_denied`; other 4xx string-result failures
+            return `RESULT_INVALID_STATUS`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '404':
-          $ref: '#/components/responses/NotFound'
+          description: >
+            Approval target job was not found. Stable error `code`:
+            `RESULT_INVALID_STATUS`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: >
+            Approval is not currently actionable or changed concurrently.
+            Stable conflict `code` values include
+            `approval_already_resolved`, `approval_retryable_lock`,
+            `approval_terminal_run`, `approval_stale_snapshot`,
+            `approval_stale_request`, and `approval_not_actionable`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
           $ref: '#/components/responses/InternalServerError'
   /api/v1/approvals/{job_id}/reject:
@@ -2328,9 +3483,32 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          description: >
+            Rejection cannot be performed. Self-rejection returns existing
+            stable `code`: `self_approval_denied`; other 4xx string-result
+            failures return `RESULT_INVALID_STATUS`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '404':
-          $ref: '#/components/responses/NotFound'
+          description: >
+            Approval target job was not found. Stable error `code`:
+            `RESULT_INVALID_STATUS`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: >
+            Rejection is not currently actionable or changed concurrently.
+            Stable conflict `code` values include
+            `approval_already_resolved`, `approval_retryable_lock`,
+            `approval_terminal_run`, and `approval_not_actionable`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
           $ref: '#/components/responses/InternalServerError'
   /api/v1/approvals/{job_id}/context:
@@ -2461,6 +3639,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/EdgeConflict'
         '500':
           $ref: '#/components/responses/InternalServerError'
   /api/v1/policy/simulate:
@@ -2515,6 +3695,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/EdgeConflict'
         '500':
           $ref: '#/components/responses/InternalServerError'
   /api/v1/policy/snapshots:
@@ -2619,7 +3801,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/OutputRule'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Output rule validation failed. Stable error `code`:
+            `POLICY_VALIDATION_FAILED`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '500':
@@ -2675,13 +3863,33 @@ paths:
               schema:
                 $ref: '#/components/schemas/PolicyGlobalDocument'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Global policy section or content validation failed. Stable error
+            `code`: `POLICY_VALIDATION_FAILED`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '409':
-          description: snapshot_version mismatch (optimistic concurrency)
+          description: >
+            snapshot_version mismatch (optimistic concurrency). Stable error
+            `code`: `POLICY_VERSION_CONFLICT`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: >
+            Strict policy signing is required but signer output is unavailable.
+            Stable error `code`: `POLICY_SIGNING_REQUIRED`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
           $ref: '#/components/responses/InternalServerError'
   /api/v1/policy/bundles:
@@ -2760,11 +3968,25 @@ paths:
               schema:
                 $ref: '#/components/schemas/PolicyBundleDetail'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Policy bundle validation failed. Stable error `code`:
+            `POLICY_VALIDATION_FAILED`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+        '503':
+          description: >
+            Strict policy signing is required but signer output is unavailable.
+            Stable error `code`: `POLICY_SIGNING_REQUIRED`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
           $ref: '#/components/responses/InternalServerError'
     delete:
@@ -2775,6 +3997,14 @@ paths:
       responses:
         '204':
           description: Policy bundle deleted
+        '400':
+          description: >
+            Policy bundle id validation failed. Stable error `code`:
+            `POLICY_VALIDATION_FAILED`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2816,7 +4046,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/PolicyCheckResponse'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Policy simulation request or candidate content validation failed.
+            Stable error `code`: `POLICY_VALIDATION_FAILED`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -2940,13 +4176,25 @@ paths:
               schema:
                 $ref: '#/components/schemas/PolicyShadow'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Policy shadow bundle/content validation failed. Stable error
+            `code`: `POLICY_VALIDATION_FAILED`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '409':
-          $ref: '#/components/responses/Conflict'
+          description: >
+            Policy shadow write conflict. Stable error `code`:
+            `POLICY_SHADOW_CONFLICT`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
           $ref: '#/components/responses/InternalServerError'
         '503':
@@ -2973,7 +4221,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/PolicyShadow'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Policy shadow bundle id validation failed. Stable error `code`:
+            `POLICY_VALIDATION_FAILED`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3002,7 +4256,13 @@ paths:
         '204':
           description: Shadow policy removed
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Policy shadow bundle id validation failed. Stable error `code`:
+            `POLICY_VALIDATION_FAILED`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3010,7 +4270,13 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/Conflict'
+          description: >
+            Policy shadow delete conflict. Stable error `code`:
+            `POLICY_SHADOW_CONFLICT`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
           $ref: '#/components/responses/InternalServerError'
         '503':
@@ -3062,7 +4328,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/ShadowResultsSummary'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Policy shadow summary query validation failed. Stable error
+            `code`: `POLICY_SHADOW_QUERY_INVALID`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3138,7 +4410,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/ShadowComparisonsResponse'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Policy shadow comparison query validation failed. Stable error
+            `code`: `POLICY_SHADOW_QUERY_INVALID`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3199,7 +4477,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/ShadowTimeseriesResponse'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Policy shadow timeseries query validation failed. Stable error
+            `code`: `POLICY_SHADOW_QUERY_INVALID`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3228,7 +4512,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/PolicySnapshot'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Policy publish validation failed. Stable error `code`:
+            `POLICY_VALIDATION_FAILED`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '500':
@@ -3255,7 +4545,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/PolicySnapshot'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Policy rollback validation failed. Stable error `code`:
+            `POLICY_VALIDATION_FAILED`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -3376,6 +4672,10 @@ paths:
   /api/v1/config:
     get:
       operationId: getConfig
+      x-cordum-error-codes:
+      - CONFIG_REQUEST_INVALID
+      - CONFIG_KEY_FORBIDDEN
+      - CONFIG_NOT_FOUND
       summary: Get configuration
       tags:
       - Config
@@ -3414,6 +4714,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
     post:
       operationId: setConfig
+      x-cordum-error-codes:
+      - CONFIG_SCHEMA_VIOLATION
+      - CONFIG_KEY_FORBIDDEN
+      - CONFIG_VERSION_CONFLICT
       summary: Set configuration
       tags:
       - Config
@@ -3438,6 +4742,10 @@ paths:
           $ref: '#/components/responses/InternalServerError'
     put:
       operationId: replaceConfig
+      x-cordum-error-codes:
+      - CONFIG_SCHEMA_VIOLATION
+      - CONFIG_KEY_FORBIDDEN
+      - CONFIG_VERSION_CONFLICT
       summary: Replace configuration
       tags:
       - Config
@@ -3503,6 +4811,8 @@ paths:
   /api/v1/schemas:
     post:
       operationId: createSchema
+      x-cordum-error-codes:
+      - CONFIG_SCHEMA_VIOLATION
       summary: Register a JSON schema
       tags:
       - Schemas
@@ -3558,6 +4868,9 @@ paths:
     - $ref: '#/components/parameters/TenantID'
     get:
       operationId: getSchema
+      x-cordum-error-codes:
+      - CONFIG_SCHEMA_VIOLATION
+      - CONFIG_SCHEMA_NOT_FOUND
       summary: Get a schema by ID
       tags:
       - Schemas
@@ -3576,6 +4889,9 @@ paths:
           $ref: '#/components/responses/InternalServerError'
     delete:
       operationId: deleteSchema
+      x-cordum-error-codes:
+      - CONFIG_SCHEMA_VIOLATION
+      - CONFIG_SCHEMA_NOT_FOUND
       summary: Delete a schema
       tags:
       - Schemas
@@ -3785,11 +5101,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/PackRecord'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Pack install validation failed. Stable error `code` values include
+            `PACK_INSTALL_INVALID`, `PACK_DEPENDENCY_MISSING`, and
+            `PACK_INVALID_SIGNATURE`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '409':
+          description: >
+            Pack is already installed or locked. Stable error `code`:
+            `PACK_ALREADY_INSTALLED`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '500':
@@ -3830,6 +5161,14 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          description: >
+            Pack uninstall lock conflict. Stable error `code`:
+            `PACK_ALREADY_INSTALLED`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
           $ref: '#/components/responses/InternalServerError'
   /api/v1/packs/{id}/verify:
@@ -3905,11 +5244,34 @@ paths:
               schema:
                 $ref: '#/components/schemas/PackRecord'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Marketplace pack install validation failed. Stable error `code`
+            values include `PACK_MARKETPLACE_INVALID`, `PACK_INSTALL_INVALID`,
+            and `PACK_INVALID_SIGNATURE`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '404':
+          description: >
+            Marketplace pack was not found. Stable error `code`:
+            `PACK_DEPENDENCY_MISSING`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: >
+            Marketplace pack is already installed or locked. Stable error
+            `code`: `PACK_ALREADY_INSTALLED`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '502':
           $ref: '#/components/responses/BadGateway'
         '500':
@@ -4086,7 +5448,13 @@ paths:
               schema:
                 type: string
         '503':
-          $ref: '#/components/responses/ServiceUnavailable'
+          description: >
+            MCP HTTP transport is unavailable. Stable error `code`:
+            `MCP_HTTP_TRANSPORT_UNAVAILABLE`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4118,7 +5486,13 @@ paths:
         '400':
           $ref: '#/components/responses/BadRequest'
         '503':
-          $ref: '#/components/responses/ServiceUnavailable'
+          description: >
+            MCP HTTP transport is unavailable. Stable error `code`:
+            `MCP_HTTP_TRANSPORT_UNAVAILABLE`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4220,6 +5594,9 @@ paths:
     - $ref: '#/components/parameters/TenantID'
     get:
       operationId: getRole
+      x-cordum-error-codes:
+      - RBAC_REQUEST_INVALID
+      - RBAC_ROLE_NOT_FOUND
       summary: Get a single RBAC role
       tags:
       - Auth
@@ -4242,6 +5619,10 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
     put:
       operationId: putRole
+      x-cordum-error-codes:
+      - RBAC_REQUEST_INVALID
+      - RBAC_PERMISSION_INVALID
+      - RBAC_ROLE_IN_USE
       summary: Create or update an RBAC role
       tags:
       - Auth
@@ -4273,6 +5654,10 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
     delete:
       operationId: deleteRole
+      x-cordum-error-codes:
+      - RBAC_REQUEST_INVALID
+      - RBAC_ROLE_NOT_FOUND
+      - RBAC_ROLE_IN_USE
       summary: Delete a custom RBAC role
       tags:
       - Auth
@@ -4306,6 +5691,9 @@ paths:
     - $ref: '#/components/parameters/TenantID'
     get:
       operationId: getWorker
+      x-cordum-error-codes:
+      - WORKER_SESSION_INVALID
+      - WORKER_NOT_FOUND
       summary: Get a single worker runtime snapshot
       tags:
       - Workers
@@ -4331,6 +5719,9 @@ paths:
     - $ref: '#/components/parameters/LimitQ'
     get:
       operationId: getWorkerJobs
+      x-cordum-error-codes:
+      - WORKER_SESSION_INVALID
+      - WORKER_NOT_FOUND
       summary: List jobs associated with a worker
       tags:
       - Workers
@@ -4358,6 +5749,45 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /api/v1/workers/{id}/revoke-session:
+    parameters:
+    - $ref: '#/components/parameters/WorkerID'
+    - $ref: '#/components/parameters/TenantID'
+    post:
+      operationId: revokeWorkerSession
+      x-cordum-error-codes:
+      - WORKER_SESSION_INVALID
+      summary: Revoke an active worker session
+      tags:
+      - Workers
+      responses:
+        '200':
+          description: Worker session revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  worker_id:
+                    type: string
+                  tenant:
+                    type: string
+                  revoked:
+                    type: boolean
+                required:
+                - worker_id
+                - tenant
+                - revoked
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /api/v1/workers/credentials:
     get:
       operationId: listWorkerCredentials
@@ -4388,6 +5818,10 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
     post:
       operationId: createWorkerCredential
+      x-cordum-error-codes:
+      - WORKER_CRED_BINDING_INVALID
+      - POOL_NOT_FOUND
+      - TOPIC_NOT_FOUND
       summary: Create or rotate a worker credential
       tags:
       - WorkerCredentials
@@ -4441,6 +5875,9 @@ paths:
     - $ref: '#/components/parameters/TenantID'
     delete:
       operationId: deleteWorkerCredential
+      x-cordum-error-codes:
+      - WORKER_CRED_BINDING_INVALID
+      - WORKER_CRED_NOT_FOUND
       summary: Revoke a worker credential
       tags:
       - WorkerCredentials
@@ -4509,6 +5946,10 @@ paths:
           $ref: '#/components/responses/NotFound'
     put:
       operationId: createPool
+      x-cordum-error-codes:
+      - POOL_INVALID_CONFIG
+      - POOL_NAME_CONFLICT
+      - POOL_VERSION_CONFLICT
       summary: Create a worker pool
       tags:
       - Pools
@@ -4542,6 +5983,10 @@ paths:
           $ref: '#/components/responses/Conflict'
     patch:
       operationId: updatePool
+      x-cordum-error-codes:
+      - POOL_INVALID_CONFIG
+      - POOL_NOT_FOUND
+      - POOL_VERSION_CONFLICT
       summary: Update a worker pool
       tags:
       - Pools
@@ -4579,6 +6024,10 @@ paths:
           $ref: '#/components/responses/Conflict'
     delete:
       operationId: deletePool
+      x-cordum-error-codes:
+      - POOL_INVALID_CONFIG
+      - POOL_NOT_FOUND
+      - POOL_VERSION_CONFLICT
       summary: Delete a worker pool
       tags:
       - Pools
@@ -4605,6 +6054,10 @@ paths:
     - $ref: '#/components/parameters/TenantID'
     post:
       operationId: drainPool
+      x-cordum-error-codes:
+      - POOL_INVALID_CONFIG
+      - POOL_NOT_FOUND
+      - POOL_VERSION_CONFLICT
       summary: Mark a pool as draining
       tags:
       - Pools
@@ -4642,6 +6095,10 @@ paths:
     - $ref: '#/components/parameters/TenantID'
     put:
       operationId: addTopicToPool
+      x-cordum-error-codes:
+      - POOL_INVALID_CONFIG
+      - POOL_NOT_FOUND
+      - POOL_VERSION_CONFLICT
       summary: Add a topic mapping to a pool
       tags:
       - Pools
@@ -4660,6 +6117,10 @@ paths:
           $ref: '#/components/responses/Conflict'
     delete:
       operationId: removeTopicFromPool
+      x-cordum-error-codes:
+      - POOL_INVALID_CONFIG
+      - TOPIC_NOT_FOUND
+      - POOL_VERSION_CONFLICT
       summary: Remove a topic mapping from a pool
       tags:
       - Pools
@@ -4708,6 +6169,9 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
     post:
       operationId: createTopic
+      x-cordum-error-codes:
+      - TOPIC_SCHEMA_VIOLATION
+      - POOL_NOT_FOUND
       summary: Create or replace a topic registration
       tags:
       - Topics
@@ -4771,6 +6235,9 @@ paths:
     - $ref: '#/components/parameters/TenantID'
     delete:
       operationId: deleteTopic
+      x-cordum-error-codes:
+      - TOPIC_SCHEMA_VIOLATION
+      - TOPIC_NOT_FOUND
       summary: Delete a topic registration
       tags:
       - Topics
@@ -5108,6 +6575,115 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/audit/events:
+    get:
+      operationId: getAuditEvents
+      summary: List audit events from the SIEM feed
+      description: |
+        Returns a paginated list of SIEM audit events for a tenant — the full
+        chained feed (MCP, edge, worker, output policy, delegation, license, ...)
+        sourced from the per-tenant Redis Stream populated by the audit chainer.
+        Distinct from `/api/v1/policy/audit`, which only surfaces the
+        policy-bundle audit subset.
+
+        Reverse-chronological by chain sequence. Filters (event_type / severity /
+        from / to / search) apply in-process after the stream read. Defense-in-depth
+        redaction strips Extra-map keys matching the secret-key pattern
+        (token / password / api_key / private_key / secret) before serialization.
+
+        Every successful read appends an `audit.read.events` event to the same
+        chain so the read surface is itself auditable.
+
+        Permission: `audit.read` (admin/operator/viewer with RBAC; admin via
+        legacy-role fallback). 503 when the audit chainer is not configured.
+      tags:
+      - AuditExport
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: tenant
+        in: query
+        required: false
+        description: |
+          Tenant id whose audit stream should be read. Must match caller scope;
+          defaults to the authenticated/header tenant.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: |
+          Maximum number of events in the response page. Default 100; values
+          above 200 are clamped to 200 silently to bound Redis fetch cost.
+        schema:
+          type: integer
+          default: 100
+          minimum: 1
+          maximum: 200
+        example: 50
+      - name: cursor
+        in: query
+        required: false
+        description: |
+          Opaque cursor returned as `next_cursor` by the previous page. Pass
+          back verbatim to fetch the next page. Empty `next_cursor` means
+          end-of-stream.
+        schema:
+          type: string
+      - name: event_type
+        in: query
+        required: false
+        description: Case-insensitive exact match against the event type (e.g. `mcp.tool_invocation`).
+        schema:
+          type: string
+        example: mcp.tool_invocation
+      - name: severity
+        in: query
+        required: false
+        description: Case-insensitive exact match against severity (CRITICAL / HIGH / MEDIUM / LOW / INFO).
+        schema:
+          type: string
+        example: HIGH
+      - name: from
+        in: query
+        required: false
+        description: Inclusive lower-bound on event timestamp (RFC3339).
+        schema:
+          type: string
+          format: date-time
+        example: '2026-05-15T00:00:00Z'
+      - name: to
+        in: query
+        required: false
+        description: Inclusive upper-bound on event timestamp (RFC3339).
+        schema:
+          type: string
+          format: date-time
+        example: '2026-05-15T23:59:59Z'
+      - name: search
+        in: query
+        required: false
+        description: |
+          Case-insensitive substring search over the lowercased concatenation
+          of `action + event_type + agent_id + job_id + identity + reason`.
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Audit events envelope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditEventsEnvelope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /api/v1/audit/export:
     get:
       operationId: exportAuditCompliance
@@ -5357,11 +6933,25 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          description: >
+            Approval repair cannot be performed for this caller or tenant.
+            Stable 4xx string-result error `code`: `RESULT_INVALID_STATUS`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '404':
-          $ref: '#/components/responses/NotFound'
+          description: >
+            Approval repair target job was not found. Stable error `code`:
+            `RESULT_INVALID_STATUS`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '409':
-          description: Repair conflict
+          description: >
+            Approval repair conflict. Stable conflict `code` values include
+            `approval_retryable_lock`.
           content:
             application/json:
               schema:
@@ -5473,13 +7063,25 @@ paths:
               schema:
                 $ref: '#/components/schemas/VelocityRule'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Velocity rule validation failed. Stable error `code`:
+            `VELOCITY_RULE_INVALID`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/TierLimit'
         '409':
-          $ref: '#/components/responses/Conflict'
+          description: >
+            Velocity rule already exists. Stable error `code`:
+            `VELOCITY_RULE_CONFLICT`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
           $ref: '#/components/responses/InternalServerError'
   /api/v1/policy/velocity-rules/stats:
@@ -5550,13 +7152,25 @@ paths:
               schema:
                 $ref: '#/components/schemas/VelocityRule'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Velocity rule validation failed. Stable error `code`:
+            `VELOCITY_RULE_INVALID`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/TierLimit'
         '404':
-          $ref: '#/components/responses/NotFound'
+          description: >
+            Velocity rule was not found. Stable error `code`:
+            `VELOCITY_RULE_CONFLICT`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
           $ref: '#/components/responses/InternalServerError'
     delete:
@@ -5568,13 +7182,25 @@ paths:
         '204':
           description: Velocity rule deleted
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Velocity rule validation failed. Stable error `code`:
+            `VELOCITY_RULE_INVALID`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/TierLimit'
         '404':
-          $ref: '#/components/responses/NotFound'
+          description: >
+            Velocity rule was not found. Stable error `code`:
+            `VELOCITY_RULE_CONFLICT`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
           $ref: '#/components/responses/InternalServerError'
   /api/v1/policy/analytics:
@@ -5692,7 +7318,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/PolicyReplayResponse'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Policy replay request or candidate content validation failed.
+            Stable error `code`: `POLICY_VALIDATION_FAILED`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -5762,9 +7394,25 @@ paths:
                         allowed_pools:
                           type: array
                           items: {type: string}
+                        allowed_servers:
+                          type: array
+                          items: {type: string}
+                          description: MCP server-name glob allowlist. Empty or omitted fail-closes server-guarded MCP actions.
                         allowed_tools:
                           type: array
                           items: {type: string}
+                        allowed_resources:
+                          type: array
+                          items: {type: string}
+                          description: cordum:// resource URI glob allowlist. Empty or omitted fail-closes resource-guarded MCP actions.
+                        entitlements:
+                          type: array
+                          items: {type: string}
+                          description: Capability tokens the identity holds for MCP required-entitlement checks.
+                        preapproved_mutating_tools:
+                          type: array
+                          items: {type: string}
+                          description: Mutating MCP tool names/globs this identity may call without human approval. Empty or omitted requires approval for every mutating tool.
                         data_classifications:
                           type: array
                           items: {type: string}
@@ -5784,6 +7432,8 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
     post:
       operationId: createAgent
+      x-cordum-error-codes:
+      - AGENT_REQUEST_INVALID
       summary: Create an agent identity
       tags:
       - Agents
@@ -5808,9 +7458,25 @@ paths:
                 allowed_pools:
                   type: array
                   items: {type: string}
+                allowed_servers:
+                  type: array
+                  items: {type: string}
+                  description: MCP server-name glob allowlist. Empty or omitted fail-closes server-guarded MCP actions.
                 allowed_tools:
                   type: array
                   items: {type: string}
+                allowed_resources:
+                  type: array
+                  items: {type: string}
+                  description: cordum:// resource URI glob allowlist. Empty or omitted fail-closes resource-guarded MCP actions.
+                entitlements:
+                  type: array
+                  items: {type: string}
+                  description: Capability tokens the identity holds for MCP required-entitlement checks.
+                preapproved_mutating_tools:
+                  type: array
+                  items: {type: string}
+                  description: Mutating MCP tool names/globs this identity may call without human approval. Empty or omitted requires approval for every mutating tool.
                 data_classifications:
                   type: array
                   items: {type: string}
@@ -5842,6 +7508,9 @@ paths:
     - $ref: '#/components/parameters/TenantID'
     get:
       operationId: getAgent
+      x-cordum-error-codes:
+      - AGENT_REQUEST_INVALID
+      - AGENT_NOT_FOUND
       summary: Get one agent identity
       tags:
       - Agents
@@ -5863,6 +7532,9 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
     put:
       operationId: updateAgent
+      x-cordum-error-codes:
+      - AGENT_REQUEST_INVALID
+      - AGENT_NOT_FOUND
       summary: Update an agent identity
       tags:
       - Agents
@@ -5885,9 +7557,25 @@ paths:
                 allowed_pools:
                   type: array
                   items: {type: string}
+                allowed_servers:
+                  type: array
+                  items: {type: string}
+                  description: Full replacement MCP server-name glob allowlist. Send [] to clear.
                 allowed_tools:
                   type: array
                   items: {type: string}
+                allowed_resources:
+                  type: array
+                  items: {type: string}
+                  description: Full replacement cordum:// resource URI glob allowlist. Send [] to clear.
+                entitlements:
+                  type: array
+                  items: {type: string}
+                  description: Full replacement capability-token list. Send [] to clear.
+                preapproved_mutating_tools:
+                  type: array
+                  items: {type: string}
+                  description: Full replacement list of mutating MCP tool names/globs allowed without human approval. Send [] to clear.
                 data_classifications:
                   type: array
                   items: {type: string}
@@ -5911,6 +7599,9 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
     delete:
       operationId: deleteAgent
+      x-cordum-error-codes:
+      - AGENT_REQUEST_INVALID
+      - AGENT_NOT_FOUND
       summary: Delete an agent identity
       tags:
       - Agents
@@ -5928,6 +7619,9 @@ paths:
   /api/v1/agents/{id}/stats:
     get:
       operationId: getAgentStats
+      x-cordum-error-codes:
+      - AGENT_REQUEST_INVALID
+      - AGENT_NOT_FOUND
       summary: Get per-agent runtime statistics
       tags:
       - Agents
@@ -6003,17 +7697,41 @@ paths:
                     type: integer
                   jti: {type: string}
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Invalid delegation issue request. Stable error `code` values:
+            `DELEGATION_REQUEST_INVALID`, `DELEGATION_SCOPE_EXCEEDED`,
+            `DELEGATION_CHAIN_TOO_DEEP`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          description: >
+            Delegating or target agent identity was not found. Stable error
+            `code`: `DELEGATION_AGENT_NOT_FOUND`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '409':
           $ref: '#/components/responses/Conflict'
         '429':
-          $ref: '#/components/responses/RateLimited'
+          description: >
+            Delegation issue quota exceeded. Stable error `code`:
+            `DELEGATION_RATE_LIMITED`.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+              description: Seconds until the rate limit resets
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
   /api/v1/agents/verify-delegation:
@@ -6061,7 +7779,14 @@ paths:
                       $ref: '#/components/schemas/DelegationChainLink'
                   error_code: {type: string}
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Invalid delegation verify request. Stable error `code`:
+            `DELEGATION_REQUEST_INVALID`. Token verification denials continue
+            to return HTTP 200 with response `error_code`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '503':
@@ -6105,13 +7830,33 @@ paths:
                     type: integer
                     description: Number of downstream delegations revoked in addition to the root token.
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Invalid delegation revoke request. Stable error `code`:
+            `DELEGATION_REQUEST_INVALID`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          description: >
+            Delegation token was not found. Stable error `code`:
+            `DELEGATION_TOKEN_NOT_FOUND`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: >
+            Delegation revoke cascade exceeded the safe traversal depth. Stable
+            error `code`: `DELEGATION_CASCADE_TOO_DEEP`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
   /api/v1/agents/{id}/delegations:
@@ -6175,7 +7920,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/DelegationListResponse'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Invalid delegation list filter or pagination parameter. Stable
+            error `code`: `DELEGATION_REQUEST_INVALID`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -6238,7 +7989,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/DelegationListResponse'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Invalid delegation list filter or pagination parameter. Stable
+            error `code`: `DELEGATION_REQUEST_INVALID`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -6362,6 +8119,114 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/mcp/gateway/health:
+    get:
+      operationId: getMcpGatewayHealth
+      summary: EDGE-100 MCP Gateway skeleton — health probe
+      tags:
+      - MCP
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      responses:
+        '200':
+          description: Gateway component reachable; body includes per-tenant gateway_enabled flag.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  status:
+                    type: string
+                  gateway_enabled:
+                    type: boolean
+                  component:
+                    type: string
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/mcp/gateway/config:
+    get:
+      operationId: getMcpGatewayConfig
+      summary: EDGE-100 MCP Gateway skeleton — effective per-tenant config (redacted)
+      tags:
+      - MCP
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      responses:
+        '200':
+          description: Effective gateway config; never echoes secret-shaped fields.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  gateway_enabled:
+                    type: boolean
+                  upstream_count:
+                    type: integer
+                  upstream_forwarding:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/mcp/gateway/upstream:
+    # `x-subroute-dispatch` tells openapi-audit about the internal prefix
+    # catch-all `/api/v1/mcp/gateway/upstream/*` (Go ServeMux pattern with
+    # trailing slash) without forcing the spec to model a path that
+    # spectral's no-path-trailing-slash rule would reject. The canonical
+    # POST op below documents the public surface; the Go gateway dispatches
+    # any subpath under it to the same skeleton handler.
+    x-subroute-dispatch: true
+    post:
+      operationId: postMcpGatewayUpstream
+      summary: EDGE-100 MCP Gateway skeleton — upstream forwarding (disabled by default)
+      description: |
+        Catch-all for `/api/v1/mcp/gateway/upstream/*`. Always returns 503 in
+        the P1 skeleton: `gateway_disabled` when MCPPolicy.GatewayEnabled is
+        false (default), `no_upstream_configured` when true but the EDGE-101
+        upstream registry is empty.
+      tags:
+      - MCP
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/mcp/gateway/clients/connect:
+    post:
+      operationId: postMcpGatewayClientsConnect
+      summary: EDGE-100 MCP Gateway skeleton — register an MCP client connect
+      description: |
+        Creates an EdgeSession + AgentExecution attributed to the resolved
+        tenant + authenticated principal (never to request-body claims) and
+        emits an `mcp.server.connected` event on success or
+        `mcp.server.failed` on the failure path.
+      tags:
+      - MCP
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      responses:
+        '200':
+          description: Session + execution created; body returns their IDs.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_id:
+                    type: string
+                  execution_id:
+                    type: string
+                  tenant_id:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
   /api/v1/mcp/approvals:
@@ -6543,13 +8408,25 @@ paths:
                 type: object
                 additionalProperties: true
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Invalid MCP verify-signature request body. Stable error `code`:
+            `MCP_VERIFY_REQUEST_INVALID`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '503':
-          $ref: '#/components/responses/ServiceUnavailable'
+          description: >
+            MCP verifier trust store is not configured. Existing stable error
+            `code`: `MCP_VERIFIER_UNAVAILABLE`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/v1/mcp/outbound:
     get:
       operationId: listMcpOutbound
@@ -6597,6 +8474,15 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
+        '400':
+          description: >
+            Invalid outbound MCP query parameter. Stable error `code` values:
+            `MCP_RANGE_INVALID`, `MCP_SIGNATURE_STATUS_INVALID`,
+            `MCP_LIMIT_INVALID`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -6644,6 +8530,14 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
+        '400':
+          description: >
+            Invalid MCP usage time range. Stable error `code`:
+            `MCP_RANGE_INVALID`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -6683,6 +8577,14 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '404':
+          description: >
+            Agent identity referenced by `agent_id` was not found. Stable error
+            `code`: `MCP_AGENT_IDENTITY_NOT_FOUND`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/v1/agents/{id}/tools:
     get:
       operationId: getAgentToolVisibility
@@ -6712,12 +8614,26 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
+        '400':
+          description: >
+            Missing path agent id. Stable error `code`:
+            `MCP_AGENT_ID_REQUIRED`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          description: >
+            Agent identity was not found. Stable error `code`:
+            `MCP_AGENT_IDENTITY_NOT_FOUND`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
   /api/v1/agents/{id}/denied-events:
@@ -6804,15 +8720,33 @@ paths:
                 type: object
                 additionalProperties: true
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Eval extraction request validation failed. Stable error `code`:
+            `EVAL_EXTRACTION_FAILED`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          description: >
+            No matching incidents were found. Stable error `code`:
+            `EVAL_EXTRACTION_FAILED`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '409':
-          $ref: '#/components/responses/Conflict'
+          description: >
+            Eval dataset version already exists. Stable error `code`:
+            `EVAL_DATASET_VERSION_CONFLICT`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '429':
           $ref: '#/components/responses/RateLimited'
         '503':
@@ -6927,15 +8861,33 @@ paths:
                 type: object
                 additionalProperties: true
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Eval dataset validation failed. Stable error `code`:
+            `EVAL_DATASET_VALIDATION_FAILED`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '409':
-          $ref: '#/components/responses/Conflict'
+          description: >
+            Eval dataset version already exists. Stable error `code`:
+            `EVAL_DATASET_VERSION_CONFLICT`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '413':
-          $ref: '#/components/responses/PayloadTooLarge'
+          description: >
+            Eval dataset payload exceeded route limits. Stable error `code`:
+            `EVAL_DATASET_VALIDATION_FAILED`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
   /api/v1/evals/datasets/by-name/{name}:
@@ -7067,7 +9019,13 @@ paths:
                 type: object
                 additionalProperties: true
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Eval dataset successor validation failed. Stable error `code`:
+            `EVAL_DATASET_VALIDATION_FAILED`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -7075,9 +9033,21 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/Conflict'
+          description: >
+            Eval dataset successor version already exists. Stable error
+            `code`: `EVAL_DATASET_VERSION_CONFLICT`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '413':
-          $ref: '#/components/responses/PayloadTooLarge'
+          description: >
+            Eval dataset successor payload exceeded route limits. Stable error
+            `code`: `EVAL_DATASET_VALIDATION_FAILED`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
     delete:
@@ -7095,7 +9065,13 @@ paths:
         '204':
           description: Dataset deleted
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Eval dataset delete validation failed. Stable error `code`:
+            `EVAL_DATASET_VALIDATION_FAILED`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -7138,7 +9114,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/EvalRunAcceptedResponse'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Eval run request is not runnable. Stable error `code`:
+            `EVAL_RUN_NOT_RUNNABLE`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -7146,7 +9128,13 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/Conflict'
+          description: >
+            Eval dataset run is already in progress. Stable error `code`:
+            `EVAL_RUN_CONFLICT`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '429':
           $ref: '#/components/responses/RateLimited'
         '503':
@@ -7205,7 +9193,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/EvalRunsResponse'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Eval run list query validation failed. Stable error `code`:
+            `EVAL_RUN_NOT_RUNNABLE`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -7263,7 +9257,13 @@ paths:
         '204':
           description: Eval run deleted
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: >
+            Eval run delete validation failed. Stable error `code`:
+            `EVAL_RUN_NOT_RUNNABLE`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -7623,6 +9623,108 @@ components:
           schema:
             $ref: '#/components/schemas/GovernanceHealth'
   schemas:
+    MCPUpstreamServer:
+      type: object
+      required: [name, transport, tenant_id, risk, enabled]
+      properties:
+        name:
+          type: string
+          pattern: '^[A-Za-z0-9.-]+$'
+        transport:
+          type: string
+          enum: [stdio, http, sse]
+        endpoint:
+          type: string
+          format: uri
+          description: HTTPS endpoint for http/sse transports; unsafe local endpoints are rejected in strict policy modes.
+        command:
+          type: array
+          description: Shell-free argv vector for stdio transport. Shell metacharacters are rejected.
+          items:
+            type: string
+        tenant_id:
+          type: string
+          description: Tenant scope for the upstream; `*` is reserved for system-wide entries.
+        auth_secret_ref:
+          type: string
+          pattern: '^secret://'
+          description: Reference to auth material. Raw secrets are rejected and never resolved in registry responses.
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        risk:
+          type: string
+          enum: [low, medium, high, critical]
+        enabled:
+          type: boolean
+        resolved_ips:
+          type: array
+          description: |
+            Registration-time DNS resolution of the upstream hostname.
+            Server-managed; clients MUST NOT submit values here on write.
+            Use-time callers (`RevalidateMCPUpstreamAtUse`) re-resolve the
+            hostname and refuse the dial if any current IP falls into the
+            SSRF deny-set (loopback, RFC1918, link-local incl.
+            169.254.169.254, IPv6 ULA, multicast, unspecified). Omitted
+            for `stdio` transports and for hostnames that fail to resolve
+            at registration.
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    MCPUpstreamServerWriteRequest:
+      type: object
+      description: Write payload for an upstream MCP entry. `tenant_id` may be omitted and is resolved from X-Tenant-ID; `created_at` and `updated_at` are server-managed.
+      properties:
+        name:
+          type: string
+          pattern: '^[A-Za-z0-9.-]+$'
+        transport:
+          type: string
+          enum: [stdio, http, sse]
+        endpoint:
+          type: string
+          format: uri
+        command:
+          type: array
+          items:
+            type: string
+        tenant_id:
+          type: string
+        auth_secret_ref:
+          type: string
+          pattern: '^secret://'
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        risk:
+          type: string
+          enum: [low, medium, high, critical]
+        enabled:
+          type: boolean
+    MCPUpstreamListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/MCPUpstreamServer'
+    MCPUpstreamValidationResponse:
+      type: object
+      required: [valid]
+      properties:
+        valid:
+          type: boolean
+        reason:
+          type: string
+          description: Redacted validation failure reason, never a raw secret.
     EdgeSessionCreateRequest:
       type: object
       properties:
@@ -8218,6 +10320,864 @@ components:
         next_cursor:
           type: string
           nullable: true
+    EdgeRuntimeIngestSource:
+      type: object
+      required: [source_id]
+      description: Authenticated trusted sidecar identity that produced the batch.
+      properties:
+        source_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Stable identifier for the runtime collector instance; must match the authenticated collector principal.
+    EdgeRuntimeProcessSummary:
+      type: object
+      description: Bounded redacted summary of a process exec event. Raw argv / env / cmdline are forbidden.
+      properties:
+        executable_basename:
+          type: string
+          maxLength: 256
+        executable_sha256:
+          type: string
+          maxLength: 80
+        argument_count:
+          type: integer
+          minimum: 0
+    EdgeRuntimeFileSummary:
+      type: object
+      properties:
+        operation:
+          type: string
+          enum: [read, write]
+        path_redacted:
+          type: string
+          maxLength: 256
+    EdgeRuntimeNetworkSummary:
+      type: object
+      properties:
+        host_redacted:
+          type: string
+          maxLength: 256
+        ip_prefix:
+          type: string
+          maxLength: 64
+        port:
+          type: integer
+          minimum: 0
+          maximum: 65535
+        protocol:
+          type: string
+          enum: [tcp, udp]
+    EdgeRuntimeDNSSummary:
+      type: object
+      properties:
+        qname_redacted:
+          type: string
+          maxLength: 256
+        qtype:
+          type: string
+          maxLength: 16
+    EdgeRuntimeEventEnvelope:
+      type: object
+      required: [tenant_id, session_id, execution_id, source_event_id, observed_at, kind]
+      description: One bounded, redacted runtime telemetry record. Forbidden top-level keys (argv, args, cmdline, command_line, env, environment, file_content, file_contents, packet, payload, body, request_body, response_body, headers, header, cookie, cookies, secret, secrets, token, tokens, password, passwords, api_key, apikey, private_key, dns_response, response) are rejected at the strict-schema decode boundary.
+      additionalProperties: false
+      properties:
+        tenant_id:
+          type: string
+        session_id:
+          type: string
+        execution_id:
+          type: string
+        source_event_id:
+          type: string
+          minLength: 1
+        observed_at:
+          type: string
+          format: date-time
+        kind:
+          type: string
+          enum:
+          - runtime.process.exec
+          - runtime.file.read
+          - runtime.file.write
+          - runtime.network.connect
+          - runtime.dns.query
+        outcome_status:
+          type: string
+          enum: ["", ok, failed, degraded]
+        process:
+          $ref: '#/components/schemas/EdgeRuntimeProcessSummary'
+        file:
+          $ref: '#/components/schemas/EdgeRuntimeFileSummary'
+        network:
+          $ref: '#/components/schemas/EdgeRuntimeNetworkSummary'
+        dns:
+          $ref: '#/components/schemas/EdgeRuntimeDNSSummary'
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+          maxProperties: 16
+        artifact_ptrs:
+          type: array
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/EdgeArtifactPointer'
+    EdgeRuntimeIngestRequest:
+      type: object
+      required: [source, nonce, events]
+      additionalProperties: false
+      properties:
+        source:
+          $ref: '#/components/schemas/EdgeRuntimeIngestSource'
+        nonce:
+          type: string
+          minLength: 16
+          maxLength: 64
+          pattern: '^[A-Za-z0-9-]{16,64}$'
+          description: Required by default replay-protection nonce (UUIDv7 or random 128-bit value). Set `CORDUM_EDGE_RUNTIME_REPLAY_REQUIRED=false` only for transitional non-production clients that cannot yet send this field.
+        batch_id:
+          type: string
+          maxLength: 256
+          description: Operator correlation identifier only; it is not used for replay protection.
+        events:
+          type: array
+          minItems: 1
+          maxItems: 256
+          items:
+            $ref: '#/components/schemas/EdgeRuntimeEventEnvelope'
+    EdgeRuntimeIngestDropReport:
+      type: object
+      properties:
+        source_event_id:
+          type: string
+        kind:
+          type: string
+        reason:
+          type: string
+          enum: [sampled_out]
+    EdgeRuntimeIngestResponse:
+      type: object
+      required: [accepted_count, dropped_count]
+      properties:
+        accepted_count:
+          type: integer
+          minimum: 0
+        dropped_count:
+          type: integer
+          minimum: 0
+        dropped:
+          type: array
+          items:
+            $ref: '#/components/schemas/EdgeRuntimeIngestDropReport'
+        replayed:
+          type: boolean
+          default: false
+          description: True when a duplicate nonce was suppressed and no events were appended.
+    BinaryVerifyEvent:
+      type: object
+      description: |
+        One structured outcome from the pre-activation integrity gate
+        in `tools/scripts/install.{sh,ps1}`. Field names and order are
+        frozen to match `install.sh` `emit_audit` (line 24-32) and
+        `model.BinaryVerifyEvent` (`core/model/binary_verify.go`) —
+        downstream SIEM mappings pin to this shape.
+      properties:
+        event:
+          type: string
+          enum: [binary-verify-ok, binary-verify-fail]
+          description: Outcome kind. Maps to SIEMEvent.EventType.
+        hash:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: SHA-256 of the verified binary, lowercase hex.
+        path:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: |
+            Manifest-relative basename of the verified binary. Absolute
+            paths, drive-rooted (Windows) paths, and any segment
+            containing `..` are rejected.
+        sig_scheme:
+          type: string
+          enum: [gpg, codesign, authenticode, dev]
+          description: Signing scheme that produced the verified signature.
+        fingerprint:
+          type: string
+          description: |
+            Empty when sig_scheme is codesign/authenticode/dev, or a
+            40-char uppercase-hex GPG key fingerprint when sig_scheme
+            is gpg. When non-empty, must match `^[A-F0-9]{40}$`.
+        reason:
+          type: string
+          maxLength: 512
+          description: |
+            Human-readable explanation of the outcome. Empty on success;
+            install-script controlled failure text on failure. Capped to
+            512 chars defensively (operator relays may splice in raw
+            gpg stderr).
+        exit_code:
+          type: integer
+          description: |
+            Exit code of the verifier. MUST be 0 when event is
+            `binary-verify-ok` and non-zero when event is
+            `binary-verify-fail`.
+      required:
+      - event
+      - hash
+      - path
+      - sig_scheme
+      - fingerprint
+      - reason
+      - exit_code
+    BinaryVerifyEventsEnvelope:
+      type: object
+      description: |
+        Paginated envelope returned by `GET /api/v1/edge/binary-integrity/events`.
+        `next_cursor` is opaque; pass it back as `?cursor=` on the next
+        request. Empty `next_cursor` means end-of-stream — clients should
+        stop polling.
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/BinaryVerifyListItem'
+        next_cursor:
+          type: string
+          description: Opaque cursor for the next page; empty when no more events.
+        returned:
+          type: integer
+          description: Number of items in this page (== `items.length`).
+      required:
+      - items
+      - next_cursor
+      - returned
+    BinaryVerifyListItem:
+      type: object
+      description: |
+        One row in the binary-verify list response. Carries the original
+        `BinaryVerifyEvent` shape plus the server-side audit-row metadata
+        captured at ingest time.
+      allOf:
+      - $ref: '#/components/schemas/BinaryVerifyEvent'
+      - type: object
+        properties:
+          timestamp:
+            type: string
+            format: date-time
+            description: Server-side ingest timestamp (UTC).
+          tenant_id:
+            type: string
+            description: Tenant that owns the event.
+          endpoint:
+            type: string
+            description: |
+              Operator-supplied label captured at ingest time. Empty when
+              the ingester did not provide one.
+        required:
+        - timestamp
+        - tenant_id
+    IngestBinaryVerifyError:
+      type: object
+      description: |
+        One per-event rejection from a partial-success `ingestBinaryVerify`
+        request. The accepted events have already been persisted.
+      properties:
+        index:
+          type: integer
+          description: |
+            Zero-based index of the rejected event within the request
+            `events` array.
+        error:
+          type: string
+          description: |
+            Human-readable validation reason, sourced from
+            `model.BinaryVerifyEvent.Validate`.
+      required:
+      - index
+      - error
+    IngestBinaryVerifyRequest:
+      type: object
+      description: |
+        Batch envelope for binary-verify outcomes. Up to 1000 events per
+        request; the body byte size is capped at 2 MB.
+      properties:
+        endpoint:
+          type: string
+          maxLength: 256
+          description: |
+            Optional operator-supplied label identifying the host that
+            ran the install script. Captured into every persisted event.
+        events:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            $ref: '#/components/schemas/BinaryVerifyEvent'
+      required:
+      - events
+    IngestBinaryVerifyResponse:
+      type: object
+      description: |
+        Result of a binary-verify batch ingest. `accepted + rejected` may
+        be less than the submitted batch only when a hard error prevented
+        decoding; per-event validation failures are surfaced in `errors`.
+      properties:
+        accepted:
+          type: integer
+          description: Number of events persisted to the audit chain.
+        rejected:
+          type: integer
+          description: Number of events rejected by per-event validation.
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/IngestBinaryVerifyError'
+          description: Per-event rejections. Omitted when rejected is 0.
+      required:
+      - accepted
+      - rejected
+    ShadowAgentFinding:
+      type: object
+      description: Persisted lifecycle record for one detected shadow agent. Distinct from the scanner-only `Finding` shape; this is the operator-visible triage record consumed by /api/v1/edge/shadow-agents.
+      required: [finding_id, tenant_id, owner_principal_id, principal_id, agent_product, risk, status, evidence_type, detected_at, created_at, updated_at]
+      properties:
+        finding_id:
+          type: string
+          description: Server-generated id prefixed with `edge_shadow_`.
+        tenant_id:
+          type: string
+        owner_principal_id:
+          type: string
+        principal_id:
+          type: string
+          description: Detector identity (scanner principal); falls back to authenticated caller when omitted.
+        agent_product:
+          type: string
+        agent_id:
+          type: string
+        hostname:
+          type: string
+        risk:
+          type: string
+          enum: [low, medium, high, critical]
+        status:
+          type: string
+          enum: [detected, resolved, suppressed, managed_skip]
+        evidence_type:
+          type: string
+        evidence_summary:
+          type: string
+          description: Bounded (≤2 KiB) redacted summary safe to persist and return. Secret-shaped values are stripped at ingest.
+        evidence_artifact_ptr:
+          $ref: '#/components/schemas/ShadowEvidencePointer'
+        redacted_path:
+          type: string
+          description: Home-prefix-stripped path; never an absolute developer-machine path.
+        detected_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        resolved_at:
+          type: string
+          format: date-time
+          nullable: true
+        resolved_by:
+          type: string
+        resolution_reason:
+          type: string
+          description: Bounded (≤512 bytes) human reason supplied at resolve/suppress; secret markers stripped.
+        suppressed_until:
+          type: string
+          format: date-time
+          nullable: true
+          description: Optional hint for a time-bound suppression. The store does NOT auto-revert when the timestamp lapses.
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+          description: Small free-form map (≤16 entries, ≤64-byte keys, ≤256-byte values).
+        source_type:
+          type: string
+          enum: [local, kubernetes, ci, network]
+          description: EDGE-143.5 §10.1 — detector-family identifier. Defaults to `local` on read for legacy EDGE-141 records.
+        source_id:
+          type: string
+          maxLength: 128
+          description: Detector instance identifier.
+        cluster_id:
+          type: string
+          maxLength: 64
+          description: Operator-configured K8s cluster name; empty for non-K8s sources.
+        namespace:
+          type: string
+          maxLength: 63
+          description: K8s namespace; empty for non-K8s sources.
+        workload_kind:
+          type: string
+          maxLength: 32
+          description: K8s kind (Deployment, StatefulSet, DaemonSet, ...) or empty.
+        workload_name:
+          type: string
+          maxLength: 253
+        pod_uid:
+          type: string
+          maxLength: 36
+          description: Optional pod UUID when the finding pins a specific pod.
+        ci_provider:
+          type: string
+          enum: [github_actions, gitlab_ci, jenkins, buildkite, circleci, other]
+          description: EDGE-143.5 §10.1 — CI provider; empty for non-CI sources.
+        repo:
+          type: string
+          maxLength: 256
+          description: '`org/repo` for CI sources; composite-indexed with ci_provider.'
+        ref:
+          type: string
+          maxLength: 256
+        workflow_id:
+          type: string
+          maxLength: 128
+        job_id:
+          type: string
+          maxLength: 128
+        run_id:
+          type: string
+          maxLength: 128
+        runner_id:
+          type: string
+          maxLength: 128
+        tenant_source:
+          type: string
+          maxLength: 64
+          description: Audit trail for tenant-attribution decisions (see §6.1 / §6.3).
+        principal_source:
+          type: string
+          maxLength: 64
+          description: Audit trail for principal-attribution decisions (see §6.2 / §6.4).
+        signal_set:
+          type: array
+          maxItems: 16
+          items:
+            type: string
+            pattern: '^[a-z0-9_]{1,32}$'
+          description: Bounded enum-shape signal identifiers from §7.1 / §8.x. Supports any-of filtering via the `signal` query param.
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: Detector self-rated confidence in [0, 1].
+        first_seen:
+          type: string
+          format: date-time
+          nullable: true
+          description: Distinct from `observed_at`; populated by detectors with longitudinal tracking.
+        last_seen:
+          type: string
+          format: date-time
+          nullable: true
+          description: Updated on every re-observation.
+        false_positive_reason:
+          type: string
+          maxLength: 64
+          description: Populated when `status` would be `managed_skip` per §10.3.
+        exception_id:
+          type: string
+          maxLength: 64
+          description: Joins to operator-defined exception declarations (§10.3).
+        retention_class:
+          type: string
+          enum: [shadow_short, shadow_default, shadow_long]
+          description: EDGE-143.5 §10.5 — per-finding terminal-TTL class. Empty falls back to the store's `terminalRetention`.
+    ShadowEvidencePointer:
+      type: object
+      description: Reference to redacted evidence stored outside the finding record. Distinct from `ArtifactPointer` because shadow findings have no session/execution context.
+      required: [tenant_id, uri, sha256, retention_class, redaction_level, created_at]
+      properties:
+        tenant_id:
+          type: string
+          description: MUST match the parent finding's tenant_id; cross-tenant pointers are rejected.
+        uri:
+          type: string
+        sha256:
+          type: string
+        size_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+        retention_class:
+          type: string
+          enum: [short, standard, audit]
+        redaction_level:
+          type: string
+          enum: [standard, strict]
+        created_at:
+          type: string
+          format: date-time
+    ShadowAgentFindingPage:
+      type: object
+      properties:
+        findings:
+          type: array
+          items:
+            $ref: '#/components/schemas/ShadowAgentFinding'
+        next_cursor:
+          type: string
+          nullable: true
+    CreateShadowAgentFindingRequest:
+      type: object
+      required: [owner_principal_id, agent_product, risk, evidence_type, detected_at]
+      anyOf:
+        - required: [evidence_summary]
+        - required: [evidence_artifact_ptr]
+      properties:
+        finding_id:
+          type: string
+          description: Optional caller-supplied id. When omitted, server generates with `edge_shadow_` prefix.
+        tenant_id:
+          type: string
+          description: Optional, must match X-Tenant-ID header when supplied.
+        owner_principal_id:
+          type: string
+        principal_id:
+          type: string
+          description: Detector identity; falls back to authenticated caller.
+        agent_product:
+          type: string
+        agent_id:
+          type: string
+        hostname:
+          type: string
+        risk:
+          type: string
+          enum: [low, medium, high, critical]
+        evidence_type:
+          type: string
+        evidence_summary:
+          type: string
+        evidence_artifact_ptr:
+          $ref: '#/components/schemas/ShadowEvidencePointer'
+        redacted_path:
+          type: string
+        detected_at:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+        source_type:
+          type: string
+          enum: [local, kubernetes, ci, network]
+          description: EDGE-143.5 §10.1; defaults to `local` when omitted.
+        source_id:
+          type: string
+          maxLength: 128
+        cluster_id:
+          type: string
+          maxLength: 64
+        namespace:
+          type: string
+          maxLength: 63
+        workload_kind:
+          type: string
+          maxLength: 32
+        workload_name:
+          type: string
+          maxLength: 253
+        pod_uid:
+          type: string
+          maxLength: 36
+        ci_provider:
+          type: string
+          enum: [github_actions, gitlab_ci, jenkins, buildkite, circleci, other]
+        repo:
+          type: string
+          maxLength: 256
+        ref:
+          type: string
+          maxLength: 256
+        workflow_id:
+          type: string
+          maxLength: 128
+        job_id:
+          type: string
+          maxLength: 128
+        run_id:
+          type: string
+          maxLength: 128
+        runner_id:
+          type: string
+          maxLength: 128
+        tenant_source:
+          type: string
+          maxLength: 64
+        principal_source:
+          type: string
+          maxLength: 64
+        signal_set:
+          type: array
+          maxItems: 16
+          items:
+            type: string
+            pattern: '^[a-z0-9_]{1,32}$'
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+        first_seen:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
+        false_positive_reason:
+          type: string
+          maxLength: 64
+        exception_id:
+          type: string
+          maxLength: 64
+        retention_class:
+          type: string
+          enum: [shadow_short, shadow_default, shadow_long]
+    ResolveShadowAgentFindingRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          description: Bounded reason for resolution; ≤512 bytes, secret markers stripped.
+    SuppressShadowAgentFindingRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          description: Bounded reason for suppression; ≤512 bytes, secret markers stripped.
+        suppressed_until:
+          type: string
+          format: date-time
+          description: Optional time-bound hint; the store records but does not auto-revert.
+    ShadowException:
+      type: object
+      required: [exception_id, tenant_id, created_by, created_at, expires_at, scope_source_type, scope_risk_level, status, step_up_factor]
+      description: |
+        Operator-defined exception declaration (EDGE-143.6 / §10.3). Suppresses
+        future ShadowAgent findings matching its scope predicate. The
+        step_up_factor records which auth tier satisfied the Q8 step-up gate
+        at creation time so SIEM rules can pivot on authority-at-time-of-action.
+      properties:
+        exception_id:
+          type: string
+          description: Opaque id with `shadow_exc_` prefix.
+        tenant_id:
+          type: string
+        created_by:
+          type: string
+          description: Authenticated principal at create time. Not trusted from the wire body.
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          description: Maximum 90 days from creation (longer requires re-affirmation per §10.3).
+        reason:
+          type: string
+          description: Free-text operator rationale, up to 512 bytes.
+        scope_source_type:
+          type: string
+          enum: [local, kubernetes, ci, network]
+        scope_source_id:
+          type: string
+          description: Optional detector instance id; further narrows scope.
+        scope_signal_set:
+          type: array
+          items:
+            type: string
+          description: At most 16 detector signal names; any-of overlap with a finding's signal_set satisfies the predicate.
+        scope_risk_level:
+          type: string
+          enum: [low, medium, high, critical]
+        status:
+          type: string
+          enum: [active, revoked, expired]
+        step_up_factor:
+          type: string
+          enum: [mfa_recent, signed_admin_token, none]
+          description: |
+            Auth tier that satisfied the Q8 step-up gate at create time.
+            "signed_admin_token" when the legacy admin role matched;
+            "mfa_recent" when the explicit shadow.exception.high_risk
+            permission matched; "none" when the gate was not required.
+        revoked_by:
+          type: string
+        revoked_at:
+          type: string
+          format: date-time
+        revocation_reason:
+          type: string
+    CreateShadowExceptionRequest:
+      type: object
+      required: [expires_at, scope_source_type, scope_risk_level]
+      properties:
+        expires_at:
+          type: string
+          format: date-time
+          description: MUST be in the future and within 90 days of now.
+        reason:
+          type: string
+          maxLength: 512
+        scope_source_type:
+          type: string
+          enum: [local, kubernetes, ci, network]
+        scope_source_id:
+          type: string
+          maxLength: 128
+        scope_signal_set:
+          type: array
+          maxItems: 16
+          items:
+            type: string
+            pattern: '^[a-z0-9_]{1,32}$'
+        scope_risk_level:
+          type: string
+          enum: [low, medium, high, critical]
+    RevokeShadowExceptionRequest:
+      type: object
+      description: Optional body for revoking an exception. Empty body is allowed.
+      properties:
+        reason:
+          type: string
+          maxLength: 512
+    ListShadowExceptionsResponse:
+      type: object
+      required: [exceptions]
+      properties:
+        exceptions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ShadowException'
+        next_cursor:
+          type: string
+    ShadowAgentRemediationRequest:
+      type: object
+      description: Optional body for generating a remediation plan. Both fields default to the generator's documented defaults when omitted.
+      properties:
+        audience:
+          type: string
+          enum: [dev, enterprise, both]
+          description: Selects wording + step layering. Defaults to "both" when omitted.
+        omit_commands:
+          type: boolean
+          description: When true, strips the Command and APIRequest.Body fields from emitted steps. Defaults to false.
+    ShadowAgentRemediationResponse:
+      type: object
+      required: [finding_id, tenant_id, remediation]
+      properties:
+        finding_id:
+          type: string
+        tenant_id:
+          type: string
+        remediation:
+          $ref: '#/components/schemas/ShadowRemediationPlan'
+    ShadowRemediationPlan:
+      type: object
+      required: [audience, severity, action_kind, summary, risk_explanation, recommended_action, steps, generator_version, generated_at, advisory_only]
+      description: Deterministic advisory remediation plan. All commands inside steps use literal placeholders and never carry live secrets or developer paths.
+      properties:
+        finding_id:
+          type: string
+          description: Empty when generated from a scanner-shape Finding (no persistent ID).
+        tenant_id:
+          type: string
+        audience:
+          type: string
+          enum: [dev, enterprise, both]
+        severity:
+          type: string
+          enum: [info, low, medium, high]
+        action_kind:
+          $ref: '#/components/schemas/ShadowRemediationActionKind'
+        summary:
+          type: string
+        risk_explanation:
+          type: string
+        recommended_action:
+          type: string
+        safety_notes:
+          type: array
+          items:
+            type: string
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/ShadowRemediationStep'
+        generator_version:
+          type: string
+        generated_at:
+          type: string
+          format: date-time
+        advisory_only:
+          type: boolean
+          description: Always true in this generator. Reserved field — a future enforcement mode (out of scope) may flip it without changing the type signature.
+    ShadowRemediationStep:
+      type: object
+      required: [id, title, kind]
+      properties:
+        id:
+          type: string
+          description: Stable, deterministic identifier within the plan.
+        title:
+          type: string
+        kind:
+          $ref: '#/components/schemas/ShadowRemediationActionKind'
+        command:
+          type: string
+          description: Shell-runnable suggestion with literal placeholders. Empty when the step is API-only or when omit_commands=true.
+        api_request:
+          $ref: '#/components/schemas/ShadowRemediationAPIRequest'
+        requires_backup:
+          type: boolean
+        preview_only:
+          type: boolean
+        destructive:
+          type: boolean
+        docs_url:
+          type: string
+        conditions:
+          type: array
+          items:
+            type: string
+    ShadowRemediationAPIRequest:
+      type: object
+      required: [method, path]
+      properties:
+        method:
+          type: string
+        path:
+          type: string
+        body:
+          type: string
+          description: Stripped when omit_commands=true.
+    ShadowRemediationActionKind:
+      type: string
+      enum:
+        - attach_mcp_gateway
+        - use_cordumctl_edge_claude
+        - deploy_managed_settings
+        - disable_unmanaged_config
+        - route_through_llm_proxy
+        - run_edge_doctor
+        - investigate_process
+        - manual_review
     EdgeAgentActionEvent:
       type: object
       required: [event_id, session_id, execution_id, tenant_id, seq, ts, layer, kind, decision, status]
@@ -8578,12 +11538,15 @@ components:
           - artifact_pointer_invalid
           - approval_conflict
           - approval_not_actionable
+          - step_up_required
           - self_approval_denied
           - idempotency_conflict
           - idempotency_key_invalid
           - idempotency_window_expired
+          - limit_exceeded
           - max_executions_exceeded
           - event_cap_exceeded
+          - replay_window_full
           example: idempotency_conflict
         message:
           type: string
@@ -8602,6 +11565,9 @@ components:
         error:
           type: string
           description: Human-readable error message
+        code:
+          type: string
+          description: Optional machine-readable error code
         status:
           type: integer
           description: HTTP status code
@@ -9964,6 +12930,109 @@ components:
       required:
       - snapshot_id
       - author
+    AuditEvent:
+      type: object
+      description: |
+        One SIEM audit event returned by `GET /api/v1/audit/events`. Mirrors
+        the gateway handler's `auditEventResponseItem` (which itself mirrors
+        `audit.SIEMEvent` in `core/audit/exporter.go`). The `extra` map's
+        secret-shaped keys (token / password / api_key / private_key / secret)
+        are stripped server-side as defense-in-depth before the response is
+        serialized; their absence does NOT imply the source event lacked them.
+      properties:
+        id:
+          type: string
+          description: |
+            Opaque per-event handle (Redis Stream message ID under the hood).
+            Stable across pagination — safe to use as a row key.
+        seq:
+          type: integer
+          format: int64
+          description: |
+            Per-tenant monotonic chain sequence. First event for a tenant has
+            seq=1. Pairs with `/api/v1/audit/verify` for forensic re-check.
+        timestamp:
+          type: string
+          format: date-time
+        event_type:
+          type: string
+        severity:
+          type: string
+          description: One of CRITICAL / HIGH / MEDIUM / LOW / INFO.
+        tenant_id:
+          type: string
+        agent_id:
+          type: string
+        agent_name:
+          type: string
+        agent_risk_tier:
+          type: string
+        job_id:
+          type: string
+        action:
+          type: string
+        decision:
+          type: string
+        matched_rule:
+          type: string
+        reason:
+          type: string
+        risk_tags:
+          type: array
+          items:
+            type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+        policy_version:
+          type: string
+        identity:
+          type: string
+          description: Identity of the actor who produced the event.
+        extra:
+          type: object
+          additionalProperties:
+            type: string
+          description: |
+            Free-form per-event metadata. Secret-shaped keys are stripped
+            before serialization (see schema-level description).
+        event_hash:
+          type: string
+          description: SHA-256 of the canonical event payload, hex-encoded.
+        prev_hash:
+          type: string
+          description: |
+            EventHash of the tenant's predecessor event, or empty for genesis.
+      required:
+      - id
+      - seq
+      - timestamp
+      - event_type
+      - severity
+      - tenant_id
+      - action
+    AuditEventsEnvelope:
+      type: object
+      description: |
+        Paginated envelope returned by `GET /api/v1/audit/events`. `next_cursor`
+        is opaque; pass it back as `?cursor=` on the next request. Empty
+        `next_cursor` means end-of-stream — clients should stop polling.
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditEvent'
+        next_cursor:
+          type: string
+          description: Opaque cursor for the next page; empty when no more events.
+        returned:
+          type: integer
+          description: Number of items in this page (== `items.length`).
+      required:
+      - items
+      - next_cursor
+      - returned
     PolicyAuditEntry:
       type: object
       description: |
@@ -10730,6 +13799,8 @@ components:
       properties:
         worker_id:
           type: string
+        tenant_id:
+          type: string
         allowed_pools:
           type: array
           items:
@@ -10750,6 +13821,7 @@ components:
           format: date-time
       required:
       - worker_id
+      - tenant_id
       - created_by
       - created_at
     WorkerCredentialIssue:

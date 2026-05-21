@@ -5,7 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
@@ -44,65 +44,115 @@ type mcpVerifySignatureResponse struct {
 	AgentID   string `json:"agent_id,omitempty"`
 }
 
-// mcpVerifierBuilder lazy-builds the Verifier from env on first use.
-// Exposed as a field on server via lazy getter so dev deploys without
-// the trust-store env vars never construct one — and the handler
-// returns a 503 with a clear remediation hint instead of 500.
-type mcpVerifierBuilder struct {
-	once     sync.Once
+// mcpVerifierState is the atomic-pointer payload stashed on *server.
+// Holding both the verifier and the (possibly-non-nil) load error in
+// one record lets the getter return either with a single atomic load,
+// without races between "loaded" vs "loaded-with-error" bookkeeping.
+type mcpVerifierState struct {
 	verifier *outbound.Verifier
 	err      error
 }
 
-var mcpVerifierSingleton mcpVerifierBuilder
-
-// mcpVerifier lazily loads the trust store + builds a Verifier.
+// mcpVerifier lazily loads the trust store + builds a Verifier on first
+// call and caches the result on the *server via atomic.Pointer. Pre-fix,
+// the cache lived on a package-level sync.Once so the very first verify
+// in any test or process pinned the trust store for the lifetime of the
+// binary — operator key rotation was silently ignored and parallel
+// server instances shared trust state. Operators trigger a re-read of
+// the env via s.reloadMCPVerifier() (admin endpoint or SIGHUP).
+//
 // Nonce store defaults to in-memory — the verification endpoint is
 // stateless from the caller's perspective so replay protection here
 // applies per-gateway-process. For cross-replica HA, an operator can
 // swap to RedisNonceStore via a future knob.
 func (s *server) mcpVerifier() (*outbound.Verifier, error) {
-	mcpVerifierSingleton.once.Do(func() {
-		trust, err := outbound.LoadTrustStoreFromEnv()
-		if err != nil {
-			mcpVerifierSingleton.err = err
-			return
-		}
-		if len(trust) == 0 {
-			mcpVerifierSingleton.err = errors.New("mcp verify: no trusted keys configured (CORDUM_MCP_INBOUND_TRUSTED_KEY_<ID>)")
-			return
-		}
-		verifier, err := outbound.NewVerifier(trust, outbound.NewInMemoryNonceStore(), 5*time.Minute)
-		if err != nil {
-			mcpVerifierSingleton.err = err
-			return
-		}
-		mcpVerifierSingleton.verifier = verifier
-	})
-	return mcpVerifierSingleton.verifier, mcpVerifierSingleton.err
+	if s == nil {
+		return nil, errors.New("mcp verify: server not initialized")
+	}
+	if loaded := s.mcpVerifierPtr.Load(); loaded != nil {
+		return loaded.verifier, loaded.err
+	}
+	state := buildMCPVerifierFromEnv()
+	// CompareAndSwap so concurrent first-callers don't trample each
+	// other's freshly built verifier; the loser drops its copy and
+	// returns the winner's published state instead.
+	if s.mcpVerifierPtr.CompareAndSwap(nil, state) {
+		return state.verifier, state.err
+	}
+	winner := s.mcpVerifierPtr.Load()
+	return winner.verifier, winner.err
 }
+
+// reloadMCPVerifier clears the cached verifier so the next mcpVerifier()
+// call rebuilds it from the current environment. Called after operator
+// key rotation, fleet re-key, or any change to the
+// CORDUM_MCP_INBOUND_TRUSTED_KEY_<ID> environment vars.
+func (s *server) reloadMCPVerifier() {
+	if s == nil {
+		return
+	}
+	s.mcpVerifierPtr.Store(nil)
+}
+
+// buildMCPVerifierFromEnv encapsulates the trust-store + verifier
+// construction so the atomic.Pointer cache populates with a single
+// composite value. Both fields are caller-visible: a nil verifier
+// paired with a non-nil err drives the 503 with the remediation
+// message; both non-nil never happens.
+func buildMCPVerifierFromEnv() *mcpVerifierState {
+	trust, err := outbound.LoadTrustStoreFromEnv()
+	if err != nil {
+		return &mcpVerifierState{err: err}
+	}
+	if len(trust) == 0 {
+		return &mcpVerifierState{err: errors.New("mcp verify: no trusted keys configured (CORDUM_MCP_INBOUND_TRUSTED_KEY_<ID>)")}
+	}
+	verifier, err := outbound.NewVerifier(trust, outbound.NewInMemoryNonceStore(), 5*time.Minute)
+	if err != nil {
+		return &mcpVerifierState{err: err}
+	}
+	return &mcpVerifierState{verifier: verifier}
+}
+
+// mcpVerifierPtrType is the atomic.Pointer field type — split out so the
+// gateway.go server struct stays small. See server.go:130 for the field
+// declaration.
+type mcpVerifierPtrType = atomic.Pointer[mcpVerifierState]
+
+// mcpVerifySignatureMaxBodyBytes caps the POST body the verify-signature
+// endpoint accepts. The handler runs ecdsa.VerifyASN1 + sha256 on the
+// claimed params; oversized bodies are a CPU-pin vector even from an
+// admin-authenticated caller. 64 KiB is generous for a signed JSON-RPC
+// envelope and well below the gateway's global maxBody middleware.
+const mcpVerifySignatureMaxBodyBytes = int64(64 * 1024)
 
 // handleMCPVerifySignature serves POST /api/v1/mcp/verify-signature.
 func (s *server) handleMCPVerifySignature(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermissionOrRole(w, r, auth.PermMCPVerify, "admin") {
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, mcpVerifySignatureMaxBodyBytes)
 	var body mcpVerifySignatureRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid json body: "+err.Error())
+		// Sanitize: never echo the json decoder error verbatim. The Go
+		// decoder text exposes struct field shape and the offending
+		// byte position — both useful to an attacker probing the
+		// handler. Log the detail server-side, return a generic 400.
+		slog.Warn("mcp verify-signature: malformed JSON body", "error", err, "remote", r.RemoteAddr)
+		writeJSONError(w, http.StatusBadRequest, errorCodeMCPVerifyRequestInvalid, "request body is not valid JSON")
 		return
 	}
 	if body.Method == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "method required")
+		writeJSONError(w, http.StatusBadRequest, errorCodeMCPVerifyRequestInvalid, "method required")
 		return
 	}
 	verifier, err := s.mcpVerifier()
 	if err != nil || verifier == nil {
 		slog.Warn("mcp verify endpoint called without trust store", "error", err)
-		writeJSONError(w, http.StatusServiceUnavailable, "mcp_verifier_unavailable", "no trusted public keys — set CORDUM_MCP_INBOUND_TRUSTED_KEY_<ID> and restart")
+		writeJSONError(w, http.StatusServiceUnavailable, errorCodeMCPVerifierUnavailable, "no trusted public keys — set CORDUM_MCP_INBOUND_TRUSTED_KEY_<ID> and restart")
 		return
 	}
-	verifyErr := verifier.VerifyRequest(body.Headers, body.Method, []byte(body.Params))
+	verifyErr := verifier.VerifyRequest(r.Context(), body.Headers, body.Method, []byte(body.Params))
 	resp := mcpVerifySignatureResponse{
 		KeyID:   body.Headers[outbound.HeaderKeyID],
 		Tenant:  body.Headers[outbound.HeaderTenant],

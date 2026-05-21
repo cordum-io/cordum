@@ -21,6 +21,7 @@ func TestActionGateHTTPStatusMapping(t *testing.T) {
 		{actiongates.CodeNotFound, http.StatusNotFound},
 		{actiongates.CodeConflict, http.StatusConflict},
 		{actiongates.CodeServiceUnavailable, http.StatusServiceUnavailable},
+		{actiongates.CodeResolverError, http.StatusServiceUnavailable},
 		{actiongates.CodeInternalError, http.StatusInternalServerError},
 		{actiongates.CodeRequireHuman, http.StatusOK},
 		{"unknown_code", http.StatusInternalServerError},
@@ -47,6 +48,7 @@ func TestActionGateEdgeErrCodeMapping(t *testing.T) {
 		{actiongates.CodeNotFound, edgeErrCodeNotFound},
 		{actiongates.CodeConflict, edgeErrCodeConflict},
 		{actiongates.CodeServiceUnavailable, edgeErrCodeServiceUnavailable},
+		{actiongates.CodeResolverError, edgeErrCodeServiceUnavailable},
 		{actiongates.CodeInternalError, edgeErrCodeInternalError},
 		{"weird_value", edgeErrCodeInternalError},
 	}
@@ -64,16 +66,16 @@ func TestSanitizeActionGateDetails(t *testing.T) {
 	t.Parallel()
 	dec := actiongates.ActionGateDecision{
 		Extra: map[string]string{
-			"gate":         "actiongate.tenant",
-			"sub_reason":   "cross_tenant:owner_mismatch",
-			"target_type":  "user",
-			"auth_tenant":  "tnt_a",
-			"target_path":  "/etc/passwd",                 // should be stripped
-			"target_url":   "https://leak.example.com/dump", // should be stripped
-			"args":         "force=true",                  // should be stripped
+			"gate":          "actiongate.tenant",
+			"sub_reason":    "cross_tenant:owner_mismatch",
+			"target_type":   "user",
+			"auth_tenant":   "tnt_a",
+			"target_path":   "/etc/passwd",                   // should be stripped
+			"target_url":    "https://leak.example.com/dump", // should be stripped
+			"args":          "force=true",                    // should be stripped
 			"claim_present": "true",
-			"claim_chars":  "<=128",
-			"approval_ref": "appr_secret",                 // should be stripped
+			"claim_chars":   "<=128",
+			"approval_ref":  "appr_secret", // should be stripped
 		},
 	}
 	got := sanitizeActionGateDetails(dec)
@@ -121,6 +123,7 @@ func TestWriteActionGatePolicyErrorAllStatuses(t *testing.T) {
 		{"conflict_409", actiongates.CodeConflict, 409, edgeErrCodeConflict},
 		{"internal_500", actiongates.CodeInternalError, 500, edgeErrCodeInternalError},
 		{"unavailable_503", actiongates.CodeServiceUnavailable, 503, edgeErrCodeServiceUnavailable},
+		{"resolver_error_503", actiongates.CodeResolverError, 503, edgeErrCodeServiceUnavailable},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -196,6 +199,48 @@ func TestWriteActionGatePolicyErrorRequireHumanSimulateIs200(t *testing.T) {
 	}
 }
 
+func TestWriteActionGatePolicyErrorRequireHumanEvaluateIs409(t *testing.T) {
+	t.Parallel()
+	dec := actiongates.ActionGateDecision{
+		Code:      actiongates.CodeRequireHuman,
+		GateID:    "actiongate.mutation",
+		Reason:    "destructive action requires human approval",
+		SubReason: "missing_approval",
+		Extra: map[string]string{
+			"gate":        "actiongate.mutation",
+			"sub_reason":  "missing_approval",
+			"target_path": "/secrets/prod.env",
+		},
+	}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/policy/evaluate", nil)
+	writeActionGatePolicyError(rr, req, "evaluate", dec)
+
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 for evaluate REQUIRE_HUMAN", rr.Code)
+	}
+	var env edgeErrorEnvelope
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode edge envelope: %v body=%s", err, rr.Body.String())
+	}
+	if env.Code != edgeErrCodeConflict {
+		t.Fatalf("envelope.code = %q, want %q", env.Code, edgeErrCodeConflict)
+	}
+	if env.Code == edgeErrCodeInternalError || rr.Code == http.StatusOK {
+		t.Fatalf("legacy REQUIRE_HUMAN shape returned: status=%d code=%q", rr.Code, env.Code)
+	}
+	if env.Message != "destructive action requires human approval" {
+		t.Fatalf("message = %q, want sanitized policy reason", env.Message)
+	}
+	if env.Details == nil || env.Details["gate"] != "actiongate.mutation" ||
+		env.Details["sub_reason"] != "missing_approval" {
+		t.Fatalf("details = %#v, want sanitized gate and sub_reason", env.Details)
+	}
+	if _, leaked := env.Details["target_path"]; leaked {
+		t.Fatalf("details leaked unsafe target_path: %#v", env.Details)
+	}
+}
+
 func TestSafeActionGateExtraKeysCoverDefaults(t *testing.T) {
 	t.Parallel()
 	must := []string{"gate", "sub_reason", "target_type", "auth_tenant"}
@@ -218,6 +263,7 @@ func TestPolicySimulateActionGateMapping(t *testing.T) {
 		actiongates.CodeConflict:           409,
 		actiongates.CodeInternalError:      500,
 		actiongates.CodeServiceUnavailable: 503,
+		actiongates.CodeResolverError:      503,
 	}
 	for code, want := range codes {
 		if got := actionGateHTTPStatus(code); got != want {

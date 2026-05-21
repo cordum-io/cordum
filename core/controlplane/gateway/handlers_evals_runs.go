@@ -106,7 +106,7 @@ func (s *server) handleRunEvalDataset(w http.ResponseWriter, r *http.Request) {
 
 	datasetID := strings.TrimSpace(r.PathValue("id"))
 	if datasetID == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "eval dataset id required")
+		writeJSONError(w, http.StatusBadRequest, errorCodeEvalRunNotRunnable, "eval dataset id required")
 		return
 	}
 
@@ -132,11 +132,11 @@ func (s *server) handleRunEvalDataset(w http.ResponseWriter, r *http.Request) {
 	body.CandidateBundleID = strings.TrimSpace(body.CandidateBundleID)
 	body.CandidateContent = strings.TrimSpace(body.CandidateContent)
 	if body.MaxEntries < 0 {
-		writeErrorJSON(w, http.StatusBadRequest, "max_entries must be >= 0")
+		writeJSONError(w, http.StatusBadRequest, errorCodeEvalRunNotRunnable, "max_entries must be >= 0")
 		return
 	}
 	if body.MaxEntries > runner.HardMaxEntries {
-		writeErrorJSON(w, http.StatusBadRequest, "max_entries must be <= 10000")
+		writeJSONError(w, http.StatusBadRequest, errorCodeEvalRunNotRunnable, "max_entries must be <= 10000")
 		return
 	}
 	if !body.UseCurrentPolicy && body.CandidateBundleID == "" && body.CandidateContent == "" {
@@ -145,7 +145,7 @@ func (s *server) handleRunEvalDataset(w http.ResponseWriter, r *http.Request) {
 
 	policy, snapshot, err := s.loadEvalRunPolicy(r.Context(), body)
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodeEvalRunNotRunnable, err.Error())
 		return
 	}
 
@@ -191,7 +191,7 @@ func (s *server) handleRunEvalDataset(w http.ResponseWriter, r *http.Request) {
 		writeInternalError(w, r, "acquire eval run lock", err)
 		return
 	} else if !ok {
-		writeErrorJSON(w, http.StatusConflict, "eval dataset run already in progress")
+		writeJSONError(w, http.StatusConflict, errorCodeEvalRunConflict, "eval dataset run already in progress")
 		return
 	}
 
@@ -251,7 +251,7 @@ func (s *server) handleListEvalRuns(w http.ResponseWriter, r *http.Request) {
 
 	datasetID := strings.TrimSpace(r.PathValue("id"))
 	if datasetID == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "eval dataset id required")
+		writeJSONError(w, http.StatusBadRequest, errorCodeEvalRunNotRunnable, "eval dataset id required")
 		return
 	}
 	if _, err := s.evalDatasetStore.GetEvalDataset(r.Context(), tenant, datasetID); err != nil {
@@ -268,7 +268,7 @@ func (s *server) handleListEvalRuns(w http.ResponseWriter, r *http.Request) {
 	if raw := strings.TrimSpace(q.Get("has_regression")); raw != "" {
 		parsed, err := parseStrictBool(raw)
 		if err != nil {
-			writeErrorJSON(w, http.StatusBadRequest, "has_regression must be true or false")
+			writeJSONError(w, http.StatusBadRequest, errorCodeEvalRunNotRunnable, "has_regression must be true or false")
 			return
 		}
 		filter.HasRegression = parsed
@@ -276,7 +276,7 @@ func (s *server) handleListEvalRuns(w http.ResponseWriter, r *http.Request) {
 	if raw := strings.TrimSpace(q.Get("since")); raw != "" {
 		ms, err := parseEvalDatasetQueryTimestamp(raw)
 		if err != nil {
-			writeErrorJSON(w, http.StatusBadRequest, "since must be RFC3339")
+			writeJSONError(w, http.StatusBadRequest, errorCodeEvalRunNotRunnable, "since must be RFC3339")
 			return
 		}
 		filter.SinceMS = ms
@@ -284,19 +284,19 @@ func (s *server) handleListEvalRuns(w http.ResponseWriter, r *http.Request) {
 	if raw := strings.TrimSpace(q.Get("until")); raw != "" {
 		ms, err := parseEvalDatasetQueryTimestamp(raw)
 		if err != nil {
-			writeErrorJSON(w, http.StatusBadRequest, "until must be RFC3339")
+			writeJSONError(w, http.StatusBadRequest, errorCodeEvalRunNotRunnable, "until must be RFC3339")
 			return
 		}
 		filter.UntilMS = ms
 	}
 	if filter.SinceMS > 0 && filter.UntilMS > 0 && filter.SinceMS > filter.UntilMS {
-		writeErrorJSON(w, http.StatusBadRequest, "since must be <= until")
+		writeJSONError(w, http.StatusBadRequest, errorCodeEvalRunNotRunnable, "since must be <= until")
 		return
 	}
 	if raw := strings.TrimSpace(q.Get("min_score")); raw != "" {
 		minScore, err := strconv.ParseFloat(raw, 64)
 		if err != nil {
-			writeErrorJSON(w, http.StatusBadRequest, "min_score must be a number")
+			writeJSONError(w, http.StatusBadRequest, errorCodeEvalRunNotRunnable, "min_score must be a number")
 			return
 		}
 		filter.MinScore = minScore
@@ -308,7 +308,7 @@ func (s *server) handleListEvalRuns(w http.ResponseWriter, r *http.Request) {
 	if raw := strings.TrimSpace(q.Get("limit")); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n <= 0 {
-			writeErrorJSON(w, http.StatusBadRequest, "limit must be a positive integer")
+			writeJSONError(w, http.StatusBadRequest, errorCodeEvalRunNotRunnable, "limit must be a positive integer")
 			return
 		}
 		limit = n
@@ -342,7 +342,7 @@ func (s *server) handleGetEvalRun(w http.ResponseWriter, r *http.Request) {
 
 	runID := strings.TrimSpace(r.PathValue("run_id"))
 	if runID == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "run id required")
+		writeJSONError(w, http.StatusBadRequest, errorCodeEvalRunNotRunnable, "run id required")
 		return
 	}
 
@@ -395,11 +395,11 @@ func (s *server) handleDeleteEvalRun(w http.ResponseWriter, r *http.Request) {
 
 	runID := strings.TrimSpace(r.PathValue("run_id"))
 	if runID == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "run id required")
+		writeJSONError(w, http.StatusBadRequest, errorCodeEvalRunNotRunnable, "run id required")
 		return
 	}
 	if strings.TrimSpace(r.URL.Query().Get("force")) != "true" {
-		writeErrorJSON(w, http.StatusBadRequest, "eval run delete requires force=true")
+		writeJSONError(w, http.StatusBadRequest, errorCodeEvalRunNotRunnable, "eval run delete requires force=true")
 		return
 	}
 

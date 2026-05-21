@@ -95,22 +95,22 @@ func (s *server) handleInstallPack(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, packs.MaxPackUploadBytes)
 	if err := r.ParseMultipartForm(packs.MaxPackUploadBytes); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid multipart form")
+		writeJSONError(w, http.StatusBadRequest, errorCodePackInstallInvalid, "invalid multipart form")
 		return
 	}
 	file, header, err := r.FormFile("bundle")
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "bundle file required")
+		writeJSONError(w, http.StatusBadRequest, errorCodePackInstallInvalid, "bundle file required")
 		return
 	}
 	defer func() { _ = file.Close() }()
 	if header != nil && header.Filename != "" && !packs.IsTarGz(header.Filename) {
-		writeErrorJSON(w, http.StatusBadRequest, "bundle must be .tgz")
+		writeJSONError(w, http.StatusBadRequest, errorCodePackInstallInvalid, "bundle must be .tgz")
 		return
 	}
 	bundleDir, cleanup, err := packs.LoadPackBundleFromReader(file)
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodePackInstallInvalid, err.Error())
 		return
 	}
 	defer cleanup()
@@ -125,7 +125,7 @@ func (s *server) handleInstallPack(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var installErr *packs.PackInstallError
 		if errors.As(err, &installErr) {
-			writeErrorJSON(w, installErr.Status, installErr.Error())
+			writeJSONError(w, installErr.Status, packInstallErrorCode(installErr), installErr.Error())
 			return
 		}
 		writeInternalError(w, r, "install pack", err)
@@ -348,7 +348,7 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 	}
 	if err := s.updatePackRegistry(ctx, record); err != nil {
 		if s.workerCredentialStore != nil && packCredential != nil {
-			_ = s.workerCredentialStore.Revoke(ctx, packCredential.WorkerID)
+			_ = s.workerCredentialStore.Revoke(ctx, packCredentialTenant(ctx, s.tenant), packCredential.WorkerID)
 		}
 		if s.topicRegistry != nil {
 			_ = s.topicRegistry.DeleteMany(ctx, registeredTopicNames)
@@ -394,7 +394,7 @@ func (s *server) handleUninstallPack(w http.ResponseWriter, r *http.Request) {
 	release, err := acquirePackLocks(r.Context(), s.lockStore, packID, owner)
 	if err != nil {
 		slog.Warn("pack lock conflict", "method", r.Method, "path", r.URL.Path, "error", err)
-		writeErrorJSON(w, http.StatusConflict, "resource is locked")
+		writeJSONError(w, http.StatusConflict, errorCodePackAlreadyInstalled, "resource is locked")
 		return
 	}
 	defer release()
@@ -458,7 +458,8 @@ func (s *server) handleUninstallPack(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if s.workerCredentialStore != nil {
-		if err := s.workerCredentialStore.Revoke(r.Context(), packWorkerID(packID)); err != nil && !errors.Is(err, workercredentials.ErrCredentialNotFound) {
+		tenant := packCredentialTenant(r.Context(), s.tenant)
+		if err := s.workerCredentialStore.Revoke(r.Context(), tenant, packWorkerID(packID)); err != nil && !errors.Is(err, workercredentials.ErrCredentialNotFound) {
 			writeInternalError(w, r, "pack worker credential cleanup", err)
 			return
 		}
@@ -552,6 +553,7 @@ func (s *server) issuePackWorkerCredential(ctx context.Context, packID string, r
 	}
 
 	issued, err := s.workerCredentialStore.Create(ctx, workercredentials.IssueInput{
+		TenantID:      packCredentialTenant(ctx, s.tenant),
 		WorkerID:      workerID,
 		AllowedPools:  allowedPools,
 		AllowedTopics: allowedTopics,
@@ -570,6 +572,17 @@ func (s *server) issuePackWorkerCredential(ctx context.Context, packID string, r
 		PackID:        issued.Credential.PackID,
 		CreatedAt:     issued.Credential.CreatedAt,
 	}, nil
+}
+
+func packCredentialTenant(ctx context.Context, fallback string) string {
+	if authCtx := auth.FromContext(ctx); authCtx != nil && strings.TrimSpace(authCtx.Tenant) != "" {
+		return strings.TrimSpace(authCtx.Tenant)
+	}
+	fallback = strings.TrimSpace(fallback)
+	if fallback == "" {
+		return "default"
+	}
+	return fallback
 }
 
 func packWorkerID(packID string) string {
@@ -643,7 +656,7 @@ func (s *server) planSchemas(ctx context.Context, dir string, manifest *packs.Pa
 						}
 					}
 				}
-			} else if err != nil && !errors.Is(err, redis.Nil) {
+			} else if !errors.Is(err, redis.Nil) {
 				return nil, err
 			}
 		}
@@ -673,7 +686,7 @@ func (s *server) planWorkflows(ctx context.Context, dir string, manifest *packs.
 			} else if !upgrade {
 				return nil, fmt.Errorf("workflow %s exists; rerun with upgrade", ref.ID)
 			}
-		} else if err != nil && !errors.Is(err, redis.Nil) {
+		} else if !errors.Is(err, redis.Nil) {
 			return nil, err
 		}
 		plans = append(plans, plan)
@@ -1240,27 +1253,27 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 	fromCatalog := false
 	if installURL != "" {
 		if expectedSha == "" {
-			writeErrorJSON(w, http.StatusBadRequest, "sha256 required")
+			writeJSONError(w, http.StatusBadRequest, errorCodePackMarketplaceInvalid, "sha256 required")
 			return
 		}
 		entry, err := s.findMarketplaceEntryByURL(r.Context(), installURL)
 		if err != nil {
 			if errors.Is(err, packs.ErrMarketplaceNotFound) {
-				writeErrorJSON(w, http.StatusNotFound, "marketplace pack not found")
+				writeJSONError(w, http.StatusNotFound, errorCodePackDependencyMissing, "marketplace pack not found")
 			} else {
 				slog.Error("marketplace entry lookup failed", "error", err, "url", installURL)
-				writeErrorJSON(w, http.StatusBadRequest, "marketplace lookup failed")
+				writeJSONError(w, http.StatusBadRequest, errorCodePackMarketplaceInvalid, "marketplace lookup failed")
 			}
 			return
 		}
 		entryURL := strings.TrimSpace(entry.Pack.URL)
 		entrySha := strings.TrimSpace(entry.Pack.Sha256)
 		if entryURL == "" || entrySha == "" {
-			writeErrorJSON(w, http.StatusBadRequest, "marketplace entry missing url or sha256")
+			writeJSONError(w, http.StatusBadRequest, errorCodePackMarketplaceInvalid, "marketplace entry missing url or sha256")
 			return
 		}
 		if !strings.EqualFold(expectedSha, entrySha) {
-			writeErrorJSON(w, http.StatusBadRequest, "sha256 mismatch")
+			writeJSONError(w, http.StatusBadRequest, errorCodePackMarketplaceInvalid, "sha256 mismatch")
 			return
 		}
 		installURL = packs.ResolvePackURL(entryURL, entry.CatalogURL)
@@ -1270,16 +1283,16 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 		catalogID := strings.TrimSpace(req.CatalogID)
 		packID := strings.TrimSpace(req.PackID)
 		if catalogID == "" || packID == "" {
-			writeErrorJSON(w, http.StatusBadRequest, "catalog_id and pack_id required")
+			writeJSONError(w, http.StatusBadRequest, errorCodePackMarketplaceInvalid, "catalog_id and pack_id required")
 			return
 		}
 		entry, err := s.findMarketplaceEntry(r.Context(), catalogID, packID, strings.TrimSpace(req.Version))
 		if err != nil {
 			if errors.Is(err, packs.ErrMarketplaceNotFound) {
-				writeErrorJSON(w, http.StatusNotFound, "marketplace pack not found")
+				writeJSONError(w, http.StatusNotFound, errorCodePackDependencyMissing, "marketplace pack not found")
 			} else {
 				slog.Error("marketplace entry lookup failed", "error", err, "catalog_id", catalogID, "pack_id", packID)
-				writeErrorJSON(w, http.StatusBadRequest, "marketplace lookup failed")
+				writeJSONError(w, http.StatusBadRequest, errorCodePackMarketplaceInvalid, "marketplace lookup failed")
 			}
 			return
 		}
@@ -1288,17 +1301,17 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 		fromCatalog = true
 	}
 	if installURL == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "download url required")
+		writeJSONError(w, http.StatusBadRequest, errorCodePackMarketplaceInvalid, "download url required")
 		return
 	}
 	if expectedSha == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "sha256 required")
+		writeJSONError(w, http.StatusBadRequest, errorCodePackMarketplaceInvalid, "sha256 required")
 		return
 	}
 	if fromCatalog {
 		if _, err := validateMarketplaceURL(installURL, nil); err != nil {
 			slog.Error("marketplace url validation failed", "error", err, "url", installURL) // #nosec -- URL is validated and used for diagnostics.
-			writeErrorJSON(w, http.StatusBadRequest, "invalid pack url")
+			writeJSONError(w, http.StatusBadRequest, errorCodePackMarketplaceInvalid, "invalid pack url")
 			return
 		}
 		if host := packs.HostFromURL(installURL); host != "" {
@@ -1308,18 +1321,18 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 	parsed, err := validateMarketplaceURL(installURL, allowedHosts)
 	if err != nil {
 		slog.Error("marketplace url validation failed", "error", err, "url", installURL) // #nosec -- URL is validated and used for diagnostics.
-		writeErrorJSON(w, http.StatusBadRequest, "invalid pack url")
+		writeJSONError(w, http.StatusBadRequest, errorCodePackMarketplaceInvalid, "invalid pack url")
 		return
 	}
 	packFile, digest, cleanup, err := downloadPackBundle(r.Context(), parsed, allowedHosts)
 	if err != nil {
 		slog.Error("pack download failed", "error", err)
-		writeErrorJSON(w, http.StatusBadRequest, "pack download failed")
+		writeJSONError(w, http.StatusBadRequest, errorCodePackMarketplaceInvalid, "pack download failed")
 		return
 	}
 	defer cleanup()
 	if !strings.EqualFold(digest, expectedSha) {
-		writeErrorJSON(w, http.StatusBadRequest, "sha256 mismatch")
+		writeJSONError(w, http.StatusBadRequest, errorCodePackMarketplaceInvalid, "sha256 mismatch")
 		return
 	}
 	// #nosec G304,G703 -- packFile is a temp file path created by this process.
@@ -1333,7 +1346,7 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 	_ = fp.Close()
 	if err != nil {
 		slog.Error("pack bundle load failed", "error", err)
-		writeErrorJSON(w, http.StatusBadRequest, "invalid pack bundle")
+		writeJSONError(w, http.StatusBadRequest, errorCodePackInstallInvalid, "invalid pack bundle")
 		return
 	}
 	defer cleanupDir()
@@ -1348,7 +1361,7 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		var installErr *packs.PackInstallError
 		if errors.As(err, &installErr) {
-			writeErrorJSON(w, installErr.Status, installErr.Error())
+			writeJSONError(w, installErr.Status, packInstallErrorCode(installErr), installErr.Error())
 		} else {
 			slog.Error("pack install failed", "error", err)
 			writeErrorJSON(w, http.StatusInternalServerError, "pack installation failed")

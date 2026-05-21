@@ -12,24 +12,20 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="PolicyReplayResponseSummary")
 
 
 @_attrs_define
 class PolicyReplayResponseSummary:
-    """ 
-        Attributes:
-            total_jobs (Union[Unset, int]):
-            evaluated (Union[Unset, int]):
-            escalated (Union[Unset, int]):
-            relaxed (Union[Unset, int]):
-            unchanged (Union[Unset, int]):
-            errored (Union[Unset, int]):
-     """
+    """
+    Attributes:
+        total_jobs (Union[Unset, int]):
+        evaluated (Union[Unset, int]):
+        escalated (Union[Unset, int]):
+        relaxed (Union[Unset, int]):
+        unchanged (Union[Unset, int]):
+        errored (Union[Unset, int]):
+    """
 
     total_jobs: Union[Unset, int] = UNSET
     evaluated: Union[Unset, int] = UNSET
@@ -38,7 +34,6 @@ class PolicyReplayResponseSummary:
     unchanged: Union[Unset, int] = UNSET
     errored: Union[Unset, int] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         total_jobs = self.total_jobs
@@ -53,11 +48,9 @@ class PolicyReplayResponseSummary:
 
         errored = self.errored
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if total_jobs is not UNSET:
             field_dict["total_jobs"] = total_jobs
         if evaluated is not UNSET:
@@ -72,8 +65,6 @@ class PolicyReplayResponseSummary:
             field_dict["errored"] = errored
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -98,7 +89,6 @@ class PolicyReplayResponseSummary:
             unchanged=unchanged,
             errored=errored,
         )
-
 
         policy_replay_response_summary.additional_properties = d
         return policy_replay_response_summary

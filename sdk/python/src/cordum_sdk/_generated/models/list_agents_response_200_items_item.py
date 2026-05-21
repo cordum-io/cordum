@@ -13,32 +13,28 @@ from typing import cast, List
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="ListAgentsResponse200ItemsItem")
 
 
 @_attrs_define
 class ListAgentsResponse200ItemsItem:
-    """ 
-        Attributes:
-            id (Union[Unset, str]):
-            name (Union[Unset, str]):
-            description (Union[Unset, str]):
-            owner (Union[Unset, str]):
-            team (Union[Unset, str]):
-            risk_tier (Union[Unset, str]):
-            allowed_topics (Union[Unset, List[str]]):
-            allowed_pools (Union[Unset, List[str]]):
-            allowed_tools (Union[Unset, List[str]]):
-            data_classifications (Union[Unset, List[str]]):
-            status (Union[Unset, str]):
-            created_at (Union[Unset, str]):
-            updated_at (Union[Unset, str]):
-            last_active (Union[Unset, int]):
-     """
+    """
+    Attributes:
+        id (Union[Unset, str]):
+        name (Union[Unset, str]):
+        description (Union[Unset, str]):
+        owner (Union[Unset, str]):
+        team (Union[Unset, str]):
+        risk_tier (Union[Unset, str]):
+        allowed_topics (Union[Unset, List[str]]):
+        allowed_pools (Union[Unset, List[str]]):
+        allowed_tools (Union[Unset, List[str]]):
+        data_classifications (Union[Unset, List[str]]):
+        status (Union[Unset, str]):
+        created_at (Union[Unset, str]):
+        updated_at (Union[Unset, str]):
+        last_active (Union[Unset, int]):
+    """
 
     id: Union[Unset, str] = UNSET
     name: Union[Unset, str] = UNSET
@@ -55,7 +51,6 @@ class ListAgentsResponse200ItemsItem:
     updated_at: Union[Unset, str] = UNSET
     last_active: Union[Unset, int] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         id = self.id
@@ -74,25 +69,17 @@ class ListAgentsResponse200ItemsItem:
         if not isinstance(self.allowed_topics, Unset):
             allowed_topics = self.allowed_topics
 
-
-
         allowed_pools: Union[Unset, List[str]] = UNSET
         if not isinstance(self.allowed_pools, Unset):
             allowed_pools = self.allowed_pools
-
-
 
         allowed_tools: Union[Unset, List[str]] = UNSET
         if not isinstance(self.allowed_tools, Unset):
             allowed_tools = self.allowed_tools
 
-
-
         data_classifications: Union[Unset, List[str]] = UNSET
         if not isinstance(self.data_classifications, Unset):
             data_classifications = self.data_classifications
-
-
 
         status = self.status
 
@@ -102,11 +89,9 @@ class ListAgentsResponse200ItemsItem:
 
         last_active = self.last_active
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if id is not UNSET:
             field_dict["id"] = id
         if name is not UNSET:
@@ -138,8 +123,6 @@ class ListAgentsResponse200ItemsItem:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
@@ -157,15 +140,11 @@ class ListAgentsResponse200ItemsItem:
 
         allowed_topics = cast(List[str], d.pop("allowed_topics", UNSET))
 
-
         allowed_pools = cast(List[str], d.pop("allowed_pools", UNSET))
-
 
         allowed_tools = cast(List[str], d.pop("allowed_tools", UNSET))
 
-
         data_classifications = cast(List[str], d.pop("data_classifications", UNSET))
-
 
         status = d.pop("status", UNSET)
 
@@ -191,7 +170,6 @@ class ListAgentsResponse200ItemsItem:
             updated_at=updated_at,
             last_active=last_active,
         )
-
 
         list_agents_response_200_items_item.additional_properties = d
         return list_agents_response_200_items_item

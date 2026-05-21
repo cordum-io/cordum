@@ -13,10 +13,7 @@ from typing import cast, List
 from typing import Dict
 
 if TYPE_CHECKING:
-  from ..models.role_definition import RoleDefinition
-
-
-
+    from ..models.role_definition import RoleDefinition
 
 
 T = TypeVar("T", bound="RoleDetailResponse")
@@ -24,54 +21,47 @@ T = TypeVar("T", bound="RoleDetailResponse")
 
 @_attrs_define
 class RoleDetailResponse:
-    """ 
-        Attributes:
-            role (RoleDefinition):
-            resolved_permissions (List[str]):
-     """
+    """
+    Attributes:
+        role (RoleDefinition):
+        resolved_permissions (List[str]):
+    """
 
-    role: 'RoleDefinition'
+    role: "RoleDefinition"
     resolved_permissions: List[str]
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
         from ..models.role_definition import RoleDefinition
+
         role = self.role.to_dict()
 
         resolved_permissions = self.resolved_permissions
 
-
-
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "role": role,
-            "resolved_permissions": resolved_permissions,
-        })
+        field_dict.update(
+            {
+                "role": role,
+                "resolved_permissions": resolved_permissions,
+            }
+        )
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.role_definition import RoleDefinition
+
         d = src_dict.copy()
         role = RoleDefinition.from_dict(d.pop("role"))
 
-
-
-
         resolved_permissions = cast(List[str], d.pop("resolved_permissions"))
-
 
         role_detail_response = cls(
             role=role,
             resolved_permissions=resolved_permissions,
         )
-
 
         role_detail_response.additional_properties = d
         return role_detail_response

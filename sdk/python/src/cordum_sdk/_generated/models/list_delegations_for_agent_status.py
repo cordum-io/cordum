@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class ListDelegationsForAgentStatus(str, Enum):
     ACTIVE = "active"
     ALL = "all"

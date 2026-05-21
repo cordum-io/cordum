@@ -114,9 +114,10 @@ function renderPage(route = "/agents") {
     );
   });
 
-  // Click the Identity Directory tab to activate it.
+  // Click the Identities tab to activate it. Tab label was renamed from
+  // "Identity Directory" → "Identities" by task-083581ca consolidation.
   const identityTab = Array.from(container.querySelectorAll("button")).find(
-    (btn) => btn.textContent?.includes("Identity Directory"),
+    (btn) => btn.textContent?.includes("Identities"),
   );
   if (identityTab) {
     act(() => {
@@ -294,7 +295,7 @@ describe("AgentIdentityTab rendered", () => {
     const { container, cleanup } = renderPage();
     try {
       // The gate renders children blurred + an overlay with upgrade CTA.
-      expect(container.textContent).toContain("Agent Identity Directory");
+      expect(container.textContent).toContain("Agent Identities");
       expect(container.textContent).toContain("requires an Enterprise license");
       expect(container.textContent).toContain("View pricing");
       expect(container.textContent).toContain("community");
@@ -310,7 +311,7 @@ describe("AgentIdentityTab rendered", () => {
     } as any;
     const { container, cleanup } = renderPage();
     try {
-      expect(container.textContent).toContain("Agent Identity Directory");
+      expect(container.textContent).toContain("Agent Identities");
       expect(container.textContent).toContain("requires an Enterprise license");
       expect(container.textContent).toContain("team");
     } finally {

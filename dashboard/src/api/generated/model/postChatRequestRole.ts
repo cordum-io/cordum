@@ -6,12 +6,12 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type PostChatRequestRole = typeof PostChatRequestRole[keyof typeof PostChatRequestRole];
-
+export type PostChatRequestRole =
+  (typeof PostChatRequestRole)[keyof typeof PostChatRequestRole];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const PostChatRequestRole = {
-  user: 'user',
-  assistant: 'assistant',
-  system: 'system',
+  user: "user",
+  assistant: "assistant",
+  system: "system",
 } as const;

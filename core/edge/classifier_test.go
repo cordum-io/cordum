@@ -1013,6 +1013,20 @@ func TestIsSecretPathRecognizesCommonCredentialFiles(t *testing.T) {
 		"/opt/svc/service_account_key.json",
 		"/opt/pkcs/keys/identity.p12",
 		"/opt/pkcs/keys/identity.pfx",
+		// EDGE-064-FOLLOWUP (task-98ad858f): OS-credential paths.
+		// /etc/passwd is the username database — readable by design, but
+		// the classifier's job is to give policy authors a single label
+		// they can use to deny secret-class reads. /etc/shadow + sudoers
+		// + gshadow are higher-value root-protected files.
+		"/etc/passwd",
+		"/etc/shadow",
+		"/etc/sudoers",
+		"/etc/sudoers.d/dev",
+		"/etc/gshadow",
+		// Nested copy of /etc/passwd (e.g. backed-up fixture under
+		// /tmp/) should still classify as secret — documents the
+		// Contains-based match semantics.
+		"/tmp/etc/passwd",
 	} {
 		t.Run(path, func(t *testing.T) {
 			if !isSecretPath(strings.ToLower(path)) {
@@ -1038,15 +1052,14 @@ func TestPathClassUNCAndHomePrefixedPaths(t *testing.T) {
 		{name: "tilde_user_netrc", path: "~user/.netrc", wantClass: "secret"},
 		{name: "home_env_kube_config", path: "$HOME/.kube/config", wantClass: "secret"},
 		{name: "userprofile_env_npmrc", path: `%USERPROFILE%\.npmrc`, wantClass: "secret"},
-		// EDGE-064 task description listed /etc/passwd as expected "secret",
-		// but the existing isSecretPath substring list does not cover it (it
-		// matches `password` as a substring; `/etc/passwd` contains
-		// `passwd` only). Adding `/etc/passwd` would violate the task rail
-		// "Do not add new secret-pattern entries beyond what's listed; this
-		// is a normalization fix." The current classifier's behavior is
-		// "file" — pinning that here so future workers see the gap, with
-		// the follow-up filed as a separate task. See commit message.
-		{name: "etc_passwd_current_behavior", path: "/etc/passwd", wantClass: "file"},
+		// EDGE-064-FOLLOWUP (task-98ad858f): the OS-credential paths
+		// listed in EDGE-064 are now first-class secret-class entries.
+		// The follow-up extends isSecretPath with literal /etc/passwd +
+		// /etc/shadow + /etc/sudoers + /etc/gshadow substring matches.
+		{name: "etc_passwd_classified_as_secret", path: "/etc/passwd", wantClass: "secret"},
+		{name: "etc_shadow_classified_as_secret", path: "/etc/shadow", wantClass: "secret"},
+		{name: "etc_sudoers_classified_as_secret", path: "/etc/sudoers", wantClass: "secret"},
+		{name: "etc_gshadow_classified_as_secret", path: "/etc/gshadow", wantClass: "secret"},
 		{name: "env_example_false_positive_guard", path: ".env.example", wantClass: "file"},
 		{name: "plain_safe_file", path: "safe.txt", wantClass: "file"},
 	} {
@@ -1067,6 +1080,10 @@ func TestIsSecretPathDoesNotFlagBenignPaths(t *testing.T) {
 		"/etc/hosts",
 		"/usr/local/bin/cordum-hook",
 		"/repo/README.md",
+		// EDGE-064-FOLLOWUP guard: a log filename containing the
+		// hyphenated `etc-passwd` token must NOT match the
+		// `/etc/passwd` (slash-form) substring added in the same task.
+		"/var/log/foo-etc-passwd.log",
 	} {
 		t.Run(path, func(t *testing.T) {
 			if isSecretPath(strings.ToLower(path)) {

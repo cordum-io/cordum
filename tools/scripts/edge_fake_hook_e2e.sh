@@ -51,6 +51,8 @@ readonly EXIT_TIMEOUT=124
 # edge_session_setup         step 7  (agentd ready + session/execution created)
 # edge_pretooluse_deny       step 8  (PreToolUse Read .env -> deny + DENY event)
 # edge_approval_flow         step 9  (Edit -> approval -> retry -> consume)
+# edge_approval_rejected     step 9b (Gateway-direct reject terminal state)
+# edge_approval_expired      step 9c (Gateway-direct expired terminal state)
 # edge_posttooluse_artifact  step 10 (PostToolUse + artifact pointer recorded)
 # edge_evidence_export       step 11 (export bundle has expected entries)
 #
@@ -64,6 +66,18 @@ readonly SCRIPT_NAME="edge_fake_hook_e2e"
 # Defaults (env-overridable)
 # ---------------------------------------------------------------------------
 : "${CORDUM_API_KEY:=}"
+# CORDUM_APPROVER_API_KEY is the auth header on approve/reject POSTs (gates
+# edge_approval_flow / edge_approval_rejected). The gateway's
+# edgeApprovalRequesterMatchesResolver + identitiesOverlap
+# (core/controlplane/gateway/helpers.go:1428-1434) match on
+# sha256(api_key)[:4] regardless of X-Principal-Id, so strict mode against a
+# single-key stack always trips self_approval_denied. Default falls back to
+# CORDUM_API_KEY for backward compat: existing single-key callers still hit
+# the self-approval 403 explicitly (the script surfaces that as a directed
+# error). 2-key stacks (CI workflow .github/workflows/edge-fake-hook-e2e.yml
+# + docker-compose.ci.yml override) set this to a second admin-role key that
+# is registered in the gateway via CORDUM_API_KEYS JSON env.
+: "${CORDUM_APPROVER_API_KEY:=${CORDUM_API_KEY}}"
 : "${CORDUM_TENANT_ID:=default}"
 : "${CORDUM_GATEWAY:=}"
 : "${CORDUM_INTEGRATION:=}"
@@ -144,7 +158,24 @@ MODES
 
 ENVIRONMENT
   CORDUM_API_KEY                 Required in strict mode. API key for the
-                                 Gateway and for cordum-agentd.
+                                 Gateway and for cordum-agentd. Identifies
+                                 the REQUESTER principal on
+                                 /api/v1/edge/evaluate POSTs.
+  CORDUM_APPROVER_API_KEY        Optional. API key for /approve and /reject
+                                 POSTs in approval gates. Defaults to
+                                 CORDUM_API_KEY. STRICT MODE REQUIREMENT:
+                                 must differ from CORDUM_API_KEY in
+                                 sha256(key)[:4] (admin-role key registered
+                                 in the gateway via CORDUM_API_KEYS JSON).
+                                 docker-compose default single-key stacks
+                                 cannot satisfy because
+                                 edgeApprovalRequesterMatchesResolver +
+                                 identitiesOverlap
+                                 (core/controlplane/gateway/helpers.go:1428-1434)
+                                 match on apikey-sha256 prefix and reject
+                                 self-approval. CI provisions a 2-key stack
+                                 via docker-compose.ci.yml +
+                                 .github/workflows/edge-fake-hook-e2e.yml.
   CORDUM_TENANT_ID               Tenant for /api/v1/edge/* requests
                                  (default `default`).
   CORDUM_GATEWAY                 Gateway base URL. If unset, derived from
@@ -171,6 +202,8 @@ PASS LINE SHAPES (one per gate)
   PASS edge_session_setup
   PASS edge_pretooluse_deny
   PASS edge_approval_flow
+  PASS edge_approval_rejected
+  PASS edge_approval_expired
   PASS edge_posttooluse_artifact
   PASS edge_evidence_export
 
@@ -733,11 +766,12 @@ start_agentd() {
   # a self-issued CA not present in the Windows root store.
   CORDUM_AGENTD_NONCE="${AGENTD_NONCE}" \
     CORDUM_GATEWAY="${API_BASE}" \
-    CORDUM_API_KEY="${CORDUM_API_KEY}" \
-    CORDUM_TENANT_ID="${CORDUM_TENANT_ID}" \
-    CORDUM_PRINCIPAL_ID="${EDGE_PRINCIPAL_ID}" \
-    CORDUM_AGENTD_SOCKET="${agentd_socket}" \
-    CORDUM_AGENTD_STATE_DIR="${AGENTD_STATE_DIR}" \
+  CORDUM_API_KEY="${CORDUM_API_KEY}" \
+  CORDUM_TENANT_ID="${CORDUM_TENANT_ID}" \
+  CORDUM_PRINCIPAL_ID="${EDGE_PRINCIPAL_ID}" \
+  CORDUM_EDGE_POLICY_MODE="${CORDUM_EDGE_E2E_POLICY_MODE:-enforce}" \
+  CORDUM_AGENTD_SOCKET="${agentd_socket}" \
+  CORDUM_AGENTD_STATE_DIR="${AGENTD_STATE_DIR}" \
     CORDUM_EDGE_SESSION_ID="${EDGE_SESSION_ID}" \
     CORDUM_EDGE_EXECUTION_ID="${EDGE_EXECUTION_ID}" \
     CORDUM_TLS_CA="${agentd_ssl_cert_file}" \
@@ -870,7 +904,67 @@ verify_demo_policy_overlay() {
   local version
   version=$(grep -E '^version:' "${DEMO_POLICY_OVERLAY}" | head -1 | awk '{print $2}')
   log "demo policy overlay: ${DEMO_POLICY_OVERLAY} (${version:-unknown-version})"
-  log "policy assumption: agentd loads cordum-edge-pack overlay for tenant ${CORDUM_TENANT_ID}"
+}
+
+resolve_cordumctl_for_pack_install() {
+  if [[ -n "${CORDUMCTL_BIN:-}" ]]; then
+    printf '%s' "${CORDUMCTL_BIN}"
+    return 0
+  fi
+  if [[ -n "${CORDUMCTL:-}" ]]; then
+    printf '%s' "${CORDUMCTL}"
+    return 0
+  fi
+  if have_cmd cordumctl; then
+    command -v cordumctl
+    return 0
+  fi
+  if [[ -x "./bin/cordumctl" ]]; then
+    printf '%s' "./bin/cordumctl"
+    return 0
+  fi
+  if [[ -x "./bin/cordumctl.exe" ]]; then
+    printf '%s' "./bin/cordumctl.exe"
+    return 0
+  fi
+  return 1
+}
+
+install_demo_policy_pack() {
+  local gate=${1:-edge_fake_hook_e2e}
+  if [[ "${CORDUM_EDGE_E2E_INSTALL_POLICY_PACK:-1}" =~ ^(0|false|FALSE|no|NO)$ ]]; then
+    log "CORDUM_EDGE_E2E_INSTALL_POLICY_PACK=0; assuming cordum-edge-pack is already installed"
+    return 0
+  fi
+  if [[ ! -d "examples/cordum-edge-pack" ]]; then
+    fail "${gate}" "cordum-edge-pack directory missing"
+  fi
+
+  log "installing/upgrading cordum-edge-pack for tenant ${CORDUM_TENANT_ID}"
+  local ctl
+  if ctl="$(resolve_cordumctl_for_pack_install)"; then
+    CORDUM_API_KEY="${CORDUM_API_KEY}" \
+      CORDUM_ORG_ID="${CORDUM_TENANT_ID}" \
+      CORDUM_TENANT_ID="${CORDUM_TENANT_ID}" \
+      CORDUM_GATEWAY="${API_BASE}" \
+      CORDUM_TLS_CA="${CORDUM_TLS_CA:-}" \
+      "${ctl}" pack install --upgrade examples/cordum-edge-pack >/dev/null || \
+      fail "${gate}" "cordum-edge-pack install failed via ${ctl}"
+    return 0
+  fi
+
+  if have_cmd go; then
+    CORDUM_API_KEY="${CORDUM_API_KEY}" \
+      CORDUM_ORG_ID="${CORDUM_TENANT_ID}" \
+      CORDUM_TENANT_ID="${CORDUM_TENANT_ID}" \
+      CORDUM_GATEWAY="${API_BASE}" \
+      CORDUM_TLS_CA="${CORDUM_TLS_CA:-}" \
+      go run ./cmd/cordumctl pack install --upgrade ./examples/cordum-edge-pack >/dev/null || \
+      fail "${gate}" "cordum-edge-pack install failed via go run ./cmd/cordumctl"
+    return 0
+  fi
+
+  fail "${gate}" "cordum-edge-pack must be installed but neither cordumctl nor go is available"
 }
 
 setup_fixture_paths() {
@@ -1306,7 +1400,7 @@ JSON
   local approve_body='{"reason":"edge_fake_hook_e2e synthetic approval"}'
   local saved_headers=("${AUTH_HEADERS[@]}")
   AUTH_HEADERS=(
-    -H "X-API-Key: ${CORDUM_API_KEY}"
+    -H "X-API-Key: ${CORDUM_APPROVER_API_KEY}"
     -H "X-Tenant-ID: ${CORDUM_TENANT_ID}"
     -H "X-Principal-Id: edge-fake-hook-e2e-approver-$$"
   )
@@ -1314,7 +1408,7 @@ JSON
   AUTH_HEADERS=("${saved_headers[@]}")
   log_http "${gate}" POST "/api/v1/edge/approvals/${approval_ref}/approve" "${code}"
   if [[ "${code}" == "403" ]]; then
-    fail "${gate}" 'approve returned 403 (likely self_approval_denied — script approver principal collided with requester)'
+    fail "${gate}" 'approve returned 403 (likely self_approval_denied — set CORDUM_APPROVER_API_KEY to an admin-role key distinct from CORDUM_API_KEY; see header SECURITY block)'
   fi
   assert_http_status "${gate}" "${code}" "200" "POST approval approve"
   assert_json "${gate}" '.status == "approved"' 'post-approve status != approved'
@@ -1412,13 +1506,25 @@ JSON
 
   # 3. Resolve as approved. EdgeApprovalDecisionRequest body is optional;
   # supply a synthetic resolver reason so the audit record carries it.
+  # Use CORDUM_APPROVER_API_KEY + a distinct X-Principal-Id so
+  # edgeApprovalRequesterMatchesResolver + identitiesOverlap
+  # (helpers.go:1428-1434) treat the resolver as a different principal
+  # than the requester. Same pattern as gate_approval_flow / gate_approval_rejected.
   local approve_body='{"reason":"edge_fake_hook_e2e synthetic approval"}'
+  local saved_headers=("${AUTH_HEADERS[@]}")
+  AUTH_HEADERS=(
+    -H "X-API-Key: ${CORDUM_APPROVER_API_KEY}"
+    -H "X-Tenant-ID: ${CORDUM_TENANT_ID}"
+    -H "X-Principal-Id: edge-fake-hook-e2e-approver-$$"
+  )
   code=$(curl_request POST "${API_BASE}/api/v1/edge/approvals/${approval_ref}/approve" "${approve_body}")
+  AUTH_HEADERS=("${saved_headers[@]}")
   log_http "${gate}" POST "/api/v1/edge/approvals/${approval_ref}/approve" "${code}"
-  # 200 = approved; 403 self_approval_denied is possible when API key principal
-  # matches the requester. Surface a directed error if that hits.
+  # 200 = approved; 403 self_approval_denied is possible when the approver
+  # key shares a sha256[:4] prefix with the requester key. Surface a
+  # directed error if that hits.
   if [[ "${code}" == "403" ]]; then
-    fail "${gate}" 'approve returned 403 (likely self_approval_denied — set CORDUM_API_KEY to a different principal than the requester)'
+    fail "${gate}" 'approve returned 403 (likely self_approval_denied — set CORDUM_APPROVER_API_KEY to an admin-role key distinct from CORDUM_API_KEY; see header SECURITY block)'
   fi
   assert_http_status "${gate}" "${code}" "200" "POST approval approve"
   assert_json "${gate}" '.status == "approved"' 'post-approve status != approved'
@@ -1490,6 +1596,15 @@ JSON
 # ---------------------------------------------------------------------------
 gate_approval_rejected() {
   local gate=edge_approval_rejected
+  # Distinct fixture so the action_hash differs from gate_approval_flow's
+  # consumed approval (handlers_edge_evaluate.go findReusableEdgeApprovalForAction
+  # scopes by (tenant, session, execution, action_hash); the principal-status
+  # index retains consumed entries on purpose so terminal "already consumed"
+  # retries fire — but a fresh gate reusing FIXTURE_APPROVE_PATH inherits the
+  # consumed terminal state and never sees REQUIRE_APPROVAL). Mirrors the
+  # protected-expired.go / protected-expired-recovery.go fixture isolation
+  # already used by gate_approval_expired below.
+  local rejected_path="${FIXTURE_DIR}/src/protected-rejected.go"
 
   # 1. First evaluate — REQUIRE_APPROVAL.
   local req
@@ -1503,7 +1618,7 @@ gate_approval_rejected() {
   "kind": "hook.pre_tool_use",
   "tool_name": "Edit",
   "input_redacted": {
-    "file_path": "${FIXTURE_APPROVE_PATH}"
+    "file_path": "${rejected_path}"
   },
   "cwd": "${TMP_ROOT}"
 }
@@ -1543,7 +1658,7 @@ JSON
   local reject_body='{"reason":"edge_fake_hook_e2e synthetic approval rejected"}'
   local saved_headers=("${AUTH_HEADERS[@]}")
   AUTH_HEADERS=(
-    -H "X-API-Key: ${CORDUM_API_KEY}"
+    -H "X-API-Key: ${CORDUM_APPROVER_API_KEY}"
     -H "X-Tenant-ID: ${CORDUM_TENANT_ID}"
     -H "X-Principal-Id: edge-fake-hook-e2e-approver-$$"
   )
@@ -1551,7 +1666,7 @@ JSON
   log_http "${gate}" POST "/api/v1/edge/approvals/${approval_ref}/reject" "${code}"
   if [[ "${code}" == "403" ]]; then
     AUTH_HEADERS=("${saved_headers[@]}")
-    fail "${gate}" 'reject returned 403 (likely self_approval_denied — script approver principal collided with requester)'
+    fail "${gate}" 'reject returned 403 (likely self_approval_denied — set CORDUM_APPROVER_API_KEY to an admin-role key distinct from CORDUM_API_KEY; see header SECURITY block)'
   fi
   assert_http_status "${gate}" "${code}" "200" "POST approval reject"
   assert_json "${gate}" '.status == "rejected"' 'post-reject status != rejected'
@@ -1575,7 +1690,7 @@ JSON
   # half of DoD #1.
   saved_headers=("${AUTH_HEADERS[@]}")
   AUTH_HEADERS=(
-    -H "X-API-Key: ${CORDUM_API_KEY}"
+    -H "X-API-Key: ${CORDUM_APPROVER_API_KEY}"
     -H "X-Tenant-ID: ${CORDUM_TENANT_ID}"
     -H "X-Principal-Id: edge-fake-hook-e2e-approver-$$"
   )
@@ -1591,6 +1706,119 @@ JSON
   esac
 
   # Negative redaction sanity (mirrors gate_pretooluse_deny + flow_bypass).
+  assert_body_does_not_contain "${gate}" "OPENAI_API_KEY" 'evaluate response contains a real-secret marker'
+  assert_body_does_not_contain "${gate}" "AWS_SECRET_ACCESS_KEY" 'evaluate response contains a real-secret marker'
+
+  pass "${gate}"
+}
+
+# ---------------------------------------------------------------------------
+# Gate: edge_approval_expired (EDGE-056 expired follow-up).
+#
+# Gateway-direct/server-lifecycle coverage for the approval expiration
+# terminal state. This intentionally mirrors gate_approval_rejected's
+# bypass-mode-only structure: expiration semantics live entirely in the
+# Gateway approval store/evaluate path and do not need a separate hook-mode
+# transport duplicate.
+# ---------------------------------------------------------------------------
+gate_approval_expired() {
+  local gate=edge_approval_expired
+  local expired_path="${FIXTURE_DIR}/src/protected-expired.go"
+  local recovery_path="${FIXTURE_DIR}/src/protected-expired-recovery.go"
+
+  local req
+  req=$(cat <<JSON
+{
+  "session_id": "${EDGE_SESSION_ID}",
+  "execution_id": "${EDGE_EXECUTION_ID}",
+  "principal_id": "${EDGE_PRINCIPAL_ID}",
+  "agent_product": "cordum-edge-fake-hook-e2e",
+  "layer": "hook",
+  "kind": "hook.pre_tool_use",
+  "tool_name": "Edit",
+  "input_redacted": {
+    "file_path": "${expired_path}"
+  },
+  "cwd": "${TMP_ROOT}",
+  "approval_ttl_seconds": 2
+}
+JSON
+)
+  local code
+  code=$(curl_request POST "${API_BASE}/api/v1/edge/evaluate" "${req}")
+  log_http "${gate}" POST "/api/v1/edge/evaluate (initial ttl=2s)" "${code}"
+  assert_http_status "${gate}" "${code}" "200" "evaluate Edit (initial ttl=2s)"
+  assert_json "${gate}" '.decision == "REQUIRE_APPROVAL"' 'initial evaluate did not require approval'
+
+  local approval_ref
+  approval_ref=$(extract_json '.approval_ref // empty')
+  if [[ -z "${approval_ref}" ]]; then
+    fail "${gate}" 'evaluate response missing approval_ref'
+  fi
+  if [[ ! "${approval_ref}" =~ ^edge_appr_[A-Za-z0-9_-]+$ ]]; then
+    fail "${gate}" "approval_ref does not match required pattern: ${approval_ref}"
+  fi
+  log "approval_ref=${approval_ref}"
+
+  code=$(curl_request GET "${API_BASE}/api/v1/edge/approvals/${approval_ref}")
+  log_http "${gate}" GET "/api/v1/edge/approvals/${approval_ref} (pending)" "${code}"
+  assert_http_status "${gate}" "${code}" "200" "GET approval before expiry"
+  assert_json "${gate}" '.status == "pending"' 'pre-expiry status != pending'
+  assert_json "${gate}" '.session_id == "'"${EDGE_SESSION_ID}"'"' 'approval bound to wrong session'
+
+  sleep 3
+
+  code=$(curl_request GET "${API_BASE}/api/v1/edge/approvals/${approval_ref}")
+  log_http "${gate}" GET "/api/v1/edge/approvals/${approval_ref} (expired)" "${code}"
+  assert_http_status "${gate}" "${code}" "200" "GET approval after expiry"
+  assert_json "${gate}" '.status == "expired"' 'post-expiry status != expired'
+
+  code=$(curl_request POST "${API_BASE}/api/v1/edge/evaluate" "${req}")
+  log_http "${gate}" POST "/api/v1/edge/evaluate (retry post-expiry)" "${code}"
+  assert_http_status "${gate}" "${code}" "200" "evaluate Edit (retry post-expiry)"
+  assert_json "${gate}" '.decision == "DENY"' 'retry post-expiry did not return DENY'
+  assert_json "${gate}" '.permission_decision == "deny"' 'retry post-expiry permission_decision != deny'
+  assert_reason_contains "${gate}" "expired"
+
+  local recovery_req
+  recovery_req=$(cat <<JSON
+{
+  "session_id": "${EDGE_SESSION_ID}",
+  "execution_id": "${EDGE_EXECUTION_ID}",
+  "principal_id": "${EDGE_PRINCIPAL_ID}",
+  "agent_product": "cordum-edge-fake-hook-e2e",
+  "layer": "hook",
+  "kind": "hook.pre_tool_use",
+  "tool_name": "Edit",
+  "input_redacted": {
+    "file_path": "${recovery_path}"
+  },
+  "cwd": "${TMP_ROOT}"
+}
+JSON
+)
+  code=$(curl_request POST "${API_BASE}/api/v1/edge/evaluate" "${recovery_req}")
+  log_http "${gate}" POST "/api/v1/edge/evaluate (recovery default ttl)" "${code}"
+  assert_http_status "${gate}" "${code}" "200" "evaluate Edit (recovery default ttl)"
+  assert_json "${gate}" '.decision == "REQUIRE_APPROVAL"' 'recovery evaluate did not require approval'
+
+  local recovery_ref
+  recovery_ref=$(extract_json '.approval_ref // empty')
+  if [[ -z "${recovery_ref}" ]]; then
+    fail "${gate}" 'recovery evaluate response missing approval_ref'
+  fi
+  if [[ ! "${recovery_ref}" =~ ^edge_appr_[A-Za-z0-9_-]+$ ]]; then
+    fail "${gate}" "recovery approval_ref does not match required pattern: ${recovery_ref}"
+  fi
+  if [[ "${recovery_ref}" == "${approval_ref}" ]]; then
+    fail "${gate}" 'recovery approval_ref unexpectedly reused expired approval_ref'
+  fi
+
+  code=$(curl_request GET "${API_BASE}/api/v1/edge/approvals/${recovery_ref}")
+  log_http "${gate}" GET "/api/v1/edge/approvals/${recovery_ref} (recovery pending)" "${code}"
+  assert_http_status "${gate}" "${code}" "200" "GET recovery approval"
+  assert_json "${gate}" '.status == "pending"' 'recovery approval status != pending'
+
   assert_body_does_not_contain "${gate}" "OPENAI_API_KEY" 'evaluate response contains a real-secret marker'
   assert_body_does_not_contain "${gate}" "AWS_SECRET_ACCESS_KEY" 'evaluate response contains a real-secret marker'
 
@@ -1825,9 +2053,16 @@ gate_evidence_export() {
     assert_json "${gate}" \
       '[.events[]? | select(.kind == "hook.post_tool_use" and (.artifact_ptrs | length) >= 1)] | length >= 1' \
       'export events[] missing PostToolUse with artifact pointer'
+    # Bypass mode attaches a synthetic artifact pointer to the PostToolUse
+    # event but does not write the artifact body to the artifact store.
+    # SessionExportAssembler.collectArtifacts (core/edge/export.go:418)
+    # calls ArtifactStore.Stat per pointer URI; an unresolved URI lands in
+    # bundle.missing_artifacts[] (reason=not_found), not bundle.artifacts[].
+    # Either array proves the pointer round-tripped through the export
+    # pipeline keyed on our session.
     assert_json "${gate}" \
-      '[.artifacts[]? | select(.session_id == "'"${EDGE_SESSION_ID}"'")] | length >= 1' \
-      'export artifacts[] missing entries for our session'
+      '(([.artifacts[]? | select(.session_id == "'"${EDGE_SESSION_ID}"'")] | length) + ([.missing_artifacts[]? | select(.session_id == "'"${EDGE_SESSION_ID}"'")] | length)) >= 1' \
+      'export artifacts[]/missing_artifacts[] missing entries for our session'
   else
     assert_json "${gate}" \
       '[.events[]? | select(.kind == "hook.post_tool_use" and .execution_id == "'"${EDGE_EXECUTION_ID}"'")] | length >= 1' \
@@ -1892,6 +2127,7 @@ main() {
   init_tempdir
   setup_fixture_paths
   verify_demo_policy_overlay edge_session_setup
+  install_demo_policy_pack edge_session_setup
 
   if ! want_bypass_hook; then
     locate_or_build_binaries edge_session_setup
@@ -1919,6 +2155,7 @@ main() {
   gate_pretooluse_deny
   gate_approval_flow
   gate_approval_rejected
+  gate_approval_expired
   gate_posttooluse_artifact
   gate_evidence_export
 }

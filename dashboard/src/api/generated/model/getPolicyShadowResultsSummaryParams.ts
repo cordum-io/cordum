@@ -7,14 +7,14 @@
  */
 
 export type GetPolicyShadowResultsSummaryParams = {
-/**
- * Inclusive lower bound, unix milliseconds.
- * @minimum 0
- */
-from: number;
-/**
- * Exclusive upper bound, unix milliseconds. Must be strictly greater than `from`; the range cannot exceed 30 days.
- * @minimum 0
- */
-to: number;
+  /**
+   * Inclusive lower bound, unix milliseconds.
+   * @minimum 0
+   */
+  from: number;
+  /**
+   * Exclusive upper bound, unix milliseconds. Must be strictly greater than `from`; the range cannot exceed 30 days.
+   * @minimum 0
+   */
+  to: number;
 };

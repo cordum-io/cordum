@@ -96,8 +96,11 @@ func TestSubmitJobUnknownTopicRejects400(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp["error_code"] != "unknown_topic" {
-		t.Fatalf("expected error_code unknown_topic, got %#v", resp["error_code"])
+	if resp["code"] != "unknown_topic" {
+		t.Fatalf("expected code unknown_topic, got %#v", resp["code"])
+	}
+	if _, ok := resp["error_code"]; ok {
+		t.Fatalf("unexpected legacy error_code in response: %#v", resp)
 	}
 	bus.mu.Lock()
 	defer bus.mu.Unlock()
@@ -118,8 +121,11 @@ func TestSubmitJob_UnknownTopic_IncludesRegisteredTopics(t *testing.T) {
 
 	resp := submitUnknownTopicForTenant(t, s, "default", "job.unknown")
 
-	if resp["error_code"] != "unknown_topic" {
-		t.Fatalf("expected error_code unknown_topic, got %#v", resp["error_code"])
+	if resp["code"] != "unknown_topic" {
+		t.Fatalf("expected code unknown_topic, got %#v", resp["code"])
+	}
+	if _, ok := resp["error_code"]; ok {
+		t.Fatalf("unexpected legacy error_code in response: %#v", resp)
 	}
 	if resp["topics_endpoint"] != "/api/v1/topics" {
 		t.Fatalf("topics_endpoint = %#v, want /api/v1/topics", resp["topics_endpoint"])
@@ -297,8 +303,11 @@ func TestSubmitJobSchemaEnforceRejectsInvalidPayload(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp["error_code"] != "schema_validation_failed" {
-		t.Fatalf("expected schema_validation_failed, got %#v", resp["error_code"])
+	if resp["code"] != "schema_validation_failed" {
+		t.Fatalf("expected schema_validation_failed, got %#v", resp["code"])
+	}
+	if _, ok := resp["error_code"]; ok {
+		t.Fatalf("unexpected legacy error_code in response: %#v", resp)
 	}
 	violations, ok := resp["violations"].([]any)
 	if !ok || len(violations) == 0 {

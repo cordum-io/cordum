@@ -43,7 +43,7 @@ func TestNewExporterFromEnv_NoneTypeCaseInsensitive(t *testing.T) {
 
 // TestNewExporterFromEnv_NullBackCompat pins that operators who explicitly
 // opt into the discard/null exporter (for metrics parity with a real SIEM
-// backend) still get a DiscardExporter. Only '' and 'none' are treated as
+// backend) still get a DiscardExporter. Only ” and 'none' are treated as
 // "no exporter at all" after task-096de016.
 func TestNewExporterFromEnv_NullBackCompat(t *testing.T) {
 	for _, typ := range []string{"null", "discard", "chain-only"} {
@@ -72,18 +72,14 @@ func TestNewExporterFromEnv_UnknownType(t *testing.T) {
 	}
 }
 
-func TestNewExporterFromEnv_Webhook(t *testing.T) {
+func TestNewExporterFromEnv_WebhookRequiresSecret(t *testing.T) {
 	t.Setenv("CORDUM_AUDIT_EXPORT_TYPE", "webhook")
 	t.Setenv("CORDUM_AUDIT_EXPORT_WEBHOOK_URL", "https://example.com/hook")
 
-	exp, err := NewExporterFromEnv()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	_, err := NewExporterFromEnv()
+	if err == nil {
+		t.Fatal("expected error when webhook secret is missing")
 	}
-	if exp == nil {
-		t.Fatal("expected non-nil exporter for webhook")
-	}
-	_ = exp.Close()
 }
 
 func TestNewExporterFromEnv_WebhookMissingURL(t *testing.T) {
@@ -99,7 +95,7 @@ func TestNewExporterFromEnv_WebhookMissingURL(t *testing.T) {
 func TestNewExporterFromEnv_WebhookWithSecret(t *testing.T) {
 	t.Setenv("CORDUM_AUDIT_EXPORT_TYPE", "webhook")
 	t.Setenv("CORDUM_AUDIT_EXPORT_WEBHOOK_URL", "https://example.com/hook")
-	t.Setenv("CORDUM_AUDIT_EXPORT_WEBHOOK_SECRET", "my-secret")
+	t.Setenv("CORDUM_AUDIT_EXPORT_WEBHOOK_SECRET", "12345678901234567890123456789012")
 
 	exp, err := NewExporterFromEnv()
 	if err != nil {

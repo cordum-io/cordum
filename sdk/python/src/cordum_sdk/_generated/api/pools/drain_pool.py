@@ -13,30 +13,23 @@ from typing import cast
 from typing import Dict
 
 
-
 def _get_kwargs(
     name: str,
     *,
     body: DrainPoolBody,
     x_tenant_id: str,
-
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
     headers["X-Tenant-ID"] = x_tenant_id
 
-
-
-    
-
-    
-
     _kwargs: Dict[str, Any] = {
         "method": "post",
-        "url": "/api/v1/pools/{name}/drain".format(name=name,),
+        "url": "/api/v1/pools/{name}/drain".format(
+            name=name,
+        ),
     }
 
     _body = body.to_dict()
-
 
     _kwargs["json"] = _body
     headers["Content-Type"] = "application/json"
@@ -45,11 +38,11 @@ def _get_kwargs(
     return _kwargs
 
 
-def _parse_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Optional[Union[Any, PoolMutation]]:
+def _parse_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Optional[Union[Any, PoolMutation]]:
     if response.status_code == 200:
         response_200 = PoolMutation.from_dict(response.json())
-
-
 
         return response_200
     if response.status_code == 400:
@@ -73,7 +66,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         return None
 
 
-def _build_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Response[Union[Any, PoolMutation]]:
+def _build_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Response[Union[Any, PoolMutation]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -88,9 +83,8 @@ def sync_detailed(
     client: Union[AuthenticatedClient, Client],
     body: DrainPoolBody,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, PoolMutation]]:
-    """ Mark a pool as draining
+    """Mark a pool as draining
 
     Args:
         name (str):
@@ -103,14 +97,12 @@ def sync_detailed(
 
     Returns:
         Response[Union[Any, PoolMutation]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         name=name,
-body=body,
-x_tenant_id=x_tenant_id,
-
+        body=body,
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -119,15 +111,15 @@ x_tenant_id=x_tenant_id,
 
     return _build_response(client=client, response=response)
 
+
 def sync(
     name: str,
     *,
     client: Union[AuthenticatedClient, Client],
     body: DrainPoolBody,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, PoolMutation]]:
-    """ Mark a pool as draining
+    """Mark a pool as draining
 
     Args:
         name (str):
@@ -140,16 +132,15 @@ def sync(
 
     Returns:
         Union[Any, PoolMutation]
-     """
-
+    """
 
     return sync_detailed(
         name=name,
-client=client,
-body=body,
-x_tenant_id=x_tenant_id,
-
+        client=client,
+        body=body,
+        x_tenant_id=x_tenant_id,
     ).parsed
+
 
 async def asyncio_detailed(
     name: str,
@@ -157,9 +148,8 @@ async def asyncio_detailed(
     client: Union[AuthenticatedClient, Client],
     body: DrainPoolBody,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, PoolMutation]]:
-    """ Mark a pool as draining
+    """Mark a pool as draining
 
     Args:
         name (str):
@@ -172,21 +162,18 @@ async def asyncio_detailed(
 
     Returns:
         Response[Union[Any, PoolMutation]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         name=name,
-body=body,
-x_tenant_id=x_tenant_id,
-
+        body=body,
+        x_tenant_id=x_tenant_id,
     )
 
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
+
 
 async def asyncio(
     name: str,
@@ -194,9 +181,8 @@ async def asyncio(
     client: Union[AuthenticatedClient, Client],
     body: DrainPoolBody,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, PoolMutation]]:
-    """ Mark a pool as draining
+    """Mark a pool as draining
 
     Args:
         name (str):
@@ -209,13 +195,13 @@ async def asyncio(
 
     Returns:
         Union[Any, PoolMutation]
-     """
+    """
 
-
-    return (await asyncio_detailed(
-        name=name,
-client=client,
-body=body,
-x_tenant_id=x_tenant_id,
-
-    )).parsed
+    return (
+        await asyncio_detailed(
+            name=name,
+            client=client,
+            body=body,
+            x_tenant_id=x_tenant_id,
+        )
+    ).parsed

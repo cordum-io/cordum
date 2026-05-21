@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 )
 
@@ -102,5 +103,59 @@ func TestFilterCache_NilIdentityCachedAsEmpty(t *testing.T) {
 	got = r.ListTools(context.Background())
 	if len(got) != 0 {
 		t.Fatalf("nil identity cached: want 0, got %d", len(got))
+	}
+}
+
+// TestFilterCache_KeyForConsistentUnderConcurrentReads asserts the
+// immutable-after-publish contract on *AgentIdentity: once a producer
+// hands an identity off to the filter path, the slice fields it sets
+// (AllowedTools, DataClassifications) must never be reassigned.
+//
+// keyFor reads both slices via `append([]string{}, id.X...)` without
+// holding any lock on the identity. The two production producers
+// (gateway/mcp_identity.go::mcpIdentityFromStore and
+// mcp/tools/register.go) freshly allocate the identity and copy the
+// slice contents at construction, then publish a pointer that no
+// later code path mutates. That invariant is documented in the
+// AgentIdentity doc comment in filter.go.
+//
+// This test pins the invariant in place: 1000 concurrent callers
+// must observe the same key for an unmutated identity. A regression
+// that introduced post-publish slice mutation would race with these
+// readers and produce inconsistent keys (or trip -race).
+func TestFilterCache_KeyForConsistentUnderConcurrentReads(t *testing.T) {
+	t.Parallel()
+
+	id := &AgentIdentity{
+		ID:                  "agent-immutable",
+		RiskTier:            "high",
+		AllowedTools:        []string{"fs.read", "fs.write", "jobs.submit", "policy.*"},
+		DataClassifications: []string{"pii", "phi", "secrets"},
+	}
+	c := newFilterCache()
+
+	const goroutines = 1000
+	keys := make([]string, goroutines)
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			keys[i] = c.keyFor(id)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	want := keys[0]
+	if want == "" {
+		t.Fatalf("keys[0] is empty")
+	}
+	for i := 1; i < goroutines; i++ {
+		if keys[i] != want {
+			t.Fatalf("keyFor inconsistent across concurrent reads: keys[0]=%q keys[%d]=%q", want, i, keys[i])
+		}
 	}
 }

@@ -130,13 +130,13 @@ func (s *server) handlePutPolicyGlobal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(body.Sections) == 0 {
-		writeErrorJSON(w, http.StatusBadRequest, "sections map required")
+		writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, "sections map required")
 		return
 	}
 	// Validate every requested section name + parse its content.
 	for name, section := range body.Sections {
 		if globalSectionBundleKey(name) == "" {
-			writeErrorJSON(w, http.StatusBadRequest, fmt.Sprintf("unknown section %q", name))
+			writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, fmt.Sprintf("unknown section %q", name))
 			return
 		}
 		content := strings.TrimSpace(section.Content)
@@ -147,7 +147,7 @@ func (s *server) handlePutPolicyGlobal(w http.ResponseWriter, r *http.Request) {
 		}
 		sanitized := policybundles.SanitizePolicyBundleYAML(content)
 		if _, err := config.ParseSafetyPolicy([]byte(sanitized)); err != nil {
-			writeErrorJSON(w, http.StatusBadRequest,
+			writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed,
 				fmt.Sprintf("invalid policy content in section %q: %v", name, err))
 			return
 		}
@@ -186,7 +186,7 @@ func (s *server) handlePutPolicyGlobal(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if currentSnap != "" && currentSnap != body.SnapshotVersion {
-			writeErrorJSON(w, http.StatusConflict,
+			writeJSONError(w, http.StatusConflict, errorCodePolicyVersionConflict,
 				fmt.Sprintf("snapshot_version mismatch: have %q, want %q", currentSnap, body.SnapshotVersion))
 			return
 		}
@@ -208,7 +208,7 @@ func (s *server) handlePutPolicyGlobal(w http.ResponseWriter, r *http.Request) {
 		// does so the strict-mode policy is uniform across endpoints.
 		outcome := signPolicyBundleContent(r.Context(), []byte(content))
 		if outcome.Status != 0 {
-			writeErrorJSON(w, outcome.Status, outcome.Message)
+			writeJSONError(w, outcome.Status, policySigningErrorCode(outcome), outcome.Message)
 			return
 		}
 		existing, _ := bundles[bundleID].(map[string]any)

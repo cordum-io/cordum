@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -18,28 +19,30 @@ const (
 )
 
 type edgeDoctorEnv struct {
-	base         *doctorEnv
-	policyMode   string
-	claudePath   string
-	hookCommand  string
-	agentdPath   string
-	agentdURL    string
-	settingsPath string
-	dashboardURL string
-	lookPath     func(string) (string, error)
-	statFile     func(string) (os.FileInfo, error)
-	readFile     func(string) ([]byte, error)
-	dialTCP      func(context.Context, string) error
+	base                *doctorEnv
+	policyMode          string
+	claudePath          string
+	hookCommand         string
+	agentdPath          string
+	agentdURL           string
+	settingsPath        string
+	managedSettingsPath string
+	dashboardURL        string
+	lookPath            func(string) (string, error)
+	statFile            func(string) (os.FileInfo, error)
+	readFile            func(string) ([]byte, error)
+	dialTCP             func(context.Context, string) error
 }
 
 type edgeDoctorOptions struct {
-	policyMode   string
-	claudePath   string
-	hookCommand  string
-	agentdPath   string
-	agentdURL    string
-	settingsPath string
-	dashboardURL string
+	policyMode          string
+	claudePath          string
+	hookCommand         string
+	agentdPath          string
+	agentdURL           string
+	settingsPath        string
+	managedSettingsPath string
+	dashboardURL        string
 }
 
 type edgeDoctorCheck struct {
@@ -66,17 +69,24 @@ func runEdgeDoctorCmd(args []string, stdout, stderr io.Writer) int {
 	agentdPath := fs.String("agentd-path", firstEnv("CORDUM_AGENTD_PATH"), "cordum-agentd binary path")
 	agentdURL := fs.String("agentd-url", firstEnvDefault(defaultEdgeAgentdURL, "CORDUM_AGENTD_URL", "CORDUM_AGENTD_SOCKET"), "local cordum-agentd hook URL")
 	settingsPath := fs.String("settings-path", firstEnvDefault(defaultClaudeSettingsPath(), "CORDUM_EDGE_SETTINGS_PATH", "CLAUDE_SETTINGS_PATH"), "Claude settings.json path to validate")
+	managedSettingsPath := fs.String("managed-settings-path", firstEnv("CORDUM_EDGE_MANAGED_SETTINGS_PATH"), "managed-settings.json path for the managed_settings_compliance check (empty = skip)")
 	dashboardURL := fs.String("dashboard-url", firstEnv("CORDUM_EDGE_DASHBOARD_URL", "CORDUM_DASHBOARD_URL"), "dashboard URL to probe")
+	shadowCluster, shadowCI := registerEdgeDoctorShadowFlags(fs.FlagSet)
 	fs.ParseArgs(args)
 
+	if exit, handled := dispatchEdgeDoctorShadow(fs.FlagSet, shadowCluster, shadowCI, *jsonOutput, stdout, stderr); handled {
+		return exit
+	}
+
 	env, err := buildEdgeDoctorEnv(fs, edgeDoctorOptions{
-		policyMode:   *policyMode,
-		claudePath:   *claudePath,
-		hookCommand:  *hookCommand,
-		agentdPath:   *agentdPath,
-		agentdURL:    *agentdURL,
-		settingsPath: *settingsPath,
-		dashboardURL: *dashboardURL,
+		policyMode:          *policyMode,
+		claudePath:          *claudePath,
+		hookCommand:         *hookCommand,
+		agentdPath:          *agentdPath,
+		agentdURL:           *agentdURL,
+		settingsPath:        *settingsPath,
+		managedSettingsPath: *managedSettingsPath,
+		dashboardURL:        *dashboardURL,
 	})
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "cordumctl edge doctor: %s\n", edgeDoctorRedact(err.Error(), *fs.apiKey))
@@ -100,6 +110,30 @@ func runEdgeDoctorCmd(args []string, stdout, stderr io.Writer) int {
 	return exitCode
 }
 
+// dispatchEdgeDoctorShadow returns (exitCode, true) when one of the
+// preview flags is set; the standard doctor checks pipeline is skipped
+// in that case because previews invoke the EDGE-143.1/.2/.3 detectors
+// directly. When neither flag is set the second return value is false
+// and runEdgeDoctorCmd falls through to its existing flow.
+func dispatchEdgeDoctorShadow(fs *flag.FlagSet, shadowCluster, shadowCI *string, asJSON bool, stdout, stderr io.Writer) (int, bool) {
+	var clusterSet, ciSet bool
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "shadow-cluster":
+			clusterSet = true
+		case "shadow-ci":
+			ciSet = true
+		}
+	})
+	if ciSet {
+		return runShadowCIPreview(*shadowCI, asJSON, stdout, stderr), true
+	}
+	if clusterSet {
+		return runShadowClusterPreview(*shadowCluster, asJSON, stdout, stderr), true
+	}
+	return 0, false
+}
+
 func edgeDoctorWriters(stdout, stderr io.Writer) (io.Writer, io.Writer) {
 	if stdout == nil {
 		stdout = os.Stdout
@@ -116,18 +150,19 @@ func buildEdgeDoctorEnv(fs *flagSet, opts edgeDoctorOptions) (*edgeDoctorEnv, er
 		return nil, err
 	}
 	return &edgeDoctorEnv{
-		base:         base,
-		policyMode:   strings.TrimSpace(opts.policyMode),
-		claudePath:   strings.TrimSpace(opts.claudePath),
-		hookCommand:  strings.TrimSpace(opts.hookCommand),
-		agentdPath:   strings.TrimSpace(opts.agentdPath),
-		agentdURL:    strings.TrimSpace(opts.agentdURL),
-		settingsPath: strings.TrimSpace(opts.settingsPath),
-		dashboardURL: strings.TrimSpace(opts.dashboardURL),
-		lookPath:     exec.LookPath,
-		statFile:     os.Stat,
-		readFile:     os.ReadFile,
-		dialTCP:      defaultEdgeDoctorDialTCP,
+		base:                base,
+		policyMode:          strings.TrimSpace(opts.policyMode),
+		claudePath:          strings.TrimSpace(opts.claudePath),
+		hookCommand:         strings.TrimSpace(opts.hookCommand),
+		agentdPath:          strings.TrimSpace(opts.agentdPath),
+		agentdURL:           strings.TrimSpace(opts.agentdURL),
+		settingsPath:        strings.TrimSpace(opts.settingsPath),
+		managedSettingsPath: strings.TrimSpace(opts.managedSettingsPath),
+		dashboardURL:        strings.TrimSpace(opts.dashboardURL),
+		lookPath:            exec.LookPath,
+		statFile:            os.Stat,
+		readFile:            os.ReadFile,
+		dialTCP:             defaultEdgeDoctorDialTCP,
 	}, nil
 }
 
@@ -145,6 +180,7 @@ func defaultEdgeDoctorChecks() []edgeDoctorCheck {
 		{id: "edge_demo_policy", label: "Edge demo policy", run: edgeCheckDemoPolicy},
 		{id: "dashboard_reachable", label: "Dashboard reachable", run: edgeCheckDashboardReachable},
 		{id: "policy_mode_implications", label: "Policy mode implications", run: edgeCheckPolicyMode},
+		{id: "managed_settings_compliance", label: "Managed settings compliance", run: edgeCheckManagedSettings},
 	}
 }
 

@@ -32,7 +32,7 @@ jobs:
 
       - name: Run lychee
         id: lychee
-        uses: lycheeverse/lychee-action@v2
+        uses: lycheeverse/lychee-action@8646ba30535128ac92d33dfc9133794bfdd9b411 # v2
         with:
           # --offline avoids external-host flakes (GitHub rate limits,
           # vendor 5xx) and keeps runtime under the 60s target.

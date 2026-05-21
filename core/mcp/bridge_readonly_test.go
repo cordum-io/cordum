@@ -33,8 +33,8 @@ func newMockBridge(t *testing.T, status int, body any) (*HTTPServiceBridge, *moc
 }
 
 type mockServer struct {
-	status                              int
-	body                                any
+	status                                      int
+	body                                        any
 	lastMethod, lastPath, lastQuery, lastTenant string
 }
 

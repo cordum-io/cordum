@@ -6,13 +6,13 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type PolicyCheckResponseDecision = typeof PolicyCheckResponseDecision[keyof typeof PolicyCheckResponseDecision];
-
+export type PolicyCheckResponseDecision =
+  (typeof PolicyCheckResponseDecision)[keyof typeof PolicyCheckResponseDecision];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const PolicyCheckResponseDecision = {
-  ALLOW: 'ALLOW',
-  DENY: 'DENY',
-  QUARANTINE: 'QUARANTINE',
-  REQUIRE_APPROVAL: 'REQUIRE_APPROVAL',
+  ALLOW: "ALLOW",
+  DENY: "DENY",
+  QUARANTINE: "QUARANTINE",
+  REQUIRE_APPROVAL: "REQUIRE_APPROVAL",
 } as const;

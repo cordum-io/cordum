@@ -15,10 +15,7 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.worker_runtime import WorkerRuntime
-
-
-
+    from ..models.worker_runtime import WorkerRuntime
 
 
 T = TypeVar("T", bound="PoolDetail")
@@ -26,27 +23,27 @@ T = TypeVar("T", bound="PoolDetail")
 
 @_attrs_define
 class PoolDetail:
-    """ 
-        Attributes:
-            name (str):
-            workers (List['WorkerRuntime']):
-            topics (List[str]):
-            active_jobs (Union[Unset, int]):
-            capacity (Union[Unset, int]):
-            utilization (Union[Unset, float]):
-     """
+    """
+    Attributes:
+        name (str):
+        workers (List['WorkerRuntime']):
+        topics (List[str]):
+        active_jobs (Union[Unset, int]):
+        capacity (Union[Unset, int]):
+        utilization (Union[Unset, float]):
+    """
 
     name: str
-    workers: List['WorkerRuntime']
+    workers: List["WorkerRuntime"]
     topics: List[str]
     active_jobs: Union[Unset, int] = UNSET
     capacity: Union[Unset, int] = UNSET
     utilization: Union[Unset, float] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
         from ..models.worker_runtime import WorkerRuntime
+
         name = self.name
 
         workers = []
@@ -54,11 +51,7 @@ class PoolDetail:
             workers_item = workers_item_data.to_dict()
             workers.append(workers_item)
 
-
-
         topics = self.topics
-
-
 
         active_jobs = self.active_jobs
 
@@ -66,14 +59,15 @@ class PoolDetail:
 
         utilization = self.utilization
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "name": name,
-            "workers": workers,
-            "topics": topics,
-        })
+        field_dict.update(
+            {
+                "name": name,
+                "workers": workers,
+                "topics": topics,
+            }
+        )
         if active_jobs is not UNSET:
             field_dict["active_jobs"] = active_jobs
         if capacity is not UNSET:
@@ -83,26 +77,21 @@ class PoolDetail:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.worker_runtime import WorkerRuntime
+
         d = src_dict.copy()
         name = d.pop("name")
 
         workers = []
         _workers = d.pop("workers")
-        for workers_item_data in (_workers):
+        for workers_item_data in _workers:
             workers_item = WorkerRuntime.from_dict(workers_item_data)
-
-
 
             workers.append(workers_item)
 
-
         topics = cast(List[str], d.pop("topics"))
-
 
         active_jobs = d.pop("active_jobs", UNSET)
 
@@ -118,7 +107,6 @@ class PoolDetail:
             capacity=capacity,
             utilization=utilization,
         )
-
 
         pool_detail.additional_properties = d
         return pool_detail

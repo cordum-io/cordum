@@ -15,10 +15,9 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.list_eval_dataset_versions_response_200_items_item import ListEvalDatasetVersionsResponse200ItemsItem
-
-
-
+    from ..models.list_eval_dataset_versions_response_200_items_item import (
+        ListEvalDatasetVersionsResponse200ItemsItem,
+    )
 
 
 T = TypeVar("T", bound="ListEvalDatasetVersionsResponse200")
@@ -26,17 +25,19 @@ T = TypeVar("T", bound="ListEvalDatasetVersionsResponse200")
 
 @_attrs_define
 class ListEvalDatasetVersionsResponse200:
-    """ 
-        Attributes:
-            items (Union[Unset, List['ListEvalDatasetVersionsResponse200ItemsItem']]):
-     """
+    """
+    Attributes:
+        items (Union[Unset, List['ListEvalDatasetVersionsResponse200ItemsItem']]):
+    """
 
-    items: Union[Unset, List['ListEvalDatasetVersionsResponse200ItemsItem']] = UNSET
+    items: Union[Unset, List["ListEvalDatasetVersionsResponse200ItemsItem"]] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.list_eval_dataset_versions_response_200_items_item import ListEvalDatasetVersionsResponse200ItemsItem
+        from ..models.list_eval_dataset_versions_response_200_items_item import (
+            ListEvalDatasetVersionsResponse200ItemsItem,
+        )
+
         items: Union[Unset, List[Dict[str, Any]]] = UNSET
         if not isinstance(self.items, Unset):
             items = []
@@ -44,38 +45,31 @@ class ListEvalDatasetVersionsResponse200:
                 items_item = items_item_data.to_dict()
                 items.append(items_item)
 
-
-
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if items is not UNSET:
             field_dict["items"] = items
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.list_eval_dataset_versions_response_200_items_item import ListEvalDatasetVersionsResponse200ItemsItem
+        from ..models.list_eval_dataset_versions_response_200_items_item import (
+            ListEvalDatasetVersionsResponse200ItemsItem,
+        )
+
         d = src_dict.copy()
         items = []
         _items = d.pop("items", UNSET)
-        for items_item_data in (_items or []):
+        for items_item_data in _items or []:
             items_item = ListEvalDatasetVersionsResponse200ItemsItem.from_dict(items_item_data)
 
-
-
             items.append(items_item)
-
 
         list_eval_dataset_versions_response_200 = cls(
             items=items,
         )
-
 
         list_eval_dataset_versions_response_200.additional_properties = d
         return list_eval_dataset_versions_response_200

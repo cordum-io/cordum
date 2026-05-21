@@ -9,6 +9,8 @@
 export interface Error {
   /** Human-readable error message */
   error: string;
+  /** Optional machine-readable error code */
+  code?: string;
   /** HTTP status code */
   status: number;
 }

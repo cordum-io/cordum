@@ -37,7 +37,6 @@ import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { CodeBlock } from "@/components/ui/CodeBlock";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { Tabs } from "@/components/ui/Tabs";
-import { GovernanceTimeline } from "@/components/governance/GovernanceTimeline";
 import { AgentExecutionsPanel } from "@/components/edge/AgentExecutionsPanel";
 
 const JOB_DETAIL_TABS = [
@@ -1202,11 +1201,13 @@ export default function JobDetailPage() {
             tabs={[
               { id: "overview", label: "Overview" },
               { id: "audit-chain", label: "Audit Chain" },
-              { id: "inputs", label: "Inputs" },
-              { id: "outputs", label: "Outputs" },
-              { id: "policy-trace", label: "Policy Trace" },
             ]}
-            activeTab={activeTab}
+            activeTab={
+              // task-cafacca3: legacy ?tab=inputs|outputs|policy-trace deep-links
+              // gracefully migrate to Overview — Inputs+Outputs payloads now live
+              // inside Overview as collapsible sections; Policy Trace removed.
+              ["inputs", "outputs", "policy-trace"].includes(activeTab) ? "overview" : activeTab
+            }
             onChange={setActiveTab}
             ariaLabel="Job detail sections"
           />
@@ -1239,6 +1240,31 @@ export default function JobDetailPage() {
               </motion.div>
 
               <AgentExecutionsPanel jobId={job.id} className="lg:col-span-12" />
+
+              {/* task-cafacca3: Context + Result payloads folded into
+                  Overview (was separate Inputs/Outputs tabs). Context
+                  opens by default; Result opens by default once the
+                  job has produced output (terminal state). */}
+              <motion.div variants={item} className="lg:col-span-12">
+                <CollapsibleSection title="Context payload" defaultOpen={true}>
+                  <div className="instrument-card">
+                    <BlobViewer label="Context" pointer={job.contextPtr} data={job.context} emptyText="No context data available" />
+                  </div>
+                </CollapsibleSection>
+              </motion.div>
+
+              <motion.div variants={item} className="lg:col-span-12">
+                <CollapsibleSection title="Result payload" defaultOpen={!isActive}>
+                  <div className="instrument-card">
+                    <BlobViewer
+                      label="Result"
+                      pointer={job.resultPtr}
+                      data={job.result}
+                      emptyText={isActive ? "Job is still running…" : "No result data available"}
+                    />
+                  </div>
+                </CollapsibleSection>
+              </motion.div>
 
               {/* Error block */}
               {(job.errorMessage || job.status === "failed") && (
@@ -1299,60 +1325,9 @@ export default function JobDetailPage() {
             </motion.div>
           )}
 
-          {activeTab === "inputs" && (
-            <motion.div
-              key="inputs"
-              variants={container}
-              initial="hidden"
-              animate="visible"
-              exit={{ opacity: 0, y: -8 }}
-              className="space-y-6"
-            >
-              <motion.div variants={item}>
-                <CollapsibleSection title="Context payload" defaultOpen={true}>
-                  <div className="instrument-card">
-                    <BlobViewer label="Context" pointer={job.contextPtr} data={job.context} emptyText="No context data available" />
-                  </div>
-                </CollapsibleSection>
-              </motion.div>
-            </motion.div>
-          )}
-
-          {activeTab === "outputs" && (
-            <motion.div
-              key="outputs"
-              variants={container}
-              initial="hidden"
-              animate="visible"
-              exit={{ opacity: 0, y: -8 }}
-              className="space-y-6"
-            >
-              <motion.div variants={item}>
-                <CollapsibleSection title="Raw output" defaultOpen={true}>
-                  <div className="instrument-card">
-                    <BlobViewer
-                      label="Result"
-                      pointer={job.resultPtr}
-                      data={job.result}
-                      emptyText={isActive ? "Job is still running\u2026" : "No result data available"}
-                    />
-                  </div>
-                </CollapsibleSection>
-              </motion.div>
-            </motion.div>
-          )}
-
-          {activeTab === "policy-trace" && (
-            <motion.div
-              key="policy-trace"
-              variants={item}
-              initial="hidden"
-              animate="visible"
-              exit={{ opacity: 0, y: -8 }}
-            >
-              <GovernanceTimeline jobId={job.id} />
-            </motion.div>
-          )}
+          {/* task-cafacca3: Inputs + Outputs tabs deleted \u2014 content moved into
+              Overview as collapsible sections. Policy Trace tab removed entirely
+              (GovernanceTimeline component still used by RunDetailPage). */}
         </AnimatePresence>
       </motion.div>
     </div>

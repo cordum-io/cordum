@@ -5,7 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { ListEvalDatasetVersions200ItemsItem } from './listEvalDatasetVersions200ItemsItem';
+import type { ListEvalDatasetVersions200ItemsItem } from "./listEvalDatasetVersions200ItemsItem";
 
 export type ListEvalDatasetVersions200 = {
   items?: ListEvalDatasetVersions200ItemsItem[];

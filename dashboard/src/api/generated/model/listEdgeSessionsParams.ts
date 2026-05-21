@@ -7,10 +7,10 @@
  */
 
 export type ListEdgeSessionsParams = {
-principal_id?: string;
-cursor?: string;
-/**
- * @minimum 1
- */
-limit?: number;
+  principal_id?: string;
+  cursor?: string;
+  /**
+   * @minimum 1
+   */
+  limit?: number;
 };

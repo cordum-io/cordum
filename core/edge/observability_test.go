@@ -43,6 +43,11 @@ func TestNoopRecorderImplementsRecorder(t *testing.T) {
 	r.RecordActionDenied("tenant-a", "hook", "hook.pre_tool_use", "destructive_command")
 	r.RecordApprovalRequested("tenant-a", "hook", "hook.pre_tool_use")
 	r.RecordApprovalResolved("tenant-a", "hook", "hook.pre_tool_use", "approved")
+	r.ObserveApprovalSweepDuration(10 * time.Millisecond)
+	r.AddApprovalSweepExpired(2)
+	r.RecordRuntimeReplayFirstSeen("tenant-a", "collector-a")
+	r.RecordRuntimeReplayReplayed("tenant-a", "collector-a")
+	r.RecordRuntimeReplayWindowFull("tenant-a", "collector-a")
 	r.RecordDegraded("tenant-a", "local-dev", "agentd", "gateway_unavailable")
 	r.RecordFailClosed("tenant-a", "enterprise-strict", "gateway_unavailable")
 	r.RecordArtifactExport("tenant-a", "edge.session_export", "ok")
@@ -402,6 +407,11 @@ func TestPrometheusRecorderRegistersAndEmitsBoundedMetrics(t *testing.T) {
 	r.RecordActionDenied("tenant-edge014", "hook", "hook.pre_tool_use", "destructive_command")
 	r.RecordApprovalRequested("tenant-edge014", "hook", "hook.pre_tool_use")
 	r.RecordApprovalResolved("tenant-edge014", "hook", "hook.pre_tool_use", "approved")
+	r.ObserveApprovalSweepDuration(10 * time.Millisecond)
+	r.AddApprovalSweepExpired(2)
+	r.RecordRuntimeReplayFirstSeen("tenant-edge014", "collector-edge014")
+	r.RecordRuntimeReplayReplayed("tenant-edge014", "collector-edge014")
+	r.RecordRuntimeReplayWindowFull("tenant-edge014", "collector-edge014")
 	r.RecordDegraded("tenant-edge014", "local-dev", "agentd", "gateway_unavailable")
 	r.RecordFailClosed("tenant-edge014", "enterprise-strict", "gateway_unavailable")
 	r.RecordArtifactExport("tenant-edge014", "edge.session_export", "ok")
@@ -456,6 +466,43 @@ func TestEDGE072PrometheusReviewerGapMetricsRegistered(t *testing.T) {
 	}
 }
 
+func TestPrometheusRecorderRuntimeReplayMetricsBoundIdentities(t *testing.T) {
+	reg := prometheusNewRegistryHelper(t)
+	r := NewPrometheusRecorder(reg)
+	const rawCollector = "collector-edge144-secret-canary"
+	const rawTenant = "tenant-edge144-secret-canary"
+
+	r.RecordRuntimeReplayFirstSeen(rawTenant, rawCollector)
+	r.RecordRuntimeReplayReplayed(rawTenant, rawCollector)
+	r.RecordRuntimeReplayWindowFull(rawTenant, rawCollector)
+
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("gather metrics: %v", err)
+	}
+	var text strings.Builder
+	for _, family := range families {
+		text.WriteString(family.String())
+	}
+	metricsText := strings.Join(strings.Fields(text.String()), " ")
+	for _, want := range []string{
+		`name:"cordum_edge_runtime_replay_first_seen_total"`,
+		`name:"cordum_edge_runtime_replay_replayed_total"`,
+		`name:"cordum_edge_runtime_replay_window_full_total"`,
+		`name:"tenant_present" value:"true"`,
+		`name:"collector_present" value:"true"`,
+	} {
+		if !strings.Contains(metricsText, want) {
+			t.Fatalf("gathered metrics missing %s in:\n%s", want, metricsText)
+		}
+	}
+	for _, forbidden := range []string{rawTenant, rawCollector} {
+		if strings.Contains(metricsText, forbidden) {
+			t.Fatalf("runtime replay metric labels leaked identity %q in: %s", forbidden, metricsText)
+		}
+	}
+}
+
 // TestPrometheusRecorderBoundsHighCardinalityInputs pins that
 // attacker-supplied or high-cardinality strings (raw command, secret,
 // ID-like values) collapse to bounded enum labels via the step-3
@@ -471,6 +518,9 @@ func TestPrometheusRecorderBoundsHighCardinalityInputs(t *testing.T) {
 	r.RecordEventPersisted(rawSecret, rawSecret, rawSecret, rawSecret)
 	r.RecordEventRedacted(rawSecret)
 	r.RecordHookTimeout(rawSecret)
+	r.RecordRuntimeReplayFirstSeen(rawSecret, rawSecret)
+	r.RecordRuntimeReplayReplayed(rawSecret, rawSecret)
+	r.RecordRuntimeReplayWindowFull(rawSecret, rawSecret)
 	r.RecordDegraded("tenant-edge014", rawSecret, rawSecret, rawSecret)
 	r.RecordFailClosed("tenant-edge014", rawSecret, rawSecret)
 	r.RecordArtifactExport("tenant-edge014", rawSecret, rawSecret)
@@ -498,6 +548,9 @@ func TestPrometheusRecorderNilRegistererReturnsNoop(t *testing.T) {
 	r.RecordEventPersisted("", "", "", "")
 	r.RecordEventRedacted("")
 	r.RecordHookTimeout("")
+	r.RecordRuntimeReplayFirstSeen("", "")
+	r.RecordRuntimeReplayReplayed("", "")
+	r.RecordRuntimeReplayWindowFull("", "")
 	r.RecordStreamEventSent("")
 	r.RecordStreamDrop("")
 }
@@ -931,6 +984,52 @@ func TestSendSIEMEventDeliversToWorkingSender(t *testing.T) {
 	}
 }
 
+// TestSendSIEMEventDefaultsEmptyTenant asserts the producer-side
+// fallback contract for the edge audit wrapper: a SIEMEvent emitted
+// with empty TenantID lands at the sink with TenantID =
+// model.DefaultTenant. Closes the gap where SIEMEventForAction (and
+// peers) propagate event.TenantID verbatim from an AgentActionEvent
+// that may have come in tenantless (anonymous hook bridge, system
+// bootstrap event). Mutation-resistant: asserts the literal "default"
+// constant value, not just non-empty.
+func TestSendSIEMEventDefaultsEmptyTenant(t *testing.T) {
+	rec := &recordingAuditSender{}
+	SendSIEMEvent(rec, audit.SIEMEvent{
+		EventType: audit.EventEdgePolicyDecision,
+		TenantID:  "", // producer left empty
+		Action:    "bash.exec",
+		Decision:  "allow",
+	})
+	got := rec.snapshot()
+	if len(got) != 1 {
+		t.Fatalf("recorder got %d events, want 1", len(got))
+	}
+	if got[0].TenantID != "default" {
+		t.Fatalf("TenantID = %q, want %q (model.DefaultTenant — empty-producer must be defaulted before forwarding)",
+			got[0].TenantID, "default")
+	}
+}
+
+// TestSendSIEMEventPreservesExplicitTenant pins the contract that an
+// explicit tenant is NEVER overwritten by the empty-tenant defaulter
+// — per-tenant chain isolation depends on this. Without this guard a
+// future refactor could accidentally route all events to the default
+// chain.
+func TestSendSIEMEventPreservesExplicitTenant(t *testing.T) {
+	rec := &recordingAuditSender{}
+	SendSIEMEvent(rec, audit.SIEMEvent{
+		EventType: audit.EventEdgePolicyDecision,
+		TenantID:  "tenant-explicit",
+		Action:    "bash.exec",
+		Decision:  "allow",
+	})
+	got := rec.snapshot()
+	if got[0].TenantID != "tenant-explicit" {
+		t.Fatalf("TenantID = %q, want %q (explicit tenant must be preserved)",
+			got[0].TenantID, "tenant-explicit")
+	}
+}
+
 // TestRecorderInterfaceForbidsRawSecretLeak documents the contract that
 // raw secret-shaped inputs MUST collapse to bounded labels via the
 // Normalize* helpers before reaching a Prometheus recorder. The no-op
@@ -1098,6 +1197,8 @@ func TestSIEMEventForApprovalRequestedHasMediumSeverity(t *testing.T) {
 		EventID:     "edge_evt_jkl",
 		PrincipalID: "user@example.com",
 		RuleID:      "rule_abc",
+		ActionHash:  "sha256:action",
+		InputHash:   "sha256:input",
 		Status:      "pending",
 		CreatedAt:   createdAt,
 		Reason:      "Authorization: Bearer leaky-reason",
@@ -1114,6 +1215,9 @@ func TestSIEMEventForApprovalRequestedHasMediumSeverity(t *testing.T) {
 	}
 	if ev.Extra["approval_ref"] != "edge_apr_abc" {
 		t.Errorf("Extra approval_ref = %q", ev.Extra["approval_ref"])
+	}
+	if ev.Extra["action_hash"] != "sha256:action" || ev.Extra["input_hash"] != "sha256:input" {
+		t.Errorf("approval evidence hashes missing from Extra: %#v", ev.Extra)
 	}
 	for k, v := range ev.Extra {
 		if strings.Contains(v, "Authorization") || strings.Contains(v, "Bearer") {
@@ -1507,6 +1611,9 @@ func TestEdgeObservabilitySecretLeakMatrix(t *testing.T) {
 		recorder.RecordEventPersisted(secret, secret, secret, secret)
 		recorder.RecordEventRedacted(secret)
 		recorder.RecordHookTimeout(secret)
+		recorder.RecordRuntimeReplayFirstSeen(secret, secret)
+		recorder.RecordRuntimeReplayReplayed(secret, secret)
+		recorder.RecordRuntimeReplayWindowFull(secret, secret)
 		recorder.RecordDegraded(secret, secret, secret, secret)
 		recorder.RecordFailClosed(secret, secret, secret)
 		recorder.RecordArtifactExport(secret, secret, secret)

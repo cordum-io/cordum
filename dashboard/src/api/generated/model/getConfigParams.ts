@@ -5,13 +5,13 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { GetConfigScope } from './getConfigScope';
+import type { GetConfigScope } from "./getConfigScope";
 
 export type GetConfigParams = {
-scope?: GetConfigScope;
-scope_id?: string;
-/**
- * Whether to wrap in {scope, data} envelope
- */
-envelope?: boolean;
+  scope?: GetConfigScope;
+  scope_id?: string;
+  /**
+   * Whether to wrap in {scope, data} envelope
+   */
+  envelope?: boolean;
 };

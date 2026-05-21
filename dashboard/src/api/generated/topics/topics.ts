@@ -5,10 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import {
-  useMutation,
-  useQuery
-} from '@tanstack/react-query';
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
   DataTag,
   DefinedInitialDataOptions,
@@ -21,8 +18,8 @@ import type {
   UseMutationOptions,
   UseMutationResult,
   UseQueryOptions,
-  UseQueryResult
-} from '@tanstack/react-query';
+  UseQueryResult,
+} from "@tanstack/react-query";
 
 import type {
   BadRequestResponse,
@@ -32,229 +29,338 @@ import type {
   NotFoundResponse,
   ServiceUnavailableResponse,
   TopicResponse,
-  UnauthorizedResponse
-} from '.././model';
+  UnauthorizedResponse,
+} from ".././model";
 
-import { apiClient } from '../../client';
-
-
-
+import { apiClient } from "../../client";
 
 /**
  * @summary List topics
  */
-export const listTopics = (
-    
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<ListTopics200>(
-      {url: `/api/v1/topics`, method: 'GET', signal
-    },
-      );
-    }
-  
-
-
+export const listTopics = (signal?: AbortSignal) => {
+  return apiClient<ListTopics200>({
+    url: `/api/v1/topics`,
+    method: "GET",
+    signal,
+  });
+};
 
 export const getListTopicsQueryKey = () => {
-    return [
-    `/api/v1/topics`
-    ] as const;
-    }
+  return [`/api/v1/topics`] as const;
+};
 
-    
-export const getListTopicsQueryOptions = <TData = Awaited<ReturnType<typeof listTopics>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTopics>>, TError, TData>>, }
-) => {
+export const getListTopicsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listTopics>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(options?: {
+  query?: Partial<
+    UseQueryOptions<Awaited<ReturnType<typeof listTopics>>, TError, TData>
+  >;
+}) => {
+  const { query: queryOptions } = options ?? {};
 
-const {query: queryOptions} = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getListTopicsQueryKey();
 
-  const queryKey =  queryOptions?.queryKey ?? getListTopicsQueryKey();
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listTopics>>> = ({
+    signal,
+  }) => listTopics(signal);
 
-  
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listTopics>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listTopics>>> = ({ signal }) => listTopics(signal);
+export type ListTopicsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listTopics>>
+>;
+export type ListTopicsQueryError =
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | ServiceUnavailableResponse;
 
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listTopics>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type ListTopicsQueryResult = NonNullable<Awaited<ReturnType<typeof listTopics>>>
-export type ListTopicsQueryError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse
-
-
-export function useListTopics<TData = Awaited<ReturnType<typeof listTopics>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTopics>>, TError, TData>> & Pick<
+export function useListTopics<
+  TData = Awaited<ReturnType<typeof listTopics>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listTopics>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listTopics>>,
           TError,
           Awaited<ReturnType<typeof listTopics>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListTopics<TData = Awaited<ReturnType<typeof listTopics>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTopics>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListTopics<
+  TData = Awaited<ReturnType<typeof listTopics>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listTopics>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listTopics>>,
           TError,
           Awaited<ReturnType<typeof listTopics>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListTopics<TData = Awaited<ReturnType<typeof listTopics>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTopics>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListTopics<
+  TData = Awaited<ReturnType<typeof listTopics>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listTopics>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary List topics
  */
 
-export function useListTopics<TData = Awaited<ReturnType<typeof listTopics>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTopics>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useListTopics<
+  TData = Awaited<ReturnType<typeof listTopics>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listTopics>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListTopicsQueryOptions(options);
 
-  const queryOptions = getListTopicsQueryOptions(options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * @summary Create or replace a topic registration
  */
 export const createTopic = (
-    createTopicBody: CreateTopicBody,
- signal?: AbortSignal
+  createTopicBody: CreateTopicBody,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<TopicResponse | TopicResponse>(
-      {url: `/api/v1/topics`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: createTopicBody, signal
-    },
-      );
-    }
-  
+  return apiClient<TopicResponse | TopicResponse>({
+    url: `/api/v1/topics`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: createTopicBody,
+    signal,
+  });
+};
 
+export const getCreateTopicMutationOptions = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createTopic>>,
+    TError,
+    { data: CreateTopicBody },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createTopic>>,
+  TError,
+  { data: CreateTopicBody },
+  TContext
+> => {
+  const mutationKey = ["createTopic"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getCreateTopicMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createTopic>>, TError,{data: CreateTopicBody}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof createTopic>>, TError,{data: CreateTopicBody}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createTopic>>,
+    { data: CreateTopicBody }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['createTopic'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return createTopic(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type CreateTopicMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createTopic>>
+>;
+export type CreateTopicMutationBody = CreateTopicBody;
+export type CreateTopicMutationError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse
+  | ServiceUnavailableResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createTopic>>, {data: CreateTopicBody}> = (props) => {
-          const {data} = props ?? {};
-
-          return  createTopic(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type CreateTopicMutationResult = NonNullable<Awaited<ReturnType<typeof createTopic>>>
-    export type CreateTopicMutationBody = CreateTopicBody
-    export type CreateTopicMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse
-
-    /**
+/**
  * @summary Create or replace a topic registration
  */
-export const useCreateTopic = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createTopic>>, TError,{data: CreateTopicBody}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof createTopic>>,
-        TError,
-        {data: CreateTopicBody},
-        TContext
-      > => {
+export const useCreateTopic = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof createTopic>>,
+      TError,
+      { data: CreateTopicBody },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof createTopic>>,
+  TError,
+  { data: CreateTopicBody },
+  TContext
+> => {
+  const mutationOptions = getCreateTopicMutationOptions(options);
 
-      const mutationOptions = getCreateTopicMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary Delete a topic registration
  */
-export const deleteTopic = (
-    name: string,
- ) => {
-      
-      
-      return apiClient<void>(
-      {url: `/api/v1/topics/${name}`, method: 'DELETE'
-    },
-      );
-    }
-  
+export const deleteTopic = (name: string) => {
+  return apiClient<void>({ url: `/api/v1/topics/${name}`, method: "DELETE" });
+};
 
+export const getDeleteTopicMutationOptions = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteTopic>>,
+    TError,
+    { name: string },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteTopic>>,
+  TError,
+  { name: string },
+  TContext
+> => {
+  const mutationKey = ["deleteTopic"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getDeleteTopicMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteTopic>>, TError,{name: string}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof deleteTopic>>, TError,{name: string}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteTopic>>,
+    { name: string }
+  > = (props) => {
+    const { name } = props ?? {};
 
-const mutationKey = ['deleteTopic'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return deleteTopic(name);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type DeleteTopicMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteTopic>>
+>;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteTopic>>, {name: string}> = (props) => {
-          const {name} = props ?? {};
+export type DeleteTopicMutationError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse
+  | ServiceUnavailableResponse;
 
-          return  deleteTopic(name,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type DeleteTopicMutationResult = NonNullable<Awaited<ReturnType<typeof deleteTopic>>>
-    
-    export type DeleteTopicMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse
-
-    /**
+/**
  * @summary Delete a topic registration
  */
-export const useDeleteTopic = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteTopic>>, TError,{name: string}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof deleteTopic>>,
-        TError,
-        {name: string},
-        TContext
-      > => {
+export const useDeleteTopic = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof deleteTopic>>,
+      TError,
+      { name: string },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof deleteTopic>>,
+  TError,
+  { name: string },
+  TContext
+> => {
+  const mutationOptions = getDeleteTopicMutationOptions(options);
 
-      const mutationOptions = getDeleteTopicMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    
+  return useMutation(mutationOptions, queryClient);
+};

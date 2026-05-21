@@ -30,7 +30,7 @@ func TestMutatingBridge_ForwardsIdempotencyHeader_AllMethods(t *testing.T) {
 			method: http.MethodPost,
 			invoke: func(b *HTTPServiceBridge) error {
 				_, err := b.CreateWorkflow(context.Background(), CreateWorkflowInput{
-					Steps:          map[string]any{"log":map[string]any{"type":"log"}},
+					Steps:          map[string]any{"log": map[string]any{"type": "log"}},
 					IdempotencyKey: "idem-cw",
 				})
 				return err
@@ -116,11 +116,11 @@ func TestMutatingBridge_ForwardsIdempotencyHeader_AllMethods(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			srv, captured := newStubGateway(t, http.StatusOK, map[string]any{
-				"id":         "x",
+				"id":          "x",
 				"workflow_id": "x",
-				"pack_id":    "cordum/slack",
-				"installed":  true,
-				"bundle_id":  "secops",
+				"pack_id":     "cordum/slack",
+				"installed":   true,
+				"bundle_id":   "secops",
 			})
 			b := mutatingBridge(t, srv)
 			if err := tc.invoke(b); err != nil {
@@ -144,7 +144,7 @@ func TestMutatingBridge_OmitsIdempotencyHeader_WhenArgUnset(t *testing.T) {
 	srv, captured := newStubGateway(t, http.StatusOK, map[string]any{"id": "w"})
 	b := mutatingBridge(t, srv)
 	if _, err := b.CreateWorkflow(context.Background(), CreateWorkflowInput{
-		Steps: map[string]any{"log":map[string]any{"type":"log"}},
+		Steps: map[string]any{"log": map[string]any{"type": "log"}},
 	}); err != nil {
 		t.Fatalf("err: %v", err)
 	}

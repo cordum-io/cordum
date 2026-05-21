@@ -10,6 +10,21 @@ enum ContextMode {
   CONTEXT_MODE_RAG = 3;
 }
 
+// MemoryWriteKind classifies the KIND of state a memory write touches.
+// Raw and chat are backward-compatible — they stay on the legacy
+// context-engine path. Writes that mutate shared policy / trust /
+// directive state are guarded by core/governance/evaluator and the
+// service-level provenance check; they require a verified writer and
+// non-empty provenance_ref or the write fails closed.
+enum MemoryWriteKind {
+  MEMORY_WRITE_KIND_UNSPECIFIED = 0;
+  MEMORY_WRITE_KIND_RAW = 1;
+  MEMORY_WRITE_KIND_CHAT = 2;
+  MEMORY_WRITE_KIND_SHARED_POLICY_STATE = 3;
+  MEMORY_WRITE_KIND_SHARED_TRUST_STATE = 4;
+  MEMORY_WRITE_KIND_SHARED_DIRECTIVE = 5;
+}
+
 service ContextEngine {
   rpc BuildWindow(BuildWindowRequest) returns (BuildWindowResponse);
   rpc UpdateMemory(UpdateMemoryRequest) returns (UpdateMemoryResponse);
@@ -40,6 +55,20 @@ message UpdateMemoryRequest {
   bytes logical_payload = 2;
   bytes model_response = 3;
   ContextMode mode = 4;
+  // Server-owned multi-agent governance fields, populated by the
+  // context-engine caller AFTER authenticating + verifying the writer
+  // and the target. These MUST NOT be set by external clients; the
+  // gateway / scheduler set them after lookup against the auth store
+  // and the delegation/approval stores. The service enforces a
+  // fail-closed check when write_kind mutates policy/trust/directive
+  // state and writer_agent_id or provenance_ref is empty.
+  string tenant_id = 5;
+  string writer_agent_id = 6;
+  string target_agent_id = 7;
+  string provenance_ref = 8;
+  bool provenance_verified = 9;
+  MemoryWriteKind write_kind = 10;
+  bool policy_state_mutation = 11;
 }
 
 message UpdateMemoryResponse {}

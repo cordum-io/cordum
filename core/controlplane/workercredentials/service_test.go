@@ -2,11 +2,13 @@ package workercredentials
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/licensing"
 )
 
 func newTestService(t *testing.T) *Service {
@@ -33,6 +35,7 @@ func TestCreateAndVerifyCredential(t *testing.T) {
 	createdAt := time.Date(2026, time.April, 7, 12, 30, 0, 0, time.UTC)
 
 	issued, err := svc.Create(ctx, IssueInput{
+		TenantID:      " tenant-a ",
 		WorkerID:      " worker-a ",
 		AllowedPools:  []string{"gpu", "default", "default", " "},
 		AllowedTopics: []string{"job.beta", "job.alpha", "job.beta"},
@@ -51,6 +54,9 @@ func TestCreateAndVerifyCredential(t *testing.T) {
 	}
 	if issued.Credential.WorkerID != "worker-a" {
 		t.Fatalf("expected trimmed worker id, got %q", issued.Credential.WorkerID)
+	}
+	if issued.Credential.TenantID != "tenant-a" {
+		t.Fatalf("expected trimmed tenant id, got %q", issued.Credential.TenantID)
 	}
 	if issued.Credential.PackID != "pack-a" {
 		t.Fatalf("expected trimmed pack id, got %q", issued.Credential.PackID)
@@ -93,6 +99,7 @@ func TestRevokedCredentialFails(t *testing.T) {
 	ctx := context.Background()
 
 	issued, err := svc.Create(ctx, IssueInput{
+		TenantID:  "default",
 		WorkerID:  "worker-revoked",
 		CreatedBy: "tester",
 	})
@@ -100,11 +107,11 @@ func TestRevokedCredentialFails(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	if err := svc.Revoke(ctx, issued.Credential.WorkerID); err != nil {
+	if err := svc.Revoke(ctx, "default", issued.Credential.WorkerID); err != nil {
 		t.Fatalf("Revoke: %v", err)
 	}
 
-	record, err := svc.Get(ctx, issued.Credential.WorkerID)
+	record, err := svc.Get(ctx, "default", issued.Credential.WorkerID)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -128,7 +135,7 @@ func TestListCredentials(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 
-	records, err := svc.List(ctx)
+	records, err := svc.List(ctx, "default")
 	if err != nil {
 		t.Fatalf("List empty: %v", err)
 	}
@@ -138,6 +145,7 @@ func TestListCredentials(t *testing.T) {
 
 	for _, workerID := range []string{"worker-b", "worker-a"} {
 		if _, err := svc.Create(ctx, IssueInput{
+			TenantID:  "default",
 			WorkerID:  workerID,
 			CreatedBy: "tester",
 		}); err != nil {
@@ -145,7 +153,7 @@ func TestListCredentials(t *testing.T) {
 		}
 	}
 
-	records, err = svc.List(ctx)
+	records, err = svc.List(ctx, "default")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -154,6 +162,82 @@ func TestListCredentials(t *testing.T) {
 	}
 	if got := []string{records[0].WorkerID, records[1].WorkerID}; !equalStrings(got, []string{"worker-a", "worker-b"}) {
 		t.Fatalf("expected sorted worker ids, got %v", got)
+	}
+}
+
+func TestListGetRevokeScopeByTenant(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	if _, err := svc.Create(ctx, IssueInput{TenantID: "tenant-a", WorkerID: "shared-worker", CreatedBy: "tester"}); err != nil {
+		t.Fatalf("Create tenant-a: %v", err)
+	}
+	issuedB, err := svc.Create(ctx, IssueInput{TenantID: "tenant-b", WorkerID: "tenant-b-worker", CreatedBy: "tester"})
+	if err != nil {
+		t.Fatalf("Create tenant-b: %v", err)
+	}
+
+	records, err := svc.List(ctx, "tenant-a")
+	if err != nil {
+		t.Fatalf("List tenant-a: %v", err)
+	}
+	if len(records) != 1 || records[0].WorkerID != "shared-worker" || records[0].TenantID != "tenant-a" {
+		t.Fatalf("tenant-a list leaked wrong records: %+v", records)
+	}
+
+	record, err := svc.Get(ctx, "tenant-a", "tenant-b-worker")
+	if err != nil {
+		t.Fatalf("cross-tenant Get: %v", err)
+	}
+	if record != nil {
+		t.Fatalf("cross-tenant Get returned %+v, want nil", record)
+	}
+	if err := svc.Revoke(ctx, "tenant-a", "tenant-b-worker"); !errors.Is(err, ErrCredentialNotFound) {
+		t.Fatalf("cross-tenant Revoke error = %v, want ErrCredentialNotFound", err)
+	}
+	record, ok, err := svc.Verify(ctx, "tenant-b-worker", issuedB.Token)
+	if err != nil {
+		t.Fatalf("Verify tenant-b after failed revoke: %v", err)
+	}
+	if !ok || record == nil || record.Revoked() {
+		t.Fatalf("tenant-b credential should remain present/unrevoked after tenant-a revoke attempt: record=%+v ok=%v", record, ok)
+	}
+}
+
+func TestCreateWithLimitCountsRevokedRotation(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	entitlements := licensing.DefaultEntitlements(licensing.PlanCommunity)
+	entitlements.MaxWorkers = 1
+	limit := CreateLimit{Entitlements: entitlements}
+
+	if _, err := svc.CreateWithLimit(ctx, IssueInput{
+		TenantID:  "default",
+		WorkerID:  "worker-a",
+		CreatedBy: "tester",
+	}, limit); err != nil {
+		t.Fatalf("Create worker-a: %v", err)
+	}
+	if err := svc.Revoke(ctx, "default", "worker-a"); err != nil {
+		t.Fatalf("Revoke worker-a: %v", err)
+	}
+	if _, err := svc.CreateWithLimit(ctx, IssueInput{
+		TenantID:  "default",
+		WorkerID:  "worker-b",
+		CreatedBy: "tester",
+	}, limit); err != nil {
+		t.Fatalf("Create worker-b: %v", err)
+	}
+	if _, err := svc.CreateWithLimit(ctx, IssueInput{
+		TenantID:  "default",
+		WorkerID:  "worker-a",
+		CreatedBy: "tester",
+	}, limit); err == nil {
+		t.Fatal("expected revoked worker-a rotation to respect max worker limit")
+	} else {
+		var limitErr *licensing.TierLimitError
+		if !errors.As(err, &limitErr) {
+			t.Fatalf("Create worker-a after revoke error = %v, want TierLimitError", err)
+		}
 	}
 }
 

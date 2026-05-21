@@ -5,7 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { ExportEdgeSession200RedactionLevel } from './exportEdgeSession200RedactionLevel';
+import type { ExportEdgeSession200RedactionLevel } from "./exportEdgeSession200RedactionLevel";
 
 /**
  * SessionExportBundle. See docs/edge-export.md for full schema
@@ -18,4 +18,4 @@ export type ExportEdgeSession200 = {
   tenant_id: string;
   redaction_level?: ExportEdgeSession200RedactionLevel;
   [key: string]: unknown;
- };
+};

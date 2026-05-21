@@ -5,9 +5,9 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { CopilotSession } from './copilotSession';
-import type { CopilotSessionJob } from './copilotSessionJob';
-import type { CopilotSessionDecision } from './copilotSessionDecision';
+import type { CopilotSession } from "./copilotSession";
+import type { CopilotSessionJob } from "./copilotSessionJob";
+import type { CopilotSessionDecision } from "./copilotSessionDecision";
 
 export interface CopilotSessionDetailResponse {
   session: CopilotSession;

@@ -13,10 +13,7 @@ from typing import cast, List
 from typing import Dict
 
 if TYPE_CHECKING:
-  from ..models.worker_credential import WorkerCredential
-
-
-
+    from ..models.worker_credential import WorkerCredential
 
 
 T = TypeVar("T", bound="ListWorkerCredentialsResponse200")
@@ -24,53 +21,47 @@ T = TypeVar("T", bound="ListWorkerCredentialsResponse200")
 
 @_attrs_define
 class ListWorkerCredentialsResponse200:
-    """ 
-        Attributes:
-            items (List['WorkerCredential']):
-     """
+    """
+    Attributes:
+        items (List['WorkerCredential']):
+    """
 
-    items: List['WorkerCredential']
+    items: List["WorkerCredential"]
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         from ..models.worker_credential import WorkerCredential
+
         items = []
         for items_item_data in self.items:
             items_item = items_item_data.to_dict()
             items.append(items_item)
 
-
-
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "items": items,
-        })
+        field_dict.update(
+            {
+                "items": items,
+            }
+        )
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.worker_credential import WorkerCredential
+
         d = src_dict.copy()
         items = []
         _items = d.pop("items")
-        for items_item_data in (_items):
+        for items_item_data in _items:
             items_item = WorkerCredential.from_dict(items_item_data)
 
-
-
             items.append(items_item)
-
 
         list_worker_credentials_response_200 = cls(
             items=items,
         )
-
 
         list_worker_credentials_response_200.additional_properties = d
         return list_worker_credentials_response_200

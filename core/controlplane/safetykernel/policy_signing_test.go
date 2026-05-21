@@ -291,9 +291,9 @@ func TestLoadFragments_EnforceAcceptsSignedBundle(t *testing.T) {
 	loader, seed := newLoadFragmentsHarness(t)
 	seed(map[string]any{
 		"custom-signed": map[string]any{
-			"content":                  testSignedPolicy,
-			"enabled":                  true,
-			policySignatureFieldKey:    signatureMap(t, priv, "TEST", []byte(testSignedPolicy)),
+			"content":               testSignedPolicy,
+			"enabled":               true,
+			policySignatureFieldKey: signatureMap(t, priv, "TEST", []byte(testSignedPolicy)),
 		},
 	})
 
@@ -322,9 +322,9 @@ func TestLoadFragments_EnforceRejectsTamperedContent(t *testing.T) {
 	tampered := []byte(testSignedPolicy + "\n  # attacker appended a comment\n")
 	seed(map[string]any{
 		"custom-tampered": map[string]any{
-			"content":                  string(tampered),
-			"enabled":                  true,
-			policySignatureFieldKey:    signatureMap(t, priv, "TEST", original),
+			"content":               string(tampered),
+			"enabled":               true,
+			policySignatureFieldKey: signatureMap(t, priv, "TEST", original),
 		},
 	})
 

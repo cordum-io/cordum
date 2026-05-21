@@ -14,10 +14,7 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.license_info import LicenseInfo
-
-
-
+    from ..models.license_info import LicenseInfo
 
 
 T = TypeVar("T", bound="ReloadLicenseResponse200")
@@ -25,21 +22,21 @@ T = TypeVar("T", bound="ReloadLicenseResponse200")
 
 @_attrs_define
 class ReloadLicenseResponse200:
-    """ 
-        Attributes:
-            status (str):
-            plan (str):
-            license_ (Union[Unset, LicenseInfo]):
-     """
+    """
+    Attributes:
+        status (str):
+        plan (str):
+        license_ (Union[Unset, LicenseInfo]):
+    """
 
     status: str
     plan: str
-    license_: Union[Unset, 'LicenseInfo'] = UNSET
+    license_: Union[Unset, "LicenseInfo"] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         from ..models.license_info import LicenseInfo
+
         status = self.status
 
         plan = self.plan
@@ -48,23 +45,23 @@ class ReloadLicenseResponse200:
         if not isinstance(self.license_, Unset):
             license_ = self.license_.to_dict()
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "status": status,
-            "plan": plan,
-        })
+        field_dict.update(
+            {
+                "status": status,
+                "plan": plan,
+            }
+        )
         if license_ is not UNSET:
             field_dict["license"] = license_
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.license_info import LicenseInfo
+
         d = src_dict.copy()
         status = d.pop("status")
 
@@ -72,20 +69,16 @@ class ReloadLicenseResponse200:
 
         _license_ = d.pop("license", UNSET)
         license_: Union[Unset, LicenseInfo]
-        if isinstance(_license_,  Unset):
+        if isinstance(_license_, Unset):
             license_ = UNSET
         else:
             license_ = LicenseInfo.from_dict(_license_)
-
-
-
 
         reload_license_response_200 = cls(
             status=status,
             plan=plan,
             license_=license_,
         )
-
 
         reload_license_response_200.additional_properties = d
         return reload_license_response_200

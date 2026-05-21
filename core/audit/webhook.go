@@ -21,6 +21,8 @@ type WebhookExporter struct {
 	secret   string // HMAC-SHA256 signing key (optional)
 }
 
+const webhookSecretMinLength = 32
+
 // WebhookOption configures a WebhookExporter.
 type WebhookOption func(*WebhookExporter)
 
@@ -33,6 +35,13 @@ func WithWebhookHeaders(h map[string]string) WebhookOption {
 // The signature is sent in the X-Cordum-Signature header.
 func WithWebhookSecret(secret string) WebhookOption {
 	return func(w *WebhookExporter) { w.secret = secret }
+}
+
+func validateWebhookSecret(secret string) error {
+	if secret != "" && len(secret) < webhookSecretMinLength {
+		return fmt.Errorf("webhook secret must be >=%d chars (got %d)", webhookSecretMinLength, len(secret))
+	}
+	return nil
 }
 
 // WithWebhookTimeout sets the HTTP client timeout.

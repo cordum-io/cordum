@@ -5,10 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import {
-  useMutation,
-  useQuery
-} from '@tanstack/react-query';
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
   DataTag,
   DefinedInitialDataOptions,
@@ -21,8 +18,8 @@ import type {
   UseMutationOptions,
   UseMutationResult,
   UseQueryOptions,
-  UseQueryResult
-} from '@tanstack/react-query';
+  UseQueryResult,
+} from "@tanstack/react-query";
 
 import type {
   ArtifactDetail,
@@ -34,260 +31,402 @@ import type {
   InternalServerErrorResponse,
   NotFoundResponse,
   PayloadTooLargeResponse,
-  UnauthorizedResponse
-} from '.././model';
+  UnauthorizedResponse,
+} from ".././model";
 
-import { apiClient } from '../../client';
-
-
-
+import { apiClient } from "../../client";
 
 /**
  * @summary Get memory data by pointer or key
  */
-export const getMemory = (
-    params?: GetMemoryParams,
- signal?: AbortSignal
+export const getMemory = (params?: GetMemoryParams, signal?: AbortSignal) => {
+  return apiClient<GetMemory200>({
+    url: `/api/v1/memory`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
+
+export const getGetMemoryQueryKey = (params?: GetMemoryParams) => {
+  return [`/api/v1/memory`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetMemoryQueryOptions = <
+  TData = Awaited<ReturnType<typeof getMemory>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  params?: GetMemoryParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getMemory>>, TError, TData>
+    >;
+  },
 ) => {
-      
-      
-      return apiClient<GetMemory200>(
-      {url: `/api/v1/memory`, method: 'GET',
-        params, signal
-    },
-      );
-    }
-  
+  const { query: queryOptions } = options ?? {};
 
+  const queryKey = queryOptions?.queryKey ?? getGetMemoryQueryKey(params);
 
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getMemory>>> = ({
+    signal,
+  }) => getMemory(params, signal);
 
-export const getGetMemoryQueryKey = (params?: GetMemoryParams,) => {
-    return [
-    `/api/v1/memory`, ...(params ? [params]: [])
-    ] as const;
-    }
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getMemory>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    
-export const getGetMemoryQueryOptions = <TData = Awaited<ReturnType<typeof getMemory>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(params?: GetMemoryParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMemory>>, TError, TData>>, }
-) => {
+export type GetMemoryQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getMemory>>
+>;
+export type GetMemoryQueryError =
+  | UnauthorizedResponse
+  | NotFoundResponse
+  | InternalServerErrorResponse;
 
-const {query: queryOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetMemoryQueryKey(params);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMemory>>> = ({ signal }) => getMemory(params, signal);
-
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMemory>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetMemoryQueryResult = NonNullable<Awaited<ReturnType<typeof getMemory>>>
-export type GetMemoryQueryError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse
-
-
-export function useGetMemory<TData = Awaited<ReturnType<typeof getMemory>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- params: undefined |  GetMemoryParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMemory>>, TError, TData>> & Pick<
+export function useGetMemory<
+  TData = Awaited<ReturnType<typeof getMemory>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  params: undefined | GetMemoryParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getMemory>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getMemory>>,
           TError,
           Awaited<ReturnType<typeof getMemory>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetMemory<TData = Awaited<ReturnType<typeof getMemory>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- params?: GetMemoryParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMemory>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetMemory<
+  TData = Awaited<ReturnType<typeof getMemory>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  params?: GetMemoryParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getMemory>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getMemory>>,
           TError,
           Awaited<ReturnType<typeof getMemory>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetMemory<TData = Awaited<ReturnType<typeof getMemory>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- params?: GetMemoryParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMemory>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetMemory<
+  TData = Awaited<ReturnType<typeof getMemory>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  params?: GetMemoryParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getMemory>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Get memory data by pointer or key
  */
 
-export function useGetMemory<TData = Awaited<ReturnType<typeof getMemory>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- params?: GetMemoryParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMemory>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetMemory<
+  TData = Awaited<ReturnType<typeof getMemory>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  params?: GetMemoryParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getMemory>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetMemoryQueryOptions(params, options);
 
-  const queryOptions = getGetMemoryQueryOptions(params,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * @summary Upload an artifact
  */
 export const createArtifact = (
-    createArtifactRequest: CreateArtifactRequest,
- signal?: AbortSignal
+  createArtifactRequest: CreateArtifactRequest,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<CreateArtifactResponse>(
-      {url: `/api/v1/artifacts`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: createArtifactRequest, signal
-    },
-      );
-    }
-  
+  return apiClient<CreateArtifactResponse>({
+    url: `/api/v1/artifacts`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: createArtifactRequest,
+    signal,
+  });
+};
 
+export const getCreateArtifactMutationOptions = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | PayloadTooLargeResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createArtifact>>,
+    TError,
+    { data: CreateArtifactRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createArtifact>>,
+  TError,
+  { data: CreateArtifactRequest },
+  TContext
+> => {
+  const mutationKey = ["createArtifact"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getCreateArtifactMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | PayloadTooLargeResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createArtifact>>, TError,{data: CreateArtifactRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof createArtifact>>, TError,{data: CreateArtifactRequest}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createArtifact>>,
+    { data: CreateArtifactRequest }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['createArtifact'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return createArtifact(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type CreateArtifactMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createArtifact>>
+>;
+export type CreateArtifactMutationBody = CreateArtifactRequest;
+export type CreateArtifactMutationError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | PayloadTooLargeResponse
+  | InternalServerErrorResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createArtifact>>, {data: CreateArtifactRequest}> = (props) => {
-          const {data} = props ?? {};
-
-          return  createArtifact(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type CreateArtifactMutationResult = NonNullable<Awaited<ReturnType<typeof createArtifact>>>
-    export type CreateArtifactMutationBody = CreateArtifactRequest
-    export type CreateArtifactMutationError = BadRequestResponse | UnauthorizedResponse | PayloadTooLargeResponse | InternalServerErrorResponse
-
-    /**
+/**
  * @summary Upload an artifact
  */
-export const useCreateArtifact = <TError = BadRequestResponse | UnauthorizedResponse | PayloadTooLargeResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createArtifact>>, TError,{data: CreateArtifactRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof createArtifact>>,
-        TError,
-        {data: CreateArtifactRequest},
-        TContext
-      > => {
+export const useCreateArtifact = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | PayloadTooLargeResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof createArtifact>>,
+      TError,
+      { data: CreateArtifactRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof createArtifact>>,
+  TError,
+  { data: CreateArtifactRequest },
+  TContext
+> => {
+  const mutationOptions = getCreateArtifactMutationOptions(options);
 
-      const mutationOptions = getCreateArtifactMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary Get an artifact by pointer
  */
-export const getArtifact = (
-    ptr: string,
- signal?: AbortSignal
+export const getArtifact = (ptr: string, signal?: AbortSignal) => {
+  return apiClient<ArtifactDetail>({
+    url: `/api/v1/artifacts/${ptr}`,
+    method: "GET",
+    signal,
+  });
+};
+
+export const getGetArtifactQueryKey = (ptr?: string) => {
+  return [`/api/v1/artifacts/${ptr}`] as const;
+};
+
+export const getGetArtifactQueryOptions = <
+  TData = Awaited<ReturnType<typeof getArtifact>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  ptr: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getArtifact>>, TError, TData>
+    >;
+  },
 ) => {
-      
-      
-      return apiClient<ArtifactDetail>(
-      {url: `/api/v1/artifacts/${ptr}`, method: 'GET', signal
-    },
-      );
-    }
-  
+  const { query: queryOptions } = options ?? {};
 
+  const queryKey = queryOptions?.queryKey ?? getGetArtifactQueryKey(ptr);
 
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getArtifact>>> = ({
+    signal,
+  }) => getArtifact(ptr, signal);
 
-export const getGetArtifactQueryKey = (ptr?: string,) => {
-    return [
-    `/api/v1/artifacts/${ptr}`
-    ] as const;
-    }
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!ptr,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getArtifact>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    
-export const getGetArtifactQueryOptions = <TData = Awaited<ReturnType<typeof getArtifact>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(ptr: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getArtifact>>, TError, TData>>, }
-) => {
+export type GetArtifactQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getArtifact>>
+>;
+export type GetArtifactQueryError =
+  | UnauthorizedResponse
+  | NotFoundResponse
+  | InternalServerErrorResponse;
 
-const {query: queryOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetArtifactQueryKey(ptr);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getArtifact>>> = ({ signal }) => getArtifact(ptr, signal);
-
-      
-
-      
-
-   return  { queryKey, queryFn, enabled: !!(ptr), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getArtifact>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetArtifactQueryResult = NonNullable<Awaited<ReturnType<typeof getArtifact>>>
-export type GetArtifactQueryError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse
-
-
-export function useGetArtifact<TData = Awaited<ReturnType<typeof getArtifact>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- ptr: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getArtifact>>, TError, TData>> & Pick<
+export function useGetArtifact<
+  TData = Awaited<ReturnType<typeof getArtifact>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  ptr: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getArtifact>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getArtifact>>,
           TError,
           Awaited<ReturnType<typeof getArtifact>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetArtifact<TData = Awaited<ReturnType<typeof getArtifact>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- ptr: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getArtifact>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetArtifact<
+  TData = Awaited<ReturnType<typeof getArtifact>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  ptr: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getArtifact>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getArtifact>>,
           TError,
           Awaited<ReturnType<typeof getArtifact>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetArtifact<TData = Awaited<ReturnType<typeof getArtifact>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- ptr: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getArtifact>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetArtifact<
+  TData = Awaited<ReturnType<typeof getArtifact>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  ptr: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getArtifact>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Get an artifact by pointer
  */
 
-export function useGetArtifact<TData = Awaited<ReturnType<typeof getArtifact>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- ptr: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getArtifact>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetArtifact<
+  TData = Awaited<ReturnType<typeof getArtifact>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  ptr: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getArtifact>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetArtifactQueryOptions(ptr, options);
 
-  const queryOptions = getGetArtifactQueryOptions(ptr,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
-

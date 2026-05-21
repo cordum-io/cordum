@@ -9,15 +9,15 @@
 /**
  * Safety decision outcome
  */
-export type SafetyDecisionAction = typeof SafetyDecisionAction[keyof typeof SafetyDecisionAction];
-
+export type SafetyDecisionAction =
+  (typeof SafetyDecisionAction)[keyof typeof SafetyDecisionAction];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const SafetyDecisionAction = {
-  ALLOW: 'ALLOW',
-  DENY: 'DENY',
-  REQUIRE_APPROVAL: 'REQUIRE_APPROVAL',
-  THROTTLE: 'THROTTLE',
-  ALLOW_WITH_CONSTRAINTS: 'ALLOW_WITH_CONSTRAINTS',
-  UNAVAILABLE: 'UNAVAILABLE',
+  ALLOW: "ALLOW",
+  DENY: "DENY",
+  REQUIRE_APPROVAL: "REQUIRE_APPROVAL",
+  THROTTLE: "THROTTLE",
+  ALLOW_WITH_CONSTRAINTS: "ALLOW_WITH_CONSTRAINTS",
+  UNAVAILABLE: "UNAVAILABLE",
 } as const;

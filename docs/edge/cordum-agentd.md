@@ -78,6 +78,11 @@ Gateway decisions map to the hook result as follows:
   `approval_ref`, approval URL/context when available, and guidance to approve
   then retry the same tool call. P0 does not rely on Claude interactive defer
   semantics.
+- On destructive retries, Gateway validates both the approved store record and
+  resolved audit provenance. Agentd should surface a fail-closed denial if the
+  audit chain lacks an approved `EventEdgeApprovalResolved` /
+  `edge.approval_resolved` event with the same tenant, `approval_ref`, and
+  `action_hash`; requested-only events are not sufficient.
 
 Inline approval wait is intentionally opt-in and local/demo-oriented. It is
 enabled only when `CORDUM_AGENTD_INLINE_APPROVAL_WAIT=true`; agentd then calls

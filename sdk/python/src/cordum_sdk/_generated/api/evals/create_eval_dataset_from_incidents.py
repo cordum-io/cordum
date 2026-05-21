@@ -8,13 +8,16 @@ from ...types import Response, UNSET
 from ... import errors
 
 from ...models.create_eval_dataset_from_incidents_body import CreateEvalDatasetFromIncidentsBody
-from ...models.create_eval_dataset_from_incidents_response_200 import CreateEvalDatasetFromIncidentsResponse200
-from ...models.create_eval_dataset_from_incidents_response_201 import CreateEvalDatasetFromIncidentsResponse201
+from ...models.create_eval_dataset_from_incidents_response_200 import (
+    CreateEvalDatasetFromIncidentsResponse200,
+)
+from ...models.create_eval_dataset_from_incidents_response_201 import (
+    CreateEvalDatasetFromIncidentsResponse201,
+)
 from ...types import UNSET, Unset
 from typing import cast
 from typing import Dict
 from typing import Union
-
 
 
 def _get_kwargs(
@@ -22,22 +25,15 @@ def _get_kwargs(
     body: CreateEvalDatasetFromIncidentsBody,
     dry_run: Union[Unset, bool] = UNSET,
     x_tenant_id: str,
-
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
     headers["X-Tenant-ID"] = x_tenant_id
-
-
-
-    
 
     params: Dict[str, Any] = {}
 
     params["dry_run"] = dry_run
 
-
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
-
 
     _kwargs: Dict[str, Any] = {
         "method": "post",
@@ -47,7 +43,6 @@ def _get_kwargs(
 
     _body = body.to_dict()
 
-
     _kwargs["json"] = _body
     headers["Content-Type"] = "application/json"
 
@@ -55,17 +50,17 @@ def _get_kwargs(
     return _kwargs
 
 
-def _parse_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Optional[Union[Any, CreateEvalDatasetFromIncidentsResponse200, CreateEvalDatasetFromIncidentsResponse201]]:
+def _parse_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Optional[
+    Union[Any, CreateEvalDatasetFromIncidentsResponse200, CreateEvalDatasetFromIncidentsResponse201]
+]:
     if response.status_code == 200:
         response_200 = CreateEvalDatasetFromIncidentsResponse200.from_dict(response.json())
-
-
 
         return response_200
     if response.status_code == 201:
         response_201 = CreateEvalDatasetFromIncidentsResponse201.from_dict(response.json())
-
-
 
         return response_201
     if response.status_code == 400:
@@ -95,7 +90,11 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         return None
 
 
-def _build_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Response[Union[Any, CreateEvalDatasetFromIncidentsResponse200, CreateEvalDatasetFromIncidentsResponse201]]:
+def _build_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Response[
+    Union[Any, CreateEvalDatasetFromIncidentsResponse200, CreateEvalDatasetFromIncidentsResponse201]
+]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -110,9 +109,10 @@ def sync_detailed(
     body: CreateEvalDatasetFromIncidentsBody,
     dry_run: Union[Unset, bool] = UNSET,
     x_tenant_id: str,
-
-) -> Response[Union[Any, CreateEvalDatasetFromIncidentsResponse200, CreateEvalDatasetFromIncidentsResponse201]]:
-    """ Derive an eval dataset from governance incidents
+) -> Response[
+    Union[Any, CreateEvalDatasetFromIncidentsResponse200, CreateEvalDatasetFromIncidentsResponse201]
+]:
+    """Derive an eval dataset from governance incidents
 
     Args:
         dry_run (Union[Unset, bool]):
@@ -125,14 +125,12 @@ def sync_detailed(
 
     Returns:
         Response[Union[Any, CreateEvalDatasetFromIncidentsResponse200, CreateEvalDatasetFromIncidentsResponse201]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         body=body,
-dry_run=dry_run,
-x_tenant_id=x_tenant_id,
-
+        dry_run=dry_run,
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -141,15 +139,17 @@ x_tenant_id=x_tenant_id,
 
     return _build_response(client=client, response=response)
 
+
 def sync(
     *,
     client: Union[AuthenticatedClient, Client],
     body: CreateEvalDatasetFromIncidentsBody,
     dry_run: Union[Unset, bool] = UNSET,
     x_tenant_id: str,
-
-) -> Optional[Union[Any, CreateEvalDatasetFromIncidentsResponse200, CreateEvalDatasetFromIncidentsResponse201]]:
-    """ Derive an eval dataset from governance incidents
+) -> Optional[
+    Union[Any, CreateEvalDatasetFromIncidentsResponse200, CreateEvalDatasetFromIncidentsResponse201]
+]:
+    """Derive an eval dataset from governance incidents
 
     Args:
         dry_run (Union[Unset, bool]):
@@ -162,16 +162,15 @@ def sync(
 
     Returns:
         Union[Any, CreateEvalDatasetFromIncidentsResponse200, CreateEvalDatasetFromIncidentsResponse201]
-     """
-
+    """
 
     return sync_detailed(
         client=client,
-body=body,
-dry_run=dry_run,
-x_tenant_id=x_tenant_id,
-
+        body=body,
+        dry_run=dry_run,
+        x_tenant_id=x_tenant_id,
     ).parsed
+
 
 async def asyncio_detailed(
     *,
@@ -179,9 +178,10 @@ async def asyncio_detailed(
     body: CreateEvalDatasetFromIncidentsBody,
     dry_run: Union[Unset, bool] = UNSET,
     x_tenant_id: str,
-
-) -> Response[Union[Any, CreateEvalDatasetFromIncidentsResponse200, CreateEvalDatasetFromIncidentsResponse201]]:
-    """ Derive an eval dataset from governance incidents
+) -> Response[
+    Union[Any, CreateEvalDatasetFromIncidentsResponse200, CreateEvalDatasetFromIncidentsResponse201]
+]:
+    """Derive an eval dataset from governance incidents
 
     Args:
         dry_run (Union[Unset, bool]):
@@ -194,21 +194,18 @@ async def asyncio_detailed(
 
     Returns:
         Response[Union[Any, CreateEvalDatasetFromIncidentsResponse200, CreateEvalDatasetFromIncidentsResponse201]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         body=body,
-dry_run=dry_run,
-x_tenant_id=x_tenant_id,
-
+        dry_run=dry_run,
+        x_tenant_id=x_tenant_id,
     )
 
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
+
 
 async def asyncio(
     *,
@@ -216,9 +213,10 @@ async def asyncio(
     body: CreateEvalDatasetFromIncidentsBody,
     dry_run: Union[Unset, bool] = UNSET,
     x_tenant_id: str,
-
-) -> Optional[Union[Any, CreateEvalDatasetFromIncidentsResponse200, CreateEvalDatasetFromIncidentsResponse201]]:
-    """ Derive an eval dataset from governance incidents
+) -> Optional[
+    Union[Any, CreateEvalDatasetFromIncidentsResponse200, CreateEvalDatasetFromIncidentsResponse201]
+]:
+    """Derive an eval dataset from governance incidents
 
     Args:
         dry_run (Union[Unset, bool]):
@@ -231,13 +229,13 @@ async def asyncio(
 
     Returns:
         Union[Any, CreateEvalDatasetFromIncidentsResponse200, CreateEvalDatasetFromIncidentsResponse201]
-     """
+    """
 
-
-    return (await asyncio_detailed(
-        client=client,
-body=body,
-dry_run=dry_run,
-x_tenant_id=x_tenant_id,
-
-    )).parsed
+    return (
+        await asyncio_detailed(
+            client=client,
+            body=body,
+            dry_run=dry_run,
+            x_tenant_id=x_tenant_id,
+        )
+    ).parsed

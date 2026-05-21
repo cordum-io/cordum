@@ -14,7 +14,6 @@ from typing import Dict
 from typing import Union
 
 
-
 def _get_kwargs(
     *,
     cursor: Union[Unset, str] = UNSET,
@@ -23,14 +22,9 @@ def _get_kwargs(
     risk_tier: Union[Unset, str] = UNSET,
     team: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
     headers["X-Tenant-ID"] = x_tenant_id
-
-
-
-    
 
     params: Dict[str, Any] = {}
 
@@ -44,9 +38,7 @@ def _get_kwargs(
 
     params["team"] = team
 
-
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
-
 
     _kwargs: Dict[str, Any] = {
         "method": "get",
@@ -54,16 +46,15 @@ def _get_kwargs(
         "params": params,
     }
 
-
     _kwargs["headers"] = headers
     return _kwargs
 
 
-def _parse_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Optional[Union[Any, ListAgentsResponse200]]:
+def _parse_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Optional[Union[Any, ListAgentsResponse200]]:
     if response.status_code == 200:
         response_200 = ListAgentsResponse200.from_dict(response.json())
-
-
 
         return response_200
     if response.status_code == 401:
@@ -81,7 +72,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         return None
 
 
-def _build_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Response[Union[Any, ListAgentsResponse200]]:
+def _build_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Response[Union[Any, ListAgentsResponse200]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -99,9 +92,8 @@ def sync_detailed(
     risk_tier: Union[Unset, str] = UNSET,
     team: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, ListAgentsResponse200]]:
-    """ List agent identities
+    """List agent identities
 
     Args:
         cursor (Union[Unset, str]):
@@ -117,17 +109,15 @@ def sync_detailed(
 
     Returns:
         Response[Union[Any, ListAgentsResponse200]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         cursor=cursor,
-limit=limit,
-status=status,
-risk_tier=risk_tier,
-team=team,
-x_tenant_id=x_tenant_id,
-
+        limit=limit,
+        status=status,
+        risk_tier=risk_tier,
+        team=team,
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -135,6 +125,7 @@ x_tenant_id=x_tenant_id,
     )
 
     return _build_response(client=client, response=response)
+
 
 def sync(
     *,
@@ -145,9 +136,8 @@ def sync(
     risk_tier: Union[Unset, str] = UNSET,
     team: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, ListAgentsResponse200]]:
-    """ List agent identities
+    """List agent identities
 
     Args:
         cursor (Union[Unset, str]):
@@ -163,19 +153,18 @@ def sync(
 
     Returns:
         Union[Any, ListAgentsResponse200]
-     """
-
+    """
 
     return sync_detailed(
         client=client,
-cursor=cursor,
-limit=limit,
-status=status,
-risk_tier=risk_tier,
-team=team,
-x_tenant_id=x_tenant_id,
-
+        cursor=cursor,
+        limit=limit,
+        status=status,
+        risk_tier=risk_tier,
+        team=team,
+        x_tenant_id=x_tenant_id,
     ).parsed
+
 
 async def asyncio_detailed(
     *,
@@ -186,9 +175,8 @@ async def asyncio_detailed(
     risk_tier: Union[Unset, str] = UNSET,
     team: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, ListAgentsResponse200]]:
-    """ List agent identities
+    """List agent identities
 
     Args:
         cursor (Union[Unset, str]):
@@ -204,24 +192,21 @@ async def asyncio_detailed(
 
     Returns:
         Response[Union[Any, ListAgentsResponse200]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         cursor=cursor,
-limit=limit,
-status=status,
-risk_tier=risk_tier,
-team=team,
-x_tenant_id=x_tenant_id,
-
+        limit=limit,
+        status=status,
+        risk_tier=risk_tier,
+        team=team,
+        x_tenant_id=x_tenant_id,
     )
 
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
+
 
 async def asyncio(
     *,
@@ -232,9 +217,8 @@ async def asyncio(
     risk_tier: Union[Unset, str] = UNSET,
     team: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, ListAgentsResponse200]]:
-    """ List agent identities
+    """List agent identities
 
     Args:
         cursor (Union[Unset, str]):
@@ -250,16 +234,16 @@ async def asyncio(
 
     Returns:
         Union[Any, ListAgentsResponse200]
-     """
+    """
 
-
-    return (await asyncio_detailed(
-        client=client,
-cursor=cursor,
-limit=limit,
-status=status,
-risk_tier=risk_tier,
-team=team,
-x_tenant_id=x_tenant_id,
-
-    )).parsed
+    return (
+        await asyncio_detailed(
+            client=client,
+            cursor=cursor,
+            limit=limit,
+            status=status,
+            risk_tier=risk_tier,
+            team=team,
+            x_tenant_id=x_tenant_id,
+        )
+    ).parsed

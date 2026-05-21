@@ -13,61 +13,48 @@ from typing import cast
 import datetime
 
 
-
-
-
-
 T = TypeVar("T", bound="ApprovalAnalyticsResponseWindow")
 
 
 @_attrs_define
 class ApprovalAnalyticsResponseWindow:
-    """ 
-        Attributes:
-            since (datetime.datetime):
-            until (datetime.datetime):
-     """
+    """
+    Attributes:
+        since (datetime.datetime):
+        until (datetime.datetime):
+    """
 
     since: datetime.datetime
     until: datetime.datetime
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         since = self.since.isoformat()
 
         until = self.until.isoformat()
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "since": since,
-            "until": until,
-        })
+        field_dict.update(
+            {
+                "since": since,
+                "until": until,
+            }
+        )
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
         since = isoparse(d.pop("since"))
 
-
-
-
         until = isoparse(d.pop("until"))
-
-
-
 
         approval_analytics_response_window = cls(
             since=since,
             until=until,
         )
-
 
         approval_analytics_response_window.additional_properties = d
         return approval_analytics_response_window

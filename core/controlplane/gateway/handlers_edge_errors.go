@@ -41,21 +41,21 @@ const (
 	edgeErrCodeServiceUnavailable       = "service_unavailable"
 	edgeErrCodeStoreUnavailable         = "store_unavailable"
 	edgeErrCodeInternalError            = "internal_error"
-	edgeErrCodeUpstreamError            = "upstream_error"
 	edgeErrCodeConflict                 = "conflict"
+	edgeErrCodeLimitExceeded            = "limit_exceeded"
 	edgeErrCodeSessionTerminal          = "session_terminal"
 	edgeErrCodeExecutionTerminal        = "execution_terminal"
 	edgeErrCodeExecutionMismatch        = "execution_session_mismatch"
 	edgeErrCodeRawPayloadRejected       = "raw_payload_rejected"
 	edgeErrCodeArtifactPointerInvalid   = "artifact_pointer_invalid"
 	edgeErrCodeApprovalConflict         = "approval_conflict"
-	edgeErrCodeApprovalNotActionable    = "approval_not_actionable"
 	edgeErrCodeSelfApprovalDenied       = "self_approval_denied"
 	edgeErrCodeIdempotencyConflict      = "idempotency_conflict"
 	edgeErrCodeIdempotencyKeyTooLong    = "idempotency_key_invalid"
 	edgeErrCodeIdempotencyWindowExpired = "idempotency_window_expired"
 	edgeErrCodeMaxExecutionsExceeded    = "max_executions_exceeded"
 	edgeErrCodeEventCapExceeded         = "event_cap_exceeded"
+	edgeErrCodeReplayWindowFull         = "replay_window_full"
 	// EDGE-065 — POST /api/v1/edge/sessions/{id}/export rejects max_events
 	// values that exceed the per-request cap (handlers_edge_export.go
 	// maxExportEventsRequest). Maps to HTTP 400 Bad Request.
@@ -65,6 +65,13 @@ const (
 	// HTTP 422 Unprocessable Entity (request well-formed but execution state
 	// precludes the operation).
 	edgeErrCodeEventListTooLarge = "event_list_too_large"
+	// EDGE-143.6 — POST /api/v1/edge/shadow/exception (and the matching
+	// DELETE) refuses the operation because the scope risk is high and
+	// the caller did not satisfy the Q8 step-up auth gate (admin role
+	// or PermShadowExceptionHighRisk). Maps to HTTP 403 Forbidden so
+	// SIEM correlation can distinguish step-up rejection from baseline
+	// access denial.
+	edgeErrCodeStepUpRequired = "step_up_required"
 )
 
 // edgeErrorEnvelope is the on-the-wire shape of a /api/v1/edge/* error.

@@ -12,29 +12,24 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="EvalRunRequest")
 
 
 @_attrs_define
 class EvalRunRequest:
-    """ 
-        Attributes:
-            use_current_policy (Union[Unset, bool]):
-            candidate_bundle_id (Union[Unset, str]):
-            candidate_content (Union[Unset, str]):
-            max_entries (Union[Unset, int]):
-     """
+    """
+    Attributes:
+        use_current_policy (Union[Unset, bool]):
+        candidate_bundle_id (Union[Unset, str]):
+        candidate_content (Union[Unset, str]):
+        max_entries (Union[Unset, int]):
+    """
 
     use_current_policy: Union[Unset, bool] = UNSET
     candidate_bundle_id: Union[Unset, str] = UNSET
     candidate_content: Union[Unset, str] = UNSET
     max_entries: Union[Unset, int] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         use_current_policy = self.use_current_policy
@@ -45,11 +40,9 @@ class EvalRunRequest:
 
         max_entries = self.max_entries
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if use_current_policy is not UNSET:
             field_dict["use_current_policy"] = use_current_policy
         if candidate_bundle_id is not UNSET:
@@ -60,8 +53,6 @@ class EvalRunRequest:
             field_dict["max_entries"] = max_entries
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -80,7 +71,6 @@ class EvalRunRequest:
             candidate_content=candidate_content,
             max_entries=max_entries,
         )
-
 
         eval_run_request.additional_properties = d
         return eval_run_request

@@ -31,6 +31,8 @@ export interface DataTableProps<T> {
   estimatedRowHeight?: number;
   /** Scrollable container height when virtualization is active. Default 480. */
   virtualizedHeight?: number;
+  /** Opt out of the internal fixed-height virtualized scroll box. Default false. */
+  disableVirtualization?: boolean;
 }
 
 export const VIRTUALIZE_THRESHOLD = 100;
@@ -65,6 +67,7 @@ export function DataTable<T>({
   initialSorting,
   estimatedRowHeight = 44,
   virtualizedHeight = 480,
+  disableVirtualization = false,
 }: DataTableProps<T>) {
   const [sorting, setSorting] = useState<SortingState>(initialSorting ?? []);
 
@@ -78,7 +81,7 @@ export function DataTable<T>({
   });
 
   const rows = table.getRowModel().rows;
-  const shouldVirtualize = rows.length > VIRTUALIZE_THRESHOLD;
+  const shouldVirtualize = !disableVirtualization && rows.length > VIRTUALIZE_THRESHOLD;
 
   const handleRowClick = useMemo(() => {
     if (!onRowClick) return undefined;

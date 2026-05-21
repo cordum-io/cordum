@@ -13,25 +13,21 @@ from typing import cast, List
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="PolicyAnalyticsResponse200RulesItem")
 
 
 @_attrs_define
 class PolicyAnalyticsResponse200RulesItem:
-    """ 
-        Attributes:
-            rule_id (Union[Unset, str]):
-            hit_count (Union[Unset, int]):
-            approval_count (Union[Unset, int]):
-            override_count (Union[Unset, int]):
-            override_rate (Union[Unset, float]): override_count / approval_count (0 if no approvals)
-            avg_approval_latency_ms (Union[Unset, int]):
-            daily_hits (Union[Unset, List[int]]): Per-day hit counts (index 0 = oldest day)
-     """
+    """
+    Attributes:
+        rule_id (Union[Unset, str]):
+        hit_count (Union[Unset, int]):
+        approval_count (Union[Unset, int]):
+        override_count (Union[Unset, int]):
+        override_rate (Union[Unset, float]): override_count / approval_count (0 if no approvals)
+        avg_approval_latency_ms (Union[Unset, int]):
+        daily_hits (Union[Unset, List[int]]): Per-day hit counts (index 0 = oldest day)
+    """
 
     rule_id: Union[Unset, str] = UNSET
     hit_count: Union[Unset, int] = UNSET
@@ -41,7 +37,6 @@ class PolicyAnalyticsResponse200RulesItem:
     avg_approval_latency_ms: Union[Unset, int] = UNSET
     daily_hits: Union[Unset, List[int]] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         rule_id = self.rule_id
@@ -60,13 +55,9 @@ class PolicyAnalyticsResponse200RulesItem:
         if not isinstance(self.daily_hits, Unset):
             daily_hits = self.daily_hits
 
-
-
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if rule_id is not UNSET:
             field_dict["rule_id"] = rule_id
         if hit_count is not UNSET:
@@ -83,8 +74,6 @@ class PolicyAnalyticsResponse200RulesItem:
             field_dict["daily_hits"] = daily_hits
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -103,7 +92,6 @@ class PolicyAnalyticsResponse200RulesItem:
 
         daily_hits = cast(List[int], d.pop("daily_hits", UNSET))
 
-
         policy_analytics_response_200_rules_item = cls(
             rule_id=rule_id,
             hit_count=hit_count,
@@ -113,7 +101,6 @@ class PolicyAnalyticsResponse200RulesItem:
             avg_approval_latency_ms=avg_approval_latency_ms,
             daily_hits=daily_hits,
         )
-
 
         policy_analytics_response_200_rules_item.additional_properties = d
         return policy_analytics_response_200_rules_item

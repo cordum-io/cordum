@@ -6,12 +6,12 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type AuditVerifyResultStatus = typeof AuditVerifyResultStatus[keyof typeof AuditVerifyResultStatus];
-
+export type AuditVerifyResultStatus =
+  (typeof AuditVerifyResultStatus)[keyof typeof AuditVerifyResultStatus];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const AuditVerifyResultStatus = {
-  ok: 'ok',
-  compromised: 'compromised',
-  partial: 'partial',
+  ok: "ok",
+  compromised: "compromised",
+  partial: "partial",
 } as const;

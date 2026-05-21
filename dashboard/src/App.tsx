@@ -48,6 +48,8 @@ const SchemasPage = lazy(() => import("./pages/SchemasPage"));
 const SchemaDetailPage = lazy(() => import("./pages/SchemaDetailPage"));
 const TopicsPage = lazy(() => import("./pages/TopicsPage"));
 const AuditLogPage = lazy(() => import("./pages/AuditLogPage"));
+// EDGE-151-DASHBOARD — Binary integrity dashboard surface.
+const EdgeBinaryIntegrityPage = lazy(() => import("./pages/EdgeBinaryIntegrityPage"));
 // DLQPage was deleted in task-100cc89c step 5 — /dlq folds into JobsPage
 // as ?status=dlq via the DlqRouteRedirect below.
 const SettingsHealthPage = lazy(() => import("./pages/SettingsHealthPage"));
@@ -191,6 +193,13 @@ function ProtectedRoutes() {
           <Route path="/jobs/:id" element={<RouteBoundary name="Job details"><JobDetailPage /></RouteBoundary>} />
           <Route path="/edge/sessions" element={<RouteBoundary name="Edge sessions"><EdgeSessionsPage /></RouteBoundary>} />
           <Route path="/edge/sessions/:sessionId" element={<RouteBoundary name="Edge session details"><EdgeSessionDetailPage /></RouteBoundary>} />
+          <Route path="/edge/binary-integrity" element={<RouteBoundary name="Binary integrity"><EdgeBinaryIntegrityPage /></RouteBoundary>} />
+          {/* Compatibility redirects for older Edge deep links/bookmarks.
+              Edge Approvals and Edge Audit are no longer visible sidebar
+              destinations; the global pages own those experiences while
+              these paths preserve the edge-scoped query filters. */}
+          <Route path="/edge/approvals" element={<Navigate to="/approvals?lane=edge" replace />} />
+          <Route path="/edge/audit" element={<Navigate to="/audit?event_type_prefix=edge" replace />} />
 
           {/* ORCHESTRATE */}
           <Route path="/workflows" element={<RouteBoundary name="Workflows"><WorkflowsPage /></RouteBoundary>} />

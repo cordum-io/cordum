@@ -6,11 +6,11 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type McpStatusTransport = typeof McpStatusTransport[keyof typeof McpStatusTransport];
-
+export type McpStatusTransport =
+  (typeof McpStatusTransport)[keyof typeof McpStatusTransport];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const McpStatusTransport = {
-  sse: 'sse',
-  stdio: 'stdio',
+  sse: "sse",
+  stdio: "stdio",
 } as const;

@@ -106,6 +106,7 @@ func TestGetConfig_MissingExplicitScope_Returns404(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
 	}
+	requireStableErrorCode(t, rec, http.StatusNotFound, "CONFIG_NOT_FOUND")
 }
 
 // TestGetConfig_ExistingDefault_Returns200WithData verifies that GET /api/v1/config
@@ -301,6 +302,7 @@ func TestSetConfigRejectsBundlesInSystemDefault(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
 	}
+	requireStableErrorCode(t, rec, http.StatusBadRequest, "CONFIG_KEY_FORBIDDEN")
 	var resp map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode error response: %v", err)
@@ -308,6 +310,20 @@ func TestSetConfigRejectsBundlesInSystemDefault(t *testing.T) {
 	if resp["error"] != "bundles must be written to system/policy scope, not system/default" {
 		t.Fatalf("unexpected error: %v", resp["error"])
 	}
+}
+
+func TestHandleRegisterSchemaMissingIDReturnsStableCode(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/schemas", bytes.NewBufferString(`{"schema":{"type":"object"}}`)), &auth.AuthContext{
+		Tenant: "default",
+		Role:   "admin",
+	})
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.handleRegisterSchema(rec, req)
+
+	requireStableErrorCode(t, rec, http.StatusBadRequest, "CONFIG_SCHEMA_VIOLATION")
 }
 
 func TestSetConfigAllowsBundlesInSystemPolicy(t *testing.T) {

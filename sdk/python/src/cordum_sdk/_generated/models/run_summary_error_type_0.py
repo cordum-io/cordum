@@ -9,38 +9,25 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 
-
-
-
-
-
 T = TypeVar("T", bound="RunSummaryErrorType0")
 
 
 @_attrs_define
 class RunSummaryErrorType0:
-    """ Error details as key-value map (e.g. {code, message})
-
-     """
+    """Error details as key-value map (e.g. {code, message})"""
 
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
-        
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
-        run_summary_error_type_0 = cls(
-        )
-
+        run_summary_error_type_0 = cls()
 
         run_summary_error_type_0.additional_properties = d
         return run_summary_error_type_0

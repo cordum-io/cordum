@@ -13,41 +13,37 @@ from typing import cast, List
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="JobRecord")
 
 
 @_attrs_define
 class JobRecord:
-    """ 
-        Attributes:
-            id (str):
-            updated_at (int):
-            state (str):
-            worker_id (Union[Unset, str]):
-            trace_id (Union[Unset, str]):
-            topic (Union[Unset, str]):
-            tenant (Union[Unset, str]):
-            team (Union[Unset, str]):
-            principal (Union[Unset, str]):
-            actor_id (Union[Unset, str]):
-            actor_type (Union[Unset, str]):
-            idempotency_key (Union[Unset, str]):
-            capability (Union[Unset, str]):
-            risk_tags (Union[Unset, List[str]]):
-            requires (Union[Unset, List[str]]):
-            pack_id (Union[Unset, str]):
-            attempts (Union[Unset, int]):
-            safety_decision (Union[Unset, str]):
-            safety_reason (Union[Unset, str]):
-            safety_rule_id (Union[Unset, str]):
-            safety_snapshot (Union[Unset, str]):
-            deadline_unix (Union[Unset, int]):
-            failure_reason (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        id (str):
+        updated_at (int):
+        state (str):
+        worker_id (Union[Unset, str]):
+        trace_id (Union[Unset, str]):
+        topic (Union[Unset, str]):
+        tenant (Union[Unset, str]):
+        team (Union[Unset, str]):
+        principal (Union[Unset, str]):
+        actor_id (Union[Unset, str]):
+        actor_type (Union[Unset, str]):
+        idempotency_key (Union[Unset, str]):
+        capability (Union[Unset, str]):
+        risk_tags (Union[Unset, List[str]]):
+        requires (Union[Unset, List[str]]):
+        pack_id (Union[Unset, str]):
+        attempts (Union[Unset, int]):
+        safety_decision (Union[Unset, str]):
+        safety_reason (Union[Unset, str]):
+        safety_rule_id (Union[Unset, str]):
+        safety_snapshot (Union[Unset, str]):
+        deadline_unix (Union[Unset, int]):
+        failure_reason (Union[Unset, str]):
+    """
 
     id: str
     updated_at: int
@@ -73,7 +69,6 @@ class JobRecord:
     deadline_unix: Union[Unset, int] = UNSET
     failure_reason: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         id = self.id
@@ -106,13 +101,9 @@ class JobRecord:
         if not isinstance(self.risk_tags, Unset):
             risk_tags = self.risk_tags
 
-
-
         requires: Union[Unset, List[str]] = UNSET
         if not isinstance(self.requires, Unset):
             requires = self.requires
-
-
 
         pack_id = self.pack_id
 
@@ -130,14 +121,15 @@ class JobRecord:
 
         failure_reason = self.failure_reason
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "id": id,
-            "updated_at": updated_at,
-            "state": state,
-        })
+        field_dict.update(
+            {
+                "id": id,
+                "updated_at": updated_at,
+                "state": state,
+            }
+        )
         if worker_id is not UNSET:
             field_dict["worker_id"] = worker_id
         if trace_id is not UNSET:
@@ -181,8 +173,6 @@ class JobRecord:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
@@ -214,9 +204,7 @@ class JobRecord:
 
         risk_tags = cast(List[str], d.pop("risk_tags", UNSET))
 
-
         requires = cast(List[str], d.pop("requires", UNSET))
-
 
         pack_id = d.pop("pack_id", UNSET)
 
@@ -259,7 +247,6 @@ class JobRecord:
             deadline_unix=deadline_unix,
             failure_reason=failure_reason,
         )
-
 
         job_record.additional_properties = d
         return job_record

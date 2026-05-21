@@ -6,12 +6,12 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type EdgeArtifactPointerRetentionClass = typeof EdgeArtifactPointerRetentionClass[keyof typeof EdgeArtifactPointerRetentionClass];
-
+export type EdgeArtifactPointerRetentionClass =
+  (typeof EdgeArtifactPointerRetentionClass)[keyof typeof EdgeArtifactPointerRetentionClass];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const EdgeArtifactPointerRetentionClass = {
-  short: 'short',
-  standard: 'standard',
-  audit: 'audit',
+  short: "short",
+  standard: "standard",
+  audit: "audit",
 } as const;

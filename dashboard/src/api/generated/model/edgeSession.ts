@@ -5,13 +5,13 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { EdgeSessionPrincipalType } from './edgeSessionPrincipalType';
-import type { EdgeSessionMode } from './edgeSessionMode';
-import type { EdgeEnforcementLayers } from './edgeEnforcementLayers';
-import type { EdgeSessionPolicyMode } from './edgeSessionPolicyMode';
-import type { EdgeSessionStatus } from './edgeSessionStatus';
-import type { EdgeRiskSummary } from './edgeRiskSummary';
-import type { EdgeLabels } from './edgeLabels';
+import type { EdgeSessionPrincipalType } from "./edgeSessionPrincipalType";
+import type { EdgeSessionMode } from "./edgeSessionMode";
+import type { EdgeEnforcementLayers } from "./edgeEnforcementLayers";
+import type { EdgeSessionPolicyMode } from "./edgeSessionPolicyMode";
+import type { EdgeSessionStatus } from "./edgeSessionStatus";
+import type { EdgeRiskSummary } from "./edgeRiskSummary";
+import type { EdgeLabels } from "./edgeLabels";
 
 export interface EdgeSession {
   session_id: string;

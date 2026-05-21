@@ -5,9 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import {
-  useQuery
-} from '@tanstack/react-query';
+import { useQuery } from "@tanstack/react-query";
 import type {
   DataTag,
   DefinedInitialDataOptions,
@@ -17,17 +15,12 @@ import type {
   QueryKey,
   UndefinedInitialDataOptions,
   UseQueryOptions,
-  UseQueryResult
-} from '@tanstack/react-query';
+  UseQueryResult,
+} from "@tanstack/react-query";
 
-import type {
-  UnauthorizedResponse
-} from '.././model';
+import type { UnauthorizedResponse } from ".././model";
 
-import { apiClient } from '../../client';
-
-
-
+import { apiClient } from "../../client";
 
 /**
  * Upgrades to a WebSocket connection. Authenticates via the
@@ -38,92 +31,116 @@ import { apiClient } from '../../client';
 Authentication: provide `X-Tenant-ID` and authenticate via `Sec-WebSocket-Protocol: cordum-api-key, <base64url(api_key)>`.
  * @summary WebSocket event bus stream
  */
-export const streamEvents = (
-    
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<unknown>(
-      {url: `/api/v1/stream`, method: 'GET', signal
-    },
-      );
-    }
-  
-
-
+export const streamEvents = (signal?: AbortSignal) => {
+  return apiClient<unknown>({ url: `/api/v1/stream`, method: "GET", signal });
+};
 
 export const getStreamEventsQueryKey = () => {
-    return [
-    `/api/v1/stream`
-    ] as const;
-    }
+  return [`/api/v1/stream`] as const;
+};
 
-    
-export const getStreamEventsQueryOptions = <TData = Awaited<ReturnType<typeof streamEvents>>, TError = void | UnauthorizedResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamEvents>>, TError, TData>>, }
-) => {
+export const getStreamEventsQueryOptions = <
+  TData = Awaited<ReturnType<typeof streamEvents>>,
+  TError = void | UnauthorizedResponse,
+>(options?: {
+  query?: Partial<
+    UseQueryOptions<Awaited<ReturnType<typeof streamEvents>>, TError, TData>
+  >;
+}) => {
+  const { query: queryOptions } = options ?? {};
 
-const {query: queryOptions} = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getStreamEventsQueryKey();
 
-  const queryKey =  queryOptions?.queryKey ?? getStreamEventsQueryKey();
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof streamEvents>>> = ({
+    signal,
+  }) => streamEvents(signal);
 
-  
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof streamEvents>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof streamEvents>>> = ({ signal }) => streamEvents(signal);
+export type StreamEventsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof streamEvents>>
+>;
+export type StreamEventsQueryError = void | UnauthorizedResponse;
 
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof streamEvents>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type StreamEventsQueryResult = NonNullable<Awaited<ReturnType<typeof streamEvents>>>
-export type StreamEventsQueryError = void | UnauthorizedResponse
-
-
-export function useStreamEvents<TData = Awaited<ReturnType<typeof streamEvents>>, TError = void | UnauthorizedResponse>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamEvents>>, TError, TData>> & Pick<
+export function useStreamEvents<
+  TData = Awaited<ReturnType<typeof streamEvents>>,
+  TError = void | UnauthorizedResponse,
+>(
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof streamEvents>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof streamEvents>>,
           TError,
           Awaited<ReturnType<typeof streamEvents>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useStreamEvents<TData = Awaited<ReturnType<typeof streamEvents>>, TError = void | UnauthorizedResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamEvents>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useStreamEvents<
+  TData = Awaited<ReturnType<typeof streamEvents>>,
+  TError = void | UnauthorizedResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof streamEvents>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof streamEvents>>,
           TError,
           Awaited<ReturnType<typeof streamEvents>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useStreamEvents<TData = Awaited<ReturnType<typeof streamEvents>>, TError = void | UnauthorizedResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamEvents>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useStreamEvents<
+  TData = Awaited<ReturnType<typeof streamEvents>>,
+  TError = void | UnauthorizedResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof streamEvents>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary WebSocket event bus stream
  */
 
-export function useStreamEvents<TData = Awaited<ReturnType<typeof streamEvents>>, TError = void | UnauthorizedResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamEvents>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useStreamEvents<
+  TData = Awaited<ReturnType<typeof streamEvents>>,
+  TError = void | UnauthorizedResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof streamEvents>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getStreamEventsQueryOptions(options);
 
-  const queryOptions = getStreamEventsQueryOptions(options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
-

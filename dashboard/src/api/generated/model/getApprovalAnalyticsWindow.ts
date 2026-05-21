@@ -6,12 +6,12 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type GetApprovalAnalyticsWindow = typeof GetApprovalAnalyticsWindow[keyof typeof GetApprovalAnalyticsWindow];
-
+export type GetApprovalAnalyticsWindow =
+  (typeof GetApprovalAnalyticsWindow)[keyof typeof GetApprovalAnalyticsWindow];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const GetApprovalAnalyticsWindow = {
-  '24h': '24h',
-  '7d': '7d',
-  '30d': '30d',
+  "24h": "24h",
+  "7d": "7d",
+  "30d": "30d",
 } as const;

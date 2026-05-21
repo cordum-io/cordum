@@ -6,13 +6,13 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type EdgeRiskSummaryMaxRisk = typeof EdgeRiskSummaryMaxRisk[keyof typeof EdgeRiskSummaryMaxRisk];
-
+export type EdgeRiskSummaryMaxRisk =
+  (typeof EdgeRiskSummaryMaxRisk)[keyof typeof EdgeRiskSummaryMaxRisk];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const EdgeRiskSummaryMaxRisk = {
-  low: 'low',
-  medium: 'medium',
-  high: 'high',
-  critical: 'critical',
+  low: "low",
+  medium: "medium",
+  high: "high",
+  critical: "critical",
 } as const;

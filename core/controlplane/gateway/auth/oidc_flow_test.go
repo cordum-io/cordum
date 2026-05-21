@@ -35,6 +35,11 @@ type mockOIDCFlowServer struct {
 
 func newMockOIDCFlowServer(t *testing.T) *mockOIDCFlowServer {
 	t.Helper()
+	// Mock OIDC flow server binds to 127.0.0.1 via httptest. The OIDC
+	// provider refuses private/loopback issuer URLs by default; opt
+	// the test scope into the dev/test escape hatch.
+	t.Setenv("CORDUM_OIDC_ALLOW_PRIVATE", "true")
+	t.Setenv("CORDUM_OIDC_ALLOW_HTTP", "true")
 
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {

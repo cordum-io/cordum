@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class GetApprovalAnalyticsWindow(str, Enum):
     VALUE_0 = "24h"
     VALUE_1 = "7d"

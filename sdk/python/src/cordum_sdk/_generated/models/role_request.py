@@ -13,27 +13,22 @@ from typing import cast, List
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="RoleRequest")
 
 
 @_attrs_define
 class RoleRequest:
-    """ 
-        Attributes:
-            description (Union[Unset, str]):
-            permissions (Union[Unset, List[str]]):
-            inherits (Union[Unset, List[str]]):
-     """
+    """
+    Attributes:
+        description (Union[Unset, str]):
+        permissions (Union[Unset, List[str]]):
+        inherits (Union[Unset, List[str]]):
+    """
 
     description: Union[Unset, str] = UNSET
     permissions: Union[Unset, List[str]] = UNSET
     inherits: Union[Unset, List[str]] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         description = self.description
@@ -42,19 +37,13 @@ class RoleRequest:
         if not isinstance(self.permissions, Unset):
             permissions = self.permissions
 
-
-
         inherits: Union[Unset, List[str]] = UNSET
         if not isinstance(self.inherits, Unset):
             inherits = self.inherits
 
-
-
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if description is not UNSET:
             field_dict["description"] = description
         if permissions is not UNSET:
@@ -64,8 +53,6 @@ class RoleRequest:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
@@ -73,16 +60,13 @@ class RoleRequest:
 
         permissions = cast(List[str], d.pop("permissions", UNSET))
 
-
         inherits = cast(List[str], d.pop("inherits", UNSET))
-
 
         role_request = cls(
             description=description,
             permissions=permissions,
             inherits=inherits,
         )
-
 
         role_request.additional_properties = d
         return role_request

@@ -74,8 +74,18 @@ func keyPrefixIndexKey(prefix string) string { return apiKeyPrefixIndexPrefix + 
 
 const apiKeyPrefixLen = 11 // "ck_" + 8 hex chars
 
-// ErrKeyNotFound is returned when a managed API key cannot be found.
+// ErrKeyNotFound is returned by admin-facing key-mutation paths (Revoke,
+// admin lookups) when a key cannot be found. ValidateKey, which is called on
+// every authenticated request, MUST NOT return this — it returns ErrInvalidKey
+// instead so callers cannot distinguish "key existed" from "key never existed".
 var ErrKeyNotFound = errors.New("key not found")
+
+// ErrInvalidKey is the single sentinel ValidateKey returns whenever an API
+// key is rejected — whether it was never seen, has been revoked, or has
+// expired. Collapsing the three causes into one error closes the SIEM-visible
+// "key formerly existed" oracle described in the PR #276 audit; the specific
+// cause is preserved server-side via slog.Warn for ops debugging.
+var ErrInvalidKey = errors.New("invalid api key")
 
 // GenerateRawKey creates a cryptographically random API key with the ck_ prefix.
 func GenerateRawKey() (string, error) {
@@ -228,11 +238,18 @@ func (s *RedisKeyStore) Revoke(ctx context.Context, id string, tenant string) er
 }
 
 // ValidateKey checks a raw API key against the store.
-// Returns the ManagedKey if valid, or an error if not found, revoked, or expired.
+//
+// Returns the ManagedKey on success, or ErrInvalidKey for any rejection cause
+// (not found, revoked, expired). Returning a single sentinel prevents an
+// attacker — including a SIEM-visible insider — from distinguishing
+// "key formerly existed" from "key never existed", and from gaining a positive
+// prefix-collision signal from differing error shapes. The specific cause is
+// logged at slog.Warn for ops debugging.
 func (s *RedisKeyStore) ValidateKey(ctx context.Context, rawKey string) (*ManagedKey, error) {
 	prefix, err := rawKeyPrefix(rawKey)
 	if err != nil {
-		return nil, fmt.Errorf("key not found")
+		slog.WarnContext(ctx, "validate key rejected", "cause", "not_found", "reason", "malformed_prefix")
+		return nil, ErrInvalidKey
 	}
 
 	ids, err := s.client.SMembers(ctx, keyPrefixIndexKey(prefix)).Result()
@@ -240,7 +257,8 @@ func (s *RedisKeyStore) ValidateKey(ctx context.Context, rawKey string) (*Manage
 		return nil, fmt.Errorf("lookup key: %w", err)
 	}
 	if len(ids) == 0 {
-		return nil, fmt.Errorf("key not found")
+		slog.WarnContext(ctx, "validate key rejected", "cause", "not_found", "reason", "no_prefix_index")
+		return nil, ErrInvalidKey
 	}
 
 	pipe := s.client.Pipeline()
@@ -271,15 +289,18 @@ func (s *RedisKeyStore) ValidateKey(ctx context.Context, rawKey string) (*Manage
 			continue
 		}
 		if mk.Revoked {
-			return nil, fmt.Errorf("key revoked")
+			slog.WarnContext(ctx, "validate key rejected", "cause", "revoked", "key_id", mk.ID, "tenant", mk.Tenant)
+			return nil, ErrInvalidKey
 		}
 		if !mk.ExpiresAt.IsZero() && time.Now().After(mk.ExpiresAt) {
-			return nil, fmt.Errorf("key expired")
+			slog.WarnContext(ctx, "validate key rejected", "cause", "expired", "key_id", mk.ID, "tenant", mk.Tenant, "expires_at", mk.ExpiresAt.Format(time.RFC3339))
+			return nil, ErrInvalidKey
 		}
 		return &mk, nil
 	}
 
-	return nil, fmt.Errorf("key not found")
+	slog.WarnContext(ctx, "validate key rejected", "cause", "not_found", "reason", "no_bcrypt_match")
+	return nil, ErrInvalidKey
 }
 
 // recordUsageLua atomically increments usage_count and updates last_used

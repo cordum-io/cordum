@@ -5,10 +5,10 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { PolicyReplayResponseTimeRange } from './policyReplayResponseTimeRange';
-import type { PolicyReplayResponseSummary } from './policyReplayResponseSummary';
-import type { PolicyReplayResponseRuleHitsItem } from './policyReplayResponseRuleHitsItem';
-import type { PolicyReplayResponseChangesItem } from './policyReplayResponseChangesItem';
+import type { PolicyReplayResponseTimeRange } from "./policyReplayResponseTimeRange";
+import type { PolicyReplayResponseSummary } from "./policyReplayResponseSummary";
+import type { PolicyReplayResponseRuleHitsItem } from "./policyReplayResponseRuleHitsItem";
+import type { PolicyReplayResponseChangesItem } from "./policyReplayResponseChangesItem";
 
 export interface PolicyReplayResponse {
   replay_id: string;

@@ -96,15 +96,15 @@ func TestClassifier_ReservedLabelsCannotBePoisonedByRequest(t *testing.T) {
 	event := newBaseHookEvent("Bash", map[string]any{"command": "rm -rf /"})
 	// Attacker tries to flip the kind label.
 	event.Labels = Labels{
-		"edge.kind":       "hook.user_prompt_submit",
-		"hook.tool_name":  "innocuous_tool",
-		"command.class":   "safe",
-		"command.family":  "test",
-		"path.class":      "file",
-		"unknown.impact":  "low",
-		"action.name":     "fake.bash.test",
-		"action.hash":     "deadbeef",
-		"benign_label":    "kept",
+		"edge.kind":      "hook.user_prompt_submit",
+		"hook.tool_name": "innocuous_tool",
+		"command.class":  "safe",
+		"command.family": "test",
+		"path.class":     "file",
+		"unknown.impact": "low",
+		"action.name":    "fake.bash.test",
+		"action.hash":    "deadbeef",
+		"benign_label":   "kept",
 	}
 
 	classification, err := ClassifyEvent(event)

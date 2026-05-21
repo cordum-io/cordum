@@ -249,7 +249,7 @@ func (s *server) handleEdgeEvaluate(w http.ResponseWriter, r *http.Request) {
 	outcome.response.EventID = appended.EventID
 	switch outcome.decision {
 	case edgecore.DecisionRequireApproval:
-		approval, err := s.enqueueEdgeEvaluateApproval(r.Context(), evalCtx.store, appended, outcome, actionHash, evalCtx.req.ApprovalTTLSeconds)
+		approval, err := s.enqueueEdgeEvaluateApproval(r.Context(), evalCtx.store, appended, outcome, actionHash, evalCtx.requesterIdentity, evalCtx.req.ApprovalTTLSeconds)
 		if err != nil {
 			writeEdgeApprovalStoreError(w, r, err, "enqueue edge evaluate approval")
 			return
@@ -293,13 +293,14 @@ func (s *server) handleEdgeEvaluate(w http.ResponseWriter, r *http.Request) {
 }
 
 type edgeEvaluateContext struct {
-	req         edgeEvaluateRequest
-	store       edgecore.Store
-	recorder    edgecore.Recorder
-	tenantID    string
-	principalID string
-	session     *edgecore.EdgeSession
-	execution   *edgecore.AgentExecution
+	req               edgeEvaluateRequest
+	store             edgecore.Store
+	recorder          edgecore.Recorder
+	tenantID          string
+	principalID       string
+	requesterIdentity string
+	session           *edgecore.EdgeSession
+	execution         *edgecore.AgentExecution
 }
 
 func (s *server) prepareEdgeEvaluateContext(w http.ResponseWriter, r *http.Request) (edgeEvaluateContext, bool) {
@@ -377,18 +378,24 @@ func (s *server) prepareEdgeEvaluateContext(w http.ResponseWriter, r *http.Reque
 		return edgeEvaluateContext{}, false
 	}
 
+	requesterIdentity := submitterIdentity(r)
+	if strings.TrimSpace(requesterIdentity) == "" {
+		requesterIdentity = "principal:" + principalID
+	}
+
 	req.SessionID = sessionID
 	req.ExecutionID = executionID
 	req.TenantID = tenantID
 	req.PrincipalID = principalID
 	return edgeEvaluateContext{
-		req:         req,
-		store:       store,
-		recorder:    s.edgeRecorder,
-		tenantID:    tenantID,
-		principalID: principalID,
-		session:     session,
-		execution:   execution,
+		req:               req,
+		store:             store,
+		recorder:          s.edgeRecorder,
+		tenantID:          tenantID,
+		principalID:       principalID,
+		requesterIdentity: requesterIdentity,
+		session:           session,
+		execution:         execution,
 	}, true
 }
 
@@ -943,9 +950,15 @@ func (s *server) consumeEdgeEvaluateApproval(ctx context.Context, store edgecore
 			InputHash:      strings.TrimSpace(event.InputHash),
 			PolicySnapshot: strings.TrimSpace(outcome.policySnapshot),
 			ConsumedAt:     time.Now().UTC(),
+			CallerAgentID:  strings.TrimSpace(event.PrincipalID),
 		})
 		if err != nil {
 			if errors.Is(err, edgecore.ErrApprovalConflict) {
+				var conflict *edgecore.ApprovalConflictError
+				if errors.As(err, &conflict) && conflict.Kind == edgecore.ApprovalConflictKindSelfApproval {
+					s.auditEdgeApprovalSelfApprovalDenied(tenantID, *approval, "caller_is_approver")
+					return edgeEvaluateRetryDeny(outcome, approvalRef, "approval self-approval denied; request a new approval"), nil
+				}
 				return edgeEvaluateRetryDeny(outcome, approvalRef, "approval action or policy snapshot mismatch; request a new approval"), nil
 			}
 			return outcome, err
@@ -1151,7 +1164,7 @@ func (s *server) findReusableEdgeApprovalForAction(ctx context.Context, store ed
 	return nil, nil
 }
 
-func (s *server) enqueueEdgeEvaluateApproval(ctx context.Context, store edgecore.Store, event edgecore.AgentActionEvent, outcome edgeEvaluateDecisionOutcome, actionHash string, ttlSecondsHint int) (*edgecore.EdgeApproval, error) {
+func (s *server) enqueueEdgeEvaluateApproval(ctx context.Context, store edgecore.Store, event edgecore.AgentActionEvent, outcome edgeEvaluateDecisionOutcome, actionHash, requesterIdentity string, ttlSecondsHint int) (*edgecore.EdgeApproval, error) {
 	policySnapshot := strings.TrimSpace(outcome.policySnapshot)
 	if policySnapshot == "" {
 		policySnapshot = strings.TrimSpace(event.PolicySnapshot)
@@ -1162,7 +1175,7 @@ func (s *server) enqueueEdgeEvaluateApproval(ctx context.Context, store edgecore
 		ExecutionID:    strings.TrimSpace(event.ExecutionID),
 		EventID:        strings.TrimSpace(event.EventID),
 		PrincipalID:    strings.TrimSpace(event.PrincipalID),
-		Requester:      strings.TrimSpace(event.PrincipalID),
+		Requester:      strings.TrimSpace(requesterIdentity),
 		Reason:         defaultEdgeEvaluateReason(outcome.reason, "approval required"),
 		RuleID:         strings.TrimSpace(outcome.ruleID),
 		PolicySnapshot: policySnapshot,

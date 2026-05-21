@@ -7,5 +7,5 @@
  */
 
 export type GetLockParams = {
-resource: string;
+  resource: string;
 };

@@ -69,13 +69,13 @@ func (s *server) handleCreateDatasetFromIncidents(w http.ResponseWriter, r *http
 
 	var body createDatasetFromIncidentsRequest
 	if err := decodeJSONBody(w, r, &body); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodeEvalExtractionFailed, "invalid json: "+err.Error())
 		return
 	}
 
 	req, err := decodeExtractionRequest(body)
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodeEvalExtractionFailed, err.Error())
 		return
 	}
 	req.Tenant = tenant
@@ -83,7 +83,7 @@ func (s *server) handleCreateDatasetFromIncidents(w http.ResponseWriter, r *http
 	if rawDryRun := strings.TrimSpace(r.URL.Query().Get("dry_run")); rawDryRun != "" {
 		parsedDryRun, err := parseStrictBool(rawDryRun)
 		if err != nil {
-			writeErrorJSON(w, http.StatusBadRequest, "dry_run must be true or false")
+			writeJSONError(w, http.StatusBadRequest, errorCodeEvalExtractionFailed, "dry_run must be true or false")
 			return
 		}
 		req.DryRun = parsedDryRun
@@ -96,7 +96,7 @@ func (s *server) handleCreateDatasetFromIncidents(w http.ResponseWriter, r *http
 		Now:          func() time.Time { return time.Now().UTC() },
 	})
 	if _, err := extractor.Validate(req); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodeEvalExtractionFailed, err.Error())
 		return
 	}
 
@@ -112,10 +112,10 @@ func (s *server) handleCreateDatasetFromIncidents(w http.ResponseWriter, r *http
 			writeJSON(w, toCreateDatasetFromIncidentsResponse(timeoutErr.Result))
 			return
 		case errors.Is(err, extraction.ErrNoIncidents):
-			writeErrorJSON(w, http.StatusNotFound, "no matching incidents found")
+			writeJSONError(w, http.StatusNotFound, errorCodeEvalExtractionFailed, "no matching incidents found")
 			return
 		case errors.Is(err, store.ErrEvalDatasetVersionExists):
-			writeErrorJSON(w, http.StatusConflict, "eval dataset version already exists")
+			writeJSONError(w, http.StatusConflict, errorCodeEvalDatasetVersionConflict, "eval dataset version already exists")
 			return
 		case errors.Is(err, context.DeadlineExceeded):
 			w.WriteHeader(http.StatusGatewayTimeout)

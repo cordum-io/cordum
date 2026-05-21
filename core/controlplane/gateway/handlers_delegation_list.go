@@ -84,7 +84,7 @@ func parseDelegationListParams(w http.ResponseWriter, r *http.Request) (delegati
 	q := r.URL.Query()
 	status := strings.ToLower(strings.TrimSpace(q.Get("status")))
 	if _, valid := validDelegationStatuses[status]; !valid {
-		writeErrorJSON(w, http.StatusBadRequest, "status must be one of: all, active, revoked, expired")
+		writeJSONError(w, http.StatusBadRequest, errorCodeDelegationRequestInvalid, "status must be one of: all, active, revoked, expired")
 		return delegation.DelegationListFilter{}, 0, "", false
 	}
 	filter := delegation.DelegationListFilter{
@@ -94,7 +94,7 @@ func parseDelegationListParams(w http.ResponseWriter, r *http.Request) (delegati
 	if raw := strings.TrimSpace(q.Get("before_expiry")); raw != "" {
 		value, err := time.Parse(time.RFC3339, raw)
 		if err != nil {
-			writeErrorJSON(w, http.StatusBadRequest, "before_expiry must be RFC3339")
+			writeJSONError(w, http.StatusBadRequest, errorCodeDelegationRequestInvalid, "before_expiry must be RFC3339")
 			return delegation.DelegationListFilter{}, 0, "", false
 		}
 		filter.BeforeExpiry = value.UTC()
@@ -102,7 +102,7 @@ func parseDelegationListParams(w http.ResponseWriter, r *http.Request) (delegati
 	if raw := strings.TrimSpace(q.Get("since_issued")); raw != "" {
 		value, err := time.Parse(time.RFC3339, raw)
 		if err != nil {
-			writeErrorJSON(w, http.StatusBadRequest, "since_issued must be RFC3339")
+			writeJSONError(w, http.StatusBadRequest, errorCodeDelegationRequestInvalid, "since_issued must be RFC3339")
 			return delegation.DelegationListFilter{}, 0, "", false
 		}
 		filter.SinceIssued = value.UTC()
@@ -110,7 +110,7 @@ func parseDelegationListParams(w http.ResponseWriter, r *http.Request) (delegati
 	if raw := strings.TrimSpace(q.Get("until_issued")); raw != "" {
 		value, err := time.Parse(time.RFC3339, raw)
 		if err != nil {
-			writeErrorJSON(w, http.StatusBadRequest, "until_issued must be RFC3339")
+			writeJSONError(w, http.StatusBadRequest, errorCodeDelegationRequestInvalid, "until_issued must be RFC3339")
 			return delegation.DelegationListFilter{}, 0, "", false
 		}
 		filter.UntilIssued = value.UTC()
@@ -119,7 +119,7 @@ func parseDelegationListParams(w http.ResponseWriter, r *http.Request) (delegati
 	if raw := strings.TrimSpace(q.Get("limit")); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed <= 0 || parsed > 200 {
-			writeErrorJSON(w, http.StatusBadRequest, "limit must be between 1 and 200")
+			writeJSONError(w, http.StatusBadRequest, errorCodeDelegationRequestInvalid, "limit must be between 1 and 200")
 			return delegation.DelegationListFilter{}, 0, "", false
 		}
 		limit = parsed

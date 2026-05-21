@@ -5,7 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { DelegationLineageChainLink } from './delegationLineageChainLink';
+import type { DelegationLineageChainLink } from "./delegationLineageChainLink";
 
 export interface DelegationLineageView {
   jti?: string;

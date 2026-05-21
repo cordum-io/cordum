@@ -6,14 +6,14 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type GovernanceHealthGrade = typeof GovernanceHealthGrade[keyof typeof GovernanceHealthGrade];
-
+export type GovernanceHealthGrade =
+  (typeof GovernanceHealthGrade)[keyof typeof GovernanceHealthGrade];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const GovernanceHealthGrade = {
-  A: 'A',
-  B: 'B',
-  C: 'C',
-  D: 'D',
-  F: 'F',
+  A: "A",
+  B: "B",
+  C: "C",
+  D: "D",
+  F: "F",
 } as const;

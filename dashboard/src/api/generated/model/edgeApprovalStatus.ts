@@ -6,14 +6,14 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type EdgeApprovalStatus = typeof EdgeApprovalStatus[keyof typeof EdgeApprovalStatus];
-
+export type EdgeApprovalStatus =
+  (typeof EdgeApprovalStatus)[keyof typeof EdgeApprovalStatus];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const EdgeApprovalStatus = {
-  pending: 'pending',
-  approved: 'approved',
-  rejected: 'rejected',
-  expired: 'expired',
-  invalidated: 'invalidated',
+  pending: "pending",
+  approved: "approved",
+  rejected: "rejected",
+  expired: "expired",
+  invalidated: "invalidated",
 } as const;

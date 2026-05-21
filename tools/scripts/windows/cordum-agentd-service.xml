@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  cordum-agentd WinSW (Windows Service Wrapper) configuration.
+
+  Install path: C:\Program Files\Cordum\cordum-agentd\cordum-agentd-service.xml
+  Paired with:  C:\Program Files\Cordum\cordum-agentd\cordum-agentd-service.exe
+                (renamed copy of winsw.exe alongside this file)
+
+  Provision boot-time secrets in the Windows Credential Manager BEFORE
+  installing the service. cordum-agentd's keychain bootstrap path reads
+  these credentials at startup; the service config carries NO env entries
+  with secret values:
+
+      cmdkey /generic:cordum-agentd:cordum_agentd_nonce /user:cordum_agentd_nonce /pass:<base64-nonce>
+      cmdkey /generic:cordum-agentd:cordum_api_key      /user:cordum_api_key /pass:<api-key>
+
+  Credentials added with cmdkey land in the per-user Credential Manager
+  vault. Install + run the service under the SAME user (LocalSystem will
+  NOT see per-user credentials), e.g.:
+
+      C:\Program Files\Cordum\cordum-agentd\cordum-agentd-service.exe install
+      sc.exe config cordum-agentd obj= ".\<USERNAME>" password= "<password>"
+      C:\Program Files\Cordum\cordum-agentd\cordum-agentd-service.exe start
+
+  Rotate by re-running cmdkey with the same /generic target. cordum-agentd
+  reads on next service restart.
+-->
+<service>
+    <id>cordum-agentd</id>
+    <name>Cordum Edge Agent Daemon</name>
+    <description>
+        Long-running local governance daemon for Cordum Edge / Claude Code hook sessions.
+        Sources its boot-time nonce and API key from the per-user Credential Manager.
+    </description>
+
+    <executable>%BASE%\cordum-agentd.exe</executable>
+
+    <!--
+      No <arguments> needed: the executable picks up CORDUM_AGENTD_STRICT
+      from the env block below. Do NOT add <arguments> containing
+      secret-bearing flags — cordum-agentd has none, but a future
+      maintainer should not introduce them.
+    -->
+
+    <!--
+      Non-secret operational environment ONLY. The keychain bootstrap
+      path will fail closed with BOOTSTRAP-FAIL if cordum_agentd_nonce or
+      cordum_api_key cannot be sourced from the Credential Manager.
+    -->
+    <env name="CORDUM_AGENTD_STRICT" value="true"/>
+    <env name="CORDUM_AGENTD_LOG_LEVEL" value="info"/>
+
+    <!--
+      Wrap stdout/stderr into rotating log files under the install dir's
+      logs/ subfolder. cordum-agentd applies its own structured-log
+      redaction before writing; WinSW does not redact again.
+    -->
+    <log mode="roll-by-size">
+        <sizeThreshold>10240</sizeThreshold>
+        <keepFiles>8</keepFiles>
+    </log>
+
+    <!-- Restart on failure: 10s delay, max 3 retries per minute window. -->
+    <onfailure action="restart" delay="10 sec"/>
+    <onfailure action="restart" delay="10 sec"/>
+    <onfailure action="none"/>
+    <resetfailure>1 hour</resetfailure>
+
+    <startmode>Automatic</startmode>
+    <delayedAutoStart>true</delayedAutoStart>
+</service>

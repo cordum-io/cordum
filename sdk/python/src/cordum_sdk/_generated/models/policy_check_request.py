@@ -15,11 +15,8 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.policy_check_request_context import PolicyCheckRequestContext
-  from ..models.policy_check_request_labels import PolicyCheckRequestLabels
-
-
-
+    from ..models.policy_check_request_labels import PolicyCheckRequestLabels
+    from ..models.policy_check_request_context import PolicyCheckRequestContext
 
 
 T = TypeVar("T", bound="PolicyCheckRequest")
@@ -27,18 +24,18 @@ T = TypeVar("T", bound="PolicyCheckRequest")
 
 @_attrs_define
 class PolicyCheckRequest:
-    """ 
-        Attributes:
-            job_id (Union[Unset, str]):
-            topic (Union[Unset, str]):
-            tenant (Union[Unset, str]):
-            org_id (Union[Unset, str]):
-            team_id (Union[Unset, str]):
-            capability (Union[Unset, str]):
-            risk_tags (Union[Unset, List[str]]):
-            context (Union[Unset, PolicyCheckRequestContext]):
-            labels (Union[Unset, PolicyCheckRequestLabels]):
-     """
+    """
+    Attributes:
+        job_id (Union[Unset, str]):
+        topic (Union[Unset, str]):
+        tenant (Union[Unset, str]):
+        org_id (Union[Unset, str]):
+        team_id (Union[Unset, str]):
+        capability (Union[Unset, str]):
+        risk_tags (Union[Unset, List[str]]):
+        context (Union[Unset, PolicyCheckRequestContext]):
+        labels (Union[Unset, PolicyCheckRequestLabels]):
+    """
 
     job_id: Union[Unset, str] = UNSET
     topic: Union[Unset, str] = UNSET
@@ -47,14 +44,14 @@ class PolicyCheckRequest:
     team_id: Union[Unset, str] = UNSET
     capability: Union[Unset, str] = UNSET
     risk_tags: Union[Unset, List[str]] = UNSET
-    context: Union[Unset, 'PolicyCheckRequestContext'] = UNSET
-    labels: Union[Unset, 'PolicyCheckRequestLabels'] = UNSET
+    context: Union[Unset, "PolicyCheckRequestContext"] = UNSET
+    labels: Union[Unset, "PolicyCheckRequestLabels"] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.policy_check_request_context import PolicyCheckRequestContext
         from ..models.policy_check_request_labels import PolicyCheckRequestLabels
+        from ..models.policy_check_request_context import PolicyCheckRequestContext
+
         job_id = self.job_id
 
         topic = self.topic
@@ -71,8 +68,6 @@ class PolicyCheckRequest:
         if not isinstance(self.risk_tags, Unset):
             risk_tags = self.risk_tags
 
-
-
         context: Union[Unset, Dict[str, Any]] = UNSET
         if not isinstance(self.context, Unset):
             context = self.context.to_dict()
@@ -81,11 +76,9 @@ class PolicyCheckRequest:
         if not isinstance(self.labels, Unset):
             labels = self.labels.to_dict()
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if job_id is not UNSET:
             field_dict["job_id"] = job_id
         if topic is not UNSET:
@@ -107,12 +100,11 @@ class PolicyCheckRequest:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.policy_check_request_context import PolicyCheckRequestContext
         from ..models.policy_check_request_labels import PolicyCheckRequestLabels
+        from ..models.policy_check_request_context import PolicyCheckRequestContext
+
         d = src_dict.copy()
         job_id = d.pop("job_id", UNSET)
 
@@ -128,26 +120,19 @@ class PolicyCheckRequest:
 
         risk_tags = cast(List[str], d.pop("risk_tags", UNSET))
 
-
         _context = d.pop("context", UNSET)
         context: Union[Unset, PolicyCheckRequestContext]
-        if isinstance(_context,  Unset):
+        if isinstance(_context, Unset):
             context = UNSET
         else:
             context = PolicyCheckRequestContext.from_dict(_context)
 
-
-
-
         _labels = d.pop("labels", UNSET)
         labels: Union[Unset, PolicyCheckRequestLabels]
-        if isinstance(_labels,  Unset):
+        if isinstance(_labels, Unset):
             labels = UNSET
         else:
             labels = PolicyCheckRequestLabels.from_dict(_labels)
-
-
-
 
         policy_check_request = cls(
             job_id=job_id,
@@ -160,7 +145,6 @@ class PolicyCheckRequest:
             context=context,
             labels=labels,
         )
-
 
         policy_check_request.additional_properties = d
         return policy_check_request

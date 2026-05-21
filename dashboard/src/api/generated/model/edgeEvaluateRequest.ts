@@ -5,11 +5,11 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { EdgeEvaluateRequestLayer } from './edgeEvaluateRequestLayer';
-import type { EdgeEvaluateRequestInputRedacted } from './edgeEvaluateRequestInputRedacted';
-import type { EdgeEvaluateRequestToolInputRedacted } from './edgeEvaluateRequestToolInputRedacted';
-import type { EdgeLabels } from './edgeLabels';
-import type { EdgeArtifactPointer } from './edgeArtifactPointer';
+import type { EdgeEvaluateRequestLayer } from "./edgeEvaluateRequestLayer";
+import type { EdgeEvaluateRequestInputRedacted } from "./edgeEvaluateRequestInputRedacted";
+import type { EdgeEvaluateRequestToolInputRedacted } from "./edgeEvaluateRequestToolInputRedacted";
+import type { EdgeLabels } from "./edgeLabels";
+import type { EdgeArtifactPointer } from "./edgeArtifactPointer";
 
 /**
  * Redacted Edge action evaluation request for an existing session/execution. Do not send raw `tool_input`, `tool_result`, `raw_input`, `raw_transcript`, or `transcript`; send bounded `input_redacted`/`tool_input_redacted` plus `artifact_ptrs`.

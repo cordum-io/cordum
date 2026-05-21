@@ -6,4 +6,6 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type CreateEvalDatasetBodyEntriesItemMetadata = {[key: string]: string};
+export type CreateEvalDatasetBodyEntriesItemMetadata = {
+  [key: string]: string;
+};

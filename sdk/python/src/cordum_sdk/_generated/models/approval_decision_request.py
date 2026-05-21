@@ -12,43 +12,37 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="ApprovalDecisionRequest")
 
 
 @_attrs_define
 class ApprovalDecisionRequest:
-    """ 
-        Attributes:
-            reason (str):
-            note (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        reason (str):
+        note (Union[Unset, str]):
+    """
 
     reason: str
     note: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         reason = self.reason
 
         note = self.note
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "reason": reason,
-        })
+        field_dict.update(
+            {
+                "reason": reason,
+            }
+        )
         if note is not UNSET:
             field_dict["note"] = note
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -61,7 +55,6 @@ class ApprovalDecisionRequest:
             reason=reason,
             note=note,
         )
-
 
         approval_decision_request.additional_properties = d
         return approval_decision_request

@@ -114,6 +114,20 @@ func DefaultSOC2Mapping() SOC2Mapping {
 		// dashboards always see a non-empty mapping.
 		"mcp.tool_denied": {"CC7.3"},
 		"shadow_eval":     {"CC7.2"},
+		// shadow_agent.* lifecycle events (EDGE-141). Detection fits
+		// CC7.2 (monitoring of controls); resolve/suppress carry
+		// change-management evidence (CC8.1) because they are operator
+		// dispositions of detected risk.
+		EventShadowAgentDetected:   {"CC7.2"},
+		EventShadowAgentResolved:   {"CC7.2", "CC8.1"},
+		EventShadowAgentSuppressed: {"CC7.2", "CC8.1"},
+		// EDGE-143.6 — operator exception lifecycle (§10.3 + §11.1).
+		// Creation/revocation are operator change-management evidence
+		// (CC8.1). Apply events fit detection-control monitoring (CC7.2)
+		// because they record which findings were silenced.
+		EventShadowAgentExceptionCreated: {"CC7.2", "CC8.1"},
+		EventShadowAgentExceptionRevoked: {"CC7.2", "CC8.1"},
+		EventShadowAgentExceptionApplied: {"CC7.2"},
 	}
 }
 

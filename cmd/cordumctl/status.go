@@ -135,7 +135,7 @@ func printStatusOverview(w *os.File, gateway string, status gatewayStatusRespons
 	_, _ = fmt.Fprintln(tw, "Workers\t"+formatInt(status.Workers.Count))
 	_, _ = fmt.Fprintln(tw, "NATS\t"+valueOrDash(strings.ToLower(status.NATS.Status)))
 	_, _ = fmt.Fprintln(tw, "Redis\t"+formatBoolState(status.Redis.OK, "ok", "unavailable"))
-	_, _ = fmt.Fprintln(tw, "Tier\t"+displayPlanName(statusTier(status, licenseInfo)))
+	_, _ = fmt.Fprintln(tw, "Tier\t"+displayPlanName(statusTier(licenseInfo)))
 	_, _ = fmt.Fprintln(tw, "Expiry\t"+formatStatusExpiry(licenseInfo))
 	_ = tw.Flush()
 }
@@ -254,7 +254,7 @@ func formatUptime(seconds int64) string {
 	return (time.Duration(seconds) * time.Second).String()
 }
 
-func statusTier(status gatewayStatusResponse, licenseInfo *licensing.LicenseInfo) string {
+func statusTier(licenseInfo *licensing.LicenseInfo) string {
 	if licenseInfo != nil && strings.TrimSpace(licenseInfo.Plan) != "" {
 		return licenseInfo.Plan
 	}

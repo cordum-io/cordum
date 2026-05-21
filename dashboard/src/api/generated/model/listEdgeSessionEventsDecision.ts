@@ -6,15 +6,15 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type ListEdgeSessionEventsDecision = typeof ListEdgeSessionEventsDecision[keyof typeof ListEdgeSessionEventsDecision];
-
+export type ListEdgeSessionEventsDecision =
+  (typeof ListEdgeSessionEventsDecision)[keyof typeof ListEdgeSessionEventsDecision];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const ListEdgeSessionEventsDecision = {
-  ALLOW: 'ALLOW',
-  DENY: 'DENY',
-  REQUIRE_APPROVAL: 'REQUIRE_APPROVAL',
-  THROTTLE: 'THROTTLE',
-  CONSTRAIN: 'CONSTRAIN',
-  RECORDED: 'RECORDED',
+  ALLOW: "ALLOW",
+  DENY: "DENY",
+  REQUIRE_APPROVAL: "REQUIRE_APPROVAL",
+  THROTTLE: "THROTTLE",
+  CONSTRAIN: "CONSTRAIN",
+  RECORDED: "RECORDED",
 } as const;

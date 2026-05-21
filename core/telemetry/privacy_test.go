@@ -7,7 +7,7 @@ import (
 	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
+	"github.com/cordum/cordum/core/internal/testredis"
 )
 
 func TestNormalizeMode(t *testing.T) {
@@ -57,10 +57,9 @@ func TestGetInstallIDGeneratesAndPersists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("miniredis: %v", err)
 	}
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
-	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
-	defer func() { _ = client.Close() }()
+	client := testredis.NewClient(t, srv.Addr())
 
 	previousReader := randomReader
 	previousHostname := hostnameLookup

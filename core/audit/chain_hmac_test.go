@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/cordum/cordum/core/internal/testredis"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -29,8 +30,7 @@ func newTestChainerWithHMAC(t *testing.T) (*Chainer, *miniredis.Miniredis, *redi
 		t.Fatalf("miniredis: %v", err)
 	}
 	t.Cleanup(mr.Close)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
+	client := testredis.NewClient(t, mr.Addr())
 	return NewChainer(client, "test:hmac:", WithHMACKey(testHMACKey())), mr, client
 }
 
@@ -45,8 +45,7 @@ func TestWithHMACKey_Enabled(t *testing.T) {
 		t.Fatalf("miniredis: %v", err)
 	}
 	t.Cleanup(mr.Close)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
+	client := testredis.NewClient(t, mr.Addr())
 
 	c := NewChainer(client, "", WithHMACKey(testHMACKey()))
 	if !c.HMACEnabled() {
@@ -61,8 +60,7 @@ func TestWithHMACKey_NilKeyDisabled(t *testing.T) {
 		t.Fatalf("miniredis: %v", err)
 	}
 	t.Cleanup(mr.Close)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
+	client := testredis.NewClient(t, mr.Addr())
 
 	c := NewChainer(client, "", WithHMACKey(nil))
 	if c.HMACEnabled() {
@@ -77,8 +75,7 @@ func TestWithHMACKey_EmptyKeyDisabled(t *testing.T) {
 		t.Fatalf("miniredis: %v", err)
 	}
 	t.Cleanup(mr.Close)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
+	client := testredis.NewClient(t, mr.Addr())
 
 	c := NewChainer(client, "", WithHMACKey([]byte{}))
 	if c.HMACEnabled() {
@@ -93,8 +90,7 @@ func TestWithHMACKey_ShortKeyDisablesHMAC(t *testing.T) {
 		t.Fatalf("miniredis: %v", err)
 	}
 	t.Cleanup(mr.Close)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
+	client := testredis.NewClient(t, mr.Addr())
 
 	// A short key should log an error and leave HMAC disabled,
 	// NOT panic or crash the process.
@@ -323,8 +319,7 @@ func TestHMAC_VerifyChainMixedPreHMACEvents(t *testing.T) {
 		t.Fatalf("miniredis: %v", err)
 	}
 	t.Cleanup(mr.Close)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
+	client := testredis.NewClient(t, mr.Addr())
 	ctx := context.Background()
 
 	// Phase 1: append 3 events WITHOUT HMAC.

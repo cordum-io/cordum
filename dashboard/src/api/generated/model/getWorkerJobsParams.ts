@@ -5,11 +5,11 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { LimitQParameter } from './limitQParameter';
+import type { LimitQParameter } from "./limitQParameter";
 
 export type GetWorkerJobsParams = {
-/**
- * @minimum 1
- */
-limit?: LimitQParameter;
+  /**
+   * @minimum 1
+   */
+  limit?: LimitQParameter;
 };

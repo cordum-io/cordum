@@ -56,12 +56,17 @@ func newJWTValidatorFromEnv() (*jwtValidator, bool, error) {
 
 	issuer := strings.TrimSpace(os.Getenv("CORDUM_JWT_ISSUER"))
 	if issuer == "" {
+		// Production refuses to start without an explicit issuer:
+		// silently defaulting to a well-known name (pre-fix this was
+		// "cordum") gave attackers with a leaked HMAC secret a
+		// platform-default "iss" claim to forge against. Mirror the
+		// audience guard at validateClaims so misconfiguration fails
+		// fast at gateway init rather than at first request.
 		if env.IsProduction() {
-			issuer = "cordum"
-		} else {
-			issuer = "cordum-dev"
+			return nil, false, fmt.Errorf("jwt: CORDUM_JWT_ISSUER required in production")
 		}
-		slog.Info("jwt: using default issuer", "issuer", issuer, "production", env.IsProduction())
+		issuer = "cordum-dev"
+		slog.Info("jwt: using default issuer", "issuer", issuer, "production", false)
 	}
 
 	v := &jwtValidator{

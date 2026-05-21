@@ -15,10 +15,7 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.license_info_limits import LicenseInfoLimits
-
-
-
+    from ..models.license_info_limits import LicenseInfoLimits
 
 
 T = TypeVar("T", bound="LicenseInfo")
@@ -26,20 +23,20 @@ T = TypeVar("T", bound="LicenseInfo")
 
 @_attrs_define
 class LicenseInfo:
-    """ 
-        Attributes:
-            mode (Union[Unset, str]):
-            status (Union[Unset, str]):
-            plan (Union[Unset, str]):
-            org_id (Union[Unset, str]):
-            license_id (Union[Unset, str]):
-            deployment_type (Union[Unset, str]):
-            issued_at (Union[Unset, str]):
-            not_before (Union[Unset, str]):
-            expires_at (Union[Unset, str]):
-            features (Union[Unset, List[str]]):
-            limits (Union[Unset, LicenseInfoLimits]):
-     """
+    """
+    Attributes:
+        mode (Union[Unset, str]):
+        status (Union[Unset, str]):
+        plan (Union[Unset, str]):
+        org_id (Union[Unset, str]):
+        license_id (Union[Unset, str]):
+        deployment_type (Union[Unset, str]):
+        issued_at (Union[Unset, str]):
+        not_before (Union[Unset, str]):
+        expires_at (Union[Unset, str]):
+        features (Union[Unset, List[str]]):
+        limits (Union[Unset, LicenseInfoLimits]):
+    """
 
     mode: Union[Unset, str] = UNSET
     status: Union[Unset, str] = UNSET
@@ -51,12 +48,12 @@ class LicenseInfo:
     not_before: Union[Unset, str] = UNSET
     expires_at: Union[Unset, str] = UNSET
     features: Union[Unset, List[str]] = UNSET
-    limits: Union[Unset, 'LicenseInfoLimits'] = UNSET
+    limits: Union[Unset, "LicenseInfoLimits"] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         from ..models.license_info_limits import LicenseInfoLimits
+
         mode = self.mode
 
         status = self.status
@@ -79,17 +76,13 @@ class LicenseInfo:
         if not isinstance(self.features, Unset):
             features = self.features
 
-
-
         limits: Union[Unset, Dict[str, Any]] = UNSET
         if not isinstance(self.limits, Unset):
             limits = self.limits.to_dict()
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if mode is not UNSET:
             field_dict["mode"] = mode
         if status is not UNSET:
@@ -115,11 +108,10 @@ class LicenseInfo:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.license_info_limits import LicenseInfoLimits
+
         d = src_dict.copy()
         mode = d.pop("mode", UNSET)
 
@@ -141,16 +133,12 @@ class LicenseInfo:
 
         features = cast(List[str], d.pop("features", UNSET))
 
-
         _limits = d.pop("limits", UNSET)
         limits: Union[Unset, LicenseInfoLimits]
-        if isinstance(_limits,  Unset):
+        if isinstance(_limits, Unset):
             limits = UNSET
         else:
             limits = LicenseInfoLimits.from_dict(_limits)
-
-
-
 
         license_info = cls(
             mode=mode,
@@ -165,7 +153,6 @@ class LicenseInfo:
             features=features,
             limits=limits,
         )
-
 
         license_info.additional_properties = d
         return license_info

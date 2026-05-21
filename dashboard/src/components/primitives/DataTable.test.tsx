@@ -190,6 +190,22 @@ describe("primitives/DataTable", () => {
     expect(rendered).toBeLessThan(50);
   });
 
+  it("can opt out of virtualization above the threshold for page-scrolled tables", () => {
+    const data: Row[] = Array.from({ length: 125 }, (_, i) => ({
+      id: `r${i}`,
+      name: `Row ${i}`,
+    }));
+    render<Row>({
+      columns: baseColumns,
+      data,
+      emptyState: <div>empty</div>,
+      disableVirtualization: true,
+    });
+
+    expect(container.querySelector('[data-virtualized="true"]')).toBeNull();
+    expect(bodyRows().length).toBe(125);
+  });
+
   it("does NOT activate virtualization at the threshold boundary (data.length === 100)", () => {
     const data: Row[] = Array.from({ length: 100 }, (_, i) => ({
       id: `r${i}`,

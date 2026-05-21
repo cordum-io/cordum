@@ -5,10 +5,10 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { GetMcpUsageGroupBy } from './getMcpUsageGroupBy';
+import type { GetMcpUsageGroupBy } from "./getMcpUsageGroupBy";
 
 export type GetMcpUsageParams = {
-since?: string;
-until?: string;
-group_by?: GetMcpUsageGroupBy;
+  since?: string;
+  until?: string;
+  group_by?: GetMcpUsageGroupBy;
 };

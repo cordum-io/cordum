@@ -6,13 +6,13 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type EdgeAgentActionEventStatus = typeof EdgeAgentActionEventStatus[keyof typeof EdgeAgentActionEventStatus];
-
+export type EdgeAgentActionEventStatus =
+  (typeof EdgeAgentActionEventStatus)[keyof typeof EdgeAgentActionEventStatus];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const EdgeAgentActionEventStatus = {
-  ok: 'ok',
-  blocked: 'blocked',
-  failed: 'failed',
-  degraded: 'degraded',
+  ok: "ok",
+  blocked: "blocked",
+  failed: "failed",
+  degraded: "degraded",
 } as const;

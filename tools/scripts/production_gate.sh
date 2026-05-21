@@ -96,15 +96,43 @@ generate_hs256_jwt() {
 }
 
 ensure_compose_cmd() {
+  local compose_project_dir="${CORDUM_COMPOSE_PROJECT_DIR:-${ROOT_DIR}}"
+  local compose_project_name="${CORDUM_COMPOSE_PROJECT_NAME:-${COMPOSE_PROJECT_NAME:-}}"
+  local compose_files="${CORDUM_COMPOSE_FILES:-${COMPOSE_FILE:-}}"
+  local -a compose_args
+
   if docker compose version >/dev/null 2>&1; then
-    COMPOSE_CMD=(docker compose --project-directory "${ROOT_DIR}")
-    return
+    compose_args=(docker compose)
+  elif command -v docker-compose >/dev/null 2>&1; then
+    compose_args=(docker-compose)
+  else
+    die "docker compose plugin required"
   fi
-  if command -v docker-compose >/dev/null 2>&1; then
-    COMPOSE_CMD=(docker-compose --project-directory "${ROOT_DIR}")
-    return
+
+  if [[ -n "${compose_project_name}" ]]; then
+    compose_args+=(--project-name "${compose_project_name}")
   fi
-  die "docker compose plugin required"
+  compose_args+=(--project-directory "${compose_project_dir}")
+
+  # Allow production-gate to operate against isolated compose stacks (for
+  # example docker-compose.porttest.yml + docker-compose.ci.yml) instead of
+  # always restarting the default project. Prefer semicolon/pipe separators so
+  # Windows drive letters are not mistaken for COMPOSE_FILE delimiters.
+  if [[ -n "${compose_files}" ]]; then
+    local normalized="${compose_files//|/;}"
+    if [[ "${normalized}" != *";"* && "${normalized}" == *":"* && ! "${normalized}" =~ ^[A-Za-z]:[\\/] ]]; then
+      normalized="${normalized//:/;}"
+    fi
+    local file
+    local -a _compose_file_list
+    IFS=';' read -r -a _compose_file_list <<<"${normalized}"
+    for file in "${_compose_file_list[@]}"; do
+      [[ -n "${file}" ]] || continue
+      compose_args+=(-f "${file}")
+    done
+  fi
+
+  COMPOSE_CMD=("${compose_args[@]}")
 }
 
 build_auth_headers() {
@@ -293,6 +321,37 @@ poll_job_terminal() {
   done
 }
 
+bank_validator_job_body() {
+  local prompt="$1"
+  local idem_key="${2:-}"
+  jq -cn --arg prompt "${prompt}" --arg idem "${idem_key}" '{
+    prompt: $prompt,
+    topic: "job.bank-validators.process",
+    capability: "bank-validator",
+    labels: {production_gate: "reliability"}
+  } + (if $idem != "" then {idempotency_key: $idem} else {} end)'
+}
+
+require_job_succeeded() {
+  local job_id="$1"
+  local timeout_sec="${2:-300}"
+  local label="${3:-job}"
+  local state
+  state="$(poll_job_terminal "${job_id}" "${timeout_sec}" || true)"
+  if [[ "${state}" == "__POLL_TIMEOUT__" ]]; then
+    local current_state
+    current_state="$(api_body GET "/jobs/${job_id}" | jq -r '.state // empty' 2>/dev/null || true)"
+    echo "${label} did not reach terminal state in time (state=${current_state:-unknown})" >&2
+    return 1
+  fi
+  if [[ "${state}" != "SUCCEEDED" ]]; then
+    local detail
+    detail="$(api_body GET "/jobs/${job_id}" | jq -c '{state, safety_decision, safety_rule_id, safety_reason, error: (.error // .message // null)}' 2>/dev/null || true)"
+    echo "${label} expected SUCCEEDED, got ${state}${detail:+ (${detail})}" >&2
+    return 1
+  fi
+}
+
 poll_run_terminal() {
   local run_id="$1"
   local timeout_sec="${2:-60}"
@@ -347,7 +406,52 @@ poll_run_terminal_with_retry() {
   return 1
 }
 
+create_bank_validator_probe_workflow() {
+  local name payload resp wf_id
+  name="production-gate-bank-validator-$(date +%s)-$$"
+  payload="$(jq -cn --arg name "${name}" --arg org "${ORG_ID}" '{
+    name: $name,
+    org_id: $org,
+    steps: {
+      validate: {
+        type: "worker",
+        name: "Validate",
+        topic: "job.bank-validators.process",
+        input: {prompt: "production gate bank-validator workflow probe"},
+        meta: {capability: "bank-validator"}
+      }
+    }
+  }')"
+  resp="$(api_call POST /workflows "${payload}")"
+  wf_id="$(echo "${resp}" | jq -r '.id // .workflow_id // empty' 2>/dev/null || true)"
+  [[ -n "${wf_id}" ]] || {
+    echo "failed to create bank-validator probe workflow" >&2
+    return 1
+  }
+  printf '%s' "${wf_id}"
+}
+
+require_workflow_succeeded() {
+  local workflow_id="$1"
+  local timeout_sec="${2:-300}"
+  local label="${3:-workflow probe}"
+  local resp run_id status detail
+  resp="$(api_call POST "/workflows/${workflow_id}/runs" '{}')"
+  run_id="$(echo "${resp}" | jq -r '.run_id // .id // empty' 2>/dev/null || true)"
+  [[ -n "${run_id}" ]] || {
+    echo "${label}: failed to start workflow run" >&2
+    return 1
+  }
+  status="$(poll_run_terminal "${run_id}" "${timeout_sec}" || true)"
+  if [[ "${status}" != "succeeded" ]]; then
+    detail="$(api_body GET "/workflow-runs/${run_id}" | jq -c '{status, steps}' 2>/dev/null || true)"
+    echo "${label}: expected workflow succeeded, got ${status:-empty}${detail:+ (${detail})}" >&2
+    return 1
+  fi
+}
+
 ensure_mock_bank_pack() {
+  log "installing/upgrading mock-bank pack"
   if command -v cordumctl >/dev/null 2>&1; then
     CORDUM_API_KEY="${API_KEY}" CORDUM_ORG_ID="${ORG_ID}" CORDUM_TENANT_ID="${TENANT_ID}" \
       CORDUM_GATEWAY="${API_BASE}" \
@@ -360,6 +464,7 @@ ensure_mock_bank_pack() {
 }
 
 ensure_demo_guardrails_pack() {
+  log "installing/upgrading demo-guardrails pack"
   if command -v cordumctl >/dev/null 2>&1; then
     CORDUM_API_KEY="${API_KEY}" CORDUM_ORG_ID="${ORG_ID}" CORDUM_TENANT_ID="${TENANT_ID}" \
       CORDUM_GATEWAY="${API_BASE}" \
@@ -425,10 +530,11 @@ has_mock_bank_worker() {
   echo "${workers}" | jq -e '[(.items // [])[] | select(.pool == "demo-mock-bank")] | length > 0' >/dev/null 2>&1
 }
 
-MOCK_BANK_PID_FILE="/tmp/production-gate-mock-bank.pid"
+MOCK_BANK_PID_FILE="${MOCK_BANK_PID_FILE:-${TMPDIR:-/tmp}/production-gate-mock-bank.${BASHPID:-$$}.pid}"
 
-# Recover PID from file (survives $() subshell boundaries since run_gate
-# captures gate output in a subshell, losing any variables set there).
+# Recover the PID created by this production_gate process. The PID file is
+# intentionally per-process so gates that do not start mock-bank never inherit
+# and kill stale PIDs from previous interrupted runs.
 _recover_mock_bank_pid() {
   if [[ -z "${MOCK_BANK_WORKER_PID:-}" ]] && [[ -f "${MOCK_BANK_PID_FILE}" ]]; then
     MOCK_BANK_WORKER_PID="$(cat "${MOCK_BANK_PID_FILE}" 2>/dev/null || true)"
@@ -442,10 +548,6 @@ _recover_mock_bank_pid() {
 }
 
 ensure_mock_bank_worker() {
-  if has_mock_bank_worker; then
-    return 0
-  fi
-
   _recover_mock_bank_pid
 
   if [[ -n "${MOCK_BANK_WORKER_PID:-}" ]] && ! kill -0 "${MOCK_BANK_WORKER_PID}" >/dev/null 2>&1; then
@@ -453,18 +555,41 @@ ensure_mock_bank_worker() {
     MOCK_BANK_WORKER_STARTED=0
   fi
 
+  if [[ -n "${MOCK_BANK_WORKER_PID:-}" ]] && has_mock_bank_worker; then
+    log "mock-bank worker already registered"
+    return 0
+  fi
+
   if [[ -z "${MOCK_BANK_WORKER_PID:-}" ]]; then
-    # Use nohup so the worker survives when the $() subshell (from run_gate) exits.
-    MOCK_BANK_WORKER_PID="$(cd "${ROOT_DIR}" && nohup env NATS_URL="${NATS_URL}" NATS_TOKEN="${NATS_TOKEN:-}" REDIS_URL="${REDIS_URL}" \
-      NATS_TLS_CA="${NATS_TLS_CA:-}" NATS_TLS_CERT="${NATS_TLS_CERT:-}" NATS_TLS_KEY="${NATS_TLS_KEY:-}" NATS_TLS_SERVER_NAME="${NATS_TLS_SERVER_NAME:-}" \
-      REDIS_TLS_CA="${REDIS_TLS_CA:-}" REDIS_TLS_CERT="${REDIS_TLS_CERT:-}" REDIS_TLS_KEY="${REDIS_TLS_KEY:-}" REDIS_TLS_SERVER_NAME="${REDIS_TLS_SERVER_NAME:-}" \
-      go run ./demo/mock-bank/worker >/tmp/production-gate-mock-bank-worker.log 2>&1 & echo $!)"
+    if [[ "${CORDUM_PRODUCTION_GATE_REUSE_MOCK_BANK_WORKER:-0}" =~ ^(1|true|TRUE|yes|YES)$ ]] && has_mock_bank_worker; then
+      log "mock-bank worker already registered (external)"
+      return 0
+    fi
+
+    log "starting mock-bank worker"
+    # Avoid starting the long-running worker inside command substitution:
+    # Git Bash/MSYS can wait for background jobs owned by $(), hanging the
+    # gate before the readiness polling below. Write the PID to a file from
+    # the launching subshell instead, then read it back in this shell.
+    (
+      cd "${ROOT_DIR}"
+      nohup env NATS_URL="${NATS_URL}" NATS_TOKEN="${NATS_TOKEN:-}" REDIS_URL="${REDIS_URL}" \
+        NATS_TLS_CA="${NATS_TLS_CA:-}" NATS_TLS_CERT="${NATS_TLS_CERT:-}" NATS_TLS_KEY="${NATS_TLS_KEY:-}" NATS_TLS_SERVER_NAME="${NATS_TLS_SERVER_NAME:-}" \
+        REDIS_TLS_CA="${REDIS_TLS_CA:-}" REDIS_TLS_CERT="${REDIS_TLS_CERT:-}" REDIS_TLS_KEY="${REDIS_TLS_KEY:-}" REDIS_TLS_SERVER_NAME="${REDIS_TLS_SERVER_NAME:-}" \
+        go run ./demo/mock-bank/worker >/tmp/production-gate-mock-bank-worker.log 2>&1 &
+      echo "$!" >"${MOCK_BANK_PID_FILE}"
+    )
+    MOCK_BANK_WORKER_PID="$(cat "${MOCK_BANK_PID_FILE}" 2>/dev/null || true)"
+    [[ -n "${MOCK_BANK_WORKER_PID}" ]] || {
+      echo "failed to start mock-bank worker: PID file was empty" >&2
+      return 1
+    }
     MOCK_BANK_WORKER_STARTED=1
-    echo "${MOCK_BANK_WORKER_PID}" >"${MOCK_BANK_PID_FILE}"
   fi
 
   for _ in {1..40}; do
     if has_mock_bank_worker; then
+      log "mock-bank worker registered"
       return 0
     fi
     sleep 0.5
@@ -484,7 +609,7 @@ ensure_mock_bank_worker() {
 
 cleanup() {
   _recover_mock_bank_pid
-  if [[ -n "${MOCK_BANK_WORKER_PID:-}" ]] && kill -0 "${MOCK_BANK_WORKER_PID}" 2>/dev/null; then
+  if [[ "${MOCK_BANK_WORKER_STARTED:-0}" == "1" ]] && [[ -n "${MOCK_BANK_WORKER_PID:-}" ]] && kill -0 "${MOCK_BANK_WORKER_PID}" 2>/dev/null; then
     kill "${MOCK_BANK_WORKER_PID}" 2>/dev/null || true
     wait "${MOCK_BANK_WORKER_PID}" 2>/dev/null || true
   fi
@@ -871,55 +996,29 @@ gate_4_policy() {
 }
 
 gate_5_reliability() {
-  local submit_body submit_resp
-  local scheduler_job scheduler_state post_restart_job post_restart_state
+  local reliability_wf
   local gateway_ready code
-  local idem_key idem_body idem_resp_1 idem_resp_2 idem_job_1 idem_job_2 idem_state
-  local jobs_json stuck_count
-  local current_state
+  local idem_key idem_body idem_resp_1 idem_resp_2 idem_job_1 idem_job_2
+  local idem_state current_state
 
   ensure_mock_bank_pack
   ensure_mock_bank_worker
-
-  submit_body="$(jq -cn '{prompt:"gate5 scheduler restart", topic:"job.bank-validators.process"}')"
-  submit_resp="$(api_call POST /jobs "${submit_body}")"
-  scheduler_job="$(echo "${submit_resp}" | jq -r '.job_id // empty' 2>/dev/null || true)"
-  [[ -n "${scheduler_job}" ]] || {
-    echo "failed to submit scheduler restart probe job" >&2
-    return 1
-  }
+  reliability_wf="$(create_bank_validator_probe_workflow)"
 
   "${COMPOSE_CMD[@]}" restart scheduler >/dev/null
   ensure_mock_bank_worker
-  scheduler_state="$(poll_job_terminal "${scheduler_job}" 300)"
-  [[ "${scheduler_state}" != "__POLL_TIMEOUT__" ]] || {
-    current_state="$(api_body GET "/jobs/${scheduler_job}" | jq -r '.state // empty' 2>/dev/null || true)"
-    echo "scheduler restart probe job did not reach terminal state in time (state=${current_state:-unknown})" >&2
-    return 1
-  }
+  require_workflow_succeeded "${reliability_wf}" 300 "scheduler restart probe workflow"
 
-  submit_resp="$(api_call POST /jobs "$(jq -cn '{prompt:"gate5 post-restart scheduler", topic:"job.bank-validators.process"}')")"
-  post_restart_job="$(echo "${submit_resp}" | jq -r '.job_id // empty' 2>/dev/null || true)"
-  [[ -n "${post_restart_job}" ]] || {
-    echo "failed to submit post-restart scheduler probe job" >&2
-    return 1
-  }
-  post_restart_state="$(poll_job_terminal "${post_restart_job}" 300)"
-  if [[ "${post_restart_state}" == "__POLL_TIMEOUT__" ]]; then
+  if ! require_workflow_succeeded "${reliability_wf}" 300 "post-restart scheduler probe workflow"; then
     # Retry once after confirming worker registration; restarts can cause transient lag.
     ensure_mock_bank_worker || true
-    post_restart_state="$(poll_job_terminal "${post_restart_job}" 180)"
+    require_workflow_succeeded "${reliability_wf}" 180 "post-restart scheduler probe workflow"
   fi
-  [[ "${post_restart_state}" != "__POLL_TIMEOUT__" ]] || {
-    current_state="$(api_body GET "/jobs/${post_restart_job}" | jq -r '.state // empty' 2>/dev/null || true)"
-    echo "post-restart scheduler probe job did not reach terminal state in time (state=${current_state:-unknown})" >&2
-    return 1
-  }
 
   "${COMPOSE_CMD[@]}" restart api-gateway >/dev/null
   gateway_ready=0
   for _ in {1..30}; do
-    code="$(http_code GET "$(api_url /status)" -H "X-API-Key: ${API_KEY}" -H "X-Tenant-ID: ${TENANT_ID}")"
+    code="$(http_code GET "$(api_url /status)" -H "X-API-Key: ${API_KEY}" -H "X-Tenant-ID: ${TENANT_ID}" || echo "000")"
     if [[ "${code}" == "200" ]]; then
       gateway_ready=1
       break
@@ -932,7 +1031,7 @@ gate_5_reliability() {
   }
 
   idem_key="production-gate-idem-$(date +%s)-$$"
-  idem_body="$(jq -cn --arg key "${idem_key}" '{prompt:"gate5 idempotency", topic:"job.bank-validators.process", idempotency_key:$key}')"
+  idem_body="$(bank_validator_job_body "gate5 idempotency" "${idem_key}")"
   idem_resp_1="$(api_call POST /jobs "${idem_body}")"
   idem_resp_2="$(api_call POST /jobs "${idem_body}")"
   idem_job_1="$(echo "${idem_resp_1}" | jq -r '.job_id // empty' 2>/dev/null || true)"
@@ -945,14 +1044,14 @@ gate_5_reliability() {
     echo "idempotency check failed: expected same job id, got ${idem_job_1} and ${idem_job_2}" >&2
     return 1
   }
-  idem_state="$(poll_job_terminal "${idem_job_1}" 300)"
-  [[ "${idem_state}" != "__POLL_TIMEOUT__" ]] || {
-    echo "idempotency job did not reach terminal state in time" >&2
+  idem_state="$(poll_job_terminal "${idem_job_1}" 60 || true)"
+  if [[ "${idem_state}" == "__POLL_TIMEOUT__" || -z "${idem_state}" ]]; then
+    current_state="$(api_body GET "/jobs/${idem_job_1}" | jq -r '.state // empty' 2>/dev/null || true)"
+    echo "idempotency job did not reach terminal state (state=${current_state:-unknown})" >&2
     return 1
-  }
+  fi
 
-  # Only verify our gate-5 probe jobs reached terminal state — other gates
-  # may have left unrelated jobs in non-terminal states.
+  api_code DELETE "/workflows/${reliability_wf}" >/dev/null 2>&1 || true
   echo "scheduler/gateway restart recovery and idempotency checks passed"
 }
 
@@ -3239,10 +3338,29 @@ run_gate() {
   local fn="$2"
   local name="$3"
   local started_ms ended_ms duration_ms
-  local msg status
+  local msg status output_file rc
 
   started_ms="$(now_ms)"
-  if msg="$("${fn}" 2>&1)"; then
+  output_file="$(mktemp)"
+
+  # Do not execute gate functions inside command substitution. Bash disables
+  # reliable `errexit` behavior in commands whose status is being captured,
+  # which previously let a failed middle command (notably platform_smoke.sh in
+  # gate 1) be masked by a later successful probe. Run the gate in its own
+  # strict subshell, stream output as it happens for long gates, and capture
+  # the real gate exit status from PIPESTATUS.
+  set +e
+  (
+    set -euo pipefail
+    "${fn}"
+  ) 2>&1 | tee "${output_file}"
+  rc=${PIPESTATUS[0]}
+  set -e
+
+  msg="$(cat "${output_file}" 2>/dev/null || true)"
+  rm -f "${output_file}"
+
+  if [[ "${rc}" -eq 0 ]]; then
     status="PASS"
   else
     status="FAIL"
@@ -3434,7 +3552,7 @@ fi
 # Cleanup trap: stop background mock-bank worker on exit (reuses _recover_mock_bank_pid)
 cleanup() {
   _recover_mock_bank_pid
-  if [[ -n "${MOCK_BANK_WORKER_PID:-}" ]] && kill -0 "${MOCK_BANK_WORKER_PID}" 2>/dev/null; then
+  if [[ "${MOCK_BANK_WORKER_STARTED:-0}" == "1" ]] && [[ -n "${MOCK_BANK_WORKER_PID:-}" ]] && kill -0 "${MOCK_BANK_WORKER_PID}" 2>/dev/null; then
     log "cleanup: stopping mock-bank worker (PID ${MOCK_BANK_WORKER_PID})"
     kill "${MOCK_BANK_WORKER_PID}" 2>/dev/null || true
     wait "${MOCK_BANK_WORKER_PID}" 2>/dev/null || true
@@ -3471,6 +3589,13 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+# Re-apply after argument parsing so `--strict` behaves the same as
+# STRICT_MODE=1 from the environment.
+if [[ "${STRICT_MODE:-0}" == "1" ]]; then
+  BLOCKING_GATES=(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21)
+  ADVISORY_GATES=()
+fi
 
 if [[ -n "${SELECT_GATE}" ]]; then
   [[ "${SELECT_GATE}" =~ ^([1-9]|1[0-9]|2[01])$ ]] || die "--gate must be 1..21"

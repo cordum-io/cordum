@@ -12,38 +12,29 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="UninstallPackBody")
 
 
 @_attrs_define
 class UninstallPackBody:
-    """ 
-        Attributes:
-            purge (Union[Unset, bool]): Whether to purge all pack data Default: False.
-     """
+    """
+    Attributes:
+        purge (Union[Unset, bool]): Whether to purge all pack data Default: False.
+    """
 
     purge: Union[Unset, bool] = False
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
         purge = self.purge
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if purge is not UNSET:
             field_dict["purge"] = purge
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -53,7 +44,6 @@ class UninstallPackBody:
         uninstall_pack_body = cls(
             purge=purge,
         )
-
 
         uninstall_pack_body.additional_properties = d
         return uninstall_pack_body

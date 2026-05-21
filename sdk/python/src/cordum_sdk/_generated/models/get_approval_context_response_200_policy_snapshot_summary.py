@@ -14,10 +14,9 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.get_approval_context_response_200_policy_snapshot_summary_matched_rule import GetApprovalContextResponse200PolicySnapshotSummaryMatchedRule
-
-
-
+    from ..models.get_approval_context_response_200_policy_snapshot_summary_matched_rule import (
+        GetApprovalContextResponse200PolicySnapshotSummaryMatchedRule,
+    )
 
 
 T = TypeVar("T", bound="GetApprovalContextResponse200PolicySnapshotSummary")
@@ -25,21 +24,25 @@ T = TypeVar("T", bound="GetApprovalContextResponse200PolicySnapshotSummary")
 
 @_attrs_define
 class GetApprovalContextResponse200PolicySnapshotSummary:
-    """ 
-        Attributes:
-            rule_count (Union[Unset, int]):
-            matched_rule (Union[Unset, GetApprovalContextResponse200PolicySnapshotSummaryMatchedRule]):
-            policy_version (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        rule_count (Union[Unset, int]):
+        matched_rule (Union[Unset, GetApprovalContextResponse200PolicySnapshotSummaryMatchedRule]):
+        policy_version (Union[Unset, str]):
+    """
 
     rule_count: Union[Unset, int] = UNSET
-    matched_rule: Union[Unset, 'GetApprovalContextResponse200PolicySnapshotSummaryMatchedRule'] = UNSET
+    matched_rule: Union[Unset, "GetApprovalContextResponse200PolicySnapshotSummaryMatchedRule"] = (
+        UNSET
+    )
     policy_version: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.get_approval_context_response_200_policy_snapshot_summary_matched_rule import GetApprovalContextResponse200PolicySnapshotSummaryMatchedRule
+        from ..models.get_approval_context_response_200_policy_snapshot_summary_matched_rule import (
+            GetApprovalContextResponse200PolicySnapshotSummaryMatchedRule,
+        )
+
         rule_count = self.rule_count
 
         matched_rule: Union[Unset, Dict[str, Any]] = UNSET
@@ -48,11 +51,9 @@ class GetApprovalContextResponse200PolicySnapshotSummary:
 
         policy_version = self.policy_version
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if rule_count is not UNSET:
             field_dict["rule_count"] = rule_count
         if matched_rule is not UNSET:
@@ -62,23 +63,23 @@ class GetApprovalContextResponse200PolicySnapshotSummary:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.get_approval_context_response_200_policy_snapshot_summary_matched_rule import GetApprovalContextResponse200PolicySnapshotSummaryMatchedRule
+        from ..models.get_approval_context_response_200_policy_snapshot_summary_matched_rule import (
+            GetApprovalContextResponse200PolicySnapshotSummaryMatchedRule,
+        )
+
         d = src_dict.copy()
         rule_count = d.pop("rule_count", UNSET)
 
         _matched_rule = d.pop("matched_rule", UNSET)
         matched_rule: Union[Unset, GetApprovalContextResponse200PolicySnapshotSummaryMatchedRule]
-        if isinstance(_matched_rule,  Unset):
+        if isinstance(_matched_rule, Unset):
             matched_rule = UNSET
         else:
-            matched_rule = GetApprovalContextResponse200PolicySnapshotSummaryMatchedRule.from_dict(_matched_rule)
-
-
-
+            matched_rule = GetApprovalContextResponse200PolicySnapshotSummaryMatchedRule.from_dict(
+                _matched_rule
+            )
 
         policy_version = d.pop("policy_version", UNSET)
 
@@ -87,7 +88,6 @@ class GetApprovalContextResponse200PolicySnapshotSummary:
             matched_rule=matched_rule,
             policy_version=policy_version,
         )
-
 
         get_approval_context_response_200_policy_snapshot_summary.additional_properties = d
         return get_approval_context_response_200_policy_snapshot_summary

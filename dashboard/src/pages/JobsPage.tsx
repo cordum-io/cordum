@@ -59,6 +59,25 @@ import {
 } from "@/lib/url-state";
 import { JobFiltersBar, type JobFilterValues } from "@/components/jobs/JobFiltersBar";
 
+// matchesJobSearch returns true when `query` matches any of the canonical
+// search fields for a job row (id, topic, traceId, workflowRunId, pool,
+// tenant, sessionId). The match is case-insensitive substring. Exported so
+// the predicate is covered by focused unit tests rather than only via the
+// full-page render path.
+export function matchesJobSearch(job: Job, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (q === "") return true;
+  return (
+    job.id.toLowerCase().includes(q) ||
+    (job.topic ?? "").toLowerCase().includes(q) ||
+    (job.traceId ?? "").toLowerCase().includes(q) ||
+    (job.workflowRunId ?? "").toLowerCase().includes(q) ||
+    (job.pool ?? "").toLowerCase().includes(q) ||
+    (job.tenant ?? "").toLowerCase().includes(q) ||
+    (getJobParentRefs(job).sessionId ?? "").toLowerCase().includes(q)
+  );
+}
+
 export function OriginPill({ job }: { job: Job }) {
   const navigate = useNavigate();
   const { runId, sessionId, workflowId } = getJobParentRefs(job);
@@ -477,13 +496,7 @@ export default function JobsPage() {
           return false;
       }
       if (search) {
-        const q = search.toLowerCase();
-        return (
-          j.id.toLowerCase().includes(q) ||
-          (j.topic ?? "").toLowerCase().includes(q) ||
-          (j.traceId ?? "").toLowerCase().includes(q) ||
-          (j.workflowRunId ?? "").toLowerCase().includes(q)
-        );
+        return matchesJobSearch(j, search);
       }
       return true;
     });
@@ -708,7 +721,7 @@ export default function JobsPage() {
         <div className="flex flex-wrap items-center gap-3">
           <Input
             type="text"
-            placeholder="Search by ID, topic, or trace..."
+            placeholder="Search jobs (ID, topic, pool, tenant, session, run, trace)"
             value={search ?? ""}
             onChange={(e) => void setSearch(e.target.value)}
             icon={<Search className="h-3.5 w-3.5" />}

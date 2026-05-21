@@ -5,9 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import {
-  useQuery
-} from '@tanstack/react-query';
+import { useQuery } from "@tanstack/react-query";
 import type {
   DataTag,
   DefinedInitialDataOptions,
@@ -17,8 +15,8 @@ import type {
   QueryKey,
   UndefinedInitialDataOptions,
   UseQueryOptions,
-  UseQueryResult
-} from '@tanstack/react-query';
+  UseQueryResult,
+} from "@tanstack/react-query";
 
 import type {
   BadRequestResponse,
@@ -27,104 +25,198 @@ import type {
   ForbiddenResponse,
   InternalServerErrorResponse,
   NotFoundResponse,
-  UnauthorizedResponse
-} from '.././model';
+  UnauthorizedResponse,
+} from ".././model";
 
-import { apiClient } from '../../client';
-
-
-
+import { apiClient } from "../../client";
 
 /**
  * Returns a Copilot chat transcript plus linked jobs and governance decisions.
  * @summary Get Copilot session detail
  */
-export const getCopilotSession = (
-    sessionId: string,
- signal?: AbortSignal
+export const getCopilotSession = (sessionId: string, signal?: AbortSignal) => {
+  return apiClient<CopilotSessionDetailResponse>({
+    url: `/api/v1/copilot/sessions/${sessionId}`,
+    method: "GET",
+    signal,
+  });
+};
+
+export const getGetCopilotSessionQueryKey = (sessionId?: string) => {
+  return [`/api/v1/copilot/sessions/${sessionId}`] as const;
+};
+
+export const getGetCopilotSessionQueryOptions = <
+  TData = Awaited<ReturnType<typeof getCopilotSession>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse
+    | Error,
+>(
+  sessionId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getCopilotSession>>,
+        TError,
+        TData
+      >
+    >;
+  },
 ) => {
-      
-      
-      return apiClient<CopilotSessionDetailResponse>(
-      {url: `/api/v1/copilot/sessions/${sessionId}`, method: 'GET', signal
-    },
-      );
-    }
-  
+  const { query: queryOptions } = options ?? {};
 
+  const queryKey =
+    queryOptions?.queryKey ?? getGetCopilotSessionQueryKey(sessionId);
 
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getCopilotSession>>
+  > = ({ signal }) => getCopilotSession(sessionId, signal);
 
-export const getGetCopilotSessionQueryKey = (sessionId?: string,) => {
-    return [
-    `/api/v1/copilot/sessions/${sessionId}`
-    ] as const;
-    }
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!sessionId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getCopilotSession>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    
-export const getGetCopilotSessionQueryOptions = <TData = Awaited<ReturnType<typeof getCopilotSession>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse | Error>(sessionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getCopilotSession>>, TError, TData>>, }
-) => {
+export type GetCopilotSessionQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getCopilotSession>>
+>;
+export type GetCopilotSessionQueryError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse
+  | InternalServerErrorResponse
+  | Error;
 
-const {query: queryOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetCopilotSessionQueryKey(sessionId);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getCopilotSession>>> = ({ signal }) => getCopilotSession(sessionId, signal);
-
-      
-
-      
-
-   return  { queryKey, queryFn, enabled: !!(sessionId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getCopilotSession>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetCopilotSessionQueryResult = NonNullable<Awaited<ReturnType<typeof getCopilotSession>>>
-export type GetCopilotSessionQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse | Error
-
-
-export function useGetCopilotSession<TData = Awaited<ReturnType<typeof getCopilotSession>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse | Error>(
- sessionId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getCopilotSession>>, TError, TData>> & Pick<
+export function useGetCopilotSession<
+  TData = Awaited<ReturnType<typeof getCopilotSession>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse
+    | Error,
+>(
+  sessionId: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getCopilotSession>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getCopilotSession>>,
           TError,
           Awaited<ReturnType<typeof getCopilotSession>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetCopilotSession<TData = Awaited<ReturnType<typeof getCopilotSession>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse | Error>(
- sessionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getCopilotSession>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetCopilotSession<
+  TData = Awaited<ReturnType<typeof getCopilotSession>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse
+    | Error,
+>(
+  sessionId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getCopilotSession>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getCopilotSession>>,
           TError,
           Awaited<ReturnType<typeof getCopilotSession>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetCopilotSession<TData = Awaited<ReturnType<typeof getCopilotSession>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse | Error>(
- sessionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getCopilotSession>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetCopilotSession<
+  TData = Awaited<ReturnType<typeof getCopilotSession>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse
+    | Error,
+>(
+  sessionId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getCopilotSession>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Get Copilot session detail
  */
 
-export function useGetCopilotSession<TData = Awaited<ReturnType<typeof getCopilotSession>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse | Error>(
- sessionId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getCopilotSession>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetCopilotSession<
+  TData = Awaited<ReturnType<typeof getCopilotSession>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse
+    | Error,
+>(
+  sessionId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getCopilotSession>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetCopilotSessionQueryOptions(sessionId, options);
 
-  const queryOptions = getGetCopilotSessionQueryOptions(sessionId,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
-

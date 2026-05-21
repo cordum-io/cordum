@@ -13,28 +13,24 @@ from typing import cast, List
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="UpdateAgentBody")
 
 
 @_attrs_define
 class UpdateAgentBody:
-    """ 
-        Attributes:
-            name (Union[Unset, str]):
-            description (Union[Unset, str]):
-            owner (Union[Unset, str]):
-            team (Union[Unset, str]):
-            risk_tier (Union[Unset, str]):
-            status (Union[Unset, str]):
-            allowed_topics (Union[Unset, List[str]]):
-            allowed_pools (Union[Unset, List[str]]):
-            allowed_tools (Union[Unset, List[str]]):
-            data_classifications (Union[Unset, List[str]]):
-     """
+    """
+    Attributes:
+        name (Union[Unset, str]):
+        description (Union[Unset, str]):
+        owner (Union[Unset, str]):
+        team (Union[Unset, str]):
+        risk_tier (Union[Unset, str]):
+        status (Union[Unset, str]):
+        allowed_topics (Union[Unset, List[str]]):
+        allowed_pools (Union[Unset, List[str]]):
+        allowed_tools (Union[Unset, List[str]]):
+        data_classifications (Union[Unset, List[str]]):
+    """
 
     name: Union[Unset, str] = UNSET
     description: Union[Unset, str] = UNSET
@@ -47,7 +43,6 @@ class UpdateAgentBody:
     allowed_tools: Union[Unset, List[str]] = UNSET
     data_classifications: Union[Unset, List[str]] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         name = self.name
@@ -66,31 +61,21 @@ class UpdateAgentBody:
         if not isinstance(self.allowed_topics, Unset):
             allowed_topics = self.allowed_topics
 
-
-
         allowed_pools: Union[Unset, List[str]] = UNSET
         if not isinstance(self.allowed_pools, Unset):
             allowed_pools = self.allowed_pools
-
-
 
         allowed_tools: Union[Unset, List[str]] = UNSET
         if not isinstance(self.allowed_tools, Unset):
             allowed_tools = self.allowed_tools
 
-
-
         data_classifications: Union[Unset, List[str]] = UNSET
         if not isinstance(self.data_classifications, Unset):
             data_classifications = self.data_classifications
 
-
-
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if name is not UNSET:
             field_dict["name"] = name
         if description is not UNSET:
@@ -114,8 +99,6 @@ class UpdateAgentBody:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
@@ -133,15 +116,11 @@ class UpdateAgentBody:
 
         allowed_topics = cast(List[str], d.pop("allowed_topics", UNSET))
 
-
         allowed_pools = cast(List[str], d.pop("allowed_pools", UNSET))
-
 
         allowed_tools = cast(List[str], d.pop("allowed_tools", UNSET))
 
-
         data_classifications = cast(List[str], d.pop("data_classifications", UNSET))
-
 
         update_agent_body = cls(
             name=name,
@@ -155,7 +134,6 @@ class UpdateAgentBody:
             allowed_tools=allowed_tools,
             data_classifications=data_classifications,
         )
-
 
         update_agent_body.additional_properties = d
         return update_agent_body

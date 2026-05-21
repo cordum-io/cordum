@@ -12,12 +12,16 @@ import (
 
 // SafetyPolicy defines allow/deny rules per tenant.
 type SafetyPolicy struct {
-	Version         string                  `yaml:"version"`
-	Tier            string                  `yaml:"tier,omitempty" json:"tier,omitempty"`
-	Selector        PolicySelector          `yaml:"selector,omitempty" json:"selector,omitempty"`
-	Rules           []PolicyRule            `yaml:"rules"`
-	InputPolicy     InputPolicyConfig       `yaml:"input_policy"`
-	InputRules      []InputPolicyRule       `yaml:"input_rules"`
+	Version     string            `yaml:"version"`
+	Tier        string            `yaml:"tier,omitempty" json:"tier,omitempty"`
+	Selector    PolicySelector    `yaml:"selector,omitempty" json:"selector,omitempty"`
+	Rules       []PolicyRule      `yaml:"rules"`
+	InputPolicy InputPolicyConfig `yaml:"input_policy"`
+	InputRules  []InputPolicyRule `yaml:"input_rules"`
+	// RequireHuman controls DENY → REQUIRE_HUMAN downgrade thresholds
+	// applied during input-rule evaluation. Per architect amendment
+	// comment-79a9e609 on task-96f931fe.
+	RequireHuman    RequireHumanThreshold   `yaml:"require_human,omitempty" json:"require_human,omitempty"`
 	OutputPolicy    OutputPolicyConfig      `yaml:"output_policy"`
 	OutputRules     []OutputPolicyRule      `yaml:"output_rules"`
 	DefaultTenant   string                  `yaml:"default_tenant,omitempty"`
@@ -31,6 +35,43 @@ type InputPolicyConfig struct {
 	Enabled      bool   `yaml:"enabled"`
 	FailMode     string `yaml:"fail_mode,omitempty"`      // open|closed (default: closed = requeue when kernel down)
 	MaxScanBytes int    `yaml:"max_scan_bytes,omitempty"` // default 2 MiB
+}
+
+// RequireHumanThreshold defines when a matched input-rule whose authored
+// decision is "deny" should be downgraded to REQUIRE_HUMAN instead. The
+// safety kernel reads the threshold from the policy snapshot and consults
+// it inside the input-rule dispatch loop.
+//
+// Per architect amendment comment-79a9e609 (task-96f931fe): an input rule
+// whose finding falls below either floor — OR a prompt-only request that
+// lacks an ActionDescriptor — is "truly ambiguous" and resolves to a
+// human approval rather than a hard deny. DoD #4 ("FP examples allowed
+// or require-human only when truly ambiguous") authorizes this routing.
+//
+// The threshold is intentionally a 2-output dial: rules below the floor
+// route to REQUIRE_HUMAN, rules at-or-above stay DENY. No third "ALLOW"
+// branch — adding one would require a session-metadata educational-context
+// carrier that does not exist (carved out by amendment §(1)).
+//
+// Zero values fall back to the strictest interpretation: empty
+// MinSeverityForDeny means any severity floor is acceptable for DENY;
+// zero MinConfidenceForDeny means any confidence is acceptable. This
+// preserves the legacy DENY-everything behavior when an operator has
+// not opted in.
+type RequireHumanThreshold struct {
+	// MinSeverityForDeny is the minimum finding severity that a "deny"
+	// rule must produce to remain DENY. Severities below this floor
+	// downgrade to REQUIRE_HUMAN. Uses the existing Severity string
+	// vocabulary: "low", "medium", "high", "critical".
+	MinSeverityForDeny string `yaml:"min_severity_for_deny,omitempty"`
+	// MinConfidenceForDeny is the minimum finding confidence (0.0–1.0)
+	// that a "deny" rule must produce to remain DENY. Lower values
+	// downgrade to REQUIRE_HUMAN.
+	MinConfidenceForDeny float32 `yaml:"min_confidence_for_deny,omitempty"`
+	// DowngradeWhenPromptOnly downgrades a "deny" rule to REQUIRE_HUMAN
+	// when the request has no ActionDescriptor (prompt-only — no
+	// action-bound target). Default false preserves legacy behavior.
+	DowngradeWhenPromptOnly bool `yaml:"downgrade_when_prompt_only,omitempty"`
 }
 
 // InputPolicyRule defines policy checks on job input content.
@@ -359,18 +400,8 @@ type DiffConstraints struct {
 	DenyPathGlobs []string `yaml:"deny_path_globs"`
 }
 
-// MCPPolicy defines allow/deny rules for MCP servers/tools/resources.
-type MCPPolicy struct {
-	AllowServers   []string `json:"allow_servers" yaml:"allow_servers"`
-	DenyServers    []string `json:"deny_servers" yaml:"deny_servers"`
-	AllowTools     []string `json:"allow_tools" yaml:"allow_tools"`
-	DenyTools      []string `json:"deny_tools" yaml:"deny_tools"`
-	AllowResources []string `json:"allow_resources" yaml:"allow_resources"`
-	DenyResources  []string `json:"deny_resources" yaml:"deny_resources"`
-	AllowActions   []string `json:"allow_actions" yaml:"allow_actions"`
-	DenyActions    []string `json:"deny_actions" yaml:"deny_actions"`
-}
-
+// MCPPolicy defines allow/deny rules for MCP servers/tools/resources, plus
+// the per-tenant EDGE-100 MCP Gateway enable flag.
 // TenantPolicy captures legacy allow/deny topics per tenant.
 type TenantPolicy struct {
 	AllowTopics      []string  `yaml:"allow_topics"`
@@ -401,12 +432,12 @@ type PolicyInput struct {
 type ActionKind string
 
 const (
-	ActionKindFile             ActionKind = "file"
-	ActionKindURL              ActionKind = "url"
-	ActionKindTenantQuery      ActionKind = "tenant_query"
-	ActionKindMutation         ActionKind = "mutation"
-	ActionKindMCPCall          ActionKind = "mcp_call"
-	ActionKindProvenanceCheck  ActionKind = "provenance_check"
+	ActionKindFile            ActionKind = "file"
+	ActionKindURL             ActionKind = "url"
+	ActionKindTenantQuery     ActionKind = "tenant_query"
+	ActionKindMutation        ActionKind = "mutation"
+	ActionKindMCPCall         ActionKind = "mcp_call"
+	ActionKindProvenanceCheck ActionKind = "provenance_check"
 )
 
 // ActionVerb names the operation an actor is requesting. Free-form by design:

@@ -13,27 +13,22 @@ from typing import cast, List
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="CreateWorkerCredentialBody")
 
 
 @_attrs_define
 class CreateWorkerCredentialBody:
-    """ 
-        Attributes:
-            worker_id (str):
-            allowed_pools (Union[Unset, List[str]]):
-            allowed_topics (Union[Unset, List[str]]):
-     """
+    """
+    Attributes:
+        worker_id (str):
+        allowed_pools (Union[Unset, List[str]]):
+        allowed_topics (Union[Unset, List[str]]):
+    """
 
     worker_id: str
     allowed_pools: Union[Unset, List[str]] = UNSET
     allowed_topics: Union[Unset, List[str]] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         worker_id = self.worker_id
@@ -42,28 +37,23 @@ class CreateWorkerCredentialBody:
         if not isinstance(self.allowed_pools, Unset):
             allowed_pools = self.allowed_pools
 
-
-
         allowed_topics: Union[Unset, List[str]] = UNSET
         if not isinstance(self.allowed_topics, Unset):
             allowed_topics = self.allowed_topics
 
-
-
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "worker_id": worker_id,
-        })
+        field_dict.update(
+            {
+                "worker_id": worker_id,
+            }
+        )
         if allowed_pools is not UNSET:
             field_dict["allowed_pools"] = allowed_pools
         if allowed_topics is not UNSET:
             field_dict["allowed_topics"] = allowed_topics
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -72,16 +62,13 @@ class CreateWorkerCredentialBody:
 
         allowed_pools = cast(List[str], d.pop("allowed_pools", UNSET))
 
-
         allowed_topics = cast(List[str], d.pop("allowed_topics", UNSET))
-
 
         create_worker_credential_body = cls(
             worker_id=worker_id,
             allowed_pools=allowed_pools,
             allowed_topics=allowed_topics,
         )
-
 
         create_worker_credential_body.additional_properties = d
         return create_worker_credential_body

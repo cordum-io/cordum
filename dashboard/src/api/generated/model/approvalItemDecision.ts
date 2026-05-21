@@ -6,12 +6,12 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type ApprovalItemDecision = typeof ApprovalItemDecision[keyof typeof ApprovalItemDecision];
-
+export type ApprovalItemDecision =
+  (typeof ApprovalItemDecision)[keyof typeof ApprovalItemDecision];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const ApprovalItemDecision = {
-  PENDING: 'PENDING',
-  APPROVED: 'APPROVED',
-  REJECTED: 'REJECTED',
+  PENDING: "PENDING",
+  APPROVED: "APPROVED",
+  REJECTED: "REJECTED",
 } as const;
