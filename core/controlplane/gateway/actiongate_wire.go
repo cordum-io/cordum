@@ -136,15 +136,15 @@ type gatewayMCPIdentityResolver struct {
 // fail-closed path takes over. A backend error propagates so the gate
 // can fail closed with Code=service_unavailable.
 //
-// The tenant parameter is part of the actiongates.MCPIdentityResolver
-// contract but the underlying AgentIdentityStore keys agents by
-// globally-unique ID. Cross-tenant agent-ID collisions are guarded by
-// the existing tenant gate (which runs before the MCP gate).
-func (r gatewayMCPIdentityResolver) ResolveMCPIdentity(ctx context.Context, _ string, agentID string) (*mcp.AgentIdentity, error) {
+// MCP actions pass their authenticated request tenant through to the
+// AgentIdentityStore lookup so the store's tenant check guards against
+// cross-tenant agent-ID reuse. The store's empty-tenant internal/system
+// bypass is not used for normal MCP action evaluation.
+func (r gatewayMCPIdentityResolver) ResolveMCPIdentity(ctx context.Context, tenant string, agentID string) (*mcp.AgentIdentity, error) {
 	if r.store == nil {
 		return nil, nil
 	}
-	identity, err := r.store.Get(ctx, "", agentID)
+	identity, err := r.store.Get(ctx, tenant, agentID)
 	if err != nil {
 		return nil, err
 	}

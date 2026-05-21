@@ -1,11 +1,15 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
 	"reflect"
 	"testing"
 
+	miniredis "github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/internal/testredis"
 	"github.com/cordum/cordum/core/policy/actiongates"
 )
 
@@ -53,6 +57,62 @@ func TestWireActionGatePipeline_NilReceiverNoOp(t *testing.T) {
 	}()
 	var s *server
 	s.wireActionGatePipeline()
+}
+
+func TestGatewayMCPIdentityResolver_TenantScopedLookup(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	mr := miniredis.RunT(t)
+	client := testredis.NewClient(t, mr.Addr())
+	identityStore := store.NewAgentIdentityStoreFromClient(client)
+	resolver := gatewayMCPIdentityResolver{store: identityStore}
+
+	created, err := identityStore.Create(ctx, store.AgentIdentity{
+		ID:                  "shared-agent-id",
+		TenantID:            "tenant-a",
+		Name:                "tenant-a-agent",
+		Owner:               "platform",
+		RiskTier:            "high",
+		AllowedTools:        []string{"read_secret"},
+		DataClassifications: []string{"internal"},
+		Status:              "active",
+	})
+	if err != nil {
+		t.Fatalf("create agent identity: %v", err)
+	}
+
+	got, err := resolver.ResolveMCPIdentity(ctx, "tenant-a", created.ID)
+	if err != nil {
+		t.Fatalf("same-tenant resolve: %v", err)
+	}
+	if got == nil {
+		t.Fatal("same-tenant resolve returned nil identity")
+	}
+	if got.ID != created.ID {
+		t.Fatalf("same-tenant identity ID = %q, want %q", got.ID, created.ID)
+	}
+	if !reflect.DeepEqual(got.AllowedTools, []string{"read_secret"}) {
+		t.Fatalf("same-tenant allowed tools = %v, want [read_secret]", got.AllowedTools)
+	}
+
+	foreign, err := resolver.ResolveMCPIdentity(ctx, "tenant-b", created.ID)
+	if err != nil {
+		t.Fatalf("cross-tenant resolve: %v", err)
+	}
+	if foreign != nil {
+		t.Fatalf("cross-tenant resolve returned identity %#v, want nil", foreign)
+	}
+}
+
+func TestGatewayMCPIdentityResolver_NilStoreReturnsMiss(t *testing.T) {
+	t.Parallel()
+	got, err := (gatewayMCPIdentityResolver{}).ResolveMCPIdentity(context.Background(), "tenant-a", "agent-a")
+	if err != nil {
+		t.Fatalf("nil-store resolver returned err: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("nil-store resolver returned identity %#v, want nil", got)
+	}
 }
 
 // TestEncodeActionDescriptorLabel_RoundTrip asserts the JSON-label
