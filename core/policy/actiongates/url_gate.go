@@ -13,15 +13,17 @@ import (
 )
 
 // URLGate blocks outbound URL access to cloud metadata services, known
-// exfiltration destinations, DNS-rebinding hostnames that resolve to
-// private/link-local IPs, and URLs whose query payload carries a recognized
-// prompt-stash signature.
+// exfiltration destinations, non-literal hostnames that resolve to private,
+// metadata, or otherwise non-routable IPs, and URLs whose query payload
+// carries a recognized prompt-stash signature.
 //
 // Resolution uses an injectable HostResolver (default: net.DefaultResolver)
-// so DNS rebinding tests are deterministic. A bounded LRU cache memoizes
+// so DNS/SSRF tests are deterministic. A bounded LRU cache memoizes
 // successful resolution results briefly to keep per-request latency
 // predictable without allowing attacker-chosen host cardinality to grow
-// memory without limit.
+// memory without limit. Resolver uncertainty fails closed; transport callers
+// that later open sockets should still pin or revalidate the selected address
+// at connect time to close DNS-rebinding TOCTOU gaps outside this policy gate.
 type URLGate struct {
 	resolver      HostResolver
 	domainSeen    func(host string) bool
@@ -178,7 +180,9 @@ func (g *URLGate) Evaluate(ctx context.Context, in *config.PolicyInput) ActionGa
 	}
 
 	// 2) Literal link-local / RFC1918 / loopback / multicast / unique-local.
+	literalHost := false
 	if ip := net.ParseIP(host); ip != nil {
+		literalHost = true
 		if class, ok := privateIPClass(ip); ok {
 			subReason := "link_local"
 			if class != "link_local" {
@@ -200,26 +204,23 @@ func (g *URLGate) Evaluate(ctx context.Context, in *config.PolicyInput) ActionGa
 		}
 	}
 
-	// 5) DNS rebinding via *.nip.io / sslip.io / xip.io: must resolve and
-	// reject if any resolved IP is in a private class. Resolver errors
-	// fail closed — a transient lookup failure on a wildcard-IP host is
-	// the easiest way for an attacker to skip the rebind check, so we
-	// refuse the request rather than treat the error as benign.
-	if isRebindWildcardHost(host) {
-		ips, _, err := g.resolveOrFail(ctx, host)
-		if err != nil {
-			return g.deny(CodeResolverError, "unable to validate destination host", "dns_rebind:resolver_error", raw, host, hasUserinfo)
-		}
-		for _, ip := range ips {
-			if class, ok := privateIPClass(ip); ok {
-				return g.deny(CodeAccessDenied, "dns rebinding denied", "dns_rebind:"+class, raw, host, hasUserinfo)
-			}
-		}
-	}
-
-	// 6) Prompt-exfil signature scan on query payload.
+	// 5) Prompt-exfil signature scan on query payload.
 	if hasPromptExfilSignature(u) {
 		return g.deny(CodeAccessDenied, "prompt context exfiltration denied", "prompt_exfil", raw, host, hasUserinfo)
+	}
+
+	// 6) Resolve non-literal hostnames and reject any private, metadata, or
+	// otherwise non-routable answer. Resolver errors fail closed: when the
+	// gate cannot prove the target is public, it must not let governed URL
+	// actions proceed.
+	if !literalHost {
+		subReasonPrefix := "dns_resolution"
+		if isRebindWildcardHost(host) {
+			subReasonPrefix = "dns_rebind"
+		}
+		if dec, denied := g.denyUnsafeResolvedHost(ctx, host, subReasonPrefix, raw, hasUserinfo); denied {
+			return dec
+		}
 	}
 
 	// 7) PII POST to never-before-seen host -> REQUIRE_HUMAN.
@@ -245,6 +246,23 @@ func (g *URLGate) Evaluate(ctx context.Context, in *config.PolicyInput) ActionGa
 	}
 
 	return ActionGateDecision{Decision: pb.DecisionType_DECISION_TYPE_ALLOW, GateID: GateIDURL}
+}
+
+func (g *URLGate) denyUnsafeResolvedHost(ctx context.Context, host, subReasonPrefix, raw string, hasUserinfo bool) (ActionGateDecision, bool) {
+	ips, _, err := g.resolveOrFail(ctx, host)
+	if err != nil {
+		return g.deny(CodeResolverError, "unable to validate destination host", subReasonPrefix+":resolver_error", raw, host, hasUserinfo), true
+	}
+	for _, ip := range ips {
+		if class, ok := resolvedIPClass(ip); ok {
+			reason := "private destination host denied"
+			if subReasonPrefix == "dns_rebind" {
+				reason = "dns rebinding denied"
+			}
+			return g.deny(CodeAccessDenied, reason, subReasonPrefix+":"+class, raw, host, hasUserinfo), true
+		}
+	}
+	return ActionGateDecision{}, false
 }
 
 func (g *URLGate) deny(code, reason, subReason, raw, host string, hasUserinfo bool) ActionGateDecision {
@@ -334,18 +352,31 @@ func unmapIPv4InIPv6(host string) string {
 	return host
 }
 
+func resolvedIPClass(ip net.IP) (string, bool) {
+	if class, ok := privateIPClass(ip); ok {
+		return class, true
+	}
+	if ip == nil {
+		return "", false
+	}
+	if sub, ok := metadataHosts[ip.String()]; ok {
+		return "metadata_service:" + sub, true
+	}
+	return "", false
+}
+
 func privateIPClass(ip net.IP) (string, bool) {
 	if ip == nil {
 		return "", false
+	}
+	if v4 := ip.To4(); v4 != nil {
+		ip = v4
 	}
 	if ip.IsLoopback() {
 		return "loopback", true
 	}
 	if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
 		return "link_local", true
-	}
-	if ip.IsPrivate() {
-		return "rfc1918", true
 	}
 	if ip.IsUnspecified() {
 		return "unspecified", true
@@ -355,6 +386,12 @@ func privateIPClass(ip net.IP) (string, bool) {
 		if v6[0]&0xfe == 0xfc {
 			return "unique_local", true
 		}
+	}
+	if ip.IsPrivate() {
+		return "rfc1918", true
+	}
+	if ip.IsMulticast() {
+		return "multicast", true
 	}
 	return "", false
 }

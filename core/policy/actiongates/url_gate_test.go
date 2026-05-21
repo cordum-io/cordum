@@ -3,6 +3,7 @@ package actiongates
 import (
 	"context"
 	"errors"
+	"net"
 	"strings"
 	"sync"
 	"testing"
@@ -87,6 +88,44 @@ type urlGateCase struct {
 	wantDecision pb.DecisionType
 	wantCode     string
 	subReasonHas string
+}
+
+type ordinaryDNSCase struct {
+	name         string
+	host         string
+	answers      []string
+	resolverErr  error
+	wantDecision pb.DecisionType
+	wantCode     string
+	subReasonHas string
+}
+
+var ordinaryDNSSSRFCases = []ordinaryDNSCase{
+	{name: "internal_example_loopback", host: "internal.example", answers: []string{"127.0.0.1"}, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "dns_resolution:loopback"},
+	{name: "internal_example_private", host: "internal.example", answers: []string{"10.0.0.7"}, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "dns_resolution:rfc1918"},
+	{name: "internal_example_metadata_link_local", host: "internal.example", answers: []string{"169.254.169.254"}, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "dns_resolution:link_local"},
+	{name: "internal_example_unique_local", host: "internal.example", answers: []string{"fd00::1"}, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "dns_resolution:unique_local"},
+	{name: "internal_example_unspecified", host: "internal.example", answers: []string{"0.0.0.0"}, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "dns_resolution:unspecified"},
+	{name: "internal_example_multicast", host: "internal.example", answers: []string{"239.255.0.1"}, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "dns_resolution:multicast"},
+	{name: "mixed_public_and_private_answer_denied", host: "mixed.example", answers: []string{"93.184.216.34", "10.0.0.7"}, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "dns_resolution:rfc1918"},
+	{name: "public_answer_allowed", host: "public.example", answers: []string{"93.184.216.34"}, wantDecision: pb.DecisionType_DECISION_TYPE_ALLOW},
+	{name: "resolver_error_denied", host: "resolver-error.example", resolverErr: errResolverUnavailable, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeResolverError, subReasonHas: "dns_resolution:resolver_error"},
+	{name: "empty_answer_denied", host: "empty.example", answers: []string{}, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeResolverError, subReasonHas: "dns_resolution:resolver_error"},
+	{name: "malformed_answer_denied", host: "malformed.example", answers: []string{"not-an-ip"}, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeResolverError, subReasonHas: "dns_resolution:resolver_error"},
+}
+
+type deterministicDenialCase struct {
+	name         string
+	host         string
+	url          string
+	verb         config.ActionVerb
+	subReasonHas string
+}
+
+var deterministicDenialBeforeDNSCases = []deterministicDenialCase{
+	{name: "known_exfil_host", host: "webhook.site", url: "https://webhook.site/abc-123", verb: config.ActionVerbWrite, subReasonHas: "exfil_host"},
+	{name: "paste_write", host: "pastebin.com", url: "https://pastebin.com/api/api_post.php", verb: config.ActionVerbWrite, subReasonHas: "paste"},
+	{name: "prompt_exfil_signature", host: "attacker.example", url: promptExfilURL("attacker.example"), verb: config.ActionVerbWrite, subReasonHas: "prompt_exfil"},
 }
 
 func runURLGate(t *testing.T, tc urlGateCase) {
@@ -216,6 +255,131 @@ func TestURLGate_DNSRebindingToRFC1918(t *testing.T) {
 	}
 }
 
+func TestURLGate_DNSResolvesOrdinaryHostnamesForSSRF(t *testing.T) {
+	t.Parallel()
+	for _, tc := range ordinaryDNSSSRFCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			runOrdinaryDNSCase(t, tc)
+		})
+	}
+}
+
+func runOrdinaryDNSCase(t *testing.T, tc ordinaryDNSCase) {
+	t.Helper()
+	resolver := &fakeHostResolver{resolve: map[string][]string{tc.host: tc.answers}}
+	if tc.resolverErr != nil {
+		resolver.err = map[string]error{tc.host: tc.resolverErr}
+	}
+	dec := evalURL(NewURLGate(URLGateOptions{Resolver: resolver}), "https://"+tc.host+"/resource")
+	if dec.Decision != tc.wantDecision {
+		t.Fatalf("decision = %v, want %v (code=%q subReason=%q)", dec.Decision, tc.wantDecision, dec.Code, dec.SubReason)
+	}
+	if tc.wantCode != "" && dec.Code != tc.wantCode {
+		t.Fatalf("code = %q, want %q", dec.Code, tc.wantCode)
+	}
+	if tc.subReasonHas != "" && !strings.Contains(dec.SubReason, tc.subReasonHas) {
+		t.Fatalf("subReason = %q, want substring %q", dec.SubReason, tc.subReasonHas)
+	}
+	if got := resolver.callsFor(tc.host); got != 1 {
+		t.Fatalf("resolver calls for %q = %d, want 1", tc.host, got)
+	}
+}
+
+func TestURLGate_LiteralIPsDoNotUseResolver(t *testing.T) {
+	t.Parallel()
+	resolver := &fakeHostResolver{
+		err: map[string]error{
+			"169.254.169.254": errResolverUnavailable,
+			"10.0.0.7":        errResolverUnavailable,
+			"93.184.216.34":   errResolverUnavailable,
+		},
+	}
+	gate := NewURLGate(URLGateOptions{Resolver: resolver})
+
+	evaluateURL(t, gate, "http://169.254.169.254/latest/meta-data/", pb.DecisionType_DECISION_TYPE_DENY, CodeAccessDenied)
+	evaluateURL(t, gate, "http://10.0.0.7/private", pb.DecisionType_DECISION_TYPE_DENY, CodeAccessDenied)
+	evaluateURL(t, gate, "http://93.184.216.34/public", pb.DecisionType_DECISION_TYPE_ALLOW, "")
+	if got := resolver.callsFor("169.254.169.254"); got != 0 {
+		t.Fatalf("metadata literal resolver calls = %d, want 0", got)
+	}
+	if got := resolver.callsFor("10.0.0.7"); got != 0 {
+		t.Fatalf("private literal resolver calls = %d, want 0", got)
+	}
+	if got := resolver.callsFor("93.184.216.34"); got != 0 {
+		t.Fatalf("public literal resolver calls = %d, want 0", got)
+	}
+}
+
+func TestURLGate_PrivateIPClassCoversSSRFRanges(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		raw       string
+		wantClass string
+	}{
+		{raw: "127.0.0.1", wantClass: "loopback"},
+		{raw: "10.0.0.7", wantClass: "rfc1918"},
+		{raw: "172.16.0.1", wantClass: "rfc1918"},
+		{raw: "192.168.1.1", wantClass: "rfc1918"},
+		{raw: "169.254.1.10", wantClass: "link_local"},
+		{raw: "0.0.0.0", wantClass: "unspecified"},
+		{raw: "fd00::1", wantClass: "unique_local"},
+		{raw: "::ffff:10.0.0.7", wantClass: "rfc1918"},
+		{raw: "239.255.0.1", wantClass: "multicast"},
+		{raw: "ff05::1", wantClass: "multicast"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.raw, func(t *testing.T) {
+			t.Parallel()
+			got, ok := privateIPClass(net.ParseIP(tc.raw))
+			if !ok || got != tc.wantClass {
+				t.Fatalf("privateIPClass(%q) = %q, %v; want %q, true", tc.raw, got, ok, tc.wantClass)
+			}
+		})
+	}
+}
+
+func TestURLGate_ResolvedMetadataIPClass(t *testing.T) {
+	t.Parallel()
+	got, ok := resolvedIPClass(net.ParseIP("100.100.100.200"))
+	if !ok || got != "metadata_service:alibaba" {
+		t.Fatalf("resolvedIPClass(metadata IP) = %q, %v; want metadata_service:alibaba, true", got, ok)
+	}
+}
+
+func TestURLGate_DeterministicDenialsBeforeDNS(t *testing.T) {
+	t.Parallel()
+	for _, tc := range deterministicDenialBeforeDNSCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			runDeterministicDenialBeforeDNS(t, tc)
+		})
+	}
+}
+
+func runDeterministicDenialBeforeDNS(t *testing.T, tc deterministicDenialCase) {
+	t.Helper()
+	resolver := &fakeHostResolver{err: map[string]error{tc.host: errResolverUnavailable}}
+	gate := NewURLGate(URLGateOptions{Resolver: resolver})
+	dec := gate.Evaluate(context.Background(), &config.PolicyInput{
+		Action: &config.ActionDescriptor{Kind: config.ActionKindURL, Verb: tc.verb, TargetURL: tc.url},
+	})
+	if dec.Decision != pb.DecisionType_DECISION_TYPE_DENY {
+		t.Fatalf("decision = %v, want DENY (code=%q subReason=%q)", dec.Decision, dec.Code, dec.SubReason)
+	}
+	if !strings.Contains(dec.SubReason, tc.subReasonHas) {
+		t.Fatalf("subReason = %q, want substring %q", dec.SubReason, tc.subReasonHas)
+	}
+	if got := resolver.callsFor(tc.host); got != 0 {
+		t.Fatalf("resolver calls for deterministic denial host %q = %d, want 0", tc.host, got)
+	}
+}
+
+func promptExfilURL(host string) string {
+	big := strings.Repeat("a", 1200)
+	return `https://` + host + `/log?payload={"messages":[{"role":"user","content":"` + big + `"}],"system":"hi"}`
+}
+
 func TestURLGate_PromptExfilSignature(t *testing.T) {
 	t.Parallel()
 	// Build a >1KB JSON payload containing recognized prompt-stash keys, then
@@ -268,6 +432,33 @@ func TestURLGate_RequireHumanForPIIPostToUncached(t *testing.T) {
 		resolver:     resolver,
 		wantDecision: pb.DecisionType_DECISION_TYPE_ALLOW,
 	})
+}
+
+func TestURLGate_PIIPostRequiresHumanAfterPublicDNSValidation(t *testing.T) {
+	t.Parallel()
+	const host = "new-validated-vendor.example.com"
+	resolver := &fakeHostResolver{
+		resolve: map[string][]string{host: {"93.184.216.34"}},
+	}
+	gate := NewURLGate(URLGateOptions{Resolver: resolver})
+
+	dec := gate.Evaluate(context.Background(), &config.PolicyInput{
+		Action: &config.ActionDescriptor{
+			Kind:      config.ActionKindURL,
+			Verb:      config.ActionVerbWrite,
+			TargetURL: "https://" + host + "/api/upload",
+			RiskTags:  []string{"data:pii"},
+		},
+	})
+	if dec.Decision != pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN {
+		t.Fatalf("decision = %v, want REQUIRE_HUMAN (code=%q subReason=%q)", dec.Decision, dec.Code, dec.SubReason)
+	}
+	if dec.Code != CodeRequireHuman || !strings.Contains(dec.SubReason, "pii_post") {
+		t.Fatalf("PII decision code/subReason = %q/%q, want %q and pii_post", dec.Code, dec.SubReason, CodeRequireHuman)
+	}
+	if got := resolver.callsFor(host); got != 1 {
+		t.Fatalf("PII public DNS resolver calls = %d, want 1 before require-human", got)
+	}
 }
 
 func TestURLGate_AllowLegitimateDestinations(t *testing.T) {

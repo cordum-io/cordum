@@ -90,6 +90,24 @@ func TestURLGate_DNSRebinding_ResolverErrorsNotCached(t *testing.T) {
 	}
 }
 
+func TestURLGate_DNSResolution_ResolverErrorsNotCached(t *testing.T) {
+	const host = "retry.example"
+	resolver := &fakeHostResolver{
+		resolve:       map[string][]string{host: {"93.184.216.34"}},
+		orderedErrors: map[string][]error{host: {errResolverUnavailable}},
+	}
+	gate := NewURLGate(URLGateOptions{Resolver: resolver, ResolverTTL: time.Hour})
+
+	dec := evaluateURL(t, gate, "http://"+host+"/first", pb.DecisionType_DECISION_TYPE_DENY, CodeResolverError)
+	if !strings.Contains(dec.SubReason, "dns_resolution:resolver_error") {
+		t.Fatalf("subReason = %q, want dns_resolution:resolver_error", dec.SubReason)
+	}
+	evaluateURL(t, gate, "http://"+host+"/second", pb.DecisionType_DECISION_TYPE_ALLOW, "")
+	if got := resolver.callsFor(host); got != 2 {
+		t.Fatalf("ordinary resolver error calls = %d, want 2 so errors are not cached", got)
+	}
+}
+
 func TestURLGate_ResolverCache_TTLExpiryReResolves(t *testing.T) {
 	const host = "ttl.nip.io"
 	resolver := &fakeHostResolver{
@@ -108,6 +126,30 @@ func TestURLGate_ResolverCache_TTLExpiryReResolves(t *testing.T) {
 	evaluateURL(t, gate, "http://"+host+"/second", pb.DecisionType_DECISION_TYPE_DENY, CodeAccessDenied)
 	if got := resolver.callsFor(host); got != 2 {
 		t.Fatalf("ttl-expired resolver calls = %d, want 2", got)
+	}
+}
+
+func TestURLGate_ResolverCache_TTLExpiryReResolvesOrdinaryHost(t *testing.T) {
+	const host = "ttl.example"
+	resolver := &fakeHostResolver{
+		orderedResponses: map[string][][]string{
+			host: {{"93.184.216.34"}, {"10.0.0.7"}},
+		},
+	}
+	gate := NewURLGate(URLGateOptions{
+		Resolver:         resolver,
+		ResolverTTL:      10 * time.Millisecond,
+		ResolverCacheMax: 2,
+	})
+
+	evaluateURL(t, gate, "http://"+host+"/first", pb.DecisionType_DECISION_TYPE_ALLOW, "")
+	time.Sleep(25 * time.Millisecond)
+	dec := evaluateURL(t, gate, "http://"+host+"/second", pb.DecisionType_DECISION_TYPE_DENY, CodeAccessDenied)
+	if !strings.Contains(dec.SubReason, "dns_resolution:rfc1918") {
+		t.Fatalf("subReason after TTL private re-resolve = %q, want dns_resolution:rfc1918", dec.SubReason)
+	}
+	if got := resolver.callsFor(host); got != 2 {
+		t.Fatalf("ordinary ttl-expired resolver calls = %d, want 2", got)
 	}
 }
 

@@ -84,6 +84,33 @@ boundary. Managed Claude settings, `cordum-agentd`, short-lived tokens,
 OS/tenant controls, audit retention, and tenant-specific policy review are
 still required for enterprise deployment.
 
+## URL network egress DNS/SSRF gate
+
+`URLGate` is the action-layer guard for governed URL actions before they reach
+approval or allow decisions. It uses the shared `HostResolver` abstraction (not
+ad hoc DNS) so tests can inject deterministic answers and production can use
+the platform resolver path.
+
+For non-literal hostnames, the gate resolves the host and denies the action if
+any answer is loopback, RFC1918/private, link-local, IPv6 ULA, unspecified,
+multicast, or a known cloud metadata literal. Known exfiltration hosts, paste
+write destinations, prompt-exfil query signatures, and literal metadata/private
+IPs are denied before DNS so those deterministic reasons are preserved.
+
+Resolver uncertainty fails closed for governed URL actions:
+
+- resolver errors, empty answer sets, and malformed addresses return a stable
+  resolver-denial reason rather than allowing the action;
+- successful answers use a bounded short-TTL cache and singleflight so attacker
+  controlled host cardinality cannot grow memory without limit;
+- resolver errors are not cached, and TTL expiry revalidates the host before a
+  later decision.
+
+This policy-time check reduces SSRF and rebinding exposure but does not by
+itself close the socket-connect TOCTOU window. Transport code that opens the
+outbound connection should pin the selected resolved address or revalidate that
+address at connect time instead of performing an unrelated second lookup.
+
 ## Approval retry and optional inline wait contract
 
 EDGE-012 defines how an Edge action that requires human approval is run. The
