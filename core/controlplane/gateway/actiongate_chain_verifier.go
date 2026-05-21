@@ -236,13 +236,20 @@ func approvalEvidenceEntryMatches(entry redis.XMessage, approval *edgecore.EdgeA
 	if !approvalEvidenceEventType(event.EventType) || strings.TrimSpace(event.TenantID) != strings.TrimSpace(approval.TenantID) {
 		return false
 	}
+	if !approvalEvidenceApprovedDecision(event.Decision) {
+		return false
+	}
 	return strings.TrimSpace(event.Extra["approval_ref"]) == strings.TrimSpace(approval.ApprovalRef) &&
 		strings.TrimSpace(event.Extra["action_hash"]) == strings.TrimSpace(approval.ActionHash)
 }
 
 func approvalEvidenceEventType(eventType string) bool {
-	switch eventType {
-	case audit.EventEdgeApprovalRequested, audit.EventEdgeApprovalResolved:
+	return strings.TrimSpace(eventType) == audit.EventEdgeApprovalResolved
+}
+
+func approvalEvidenceApprovedDecision(decision string) bool {
+	switch strings.ToLower(strings.TrimSpace(decision)) {
+	case "approved", "approve":
 		return true
 	default:
 		return false

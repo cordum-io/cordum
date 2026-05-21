@@ -110,6 +110,16 @@ func TestAuditChainApprovalVerifier_ZeroEventWindowIsEvidenceGap(t *testing.T) {
 	}
 }
 
+func TestAuditChainApprovalVerifier_RequestedOnlyEvidenceIsGap(t *testing.T) {
+	t.Parallel()
+	client, _, chainer := newVerifierTestChain(t, nil)
+	approval := approvalWindow("tenant-requested-only")
+	appendApprovalRequestedEvidenceEvent(t, chainer, approval, nil)
+
+	outcome := verifyApprovalForTest(t, client, chainer, approval)
+	requireApprovalEvidenceGap(t, outcome)
+}
+
 func TestAuditChainApprovalVerifier_RequiresExactApprovalEvidence(t *testing.T) {
 	t.Parallel()
 
@@ -127,7 +137,7 @@ func TestAuditChainApprovalVerifier_RequiresExactApprovalEvidence(t *testing.T) 
 		t.Parallel()
 		client, _, chainer := newVerifierTestChain(t, nil)
 		approval := approvalWindow("tenant-missing-action-hash")
-		appendApprovalEvidenceEvent(t, chainer, approval, func(ev *audit.SIEMEvent) {
+		appendApprovalResolvedEvidenceEvent(t, chainer, approval, func(ev *audit.SIEMEvent) {
 			delete(ev.Extra, "action_hash")
 		})
 
@@ -139,7 +149,7 @@ func TestAuditChainApprovalVerifier_RequiresExactApprovalEvidence(t *testing.T) 
 		t.Parallel()
 		client, _, chainer := newVerifierTestChain(t, nil)
 		approval := approvalWindow("tenant-wrong-action-hash")
-		appendApprovalEvidenceEvent(t, chainer, approval, func(ev *audit.SIEMEvent) {
+		appendApprovalResolvedEvidenceEvent(t, chainer, approval, func(ev *audit.SIEMEvent) {
 			ev.Extra["action_hash"] = "action_hash_other"
 		})
 
@@ -151,7 +161,7 @@ func TestAuditChainApprovalVerifier_RequiresExactApprovalEvidence(t *testing.T) 
 		t.Parallel()
 		client, _, chainer := newVerifierTestChain(t, nil)
 		approval := approvalWindow("tenant-wrong-ref")
-		appendApprovalEvidenceEvent(t, chainer, approval, func(ev *audit.SIEMEvent) {
+		appendApprovalResolvedEvidenceEvent(t, chainer, approval, func(ev *audit.SIEMEvent) {
 			ev.Extra["approval_ref"] = "edge_appr_other"
 		})
 
@@ -165,7 +175,31 @@ func TestAuditChainApprovalVerifier_RequiresExactApprovalEvidence(t *testing.T) 
 		approval := approvalWindow("tenant-right")
 		foreign := *approval
 		foreign.TenantID = "tenant-wrong"
-		appendApprovalEvidenceEvent(t, chainer, &foreign, nil)
+		appendApprovalResolvedEvidenceEvent(t, chainer, &foreign, nil)
+
+		outcome := verifyApprovalForTest(t, client, chainer, approval)
+		requireApprovalEvidenceGap(t, outcome)
+	})
+
+	t.Run("missing resolved decision is an evidence gap", func(t *testing.T) {
+		t.Parallel()
+		client, _, chainer := newVerifierTestChain(t, nil)
+		approval := approvalWindow("tenant-missing-decision")
+		appendApprovalResolvedEvidenceEvent(t, chainer, approval, func(ev *audit.SIEMEvent) {
+			ev.Decision = ""
+		})
+
+		outcome := verifyApprovalForTest(t, client, chainer, approval)
+		requireApprovalEvidenceGap(t, outcome)
+	})
+
+	t.Run("wrong resolved decision is an evidence gap", func(t *testing.T) {
+		t.Parallel()
+		client, _, chainer := newVerifierTestChain(t, nil)
+		approval := approvalWindow("tenant-wrong-decision")
+		appendApprovalResolvedEvidenceEvent(t, chainer, approval, func(ev *audit.SIEMEvent) {
+			ev.Decision = "rejected"
+		})
 
 		outcome := verifyApprovalForTest(t, client, chainer, approval)
 		requireApprovalEvidenceGap(t, outcome)
@@ -175,7 +209,7 @@ func TestAuditChainApprovalVerifier_RequiresExactApprovalEvidence(t *testing.T) 
 		t.Parallel()
 		client, _, chainer := newVerifierTestChain(t, nil)
 		approval := approvalWindow("tenant-exact")
-		appendApprovalEvidenceEvent(t, chainer, approval, nil)
+		appendApprovalResolvedEvidenceEvent(t, chainer, approval, nil)
 
 		outcome := verifyApprovalForTest(t, client, chainer, approval)
 		if outcome.Status != actiongates.ChainStatusOK || outcome.HasEvidenceGap {
@@ -188,7 +222,7 @@ func TestAuditChainApprovalVerifier_RequiresExactApprovalEvidence(t *testing.T) 
 		key := randomVerifierTestKey(t)
 		client, _, chainer := newVerifierTestChain(t, key)
 		approval := approvalWindow("tenant-exact-hmac")
-		appendApprovalEvidenceEvent(t, chainer, approval, nil)
+		appendApprovalResolvedEvidenceEvent(t, chainer, approval, nil)
 
 		outcome := verifyApprovalForTest(t, client, chainer, approval)
 		if outcome.Status != actiongates.ChainStatusOK || outcome.HasEvidenceGap {
@@ -208,6 +242,16 @@ func TestAuditChainApprovalVerifier_FindsApprovalEvidenceBeyondDefaultScanLimit(
 		t.Fatalf("outcome = %+v, want OK without evidence gap after %d unrelated events",
 			outcome, audit.DefaultVerifyLimit+1)
 	}
+}
+
+func TestAuditChainApprovalVerifier_RequestedEvidenceBeyondDefaultScanLimitIsGap(t *testing.T) {
+	client, _, chainer := newVerifierTestChain(t, nil)
+	approval := approvalWindow("tenant-requested-high-volume-evidence")
+	appendVerifierTestEvents(t, chainer, approval.TenantID, int(audit.DefaultVerifyLimit)+1)
+	appendApprovalRequestedEvidenceEvent(t, chainer, approval, nil)
+
+	outcome := verifyApprovalForTest(t, client, chainer, approval)
+	requireApprovalEvidenceGap(t, outcome)
 }
 
 func TestAuditChainApprovalVerifier_RejectsCorruptEvidenceBeyondDefaultScanLimit(t *testing.T) {
@@ -344,6 +388,16 @@ func appendApprovalEvidenceEvent(
 	mutate func(*audit.SIEMEvent),
 ) {
 	t.Helper()
+	appendApprovalResolvedEvidenceEvent(t, chainer, approval, mutate)
+}
+
+func appendApprovalRequestedEvidenceEvent(
+	t *testing.T,
+	chainer *audit.Chainer,
+	approval *edgecore.EdgeApproval,
+	mutate func(*audit.SIEMEvent),
+) {
+	t.Helper()
 	event := audit.SIEMEvent{
 		Timestamp: approval.CreatedAt.Add(time.Minute),
 		EventType: audit.EventEdgeApprovalRequested,
@@ -364,6 +418,34 @@ func appendApprovalEvidenceEvent(
 	}
 }
 
+func appendApprovalResolvedEvidenceEvent(
+	t *testing.T,
+	chainer *audit.Chainer,
+	approval *edgecore.EdgeApproval,
+	mutate func(*audit.SIEMEvent),
+) {
+	t.Helper()
+	resolvedAt := approval.CreatedAt.Add(time.Minute)
+	if approval.ResolvedAt != nil && !approval.ResolvedAt.IsZero() {
+		resolvedAt = *approval.ResolvedAt
+	}
+	event := edgecore.SIEMEventForApprovalResolved(
+		approval.TenantID,
+		approval.ApprovalRef,
+		approval.RuleID,
+		"approved",
+		"principal-resolver",
+		resolvedAt,
+		map[string]string{"action_hash": approval.ActionHash},
+	)
+	if mutate != nil {
+		mutate(&event)
+	}
+	if err := chainer.Append(context.Background(), &event); err != nil {
+		t.Fatalf("append resolved approval evidence: %v", err)
+	}
+}
+
 func appendCorruptApprovalEvidenceEvent(
 	t *testing.T,
 	client redis.UniversalClient,
@@ -372,21 +454,18 @@ func appendCorruptApprovalEvidenceEvent(
 ) {
 	t.Helper()
 	last := readLastVerifierEvent(t, client, chainer.StreamKey(approval.TenantID))
-	event := audit.SIEMEvent{
-		Timestamp: approval.CreatedAt.Add(time.Minute),
-		EventType: audit.EventEdgeApprovalRequested,
-		Severity:  audit.SeverityMedium,
-		TenantID:  approval.TenantID,
-		Action:    "edge_approval_requested",
-		Decision:  "require_approval",
-		Extra: map[string]string{
-			"approval_ref": approval.ApprovalRef,
-			"action_hash":  approval.ActionHash,
-		},
-		Seq:       last.Seq + 1,
-		PrevHash:  last.EventHash,
-		EventHash: "corrupt_event_hash",
-	}
+	event := edgecore.SIEMEventForApprovalResolved(
+		approval.TenantID,
+		approval.ApprovalRef,
+		approval.RuleID,
+		"approved",
+		"principal-resolver",
+		approval.CreatedAt.Add(time.Minute),
+		map[string]string{"action_hash": approval.ActionHash},
+	)
+	event.Seq = last.Seq + 1
+	event.PrevHash = last.EventHash
+	event.EventHash = "corrupt_event_hash"
 	payload, err := json.Marshal(event)
 	if err != nil {
 		t.Fatalf("marshal corrupt approval evidence: %v", err)
