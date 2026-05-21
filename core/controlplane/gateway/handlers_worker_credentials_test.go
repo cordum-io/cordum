@@ -278,7 +278,10 @@ func TestWorkerCredentials_ScopedToTenant(t *testing.T) {
 
 func TestWorkerCredentials_LicenseCASNoOvershoot(t *testing.T) {
 	s, _, _ := newTestGateway(t)
-	const maxWorkers = 10
+	// The invariant is exact license-cap enforcement under concurrent CAS, not
+	// a specific cap size. Keep 3x contention but bound the race-detector memory
+	// footprint so WSL runners can repeat the test with -race -count=3.
+	const maxWorkers = 4
 	setTestEntitlements(t, s, licensing.PlanTeam, func(e *licensing.Entitlements) {
 		e.MaxWorkers = maxWorkers
 	})
