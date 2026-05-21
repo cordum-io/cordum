@@ -141,6 +141,18 @@ authenticated tenant and only then compares the resolved record's
 cross-tenant ref must miss/fail closed even if another approved record
 exists for the same `action_hash`.
 
+For destructive mutations, `approval_ref` is also bound to audit-chain
+provenance. After the mutation gate validates the backend approval, the
+production gateway pipeline verifies the tenant's audit hash-chain slice for
+that approval through `server.auditChainer` and `core/audit.VerifyChain`.
+Missing Redis/audit-chainer/verifier dependencies return an explicit
+`service_unavailable` denial and never fail open. Compromised hash/HMAC/linkage
+or missing approval-window evidence remains a hard fail-closed provenance
+denial. If retention trims older history, a partial verifier result is allowed
+only when in-window approval evidence is still present. HMAC verification uses
+`CORDUM_AUDIT_HMAC_KEY` via `Chainer.HMACKeyForVerify`; the key itself is never
+logged or surfaced to clients.
+
 ### States and transitions
 
 `core/edge/approval.go:5-13` `ApprovalStatus` has these values:

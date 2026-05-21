@@ -77,7 +77,7 @@ type ProvenanceGateOptions struct {
 //     → DENY with the same stable code/sub_reason as MutationGate.
 //  5. Chain verification reports compromised → DENY/internal_error/audit_chain_compromised.
 //  6. Chain verifier reports an evidence gap → DENY/internal_error/audit_evidence_missing.
-//  7. Verifier error or nil verifier → DENY/internal_error fail-closed.
+//  7. Verifier error or nil verifier → DENY/service_unavailable fail-closed.
 //
 // Like MutationGate, ProvenanceGate resolves approval_ref first and compares
 // the resolved record's ActionHash second. Evaluate remains side-effect free:
@@ -88,9 +88,10 @@ type ProvenanceGate struct {
 }
 
 // NewProvenanceGate returns a gate bound to opts.Approvals and
-// opts.ChainVerifier. Either being nil causes destructive actions to
-// fail closed with Code=internal_error — explicit refusal beats a
-// silent allow under mis-configuration.
+// opts.ChainVerifier. Nil Approvals causes destructive actions to fail
+// closed with Code=internal_error; nil ChainVerifier fails closed with
+// Code=service_unavailable so operators can distinguish dependency
+// outage/misconfiguration from audit-chain tampering.
 func NewProvenanceGate(opts ProvenanceGateOptions) *ProvenanceGate {
 	return &ProvenanceGate{approvals: opts.Approvals, chainVerifier: opts.ChainVerifier}
 }
@@ -142,12 +143,12 @@ func (g *ProvenanceGate) Evaluate(ctx context.Context, in *config.PolicyInput) A
 	}
 
 	if g.chainVerifier == nil {
-		return provDecision(pb.DecisionType_DECISION_TYPE_DENY, act, CodeInternalError,
+		return provDecision(pb.DecisionType_DECISION_TYPE_DENY, act, CodeServiceUnavailable,
 			"audit chain verifier unavailable", "audit_chain_verifier_unavailable")
 	}
 	outcome, verr := g.chainVerifier.VerifyForApproval(ctx, actx.Tenant, approval)
 	if verr != nil {
-		return provDecision(pb.DecisionType_DECISION_TYPE_DENY, act, CodeInternalError,
+		return provDecision(pb.DecisionType_DECISION_TYPE_DENY, act, CodeServiceUnavailable,
 			"audit chain verification failed", "audit_chain_verify_failed:"+sanitizeErr(verr))
 	}
 	if outcome.Status == ChainStatusCompromised {
@@ -161,12 +162,13 @@ func (g *ProvenanceGate) Evaluate(ctx context.Context, in *config.PolicyInput) A
 
 	// Status OK or Partial. Partial only means retention-trimmed prefix;
 	// for an in-window-only verifier this still counts as authenticated.
+	subReason := "provenance_ok:" + string(outcome.Status)
 	return ActionGateDecision{
 		Decision:  pb.DecisionType_DECISION_TYPE_ALLOW,
 		GateID:    GateIDProvenance,
 		Reason:    "approval backed by verified audit chain",
-		SubReason: "provenance_ok:" + string(outcome.Status),
-		Extra:     provExtra(act, "provenance_ok"),
+		SubReason: subReason,
+		Extra:     provExtra(act, subReason),
 	}
 }
 

@@ -309,8 +309,11 @@ func TestProvenanceGate_ChainVerifierErrFailsClosed(t *testing.T) {
 	verifier := &fakeChainVerifier{err: errors.New("redis unavailable")}
 	gate := newProvenanceGateWith(approval, verifier, nil)
 	dec := gate.Evaluate(provAuthCtx(), &config.PolicyInput{Action: act})
-	if dec.Decision != pb.DecisionType_DECISION_TYPE_DENY || dec.Code != CodeInternalError {
-		t.Fatalf("got %v / %q, want DENY / internal_error", dec.Decision, dec.Code)
+	if dec.Decision != pb.DecisionType_DECISION_TYPE_DENY || dec.Code != CodeServiceUnavailable {
+		t.Fatalf("got %v / %q, want DENY / service_unavailable", dec.Decision, dec.Code)
+	}
+	if !strings.Contains(dec.SubReason, "audit_chain_verify_failed") {
+		t.Fatalf("subReason = %q, want audit_chain_verify_failed", dec.SubReason)
 	}
 }
 
@@ -359,7 +362,10 @@ func TestProvenanceGate_NilVerifierFailsClosed(t *testing.T) {
 	approval := provValidApproval(act)
 	gate := newProvenanceGateWith(approval, nil, nil)
 	dec := gate.Evaluate(provAuthCtx(), &config.PolicyInput{Action: act})
-	if dec.Decision != pb.DecisionType_DECISION_TYPE_DENY || dec.Code != CodeInternalError {
-		t.Fatalf("got %v / %q, want DENY / internal_error (nil verifier)", dec.Decision, dec.Code)
+	if dec.Decision != pb.DecisionType_DECISION_TYPE_DENY || dec.Code != CodeServiceUnavailable {
+		t.Fatalf("got %v / %q, want DENY / service_unavailable (nil verifier)", dec.Decision, dec.Code)
+	}
+	if !strings.Contains(dec.SubReason, "audit_chain_verifier_unavailable") {
+		t.Fatalf("subReason = %q, want audit_chain_verifier_unavailable", dec.SubReason)
 	}
 }

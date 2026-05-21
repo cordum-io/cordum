@@ -73,16 +73,18 @@ func encodeActionDescriptorLabel(desc *config.ActionDescriptor) (string, error) 
 // handlers_policy.go gate-firing branches into the live request path.
 //
 // Returns no error: gate construction itself never fails (nil deps
-// degrade individual gates to fail-closed). The function is idempotent
-// — callers that re-invoke at config-reload time receive a fresh
-// pipeline.
+// degrade individual gates to fail-closed/service_unavailable). The
+// function is idempotent — callers that re-invoke at config-reload time
+// receive a fresh pipeline.
 func (s *server) wireActionGatePipeline() {
 	if s == nil {
 		return
 	}
+	redisClient := s.redisClient()
 	pipeline := actiongates.BuildProductionPipeline(actiongates.ProductionPipelineOptions{
-		Approvals:  edgeStoreApprovalLookup{store: s.edgeStore},
-		Identities: gatewayMCPIdentityResolver{store: s.agentIdentityStore},
+		Approvals:     edgeStoreApprovalLookup{store: s.edgeStore},
+		Identities:    gatewayMCPIdentityResolver{store: s.agentIdentityStore},
+		ChainVerifier: newAuditChainApprovalVerifier(redisClient, s.auditChainer),
 	})
 	// actionGatePipeline is set once during boot before any handler can
 	// observe it, so the field assignment needs no lock — Go's
@@ -92,6 +94,10 @@ func (s *server) wireActionGatePipeline() {
 		"gate_count", len(pipeline.Gates()),
 		"approvals_backend", "edge.RedisStore",
 		"mcp_identity_backend", "store.AgentIdentityStore",
+		"audit_chain_verifier_backend", "core/audit.VerifyChain",
+		"audit_chain_redis_available", redisClient != nil,
+		"audit_chain_chainer_available", s.auditChainer != nil,
+		"audit_chain_hmac_enabled", s.auditChainer != nil && s.auditChainer.HMACEnabled(),
 	)
 }
 

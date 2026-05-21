@@ -11,9 +11,11 @@ package actiongates
 //   - MutationGate needs an Approvals lookup — without it, every
 //     destructive action fails closed at the mutation gate with
 //     Code=internal_error.
-//   - ProvenanceGate needs both an Approvals lookup AND a ChainVerifier
-//     — either being nil short-circuits destructive actions to
-//     Code=internal_error.
+//   - ProvenanceGate needs both an Approvals lookup AND a ChainVerifier.
+//     Gateway production wiring supplies a core/audit ChainVerifier; if
+//     that dependency is absent or unavailable, destructive actions fail
+//     closed with Code=service_unavailable rather than silently allowing
+//     or surfacing an ambiguous internal_error.
 //   - MCPGate needs an Identities resolver — without it, every
 //     mcp_call action fails closed with Code=internal_error.
 //

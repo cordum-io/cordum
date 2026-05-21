@@ -143,6 +143,31 @@ Edge reuses the existing audit pipeline (`core/audit.AuditSender` and
 `audit.SIEMEvent`). Audit emission is best-effort and must not change
 policy/evaluate/hook decisions if the audit pipeline is unavailable.
 
+### ProvenanceGate audit-chain verification
+
+For destructive actions that present a backend `approval_ref`, the gateway's
+production action-gate pipeline wires `ProvenanceGate` to the existing
+per-tenant audit hash chain (`server.auditChainer` +
+`core/audit.VerifyChain`). The verifier bounds each check to the approval
+window (`CreatedAt` through max of `ResolvedAt`, `ConsumedAt`, and now) and
+uses the tenant stream (`audit:chain:<tenant>`) rather than scanning unrelated
+tenant history.
+
+Verifier dependencies fail closed. If Redis or the audit chainer/verifier is
+missing or unavailable, the gate returns `service_unavailable` with an
+`audit_chain_verifier_unavailable` / `audit_chain_verify_failed` sub-reason so
+operators see a dependency outage instead of a surprise `internal_error` after
+human approval. Tampering signals still deny hard as integrity failures:
+compromised hash/HMAC/linkage returns `audit_chain_compromised`, and a missing
+approval-window event returns `audit_evidence_missing`.
+
+Retention-trimmed history can produce a `partial` verifier status. Partial is
+acceptable only when the requested window still has authenticated in-window
+evidence; a zero-event window or explicit missing/out-of-order gap is treated as
+an evidence gap and fails closed. When `CORDUM_AUDIT_HMAC_KEY` is configured,
+the verifier uses `Chainer.HMACKeyForVerify`; key material is never logged,
+returned in API errors, or copied into audit `extra`.
+
 | Event type | Builder / source | Severity source |
 | --- | --- | --- |
 | `edge.session_started` | `SIEMEventForSessionStarted` | `INFO`. |
