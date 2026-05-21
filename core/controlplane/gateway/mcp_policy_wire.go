@@ -64,12 +64,12 @@ type policyDispatcherAdapter struct {
 // so a gateway boot without the action gate wired falls through to
 // the legacy approval flow without crashing.
 //
-// Constraints propagate when the gate fires ALLOW_WITH_CONSTRAINTS so
-// the mcp audit event records the same `_constraints` payload that
-// agentd consumers see — keeps the gate's verdict bound to the same
-// constraint metadata across the hook + MCP surfaces (no parallel
-// subsystem). No-op for non-AWC decisions: the source map is nil and
-// the copy preserves nil rather than substituting an empty map.
+// Production action gates are blockers/approval gates and do not emit
+// enforceable generic constraints. The adapter still copies Constraints for
+// fake/test dispatchers and future typed action-gate designs, but callers must
+// not treat those generic map entries as the production enforcement path.
+// Typed runtime constraints continue to flow through policy bundles and
+// SafetyKernel PolicyConstraints.
 func (a policyDispatcherAdapter) Dispatch(ctx context.Context, in *config.PolicyInput) (mcp.PolicyDecision, bool) {
 	if a.pipeline == nil {
 		return mcp.PolicyDecision{}, false

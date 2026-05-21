@@ -114,21 +114,20 @@ func TestMCPPolicyGateE2E_OversizedPayloadLandsInArtifactStore(t *testing.T) {
 	}
 }
 
-// TestMCPPolicyGateE2E_AWCPostEventCarriesConstraints covers acceptance
-// criterion #3 part (iv): when the gate fires ALLOW_WITH_CONSTRAINTS,
-// the post event landing on edge.RedisStore records
-// Decision=DecisionConstrain plus the structured Constraints map.
-// Production gates do not yet emit AWC, so we substitute a fake
-// dispatcher while keeping the EventEmitter + ArtifactStore real —
-// the constraint propagation path is the data plane we want to verify.
-func TestMCPPolicyGateE2E_AWCPostEventCarriesConstraints(t *testing.T) {
+// TestMCPPolicyGateE2E_FakeDispatcherAWCPostEventCarriesConstraints covers
+// the compatibility data plane only: when a fake/test dispatcher fires
+// ALLOW_WITH_CONSTRAINTS, the post event landing on edge.RedisStore records
+// Decision=DecisionConstrain plus the structured Constraints map. Production
+// action gates are blockers-only and do not emit enforceable generic
+// constraints; policy-bundle typed constraints are tested separately.
+func TestMCPPolicyGateE2E_FakeDispatcherAWCPostEventCarriesConstraints(t *testing.T) {
 	t.Parallel()
 	deps, ctx, tenantID, sessionID, executionID := bootMCPPolicyGateE2E(t)
 	constraints := map[string]any{
 		"max_bytes": float64(1024),
 		"redaction": "strict",
 	}
-	deps.Pipeline = awcDispatcher{constraints: constraints}
+	deps.Pipeline = fakeAWCDispatcher{constraints: constraints}
 	deps.Upstream = upstreamCallerAdapter{upstream: &fakeUpstreamToolCaller{result: "ok"}}
 
 	if _, err := mcp.InvokeToolWithPolicy(ctx, deps, mcp.ToolCallParams{
@@ -300,16 +299,16 @@ func waitForEdgeEventsByKind(ctx context.Context, t *testing.T, emitter mcp.Even
 	return out, nil
 }
 
-// awcDispatcher returns ALLOW_WITH_CONSTRAINTS with a fixed constraint
-// map. Production gates don't yet emit AWC; this fake stands in to
-// exercise the constraint propagation data path through the production
-// emitter + artifact store. The Pipeline interface lets tests inject
-// the fake while keeping the rest of the boot-wired deps real.
-type awcDispatcher struct {
+// fakeAWCDispatcher returns ALLOW_WITH_CONSTRAINTS with a fixed constraint
+// map. Production action gates do not emit this decision; this fake stands in
+// to exercise the compatibility propagation data path through the production
+// emitter + artifact store. The Pipeline interface lets tests inject the fake
+// while keeping the rest of the boot-wired deps real.
+type fakeAWCDispatcher struct {
 	constraints map[string]any
 }
 
-func (a awcDispatcher) Dispatch(_ context.Context, _ *config.PolicyInput) (mcp.PolicyDecision, bool) {
+func (a fakeAWCDispatcher) Dispatch(_ context.Context, _ *config.PolicyInput) (mcp.PolicyDecision, bool) {
 	return mcp.PolicyDecision{
 		Decision:    pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS,
 		GateID:      "test.awc",

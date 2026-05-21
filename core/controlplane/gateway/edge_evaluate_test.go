@@ -204,6 +204,8 @@ func TestGatewayEdgeEvaluateMapsSafetyDecisionsToHookResponse(t *testing.T) {
 		wantApprovalRef    string
 		wantWaitStrategy   string
 		wantConstraints    bool
+		wantCommand        string
+		wantRedaction      string
 		wantTerminalSubstr string
 	}{
 		{
@@ -248,13 +250,17 @@ func TestGatewayEdgeEvaluateMapsSafetyDecisionsToHookResponse(t *testing.T) {
 				PolicySnapshot: "snap-constrain",
 				RuleId:         "constraint-rule",
 				Constraints: &pb.PolicyConstraints{
-					Toolchain: &pb.ToolchainConstraints{AllowedCommands: []string{"npm test"}},
+					Budgets:        &pb.BudgetConstraints{MaxRuntimeMs: 5000},
+					Toolchain:      &pb.ToolchainConstraints{AllowedCommands: []string{"npm test"}},
+					RedactionLevel: "strict",
 				},
 			},
 			wantDecision:    "CONSTRAIN",
 			wantPermission:  "allow",
 			wantExitCode:    0,
 			wantConstraints: true,
+			wantCommand:     "npm test",
+			wantRedaction:   "strict",
 		},
 		{
 			name:               "unspecified fail closed",
@@ -300,11 +306,35 @@ func TestGatewayEdgeEvaluateMapsSafetyDecisionsToHookResponse(t *testing.T) {
 			if tc.wantConstraints && len(resp.Constraints) == 0 {
 				t.Fatalf("constraints empty, want safety constraints body=%s", rr.Body.String())
 			}
+			if tc.wantCommand != "" {
+				assertEdgeConstraintListContains(t, resp.Constraints, "toolchain", "allowedCommands", tc.wantCommand)
+			}
+			if tc.wantRedaction != "" && resp.Constraints["redactionLevel"] != tc.wantRedaction {
+				t.Fatalf("constraints.redactionLevel = %#v, want %q body=%s", resp.Constraints["redactionLevel"], tc.wantRedaction, rr.Body.String())
+			}
 			if tc.wantTerminalSubstr != "" && !strings.Contains(strings.ToLower(resp.TerminalMessage), tc.wantTerminalSubstr) {
 				t.Fatalf("terminal_message = %q, want substring %q", resp.TerminalMessage, tc.wantTerminalSubstr)
 			}
 		})
 	}
+}
+
+func assertEdgeConstraintListContains(t *testing.T, constraints map[string]any, section, field, want string) {
+	t.Helper()
+	nested, ok := constraints[section].(map[string]any)
+	if !ok {
+		t.Fatalf("constraints[%q] = %#v, want object", section, constraints[section])
+	}
+	values, ok := nested[field].([]any)
+	if !ok {
+		t.Fatalf("constraints[%q][%q] = %#v, want list", section, field, nested[field])
+	}
+	for _, value := range values {
+		if got, ok := value.(string); ok && got == want {
+			return
+		}
+	}
+	t.Fatalf("constraints[%q][%q] = %#v, want entry %q", section, field, values, want)
 }
 
 func TestGatewayEdgeEvaluateRequireApprovalResponseIncludesRetryMetadata(t *testing.T) {

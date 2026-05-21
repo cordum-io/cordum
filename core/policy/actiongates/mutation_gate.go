@@ -128,7 +128,7 @@ func (g *MutationGate) Evaluate(ctx context.Context, in *config.PolicyInput) Act
 	extra["approval_ref"] = approval.ApprovalRef
 	extra["single_use"] = "true"
 	return ActionGateDecision{
-		Decision:  pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS,
+		Decision:  pb.DecisionType_DECISION_TYPE_ALLOW,
 		GateID:    GateIDMutation,
 		Reason:    "destructive action authorized by backend approval",
 		SubReason: "approved",

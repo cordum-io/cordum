@@ -11,6 +11,11 @@ The policy entry-point is `core/mcp.InvokeToolWithPolicy`. The MCP server
 wires it via `MCPServer.WithPolicyGate(server, deps)`; an un-wired server
 falls through to the legacy direct-dispatch path (dev/test only).
 
+Production action gates are blockers/approval gates. They produce
+`ALLOW`, `DENY`, `THROTTLE`, or `REQUIRE_HUMAN`, and they do not emit
+enforceable generic constraint maps. Typed runtime constraints still
+come from policy bundles and SafetyKernel `PolicyConstraints`.
+
 ## Request flow
 
 ```
@@ -28,12 +33,12 @@ core/mcp.EvaluateToolCall
    │     ├── normalize path-like args ➜ desc.TargetPath
    │     ├── enforce byte-length cap (MaxToolCallArgsBytes = 1 MiB)
    │     └── copy approval_claim arg verbatim into ApprovalClaim.ClaimText
-   │  5. PolicyDispatcher.Dispatch — runs the actiongate pipeline in
-   │     order: tenant → file → url → mcp → mutation → provenance
+   │  5. PolicyDispatcher.Dispatch — runs the blockers-only actiongate
+   │     pipeline in order: tenant → file → url → mcp → mutation → provenance
    │  6. emit mcp.tool.pre OR mcp.tool.failed (deny/throttle) event
    ▼
 decision branch
-   ├── ALLOW / ALLOW_WITH_CONSTRAINTS  ───►  upstream tool handler  ───►  mcp.tool.post
+   ├── ALLOW                           ───►  upstream tool handler  ───►  mcp.tool.post
    ├── DENY / THROTTLE                  ───►  short-circuit (no upstream call)
    ├── REQUIRE_HUMAN                    ───►  ApprovalHandoff.ConsumeActionGateDecision
    │                                            ├── invariant check
@@ -89,7 +94,7 @@ universal "no claim text wins" rule.
 | Decision | Behaviour |
 | --- | --- |
 | `ALLOW` | Forward to upstream; emit `mcp.tool.pre` then `mcp.tool.post`. |
-| `ALLOW_WITH_CONSTRAINTS` | Forward to upstream like ALLOW; emit `mcp.tool.pre` then `mcp.tool.post` with `Decision=CONSTRAIN` (not `ALLOW`) and the gate's constraint map carried on `AgentActionEvent.Constraints` (`json:"constraints,omitempty"`). Failed-upstream events emit `mcp.tool.failed` preserving the same constraints. `logToolCallDecision` records `constraint_count` only — never values. |
+| `ALLOW_WITH_CONSTRAINTS` | Compatibility/future-typed dispatcher path only. Production action gates do not emit this decision. If a non-actiongate test/future dispatcher returns it, the MCP bridge forwards like ALLOW and emits `Decision=CONSTRAIN` with the provided typed constraints; do not rely on action-gate `Constraints` for enforcement. |
 | `DENY` | Short-circuit; emit `mcp.tool.failed`; return `IsError=true` with sanitized reason. |
 | `THROTTLE` | Short-circuit; emit `mcp.tool.failed` with code `throttled`; caller back-pressures. |
 | `REQUIRE_HUMAN` | Bridge calls `ApprovalHandoff.ConsumeActionGateDecision`; upstream is not invoked. |
@@ -99,9 +104,12 @@ store outage on an oversized event, a redaction completeness leak, or a
 nil `EventEmitter` all reject with no event emitted (we never write an
 unattributed audit row).
 
-> **Constraints persistence (post-EDGE-102).** When the policy decision
-> is `ALLOW_WITH_CONSTRAINTS`, the constraint identifiers and parameters
-> are carried on the typed `AgentActionEvent.Constraints` field
+> **Constraints persistence (post-EDGE-102).** Production action gates
+> are blockers-only and do not populate enforceable generic
+> `Constraints`. The MCP bridge still has a compatibility data plane:
+> if a non-actiongate/future typed dispatcher returns
+> `ALLOW_WITH_CONSTRAINTS`, the constraint identifiers and parameters are
+> carried on the typed `AgentActionEvent.Constraints` field
 > (`map[string]any` with `json:"constraints,omitempty"`, defined at
 > `core/edge/event.go`). The field is populated on `mcp.tool.pre`,
 > `mcp.tool.post` (`Decision=CONSTRAIN`), and `mcp.tool.failed` events,
@@ -116,7 +124,9 @@ unattributed audit row).
 > `SessionExportAssembler` path (`core/edge/export.go`); the redaction
 > contract still applies, so any constraint value-shaped fields stay
 > bounded to identifiers and structured parameters, never freeform
-> tool input.
+> tool input. Today, normal typed runtime constraints are produced by
+> policy bundles and SafetyKernel `PolicyConstraints`, not by production
+> action gates.
 
 ## Approval flow integration
 
@@ -144,6 +154,12 @@ Precedence at the approval-handoff site (matches `gatewayApprovalGate.Check`):
 The bridge's `mcp.tool.pre` event carries `Decision = require_approval` so
 the audit trail records the gating point even if the lifecycle resolves
 asynchronously.
+
+Single-use approval semantics are enforced by the Edge approval store's
+`ClaimApproval` CAS consume path when the retry presents the bound
+`approval_ref`. Mutation/action gates may add `single_use=true` as an
+audit breadcrumb on ALLOW, but no action-gate constraint map enforces
+the one-shot transition.
 
 ## Emitted events
 

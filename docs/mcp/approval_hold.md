@@ -6,6 +6,12 @@ once an operator approves. The mint path runs inside the gateway's
 action-gate evaluation; the consume path runs inside the MCP server
 when the client retries the call with an `_approval_ref` argument.
 
+Production action gates are blockers/approval gates only: they allow,
+deny, throttle, or require human approval. They do not emit enforceable
+generic runtime constraints. Typed `ALLOW_WITH_CONSTRAINTS` limits are
+owned by policy bundles and SafetyKernel `PolicyConstraints`, while
+approval single-use is enforced by the Edge approval store claim path.
+
 This document is the contract for the EDGE-103 lifecycle. For the
 broader threat model and human approval flow see
 [`per-tool-approval.md`](per-tool-approval.md). For preapproved

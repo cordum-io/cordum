@@ -7,6 +7,12 @@ same call with an `_approval_ref` field once a human resolver has
 approved the request; Cordum atomically consumes the approval against
 the stored args + policy snapshot and forwards the call upstream.
 
+Production action gates are blockers/approval gates: they allow, deny,
+throttle, or require human approval. They do not emit enforceable
+generic runtime constraints. Typed `ALLOW_WITH_CONSTRAINTS` runtime
+limits come from policy bundles and SafetyKernel `PolicyConstraints`,
+not from this approval-hold path.
+
 EDGE-103 layers the **resume** path on top of EDGE-102's policy gate.
 The initial **hold** path is unchanged from EDGE-102.
 
@@ -112,6 +118,10 @@ consume flips `Status` from `Approved` to `Consumed` and sets
 `ConsumedAt`. A second consume on the same `approval_ref` hits
 `kind=consumed`. Concurrent consumes on the same ref are serialised
 (see `TestRedisStoreApprovalConcurrentClaimConsumesOnce`).
+
+This CAS transition is the single-use enforcement point. The mutation
+gate may include `single_use=true` as an audit breadcrumb on an allow,
+but no action-gate `Constraints` map enforces single-use.
 
 ## Self-approval prohibition
 

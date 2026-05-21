@@ -193,7 +193,7 @@ func TestMutationGate_ApprovalRefBinding(t *testing.T) {
 		subReasonHas string
 		wantExtraRef string
 	}{
-		{"real_ref_allows", "appr_real", real, pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS, "", "", "appr_real"},
+		{"real_ref_allows", "appr_real", real, pb.DecisionType_DECISION_TYPE_ALLOW, "", "", "appr_real"},
 		{"fake_ref_denies_not_found", "appr_fake", nil, pb.DecisionType_DECISION_TYPE_DENY, CodeNotFound, "approval_not_found", ""},
 		{"mismatched_ref_conflicts", "appr_mismatch", mismatched, pb.DecisionType_DECISION_TYPE_DENY, CodeConflict, "approval_mismatch", ""},
 		{"consumed_ref_conflicts", "appr_consumed", consumed, pb.DecisionType_DECISION_TYPE_DENY, CodeConflict, "consumed", ""},
@@ -218,6 +218,9 @@ func TestMutationGate_ApprovalRefBinding(t *testing.T) {
 			assertMutationDecision(t, dec, tc.wantDecision, tc.wantCode, tc.subReasonHas)
 			if tc.wantExtraRef != "" && dec.Extra["approval_ref"] != tc.wantExtraRef {
 				t.Fatalf("extra.approval_ref = %q, want %q", dec.Extra["approval_ref"], tc.wantExtraRef)
+			}
+			if tc.wantExtraRef != "" && len(dec.Constraints) != 0 {
+				t.Fatalf("valid approval must not imply unenforced constraints, got %v", dec.Constraints)
 			}
 		})
 	}
@@ -405,14 +408,17 @@ func TestMutationGate_ValidApprovalAllows(t *testing.T) {
 	lookup := &fakeApprovalLookup{records: map[string]*edge.EdgeApproval{"tnt_a:" + hash: approval}}
 	gate := NewMutationGate(MutationGateOptions{Approvals: lookup, Resources: &fakeResourceLookup{}})
 	dec := gate.Evaluate(mutCtx(), &config.PolicyInput{Action: action})
-	if dec.Decision != pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS {
-		t.Fatalf("got %v, want ALLOW_WITH_CONSTRAINTS", dec.Decision)
+	if dec.Decision != pb.DecisionType_DECISION_TYPE_ALLOW {
+		t.Fatalf("got %v, want ALLOW", dec.Decision)
 	}
 	if dec.Extra["approval_ref"] != "appr_1" {
 		t.Fatalf("extra.approval_ref = %q, want appr_1", dec.Extra["approval_ref"])
 	}
 	if dec.Extra["single_use"] != "true" {
 		t.Fatalf("extra.single_use = %q, want true", dec.Extra["single_use"])
+	}
+	if len(dec.Constraints) != 0 {
+		t.Fatalf("valid approval must not imply unenforced constraints, got %v", dec.Constraints)
 	}
 }
 

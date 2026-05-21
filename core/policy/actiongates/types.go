@@ -37,20 +37,20 @@ const (
 
 // ActionGateDecision is the output of a single gate. A zero-value decision
 // (Decision == DECISION_TYPE_UNSPECIFIED) indicates the gate did not fire and
-// the pipeline continues. A populated Decision short-circuits the pipeline.
+// the pipeline continues. A populated non-allow Decision short-circuits the
+// pipeline. Production action gates are blockers / approval checks: they allow,
+// deny, throttle, or require human approval, but they do not emit enforceable
+// runtime constraints.
 //
 // Reason MUST be sanitized for user/client display. SubReason is for audit
 // only and may carry the internal "why" (e.g. "approval_consumed",
 // "self_approval", "cross_tenant"). Extra holds non-PII gate-specific
 // breadcrumbs (gate, sub_reason, sanitized target_type) for SIEM.
 //
-// Constraints carries the structured `_constraints` map a gate populates
-// when it returns ALLOW_WITH_CONSTRAINTS. The shape mirrors the agentd
-// evaluate response (core/edge/agentd EvaluateResponse.Constraints) so
-// audit consumers see a single canonical constraint payload across the
-// hook + MCP surfaces. Gates today populate this lazily; the field is
-// ready so future tier-ceiling / sandbox-mode gates can emit constraints
-// without a wire-format change.
+// Constraints is reserved for non-production/test adapters or a future typed
+// action-gate design. Production action gates must not populate it or imply
+// that generic map entries are enforced; typed runtime constraints are owned
+// by policy bundles and SafetyKernel PolicyConstraints.
 type ActionGateDecision struct {
 	Decision    pb.DecisionType
 	GateID      string

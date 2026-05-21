@@ -33,7 +33,8 @@ For every Claude action that crossed the gateway evaluate path:
 ### Why two records, not one
 
 The gateway records the authoritative decision (which rule fired, what
-the policy snapshot was, the constraints emitted). The agentd records
+the policy snapshot was, and any typed policy-bundle/SafetyKernel
+constraints emitted). The agentd records
 the local-context evidence (cache hit/miss, fail mode, agentd timing,
 hook env). Collapsing them as EDGE-039 attempted (sharing the gateway
 event_id) hit the idempotency window on the second write because both

@@ -1,6 +1,7 @@
 package safetykernel
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/cordum/cordum/core/infra/config"
@@ -63,10 +64,31 @@ func TestConstraintsHelpers(t *testing.T) {
 	if !isConstraintsEmpty(config.PolicyConstraints{}) {
 		t.Fatalf("expected empty constraints")
 	}
-	c := config.PolicyConstraints{Budgets: config.BudgetConstraints{MaxRuntimeMs: 1}}
+	c := config.PolicyConstraints{
+		Budgets: config.BudgetConstraints{MaxRuntimeMs: 1, MaxArtifactBytes: 2048},
+		Sandbox: config.SandboxProfile{
+			Isolated:   true,
+			FsReadOnly: []string{"/workspace"},
+		},
+		Toolchain:      config.ToolchainConstraints{AllowedCommands: []string{"go test ./..."}},
+		Diff:           config.DiffConstraints{MaxLines: 200, DenyPathGlobs: []string{"secrets/*"}},
+		RedactionLevel: "strict",
+	}
 	proto := toProtoConstraints(c)
-	if proto == nil || proto.Budgets.GetMaxRuntimeMs() != 1 {
-		t.Fatalf("unexpected constraints proto")
+	if proto == nil || proto.GetBudgets().GetMaxRuntimeMs() != 1 || proto.GetBudgets().GetMaxArtifactBytes() != 2048 {
+		t.Fatalf("unexpected policy-bundle budget constraints proto: %#v", proto)
+	}
+	if !proto.GetSandbox().GetIsolated() || !slices.Equal(proto.GetSandbox().GetFsReadOnly(), []string{"/workspace"}) {
+		t.Fatalf("unexpected sandbox constraints proto: %#v", proto.GetSandbox())
+	}
+	if !slices.Equal(proto.GetToolchain().GetAllowedCommands(), []string{"go test ./..."}) {
+		t.Fatalf("unexpected toolchain constraints proto: %#v", proto.GetToolchain())
+	}
+	if proto.GetDiff().GetMaxLines() != 200 || !slices.Equal(proto.GetDiff().GetDenyPathGlobs(), []string{"secrets/*"}) {
+		t.Fatalf("unexpected diff constraints proto: %#v", proto.GetDiff())
+	}
+	if proto.GetRedactionLevel() != "strict" {
+		t.Fatalf("redaction_level = %q, want strict", proto.GetRedactionLevel())
 	}
 }
 

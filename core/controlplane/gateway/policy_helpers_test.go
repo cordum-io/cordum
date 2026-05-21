@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
@@ -75,10 +76,30 @@ func TestConstraintsConversion(t *testing.T) {
 		t.Fatalf("expected nil proto constraints for empty config")
 	}
 	converted := policybundles.ToProtoConstraints(config.PolicyConstraints{
-		Budgets: config.BudgetConstraints{MaxRuntimeMs: 1000},
+		Budgets: config.BudgetConstraints{MaxRuntimeMs: 1000, MaxRetries: 2},
+		Sandbox: config.SandboxProfile{
+			Isolated:         true,
+			NetworkAllowlist: []string{"api.cordum.io"},
+			FsReadOnly:       []string{"/workspace"},
+		},
+		Toolchain:      config.ToolchainConstraints{AllowedTools: []string{"Bash"}, AllowedCommands: []string{"npm test"}},
+		Diff:           config.DiffConstraints{MaxFiles: 3, DenyPathGlobs: []string{"secrets/*"}},
+		RedactionLevel: "strict",
 	})
-	if converted == nil || converted.Budgets.GetMaxRuntimeMs() != 1000 {
-		t.Fatalf("expected budgets converted")
+	if converted == nil || converted.GetBudgets().GetMaxRuntimeMs() != 1000 || converted.GetBudgets().GetMaxRetries() != 2 {
+		t.Fatalf("expected typed policy-bundle budget constraints converted, got %#v", converted)
+	}
+	if !converted.GetSandbox().GetIsolated() || !slices.Equal(converted.GetSandbox().GetNetworkAllowlist(), []string{"api.cordum.io"}) {
+		t.Fatalf("expected typed sandbox constraints converted, got %#v", converted.GetSandbox())
+	}
+	if !slices.Equal(converted.GetToolchain().GetAllowedCommands(), []string{"npm test"}) {
+		t.Fatalf("expected typed toolchain constraints converted, got %#v", converted.GetToolchain())
+	}
+	if converted.GetDiff().GetMaxFiles() != 3 || !slices.Equal(converted.GetDiff().GetDenyPathGlobs(), []string{"secrets/*"}) {
+		t.Fatalf("expected typed diff constraints converted, got %#v", converted.GetDiff())
+	}
+	if converted.GetRedactionLevel() != "strict" {
+		t.Fatalf("redaction_level = %q, want strict", converted.GetRedactionLevel())
 	}
 }
 

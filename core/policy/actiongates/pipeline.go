@@ -25,9 +25,11 @@ import (
 //
 // A gate may return a zero decision (Decision == UNSPECIFIED) to signal
 // "does not apply to this input"; the pipeline simply continues. An
-// ALLOW or ALLOW_WITH_CONSTRAINTS lets subsequent gates run because
-// each gate enforces a different invariant. Any other decision
-// (DENY / REQUIRE_HUMAN / THROTTLE) short-circuits.
+// ALLOW lets subsequent gates run because each gate enforces a different
+// invariant. ALLOW_WITH_CONSTRAINTS is also treated as non-terminal for
+// defensive compatibility, but production action gates do not use it as an
+// enforcement surface. Any other decision (DENY / REQUIRE_HUMAN / THROTTLE)
+// short-circuits.
 type Pipeline struct {
 	gates []ActionGate
 }
@@ -69,15 +71,15 @@ func (p *Pipeline) Gates() []ActionGate {
 // decision with fired=false so callers can fall through to legacy
 // rule evaluation without an action-layer ambiguity.
 //
-// When every fired gate ALLOWs (DECISION_TYPE_ALLOW or
-// DECISION_TYPE_ALLOW_WITH_CONSTRAINTS) the pipeline returns
+// When every fired gate ALLOWs (DECISION_TYPE_ALLOW, or the compatibility
+// DECISION_TYPE_ALLOW_WITH_CONSTRAINTS anomaly) the pipeline returns
 // (mergedExtra, false): fired stays false so the existing "no blocking
 // decision" caller contract is preserved, and the returned decision
 // keeps Decision == UNSPECIFIED (Fired() reports false). The Extra map
-// carries the merged breadcrumbs from every firing gate (mutation
-// gate's `single_use=true`, provenance gate's `provenance_verified=true`,
-// etc.) so audit/observability paths can read constraint signals
-// without losing data when a later gate overwrites an earlier one.
+// carries merged non-PII breadcrumbs from every firing allow gate. Generic
+// action-gate Constraints are intentionally not merged: typed runtime
+// constraints are enforced through policy bundles / SafetyKernel
+// PolicyConstraints, not through the blockers-only action-gate pipeline.
 func (p *Pipeline) Run(ctx context.Context, in *config.PolicyInput) (ActionGateDecision, bool) {
 	if p == nil || len(p.gates) == 0 {
 		return ActionGateDecision{}, false
