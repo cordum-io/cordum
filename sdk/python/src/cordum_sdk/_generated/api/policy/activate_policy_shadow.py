@@ -1,16 +1,13 @@
 from http import HTTPStatus
-from typing import Any, Dict, List, Optional, Union, cast
+from typing import Any, Dict, Optional, Union, cast
 
 import httpx
 
-from ...client import AuthenticatedClient, Client
-from ...types import Response, UNSET
 from ... import errors
-
+from ...client import AuthenticatedClient, Client
 from ...models.policy_shadow import PolicyShadow
 from ...models.policy_shadow_upsert_request import PolicyShadowUpsertRequest
-from typing import cast
-from typing import Dict
+from ...types import Response
 
 
 def _get_kwargs(
