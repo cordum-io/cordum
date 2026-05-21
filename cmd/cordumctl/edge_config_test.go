@@ -14,7 +14,7 @@ func TestEdgeClaudeConfigDefaultsBaseline(t *testing.T) {
 	home := t.TempDir()
 	cwd := t.TempDir()
 
-	cfg, sources, err := LoadEdgeClaudeConfig(nil, cwd, home)
+	cfg, sources, err := LoadEdgeClaudeConfig([]string{}, cwd, home)
 	if err != nil {
 		t.Fatalf("LoadEdgeClaudeConfig returned error: %v", err)
 	}
@@ -48,7 +48,7 @@ tenant: tenant-from-user-yaml
 policy_mode: observe
 `)
 
-	cfg, sources, err := LoadEdgeClaudeConfig(nil, cwd, home)
+	cfg, sources, err := LoadEdgeClaudeConfig([]string{}, cwd, home)
 	if err != nil {
 		t.Fatalf("LoadEdgeClaudeConfig: %v", err)
 	}
@@ -87,7 +87,7 @@ gateway: https://project.example
 policy_mode: enforce
 `)
 
-	cfg, sources, err := LoadEdgeClaudeConfig(nil, cwd, home)
+	cfg, sources, err := LoadEdgeClaudeConfig([]string{}, cwd, home)
 	if err != nil {
 		t.Fatalf("LoadEdgeClaudeConfig: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestEdgeClaudeConfigRejectsPlaintextAPIKey(t *testing.T) {
 api_key: super-secret-plaintext-do-not-commit
 `)
 
-	_, _, err := LoadEdgeClaudeConfig(nil, cwd, home)
+	_, _, err := LoadEdgeClaudeConfig([]string{}, cwd, home)
 	if err == nil {
 		t.Fatalf("LoadEdgeClaudeConfig: expected error for plaintext api_key, got nil")
 	}
@@ -193,7 +193,7 @@ func TestEdgeClaudeConfigAPIKeyEnvReferenceUnsetIsEmpty(t *testing.T) {
 api_key: ${CORDUM_API_KEY_NEVER_DEFINED}
 `)
 
-	cfg, _, err := LoadEdgeClaudeConfig(nil, cwd, home)
+	cfg, _, err := LoadEdgeClaudeConfig([]string{}, cwd, home)
 	if err != nil {
 		t.Fatalf("LoadEdgeClaudeConfig: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestEdgeClaudeConfigAutoDetectsCacertForLocalhost(t *testing.T) {
 gateway: https://localhost:8081
 `)
 
-	cfg, sources, err := LoadEdgeClaudeConfig(nil, cwd, home)
+	cfg, sources, err := LoadEdgeClaudeConfig([]string{}, cwd, home)
 	if err != nil {
 		t.Fatalf("LoadEdgeClaudeConfig: %v", err)
 	}
@@ -244,7 +244,7 @@ func TestEdgeClaudeConfigSkipsAutoCacertForRemoteGateway(t *testing.T) {
 gateway: https://gateway.production.example
 `)
 
-	cfg, _, err := LoadEdgeClaudeConfig(nil, cwd, home)
+	cfg, _, err := LoadEdgeClaudeConfig([]string{}, cwd, home)
 	if err != nil {
 		t.Fatalf("LoadEdgeClaudeConfig: %v", err)
 	}
@@ -273,7 +273,7 @@ gateway: https://localhost:8081
 cacert: operator-supplied.crt
 `)
 
-	cfg, sources, err := LoadEdgeClaudeConfig(nil, cwd, home)
+	cfg, sources, err := LoadEdgeClaudeConfig([]string{}, cwd, home)
 	if err != nil {
 		t.Fatalf("LoadEdgeClaudeConfig: %v", err)
 	}
@@ -318,7 +318,7 @@ func TestEdgeClaudeConfigMalformedYAMLRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err := LoadEdgeClaudeConfig(nil, cwd, home)
+	_, _, err := LoadEdgeClaudeConfig([]string{}, cwd, home)
 	if err == nil {
 		t.Fatalf("LoadEdgeClaudeConfig: expected error for malformed yaml, got nil")
 	}
@@ -337,7 +337,7 @@ gateway: https://localhost:8081
 gatewey: oops-typo
 `)
 
-	_, _, err := LoadEdgeClaudeConfig(nil, cwd, home)
+	_, _, err := LoadEdgeClaudeConfig([]string{}, cwd, home)
 	if err == nil {
 		t.Fatalf("LoadEdgeClaudeConfig: expected error for unknown field, got nil")
 	}

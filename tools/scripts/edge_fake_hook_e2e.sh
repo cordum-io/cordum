@@ -766,11 +766,12 @@ start_agentd() {
   # a self-issued CA not present in the Windows root store.
   CORDUM_AGENTD_NONCE="${AGENTD_NONCE}" \
     CORDUM_GATEWAY="${API_BASE}" \
-    CORDUM_API_KEY="${CORDUM_API_KEY}" \
-    CORDUM_TENANT_ID="${CORDUM_TENANT_ID}" \
-    CORDUM_PRINCIPAL_ID="${EDGE_PRINCIPAL_ID}" \
-    CORDUM_AGENTD_SOCKET="${agentd_socket}" \
-    CORDUM_AGENTD_STATE_DIR="${AGENTD_STATE_DIR}" \
+  CORDUM_API_KEY="${CORDUM_API_KEY}" \
+  CORDUM_TENANT_ID="${CORDUM_TENANT_ID}" \
+  CORDUM_PRINCIPAL_ID="${EDGE_PRINCIPAL_ID}" \
+  CORDUM_EDGE_POLICY_MODE="${CORDUM_EDGE_E2E_POLICY_MODE:-enforce}" \
+  CORDUM_AGENTD_SOCKET="${agentd_socket}" \
+  CORDUM_AGENTD_STATE_DIR="${AGENTD_STATE_DIR}" \
     CORDUM_EDGE_SESSION_ID="${EDGE_SESSION_ID}" \
     CORDUM_EDGE_EXECUTION_ID="${EDGE_EXECUTION_ID}" \
     CORDUM_TLS_CA="${agentd_ssl_cert_file}" \
@@ -903,7 +904,67 @@ verify_demo_policy_overlay() {
   local version
   version=$(grep -E '^version:' "${DEMO_POLICY_OVERLAY}" | head -1 | awk '{print $2}')
   log "demo policy overlay: ${DEMO_POLICY_OVERLAY} (${version:-unknown-version})"
-  log "policy assumption: agentd loads cordum-edge-pack overlay for tenant ${CORDUM_TENANT_ID}"
+}
+
+resolve_cordumctl_for_pack_install() {
+  if [[ -n "${CORDUMCTL_BIN:-}" ]]; then
+    printf '%s' "${CORDUMCTL_BIN}"
+    return 0
+  fi
+  if [[ -n "${CORDUMCTL:-}" ]]; then
+    printf '%s' "${CORDUMCTL}"
+    return 0
+  fi
+  if have_cmd cordumctl; then
+    command -v cordumctl
+    return 0
+  fi
+  if [[ -x "./bin/cordumctl" ]]; then
+    printf '%s' "./bin/cordumctl"
+    return 0
+  fi
+  if [[ -x "./bin/cordumctl.exe" ]]; then
+    printf '%s' "./bin/cordumctl.exe"
+    return 0
+  fi
+  return 1
+}
+
+install_demo_policy_pack() {
+  local gate=${1:-edge_fake_hook_e2e}
+  if [[ "${CORDUM_EDGE_E2E_INSTALL_POLICY_PACK:-1}" =~ ^(0|false|FALSE|no|NO)$ ]]; then
+    log "CORDUM_EDGE_E2E_INSTALL_POLICY_PACK=0; assuming cordum-edge-pack is already installed"
+    return 0
+  fi
+  if [[ ! -d "examples/cordum-edge-pack" ]]; then
+    fail "${gate}" "cordum-edge-pack directory missing"
+  fi
+
+  log "installing/upgrading cordum-edge-pack for tenant ${CORDUM_TENANT_ID}"
+  local ctl
+  if ctl="$(resolve_cordumctl_for_pack_install)"; then
+    CORDUM_API_KEY="${CORDUM_API_KEY}" \
+      CORDUM_ORG_ID="${CORDUM_TENANT_ID}" \
+      CORDUM_TENANT_ID="${CORDUM_TENANT_ID}" \
+      CORDUM_GATEWAY="${API_BASE}" \
+      CORDUM_TLS_CA="${CORDUM_TLS_CA:-}" \
+      "${ctl}" pack install --upgrade examples/cordum-edge-pack >/dev/null || \
+      fail "${gate}" "cordum-edge-pack install failed via ${ctl}"
+    return 0
+  fi
+
+  if have_cmd go; then
+    CORDUM_API_KEY="${CORDUM_API_KEY}" \
+      CORDUM_ORG_ID="${CORDUM_TENANT_ID}" \
+      CORDUM_TENANT_ID="${CORDUM_TENANT_ID}" \
+      CORDUM_GATEWAY="${API_BASE}" \
+      CORDUM_TLS_CA="${CORDUM_TLS_CA:-}" \
+      go run ./cmd/cordumctl pack install --upgrade ./examples/cordum-edge-pack >/dev/null || \
+      fail "${gate}" "cordum-edge-pack install failed via go run ./cmd/cordumctl"
+    return 0
+  fi
+
+  fail "${gate}" "cordum-edge-pack must be installed but neither cordumctl nor go is available"
 }
 
 setup_fixture_paths() {
@@ -2066,6 +2127,7 @@ main() {
   init_tempdir
   setup_fixture_paths
   verify_demo_policy_overlay edge_session_setup
+  install_demo_policy_pack edge_session_setup
 
   if ! want_bypass_hook; then
     locate_or_build_binaries edge_session_setup

@@ -3,6 +3,7 @@ package bus
 import (
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +20,19 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 	"google.golang.org/protobuf/proto"
 )
+
+func unusedLocalNATSURL(t *testing.T, scheme string) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve unused local port: %v", err)
+	}
+	addr := ln.Addr().String()
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close unused local port listener: %v", err)
+	}
+	return scheme + "://" + addr
+}
 
 func TestDirectSubject(t *testing.T) {
 	if DirectSubject("") != "" {
@@ -800,7 +814,7 @@ func TestNewNatsBus_PlaintextRejectedInProduction(t *testing.T) {
 	t.Setenv("CORDUM_ENV", "production")
 	t.Setenv("CORDUM_NATS_ALLOW_PLAINTEXT", "")
 
-	_, err := NewNatsBus("nats://localhost:14222")
+	_, err := NewNatsBus(unusedLocalNATSURL(t, "nats"))
 	if err == nil {
 		t.Fatal("expected error for plaintext NATS in production")
 	}
@@ -817,7 +831,7 @@ func TestNewNatsBus_PlaintextAllowedWithOverride(t *testing.T) {
 	t.Setenv("CORDUM_NATS_ALLOW_PLAINTEXT", "true")
 
 	// Connection will fail (no NATS), but the TLS check should pass.
-	_, err := NewNatsBus("nats://localhost:14222")
+	_, err := NewNatsBus(unusedLocalNATSURL(t, "nats"))
 	if err == nil {
 		t.Fatal("expected connection error (no NATS server)")
 	}
@@ -831,7 +845,7 @@ func TestNewNatsBus_PlaintextAllowedInDev(t *testing.T) {
 	t.Setenv("CORDUM_PRODUCTION", "")
 	t.Setenv("CORDUM_NATS_ALLOW_PLAINTEXT", "")
 
-	_, err := NewNatsBus("nats://localhost:14222")
+	_, err := NewNatsBus(unusedLocalNATSURL(t, "nats"))
 	if err == nil {
 		t.Fatal("expected connection error")
 	}
@@ -849,7 +863,7 @@ func TestNewNatsBus_TLSURLNotBlockedByEnforcement(t *testing.T) {
 	t.Setenv(envNATSTLSInsecure, "")
 	t.Setenv(envNATSTLSServerName, "")
 
-	_, err := NewNatsBus("tls://localhost:14222")
+	_, err := NewNatsBus(unusedLocalNATSURL(t, "tls"))
 	if err == nil {
 		t.Fatal("expected error (no TLS certs)")
 	}
@@ -990,7 +1004,7 @@ func TestNewNatsBus_ProductionNoAuthProceedsWithWarning(t *testing.T) {
 
 	// Should proceed to connection attempt (and fail due to no server),
 	// not reject due to missing auth.
-	_, err := NewNatsBus("nats://localhost:14222")
+	_, err := NewNatsBus(unusedLocalNATSURL(t, "nats"))
 	if err == nil {
 		t.Fatal("expected connection error")
 	}

@@ -170,6 +170,7 @@ fi
 BASE="${CORDUM_E2E_BASE:-http://localhost:8082/api/v1}"
 DASHBOARD_ROOT="${CORDUM_E2E_DASHBOARD_ROOT:-${BASE%/api/v1}}"
 DASHBOARD_ROOT="${DASHBOARD_ROOT%/}"
+DASHBOARD_API="${DASHBOARD_ROOT}/api/v1"
 GW="${CORDUM_E2E_GW_BASE:-${GW_SCHEME}://localhost:8081/api/v1}"
 GW_ROOT="${GW%/api/v1}"
 
@@ -204,6 +205,23 @@ http_code() {
   code="$(curl -s -o "${CURL_OUTPUT_NULL}" -w "%{http_code}" "$@" 2>/dev/null)"
   set -e
   printf '%s' "${code:-000}"
+}
+
+HTTP_CAPTURE_BODY=""
+HTTP_CAPTURE_CODE="000"
+http_capture() {
+  local tmp_body
+  local code=""
+  local rc=0
+  tmp_body="$(mktemp -t cordum-e2e-http.XXXXXX)"
+  set +e
+  code="$(curl -sS -o "${tmp_body}" -w "%{http_code}" "$@" 2>/dev/null)"
+  rc=$?
+  set -e
+  HTTP_CAPTURE_BODY="$(cat "${tmp_body}" 2>/dev/null || true)"
+  rm -f "${tmp_body}"
+  HTTP_CAPTURE_CODE="${code:-000}"
+  return "${rc}"
 }
 
 http_headers() {
@@ -246,8 +264,13 @@ wait_for_ready() {
 
 redis_ping() {
   if command -v redis-cli >/dev/null 2>&1; then
-    local redis_args=(-h localhost -p 6379)
-    if [[ -n "${TLS_CA}" ]]; then
+    local redis_args=()
+    if [[ -n "${REDIS_URL:-}" ]]; then
+      redis_args+=(-u "${REDIS_URL}")
+    else
+      redis_args+=(-h localhost -p 6379)
+    fi
+    if [[ -n "${TLS_CA}" && "${REDIS_URL:-}" != redis://* ]]; then
       redis_args+=(--tls --cacert "${TLS_CA}")
       if [[ -n "${REDIS_TLS_CERT:-}" && -n "${REDIS_TLS_KEY:-}" ]]; then
         redis_args+=(--cert "${REDIS_TLS_CERT}" --key "${REDIS_TLS_KEY}")
@@ -256,20 +279,37 @@ redis_ping() {
         redis_args+=(--sni "${REDIS_TLS_SERVER_NAME}")
       fi
     fi
-    if [[ -n "${REDIS_PASSWORD}" ]]; then
+    if [[ -n "${REDIS_PASSWORD}" && -z "${REDIS_URL:-}" ]]; then
       redis_args+=(-a "${REDIS_PASSWORD}")
     fi
     redis-cli "${redis_args[@]}" ping
     return
   fi
 
-  if command -v docker >/dev/null 2>&1 && docker compose ps -q redis >/dev/null 2>&1; then
+  local -a compose_cmd
+  compose_cmd=(docker compose)
+  if [[ -n "${CORDUM_E2E_COMPOSE_PROJECT_NAME:-${COMPOSE_PROJECT_NAME:-}}" ]]; then
+    compose_cmd+=(--project-name "${CORDUM_E2E_COMPOSE_PROJECT_NAME:-${COMPOSE_PROJECT_NAME:-}}")
+  fi
+  if [[ -n "${CORDUM_E2E_COMPOSE_FILES:-${COMPOSE_FILE:-}}" ]]; then
+    local compose_files="${CORDUM_E2E_COMPOSE_FILES:-${COMPOSE_FILE:-}}"
+    compose_files="${compose_files//|/;}"
+    local -a compose_file_list
+    IFS=';' read -r -a compose_file_list <<<"${compose_files}"
+    local compose_file
+    for compose_file in "${compose_file_list[@]}"; do
+      [[ -n "${compose_file}" ]] || continue
+      compose_cmd+=(-f "${compose_file}")
+    done
+  fi
+
+  if command -v docker >/dev/null 2>&1 && "${compose_cmd[@]}" ps -q redis >/dev/null 2>&1; then
     if [[ -n "${TLS_CA}" ]]; then
-      MSYS_NO_PATHCONV=1 docker compose exec -T redis redis-cli --tls --cacert /etc/cordum/tls/ca/ca.crt -a "${REDIS_PASSWORD}" ping
+      MSYS_NO_PATHCONV=1 "${compose_cmd[@]}" exec -T redis redis-cli --tls --cacert /etc/cordum/tls/ca/ca.crt -a "${REDIS_PASSWORD}" ping
     elif [[ -n "${REDIS_PASSWORD}" ]]; then
-      MSYS_NO_PATHCONV=1 docker compose exec -T redis redis-cli -a "${REDIS_PASSWORD}" ping
+      MSYS_NO_PATHCONV=1 "${compose_cmd[@]}" exec -T redis redis-cli -a "${REDIS_PASSWORD}" ping
     else
-      MSYS_NO_PATHCONV=1 docker compose exec -T redis redis-cli ping
+      MSYS_NO_PATHCONV=1 "${compose_cmd[@]}" exec -T redis redis-cli ping
     fi
     return
   fi
@@ -323,7 +363,7 @@ run_cordumctl_pack_list() {
 run_cordumctl_pack_install() {
   local pack_path="$1"
   cordumctl_common_flags
-  cordumctl_cmd pack install "${CORDUMCTL_FLAGS[@]}" "$(to_cordumctl_path "${pack_path}")"
+  cordumctl_cmd pack install --upgrade "${CORDUMCTL_FLAGS[@]}" "$(to_cordumctl_path "${pack_path}")"
 }
 
 ensure_hello_pack_installed() {
@@ -335,17 +375,40 @@ ensure_hello_pack_installed() {
   list_status=$?
   set -e
   if [[ ${list_status} -eq 0 ]] && grep -qE '^hello-pack[[:space:]]' <<<"${list_output}"; then
-    green "  hello-pack already installed"
-    return 0
+    green "  hello-pack already installed; refreshing topic registry"
+  else
+    bold "[setup] Installing hello-pack topic registry"
   fi
 
-  bold "[setup] Installing hello-pack topic registry"
   if ! install_output="$(run_cordumctl_pack_install "${ROOT_DIR}/examples/hello-worker-go/pack" 2>&1)"; then
     red "FATAL: hello-pack install failed -- cannot run Phase 4 (job dispatch)"
     printf '%s\n' "${install_output}" >&2
     exit 2
   fi
   printf '%s\n' "${install_output}"
+}
+
+topics_json_has_hello_topic() {
+  jq -e '.items[]? | select(.name == "job.hello-pack.echo" and .status == "active")' >/dev/null 2>&1
+}
+
+wait_for_hello_topic_registry() {
+  local topics_body=""
+  for _ in $(seq 1 60); do
+    topics_body="$(http_body -H "${AUTH_HEADER}" -H "X-Tenant-ID: ${TENANT_ID}" "${BASE}/topics")"
+    if [[ -n "${topics_body}" ]] && topics_json_has_hello_topic <<<"${topics_body}"; then
+      green "  hello-pack topic registry active (job.hello-pack.echo)"
+      return 0
+    fi
+    sleep 0.5
+  done
+
+  red "FATAL: hello-pack topic registry did not expose job.hello-pack.echo after install"
+  if [[ -n "${topics_body}" ]]; then
+    yellow "  Last /api/v1/topics response:"
+    printf '%s\n' "${topics_body}" >&2
+  fi
+  exit 2
 }
 
 # ---------------------------------------------------------------------------
@@ -413,14 +476,14 @@ bold "=== PHASE 1: Infrastructure Health ==="
 # =============================================================================
 
 bold "1.1 Dashboard (nginx) serves index.html"
-code=$(http_code http://localhost:8082/)
+code=$(http_code "${DASHBOARD_ROOT}/")
 check "GET / (dashboard)" "200" "$code"
 
 bold "1.2 Dashboard config.json"
 body=""
 code="ERR"
 for _ in $(seq 1 90); do
-  body=$(http_body http://localhost:8082/config.json)
+  body=$(http_body "${DASHBOARD_ROOT}/config.json")
   if echo "$body" | jq -e . >/dev/null 2>&1; then
     code="200"
     break
@@ -456,24 +519,34 @@ fi
 
 bold "1.4 NATS reachable"
 # NATS doesn't speak HTTP; test TCP connectivity
+nats_target="${HELLO_NATS_URL#*://}"
+nats_target="${nats_target%%/*}"
+nats_target="${nats_target##*@}"
+NATS_HOST="${nats_target%:*}"
+NATS_PORT="${nats_target##*:}"
+if [[ "${NATS_HOST}" == "${NATS_PORT}" ]]; then
+  NATS_PORT="4222"
+fi
+NATS_HOST="${NATS_HOST#[}"
+NATS_HOST="${NATS_HOST%]}"
 if command -v nc >/dev/null 2>&1; then
-  if nc -z -w 2 localhost 4222 >/dev/null 2>&1; then
+  if nc -z -w 2 "${NATS_HOST}" "${NATS_PORT}" >/dev/null 2>&1; then
     nats_ok="ok"
   else
     nats_ok="fail"
   fi
 else
-  if timeout 2 bash -c "cat < /dev/null > /dev/tcp/localhost/4222" >/dev/null 2>&1; then
+  if timeout 2 bash -c "cat < /dev/null > /dev/tcp/${NATS_HOST}/${NATS_PORT}" >/dev/null 2>&1; then
     nats_ok="ok"
   else
     nats_ok="fail"
   fi
 fi
 if [ "$nats_ok" = "ok" ]; then
-  green "  PASS: NATS reachable (TCP 4222)"
+  green "  PASS: NATS reachable (TCP ${NATS_HOST}:${NATS_PORT})"
   PASS=$((PASS+1))
 else
-  red "  FAIL: NATS unreachable (TCP 4222)"
+  red "  FAIL: NATS unreachable (TCP ${NATS_HOST}:${NATS_PORT})"
   FAIL=$((FAIL+1))
 fi
 
@@ -622,6 +695,7 @@ check "GET /config" "200" "$code"
 # Install hello-pack and wait for hello-worker before job submission
 # ---------------------------------------------------------------------------
 ensure_hello_pack_installed
+wait_for_hello_topic_registry
 
 bold "[setup] Waiting for hello-worker heartbeat"
 WORKER_READY=false
@@ -661,16 +735,15 @@ bold "4.1 Submit a job"
 # Use job.hello-pack.echo which has the hello-worker listening (pool=hello-pack).
 # Avoid job.default -- no workers serve it, causing infinite NAK redelivery noise.
 JOB_BODY='{"prompt":"E2E test job","topic":"job.hello-pack.echo","metadata":{"test":"e2e"}}'
-body=$(http_body -X POST "$BASE/jobs" \
+if ! http_capture -X POST "$BASE/jobs" \
   -H "$AUTH_HEADER" \
   -H "X-Tenant-ID: ${TENANT_ID}" \
   -H "Content-Type: application/json" \
-  -d "$JOB_BODY")
-code=$(http_code -X POST "$BASE/jobs" \
-  -H "$AUTH_HEADER" \
-  -H "X-Tenant-ID: ${TENANT_ID}" \
-  -H "Content-Type: application/json" \
-  -d "$JOB_BODY")
+  -d "$JOB_BODY"; then
+  true
+fi
+body="${HTTP_CAPTURE_BODY}"
+code="${HTTP_CAPTURE_CODE}"
 
 # Accept 200, 201, 202 as success
 if [ "$code" = "200" ] || [ "$code" = "201" ] || [ "$code" = "202" ]; then
@@ -736,9 +809,13 @@ if [ -n "$JOB_ID" ]; then
     green "  PASS: Job $JOB_ID reached SUCCEEDED"
     PASS=$((PASS+1))
   else
+    detail="$(http_body "$BASE/jobs/$JOB_ID" -H "$AUTH_HEADER" -H "X-Tenant-ID: ${TENANT_ID}" | jq -c '{state: (.status // .state // null), error_code, error_message, result}' 2>/dev/null || true)"
     red "  FAIL: Job $JOB_ID in state '$state' after 15s (expected SUCCEEDED)"
+    if [[ -n "${detail}" ]]; then
+      red "  Detail: ${detail}"
+    fi
     FAIL=$((FAIL+1))
-    ERRORS="${ERRORS}\n  - GET /jobs/${JOB_ID}: expected SUCCEEDED, got ${state:-<empty>} after 15s"
+    ERRORS="${ERRORS}\n  - GET /jobs/${JOB_ID}: expected SUCCEEDED, got ${state:-<empty>} after 15s${detail:+ (${detail})}"
   fi
 else
   red "  FAIL: No job ID for SUCCEEDED-state check"
@@ -759,7 +836,7 @@ timeout 3 curl -s -o "${CURL_OUTPUT_NULL}" -w "%{http_code}" \
   -H "Sec-WebSocket-Version: 13" \
   -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
   -H "Sec-WebSocket-Protocol: cordum-api-key.${ENCODED}" \
-  "http://localhost:8082/api/v1/stream" 2>/dev/null && ws_result="fail" || ws_result="pass"
+  "${DASHBOARD_API}/stream" 2>/dev/null && ws_result="fail" || ws_result="pass"
 
 if [ "$ws_result" = "pass" ]; then
   green "  PASS: WebSocket upgrade succeeded (connection held open)"
@@ -778,7 +855,7 @@ if [ -n "$SESSION" ]; then
     -H "Sec-WebSocket-Version: 13" \
     -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
     -H "Sec-WebSocket-Protocol: cordum-api-key.${SESS_ENC}" \
-    http://localhost:8082/api/v1/stream 2>/dev/null && ws_result="fail" || ws_result="pass"
+    "${DASHBOARD_API}/stream" 2>/dev/null && ws_result="fail" || ws_result="pass"
 
   if [ "$ws_result" = "pass" ]; then
     green "  PASS: WebSocket with session token (connection held open)"
@@ -798,7 +875,7 @@ ws_unauth_output=$(timeout 3 curl -s -o "${CURL_OUTPUT_NULL}" -w "%{http_code}" 
   -H "Connection: upgrade" \
   -H "Sec-WebSocket-Version: 13" \
   -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
-  http://localhost:8082/api/v1/stream 2>/dev/null || true)
+  "${DASHBOARD_API}/stream" 2>/dev/null || true)
 code=$(printf '%s' "${ws_unauth_output}" | grep -Eo '[0-9]{3}' | head -1 || true)
 code="${code:-000}"
 check "WebSocket no auth" "401" "$code"
@@ -809,15 +886,15 @@ bold "=== PHASE 6: Nginx Proxy Validation ==="
 # =============================================================================
 
 bold "6.1 API proxy works (proxy -> gateway)"
-code=$(http_code -H "$AUTH_HEADER" -H "X-Tenant-ID: ${TENANT_ID}" http://localhost:8082/api/v1/workers)
+code=$(http_code -H "$AUTH_HEADER" -H "X-Tenant-ID: ${TENANT_ID}" "${DASHBOARD_API}/workers")
 check "Proxy: /api/v1/workers" "200" "$code"
 
 bold "6.2 SPA fallback (unknown path -> index.html)"
-code=$(http_code http://localhost:8082/some/unknown/page)
+code=$(http_code "${DASHBOARD_ROOT}/some/unknown/page")
 check "SPA fallback" "200" "$code"
 
 bold "6.3 Security headers present"
-headers=$(http_headers http://localhost:8082/)
+headers=$(http_headers "${DASHBOARD_ROOT}/")
 if echo "$headers" | grep -qi "X-Content-Type-Options"; then
   green "  PASS: X-Content-Type-Options header present"
   PASS=$((PASS+1))

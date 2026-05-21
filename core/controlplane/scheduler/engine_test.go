@@ -473,6 +473,51 @@ func TestSchedulerRejectsUnknownTopicFromBus(t *testing.T) {
 	}
 }
 
+func TestSchedulerAcceptsTenantScopedTopicFromBus(t *testing.T) {
+	redisSrv, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	defer redisSrv.Close()
+
+	configSvc, err := configsvc.New("redis://" + redisSrv.Addr())
+	if err != nil {
+		t.Fatalf("config svc: %v", err)
+	}
+	defer func() { _ = configSvc.Close() }()
+
+	regSvc := topicregistry.NewService(configSvc)
+	if err := regSvc.Set(testCtx(t), topicregistry.Registration{
+		Name:     "job.tenant.echo",
+		TenantID: "tenant-a",
+		Pool:     "tenant-pack",
+		Status:   topicregistry.StatusActive,
+	}); err != nil {
+		t.Fatalf("seed topic registry: %v", err)
+	}
+
+	bus := &fakeBus{}
+	store := newFakeJobStore()
+	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil).
+		WithTopicRegistry(regSvc)
+	req := &pb.JobRequest{JobId: "job-tenant-topic", Topic: "job.tenant.echo", TenantId: "tenant-a"}
+	packet := &pb.BusPacket{TraceId: "trace-tenant-topic", Payload: &pb.BusPacket_JobRequest{JobRequest: req}}
+
+	if err := engine.HandlePacket(packet); err != nil {
+		t.Fatalf("HandlePacket returned error: %v", err)
+	}
+	state, err := store.GetState(testCtx(t), req.JobId)
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	if state != JobStateRunning {
+		t.Fatalf("expected running state, got %q", state)
+	}
+	if got := bus.snapshotPublished(); len(got) != 1 || got[0].subject != req.Topic {
+		t.Fatalf("expected dispatch publish to %s, got %+v", req.Topic, got)
+	}
+}
+
 func TestSchedulerSchemaEnforceRejects(t *testing.T) {
 	jobStore, regSvc, schemaRegistry, cleanup := newSchedulerSchemaTestDeps(t)
 	defer cleanup()

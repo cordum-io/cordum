@@ -1374,7 +1374,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 	jobID := strings.TrimSpace(req.JobId)
 	topic := strings.TrimSpace(req.Topic)
 	dispatchStart := time.Now()
-	reg, registryEmpty, err := e.topicRegistration(lockCtx, topic)
+	reg, registryEmpty, err := e.topicRegistration(lockCtx, req.GetTenantId(), topic)
 	if err != nil {
 		return RetryAfter(err, retryDelayStore)
 	} else if !registryEmpty && (reg == nil || reg.Status == topicregistry.StatusDisabled) {
@@ -1879,7 +1879,7 @@ func reasonCodeForSchedulingError(err error) string {
 	}
 }
 
-func (e *Engine) topicRegistration(ctx context.Context, topic string) (*topicregistry.Registration, bool, error) {
+func (e *Engine) topicRegistration(ctx context.Context, tenantID, topic string) (*topicregistry.Registration, bool, error) {
 	if e == nil {
 		return nil, true, nil
 	}
@@ -1896,7 +1896,7 @@ func (e *Engine) topicRegistration(ctx context.Context, topic string) (*topicreg
 		}
 		return nil, true, nil
 	}
-	return e.topicRegistry.Get(ctx, topic)
+	return e.topicRegistry.GetForTenant(ctx, tenantID, topic)
 }
 
 func (e *Engine) applySubmitSchemaValidation(ctx context.Context, req *pb.JobRequest, traceID string, reg *topicregistry.Registration) (bool, error) {
