@@ -84,6 +84,7 @@ in the internal Edge P0 threat model is the production sign-off reference
 | Demo policy decisions do not match expected deny/approval. | Demo policy overlay missing, tenant has a different policy snapshot, or action text/tool kind does not match fixture rules. | Verify `examples/cordum-edge-pack/overlays/policy.fragment.yaml` is loaded for the tenant. Use the exact prompts from [demo.md](demo.md). Check timeline policy snapshot/rule IDs before retrying. |
 | Approval drawer is empty after `REQUIRE_APPROVAL`. | Wrong tenant/principal/role, expired approval, stream stale, or session detail is filtered. | Refresh the session detail page, clear decision/execution filters, confirm the requester principal and tenant, then use list/detail approval APIs if the UI is stale. |
 | Approval retry keeps failing. | Approval expired, rejected, consumed already, action hash/input hash changed, or retry prompt was not the same action. | Re-run the same action text/tool target exactly once after approval. If already consumed, create a new approval; do not mutate hashes or reuse stale approval refs. |
+| Approval retry fails with `audit_evidence_missing` or provenance wording. | The approval store says approved, but the audit chain lacks a matching resolved approval event (`EventEdgeApprovalResolved` / `edge.approval_resolved`) for the same tenant, `approval_ref`, and `action_hash`. Requested-only rows do not satisfy ProvenanceGate. | Treat as fail-closed. Verify audit health for the approval window, confirm the exact ref/hash match, and rerun the approval flow after the audit pipeline is healthy; never paste raw prompts/tool payloads into audit evidence. |
 | Inline approval wait times out. | Local/demo `CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` elapsed before an operator approved. | Approve from the dashboard and retry the action manually. For scripted demos, prefer fake-hook E2E approval flow with bounded waits. |
 | Dashboard Edge Sessions list is empty. | Session did not register, wrong tenant selected, Gateway auth failed, or event stream disconnected. | Check dry-run session/execution IDs, dashboard tenant selector, browser devtools network errors, and Gateway `/api/v1/edge/sessions` response for the same tenant. |
 | Session detail shows `Timeline: 0 events` while session status is `running`. | Most often **benign** — no Claude tool call has triggered a hook yet, so no `AgentActionEvent` has been recorded. The dashboard EmptyState text reflects this ("has not emitted any agent action events yet"). After the first PreToolUse/PostToolUse hook fires, events appear within ~1 second. If 0 events persists after a confirmed tool invocation, the bug class is **session/event chain**: agentd not bound to the wrapper-created EdgeSession (CORDUM_EDGE_SESSION_ID/EXECUTION_ID propagation), agentd evidence event ID colliding with Gateway's evaluate event ID, or events/batch idempotency-key collision. | First wait 5 seconds after a tool call. If still 0, run `curl -sS "$CORDUM_GATEWAY/api/v1/edge/sessions/<session-id>/events" -H "X-Tenant-ID: $CORDUM_TENANT_ID" -H "X-API-Key: $CORDUM_API_KEY"` to ask the Gateway directly — if Gateway returns events but dashboard does not, suspect the WebSocket stream (see "Timeline or event inspector shows stale data" below). If Gateway returns 0 events, suspect the hook→agentd→Gateway write chain: check agentd stderr for evaluate/RecordDecisionEvidence calls, verify CORDUM_EDGE_SESSION_ID matches the Gateway session, and verify cordum-hook stdout is non-empty (degraded fail-mode silently exits 0). |
@@ -144,9 +145,14 @@ in the internal Edge P0 threat model is the production sign-off reference
    let the wait time out and retry manually.
 2. Keep the retry action identical: same tool kind, target path, command/edit
    text, policy snapshot, action hash, and input hash.
-3. If approval was consumed once, create a new approval instead of replaying the
+3. If the retry fails on provenance, confirm the audit chain contains an
+   approved `EventEdgeApprovalResolved` / `edge.approval_resolved` event whose
+   tenant, `approval_ref`, and `action_hash` exactly match the approval. The
+   approval-requested event is not enough and should not be treated as a
+   bypass.
+4. If approval was consumed once, create a new approval instead of replaying the
    old ref.
-4. If another principal attempts self-approval or stale approval reuse and it
+5. If another principal attempts self-approval or stale approval reuse and it
    succeeds, stop and file a security bug.
 
 ### Dashboard stream disconnected

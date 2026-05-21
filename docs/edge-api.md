@@ -76,7 +76,13 @@ Gateway Edge handlers reuse `core/edge.Recorder` and the existing audit exporter
 - `/api/v1/edge/sessions/{id}/export` emits artifact export metrics/audit;
 - the Edge stream bridge emits bounded stream drop reasons.
 
-See [Edge observability](edge-observability.md) for metric names, labels, audit
+For destructive action-gate provenance, only an approved
+`EventEdgeApprovalResolved` / `edge.approval_resolved` event with exact tenant,
+`approval_ref`, and `action_hash` matches can satisfy the audit check. The
+approval-requested event is timeline context and fails closed if it is the only
+evidence.
+
+See [Edge observability](edge/observability.md) for metric names, labels, audit
 fields, and redaction rules.
 
 ## Not Cordum Jobs

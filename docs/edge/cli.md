@@ -104,6 +104,12 @@ Cordum, then the agent retries the same action. Replay checks bind the approval
 to the original action hash, input hash, and policy snapshot; approval does not
 edit the command content.
 
+For destructive actions, Gateway also verifies resolved approval provenance on
+the audit chain. A retry is allowed only when the chain contains an approved
+`EventEdgeApprovalResolved` / `edge.approval_resolved` row for the same tenant,
+`approval_ref`, and `action_hash`; an approval-requested row by itself remains
+a pending-review signal, not proof of approval.
+
 The wrapper enables local/demo inline approval wait for convenience. Rejection,
 timeout, pending, or wait errors deny the action and ask the user to retry after
 review.

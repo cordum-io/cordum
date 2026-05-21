@@ -82,8 +82,8 @@ the execution is linked to a real production `job_id` or workflow run.
 | `EventEdgeExecutionEnded` | `edge.execution_ended` | Agent execution terminal state |
 | `EventEdgePolicyDecision` | `edge.policy_decision` | Allow/recorded Edge policy decision |
 | `EventEdgeActionDenied` | `edge.action_denied` | Deny/throttle outcome |
-| `EventEdgeApprovalRequested` | `edge.approval_requested` | Human approval required/requested |
-| `EventEdgeApprovalResolved` | `edge.approval_resolved` | Approval reached terminal outcome |
+| `EventEdgeApprovalRequested` | `edge.approval_requested` | Human approval required/requested; lifecycle context only |
+| `EventEdgeApprovalResolved` | `edge.approval_resolved` | Approval reached terminal outcome; approved outcomes can satisfy Edge provenance |
 | `EventEdgeApprovalRejected` | `edge.approval_rejected` | Approval explicitly rejected |
 | `EventEdgeApprovalExpired` | `edge.approval_expired` | Approval expired/timed out |
 | `EventEdgeArtifactExported` | `edge.artifact_exported` | Evidence/session export attempt |
@@ -96,7 +96,12 @@ mode/component, and stable reason codes. Raw prompts, tool payloads, signed URLs
 approval reason text, `InputRedacted` maps, arbitrary labels, bearer tokens, and
 API keys must never be placed in SIEM `extra`.
 
-See [Edge observability](edge-observability.md) for the full metric, log, and
+For destructive Edge actions, `ProvenanceGate` accepts only a resolved approval
+audit event with decision `approved` or `approve` and exact tenant,
+`approval_ref`, and `action_hash` matches. A requested-only approval event does
+not prove approval and is treated as missing provenance.
+
+See [Edge observability](edge/observability.md) for the full metric, log, and
 audit contract.
 
 Severity levels: `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`, `INFO`.

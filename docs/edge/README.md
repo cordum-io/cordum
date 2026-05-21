@@ -56,7 +56,7 @@ redacted summaries, hashes, and artifact pointers.
 | Sessions and executions | Register, heartbeat, end, and inspect governed agent runs. | [API](api.md) |
 | Events and streams | Append idempotent action events, batch evidence, and stream `edge.event`. | [API](api.md), [observability](observability.md) |
 | Policy/evaluate | Classify actions, call Safety Kernel policy, and return allow/deny/approval/constrain decisions. | [policy](../edge-policy.md), [mapper](claude-hook-mapper.md) |
-| Approvals | Create, list, approve/reject, and optionally wait on approvals with replay-safe hashes. | [API](api.md) |
+| Approvals | Create, list, approve/reject, and optionally wait on approvals with replay-safe hashes and resolved audit provenance. | [API](api.md), [observability](observability.md) |
 | Artifacts and export | Attach artifact pointer metadata and export an audit-ready session evidence bundle. | [evidence export](../edge-export.md) |
 
 ## Enforcement layers

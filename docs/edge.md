@@ -58,8 +58,11 @@ stable hashes, and artifact pointer metadata.
 3. **Policy/evaluate** classifies agent actions, calls Safety Kernel policy, and
    returns `ALLOW`, `DENY`, `REQUIRE_APPROVAL`, `THROTTLE`, `CONSTRAIN`, or
    evidence-only decisions.
-4. **Approvals** let reviewers approve/reject actions while replay checks bind
-   the decision to the original action and redacted input hashes.
+4. **Approvals** let reviewers approve/reject actions while retry checks bind
+   the decision to the original action and redacted input hashes. Destructive
+   retries also require resolved approval audit provenance for the same tenant,
+   `approval_ref`, and `action_hash`; a requested-only approval event is not
+   enough.
 5. **Artifacts and export** attach metadata-only artifact pointers and export an
    audit-ready session bundle without inlining raw evidence bodies.
 
@@ -119,7 +122,12 @@ without colliding their namespaces — gateway-issued `event_id`,
 agentd-prefixed evidence id, the `(tenant, session, execution,
 action_hash)` approval-reuse tuple, and the approval_ref lifecycle. The
 canonical reference is [Edge identity contract](edge/identity-contract.md).
-Read it before touching any audit, evidence, approval, or cache code.
+Read it before touching any audit, evidence, approval, or cache code. In
+operator terms, ProvenanceGate accepts only an approved
+`EventEdgeApprovalResolved` / `edge.approval_resolved` event that matches the
+tenant, `approval_ref`, and `action_hash`; malformed, missing, requested-only,
+or mismatched evidence fails closed without persisting raw prompts, transcripts,
+or tool payloads.
 
 ## Start here
 

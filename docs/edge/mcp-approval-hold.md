@@ -6,6 +6,11 @@ required error rather than dispatching the call. The client retries the
 same call with an `_approval_ref` field once a human resolver has
 approved the request; Cordum atomically consumes the approval against
 the stored args + policy snapshot and forwards the call upstream.
+For destructive action-gate paths, consume is followed by ProvenanceGate:
+the tenant audit chain must include an approved
+`EventEdgeApprovalResolved` / `edge.approval_resolved` event with the same
+tenant, `approval_ref`, and `action_hash`. A requested-only approval event is
+not sufficient provenance.
 
 Production action gates are blockers/approval gates: they allow, deny,
 throttle, or require human approval. They do not emit enforceable
@@ -122,6 +127,11 @@ consume flips `Status` from `Approved` to `Consumed` and sets
 This CAS transition is the single-use enforcement point. The mutation
 gate may include `single_use=true` as an audit breadcrumb on an allow,
 but no action-gate `Constraints` map enforces single-use.
+
+For destructive tools, the upstream dispatch still depends on resolved approval
+audit evidence. Missing, malformed, wrong-ref/hash, rejected/expired, or
+unverifiable provenance fails closed; raw arguments and tool outputs are not
+persisted as approval evidence.
 
 ## Self-approval prohibition
 

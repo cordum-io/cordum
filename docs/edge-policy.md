@@ -173,6 +173,34 @@ fresh `DENY` must win over a stale approval, and a fresh `ALLOW` does not
 need one. The approval's lifecycle continues until explicitly resolved or it
 expires.
 
+### ProvenanceGate: resolved approval audit evidence
+
+For destructive action-gate decisions, a backend `approved` approval is
+necessary but not sufficient. After the mutation gate validates the stored
+`EdgeApproval`, `ProvenanceGate` verifies the tenant audit chain and requires a
+canonical resolved approval event:
+
+- event type `EventEdgeApprovalResolved` / `edge.approval_resolved`;
+- decision `approved` or `approve`;
+- exact tenant match;
+- exact `approval_ref` and `action_hash` match in bounded audit `extra`.
+
+`EventEdgeApprovalRequested` / `edge.approval_requested` rows are request
+lifecycle context only. A requested-only row, wrong tenant, wrong ref, wrong
+hash, rejected/expired decision, malformed event JSON, Redis/audit verifier
+outage, or compromised hash/HMAC/linkage is an evidence gap and the gate fails
+closed. The failure is reported with bounded reason codes such as
+`audit_evidence_missing`, `audit_chain_compromised`, or
+`audit_chain_verifier_unavailable`; raw prompts, tool payloads, transcripts,
+approval secrets, and command output are never embedded in the audit evidence.
+
+The provenance check uses the approval window (`CreatedAt` through max of
+`ResolvedAt`, `ConsumedAt`, and now), caps the window to the shared audit verify
+spread, and caps Redis stream work with the same audit verification limit used
+by the chain verifier. Busy tenants therefore get bounded verification instead
+of an unbounded stream scan, and retention-trimmed history is accepted only when
+the in-window resolved approval evidence is still present.
+
 ### Optional inline wait (opt-in, demo only)
 
 For local agentd or interactive demo callers that prefer a single blocking

@@ -5,6 +5,11 @@ decision with the Edge approval store so a held tool call can resume
 once an operator approves. The mint path runs inside the gateway's
 action-gate evaluation; the consume path runs inside the MCP server
 when the client retries the call with an `_approval_ref` argument.
+For destructive action-gate approvals, a successful consume is not the whole
+provenance contract: the tenant audit chain must also contain an approved
+`EventEdgeApprovalResolved` / `edge.approval_resolved` event for the same
+tenant, `approval_ref`, and `action_hash`. Requested-only approval rows remain
+pending-review context and fail closed as provenance.
 
 Production action gates are blockers/approval gates only: they allow,
 deny, throttle, or require human approval. They do not emit enforceable
@@ -40,6 +45,9 @@ scopes see [`scope-preapproval.md`](scope-preapproval.md).
                                        │
                               ProcessApprovalClaim → ClaimApproval
                                        │
+                              ProvenanceGate verifies resolved
+                              approval audit evidence
+                                       │
                               invokeTool with `_approval_ref`-stripped args
 ```
 
@@ -50,6 +58,12 @@ EDGE-103 reopen #1 was a divergence in the input-hash derivation; PR
 #276 Sub-E finding #15 consolidated all three call sites (policy-gate
 mint, gateway Edge mint, server consume) onto the single helper so
 future drift is impossible.
+
+The resolved audit event must match the same `ActionHash` and tenant/ref used
+by the approval store. Wrong tenant/ref/hash, malformed event JSON,
+rejected/expired outcomes, missing Redis/audit verifier dependencies, or
+compromised hash/HMAC/linkage are treated as fail-closed evidence gaps rather
+than as recoverable client retries.
 
 ## `_approval_ref` retry argument
 

@@ -153,20 +153,32 @@ window (`CreatedAt` through max of `ResolvedAt`, `ConsumedAt`, and now) and
 uses the tenant stream (`audit:chain:<tenant>`) rather than scanning unrelated
 tenant history.
 
+The accepted provenance event is resolved-only. The audit chain must contain a
+canonical `EventEdgeApprovalResolved` / `edge.approval_resolved` event with
+decision `approved` or `approve`, the same tenant, and bounded `extra` values
+whose `approval_ref` and `action_hash` exactly match the `EdgeApproval`. An
+`EventEdgeApprovalRequested` / `edge.approval_requested` row proves that review
+was requested, but it does not prove that the destructive retry was approved and
+does not satisfy `ProvenanceGate` by itself.
+
 Verifier dependencies fail closed. If Redis or the audit chainer/verifier is
 missing or unavailable, the gate returns `service_unavailable` with an
 `audit_chain_verifier_unavailable` / `audit_chain_verify_failed` sub-reason so
 operators see a dependency outage instead of a surprise `internal_error` after
 human approval. Tampering signals still deny hard as integrity failures:
 compromised hash/HMAC/linkage returns `audit_chain_compromised`, and a missing
-approval-window event returns `audit_evidence_missing`.
+resolved approval event, malformed event JSON, wrong tenant/ref/hash, or
+non-approved terminal decision returns `audit_evidence_missing`.
 
 Retention-trimmed history can produce a `partial` verifier status. Partial is
 acceptable only when the requested window still has authenticated in-window
-evidence; a zero-event window or explicit missing/out-of-order gap is treated as
-an evidence gap and fails closed. When `CORDUM_AUDIT_HMAC_KEY` is configured,
-the verifier uses `Chainer.HMACKeyForVerify`; key material is never logged,
-returned in API errors, or copied into audit `extra`.
+resolved approval evidence; a zero-event window or explicit
+missing/out-of-order gap is treated as an evidence gap and fails closed. The
+stream scan and chain verification are capped by the shared audit verification
+limit, so high-volume tenants cannot trigger unbounded Redis work. When
+`CORDUM_AUDIT_HMAC_KEY` is configured, the verifier uses
+`Chainer.HMACKeyForVerify`; key material is never logged, returned in API
+errors, or copied into audit `extra`.
 
 | Event type | Builder / source | Severity source |
 | --- | --- | --- |
@@ -227,7 +239,8 @@ returned in API errors, or copied into audit `extra`.
 | `actionExtra` | `session_id`, `execution_id`, `event_id`, `layer`, `kind`, `tool_name`, `input_hash`, `policy_snapshot`, `tier`, `approval_ref`, `redaction_status`. |
 | `sessionExtra` | `session_id`, `mode`, `status`, `agent_product`. |
 | `executionExtra` | `execution_id`, `session_id`, `adapter`, `mode`, `status`, `workflow_run_id`, `step_id`, `attempt`, `event_counts`. |
-| `approvalExtra` / approval requested | `approval_ref`, `session_id`, `execution_id`, `event_id`, `rule_id`, `policy_snapshot`, plus caller-supplied bounded terminal metadata. |
+| `approvalExtra` / approval requested | `approval_ref`, `session_id`, `execution_id`, `event_id`, `rule_id`, `policy_snapshot`, plus bounded `action_hash` / `input_hash` when available. |
+| `approvalExtra` / approval resolved | `approval_ref` plus bounded terminal metadata such as `action_hash`, `input_hash`, and `policy_snapshot`. This is the only approval lifecycle event kind that can satisfy `ProvenanceGate` for approved destructive actions. |
 | `artifact` export | `artifact_type`, `result`, `session_id`, `execution_id`, `event_id`, `sha256`, `redaction_level`, `retention_class`. Raw artifact URI is never included. |
 | degraded / fail-closed | `mode`, `component`, `reason_code`. |
 

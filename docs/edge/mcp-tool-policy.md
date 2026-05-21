@@ -161,6 +161,16 @@ Single-use approval semantics are enforced by the Edge approval store's
 audit breadcrumb on ALLOW, but no action-gate constraint map enforces
 the one-shot transition.
 
+For destructive verbs, the later provenance gate does not treat claim text or a
+pending/requested approval event as proof. It requires the backend approval to
+be approved and the tenant audit chain to contain a resolved approval event
+(`EventEdgeApprovalResolved` / `edge.approval_resolved`) with decision
+`approved` or `approve` and exact tenant, `approval_ref`, and `action_hash`
+matches. Requested-only, malformed, wrong-ref/hash, rejected/expired, or
+unverifiable audit evidence fails closed before the tool invocation is allowed.
+The verification uses the shared audit chain/window limits and never persists
+raw tool arguments or outputs as provenance evidence.
+
 ## Emitted events
 
 All three event kinds populate `core/edge.AgentActionEvent` with the

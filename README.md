@@ -105,6 +105,12 @@ Read .env is denied; Edit/Write requires approval; safe reads pass through
 untouched. The dashboard shows the live session timeline at
 [/edge/sessions](http://localhost:8082/edge/sessions).
 
+For approved destructive actions, Edge does not trust the approval store alone:
+the ProvenanceGate also requires a resolved approval audit event for the same
+tenant, `approval_ref`, and `action_hash`. An approval-requested event by itself
+does not satisfy provenance, and raw prompts, transcripts, and tool payloads are
+kept out of audit evidence.
+
 Full 30-minute walkthrough: [docs/quickstart-edge.md](docs/quickstart-edge.md).
 Reference: [docs/edge/README.md](docs/edge/README.md).
 
@@ -191,6 +197,11 @@ it protects them, their team, and production: before risky tools run, when an
 action needs approval, and when evidence must be exported. The wrapper is the
 developer/demo path; enterprise enforcement requires managed Claude settings and
 endpoint controls.
+
+Approval provenance is resolved-only: destructive retries must have a matching
+approved approval record and a canonical resolved approval audit event for the
+same tenant/ref/hash. Requested-only audit rows are lifecycle context, not proof
+that the action was approved.
 
 Start here: [Edge overview](docs/edge.md), [Claude Code guide](docs/edge-claude-code.md),
 [manual demo](docs/demo-edge-claude.md), and [Edge API](docs/edge/api.md).
@@ -378,7 +389,7 @@ Other useful contributor commands:
 | **Deterministic Audit** | Prove exactly *why* a decision was made with a full chain-of-thought audit trail. |
 | **Governance Policies** | Declarative YAML-based rules that map enterprise risk to agent behavior. |
 | **Policy Simulator** | Test your governance rules against historical data before rolling them out to production. |
-| **Cordum Edge** | Compliance Firewall for local AI-agent actions (Claude Code today, more agents next): hook → local agentd → Gateway evaluate → approvals → redacted evidence export. See [docs/edge/README.md](docs/edge/README.md). |
+| **Cordum Edge** | Compliance Firewall for local AI-agent actions (Claude Code today, more agents next): hook → local agentd → Gateway evaluate → resolved approval provenance → redacted evidence export. See [docs/edge/README.md](docs/edge/README.md). |
 
 ## Architecture
 

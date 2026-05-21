@@ -19,7 +19,7 @@ into prompts, screenshots, docs, or exported evidence.
 | --- | --- |
 | Session setup | `cordumctl edge claude` creates one `EdgeSession` and one `AgentExecution` with tenant/principal metadata. |
 | Deny | A synthetic request to read `.env` is denied before the tool runs. |
-| Approval | A synthetic edit request returns `REQUIRE_APPROVAL`, appears in the dashboard approval drawer, can be approved, and retry consumes that approval once. |
+| Approval | A synthetic edit request returns `REQUIRE_APPROVAL`, appears in the dashboard approval drawer, can be approved, and retry consumes that approval once after resolved audit provenance matches tenant/ref/hash. |
 | PostToolUse evidence | Already-run tool evidence creates an audit event and artifact pointer metadata without inlining raw output. |
 | Export | Session evidence export returns events, approvals, hashes, and artifact pointer manifests without raw secret material. |
 
@@ -87,7 +87,9 @@ Dashboard checkpoint after the script:
 - Edge Sessions list shows the synthetic Claude Code session for the demo
   tenant/principal.
 - Session detail timeline contains ordered hook receipt, evaluate/decision,
-  approval, retry, PostToolUse, artifact pointer, and export-related evidence.
+  approval request, resolved approval, retry, PostToolUse, artifact pointer, and
+  export-related evidence. The resolved approval event, not the request event
+  alone, is what satisfies destructive-action provenance.
 - Event inspector shows redacted summaries and hashes only; no raw tool payload,
   prompt, transcript, or secret value should be visible.
 - Export action returns a bundle containing session/execution/events/approvals

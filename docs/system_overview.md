@@ -96,10 +96,11 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
     persist as `AgentActionEvent` rows under an `EdgeSession` /
     `AgentExecution` parent.
   - Approvals: `POST /api/v1/edge/approvals/{ref}/approve` resolves a
-    REQUIRE_APPROVAL; the next evaluate with the same action_hash is
-    auto-consumed via the approval CAS path so Claude Code's natural
-    "retry the same tool call" UX completes the loop without the agent
-    needing to carry an approval_ref.
+    REQUIRE_APPROVAL; the next evaluate with the same action_hash can be
+    consumed via the approval CAS path only when ProvenanceGate also finds a
+    resolved approval audit event (`EventEdgeApprovalResolved` /
+    `edge.approval_resolved`) for the same tenant/ref/hash. A requested-only
+    approval event does not satisfy destructive-action provenance.
   - Evidence export: `POST /api/v1/edge/sessions/{id}/export` returns the
     full session bundle (events + approvals + artifacts), redaction
     enforced server-side.

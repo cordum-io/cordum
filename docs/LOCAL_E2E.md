@@ -111,7 +111,7 @@ internal Edge P0 threat model (Cordum engineering).
 | --- | --- | --- |
 | 1 | `edge_session_setup` | session/execution Gateway-direct create + round-trip GETs |
 | 2 | `edge_pretooluse_deny` | classifier + evaluate fresh-deny path (`hook.pre_tool_use` against `claude-code.deny-secret-reads`) |
-| 3 | `edge_approval_flow` | enqueue → approve → retry consumes via approval_ref AND auto-consumes via action_hash; third call hits the terminal "already consumed" path |
+| 3 | `edge_approval_flow` | enqueue → approve → retry consumes via approval_ref AND auto-consumes via action_hash; third call hits the terminal "already consumed" path. Destructive action gates still require separate resolved approval audit provenance for the same tenant/ref/hash. |
 | 4 | `edge_approval_rejected` (EDGE-056) | enqueue → reject (separate resolver principal to dodge self_approval_denied) → retry asserts `decision=DENY` and `.reason` contains "rejected" (case-insensitive); second reject of the terminal approval is non-2xx |
 | 5 | `edge_approval_expired` (EDGE-056-EXPIRED) | enqueue with EDGE-059's `approval_ttl_seconds: 2` override (`task-4c2b24d2`) → bounded `sleep 3` → GET asserts `status=expired` → retry asserts `decision=DENY`, `permission_decision=deny`, and `.reason` contains "expired" → default-TTL recovery request returns a new pending approval |
 | 6 | `edge_posttooluse_artifact` | hook.post_tool_use event with synthetic artifact pointer round-trips into the Gateway session-events listing |
