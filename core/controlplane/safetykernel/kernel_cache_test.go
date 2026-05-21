@@ -2,6 +2,7 @@ package safetykernel
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"sync"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/policy/actiongates"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/redis/go-redis/v9"
 )
@@ -623,6 +625,49 @@ func TestCacheStillWorksForNonVelocityPolicies(t *testing.T) {
 	}
 }
 
+func TestDecisionCacheBypassesActionDescriptorRequests(t *testing.T) {
+	policy := &config.SafetyPolicy{DefaultTenant: "default", DefaultDecision: "allow"}
+	srv := &server{cacheTTL: 5 * time.Minute, cache: map[string]cacheEntry{}, cacheMaxSize: 100}
+	_ = srv.setPolicy(context.Background(), policy, "snap-action-cache")
+	gate := &cacheActionGate{}
+	gate.set(actiongates.ActionGateDecision{
+		Decision: pb.DecisionType_DECISION_TYPE_ALLOW,
+		GateID:   "actiongate.cache-test",
+		Code:     "allow",
+		Reason:   "initial allow",
+	})
+	srv.SetActionDescriptorExtractor(actionDescriptorFromRequest)
+	srv.SetActionGatePipeline(actiongates.NewPipeline(gate))
+	req := actionDescriptorCacheRequest(t, "job-action-1")
+
+	resp1, err := srv.evaluate(context.Background(), req, "check")
+	if err != nil {
+		t.Fatalf("first evaluate: %v", err)
+	}
+	if resp1.GetDecision() != pb.DecisionType_DECISION_TYPE_ALLOW {
+		t.Fatalf("first decision = %v, want ALLOW", resp1.GetDecision())
+	}
+	if got := cacheSize(srv); got != 0 {
+		t.Fatalf("action descriptor response was cached; entries=%d", got)
+	}
+
+	gate.set(actiongates.ActionGateDecision{
+		Decision:  pb.DecisionType_DECISION_TYPE_DENY,
+		GateID:    "actiongate.cache-test",
+		Code:      actiongates.CodeAccessDenied,
+		Reason:    "dynamic state changed",
+		SubReason: "approval_state_changed",
+	})
+	req.JobId = "job-action-2"
+	resp2, err := srv.evaluate(context.Background(), req, "check")
+	if err != nil {
+		t.Fatalf("second evaluate: %v", err)
+	}
+	if resp2.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY {
+		t.Fatalf("second decision = %v, want DENY after dynamic gate changed", resp2.GetDecision())
+	}
+}
+
 func TestConcurrentCacheReads(t *testing.T) {
 	srv := &server{
 		cacheTTL:     5 * time.Minute,
@@ -657,6 +702,46 @@ func TestConcurrentCacheReads(t *testing.T) {
 	for err := range errors {
 		t.Fatal(err)
 	}
+}
+
+type cacheActionGate struct {
+	mu  sync.Mutex
+	dec actiongates.ActionGateDecision
+}
+
+func (g *cacheActionGate) ID() string { return "actiongate.cache-test" }
+
+func (g *cacheActionGate) set(dec actiongates.ActionGateDecision) {
+	g.mu.Lock()
+	g.dec = dec
+	g.mu.Unlock()
+}
+
+func (g *cacheActionGate) Evaluate(context.Context, *config.PolicyInput) actiongates.ActionGateDecision {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.dec
+}
+
+func actionDescriptorCacheRequest(t *testing.T, jobID string) *pb.PolicyCheckRequest {
+	t.Helper()
+	desc := config.ActionDescriptor{Kind: config.ActionKindMutation, Verb: config.ActionVerbDelete}
+	raw, err := json.Marshal(desc)
+	if err != nil {
+		t.Fatalf("marshal action descriptor: %v", err)
+	}
+	return &pb.PolicyCheckRequest{
+		JobId:  jobID,
+		Topic:  "job.test",
+		Tenant: "default",
+		Labels: map[string]string{LabelActionDescriptorJSON: string(raw)},
+	}
+}
+
+func cacheSize(srv *server) int {
+	srv.cacheMu.Lock()
+	defer srv.cacheMu.Unlock()
+	return len(srv.cache)
 }
 
 func TestPolicyCacheTOCTOU(t *testing.T) {

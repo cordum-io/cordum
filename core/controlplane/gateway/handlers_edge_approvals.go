@@ -256,7 +256,7 @@ func (s *server) executeResolveEdgeApproval(r *http.Request, store edgecore.Stor
 			outcome,
 			resolverID,
 			resolvedAt,
-			nil,
+			edgeApprovalEvidenceAuditExtra(approval),
 		))
 	}
 	body, err := json.Marshal(approval)
@@ -271,6 +271,12 @@ func (s *server) executeResolveEdgeApproval(r *http.Request, store edgecore.Stor
 }
 
 func (s *server) auditEdgeApprovalSelfApprovalDenied(tenantID string, approval edgecore.EdgeApproval, reasonCode string) {
+	extra := edgeApprovalEvidenceAuditExtra(&approval)
+	if extra == nil {
+		extra = map[string]string{}
+	}
+	extra["conflict_kind"] = string(edgecore.ApprovalConflictKindSelfApproval)
+	extra["reason_code"] = reasonCode
 	edgecore.SendSIEMEvent(s.auditExporter, edgecore.SIEMEventForApprovalResolved(
 		tenantID,
 		approval.ApprovalRef,
@@ -278,11 +284,28 @@ func (s *server) auditEdgeApprovalSelfApprovalDenied(tenantID string, approval e
 		"rejected",
 		"",
 		time.Now().UTC(),
-		map[string]string{
-			"conflict_kind": string(edgecore.ApprovalConflictKindSelfApproval),
-			"reason_code":   reasonCode,
-		},
+		extra,
 	))
+}
+
+func edgeApprovalEvidenceAuditExtra(approval *edgecore.EdgeApproval) map[string]string {
+	if approval == nil {
+		return nil
+	}
+	extra := map[string]string{}
+	if v := strings.TrimSpace(approval.ActionHash); v != "" {
+		extra["action_hash"] = v
+	}
+	if v := strings.TrimSpace(approval.InputHash); v != "" {
+		extra["input_hash"] = v
+	}
+	if v := strings.TrimSpace(approval.PolicySnapshot); v != "" {
+		extra["policy_snapshot"] = v
+	}
+	if len(extra) == 0 {
+		return nil
+	}
+	return extra
 }
 
 func edgeApprovalListQueryFromRequest(r *http.Request, tenantID string) (edgecore.ListApprovalsQuery, error) {

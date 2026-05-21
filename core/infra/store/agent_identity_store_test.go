@@ -131,6 +131,7 @@ func TestAgentIdentityList(t *testing.T) {
 
 	for _, name := range []string{"agent-a", "agent-b", "agent-c"} {
 		_, err := s.Create(ctx, AgentIdentity{
+			TenantID: "tenant-a",
 			Name:     name,
 			Owner:    "admin",
 			RiskTier: "low",
@@ -139,8 +140,16 @@ func TestAgentIdentityList(t *testing.T) {
 			t.Fatalf("Create %s: %v", name, err)
 		}
 	}
+	if _, err := s.Create(ctx, AgentIdentity{
+		TenantID: "tenant-b",
+		Name:     "agent-foreign",
+		Owner:    "admin",
+		RiskTier: "low",
+	}); err != nil {
+		t.Fatalf("Create foreign tenant agent: %v", err)
+	}
 
-	results, _, err := s.List(ctx, "", 10, AgentIdentityFilter{})
+	results, _, err := s.List(ctx, "tenant-a", "", 10, AgentIdentityFilter{})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -150,6 +159,7 @@ func TestAgentIdentityList(t *testing.T) {
 
 	// Test filter by risk_tier
 	_, err = s.Create(ctx, AgentIdentity{
+		TenantID: "tenant-a",
 		Name:     "agent-critical",
 		Owner:    "admin",
 		RiskTier: "critical",
@@ -158,7 +168,7 @@ func TestAgentIdentityList(t *testing.T) {
 		t.Fatalf("Create agent-critical: %v", err)
 	}
 
-	filtered, _, err := s.List(ctx, "", 10, AgentIdentityFilter{RiskTier: "critical"})
+	filtered, _, err := s.List(ctx, "tenant-a", "", 10, AgentIdentityFilter{RiskTier: "critical"})
 	if err != nil {
 		t.Fatalf("List filtered: %v", err)
 	}
@@ -167,6 +177,53 @@ func TestAgentIdentityList(t *testing.T) {
 	}
 	if filtered[0].Name != "agent-critical" {
 		t.Fatalf("expected agent-critical, got %q", filtered[0].Name)
+	}
+}
+
+func TestAgentIdentityListTenantScoped(t *testing.T) {
+	s := newTestAgentIdentityStore(t)
+	ctx := context.Background()
+	for _, tc := range []struct {
+		tenant string
+		name   string
+		server string
+	}{
+		{"tenant-a", "agent-a", "a-mcp"},
+		{"tenant-b", "agent-b", "b-mcp"},
+	} {
+		if _, err := s.Create(ctx, AgentIdentity{
+			TenantID:       tc.tenant,
+			Name:           tc.name,
+			Owner:          "admin",
+			RiskTier:       "high",
+			AllowedServers: []string{tc.server},
+			AllowedTools:   []string{tc.tenant + "-tool"},
+			Entitlements:   []string{tc.tenant + ".entitlement"},
+		}); err != nil {
+			t.Fatalf("Create %s: %v", tc.name, err)
+		}
+	}
+	if _, _, err := s.List(ctx, "", "", 10, AgentIdentityFilter{}); err == nil {
+		t.Fatal("expected empty-tenant list to fail closed")
+	}
+	for _, tc := range []struct {
+		tenant string
+		name   string
+		server string
+	}{
+		{"tenant-a", "agent-a", "a-mcp"},
+		{"tenant-b", "agent-b", "b-mcp"},
+	} {
+		got, _, err := s.List(ctx, tc.tenant, "", 10, AgentIdentityFilter{})
+		if err != nil {
+			t.Fatalf("List %s: %v", tc.tenant, err)
+		}
+		if len(got) != 1 || got[0].Name != tc.name {
+			t.Fatalf("List %s = %#v, want only %s", tc.tenant, got, tc.name)
+		}
+		if len(got[0].AllowedServers) != 1 || got[0].AllowedServers[0] != tc.server {
+			t.Fatalf("List %s allowed servers leaked/missing: %#v", tc.tenant, got[0].AllowedServers)
+		}
 	}
 }
 
@@ -394,6 +451,7 @@ func TestAgentIdentityListPaginationSameScore(t *testing.T) {
 	var ids []string
 	for i := 0; i < 5; i++ {
 		created, err := s.Create(ctx, AgentIdentity{
+			TenantID: "tenant-a",
 			Name:     fmt.Sprintf("agent-%d", i),
 			Owner:    "admin",
 			RiskTier: "low",
@@ -419,7 +477,7 @@ func TestAgentIdentityListPaginationSameScore(t *testing.T) {
 	cursor := ""
 	pages := 0
 	for {
-		results, nextCursor, err := s.List(ctx, cursor, 2, AgentIdentityFilter{})
+		results, nextCursor, err := s.List(ctx, "tenant-a", cursor, 2, AgentIdentityFilter{})
 		if err != nil {
 			t.Fatalf("List page %d: %v", pages+1, err)
 		}
@@ -490,6 +548,7 @@ func TestAgentIdentityListPaginationLargeSameScore(t *testing.T) {
 	for i := range totalItems {
 		id := fmt.Sprintf("agent-%03d", i)
 		identity := AgentIdentity{
+			TenantID: "tenant-a",
 			ID:       id,
 			Name:     fmt.Sprintf("agent-%d", i),
 			Owner:    "admin",
@@ -513,7 +572,7 @@ func TestAgentIdentityListPaginationLargeSameScore(t *testing.T) {
 	cursor := ""
 	pages := 0
 	for {
-		results, nextCursor, err := s.List(ctx, cursor, limit, AgentIdentityFilter{})
+		results, nextCursor, err := s.List(ctx, "tenant-a", cursor, limit, AgentIdentityFilter{})
 		if err != nil {
 			t.Fatalf("List page %d: %v", pages+1, err)
 		}
@@ -562,7 +621,7 @@ func TestAgentIdentityListPaginationMixedScores(t *testing.T) {
 	}
 	for _, e := range entries {
 		identity := AgentIdentity{
-			ID: e.id, Name: e.id, Owner: "admin", RiskTier: "low", Status: "active",
+			TenantID: "tenant-a", ID: e.id, Name: e.id, Owner: "admin", RiskTier: "low", Status: "active",
 		}
 		if _, err := s.Create(ctx, identity); err != nil {
 			t.Fatalf("Create %s: %v", e.id, err)
@@ -577,7 +636,7 @@ func TestAgentIdentityListPaginationMixedScores(t *testing.T) {
 	cursor := ""
 	pages := 0
 	for {
-		results, nextCursor, err := s.List(ctx, cursor, limit, AgentIdentityFilter{})
+		results, nextCursor, err := s.List(ctx, "tenant-a", cursor, limit, AgentIdentityFilter{})
 		if err != nil {
 			t.Fatalf("List page %d: %v", pages+1, err)
 		}
@@ -630,6 +689,7 @@ func TestAgentIdentityListFilteredLateMatch(t *testing.T) {
 			tier = "critical"
 		}
 		identity := AgentIdentity{
+			TenantID: "tenant-a",
 			ID:       fmt.Sprintf("agent-%03d", i),
 			Name:     fmt.Sprintf("agent-%d", i),
 			Owner:    "admin",
@@ -642,7 +702,7 @@ func TestAgentIdentityListFilteredLateMatch(t *testing.T) {
 	}
 
 	// Filter for critical — should find the 1 matching identity.
-	results, nextCursor, err := s.List(ctx, "", 10, AgentIdentityFilter{RiskTier: "critical"})
+	results, nextCursor, err := s.List(ctx, "tenant-a", "", 10, AgentIdentityFilter{RiskTier: "critical"})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}

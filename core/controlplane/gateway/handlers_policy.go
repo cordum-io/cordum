@@ -99,9 +99,11 @@ func (s *server) handlePolicyCheck(w http.ResponseWriter, r *http.Request, mode 
 			Action: req.Action,
 		}
 		if gateDec, fired := s.actionGatePipeline.Run(r.Context(), input); fired {
+			s.emitPolicyActionGateAudit(r.Context(), tenant, principalID, mode, &req, gateDec)
 			writeActionGatePolicyError(w, r, mode, gateDec)
 			return
 		}
+		checkReq = stripGatewayForwardedActionDescriptor(checkReq)
 	}
 
 	var resp *pb.PolicyCheckResponse

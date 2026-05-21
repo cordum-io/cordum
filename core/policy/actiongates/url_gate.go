@@ -157,8 +157,15 @@ func (g *URLGate) Evaluate(ctx context.Context, in *config.PolicyInput) ActionGa
 	}
 
 	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" {
-		return ActionGateDecision{}
+	if err != nil {
+		return g.deny(CodeAccessDenied, "malformed URL denied", "malformed_url", raw, "", false)
+	}
+	scheme := strings.ToLower(strings.TrimSpace(u.Scheme))
+	if scheme != "http" && scheme != "https" {
+		return g.deny(CodeAccessDenied, "unsupported URL scheme denied", "unsupported_scheme", raw, strings.ToLower(u.Hostname()), u.User != nil)
+	}
+	if u.Host == "" || u.Hostname() == "" {
+		return g.deny(CodeAccessDenied, "URL host required", "missing_host", raw, "", u.User != nil)
 	}
 
 	host := strings.ToLower(u.Hostname())

@@ -7409,6 +7409,10 @@ paths:
                           type: array
                           items: {type: string}
                           description: Capability tokens the identity holds for MCP required-entitlement checks.
+                        preapproved_mutating_tools:
+                          type: array
+                          items: {type: string}
+                          description: Mutating MCP tool names/globs this identity may call without human approval. Empty or omitted requires approval for every mutating tool.
                         data_classifications:
                           type: array
                           items: {type: string}
@@ -7469,6 +7473,10 @@ paths:
                   type: array
                   items: {type: string}
                   description: Capability tokens the identity holds for MCP required-entitlement checks.
+                preapproved_mutating_tools:
+                  type: array
+                  items: {type: string}
+                  description: Mutating MCP tool names/globs this identity may call without human approval. Empty or omitted requires approval for every mutating tool.
                 data_classifications:
                   type: array
                   items: {type: string}
@@ -7564,6 +7572,10 @@ paths:
                   type: array
                   items: {type: string}
                   description: Full replacement capability-token list. Send [] to clear.
+                preapproved_mutating_tools:
+                  type: array
+                  items: {type: string}
+                  description: Full replacement list of mutating MCP tool names/globs allowed without human approval. Send [] to clear.
                 data_classifications:
                   type: array
                   items: {type: string}

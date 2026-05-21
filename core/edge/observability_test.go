@@ -1197,6 +1197,8 @@ func TestSIEMEventForApprovalRequestedHasMediumSeverity(t *testing.T) {
 		EventID:     "edge_evt_jkl",
 		PrincipalID: "user@example.com",
 		RuleID:      "rule_abc",
+		ActionHash:  "sha256:action",
+		InputHash:   "sha256:input",
 		Status:      "pending",
 		CreatedAt:   createdAt,
 		Reason:      "Authorization: Bearer leaky-reason",
@@ -1213,6 +1215,9 @@ func TestSIEMEventForApprovalRequestedHasMediumSeverity(t *testing.T) {
 	}
 	if ev.Extra["approval_ref"] != "edge_apr_abc" {
 		t.Errorf("Extra approval_ref = %q", ev.Extra["approval_ref"])
+	}
+	if ev.Extra["action_hash"] != "sha256:action" || ev.Extra["input_hash"] != "sha256:input" {
+		t.Errorf("approval evidence hashes missing from Extra: %#v", ev.Extra)
 	}
 	for k, v := range ev.Extra {
 		if strings.Contains(v, "Authorization") || strings.Contains(v, "Bearer") {

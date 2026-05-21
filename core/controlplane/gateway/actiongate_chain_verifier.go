@@ -2,9 +2,11 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
@@ -54,7 +56,18 @@ func (v *auditChainApprovalVerifier) VerifyForApproval(
 	if err != nil {
 		return actiongates.ChainVerifyOutcome{}, err
 	}
-	return chainOutcomeFromVerifyResult(result, len(opts.HMACKey) > 0), nil
+	outcome := chainOutcomeFromVerifyResult(result, len(opts.HMACKey) > 0)
+	found, err := approvalEvidenceExists(ctx, v.client, streamKey, opts, approval)
+	if err != nil {
+		return actiongates.ChainVerifyOutcome{}, err
+	}
+	if !found {
+		outcome.HasEvidenceGap = true
+		if outcome.Status != actiongates.ChainStatusCompromised {
+			outcome.Detail = "approval_evidence_missing:" + approvalRefDetailPrefix(approval.ApprovalRef)
+		}
+	}
+	return outcome, nil
 }
 
 func auditVerifyOptionsForApproval(approval *edgecore.EdgeApproval, now time.Time) audit.VerifyOptions {
@@ -155,4 +168,86 @@ func verifyResultDetail(result *audit.VerifyResult) string {
 	}
 	gap := result.Gaps[0]
 	return "gap=" + string(gap.Type) + ":seq=" + strconv.FormatInt(gap.AtSeq, 10)
+}
+
+func approvalEvidenceExists(
+	ctx context.Context,
+	client redis.UniversalClient,
+	streamKey string,
+	opts audit.VerifyOptions,
+	approval *edgecore.EdgeApproval,
+) (bool, error) {
+	if approval == nil || strings.TrimSpace(approval.ApprovalRef) == "" || strings.TrimSpace(approval.ActionHash) == "" {
+		return false, nil
+	}
+	entries, err := client.XRangeN(ctx, streamKey, streamMinID(opts), streamMaxID(opts), verifyScanLimit(opts)).Result()
+	if err != nil {
+		return false, fmt.Errorf("scan approval evidence: %w", err)
+	}
+	for _, entry := range entries {
+		if approvalEvidenceEntryMatches(entry, approval) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func approvalEvidenceEntryMatches(entry redis.XMessage, approval *edgecore.EdgeApproval) bool {
+	payload, ok := entry.Values["event"].(string)
+	if !ok || payload == "" {
+		return false
+	}
+	var event audit.SIEMEvent
+	if err := json.Unmarshal([]byte(payload), &event); err != nil {
+		return false
+	}
+	if !approvalEvidenceEventType(event.EventType) || strings.TrimSpace(event.TenantID) != strings.TrimSpace(approval.TenantID) {
+		return false
+	}
+	return strings.TrimSpace(event.Extra["approval_ref"]) == strings.TrimSpace(approval.ApprovalRef) &&
+		strings.TrimSpace(event.Extra["action_hash"]) == strings.TrimSpace(approval.ActionHash)
+}
+
+func approvalEvidenceEventType(eventType string) bool {
+	switch eventType {
+	case audit.EventEdgeApprovalRequested, audit.EventEdgeApprovalResolved:
+		return true
+	default:
+		return false
+	}
+}
+
+func streamMinID(opts audit.VerifyOptions) string {
+	if opts.SinceMs <= 0 {
+		return "-"
+	}
+	return strconv.FormatInt(opts.SinceMs, 10) + "-0"
+}
+
+func streamMaxID(opts audit.VerifyOptions) string {
+	if opts.UntilMs <= 0 {
+		return "+"
+	}
+	return strconv.FormatInt(opts.UntilMs, 10) + "-18446744073709551615"
+}
+
+func verifyScanLimit(opts audit.VerifyOptions) int64 {
+	if opts.Limit <= 0 {
+		return audit.DefaultVerifyLimit
+	}
+	if opts.Limit > audit.MaxVerifyLimit {
+		return audit.MaxVerifyLimit
+	}
+	return opts.Limit
+}
+
+func approvalRefDetailPrefix(ref string) string {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "missing_ref"
+	}
+	if len(ref) > 16 {
+		return ref[:16]
+	}
+	return ref
 }

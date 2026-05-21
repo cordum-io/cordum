@@ -484,16 +484,17 @@ func TestURLGate_AllowLegitimateDestinations(t *testing.T) {
 	}
 }
 
-func TestURLGate_MalformedURLAllowsPipelineContinue(t *testing.T) {
+func TestURLGate_FailsClosedOnMalformedHostlessAndUnsupportedSchemes(t *testing.T) {
 	t.Parallel()
-	// Malformed -> we choose ALLOW (skip) and let the rule engine + handler
-	// produce a 400 downstream. The gate is for actionable structured cases.
-	gate := NewURLGate(URLGateOptions{Resolver: &fakeHostResolver{}})
-	dec := gate.Evaluate(context.Background(), &config.PolicyInput{
-		Action: &config.ActionDescriptor{Kind: config.ActionKindURL, Verb: config.ActionVerbRead, TargetURL: "::not a url::"},
-	})
-	if dec.Fired() {
-		t.Fatalf("malformed url: gate fired (Decision=%v)", dec.Decision)
+	cases := []urlGateCase{
+		{name: "file_scheme", url: "file:///etc/passwd", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "unsupported_scheme"},
+		{name: "mailto_scheme", url: "mailto:ops@example.com", verb: config.ActionVerbWrite, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "unsupported_scheme"},
+		{name: "ftp_scheme", url: "ftp://example.com/x", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "unsupported_scheme"},
+		{name: "http_missing_host", url: "http:///missing-host", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "missing_host"},
+		{name: "malformed_url", url: "http://[::1", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "malformed_url"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) { t.Parallel(); runURLGate(t, tc) })
 	}
 }
 

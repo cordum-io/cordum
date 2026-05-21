@@ -932,6 +932,12 @@ func SIEMEventForApprovalRequested(apr EdgeApproval) audit.SIEMEvent {
 	if v := strings.TrimSpace(apr.PolicySnapshot); v != "" {
 		extra["policy_snapshot"] = boundedShortString(v, 80)
 	}
+	if v := strings.TrimSpace(apr.ActionHash); v != "" {
+		extra["action_hash"] = boundedShortString(v, 80)
+	}
+	if v := strings.TrimSpace(apr.InputHash); v != "" {
+		extra["input_hash"] = boundedShortString(v, 80)
+	}
 	return audit.SIEMEvent{
 		Timestamp:   timestamp,
 		EventType:   audit.EventEdgeApprovalRequested,

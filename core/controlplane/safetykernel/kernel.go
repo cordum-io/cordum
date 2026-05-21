@@ -675,8 +675,9 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	// request, so caching any result (even a fallthrough ALLOW) would prevent
 	// the window from advancing correctly.
 	policyHasVelocity := effectiveVelocityRuleCount(evalPolicy, s.velocityRuleLimit()) > 0
+	requestHasActionDescriptor := requestHasActionDescriptorLabel(req)
 	cacheKey := ""
-	if s.cacheTTL > 0 && !policyHasVelocity {
+	if s.cacheTTL > 0 && !policyHasVelocity && !requestHasActionDescriptor {
 		cacheKey = cacheKeyForRequest(req, snapshot)
 		if cacheKey != "" {
 			if cached := s.getCachedDecision(cacheKey); cached != nil {
@@ -980,7 +981,7 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 
 	slog.Info("policy evaluation result", "component", "safety", "tenant", tenant, "topic", topic, "jobId", req.GetJobId(), "decision", resp.Decision.String(), "ruleId", resp.RuleId, "ruleTier", ruleTier)
 
-	if cacheKey != "" && s.cacheTTL > 0 {
+	if cacheKey != "" && s.cacheTTL > 0 && !requestHasActionDescriptor {
 		cacheResp := clonePolicyResponse(resp)
 		cacheResp.ApprovalRef = ""
 		s.setCachedDecision(cacheKey, cacheResp)

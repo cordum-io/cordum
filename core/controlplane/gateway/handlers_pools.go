@@ -308,7 +308,14 @@ func (s *server) handleDeletePool(w http.ResponseWriter, r *http.Request) {
 	}
 
 	force := r.URL.Query().Get("force") == "true"
-	err := s.deletePoolFromConfig(r.Context(), name, force)
+	tenant, err := s.resolveTenant(r, "")
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, errorCodePoolInvalidConfig, err.Error())
+		return
+	}
+	// Pool config is system-scoped, but agent identity blockers are tenant-scoped;
+	// use the authenticated request tenant rather than the store's legacy empty-tenant path.
+	err = s.deletePoolFromConfig(r.Context(), tenant, name, force)
 	if err != nil {
 		if errors.Is(err, configsvc.ErrRevisionConflict) {
 			writeJSONError(w, http.StatusConflict, errorCodePoolVersionConflict, "config update conflict — retry")
@@ -337,13 +344,13 @@ func (s *server) handleDeletePool(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *server) deletePoolFromConfig(ctx context.Context, name string, force bool) error {
+func (s *server) deletePoolFromConfig(ctx context.Context, tenantID, name string, force bool) error {
 	return s.configSvc.SetWithRetry(ctx, configsvc.ScopeSystem, "default", 3, func(doc *configsvc.Document) error {
 		topics, poolMap, err := extractPoolsFromConfig(doc)
 		if err != nil {
 			return err
 		}
-		if err := s.validatePoolDelete(ctx, name, force, topics, poolMap); err != nil {
+		if err := s.validatePoolDelete(ctx, tenantID, name, force, topics, poolMap); err != nil {
 			return err
 		}
 		delete(poolMap, name)
@@ -353,7 +360,7 @@ func (s *server) deletePoolFromConfig(ctx context.Context, name string, force bo
 	})
 }
 
-func (s *server) validatePoolDelete(ctx context.Context, name string, force bool, topics map[string][]string, poolMap map[string]config.PoolConfig) error {
+func (s *server) validatePoolDelete(ctx context.Context, tenantID, name string, force bool, topics map[string][]string, poolMap map[string]config.PoolConfig) error {
 	existing, ok := poolMap[name]
 	if !ok {
 		return poolNotFoundError{pool: name}
@@ -362,7 +369,7 @@ func (s *server) validatePoolDelete(ctx context.Context, name string, force bool
 	if force && status != config.PoolStatusInactive {
 		return &poolInUseError{pool: name, status: status}
 	}
-	queuedJobs, agentIDs, err := s.poolDeleteBlockers(ctx, name, topics)
+	queuedJobs, agentIDs, err := s.poolDeleteBlockers(ctx, tenantID, name, topics)
 	if err != nil {
 		return err
 	}
@@ -585,12 +592,12 @@ func (s *server) handleRemoveTopicFromPool(w http.ResponseWriter, r *http.Reques
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *server) poolDeleteBlockers(ctx context.Context, pool string, topics map[string][]string) (int, []string, error) {
+func (s *server) poolDeleteBlockers(ctx context.Context, tenantID, pool string, topics map[string][]string) (int, []string, error) {
 	queuedJobs, err := s.countPoolQueuedJobs(ctx, pool, topics)
 	if err != nil {
 		return 0, nil, err
 	}
-	agentIDs, err := s.agentIDsReferencingPool(ctx, pool)
+	agentIDs, err := s.agentIDsReferencingPool(ctx, tenantID, pool)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -621,14 +628,14 @@ func (s *server) countPoolQueuedJobs(ctx context.Context, pool string, topics ma
 	return total, nil
 }
 
-func (s *server) agentIDsReferencingPool(ctx context.Context, pool string) ([]string, error) {
+func (s *server) agentIDsReferencingPool(ctx context.Context, tenantID, pool string) ([]string, error) {
 	if s.agentIdentityStore == nil {
 		return nil, nil
 	}
 	var ids []string
 	cursor := ""
 	for {
-		agents, next, err := s.agentIdentityStore.List(ctx, cursor, 200, store.AgentIdentityFilter{})
+		agents, next, err := s.agentIdentityStore.List(ctx, tenantID, cursor, 200, store.AgentIdentityFilter{})
 		if err != nil {
 			return nil, err
 		}

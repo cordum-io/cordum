@@ -108,6 +108,14 @@ func actionDescriptorFromRequest(_ context.Context, req *pb.PolicyCheckRequest) 
 	return &desc
 }
 
+func requestHasActionDescriptorLabel(req *pb.PolicyCheckRequest) bool {
+	if req == nil {
+		return false
+	}
+	_, ok := req.GetLabels()[LabelActionDescriptorJSON]
+	return ok
+}
+
 // newKernelActionGateAuditSink returns an audit sink that records the
 // SIEMEvent into the kernel's audit exporter. A nil exporter degrades
 // to a slog-only sink so a misconfigured deployment still surfaces the

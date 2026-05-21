@@ -43,6 +43,7 @@ func adminRequest(method, url string, body any) *http.Request {
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("X-Cordum-Role", "admin")
 	r.Header.Set("X-Cordum-Principal", "test-admin")
+	r.Header.Set("X-Tenant-ID", "default")
 	return r
 }
 

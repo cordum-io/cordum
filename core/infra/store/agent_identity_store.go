@@ -173,10 +173,14 @@ func (s *AgentIdentityStore) Get(ctx context.Context, tenantID, id string) (*Age
 	return &identity, nil
 }
 
-// List returns agent identities with cursor-based pagination and optional filtering.
-func (s *AgentIdentityStore) List(ctx context.Context, cursor string, limit int, filter AgentIdentityFilter) ([]*AgentIdentity, string, error) {
+// List returns tenant-scoped agent identities with cursor-based pagination and optional filtering.
+func (s *AgentIdentityStore) List(ctx context.Context, tenantID, cursor string, limit int, filter AgentIdentityFilter) ([]*AgentIdentity, string, error) {
 	if s == nil || s.client == nil {
 		return nil, "", fmt.Errorf("agent_identity_store: redis client not initialized")
+	}
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		return nil, "", fmt.Errorf("agent identity tenant id required")
 	}
 	if limit <= 0 {
 		limit = defaultAgentListLimit
@@ -257,7 +261,7 @@ func (s *AgentIdentityStore) List(ctx context.Context, cursor string, limit int,
 			}
 			itemsAtLastScore++
 
-			identity, err := s.Get(ctx, "", id)
+			identity, err := s.Get(ctx, tenantID, id)
 			if err != nil {
 				slog.Warn("list agent identities: skip unreadable entry", "id", id, "error", err)
 				continue

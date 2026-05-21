@@ -22,6 +22,7 @@ func TestWireActionGatePipeline_ValidApprovalAndAuditChainAllows(t *testing.T) {
 	approval := seedApprovedWirePipelineApproval(t, ctx, edgeStore, "tenant-chain-ok", "ok", action)
 	action.ApprovalClaim.ApprovalRef = approval.ApprovalRef
 	appendVerifierTestEvents(t, s.auditChainer, "tenant-chain-ok", 2)
+	appendApprovalEvidenceEvent(t, s.auditChainer, approval, nil)
 
 	s.wireActionGatePipeline()
 	dec, fired := s.actionGatePipeline.Run(wirePipelineAuthContext("tenant-chain-ok"), &config.PolicyInput{

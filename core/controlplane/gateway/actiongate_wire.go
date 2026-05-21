@@ -11,6 +11,8 @@ import (
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/mcp"
 	"github.com/cordum/cordum/core/policy/actiongates"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 // labelActionDescriptorJSON is the reserved Labels-map key the gateway
@@ -62,6 +64,29 @@ func encodeActionDescriptorLabel(desc *config.ActionDescriptor) (string, error) 
 		return "", fmt.Errorf("action descriptor too large: %d bytes (cap %d)", len(encoded), config.ActionArgsMaxSerializedBytes)
 	}
 	return string(encoded), nil
+}
+
+// stripGatewayForwardedActionDescriptor clones req and removes the reserved
+// descriptor label after the gateway-primary action-gate pipeline has allowed
+// the action. The gateway has full HTTP auth/backend context; the Safety Kernel
+// descriptor extractor remains defense-in-depth for direct gRPC callers.
+func stripGatewayForwardedActionDescriptor(req *pb.PolicyCheckRequest) *pb.PolicyCheckRequest {
+	if req == nil {
+		return nil
+	}
+	if _, ok := req.GetLabels()[labelActionDescriptorJSON]; !ok {
+		return req
+	}
+	out := proto.Clone(req).(*pb.PolicyCheckRequest)
+	labels := make(map[string]string, len(req.GetLabels()))
+	for k, v := range req.GetLabels() {
+		if k == labelActionDescriptorJSON {
+			continue
+		}
+		labels[k] = v
+	}
+	out.Labels = labels
+	return out
 }
 
 // wireActionGatePipeline installs the production action-gate pipeline

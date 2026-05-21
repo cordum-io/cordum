@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/licensing"
+	"github.com/cordum/cordum/core/mcp"
 	"github.com/cordum/cordum/core/model"
 	redis "github.com/redis/go-redis/v9"
 )
@@ -82,28 +84,42 @@ func TestAgentIdentityAPISurfacesMCPAllowlists(t *testing.T) {
 
 	created := createAgentWithMCPAllowlists(t, s)
 	requireAgentMCPFields(t, created, []string{"prod-mcp"}, []string{"repo.*"}, []string{"cordum://repos/*"}, []string{"repo.read"})
+	requireAgentPreapprovedFields(t, created, []string{"cordum_install_pack"})
 
 	stored, err := s.agentIdentityStore.Get(ctx, "default", created.ID)
 	if err != nil {
 		t.Fatalf("get stored agent: %v", err)
 	}
 	requireStoreMCPFields(t, stored, []string{"prod-mcp"}, []string{"repo.*"}, []string{"cordum://repos/*"}, []string{"repo.read"})
+	requireStorePreapprovedFields(t, stored, []string{"cordum_install_pack"})
 
 	got := getAgentViaHandler(t, s, created.ID)
 	requireAgentMCPFields(t, got, []string{"prod-mcp"}, []string{"repo.*"}, []string{"cordum://repos/*"}, []string{"repo.read"})
+	requireAgentPreapprovedFields(t, got, []string{"cordum_install_pack"})
 
 	listed := listAgentViaHandler(t, s, created.ID)
 	requireAgentMCPFields(t, listed, []string{"prod-mcp"}, []string{"repo.*"}, []string{"cordum://repos/*"}, []string{"repo.read"})
+	requireAgentPreapprovedFields(t, listed, []string{"cordum_install_pack"})
 
 	updated := updateAgentMCPAllowlists(t, s, created.ID)
 	requireAgentMCPFields(t, updated, []string{"stage-mcp"}, []string{"repo.*"}, nil, []string{"repo.write"})
+	requireAgentPreapprovedFields(t, updated, []string{"cordum_publish_release"})
 	afterUpdate, err := s.agentIdentityStore.Get(ctx, "default", created.ID)
 	if err != nil {
 		t.Fatalf("get updated stored agent: %v", err)
 	}
 	requireStoreMCPFields(t, afterUpdate, []string{"stage-mcp"}, []string{"repo.*"}, []string{}, []string{"repo.write"})
+	requireStorePreapprovedFields(t, afterUpdate, []string{"cordum_publish_release"})
 	assertStringSlice(t, "AllowedTopics preserved", afterUpdate.AllowedTopics, []string{"job.repo"})
 	assertStringSlice(t, "DataClassifications preserved", afterUpdate.DataClassifications, []string{"internal"})
+
+	cleared := clearAgentPreapprovals(t, s, created.ID)
+	requireAgentPreapprovedFields(t, cleared, []string{})
+	afterClear, err := s.agentIdentityStore.Get(ctx, "default", created.ID)
+	if err != nil {
+		t.Fatalf("get cleared stored agent: %v", err)
+	}
+	requireStorePreapprovedFields(t, afterClear, []string{})
 }
 
 func TestAgentResponseFromIdentityCopiesAllowlistSlices(t *testing.T) {
@@ -111,13 +127,16 @@ func TestAgentResponseFromIdentityCopiesAllowlistSlices(t *testing.T) {
 		ID: "agent-copy", Name: "copy", Owner: "admin", RiskTier: "high", Status: "active",
 		AllowedServers: []string{"prod-mcp"}, AllowedTools: []string{"repo.*"},
 		AllowedResources: []string{"cordum://repos/*"}, Entitlements: []string{"repo.read"},
+		PreapprovedMutatingTools: []string{"cordum_install_pack"},
 	}
 	resp := agentResponseFromIdentity(src)
 	resp.AllowedServers[0] = "mutated-server"
 	resp.AllowedTools[0] = "mutated-tool"
 	resp.AllowedResources[0] = "mutated-resource"
 	resp.Entitlements[0] = "mutated-entitlement"
+	resp.PreapprovedMutatingTools[0] = "mutated-preapproval"
 	requireStoreMCPFields(t, src, []string{"prod-mcp"}, []string{"repo.*"}, []string{"cordum://repos/*"}, []string{"repo.read"})
+	requireStorePreapprovedFields(t, src, []string{"cordum_install_pack"})
 }
 
 func createAgentWithMCPAllowlists(t *testing.T, s *server) agentResponse {
@@ -126,7 +145,8 @@ func createAgentWithMCPAllowlists(t *testing.T, s *server) agentResponse {
 		"name":"repo-bot","owner":"admin","risk_tier":"high",
 		"allowed_topics":["job.repo"],"allowed_tools":["repo.*"],
 		"allowed_servers":["prod-mcp"],"allowed_resources":["cordum://repos/*"],
-		"entitlements":["repo.read"],"data_classifications":["internal"]
+		"entitlements":["repo.read"],"preapproved_mutating_tools":["cordum_install_pack"],
+		"data_classifications":["internal"]
 	}`)
 	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents", body), &auth.AuthContext{
 		Tenant: "default", Role: "admin", PrincipalID: "admin-user",
@@ -184,7 +204,8 @@ func updateAgentMCPAllowlists(t *testing.T, s *server, id string) agentResponse 
 	body := bytes.NewBufferString(`{
 		"allowed_servers":["stage-mcp"],
 		"allowed_resources":[],
-		"entitlements":["repo.write"]
+		"entitlements":["repo.write"],
+		"preapproved_mutating_tools":["cordum_publish_release"]
 	}`)
 	req := withAuth(httptest.NewRequest(http.MethodPut, "/api/v1/agents/"+id, body), &auth.AuthContext{
 		Tenant: "default", Role: "admin", PrincipalID: "admin-user",
@@ -195,6 +216,22 @@ func updateAgentMCPAllowlists(t *testing.T, s *server, id string) agentResponse 
 	s.handleUpdateAgent(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("update agent: got %d: %s", rr.Code, rr.Body.String())
+	}
+	return decodeAgentResponse(t, rr)
+}
+
+func clearAgentPreapprovals(t *testing.T, s *server, id string) agentResponse {
+	t.Helper()
+	body := bytes.NewBufferString(`{"preapproved_mutating_tools":[]}`)
+	req := withAuth(httptest.NewRequest(http.MethodPut, "/api/v1/agents/"+id, body), &auth.AuthContext{
+		Tenant: "default", Role: "admin", PrincipalID: "admin-user",
+	})
+	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("id", id)
+	rr := httptest.NewRecorder()
+	s.handleUpdateAgent(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("clear preapprovals: got %d: %s", rr.Code, rr.Body.String())
 	}
 	return decodeAgentResponse(t, rr)
 }
@@ -220,6 +257,11 @@ func requireAgentMCPFields(
 	assertStringSlice(t, "response Entitlements", got.Entitlements, entitlements)
 }
 
+func requireAgentPreapprovedFields(t *testing.T, got agentResponse, preapproved []string) {
+	t.Helper()
+	assertStringSlice(t, "response PreapprovedMutatingTools", got.PreapprovedMutatingTools, preapproved)
+}
+
 func requireStoreMCPFields(
 	t *testing.T,
 	got *store.AgentIdentity,
@@ -233,6 +275,14 @@ func requireStoreMCPFields(
 	assertStringSlice(t, "store AllowedTools", got.AllowedTools, tools)
 	assertStringSlice(t, "store AllowedResources", got.AllowedResources, resources)
 	assertStringSlice(t, "store Entitlements", got.Entitlements, entitlements)
+}
+
+func requireStorePreapprovedFields(t *testing.T, got *store.AgentIdentity, preapproved []string) {
+	t.Helper()
+	if got == nil {
+		t.Fatal("stored identity is nil")
+	}
+	assertStringSlice(t, "store PreapprovedMutatingTools", got.PreapprovedMutatingTools, preapproved)
 }
 
 func TestCreateAgentValidation(t *testing.T) {
@@ -781,6 +831,145 @@ func TestHandleAgentByID_RejectsCrossTenant(t *testing.T) {
 	if after.Status == "revoked" {
 		t.Fatalf("REGRESSION: victim status set to revoked by cross-tenant DELETE")
 	}
+}
+
+func TestHandleListAgentsTenantScoped(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
+	ctx := context.Background()
+
+	seeded := []store.AgentIdentity{
+		{
+			TenantID:                 "tenant-a",
+			ID:                       "agent-tenant-a",
+			Name:                     "tenant-a-agent",
+			Owner:                    "tenant-a-owner",
+			Team:                     "red",
+			RiskTier:                 "high",
+			AllowedServers:           []string{"tenant-a-mcp"},
+			AllowedTools:             []string{"tenant-a.tool"},
+			AllowedResources:         []string{"cordum://tenant-a/*"},
+			Entitlements:             []string{"tenant-a.entitlement"},
+			PreapprovedMutatingTools: []string{"tenant-a.mutate"},
+		},
+		{
+			TenantID:                 "tenant-b",
+			ID:                       "agent-tenant-b",
+			Name:                     "tenant-b-agent",
+			Owner:                    "tenant-b-owner",
+			Team:                     "blue",
+			RiskTier:                 "critical",
+			AllowedServers:           []string{"tenant-b-mcp"},
+			AllowedTools:             []string{"tenant-b.tool"},
+			AllowedResources:         []string{"cordum://tenant-b/*"},
+			Entitlements:             []string{"tenant-b.entitlement"},
+			PreapprovedMutatingTools: []string{"tenant-b.mutate"},
+		},
+	}
+	for _, identity := range seeded {
+		if _, err := s.agentIdentityStore.Create(ctx, identity); err != nil {
+			t.Fatalf("seed %s: %v", identity.ID, err)
+		}
+	}
+
+	tenantA := listAgentsForTenant(t, s, "tenant-a")
+	requireSingleTenantAgent(t, tenantA, "agent-tenant-a", "tenant-a-mcp", "tenant-a.tool", "cordum://tenant-a/*", "tenant-a.entitlement", "tenant-a.mutate")
+	tenantB := listAgentsForTenant(t, s, "tenant-b")
+	requireSingleTenantAgent(t, tenantB, "agent-tenant-b", "tenant-b-mcp", "tenant-b.tool", "cordum://tenant-b/*", "tenant-b.entitlement", "tenant-b.mutate")
+}
+
+func TestMCPSetAgentScopeRoundTripPreapprovedMutatingTools(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
+	ctx := context.Background()
+	agent, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+		TenantID: "default",
+		ID:       "mcp-scope-agent",
+		Name:     "MCP Scope Agent",
+		Owner:    "ops",
+		RiskTier: "high",
+	})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || !strings.HasPrefix(r.URL.Path, "/api/v1/agents/") {
+			t.Errorf("unexpected bridge request %s %s", r.Method, r.URL.Path)
+			http.Error(w, "unexpected request", http.StatusNotFound)
+			return
+		}
+		r.SetPathValue("id", strings.TrimPrefix(r.URL.Path, "/api/v1/agents/"))
+		authed := withAuth(r, &auth.AuthContext{
+			Tenant:      "default",
+			Role:        "admin",
+			PrincipalID: "mcp-operator",
+		})
+		s.handleUpdateAgent(w, authed)
+	}))
+	t.Cleanup(srv.Close)
+
+	bridge := mcp.NewHTTPServiceBridge(mcp.HTTPServiceBridgeConfig{
+		BaseURL:           srv.URL,
+		TenantID:          "default",
+		HTTPClient:        srv.Client(),
+		AllowPrivateHosts: true,
+	})
+	out, err := bridge.SetAgentScope(ctx, mcp.SetAgentScopeInput{
+		AgentID:                  agent.ID,
+		AllowedTools:             []string{"cordum_list_jobs"},
+		PreapprovedMutatingTools: []string{"cordum_install_pack"},
+	})
+	if err != nil {
+		t.Fatalf("SetAgentScope: %v", err)
+	}
+	assertStringSlice(t, "bridge PreapprovedMutatingTools", out.PreapprovedMutatingTools, []string{"cordum_install_pack"})
+
+	stored, err := s.agentIdentityStore.Get(ctx, "default", agent.ID)
+	if err != nil {
+		t.Fatalf("get stored agent: %v", err)
+	}
+	assertStringSlice(t, "stored AllowedTools", stored.AllowedTools, []string{"cordum_list_jobs"})
+	requireStorePreapprovedFields(t, stored, []string{"cordum_install_pack"})
+}
+
+func listAgentsForTenant(t *testing.T, s *server, tenant string) []agentResponse {
+	t.Helper()
+	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil), &auth.AuthContext{
+		Tenant: tenant, Role: "admin", PrincipalID: "admin-" + tenant,
+	})
+	rr := httptest.NewRecorder()
+	s.handleListAgents(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("list agents for %s: got %d: %s", tenant, rr.Code, rr.Body.String())
+	}
+	var listResp struct {
+		Items []agentResponse `json:"items"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&listResp); err != nil {
+		t.Fatalf("decode list for %s: %v", tenant, err)
+	}
+	return listResp.Items
+}
+
+func requireSingleTenantAgent(
+	t *testing.T,
+	items []agentResponse,
+	wantID, wantServer, wantTool, wantResource, wantEntitlement, wantPreapproved string,
+) {
+	t.Helper()
+	if len(items) != 1 {
+		t.Fatalf("expected one tenant-scoped item, got %d: %#v", len(items), items)
+	}
+	got := items[0]
+	if got.ID != wantID {
+		t.Fatalf("list returned agent %q, want %q", got.ID, wantID)
+	}
+	assertStringSlice(t, "AllowedServers", got.AllowedServers, []string{wantServer})
+	assertStringSlice(t, "AllowedTools", got.AllowedTools, []string{wantTool})
+	assertStringSlice(t, "AllowedResources", got.AllowedResources, []string{wantResource})
+	assertStringSlice(t, "Entitlements", got.Entitlements, []string{wantEntitlement})
+	assertStringSlice(t, "PreapprovedMutatingTools", got.PreapprovedMutatingTools, []string{wantPreapproved})
 }
 
 func TestListAgentsIncludesLastActive(t *testing.T) {

@@ -58,6 +58,12 @@ func TestGatewayEdgeApprovalResolveEmitsAuditEvent(t *testing.T) {
 			if ev.Extra["approval_ref"] != approval.ApprovalRef {
 				t.Errorf("Extra[approval_ref] = %q, want %q", ev.Extra["approval_ref"], approval.ApprovalRef)
 			}
+			if ev.Extra["action_hash"] == "" || ev.Extra["input_hash"] == "" {
+				t.Errorf("approval evidence hashes missing from Extra: %#v", ev.Extra)
+			}
+			if ev.Extra["policy_snapshot"] != approval.PolicySnapshot {
+				t.Errorf("policy_snapshot = %q, want %q", ev.Extra["policy_snapshot"], approval.PolicySnapshot)
+			}
 			// Raw resolution Reason (with Bearer secret) must NEVER reach Extra.
 			for k, v := range ev.Extra {
 				if strings.Contains(v, "Authorization") || strings.Contains(v, "Bearer") {
@@ -140,6 +146,9 @@ func assertSelfApprovalAuditEvent(t *testing.T, sink *testAuditSender, start int
 		}
 		if ev.Extra["approval_ref"] != approvalRef || ev.Extra["reason_code"] != reasonCode {
 			t.Fatalf("self-approval audit extra = %#v, want ref=%q reason_code=%q", ev.Extra, approvalRef, reasonCode)
+		}
+		if ev.Extra["action_hash"] == "" || ev.Extra["input_hash"] == "" {
+			t.Fatalf("self-approval audit missing evidence hashes: %#v", ev.Extra)
 		}
 		if strings.Contains(ev.Identity, "principal-edge-a") || strings.Contains(strings.Join(extraValues(ev.Extra), " "), "principal-edge-a") {
 			t.Fatalf("self-approval audit leaked raw caller principal: %#v", ev)

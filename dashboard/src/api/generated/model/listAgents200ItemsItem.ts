@@ -22,6 +22,8 @@ export type ListAgents200ItemsItem = {
   allowed_resources?: string[];
   /** Capability tokens the identity holds for MCP required-entitlement checks. */
   entitlements?: string[];
+  /** Mutating MCP tool names/globs this identity may call without human approval. Empty or omitted requires approval for every mutating tool. */
+  preapproved_mutating_tools?: string[];
   data_classifications?: string[];
   status?: string;
   created_at?: string;

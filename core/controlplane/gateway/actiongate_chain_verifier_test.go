@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,9 +22,11 @@ func TestAuditChainApprovalVerifier_OKAndPartial(t *testing.T) {
 	t.Run("intact chain maps to ok", func(t *testing.T) {
 		t.Parallel()
 		client, _, chainer := newVerifierTestChain(t, nil)
-		appendVerifierTestEvents(t, chainer, "tenant-ok", 3)
+		approval := approvalWindow("tenant-ok")
+		appendVerifierTestEvents(t, chainer, "tenant-ok", 2)
+		appendApprovalEvidenceEvent(t, chainer, approval, nil)
 
-		outcome := verifyApprovalForTest(t, client, chainer, approvalWindow("tenant-ok"))
+		outcome := verifyApprovalForTest(t, client, chainer, approval)
 		if outcome.Status != actiongates.ChainStatusOK {
 			t.Fatalf("status = %q, want %q", outcome.Status, actiongates.ChainStatusOK)
 		}
@@ -35,10 +38,12 @@ func TestAuditChainApprovalVerifier_OKAndPartial(t *testing.T) {
 	t.Run("retention trimmed prefix maps to partial", func(t *testing.T) {
 		t.Parallel()
 		client, _, chainer := newVerifierTestChain(t, nil)
-		appendVerifierTestEvents(t, chainer, "tenant-partial", 4)
+		approval := approvalWindow("tenant-partial")
+		appendVerifierTestEvents(t, chainer, "tenant-partial", 3)
+		appendApprovalEvidenceEvent(t, chainer, approval, nil)
 		deleteStreamEntry(t, client, chainer.StreamKey("tenant-partial"), 0)
 
-		outcome := verifyApprovalForTest(t, client, chainer, approvalWindow("tenant-partial"))
+		outcome := verifyApprovalForTest(t, client, chainer, approval)
 		if outcome.Status != actiongates.ChainStatusPartial {
 			t.Fatalf("status = %q, want %q (detail %q)", outcome.Status, actiongates.ChainStatusPartial, outcome.Detail)
 		}
@@ -53,10 +58,11 @@ func TestAuditChainApprovalVerifier_HMACMismatchCompromised(t *testing.T) {
 	goodKey := randomVerifierTestKey(t)
 	wrongKey := randomVerifierTestKey(t)
 	client, _, writer := newVerifierTestChain(t, goodKey)
-	appendVerifierTestEvents(t, writer, "tenant-hmac", 2)
+	approval := approvalWindow("tenant-hmac")
+	appendApprovalEvidenceEvent(t, writer, approval, nil)
 
 	verifierChainer := audit.NewChainer(client, "", audit.WithHMACKey(wrongKey))
-	outcome := verifyApprovalForTest(t, client, verifierChainer, approvalWindow("tenant-hmac"))
+	outcome := verifyApprovalForTest(t, client, verifierChainer, approval)
 	if outcome.Status != actiongates.ChainStatusCompromised {
 		t.Fatalf("status = %q, want %q (detail %q)", outcome.Status, actiongates.ChainStatusCompromised, outcome.Detail)
 	}
@@ -69,9 +75,10 @@ func TestAuditChainApprovalVerifier_HMACKeyForVerifyAllowsMatchingKey(t *testing
 	t.Parallel()
 	key := randomVerifierTestKey(t)
 	client, _, chainer := newVerifierTestChain(t, key)
-	appendVerifierTestEvents(t, chainer, "tenant-hmac-ok", 2)
+	approval := approvalWindow("tenant-hmac-ok")
+	appendApprovalEvidenceEvent(t, chainer, approval, nil)
 
-	outcome := verifyApprovalForTest(t, client, chainer, approvalWindow("tenant-hmac-ok"))
+	outcome := verifyApprovalForTest(t, client, chainer, approval)
 	if outcome.Status != actiongates.ChainStatusOK {
 		t.Fatalf("status = %q, want %q (detail %q)", outcome.Status, actiongates.ChainStatusOK, outcome.Detail)
 	}
@@ -100,6 +107,81 @@ func TestAuditChainApprovalVerifier_ZeroEventWindowIsEvidenceGap(t *testing.T) {
 	if !outcome.HasEvidenceGap {
 		t.Fatalf("HasEvidenceGap = false, want true for zero-event approval window: %+v", outcome)
 	}
+}
+
+func TestAuditChainApprovalVerifier_RequiresExactApprovalEvidence(t *testing.T) {
+	t.Parallel()
+
+	t.Run("unrelated valid events in window are not sufficient", func(t *testing.T) {
+		t.Parallel()
+		client, _, chainer := newVerifierTestChain(t, nil)
+		approval := approvalWindow("tenant-unrelated")
+		appendVerifierTestEvents(t, chainer, approval.TenantID, 2)
+
+		outcome := verifyApprovalForTest(t, client, chainer, approval)
+		requireApprovalEvidenceGap(t, outcome)
+	})
+
+	t.Run("missing action hash is an evidence gap", func(t *testing.T) {
+		t.Parallel()
+		client, _, chainer := newVerifierTestChain(t, nil)
+		approval := approvalWindow("tenant-missing-action-hash")
+		appendApprovalEvidenceEvent(t, chainer, approval, func(ev *audit.SIEMEvent) {
+			delete(ev.Extra, "action_hash")
+		})
+
+		outcome := verifyApprovalForTest(t, client, chainer, approval)
+		requireApprovalEvidenceGap(t, outcome)
+	})
+
+	t.Run("wrong approval ref is an evidence gap", func(t *testing.T) {
+		t.Parallel()
+		client, _, chainer := newVerifierTestChain(t, nil)
+		approval := approvalWindow("tenant-wrong-ref")
+		appendApprovalEvidenceEvent(t, chainer, approval, func(ev *audit.SIEMEvent) {
+			ev.Extra["approval_ref"] = "edge_appr_other"
+		})
+
+		outcome := verifyApprovalForTest(t, client, chainer, approval)
+		requireApprovalEvidenceGap(t, outcome)
+	})
+
+	t.Run("wrong tenant is an evidence gap", func(t *testing.T) {
+		t.Parallel()
+		client, _, chainer := newVerifierTestChain(t, nil)
+		approval := approvalWindow("tenant-right")
+		foreign := *approval
+		foreign.TenantID = "tenant-wrong"
+		appendApprovalEvidenceEvent(t, chainer, &foreign, nil)
+
+		outcome := verifyApprovalForTest(t, client, chainer, approval)
+		requireApprovalEvidenceGap(t, outcome)
+	})
+
+	t.Run("exact approval ref and action hash allows", func(t *testing.T) {
+		t.Parallel()
+		client, _, chainer := newVerifierTestChain(t, nil)
+		approval := approvalWindow("tenant-exact")
+		appendApprovalEvidenceEvent(t, chainer, approval, nil)
+
+		outcome := verifyApprovalForTest(t, client, chainer, approval)
+		if outcome.Status != actiongates.ChainStatusOK || outcome.HasEvidenceGap {
+			t.Fatalf("outcome = %+v, want OK without evidence gap", outcome)
+		}
+	})
+
+	t.Run("exact HMAC approval event allows", func(t *testing.T) {
+		t.Parallel()
+		key := randomVerifierTestKey(t)
+		client, _, chainer := newVerifierTestChain(t, key)
+		approval := approvalWindow("tenant-exact-hmac")
+		appendApprovalEvidenceEvent(t, chainer, approval, nil)
+
+		outcome := verifyApprovalForTest(t, client, chainer, approval)
+		if outcome.Status != actiongates.ChainStatusOK || outcome.HasEvidenceGap {
+			t.Fatalf("outcome = %+v, want OK without evidence gap", outcome)
+		}
+	})
 }
 
 func verifyApprovalForTest(
@@ -142,6 +224,46 @@ func appendVerifierTestEvents(t *testing.T, chainer *audit.Chainer, tenant strin
 		if err := chainer.Append(context.Background(), &event); err != nil {
 			t.Fatalf("append audit event %d: %v", i, err)
 		}
+	}
+}
+
+func appendApprovalEvidenceEvent(
+	t *testing.T,
+	chainer *audit.Chainer,
+	approval *edgecore.EdgeApproval,
+	mutate func(*audit.SIEMEvent),
+) {
+	t.Helper()
+	event := audit.SIEMEvent{
+		Timestamp: approval.CreatedAt.Add(time.Minute),
+		EventType: audit.EventEdgeApprovalRequested,
+		Severity:  audit.SeverityMedium,
+		TenantID:  approval.TenantID,
+		Action:    "edge_approval_requested",
+		Decision:  "require_approval",
+		Extra: map[string]string{
+			"approval_ref": approval.ApprovalRef,
+			"action_hash":  approval.ActionHash,
+		},
+	}
+	if mutate != nil {
+		mutate(&event)
+	}
+	if err := chainer.Append(context.Background(), &event); err != nil {
+		t.Fatalf("append approval evidence: %v", err)
+	}
+}
+
+func requireApprovalEvidenceGap(t *testing.T, outcome actiongates.ChainVerifyOutcome) {
+	t.Helper()
+	if outcome.Status != actiongates.ChainStatusOK {
+		t.Fatalf("status = %q, want OK evidence gap: %+v", outcome.Status, outcome)
+	}
+	if !outcome.HasEvidenceGap {
+		t.Fatalf("HasEvidenceGap = false, want true for missing exact approval evidence: %+v", outcome)
+	}
+	if !strings.HasPrefix(outcome.Detail, "approval_evidence_missing:") {
+		t.Fatalf("Detail = %q, want approval evidence gap without raw event contents", outcome.Detail)
 	}
 }
 

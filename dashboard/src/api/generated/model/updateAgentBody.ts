@@ -22,5 +22,7 @@ export type UpdateAgentBody = {
   allowed_resources?: string[];
   /** Full replacement capability-token list. Send [] to clear. */
   entitlements?: string[];
+  /** Full replacement list of mutating MCP tool names/globs allowed without human approval. Send [] to clear. */
+  preapproved_mutating_tools?: string[];
   data_classifications?: string[];
 };
