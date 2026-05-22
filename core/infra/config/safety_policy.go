@@ -12,12 +12,12 @@ import (
 
 // SafetyPolicy defines allow/deny rules per tenant.
 type SafetyPolicy struct {
-	Version         string                  `yaml:"version"`
-	Tier            string                  `yaml:"tier,omitempty" json:"tier,omitempty"`
-	Selector        PolicySelector          `yaml:"selector,omitempty" json:"selector,omitempty"`
-	Rules           []PolicyRule            `yaml:"rules"`
-	InputPolicy     InputPolicyConfig       `yaml:"input_policy"`
-	InputRules      []InputPolicyRule       `yaml:"input_rules"`
+	Version     string            `yaml:"version"`
+	Tier        string            `yaml:"tier,omitempty" json:"tier,omitempty"`
+	Selector    PolicySelector    `yaml:"selector,omitempty" json:"selector,omitempty"`
+	Rules       []PolicyRule      `yaml:"rules"`
+	InputPolicy InputPolicyConfig `yaml:"input_policy"`
+	InputRules  []InputPolicyRule `yaml:"input_rules"`
 	// RequireHuman controls DENY → REQUIRE_HUMAN downgrade thresholds
 	// applied during input-rule evaluation. Per architect amendment
 	// comment-79a9e609 on task-96f931fe.
