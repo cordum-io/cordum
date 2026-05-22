@@ -193,7 +193,7 @@ jobs:
 
     - name: Upload dashboard test results
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: dashboard-vitest-results
         path: dashboard/test-results/vitest.xml
@@ -210,7 +210,7 @@ jobs:
 
     - name: Upload bundle visualizer artifact
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: dashboard-bundle-stats
         path: |
@@ -328,7 +328,7 @@ jobs:
 
     - name: Upload lhci artifacts
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: lhci-login-results
         path: dashboard/.lighthouseci/

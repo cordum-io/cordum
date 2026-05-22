@@ -52,7 +52,7 @@ jobs:
           go build -o bin/cordum-gateway-sim ./cmd/cordum-gateway-sim
           chmod +x bin/cordum-gateway-sim
       - name: Upload simulator binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cordum-gateway-sim
           path: sdk/conformance/simulator/bin/cordum-gateway-sim
@@ -84,7 +84,7 @@ jobs:
             --report ../../reports/go.xml
       - name: Upload Go JUnit
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: conformance-go-junit
           path: sdk/conformance/reports/go.xml
@@ -126,7 +126,7 @@ jobs:
             --report ../../reports/python.xml
       - name: Upload Python JUnit
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: conformance-python-junit-py${{ matrix.python }}
           path: sdk/conformance/reports/python.xml
@@ -172,7 +172,7 @@ jobs:
             --report ../../reports/typescript.xml
       - name: Upload TypeScript JUnit
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: conformance-typescript-junit-node${{ matrix.node }}
           path: sdk/conformance/reports/typescript.xml
@@ -224,7 +224,7 @@ jobs:
             --out-json reports/summary.json
       - name: Upload aggregate summary
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: conformance-summary
           path: |
