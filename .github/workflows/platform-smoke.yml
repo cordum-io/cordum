@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: "1.25"
 
@@ -63,7 +63,7 @@ jobs:
 
       - name: Upload platform smoke artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: platform-smoke-artifacts
           path: |

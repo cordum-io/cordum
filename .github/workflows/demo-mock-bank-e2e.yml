@@ -37,7 +37,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -118,7 +118,7 @@ jobs:
 
       - name: Upload failure artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: demo-mock-bank-e2e-failure
           path: /tmp/mock-bank-logs/

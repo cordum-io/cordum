@@ -18,7 +18,7 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         go-version: ${{ matrix.go-version }}
         cache: false
@@ -32,7 +32,7 @@ jobs:
       run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
 
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe # v5
+      uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6.0.1
       with:
         files: ./coverage.out
         flags: unittests
@@ -84,7 +84,7 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         go-version: '1.25'
         cache: false
@@ -106,7 +106,7 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         go-version: '1.25'
         cache: false
@@ -193,7 +193,7 @@ jobs:
 
     - name: Upload dashboard test results
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: dashboard-vitest-results
         path: dashboard/test-results/vitest.xml
@@ -210,7 +210,7 @@ jobs:
 
     - name: Upload bundle visualizer artifact
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: dashboard-bundle-stats
         path: |
@@ -328,7 +328,7 @@ jobs:
 
     - name: Upload lhci artifacts
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: lhci-login-results
         path: dashboard/.lighthouseci/
@@ -342,7 +342,7 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         go-version: '1.25'
         cache: false
@@ -382,7 +382,7 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         go-version: '1.25'
         cache: false
@@ -417,7 +417,7 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         go-version: '1.25'
 
@@ -467,7 +467,7 @@ jobs:
         fetch-depth: 0
 
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         go-version: '1.25'
         cache: false
