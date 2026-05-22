@@ -106,7 +106,7 @@ jobs:
         run: python -m twine check dist/*
 
       - name: Upload dist artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cordum-sdk-dist
           path: sdk/python/dist/*
