@@ -107,7 +107,7 @@ jobs:
             -o "$out" \
             ./cmd/${{ matrix.binary }}
           ls -la "$out"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: bin-${{ matrix.binary }}-${{ matrix.target.goos }}-${{ matrix.target.goarch }}
           path: bin/${{ matrix.binary }}-${{ matrix.target.goos }}-${{ matrix.target.goarch }}${{ matrix.target.ext }}
@@ -168,7 +168,7 @@ jobs:
             # notary record is verified online by Gatekeeper instead.
             rm -f "${f}.zip"
           done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: steps.have_secrets.outputs.skip == 'false'
         with:
           name: signed-darwin-${{ matrix.target.goarch }}
@@ -221,7 +221,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "signtool failed for $($_.FullName)" }
           }
           Remove-Item -LiteralPath $pfx -Force
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: steps.have_secrets.outputs.skip == 'false'
         with:
           name: signed-windows-amd64
@@ -325,7 +325,7 @@ jobs:
         if: steps.tier1_secrets.outputs.has_gpg == 'false'
         run: |
           echo "::warning::GPG_RELEASE_KEY_PRIVATE not set on this fork — SHA256SUMS.asc was NOT produced. install.sh will refuse these artefacts in production mode (--dev-allow-unsigned only)."
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-bundle
           path: |
