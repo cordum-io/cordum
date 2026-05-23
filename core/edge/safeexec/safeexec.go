@@ -44,7 +44,7 @@ func CommandContext(ctx context.Context, argv0 string, args []string, opts Optio
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := exec.CommandContext(ctx, name, args...) // #nosec G204 -- hardened wrapper: name is allowlist-normalized by NormalizeExecutablePath and args/arg-paths/env are validated above
 	cmd.Env = env
 	if strings.TrimSpace(opts.Dir) != "" {
 		dir, err := NormalizeDir(opts.Dir, nil)

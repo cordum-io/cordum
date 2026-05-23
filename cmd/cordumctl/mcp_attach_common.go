@@ -173,7 +173,7 @@ func RollbackAttach(adapter AttachAdapter, stdout io.Writer) int {
 // (nil, false, err) for any other IO error. Used by preview + apply to
 // distinguish "absent" from "broken".
 func readMaybeMissing(path string) ([]byte, bool, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- operator-supplied MCP config path; cordumctl runs with the invoking user's own privileges (no privilege boundary crossed)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, true, nil
@@ -200,7 +200,7 @@ func backupExistingFile(path string, payload []byte) (string, error) {
 // /tmp is mounted separately from the user's home).
 func atomicWriteAttachConfig(path string, payload []byte) error {
 	clean := filepath.Clean(path)
-	if err := os.MkdirAll(filepath.Dir(clean), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(clean), 0o750); err != nil {
 		return fmt.Errorf("mkdir %s: %w", filepath.Dir(clean), err)
 	}
 	dir := filepath.Dir(clean)
@@ -255,7 +255,7 @@ func newestBackup(path string) (string, error) {
 // copyFile reads src and writes dst atomically. Used as the
 // cross-filesystem rollback fallback when os.Rename returns EXDEV.
 func copyFile(src, dst string) error {
-	data, err := os.ReadFile(src)
+	data, err := os.ReadFile(src) // #nosec G304 -- rollback source derived from the operator-supplied config path; cordumctl runs with the invoking user's own privileges
 	if err != nil {
 		return err
 	}

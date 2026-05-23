@@ -336,7 +336,7 @@ jobs:
   security:
     name: Security Scan
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
     - uses: actions/checkout@v4
@@ -352,27 +352,72 @@ jobs:
         go mod edit -dropreplace github.com/cordum-io/cap/v2
         go mod tidy
 
-    - name: Run Gosec Security Scanner
+    - name: Install gosec
       env:
         GOFLAGS: ""
         GOTOOLCHAIN: local
-      run: |
-        go install github.com/securego/gosec/v2/cmd/gosec@v2.22.4
-        gosec -no-fail -fmt sarif -out results.sarif -exclude-dir=vendor ./cmd/... ./core/... ./sdk/...
+      run: go install github.com/securego/gosec/v2/cmd/gosec@v2.22.4
+
+    # gosec runs once per Go module (cmd+core live in the root module; the
+    # shipped SDK is a separate module). `./sdk/...` from the root module
+    # matches nothing, so each module is scanned with its own scoped patterns.
+    # -no-fail keeps these steps green; the "Fail on gosec findings" gate below
+    # is the single place that fails the job, so SARIF still uploads on failure.
+    - name: Run gosec (core platform + CLIs)
+      env:
+        GOFLAGS: ""
+        GOTOOLCHAIN: local
+      run: gosec -no-fail -fmt sarif -out gosec-core.sarif -exclude-dir=vendor ./cmd/... ./core/...
+
+    - name: Run gosec (Go SDK)
+      working-directory: sdk
+      env:
+        GOFLAGS: ""
+        GOTOOLCHAIN: local
+      run: gosec -no-fail -fmt sarif -out ../gosec-sdk.sarif -exclude-dir=vendor ./client/... ./runtime/...
 
     - name: Sanitize SARIF
+      # Strip rule relationship metadata and generated-protobuf (.pb.go)
+      # results (noise, not actionable). The SDK SARIF paths are relative to
+      # the sdk/ module dir, so prefix them back to repo-root for the Security
+      # tab. The gate counts the sanitized set.
       run: |
-        jq '
-          (.runs[]?.tool.driver.rules[]? |= del(.relationships))
-          | (.runs[]?.results |= ((. // []) | map(select(
-              ([.locations[]?.physicalLocation.artifactLocation.uri // ""] | any(endswith(".pb.go"))) | not
-            ))))
-        ' results.sarif > results.cleaned.sarif
+        sanitize() { # $1=in $2=out $3=uri-prefix(optional)
+          jq --arg p "${3:-}" '
+            (.runs[]?.tool.driver.rules[]? |= del(.relationships))
+            | (.runs[]?.results |= ((. // []) | map(select(
+                ([.locations[]?.physicalLocation.artifactLocation.uri // ""] | any(endswith(".pb.go"))) | not
+              ))))
+            | (if $p != "" then (.runs[]?.results[]?.locations[]?.physicalLocation.artifactLocation.uri |= ($p + .)) else . end)
+          ' "$1" > "$2"
+        }
+        sanitize gosec-core.sarif gosec-core.cleaned.sarif ""
+        sanitize gosec-sdk.sarif  gosec-sdk.cleaned.sarif  "sdk/"
 
-    - name: Upload SARIF file
+    # Core keeps the default analysis category so the pre-existing gosec alerts
+    # uploaded under it are auto-resolved when they disappear from the SARIF.
+    - name: Upload SARIF (core)
+      if: always() && hashFiles('gosec-core.cleaned.sarif') != ''
       uses: github/codeql-action/upload-sarif@9e0d7b8d25671d64c341c19c0152d693099fb5ba # v4
       with:
-        sarif_file: results.cleaned.sarif
+        sarif_file: gosec-core.cleaned.sarif
+
+    - name: Upload SARIF (sdk)
+      if: always() && hashFiles('gosec-sdk.cleaned.sarif') != ''
+      uses: github/codeql-action/upload-sarif@9e0d7b8d25671d64c341c19c0152d693099fb5ba # v4
+      with:
+        sarif_file: gosec-sdk.cleaned.sarif
+        category: gosec-sdk
+
+    - name: Fail on gosec findings
+      run: |
+        total=$(jq -s '[.[].runs[].results[]] | length' gosec-core.cleaned.sarif gosec-sdk.cleaned.sarif)
+        echo "gosec findings after sanitize: $total"
+        if [ "$total" -gt 0 ]; then
+          echo "::error::gosec reported $total finding(s); see the Security tab (categories: default + gosec-sdk)"
+          jq -r '.runs[]?.results[]? | "  \(.ruleId) \(.locations[0].physicalLocation.artifactLocation.uri):\(.locations[0].physicalLocation.region.startLine // 0)"' gosec-core.cleaned.sarif gosec-sdk.cleaned.sarif || true
+          exit 1
+        fi
 
   build:
     name: Build

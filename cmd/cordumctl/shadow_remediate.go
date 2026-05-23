@@ -83,7 +83,7 @@ func readFindingInput(path string, stdin io.Reader) ([]byte, error) {
 	if path == "-" {
 		return io.ReadAll(io.LimitReader(stdin, 64*1024))
 	}
-	return os.ReadFile(path)
+	return os.ReadFile(path) // #nosec G304 -- operator-supplied finding-input path; cordumctl runs with the invoking user's own privileges
 }
 
 // generatePlanFromRaw inspects the JSON payload to choose between the

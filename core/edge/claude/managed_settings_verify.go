@@ -90,7 +90,7 @@ func VerifyManagedSettings(data []byte) (ManagedSettingsVerifyResult, error) {
 // VerifyManagedSettings on the contents. Returns a non-nil error for IO
 // failures, oversized files, or unparseable JSON.
 func VerifyManagedSettingsFromPath(path string) (ManagedSettingsVerifyResult, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) // #nosec G304 -- operator/config-supplied managed-settings.json path, read locally with a size cap; no remote-attacker input
 	if err != nil {
 		return ManagedSettingsVerifyResult{}, fmt.Errorf("open managed-settings.json: %w", err)
 	}

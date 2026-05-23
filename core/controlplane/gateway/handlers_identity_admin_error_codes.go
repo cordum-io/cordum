@@ -1,8 +1,8 @@
 package gateway
 
 const (
-	errorCodeAuthInvalidCredentials = "AUTH_INVALID_CREDENTIALS"
-	errorCodeAuthTokenInvalid       = "AUTH_TOKEN_INVALID"
+	errorCodeAuthInvalidCredentials = "AUTH_INVALID_CREDENTIALS" // #nosec G101 -- API error-code identifier returned to clients, not a credential
+	errorCodeAuthTokenInvalid       = "AUTH_TOKEN_INVALID"       // #nosec G101 -- API error-code identifier returned to clients, not a credential
 	errorCodeAuthOIDCCallbackFailed = "AUTH_OIDC_CALLBACK_FAILED"
 	errorCodeAuthRequestInvalid     = "AUTH_REQUEST_INVALID"
 	errorCodeAuthPasswordInvalid    = "AUTH_PASSWORD_INVALID"
@@ -36,8 +36,8 @@ const (
 	errorCodeTopicSchemaViolation = "TOPIC_SCHEMA_VIOLATION"
 	errorCodeTopicNotFound        = "TOPIC_NOT_FOUND"
 
-	errorCodeWorkerCredBindingInvalid = "WORKER_CRED_BINDING_INVALID"
-	errorCodeWorkerCredNotFound       = "WORKER_CRED_NOT_FOUND"
+	errorCodeWorkerCredBindingInvalid = "WORKER_CRED_BINDING_INVALID" // #nosec G101 -- API error-code identifier returned to clients, not a credential
+	errorCodeWorkerCredNotFound       = "WORKER_CRED_NOT_FOUND"       // #nosec G101 -- API error-code identifier returned to clients, not a credential
 
 	errorCodeWorkerSessionInvalid = "WORKER_SESSION_INVALID"
 	errorCodeWorkerNotFound       = "WORKER_NOT_FOUND"

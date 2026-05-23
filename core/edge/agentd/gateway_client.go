@@ -53,7 +53,7 @@ func NewGatewayClient(cfg GatewayClientConfig) (*GatewayClient, error) {
 	if client == nil {
 		httpClient := &http.Client{Timeout: timeout}
 		if caFile := strings.TrimSpace(cfg.TLSCAFile); caFile != "" {
-			pem, err := os.ReadFile(caFile)
+			pem, err := os.ReadFile(caFile) // #nosec G304 -- operator-configured TLS CA file path set at agentd startup; not request-derived
 			if err != nil {
 				return nil, fmt.Errorf("read TLS CA file %q: %w", caFile, err)
 			}

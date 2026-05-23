@@ -178,7 +178,7 @@ func waitForLaunchStateOrAgentdExit(ctx context.Context, dir string, timeout tim
 func readFirstLaunchState(dir string) (launchSessionState, bool) {
 	matches, _ := filepath.Glob(filepath.Join(dir, "*", "state.json"))
 	for _, path := range matches {
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(path) // #nosec G304 -- path is internally derived from a glob of the 0700 agentd state dir created by this process; not external input
 		if err != nil {
 			continue
 		}

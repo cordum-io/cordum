@@ -190,7 +190,7 @@ func loadFixtures(dir string) ([]*Fixture, error) {
 	var mu sync.Mutex
 	var out []*Fixture
 	for _, p := range paths {
-		data, err := os.ReadFile(p)
+		data, err := os.ReadFile(p) // #nosec G304 -- conformance dev/test harness reading fixture files from an operator-supplied fixtures dir
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %w", p, err)
 		}
@@ -237,7 +237,7 @@ func writeReport(path string, suite *TestSuite) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}
-	f, err := os.Create(path)
+	f, err := os.Create(path) // #nosec G304 -- conformance dev/test harness writing a JUnit report to an operator-supplied output path
 	if err != nil {
 		return err
 	}

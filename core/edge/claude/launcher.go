@@ -133,7 +133,7 @@ func LaunchEdgeClaude(ctx context.Context, opts LaunchOptions) (LaunchResult, er
 	if err := os.MkdirAll(cfg.StateDir, 0o700); err != nil {
 		return LaunchResult{}, fmt.Errorf("create agentd state dir: %w", err)
 	}
-	_ = os.Chmod(cfg.StateDir, 0o700)
+	_ = os.Chmod(cfg.StateDir, 0o700) // #nosec G302 -- directory needs the owner execute bit to be traversable; 0700 is owner-only
 	agentd, err := startLaunchAgentd(ctx, cfg, opts, meta, stderr)
 	if err != nil {
 		return LaunchResult{}, err

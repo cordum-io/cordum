@@ -63,7 +63,7 @@ func NewFileStateStore(root string) (*FileStateStore, error) {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return nil, fmt.Errorf("create state root: %w", err)
 	}
-	_ = os.Chmod(root, 0o700)
+	_ = os.Chmod(root, 0o700) // #nosec G302 -- directory needs the owner execute bit to be traversable; 0700 is owner-only
 	store := &FileStateStore{root: root, strictPerms: stateStoreStrictPermsEnabled()}
 	if err := store.verifyRootPermissions(); err != nil {
 		return nil, err
@@ -93,7 +93,7 @@ func (s *FileStateStore) Save(_ context.Context, state SessionState) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create session state dir: %w", err)
 	}
-	_ = os.Chmod(dir, 0o700)
+	_ = os.Chmod(dir, 0o700) // #nosec G302 -- directory needs the owner execute bit to be traversable; 0700 is owner-only
 	if err := s.hardenPath(dir); err != nil {
 		return err
 	}
