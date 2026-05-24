@@ -227,3 +227,112 @@ func (m SOC2Mapping) String() string {
 	b.WriteByte('}')
 	return b.String()
 }
+
+// ---------------------------------------------------------------------------
+// Event categories (governance vs routine)
+// ---------------------------------------------------------------------------
+
+// Event categories partition audit event types into security-relevant
+// governance events and high-volume operational telemetry. The compliance
+// export (core/audit/export_compliance.go) and the /api/v1/audit/events read
+// surface both consume this single source of truth so their category filters
+// can never drift apart.
+const (
+	// CategoryGovernance marks security-relevant events an auditor cares
+	// about: policy decisions, approvals, denials, key/role changes, license
+	// break-glass, and shadow-agent findings.
+	CategoryGovernance = "governance"
+	// CategoryRoutine marks high-volume operational telemetry: auth checks,
+	// audit-read meta-events, edge/MCP lifecycle, worker handshakes, and topic
+	// registration. These dominate an unfiltered export and bury governance
+	// signal (the reason CORDUM_AUDIT_READ_SAMPLE_RATE defaults to 0.0).
+	CategoryRoutine = "routine"
+)
+
+// eventCategories is the canonical event-type → category map. It covers every
+// Event* constant in AllEventTypes (enforced by
+// TestEventCategories_CoversAllEventTypes) plus the bare-string event types
+// emitted from packages outside core/audit: "audit.read.events" (the audit
+// read handler), "mcp.tool_called" (core/mcp), and "worker_handshake" (the
+// scheduler). Any event type NOT listed here resolves to governance via
+// CategoryFor (fail-open) so a newly added or caller-supplied event is never
+// silently hidden from a governance-filtered export.
+//
+// Borderline calls (surfaced in docs/audit.md's category table for review):
+// the edge session/execution lifecycle and edge.action_attempted,
+// mcp.tool_invocation/outbound_invocation, and topic_(un)registered are
+// ROUTINE (operational volume); edge.policy_decision/action_denied/approval_*
+// /artifact_exported and every shadow_agent.* finding stay GOVERNANCE.
+var eventCategories = map[string]string{
+	// --- routine: operational telemetry / noise ---
+	EventSystemAuth:                CategoryRoutine,
+	EventEdgeSessionStarted:        CategoryRoutine,
+	EventEdgeSessionEnded:          CategoryRoutine,
+	EventEdgeExecutionStarted:      CategoryRoutine,
+	EventEdgeExecutionEnded:        CategoryRoutine,
+	EventEdgeActionAttempted:       CategoryRoutine,
+	EventMCPToolInvocation:         CategoryRoutine,
+	EventMCPToolOutboundInvocation: CategoryRoutine,
+	EventTopicRegistered:           CategoryRoutine,
+	EventTopicUnregistered:         CategoryRoutine,
+	"audit.read.events":            CategoryRoutine,
+	"mcp.tool_called":              CategoryRoutine,
+	"worker_handshake":             CategoryRoutine,
+
+	// --- governance: security-relevant ---
+	EventSafetyDecision:                  CategoryGovernance,
+	EventDelegationLineage:               CategoryGovernance,
+	EventDelegationRejected:              CategoryGovernance,
+	EventDelegationRevokedBeforeDispatch: CategoryGovernance,
+	EventSafetyApproval:                  CategoryGovernance,
+	EventPolicyChange:                    CategoryGovernance,
+	EventSafetyViolation:                 CategoryGovernance,
+	EventMCPToolApproval:                 CategoryGovernance,
+	EventMCPToolDenied:                   CategoryGovernance,
+	EventMCPSignatureInvalid:             CategoryGovernance,
+	EventHeartbeatDisagreement:           CategoryGovernance,
+	EventApprovalRevisionMismatch:        CategoryGovernance,
+	EventWorkerTrustChange:               CategoryGovernance,
+	EventLicenseLegacyRejected:           CategoryGovernance,
+	EventLicenseBreakglassActivated:      CategoryGovernance,
+	EventShadowEval:                      CategoryGovernance,
+	EventAuthAPIKeyCreated:               CategoryGovernance,
+	EventAuthAPIKeyRevoked:               CategoryGovernance,
+	EventAuthRoleUpserted:                CategoryGovernance,
+	EventAuthRoleDeleted:                 CategoryGovernance,
+	EventEdgePolicyDecision:              CategoryGovernance,
+	EventEdgeActionDenied:                CategoryGovernance,
+	EventEdgeApprovalRequested:           CategoryGovernance,
+	EventEdgeApprovalResolved:            CategoryGovernance,
+	EventEdgeApprovalRejected:            CategoryGovernance,
+	EventEdgeApprovalExpired:             CategoryGovernance,
+	EventEdgeArtifactExported:            CategoryGovernance,
+	EventSafetyBypassAdmit:               CategoryGovernance,
+	EventShadowAgentDetected:             CategoryGovernance,
+	EventShadowAgentResolved:             CategoryGovernance,
+	EventShadowAgentSuppressed:           CategoryGovernance,
+	EventShadowAgentExceptionCreated:     CategoryGovernance,
+	EventShadowAgentExceptionRevoked:     CategoryGovernance,
+	EventShadowAgentExceptionApplied:     CategoryGovernance,
+	EventActionGateDenied:                CategoryGovernance,
+	EventEdgeAgentdDegraded:              CategoryGovernance,
+	EventEdgeFailClosed:                  CategoryGovernance,
+	EventGovernanceDecision:              CategoryGovernance,
+	EventGovernanceLabelSpoof:            CategoryGovernance,
+}
+
+// CategoryFor returns the governance/routine category for an event type.
+// Unknown or empty types FAIL OPEN to governance: a security event must never
+// be silently dropped from a governance-filtered export just because it was
+// introduced without a category mapping.
+func CategoryFor(eventType string) string {
+	if cat, ok := eventCategories[eventType]; ok {
+		return cat
+	}
+	return CategoryGovernance
+}
+
+// IsGovernanceEvent reports whether an event type is governance-relevant.
+func IsGovernanceEvent(eventType string) bool {
+	return CategoryFor(eventType) == CategoryGovernance
+}

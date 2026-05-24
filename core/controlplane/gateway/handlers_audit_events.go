@@ -25,12 +25,13 @@ const MaxAuditEventsLimit = 200
 // AuditErrCodeInvalid* values are stable machine-readable 400 codes that
 // dashboard / SIEM clients can pin against without message-string matching.
 const (
-	AuditErrCodeInvalidCursor = "INVALID_CURSOR"
-	AuditErrCodeInvalidLimit  = "INVALID_LIMIT"
-	AuditErrCodeInvalidFrom   = "INVALID_FROM"
-	AuditErrCodeInvalidTo     = "INVALID_TO"
-	AuditErrCodeInvalidRange  = "INVALID_RANGE"
-	AuditErrCodeInvalidQuery  = "INVALID_QUERY"
+	AuditErrCodeInvalidCursor   = "INVALID_CURSOR"
+	AuditErrCodeInvalidLimit    = "INVALID_LIMIT"
+	AuditErrCodeInvalidFrom     = "INVALID_FROM"
+	AuditErrCodeInvalidTo       = "INVALID_TO"
+	AuditErrCodeInvalidRange    = "INVALID_RANGE"
+	AuditErrCodeInvalidCategory = "INVALID_CATEGORY"
+	AuditErrCodeInvalidQuery    = "INVALID_QUERY"
 )
 
 // These sentinel parse errors let the handler choose stable code fields while
@@ -40,10 +41,11 @@ var (
 	errInvalidAuditCursor = errors.New(
 		"invalid cursor: must be redis stream id '<unsigned-ms>-<unsigned-seq>'",
 	)
-	errInvalidAuditLimit = errors.New("invalid limit: must be a positive integer")
-	errInvalidAuditFrom  = errors.New("invalid from: must be RFC3339 timestamp")
-	errInvalidAuditTo    = errors.New("invalid to: must be RFC3339 timestamp")
-	errInvalidAuditRange = errors.New("invalid range: to must not precede from")
+	errInvalidAuditLimit    = errors.New("invalid limit: must be a positive integer")
+	errInvalidAuditFrom     = errors.New("invalid from: must be RFC3339 timestamp")
+	errInvalidAuditTo       = errors.New("invalid to: must be RFC3339 timestamp")
+	errInvalidAuditRange    = errors.New("invalid range: to must not precede from")
+	errInvalidAuditCategory = errors.New("invalid category: must be governance or routine")
 )
 
 // defaultAuditEventsLimit is the page size when the caller omits ?limit.
@@ -107,6 +109,7 @@ type auditEventsResponse struct {
 type auditEventsFilters struct {
 	eventType string
 	severity  string
+	category  string
 	from      time.Time
 	to        time.Time
 	search    string
@@ -170,6 +173,7 @@ func (s *server) handleListAuditEvents(w http.ResponseWriter, r *http.Request) {
 		"next_cursor_present", nextCursor != "",
 		"filter_event_type", filters.eventType,
 		"filter_severity", filters.severity,
+		"filter_category", filters.category,
 		"filter_from", filters.from.Format(time.RFC3339),
 		"filter_to", filters.to.Format(time.RFC3339),
 		"filter_search", filters.search != "",
@@ -196,6 +200,8 @@ func auditEventsParseErrorCode(err error) string {
 		return AuditErrCodeInvalidTo
 	case errors.Is(err, errInvalidAuditRange):
 		return AuditErrCodeInvalidRange
+	case errors.Is(err, errInvalidAuditCategory):
+		return AuditErrCodeInvalidCategory
 	default:
 		return AuditErrCodeInvalidQuery
 	}
@@ -254,6 +260,16 @@ func parseAuditEventsQuery(r *http.Request) (int, string, auditEventsFilters, er
 		eventType: strings.TrimSpace(q.Get("event_type")),
 		severity:  strings.TrimSpace(q.Get("severity")),
 		search:    strings.ToLower(strings.TrimSpace(q.Get("search"))),
+	}
+	// category is additive to event_type/severity/search. Reject an unknown
+	// value (400) rather than silently returning an empty page; accept the
+	// governance/routine taxonomy case-insensitively, normalised to lower.
+	if raw := strings.TrimSpace(q.Get("category")); raw != "" {
+		cat := strings.ToLower(raw)
+		if cat != audit.CategoryGovernance && cat != audit.CategoryRoutine {
+			return 0, "", auditEventsFilters{}, errInvalidAuditCategory
+		}
+		filters.category = cat
 	}
 	if raw := strings.TrimSpace(q.Get("from")); raw != "" {
 		t, err := time.Parse(time.RFC3339, raw)
@@ -400,6 +416,9 @@ func matchesFilters(ev *audit.SIEMEvent, f auditEventsFilters) bool {
 	if f.severity != "" && !strings.EqualFold(ev.Severity, f.severity) {
 		return false
 	}
+	if f.category != "" && audit.CategoryFor(ev.EventType) != f.category {
+		return false
+	}
 	if f.hasFrom && ev.Timestamp.Before(f.from) {
 		return false
 	}
@@ -497,6 +516,9 @@ func emitAuditReadMetaEvent(
 	}
 	if filters.severity != "" {
 		extra["filter_severity"] = filters.severity
+	}
+	if filters.category != "" {
+		extra["filter_category"] = filters.category
 	}
 	if filters.hasFrom {
 		extra["filter_from"] = filters.from.Format(time.RFC3339)

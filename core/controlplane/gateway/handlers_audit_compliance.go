@@ -151,6 +151,18 @@ func (s *server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", "attachment; filename="+strconv.Quote(filename))
 	w.Header().Set("X-Cordum-Export-Format", string(opts.Format))
 	w.Header().Set("X-Cordum-Tenant", tenant)
+	// Echo the applied row filter so a client/proxy can confirm the artifact
+	// is scoped without parsing the manifest. category/severity come from
+	// fixed allow-lists; event_type is sanitised against header injection.
+	if opts.Category != "" {
+		w.Header().Set("X-Cordum-Export-Filter-Category", opts.Category)
+	}
+	if opts.Severity != "" {
+		w.Header().Set("X-Cordum-Export-Filter-Severity", opts.Severity)
+	}
+	if opts.EventType != "" {
+		w.Header().Set("X-Cordum-Export-Filter-Event-Type", headerSafe(opts.EventType))
+	}
 	// Flushing is important for client progress bars; the handler is
 	// explicitly one-shot and streams rather than buffers.
 	flusher, _ := w.(http.Flusher)
@@ -173,6 +185,15 @@ func (s *server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 		observeAuditExport(string(opts.Format), "error", manifestEventCount(manifest))
 		return
 	}
+	slog.Info("compliance export",
+		"tenant", tenant,
+		"format", opts.Format,
+		"events", manifestEventCount(manifest),
+		"filter_category", opts.Category,
+		"filter_event_type", opts.EventType,
+		"filter_severity", opts.Severity,
+		"row_filter_applied", manifestRowFilterApplied(manifest),
+	)
 	observeAuditExport(string(opts.Format), "ok", manifestEventCount(manifest))
 }
 
@@ -182,6 +203,11 @@ func manifestEventCount(m *audit.ExportManifest) int {
 		return 0
 	}
 	return m.EventCount
+}
+
+// manifestRowFilterApplied is nil-safe for the slog success line.
+func manifestRowFilterApplied(m *audit.ExportManifest) bool {
+	return m != nil && m.RowFilterApplied
 }
 
 // parseComplianceExportQuery parses + validates the ?from ?to ?format
@@ -244,7 +270,55 @@ func parseComplianceExportQuery(r *http.Request) (audit.ComplianceExportOptions,
 		}
 		opts.MaxEvents = n
 	}
+
+	// Row filters (event_type / severity / category). These constrain the
+	// EMITTED ROWS only; the chain verifier always runs over the full range
+	// (enforced in core/audit/export_compliance.go). event_type is matched
+	// case-insensitively and accepted loosely (any non-empty string filters by
+	// exact eq-fold); severity must be a known level; category must resolve to
+	// the governance/routine taxonomy.
+	if v := strings.TrimSpace(q.Get("event_type")); v != "" {
+		opts.EventType = v
+	}
+	if v := strings.TrimSpace(q.Get("severity")); v != "" {
+		if !isKnownSeverity(v) {
+			return opts, &verifyHTTPError{http.StatusBadRequest, "invalid severity"}
+		}
+		opts.Severity = v
+	}
+	if v := strings.TrimSpace(q.Get("category")); v != "" {
+		cat := strings.ToLower(v)
+		if cat != audit.CategoryGovernance && cat != audit.CategoryRoutine {
+			return opts, &verifyHTTPError{http.StatusBadRequest, "invalid category"}
+		}
+		opts.Category = cat
+	}
 	return opts, nil
+}
+
+// isKnownSeverity reports whether s (case-insensitive) is one of the audit
+// severity levels. Used to 400 a malformed ?severity= rather than silently
+// returning an empty export.
+func isKnownSeverity(s string) bool {
+	switch strings.ToUpper(s) {
+	case audit.SeverityCritical, audit.SeverityHigh, audit.SeverityMedium, audit.SeverityLow, audit.SeverityInfo:
+		return true
+	default:
+		return false
+	}
+}
+
+// headerSafe strips CR/LF and other control characters from a caller-supplied
+// value before it is echoed into a response header, so a crafted ?event_type=
+// can never inject additional headers (defense-in-depth atop net/http's own
+// header-value guard).
+func headerSafe(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // sanitiseFilenameSegment strips characters that would break the

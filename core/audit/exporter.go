@@ -195,6 +195,65 @@ const (
 	EventGovernanceLabelSpoof = "governance.label_spoof"
 )
 
+// AllEventTypes is the canonical enumeration of every Event* constant declared
+// above, in declaration order. Go cannot reflect package-level constants, so
+// this slice is the single source the governance-category CI guard
+// (TestEventCategories_CoversAllEventTypes) ranges over to prove every audit
+// event type has an explicit governance/routine mapping in soc2.go. When you
+// add a new Event* constant, append it here AND add it to eventCategories —
+// the guard fails until both are in lockstep.
+var AllEventTypes = []string{
+	EventSafetyDecision,
+	EventDelegationLineage,
+	EventDelegationRejected,
+	EventDelegationRevokedBeforeDispatch,
+	EventSafetyApproval,
+	EventPolicyChange,
+	EventSafetyViolation,
+	EventSystemAuth,
+	EventMCPToolApproval,
+	EventMCPToolDenied,
+	EventMCPToolInvocation,
+	EventMCPToolOutboundInvocation,
+	EventMCPSignatureInvalid,
+	EventHeartbeatDisagreement,
+	EventApprovalRevisionMismatch,
+	EventWorkerTrustChange,
+	EventTopicRegistered,
+	EventTopicUnregistered,
+	EventLicenseLegacyRejected,
+	EventLicenseBreakglassActivated,
+	EventShadowEval,
+	EventAuthAPIKeyCreated,
+	EventAuthAPIKeyRevoked,
+	EventAuthRoleUpserted,
+	EventAuthRoleDeleted,
+	EventEdgeSessionStarted,
+	EventEdgeSessionEnded,
+	EventEdgeExecutionStarted,
+	EventEdgeExecutionEnded,
+	EventEdgeActionAttempted,
+	EventEdgePolicyDecision,
+	EventEdgeActionDenied,
+	EventEdgeApprovalRequested,
+	EventEdgeApprovalResolved,
+	EventEdgeApprovalRejected,
+	EventEdgeApprovalExpired,
+	EventEdgeArtifactExported,
+	EventSafetyBypassAdmit,
+	EventShadowAgentDetected,
+	EventShadowAgentResolved,
+	EventShadowAgentSuppressed,
+	EventShadowAgentExceptionCreated,
+	EventShadowAgentExceptionRevoked,
+	EventShadowAgentExceptionApplied,
+	EventActionGateDenied,
+	EventEdgeAgentdDegraded,
+	EventEdgeFailClosed,
+	EventGovernanceDecision,
+	EventGovernanceLabelSpoof,
+}
+
 // Severity levels for SIEM events.
 const (
 	SeverityCritical = "CRITICAL"

@@ -68,6 +68,7 @@ func TestHandleAuditEvents_400ErrorEnvelopeIncludesCode(t *testing.T) {
 			query:        "from=2020-01-01T00:00:00Z&to=2019-01-01T00:00:00Z",
 			expectedCode: "INVALID_RANGE",
 		},
+		{name: "invalid category", query: "category=bogus", expectedCode: "INVALID_CATEGORY"},
 	}
 
 	for _, tc := range cases {
@@ -705,6 +706,72 @@ func TestHandleAuditEvents_InvalidCursor_Returns400InvalidCursorCode(t *testing.
 				t.Errorf("body leaks generic 500 internal-error: %s", rec.Body.String())
 			}
 		})
+	}
+}
+
+// TestHandleAuditEvents_CategoryFilter pins ?category=governance as an
+// additive filter: only governance event types surface; routine telemetry
+// (system.auth, mcp.tool_invocation) is dropped.
+func TestHandleAuditEvents_CategoryFilter(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	seedAuditEvents(t, s, "default", []audit.SIEMEvent{
+		{EventType: audit.EventSafetyDecision, Severity: audit.SeverityInfo, Action: "gov1"},
+		{EventType: audit.EventSystemAuth, Severity: audit.SeverityInfo, Action: "routine1"},
+		{EventType: audit.EventEdgePolicyDecision, Severity: audit.SeverityInfo, Action: "gov2"},
+		{EventType: audit.EventMCPToolInvocation, Severity: audit.SeverityInfo, Action: "routine2"},
+	})
+
+	rec := httptest.NewRecorder()
+	req := adminCtx(httptest.NewRequest(http.MethodGet,
+		"/api/v1/audit/events?tenant=default&category=governance", nil))
+	s.handleListAuditEvents(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d: %s", rec.Code, rec.Body.String())
+	}
+	resp := decodeAuditEventsResponse(t, rec)
+	if len(resp.Items) != 2 {
+		t.Fatalf("returned %d items, want 2 governance; items=%+v", len(resp.Items), resp.Items)
+	}
+	for _, it := range resp.Items {
+		if audit.CategoryFor(it.EventType) != audit.CategoryGovernance {
+			t.Errorf("returned non-governance event_type %q", it.EventType)
+		}
+	}
+}
+
+// TestHandleAuditEvents_MetaAuditCarriesFilterCategory pins that the
+// audit.read.events meta-event records the applied category filter in Extra,
+// alongside the existing filter_event_type/filter_severity reflection.
+func TestHandleAuditEvents_MetaAuditCarriesFilterCategory(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	seedAuditEvents(t, s, "default", []audit.SIEMEvent{
+		{EventType: audit.EventSafetyDecision, Severity: audit.SeverityInfo, Action: "seed"},
+	})
+	streamKey := audit.NewChainer(s.redisClient(), "").StreamKey("default")
+
+	req := adminCtx(httptest.NewRequest(http.MethodGet,
+		"/api/v1/audit/events?tenant=default&category=governance", nil))
+	rec := httptest.NewRecorder()
+	s.handleListAuditEvents(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Newest stream entry is the audit.read.events meta-event this call appended.
+	entries, err := s.redisClient().XRevRangeN(context.Background(), streamKey, "+", "-", 1).Result()
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("xrevrange: %v (n=%d)", err, len(entries))
+	}
+	payload, _ := entries[0].Values["event"].(string)
+	var ev audit.SIEMEvent
+	if err := json.Unmarshal([]byte(payload), &ev); err != nil {
+		t.Fatalf("unmarshal meta-event: %v", err)
+	}
+	if ev.EventType != "audit.read.events" {
+		t.Fatalf("newest event type = %q, want audit.read.events", ev.EventType)
+	}
+	if ev.Extra["filter_category"] != "governance" {
+		t.Errorf("meta-event filter_category = %q, want governance", ev.Extra["filter_category"])
 	}
 }
 

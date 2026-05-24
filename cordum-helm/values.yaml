@@ -555,6 +555,11 @@ audit:
       logStream: "" # CORDUM_AUDIT_EXPORT_CW_LOG_STREAM
       awsRegion: "" # AWS_REGION
   bufferSize: 1000 # CORDUM_AUDIT_BUFFER_SIZE
+  # Fraction (0.0-1.0) of /api/v1/audit/events reads that emit an
+  # audit.read.events meta-event. Recommended prod default 0.0: raising it
+  # floods the chain with routine system.auth/audit.read.events rows that bury
+  # governance signal. For a governance-focused artifact, filter the export/read
+  # with ?category=governance instead of tuning this rate (see docs/audit.md §2/§7).
   readSampleRate: 0.0 # CORDUM_AUDIT_READ_SAMPLE_RATE
 
 outputPolicy:

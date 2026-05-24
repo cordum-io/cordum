@@ -430,3 +430,195 @@ func TestParseComplianceExportQuery_FormatValidation(t *testing.T) {
 		}
 	}
 }
+
+// TestParseComplianceExportQuery_FilterParams covers the new
+// event_type/severity/category parsing: governance/routine accepted
+// (case-insensitive, normalised lower), unknown category + unknown severity
+// rejected with 400, event_type accepted loosely.
+func TestParseComplianceExportQuery_FilterParams(t *testing.T) {
+	base := "/api/v1/audit/export?format=json&from=2026-04-17T00:00:00Z&to=2026-04-18T00:00:00Z"
+
+	t.Run("category governance", func(t *testing.T) {
+		opts, err := parseComplianceExportQuery(httptest.NewRequest(http.MethodGet, base+"&category=governance", nil))
+		if err != nil {
+			t.Fatalf("unexpected error: %+v", err)
+		}
+		if opts.Category != "governance" {
+			t.Errorf("Category = %q, want governance", opts.Category)
+		}
+	})
+	t.Run("category mixed-case normalised", func(t *testing.T) {
+		opts, err := parseComplianceExportQuery(httptest.NewRequest(http.MethodGet, base+"&category=Routine", nil))
+		if err != nil {
+			t.Fatalf("unexpected error: %+v", err)
+		}
+		if opts.Category != "routine" {
+			t.Errorf("Category = %q, want routine", opts.Category)
+		}
+	})
+	t.Run("category unknown rejected", func(t *testing.T) {
+		_, err := parseComplianceExportQuery(httptest.NewRequest(http.MethodGet, base+"&category=bogus", nil))
+		if err == nil || err.status != http.StatusBadRequest {
+			t.Fatalf("category=bogus: err = %+v, want 400", err)
+		}
+	})
+	t.Run("severity case-insensitive accepted", func(t *testing.T) {
+		opts, err := parseComplianceExportQuery(httptest.NewRequest(http.MethodGet, base+"&severity=high", nil))
+		if err != nil {
+			t.Fatalf("unexpected error: %+v", err)
+		}
+		if opts.Severity != "high" {
+			t.Errorf("Severity = %q, want high", opts.Severity)
+		}
+	})
+	t.Run("severity unknown rejected", func(t *testing.T) {
+		_, err := parseComplianceExportQuery(httptest.NewRequest(http.MethodGet, base+"&severity=spicy", nil))
+		if err == nil || err.status != http.StatusBadRequest {
+			t.Fatalf("severity=spicy: err = %+v, want 400", err)
+		}
+	})
+	t.Run("event_type accepted loosely", func(t *testing.T) {
+		opts, err := parseComplianceExportQuery(httptest.NewRequest(http.MethodGet, base+"&event_type=safety.decision", nil))
+		if err != nil {
+			t.Fatalf("unexpected error: %+v", err)
+		}
+		if opts.EventType != "safety.decision" {
+			t.Errorf("EventType = %q, want safety.decision", opts.EventType)
+		}
+	})
+}
+
+// TestHandleAuditExport_CategoryGovernanceFilter is the handler-level E2E:
+// category=governance emits ONLY governance rows and echoes the applied filter
+// in the response header + manifest.
+func TestHandleAuditExport_CategoryGovernanceFilter(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	grantExportEntitlement(t, s)
+	// 5 seeded types cycle safety.decision, safety.approval, safety.policy_change,
+	// system.auth (ROUTINE), mcp.tool_approval -> 4 governance, 1 routine.
+	seedComplianceEvents(t, s.redisClient(), "default", 5)
+
+	req := adminCtx(httptest.NewRequest(http.MethodGet,
+		"/api/v1/audit/export?format=json&category=governance"+rangeQS(), nil))
+	rec := httptest.NewRecorder()
+	s.handleAuditExport(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("X-Cordum-Export-Filter-Category"); got != "governance" {
+		t.Errorf("filter-category header = %q, want governance", got)
+	}
+
+	scanner := bufio.NewScanner(rec.Body)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+	events := 0
+	var manifestRowFilterApplied bool
+	for scanner.Scan() {
+		var line map[string]any
+		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		switch line["type"] {
+		case "manifest":
+			manifestRowFilterApplied, _ = line["row_filter_applied"].(bool)
+		case "event":
+			events++
+			et, _ := line["event_type"].(string)
+			if audit.CategoryFor(et) != audit.CategoryGovernance {
+				t.Errorf("emitted non-governance event_type %q", et)
+			}
+		}
+	}
+	if events != 4 {
+		t.Errorf("emitted %d events, want 4 governance", events)
+	}
+	if !manifestRowFilterApplied {
+		t.Error("manifest row_filter_applied = false, want true")
+	}
+}
+
+// TestHandleAuditExport_CategoryGovernanceFilterCSV is the literal DoD-6 E2E:
+// GET /api/v1/audit/export?category=governance&format=csv returns ONLY
+// governance rows, the manifest comment records row_filter, and
+// chain_verification still attests the full range (not the filtered subset).
+func TestHandleAuditExport_CategoryGovernanceFilterCSV(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	grantExportEntitlement(t, s)
+	// 5 seeded types: safety.decision, safety.approval, safety.policy_change,
+	// system.auth (ROUTINE), mcp.tool_approval -> 4 governance, 1 routine.
+	seedComplianceEvents(t, s.redisClient(), "default", 5)
+
+	req := adminCtx(httptest.NewRequest(http.MethodGet,
+		"/api/v1/audit/export?format=csv&category=governance"+rangeQS(), nil))
+	rec := httptest.NewRecorder()
+	s.handleAuditExport(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("X-Cordum-Export-Filter-Category"); got != "governance" {
+		t.Errorf("filter-category header = %q, want governance", got)
+	}
+
+	firstLine, rest, found := strings.Cut(rec.Body.String(), "\n")
+	if !found || !strings.HasPrefix(firstLine, "# cordum-manifest: ") {
+		t.Fatalf("missing manifest comment: %q", firstLine)
+	}
+	var manifest struct {
+		RowFilterApplied bool `json:"row_filter_applied"`
+		RowFilter        *struct {
+			Category string `json:"category"`
+		} `json:"row_filter"`
+		ChainVerification *struct {
+			TotalEvents int    `json:"total_events"`
+			Status      string `json:"status"`
+		} `json:"chain_verification"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(firstLine, "# cordum-manifest: ")), &manifest); err != nil {
+		t.Fatalf("manifest JSON: %v", err)
+	}
+	if !manifest.RowFilterApplied || manifest.RowFilter == nil || manifest.RowFilter.Category != "governance" {
+		t.Errorf("manifest row_filter not recorded: applied=%v filter=%+v", manifest.RowFilterApplied, manifest.RowFilter)
+	}
+	// chain_verification must reflect the FULL range (all 5 seeded), not the
+	// filtered 4 — proving the filter never reached the verifier. (The CSV
+	// comment manifest is written BEFORE the walk, so its event_count is
+	// structurally 0 there; the authoritative post-filter count is the CSV
+	// data-row count asserted below.)
+	if manifest.ChainVerification == nil || manifest.ChainVerification.TotalEvents != 5 {
+		t.Errorf("chain_verification not full-range: %+v (want total_events=5)", manifest.ChainVerification)
+	}
+
+	// Every CSV data row must be a governance event (event_type column index 1),
+	// and there must be exactly 4 — the post-filter count for this seed.
+	rdr := csv.NewReader(strings.NewReader(rest))
+	rdr.FieldsPerRecord = -1
+	rows, err := rdr.ReadAll()
+	if err != nil {
+		t.Fatalf("csv: %v", err)
+	}
+	if len(rows) != 1+4 {
+		t.Fatalf("got %d CSV rows (incl header), want 5 (header + 4 governance)", len(rows))
+	}
+	for _, row := range rows[1:] {
+		if audit.CategoryFor(row[1]) != audit.CategoryGovernance {
+			t.Errorf("CSV row emitted non-governance event_type %q", row[1])
+		}
+	}
+}
+
+// TestHandleAuditExport_RejectsUnknownCategory pins the 400 on a bad category.
+func TestHandleAuditExport_RejectsUnknownCategory(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	grantExportEntitlement(t, s)
+
+	req := adminCtx(httptest.NewRequest(http.MethodGet,
+		"/api/v1/audit/export?format=json&category=bogus"+rangeQS(), nil))
+	rec := httptest.NewRecorder()
+	s.handleAuditExport(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}

@@ -263,3 +263,94 @@ func TestControlsFor_NilMapReturnsEmpty(t *testing.T) {
 		t.Errorf("nil map ControlsFor = %v, want empty non-nil slice", got)
 	}
 }
+
+// TestEventCategories_CoversAllEventTypes is the CI guard for governance
+// filtering: every Event* constant enumerated in AllEventTypes MUST have an
+// explicit entry in the eventCategories map. CategoryFor fail-opens to
+// governance, so a missing mapping would NOT surface via CategoryFor alone —
+// this test inspects the map directly so a newly-added Event* constant left
+// uncategorised fails the build rather than silently defaulting.
+func TestEventCategories_CoversAllEventTypes(t *testing.T) {
+	if len(AllEventTypes) < 46 {
+		t.Fatalf("AllEventTypes has %d entries, want >= 46 (a new Event* constant must be appended to AllEventTypes)", len(AllEventTypes))
+	}
+	seen := make(map[string]struct{}, len(AllEventTypes))
+	for _, et := range AllEventTypes {
+		if et == "" {
+			t.Error("AllEventTypes contains an empty string")
+			continue
+		}
+		if _, dup := seen[et]; dup {
+			t.Errorf("AllEventTypes contains duplicate %q", et)
+		}
+		seen[et] = struct{}{}
+		cat, ok := eventCategories[et]
+		if !ok {
+			t.Errorf("event type %q has no explicit eventCategories entry (add it to eventCategories in soc2.go)", et)
+			continue
+		}
+		if cat != CategoryGovernance && cat != CategoryRoutine {
+			t.Errorf("event type %q mapped to invalid category %q", et, cat)
+		}
+	}
+}
+
+// TestEventCategories_AllValuesValid pins that every value in the map (incl.
+// the bare-string event types emitted outside exporter.go) is one of the two
+// known categories, and that the three known bare strings are routine.
+func TestEventCategories_AllValuesValid(t *testing.T) {
+	for et, cat := range eventCategories {
+		if cat != CategoryGovernance && cat != CategoryRoutine {
+			t.Errorf("eventCategories[%q] = %q, want governance|routine", et, cat)
+		}
+	}
+	for _, bare := range []string{"audit.read.events", "mcp.tool_called", "worker_handshake"} {
+		if got := eventCategories[bare]; got != CategoryRoutine {
+			t.Errorf("bare event %q category = %q, want routine", bare, got)
+		}
+	}
+}
+
+// TestCategoryFor covers the routine/governance split plus the FAIL-OPEN
+// contract: any unknown or empty event type resolves to governance so a new
+// or caller-supplied event is never silently hidden from a governance export.
+func TestCategoryFor(t *testing.T) {
+	cases := []struct {
+		name string
+		et   string
+		want string
+	}{
+		{"unknown fail-open to governance", "some.brand.new.event", CategoryGovernance},
+		{"empty fail-open to governance", "", CategoryGovernance},
+		{"routine system.auth", EventSystemAuth, CategoryRoutine},
+		{"routine audit.read.events bare", "audit.read.events", CategoryRoutine},
+		{"routine mcp.tool_invocation", EventMCPToolInvocation, CategoryRoutine},
+		{"routine topic_registered", EventTopicRegistered, CategoryRoutine},
+		{"routine edge.session_started", EventEdgeSessionStarted, CategoryRoutine},
+		{"governance safety.decision", EventSafetyDecision, CategoryGovernance},
+		{"governance governance.decision", EventGovernanceDecision, CategoryGovernance},
+		{"governance auth.api_key_revoked", EventAuthAPIKeyRevoked, CategoryGovernance},
+		{"governance edge.action_denied", EventEdgeActionDenied, CategoryGovernance},
+		{"governance shadow_agent.detected", EventShadowAgentDetected, CategoryGovernance},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := CategoryFor(tc.et); got != tc.want {
+				t.Errorf("CategoryFor(%q) = %q, want %q", tc.et, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestIsGovernanceEvent is the boolean façade over CategoryFor.
+func TestIsGovernanceEvent(t *testing.T) {
+	if !IsGovernanceEvent(EventSafetyDecision) {
+		t.Error("safety.decision must be governance")
+	}
+	if IsGovernanceEvent(EventSystemAuth) {
+		t.Error("system.auth must not be governance (routine)")
+	}
+	if !IsGovernanceEvent("unknown.event.type") {
+		t.Error("unknown event must fail-open to governance")
+	}
+}
