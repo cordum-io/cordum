@@ -56,6 +56,15 @@ openapi:
 openapi-validate:
 	./tools/scripts/openapi-validate.sh
 
+# docs-tables regenerates the code-derived enumeration tables (RBAC permissions,
+# REST route index, MCP tool catalog) into the in-repo docs between their
+# BEGIN/END markers. docs-tables-check fails (for CI) when they are out of date.
+docs-tables:
+	go run ./tools/scripts/gen_docs_tables
+
+docs-tables-check:
+	go run ./tools/scripts/gen_docs_tables -check
+
 docker:
 	@test -n "$(SERVICE)" || (echo "SERVICE is required (e.g. SERVICE=cordum-scheduler)" && exit 1)
 	@BASE="$(SERVICE)"; BASE="$${BASE#cordum-}"; \
@@ -156,4 +165,4 @@ soak-ws-full:
 release-local:
 	@bash tools/scripts/release-local.sh
 
-.PHONY: help proto build build-all $(SERVICES:%=build-%) test test-integration coverage coverage-core openapi openapi-validate docker smoke verify-images demo-quickstart-test demo-mock-bank-test dev-up dev-down dev-logs edge-rebuild-e2e soak-ws soak-ws-quick soak-ws-full release-local
+.PHONY: help proto build build-all $(SERVICES:%=build-%) test test-integration coverage coverage-core openapi openapi-validate docs-tables docs-tables-check docker smoke verify-images demo-quickstart-test demo-mock-bank-test dev-up dev-down dev-logs edge-rebuild-e2e soak-ws soak-ws-quick soak-ws-full release-local

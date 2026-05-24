@@ -16,6 +16,6 @@ const (
 	SubjectWorkflowApprovalGate = "job.cordum.approval-gate"
 
 	// DefaultProtocolVersion matches CAP wire version 1.
-	// Corresponds to CAP SDK v2.5.2 — wire protocol version remains 1.
+	// Corresponds to CAP SDK v2.13.1 — wire protocol version remains 1.
 	DefaultProtocolVersion = 1
 )

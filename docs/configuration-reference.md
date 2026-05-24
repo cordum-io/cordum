@@ -791,17 +791,16 @@ Invalid values (non-numeric, zero, negative) are silently replaced with defaults
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GATEWAY_GRPC_ADDR` | `:50051` | gRPC listen address |
-| `GATEWAY_HTTP_ADDR` | `:8080` | HTTP listen address |
-| `GATEWAY_METRICS_ADDR` | `:9090` | Metrics listen address |
+| `GATEWAY_GRPC_ADDR` | `:8080` | gRPC listen address (the dev `docker-compose.yml` host-maps this to `9080`; the release compose maps `8080:8080`) |
+| `GATEWAY_HTTP_ADDR` | `:8081` | HTTP/REST listen address (TLS by default) |
+| `GATEWAY_METRICS_ADDR` | `:9092` | Metrics listen address |
 | `GATEWAY_METRICS_PUBLIC` | — | Set to `1` for non-loopback metrics in production |
 | `GATEWAY_HTTP_TLS_CERT` | — | HTTP TLS certificate path |
 | `GATEWAY_HTTP_TLS_KEY` | — | HTTP TLS private key path |
 | `GRPC_TLS_CERT` | — | gRPC TLS certificate path |
 | `GRPC_TLS_KEY` | — | gRPC TLS private key path |
-| `GATEWAY_MAX_JOB_PAYLOAD_BYTES` | `2097152` (2 MB) | Max job submission payload size in bytes |
-| `GATEWAY_MAX_BODY_BYTES` | `1048576` (1 MB) | Max HTTP request body size in bytes |
-| `GATEWAY_MAX_JSON_BODY_BYTES` | — | Max JSON request body size |
+| `GATEWAY_MAX_JOB_PAYLOAD_BYTES` | `2097152` (2 MiB) | Max job submission payload size in bytes |
+| `GATEWAY_MAX_JSON_BODY_BYTES` | `2097152` (2 MiB) | Max JSON request body size in bytes |
 | `TENANT_ID` | — | Single-tenant default ID |
 | `ARTIFACT_MAX_BYTES` | — | Max artifact upload/download size |
 | `WORKFLOW_FOREACH_MAX_ITEMS` | — | Max items in workflow for-each expansion |
@@ -822,8 +821,8 @@ Invalid values (non-numeric, zero, negative) are silently replaced with defaults
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `API_RATE_LIMIT_RPS` | `2000` | Per-tenant rate limit (requests/sec) |
-| `API_RATE_LIMIT_BURST` | `4000` | Per-tenant burst size |
+| `API_RATE_LIMIT_RPS` | `30` | Per-tenant rate limit (requests/sec) |
+| `API_RATE_LIMIT_BURST` | `50` | Per-tenant burst size |
 | `API_PUBLIC_RATE_LIMIT_RPS` | `20` | Public (unauthenticated) rate limit |
 | `API_PUBLIC_RATE_LIMIT_BURST` | `40` | Public burst size |
 | `REDIS_RATE_LIMIT` | `true` | Enable Redis-backed distributed rate limiting. When `true`, rate limits are enforced globally across all gateway replicas via Redis sliding-window counters (key format: `cordum:rl:{key}:{unix_second}`). When `false` or Redis unavailable, falls back to per-process in-memory token buckets (effective limit = N × configured limit with N replicas). |

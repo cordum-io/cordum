@@ -36,8 +36,8 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
   - Streams `BusPacket` events over `/api/v1/stream` (protojson).
   - Enforces API key + tenant headers and CORS allowlist if configured (HTTP `X-API-Key` + `X-Tenant-ID`, gRPC metadata `x-api-key`, WS `Sec-WebSocket-Protocol: cordum-api-key, <base64url>` + `?tenant_id=<tenant>`).
   - OSS auth uses an API key allowlist (`CORDUM_API_KEYS`, `CORDUM_API_KEY`, or `CORDUM_API_KEYS_PATH`) with optional role/tenant metadata and a single-tenant default (`TENANT_ID`, default `default`). HTTP requests must supply `X-Tenant-ID`.
-  - Multi-tenant API keys and RBAC enforcement are provided by the enterprise auth provider (enterprise repo).
-  - Enterprise add-ons are delivered from the enterprise repo; this repo stays platform-only.
+  - Multi-tenant API keys and RBAC enforcement are provided in core (`core/controlplane/gateway/auth/`) behind license entitlements.
+  - All enterprise features are consolidated into core behind license entitlements; the standalone `cordum-enterprise` repo was retired 2026-04-23.
 
 - Dashboard (`dashboard/`)
   - React UI served via Nginx; connects to `/api/v1` and `/api/v1/stream`.

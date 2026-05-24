@@ -503,8 +503,8 @@ docker compose up -d
 # Start your pack worker (joins the Cordum network)
 docker compose -f my-pack/deploy/docker-compose.yaml up -d
 
-# Submit a test job
-curl -s -X POST http://localhost:8080/api/v1/jobs \
+# Submit a test job (gateway is TLS by default)
+curl -s --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/jobs \
   -H "X-API-Key: $CORDUM_API_KEY" \
   -H "X-Tenant-ID: default" \
   -H "Content-Type: application/json" \
@@ -521,7 +521,7 @@ set -euo pipefail
 cordumctl pack install ./my-pack
 
 # Submit job and capture ID
-JOB_ID=$(curl -s -X POST http://localhost:8080/api/v1/jobs \
+JOB_ID=$(curl -s --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/jobs \
   -H "X-API-Key: $CORDUM_API_KEY" \
   -H "X-Tenant-ID: default" \
   -H "Content-Type: application/json" \
@@ -529,7 +529,7 @@ JOB_ID=$(curl -s -X POST http://localhost:8080/api/v1/jobs \
 
 # Poll for completion (max 30s)
 for i in $(seq 1 30); do
-  STATUS=$(curl -s http://localhost:8080/api/v1/jobs/$JOB_ID \
+  STATUS=$(curl -s --cacert ./certs/ca/ca.crt https://localhost:8081/api/v1/jobs/$JOB_ID \
     -H "X-API-Key: $CORDUM_API_KEY" \
     -H "X-Tenant-ID: default" | jq -r '.status')
   [ "$STATUS" = "succeeded" ] && echo "PASS" && exit 0

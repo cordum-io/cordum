@@ -102,7 +102,7 @@ Priority semantics:
   - `UpdateMemory(memory_id, logical_payload, model_response, mode)` → appends chat history or summaries.
 - Uses the same Redis instance; keys are namespaced under `mem:<memory_id>:*`.
 
-## Error Codes (CAP v2.5.2)
+## Error Codes (CAP v2.13.1)
 
 The `ErrorCode` enum provides structured error classification, replacing ad-hoc string error codes. Both string `error_code` and numeric `error_code_enum` are populated during the transition period.
 
@@ -137,7 +137,7 @@ Cordum upgraded its CAP dependency from v2.8.6 to v2.9.0. The wire contract gain
 
 See `AGENTS.md` § "Control Plane Boundary Hardening (recent)" for the operator-facing surface that consumes these fields (Topic Registry, Worker Credentials, schema enforcement modes).
 
-## Enhanced SystemAlert (CAP v2.5.2)
+## Enhanced SystemAlert (CAP v2.13.1)
 
 `SystemAlert` now carries structured fields alongside the deprecated string-based fields:
 
