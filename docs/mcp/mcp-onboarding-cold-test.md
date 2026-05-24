@@ -16,8 +16,7 @@ with screenshot slots the tester fills in):
 - [docs/getting-started/mcp-with-cursor.md](../getting-started/mcp-with-cursor.md)
 - [docs/getting-started/mcp-with-vscode.md](../getting-started/mcp-with-vscode.md)
 
-The canonical deep quickstarts (wired into docs-site/sidebars.ts under
-"Drive Cordum with MCP") cover the full stdio + HTTP + TLS surface:
+The canonical deep quickstarts cover the full stdio + HTTP + TLS surface:
 
 - [docs/mcp/quickstart-claude-code.md](./quickstart-claude-code.md)
 - [docs/mcp/quickstart-cursor.md](./quickstart-cursor.md)
