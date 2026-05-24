@@ -591,6 +591,23 @@ these entries into a versioned release note and reset this file.
   `invalidate_stale_request` path should now see the benign approval
   succeed again. Follow-up to commit `297937c7` and guard task
   `task-035cdc8e`.
+- **Approvals — worker-originated approval gates no longer
+  auto-invalidated by `policy.attachment_id`
+  (`core/protocol/reqhash/reqhash.go`):** the shared canonicaliser
+  `reqhash.Canonical` now also strips the platform-injected
+  `policy.attachment_id` label (alongside `approval_*`,
+  `bus.LabelBusMsgID`, and `config.EffectiveConfigEnvVar`). That label
+  is attached during policy attachment *after* the submit-time JobHash
+  is pinned, so the reconciler's recomputed `RequestHash` used to
+  diverge from the pinned hash and wrongly classify a still-pending
+  worker-originated approval (e.g. a workflow-step approval gate) as
+  `invalidate_stale_request` → `DENIED` about one reconciler tick after
+  creation — before a human could approve. The TOCTOU fence is
+  unchanged: a genuine request-payload change still trips
+  `invalidate_stale_request`. The temporary 15-minute stopgap
+  (`config/timeouts.yaml` `reconciler.scan_interval_seconds` raised to
+  `900`, which also delayed dispatch/running timeout enforcement) is
+  removed — restored to the `30`s default. See `task-821a6ebb`.
 - **Approvals — canonical hash parity
   (`core/infra/store/job_store.go`):** the store-side
   `hashApprovalJobRequest` now protojson-roundtrips the cloned

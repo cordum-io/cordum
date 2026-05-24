@@ -6,7 +6,9 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/infra/bus"
+	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/model"
+	"github.com/cordum/cordum/core/policylabels"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -242,5 +244,142 @@ func TestClassifyApprovalRepair_EffectiveConfigEnvMutation_NotStale(t *testing.T
 	plan := ClassifyApprovalRepair(*snap, ApprovalRepairClassifyOptions{})
 	if plan.Kind != ApprovalRepairNone {
 		t.Fatalf("env-stripping drift must not trip StaleRequest, got %q", plan.Kind)
+	}
+}
+
+// TestClassifyApprovalRepair_PolicyAttachmentIDInjected_DoesNotTripStaleRequest
+// is the task-821a6ebb regression guard. A worker-originated workflow-step
+// approval gate pins its submit-time JobHash, then policy attachment injects
+// policylabels.PolicyAttachmentID onto the stored request (engine_job.go:228)
+// and the scheduler's attachEffectiveConfig adds config.EffectiveConfigEnvVar
+// to req.Env — both AFTER the pin, while the approval is still PENDING. reqhash
+// .Canonical strips both, so the reconciler's recomputed RequestHash must still
+// equal the pinned JobHash and the pending approval must classify None (survive
+// the reconciler tick) instead of being auto-invalidated as stale_request
+// before a human can act. Before the strip this tripped invalidate_stale_request
+// roughly one tick after creation.
+func TestClassifyApprovalRepair_PolicyAttachmentIDInjected_DoesNotTripStaleRequest(t *testing.T) {
+	t.Parallel()
+	srv := miniredis.RunT(t)
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	ctx := context.Background()
+	const jobID = "job-policy-attach"
+	// Submit-time shape, BEFORE policy attachment — what the JobHash pins.
+	req := &pb.JobRequest{
+		JobId:    jobID,
+		Topic:    "job.approval-gate",
+		TenantId: "default",
+		Labels: map[string]string{
+			"run_id":      "run-1",
+			"step_id":     "approve",
+			"workflow_id": "wf-1",
+		},
+	}
+	preHash, err := hashApprovalJobRequest(req)
+	if err != nil {
+		t.Fatalf("hash: %v", err)
+	}
+	if err := store.SetState(ctx, jobID, model.JobStateApproval); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	if err := store.SetSafetyDecision(ctx, jobID, model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   "snap-1",
+		JobHash:          preHash,
+	}); err != nil {
+		t.Fatalf("set safety: %v", err)
+	}
+
+	// Platform-injected metadata that lands on the stored request after the
+	// pin, while the approval is still pending. Both are stripped by Canonical.
+	req.Labels[policylabels.PolicyAttachmentID] = policylabels.JobAttachmentID(jobID)
+	req.Env = map[string]string{config.EffectiveConfigEnvVar: `{"tenant":"default","effective":true}`}
+	if err := store.SetJobRequest(ctx, req); err != nil {
+		t.Fatalf("set req: %v", err)
+	}
+
+	snap, err := store.InspectApprovalRepair(ctx, jobID)
+	if err != nil {
+		t.Fatalf("inspect: %v", err)
+	}
+	if snap.RequestHash != preHash {
+		t.Fatalf("policy.attachment_id + EffectiveConfigEnvVar must not drift the hash: pinned=%s recomputed=%s",
+			preHash, snap.RequestHash)
+	}
+	plan := ClassifyApprovalRepair(*snap, ApprovalRepairClassifyOptions{})
+	if plan.Kind == ApprovalRepairInvalidateStaleRequest {
+		t.Fatal("policy.attachment_id injection must NOT invalidate a pending approval as stale_request")
+	}
+	if plan.Kind != ApprovalRepairNone {
+		t.Fatalf("a pending approval carrying only stripped platform churn must classify None, got %q", plan.Kind)
+	}
+}
+
+// TestClassifyApprovalRepair_PolicyAttachmentPlusRealDrift_StillTripsStaleRequest
+// is the fence counterpart to the survival test: stripping policy.attachment_id
+// must not blind the TOCTOU check. A pending approval carrying the (stripped)
+// platform label that ALSO has a genuine payload change (ContextPtr) between
+// safety-check and reconcile must STILL be invalidated as stale_request.
+func TestClassifyApprovalRepair_PolicyAttachmentPlusRealDrift_StillTripsStaleRequest(t *testing.T) {
+	t.Parallel()
+	srv := miniredis.RunT(t)
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	ctx := context.Background()
+	const jobID = "job-policy-attach-drift"
+	req := &pb.JobRequest{
+		JobId:      jobID,
+		Topic:      "job.approval-gate",
+		TenantId:   "default",
+		ContextPtr: "ctx:original",
+		Labels: map[string]string{
+			"run_id":      "run-1",
+			"step_id":     "approve",
+			"workflow_id": "wf-1",
+		},
+	}
+	preHash, err := hashApprovalJobRequest(req)
+	if err != nil {
+		t.Fatalf("hash: %v", err)
+	}
+	if err := store.SetState(ctx, jobID, model.JobStateApproval); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	if err := store.SetSafetyDecision(ctx, jobID, model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
+		ApprovalRequired: true,
+		JobHash:          preHash,
+	}); err != nil {
+		t.Fatalf("set safety: %v", err)
+	}
+
+	// Benign stripped platform label AND a real payload change (ContextPtr,
+	// not stripped) — the latter must still trip the fence.
+	req.Labels[policylabels.PolicyAttachmentID] = policylabels.JobAttachmentID(jobID)
+	req.ContextPtr = "ctx:tampered"
+	if err := store.SetJobRequest(ctx, req); err != nil {
+		t.Fatalf("set req: %v", err)
+	}
+
+	snap, err := store.InspectApprovalRepair(ctx, jobID)
+	if err != nil {
+		t.Fatalf("inspect: %v", err)
+	}
+	plan := ClassifyApprovalRepair(*snap, ApprovalRepairClassifyOptions{})
+	if plan.Kind != ApprovalRepairInvalidateStaleRequest {
+		t.Fatalf("real payload drift alongside a stripped platform label must still trip StaleRequest, got %q", plan.Kind)
+	}
+	if plan.TargetState != model.JobStateDenied {
+		t.Fatalf("stale-request repair must target DENIED, got %s", plan.TargetState)
 	}
 }

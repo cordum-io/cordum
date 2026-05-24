@@ -17,6 +17,7 @@ import (
 
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/policylabels"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/cordum/cordum/core/protocol/protoutil"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -24,8 +25,9 @@ import (
 )
 
 // Canonical returns a copy of req with mutable fields stripped
-// (approval_* labels, bus.LabelBusMsgID, config.EffectiveConfigEnvVar)
-// and proto unknown fields removed via a protojson round-trip. The
+// (approval_* labels, bus.LabelBusMsgID, policylabels.PolicyAttachmentID,
+// config.EffectiveConfigEnvVar) and proto unknown fields removed via a
+// protojson round-trip. The
 // round-trip matches what the store persists into Redis, so the
 // canonical form is stable regardless of whether the caller holds the
 // original in-memory proto or a Redis-read form.
@@ -37,7 +39,11 @@ func Canonical(req *pb.JobRequest) (*pb.JobRequest, error) {
 	if clone.Labels != nil {
 		for key := range clone.Labels {
 			lower := strings.ToLower(key)
-			if strings.HasPrefix(lower, "approval_") || key == bus.LabelBusMsgID {
+			// policy.attachment_id is injected during policy attachment (after the
+			// submit-time hash is pinned), so it must be stripped here or the
+			// reconcile-time RequestHash drifts from the pinned JobHash and a
+			// still-pending approval is wrongly invalidated as stale_request.
+			if strings.HasPrefix(lower, "approval_") || key == bus.LabelBusMsgID || key == policylabels.PolicyAttachmentID {
 				delete(clone.Labels, key)
 			}
 		}

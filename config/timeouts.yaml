@@ -4,4 +4,9 @@ reconciler:
   dispatch_timeout_seconds: 300
   # Per-topic overrides available via topics.<topic>.running_timeout_seconds
   running_timeout_seconds: 900
+  # 30s is the default reconciler tick. The temporary 900s stopgap (task-821a6ebb)
+  # that masked approval auto-invalidation is removed now that reqhash strips the
+  # platform-injected policy.attachment_id label; pending approvals no longer drift
+  # the TOCTOU hash, so the prompt 30s tick is safe again (also restores timely
+  # dispatch/running timeout enforcement the 900s tick delayed).
   scan_interval_seconds: 30
