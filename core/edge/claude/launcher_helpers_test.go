@@ -104,6 +104,14 @@ func TestFilepathExt(t *testing.T) {
 	}
 }
 
+// TestLoopbackReservationNoTOCTOU asserts the per-platform reservation contract.
+// On inheritance platforms (Unix) reserveLoopbackHookURL holds the reserved
+// listener open until it is handed to agentd across exec, so the port must NOT be
+// re-bindable — the no-TOCTOU guarantee. On non-inheritance platforms (Windows,
+// where supportsAgentdListenerInheritance() is false; see
+// listener_inheritance_windows.go) the wrapper deliberately uses the close-then-
+// bind legacy path: the port is released so agentd can re-bind it fresh, which is
+// the accepted Option-A reserve->bind race tradeoff.
 func TestLoopbackReservationNoTOCTOU(t *testing.T) {
 	rawURL, err := reserveLoopbackHookURL()
 	if err != nil {
@@ -115,11 +123,21 @@ func TestLoopbackReservationNoTOCTOU(t *testing.T) {
 		t.Fatalf("parse reserved URL: %v", err)
 	}
 
-	attacker, err := net.Listen("tcp", u.Host)
-	if err == nil {
-		_ = attacker.Close()
-		t.Fatalf("reserved loopback port %s was bindable after reservation; launcher has a TOCTOU window", u.Host)
+	attacker, attackErr := net.Listen("tcp", u.Host)
+	if supportsAgentdListenerInheritance() {
+		if attackErr == nil {
+			_ = attacker.Close()
+			t.Fatalf("reserved loopback port %s was bindable after reservation; launcher has a TOCTOU window", u.Host)
+		}
+		return
 	}
+	// Legacy close-then-bind path: the reserved port is expected to be free so
+	// agentd can re-bind it. A failure here means the freed port is not
+	// re-bindable, which would break the Windows fix's core assumption.
+	if attackErr != nil {
+		t.Fatalf("legacy reservation should release %s for agentd to re-bind, but it was not bindable: %v", u.Host, attackErr)
+	}
+	_ = attacker.Close()
 }
 
 func TestRejectSettingsOverrideBlocksAllSettingsVariants(t *testing.T) {

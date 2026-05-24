@@ -70,7 +70,10 @@ stable hashes, and artifact pointer metadata.
 
 - `cordumctl edge claude` is the developer/demo launcher. It starts local
   `cordum-agentd`, renders temporary Claude command-hook settings, injects a
-  runtime-only hook nonce, and launches Claude Code.
+  runtime-only hook nonce, and launches Claude Code. It reserves the local
+  `cordum-agentd` loopback port automatically (close-then-bind on Windows, where
+  listener handle inheritance is Unix-only), so `--agentd-url` is not required on
+  any platform.
 - `cordum-hook` is the Claude command hook. It reads one bounded hook payload,
   redacts/maps it, and calls only the local agentd endpoint.
 - `cordum-agentd` owns local session lifecycle, hook authentication, Gateway
