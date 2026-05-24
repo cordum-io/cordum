@@ -787,7 +787,7 @@ cordumctl delegation-keygen --rotate         # rotate; preserves prior public ke
 ```
 
 Companion to the delegation system documented in
-[delegation.md](delegation.md). Tokens are re-verified at
+[delegation.md](auth/delegation.md). Tokens are re-verified at
 dispatch time per the boundary-hardening described in
 [CORE.md § 3](CORE.md#3-scheduler-that-is-purely-config‑driven-no-hardcoded-core-topics).
 

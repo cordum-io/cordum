@@ -20,18 +20,7 @@ exclude_path = [
   "docs/static",
 ]
 
-# --- Individual links excluded (pre-existing baseline breaks) ----------------
-# These relative links were already broken when this gate was introduced
-# (lychee --offline baseline, 2026-05-24). The content fixes are owned by the
-# docs-accuracy task (task-8e555500); excluding them here snapshots the known
-# baseline so the gate fails only on NEW breakage, not pre-existing debt.
-exclude = [
-  # docs/cli-reference.md, docs/configuration-reference.md:
-  #   link "(delegation.md)" resolves to docs/delegation.md; file lives at docs/auth/delegation.md
-  "docs/delegation\\.md$",
-  # docs/mcp/resources.md: "(../../api/openapi.yaml)" — spec file not present in repo
-  "/api/openapi\\.yaml$",
-  # docs/troubleshooting/install.md: targets were never created under docs/deployment/
-  "docs/deployment/certs\\.md$",
-  "docs/deployment/worker-credentials\\.md$",
-]
+# --- Individual links excluded ------------------------------------------------
+# No individual baseline excludes remain; keep this array explicit so future
+# debt snapshots are visible in review.
+exclude = []

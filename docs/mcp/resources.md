@@ -75,7 +75,7 @@ The embedded `text` decodes to:
 **`id` and `kind` are stable.** **`data`** passes through the gateway's
 JSON body verbatim — individual fields track the gateway's existing
 REST-API contract; see the
-[OpenAPI spec](../../api/openapi.yaml) for per-field stability.
+[OpenAPI spec](../api/openapi/cordum-api.yaml) for per-field stability.
 
 ---
 
