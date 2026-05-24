@@ -549,7 +549,10 @@ func PrepareUnixSocketPath(_ context.Context, socketPath string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create socket dir: %w", err)
 	}
-	_ = os.Chmod(dir, 0o700) // #nosec G302 -- directory needs the owner execute bit to be traversable; 0700 is owner-only
+	chmodErr := os.Chmod(dir, 0o700) // #nosec G302 -- directory needs the owner execute bit to be traversable; 0700 is owner-only
+	if chmodErr != nil {
+		return fmt.Errorf("harden socket dir perms: %w", chmodErr)
+	}
 	if info, err := os.Lstat(socketPath); err == nil {
 		if info.Mode()&os.ModeSocket == 0 {
 			return fmt.Errorf("refusing to remove non-socket path %s", socketPath)

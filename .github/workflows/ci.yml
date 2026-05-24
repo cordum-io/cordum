@@ -337,6 +337,9 @@ jobs:
     name: Security Scan
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read          # checkout
+      security-events: write  # upload-sarif to the code-scanning API
 
     steps:
     - uses: actions/checkout@v4

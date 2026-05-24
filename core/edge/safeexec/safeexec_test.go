@@ -108,6 +108,41 @@ func TestNormalizeExecutablePathRejectsAbsoluteTraversal(t *testing.T) {
 	}
 }
 
+// A bare name must be resolved to an absolute path here rather than left for
+// exec.Command to look up against $PATH at spawn time.
+func TestNormalizeExecutablePathResolvesBareNameToAbsolute(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX exec-bit / PATHEXT semantics differ on Windows")
+	}
+	dir := t.TempDir()
+	const name = "cordum-bare-helper"
+	exe := filepath.Join(dir, name)
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	t.Setenv("PATH", dir)
+	got, err := NormalizeExecutablePath(name, nil)
+	if err != nil {
+		t.Fatalf("NormalizeExecutablePath(bare) returned error: %v", err)
+	}
+	if !filepath.IsAbs(got) {
+		t.Fatalf("bare name resolved to non-absolute path %q", got)
+	}
+	if filepath.Base(got) != name {
+		t.Fatalf("resolved path %q does not end in %q", got, name)
+	}
+	if _, err := os.Stat(got); err != nil {
+		t.Fatalf("resolved path %q not statable: %v", got, err)
+	}
+}
+
+func TestNormalizeExecutablePathRejectsUnresolvableBareName(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()) // empty dir: nothing resolves
+	if _, err := NormalizeExecutablePath("cordum-definitely-not-on-path-xyz", nil); err == nil {
+		t.Fatalf("NormalizeExecutablePath resolved a bare name that is not on PATH")
+	}
+}
+
 func TestValidateArgPathsRejectsTraversalAndOutsidePrefix(t *testing.T) {
 	base := t.TempDir()
 	if err := ValidateArgPaths([]string{"--settings", filepath.Join(base, "settings.json")}, base, []string{base}); err != nil {

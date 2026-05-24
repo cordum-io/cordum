@@ -191,6 +191,11 @@ func writeInitYAML(path string, s edgeInitScaffold) error {
 	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
+	// WriteFile only applies the mode on create; enforce owner-only perms on
+	// `--force` re-runs over a pre-existing, looser-permissioned file too.
+	if err := os.Chmod(path, 0o600); err != nil {
+		return fmt.Errorf("chmod %s: %w", path, err)
+	}
 	return nil
 }
 
@@ -213,6 +218,9 @@ func writeInitWrapper(cwd string, _ edgeInitScaffold) (string, error) {
 		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 			return "", fmt.Errorf("write %s: %w", path, err)
 		}
+		if err := os.Chmod(path, 0o600); err != nil {
+			return "", fmt.Errorf("chmod %s: %w", path, err)
+		}
 		return path, nil
 	}
 	path := filepath.Join(cwd, "cordum-claude.sh")
@@ -223,6 +231,11 @@ func writeInitWrapper(cwd string, _ edgeInitScaffold) (string, error) {
 	err := os.WriteFile(path, []byte(body), 0o700) // #nosec G306 -- wrapper script must be owner-executable; 0700 is owner-only
 	if err != nil {
 		return "", fmt.Errorf("write %s: %w", path, err)
+	}
+	// Enforce the mode on re-runs over a pre-existing, looser-permissioned file.
+	chmodErr := os.Chmod(path, 0o700) // #nosec G302 -- wrapper script must be owner-executable; 0700 is owner-only
+	if chmodErr != nil {
+		return "", fmt.Errorf("chmod %s: %w", path, chmodErr)
 	}
 	return path, nil
 }
