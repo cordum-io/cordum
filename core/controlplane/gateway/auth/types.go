@@ -27,9 +27,15 @@ const (
 // AuthContext captures request identity for auditing and tenant routing.
 type AuthContext struct {
 	// #nosec G117 -- runtime credential in request context, not a hardcoded secret.
-	APIKey           string
-	Tenant           string
-	PrincipalID      string
+	APIKey      string
+	Tenant      string
+	PrincipalID string
+	// KeyID is a stable, non-secret key identifier (managed key id, or
+	// "static:"+sha256(key)[:12]); never the raw key.
+	KeyID string
+	// KeyName is the human-readable key name (managed key Name), surfaced in
+	// audit as identity_label; may be empty.
+	KeyName          string
 	Role             string
 	AllowCrossTenant bool
 	AuthSource       AuthSource

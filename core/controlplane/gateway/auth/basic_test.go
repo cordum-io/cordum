@@ -302,3 +302,86 @@ func TestNewBasicAuthProviderLogsAPIKeySource(t *testing.T) {
 		t.Fatalf("api key value leaked in logs: %s", logs)
 	}
 }
+
+func TestAPIKeyFingerprint(t *testing.T) {
+	const raw = "super-secret-raw-key-value-0000000000000000000000"
+	fp := APIKeyFingerprint(raw)
+
+	if len(fp) != 12 {
+		t.Fatalf("fingerprint length = %d, want 12 (%q)", len(fp), fp)
+	}
+	for _, c := range fp {
+		if !strings.ContainsRune("0123456789abcdef", c) {
+			t.Fatalf("fingerprint %q contains non lowercase-hex rune %q", fp, c)
+		}
+	}
+	// Must be the 12-char prefix of the full SHA-256 hex digest — same hasher,
+	// single source of truth, never the raw key.
+	if want := hashAPIKey(raw)[:12]; fp != want {
+		t.Fatalf("fingerprint = %q, want %q (hashAPIKey prefix)", fp, want)
+	}
+	if fp == raw {
+		t.Fatalf("fingerprint must not equal the raw key")
+	}
+	if again := APIKeyFingerprint(raw); again != fp {
+		t.Fatalf("fingerprint not deterministic: %q != %q", again, fp)
+	}
+	if other := APIKeyFingerprint("a-completely-different-key-value-11111111111111111"); other == fp {
+		t.Fatalf("distinct keys produced identical fingerprint %q", fp)
+	}
+}
+
+func TestKeyIDAndName_PopulatedInAuthContext(t *testing.T) {
+	t.Run("managed key uses id and name", func(t *testing.T) {
+		ks := &fakeKeyStore{
+			validateFn: func(context.Context, string) (*ManagedKey, error) {
+				return &ManagedKey{ID: "mk_abc123", Name: "ci-deploy", Tenant: "default", Scopes: []string{"admin"}}, nil
+			},
+			recordFn: func(context.Context, string) error { return nil },
+		}
+		b := &BasicAuthProvider{defaultTenant: "default", keyStore: ks}
+
+		ac, err := b.authenticate(context.Background(), "managed-raw-secret", "")
+		if err != nil {
+			t.Fatalf("authenticate() error = %v", err)
+		}
+		b.DrainUsage()
+
+		if ac.KeyID != "mk_abc123" {
+			t.Fatalf("KeyID = %q, want %q", ac.KeyID, "mk_abc123")
+		}
+		if ac.KeyName != "ci-deploy" {
+			t.Fatalf("KeyName = %q, want %q", ac.KeyName, "ci-deploy")
+		}
+	})
+
+	t.Run("static key uses static fingerprint and empty name", func(t *testing.T) {
+		const raw = "static-raw-secret-value-2222222222222222222222222"
+		b := &BasicAuthProvider{
+			defaultTenant: "default",
+			keyHashes: buildKeyHashes(map[string]apiKeyMeta{
+				raw: {Tenant: "default", Role: "admin"},
+			}),
+		}
+
+		ac, err := b.authenticate(context.Background(), raw, "")
+		if err != nil {
+			t.Fatalf("authenticate() error = %v", err)
+		}
+
+		const wantPrefix = "static:"
+		if !strings.HasPrefix(ac.KeyID, wantPrefix) {
+			t.Fatalf("KeyID = %q, want prefix %q", ac.KeyID, wantPrefix)
+		}
+		gotFP := strings.TrimPrefix(ac.KeyID, wantPrefix)
+		if gotFP != APIKeyFingerprint(raw) {
+			t.Fatalf("static KeyID fingerprint = %q, want %q", gotFP, APIKeyFingerprint(raw))
+		}
+		if ac.KeyID == raw || strings.Contains(ac.KeyID, raw) {
+			t.Fatalf("static KeyID %q must never contain the raw key", ac.KeyID)
+		}
+		if ac.KeyName != "" {
+			t.Fatalf("static KeyName = %q, want empty (apiKeyMeta carries no name field)", ac.KeyName)
+		}
+	})
+}

@@ -44,6 +44,12 @@ func AuditEntryToSIEM(entry PolicyAuditEntry, tenantID string) audit.SIEMEvent {
 		}
 		extra[key] = value
 	}
+	if identitySource := strings.TrimSpace(entry.IdentitySource); identitySource != "" {
+		extra["identity_source"] = identitySource
+	}
+	if identityLabel := strings.TrimSpace(entry.IdentityLabel); identityLabel != "" {
+		extra["identity_label"] = identityLabel
+	}
 	if len(extra) == 0 {
 		extra = nil
 	}
@@ -129,15 +135,46 @@ func ClassifyAuditSeverity(action string) string {
 	}
 }
 
-// PolicyActorID extracts the principal ID from the request's auth context.
-func PolicyActorID(r *http.Request) string {
+// ActorIdentity resolves a stable audit identity from an auth context.
+// Priority: bound principal id, then the stable key id (managed key id or
+// "static:<fp>"), then a defense-in-depth SHA-256 fingerprint of the raw key.
+// It returns (identity, identity_source, identity_label). The raw API key is
+// NEVER returned — only the principal id, the stable key id, the key name, or a
+// truncated fingerprint.
+//   - identity_source taxonomy: "principal" | "api_key:<id>" | "api_key_fp".
+//   - identity stays the STABLE id; the human-readable key name (when set)
+//     rides in identity_label so audit readers see "ci" alongside id "mk_x".
+func ActorIdentity(ac *auth.AuthContext) (identity, source, label string) {
+	if ac == nil {
+		return "", "", ""
+	}
+	if pid := strings.TrimSpace(ac.PrincipalID); pid != "" {
+		return pid, "principal", ""
+	}
+	if keyID := strings.TrimSpace(ac.KeyID); keyID != "" {
+		return keyID, "api_key:" + keyID, strings.TrimSpace(ac.KeyName)
+	}
+	if apiKey := strings.TrimSpace(ac.APIKey); apiKey != "" {
+		return auth.APIKeyFingerprint(apiKey), "api_key_fp", ""
+	}
+	return "", "", ""
+}
+
+// PolicyActorIdentity resolves (identity, identity_source, identity_label) from
+// the request's auth context. See ActorIdentity for the resolution priority.
+func PolicyActorIdentity(r *http.Request) (identity, source, label string) {
 	if r == nil {
-		return ""
+		return "", "", ""
 	}
-	if a := auth.FromRequest(r); a != nil && a.PrincipalID != "" {
-		return a.PrincipalID
-	}
-	return ""
+	return ActorIdentity(auth.FromRequest(r))
+}
+
+// PolicyActorID extracts the stable audit identity from the request's auth
+// context. It delegates to ActorIdentity so existing call sites automatically
+// record a non-empty identity for key-only actors, not just bound principals.
+func PolicyActorID(r *http.Request) string {
+	id, _, _ := PolicyActorIdentity(r)
+	return id
 }
 
 // PolicyRole extracts and normalizes the role from the request's auth context.

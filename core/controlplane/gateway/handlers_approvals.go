@@ -699,7 +699,7 @@ func approvalHandlerErrorCode(status int) string {
 	}
 }
 
-func (s *server) appendApprovalDecisionAudit(ctx context.Context, action, jobID, topic, actorID, role, reason, note, agentID, agentName, agentRiskTier string) {
+func (s *server) appendApprovalDecisionAudit(ctx context.Context, action, jobID, topic, actorID, role, identitySource, identityLabel, reason, note, agentID, agentName, agentRiskTier string) {
 	extra := map[string]string{}
 	if note = strings.TrimSpace(note); note != "" {
 		extra["note"] = note
@@ -708,18 +708,20 @@ func (s *server) appendApprovalDecisionAudit(ctx context.Context, action, jobID,
 		extra = nil
 	}
 	_ = s.appendPolicyAudit(ctx, policybundles.PolicyAuditEntry{
-		Action:        action,
-		ResourceType:  "job",
-		ResourceID:    jobID,
-		ResourceName:  topic,
-		ActorID:       actorID,
-		Role:          role,
-		Message:       action + " job " + jobID,
-		Reason:        strings.TrimSpace(reason),
-		AgentID:       agentID,
-		AgentName:     agentName,
-		AgentRiskTier: agentRiskTier,
-		Extra:         extra,
+		Action:         action,
+		ResourceType:   "job",
+		ResourceID:     jobID,
+		ResourceName:   topic,
+		ActorID:        actorID,
+		Role:           role,
+		IdentitySource: identitySource,
+		IdentityLabel:  identityLabel,
+		Message:        action + " job " + jobID,
+		Reason:         strings.TrimSpace(reason),
+		AgentID:        agentID,
+		AgentName:      agentName,
+		AgentRiskTier:  agentRiskTier,
+		Extra:          extra,
 	})
 }
 
@@ -1401,7 +1403,8 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 		if resolved.Request != nil && resolved.Request.Labels != nil {
 			approveAgentID, approveAgentName, approveAgentRiskTier = s.resolveAgentForAudit(ctx, resolved.Request.Labels["agent_id"])
 		}
-		s.appendApprovalDecisionAudit(ctx, "approve", jobID, resolved.Request.GetTopic(), policybundles.PolicyActorID(r), policybundles.PolicyRole(r), reason, note, approveAgentID, approveAgentName, approveAgentRiskTier)
+		approveActorID, approveIdentitySource, approveIdentityLabel := policybundles.PolicyActorIdentity(r)
+		s.appendApprovalDecisionAudit(ctx, "approve", jobID, resolved.Request.GetTopic(), approveActorID, policybundles.PolicyRole(r), approveIdentitySource, approveIdentityLabel, reason, note, approveAgentID, approveAgentName, approveAgentRiskTier)
 		result = handlerResult{http.StatusOK, map[string]string{"job_id": jobID, "trace_id": resolved.TraceID}}
 		return nil
 	})
@@ -1606,7 +1609,8 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 		if resolved.Request != nil && resolved.Request.Labels != nil {
 			rejectAgentID, rejectAgentName, rejectAgentRiskTier = s.resolveAgentForAudit(ctx, resolved.Request.Labels["agent_id"])
 		}
-		s.appendApprovalDecisionAudit(ctx, "reject", jobID, rejectTopic, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), reason, note, rejectAgentID, rejectAgentName, rejectAgentRiskTier)
+		rejectActorID, rejectIdentitySource, rejectIdentityLabel := policybundles.PolicyActorIdentity(r)
+		s.appendApprovalDecisionAudit(ctx, "reject", jobID, rejectTopic, rejectActorID, policybundles.PolicyRole(r), rejectIdentitySource, rejectIdentityLabel, reason, note, rejectAgentID, rejectAgentName, rejectAgentRiskTier)
 		result = handlerResult{http.StatusOK, map[string]string{"job_id": jobID}}
 		return nil
 	})

@@ -101,6 +101,8 @@ type PolicyAuditEntry struct {
 	ActorID        string            `json:"actor_id,omitempty"`
 	Role           string            `json:"role,omitempty"`
 	AuthSource     auth.AuthSource   `json:"auth_source,omitempty"`
+	IdentitySource string            `json:"identity_source,omitempty"`
+	IdentityLabel  string            `json:"identity_label,omitempty"`
 	AgentID        string            `json:"agent_id,omitempty"`
 	AgentName      string            `json:"agent_name,omitempty"`
 	AgentRiskTier  string            `json:"agent_risk_tier,omitempty"`

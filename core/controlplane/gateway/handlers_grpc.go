@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/infra/secrets"
 	"github.com/cordum/cordum/core/infra/store"
@@ -24,6 +25,20 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+// grpcAuditActor resolves the audit actor for a gRPC governance event from the
+// request context. It routes through the shared policybundles.ActorIdentity
+// resolver so gRPC and HTTP record an identical (identity, identity_source,
+// identity_label) for the same credential — the HTTP/gRPC parity contract.
+// Truly unauthenticated callers (no auth context) map to the "anonymous"/"none"
+// sentinel; an authenticated-but-anonymous context yields an empty identity.
+func grpcAuditActor(ctx context.Context) (identity, source, label, role string) {
+	if ac := auth.FromContext(ctx); ac != nil {
+		identity, source, label = policybundles.ActorIdentity(ac)
+		return identity, source, label, ac.Role
+	}
+	return "anonymous", "", "", "none"
+}
 
 // --- gRPC Implementations ---
 
@@ -39,10 +54,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 	// This matches the HTTP handler (handleSubmitJobHTTP) which also allows
 	// "admin" and "user" roles. Keep both in sync to avoid role asymmetry.
 	if err := s.requireRoleGRPC(ctx, "admin", "user"); err != nil {
-		actorID, role := "anonymous", "none"
-		if ac := auth.FromContext(ctx); ac != nil {
-			actorID, role = ac.PrincipalID, ac.Role
-		}
+		actorID, _, _, role := grpcAuditActor(ctx)
 		s.appendAuditEntryNamed(ctx, "submit_denied", "job", "", "", actorID, role, "job submit denied: "+err.Error())
 		return nil, err
 	}
@@ -213,17 +225,14 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 
 	// Resolve agent context for audit events (same as HTTP path).
 	grpcAgentID, grpcAgentName, grpcAgentRiskTier := s.resolveAgentForAudit(ctx, payloadReq.Labels["agent_id"])
-	actorForAudit, roleForAudit := "anonymous", "none"
-	if ac := auth.FromContext(ctx); ac != nil {
-		actorForAudit, roleForAudit = ac.PrincipalID, ac.Role
-	}
+	actorForAudit, identitySource, identityLabel, roleForAudit := grpcAuditActor(ctx)
 
 	if policyResult.Denied {
 		reason := "policy denied"
 		if policyResult.Reason != "" {
 			reason = policyResult.Reason
 		}
-		s.appendSubmitSafetyDecisionAudit(ctx, "submit_denied", jobID, payloadReq.Topic, actorForAudit, roleForAudit, "submit-time policy denied: "+reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
+		s.appendSubmitSafetyDecisionAudit(ctx, "submit_denied", jobID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit-time policy denied: "+reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
 		return nil, status.Error(codes.PermissionDenied, reason)
 	}
 	if policyResult.Throttled {
@@ -231,7 +240,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		if policyResult.Reason != "" {
 			reason = policyResult.Reason
 		}
-		s.appendSubmitSafetyDecisionAudit(ctx, "submit_throttled", jobID, payloadReq.Topic, actorForAudit, roleForAudit, "submit-time policy throttled: "+reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
+		s.appendSubmitSafetyDecisionAudit(ctx, "submit_throttled", jobID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit-time policy throttled: "+reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
 		return nil, status.Error(codes.ResourceExhausted, reason)
 	}
 	if policyResult.ApprovalRequired {
@@ -346,7 +355,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 			}
 			s.syncApprovalQueueDepth(ctx)
 		}
-		s.appendSubmitSafetyDecisionAudit(ctx, "submit_approval_required", jobID, payloadReq.Topic, actorForAudit, roleForAudit, "submit-time policy requires approval: "+policyResult.Reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
+		s.appendSubmitSafetyDecisionAudit(ctx, "submit_approval_required", jobID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit-time policy requires approval: "+policyResult.Reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
 		return &pb.SubmitJobResponse{
 			JobId:   jobID,
 			TraceId: traceID,
@@ -495,7 +504,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		"traceId", traceID,
 		"topic", payloadReq.Topic,
 	)
-	s.appendSubmitSafetyDecisionAudit(ctx, "submit", jobID, payloadReq.Topic, actorForAudit, roleForAudit, "submit job "+jobID, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
+	s.appendSubmitSafetyDecisionAudit(ctx, "submit", jobID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit job "+jobID, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
 	return &pb.SubmitJobResponse{JobId: jobID, TraceId: traceID}, nil
 }
 

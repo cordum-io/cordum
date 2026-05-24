@@ -373,6 +373,8 @@ func (b *BasicAuthProvider) authenticateWithScope(ctx context.Context, key, prin
 					APIKey:      key,
 					Tenant:      tenant,
 					PrincipalID: strings.TrimSpace(principalID),
+					KeyID:       mk.ID,
+					KeyName:     mk.Name,
 					Role:        role,
 					AuthSource:  AuthSourceAPIKey,
 				}, nil
@@ -400,6 +402,7 @@ func (b *BasicAuthProvider) authenticateWithScope(ctx context.Context, key, prin
 		APIKey:           key,
 		Tenant:           tenant,
 		PrincipalID:      strings.TrimSpace(principalID),
+		KeyID:            "static:" + APIKeyFingerprint(key),
 		Role:             role,
 		AllowCrossTenant: meta.AllowCrossTenant,
 		AuthSource:       AuthSourceAPIKey,
@@ -587,6 +590,15 @@ func loadBasicAPIKeys() (map[string]apiKeyMeta, bool, string, time.Time, bool, e
 func hashAPIKey(rawToken string) string {
 	h := sha256.Sum256([]byte(rawToken)) // #nosec G703 -- SHA-256 for lookup index, not password storage
 	return hex.EncodeToString(h[:])
+}
+
+// APIKeyFingerprint returns a stable, non-secret 12-hex-character fingerprint of
+// an API key (the SHA-256 hex prefix). It is the single source of truth for
+// deriving a key identifier from a raw key — used for static-key KeyIDs and as
+// the audit resolver's defense-in-depth fallback. It NEVER returns or stores
+// the raw key.
+func APIKeyFingerprint(key string) string {
+	return hashAPIKey(key)[:12]
 }
 
 // buildKeyHashes creates the hash-indexed lookup map from the raw key map.

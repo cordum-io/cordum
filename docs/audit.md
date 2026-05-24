@@ -130,6 +130,45 @@ Each exported event uses the `SIEMEvent` struct:
 | `identity` | `string` | Actor identity |
 | `extra` | `map[string]string` | Additional context |
 
+### Actor identity
+
+Every authenticated governance event (`safety.decision`, `safety.approval`, job
+submit, and approve/reject) records a non-empty `identity` describing **who**
+performed the action. The value is resolved identically on the HTTP and gRPC
+transports — both route through `policybundles.ActorIdentity` — so the same
+credential always produces the same identity regardless of transport.
+
+Two companion fields travel inside `extra`:
+
+- `identity_source` — how the identity was derived (taxonomy below).
+- `identity_label` — the human-readable key name, when the key has one, so a
+  reviewer can read `ci-deploy` next to the stable id `mk_3f9c`.
+
+**`identity_source` taxonomy**
+
+| `identity_source` | When | `identity` value | `identity_label` |
+|-------------------|------|------------------|------------------|
+| `principal` | The credential is bound to a principal | The principal id | _(empty)_ |
+| `api_key:<id>` | Authenticated by API key with no bound principal; `<id>` is the **stable key id** — a managed key's id, or `static:<fp>` for a static key | The same stable key id | The key's name, e.g. `ci-deploy` |
+| `api_key_fp` | Defense-in-depth fallback when only a raw key is present | `sha256(key)[:12]` fingerprint | _(empty)_ |
+
+Example — a managed key `mk_3f9c` named `ci-deploy`, used without a bound
+principal, emits `identity = "mk_3f9c"`, `identity_source = "api_key:mk_3f9c"`,
+and `identity_label = "ci-deploy"`.
+
+**Actor vs. agent.** `identity` / `identity_source` / `identity_label` describe
+the **actor** — the authenticated caller (human principal or API key) that made
+the request. They are distinct from the **agent** dimension
+(`agent_id` / `agent_name` / `agent_risk_tier`, including the `unlinked`
+sentinel), which describes the workload the job runs as. The two are resolved
+independently: a key-authenticated submit on behalf of an `unlinked` agent still
+records a precise actor identity.
+
+**Raw keys are never written.** No audit event, `extra` value, or log line ever
+contains a raw API key — only the principal id, the stable key id, the key name,
+or a truncated `sha256(key)[:12]` fingerprint. This is enforced by a test that
+serializes a key-derived event and asserts the raw key is absent.
+
 ## 4. HTTP Request Audit
 
 The gateway logs every HTTP request as an `AuditEvent` (defined in
