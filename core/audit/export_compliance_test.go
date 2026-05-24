@@ -396,3 +396,320 @@ func TestBuildNDJSONEventLine_SOC2SortedAndNonEmpty(t *testing.T) {
 		t.Errorf("type = %v, want event", parsed["type"])
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Row filter (event_type / severity / category) — task-7f0f57bf
+// ---------------------------------------------------------------------------
+
+// TestWriteComplianceExport_UnfilteredByteIdentical is the DoD-2 regression:
+// with NO row filter set, the export is byte-identical to today. Each emitted
+// event line must equal a fresh buildNDJSONEventLine recomputation, the
+// manifest must carry row_filter_applied:false with no row_filter object, and
+// no rows may be dropped.
+func TestWriteComplianceExport_UnfilteredByteIdentical(t *testing.T) {
+	client, cleanup := newExportClient(t)
+	defer cleanup()
+
+	chainer := NewChainer(client, "")
+	streamKey := chainer.StreamKey("default")
+	seeded := seedChainEvents(t, client, "default", 3, nil) // all governance (safety.decision)
+
+	var buf bytes.Buffer
+	manifest, err := WriteComplianceExport(context.Background(), &buf, client, ComplianceExportOptions{
+		TenantID:  "default",
+		StreamKey: streamKey,
+		Format:    ComplianceExportFormatJSON,
+		From:      time.Now().Add(-1 * time.Hour),
+		To:        time.Now().Add(1 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("WriteComplianceExport: %v", err)
+	}
+
+	if manifest.RowFilterApplied {
+		t.Errorf("unfiltered: RowFilterApplied = true, want false")
+	}
+	if manifest.RowFilter != nil {
+		t.Errorf("unfiltered: RowFilter = %+v, want nil", manifest.RowFilter)
+	}
+	if manifest.EventCount != 3 {
+		t.Errorf("unfiltered: EventCount = %d, want 3 (no rows dropped)", manifest.EventCount)
+	}
+
+	// Collect emitted event lines + the raw manifest line.
+	var manifestLine string
+	var eventLines []string
+	scanner := bufio.NewScanner(&buf)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+	idx := 0
+	for scanner.Scan() {
+		text := scanner.Text()
+		var line map[string]any
+		if err := json.Unmarshal([]byte(text), &line); err != nil {
+			t.Fatalf("line %d unmarshal: %v", idx, err)
+		}
+		switch line["type"] {
+		case "manifest":
+			manifestLine = text
+		case "event":
+			eventLines = append(eventLines, text)
+		}
+		idx++
+	}
+
+	// Manifest: additive field present-and-false; row_filter object omitted.
+	if !strings.Contains(manifestLine, `"row_filter_applied":false`) {
+		t.Errorf("manifest missing row_filter_applied:false:\n%s", manifestLine)
+	}
+	if strings.Contains(manifestLine, `"row_filter":`) {
+		t.Errorf("manifest unexpectedly contains a row_filter object:\n%s", manifestLine)
+	}
+
+	// Byte-identical: each event line equals a fresh recomputation.
+	if len(eventLines) != len(seeded) {
+		t.Fatalf("emitted %d event lines, want %d", len(eventLines), len(seeded))
+	}
+	for i, ev := range seeded {
+		want, berr := buildNDJSONEventLine(ev, DefaultSOC2Mapping().ControlsFor(ev))
+		if berr != nil {
+			t.Fatalf("recompute line %d: %v", i, berr)
+		}
+		wantLine := strings.TrimRight(string(want), "\n")
+		if eventLines[i] != wantLine {
+			t.Errorf("event line %d not byte-identical:\n got=%s\nwant=%s", i, eventLines[i], wantLine)
+		}
+	}
+}
+
+// TestWriteComplianceExport_CSVColumnsUnchanged guards the export-format
+// stability rail: the unfiltered CSV header row must still equal
+// complianceCSVHeaders verbatim (no reorder/rename).
+func TestWriteComplianceExport_CSVColumnsUnchanged(t *testing.T) {
+	client, cleanup := newExportClient(t)
+	defer cleanup()
+	chainer := NewChainer(client, "")
+	streamKey := chainer.StreamKey("default")
+	seedChainEvents(t, client, "default", 2, nil)
+
+	var buf bytes.Buffer
+	if _, err := WriteComplianceExport(context.Background(), &buf, client, ComplianceExportOptions{
+		TenantID:  "default",
+		StreamKey: streamKey,
+		Format:    ComplianceExportFormatCSV,
+		From:      time.Now().Add(-1 * time.Hour),
+		To:        time.Now().Add(1 * time.Hour),
+	}); err != nil {
+		t.Fatalf("WriteComplianceExport: %v", err)
+	}
+	_, rest, _ := strings.Cut(buf.String(), "\n") // drop manifest comment
+	rdr := csv.NewReader(strings.NewReader(rest))
+	rows, err := rdr.ReadAll()
+	if err != nil {
+		t.Fatalf("csv: %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("no CSV rows")
+	}
+	if !reflectStringSliceEqual(rows[0], complianceCSVHeaders) {
+		t.Errorf("CSV header drifted:\n got=%v\nwant=%v", rows[0], complianceCSVHeaders)
+	}
+}
+
+// TestWriteComplianceExport_CategoryGovernanceFilter is the DoD-6 / DoD-1 E2E:
+// category=governance emits ONLY governance rows, the manifest records the
+// filter, event_count is the post-filter count, and — critically — chain
+// verification still covers the FULL range (all seeded rows), proving the
+// filter never reached the verifier.
+func TestWriteComplianceExport_CategoryGovernanceFilter(t *testing.T) {
+	client, cleanup := newExportClient(t)
+	defer cleanup()
+	chainer := NewChainer(client, "")
+	streamKey := chainer.StreamKey("default")
+	// 5 seeded: i=0,2,4 routine (system.auth); i=1,3 governance (safety.decision).
+	seedChainEvents(t, client, "default", 5, func(i int, ev *SIEMEvent) {
+		if i%2 == 0 {
+			ev.EventType = EventSystemAuth
+		} else {
+			ev.EventType = EventSafetyDecision
+		}
+	})
+
+	var filteredBuf, fullBuf bytes.Buffer
+	opts := ComplianceExportOptions{
+		TenantID:  "default",
+		StreamKey: streamKey,
+		Format:    ComplianceExportFormatJSON,
+		From:      time.Now().Add(-1 * time.Hour),
+		To:        time.Now().Add(1 * time.Hour),
+	}
+	// Filtered (category=governance) and unfiltered exports over the SAME data.
+	filteredOpts := opts
+	filteredOpts.Category = CategoryGovernance
+	filtered, err := WriteComplianceExport(context.Background(), &filteredBuf, client, filteredOpts)
+	if err != nil {
+		t.Fatalf("filtered export: %v", err)
+	}
+	full, err := WriteComplianceExport(context.Background(), &fullBuf, client, opts)
+	if err != nil {
+		t.Fatalf("unfiltered export: %v", err)
+	}
+
+	// Only governance rows emitted under the filter; all rows unfiltered.
+	emitted := collectExportedEventTypes(t, &filteredBuf)
+	if len(emitted) != 2 {
+		t.Errorf("filtered emitted %d events, want 2 governance", len(emitted))
+	}
+	for _, et := range emitted {
+		if CategoryFor(et) != CategoryGovernance {
+			t.Errorf("filtered emitted non-governance event_type %q", et)
+		}
+	}
+	if got := len(collectExportedEventTypes(t, &fullBuf)); got != 5 {
+		t.Errorf("unfiltered emitted %d events, want 5", got)
+	}
+
+	// Manifest records the filter; event_count is the POST-filter count.
+	if !filtered.RowFilterApplied {
+		t.Error("filtered RowFilterApplied = false, want true")
+	}
+	if filtered.RowFilter == nil || filtered.RowFilter.Category != CategoryGovernance {
+		t.Errorf("filtered RowFilter = %+v, want Category=governance", filtered.RowFilter)
+	}
+	if filtered.EventCount != 2 {
+		t.Errorf("filtered EventCount = %d, want 2 (post-filter)", filtered.EventCount)
+	}
+	if full.EventCount != 5 {
+		t.Errorf("unfiltered EventCount = %d, want 5", full.EventCount)
+	}
+
+	// CRITICAL invariant: the row filter has ZERO effect on chain
+	// verification. The filtered export's ChainVerification must be identical
+	// to the unfiltered one — same total/verified/status over the FULL range
+	// (5), never the filtered subset (2). This is what makes a filtered export
+	// distinguishable from a tamper gap.
+	fv, uv := filtered.ChainVerification, full.ChainVerification
+	if fv == nil || uv == nil {
+		t.Fatalf("ChainVerification nil (filtered=%v unfiltered=%v)", fv, uv)
+	}
+	if fv.TotalEvents != 5 {
+		t.Errorf("filtered ChainVerification.TotalEvents = %d, want 5 (full range)", fv.TotalEvents)
+	}
+	if fv.TotalEvents != uv.TotalEvents || fv.VerifiedEvents != uv.VerifiedEvents || fv.Status != uv.Status {
+		t.Errorf("filter changed verification: filtered{total=%d verified=%d status=%q} vs unfiltered{total=%d verified=%d status=%q}",
+			fv.TotalEvents, fv.VerifiedEvents, fv.Status, uv.TotalEvents, uv.VerifiedEvents, uv.Status)
+	}
+	if fv.Status == VerifyStatusCompromised {
+		t.Errorf("filtered export reported compromised chain — filter leaked into verifier")
+	}
+}
+
+// TestWriteComplianceExport_EventTypeFilter exercises the event_type filter
+// (case-insensitive) and its manifest record.
+func TestWriteComplianceExport_EventTypeFilter(t *testing.T) {
+	client, cleanup := newExportClient(t)
+	defer cleanup()
+	chainer := NewChainer(client, "")
+	streamKey := chainer.StreamKey("default")
+	seedChainEvents(t, client, "default", 4, func(i int, ev *SIEMEvent) {
+		if i < 2 {
+			ev.EventType = EventSafetyDecision
+		} else {
+			ev.EventType = EventSystemAuth
+		}
+	})
+
+	var buf bytes.Buffer
+	manifest, err := WriteComplianceExport(context.Background(), &buf, client, ComplianceExportOptions{
+		TenantID:  "default",
+		StreamKey: streamKey,
+		Format:    ComplianceExportFormatJSON,
+		EventType: "SAFETY.DECISION", // upper-case: eq-fold must still match
+		From:      time.Now().Add(-1 * time.Hour),
+		To:        time.Now().Add(1 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("WriteComplianceExport: %v", err)
+	}
+	emitted := collectExportedEventTypes(t, &buf)
+	if len(emitted) != 2 {
+		t.Errorf("emitted %d, want 2 safety.decision", len(emitted))
+	}
+	for _, et := range emitted {
+		if !strings.EqualFold(et, EventSafetyDecision) {
+			t.Errorf("emitted %q, want safety.decision", et)
+		}
+	}
+	if manifest.RowFilter == nil || manifest.RowFilter.EventType != "SAFETY.DECISION" {
+		t.Errorf("manifest.RowFilter = %+v, want EventType=SAFETY.DECISION", manifest.RowFilter)
+	}
+	if manifest.EventCount != 2 {
+		t.Errorf("EventCount = %d, want 2", manifest.EventCount)
+	}
+}
+
+// TestWriteComplianceExport_SeverityFilter exercises the severity filter
+// (case-insensitive).
+func TestWriteComplianceExport_SeverityFilter(t *testing.T) {
+	client, cleanup := newExportClient(t)
+	defer cleanup()
+	chainer := NewChainer(client, "")
+	streamKey := chainer.StreamKey("default")
+	seedChainEvents(t, client, "default", 4, func(i int, ev *SIEMEvent) {
+		if i < 3 {
+			ev.Severity = SeverityHigh
+		} else {
+			ev.Severity = SeverityInfo
+		}
+	})
+
+	var buf bytes.Buffer
+	manifest, err := WriteComplianceExport(context.Background(), &buf, client, ComplianceExportOptions{
+		TenantID:  "default",
+		StreamKey: streamKey,
+		Format:    ComplianceExportFormatJSON,
+		Severity:  "high", // lower-case: eq-fold must match HIGH
+		From:      time.Now().Add(-1 * time.Hour),
+		To:        time.Now().Add(1 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("WriteComplianceExport: %v", err)
+	}
+	if manifest.EventCount != 3 {
+		t.Errorf("EventCount = %d, want 3 HIGH-severity", manifest.EventCount)
+	}
+	if manifest.RowFilter == nil || manifest.RowFilter.Severity != "high" {
+		t.Errorf("manifest.RowFilter = %+v, want Severity=high", manifest.RowFilter)
+	}
+}
+
+// collectExportedEventTypes drains an NDJSON export buffer and returns the
+// event_type of every type=="event" line.
+func collectExportedEventTypes(t *testing.T, buf *bytes.Buffer) []string {
+	t.Helper()
+	var out []string
+	scanner := bufio.NewScanner(buf)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+	for scanner.Scan() {
+		var line map[string]any
+		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if line["type"] == "event" {
+			et, _ := line["event_type"].(string)
+			out = append(out, et)
+		}
+	}
+	return out
+}
+
+func reflectStringSliceEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

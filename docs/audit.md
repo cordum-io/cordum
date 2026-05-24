@@ -126,6 +126,42 @@ Severity levels: `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`, `INFO`.
 
 <!-- TODO: document which actions map to which event types and severities -->
 
+### Event categories (governance vs routine)
+
+Every event type is classified as **governance** (security-relevant — the
+events an auditor cares about) or **routine** (high-volume operational
+telemetry). The classification is a single source of truth in
+`core/audit/soc2.go` (`CategoryFor` / `IsGovernanceEvent`, keyed off the
+`Event*` constants and CI-guarded so no constant can ship uncategorised) and is
+reused by both the compliance export and the `/api/v1/audit/events` read
+surface. **Unknown or newly added event types fail open to `governance`**, so a
+security event is never silently hidden from a governance-filtered view.
+
+**Routine** (operational telemetry): `system.auth`, `audit.read.events`,
+`edge.session_started`, `edge.session_ended`, `edge.execution_started`,
+`edge.execution_ended`, `edge.action_attempted`, `mcp.tool_invocation`,
+`mcp.tool_outbound_invocation`, `mcp.tool_called`, `worker_handshake`,
+`topic_registered`, `topic_unregistered`.
+
+**Governance** (everything else): `safety.*`, `delegation.*`,
+`auth.api_key_*` / `auth.role_*`, `edge.policy_decision`, `edge.action_denied`,
+`edge.approval_*`, `edge.artifact_exported`, `edge.fail_closed`,
+`edge.agentd_degraded`, `shadow_agent.*`, `shadow_eval`, `governance.*`,
+`actiongate.denied`, `approval.revision_mismatch`, `license.*`,
+`mcp.tool_approval`, `mcp.tool_denied`, `mcp.signature_invalid`,
+`heartbeat_disagreement`, `worker_trust_change`.
+
+> **Borderline calls** (review here; adjust the map in `soc2.go` if your threat
+> model differs): the edge session/execution lifecycle and
+> `edge.action_attempted` are **routine** — they fire on every action, not just
+> denials. `mcp.tool_invocation` / `mcp.tool_outbound_invocation` are **routine**
+> call-volume telemetry, whereas `mcp.tool_approval` / `mcp.tool_denied` are
+> **governance**. `topic_registered` / `topic_unregistered` are **routine**;
+> `heartbeat_disagreement` and `edge.artifact_exported` are **governance**.
+
+Both the compliance export and the events endpoint filter on this taxonomy via
+`?category=governance` (or `routine`) — see §6 and §7.
+
 ## 3. SIEM Event Schema
 
 Each exported event uses the `SIEMEvent` struct:
@@ -210,8 +246,29 @@ The gateway records fine-grained audit entries via `appendAuditEntryNamed` for:
 ## 6. Query API
 
 - `GET /api/v1/policy/audit` — List policy audit entries
+- `GET /api/v1/audit/events` — Paginated SIEM-feed read surface over the
+  per-tenant audit chain (see [`audit/list-api.md`](audit/list-api.md))
 
-<!-- TODO: document query parameters, pagination, filtering, and response format -->
+`/api/v1/audit/events` accepts these additive filters (all optional; an absent
+param means "no constraint on that dimension"):
+
+| Query param | Description |
+|-------------|-------------|
+| `event_type` | Exact event type, matched case-insensitively |
+| `severity` | One of `CRITICAL`/`HIGH`/`MEDIUM`/`LOW`/`INFO`, case-insensitive |
+| `category` | `governance` or `routine` (see §2); an unknown value is rejected with `400 INVALID_CATEGORY` |
+| `search` | Substring match over action / type / agent / job / identity / reason |
+| `from` / `to` | RFC 3339 timestamp bounds (inclusive) |
+| `limit` | Page size, capped at 200 |
+| `cursor` | Opaque Redis stream id from the previous page's `next_cursor` |
+
+`category` is resolved per row from the governance/routine taxonomy, so
+`?category=governance` returns only security-relevant events and drops routine
+telemetry such as `system.auth` and `mcp.tool_invocation`. The applied
+`event_type` / `severity` / `category` filters are reflected in the
+`audit.read.events` meta-event so the read surface is itself auditable.
+
+<!-- TODO: document the full response envelope (items / next_cursor / returned) -->
 
 ## 7. SIEM Export Configuration
 
@@ -248,6 +305,41 @@ The gateway records fine-grained audit entries via `appendAuditEntryNamed` for:
 |---------|-------------|
 | `CORDUM_AUDIT_EXPORT_CW_LOG_GROUP` | CloudWatch log group name |
 | `CORDUM_AUDIT_EXPORT_CW_LOG_STREAM` | CloudWatch log stream name |
+
+### Compliance export filters (`GET /api/v1/audit/export`)
+
+The on-demand compliance export streams the per-tenant audit chain as NDJSON or
+CSV with a leading manifest. Alongside `format` / `from` / `to` / `excel` /
+`limit`, it accepts the same row filters as the events endpoint (§6):
+
+| Query param | Description |
+|-------------|-------------|
+| `event_type` | Exact event type, matched case-insensitively |
+| `severity` | `CRITICAL`/`HIGH`/`MEDIUM`/`LOW`/`INFO`, case-insensitive (unknown → `400`) |
+| `category` | `governance` or `routine` (see §2); unknown → `400 invalid category` |
+
+The applied filter is echoed in the response headers
+(`X-Cordum-Export-Filter-Category` / `-Severity` / `-Event-Type`) and recorded
+in the manifest:
+
+| Manifest field | Meaning |
+|----------------|---------|
+| `row_filter_applied` | `true` when any row filter was applied (always present) |
+| `row_filter` | The applied `{event_type, severity, category}` (omitted when none) |
+
+**A filtered export is not a tamper gap.** The manifest's `event_count` is the
+**post-filter** row count, but `chain_verification` always runs over the
+**full** range — the filter only gates which rows are *emitted*, never the
+integrity check. A governance-only export can therefore show an `event_count`
+far smaller than the verified chain length; the `row_filter` record is exactly
+what tells an auditor that difference is a filter, not missing events.
+`GET /api/v1/audit/verify` is unaffected by export filters.
+
+> **Truncation caveat.** `limit` / `MaxEvents` counts events *before* the row
+> filter is applied. A narrow `?category=governance` filter over a very noisy
+> range can hit the cap and set `truncated_at_max` before emitting many
+> governance rows. When you see `truncated_at_max` together with a `row_filter`,
+> narrow the `from`/`to` window rather than raising the cap.
 
 ## 8. Dashboard UI
 

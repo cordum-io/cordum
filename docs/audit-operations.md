@@ -55,6 +55,7 @@ Expected response for a healthy chain:
 | `CORDUM_AUDIT_CHAIN_FAIL` | `strict` | `strict`: drop unchained events; `permissive`: export anyway |
 | `CORDUM_AUDIT_EXPORT_TYPE` | `none` | SIEM backend: `webhook`, `syslog`, `datadog`, `cloudwatch`, `chain-only` |
 | `CORDUM_AUDIT_RETENTION_HOURS` | `168` (7 days) | Audit retention window in hours |
+| `CORDUM_AUDIT_READ_SAMPLE_RATE` | `0.0` | Fraction (`0.0`–`1.0`) of `/api/v1/audit/events` reads that emit an `audit.read.events` meta-event. **Recommended prod default `0.0`** — raising it floods the chain with routine `system.auth` / `audit.read.events` rows that bury governance signal. If your goal is a governance-focused audit artifact, filter with `?category=governance` (see below) rather than tuning this sample rate. |
 
 ## HMAC Key Management
 
@@ -250,3 +251,23 @@ The audit chain maps to SOC2 2017 Trust Services Criteria:
 
 See `core/audit/soc2.go` for the authoritative mapping and override
 instructions.
+
+### Governance-focused exports
+
+Routine telemetry (`system.auth`, `audit.read.events`, edge/MCP lifecycle) can
+dominate an unfiltered export — observed ~90% noise when the read sample rate
+was raised — burying the governance events an auditor needs. Rather than tuning
+`CORDUM_AUDIT_READ_SAMPLE_RATE` (keep it at the recommended `0.0`), scope the
+artifact at query time:
+
+```bash
+# Governance-only compliance export (CSV), chain integrity still attested over
+# the full range — the manifest's row_filter records the scope.
+curl -H "Authorization: Bearer $API_KEY" \
+  "https://your-cordum/api/v1/audit/export?format=csv&category=governance&from=<RFC3339>&to=<RFC3339>"
+```
+
+The export's `event_count` is then the post-filter row count while
+`chain_verification` still covers the full range, so a filtered export is never
+mistaken for a tamper gap (see `docs/audit.md` §7). The same `?category=` filter
+works on `GET /api/v1/audit/events` for the dashboard read surface.

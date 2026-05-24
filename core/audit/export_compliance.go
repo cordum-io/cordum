@@ -75,6 +75,25 @@ type ExportManifest struct {
 	TruncatedAtMax       bool                   `json:"truncated_at_max"`
 	MaxEventsCap         int                    `json:"max_events_cap"`
 	RetentionBoundarySeq int64                  `json:"retention_boundary_seq,omitempty"`
+	// RowFilter records the event_type/severity/category filter applied to
+	// the EVENT ROWS, when any. It is additive and self-describing: EventCount
+	// above is the POST-filter row count, while ChainVerification covers the
+	// FULL range — so a filtered export is never mistaken for a tamper gap.
+	// Omitted entirely when no filter is set.
+	RowFilter *ExportRowFilter `json:"row_filter,omitempty"`
+	// RowFilterApplied is always present so an auditor can distinguish "no
+	// filter" from "old export format" without ambiguity. False on every
+	// unfiltered export (byte-stable companion to TruncatedAtMax).
+	RowFilterApplied bool `json:"row_filter_applied"`
+}
+
+// ExportRowFilter is the machine-readable record of the row filter applied to
+// a compliance export. Fields mirror the ComplianceExportOptions filter knobs;
+// empty fields are omitted so the manifest only advertises active predicates.
+type ExportRowFilter struct {
+	EventType string `json:"event_type,omitempty"`
+	Severity  string `json:"severity,omitempty"`
+	Category  string `json:"category,omitempty"`
 }
 
 // BundleLookupFn resolves the signed policy bundles that were active
@@ -89,17 +108,56 @@ type ChainVerifierFn func(ctx context.Context, client redis.UniversalClient, str
 
 // ComplianceExportOptions configures a single export call.
 type ComplianceExportOptions struct {
-	TenantID     string
-	StreamKey    string
-	From         time.Time
-	To           time.Time
-	Format       ComplianceExportFormat
-	Excel        bool
-	MaxEvents    int
+	TenantID  string
+	StreamKey string
+	From      time.Time
+	To        time.Time
+	Format    ComplianceExportFormat
+	Excel     bool
+	MaxEvents int
+	// EventType / Severity / Category filter the EMITTED ROWS only — never
+	// the chain verification, which always runs over the full range. EventType
+	// and Severity match case-insensitively; Category ("governance"|"routine")
+	// is resolved per row via CategoryFor(ev.EventType). Empty means "no
+	// constraint on that dimension"; all empty means every in-range row emits.
+	EventType    string
+	Severity     string
+	Category     string
 	SOC2Mapping  SOC2Mapping
 	SOC2Legend   map[string]string
 	BundleLookup BundleLookupFn
 	Verifier     ChainVerifierFn
+}
+
+// rowMatches reports whether ev passes the configured row filter. Returns true
+// when no filter is set (the common, unfiltered path). EventType and Severity
+// compare case-insensitively; Category is derived from CategoryFor so the
+// caller filters by governance/routine without enumerating event types.
+func (o ComplianceExportOptions) rowMatches(ev SIEMEvent) bool {
+	if o.EventType != "" && !strings.EqualFold(ev.EventType, o.EventType) {
+		return false
+	}
+	if o.Severity != "" && !strings.EqualFold(ev.Severity, o.Severity) {
+		return false
+	}
+	if o.Category != "" && CategoryFor(ev.EventType) != o.Category {
+		return false
+	}
+	return true
+}
+
+// rowFilter returns the typed manifest record of the active row filter, or nil
+// when no dimension is constrained. Mirrors rowMatches: a nil result means
+// every in-range row is emitted.
+func (o ComplianceExportOptions) rowFilter() *ExportRowFilter {
+	if o.EventType == "" && o.Severity == "" && o.Category == "" {
+		return nil
+	}
+	return &ExportRowFilter{
+		EventType: o.EventType,
+		Severity:  o.Severity,
+		Category:  o.Category,
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -207,6 +265,14 @@ func WriteComplianceExport(
 		SOC2Legend:   cloneStringMap(opts.SOC2Legend),
 		MaxEventsCap: opts.MaxEvents,
 	}
+	// Record any row filter up-front so it is present in the manifest line the
+	// NDJSON path writes BEFORE the walk (and in the CSV comment). The filter
+	// only affects EVENT ROWS — ChainVerification below still covers the full
+	// range, making a filtered export self-describing rather than a tamper gap.
+	if filter := opts.rowFilter(); filter != nil {
+		manifest.RowFilter = filter
+		manifest.RowFilterApplied = true
+	}
 
 	// --- 1) Policy snapshots. Surfaced even on an empty event stream
 	// so a dev tenant with no activity still shows the current bundle
@@ -290,6 +356,14 @@ func writeNDJSONExport(
 	count := 0
 	truncated := false
 	err = walkChainStream(ctx, client, opts.StreamKey, opts.From, opts.To, int64(opts.MaxEvents), func(ev SIEMEvent) error {
+		// Row filter applies ONLY here, at the top of the emit callback —
+		// never in the opts.Verifier call above or in walkChainStream's cursor
+		// advance, so chain verification stays full-range. `count` below
+		// increments only on a successful write, so EventCount automatically
+		// becomes the POST-filter total.
+		if !opts.rowMatches(ev) {
+			return nil
+		}
 		controls := opts.SOC2Mapping.ControlsFor(ev)
 		line, err := buildNDJSONEventLine(ev, controls)
 		if err != nil {
@@ -426,6 +500,12 @@ func writeCSVExport(
 	count := 0
 	truncated := false
 	err = walkChainStream(ctx, client, opts.StreamKey, opts.From, opts.To, int64(opts.MaxEvents), func(ev SIEMEvent) error {
+		// Row filter applies ONLY here (see writeNDJSONExport for the full
+		// invariant note): the opts.Verifier pass above already covered the
+		// full range; this gate only decides which rows are written.
+		if !opts.rowMatches(ev) {
+			return nil
+		}
 		controls := opts.SOC2Mapping.ControlsFor(ev)
 		row := buildCSVRow(ev, controls)
 		if err := csvW.Write(row); err != nil {
