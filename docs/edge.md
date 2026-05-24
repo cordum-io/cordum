@@ -49,6 +49,18 @@ Raw prompts, tool payloads, transcripts, command output, API keys, bearer tokens
 and hook nonces must not be stored in Edge events. Use redacted summaries,
 stable hashes, and artifact pointer metadata.
 
+Governance events (`edge.action_denied`, `edge.policy_decision`) surface
+*descriptive* action targets without violating that rule: a hard-coded allowlist
+of classifier-derived enums is copied into the audit `extra` map — `target_class`,
+`target_sensitive_area`, `target_traversal`, `command_class`, `command_family`,
+`mcp_server` / `mcp_tool` / `mcp_action`, `runtime_event` / `runtime_host`, plus a
+composed `target_summary` (e.g. `shell:destructive/filesystem_delete`,
+`file:secret`, `mcp:github/create_issue`). No raw file path, command, prompt, or
+secret is ever written — only these safe, bounded descriptors, and caller-supplied
+labels are never copied. Auditors needing the complete label set read
+`events[].labels` in the session export bundle (`edge.export.v1`, unchanged). See
+[Edge observability](edge/observability.md) for the full key/value reference.
+
 ## Five P0 capabilities
 
 1. **Sessions and executions** register, heartbeat, end, and inspect governed

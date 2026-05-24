@@ -814,6 +814,180 @@ func TestEDGE072ActionAuditIncludesReviewerFieldsAndNoRawSecrets(t *testing.T) {
 	}
 }
 
+// TestSIEMEventForActionDescriptiveTargets pins the EDGE governance
+// descriptive-target contract (task-6a93a0fc): actionExtra copies a
+// HARD-CODED allowlist of classifier descriptor labels into Extra under
+// stable names, and actionTargetSummary composes one pivotable
+// class:subclass string from the same enums. Each scenario seeds the
+// classifier labels exactly as edgeEvaluateMergeLabels would have merged
+// them onto event.Labels before the SIEM emit.
+func TestSIEMEventForActionDescriptiveTargets(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		layer       Layer
+		kind        EventKind
+		toolName    string
+		decision    EdgeDecision
+		labels      Labels
+		wantExtra   map[string]string // keys that MUST be present with these exact values
+		wantSummary string
+	}{
+		{
+			name:     "hook bash destructive",
+			layer:    LayerHook,
+			kind:     EventKindHookPreToolUse,
+			toolName: "Bash",
+			decision: DecisionDeny,
+			labels:   Labels{"command.class": "destructive", "command.family": "filesystem_delete"},
+			wantExtra: map[string]string{
+				"command_class":  "destructive",
+				"command_family": "filesystem_delete",
+			},
+			wantSummary: "shell:destructive/filesystem_delete",
+		},
+		{
+			name:     "secret file read with traversal",
+			layer:    LayerHook,
+			kind:     EventKindHookPreToolUse,
+			toolName: "Read",
+			decision: DecisionDeny,
+			labels:   Labels{"path.class": "secret", "path.traversal": "true"},
+			wantExtra: map[string]string{
+				"target_class":     "secret",
+				"target_traversal": "true",
+			},
+			wantSummary: "file:secret",
+		},
+		{
+			name:     "source code auth area",
+			layer:    LayerHook,
+			kind:     EventKindHookPreToolUse,
+			toolName: "Edit",
+			decision: DecisionAllow,
+			labels:   Labels{"path.class": "source_code", "path.sensitive_area": "auth"},
+			wantExtra: map[string]string{
+				"target_class":          "source_code",
+				"target_sensitive_area": "auth",
+			},
+			wantSummary: "file:source_code/auth",
+		},
+		{
+			name:     "mcp mutate",
+			layer:    LayerMCP,
+			kind:     EventKindMCPToolPre,
+			toolName: "create_issue",
+			decision: DecisionRequireApproval,
+			labels:   Labels{"mcp.server": "github", "mcp.tool": "create_issue", "mcp.action": "create_issue"},
+			wantExtra: map[string]string{
+				"mcp_server": "github",
+				"mcp_tool":   "create_issue",
+				"mcp_action": "create_issue",
+			},
+			wantSummary: "mcp:github/create_issue",
+		},
+		{
+			name:     "runtime network connect",
+			layer:    LayerRuntime,
+			kind:     EventKindRuntimeNetworkConnect,
+			decision: DecisionRecorded,
+			labels:   Labels{"runtime.event": "network.connect", "runtime.host": "api.example.com"},
+			wantExtra: map[string]string{
+				"runtime_event": "network.connect",
+				"runtime_host":  "api.example.com",
+			},
+			wantSummary: "runtime:network.connect/api.example.com",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			event := AgentActionEvent{
+				EventID:     "evt-" + tc.name,
+				SessionID:   "edge_sess_targets",
+				ExecutionID: "edge_exec_targets",
+				TenantID:    "tenant-targets",
+				PrincipalID: "principal-targets",
+				Timestamp:   time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC),
+				Layer:       tc.layer,
+				Kind:        tc.kind,
+				ToolName:    tc.toolName,
+				Decision:    tc.decision,
+				Status:      ActionStatusOK,
+				InputHash:   "sha256:" + strings.Repeat("b", 64),
+				Labels:      tc.labels,
+			}
+			got := SIEMEventForAction(event)
+			for k, want := range tc.wantExtra {
+				if got.Extra[k] != want {
+					t.Errorf("Extra[%q] = %q, want %q; full Extra=%#v", k, got.Extra[k], want, got.Extra)
+				}
+			}
+			if got.Extra["target_summary"] != tc.wantSummary {
+				t.Errorf("Extra[target_summary] = %q, want %q", got.Extra["target_summary"], tc.wantSummary)
+			}
+		})
+	}
+}
+
+// TestSIEMEventForActionTargetRedactionBoundary proves the descriptive-target
+// allowlist is the ONLY thing copied into Extra: allowlisted classifier keys
+// appear, but raw input (InputRedacted) and non-allowlisted caller-supplied
+// labels (token, leak, agent.product) never reach any Extra value or the
+// target_summary. This is the redaction boundary the task rail mandates —
+// actionExtra MUST read the hard-coded allowlist only, never range over Labels.
+func TestSIEMEventForActionTargetRedactionBoundary(t *testing.T) {
+	const rawSecret = "ghp_edge6a93secretTOKENvalue0123456789abcd"
+	event := AgentActionEvent{
+		EventID:       "evt-target-redaction",
+		SessionID:     "edge_sess_redaction",
+		ExecutionID:   "edge_exec_redaction",
+		TenantID:      "tenant-redaction",
+		PrincipalID:   "principal-redaction",
+		Timestamp:     time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC),
+		Layer:         LayerHook,
+		Kind:          EventKindHookPreToolUse,
+		ToolName:      "Bash",
+		Decision:      DecisionDeny,
+		Status:        ActionStatusBlocked,
+		InputHash:     "sha256:" + strings.Repeat("c", 64),
+		InputRedacted: map[string]any{"command": rawSecret},
+		Labels: Labels{
+			// allowlisted classifier descriptors — MUST be copied.
+			"command.class":  "destructive",
+			"command.family": "filesystem_delete",
+			// caller-supplied / non-allowlisted — MUST NOT be copied.
+			"token":         rawSecret,
+			"leak":          rawSecret,
+			"agent.product": "claude-code/" + rawSecret,
+		},
+	}
+	got := SIEMEventForAction(event)
+
+	// Allowlisted descriptors are present and pivotable.
+	if got.Extra["command_class"] != "destructive" {
+		t.Errorf("Extra[command_class] = %q, want destructive", got.Extra["command_class"])
+	}
+	if got.Extra["command_family"] != "filesystem_delete" {
+		t.Errorf("Extra[command_family] = %q, want filesystem_delete", got.Extra["command_family"])
+	}
+	if got.Extra["target_summary"] != "shell:destructive/filesystem_delete" {
+		t.Errorf("Extra[target_summary] = %q, want shell:destructive/filesystem_delete", got.Extra["target_summary"])
+	}
+
+	// No raw secret anywhere in Extra (keys or values), including target_summary.
+	for k, v := range got.Extra {
+		if strings.Contains(k, rawSecret) || strings.Contains(v, rawSecret) {
+			t.Errorf("Extra leaked raw secret in %q=%q", k, v)
+		}
+	}
+
+	// Non-allowlisted / caller-supplied label keys must never be copied,
+	// neither under their raw key nor any derived key.
+	for _, banned := range []string{"token", "leak", "agent.product", "agent_product"} {
+		if _, ok := got.Extra[banned]; ok {
+			t.Errorf("Extra copied non-allowlisted caller label %q: %#v", banned, got.Extra)
+		}
+	}
+}
+
 // TestSIEMEventForSessionLifecycle pins start/end event types + severity
 // (info on clean end, high on failed/degraded).
 func TestSIEMEventForSessionLifecycle(t *testing.T) {

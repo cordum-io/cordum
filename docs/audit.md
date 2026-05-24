@@ -96,6 +96,24 @@ mode/component, and stable reason codes. Raw prompts, tool payloads, signed URLs
 approval reason text, `InputRedacted` maps, arbitrary labels, bearer tokens, and
 API keys must never be placed in SIEM `extra`.
 
+**Descriptive action targets.** `edge.action_denied` and `edge.policy_decision`
+additionally carry a hard-coded allowlist of classifier-derived descriptors so a
+responder can see *what class of thing* was targeted without any raw
+path/command/prompt: `target_class` (`secret`/`source_code`/`file`/`unknown`),
+`target_sensitive_area` (`auth`), `target_traversal` (`true`), `command_class`
+(`destructive`/`deploy`/`network`/`dependency_change`/`safe`/`unknown`),
+`command_family` (e.g. `filesystem_delete`/`git_push`/`network_egress`/`install`),
+`mcp_server` / `mcp_tool` / `mcp_action`, and `runtime_event`
+(`process.exec`/`file.read`/`file.write`/`network.connect`/`dns.query`) /
+`runtime_host`. A composed `target_summary` gives one pivotable string —
+`shell:<class>/<family>`, `file:<class>/<area>`, `mcp:<server>/<action>`, or
+`runtime:<event>/<host>` (e.g. `shell:destructive/filesystem_delete`,
+`file:secret`, `mcp:github/create_issue`). Each key is copied from classifier
+output only (never raw input), bounded, and emitted only when present;
+caller-supplied labels are never copied. The full classifier label set is
+available to auditors via `events[].labels` in the session export bundle
+(`edge.export.v1`, unchanged).
+
 For destructive Edge actions, `ProvenanceGate` accepts only a resolved approval
 audit event with decision `approved` or `approve` and exact tenant,
 `approval_ref`, and `action_hash` matches. A requested-only approval event does
