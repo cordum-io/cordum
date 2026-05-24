@@ -708,6 +708,32 @@ func SendSIEMEvent(sender audit.AuditSender, event audit.SIEMEvent) {
 	sender.Send(event)
 }
 
+// actionTargetLabelAllowlist is the HARD-CODED, ORDERED set of classifier
+// descriptor label keys that actionExtra copies from event.Labels into the
+// SIEM Extra map under stable, redaction-safe names. This allowlist is the
+// ONLY thing read from event.Labels for descriptive targeting; actionExtra
+// MUST NEVER range over event.Labels because Labels also carries
+// caller-supplied keys (agent.product and arbitrary context labels) whose
+// values are not safe to surface in the audit trail. Every value the
+// classifier writes under these keys is already a bounded enum or a
+// safeLabelValue (secret-redacted + length-bounded) by the time the gateway
+// merges classification.Labels onto event.Labels (handlers_edge_evaluate.go
+// edgeEvaluateMergeLabels); each copied value is re-bounded via
+// boundedShortString defensively. A slice (not a map) keeps the allowlist a
+// single grep-able list and structurally forbids an accidental range-over-Labels.
+var actionTargetLabelAllowlist = []struct{ src, dst string }{
+	{"path.class", "target_class"},
+	{"path.sensitive_area", "target_sensitive_area"},
+	{"path.traversal", "target_traversal"},
+	{"command.class", "command_class"},
+	{"command.family", "command_family"},
+	{"mcp.server", "mcp_server"},
+	{"mcp.tool", "mcp_tool"},
+	{"mcp.action", "mcp_action"},
+	{"runtime.event", "runtime_event"},
+	{"runtime.host", "runtime_host"},
+}
+
 // actionExtra builds the safe Extra map for an AgentActionEvent.
 func actionExtra(event AgentActionEvent) map[string]string {
 	extra := map[string]string{
@@ -732,8 +758,62 @@ func actionExtra(event AgentActionEvent) map[string]string {
 	if v := strings.TrimSpace(event.ApprovalRef); v != "" {
 		extra["approval_ref"] = boundedShortString(v, 64)
 	}
+	// EDGE governance descriptive targets (task-6a93a0fc): copy ONLY the
+	// hard-coded classifier-descriptor allowlist from event.Labels into Extra
+	// so an incident responder sees WHAT class of thing was targeted (secret
+	// file? destructive shell? MCP mutation?) without ever exposing the raw
+	// path/command/prompt. NEVER range over event.Labels (it carries
+	// caller-supplied keys); each value is re-bounded via boundedShortString.
+	for _, pair := range actionTargetLabelAllowlist {
+		if v := strings.TrimSpace(event.Labels[pair.src]); v != "" {
+			extra[pair.dst] = boundedShortString(v, 64)
+		}
+	}
+	if summary := actionTargetSummary(event); summary != "" {
+		extra["target_summary"] = summary
+	}
 	extra["redaction_status"] = redactionStatusForAction(event)
 	return extra
+}
+
+// actionTargetSummary composes a single compact, pivotable "class:subclass"
+// descriptor for an action from the SAME hard-coded classifier enums that
+// actionTargetLabelAllowlist copies — never from raw input. Priority follows
+// the most security-relevant axis first: shell command, then file path, then
+// MCP call, then runtime event. The result is human-readable AND greppable
+// (e.g. "shell:destructive/filesystem_delete", "file:secret",
+// "mcp:github/create_issue", "runtime:network.connect/api.example.com").
+// Returns "" when the event carries none of the allowlisted descriptors
+// (e.g. nil/empty Labels) so the caller omits the key. Bounded defensively.
+func actionTargetSummary(event AgentActionEvent) string {
+	label := func(key string) string { return strings.TrimSpace(event.Labels[key]) }
+	var summary string
+	switch {
+	case label("command.class") != "":
+		summary = "shell:" + label("command.class")
+		if family := label("command.family"); family != "" {
+			summary += "/" + family
+		}
+	case label("path.class") != "":
+		summary = "file:" + label("path.class")
+		if area := label("path.sensitive_area"); area != "" {
+			summary += "/" + area
+		}
+	case label("mcp.server") != "" || label("mcp.tool") != "" || label("mcp.action") != "":
+		primary := firstNonEmpty(label("mcp.server"), label("mcp.tool"))
+		summary = "mcp:" + primary
+		if secondary := firstNonEmpty(label("mcp.action"), label("mcp.tool")); secondary != "" && secondary != primary {
+			summary += "/" + secondary
+		}
+	case label("runtime.event") != "":
+		summary = "runtime:" + label("runtime.event")
+		if host := label("runtime.host"); host != "" {
+			summary += "/" + host
+		}
+	default:
+		return ""
+	}
+	return boundedShortString(summary, 96)
 }
 
 func redactionStatusForAction(event AgentActionEvent) string {

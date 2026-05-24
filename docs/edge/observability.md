@@ -236,13 +236,40 @@ errors, or copied into audit `extra`.
 
 | Builder | Allowed `extra` keys |
 | --- | --- |
-| `actionExtra` | `session_id`, `execution_id`, `event_id`, `layer`, `kind`, `tool_name`, `input_hash`, `policy_snapshot`, `tier`, `approval_ref`, `redaction_status`. |
+| `actionExtra` | `session_id`, `execution_id`, `event_id`, `layer`, `kind`, `tool_name`, `input_hash`, `policy_snapshot`, `tier`, `approval_ref`, `redaction_status`, plus the classifier descriptive targets `target_class`, `target_sensitive_area`, `target_traversal`, `command_class`, `command_family`, `mcp_server`, `mcp_tool`, `mcp_action`, `runtime_event`, `runtime_host`, and the composed `target_summary` (each emitted only when the classifier produced it). |
 | `sessionExtra` | `session_id`, `mode`, `status`, `agent_product`. |
 | `executionExtra` | `execution_id`, `session_id`, `adapter`, `mode`, `status`, `workflow_run_id`, `step_id`, `attempt`, `event_counts`. |
 | `approvalExtra` / approval requested | `approval_ref`, `session_id`, `execution_id`, `event_id`, `rule_id`, `policy_snapshot`, plus bounded `action_hash` / `input_hash` when available. |
 | `approvalExtra` / approval resolved | `approval_ref` plus bounded terminal metadata such as `action_hash`, `input_hash`, and `policy_snapshot`. This is the only approval lifecycle event kind that can satisfy `ProvenanceGate` for approved destructive actions. |
 | `artifact` export | `artifact_type`, `result`, `session_id`, `execution_id`, `event_id`, `sha256`, `redaction_level`, `retention_class`. Raw artifact URI is never included. |
 | degraded / fail-closed | `mode`, `component`, `reason_code`. |
+
+#### Descriptive action targets (`actionExtra`)
+
+`edge.action_denied` / `edge.policy_decision` copy a **hard-coded allowlist** of
+classifier descriptors from `AgentActionEvent.Labels` into `extra` so a responder
+can see *what class of thing* an action targeted without any raw path/command/
+prompt. The allowlist is the only thing read from `Labels`; caller-supplied label
+keys (e.g. `agent.product`) are never copied, and `actionExtra` never ranges over
+`Labels`.
+
+| `extra` key | Source label | Values |
+| --- | --- | --- |
+| `target_class` | `path.class` | `secret`, `source_code`, `file`, `unknown` |
+| `target_sensitive_area` | `path.sensitive_area` | `auth` |
+| `target_traversal` | `path.traversal` | `true` |
+| `command_class` | `command.class` | `destructive`, `deploy`, `network`, `dependency_change`, `safe`, `unknown` |
+| `command_family` | `command.family` | e.g. `filesystem_delete`, `git_push`, `network_egress`, `install` |
+| `mcp_server` / `mcp_tool` / `mcp_action` | `mcp.server` / `mcp.tool` / `mcp.action` | classifier `safeLabelValue` (secret-redacted, bounded) |
+| `runtime_event` | `runtime.event` | `process.exec`, `file.read`, `file.write`, `network.connect`, `dns.query` |
+| `runtime_host` | `runtime.host` | classifier `safeLabelValue` (secret-redacted, bounded) |
+| `target_summary` | composed from the enums above | `shell:<class>/<family>`, `file:<class>/<area>`, `mcp:<server>/<action>`, `runtime:<event>/<host>` |
+
+`target_summary` is a single compact, pivotable string (e.g.
+`shell:destructive/filesystem_delete`, `file:secret`, `mcp:github/create_issue`)
+composed only from the enums above — never from raw input. Every value passes
+through `boundedShortString`. Auditors needing the full classifier label set read
+`events[].labels` in the session export bundle (`edge.export.v1`, unchanged).
 
 Forbidden raw fields and payloads must never appear in audit JSON or `extra`:
 `raw_prompt`, `raw_tool_input`, `raw_stderr`, `secret_token`, `.env_content`,
