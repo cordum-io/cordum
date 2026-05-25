@@ -188,6 +188,21 @@ var complianceCSVHeaders = []string{
 	"prev_hash",
 	"soc2_controls",
 	"extra_json",
+	// Humanized columns (task-c8d4b056). APPENDED after the frozen legacy set
+	// above — never rename/remove/reorder existing columns (edge.export.v1 stays
+	// unbumped). Values come from the humanize allowlist + pure helpers, so a
+	// human-readable export can never leak raw prompts, tool payloads, or secrets.
+	"human_summary",
+	"actor_label",
+	"agent_label",
+	"resource_label",
+	"session_id",
+	"execution_id",
+	"resource_id",
+	"input_preview",
+	"output_preview",
+	"trace_id",
+	"artifact_id",
 }
 
 // utf8BOM is prepended to CSV output when Excel mode is requested.
@@ -409,37 +424,76 @@ func writeNDJSONExport(
 	return manifest, nil
 }
 
-// buildNDJSONEventLine marshals a SIEMEvent + its SOC2 controls into a
-// newline-terminated NDJSON line. Uses json.RawMessage interleaving so
-// we don't re-hash field names or build an intermediate map per event
-// on the hot path.
+// ndjsonHumanized is the additive humanization envelope grafted onto every
+// NDJSON event line alongside the SOC2 controls. Every value comes from the
+// humanize allowlist + pure deterministic helpers — never raw Extra iteration —
+// so an NDJSON export carries human-readable context without leaking secrets.
+// Fields are ADDITIVE: the original event payload + chain metadata are retained
+// verbatim, so existing edge.export.v1 consumers keep working.
+type ndjsonHumanized struct {
+	Type          string   `json:"type"`
+	SOC2Controls  []string `json:"soc2_controls"`
+	HumanSummary  string   `json:"human_summary"`
+	ActorLabel    string   `json:"actor_label,omitempty"`
+	AgentLabel    string   `json:"agent_label,omitempty"`
+	ResourceLabel string   `json:"resource_label,omitempty"`
+	SessionID     string   `json:"session_id,omitempty"`
+	ExecutionID   string   `json:"execution_id,omitempty"`
+	ResourceID    string   `json:"resource_id,omitempty"`
+	InputPreview  string   `json:"input_preview,omitempty"`
+	OutputPreview string   `json:"output_preview,omitempty"`
+	TraceID       string   `json:"trace_id,omitempty"`
+	ArtifactID    string   `json:"artifact_id,omitempty"`
+}
+
+// buildNDJSONEventLine marshals a SIEMEvent + its SOC2 controls + the additive
+// humanization envelope into a newline-terminated NDJSON line. The original
+// event object is retained verbatim; the envelope object is grafted onto it so
+// we don't rebuild an intermediate map per event on the hot path.
 func buildNDJSONEventLine(ev SIEMEvent, controls []string) ([]byte, error) {
 	eventJSON, err := json.Marshal(ev)
 	if err != nil {
 		return nil, fmt.Errorf("marshal event: %w", err)
 	}
-	ctrlsJSON, err := json.Marshal(controls)
+	pivots := Pivots(ev)
+	addJSON, err := json.Marshal(ndjsonHumanized{
+		Type:          "event",
+		SOC2Controls:  controls,
+		HumanSummary:  HumanSummary(ev),
+		ActorLabel:    ActorLabel(ev),
+		AgentLabel:    AgentLabel(ev),
+		ResourceLabel: ResourceLabel(ev),
+		SessionID:     pivots.SessionID,
+		ExecutionID:   pivots.ExecutionID,
+		ResourceID:    pivots.ResourceID,
+		InputPreview:  BoundedPreview(allowedExtra(ev, "input_preview"), maxSummaryLen),
+		OutputPreview: BoundedPreview(allowedExtra(ev, "output_preview"), maxSummaryLen),
+		TraceID:       allowedExtra(ev, "trace_id"),
+		ArtifactID:    allowedExtra(ev, "artifact_id"),
+	})
 	if err != nil {
-		return nil, fmt.Errorf("marshal controls: %w", err)
+		return nil, fmt.Errorf("marshal humanized envelope: %w", err)
 	}
-	// Strip the trailing `}` off the event JSON so we can graft the
-	// extra fields onto the same object. Every encoding/json object
-	// ends with `}` — guaranteed by json.Marshal.
+	// Strip the trailing `}` off the event JSON so we can graft the envelope's
+	// fields onto the same object. Every encoding/json object ends with `}` —
+	// guaranteed by json.Marshal; addJSON likewise starts with `{` and ends `}`.
 	if len(eventJSON) == 0 || eventJSON[len(eventJSON)-1] != '}' {
 		return nil, errors.New("event JSON did not end with '}'")
 	}
+	if len(addJSON) < 2 || addJSON[0] != '{' || addJSON[len(addJSON)-1] != '}' {
+		return nil, errors.New("humanized envelope JSON malformed")
+	}
 	prefix := eventJSON[:len(eventJSON)-1]
-	// If the object was empty (`{}`), skip the leading comma.
+	// If the event object was empty (`{}`), skip the leading comma.
 	sep := []byte{','}
 	if len(prefix) == 1 && prefix[0] == '{' {
 		sep = sep[:0]
 	}
-	line := make([]byte, 0)
+	line := make([]byte, 0, len(prefix)+len(addJSON)+2)
 	line = append(line, prefix...)
 	line = append(line, sep...)
-	line = append(line, []byte(`"type":"event","soc2_controls":`)...)
-	line = append(line, ctrlsJSON...)
-	line = append(line, '}', '\n')
+	line = append(line, addJSON[1:]...) // drop the envelope's leading '{', keep its trailing '}'
+	line = append(line, '\n')
 	return line, nil
 }
 
@@ -557,6 +611,7 @@ func buildCSVRow(ev SIEMEvent, controls []string) []string {
 			extraJSON = string(b)
 		}
 	}
+	pivots := Pivots(ev)
 	row := []string{
 		ev.Timestamp.UTC().Format(time.RFC3339Nano),
 		ev.EventType,
@@ -579,6 +634,21 @@ func buildCSVRow(ev SIEMEvent, controls []string) []string {
 		ev.PrevHash,
 		strings.Join(controls, "|"),
 		extraJSON,
+		// Appended humanized cells, aligned 1:1 with the columns added to
+		// complianceCSVHeaders. Labels/summary are deterministic, bounded, and
+		// secret-scrubbed; previews are re-bounded as defense-in-depth on top of
+		// producer-side redaction; pivots/trace come from the allowlist only.
+		HumanSummary(ev),
+		ActorLabel(ev),
+		AgentLabel(ev),
+		ResourceLabel(ev),
+		pivots.SessionID,
+		pivots.ExecutionID,
+		pivots.ResourceID,
+		BoundedPreview(allowedExtra(ev, "input_preview"), maxSummaryLen),
+		BoundedPreview(allowedExtra(ev, "output_preview"), maxSummaryLen),
+		allowedExtra(ev, "trace_id"),
+		allowedExtra(ev, "artifact_id"),
 	}
 	for i, cell := range row {
 		row[i] = csvSafe(cell)
