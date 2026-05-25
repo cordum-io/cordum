@@ -67,35 +67,41 @@ const (
 
 // AgentActionEvent is the compliance/evidence unit for governed agent activity.
 type AgentActionEvent struct {
-	EventID          string            `json:"event_id"`
-	SessionID        string            `json:"session_id"`
-	ExecutionID      string            `json:"execution_id"`
-	TenantID         string            `json:"tenant_id"`
-	PrincipalID      string            `json:"principal_id"`
-	Seq              int               `json:"seq"`
-	Timestamp        time.Time         `json:"ts"`
-	Layer            Layer             `json:"layer"`
-	Kind             EventKind         `json:"kind"`
-	AgentProduct     string            `json:"agent_product"`
-	ToolName         string            `json:"tool_name"`
-	ToolUseID        string            `json:"tool_use_id"`
-	ActionName       string            `json:"action_name"`
-	Capability       string            `json:"capability"`
-	RiskTags         []string          `json:"risk_tags"`
-	InputRedacted    map[string]any    `json:"input_redacted"`
-	InputHash        string            `json:"input_hash"`
-	Decision         EdgeDecision      `json:"decision"`
-	DecisionReason   string            `json:"decision_reason"`
-	RuleID           string            `json:"rule_id"`
-	RuleTier         string            `json:"tier"`
-	PolicySnapshot   string            `json:"policy_snapshot"`
-	ApprovalRef      string            `json:"approval_ref"`
-	ArtifactPointers []ArtifactPointer `json:"artifact_ptrs"`
-	DurationMS       int               `json:"duration_ms"`
-	Status           ActionStatus      `json:"status"`
-	ErrorCode        string            `json:"error_code"`
-	ErrorMessage     string            `json:"error_message"`
-	Labels           Labels            `json:"labels"`
+	EventID      string    `json:"event_id"`
+	SessionID    string    `json:"session_id"`
+	ExecutionID  string    `json:"execution_id"`
+	TenantID     string    `json:"tenant_id"`
+	PrincipalID  string    `json:"principal_id"`
+	Seq          int       `json:"seq"`
+	Timestamp    time.Time `json:"ts"`
+	Layer        Layer     `json:"layer"`
+	Kind         EventKind `json:"kind"`
+	AgentProduct string    `json:"agent_product"`
+	// AgentName / PrincipalDisplayName carry the session's sanitized display
+	// labels onto the action evidence (task-c8d4b056) so a denied/approved
+	// action row attributes who/what without a session join. Backfilled from
+	// the parent session at append time; omitempty preserves the legacy shape.
+	AgentName            string            `json:"agent_name,omitempty"`
+	PrincipalDisplayName string            `json:"principal_display_name,omitempty"`
+	ToolName             string            `json:"tool_name"`
+	ToolUseID            string            `json:"tool_use_id"`
+	ActionName           string            `json:"action_name"`
+	Capability           string            `json:"capability"`
+	RiskTags             []string          `json:"risk_tags"`
+	InputRedacted        map[string]any    `json:"input_redacted"`
+	InputHash            string            `json:"input_hash"`
+	Decision             EdgeDecision      `json:"decision"`
+	DecisionReason       string            `json:"decision_reason"`
+	RuleID               string            `json:"rule_id"`
+	RuleTier             string            `json:"tier"`
+	PolicySnapshot       string            `json:"policy_snapshot"`
+	ApprovalRef          string            `json:"approval_ref"`
+	ArtifactPointers     []ArtifactPointer `json:"artifact_ptrs"`
+	DurationMS           int               `json:"duration_ms"`
+	Status               ActionStatus      `json:"status"`
+	ErrorCode            string            `json:"error_code"`
+	ErrorMessage         string            `json:"error_message"`
+	Labels               Labels            `json:"labels"`
 	// Constraints carries the structured `_constraints` map emitted by a
 	// policy gate when its decision was ALLOW_WITH_CONSTRAINTS. Only set on
 	// pre/post/failed events whose decision is `constrain`; omitempty keeps

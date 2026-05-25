@@ -38,6 +38,8 @@
     "principal_type": { "type": "string", "enum": ["human", "service", "unknown"] },
     "agent_product": { "type": "string" },
     "agent_version": { "type": "string" },
+    "agent_name": { "type": "string", "maxLength": 128 },
+    "principal_display_name": { "type": "string", "maxLength": 128 },
     "mode": {
       "type": "string",
       "enum": ["local-dev", "enterprise-managed", "workflow", "ci", "prod-runner"]

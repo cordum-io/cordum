@@ -1293,25 +1293,30 @@ func buildEdgeEvaluatePolicyInput(evalCtx edgeEvaluateContext) (edgeEvaluatePoli
 	}
 	agentProduct := firstEdgeEvaluateNonEmpty(req.AgentProduct, evalCtx.session.AgentProduct)
 	event := edgecore.AgentActionEvent{
-		EventID:       eventID,
-		SessionID:     strings.TrimSpace(req.SessionID),
-		ExecutionID:   strings.TrimSpace(req.ExecutionID),
-		TenantID:      strings.TrimSpace(evalCtx.tenantID),
-		PrincipalID:   strings.TrimSpace(evalCtx.principalID),
-		Timestamp:     time.Now().UTC(),
-		Layer:         req.Layer,
-		Kind:          edgecore.EventKind(strings.TrimSpace(string(req.Kind))),
-		AgentProduct:  mustRedactEdgeString(agentProduct),
-		ToolName:      mustRedactEdgeString(req.ToolName),
-		ToolUseID:     mustRedactEdgeString(req.ToolUseID),
-		ActionName:    mustRedactEdgeString(req.ActionName),
-		Capability:    mustRedactEdgeString(req.Capability),
-		RiskTags:      riskTags,
-		InputRedacted: inputRedacted,
-		InputHash:     inputHash,
-		Decision:      edgecore.DecisionRecorded,
-		Status:        edgecore.ActionStatusOK,
-		Labels:        labels,
+		EventID:      eventID,
+		SessionID:    strings.TrimSpace(req.SessionID),
+		ExecutionID:  strings.TrimSpace(req.ExecutionID),
+		TenantID:     strings.TrimSpace(evalCtx.tenantID),
+		PrincipalID:  strings.TrimSpace(evalCtx.principalID),
+		Timestamp:    time.Now().UTC(),
+		Layer:        req.Layer,
+		Kind:         edgecore.EventKind(strings.TrimSpace(string(req.Kind))),
+		AgentProduct: mustRedactEdgeString(agentProduct),
+		// Attribution labels are backfilled from the parent session (already
+		// sanitized at session-create); SIEMEventForAction re-bounds them
+		// defensively. task-c8d4b056.
+		AgentName:            evalCtx.session.AgentName,
+		PrincipalDisplayName: evalCtx.session.PrincipalDisplayName,
+		ToolName:             mustRedactEdgeString(req.ToolName),
+		ToolUseID:            mustRedactEdgeString(req.ToolUseID),
+		ActionName:           mustRedactEdgeString(req.ActionName),
+		Capability:           mustRedactEdgeString(req.Capability),
+		RiskTags:             riskTags,
+		InputRedacted:        inputRedacted,
+		InputHash:            inputHash,
+		Decision:             edgecore.DecisionRecorded,
+		Status:               edgecore.ActionStatusOK,
+		Labels:               labels,
 	}
 	artifactPointers, err := normalizeEdgeEventArtifactPointers(req.ArtifactPointers, event)
 	if err != nil {
