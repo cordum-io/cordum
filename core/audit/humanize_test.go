@@ -8,7 +8,7 @@ import (
 
 // secretCanary is a fake secret used to prove humanization never leaks
 // secret-shaped content into summaries/labels.
-const secretCanary = "sk-live-DEADBEEFdeadbeef0123456789ABCDEF"
+const secretCanary = "sk-test-DEADBEEFdeadbeef0123456789ABCDEF"
 
 func TestHumanSummary_RepresentativeRows(t *testing.T) {
 	cases := []struct {

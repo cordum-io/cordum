@@ -489,7 +489,11 @@ func buildNDJSONEventLine(ev SIEMEvent, controls []string) ([]byte, error) {
 	if len(prefix) == 1 && prefix[0] == '{' {
 		sep = sep[:0]
 	}
-	line := make([]byte, 0, len(prefix)+len(addJSON)+2)
+	// Concatenate via append rather than make() with a precomputed capacity:
+	// summing the two caller-derived lengths for an explicit allocation size
+	// trips a CodeQL "size computation may overflow" finding on this SOC2
+	// export path. append grows the backing array safely without the arithmetic.
+	var line []byte
 	line = append(line, prefix...)
 	line = append(line, sep...)
 	line = append(line, addJSON[1:]...) // drop the envelope's leading '{', keep its trailing '}'
