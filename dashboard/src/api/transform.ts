@@ -1618,6 +1618,41 @@ export interface SiemAuditEventInput {
   extra?: Record<string, string>;
   event_hash?: string;
   prev_hash?: string;
+  // Human-readable / attribution additions (task-c8d4b056). All additive and
+  // optional: an older backend that omits them still yields a valid AuditEntry
+  // (mapAuditEvent falls back to a deterministic client-side summary).
+  human_summary?: string;
+  actor_label?: string;
+  agent_label?: string;
+  resource_label?: string;
+  category?: string;
+  agent_product?: string;
+  session_id?: string;
+  execution_id?: string;
+  input_preview?: string;
+  output_preview?: string;
+  trace_id?: string;
+  artifact_id?: string;
+}
+
+// clientAuditSummary builds a deterministic, bounded one-line summary from the
+// machine fields when the backend did not supply human_summary (older server).
+// It mirrors the backend audit.HumanSummary shape closely enough to stay
+// readable, and reads ONLY safe scalar fields — never the raw extra payload.
+function clientAuditSummary(event: SiemAuditEventInput): string {
+  const agent = (event.agent_label || event.agent_name || "").trim();
+  const actor =
+    (event.actor_label || event.identity || event.agent_id || "system").trim();
+  const subject = agent || actor;
+  const action = (event.action || event.event_type || "").trim();
+  const parts: string[] = [];
+  const head = `${subject} ${action}`.trim();
+  if (head) parts.push(head);
+  if (event.decision) parts.push(event.decision);
+  if (event.matched_rule) parts.push(`rule ${event.matched_rule}`);
+  if (event.reason) parts.push(`(${event.reason})`);
+  const out = parts.filter(Boolean).join(" — ").trim();
+  return (out || "audit event").slice(0, 240);
 }
 
 // Map an SIEM event type onto an AuditEntry resourceType. Derived from
@@ -1680,6 +1715,11 @@ export function mapAuditEvent(event: SiemAuditEventInput): AuditEntry {
     event.job_id ||
     "";
 
+  const agentName = (event.agent_name || "").trim();
+  const agentProduct = (event.agent_product || extra.agent_product || "").trim();
+  const actorLabel = (event.actor_label || actor).trim();
+  const agentLabel = (event.agent_label || agentName || "").trim();
+
   return {
     id: event.id,
     timestamp: event.timestamp,
@@ -1697,6 +1737,30 @@ export function mapAuditEvent(event: SiemAuditEventInput): AuditEntry {
       id: resourceId,
       link: auditResourceLink(resourceType, resourceId),
     },
+    // Human-readable attribution (task-c8d4b056): prefer the backend's
+    // secret-scrubbed values; fall back to a deterministic client summary so
+    // an older backend still renders something readable.
+    humanSummary: (event.human_summary || "").trim() || clientAuditSummary(event),
+    actorLabel,
+    agentLabel,
+    resourceLabel: (event.resource_label || "").trim(),
+    governanceCategory: event.category,
+    agentId: (event.agent_id || "").trim(),
+    agentName,
+    agentProduct,
+    decision: event.decision,
+    matchedRule: event.matched_rule,
+    reason: event.reason,
+    seq: event.seq,
+    jobId: (event.job_id || extra.job_id || "").trim(),
+    sessionId: (event.session_id || extra.session_id || "").trim(),
+    executionId: (event.execution_id || extra.execution_id || "").trim(),
+    eventHash: event.event_hash,
+    prevHash: event.prev_hash,
+    inputPreview: (event.input_preview || extra.input_preview || "").trim(),
+    outputPreview: (event.output_preview || extra.output_preview || "").trim(),
+    traceId: (event.trace_id || extra.trace_id || "").trim(),
+    artifactId: (event.artifact_id || extra.artifact_id || "").trim(),
   };
 }
 

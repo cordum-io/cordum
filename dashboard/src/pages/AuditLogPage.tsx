@@ -1,15 +1,17 @@
 /*
- * DESIGN: "Control Surface" — Audit Log
+ * DESIGN: "Control Surface" — Audit Log (human-readable rewrite, task-c8d4b056)
  *
- * v2.5 hero rewrite (task-55f813b3):
- *  - Filters serialised to URL via nuqs (URL roundtrip restores state).
- *  - Hand-rolled <table> swapped for primitives/DataTable; Audit Log opts
- *    into page scrolling so the trail is not trapped in a fixed table box.
- *  - Row-click opens a Drawer with event detail + chain-signature drilldown
- *    (DoD #4 amended via comment-832277b0 — drilldown derives per-event
- *    chain status from the cached /audit/verify result, no N+1).
+ * The page now renders the backend's human-readable attribution: a primary
+ * Summary column ("who/what did what, and why"), named Agent/Event/Severity/
+ * Decision columns, a Hide system/routine toggle (server category=governance),
+ * and a drawer that explains who/what acted, where, why, and surfaces redacted
+ * input/output previews + trace/artifact pointers — never a raw payload dump.
+ * Download uses the shared RFC-4180 CSV helper (lib/export) with a partial-slice
+ * warning so a filtered/visible export is never mistaken for the audit-complete
+ * compliance bundle. Rows source from the SIEM feed GET /api/v1/audit/events via
+ * useInfiniteAuditEvents (mapped to the shared AuditEntry shape).
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQueryState, parseAsString } from "nuqs";
 import { parseAsSearchTerm } from "@/lib/url-state";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -18,6 +20,7 @@ import {
   useInfiniteAuditEvents,
   type AuditEventsFilters,
 } from "@/hooks/useAuditEvents";
+import type { AuditEntry } from "@/api/types";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -39,11 +42,14 @@ import {
   Download,
   Calendar,
   Bot,
+  EyeOff,
+  Eye,
   X,
   Copy,
 } from "lucide-react";
 import { StatusBadge, type BadgeVariant } from "@/components/ui/StatusBadge";
 import { cn, formatRelativeTime } from "@/lib/utils";
+import { toCsv, downloadFile } from "@/lib/export";
 import { toast } from "sonner";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { useConfigStore } from "@/state/config";
@@ -53,31 +59,7 @@ import {
 } from "@/hooks/useAuditVerify";
 import { useIsAdmin } from "@/hooks/usePermission";
 
-// The page now sources rows from the SIEM-feed `GET /api/v1/audit/events`
-// (full chained feed: MCP, edge, worker, output policy, delegation, ...)
-// via `useInfiniteAuditEvents`. The previous path called
-// `useGetPolicyAudit` which only exposed the policy-bundle audit subset
-// — Yaron's bug report ("I DONT SEE ALL LOGS RECORD IN AUDIT LOG PAGE")
-// pinned that gap. Cursor pagination via the server's `next_cursor` is
-// the next-page mechanism (server caps a single page at 200); an
-// IntersectionObserver sentinel near the end of the trail fetches the next
-// page automatically, with a button retained as an accessible fallback. See
-// docs/audit/list-api.md for the contract.
-
-interface AuditEvent {
-  id: string;
-  action: string;
-  actor: string;
-  resource: string;
-  resourceId?: string;
-  detail?: string;
-  timestamp: string;
-  ip?: string;
-  decision?: string;
-  seq?: number;
-}
-
-const PAGE_LIMIT = 1000;
+const PAGE_LIMIT = 200;
 
 const DECISION_TIERS: ReadonlySet<DecisionTier> = new Set([
   "allow",
@@ -86,6 +68,76 @@ const DECISION_TIERS: ReadonlySet<DecisionTier> = new Set([
   "allow_with_constraints",
   "throttle",
 ]);
+
+// AUDIT_EXPORT_HEADERS is the human-readable CSV column order for the
+// dashboard "visible rows" export. This is the dashboard download (the loaded
+// slice) — distinct from the backend audit-complete compliance bundle, whose
+// column contract lives in core/audit/export_compliance.go.
+export const AUDIT_EXPORT_HEADERS = [
+  "Summary",
+  "Timestamp",
+  "Category",
+  "Severity",
+  "Event Type",
+  "Actor",
+  "Agent",
+  "Resource",
+  "Action",
+  "Decision",
+  "Rule",
+  "Reason",
+  "Job ID",
+  "Session ID",
+  "Execution ID",
+  "Chain Seq",
+  "Event Hash",
+  "Prev Hash",
+  "Input Preview",
+  "Output Preview",
+  "Trace ID",
+  "Artifact ID",
+] as const;
+
+// csvCell neutralises spreadsheet formula-injection at the cell source: a cell
+// beginning with =,+,-,@,TAB,CR is prefixed with a single quote (OWASP). RFC
+// comma/quote/newline escaping is handled by toCsv.
+function csvCell(value: string | number | undefined | null): string {
+  const s = value === undefined || value === null ? "" : String(value);
+  if (s && /^[=+\-@\t\r]/.test(s)) return "'" + s;
+  return s;
+}
+
+// buildAuditExportRows projects the loaded AuditEntry rows onto
+// AUDIT_EXPORT_HEADERS, formula-guarding every cell. Exported + pure so the
+// CSV shape is unit-testable without rendering the page.
+export function buildAuditExportRows(entries: AuditEntry[]): string[][] {
+  return entries.map((e) =>
+    [
+      e.humanSummary ?? "",
+      e.timestamp ?? "",
+      e.governanceCategory ?? "",
+      e.severity ?? "",
+      e.eventType ?? "",
+      e.actorLabel ?? e.actor ?? "",
+      e.agentLabel ?? e.agentName ?? "",
+      e.resourceLabel ?? e.resourceType ?? "",
+      e.action ?? "",
+      e.decision ?? "",
+      e.matchedRule ?? "",
+      e.reason ?? e.message ?? "",
+      e.jobId ?? "",
+      e.sessionId ?? "",
+      e.executionId ?? "",
+      e.seq !== undefined ? String(e.seq) : "",
+      e.eventHash ?? "",
+      e.prevHash ?? "",
+      e.inputPreview ?? "",
+      e.outputPreview ?? "",
+      e.traceId ?? "",
+      e.artifactId ?? "",
+    ].map(csvCell),
+  );
+}
 
 export function parseSeqParam(raw?: string | null): number | undefined {
   if (typeof raw !== "string") return undefined;
@@ -120,85 +172,25 @@ export function shouldFetchNextAuditPage(
   return !!entries[0]?.isIntersecting && hasNextPage && !isFetchingNextPage;
 }
 
-// siemResourceTypeFromEventType extracts the resource family prefix from
-// an event_type like `mcp.tool_invocation`, `edge.action_attempted`, or
-// `worker_trust_change`. Mirrors the same split logic used by
-// `mapAuditEvent` in api/transform.ts; duplicated here as a small helper
-// so the page doesn't pull the entire transform module just for this.
-function siemResourceTypeFromEventType(eventType: string): string {
-  const trimmed = eventType.trim();
-  if (!trimmed) return "";
-  const dotIdx = trimmed.indexOf(".");
-  const usIdx = trimmed.indexOf("_");
-  const candidates = [dotIdx, usIdx].filter((i) => i > 0);
-  if (candidates.length === 0) return trimmed.toLowerCase();
-  return trimmed.slice(0, Math.min(...candidates)).toLowerCase();
-}
-
-// SiemAuditEventInput from the /audit/events response. Keeping this local
-// to the page so the renderer doesn't pull the orval-generated wire type
-// just to translate a few fields into the on-screen shape.
-interface SiemAuditEvent {
-  id: string;
-  seq?: number;
-  timestamp: string;
-  event_type: string;
-  severity?: string;
-  tenant_id?: string;
-  agent_id?: string;
-  job_id?: string;
-  action: string;
-  decision?: string;
-  reason?: string;
-  identity?: string;
-  extra?: Record<string, string>;
-}
-
-function mapEvent(e: SiemAuditEvent): AuditEvent {
-  const extra = e.extra ?? {};
-  const actor =
-    (e.identity && String(e.identity).trim()) ||
-    (e.agent_id && String(e.agent_id).trim()) ||
-    "unknown";
-  const resourceType = siemResourceTypeFromEventType(e.event_type);
-  const resourceId =
-    (extra["resource_id"] as string | undefined) ||
-    (extra["session_id"] as string | undefined) ||
-    (extra["execution_id"] as string | undefined) ||
-    (extra["job_id"] as string | undefined) ||
-    e.job_id ||
-    undefined;
-  // SIEM feed carries the chain seq directly — the previous policy-feed
-  // path had to extension-cast for it. ChainIntegrityWidget consumes this
-  // verbatim for verified/unverified/pending classification.
-  const seq = typeof e.seq === "number" ? e.seq : undefined;
-  return {
-    id: e.id,
-    action: e.action || e.event_type,
-    actor,
-    resource: resourceType,
-    resourceId,
-    detail: e.reason ?? undefined,
-    timestamp: e.timestamp || "",
-    decision: e.decision ?? undefined,
-    seq,
-  };
-}
-
-function actionVariant(action: string): BadgeVariant {
-  if (action.includes("created") || action.includes("registered")) {
-    return "healthy";
+function severityVariant(severity?: string): BadgeVariant {
+  switch (severity) {
+    case "high":
+      return "danger";
+    case "medium":
+      return "warning";
+    default:
+      return "muted";
   }
-  if (action.includes("failed") || action.includes("deleted")) {
-    return "danger";
-  }
-  if (action.includes("updated") || action.includes("decided")) {
-    return "warning";
-  }
-  return "cordum";
 }
 
-function decisionAccessor(event: AuditEvent): DecisionTier | undefined {
+function decisionVariant(decision?: string): BadgeVariant {
+  if (!decision) return "muted";
+  if (decision === "allow" || decision === "approved") return "healthy";
+  if (decision === "deny" || decision === "rejected") return "danger";
+  return "warning";
+}
+
+function decisionAccessor(event: AuditEntry): DecisionTier | undefined {
   const d = event.decision;
   if (!d) return undefined;
   return DECISION_TIERS.has(d as DecisionTier) ? (d as DecisionTier) : undefined;
@@ -235,20 +227,22 @@ export default function AuditLogPage() {
     "to",
     parseAsString.withDefault("").withOptions({ clearOnDefault: true }),
   );
-  // task-266f21ad: `?event_type_prefix=edge` is the URL contract the new
-  // Edge sidebar item lands on (via /edge/audit →
-  // /audit?event_type_prefix=edge redirect). Filters events client-side
-  // by matching `event.action.startsWith(prefix)`. Today's
-  // /audit/events feed primarily carries policy/auth events; edge.*
-  // event types will populate the filtered view once task-00b82b90's
-  // SIEM-feed wiring lands. Read-only here (no setter) — the redirect
-  // sets the param.
+  // Hide system/routine audit — backed by the server governance/routine
+  // taxonomy: hide_system=1 narrows the feed to category=governance so an
+  // investigator sees only consequential rows (denials, approvals, policy
+  // decisions, auth changes) and not the high-volume routine telemetry.
+  const [hideSystem, setHideSystem] = useQueryState(
+    "hide_system",
+    parseAsString.withDefault("").withOptions({ clearOnDefault: true }),
+  );
   const [eventTypePrefix] = useQueryState(
     "event_type_prefix",
     parseAsString.withDefault("").withOptions({ clearOnDefault: true }),
   );
   const [agents, setAgents] = useState<AgentOption[]>([]);
   const [expandedEventId, setExpandedEventId] = useState<string | null>(null);
+
+  const systemHidden = hideSystem === "1";
 
   useEffect(() => {
     get<{ items?: Array<{ id: string; name: string }> }>("/agents")
@@ -262,21 +256,11 @@ export default function AuditLogPage() {
       });
   }, []);
 
-  // Build typed filters for useInfiniteAuditEvents. Unset filters drop
-  // out (undefined values are omitted from the query string by the
-  // hook). The SIEM-feed endpoint takes event_type rather than the
-  // legacy `action` filter; we forward actionFilter as event_type so
-  // existing URL state (?action=...) continues to narrow the page
-  // additively. agent_id is not yet a server-side filter on
-  // /audit/events — applied client-side below.
+  // Server-side filters. event_type/from/to/search/category/agent_id are
+  // narrowed by the gateway; eventTypePrefix is the only client-side residue
+  // (a redirect convenience param).
   const auditFilters = useMemo<AuditEventsFilters>(() => {
-    const p: AuditEventsFilters = {
-      // Server caps limit at MaxAuditEventsLimit=200. Per-page render
-      // budget is the same; older records are reached via
-      // fetchNextPage (cursor-based pagination through the server's
-      // next_cursor).
-      limit: Math.min(PAGE_LIMIT, 200),
-    };
+    const p: AuditEventsFilters = { limit: PAGE_LIMIT };
     if (actionFilter) p.eventType = [actionFilter];
     if (dateFrom) {
       const d = new Date(dateFrom);
@@ -287,11 +271,13 @@ export default function AuditLogPage() {
       if (!Number.isNaN(d.getTime())) p.to = d.toISOString();
     }
     if (search) p.search = search;
+    if (systemHidden) p.category = "governance";
+    if (agentFilter) p.agentId = agentFilter;
     return p;
-  }, [actionFilter, dateFrom, dateTo, search]);
+  }, [actionFilter, dateFrom, dateTo, search, systemHidden, agentFilter]);
 
   const {
-    pages,
+    items,
     isLoading,
     isError,
     error,
@@ -328,72 +314,66 @@ export default function AuditLogPage() {
     return () => observer.disconnect();
   }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
 
-  const events: AuditEvent[] = useMemo(() => {
-    const raw = pages.flatMap((p) => p.items as SiemAuditEvent[]);
-    let mapped = raw.map(mapEvent);
-    if (agentFilter) {
-      const needle = agentFilter.toLowerCase();
-      mapped = mapped.filter((e) => e.actor.toLowerCase().includes(needle));
-    }
-    if (eventTypePrefix) {
-      const prefix = eventTypePrefix.toLowerCase();
-      mapped = mapped.filter((e) => e.action.toLowerCase().startsWith(prefix));
-    }
-    return mapped;
-  }, [pages, agentFilter, eventTypePrefix]);
-  // Server emits per-page `returned` rather than a global total —
-  // cursor pagination is unbounded by design (a global count would
-  // require an O(stream) scan). The render below shows the running
-  // count across all loaded pages plus "more available" when the
-  // cursor is non-empty; the scroll sentinel handles depth.
+  const events: AuditEntry[] = useMemo(() => {
+    if (!eventTypePrefix) return items;
+    const prefix = eventTypePrefix.toLowerCase();
+    return items.filter((e) => e.eventType.toLowerCase().startsWith(prefix));
+  }, [items, eventTypePrefix]);
+
   const expandedEvent = useMemo(
     () => events.find((e) => e.id === expandedEventId) ?? null,
     [events, expandedEventId],
   );
 
   const filtersActive =
-    !!actionFilter || !!agentFilter || !!dateFrom || !!dateTo || !!search;
+    !!actionFilter ||
+    !!agentFilter ||
+    !!dateFrom ||
+    !!dateTo ||
+    !!search ||
+    systemHidden;
   const activeFilterCount = [
     actionFilter,
     agentFilter,
     dateFrom,
     dateTo,
     search,
+    systemHidden ? "1" : "",
   ].filter(Boolean).length;
 
-  const exportCSV = () => {
-    if (filtersActive) {
-      toast.info(
-        `Exporting ${events.length} filtered events. Clear filters to export all.`,
-      );
-    }
-    const rows = events.map((e) =>
-      [
-        e.timestamp,
-        e.action,
-        e.actor,
-        e.resource,
-        e.resourceId ?? "",
-        (e.detail ?? "").replace(/,/g, ";"),
-      ].join(","),
-    );
-    const csv = [
-      "timestamp,action,actor,resource,resourceId,detail",
-      ...rows,
-    ].join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    const dateSuffix =
-      dateFrom || dateTo ? `-${dateFrom || "start"}-${dateTo || "now"}` : "";
-    a.download = `audit-export-${new Date().toISOString().slice(0, 10)}${dateSuffix}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast.success(`Exported ${events.length} events`);
+  const clearFilters = () => {
+    void setSearch(null);
+    void setActionFilter(null);
+    void setAgentFilter(null);
+    void setDateFrom(null);
+    void setDateTo(null);
+    void setHideSystem(null);
   };
 
-  const columns = useMemo<ColumnDef<AuditEvent>[]>(
+  const exportCSV = () => {
+    const rows = buildAuditExportRows(events);
+    const csv = toCsv([...AUDIT_EXPORT_HEADERS], rows);
+    const dateSuffix =
+      dateFrom || dateTo ? `-${dateFrom || "start"}-${dateTo || "now"}` : "";
+    downloadFile(
+      csv,
+      `audit-visible-${new Date().toISOString().slice(0, 10)}${dateSuffix}.csv`,
+      "text/csv;charset=utf-8",
+    );
+    if (hasNextPage) {
+      toast.info(
+        `Exported ${events.length} visible rows. More rows exist — scroll to load them, or use the compliance export for an audit-complete bundle.`,
+      );
+    } else if (filtersActive) {
+      toast.success(
+        `Exported ${events.length} filtered rows (the currently visible slice).`,
+      );
+    } else {
+      toast.success(`Exported ${events.length} visible rows.`);
+    }
+  };
+
+  const columns = useMemo<ColumnDef<AuditEntry>[]>(
     () => [
       {
         id: "time",
@@ -406,42 +386,58 @@ export default function AuditLogPage() {
         ),
       },
       {
-        id: "action",
-        header: "Action",
-        accessorFn: (e) => e.action,
-        cell: ({ row }) => (
-          <StatusBadge
-            variant={actionVariant(row.original.action)}
-            className="font-mono"
-          >
-            {row.original.action}
-          </StatusBadge>
-        ),
+        id: "summary",
+        header: "Summary",
+        enableSorting: false,
+        cell: ({ row }) => {
+          const e = row.original;
+          return (
+            <div className="min-w-0 max-w-[520px]">
+              <p className="truncate text-sm text-foreground">
+                {e.humanSummary || e.action || e.eventType}
+              </p>
+              <p className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
+                {e.eventType}
+                {e.resourceLabel ? ` · ${e.resourceLabel}` : ""}
+              </p>
+            </div>
+          );
+        },
       },
       {
-        id: "actor",
-        header: "Actor",
-        accessorFn: (e) => e.actor,
-        cell: ({ row }) => (
-          <span className="font-mono text-cordum">
-            {row.original.actor.slice(0, 16)}
-          </span>
-        ),
+        id: "agent",
+        header: "Agent",
+        accessorFn: (e) => e.agentLabel ?? "",
+        cell: ({ row }) => {
+          const e = row.original;
+          const label = e.agentLabel || e.agentName;
+          if (!label) {
+            return <span className="text-xs text-muted-foreground">—</span>;
+          }
+          return (
+            <div className="min-w-0">
+              <span className="block truncate text-sm text-cordum">{label}</span>
+              {e.agentId && (
+                <span className="block truncate font-mono text-[11px] text-muted-foreground">
+                  {e.agentId}
+                </span>
+              )}
+            </div>
+          );
+        },
       },
       {
-        id: "resource",
-        header: "Resource",
-        accessorFn: (e) => e.resource,
-        cell: ({ row }) => (
-          <span className="text-sm text-foreground">
-            {row.original.resource || "—"}
-            {row.original.resourceId && (
-              <span className="text-xs text-muted-foreground font-mono ml-1">
-                ({row.original.resourceId.slice(0, 12)})
-              </span>
-            )}
-          </span>
-        ),
+        id: "severity",
+        header: "Severity",
+        accessorFn: (e) => e.severity ?? "",
+        cell: ({ row }) =>
+          row.original.severity ? (
+            <StatusBadge variant={severityVariant(row.original.severity)}>
+              {row.original.severity}
+            </StatusBadge>
+          ) : (
+            <span className="text-xs text-muted-foreground">—</span>
+          ),
       },
       {
         id: "decision",
@@ -452,28 +448,12 @@ export default function AuditLogPage() {
           if (!d) {
             return <span className="text-xs text-muted-foreground">—</span>;
           }
-          const variant: BadgeVariant =
-            d === "allow"
-              ? "healthy"
-              : d === "deny"
-                ? "danger"
-                : "warning";
           return (
-            <StatusBadge variant={variant} className="font-mono">
+            <StatusBadge variant={decisionVariant(d)} className="font-mono">
               {d}
             </StatusBadge>
           );
         },
-      },
-      {
-        id: "detail",
-        header: "Detail",
-        enableSorting: false,
-        cell: ({ row }) => (
-          <span className="text-xs text-muted-foreground truncate max-w-[260px] inline-block align-middle">
-            {row.original.detail ?? "—"}
-          </span>
-        ),
       },
     ],
     [],
@@ -495,26 +475,21 @@ export default function AuditLogPage() {
       <PageHeader
         label="Platform"
         title="Audit Log"
-        subtitle="System-wide activity trail"
+        subtitle="Who did what, when, where, and why — across the whole platform"
         actions={
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={() => refetch()}>
               <RefreshCw className="w-3 h-3 mr-1" />
               Refresh
             </Button>
-            <Button variant="outline" size="sm" onClick={exportCSV}>
-              <Download className="w-3 h-3 mr-1" />
-              Export CSV
-            </Button>
             <Button
               variant="outline"
               size="sm"
-              disabled
-              aria-label="Export PDF (coming soon)"
-              title="PDF export — coming soon. Backend endpoint pending."
+              onClick={exportCSV}
+              title="Download the currently loaded rows. For an audit-complete, chain-verified bundle use the compliance export."
             >
-              <FileText className="w-3 h-3 mr-1" />
-              Export PDF
+              <Download className="w-3 h-3 mr-1" />
+              Export visible (CSV)
             </Button>
           </div>
         }
@@ -539,7 +514,7 @@ export default function AuditLogPage() {
                 <Input
                   type="text"
                   icon={<Search className="h-3.5 w-3.5" />}
-                  placeholder="Search events..."
+                  placeholder="Summary, agent, session, rule…"
                   value={search}
                   onChange={(e) => void setSearch(e.target.value || null)}
                   aria-label="Search audit events"
@@ -603,7 +578,7 @@ export default function AuditLogPage() {
               {agents.length > 0 && (
                 <LabeledField
                   label="Agent"
-                  description="Filter by actor"
+                  description="Filter by governed agent"
                   action={<Bot className="h-3.5 w-3.5 text-muted-foreground" />}
                 >
                   <Select
@@ -650,6 +625,26 @@ export default function AuditLogPage() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+              <Button
+                variant={systemHidden ? "default" : "outline"}
+                size="sm"
+                onClick={() => void setHideSystem(systemHidden ? null : "1")}
+                aria-pressed={systemHidden}
+                aria-label={
+                  systemHidden
+                    ? "Show system/routine audit"
+                    : "Hide system/routine audit"
+                }
+              >
+                {systemHidden ? (
+                  <Eye className="h-3 w-3" />
+                ) : (
+                  <EyeOff className="h-3 w-3" />
+                )}
+                {systemHidden
+                  ? "Show system/routine audit"
+                  : "Hide system/routine audit"}
+              </Button>
               {filtersActive && (
                 <StatusBadge variant="info">
                   {activeFilterCount} filter{activeFilterCount > 1 ? "s" : ""}{" "}
@@ -659,13 +654,7 @@ export default function AuditLogPage() {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => {
-                  void setSearch(null);
-                  void setActionFilter(null);
-                  void setAgentFilter(null);
-                  void setDateFrom(null);
-                  void setDateTo(null);
-                }}
+                onClick={clearFilters}
                 disabled={!filtersActive}
               >
                 <X className="h-3 w-3" />
@@ -680,10 +669,8 @@ export default function AuditLogPage() {
               {filtersActive && " (filtered)"}
               {hasNextPage && " · more available"}
             </span>
-            {filtersActive && (
-              <span>
-                Narrowed by search, action, agent, or date range filters.
-              </span>
+            {systemHidden && (
+              <span>System/routine rows are hidden (governance-only view).</span>
             )}
           </div>
         </InstrumentCardBody>
@@ -702,15 +689,35 @@ export default function AuditLogPage() {
             disableVirtualization
             onRowClick={(event) => setExpandedEventId(event.id)}
             emptyState={
-              <EmptyState
-                icon={<FileText className="w-5 h-5" />}
-                title="No audit events"
-                description={
-                  filtersActive
-                    ? "No events match your filters"
-                    : "Events will appear as actions occur in the system"
-                }
-              />
+              systemHidden ? (
+                <EmptyState
+                  icon={<EyeOff className="w-5 h-5" />}
+                  title="No governance events match"
+                  description="Only governance events are shown — system/routine rows are hidden. Clear filters to see the full trail."
+                  action={
+                    <Button variant="outline" size="sm" onClick={clearFilters}>
+                      Clear filters
+                    </Button>
+                  }
+                />
+              ) : (
+                <EmptyState
+                  icon={<FileText className="w-5 h-5" />}
+                  title="No audit events"
+                  description={
+                    filtersActive
+                      ? "No events match your filters"
+                      : "Events will appear as actions occur in the system"
+                  }
+                  action={
+                    filtersActive ? (
+                      <Button variant="outline" size="sm" onClick={clearFilters}>
+                        Clear filters
+                      </Button>
+                    ) : undefined
+                  }
+                />
+              )
             }
           />
           <div ref={nextPageSentinelRef} aria-hidden="true" className="h-px" />
@@ -752,6 +759,10 @@ export default function AuditLogPage() {
             tenantId={tenantId}
             isAdmin={isAdmin}
             onClose={() => setExpandedEventId(null)}
+            onPivotAgent={(id) => {
+              void setAgentFilter(id);
+              setExpandedEventId(null);
+            }}
           />
         )}
       </Drawer>
@@ -760,25 +771,18 @@ export default function AuditLogPage() {
 }
 
 // ---------------------------------------------------------------------------
-// AuditEventDrilldown
-//
-// Renders inside the Drawer when the user clicks an audit row. Top half
-// shows event metadata; bottom half is the chain-signature drilldown
-// (DoD #4 amended via comment-832277b0). The drilldown gates on isAdmin
-// per the /audit/verify backend RBAC; non-admin viewers see a hint
-// pointing at /govern/verification instead of triggering a 403.
-//
-// The drilldown derives per-event verdict from the cached chain-wide
-// verification result — opening 1000 different drawers fires at most
-// one /audit/verify request because React Query shares the cache via
-// queryKey ["audit-chain-verify", tenant].
+// AuditEventDrilldown — explains who/what acted, when, where, why, and surfaces
+// redacted input/output previews + trace/artifact pointers. NEVER dumps the raw
+// extra payload as a JSON blob (the previews are the only content surfaced, and
+// they are already bounded/redacted server-side).
 // ---------------------------------------------------------------------------
 
 interface AuditEventDrilldownProps {
-  event: AuditEvent;
+  event: AuditEntry;
   tenantId: string;
   isAdmin: boolean;
   onClose: () => void;
+  onPivotAgent: (agentId: string) => void;
 }
 
 function AuditEventDrilldown({
@@ -786,7 +790,14 @@ function AuditEventDrilldown({
   tenantId,
   isAdmin,
   onClose,
+  onPivotAgent,
 }: AuditEventDrilldownProps) {
+  const hasEvidence =
+    !!event.inputPreview ||
+    !!event.outputPreview ||
+    !!event.traceId ||
+    !!event.artifactId;
+
   return (
     <div className="space-y-6">
       <header className="flex items-start justify-between gap-3">
@@ -794,11 +805,11 @@ function AuditEventDrilldown({
           <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
             Audit event
           </p>
-          <h2 className="font-display text-lg font-semibold text-foreground truncate">
-            {event.action || "(no action)"}
+          <h2 className="font-display text-lg font-semibold text-foreground">
+            {event.humanSummary || event.action || event.eventType}
           </h2>
-          <p className="mt-1 text-xs text-muted-foreground font-mono">
-            {event.id}
+          <p className="mt-1 font-mono text-xs text-muted-foreground">
+            {event.eventType} · {event.id}
           </p>
         </div>
         <button
@@ -811,31 +822,86 @@ function AuditEventDrilldown({
         </button>
       </header>
 
-      <dl className="grid grid-cols-2 gap-3 text-xs">
-        <DrillRow label="Time" value={event.timestamp || "—"} mono />
-        <DrillRow label="Actor" value={event.actor} mono />
-        <DrillRow label="Resource" value={event.resource || "—"} />
-        {event.resourceId && (
-          <DrillRow label="Resource ID" value={event.resourceId} mono />
-        )}
-        {event.decision && (
-          <DrillRow label="Decision" value={event.decision} mono />
-        )}
-        {event.seq !== undefined && (
-          <DrillRow label="Chain seq" value={`#${event.seq}`} mono />
-        )}
-      </dl>
+      <DrillSection title="Who / what">
+        <dl className="grid grid-cols-2 gap-3 text-xs">
+          <DrillRow label="Actor" value={event.actorLabel || event.actor} />
+          {(event.agentLabel || event.agentName) && (
+            <DrillRow label="Agent" value={event.agentLabel || event.agentName || ""} />
+          )}
+          {event.agentId && (
+            <DrillRow
+              label="Agent ID"
+              value={event.agentId}
+              mono
+              onPivot={() => onPivotAgent(event.agentId as string)}
+            />
+          )}
+          {event.agentProduct && (
+            <DrillRow label="Product" value={event.agentProduct} />
+          )}
+        </dl>
+      </DrillSection>
 
-      {event.detail && (
-        <section>
-          <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-            Detail
+      <DrillSection title="When / where">
+        <dl className="grid grid-cols-2 gap-3 text-xs">
+          <DrillRow label="Time" value={event.timestamp || "—"} mono />
+          <DrillRow
+            label="Resource"
+            value={event.resourceLabel || event.resourceType || "—"}
+          />
+          {event.sessionId && (
+            <DrillRow label="Session" value={event.sessionId} mono />
+          )}
+          {event.executionId && (
+            <DrillRow label="Execution" value={event.executionId} mono />
+          )}
+          {event.jobId && <DrillRow label="Job" value={event.jobId} mono />}
+        </dl>
+      </DrillSection>
+
+      <DrillSection title="Why">
+        <dl className="grid grid-cols-2 gap-3 text-xs">
+          <DrillRow label="Decision" value={event.decision || "—"} mono />
+          {event.matchedRule && (
+            <DrillRow label="Matched rule" value={event.matchedRule} mono />
+          )}
+          {event.severity && (
+            <DrillRow label="Severity" value={event.severity} />
+          )}
+        </dl>
+        {event.reason && (
+          <p className="mt-2 whitespace-pre-wrap text-sm text-foreground">
+            {event.reason}
           </p>
-          <p className="mt-1 text-sm text-foreground whitespace-pre-wrap">
-            {event.detail}
+        )}
+      </DrillSection>
+
+      <DrillSection title="Evidence">
+        {hasEvidence ? (
+          <div className="space-y-2 text-xs">
+            {event.inputPreview && (
+              <PreviewBlock label="Input preview" value={event.inputPreview} />
+            )}
+            {event.outputPreview && (
+              <PreviewBlock label="Output preview" value={event.outputPreview} />
+            )}
+            <dl className="grid grid-cols-2 gap-3">
+              {event.traceId && (
+                <DrillRow label="Trace" value={event.traceId} mono />
+              )}
+              {event.artifactId && (
+                <DrillRow label="Artifact" value={event.artifactId} mono />
+              )}
+            </dl>
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            No redacted preview captured for this event. Raw input/output is
+            never dumped here — see the compliance export for permissioned
+            artifact pointers.
           </p>
-        </section>
-      )}
+        )}
+      </DrillSection>
 
       <ChainSignatureSection
         event={event}
@@ -846,13 +912,48 @@ function AuditEventDrilldown({
   );
 }
 
+interface DrillSectionProps {
+  title: string;
+  children: ReactNode;
+}
+
+function DrillSection({ title, children }: DrillSectionProps) {
+  return (
+    <section>
+      <p className="mb-2 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+        {title}
+      </p>
+      {children}
+    </section>
+  );
+}
+
+interface PreviewBlockProps {
+  label: string;
+  value: string;
+}
+
+function PreviewBlock({ label, value }: PreviewBlockProps) {
+  return (
+    <div className="rounded-lg border border-border bg-surface-1 p-2">
+      <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+        {label}
+      </p>
+      <p className="mt-1 whitespace-pre-wrap break-words font-mono text-xs text-foreground">
+        {value}
+      </p>
+    </div>
+  );
+}
+
 interface DrillRowProps {
   label: string;
   value: string;
   mono?: boolean;
+  onPivot?: () => void;
 }
 
-function DrillRow({ label, value, mono }: DrillRowProps) {
+function DrillRow({ label, value, mono, onPivot }: DrillRowProps) {
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(value);
@@ -867,13 +968,19 @@ function DrillRow({ label, value, mono }: DrillRowProps) {
       <dt className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
         {label}
       </dt>
-      <dd
-        className={cn(
-          "flex items-center gap-1.5 text-sm",
-          mono && "font-mono",
-        )}
-      >
+      <dd className={cn("flex items-center gap-1.5 text-sm", mono && "font-mono")}>
         <span className="truncate">{value}</span>
+        {onPivot && value && value !== "—" && (
+          <button
+            type="button"
+            aria-label={`Filter by ${label}`}
+            onClick={onPivot}
+            className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-surface-1 hover:text-foreground"
+            data-row-action
+          >
+            <Search className="h-3 w-3" />
+          </button>
+        )}
         {value && value !== "—" && (
           <button
             type="button"
@@ -891,7 +998,7 @@ function DrillRow({ label, value, mono }: DrillRowProps) {
 }
 
 interface ChainSignatureSectionProps {
-  event: AuditEvent;
+  event: AuditEntry;
   tenantId: string;
   isAdmin: boolean;
 }
@@ -901,14 +1008,6 @@ function ChainSignatureSection({
   tenantId,
   isAdmin,
 }: ChainSignatureSectionProps) {
-  // Per amended DoD #4 (comment-7419de07, third amendment, supersedes
-  // comment-832277b0): use the chain-wide /audit/verify endpoint and
-  // derive the per-row verdict from the cached result. The signature
-  // display must NOT block the row from rendering — pending is the safe
-  // default while the chain verdict is in flight or absent.
-  // useAuditVerify gates on isAdmin internally so viewer users don't fire
-  // a 403; we mirror that gate at this section to render a helpful hint
-  // instead of a silent no-op.
   const verify = useAuditVerify({ tenant: tenantId, enabled: isAdmin });
 
   if (!isAdmin) {
@@ -933,13 +1032,19 @@ function ChainSignatureSection({
       <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
         Chain signature
       </p>
+      {event.seq !== undefined && (
+        <p className="font-mono text-xs text-muted-foreground">
+          seq #{event.seq}
+          {event.eventHash ? ` · ${event.eventHash.slice(0, 16)}…` : ""}
+        </p>
+      )}
       <ChainSignatureVerdict event={event} verify={verify} />
     </section>
   );
 }
 
 interface ChainSignatureVerdictProps {
-  event: AuditEvent;
+  event: AuditEntry;
   verify: {
     data: AuditVerifyResult | undefined;
     isLoading: boolean;
@@ -947,27 +1052,13 @@ interface ChainSignatureVerdictProps {
   };
 }
 
-// ChainSignatureVerdict implements the three-state badge contract from the
-// task-55f813b3 third DoD amendment (comment-7419de07):
-//
-//   verified   (healthy / green) — chain verdict found AND row's seq is in
-//                                  the verified Merkle window with no gap.
-//   unverified (danger / red)    — chain verdict found AND row's seq is in
-//                                  gaps as missing / hash_mismatch /
-//                                  out_of_order.
-//   pending    (muted)           — chain verdict not yet loaded (in-flight,
-//                                  errored, or no data) OR row's seq is
-//                                  absent from the cached result (no seq on
-//                                  the row, or seq pruned by retention).
-//
-// The descriptive subtext below the badge preserves the granular reason
-// (Retention-trimmed / no chain seq / hash_mismatch label) so operators
-// can tell why a row is pending or unverified without losing information.
+// Three-state badge: verified / unverified / pending. Pending is the safe
+// default while the chain verdict is in flight, errored, absent, or when the
+// row's seq is outside the cached verified range / pruned by retention.
 function ChainSignatureVerdict({
   event,
   verify,
 }: ChainSignatureVerdictProps) {
-  // Pending: chain verdict not yet loaded.
   if (verify.isLoading) {
     return (
       <div className="space-y-1">
@@ -980,8 +1071,6 @@ function ChainSignatureVerdict({
     );
   }
 
-  // Pending: chain verdict request errored or no data — we cannot claim
-  // verified or unverified without a result.
   if (verify.isError || !verify.data) {
     return (
       <div className="space-y-1">
@@ -997,8 +1086,6 @@ function ChainSignatureVerdict({
 
   const chain = verify.data;
 
-  // Pending: row's seq absent from the cached result — policy-only audit
-  // entries are not in the Merkle chain at all.
   if (event.seq === undefined) {
     return (
       <div className="space-y-1">
@@ -1011,22 +1098,19 @@ function ChainSignatureVerdict({
     );
   }
 
-  // Pending: row's seq pruned by retention — verdict cannot be derived
-  // because the signature evidence is gone.
   if (event.seq < chain.retention_boundary_seq) {
     return (
       <div className="space-y-1">
         <StatusBadge variant="muted">Pending</StatusBadge>
         <p className="text-xs text-muted-foreground">
           Chain seq #{event.seq} is older than the retention window
-          ({chain.retention_window_hours ?? "?"}h). Signature evidence has
-          been pruned (retention-trimmed).
+          ({chain.retention_window_hours ?? "?"}h). Signature evidence has been
+          pruned (retention-trimmed).
         </p>
       </div>
     );
   }
 
-  // Unverified: row's seq matches a tampered / missing / out-of-order gap.
   const tamperGap = chain.gaps.find(
     (g) =>
       g.at_seq === event.seq &&
@@ -1051,15 +1135,6 @@ function ChainSignatureVerdict({
     );
   }
 
-  // Verified requires that the row's seq is actually present in the cached
-  // chain-wide result's verified range. Without this guard, an empty result
-  // (verified_events=0), a stale cache, a bounded/limited verify window, or
-  // a result missing coverage bounds would default-pass an absent seq as
-  // "verified" — the very gap QA flagged on reopen #3. Per architect's
-  // pending definition (comment-7419de07), "row's seq absent from the
-  // cached result" is pending. Conditions are inlined in a single &&
-  // chain so TypeScript narrows `first_seq` / `last_seq` from `number |
-  // undefined` to `number` before the comparison.
   const inVerifiedRange =
     chain.verified_events > 0 &&
     chain.first_seq !== undefined &&
@@ -1080,14 +1155,12 @@ function ChainSignatureVerdict({
         <p className="text-xs text-muted-foreground">
           Chain seq #{event.seq} is outside the cached verification range
           {rangeSuffix}
-          {emptySuffix}
-          . Awaiting a fresh chain verdict that covers this seq.
+          {emptySuffix}. Awaiting a fresh chain verdict that covers this seq.
         </p>
       </div>
     );
   }
 
-  // Verified: seq is in the verified Merkle window and not in any gap.
   return (
     <div className="space-y-1">
       <StatusBadge variant="healthy" dot>
