@@ -8,6 +8,7 @@ import (
 	miniredis "github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	"github.com/cordum/cordum/core/infra/store"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -59,6 +60,58 @@ func TestAgentResolver_LinkedWorker(t *testing.T) {
 	}
 	if info.RiskTier != "high" {
 		t.Errorf("RiskTier = %q, want %q", info.RiskTier, "high")
+	}
+}
+
+// TestAgentResolver_CAPNameFallbackAndSpoofProtection proves the task-c8d4b056
+// resolution contract: a self-reported CAP display label fills the agent name
+// for an UNLINKED worker, but can NEVER override an authenticated Agent Identity
+// name (spoof protection). The label flows in via the registry's AgentName
+// accessor, exactly as the production wiring would inject it.
+func TestAgentResolver_CAPNameFallbackAndSpoofProtection(t *testing.T) {
+	resolver, agentStore := newTestAgentResolver(t)
+	ctx := context.Background()
+
+	reg := NewMemoryRegistry()
+	t.Cleanup(reg.Close)
+	reg.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "worker-cap", AgentName: "Billing Bot"})
+	reg.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "worker-auth", AgentName: "Spoofed Privileged Agent"})
+	resolver.WithCAPNameResolver(reg.AgentName)
+
+	// (1) Unlinked worker with a CAP label: the self-reported label fills the
+	// display name, but AgentID stays "unlinked" — the label is never mistaken
+	// for an authenticated identity.
+	info := resolver.Resolve(ctx, "worker-cap")
+	if info.AgentID != agentCacheUnlinked {
+		t.Errorf("unlinked AgentID = %q, want %q", info.AgentID, agentCacheUnlinked)
+	}
+	if info.Name != "Billing Bot" {
+		t.Errorf("CAP fallback Name = %q, want %q", info.Name, "Billing Bot")
+	}
+
+	// (2) Authenticated identity must win over a spoofed CAP label for the same
+	// worker.
+	agent, err := agentStore.Create(ctx, store.AgentIdentity{
+		Name:     "Authentic Agent",
+		Owner:    "admin",
+		RiskTier: "high",
+	})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	resolver.credCache.mu.Lock()
+	resolver.credCache.records["worker-auth"] = workercredentials.Credential{
+		WorkerID: "worker-auth",
+		AgentID:  agent.ID,
+	}
+	resolver.credCache.mu.Unlock()
+
+	info = resolver.Resolve(ctx, "worker-auth")
+	if info.AgentID != agent.ID {
+		t.Errorf("auth AgentID = %q, want %q", info.AgentID, agent.ID)
+	}
+	if info.Name != "Authentic Agent" {
+		t.Errorf("spoof protection failed: Name = %q, want authenticated %q (CAP label must not override)", info.Name, "Authentic Agent")
 	}
 }
 
