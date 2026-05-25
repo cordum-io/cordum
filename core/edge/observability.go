@@ -783,6 +783,16 @@ func actionExtra(event AgentActionEvent) map[string]string {
 	if summary := actionTargetSummary(event); summary != "" {
 		extra["target_summary"] = summary
 	}
+	// Langfuse-like investigability pointer (task-c8d4b056 step 8): surface the
+	// FIRST artifact's content hash as a safe pointer so an investigator can
+	// pivot to the redacted evidence bundle. NEVER the content itself — the
+	// audit row stays free of raw input/output; only the SHA pointer is copied.
+	for _, ptr := range event.ArtifactPointers {
+		if sha := strings.TrimSpace(ptr.SHA256); sha != "" {
+			extra["artifact_id"] = boundedShortString(sha, 80)
+			break
+		}
+	}
 	extra["redaction_status"] = redactionStatusForAction(event)
 	return extra
 }
