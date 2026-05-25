@@ -257,7 +257,9 @@ param means "no constraint on that dimension"):
 | `event_type` | Exact event type, matched case-insensitively |
 | `severity` | One of `CRITICAL`/`HIGH`/`MEDIUM`/`LOW`/`INFO`, case-insensitive |
 | `category` | `governance` or `routine` (see §2); an unknown value is rejected with `400 INVALID_CATEGORY` |
-| `search` | Substring match over action / type / agent / job / identity / reason |
+| `agent_id` | Exact match on the resolved agent id |
+| `agent` | Case-insensitive substring match on the human agent name (`agent_name`) |
+| `search` | Substring over action / type / agent id + name / job / session / execution / resource ids / identity / reason |
 | `from` / `to` | RFC 3339 timestamp bounds (inclusive) |
 | `limit` | Page size, capped at 200 |
 | `cursor` | Opaque Redis stream id from the previous page's `next_cursor` |
@@ -265,10 +267,45 @@ param means "no constraint on that dimension"):
 `category` is resolved per row from the governance/routine taxonomy, so
 `?category=governance` returns only security-relevant events and drops routine
 telemetry such as `system.auth` and `mcp.tool_invocation`. The applied
-`event_type` / `severity` / `category` filters are reflected in the
-`audit.read.events` meta-event so the read surface is itself auditable.
+`event_type` / `severity` / `category` / `agent_id` / `agent` filters are
+reflected in the `audit.read.events` meta-event so the read surface is itself
+auditable.
 
-<!-- TODO: document the full response envelope (items / next_cursor / returned) -->
+The response envelope is `{ items[], next_cursor, returned }`; an empty
+`next_cursor` means end-of-stream.
+
+### Human-readable response fields (attribution)
+
+Each `items[]` entry preserves the machine SIEM fields (`event_type`,
+`agent_id`, `agent_name`, `decision`, `matched_rule`, `reason`, `seq`,
+`event_hash`, `prev_hash`, `extra`, …) and ADDS the following deterministic,
+secret-scrubbed attribution fields so a human can read the row without
+reconstructing it client-side:
+
+| Field | Meaning |
+|-------|---------|
+| `human_summary` | One-line "who/what acted, what happened, and why" sentence |
+| `actor_label` | Human principal (display name → identity → principal id → `system`) |
+| `agent_label` | Governed agent (resolved name → product → agent id) |
+| `resource_label` | Target of the action |
+| `category` | `governance` or `routine` |
+| `agent_product`, `session_id`, `execution_id`, `resource_id` | Investigation pivots |
+| `input_preview` / `output_preview` | Bounded, redacted previews — present ONLY when a producer explicitly supplied them; never raw prompts or tool payloads |
+| `trace_id` / `artifact_id` | Safe pointers to redacted evidence/traces (hashes, not content) |
+
+All label/preview values are derived from a hard-coded allowlist of
+classifier-produced descriptor keys and are bounded + secret-scrubbed; the
+response never iterates the raw `extra` map into prose, so it cannot leak API
+keys, tokens, or raw payloads. **Agent-name resolution is authenticated-first**:
+an authenticated Agent Identity name always wins over a self-reported CAP/Edge
+display label, and an Edge `principal_display_name` / `agent_name` supplied on
+session create is accepted only as a sanitized label (principal identity stays
+server-derived; no Claude token/auth files are ever read). The compliance export
+(§7) appends the same fields additively after the frozen legacy columns.
+
+> OpenAPI note: the `AuditEvent` schema in `docs/api/openapi/cordum-api.yaml`
+> still documents only the machine fields; the additive attribution fields above
+> are a pending spec/codegen follow-up and do not change the wire behaviour.
 
 ## 7. SIEM Export Configuration
 
@@ -343,18 +380,29 @@ what tells an auditor that difference is a filter, not missing events.
 
 ## 8. Dashboard UI
 
-The audit log page (`/audit`) provides:
+The audit log page (`/audit`) is built for investigation, not just download. It
+sources the full SIEM feed via `GET /api/v1/audit/events` and renders the
+backend's human-readable attribution:
 
-- **AuditFiltersBar** — Filter by event type, severity, tenant, time range
-- **AuditTimeline** — Chronological event visualization
-- **AuditEventCard** — Individual event summary cards
-- **AuditDetailPanel** / **AuditEntryDetail** — Expanded event details
-- **AuditIntegrityPanel** — Cryptographic integrity verification
-- **AuditExport** — Export filtered results
-- **AuditTransportBadge** — Transport type indicator
-- **SavedFiltersDropdown** — Reusable filter presets
-
-<!-- TODO: screenshots and detailed UI workflow documentation -->
+- **Summary column** — a one-line "who/what acted, what happened, and why" for
+  every row, backed by the API's `human_summary` (with a deterministic
+  client-side fallback if an older backend omits it).
+- **Named columns** — Time, Summary, Agent (name + id), Severity, Decision.
+- **Hide system/routine toggle** — one click narrows the feed to
+  `category=governance` (URL-persisted as `hide_system=1`, counted as an active
+  filter) so routine telemetry is dropped; the governance-only empty state
+  offers a clear-filters action.
+- **Filters** — search (server-side, spans summary/agent/session/rule), event
+  type, agent, and an inclusive date range, all serialised to the URL.
+- **Detail drawer** — explains who/what acted, when, where, and why, with
+  redacted input/output previews and trace/artifact pointers (never a raw
+  payload dump) plus the per-row chain-signature verdict
+  (verified / unverified / pending).
+- **Export visible (CSV)** — downloads the currently loaded rows through the
+  shared RFC-4180 helper (formula-injection guarded) with a `Summary` column and
+  every named field. A warning distinguishes this visible-slice export from the
+  audit-complete compliance bundle (§7) and flags when more rows remain unloaded.
+- **Chain integrity widget** — tenant-wide verified/unverified/pending status.
 
 ## See Also
 
