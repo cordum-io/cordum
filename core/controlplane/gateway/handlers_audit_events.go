@@ -93,6 +93,25 @@ type auditEventResponseItem struct {
 	Extra         map[string]string `json:"extra,omitempty"`
 	EventHash     string            `json:"event_hash,omitempty"`
 	PrevHash      string            `json:"prev_hash,omitempty"`
+
+	// Humanized / attribution fields (task-c8d4b056). ADDITIVE: every machine
+	// field above is unchanged so existing SIEM consumers keep working. Values
+	// are derived from audit's deterministic, secret-scrubbed humanize helpers
+	// and a hard-coded allowlist of Extra descriptor keys — never wholesale
+	// Extra iteration — so they cannot leak raw prompts, payloads, or secrets.
+	HumanSummary  string `json:"human_summary,omitempty"`
+	ActorLabel    string `json:"actor_label,omitempty"`
+	AgentLabel    string `json:"agent_label,omitempty"`
+	ResourceLabel string `json:"resource_label,omitempty"`
+	Category      string `json:"category,omitempty"`
+	AgentProduct  string `json:"agent_product,omitempty"`
+	SessionID     string `json:"session_id,omitempty"`
+	ExecutionID   string `json:"execution_id,omitempty"`
+	ResourceID    string `json:"resource_id,omitempty"`
+	InputPreview  string `json:"input_preview,omitempty"`
+	OutputPreview string `json:"output_preview,omitempty"`
+	TraceID       string `json:"trace_id,omitempty"`
+	ArtifactID    string `json:"artifact_id,omitempty"`
 }
 
 // auditEventsResponse is the envelope. next_cursor is the opaque Redis
@@ -113,8 +132,13 @@ type auditEventsFilters struct {
 	from      time.Time
 	to        time.Time
 	search    string
-	hasFrom   bool
-	hasTo     bool
+	// agentID is an EXACT match on the stable agent id; agent is a
+	// case-insensitive substring match on the human agent_name. Both are
+	// additive to the existing dimensions (task-c8d4b056).
+	agentID string
+	agent   string
+	hasFrom bool
+	hasTo   bool
 }
 
 // handleListAuditEvents serves GET /api/v1/audit/events — the SIEM-feed
@@ -174,6 +198,8 @@ func (s *server) handleListAuditEvents(w http.ResponseWriter, r *http.Request) {
 		"filter_event_type", filters.eventType,
 		"filter_severity", filters.severity,
 		"filter_category", filters.category,
+		"filter_agent_id", filters.agentID,
+		"filter_agent", filters.agent != "",
 		"filter_from", filters.from.Format(time.RFC3339),
 		"filter_to", filters.to.Format(time.RFC3339),
 		"filter_search", filters.search != "",
@@ -260,6 +286,10 @@ func parseAuditEventsQuery(r *http.Request) (int, string, auditEventsFilters, er
 		eventType: strings.TrimSpace(q.Get("event_type")),
 		severity:  strings.TrimSpace(q.Get("severity")),
 		search:    strings.ToLower(strings.TrimSpace(q.Get("search"))),
+		// agent_id is matched exactly (a stable id), so it is NOT lowercased;
+		// agent is a human-name substring, lowercased for case-insensitive match.
+		agentID: strings.TrimSpace(q.Get("agent_id")),
+		agent:   strings.ToLower(strings.TrimSpace(q.Get("agent"))),
 	}
 	// category is additive to event_type/severity/search. Reject an unknown
 	// value (400) rather than silently returning an empty page; accept the
@@ -419,6 +449,12 @@ func matchesFilters(ev *audit.SIEMEvent, f auditEventsFilters) bool {
 	if f.category != "" && audit.CategoryFor(ev.EventType) != f.category {
 		return false
 	}
+	if f.agentID != "" && ev.AgentID != f.agentID {
+		return false
+	}
+	if f.agent != "" && !strings.Contains(strings.ToLower(ev.AgentName), f.agent) {
+		return false
+	}
 	if f.hasFrom && ev.Timestamp.Before(f.from) {
 		return false
 	}
@@ -426,16 +462,26 @@ func matchesFilters(ev *audit.SIEMEvent, f auditEventsFilters) bool {
 		return false
 	}
 	if f.search != "" {
-		combined := strings.ToLower(
-			ev.Action + " " + ev.EventType + " " + ev.AgentID + " " +
-				ev.JobID + " " + ev.Identity + " " + ev.Reason,
-		)
+		// Search spans the machine fields plus the human agent name and the
+		// pivot IDs an investigator types (session/execution/resource), so a
+		// free-text query can locate a row by any of them.
+		combined := strings.ToLower(strings.Join([]string{
+			ev.Action, ev.EventType, ev.AgentID, ev.AgentName, ev.JobID,
+			ev.Identity, ev.Reason,
+			ev.Extra["session_id"], ev.Extra["execution_id"], ev.Extra["resource_id"],
+		}, " "))
 		if !strings.Contains(combined, f.search) {
 			return false
 		}
 	}
 	return true
 }
+
+// auditPreviewMaxLen bounds the input/output preview surfaced on the read
+// API. The producer (Edge observability) already bounds + redacts previews;
+// re-bounding here via audit.BoundedPreview is defense-in-depth so a misbehaving
+// producer cannot blow up the response or smuggle a long secret-shaped value.
+const auditPreviewMaxLen = 240
 
 // toAuditEventResponseItem converts the in-memory SIEMEvent into the
 // wire shape. Stream message ID becomes the item ID so consumers have a
@@ -446,6 +492,11 @@ func toAuditEventResponseItem(id string, ev *audit.SIEMEvent) auditEventResponse
 	for k, v := range ev.Extra {
 		extra[k] = v
 	}
+	// Humanized attribution is derived from the audit package's deterministic,
+	// secret-scrubbed helpers (HumanSummary/ActorLabel/AgentLabel/ResourceLabel/
+	// Pivots) plus a hard-coded set of allowlisted Extra descriptor keys read by
+	// explicit name — never wholesale Extra iteration — per the redaction rail.
+	pivots := audit.Pivots(*ev)
 	return auditEventResponseItem{
 		ID:            id,
 		Seq:           ev.Seq,
@@ -468,6 +519,20 @@ func toAuditEventResponseItem(id string, ev *audit.SIEMEvent) auditEventResponse
 		Extra:         extra,
 		EventHash:     ev.EventHash,
 		PrevHash:      ev.PrevHash,
+
+		HumanSummary:  audit.HumanSummary(*ev),
+		ActorLabel:    audit.ActorLabel(*ev),
+		AgentLabel:    audit.AgentLabel(*ev),
+		ResourceLabel: audit.ResourceLabel(*ev),
+		Category:      audit.CategoryFor(ev.EventType),
+		AgentProduct:  ev.Extra["agent_product"],
+		SessionID:     pivots.SessionID,
+		ExecutionID:   pivots.ExecutionID,
+		ResourceID:    pivots.ResourceID,
+		InputPreview:  audit.BoundedPreview(ev.Extra["input_preview"], auditPreviewMaxLen),
+		OutputPreview: audit.BoundedPreview(ev.Extra["output_preview"], auditPreviewMaxLen),
+		TraceID:       ev.Extra["trace_id"],
+		ArtifactID:    ev.Extra["artifact_id"],
 	}
 }
 
@@ -519,6 +584,12 @@ func emitAuditReadMetaEvent(
 	}
 	if filters.category != "" {
 		extra["filter_category"] = filters.category
+	}
+	if filters.agentID != "" {
+		extra["filter_agent_id"] = filters.agentID
+	}
+	if filters.agent != "" {
+		extra["filter_agent"] = filters.agent
 	}
 	if filters.hasFrom {
 		extra["filter_from"] = filters.from.Format(time.RFC3339)
