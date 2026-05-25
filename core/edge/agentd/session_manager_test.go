@@ -10,6 +10,40 @@ import (
 	edgecore "github.com/cordum/cordum/core/edge"
 )
 
+// TestGatherLocalMetadata_DisplayLabelsFromEnv covers the task-c8d4b056 agentd
+// supply path: explicit operator display labels are read from env (with the
+// CORDUM_AGENT_NAME fallback), sanitized locally, and propagate into the
+// CreateSessionRequest body. No Claude token/auth files are consulted.
+func TestGatherLocalMetadata_DisplayLabelsFromEnv(t *testing.T) {
+	meta := GatherLocalMetadata(LocalMetadataOptions{
+		Env: map[string]string{
+			"CORDUM_EDGE_AGENT_NAME":             "  Billing  Bot  ",
+			"CORDUM_EDGE_PRINCIPAL_DISPLAY_NAME": "Alice\tOps",
+		},
+		CWD: "/tmp",
+	})
+	if meta.AgentName != "Billing Bot" {
+		t.Errorf("AgentName = %q, want sanitized %q", meta.AgentName, "Billing Bot")
+	}
+	if meta.PrincipalDisplayName != "Alice Ops" {
+		t.Errorf("PrincipalDisplayName = %q, want %q", meta.PrincipalDisplayName, "Alice Ops")
+	}
+
+	// CORDUM_AGENT_NAME is the fallback when the edge-specific var is unset.
+	fallback := GatherLocalMetadata(LocalMetadataOptions{
+		Env: map[string]string{"CORDUM_AGENT_NAME": "Codex"},
+		CWD: "/tmp",
+	})
+	if fallback.AgentName != "Codex" {
+		t.Errorf("fallback AgentName = %q, want %q", fallback.AgentName, "Codex")
+	}
+
+	req := createSessionRequestFromMetadata(meta, edgecore.PolicyModeObserve)
+	if req.AgentName != "Billing Bot" || req.PrincipalDisplayName != "Alice Ops" {
+		t.Errorf("request labels = %q / %q, want propagated", req.AgentName, req.PrincipalDisplayName)
+	}
+}
+
 func TestSessionManagerCreateSessionTimeoutDegradesOutsideEnterpriseStrict(t *testing.T) {
 	t.Parallel()
 
