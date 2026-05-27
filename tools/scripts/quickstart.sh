@@ -591,7 +591,7 @@ if [[ "${BANNER_AUTH_LC}" == "true" || "${BANNER_AUTH_LC}" == "1" || "${BANNER_A
     # Operator-supplied secret — mask it. It came from CORDUM_ADMIN_PASSWORD
     # (shell env or .env) and is NOT necessarily persisted to .env, so point
     # back at the source the operator set rather than promising it's in .env.
-    CREDS_SUMMARY="${CORDUM_ADMIN_USERNAME:-admin} / ${ADMIN_PASSWORD:0:8}... (the value you set in CORDUM_ADMIN_PASSWORD)"
+    CREDS_SUMMARY="${CORDUM_ADMIN_USERNAME:-admin} / •••••••• (the value you set in CORDUM_ADMIN_PASSWORD)"
   fi
 else
   CREDS_SUMMARY="use your CORDUM_API_KEY (see .env)"
