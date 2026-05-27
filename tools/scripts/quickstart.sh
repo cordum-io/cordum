@@ -588,8 +588,10 @@ if [[ "${BANNER_AUTH_LC}" == "true" || "${BANNER_AUTH_LC}" == "1" || "${BANNER_A
     # Known dev default — safe to show in full so first login is frictionless.
     CREDS_SUMMARY="${CORDUM_ADMIN_USERNAME:-admin} / ${ADMIN_PASSWORD}  (default — CHANGE before prod)"
   else
-    # Operator-supplied secret — mask it; the full value lives in .env.
-    CREDS_SUMMARY="${CORDUM_ADMIN_USERNAME:-admin} / ${ADMIN_PASSWORD:0:8}... (full value in .env)"
+    # Operator-supplied secret — mask it. It came from CORDUM_ADMIN_PASSWORD
+    # (shell env or .env) and is NOT necessarily persisted to .env, so point
+    # back at the source the operator set rather than promising it's in .env.
+    CREDS_SUMMARY="${CORDUM_ADMIN_USERNAME:-admin} / ${ADMIN_PASSWORD:0:8}... (the value you set in CORDUM_ADMIN_PASSWORD)"
   fi
 else
   CREDS_SUMMARY="use your CORDUM_API_KEY (see .env)"
