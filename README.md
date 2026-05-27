@@ -326,7 +326,7 @@ curl -sS --cacert ./certs/ca/ca.crt \
   -X POST https://localhost:8081/api/v1/jobs \
   -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
   -H "Content-Type: application/json" \
-  -d '{"topic":"job.default","context":{"prompt":"hello"}}'
+  -d '{"topic":"job.default","prompt":"hello"}'
 
 # Stop the stack
 docker compose down
