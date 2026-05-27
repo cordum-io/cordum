@@ -62,6 +62,15 @@ gen_hex() {
   fi
 }
 
+# --- Default dashboard admin password ---
+# Seeded by the login bootstrap below when CORDUM_ADMIN_PASSWORD is unset. Must
+# satisfy the gateway policy (>=12 chars, with an uppercase letter, a digit, and
+# a special character — see core/controlplane/gateway/auth.ValidatePassword).
+# This is a well-known DEV default for frictionless first login — CHANGE it
+# before exposing the stack beyond localhost. Override via the environment with
+# CORDUM_DEFAULT_ADMIN_PASSWORD.
+DEFAULT_ADMIN_PASSWORD="${CORDUM_DEFAULT_ADMIN_PASSWORD:-ChangeMe123!}"
+
 # --- Pre-flight checks ---
 require docker
 require curl
@@ -449,7 +458,34 @@ ORG_ID=${CORDUM_ORG_ID:-${CORDUM_TENANT_ID:-default}}
 TENANT_ID=${CORDUM_TENANT_ID:-${ORG_ID}}
 COMPOSE_FILES=${CORDUM_COMPOSE_FILES:-docker-compose.yml}
 ALLOW_ENTERPRISE=${CORDUM_ALLOW_ENTERPRISE:-0}
+# Dashboard login bootstrap — enable password auth by default and seed a known
+# default, policy-compliant admin password (>=12 chars, with an uppercase
+# letter, a digit, and a special character) when none is supplied, so the
+# dashboard is loginable out of the box. Explicit env / .env values always win;
+# the default is persisted to .env. CHANGE it before exposing the stack.
+if [[ -z "${CORDUM_USER_AUTH_ENABLED:-}" ]]; then
+  export CORDUM_USER_AUTH_ENABLED=true
+  persist_env_var CORDUM_USER_AUTH_ENABLED true
+  mark_env_source CORDUM_USER_AUTH_ENABLED "auto-generated" ".env"
+fi
 AUTH_ENABLED=${CORDUM_USER_AUTH_ENABLED:-false}
+AUTH_FLAG_LC="$(printf '%s' "${AUTH_ENABLED}" | tr '[:upper:]' '[:lower:]')"
+if [[ "${AUTH_FLAG_LC}" == "true" || "${AUTH_FLAG_LC}" == "1" || "${AUTH_FLAG_LC}" == "yes" ]]; then
+  if [[ -z "${CORDUM_ADMIN_USERNAME:-}" ]]; then
+    export CORDUM_ADMIN_USERNAME=admin
+    persist_env_var CORDUM_ADMIN_USERNAME admin
+  fi
+  if [[ -z "${CORDUM_ADMIN_EMAIL:-}" ]]; then
+    export CORDUM_ADMIN_EMAIL=admin@cordum.local
+    persist_env_var CORDUM_ADMIN_EMAIL admin@cordum.local
+  fi
+  if [[ -z "${CORDUM_ADMIN_PASSWORD:-}" ]]; then
+    export CORDUM_ADMIN_PASSWORD="${DEFAULT_ADMIN_PASSWORD}"
+    persist_env_var CORDUM_ADMIN_PASSWORD "${CORDUM_ADMIN_PASSWORD}"
+    mark_env_source CORDUM_ADMIN_PASSWORD "default" ".env"
+    log "CORDUM_ADMIN_PASSWORD: set to the default dev password (CHANGE before exposing publicly); persisted to .env"
+  fi
+fi
 ADMIN_PASSWORD=${CORDUM_ADMIN_PASSWORD:-}
 ADMIN_EMAIL=${CORDUM_ADMIN_EMAIL:-}
 export COMPOSE_HTTP_TIMEOUT=${COMPOSE_HTTP_TIMEOUT:-1800}
@@ -543,6 +579,24 @@ else
   log "warning: config endpoint returned ${config_status} — settings page may show empty state"
 fi
 
+# Credential summary for the banner — show the admin login when password auth
+# is enabled (password masked; the full value lives in .env), otherwise point
+# operators at the API key.
+BANNER_AUTH_LC="$(printf '%s' "${AUTH_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')"
+if [[ "${BANNER_AUTH_LC}" == "true" || "${BANNER_AUTH_LC}" == "1" || "${BANNER_AUTH_LC}" == "yes" ]]; then
+  if [[ "${ADMIN_PASSWORD}" == "${DEFAULT_ADMIN_PASSWORD}" ]]; then
+    # Known dev default — safe to show in full so first login is frictionless.
+    CREDS_SUMMARY="${CORDUM_ADMIN_USERNAME:-admin} / ${ADMIN_PASSWORD}  (default — CHANGE before prod)"
+  else
+    # Operator-supplied secret — mask it. It came from CORDUM_ADMIN_PASSWORD
+    # (shell env or .env) and is NOT necessarily persisted to .env, so point
+    # back at the source the operator set rather than promising it's in .env.
+    CREDS_SUMMARY="${CORDUM_ADMIN_USERNAME:-admin} / •••••••• (the value you set in CORDUM_ADMIN_PASSWORD)"
+  fi
+else
+  CREDS_SUMMARY="use your CORDUM_API_KEY (see .env)"
+fi
+
 echo ""
 echo "  ┌─────────────────────────────────────────────────────────┐"
 echo "  │  Cordum is running!                                     │"
@@ -551,8 +605,8 @@ echo "  │  Dashboard:      http://localhost:8082                  │"
 echo "  │  API Gateway:    ${API_BASE}                            │"
 echo "  │  API Key:        ${API_KEY:0:8}... (see .env)           │"
 echo "  ├─────────────────────────────────────────────────────────┤"
-echo "  │  Login:          admin / admin123                       │"
-echo "  │  (change via CORDUM_ADMIN_PASSWORD in .env)             │"
+echo "  │  Login:          ${CREDS_SUMMARY}"
+echo "  │  (auto-generated — rotate before exposing publicly)     │"
 echo "  ├─────────────────────────────────────────────────────────┤"
 echo "  │  Ports:                                                 │"
 echo "  │    8082  Dashboard                                      │"
