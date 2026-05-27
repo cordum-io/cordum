@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useConfigStore } from "@/state/config";
+import { useAuthConfig } from "@/hooks/useAuthConfig";
 import { Button } from "@/components/ui/Button";
 import type { User } from "@/api/types";
 import { toast } from "sonner";
@@ -246,12 +247,20 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const login = useConfigStore((s) => s.login);
+  const configuredApiBase = useConfigStore((s) => s.apiBaseUrl);
+  const { data: authConfig } = useAuthConfig();
   const returnUrl = isSafeReturnUrl(searchParams.get("returnUrl"));
   const [authMode, setAuthMode] = useState<AuthMode>("api_key");
   const [showModeSelector, setShowModeSelector] = useState(false);
+  // Default-tab resolution runs once when auth-config arrives; tracked so a
+  // user's later manual tab choice is never overridden by a refetch.
+  const [defaultModeApplied, setDefaultModeApplied] = useState(false);
 
-  // API Key fields
-  const [apiUrl, setApiUrl] = useState("");
+  // API Key fields. Pre-fill the endpoint with the runtime-configured base
+  // (from public/config.json) when present, otherwise the relative `/api/v1`
+  // nginx-proxy default — so a fresh install shows a working value instead of
+  // a blank box. isSafeApiUrl() still treats empty as the same default.
+  const [apiUrl, setApiUrl] = useState(configuredApiBase || "/api/v1");
   const [apiKey, setApiKey] = useState("");
 
   // Password fields
@@ -298,6 +307,20 @@ export default function LoginPage() {
     showErrorToast(message);
     window.history.replaceState(null, "", window.location.pathname + window.location.search);
   }, []);
+
+  // Pick the most useful default tab once the gateway's auth-config loads:
+  // when password auth is enabled (the common self-hosted setup), open the
+  // Password tab with `admin` pre-filled so the documented default login is
+  // one field away. SSO-only or API-key-only deployments keep the API Key
+  // default. Applied once; manual tab switches afterward are preserved.
+  useEffect(() => {
+    if (defaultModeApplied || !authConfig) return;
+    if (authConfig.password_enabled) {
+      setAuthMode("password");
+      setUsername((current) => current || "admin");
+    }
+    setDefaultModeApplied(true);
+  }, [authConfig, defaultModeApplied]);
 
   const handleApiKeyLogin = async () => {
     if (!apiKey.trim()) {

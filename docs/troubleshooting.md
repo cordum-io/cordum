@@ -92,10 +92,23 @@ go test -count=3 ./core/...
 
 **Symptoms**: Dashboard login page rejects credentials.
 
-**Fix**: Default credentials are `admin` / `admin123`. These are set via `CORDUM_ADMIN_USERNAME` and `CORDUM_ADMIN_PASSWORD` in `.env`. If you changed the password and forgot it, update `.env` and restart:
+**Fix**: The admin user is `CORDUM_ADMIN_USERNAME` (default `admin`) with the
+password in `CORDUM_ADMIN_PASSWORD` — quickstart auto-generates a compliant one
+and prints it (it's also in `.env`). Two common causes of login failure:
+
+1. **User auth is disabled.** Password login only works when
+   `CORDUM_USER_AUTH_ENABLED=true`. The published-images path (`docker compose
+   up -d` without quickstart) defaults it to `false` — sign in with your
+   `CORDUM_API_KEY` instead, or enable it.
+2. **The password violates the policy**, so the gateway silently failed to seed
+   the admin (look for `seed admin user failed` in `docker compose logs
+   api-gateway`). Policy: **≥ 12 characters, with at least one uppercase letter,
+   one digit, and one special character.** `admin123` does NOT satisfy it.
+
+To set/rotate the password, edit `.env` and restart:
 
 ```bash
-# Edit .env: set CORDUM_ADMIN_PASSWORD=your-new-password
+# Edit .env: set a compliant CORDUM_ADMIN_PASSWORD (>=12 chars, upper+digit+special)
 docker compose restart api-gateway
 ```
 

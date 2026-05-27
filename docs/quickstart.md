@@ -49,9 +49,11 @@ That's it. The script:
 | NATS | localhost:4222 |
 | Redis (TLS) | localhost:6379 |
 
-**Dashboard login:** `admin / admin123`. Change it before exposing the
-stack to anything beyond localhost by setting `CORDUM_ADMIN_PASSWORD`
-in `.env`.
+**Dashboard login:** user `admin`, default password `ChangeMe123!` (also in
+`.env` as `CORDUM_ADMIN_PASSWORD`). Rotate it before exposing the stack beyond
+localhost by setting a new `CORDUM_ADMIN_PASSWORD` in `.env` (policy: ≥12
+chars, with an uppercase letter, a digit, and a special character) and
+restarting the gateway.
 
 **API key:** in `.env` as `CORDUM_API_KEY`. Attach to every request:
 
