@@ -115,8 +115,8 @@ func TestHumanSummary_RepresentativeRows(t *testing.T) {
 			if got == "" {
 				t.Fatalf("HumanSummary returned empty for %s", tc.name)
 			}
-			if len(got) > maxSummaryLen {
-				t.Fatalf("summary exceeds bound %d: %d chars: %q", maxSummaryLen, len(got), got)
+			if n := utf8.RuneCountInString(got); n > maxSummaryLen {
+				t.Fatalf("summary exceeds bound %d: %d runes: %q", maxSummaryLen, n, got)
 			}
 			low := strings.ToLower(got)
 			for _, want := range tc.mustContain {

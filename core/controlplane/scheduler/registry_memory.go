@@ -64,14 +64,18 @@ func (r *MemoryRegistry) AgentName(workerID string) string {
 	}
 	r.mu.RLock()
 	entry, ok := r.workers[workerID]
-	r.mu.RUnlock()
 	if !ok || entry == nil {
+		r.mu.RUnlock()
 		return ""
 	}
+	// Read the worker fields while still holding the read lock — they are
+	// mutated under the write lock in UpdateHeartbeat/handshake paths, so
+	// reading them after RUnlock is a data race.
 	name := entry.hb.GetAgentName()
 	if name == "" {
 		name = entry.handshake.GetAgentName()
 	}
+	r.mu.RUnlock()
 	return model.SanitizeAgentName(name)
 }
 

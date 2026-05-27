@@ -146,9 +146,9 @@ func HumanSummary(ev SIEMEvent) string {
 	actor := ActorLabel(ev)
 	agent := AgentLabel(ev)
 	resource := ResourceLabel(ev)
-	tool := allowedExtra(ev, "tool_name")
+	tool := safeSummaryField(allowedExtra(ev, "tool_name"), maxLabelLen)
 	action := safeSummaryField(ev.Action, maxLabelLen)
-	decision := strings.TrimSpace(ev.Decision)
+	decision := safeSummaryField(ev.Decision, maxLabelLen)
 
 	// Edge/agent activity reads better led by the agent; control-plane/auth
 	// activity by the human actor.
