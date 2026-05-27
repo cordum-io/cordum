@@ -34,7 +34,11 @@ func (s *stubCopilotSessionStore) GetSession(_ context.Context, sessionID, userI
 func TestHandleGetCopilotSession_HappyPathAggregatesSessionJobsAndDecisions(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	s.auth = governanceAuth{}
-	now := time.Date(2026, time.April, 26, 8, 0, 0, 0, time.UTC)
+	// Wall-clock, not a fixed date: AppendDecision prunes decision-log entries
+	// older than the 30-day retention window on insert (decision_log_store.go),
+	// so a hardcoded past timestamp silently ages out and the query returns
+	// nothing once the test runs >30 days later.
+	now := time.Now().UTC()
 	store := &stubCopilotSessionStore{
 		session: &copilot.CopilotSession{
 			ID:        "sess-abc123",
@@ -291,7 +295,11 @@ func TestHandleGetCopilotSession_JobsReadOnlyRoleSeesNoDecisions(t *testing.T) {
 		t.Fatalf("PutRole() error = %v", err)
 	}
 
-	now := time.Date(2026, time.April, 26, 8, 0, 0, 0, time.UTC)
+	// Wall-clock, not a fixed date: AppendDecision prunes decision-log entries
+	// older than the 30-day retention window on insert (decision_log_store.go),
+	// so a hardcoded past timestamp silently ages out and the query returns
+	// nothing once the test runs >30 days later.
+	now := time.Now().UTC()
 	s.copilotStore = &stubCopilotSessionStore{
 		session: &copilot.CopilotSession{
 			ID:        "sess-rbac",
@@ -376,7 +384,11 @@ func TestHandleGetCopilotSession_GovernanceReadRoleSeesDecisions(t *testing.T) {
 		t.Fatalf("PutRole() error = %v", err)
 	}
 
-	now := time.Date(2026, time.April, 26, 8, 0, 0, 0, time.UTC)
+	// Wall-clock, not a fixed date: AppendDecision prunes decision-log entries
+	// older than the 30-day retention window on insert (decision_log_store.go),
+	// so a hardcoded past timestamp silently ages out and the query returns
+	// nothing once the test runs >30 days later.
+	now := time.Now().UTC()
 	s.copilotStore = &stubCopilotSessionStore{
 		session: &copilot.CopilotSession{
 			ID:        "sess-rbac-pos",
