@@ -65,8 +65,18 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Install GnuPG
-        run: sudo apt-get update && sudo apt-get install -y gnupg
+      - name: Ensure GnuPG
+        # gnupg is preinstalled on ubuntu-latest, so this is normally a no-op.
+        # When it isn't, retry the apt mirror — `apt-get update` against
+        # azure.archive.ubuntu.com has hung the job past timeout when the
+        # mirror is unreachable (e.g. cancelled run 26538443323 on #301).
+        run: |
+          if command -v gpg >/dev/null 2>&1; then
+            echo "gpg already on PATH ($(gpg --version | head -n1)); skipping apt"
+            exit 0
+          fi
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y gnupg
       - name: make release-local
         run: make release-local
       - name: install_test.sh — tamper + unsigned synthetics must FAIL install
