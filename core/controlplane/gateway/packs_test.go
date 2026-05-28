@@ -596,3 +596,97 @@ func buildTarGz(t *testing.T, files map[string]string) []byte {
 	}
 	return buf.Bytes()
 }
+
+// TestHandleInstallPack_RejectsMalformedPolicyFragment is the regression for
+// issue #311 — pack install would previously persist a policy fragment that
+// the safety-kernel later rejects on reload, leaving operators with a
+// "successful" install whose rules are silently ignored at evaluation time.
+// The install handler now validates fragments against the same schema the
+// kernel uses, before persisting.
+func TestHandleInstallPack_RejectsMalformedPolicyFragment(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	if err := s.configSvc.Set(context.Background(), &configsvc.Document{
+		Scope:   configsvc.ScopeSystem,
+		ScopeID: "default",
+		Data:    map[string]any{"pools": map[string]any{}},
+	}); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+
+	// Fragment puts `keywords` in rules[].match — valid under input_rules[]
+	// only (schema rejects this). The classic "wrong rule-type" mistake the
+	// install handler must now catch.
+	files := map[string]string{
+		"pack.yaml": `
+apiVersion: cordum.io/v1alpha1
+kind: Pack
+metadata:
+  id: malformed-pack
+  version: 0.1.0
+  title: Malformed Pack
+compatibility:
+  protocolVersion: 1
+topics:
+  - name: job.malformed-pack.do
+overlays:
+  policy:
+    - name: safety
+      strategy: bundle_fragment
+      path: overlays/policy.fragment.yaml
+`,
+		"overlays/policy.fragment.yaml": `
+rules:
+  - id: malformed-keywords-in-rules
+    match:
+      topics:
+        - "job.malformed-pack.do"
+      keywords:
+        - "refund"
+    decision: require_approval
+    reason: ""
+`,
+	}
+	bundle := buildTarGz(t, files)
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("bundle", "malformed-pack.tgz")
+	if err != nil {
+		t.Fatalf("form file: %v", err)
+	}
+	if _, err := part.Write(bundle); err != nil {
+		t.Fatalf("write bundle: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/packs/install", &body)
+	req.Header.Set("X-Tenant-ID", "default")
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rr := httptest.NewRecorder()
+	s.handleInstallPack(rr, req)
+
+	// The bug, pre-fix: install reports 200 ACTIVE, kernel silently rejects.
+	// The fix: install rejects with 400 and the operator-visible reason names
+	// the offending field.
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for malformed policy fragment, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	body400 := rr.Body.String()
+	if !strings.Contains(body400, "keywords") {
+		t.Errorf("400 body should name the offending field 'keywords', got: %s", body400)
+	}
+	if !strings.Contains(body400, "policy.fragment.yaml") {
+		t.Errorf("400 body should name the offending fragment file, got: %s", body400)
+	}
+
+	// Belt-and-braces: nothing from the malformed pack should be persisted.
+	ctx := context.Background()
+	if doc, err := s.configSvc.Get(ctx, "system", "policy"); err == nil && doc != nil {
+		bundles, _ := doc.Data["bundles"].(map[string]any)
+		if _, leaked := bundles["malformed-pack/safety"]; leaked {
+			t.Errorf("malformed fragment must not be persisted after install rejection")
+		}
+	}
+}
