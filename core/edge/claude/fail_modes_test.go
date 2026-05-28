@@ -189,3 +189,129 @@ func TestRunEnforceAllowsNonDegradedRecordedResponses(t *testing.T) {
 		t.Errorf("RECORDED without degraded should be a no-op pass-through; got: %s", stdout)
 	}
 }
+
+// =====================================================================
+// Regression for the deeper enforce-mode gap end-to-end testing on
+// 2026-05-29 uncovered: when agentd was unreachable (Post EOF — agentd
+// took longer than the hook's postBudget waiting for an approval that
+// never came), the hook fell into handleAgentdError. failClosed(opts)
+// returned false because it only matched enterprise-strict, not enforce.
+// localDevEnforce(opts) returned false because mode was "enforce", not
+// "local-dev-enforce". So the hook hit the catch-all "return 0" with 0
+// bytes of stdout — a silent allow on every risky tool call in enforce
+// mode whenever agentd was briefly slow.
+//
+// The fix wires enforce into the same fail-closed-on-risky branch
+// local-dev-enforce already used, AND extends riskyPreToolUse to cover
+// the file-mutation tools (Write / Edit / MultiEdit / NotebookEdit) that
+// the demo policy pack's require-approval-for-edits rule was already
+// trying to gate.
+// =====================================================================
+
+func TestRunEnforceModeDeniesWritePreToolUseWhenAgentdUnavailable(t *testing.T) {
+	agentd := &fakeAgentdClient{fn: func(context.Context, AgentdRequest) (AgentdDecision, error) {
+		return AgentdDecision{}, errors.New("agentd connection refused")
+	}}
+	code, stdout, _ := runHook(t, RunOptions{
+		Args:   []string{"claude", "pre-tool-use"},
+		Stdin:  hookInput(`{"hook_event_name":"PreToolUse","tool_name":"Write","tool_input":{"file_path":"/tmp/x","content":"hi"}}`),
+		Agentd: agentd,
+		Env:    map[string]string{"CORDUM_EDGE_MODE": "enforce"},
+	})
+	if code != 0 {
+		t.Fatalf("exit code=%d", code)
+	}
+	if stdout == "" {
+		t.Fatal("enforce mode + Write + agentd unavailable must NOT silently allow")
+	}
+	if !strings.Contains(stdout, `"permissionDecision":"deny"`) {
+		t.Errorf("expected deny output; got: %s", stdout)
+	}
+	if !strings.Contains(stdout, "blocking risky action") {
+		t.Errorf("Write is a file-mutation tool and must be classified risky; got: %s", stdout)
+	}
+}
+
+func TestRunEnforceModeDeniesEditPreToolUseWhenAgentdUnavailable(t *testing.T) {
+	agentd := &fakeAgentdClient{fn: func(context.Context, AgentdRequest) (AgentdDecision, error) {
+		return AgentdDecision{}, errors.New("agentd stopped")
+	}}
+	_, stdout, _ := runHook(t, RunOptions{
+		Args:   []string{"claude", "pre-tool-use"},
+		Stdin:  hookInput(`{"hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"/tmp/x","old_string":"a","new_string":"b"}}`),
+		Agentd: agentd,
+		Env:    map[string]string{"CORDUM_EDGE_POLICY_MODE": "enforce"},
+	})
+	if !strings.Contains(stdout, `"permissionDecision":"deny"`) || !strings.Contains(stdout, "risky action") {
+		t.Errorf("Edit under enforce + agentd-down must deny + classify risky; got: %s", stdout)
+	}
+}
+
+func TestRunEnforceModeDeniesMultiEditPreToolUseWhenAgentdUnavailable(t *testing.T) {
+	agentd := &fakeAgentdClient{fn: func(context.Context, AgentdRequest) (AgentdDecision, error) {
+		return AgentdDecision{}, errors.New("agentd stopped")
+	}}
+	_, stdout, _ := runHook(t, RunOptions{
+		Args:   []string{"claude", "pre-tool-use"},
+		Stdin:  hookInput(`{"hook_event_name":"PreToolUse","tool_name":"MultiEdit","tool_input":{"file_path":"/tmp/x"}}`),
+		Agentd: agentd,
+		Env:    map[string]string{"CORDUM_EDGE_MODE": "enforce"},
+	})
+	if !strings.Contains(stdout, `"permissionDecision":"deny"`) {
+		t.Errorf("MultiEdit must be denied under enforce + agentd-down; got: %s", stdout)
+	}
+}
+
+func TestRunEnforceModeDeniesNotebookEditPreToolUseWhenAgentdUnavailable(t *testing.T) {
+	agentd := &fakeAgentdClient{fn: func(context.Context, AgentdRequest) (AgentdDecision, error) {
+		return AgentdDecision{}, errors.New("agentd stopped")
+	}}
+	_, stdout, _ := runHook(t, RunOptions{
+		Args:   []string{"claude", "pre-tool-use"},
+		Stdin:  hookInput(`{"hook_event_name":"PreToolUse","tool_name":"NotebookEdit","tool_input":{"notebook_path":"/tmp/n.ipynb"}}`),
+		Agentd: agentd,
+		Env:    map[string]string{"CORDUM_EDGE_MODE": "enforce"},
+	})
+	if !strings.Contains(stdout, `"permissionDecision":"deny"`) {
+		t.Errorf("NotebookEdit must be denied under enforce + agentd-down; got: %s", stdout)
+	}
+}
+
+func TestRunObserveModeAllowsWritePreToolUseWhenAgentdUnavailable(t *testing.T) {
+	// Belt-and-braces: observe mode must NOT be wrapped into the new
+	// enforce branch — operators who chose observability-only deployments
+	// rely on it never synthesizing a deny.
+	agentd := &fakeAgentdClient{fn: func(context.Context, AgentdRequest) (AgentdDecision, error) {
+		return AgentdDecision{}, errors.New("agentd connection refused")
+	}}
+	code, stdout, _ := runHook(t, RunOptions{
+		Args:   []string{"claude", "pre-tool-use"},
+		Stdin:  hookInput(`{"hook_event_name":"PreToolUse","tool_name":"Write","tool_input":{"file_path":"/tmp/x","content":"hi"}}`),
+		Agentd: agentd,
+		Env:    map[string]string{"CORDUM_EDGE_MODE": "observe"},
+	})
+	if code != 0 {
+		t.Fatalf("exit code=%d", code)
+	}
+	if stdout != "" {
+		t.Errorf("observe mode must continue passing through degraded; got: %s", stdout)
+	}
+}
+
+func TestRunEnforceModeDeniesUnclassifiedPreToolUseWhenAgentdUnavailable(t *testing.T) {
+	// Tool name unknown to riskyPreToolUse (not Bash, not in
+	// fileMutationTools) — must still deny under enforce because we
+	// can't classify, and enforce "degrades closed for unknown actions".
+	agentd := &fakeAgentdClient{fn: func(context.Context, AgentdRequest) (AgentdDecision, error) {
+		return AgentdDecision{}, errors.New("agentd unavailable")
+	}}
+	_, stdout, _ := runHook(t, RunOptions{
+		Args:   []string{"claude", "pre-tool-use"},
+		Stdin:  hookInput(`{"hook_event_name":"PreToolUse","tool_name":"FutureExperimentalTool","tool_input":{"x":"y"}}`),
+		Agentd: agentd,
+		Env:    map[string]string{"CORDUM_EDGE_MODE": "enforce"},
+	})
+	if !strings.Contains(stdout, `"permissionDecision":"deny"`) {
+		t.Errorf("unknown tool under enforce + agentd-down must deny; got: %s", stdout)
+	}
+}

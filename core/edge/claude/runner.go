@@ -157,10 +157,24 @@ func handleAgentdError(stderr, stdout io.Writer, input HookInput, req AgentdRequ
 		recordHookObservability(opts, req, DecisionDeny, code, true, true, startedAt)
 		return 0
 	}
-	if localDevEnforce(opts) && input.HookEventName == "PreToolUse" {
-		localReason := "Cordum Edge local enforcer unavailable; blocking unclassified action"
+	// enforce + local-dev-enforce both degrade-CLOSED for risky / unknown
+	// PreToolUse actions. cordumctl edge doctor documents this contract
+	// ("enforce degrades closed for risky/unknown actions"), but until this
+	// fix only local-dev-enforce was wired up — `enforce` silently fell
+	// through to the catch-all `return 0` below (0 bytes of stdout, exit 0
+	// = Claude proceeds). End-to-end traces caught Write going through in
+	// policy_mode=enforce when agentd was unreachable (post EOF).
+	if (localDevEnforce(opts) || enforceMode(opts)) && input.HookEventName == "PreToolUse" {
+		// Preserve the "local enforcer" wording for local-dev-enforce so
+		// downstream monitors matching on the exact string keep firing;
+		// production enforce gets the unqualified phrasing.
+		enforcerLabel := "Cordum Edge enforcer"
+		if localDevEnforce(opts) {
+			enforcerLabel = "Cordum Edge local enforcer"
+		}
+		localReason := enforcerLabel + " unavailable; blocking unclassified action"
 		if riskyPreToolUse(input) {
-			localReason = "Cordum Edge local enforcer unavailable; blocking risky action"
+			localReason = enforcerLabel + " unavailable; blocking risky action"
 		}
 		out := failClosedOutput(input.HookEventName, localReason)
 		if werr := writeJSON(stdout, out); werr != nil {
@@ -285,9 +299,52 @@ func localDevEnforce(opts RunOptions) bool {
 	return mode == "local-dev-enforce" || mode == "local-dev enforce"
 }
 
+// enforceMode reports whether the active policy mode is "enforce" — the
+// production-shape mode where risky / unknown PreToolUse actions must
+// fail closed when agentd is unreachable. Distinct from failClosed
+// (which is the strictest enterprise-strict deny-everything-on-degraded)
+// and from localDevEnforce (which targets the dev workstation
+// explicitly). Reads both CORDUM_EDGE_POLICY_MODE and CORDUM_EDGE_MODE
+// because the launcher sets both (launcher_metadata.go); a downstream
+// wrapper that drops one of them shouldn't silently downgrade the
+// fail-mode posture.
+func enforceMode(opts RunOptions) bool {
+	if mode := strings.ToLower(strings.TrimSpace(envValue(opts.Env, "CORDUM_EDGE_POLICY_MODE"))); mode == "enforce" {
+		return true
+	}
+	return strings.EqualFold(envValue(opts.Env, "CORDUM_EDGE_MODE"), "enforce")
+}
+
+// fileMutationTools is the static set of Claude Code tools whose contract
+// includes writing or deleting on the operator's filesystem. Each of
+// these is risky-by-default for PreToolUse fail-closed gating — the
+// safety-kernel rules in cordum-edge-pack treat them as file.write
+// capability and the demo's claude-code.require-approval-for-edits rule
+// gates exactly this set. Kept as a map for O(1) lookup; case matters
+// because Claude Code tool names are PascalCase.
+var fileMutationTools = map[string]struct{}{
+	"Write":        {},
+	"Edit":         {},
+	"MultiEdit":    {},
+	"NotebookEdit": {},
+}
+
 func riskyPreToolUse(input HookInput) bool {
+	// Tool-less or unknown invocation — fail closed to surface the gap.
+	if input.ToolName == "" {
+		return true
+	}
+	// File-mutation tools are always risky for PreToolUse: their contract
+	// is "modify the filesystem". Previously this function only flagged
+	// Bash + destructive shell, which let Write / Edit / MultiEdit /
+	// NotebookEdit slip through enforcer-unavailable paths even though
+	// the demo policy pack's require-approval-for-edits rule clearly
+	// intends to gate them.
+	if _, ok := fileMutationTools[input.ToolName]; ok {
+		return true
+	}
 	if !strings.EqualFold(input.ToolName, "Bash") {
-		return input.ToolName == ""
+		return false
 	}
 	raw, ok := input.ToolInput["command"]
 	if !ok {
