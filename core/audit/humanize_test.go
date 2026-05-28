@@ -125,7 +125,9 @@ func TestHumanSummary_RepresentativeRows(t *testing.T) {
 				}
 			}
 			for _, bad := range tc.mustReject {
-				if strings.Contains(got, bad) {
+				// Case-insensitive: a case-flipped leak ("BEARER xxx") must
+				// still trip this gate. `low` is got lowercased above.
+				if strings.Contains(low, strings.ToLower(bad)) {
 					t.Errorf("summary %q leaked forbidden %q", got, bad)
 				}
 			}
