@@ -11,6 +11,7 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Worker } from "@/api/types";
+import { renderWithProviders } from "@/test-utils/render";
 import AgentIdentityCreateForm from "./AgentIdentityCreateForm";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -90,6 +91,20 @@ beforeEach(() => {
 /* ------------------------------------------------------------------ */
 
 describe("AgentIdentityCreateForm", () => {
+  // Accessibility gate for this new customer-visible surface: zero WCAG 2
+  // A/AA violations. Uses the shared renderWithProviders + runAxe per the
+  // dashboard testing guidelines (CodeRabbit #314 review).
+  it("has no WCAG 2 A/AA violations", async () => {
+    await renderWithProviders(
+      <AgentIdentityCreateForm
+        agentId="support-triage-bot"
+        heartbeat={makeHeartbeat()}
+        defaultOwner="alice"
+      />,
+      { runAxe: true },
+    );
+  });
+
   it("pre-fills name and pool from the worker heartbeat", () => {
     const { container, cleanup } = render(
       <AgentIdentityCreateForm
