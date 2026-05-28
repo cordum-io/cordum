@@ -107,6 +107,22 @@ func TestDispatcher_DirectSubjectStillUsesJobTopic(t *testing.T) {
 				}
 			},
 		},
+		{
+			// Third typed handler — covers the gap CodeRabbit flagged on #315:
+			// the regression case had `upper` and `add` but not `tag`, leaving
+			// one of the three typed handlers unverified for the direct-subject
+			// path that this whole example exists to teach.
+			name:  "tag-via-direct",
+			topic: topicTag,
+			in:    tagIn{Items: []string{"a"}, Tag: "p"},
+			assert: func(t *testing.T, raw json.RawMessage) {
+				var out tagOut
+				_ = json.Unmarshal(raw, &out)
+				if len(out.Tagged) != 1 || out.Tagged[0] != "p:a" {
+					t.Errorf("got %v, want [p:a]", out.Tagged)
+				}
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
