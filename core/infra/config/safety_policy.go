@@ -583,7 +583,7 @@ func ParseSafetyPolicy(data []byte) (*SafetyPolicy, error) {
 		return nil, nil
 	}
 	if err := validateConfigSchema("safety policy", safetyPolicySchemaFile, data); err != nil {
-		return nil, err
+		return nil, enrichSafetyPolicyValidationError(err)
 	}
 	var policy SafetyPolicy
 	if err := yaml.Unmarshal(data, &policy); err != nil {
