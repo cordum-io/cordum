@@ -24,6 +24,7 @@ import (
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
+	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/locks"
 	wf "github.com/cordum/cordum/core/workflow"
@@ -926,6 +927,21 @@ func (s *server) applyPolicyOverlay(ctx context.Context, overlay packs.PackPolic
 	if err != nil {
 		return packs.AppliedPolicyChange{}, err
 	}
+
+	// Pre-flight: validate the fragment against the SAME schema the safety
+	// kernel uses. Without this, a malformed fragment is happily persisted
+	// here, the install reports ACTIVE, and the kernel later silently rejects
+	// it on reload — leaving the operator with `policy/rules` returning the
+	// rules but every job hitting `default policy: deny`. See issue #311.
+	//
+	// ParseSafetyPolicy enforces the schema; for the "wrong rule-type" case
+	// (e.g., keywords in rules[].match) it also returns the enriched
+	// "did you mean: input_rules[].match" hint from issue #312.
+	if _, err := config.ParseSafetyPolicy(content); err != nil {
+		return packs.AppliedPolicyChange{}, fmt.Errorf(
+			"policy overlay %q (fragment file %q): %w", overlay.Name, overlay.Path, err)
+	}
+
 	fragmentID := policyFragmentID(packID, overlay.Name)
 	doc, err := getConfigDoc(ctx, s.configSvc, packs.PolicyConfigScope, packs.PolicyConfigID)
 	if err != nil {
