@@ -315,3 +315,89 @@ func TestRunEnforceModeDeniesUnclassifiedPreToolUseWhenAgentdUnavailable(t *test
 		t.Errorf("unknown tool under enforce + agentd-down must deny; got: %s", stdout)
 	}
 }
+
+// CodeRabbit on #319 caught that the observability recording fired
+// BEFORE the degraded+enforce synthesis path, so a fail-closed PreToolUse
+// showed up in metrics as the original (non-deny) decision and with
+// degraded/failClosed flags both false. This regression asserts that the
+// recorder now sees DecisionDeny + degraded=true + failClosed=true with
+// the canonical "degraded_policy_enforced" reason code, matching the
+// hook's actual emitted output.
+func TestRunEnforceDegradedRecordsDenyObservability(t *testing.T) {
+	agentd := &fakeAgentdClient{fn: func(context.Context, AgentdRequest) (AgentdDecision, error) {
+		return AgentdDecision{
+			Decision: Decision("recorded"),
+			Reason:   "evaluation pending",
+			Degraded: true,
+		}, nil
+	}}
+	recorder := &hookRecordingRecorder{}
+	code, stdout, _ := runHook(t, RunOptions{
+		Args:     []string{"claude", "pre-tool-use"},
+		Stdin:    hookInput(`{"hook_event_name":"PreToolUse","tool_name":"Write","tool_input":{"file_path":"/tmp/x","content":"hi"}}`),
+		Agentd:   agentd,
+		Recorder: recorder,
+		Env:      map[string]string{"CORDUM_EDGE_POLICY_MODE": "enforce"},
+	})
+	if code != 0 {
+		t.Fatalf("exit=%d", code)
+	}
+	if !strings.Contains(stdout, `"permissionDecision":"deny"`) {
+		t.Fatalf("expected deny output; got: %s", stdout)
+	}
+	// 1. RecordActionDecision must reflect the SYNTHESIZED deny, not the
+	//    original RECORDED decision.
+	if len(recorder.actionDecisions) != 1 {
+		t.Fatalf("want 1 RecordActionDecision call, got %d: %#v", len(recorder.actionDecisions), recorder.actionDecisions)
+	}
+	if got := recorder.actionDecisions[0].decision; got != string(DecisionDeny) {
+		t.Errorf("RecordActionDecision.decision = %q, want %q (synthesized deny)", got, DecisionDeny)
+	}
+	if got := recorder.actionDecisions[0].mode; got != "enforce" {
+		t.Errorf("RecordActionDecision.mode = %q, want %q", got, "enforce")
+	}
+	// 2. RecordActionDenied must fire — old code never reached this
+	//    branch because effectiveDecision was the original RECORDED.
+	if len(recorder.actionDenied) != 1 {
+		t.Fatalf("want 1 RecordActionDenied call, got %d: %#v", len(recorder.actionDenied), recorder.actionDenied)
+	}
+	if got := recorder.actionDenied[0].reason; got != "degraded_policy_enforced" {
+		t.Errorf("RecordActionDenied.reason = %q, want %q", got, "degraded_policy_enforced")
+	}
+	// 3. RecordDegraded must fire with the canonical reason code so
+	//    operators can query degraded_policy_enforced specifically.
+	if len(recorder.degraded) != 1 {
+		t.Fatalf("want 1 RecordDegraded call, got %d", len(recorder.degraded))
+	}
+	if got := recorder.degraded[0].reason; got != "degraded_policy_enforced" {
+		t.Errorf("RecordDegraded.reason = %q, want %q", got, "degraded_policy_enforced")
+	}
+	// 4. RecordFailClosed must fire — the hook truly fail-closed.
+	if len(recorder.failClosed) != 1 {
+		t.Fatalf("want 1 RecordFailClosed call, got %d", len(recorder.failClosed))
+	}
+}
+
+// Symmetric guard: observe mode keeps reporting the raw decision and does
+// NOT flip degraded / failClosed flags. Without this, future refactors of
+// the synthesis branch could silently start emitting fail-closed metrics
+// for observe deployments, hurting the audit story for opt-in tiers.
+func TestRunObserveDegradedKeepsRawObservability(t *testing.T) {
+	agentd := &fakeAgentdClient{fn: func(context.Context, AgentdRequest) (AgentdDecision, error) {
+		return AgentdDecision{Decision: Decision("recorded"), Degraded: true}, nil
+	}}
+	recorder := &hookRecordingRecorder{}
+	_, _, _ = runHook(t, RunOptions{
+		Args:     []string{"claude", "pre-tool-use"},
+		Stdin:    hookInput(`{"hook_event_name":"PreToolUse","tool_name":"Write","tool_input":{"file_path":"/tmp/x","content":"hi"}}`),
+		Agentd:   agentd,
+		Recorder: recorder,
+		Env:      map[string]string{"CORDUM_EDGE_MODE": "observe"},
+	})
+	if len(recorder.actionDecisions) != 1 || recorder.actionDecisions[0].decision != "recorded" {
+		t.Errorf("observe mode must keep the raw decision; got: %#v", recorder.actionDecisions)
+	}
+	if len(recorder.failClosed) != 0 {
+		t.Errorf("observe mode must not record fail-closed; got %d calls", len(recorder.failClosed))
+	}
+}
