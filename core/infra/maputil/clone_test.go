@@ -127,6 +127,49 @@ func TestDeepCloneAnyMap_PreservesIntType(t *testing.T) {
 	}
 }
 
+func TestDeepCloneAnyMap_StringSliceIsolated(t *testing.T) {
+	orig := map[string]any{"tags": []string{"a", "b"}}
+	got := DeepCloneAnyMap(orig)
+
+	gotSlice, ok := got["tags"].([]string)
+	if !ok || len(gotSlice) != 2 {
+		t.Fatalf("expected []string of len 2, got %T %v", got["tags"], got["tags"])
+	}
+	gotSlice[0] = "changed"
+	if orig["tags"].([]string)[0] != "a" {
+		t.Fatal("[]string mutation leaked to original")
+	}
+}
+
+func TestDeepCloneAnyMap_MapAnyAnyIsolated(t *testing.T) {
+	inner := map[any]any{"nested": true}
+	orig := map[string]any{"yaml": inner}
+	got := DeepCloneAnyMap(orig)
+
+	gotInner, ok := got["yaml"].(map[any]any)
+	if !ok {
+		t.Fatalf("expected map[any]any, got %T", got["yaml"])
+	}
+	gotInner["nested"] = false
+	if inner["nested"] != true {
+		t.Fatal("map[any]any mutation leaked to original")
+	}
+}
+
+func TestDeepCloneAnyMap_MapSliceIsolated(t *testing.T) {
+	orig := map[string]any{"items": []map[string]any{{"k": 1}}}
+	got := DeepCloneAnyMap(orig)
+
+	gotSlice, ok := got["items"].([]map[string]any)
+	if !ok || len(gotSlice) != 1 {
+		t.Fatalf("expected []map[string]any len 1, got %T %v", got["items"], got["items"])
+	}
+	gotSlice[0]["k"] = 999
+	if orig["items"].([]map[string]any)[0]["k"] != 1 {
+		t.Fatal("[]map[string]any mutation leaked to original")
+	}
+}
+
 func TestDeepCloneAnyMap_SliceCloned(t *testing.T) {
 	orig := map[string]any{
 		"tags": []any{"a", "b", map[string]any{"nested": true}},
