@@ -941,7 +941,18 @@ func preToolUseHookOutput(decision string, resp EdgeDecisionResponse) ClaudeHook
 		hsop.UpdatedInput = resp.UpdatedInput
 		hsop.AdditionalContext = resp.AdditionalContext
 	}
-	return ClaudeHookOutput{HookSpecificOutput: hsop}
+	out := ClaudeHookOutput{HookSpecificOutput: hsop}
+	// Mirror the top-level `decision: "block"` that every other hook event
+	// mapper in this file emits for deny outcomes (userPromptSubmitHookOutput
+	// line ~953, postToolUseHookOutput, configChangeHookOutput). Without
+	// the outer field, Claude Code v2.1.x treats the deny as a soft ask
+	// and proceeds with the tool call in non-interactive (`claude -p`)
+	// mode. PreToolUse was the only path that omitted the mirror.
+	if hsop.PermissionDecision == "deny" {
+		out.Decision = "block"
+		out.Reason = hsop.PermissionDecisionReason
+	}
+	return out
 }
 
 func userPromptSubmitHookOutput(decision string, resp EdgeDecisionResponse) ClaudeHookOutput {

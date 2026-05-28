@@ -54,13 +54,30 @@ func preToolUseOutput(d AgentdDecision) ClaudeHookOutput {
 	default:
 		return ClaudeHookOutput{}
 	}
-	return ClaudeHookOutput{HookSpecificOutput: &HookSpecificOutput{
+	out := ClaudeHookOutput{HookSpecificOutput: &HookSpecificOutput{
 		HookEventName:            "PreToolUse",
 		PermissionDecision:       permission,
 		PermissionDecisionReason: reason,
 		UpdatedInput:             redactHookBoundaryMap(d.UpdatedInput),
 		AdditionalContext:        d.AdditionalContext,
 	}}
+	// Also set the top-level `decision: "block"` mirror that every other
+	// hook output function in this file already does for deny/require_approval
+	// (see userPromptSubmitOutput, postToolUseOutput, configChangeOutput).
+	// End-to-end Edge testing on 2026-05-28 showed that Claude Code v2.1.x
+	// will silently proceed with the tool call when only the inner
+	// permissionDecision is set — it treats that as a soft ask, which in
+	// non-interactive `-p` mode is effectively allow. Setting BOTH fields
+	// is the canonical "hard block" shape Claude Code respects across
+	// interactive and headless invocations. PreToolUse was the odd one
+	// out; this brings it in line with the rest of the hook events.
+	if permission == string(DecisionDeny) {
+		out.Decision = "block"
+		if out.Reason == "" {
+			out.Reason = reason
+		}
+	}
+	return out
 }
 
 func userPromptSubmitOutput(d AgentdDecision) ClaudeHookOutput {

@@ -27,7 +27,7 @@ func TestMapEdgeDecisionToHookOutputPreToolUseDeny(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MapEdgeDecisionToHookOutput: %v", err)
 	}
-	assertCompactJSON(t, marshalOutput(t, out), `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Reading .env is blocked by Cordum policy"}}`)
+	assertCompactJSON(t, marshalOutput(t, out), `{"decision":"block","reason":"Reading .env is blocked by Cordum policy","hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Reading .env is blocked by Cordum policy"}}`)
 }
 
 func TestMapEdgeDecisionToHookOutputPreToolUseRequireApprovalIsImmediateDenyWithApprovalRef(t *testing.T) {
@@ -39,7 +39,7 @@ func TestMapEdgeDecisionToHookOutputPreToolUseRequireApprovalIsImmediateDenyWith
 	if err != nil {
 		t.Fatalf("MapEdgeDecisionToHookOutput: %v", err)
 	}
-	assertCompactJSON(t, marshalOutput(t, out), `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Editing production deployment files requires approval; approval_ref=edge_appr_01J7QY; approve then retry the tool call"}}`)
+	assertCompactJSON(t, marshalOutput(t, out), `{"decision":"block","reason":"Editing production deployment files requires approval; approval_ref=edge_appr_01J7QY; approve then retry the tool call","hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Editing production deployment files requires approval; approval_ref=edge_appr_01J7QY; approve then retry the tool call"}}`)
 }
 
 func TestMapEdgeDecisionToHookOutputPreToolUseThrottleIsDenyWithReason(t *testing.T) {

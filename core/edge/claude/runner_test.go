@@ -185,7 +185,7 @@ func TestRunRecordsHookObservabilityForFailClosedAgentdOutage(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr=%q", code, stderr)
 	}
-	assertCompactJSON(t, stdout, `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Cordum Edge unavailable; blocking by fail-closed policy"}}`)
+	assertCompactJSON(t, stdout, `{"decision":"block","reason":"Cordum Edge unavailable; blocking by fail-closed policy","hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Cordum Edge unavailable; blocking by fail-closed policy"}}`)
 	assertNoSyntheticSecrets(t, stdout+stderr)
 	if len(recorder.actionDecisions) != 1 || recorder.actionDecisions[0].decision != "deny" || recorder.actionDecisions[0].kind != "hook.pre_tool_use" {
 		t.Fatalf("action decision calls = %#v, want deny hook.pre_tool_use", recorder.actionDecisions)
@@ -245,7 +245,7 @@ func TestRunPreToolUseDenyWritesDenyReasonForClaude(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr=%q", code, stderr)
 	}
-	assertCompactJSON(t, stdout, `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Cordum policy denied rm -rf"}}`)
+	assertCompactJSON(t, stdout, `{"decision":"block","reason":"Cordum policy denied rm -rf","hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Cordum policy denied rm -rf"}}`)
 	if strings.Contains(stderr, "rm -rf") {
 		t.Fatalf("stderr leaked raw command: %q", stderr)
 	}
@@ -392,7 +392,7 @@ func TestRunStrictModeDeniesWhenAgentdUnavailable(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr=%q", code, stderr)
 	}
-	assertCompactJSON(t, stdout, `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Cordum Edge unavailable; blocking by fail-closed policy"}}`)
+	assertCompactJSON(t, stdout, `{"decision":"block","reason":"Cordum Edge unavailable; blocking by fail-closed policy","hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Cordum Edge unavailable; blocking by fail-closed policy"}}`)
 	if !strings.Contains(stderr, "agentd_unavailable") {
 		t.Fatalf("stderr missing stable outage code: %q", stderr)
 	}
@@ -420,7 +420,7 @@ func TestRunStrictModeDeniesWhenAgentdTimesOut(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr=%q", code, stderr)
 	}
-	assertCompactJSON(t, stdout, `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Cordum Edge timeout; blocking by fail-closed policy"}}`)
+	assertCompactJSON(t, stdout, `{"decision":"block","reason":"Cordum Edge timeout; blocking by fail-closed policy","hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Cordum Edge timeout; blocking by fail-closed policy"}}`)
 	if !strings.Contains(stderr, "agentd_timeout") {
 		t.Fatalf("stderr missing timeout code: %q", stderr)
 	}
@@ -473,7 +473,7 @@ func TestSlowAgentdDoesNotConsumeResponseWriteReserve(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr=%q", code, stderr)
 	}
-	assertCompactJSON(t, stdout, `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Cordum Edge timeout; blocking by fail-closed policy"}}`)
+	assertCompactJSON(t, stdout, `{"decision":"block","reason":"Cordum Edge timeout; blocking by fail-closed policy","hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Cordum Edge timeout; blocking by fail-closed policy"}}`)
 	if !strings.Contains(stderr, "agentd_timeout") {
 		t.Fatalf("stderr missing timeout code: %q", stderr)
 	}
