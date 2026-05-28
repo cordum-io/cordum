@@ -12,7 +12,9 @@ import (
 // and definitions.inputMatch). The schema is the source of truth; if you
 // add or remove a field there, update the corresponding set below and the
 // TestEnrichSafetyPolicyValidationError_FieldSetsMatchSchema test that
-// guards against drift.
+// guards against drift (it walks the schema bidirectionally so a NEW
+// exclusive field added to the schema without a hint-set update will
+// also fire the test, not just a removed one).
 var (
 	policyMatchOnlyFields = map[string]struct{}{
 		"pack_ids":                   {},
@@ -20,6 +22,7 @@ var (
 		"actor_types":                {},
 		"agent_risk_tiers":           {},
 		"agent_data_classifications": {},
+		"labels":                     {},
 		"label_allowlist":            {},
 		"label_threshold":            {},
 		"secrets_present":            {},
@@ -40,9 +43,32 @@ var (
 	}
 )
 
-// Compiled once; matches messages emitted by jsonschema/v5 of the form
-// `additionalProperties 'X' not allowed`. We capture the field name to
-// look up which rule type it actually belongs on.
+// causeRegex extracts (section, field) pairs PER REJECTION from a
+// jsonschema/v5 validation error. The library emits each cause with its own
+// schema location prefix like:
+//
+//	... inmemory://safety-policy#/properties/rules/items/$ref/properties/match/...:
+//	    additionalProperties 'keywords' not allowed
+//	... inmemory://safety-policy#/properties/input_rules/items/$ref/properties/match/...:
+//	    additionalProperties 'delegation' not allowed
+//
+// Matching the (section, field) tuple greedily-but-locally lets us emit
+// distinct hints per cause — previously a single error containing both
+// sections fell back to "ambiguous" and dropped every hint (CodeRabbit
+// finding on #316).
+//
+// `[^']*?` is lazy so we stop at the FIRST closing quote of `'X'`, which is
+// the offending field name. `[^/']*?` between the section and the field
+// keeps the match local to one rejection (no `/` allowed, so a cross-cause
+// match can't slip through).
+var causeRegex = regexp.MustCompile(
+	`/properties/(rules|input_rules)/items/\$ref/properties/match[^']*?additionalProperties '([^']+)' not allowed`,
+)
+
+// additionalPropsRegex is a fallback for rejections that DON'T sit under
+// rules[].match or input_rules[].match (e.g. an unknown top-level key).
+// We use it only to detect "is there any schema rejection at all?" and pass
+// the error through unchanged when no rule-match cause matched.
 var additionalPropsRegex = regexp.MustCompile(`additionalProperties '([^']+)' not allowed`)
 
 // enrichSafetyPolicyValidationError wraps a schema validation failure with a
@@ -63,38 +89,40 @@ func enrichSafetyPolicyValidationError(err error) error {
 		return nil
 	}
 	msg := err.Error()
-	matches := additionalPropsRegex.FindAllStringSubmatch(msg, -1)
-	if len(matches) == 0 {
+
+	// Per-cause (section, field) extraction. Each match is one rejection,
+	// scoped to a single rules[] or input_rules[] match-clause path. This
+	// is the right granularity — when one error has rejections in BOTH
+	// sections, we now suggest both, instead of dropping all hints because
+	// the global path was ambiguous (CodeRabbit major finding on #316).
+	pairs := causeRegex.FindAllStringSubmatch(msg, -1)
+	if len(pairs) == 0 {
 		return err
 	}
 
-	// Collect unique suggestions across all rejections in this error (the
-	// jsonschema library aggregates multiple causes into one error tree).
 	seenSuggestions := map[string]struct{}{}
-	suggestions := make([]string, 0, len(matches))
-	for _, m := range matches {
-		field := m[1]
-		path := pathContextFor(msg, field)
-		// Field used in rules[].match but is input-only → suggest input_rules.
-		if path == "rules" {
+	suggestions := make([]string, 0, len(pairs))
+	for _, p := range pairs {
+		section, field := p[1], p[2]
+		var hint string
+		switch section {
+		case "rules":
 			if _, ok := inputMatchOnlyFields[field]; ok {
-				s := fmt.Sprintf("'%s' is valid under input_rules[].match (content inspection); see docs/policy/global-authority.md", field)
-				if _, dup := seenSuggestions[s]; !dup {
-					seenSuggestions[s] = struct{}{}
-					suggestions = append(suggestions, s)
-				}
+				hint = fmt.Sprintf("'%s' is valid under input_rules[].match (content inspection); see docs/policy/global-authority.md", field)
 			}
-		}
-		// Field used in input_rules[].match but is policy-only → suggest rules.
-		if path == "input_rules" {
+		case "input_rules":
 			if _, ok := policyMatchOnlyFields[field]; ok {
-				s := fmt.Sprintf("'%s' is valid under rules[].match (dispatch); see docs/policy/global-authority.md", field)
-				if _, dup := seenSuggestions[s]; !dup {
-					seenSuggestions[s] = struct{}{}
-					suggestions = append(suggestions, s)
-				}
+				hint = fmt.Sprintf("'%s' is valid under rules[].match (dispatch); see docs/policy/global-authority.md", field)
 			}
 		}
+		if hint == "" {
+			continue
+		}
+		if _, dup := seenSuggestions[hint]; dup {
+			continue
+		}
+		seenSuggestions[hint] = struct{}{}
+		suggestions = append(suggestions, hint)
 	}
 
 	if len(suggestions) == 0 {
@@ -106,48 +134,6 @@ func enrichSafetyPolicyValidationError(err error) error {
 		hint += "; " + s
 	}
 	return fmt.Errorf("%w (%s)", err, hint)
-}
-
-// pathContextFor returns "rules" or "input_rules" if the substring around
-// the rejected field name in the jsonschema error indicates one of those
-// sections. Returns "" for any other context (so we don't fire incorrect
-// hints on unrelated additionalProperties rejections elsewhere in the schema).
-//
-// The jsonschema/v5 error embeds the schema location like:
-//
-//	/properties/rules/items/$ref/properties/match/$ref/additionalProperties
-//	/properties/input_rules/items/$ref/properties/match/$ref/additionalProperties
-//
-// We probe for `/properties/rules/items` and `/properties/input_rules/items`
-// against the WHOLE message rather than trying to align with the specific
-// instance location for the matched field — multiple causes in a single
-// error often share one schema location, so a global probe is robust.
-func pathContextFor(msg, _ string) string {
-	const ruleHint = "/properties/rules/items"
-	const inputHint = "/properties/input_rules/items"
-	hasRules := containsLiteral(msg, ruleHint)
-	hasInput := containsLiteral(msg, inputHint)
-	switch {
-	case hasInput && !hasRules:
-		return "input_rules"
-	case hasRules && !hasInput:
-		return "rules"
-	default:
-		// Ambiguous (both present, or neither). Don't risk a wrong hint.
-		return ""
-	}
-}
-
-// containsLiteral is a tiny strings.Contains shim so this file does not pull
-// in the strings package just for one call (avoids an import collision in
-// tests). Inlined for clarity.
-func containsLiteral(haystack, needle string) bool {
-	for i := 0; i+len(needle) <= len(haystack); i++ {
-		if haystack[i:i+len(needle)] == needle {
-			return true
-		}
-	}
-	return false
 }
 
 // Sentinel so callers can errors.Is the inner ValidationError if they want

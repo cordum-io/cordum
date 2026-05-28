@@ -127,10 +127,15 @@ func TestEnrichSafetyPolicyValidationError_NilIsNil(t *testing.T) {
 	}
 }
 
-// Drift guard: every field in policyMatchOnlyFields and inputMatchOnlyFields
-// must still be (a) defined in the schema, and (b) NOT in the OTHER side's
-// allowlist. If anyone adds a field to the schema and forgets to update the
-// sets here, this test fires and points at exactly which one drifted.
+// Drift guard: every field in policyMatchOnlyFields / inputMatchOnlyFields
+// must still be (a) defined in the schema and (b) NOT in the OTHER side's
+// definition. AND — bidirectionally — every field that's actually exclusive
+// to one match definition in the schema must appear in the corresponding
+// hint set. The CodeRabbit major finding on #316 pointed out the one-way
+// check above silently passes if someone adds a NEW exclusive field to the
+// schema and forgets the hint set; the bidirectional check below catches
+// that case too. Either drift direction fires this test with a precise
+// pointer at the field that diverged.
 func TestEnrichSafetyPolicyValidationError_FieldSetsMatchSchema(t *testing.T) {
 	schemaBytes, err := configSchemaFS.ReadFile(safetyPolicySchemaFile)
 	if err != nil {
@@ -147,6 +152,9 @@ func TestEnrichSafetyPolicyValidationError_FieldSetsMatchSchema(t *testing.T) {
 	policyMatch := matchProperties(t, defs, "policyMatch")
 	inputMatch := matchProperties(t, defs, "inputMatch")
 
+	// Direction 1 — every entry in our hint sets must be a real schema
+	// field AND must not also appear in the OTHER definition (otherwise
+	// it isn't exclusive, and the hint would mislead).
 	for field := range policyMatchOnlyFields {
 		if _, ok := policyMatch[field]; !ok {
 			t.Errorf("policyMatchOnlyFields lists %q but the schema's policyMatch does not", field)
@@ -163,6 +171,71 @@ func TestEnrichSafetyPolicyValidationError_FieldSetsMatchSchema(t *testing.T) {
 			t.Errorf("inputMatchOnlyFields lists %q but it's ALSO in policyMatch — it isn't exclusive", field)
 		}
 	}
+
+	// Direction 2 — walk the SCHEMA. Every field that's exclusive to one
+	// definition must appear in the matching hint set; otherwise the hint
+	// won't fire when a user puts it in the wrong section. This catches
+	// the case where the schema gains a new exclusive field but the hint
+	// sets are left behind.
+	for field := range policyMatch {
+		if _, alsoInInput := inputMatch[field]; alsoInInput {
+			continue // shared field; no exclusive hint applies
+		}
+		if _, listed := policyMatchOnlyFields[field]; !listed {
+			t.Errorf(
+				"schema field %q is exclusive to policyMatch but missing from policyMatchOnlyFields — "+
+					"hint won't fire if a user puts it in input_rules[].match", field)
+		}
+	}
+	for field := range inputMatch {
+		if _, alsoInPolicy := policyMatch[field]; alsoInPolicy {
+			continue
+		}
+		if _, listed := inputMatchOnlyFields[field]; !listed {
+			t.Errorf(
+				"schema field %q is exclusive to inputMatch but missing from inputMatchOnlyFields — "+
+					"hint won't fire if a user puts it in rules[].match", field)
+		}
+	}
+}
+
+// Regression for the second CodeRabbit major finding on #316. The previous
+// global "is /properties/rules/items AND /properties/input_rules/items in
+// the message?" check returned "" (ambiguous) when one validation error
+// contained rejections in BOTH sections — dropping every otherwise-valid
+// hint. The per-cause regex now emits one hint per rejection independently.
+func TestEnrichSafetyPolicyValidationError_BothSectionsInOneError(t *testing.T) {
+	// Build a single multi-cause error string by hand. The shape mirrors
+	// what jsonschema/v5 actually produces — each cause gets its own
+	// schema location prefix and an `additionalProperties 'X' not allowed`
+	// trailer.
+	combined := errors.New(
+		"validate safety policy config: schema validation failed: jsonschema: '/' does not validate with " +
+			"inmemory://safety-policy: " +
+			// cause 1 — content-inspection field in rules[].match
+			"jsonschema: '/rules/0/match' does not validate with inmemory://safety-policy#/properties/rules/items/$ref/properties/match/$ref/additionalProperties: additionalProperties 'keywords' not allowed; " +
+			// cause 2 — dispatch-only field in input_rules[].match
+			"jsonschema: '/input_rules/0/match' does not validate with inmemory://safety-policy#/properties/input_rules/items/$ref/properties/match/$ref/additionalProperties: additionalProperties 'delegation' not allowed",
+	)
+	enriched := enrichSafetyPolicyValidationError(combined)
+	msg := enriched.Error()
+	// Both hints must appear — previously the global path check returned
+	// "ambiguous" and the user got zero suggestions.
+	if !contains(msg, "'keywords' is valid under input_rules[].match") {
+		t.Errorf("expected input_rules hint for keywords; got: %s", msg)
+	}
+	if !contains(msg, "'delegation' is valid under rules[].match") {
+		t.Errorf("expected rules hint for delegation; got: %s", msg)
+	}
+}
+
+func contains(haystack, needle string) bool {
+	for i := 0; i+len(needle) <= len(haystack); i++ {
+		if haystack[i:i+len(needle)] == needle {
+			return true
+		}
+	}
+	return false
 }
 
 func matchProperties(t *testing.T, defs map[string]any, name string) map[string]any {
