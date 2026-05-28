@@ -337,6 +337,8 @@ export function useEventStream(): void {
   const queryClient = useQueryClient();
   const apiKey = useConfigStore((s) => s.apiKey);
   const apiBaseUrl = useConfigStore((s) => s.apiBaseUrl);
+  const authMode = useConfigStore((s) => s.authMode);
+  const isAuthenticated = useConfigStore((s) => s.isAuthenticated);
   const wsRef = useRef<WebSocket | null>(null);
   const backoffRef = useRef(MIN_BACKOFF_MS);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -346,7 +348,16 @@ export function useEventStream(): void {
   useEffect(() => {
     unmountedRef.current = false;
 
-    if (!apiKey) return;
+    // Connect when authenticated by EITHER credential mode:
+    //   - apikey mode  → auth via WS subprotocol `cordum-api-key.<base64(key)>`
+    //   - session mode → no subprotocol; the browser sends the httpOnly
+    //                    `cordum_session` cookie automatically, and the
+    //                    gateway's standard auth middleware
+    //                    (handlers_stream.go: auth.FromRequest) accepts it.
+    // Previously this gated on `apiKey` alone, so password-logged-in users
+    // never connected and the status badge stayed stuck on "disconnected".
+    if (!isAuthenticated) return;
+    if (authMode === "apikey" && !apiKey) return;
 
     const { setStatus, addEvent, pushSafetyDecision } =
       useEventStore.getState();
@@ -354,15 +365,23 @@ export function useEventStream(): void {
     function connect() {
       if (unmountedRef.current) return;
 
-      // Auth via subprotocol — send identifier and credential as separate list
-      // entries so the server echoes only "cordum-api-key" (never the key itself).
-      const encoded = btoa(apiKey).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-
       setStatus("connecting");
       const url = wsUrl(apiBaseUrl);
-      logger.info("ws", "Connecting", { url });
+      logger.info("ws", "Connecting", { url, authMode });
 
-      const ws = new WebSocket(url, ["cordum-api-key", encoded]);
+      let ws: WebSocket;
+      if (authMode === "apikey" && apiKey) {
+        // Auth via subprotocol — send identifier and credential as separate list
+        // entries so the server echoes only "cordum-api-key" (never the key itself).
+        const encoded = btoa(apiKey)
+          .replace(/\+/g, "-")
+          .replace(/\//g, "_")
+          .replace(/=+$/, "");
+        ws = new WebSocket(url, ["cordum-api-key", encoded]);
+      } else {
+        // Session mode: cookie carries auth; no subprotocol.
+        ws = new WebSocket(url);
+      }
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -506,6 +525,7 @@ export function useEventStream(): void {
       }
       useEventStore.getState().setStatus("disconnected");
     };
-    // Re-connect when apiKey changes (login/logout)
-  }, [apiKey, apiBaseUrl, queryClient]);
+    // Re-connect when auth state changes (login/logout) or when the API key
+    // is set/cleared (embedded-config path can flip apikey mode at runtime).
+  }, [apiKey, apiBaseUrl, authMode, isAuthenticated, queryClient]);
 }
