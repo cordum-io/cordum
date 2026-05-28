@@ -48,11 +48,25 @@ const { hookState } = vi.hoisted(() => ({
 /* Mocks                                                               */
 /* ------------------------------------------------------------------ */
 
-vi.mock("@/hooks/useAgentIdentities", () => ({
-  useAgentIdentities: () => hookState.identities,
-  useAgentIdentity: () => hookState.identity,
-  useAgentStats: () => hookState.stats,
-}));
+vi.mock("@/hooks/useAgentIdentities", async () => {
+  const actual = await vi.importActual<typeof import("@/hooks/useAgentIdentities")>(
+    "@/hooks/useAgentIdentities",
+  );
+  return {
+    ...actual,
+    useAgentIdentities: () => hookState.identities,
+    useAgentIdentity: () => hookState.identity,
+    useAgentStats: () => hookState.stats,
+    // useCreateAgentIdentity (added for issue #314 empty-state CTA) is mocked
+    // as a no-op success so the form can render without a real network call.
+    useCreateAgentIdentity: () => ({
+      mutate: vi.fn(),
+      isPending: false,
+      isError: false,
+      error: null,
+    }),
+  };
+});
 
 vi.mock("@/hooks/useLicense", () => ({
   useLicense: () => hookState.license,
@@ -61,6 +75,16 @@ vi.mock("@/hooks/useLicense", () => ({
 
 vi.mock("@/hooks/useWorkers", () => ({
   useWorkers: () => ({ data: [], isLoading: false }),
+  // useWorker is the heartbeat fetch the AgentIdentityPanel uses to pre-fill
+  // the empty-state create form (issue #314). Default to undefined so the
+  // panel falls back to deterministic prettify(agent_id) for the name.
+  useWorker: () => ({ data: undefined, isLoading: false }),
+  useWorkerJobs: () => ({ data: [], isLoading: false }),
+}));
+
+vi.mock("@/state/config", () => ({
+  useConfigStore: (selector: (s: { principalId: string }) => unknown) =>
+    selector({ principalId: "test-operator" }),
 }));
 
 vi.mock("@/components/agents/WorkerDetailDrawer", () => ({
@@ -382,7 +406,12 @@ describe("AgentIdentityPanel rendered", () => {
     }
   });
 
-  it("renders EmptyState (not ErrorBanner) when useAgentIdentity returns 404", () => {
+  it("renders EmptyState with create-identity CTA (not ErrorBanner) when useAgentIdentity returns 404", () => {
+    // Issue #314 — previously this rendered a text-only placeholder pointing
+    // operators at the catalog / CLI. It now renders an actionable empty
+    // state with a "Create identity" button that pre-fills from the
+    // worker's heartbeat (the form pops inline on click; not asserted here
+    // — its behavior is covered by a focused test below).
     hookState.identity = {
       data: undefined,
       isLoading: false,
@@ -391,8 +420,14 @@ describe("AgentIdentityPanel rendered", () => {
     };
     const { container, cleanup } = renderIdentityPanel();
     try {
-      expect(container.textContent).toContain("No identity profile");
-      expect(container.textContent).toContain("cordumctl agents identity create");
+      expect(container.textContent).toContain("No identity registered for this agent");
+      // Must explain the operational consequence (raw agent_id in audit).
+      expect(container.textContent).toContain("agent_id");
+      // Must offer the in-place CTA.
+      const cta = container.querySelector('[data-testid="agent-identity-create-button"]');
+      expect(cta).not.toBeNull();
+      expect(cta?.textContent).toContain("Create identity");
+      // Must NOT degrade into the generic error banner.
       expect(container.textContent).not.toContain("Failed to load agent identity");
     } finally {
       cleanup();
