@@ -57,19 +57,15 @@ var (
 // sections fell back to "ambiguous" and dropped every hint (CodeRabbit
 // finding on #316).
 //
-// `[^']*?` is lazy so we stop at the FIRST closing quote of `'X'`, which is
-// the offending field name. `[^/']*?` between the section and the field
-// keeps the match local to one rejection (no `/` allowed, so a cross-cause
-// match can't slip through).
+// The gap `[^']*?` is lazy, so each match pairs a rule-match path with the
+// FIRST `additionalProperties 'X'` that follows it — that rejection's own
+// offending field. `/` is intentionally allowed in the gap because the
+// rejection path itself contains `/additionalProperties` before the message;
+// it's the laziness (not a `/` exclusion) that scopes each match to one
+// cause. `([^']+)` then captures the field name up to its closing quote.
 var causeRegex = regexp.MustCompile(
 	`/properties/(rules|input_rules)/items/\$ref/properties/match[^']*?additionalProperties '([^']+)' not allowed`,
 )
-
-// additionalPropsRegex is a fallback for rejections that DON'T sit under
-// rules[].match or input_rules[].match (e.g. an unknown top-level key).
-// We use it only to detect "is there any schema rejection at all?" and pass
-// the error through unchanged when no rule-match cause matched.
-var additionalPropsRegex = regexp.MustCompile(`additionalProperties '([^']+)' not allowed`)
 
 // enrichSafetyPolicyValidationError wraps a schema validation failure with a
 // "did you mean..." hint when the offending property is valid on the SIBLING
