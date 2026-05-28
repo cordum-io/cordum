@@ -13,6 +13,12 @@ export interface CreateAgentIdentityBody {
   name: string;
   owner: string;
   risk_tier: string;
+  /**
+   * The worker/agent id this identity represents. When set, the server links
+   * worker_id -> identity so audit + the detail panel resolve the new record
+   * by the worker's id (GitHub issue #314). Omitted for catalog-only creates.
+   */
+  agent_id?: string;
   description?: string;
   team?: string;
   allowed_topics?: string[];
@@ -76,17 +82,22 @@ export function useAgentStats(id: string | undefined) {
  * worker so its audit rows surface `agent_label` instead of falling back
  * to the raw `agent_id` (GitHub issue #314).
  *
- * On success, invalidates the per-id `agent-identity` query so the panel
- * re-fetches and renders the populated identity; also invalidates the
- * list so the /agents catalog reflects the new record.
+ * On success, invalidates the whole `agent-identity` query family so the
+ * panel re-fetches and renders the populated identity. We invalidate the
+ * family (not just `["agent-identity", created.id]`) because the server
+ * assigns the identity its own id while the panel is keyed by the worker's
+ * id — the two differ, so a key-specific invalidation would miss the panel
+ * (the worker->identity link is what makes the panel's worker-id lookup
+ * resolve, see #314). Also invalidates the list so the /agents catalog
+ * reflects the new record.
  */
 export function useCreateAgentIdentity() {
   const qc = useQueryClient();
   return useMutation<AgentIdentity, Error, CreateAgentIdentityBody>({
     mutationFn: (body) => post<AgentIdentity>("/agents", body),
-    onSuccess: (created) => {
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["agent-identities"] });
-      qc.invalidateQueries({ queryKey: ["agent-identity", created.id] });
+      qc.invalidateQueries({ queryKey: ["agent-identity"] });
     },
   });
 }

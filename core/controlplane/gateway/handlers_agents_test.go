@@ -77,6 +77,78 @@ func TestCreateAgent(t *testing.T) {
 	}
 }
 
+// TestCreateAgent_LinksWorkerForHeartbeatRegistration covers the #314 flow:
+// creating an identity for a heartbeating worker (agent_id set) must link the
+// worker so GetByWorkerID-based resolution (audit/scheduler) works AND the
+// detail panel — which looks the identity up by the worker id — resolves it.
+// Before the fix, the created identity got an unrelated UUID with no link, so
+// both the panel (404) and audit attribution (raw agent_id) stayed broken.
+func TestCreateAgent_LinksWorkerForHeartbeatRegistration(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
+	ctx := context.Background()
+	const workerID = "support-triage-bot"
+
+	body := bytes.NewBufferString(`{"agent_id":"support-triage-bot","name":"Support Triage Bot","owner":"alice","risk_tier":"low"}`)
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents", body), &auth.AuthContext{
+		Tenant: "default", Role: "admin", PrincipalID: "admin-user",
+	})
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	s.handleCreateAgent(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var created agentResponse
+	if err := json.NewDecoder(rr.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create: %v", err)
+	}
+	// The identity keeps its own server-assigned id, distinct from the worker id.
+	if created.ID == "" || created.ID == workerID {
+		t.Fatalf("expected a server-generated id distinct from worker id, got %q", created.ID)
+	}
+
+	// Core of #314: the worker is linked, so GetByWorkerID resolves the identity.
+	linked, err := s.agentIdentityStore.GetByWorkerID(ctx, workerID)
+	if err != nil {
+		t.Fatalf("GetByWorkerID: %v", err)
+	}
+	if linked == nil || linked.ID != created.ID {
+		t.Fatalf("worker %q not linked to created identity %q (got %+v)", workerID, created.ID, linked)
+	}
+
+	// The panel looks the identity up by the worker id; the GET fallback must
+	// resolve it. This assertion fails on the pre-fix code (404).
+	getReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents/"+workerID, nil), &auth.AuthContext{
+		Tenant: "default", Role: "admin",
+	})
+	getReq.SetPathValue("id", workerID)
+	getRR := httptest.NewRecorder()
+	s.handleGetAgent(getRR, getReq)
+	if getRR.Code != http.StatusOK {
+		t.Fatalf("get-by-worker-id: expected 200, got %d: %s", getRR.Code, getRR.Body.String())
+	}
+	var got agentResponse
+	if err := json.NewDecoder(getRR.Body).Decode(&got); err != nil {
+		t.Fatalf("decode get: %v", err)
+	}
+	if got.ID != created.ID || got.Name != "Support Triage Bot" {
+		t.Fatalf("resolved wrong identity: %+v", got)
+	}
+
+	// Re-registering the same worker must conflict, not silently overwrite the link.
+	dupReq := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents",
+		bytes.NewBufferString(`{"agent_id":"support-triage-bot","name":"Dup","owner":"bob","risk_tier":"low"}`)),
+		&auth.AuthContext{Tenant: "default", Role: "admin"})
+	dupReq.Header.Set("Content-Type", "application/json")
+	dupRR := httptest.NewRecorder()
+	s.handleCreateAgent(dupRR, dupReq)
+	if dupRR.Code != http.StatusConflict {
+		t.Fatalf("duplicate worker register: expected 409, got %d: %s", dupRR.Code, dupRR.Body.String())
+	}
+	requireStableErrorCode(t, dupRR, http.StatusConflict, "AGENT_WORKER_CONFLICT")
+}
+
 func TestAgentIdentityAPISurfacesMCPAllowlists(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	enableAgentIdentityEntitlement(t, s)

@@ -147,6 +147,9 @@ describe("AgentIdentityCreateForm", () => {
       });
       expect(mutationState.mutate).toHaveBeenCalledTimes(1);
       const [body] = mutationState.mutate.mock.calls[0];
+      // agent_id must link the identity to this worker, else the panel never
+      // resolves and audit attribution stays on the raw id (#314 regression).
+      expect(body.agent_id).toBe("bot");
       expect(body.name).toBe("Bot");
       expect(body.owner).toBe("alice");
       expect(body.risk_tier).toBe("high");

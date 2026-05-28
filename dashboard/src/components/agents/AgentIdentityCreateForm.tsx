@@ -35,6 +35,9 @@ function initialBody(
 ): CreateAgentIdentityBody {
   const name = heartbeat?.name?.trim() || prettify(agentId);
   return {
+    // agent_id links the new identity to this heartbeating worker so the
+    // panel resolves it and audit rows stop falling back to the raw id (#314).
+    agent_id: agentId,
     name,
     owner: defaultOwner?.trim() || "",
     risk_tier: "low",
