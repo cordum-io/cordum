@@ -77,6 +77,15 @@ type AgentdDecision struct {
 	ApprovalRef       string         `json:"approval_ref,omitempty"`
 	AdditionalContext string         `json:"additional_context,omitempty"`
 	UpdatedInput      map[string]any `json:"updated_input,omitempty"`
+	// Degraded mirrors agentd's EvaluateResponse.Degraded (set when the
+	// gateway evaluation could not complete in time and the agentd had to
+	// answer the hook on degraded path). The hook used to drop this signal
+	// because the struct didn't declare the field — every degraded response
+	// looked like a regular allow/RECORDED at the output mapper, and risky
+	// PreToolUse actions slipped through under policy_mode=enforce. See
+	// GitHub issue (filed alongside this fix) and runner.hookOutputForRun
+	// for the fail-closed treatment.
+	Degraded bool `json:"degraded,omitempty"`
 }
 
 type HTTPAgentdClient struct {

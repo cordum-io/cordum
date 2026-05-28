@@ -268,7 +268,17 @@ func (e *Evaluator) degradedDecision(req claude.AgentdRequest, evalReq EvaluateR
 		GatewayErrorCategory: category,
 		ApprovalRef:          "",
 	})
-	decision := claude.AgentdDecision{Decision: outcome.Decision}
+	decision := claude.AgentdDecision{
+		Decision: outcome.Decision,
+		// Surface the degraded flag on the wire to the hook. Previously this
+		// field wasn't on the AgentdDecision struct at all — the hook lost
+		// the signal that a fail-mode response was synthesized (vs. a real
+		// gateway decision), and `hookOutputForRun` couldn't fail-close
+		// on the degraded path. With the struct now carrying Degraded
+		// (claude/agentd_client.go), the hook can synthesize a deny on
+		// PreToolUse under enforce / enterprise-strict modes.
+		Degraded: true,
+	}
 	if outcome.TerminalCopy != "" {
 		decision.Reason = boundDecisionText(outcome.TerminalCopy)
 	} else if outcome.Decision != claude.DecisionAllow {
