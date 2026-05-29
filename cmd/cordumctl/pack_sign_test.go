@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -210,5 +211,25 @@ func TestPackExportKeyShape(t *testing.T) {
 	}
 	if !strings.Contains(body, `"public_key_b64"`) {
 		t.Fatalf("missing public_key_b64: %s", body)
+	}
+}
+
+// BUG-015 regression lock: the generated private key file must be 0o600
+// (owner-only). Windows skips strict-perm check because the model differs.
+func TestPackKeygen_PrivateKeyFileIs0600(t *testing.T) {
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "key.pkey")
+	if err := runPackSignKeygen([]string{"--out", keyPath, "--kid", "perm-test"}); err != nil {
+		t.Fatalf("runPackSignKeygen: %v", err)
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows permission model differs; perms are managed differently")
+	}
+	info, err := os.Stat(keyPath)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("private key file mode = %#o, want 0600", got)
 	}
 }

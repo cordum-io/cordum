@@ -18,3 +18,9 @@
 
 # Dockerfile
 Dockerfile text eol=lf
+
+# Golden test fixtures: LF only (byte-compared vs json.MarshalIndent LF output). BUG-019
+*.golden text eol=lf
+
+# Markdown: LF only (gen_docs_tables marker regions must match committed LF; mixed EOL caused perpetual docs-tables-check drift). BUG-017
+*.md text eol=lf

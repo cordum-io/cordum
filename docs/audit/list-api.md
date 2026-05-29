@@ -62,6 +62,12 @@ returns `503` with body code `audit_chainer_not_installed`. The dashboard
 surface translates this into a human-readable banner ("Audit chain not
 installed — contact your operator").
 
+> In production (`CORDUM_ENV=production`), an unset `CORDUM_AUDIT_HMAC_KEY`
+> is no longer a 503-at-request-time fallback — the gateway refuses to boot
+> at all unless the operator sets `CORDUM_AUDIT_HMAC_OPTIONAL=true` as an
+> explicit override. This 503 path now only fires in dev mode or when the
+> override is active.
+
 ## Cursor stability under concurrent appends
 
 The endpoint reads via `client.XRevRangeN` in batches of `limit *

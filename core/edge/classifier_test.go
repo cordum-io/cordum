@@ -1225,3 +1225,66 @@ func TestClassifierRejectsBareKeysWhenRenamedAreAlsoMissing(t *testing.T) {
 		t.Fatalf("Labels[path.class] = %q, want %q (empty-input sentinel)", cls.Labels["path.class"], "unknown")
 	}
 }
+
+// BUG-004: a NUL byte in agent tool input ('evil.pem\x00.txt') used to survive
+// TrimSpace + normalizePathForClass and bypass the .pem suffix secret check —
+// the path was classified as non-secret and the downstream deny rule did not
+// fire. ClassifyEvent now rejects any input containing NUL bytes
+// (recursing through map/slice values) with a CONSTANT error message that
+// never leaks the raw value.
+func TestClassifyEventRejectsNULInjectedInput(t *testing.T) {
+	base := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name  string
+		event AgentActionEvent
+	}{
+		{
+			name:  "suffix_bypass_file_path",
+			event: classifierHookEvent(base, "Write", map[string]any{"file_path_redacted": "evil.pem\x00.txt"}),
+		},
+		{
+			name:  "nul_in_bash_command",
+			event: classifierHookEvent(base, "Bash", map[string]any{"command": "id\x00"}),
+		},
+		{
+			name:  "nul_nested_in_slice",
+			event: classifierHookEvent(base, "Bash", map[string]any{"command": "echo ok", "args": []any{"ok", "x\x00"}}),
+		},
+		{
+			name:  "nul_in_nested_map_value",
+			event: classifierHookEvent(base, "Write", map[string]any{"meta": map[string]any{"file_path": "ok\x00.bin"}}),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ClassifyEvent(tc.event)
+			if err == nil {
+				t.Fatal("ClassifyEvent err = nil, want NUL-rejection error")
+			}
+			lower := strings.ToLower(err.Error())
+			if !strings.Contains(lower, "nul") {
+				t.Fatalf("err = %q, want message naming NUL", err.Error())
+			}
+			// No-leak contract: must not echo the raw secret-like value.
+			for _, leaky := range []string{"evil.pem", "id_rsa", "x\x00", "ok\x00"} {
+				if strings.Contains(err.Error(), leaky) {
+					t.Fatalf("err leaks raw value %q: %q", leaky, err.Error())
+				}
+			}
+		})
+	}
+
+	// Control: the same path WITHOUT NUL must still classify cleanly as
+	// secret — proves the new guard closes the bypass without breaking
+	// legitimate .pem secret classification.
+	t.Run("control_no_nul_still_classifies_as_secret", func(t *testing.T) {
+		event := classifierHookEvent(base, "Write", map[string]any{"file_path_redacted": "evil.pem"})
+		cls, err := ClassifyEvent(event)
+		if err != nil {
+			t.Fatalf("ClassifyEvent err = %v, want nil for clean path", err)
+		}
+		if cls.Labels["path.class"] != "secret" {
+			t.Fatalf("Labels[path.class] = %q, want %q", cls.Labels["path.class"], "secret")
+		}
+	})
+}

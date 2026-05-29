@@ -44,6 +44,12 @@ func sanitizeLogValue(s string) string {
 type Store interface {
 	PutContext(ctx context.Context, key string, data []byte) error
 	GetContext(ctx context.Context, key string) ([]byte, error)
+	// DeleteContext removes a previously-put context key. Used by the
+	// gateway to early-GC orphaned context pointers when a JobRequest
+	// is rejected after PutContext but before successful Publish — see
+	// BUG-009 in the bug-hunt report. Implementations must tolerate a
+	// missing key as a no-op (idempotent).
+	DeleteContext(ctx context.Context, key string) error
 	PutResult(ctx context.Context, key string, data []byte) error
 	GetResult(ctx context.Context, key string) ([]byte, error)
 	Close() error
@@ -121,6 +127,24 @@ func (s *RedisStore) PutContext(ctx context.Context, key string, data []byte) er
 	defer cancel()
 	if err := s.client.Set(cctx, key, data, s.dataTTL).Err(); err != nil {
 		return fmt.Errorf("redis_store: put context %s: %w", key, err)
+	}
+	return nil
+}
+
+func (s *RedisStore) DeleteContext(ctx context.Context, key string) error {
+	if s == nil || s.client == nil {
+		return errors.New("redis_store: client not initialized")
+	}
+	if ctx == nil {
+		return errors.New("redis_store: DeleteContext: nil context")
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("redis_store: DeleteContext: %w", err)
+	}
+	cctx, cancel := context.WithTimeout(ctx, defaultRedisOpTimeout)
+	defer cancel()
+	if err := s.client.Del(cctx, key).Err(); err != nil {
+		return fmt.Errorf("redis_store: delete context %s: %w", key, err)
 	}
 	return nil
 }

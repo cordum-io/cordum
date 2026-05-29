@@ -2046,6 +2046,22 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "failed to persist job context")
 		return
 	}
+	// BUG-009: if any post-PutContext reject path is taken before the job is
+	// successfully dispatched on the bus, the context blob lives in Redis
+	// until its 24h TTL elapses. Early-GC on every reject. Uses a fresh
+	// background context because r.Context() is cancelled the moment we
+	// return.
+	submitted := false
+	defer func() {
+		if submitted {
+			return
+		}
+		gctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if delErr := s.memStore.DeleteContext(gctx, ctxKey); delErr != nil {
+			slog.Warn("gateway: GC orphaned job context failed", "job_id", jobID, "err", delErr)
+		}
+	}()
 
 	// Set initial state
 	if err := s.jobStore.SetState(r.Context(), jobID, model.JobStatePending); err != nil {
@@ -2135,6 +2151,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "failed to enqueue job")
 		return
 	}
+	submitted = true
 
 	reqID := requestIdFromContext(r.Context())
 	loggerFromContext(r.Context()).Info("job submitted",

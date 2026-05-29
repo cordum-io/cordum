@@ -207,3 +207,68 @@ func maxInt64(a, b int64) int64 {
 	}
 	return b
 }
+
+// BUG-016 — allowed=0 must DENY any positive usage; Unlimited is the only
+// "no cap" sentinel. Zero usage against zero cap still passes (current<=allowed).
+func TestCheckNumericLimit_ZeroAllowedDeniesPositive(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name        string
+		current     int64
+		allowed     int64
+		shouldAllow bool
+	}{
+		{"zero_cap_denies_positive", 1, 0, false},
+		{"zero_cap_allows_zero_usage", 0, 0, true},
+		{"unlimited_allows_anything", 5, Unlimited, true},
+		{"under_cap_allowed", 5, 10, true},
+		{"at_cap_allowed", 10, 10, true},
+		{"over_cap_denied", 11, 10, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkNumericLimit("test", tc.current, tc.allowed)
+			if tc.shouldAllow {
+				if err != nil {
+					t.Fatalf("want allow (nil), got error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("want deny, got nil")
+			}
+		})
+	}
+}
+
+// BUG-016 regression lock: every Plan in DefaultEntitlements must populate
+// every numeric limit field to Unlimited (or a real cap). An accidental 0
+// would now deny instead of "implicitly unlimited" — this test fires before
+// that misconfiguration ships.
+func TestDefaultEntitlements_EveryNumericFieldAllowsPositiveUsage(t *testing.T) {
+	t.Parallel()
+	const probe int64 = 1
+	checks := []struct {
+		name string
+		fn   func(int64, Entitlements) *TierLimitError
+	}{
+		{"CheckWorkerLimit", CheckWorkerLimit},
+		{"CheckJobConcurrency", CheckJobConcurrency},
+		{"CheckWorkflowSteps", CheckWorkflowSteps},
+		{"CheckActiveWorkflows", CheckActiveWorkflows},
+		{"CheckPolicyBundleLimit", CheckPolicyBundleLimit},
+		{"CheckSchemaCount", CheckSchemaCount},
+		{"CheckRateLimitRPS", CheckRateLimitRPS},
+		{"CheckArtifactSize", CheckArtifactSize},
+	}
+	for _, plan := range []Plan{PlanCommunity, PlanTeam, PlanEnterprise} {
+		ent := DefaultEntitlements(plan)
+		for _, c := range checks {
+			t.Run(string(plan)+"/"+c.name, func(t *testing.T) {
+				if err := c.fn(probe, ent); err != nil {
+					t.Fatalf("plan=%s check=%s probe=1 returned %v — limit field is unset (0 = deny); set Unlimited or a positive cap in TierDefaults", plan, c.name, err)
+				}
+			})
+		}
+	}
+}

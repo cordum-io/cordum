@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -382,4 +383,48 @@ func TestParseChainHead(t *testing.T) {
 	if _, _, err := parseChainHead("1:short"); err == nil {
 		t.Errorf("expected error for truncated hash")
 	}
+}
+
+// BUG-013: WithHMACKey used to slog.Error + silently set hmacKey=nil for keys
+// shorter than 32 bytes. Callers cannot recover, and a silent downgrade
+// weakens the chain invisibly. Now PANICS on 0<len<32; empty key still
+// disables cleanly; 32+ byte key still works.
+func TestWithHMACKey_PanicsOnShortNonEmptyKey(t *testing.T) {
+	t.Run("short_key_panics", func(t *testing.T) {
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatal("expected panic on 16-byte key")
+			}
+			msg, ok := r.(string)
+			if !ok {
+				t.Fatalf("panic value type = %T, want string; got %v", r, r)
+			}
+			if !strings.Contains(msg, "at least 32 bytes") {
+				t.Fatalf("panic message missing length requirement: %q", msg)
+			}
+		}()
+		c := &Chainer{}
+		WithHMACKey([]byte("16-byte-key-xxxx"))(c)
+	})
+
+	t.Run("empty_key_disables_silently", func(t *testing.T) {
+		c := &Chainer{hmacKey: []byte("preexisting")}
+		WithHMACKey(nil)(c)
+		if c.hmacKey != nil {
+			t.Fatalf("empty key should disable HMAC, got %v", c.hmacKey)
+		}
+	})
+
+	t.Run("valid_32_byte_key_enabled", func(t *testing.T) {
+		key := make([]byte, 32)
+		for i := range key {
+			key[i] = byte(i)
+		}
+		c := &Chainer{}
+		WithHMACKey(key)(c)
+		if len(c.hmacKey) != 32 {
+			t.Fatalf("valid key not stored: got %d bytes", len(c.hmacKey))
+		}
+	})
 }

@@ -92,7 +92,12 @@ func resolveFileLoaderMode() policysign.Mode {
 	if raw := strings.TrimSpace(os.Getenv(policysign.EnvStrictMode)); raw != "" {
 		mode, err := policysign.ParseMode(raw)
 		if err != nil {
-			slog.Warn("safety-kernel: CORDUM_POLICY_STRICT invalid; defaulting to warn", "err", err)
+			fallback := policysign.ModeWarn
+			if env.IsProduction() {
+				fallback = policysign.ModeEnforce
+			}
+			slog.Warn("safety-kernel: CORDUM_POLICY_STRICT invalid; falling back", "err", err, "mode", fallback.String())
+			return fallback
 		}
 		return mode
 	}

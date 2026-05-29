@@ -2812,6 +2812,12 @@ func applyConstraints(req *pb.JobRequest, constraints *pb.PolicyConstraints) {
 	}
 	if data, err := protojson.Marshal(constraints); err == nil {
 		req.Env["CORDUM_POLICY_CONSTRAINTS"] = string(data)
+	} else {
+		policyConstraintsSerialiseFailedTotal.Inc()
+		slog.Error("scheduler: serialise policy constraints failed",
+			"audit_event", "policy_constraints_serialise_failed",
+			"job_id", req.GetJobId(),
+			"err", err)
 	}
 	if constraints.GetRedactionLevel() != "" {
 		req.Env["CORDUM_REDACTION_LEVEL"] = constraints.GetRedactionLevel()

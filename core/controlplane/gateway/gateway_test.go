@@ -40,6 +40,11 @@ func (s *stubMemStore) GetContext(ctx context.Context, key string) ([]byte, erro
 	return val, nil
 }
 
+func (s *stubMemStore) DeleteContext(ctx context.Context, key string) error {
+	delete(s.context, key)
+	return nil
+}
+
 func (s *stubMemStore) PutResult(ctx context.Context, key string, data []byte) error {
 	if s.result == nil {
 		s.result = make(map[string][]byte)

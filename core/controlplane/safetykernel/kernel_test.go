@@ -21,6 +21,7 @@ import (
 	"github.com/cordum/cordum/core/infra/store"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/nats-io/nats.go"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -1486,7 +1487,7 @@ func TestEvaluatePanicRecoveryReturnsDeny(t *testing.T) {
 
 	// Inject a panic via the test hook.
 	origHook := policyEvalTestHook
-	policyEvalTestHook = func() { panic("simulated policy evaluation panic") }
+	policyEvalTestHook = func(*config.PolicyDecision) { panic("simulated policy evaluation panic") }
 	t.Cleanup(func() { policyEvalTestHook = origHook })
 
 	req := &pb.PolicyCheckRequest{
@@ -1522,7 +1523,7 @@ func TestEvaluatePanicRecoveryWithNilMapAccess(t *testing.T) {
 	_ = srv.setPolicy(context.Background(), policy, "snap-nilmap")
 
 	origHook := policyEvalTestHook
-	policyEvalTestHook = func() {
+	policyEvalTestHook = func(*config.PolicyDecision) {
 		var m map[string]string
 		_ = m["trigger"] // safe — won't panic
 		// Force a nil pointer dereference to simulate realistic panic.
@@ -1546,6 +1547,53 @@ func TestEvaluatePanicRecoveryWithNilMapAccess(t *testing.T) {
 	}
 	if !strings.Contains(resp.GetReason(), "policy evaluation panic") {
 		t.Fatalf("expected panic reason, got %q", resp.GetReason())
+	}
+}
+
+// BUG-002: an unrecognized policy decision string used to silently stay at the
+// initial DENY with empty reason and no audit signal. After the fix, the
+// switch's default arm fires: DENY + structured reason naming the bad
+// decision string + slog audit_event=policy_decision_unknown + a metric
+// increment on defaultDecisionTotal{"unknown"} (FIXED label — the raw string
+// is only in the log/reason to avoid Prometheus cardinality blowup).
+func TestEvaluate_UnknownDecisionString_DeniesWithAuditedReason(t *testing.T) {
+	srv := &server{}
+	policy := &config.SafetyPolicy{
+		DefaultTenant: "default",
+		Tenants: map[string]config.TenantPolicy{
+			"default": {AllowTopics: []string{"job.*"}},
+		},
+	}
+	if err := srv.setPolicy(context.Background(), policy, "snap-unknown"); err != nil {
+		t.Fatalf("setPolicy: %v", err)
+	}
+
+	origHook := policyEvalTestHook
+	policyEvalTestHook = func(d *config.PolicyDecision) { d.Decision = "audit_only" }
+	t.Cleanup(func() { policyEvalTestHook = origHook })
+
+	before := testutil.ToFloat64(defaultDecisionTotal.WithLabelValues("unknown"))
+
+	req := &pb.PolicyCheckRequest{
+		JobId:  "job-unknown",
+		Topic:  "job.test",
+		Tenant: "default",
+	}
+	resp, err := srv.Evaluate(context.Background(), req)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY {
+		t.Fatalf("FAIL-OPEN BUG: unknown decision must DENY, got %v", resp.GetDecision())
+	}
+	if !strings.Contains(resp.GetReason(), "unknown policy decision string") {
+		t.Fatalf("reason should name the new default arm, got %q", resp.GetReason())
+	}
+	if !strings.Contains(resp.GetReason(), "audit_only") {
+		t.Fatalf("reason should include the bad decision string, got %q", resp.GetReason())
+	}
+	if delta := testutil.ToFloat64(defaultDecisionTotal.WithLabelValues("unknown")) - before; delta != 1 {
+		t.Fatalf("metric defaultDecisionTotal{unknown} delta = %v, want 1", delta)
 	}
 }
 

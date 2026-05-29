@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,7 @@ import (
 	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	goredis "github.com/redis/go-redis/v9"
 )
 
 func TestHandleSubmitJobHTTP(t *testing.T) {
@@ -1495,5 +1497,77 @@ func TestHandleSubmitJob_DeniedIdempotencyReplay(t *testing.T) {
 	state, _ := s.jobStore.GetState(context.Background(), firstJobID)
 	if state != model.JobStateDenied {
 		t.Fatalf("denied job state: want DENIED, got %s", state)
+	}
+}
+
+// BUG-009: when submit fails AFTER PutContext (e.g. bus publish fails) the
+// orphaned context_ptr used to live in Redis for the full 24h TTL. The
+// gateway now early-GCs the context blob via DeleteContext.
+func TestSubmitJobHTTP_PublishFails_GCsOrphanedContext(t *testing.T) {
+	s, bus, _ := newTestGateway(t)
+	s.tenant = "default"
+	bus.publishErr = errors.New("bus down")
+
+	payload := map[string]any{"prompt": "hi", "topic": "job.test"}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+
+	s.handleSubmitJobHTTP(rec, req)
+
+	if rec.Code < 500 || rec.Code >= 600 {
+		t.Fatalf("expected 5xx (publish failed), got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	bus.mu.Lock()
+	if len(bus.published) != 1 {
+		bus.mu.Unlock()
+		t.Fatalf("expected one publish attempt, got %d", len(bus.published))
+	}
+	jobID := bus.published[0].packet.GetJobRequest().GetJobId()
+	bus.mu.Unlock()
+	if jobID == "" {
+		t.Fatal("jobID missing from published packet")
+	}
+
+	// Context blob must have been GC'd; GetContext returns redis.Nil.
+	ctxKey := store.MakeContextKey(jobID)
+	if _, err := s.memStore.GetContext(context.Background(), ctxKey); !errors.Is(err, goredis.Nil) {
+		t.Fatalf("expected context GC after publish failure (redis.Nil), got err=%v", err)
+	}
+}
+
+// Positive control: a fully-successful submit must NOT delete the context —
+// the worker still needs it.
+func TestSubmitJobHTTP_Success_KeepsContext(t *testing.T) {
+	s, bus, _ := newTestGateway(t)
+	s.tenant = "default"
+
+	payload := map[string]any{"prompt": "hi", "topic": "job.test"}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+
+	s.handleSubmitJobHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	bus.mu.Lock()
+	if len(bus.published) != 1 {
+		bus.mu.Unlock()
+		t.Fatalf("expected one publish, got %d", len(bus.published))
+	}
+	jobID := bus.published[0].packet.GetJobRequest().GetJobId()
+	bus.mu.Unlock()
+
+	data, err := s.memStore.GetContext(context.Background(), store.MakeContextKey(jobID))
+	if err != nil {
+		t.Fatalf("context should be present after successful submit, got err=%v", err)
+	}
+	if len(data) == 0 {
+		t.Fatal("context blob empty after successful submit")
 	}
 }

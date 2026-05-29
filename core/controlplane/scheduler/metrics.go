@@ -164,3 +164,21 @@ func (m *WorkerTrustMetrics) ForgetWorker(workerID string) {
 	m.sessionValid.DeletePartialMatch(prometheus.Labels{"worker_id": workerID})
 	m.heartbeatAge.DeleteLabelValues(workerID)
 }
+
+// policyConstraintsSerialiseFailedTotal counts PolicyConstraints that
+// protojson.Marshal rejected inside applyConstraints. Pre-BUG-011, this
+// failure silently dropped the env propagation and the operator had no
+// signal; the structural budget cap still applied (defense in depth),
+// but the worker lost the redaction/budget hints.
+var policyConstraintsSerialiseFailedTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Namespace: "cordum",
+		Subsystem: "scheduler",
+		Name:      "policy_constraints_serialise_failed_total",
+		Help:      "PolicyConstraints that failed protojson.Marshal in applyConstraints (BUG-011).",
+	},
+)
+
+func init() {
+	prometheus.MustRegister(policyConstraintsSerialiseFailedTotal)
+}

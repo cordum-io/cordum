@@ -1034,6 +1034,12 @@ func initAuditPipeline(client redis.UniversalClient, natsBus audit.AuditBus, ent
 				audit.EnvHMACKey, len(key))
 		}
 		chainerOpts = append(chainerOpts, audit.WithHMACKey(key))
+	} else if env.IsProduction() {
+		if !env.Bool(audit.EnvHMACOptional) {
+			return nil, nil, fmt.Errorf("audit chain: %s is required in production — generate with: openssl rand -hex 32 — or set %s=true to override (unsigned chain weakens ProvenanceGate)",
+				audit.EnvHMACKey, audit.EnvHMACOptional)
+		}
+		slog.Warn("audit chain: HMAC disabled in production via override", "override", audit.EnvHMACOptional)
 	}
 	auditChainer := audit.NewChainer(client, "", chainerOpts...)
 	var workflowStepSink audit.StepHashSink

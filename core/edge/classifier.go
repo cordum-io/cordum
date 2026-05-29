@@ -9,6 +9,14 @@ import (
 	"unicode/utf8"
 )
 
+// Path-handling invariant (BUG-005): the path-traversal heuristic in
+// addPathLabels uses a literal `strings.Contains(path, "..")` check. It does
+// NOT decode percent-encoded ("%2e%2e") or Unicode look-alike sequences. This
+// is safe today because Edge hook sources forward agent tool inputs verbatim
+// (never URL-encoded). If a future source ever forwards percent-encoded or
+// otherwise-escaped paths, it MUST decode them at the source before calling
+// ClassifyEvent — otherwise traversal/secret classification can be bypassed.
+
 // EdgePolicyTopic is the P0 Safety Kernel topic for deterministic Edge action
 // checks. Safety Kernel currently accepts job.* topics, so Edge action policy
 // uses this job-prefixed topic and carries Edge dimensions in labels/metadata.
@@ -97,6 +105,9 @@ func ClassifyEvent(event AgentActionEvent) (ActionClassification, error) {
 	// fail-closed denied every prompt — see EDGE-049 closure trail.
 	if event.Layer == LayerHook && hookKindRequiresTool(event.Kind) && strings.TrimSpace(event.ToolName) == "" {
 		return ActionClassification{}, fmt.Errorf("tool_name is required")
+	}
+	if strings.IndexByte(event.ToolName, 0) >= 0 || inputContainsNUL(event.InputRedacted) {
+		return ActionClassification{}, fmt.Errorf("input contains NUL byte")
 	}
 
 	content, contentType, size, err := classifiedInputContent(event.InputRedacted)
@@ -428,6 +439,7 @@ func addPathLabels(path string, out *ActionClassification) {
 		out.Labels["path.class"] = "unknown"
 		return
 	}
+	// Literal-only; see the path-handling invariant note at the top of this file (BUG-005).
 	if strings.Contains(folded, "..") {
 		out.Labels["path.traversal"] = "true"
 	}
@@ -599,6 +611,31 @@ func isSecretPath(path string) bool {
 		strings.HasSuffix(path, ".p12") ||
 		strings.HasSuffix(path, ".pfx") ||
 		strings.HasSuffix(path, ".kdbx")
+}
+
+// inputContainsNUL reports whether any string value in v (recursing through
+// maps and slices) contains a NUL byte. A NUL has no legitimate place in a
+// tool path or command; its presence indicates malformed or hostile input
+// and is rejected fail-closed by ClassifyEvent. InputRedacted is bounded
+// to MaxInputRedactedBytes, so the recursion is O(64 KiB) worst-case.
+func inputContainsNUL(v any) bool {
+	switch t := v.(type) {
+	case string:
+		return strings.IndexByte(t, 0) >= 0
+	case map[string]any:
+		for k, val := range t {
+			if strings.IndexByte(k, 0) >= 0 || inputContainsNUL(val) {
+				return true
+			}
+		}
+	case []any:
+		for _, val := range t {
+			if inputContainsNUL(val) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // matchesEnvSecretFile narrows the original `/.env` substring match so

@@ -2,10 +2,20 @@ package agentd
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -442,4 +452,72 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
+}
+
+// TestNewGatewayClientTLSCAFileSetsTLS13Floor drives the cfg.TLSCAFile branch of
+// NewGatewayClient (HTTPClient left nil) and asserts the transport it builds pins
+// the TLS floor to 1.3 (BUG-006). The other tests in this file inject HTTPClient
+// and therefore never exercise this branch.
+func TestNewGatewayClientTLSCAFileSetsTLS13Floor(t *testing.T) {
+	t.Parallel()
+
+	caFile := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caFile, testSelfSignedCAPEM(t), 0o600); err != nil {
+		t.Fatalf("write CA file: %v", err)
+	}
+
+	gc, err := NewGatewayClient(GatewayClientConfig{
+		BaseURL:   "https://gateway.example.invalid",
+		TLSCAFile: caFile,
+		// HTTPClient intentionally nil so NewGatewayClient builds the TLS transport.
+	})
+	if err != nil {
+		t.Fatalf("NewGatewayClient: %v", err)
+	}
+
+	httpClient, ok := gc.client.(*http.Client)
+	if !ok {
+		t.Fatalf("gc.client type = %T, want *http.Client", gc.client)
+	}
+	transport, ok := httpClient.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transport type = %T, want *http.Transport", httpClient.Transport)
+	}
+	if transport.TLSClientConfig == nil {
+		t.Fatal("TLSClientConfig is nil; TLSCAFile branch did not build a TLS config")
+	}
+	// Mutation-resistant: pin the exact constant, not merely != 0. Reverting the
+	// floor to tls.VersionTLS12 (the BUG-006 regression) must fail this assertion.
+	if got := transport.TLSClientConfig.MinVersion; got != tls.VersionTLS13 {
+		t.Fatalf("TLS MinVersion = %#x, want tls.VersionTLS13 (%#x)", got, tls.VersionTLS13)
+	}
+	// Guard against a future edit that keeps the floor but drops the CA pool.
+	if transport.TLSClientConfig.RootCAs == nil {
+		t.Fatal("RootCAs is nil; CA bundle was not wired into the TLS config")
+	}
+}
+
+// testSelfSignedCAPEM returns a PEM-encoded self-signed certificate. It only needs
+// to satisfy x509.CertPool.AppendCertsFromPEM (the sole use NewGatewayClient makes
+// of the CA file); the cert is never used for an actual handshake here.
+func testSelfSignedCAPEM(t *testing.T) []byte {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "agentd-test-ca"},
+		NotBefore:             time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
+		NotAfter:              time.Date(2035, 1, 1, 0, 0, 0, 0, time.UTC),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create certificate: %v", err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }

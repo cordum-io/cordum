@@ -71,6 +71,7 @@ type failingContextStore struct {
 }
 
 func (f *failingContextStore) PutContext(context.Context, string, []byte) error { return f.err }
+func (f *failingContextStore) DeleteContext(context.Context, string) error       { return f.err }
 func (f *failingContextStore) GetContext(context.Context, string) ([]byte, error) {
 	return nil, f.err
 }

@@ -230,11 +230,13 @@ func MapHookInput(input HookInput, ctx MappingContext) (MappedHookAction, error)
 
 	classification, err := edge.ClassifyEvent(actionEvent)
 	if err != nil {
-		// ClassifyEvent rejects only on missing required fields; the
-		// mapper guarantees Layer/Kind/ToolName upstream via degradedReason.
-		// If it fires anyway (future schema drift), surface a degraded
-		// action with reasonUnsupportedToolInputShape so the Gateway can
-		// record an audit event without trusting client classification.
+		// ClassifyEvent rejects on missing required fields or malformed
+		// input (e.g. NUL bytes — see BUG-004); the mapper guarantees
+		// Layer/Kind/ToolName upstream via degradedReason. If it fires
+		// anyway (future schema drift or hostile input), surface a
+		// degraded action with reasonUnsupportedToolInputShape so the
+		// Gateway can record an audit event without trusting client
+		// classification.
 		return MappedHookAction{
 			Layer:         edge.LayerHook,
 			Kind:          kind,

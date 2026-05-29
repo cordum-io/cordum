@@ -2,10 +2,13 @@ package auth
 
 import (
 	"fmt"
+	"log/slog"
 	"math"
 	"os"
 	"strings"
 	"unicode"
+
+	infraenv "github.com/cordum/cordum/core/infra/env"
 )
 
 // weakPatterns are case-insensitive substrings that indicate a weak secret.
@@ -83,6 +86,14 @@ func ValidateStartupSecrets() error {
 	if env != "production" && env != "prod" {
 		// Only enforce in production mode
 		return nil
+	}
+
+	// BUG-014: surface a config oversight if the operator left user auth
+	// disabled in production. API key + RBAC are still a valid posture,
+	// but a silent disable looks like an accident. ValidateStartupSecrets
+	// runs once at boot so a plain Warn is naturally one-time.
+	if !infraenv.Bool("CORDUM_USER_AUTH_ENABLED") {
+		slog.Warn("user auth disabled in production — relying on API key + RBAC")
 	}
 
 	// Validate admin password (required in production)

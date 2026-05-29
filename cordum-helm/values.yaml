@@ -192,6 +192,7 @@ nats:
     serverName: "" # NATS_TLS_SERVER_NAME
     insecure: false # NATS_TLS_INSECURE
   allowPlaintext: false # CORDUM_NATS_ALLOW_PLAINTEXT
+  allowNoAuth: false # CORDUM_NATS_ALLOW_NOAUTH
   containerSecurityContext:
     readOnlyRootFilesystem: false
     allowPrivilegeEscalation: false

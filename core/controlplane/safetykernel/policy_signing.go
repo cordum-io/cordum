@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/policysign"
 )
 
@@ -203,6 +204,9 @@ func newBundleVerifier() *bundleVerifier {
 				"err", err,
 			)
 		})
+		if env.IsProduction() {
+			mode = policysign.ModeEnforce
+		}
 	}
 	store, err := policysign.LoadTrustStoreFromEnv()
 	if err != nil {

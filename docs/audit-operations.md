@@ -51,7 +51,8 @@ Expected response for a healthy chain:
 
 | Variable | Default | Description |
 |---|---|---|
-| `CORDUM_AUDIT_HMAC_KEY` | _(empty)_ | Hex-encoded HMAC-SHA256 signing key (min 32 bytes decoded) |
+| `CORDUM_AUDIT_HMAC_KEY` | **REQUIRED in production** (empty allowed in dev) | Hex-encoded HMAC-SHA256 signing key (min 32 bytes decoded). Production boot fails unless this is set or `CORDUM_AUDIT_HMAC_OPTIONAL=true`. |
+| `CORDUM_AUDIT_HMAC_OPTIONAL` | `false` | Set to `true` to bypass the production HMAC requirement; emits a loud warning and weakens ProvenanceGate `audit_chain_compromised`. |
 | `CORDUM_AUDIT_CHAIN_FAIL` | `strict` | `strict`: drop unchained events; `permissive`: export anyway |
 | `CORDUM_AUDIT_EXPORT_TYPE` | `none` | SIEM backend: `webhook`, `syslog`, `datadog`, `cloudwatch`, `chain-only` |
 | `CORDUM_AUDIT_RETENTION_HOURS` | `168` (7 days) | Audit retention window in hours |

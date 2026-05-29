@@ -216,9 +216,12 @@ const defaultAgentCacheTTL = 30 * time.Second
 // policyLookupIP allows tests to override DNS resolution for policy URL validation.
 var policyLookupIP = net.LookupIP
 
-// policyEvalTestHook is called inside the evaluate recover closure before policy.Evaluate.
-// It is nil in production; tests may set it to inject panics for fail-closed verification.
-var policyEvalTestHook func()
+// policyEvalTestHook is called inside the evaluate recover closure AFTER
+// policy.Evaluate. It is nil in production; tests may set it to inject panics
+// for fail-closed verification, or to mutate the resolved policyDecision (e.g.
+// to inject an unrecognized decision string and exercise the switch's default
+// arm).
+var policyEvalTestHook func(*config.PolicyDecision)
 
 var defaultDecisionTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 	Name: "cordum_safety_default_decision_total",
@@ -803,19 +806,19 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 				}
 			}
 		}()
-		if policyEvalTestHook != nil {
-			policyEvalTestHook()
-		}
 		if policyHasVelocity {
 			policyDecision = s.evaluateRulesWithVelocity(ctx, evalPolicy, input, req.GetJobId(), method)
 		} else {
 			policyDecision = evalPolicy.Evaluate(input)
 		}
-		if tp, ok := evalPolicy.Tenants[tenant]; ok {
-			if ok, mcpReason := config.MCPAllowed(tp.MCP, input.MCP); !ok {
+		if tp, hasTenant := evalPolicy.Tenants[tenant]; hasTenant {
+			if allowed, mcpReason := config.MCPAllowed(tp.MCP, input.MCP); !allowed {
 				policyDecision.Decision = "deny"
 				policyDecision.Reason = mcpReason
 			}
+		}
+		if policyEvalTestHook != nil {
+			policyEvalTestHook(&policyDecision)
 		}
 	}()
 	slog.Debug("policy evaluation complete", "component", "safety", "tenant", tenant, "topic", topic, "decision", policyDecision.Decision, "ruleId", policyDecision.RuleID, "ruleTier", policyDecision.RuleTier, "duration", time.Since(evalStart).String())
@@ -848,6 +851,14 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 		if constraints != nil {
 			decision = pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS
 		}
+	default:
+		decision = pb.DecisionType_DECISION_TYPE_DENY
+		reason = "internal: unknown policy decision string: " + policyDecision.Decision
+		slog.Error("safety-kernel: unknown policy decision string",
+			"component", "safety", "audit_event", "policy_decision_unknown",
+			"decision", policyDecision.Decision, "tenant", tenant,
+			"topic", topic, "job_id", req.GetJobId())
+		defaultDecisionTotal.WithLabelValues("unknown").Inc()
 	}
 
 	// Effective config can further restrict allowed topics or MCP access.

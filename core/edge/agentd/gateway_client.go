@@ -62,7 +62,7 @@ func NewGatewayClient(cfg GatewayClientConfig) (*GatewayClient, error) {
 				return nil, fmt.Errorf("TLS CA file %q contains no valid PEM certificates", caFile)
 			}
 			httpClient.Transport = &http.Transport{
-				TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
+				TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS13},
 			}
 		}
 		client = httpClient

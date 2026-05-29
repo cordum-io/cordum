@@ -22,6 +22,7 @@ import (
 	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -3186,4 +3187,33 @@ func TestProcessJobTenantMatchProceeds(t *testing.T) {
 	// With no workers registered, it returns a retryable scheduling error — that's fine,
 	// it proves the job passed the tenant check.
 	_ = engine.processJob(testCtx(t), req, "trace-tenant-ok")
+}
+
+// BUG-011: protojson.Marshal failure inside applyConstraints used to silently
+// drop the CORDUM_POLICY_CONSTRAINTS env propagation — no metric, no log.
+// Now: structured slog with audit_event + counter increment, AND defense in
+// depth (structural budget cap) still applies.
+func TestApplyConstraints_SerialiseFailureEmitsMetric_KeepsStructuralCap(t *testing.T) {
+	req := &pb.JobRequest{JobId: "j", Env: map[string]string{}}
+	// Invalid UTF-8 in a string field makes protojson.Marshal error.
+	constraints := &pb.PolicyConstraints{
+		RedactionLevel: string([]byte{0xff, 0xfe}),
+		Budgets:        &pb.BudgetConstraints{MaxRuntimeMs: 1000},
+	}
+
+	before := testutil.ToFloat64(policyConstraintsSerialiseFailedTotal)
+	applyConstraints(req, constraints)
+	delta := testutil.ToFloat64(policyConstraintsSerialiseFailedTotal) - before
+
+	if delta != 1 {
+		t.Fatalf("metric delta = %v, want 1 (protojson should have failed on invalid UTF-8)", delta)
+	}
+	if got := req.Env["CORDUM_POLICY_CONSTRAINTS"]; got != "" {
+		t.Fatalf("CORDUM_POLICY_CONSTRAINTS should be unset on serialise failure, got %q", got)
+	}
+	// Defense in depth: the structural budget cap MUST still apply even though
+	// env propagation failed. Worker still gets the runtime ceiling via Budget.
+	if req.Budget == nil || req.Budget.DeadlineMs != 1000 {
+		t.Fatalf("Budget.DeadlineMs = %v, want 1000 (structural cap must survive serialise failure)", req.Budget)
+	}
 }
