@@ -71,7 +71,7 @@ func Run(ctx context.Context, opts RunOptions) int {
 	}
 	// Compute the hook output once, derive the metric/audit-recorded
 	// decision from it. Previously this fired recordHookObservability with
-	// the raw `decision.Decision` BEFORE writeRunOutput synthesized a deny
+	// the raw `decision.Decision` BEFORE hookOutputForRun synthesized a deny
 	// for the degraded+enforce case — so a fail-closed PreToolUse showed
 	// up in metrics as the original `RECORDED` decision with degraded=false,
 	// even though the hook actually emitted a block. CodeRabbit on #319
@@ -108,16 +108,11 @@ func evaluateAgentdHook(ctx context.Context, agentd AgentdClient, req AgentdRequ
 	return agentd.EvaluateHook(agentdCtx, req)
 }
 
-func writeRunOutput(stderr, stdout io.Writer, eventName string, decision AgentdDecision, opts RunOptions) int {
-	return writeRunOutputComputed(stderr, stdout, hookOutputForRun(eventName, decision, opts))
-}
-
 // writeRunOutputComputed is the shared write tail. Run() computes
 // hookOutputForRun upstream so it can derive the observability decision
-// from the synthesis path; everyone else (handleAgentdError, tests via
-// writeRunOutput) goes through here too. Keeping the empty-check and the
-// writeJSON error handling in one place means no caller has to remember
-// the contract.
+// from the synthesis path; handleAgentdError and the fail-closed paths go
+// through here too. Keeping the empty-check and the writeJSON error
+// handling in one place means no caller has to remember the contract.
 func writeRunOutputComputed(stderr, stdout io.Writer, out ClaudeHookOutput) int {
 	if isEmptyOutput(out) {
 		return 0
