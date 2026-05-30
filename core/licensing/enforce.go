@@ -22,11 +22,11 @@ func CheckJobConcurrency(current int64, entitlements Entitlements) *TierLimitErr
 }
 
 func CheckWorkflowSteps(current int64, entitlements Entitlements) *TierLimitError {
-	return checkNumericLimit("max_workflow_steps", current, entitlements.MaxWorkflowSteps)
+	return checkNumericLimit("max_workflow_steps", current, effectiveLimit(entitlements.MaxWorkflowSteps, entitlements.Limits, "max_workflow_steps"))
 }
 
 func CheckActiveWorkflows(current int64, entitlements Entitlements) *TierLimitError {
-	return checkNumericLimit("max_active_workflows", current, entitlements.MaxActiveWorkflows)
+	return checkNumericLimit("max_active_workflows", current, effectiveLimit(entitlements.MaxActiveWorkflows, entitlements.Limits, "max_active_workflows"))
 }
 
 func CheckApprovalMode(requested, allowed string) *TierLimitError {

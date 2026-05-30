@@ -137,6 +137,73 @@ func TestNumericEnforcementChecksAcrossTiers(t *testing.T) {
 	}
 }
 
+// TestWorkflowChecksHonorLimitsMapOverride locks task-db35c079: CheckWorkflowSteps
+// and CheckActiveWorkflows now route through effectiveLimit(), so an
+// Entitlements.Limits override applies when the struct field is unset (0) — parity
+// with the sibling checks (CheckPolicyBundleLimit, …). Mutation guard: with the
+// pre-fix code (struct field read directly), a 0 field denies all positive usage
+// (BUG-016), so the at-limit assertion below would fail — i.e. reverting the fix
+// breaks this test.
+func TestWorkflowChecksHonorLimitsMapOverride(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		check    func(int64, Entitlements) *TierLimitError
+		limitKey string
+		allowed  int64
+	}{
+		{name: "workflow steps", check: CheckWorkflowSteps, limitKey: "max_workflow_steps", allowed: 7},
+		{name: "active workflows", check: CheckActiveWorkflows, limitKey: "max_active_workflows", allowed: 3},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			// Struct field left 0 so effectiveLimit must consult the Limits map.
+			ent := Entitlements{Limits: map[string]int64{tc.limitKey: tc.allowed}}
+
+			if err := tc.check(tc.allowed, ent); err != nil {
+				t.Fatalf("at limit (%d) should pass via Limits override for %s: %v", tc.allowed, tc.limitKey, err)
+			}
+			over := tc.allowed + 1
+			err := tc.check(over, ent)
+			if err == nil {
+				t.Fatalf("over limit (%d) should fail via Limits override for %s", over, tc.limitKey)
+			}
+			if err.Limit != tc.limitKey {
+				t.Fatalf("Limit = %q, want %q", err.Limit, tc.limitKey)
+			}
+			if err.Allowed != tc.allowed {
+				t.Fatalf("Allowed = %d, want %d", err.Allowed, tc.allowed)
+			}
+			if err.Current != over {
+				t.Fatalf("Current = %d, want %d", err.Current, over)
+			}
+		})
+	}
+}
+
+// TestWorkflowChecksStructFieldTakesPriorityOverLimitsMap guards the ADDITIVE
+// contract: a set struct field still wins over a Limits-map entry (effectiveLimit
+// returns the field when non-zero), so the task-60dc3610 struct-field path is not
+// replaced — only supplemented.
+func TestWorkflowChecksStructFieldTakesPriorityOverLimitsMap(t *testing.T) {
+	t.Parallel()
+
+	ent := Entitlements{
+		MaxWorkflowSteps:   5,
+		MaxActiveWorkflows: 5,
+		Limits:             map[string]int64{"max_workflow_steps": 99, "max_active_workflows": 99},
+	}
+	if err := CheckWorkflowSteps(6, ent); err == nil {
+		t.Fatal("CheckWorkflowSteps(6) must fail at struct-field cap 5, not the Limits map's 99")
+	}
+	if err := CheckActiveWorkflows(6, ent); err == nil {
+		t.Fatal("CheckActiveWorkflows(6) must fail at struct-field cap 5, not the Limits map's 99")
+	}
+}
+
 func TestCheckApprovalMode(t *testing.T) {
 	t.Parallel()
 
