@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -221,6 +223,39 @@ func MockBankTransferDeriver() TagDeriverFunc {
 		},
 		[]string{"finance", "transfer"},
 	)
+}
+
+// --- Generic config-driven MCP-op risk-tag deriver (task-73922f13) ---
+
+// configMCPOpDeriverName is the risk_tag_deriver value a topic uses to opt into
+// the generic, config-driven MCP-op deriver (built per-topic from mcp_op_rules,
+// not a static NamedDerivers entry).
+const configMCPOpDeriverName = "mcp-op"
+
+// MCPOpTagRule lets ANY MCP integration declare op->risk-tag rules as DATA in the
+// system "topics" config — no per-integration Go in core. Schema for a topic that
+// names the "mcp-op" deriver:
+//
+//	{
+//	  "name": "job.<integration>.tool",
+//	  "risk_tag_deriver": "mcp-op",
+//	  "default_risk_tags": ["external-callback"],
+//	  "mcp_op_rules": [
+//	    {"op_glob": "all_monday_api", "labels": {"mutation": "true"}, "tags": ["destructive"]},
+//	    {"op_glob": "*delete*", "tags": ["destructive"]}
+//	  ]
+//	}
+//
+// A rule MATCHES a job when its OpGlob (path.Match against the resolved op/tool
+// name; empty OpGlob matches any op) matches AND every entry in Labels equals the
+// job's label of that key (empty Labels impose no constraint). The deriver returns
+// the deduped, sorted UNION of every matching rule's Tags plus default_risk_tags —
+// always non-nil, so it REPLACES client-supplied risk_tags (anti-spoof) for the
+// registered topic.
+type MCPOpTagRule struct {
+	OpGlob string            `json:"op_glob,omitempty"`
+	Labels map[string]string `json:"labels,omitempty"`
+	Tags   []string          `json:"tags"`
 }
 
 // NamedDerivers maps deriver names (as declared in pack manifests via
