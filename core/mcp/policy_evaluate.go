@@ -909,6 +909,9 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 			Content: []ContentItem{{Type: "text", Text: dec.Reason}},
 			IsError: true,
 		}
+		if h := InvocationHandleFromContext(ctx); h != nil {
+			h.MarkPolicyDenied(dec.Reason, dec.SubReason, dec.Extra)
+		}
 		finalResult = denyResult
 		skipDedupeCache = true
 		return denyResult, nil

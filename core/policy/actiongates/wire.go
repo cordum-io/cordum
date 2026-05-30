@@ -35,6 +35,12 @@ type ProductionPipelineOptions struct {
 	// session-taint deny (tool-name globs treated as destructive). Unset => the
 	// gate's defaultDestructiveToolGlobs.
 	DestructiveToolGlobs []string
+	// DestructiveMutationArgKeys names string args to scan for GraphQL mutation
+	// documents. Unset => the gate's built-in defaults.
+	DestructiveMutationArgKeys []string
+	// DestructiveMutationFieldGlobs lists GraphQL mutation field globs treated as
+	// destructive. Unset => the gate's built-in defaults.
+	DestructiveMutationFieldGlobs []string
 }
 
 // BuildProductionPipeline constructs the canonical Tenant→File→URL→MCP→
@@ -55,10 +61,12 @@ func BuildProductionPipeline(opts ProductionPipelineOptions) *Pipeline {
 			DomainSeen: opts.DomainSeen,
 		}),
 		NewMCPGate(MCPGateOptions{
-			Identities:           opts.Identities,
-			Reachability:         opts.Reachability,
-			DangerousParamRules:  opts.DangerousParamRules,
-			DestructiveToolGlobs: opts.DestructiveToolGlobs,
+			Identities:                    opts.Identities,
+			Reachability:                  opts.Reachability,
+			DangerousParamRules:           opts.DangerousParamRules,
+			DestructiveToolGlobs:          opts.DestructiveToolGlobs,
+			DestructiveMutationArgKeys:    opts.DestructiveMutationArgKeys,
+			DestructiveMutationFieldGlobs: opts.DestructiveMutationFieldGlobs,
 		}),
 		NewMutationGate(MutationGateOptions{
 			Approvals: opts.Approvals,

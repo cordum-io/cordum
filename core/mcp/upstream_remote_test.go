@@ -293,6 +293,13 @@ func TestRemoteUpstream_MondayStreamableHTTPFraming(t *testing.T) {
 	if err := json.Unmarshal(f.initParams, &ip); err != nil {
 		t.Fatalf("decode initialize params: %v", err)
 	}
+	var rawInit map[string]json.RawMessage
+	if err := json.Unmarshal(f.initParams, &rawInit); err != nil {
+		t.Fatalf("decode raw initialize params: %v", err)
+	}
+	if _, ok := rawInit["capabilities"]; !ok {
+		t.Fatal("initialize must include capabilities:{}; Monday rejects the field being omitted")
+	}
 	if ip.ProtocolVersion != DefaultProtocolVersion {
 		t.Fatalf("initialize protocolVersion = %q, want %q", ip.ProtocolVersion, DefaultProtocolVersion)
 	}

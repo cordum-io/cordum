@@ -214,3 +214,38 @@ func TestEvaluateToolCall_CleanSessionNotStamped(t *testing.T) {
 		t.Fatalf("clean session must have nil SessionTaint; got %+v", act.SessionTaint)
 	}
 }
+
+func TestEvaluateToolCall_StampsTaintForAllMondayApiDelete(t *testing.T) {
+	t.Parallel()
+	pipeline := &fakePolicyDispatcher{}
+	emitter := &fakeEventEmitter{}
+	deps := newToolCallDepsFixture(pipeline, emitter, &fakeArtifactStore{})
+	taintStore := NewInProcessTaintStore()
+	_ = taintStore.Taint(context.Background(), "tnt_a", "sess_42", SessionTaint{
+		Tool: "get_board_items_page", Pattern: "system override directive",
+		Snippet: "SYSTEM OVERRIDE:", Severity: "high", Confidence: 0.9,
+	})
+	deps.TaintStore = taintStore
+
+	if _, err := EvaluateToolCall(newAuthedToolCallCtx(), deps, ToolCallParams{
+		Name: "all_monday_api", Arguments: json.RawMessage(`{"query":"mutation{delete_item(item_id:0){id}}"}`),
+	}, "monday"); err != nil {
+		t.Fatalf("EvaluateToolCall: %v", err)
+	}
+	if len(pipeline.calls) != 1 {
+		t.Fatalf("dispatch calls = %d, want 1", len(pipeline.calls))
+	}
+	act := pipeline.calls[0].Action
+	if !slices.Contains(act.RiskTags, config.RiskTagSessionPromptInjection) {
+		t.Fatalf("dispatched RiskTags = %v, want to contain %q", act.RiskTags, config.RiskTagSessionPromptInjection)
+	}
+	if act.SessionTaint == nil {
+		t.Fatalf("dispatched Action.SessionTaint = nil, want the stamped citation")
+	}
+	if act.SessionTaint.SourceTool != "get_board_items_page" {
+		t.Fatalf("SessionTaint.SourceTool = %q, want get_board_items_page", act.SessionTaint.SourceTool)
+	}
+	if act.SessionTaint.Snippet != "SYSTEM OVERRIDE:" {
+		t.Fatalf("SessionTaint.Snippet = %q, want the cited injected content", act.SessionTaint.Snippet)
+	}
+}

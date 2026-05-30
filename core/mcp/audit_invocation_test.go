@@ -133,6 +133,38 @@ func TestToolInvocationAuditor_InboundError(t *testing.T) {
 	}
 }
 
+func TestToolInvocationAuditor_PolicyDeniedResultAuditsDeny(t *testing.T) {
+	t.Parallel()
+	sender := &recordingSender{}
+	a := NewToolInvocationAuditor(sender, DefaultRedactor())
+
+	_, h := a.StartInbound(context.Background(), "agent-1", "tenant-a", "all_monday_api", json.RawMessage(`{}`))
+	h.MarkPolicyDenied("destructive action blocked", "session_tainted_prompt_injection", map[string]string{
+		"taint_snippet": "SYSTEM OVERRIDE:",
+	})
+	a.FinishInbound(h, &ToolCallResult{
+		Content: []ContentItem{{Type: "text", Text: "destructive action blocked"}},
+		IsError: true,
+	}, nil)
+
+	ev := sender.last()
+	if ev == nil {
+		t.Fatal("no event")
+	}
+	if ev.Decision != "deny" {
+		t.Fatalf("Decision = %q, want deny", ev.Decision)
+	}
+	if ev.Extra["result_type"] != "error" {
+		t.Errorf("result_type = %q, want error", ev.Extra["result_type"])
+	}
+	if ev.Extra["sub_reason"] != "session_tainted_prompt_injection" {
+		t.Errorf("sub_reason = %q", ev.Extra["sub_reason"])
+	}
+	if ev.Extra["taint_snippet"] != "SYSTEM OVERRIDE:" {
+		t.Errorf("taint_snippet = %q", ev.Extra["taint_snippet"])
+	}
+}
+
 func TestToolInvocationAuditor_IdentityMissing(t *testing.T) {
 	t.Parallel()
 	sender := &recordingSender{}

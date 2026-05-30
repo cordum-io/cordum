@@ -275,6 +275,7 @@ services:
       - CORDUM_LICENSE_PUBLIC_KEY=${CORDUM_LICENSE_PUBLIC_KEY:-}
       - CORDUM_POLICY_SIGNING_KEY_ID=${CORDUM_POLICY_SIGNING_KEY_ID:-dev-local}
       - CORDUM_POLICY_DEV_SIGNING_SEED=${CORDUM_POLICY_DEV_SIGNING_SEED:-cordum-local-policy-signing-v1}
+      - CORDUM_MCP_DESTRUCTIVE_TOOL_GLOBS=${CORDUM_MCP_DESTRUCTIVE_TOOL_GLOBS:-}
       - CORDUM_TELEMETRY_MODE=off
       # Unset by default — the audit chain engages unconditionally at gateway boot. Set this to
       # webhook|syslog|datadog|cloudwatch to stream events to an external SIEM, or to

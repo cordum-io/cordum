@@ -46,6 +46,10 @@ type InvocationHandle struct {
 	approvalID     string
 	approvalStatus string // "" (default → "none"), "required", "consumed"
 	argsRaw        json.RawMessage
+	decision       string
+	reason         string
+	subReason      string
+	policyExtra    map[string]string
 }
 
 // MarkApprovalConsumed is called by the approval gate after a successful
@@ -84,6 +88,26 @@ func (h *InvocationHandle) MarkApprovalPreapproved(toolName string) {
 	}
 	h.approvalID = ""
 	h.approvalStatus = "preapproved"
+}
+
+// MarkPolicyDenied records a pre-dispatch policy DENY on the invocation
+// handle. Policy-denied MCP calls return an isError ToolCallResult (not a Go
+// error) so the JSON-RPC session can continue; without this stamp the terminal
+// invocation audit would see only result.IsError and incorrectly report
+// decision=allow.
+func (h *InvocationHandle) MarkPolicyDenied(reason, subReason string, extra ...map[string]string) {
+	if h == nil {
+		return
+	}
+	h.decision = "deny"
+	h.reason = reason
+	h.subReason = subReason
+	if len(extra) > 0 && len(extra[0]) > 0 {
+		h.policyExtra = make(map[string]string, len(extra[0]))
+		for k, v := range extra[0] {
+			h.policyExtra[k] = v
+		}
+	}
 }
 
 // invocationHandleCtxKey is the unexported ctx key used to propagate an
@@ -321,6 +345,16 @@ func (a *auditor) emit(h *InvocationHandle, eventType string, result *ToolCallRe
 		resultType = "error"
 		errorCode = err.Error()
 	}
+	if h.decision == "deny" {
+		decision = "deny"
+		resultType = "error"
+		if h.reason != "" {
+			errorCode = h.reason
+		}
+		if h.subReason != "" {
+			subReason = h.subReason
+		}
+	}
 
 	contentCount := 0
 	resultHash := ""
@@ -356,6 +390,12 @@ func (a *auditor) emit(h *InvocationHandle, eventType string, result *ToolCallRe
 	}
 	if h.agentID == "unknown" {
 		extra["identity_missing"] = "true"
+	}
+	for k, v := range h.policyExtra {
+		if k == "" || v == "" {
+			continue
+		}
+		extra[k] = v
 	}
 
 	a.sender.Send(audit.SIEMEvent{

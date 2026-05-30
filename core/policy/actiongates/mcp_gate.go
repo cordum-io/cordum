@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"path"
 	"reflect"
+	"regexp"
 	"strings"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
@@ -44,6 +45,14 @@ type MCPGateOptions struct {
 	// (content-aware session-taint deny). Unset => defaultDestructiveToolGlobs.
 	// This is a SCOPING predicate only — it never denies on its own.
 	DestructiveToolGlobs []string
+	// DestructiveMutationArgKeys names string args that may carry a GraphQL
+	// mutation document for generic API passthrough tools. Unset => defaults.
+	// This is a SCOPING predicate only -- it never denies on its own.
+	DestructiveMutationArgKeys []string
+	// DestructiveMutationFieldGlobs lists path.Match globs for GraphQL mutation
+	// field names treated as destructive. Unset => defaults.
+	// This is a SCOPING predicate only -- it never denies on its own.
+	DestructiveMutationFieldGlobs []string
 }
 
 // MCPGate enforces MCP/tool-call admission. It converges on the same
@@ -51,10 +60,12 @@ type MCPGateOptions struct {
 // field but additionally validates: AllowedServers, AllowedResources,
 // RequiredEntitlement, DangerousParamRules and Reachability.
 type MCPGate struct {
-	identities      MCPIdentityResolver
-	reachability    ReachabilityProbe
-	dangerous       map[string][]DangerousParamRule
-	destructiveTool []string
+	identities               MCPIdentityResolver
+	reachability             ReachabilityProbe
+	dangerous                map[string][]DangerousParamRule
+	destructiveTool          []string
+	destructiveMutArgKeys    []string
+	destructiveMutFieldGlobs []string
 }
 
 // NewMCPGate returns a gate bound to the resolver/probe in opts. Rule
@@ -66,10 +77,12 @@ type MCPGate struct {
 // silently never match a JSON `1` that arrives over the wire.
 func NewMCPGate(opts MCPGateOptions) *MCPGate {
 	return &MCPGate{
-		identities:      opts.Identities,
-		reachability:    opts.Reachability,
-		dangerous:       normalizeDangerousParamRules(opts.DangerousParamRules),
-		destructiveTool: normalizeDestructiveToolGlobs(opts.DestructiveToolGlobs),
+		identities:               opts.Identities,
+		reachability:             opts.Reachability,
+		dangerous:                normalizeDangerousParamRules(opts.DangerousParamRules),
+		destructiveTool:          normalizeDestructiveToolGlobs(opts.DestructiveToolGlobs),
+		destructiveMutArgKeys:    normalizeStringList(opts.DestructiveMutationArgKeys, defaultDestructiveMutationArgKeys),
+		destructiveMutFieldGlobs: normalizeStringList(opts.DestructiveMutationFieldGlobs, defaultDestructiveMutationFieldGlobs),
 	}
 }
 
@@ -78,6 +91,17 @@ func NewMCPGate(opts MCPGateOptions) *MCPGate {
 // covers the common destructive verbs across MCP tool catalogs; P3b may tighten
 // it for the Monday pack.
 var defaultDestructiveToolGlobs = []string{"*delete*", "*remove*", "*archive*"}
+
+var defaultDestructiveMutationArgKeys = []string{"query", "mutation", "gql", "graphql"}
+
+var defaultDestructiveMutationFieldGlobs = []string{"delete_*", "archive_*", "remove_*", "delete", "archive", "remove"}
+
+const maxArgMutationScanBytes = 16 << 10
+
+var (
+	mutationKeywordRe        = regexp.MustCompile(`(?i)\bmutation\b`)
+	graphqlFieldInvocationRe = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
+)
 
 // normalizeDestructiveToolGlobs trims blanks and applies the default set when the
 // caller supplied none.
@@ -94,11 +118,43 @@ func normalizeDestructiveToolGlobs(globs []string) []string {
 	return out
 }
 
-// isDestructiveTool reports whether the tool name matches any destructive glob.
-// SCOPING predicate only for the session-taint deny — NEVER a standalone deny:
-// a clean (untainted) destructive call still passes the gate (DoD#3).
+func normalizeStringList(values, defaults []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			out = append(out, value)
+		}
+	}
+	if len(out) == 0 {
+		return append([]string(nil), defaults...)
+	}
+	return out
+}
+
+// isDestructiveTool reports whether the tool name itself is configured as
+// destructive. It is a scoping predicate only, never a standalone deny.
 func (g *MCPGate) isDestructiveTool(tool string) bool {
 	return globAdmits(g.destructiveTool, tool)
+}
+
+// destructiveCall reports whether a tool call is destructive and returns the
+// safe identifier that matched. Tool-name globs are the primary configured
+// signal; the GraphQL fallback catches generic passthrough tools whose name is
+// benign but whose arguments carry a destructive delete/archive/remove mutation
+// (for example all_monday_api with "mutation { delete_item(...) }"). This
+// remains a SCOPING predicate only for the session-taint deny -- NEVER a
+// standalone deny: a clean destructive call still passes the gate.
+func (g *MCPGate) destructiveCall(act *config.ActionDescriptor) (string, bool) {
+	if act == nil {
+		return "", false
+	}
+	if g.isDestructiveTool(act.Tool) {
+		return act.Tool, true
+	}
+	if field, ok := matchesDestructiveMutationArgs(act.Args, g.destructiveMutArgKeys, g.destructiveMutFieldGlobs); ok {
+		return "mutation:" + field, true
+	}
+	return "", false
 }
 
 // normalizeDangerousParamRules JSON-round-trips every rule Value so
@@ -204,16 +260,22 @@ func (g *MCPGate) Evaluate(ctx context.Context, in *config.PolicyInput) ActionGa
 	// Content-aware session-taint deny (DoD#2/#3/#4): block ONLY when the action
 	// is BOTH tainted (a prompt injection was detected in a PRIOR tool-call result
 	// this session, stamped pre-dispatch in EvaluateToolCall) AND destructive. The
-	// conjunction is the whole point: isDestructiveTool alone is a scoping
-	// predicate, never a standalone deny — a clean session's delete carries no
-	// taint tag and falls through to the normal allow-list ALLOW (DoD#3), and a
-	// benign tool while tainted is not denied (DoD#4). That is what makes this
-	// deny content-DERIVED, not a bare "deny deletes" metadata rule. The injected
-	// snippet is cited in the decision Extra (mcpExtra) for the audit trail / UI.
-	if containsRiskTag(act.RiskTags, config.RiskTagSessionPromptInjection) && g.isDestructiveTool(act.Tool) {
-		return mcpDecision(pb.DecisionType_DECISION_TYPE_DENY, act, CodeAccessDenied,
-			"destructive action blocked: session tainted by prompt injection detected in a prior tool result",
-			"session_tainted_prompt_injection")
+	// destructive match can come from a tool-name glob or from a GraphQL-proxy
+	// tool whose args carry a delete/archive/remove mutation. The conjunction is
+	// the whole point: destructiveCall alone is a scoping predicate, never a
+	// standalone deny -- a clean session's delete carries no taint tag and falls
+	// through to the normal allow-list ALLOW (DoD#3), and a benign tool while
+	// tainted is not denied (DoD#4). That is what makes this deny content-DERIVED,
+	// not a bare "deny deletes" metadata rule. The injected snippet is cited in
+	// the decision Extra (mcpExtra) for the audit trail / UI.
+	if containsRiskTag(act.RiskTags, config.RiskTagSessionPromptInjection) {
+		if match, destructive := g.destructiveCall(act); destructive {
+			dec := mcpDecision(pb.DecisionType_DECISION_TYPE_DENY, act, CodeAccessDenied,
+				"destructive action blocked: session tainted by prompt injection detected in a prior tool result",
+				"session_tainted_prompt_injection")
+			dec.Extra["taint_destructive_match"] = match
+			return dec
+		}
 	}
 
 	if g.reachability != nil && strings.TrimSpace(act.Server) != "" {
@@ -296,6 +358,39 @@ func globAdmits(patterns []string, value string) bool {
 		}
 	}
 	return false
+}
+
+func matchesDestructiveMutationArgs(args map[string]any, argKeys, fieldGlobs []string) (string, bool) {
+	if len(args) == 0 {
+		return "", false
+	}
+	for _, key := range argKeys {
+		value, ok := args[key]
+		if !ok {
+			continue
+		}
+		doc, ok := value.(string)
+		if !ok || strings.TrimSpace(doc) == "" {
+			continue
+		}
+		if len(doc) > maxArgMutationScanBytes {
+			doc = doc[:maxArgMutationScanBytes]
+		}
+		lower := strings.ToLower(doc)
+		if !mutationKeywordRe.MatchString(lower) {
+			continue
+		}
+		for _, match := range graphqlFieldInvocationRe.FindAllStringSubmatch(lower, -1) {
+			if len(match) < 2 {
+				continue
+			}
+			field := match[1]
+			if globAdmits(fieldGlobs, field) {
+				return field, true
+			}
+		}
+	}
+	return "", false
 }
 
 func hasEntitlement(have []string, required string) bool {

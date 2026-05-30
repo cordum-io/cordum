@@ -17,6 +17,7 @@ import (
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/mcp"
@@ -374,12 +375,30 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		if agentID == "" {
 			agentID = strings.TrimSpace(authCtx.PrincipalID)
 		}
+		principalID := strings.TrimSpace(authCtx.PrincipalID)
+		if principalID == "" {
+			principalID = agentID
+		}
 		mcpCtx := WithMCPCallMetadata(r.Context(), MCPCallMetadata{
 			Tenant:            tenantID,
 			AgentID:           agentID,
-			Principal:         strings.TrimSpace(authCtx.PrincipalID),
+			Principal:         principalID,
 			RequesterIdentity: submitterIdentity(r),
 		})
+		if transportSessionID := strings.TrimSpace(r.Header.Get("X-MCP-Session-ID")); transportSessionID != "" {
+			executionID := "mcp-" + transportSessionID
+			if err := s.ensureMCPHTTPTraceParents(r.Context(), tenantID, agentID, principalID, transportSessionID, executionID); err != nil {
+				writeErrorJSON(w, http.StatusInternalServerError, "mcp trace unavailable")
+				return
+			}
+			mcpCtx = mcp.WithCallMetadata(mcpCtx, mcp.CallMetadata{
+				Tenant:      tenantID,
+				Principal:   principalID,
+				AgentID:     agentID,
+				SessionID:   transportSessionID,
+				ExecutionID: executionID,
+			})
+		}
 		// Also stash tenant for the mcp.tool_called audit hook, which
 		// reads ctx via mcp.TenantFromContext (a separate ctx key from
 		// MCPCallMetadata so core/mcp stays free of gateway-specific
@@ -396,6 +415,39 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	}
+}
+
+func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentID, principalID, sessionID, executionID string) error {
+	if s == nil || s.edgeStore == nil || sessionID == "" || executionID == "" {
+		return nil
+	}
+	now := time.Now().UTC()
+	if _, ok, err := s.edgeStore.GetSession(ctx, tenantID, sessionID); err != nil {
+		return err
+	} else if !ok {
+		if err := s.edgeStore.CreateSession(ctx, edge.EdgeSession{
+			SessionID: sessionID, TenantID: tenantID, PrincipalID: principalID,
+			PrincipalType: edge.PrincipalTypeService, AgentProduct: "mcp-gateway",
+			AgentVersion: buildinfo.Version, Mode: edge.SessionModeLocalDev,
+			PolicyMode: edge.PolicyModeEnforce, Status: edge.SessionStatusRunning,
+			StartedAt: now, EnforcementLayers: edge.EnforcementLayers{"mcp": true},
+			RiskSummary: edge.RiskSummary{MaxRisk: edge.RiskLevelLow},
+			Labels:      edge.Labels{"agent_id": agentID},
+		}); err != nil {
+			return err
+		}
+	}
+	if _, ok, err := s.edgeStore.GetExecution(ctx, tenantID, executionID); err != nil {
+		return err
+	} else if !ok {
+		return s.edgeStore.CreateExecution(ctx, edge.AgentExecution{
+			ExecutionID: executionID, SessionID: sessionID, TenantID: tenantID,
+			Adapter: edge.AdapterMCPGateway, Mode: edge.ExecutionModeLocalDev,
+			WorkerID: agentID, Status: edge.ExecutionStatusRunning,
+			StartedAt: now, Labels: edge.Labels{"agent_id": agentID},
+		})
+	}
+	return nil
 }
 
 // resolveMCPIdentity looks up the agent identity for this MCP request.

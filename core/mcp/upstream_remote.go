@@ -318,7 +318,7 @@ func (u *RemoteUpstream) post(ctx context.Context, sessionID string, body []byte
 	if err != nil {
 		return nil, "", 0, errors.New("mcp: upstream request failed")
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	read, err := io.ReadAll(io.LimitReader(resp.Body, remoteMaxResponseBytes))
 	if err != nil {
 		return nil, "", resp.StatusCode, errors.New("mcp: reading upstream response failed")
