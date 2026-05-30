@@ -526,6 +526,12 @@ type ActionDescriptor struct {
 	// payload lets a gate cite the actual injected content; the trigger flag rides
 	// in RiskTags as RiskTagSessionPromptInjection.
 	SessionTaint *ActionSessionTaint `json:"session_taint,omitempty"`
+
+	// TaintLookupFailed is set pre-dispatch when the MCP session-taint lookup
+	// errored for this action. It lets an action gate fail closed for
+	// destructive actions while keeping the zero value backward-compatible with
+	// today's fail-open behavior.
+	TaintLookupFailed bool `json:"taint_lookup_failed,omitempty"`
 }
 
 // ActionTargetResource identifies an object referenced by an action. OwnerTenant

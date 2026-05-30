@@ -53,6 +53,10 @@ type MCPGateOptions struct {
 	// field names treated as destructive. Unset => defaults.
 	// This is a SCOPING predicate only -- it never denies on its own.
 	DestructiveMutationFieldGlobs []string
+	// FailClosedDestructiveOnTaintLookupError requires human approval for a
+	// destructive MCP call when the session-taint lookup errored. Default false
+	// preserves the historical fail-open path.
+	FailClosedDestructiveOnTaintLookupError bool
 }
 
 // MCPGate enforces MCP/tool-call admission. It converges on the same
@@ -66,6 +70,7 @@ type MCPGate struct {
 	destructiveTool          []string
 	destructiveMutArgKeys    []string
 	destructiveMutFieldGlobs []string
+	failClosedTaintLookup    bool
 }
 
 // NewMCPGate returns a gate bound to the resolver/probe in opts. Rule
@@ -83,6 +88,7 @@ func NewMCPGate(opts MCPGateOptions) *MCPGate {
 		destructiveTool:          normalizeDestructiveToolGlobs(opts.DestructiveToolGlobs),
 		destructiveMutArgKeys:    normalizeStringList(opts.DestructiveMutationArgKeys, defaultDestructiveMutationArgKeys),
 		destructiveMutFieldGlobs: normalizeStringList(opts.DestructiveMutationFieldGlobs, defaultDestructiveMutationFieldGlobs),
+		failClosedTaintLookup:    opts.FailClosedDestructiveOnTaintLookupError,
 	}
 }
 
