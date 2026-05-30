@@ -258,6 +258,102 @@ type MCPOpTagRule struct {
 	Tags   []string          `json:"tags"`
 }
 
+// mcpOpNameLabelKeys are the conventional label keys consulted (in order) for the
+// MCP op/tool name. Integrations/edge populate one of these; a JSON payload
+// tool/op/name field is the fallback.
+var mcpOpNameLabelKeys = []string{"mcp.tool_name", "mcp.op", "tool_name", "_content.tool_name", "op"}
+
+// resolveMCPOpName extracts the MCP op/tool name from labels (preferred) or a
+// JSON payload "tool"/"op"/"name" field. Returns "" when none is present (a rule
+// with a non-empty OpGlob then simply will not match).
+func resolveMCPOpName(labels map[string]string, payload []byte) string {
+	for _, k := range mcpOpNameLabelKeys {
+		if v := strings.TrimSpace(labels[k]); v != "" {
+			return v
+		}
+	}
+	for _, src := range [][]byte{[]byte(labels["_content.payload_json"]), payload} {
+		if len(src) == 0 {
+			continue
+		}
+		if op := jsonFirstStringField(src, "tool", "op", "name"); op != "" {
+			return op
+		}
+	}
+	return ""
+}
+
+// jsonFirstStringField returns the first non-empty string value among keys in a
+// JSON object, or "" (also "" on non-object input or parse error — never panics).
+func jsonFirstStringField(data []byte, keys ...string) string {
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(data, &obj) != nil {
+		return ""
+	}
+	for _, k := range keys {
+		raw, ok := obj[k]
+		if !ok {
+			continue
+		}
+		var s string
+		if json.Unmarshal(raw, &s) == nil {
+			if s = strings.TrimSpace(s); s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+// mcpOpRuleMatches reports whether rule applies to the resolved op and labels.
+// An invalid OpGlob pattern fails closed (no match) rather than erroring.
+func mcpOpRuleMatches(rule MCPOpTagRule, op string, labels map[string]string) bool {
+	if glob := strings.TrimSpace(rule.OpGlob); glob != "" {
+		ok, err := path.Match(glob, op)
+		if err != nil || !ok {
+			return false
+		}
+	}
+	for k, want := range rule.Labels {
+		if labels[k] != want {
+			return false
+		}
+	}
+	return true
+}
+
+// NewConfigMCPOpDeriver returns a generic TagDeriverFunc built from declarative
+// op->tag rules (no per-integration Go). It resolves the MCP op/tool name, ORs
+// together every matching rule's tags with defaultTags, and returns the deduped,
+// sorted result. The result is ALWAYS non-nil (even when empty) so it REPLACES
+// client-supplied risk_tags for the registered topic (anti-spoof). Malformed or
+// empty rules contribute nothing; it never panics.
+func NewConfigMCPOpDeriver(rules []MCPOpTagRule, defaultTags []string) TagDeriverFunc {
+	return func(topic string, labels map[string]string, payload []byte) []string {
+		op := resolveMCPOpName(labels, payload)
+		set := make(map[string]struct{})
+		add := func(tags []string) {
+			for _, t := range tags {
+				if t = strings.TrimSpace(t); t != "" {
+					set[t] = struct{}{}
+				}
+			}
+		}
+		add(defaultTags)
+		for _, rule := range rules {
+			if mcpOpRuleMatches(rule, op, labels) {
+				add(rule.Tags)
+			}
+		}
+		out := make([]string, 0, len(set))
+		for t := range set {
+			out = append(out, t)
+		}
+		sort.Strings(out)
+		return out
+	}
+}
+
 // NamedDerivers maps deriver names (as declared in pack manifests via
 // riskTagDeriver) to factory functions. Packs reference these by name;
 // the safety kernel resolves them at boot or when packs are installed.
@@ -289,11 +385,19 @@ func loadTagDeriversFromTopics(registry *TagDeriverRegistry, topics []topicDeriv
 		if name == "" {
 			continue
 		}
-		fn, ok := NamedDerivers[name]
-		if !ok {
-			slog.Warn("tag deriver: unknown named deriver in topic registry",
-				"component", "safety", "topic", t.TopicName, "deriver", name)
-			continue
+		var fn TagDeriverFunc
+		if name == configMCPOpDeriverName {
+			// Generic config-driven deriver: built per-topic from its declared
+			// rules (NamedDerivers entries are static/config-less).
+			fn = NewConfigMCPOpDeriver(t.MCPOpRules, t.DefaultTags)
+		} else {
+			named, ok := NamedDerivers[name]
+			if !ok {
+				slog.Warn("tag deriver: unknown named deriver in topic registry",
+					"component", "safety", "topic", t.TopicName, "deriver", name)
+				continue
+			}
+			fn = named
 		}
 		newDerivers[t.TopicName] = fn
 		count++
@@ -312,6 +416,10 @@ func loadTagDeriversFromTopics(registry *TagDeriverRegistry, topics []topicDeriv
 type topicDeriverEntry struct {
 	TopicName   string
 	DeriverName string
+	// MCPOpRules + DefaultTags carry the generic "mcp-op" deriver's config from
+	// the topic registration so the deriver is constructed per-topic at load time.
+	MCPOpRules  []MCPOpTagRule
+	DefaultTags []string
 }
 
 // topicRegistration mirrors the JSON structure of a topic registry entry.
@@ -319,6 +427,10 @@ type topicDeriverEntry struct {
 type topicRegistration struct {
 	Name           string `json:"name"`
 	RiskTagDeriver string `json:"risk_tag_deriver"`
+	// MCPOpRules + DefaultRiskTags configure the generic "mcp-op" deriver for
+	// this topic (ignored by other derivers); supplied as data by a pack/operator.
+	MCPOpRules      []MCPOpTagRule `json:"mcp_op_rules,omitempty"`
+	DefaultRiskTags []string       `json:"default_risk_tags,omitempty"`
 }
 
 // loadTopicDeriverEntries reads the topic registry from the config service and
@@ -349,6 +461,8 @@ func loadTopicDeriverEntries(ctx context.Context, cfgSvc *configsvc.Service) ([]
 			entries = append(entries, topicDeriverEntry{
 				TopicName:   reg.Name,
 				DeriverName: reg.RiskTagDeriver,
+				MCPOpRules:  reg.MCPOpRules,
+				DefaultTags: reg.DefaultRiskTags,
 			})
 		}
 	}

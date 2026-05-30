@@ -447,3 +447,124 @@ func TestLoadTagDeriversFromTopics_UpdateDeriverOnReload(t *testing.T) {
 		t.Fatal("deriver should be removed after riskTagDeriver cleared")
 	}
 }
+
+// equalTagSet compares two tag slices in order. NewConfigMCPOpDeriver returns a
+// sorted slice, so callers pass sorted wants.
+func equalTagSet(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestNewConfigMCPOpDeriver_Matching(t *testing.T) {
+	rules := []MCPOpTagRule{
+		{OpGlob: "all_monday_api", Labels: map[string]string{"mutation": "true"}, Tags: []string{"destructive"}},
+		{OpGlob: "*delete*", Tags: []string{"destructive"}},
+		{OpGlob: "*item*", Tags: []string{"destructive"}}, // dedups with *delete* for board_item_delete
+		{OpGlob: "bulk_*", Tags: []string{"batch"}},       // unions with *delete* for bulk_delete
+		{OpGlob: "webhook_*", Tags: []string{"external-callback"}},
+	}
+	deriver := NewConfigMCPOpDeriver(rules, nil)
+	tests := []struct {
+		name   string
+		labels map[string]string
+		want   []string
+	}{
+		{name: "op+label match -> destructive", labels: map[string]string{"mcp.tool_name": "all_monday_api", "mutation": "true"}, want: []string{"destructive"}},
+		{name: "op matches but required label missing -> empty", labels: map[string]string{"mcp.tool_name": "all_monday_api"}, want: []string{}},
+		{name: "two destructive rules dedup to one", labels: map[string]string{"mcp.tool_name": "board_item_delete"}, want: []string{"destructive"}},
+		{name: "two rules union (sorted)", labels: map[string]string{"mcp.tool_name": "bulk_delete"}, want: []string{"batch", "destructive"}},
+		{name: "external callback", labels: map[string]string{"mcp.tool_name": "webhook_register"}, want: []string{"external-callback"}},
+		{name: "no match -> empty (non-nil, replaces client tags)", labels: map[string]string{"mcp.tool_name": "get_board_info"}, want: []string{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := deriver("job.x.tool", tt.labels, nil)
+			if got == nil {
+				t.Fatalf("deriver returned nil; must be non-nil so it replaces client risk_tags (anti-spoof)")
+			}
+			if !equalTagSet(got, tt.want) {
+				t.Fatalf("tags = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNewConfigMCPOpDeriver_DefaultsAndAntiSpoof(t *testing.T) {
+	deriver := NewConfigMCPOpDeriver(
+		[]MCPOpTagRule{{OpGlob: "*delete*", Tags: []string{"destructive"}}},
+		[]string{"external-callback"},
+	)
+	// No op match -> defaults only (still non-nil).
+	if got := deriver("t", map[string]string{"mcp.tool_name": "get_board"}, nil); !equalTagSet(got, []string{"external-callback"}) {
+		t.Fatalf("no-match tags = %v, want [external-callback]", got)
+	}
+	// Match -> default + matched, deduped + sorted.
+	if got := deriver("t", map[string]string{"mcp.tool_name": "hard_delete"}, nil); !equalTagSet(got, []string{"destructive", "external-callback"}) {
+		t.Fatalf("match tags = %v, want [destructive external-callback]", got)
+	}
+	// nil rules + nil defaults -> non-nil EMPTY (replaces client tags with nothing).
+	if empty := NewConfigMCPOpDeriver(nil, nil)("t", map[string]string{"mcp.tool_name": "anything"}, nil); empty == nil || len(empty) != 0 {
+		t.Fatalf("empty deriver = %v, want non-nil empty slice", empty)
+	}
+}
+
+func TestNewConfigMCPOpDeriver_MalformedAndPayloadFallback(t *testing.T) {
+	// An invalid glob ("[") fails closed (no match, no panic); the valid rule still applies.
+	deriver := NewConfigMCPOpDeriver([]MCPOpTagRule{
+		{OpGlob: "[", Tags: []string{"never"}},
+		{OpGlob: "*delete*", Tags: []string{"destructive"}},
+	}, nil)
+	if got := deriver("t", map[string]string{"mcp.tool_name": "do_delete"}, nil); !equalTagSet(got, []string{"destructive"}) {
+		t.Fatalf("invalid-glob tags = %v, want [destructive] (bad pattern must fail closed)", got)
+	}
+	// Op name resolved from a JSON payload "tool" field when no label is set.
+	if got := deriver("t", nil, []byte(`{"tool":"hard_delete"}`)); !equalTagSet(got, []string{"destructive"}) {
+		t.Fatalf("payload-op tags = %v, want [destructive]", got)
+	}
+	// Non-JSON payload + no labels -> op "" -> no match -> empty, no panic.
+	if got := deriver("t", nil, []byte("not json")); len(got) != 0 {
+		t.Fatalf("garbage payload tags = %v, want empty", got)
+	}
+}
+
+func TestLoadTagDeriversFromTopics_ConfigMCPOpDispatch(t *testing.T) {
+	registry := NewTagDeriverRegistry()
+	topics := []topicDeriverEntry{
+		{
+			TopicName:   "job.monday.tool",
+			DeriverName: configMCPOpDeriverName, // "mcp-op"
+			MCPOpRules:  []MCPOpTagRule{{OpGlob: "all_monday_api", Tags: []string{"destructive"}}},
+			DefaultTags: []string{"external-callback"},
+		},
+		{TopicName: "job.demo-mock-bank.transfer", DeriverName: "amount-threshold"}, // legacy named, must still bind
+		{TopicName: "job.unknown", DeriverName: "does-not-exist"},                   // unknown -> skipped
+	}
+	count := loadTagDeriversFromTopics(registry, topics)
+	if count != 2 {
+		t.Fatalf("registered count = %d, want 2 (mcp-op + amount-threshold; unknown skipped)", count)
+	}
+	// The config-driven deriver is constructed from the topic's rules and works
+	// end-to-end via the registry (Derive returns the server-derived set -> anti-spoof).
+	tags, ok := registry.Derive("job.monday.tool", map[string]string{"mcp.tool_name": "all_monday_api"}, nil)
+	if !ok {
+		t.Fatal("mcp-op deriver not registered for job.monday.tool")
+	}
+	if !equalTagSet(tags, []string{"destructive", "external-callback"}) {
+		t.Fatalf("mcp-op derived tags = %v, want [destructive external-callback]", tags)
+	}
+	// Legacy named deriver binding unchanged (DoD#3 — additive).
+	if !registry.HasDeriver("job.demo-mock-bank.transfer") {
+		t.Fatal("amount-threshold binding lost (regression)")
+	}
+	// Unknown deriver name skipped, not registered.
+	if registry.HasDeriver("job.unknown") {
+		t.Fatal("unknown deriver name should be skipped, not registered")
+	}
+}
