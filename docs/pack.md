@@ -222,6 +222,16 @@ cfg:system:policy.data.bundles["<pack_id>/<name>"] = {
 Safety kernel merges file/URL policy with config service fragments on load/reload.
 Snapshot hashes are combined (e.g. `baseSnapshot|cfg:<hash>`).
 
+**Merge precedence (cross-bundle duplicate rule IDs).** When two bundles define the
+same rule `id`, the kernel resolves the conflict by **install recency**: bundles
+merge in `installed_at`-ascending order (bundle id alphabetical as a deterministic
+tiebreak), so the **most-recently-installed bundle wins**. Reinstall or upgrade a
+pack and its changed rule takes effect even when another co-installed bundle defines
+the same rule id. A missing or unparseable `installed_at` is treated as oldest
+(lowest precedence). Kernel security invariants are applied separately as a security
+floor and are unaffected by this ordering; the snapshot hash depends only on the
+bundle content set (not install order), so reloads stay stable.
+
 Policy rules may include **remediations** to suggest safer alternatives:
 
 ```yaml
