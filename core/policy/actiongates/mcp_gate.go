@@ -274,11 +274,19 @@ func (g *MCPGate) Evaluate(ctx context.Context, in *config.PolicyInput) ActionGa
 	// tainted is not denied (DoD#4). That is what makes this deny content-DERIVED,
 	// not a bare "deny deletes" metadata rule. The injected snippet is cited in
 	// the decision Extra (mcpExtra) for the audit trail / UI.
-	if containsRiskTag(act.RiskTags, config.RiskTagSessionPromptInjection) {
+	tainted := containsRiskTag(act.RiskTags, config.RiskTagSessionPromptInjection)
+	if tainted || (g.failClosedTaintLookup && act.TaintLookupFailed) {
 		if match, destructive := g.destructiveCall(act); destructive {
-			dec := mcpDecision(pb.DecisionType_DECISION_TYPE_DENY, act, CodeAccessDenied,
-				"destructive action blocked: session tainted by prompt injection detected in a prior tool result",
-				"session_tainted_prompt_injection")
+			if tainted {
+				dec := mcpDecision(pb.DecisionType_DECISION_TYPE_DENY, act, CodeAccessDenied,
+					"destructive action blocked: session tainted by prompt injection detected in a prior tool result",
+					"session_tainted_prompt_injection")
+				dec.Extra["taint_destructive_match"] = match
+				return dec
+			}
+			dec := mcpDecision(pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN, act, CodeRequireHuman,
+				"destructive action held: session taint store unavailable, cannot confirm session is clean",
+				"taint_lookup_unavailable_failclosed")
 			dec.Extra["taint_destructive_match"] = match
 			return dec
 		}

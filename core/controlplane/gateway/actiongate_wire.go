@@ -109,12 +109,13 @@ func (s *server) wireActionGatePipeline() {
 	}
 	redisClient := s.redisClient()
 	pipeline := actiongates.BuildProductionPipeline(actiongates.ProductionPipelineOptions{
-		Approvals:                     edgeStoreApprovalLookup{store: s.edgeStore},
-		Identities:                    gatewayMCPIdentityResolver{store: s.agentIdentityStore},
-		ChainVerifier:                 newAuditChainApprovalVerifier(redisClient, s.auditChainer),
-		DestructiveToolGlobs:          destructiveToolGlobsFromEnv(),
-		DestructiveMutationArgKeys:    destructiveMutationArgKeysFromEnv(),
-		DestructiveMutationFieldGlobs: destructiveMutationFieldGlobsFromEnv(),
+		Approvals:                               edgeStoreApprovalLookup{store: s.edgeStore},
+		Identities:                              gatewayMCPIdentityResolver{store: s.agentIdentityStore},
+		ChainVerifier:                           newAuditChainApprovalVerifier(redisClient, s.auditChainer),
+		DestructiveToolGlobs:                    destructiveToolGlobsFromEnv(),
+		DestructiveMutationArgKeys:              destructiveMutationArgKeysFromEnv(),
+		DestructiveMutationFieldGlobs:           destructiveMutationFieldGlobsFromEnv(),
+		FailClosedDestructiveOnTaintLookupError: failClosedDestructiveTaintFromEnv(),
 	})
 	// actionGatePipeline is set once during boot before any handler can
 	// observe it, so the field assignment needs no lock — Go's
@@ -152,6 +153,16 @@ func destructiveMutationArgKeysFromEnv() []string {
 // built-in defaults (delete/remove/archive mutation fields).
 func destructiveMutationFieldGlobsFromEnv() []string {
 	return splitCommaEnv("CORDUM_MCP_DESTRUCTIVE_MUTATION_GLOBS")
+}
+
+func failClosedDestructiveTaintFromEnv() bool {
+	raw := strings.TrimSpace(os.Getenv("CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE"))
+	switch strings.ToLower(raw) {
+	case "1", "true", "t", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func splitCommaEnv(name string) []string {
