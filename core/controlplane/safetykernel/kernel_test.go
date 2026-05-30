@@ -713,6 +713,161 @@ default_decision: maybe
 	}
 }
 
+// sharedRuleYAML is a one-rule fragment whose rule id "shared-rule" matches
+// topic job.shared.test with the given decision — used to probe which bundle
+// wins a cross-bundle duplicate rule id under loadFragments' merge order.
+func sharedRuleYAML(decision string) string {
+	return "rules:\n" +
+		"  - id: shared-rule\n" +
+		"    match:\n" +
+		"      topics:\n" +
+		"        - job.shared.test\n" +
+		"    decision: " + decision + "\n" +
+		"    reason: " + decision + " fragment\n"
+}
+
+// fragmentLoaderForTest seeds a miniredis-backed config service with the given
+// bundle map (cfg:system:policy.data.bundles) and returns a policyLoader.
+func fragmentLoaderForTest(t *testing.T, bundles map[string]any) *policyLoader {
+	t.Helper()
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	t.Cleanup(srv.Close)
+	svc, err := configsvc.New("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("config svc: %v", err)
+	}
+	t.Cleanup(func() { _ = svc.Close() })
+	doc := &configsvc.Document{
+		Scope:   configsvc.ScopeSystem,
+		ScopeID: "policy",
+		Data:    map[string]any{"bundles": bundles},
+	}
+	if err := svc.Set(context.Background(), doc); err != nil {
+		t.Fatalf("set config doc: %v", err)
+	}
+	return &policyLoader{
+		configSvc:   svc,
+		configScope: configsvc.ScopeSystem,
+		configID:    "policy",
+		configKey:   "bundles",
+	}
+}
+
+// mergedSharedDecision loads the fragments and returns the merged decision for
+// topic job.shared.test (i.e. which bundle's "shared-rule" won the merge).
+func mergedSharedDecision(t *testing.T, l *policyLoader) string {
+	t.Helper()
+	policy, _, _, _, err := l.loadFragments(context.Background())
+	if err != nil {
+		t.Fatalf("load fragments: %v", err)
+	}
+	if policy == nil {
+		t.Fatalf("expected merged policy")
+	}
+	return policy.Evaluate(config.PolicyInput{Tenant: "default", Topic: "job.shared.test"}).Decision
+}
+
+// TestLoadFragments_InstallRecencyWinsOverAlphabetical locks task-53777f44:
+// cross-bundle duplicate rule ids resolve by install recency, not bundle-id
+// alphabetical order. "aaa-newer" sorts FIRST but was installed LATER; under the
+// old sort.Strings merge the alphabetically-last "zzz-older" (allow) would win.
+// Install recency must make the most-recently-installed "aaa-newer" (deny) win.
+func TestLoadFragments_InstallRecencyWinsOverAlphabetical(t *testing.T) {
+	loader := fragmentLoaderForTest(t, map[string]any{
+		"zzz-older": map[string]any{
+			"content":      sharedRuleYAML("allow"),
+			"installed_at": "2026-01-01T00:00:00Z",
+		},
+		"aaa-newer": map[string]any{
+			"content":      sharedRuleYAML("deny"),
+			"installed_at": "2026-02-01T00:00:00Z",
+		},
+	})
+	if got := mergedSharedDecision(t, loader); got != "deny" {
+		t.Fatalf("shared-rule decision = %q, want \"deny\" (most-recently-installed aaa-newer must win over alphabetically-later zzz-older)", got)
+	}
+}
+
+// TestLoadFragments_SameInstalledAtTiebreakDeterministic covers the tie path: two
+// bundles with IDENTICAL installed_at (e.g. one pack writing two overlays in the
+// same second). The bundle-id alphabetical tiebreak must decide deterministically
+// ("bbb-tie" sorts after "aaa-tie" -> merges last -> deny wins) and stay identical
+// across repeated loads despite Go map-iteration nondeterminism.
+func TestLoadFragments_SameInstalledAtTiebreakDeterministic(t *testing.T) {
+	loader := fragmentLoaderForTest(t, map[string]any{
+		"aaa-tie": map[string]any{
+			"content":      sharedRuleYAML("allow"),
+			"installed_at": "2026-03-01T00:00:00Z",
+		},
+		"bbb-tie": map[string]any{
+			"content":      sharedRuleYAML("deny"),
+			"installed_at": "2026-03-01T00:00:00Z",
+		},
+	})
+	for i := 0; i < 20; i++ {
+		if got := mergedSharedDecision(t, loader); got != "deny" {
+			t.Fatalf("iter %d: tie decision = %q, want \"deny\" (bbb-tie sorts after aaa-tie -> merges last)", i, got)
+		}
+	}
+}
+
+// TestLoadFragments_MissingOrGarbledInstalledAtIsOldest covers fragmentInstalledAt's
+// defensive paths: a missing installed_at and an unparseable one both resolve to
+// the zero time (oldest = lowest precedence) without panicking, so a bundle with a
+// real (newer) installed_at wins.
+func TestLoadFragments_MissingOrGarbledInstalledAtIsOldest(t *testing.T) {
+	loader := fragmentLoaderForTest(t, map[string]any{
+		"aaa-missing": map[string]any{ // no installed_at -> zero time
+			"content": sharedRuleYAML("allow"),
+		},
+		"bbb-garbled": map[string]any{ // unparseable installed_at -> zero time, no panic
+			"content":      sharedRuleYAML("require_approval"),
+			"installed_at": "not-a-timestamp",
+		},
+		"ccc-legacy-string": sharedRuleYAML("allow"), // legacy bare-string fragment -> zero time
+		"zzz-dated": map[string]any{ // real, newest -> wins
+			"content":      sharedRuleYAML("deny"),
+			"installed_at": "2026-02-01T00:00:00Z",
+		},
+	})
+	if got := mergedSharedDecision(t, loader); got != "deny" {
+		t.Fatalf("shared-rule decision = %q, want \"deny\" (dated bundle must outrank missing/garbled-installed_at bundles)", got)
+	}
+}
+
+// TestLoadFragments_SnapshotIndependentOfInstallOrder guards the StaleSnapshot
+// risk: install recency reorders the MERGE but must NOT change the cfg:<sha>
+// snapshot, which folds {bundle-id, content} in sorted-key order only. Two
+// loaders with the same content but different installed_at (different merge
+// order, even a different winning decision) must produce the SAME snapshot, so
+// reinstalling a pack (which rewrites installed_at) never drifts the cache key.
+func TestLoadFragments_SnapshotIndependentOfInstallOrder(t *testing.T) {
+	contentBundles := func(aInstalled, bInstalled string) map[string]any {
+		return map[string]any{
+			"aaa": map[string]any{"content": sharedRuleYAML("allow"), "installed_at": aInstalled},
+			"bbb": map[string]any{"content": sharedRuleYAML("deny"), "installed_at": bInstalled},
+		}
+	}
+	// Set A: aaa older -> bbb (deny) wins. Set B: bbb older -> aaa (allow) wins.
+	_, _, snapA, _, err := fragmentLoaderForTest(t, contentBundles("2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z")).loadFragments(context.Background())
+	if err != nil {
+		t.Fatalf("load A: %v", err)
+	}
+	_, _, snapB, _, err := fragmentLoaderForTest(t, contentBundles("2026-09-09T00:00:00Z", "2026-03-03T00:00:00Z")).loadFragments(context.Background())
+	if err != nil {
+		t.Fatalf("load B: %v", err)
+	}
+	if snapA == "" || snapB == "" {
+		t.Fatalf("expected non-empty snapshots, got %q / %q", snapA, snapB)
+	}
+	if snapA != snapB {
+		t.Fatalf("snapshot drifted with install order: %q != %q (installed_at must NOT be folded into the hash)", snapA, snapB)
+	}
+}
+
 func TestEvaluateExplainSimulate(t *testing.T) {
 	srv := &server{}
 	policy := &config.SafetyPolicy{
