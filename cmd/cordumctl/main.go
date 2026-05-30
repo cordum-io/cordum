@@ -331,6 +331,17 @@ func (fs *flagSet) tlsOptions() sdk.TLSOptions {
 	}
 	opts.InsecureSkipVerify = (fs.insecure != nil && *fs.insecure) ||
 		parseBoolEnv("CORDUM_TLS_INSECURE")
+	// For a localhost-https gateway, auto-detect the local dev CA
+	// (./certs/ca/ca.crt) when none was supplied and verification is not
+	// disabled — mirroring `cordumctl edge` (detectInitCACert) so REST/SDK
+	// commands (pack install, status, …) trust the local self-signed stack
+	// without a manual CORDUM_TLS_CA. Scoped to localhost; never affects a
+	// remote gateway and never weakens verification.
+	if opts.CACertPath == "" && !opts.InsecureSkipVerify && fs.gateway != nil {
+		if cwd, err := os.Getwd(); err == nil {
+			opts.CACertPath = detectInitCACert("", *fs.gateway, cwd)
+		}
+	}
 	return opts
 }
 
