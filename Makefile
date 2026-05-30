@@ -174,4 +174,5 @@ soak-ws-full:
 release-local:
 	@bash tools/scripts/release-local.sh
 
-.PHONY: help proto build build-all $(SERVICES:%=build-%) test test-integration coverage coverage-core openapi openapi-validate docs-tables docs-tables-check docker smoke verify-images demo-quickstart-test demo-mock-bank-test dev-up dev-down dev-logs edge-rebuild-e2e soak-ws soak-ws-quick soak-ws-full release-local
+# Do NOT add build-% / $(SERVICES:%=build-%) here: make skips pattern-rule search for phony targets (manual sec. 4.6), silently disabling the build-% recipe above ("Nothing to be done for build-<svc>"). Outputs live in bin/, so build-% is always out-of-date and rebuilds anyway.
+.PHONY: help proto build build-all test test-integration coverage coverage-core openapi openapi-validate docs-tables docs-tables-check docker smoke verify-images demo-quickstart-test demo-mock-bank-test dev-up dev-down dev-logs edge-rebuild-e2e soak-ws soak-ws-quick soak-ws-full release-local
