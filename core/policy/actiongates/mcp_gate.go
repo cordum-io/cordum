@@ -39,6 +39,11 @@ type MCPGateOptions struct {
 	Identities          MCPIdentityResolver
 	Reachability        ReachabilityProbe
 	DangerousParamRules map[string][]DangerousParamRule
+	// DestructiveToolGlobs lists path.Match globs for tool names treated as
+	// destructive. A session-tainted action whose tool matches one is DENIED
+	// (content-aware session-taint deny). Unset => defaultDestructiveToolGlobs.
+	// This is a SCOPING predicate only — it never denies on its own.
+	DestructiveToolGlobs []string
 }
 
 // MCPGate enforces MCP/tool-call admission. It converges on the same
@@ -46,9 +51,10 @@ type MCPGateOptions struct {
 // field but additionally validates: AllowedServers, AllowedResources,
 // RequiredEntitlement, DangerousParamRules and Reachability.
 type MCPGate struct {
-	identities   MCPIdentityResolver
-	reachability ReachabilityProbe
-	dangerous    map[string][]DangerousParamRule
+	identities      MCPIdentityResolver
+	reachability    ReachabilityProbe
+	dangerous       map[string][]DangerousParamRule
+	destructiveTool []string
 }
 
 // NewMCPGate returns a gate bound to the resolver/probe in opts. Rule
@@ -60,10 +66,39 @@ type MCPGate struct {
 // silently never match a JSON `1` that arrives over the wire.
 func NewMCPGate(opts MCPGateOptions) *MCPGate {
 	return &MCPGate{
-		identities:   opts.Identities,
-		reachability: opts.Reachability,
-		dangerous:    normalizeDangerousParamRules(opts.DangerousParamRules),
+		identities:      opts.Identities,
+		reachability:    opts.Reachability,
+		dangerous:       normalizeDangerousParamRules(opts.DangerousParamRules),
+		destructiveTool: normalizeDestructiveToolGlobs(opts.DestructiveToolGlobs),
 	}
+}
+
+// defaultDestructiveToolGlobs is the fallback set of tool-name globs (path.Match)
+// treated as destructive when MCPGateOptions.DestructiveToolGlobs is unset. It
+// covers the common destructive verbs across MCP tool catalogs; P3b may tighten
+// it for the Monday pack.
+var defaultDestructiveToolGlobs = []string{"*delete*", "*remove*", "*archive*"}
+
+// normalizeDestructiveToolGlobs trims blanks and applies the default set when the
+// caller supplied none.
+func normalizeDestructiveToolGlobs(globs []string) []string {
+	out := make([]string, 0, len(globs))
+	for _, g := range globs {
+		if g = strings.TrimSpace(g); g != "" {
+			out = append(out, g)
+		}
+	}
+	if len(out) == 0 {
+		return append([]string(nil), defaultDestructiveToolGlobs...)
+	}
+	return out
+}
+
+// isDestructiveTool reports whether the tool name matches any destructive glob.
+// SCOPING predicate only for the session-taint deny — NEVER a standalone deny:
+// a clean (untainted) destructive call still passes the gate (DoD#3).
+func (g *MCPGate) isDestructiveTool(tool string) bool {
+	return globAdmits(g.destructiveTool, tool)
 }
 
 // normalizeDangerousParamRules JSON-round-trips every rule Value so
@@ -166,6 +201,21 @@ func (g *MCPGate) Evaluate(ctx context.Context, in *config.PolicyInput) ActionGa
 			"action carries a dangerous parameter", sub)
 	}
 
+	// Content-aware session-taint deny (DoD#2/#3/#4): block ONLY when the action
+	// is BOTH tainted (a prompt injection was detected in a PRIOR tool-call result
+	// this session, stamped pre-dispatch in EvaluateToolCall) AND destructive. The
+	// conjunction is the whole point: isDestructiveTool alone is a scoping
+	// predicate, never a standalone deny — a clean session's delete carries no
+	// taint tag and falls through to the normal allow-list ALLOW (DoD#3), and a
+	// benign tool while tainted is not denied (DoD#4). That is what makes this
+	// deny content-DERIVED, not a bare "deny deletes" metadata rule. The injected
+	// snippet is cited in the decision Extra (mcpExtra) for the audit trail / UI.
+	if containsRiskTag(act.RiskTags, config.RiskTagSessionPromptInjection) && g.isDestructiveTool(act.Tool) {
+		return mcpDecision(pb.DecisionType_DECISION_TYPE_DENY, act, CodeAccessDenied,
+			"destructive action blocked: session tainted by prompt injection detected in a prior tool result",
+			"session_tainted_prompt_injection")
+	}
+
 	if g.reachability != nil && strings.TrimSpace(act.Server) != "" {
 		reachable, perr := g.reachability.MCPServerReachable(ctx, act.Server)
 		if perr != nil {
@@ -208,6 +258,20 @@ func mcpExtra(act *config.ActionDescriptor, sub string) map[string]string {
 	}
 	if act.Tool != "" {
 		out["tool"] = act.Tool
+	}
+	// Cite the actual injected content when the action carries a session taint,
+	// so the DENY / audit / UI is verifiably content-aware. The snippet was
+	// already bounded + control-char stripped at detection time.
+	if act.SessionTaint != nil {
+		if act.SessionTaint.Pattern != "" {
+			out["taint_pattern"] = act.SessionTaint.Pattern
+		}
+		if act.SessionTaint.Snippet != "" {
+			out["taint_snippet"] = act.SessionTaint.Snippet
+		}
+		if act.SessionTaint.SourceTool != "" {
+			out["taint_source_tool"] = act.SessionTaint.SourceTool
+		}
 	}
 	return out
 }

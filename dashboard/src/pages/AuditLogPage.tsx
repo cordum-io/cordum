@@ -38,6 +38,7 @@ import {
 import {
   Search,
   RefreshCw,
+  Radio,
   FileText,
   Download,
   Calendar,
@@ -241,6 +242,10 @@ export default function AuditLogPage() {
   );
   const [agents, setAgents] = useState<AgentOption[]>([]);
   const [expandedEventId, setExpandedEventId] = useState<string | null>(null);
+  // Live audit feed (P2a): when ON, the SIEM feed polls ~every 2s so decisions
+  // stream in during the demo. Default OFF keeps the calm 15s cadence + prod
+  // request load unchanged. Local UI state only (not persisted, not a filter).
+  const [live, setLive] = useState(false);
 
   const systemHidden = hideSystem === "1";
 
@@ -285,7 +290,7 @@ export default function AuditLogPage() {
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
-  } = useInfiniteAuditEvents(auditFilters);
+  } = useInfiniteAuditEvents(auditFilters, { live });
 
   useEffect(() => {
     if (!isFetchingNextPage) {
@@ -478,6 +483,23 @@ export default function AuditLogPage() {
         subtitle="Who did what, when, where, and why — across the whole platform"
         actions={
           <div className="flex gap-2">
+            <Button
+              variant={live ? "default" : "outline"}
+              size="sm"
+              onClick={() => setLive((v) => !v)}
+              aria-pressed={live}
+              aria-label={
+                live ? "Pause live audit feed" : "Resume live audit feed"
+              }
+              title={
+                live
+                  ? "Live: new decisions stream in within ~2s. Click to pause."
+                  : "Paused: click to stream new decisions live (~2s polling)."
+              }
+            >
+              <Radio className={cn("w-3 h-3 mr-1", live && "animate-pulse")} />
+              {live ? "Live" : "Paused"}
+            </Button>
             <Button variant="outline" size="sm" onClick={() => refetch()}>
               <RefreshCw className="w-3 h-3 mr-1" />
               Refresh

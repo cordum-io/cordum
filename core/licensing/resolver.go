@@ -241,6 +241,12 @@ func licenseStatus(license *License) string {
 func mergeEntitlements(base, override Entitlements) Entitlements {
 	merged := base
 	mergeValue(reflect.ValueOf(&merged).Elem(), reflect.ValueOf(override), "")
+	// Presence-aware override: a signature-verified claim that EXPLICITLY set a
+	// scalar limit is authoritative over the tier default (it may RESTRICT below
+	// it — security-safe; the generic mergeValue above MAX-merges, which
+	// under-enforces a lower claim limit against a BUG-016 Unlimited default).
+	// Fields the claim did not set keep the merged tier default.
+	applyPresentLimits(&merged, override)
 	return merged
 }
 
@@ -312,6 +318,41 @@ func mergeLimitValues(current, next int64) int64 {
 		return next
 	}
 	return current
+}
+
+// applyPresentLimits overrides scalar int64 limit fields that the (verified)
+// claim EXPLICITLY set, making them authoritative over the tier default. This
+// fixes the MAX-merge under-enforcement (BUG-016 sibling): a claim limit lower
+// than the tier default is now honored (including explicit 0=deny and explicit
+// Unlimited). Fields the claim did not set keep the merged tier default. No-op
+// when the override carries no presence info (an in-code override), preserving
+// the legacy merge for non-JSON callers.
+func applyPresentLimits(merged *Entitlements, override Entitlements) {
+	if override.present == nil {
+		return
+	}
+	mv := reflect.ValueOf(merged).Elem()
+	ov := reflect.ValueOf(override)
+	t := mv.Type()
+	for i := range t.NumField() {
+		f := t.Field(i)
+		if f.PkgPath != "" || mv.Field(i).Kind() != reflect.Int64 {
+			continue
+		}
+		key := entitlementJSONKey(f.Tag.Get("json"))
+		if key != "" && override.wasSet(key) {
+			mv.Field(i).SetInt(ov.Field(i).Int())
+		}
+	}
+}
+
+// entitlementJSONKey returns the field-name part of a struct json tag
+// ("name,omitempty" -> "name").
+func entitlementJSONKey(tag string) string {
+	if idx := strings.IndexByte(tag, ','); idx >= 0 {
+		return tag[:idx]
+	}
+	return tag
 }
 
 func isApprovalModeField(fieldName string, typ reflect.Type) bool {

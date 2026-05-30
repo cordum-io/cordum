@@ -276,6 +276,10 @@ services:
       - CORDUM_AUDIT_EXPORT_TYPE=${CORDUM_AUDIT_EXPORT_TYPE:-}
       - AUDIT_TRANSPORT=${AUDIT_TRANSPORT:-nats}
       - CORDUM_AUDIT_CHAIN_FAIL=${CORDUM_AUDIT_CHAIN_FAIL:-permissive}
+      # Optional tamper-evident HMAC over the audit chain (core/audit WithHMACKey).
+      # Unset = chain runs without HMAC; set a >=32-byte random key to enable
+      # hmac_verified>0 on /api/v1/audit/verify (short keys are rejected — BUG-013).
+      - CORDUM_AUDIT_HMAC_KEY=${CORDUM_AUDIT_HMAC_KEY:-}
       - CORDUM_AUDIT_EXPORT_WEBHOOK_URL=${CORDUM_AUDIT_EXPORT_WEBHOOK_URL:-}
       - CORDUM_AUDIT_EXPORT_WEBHOOK_SECRET=${CORDUM_AUDIT_EXPORT_WEBHOOK_SECRET:-}
       - CORDUM_AUDIT_EXPORT_SYSLOG_ADDR=${CORDUM_AUDIT_EXPORT_SYSLOG_ADDR:-}

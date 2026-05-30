@@ -31,6 +31,10 @@ type ProductionPipelineOptions struct {
 	HostResolver        HostResolver
 	DomainSeen          func(host string) bool
 	DangerousParamRules map[string][]DangerousParamRule
+	// DestructiveToolGlobs is forwarded to the MCPGate's content-aware
+	// session-taint deny (tool-name globs treated as destructive). Unset => the
+	// gate's defaultDestructiveToolGlobs.
+	DestructiveToolGlobs []string
 }
 
 // BuildProductionPipeline constructs the canonical Tenant→File→URL→MCP→
@@ -51,9 +55,10 @@ func BuildProductionPipeline(opts ProductionPipelineOptions) *Pipeline {
 			DomainSeen: opts.DomainSeen,
 		}),
 		NewMCPGate(MCPGateOptions{
-			Identities:          opts.Identities,
-			Reachability:        opts.Reachability,
-			DangerousParamRules: opts.DangerousParamRules,
+			Identities:           opts.Identities,
+			Reachability:         opts.Reachability,
+			DangerousParamRules:  opts.DangerousParamRules,
+			DestructiveToolGlobs: opts.DestructiveToolGlobs,
 		}),
 		NewMutationGate(MutationGateOptions{
 			Approvals: opts.Approvals,

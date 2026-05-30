@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
+	"strings"
 
 	edgecore "github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/infra/config"
@@ -107,9 +109,10 @@ func (s *server) wireActionGatePipeline() {
 	}
 	redisClient := s.redisClient()
 	pipeline := actiongates.BuildProductionPipeline(actiongates.ProductionPipelineOptions{
-		Approvals:     edgeStoreApprovalLookup{store: s.edgeStore},
-		Identities:    gatewayMCPIdentityResolver{store: s.agentIdentityStore},
-		ChainVerifier: newAuditChainApprovalVerifier(redisClient, s.auditChainer),
+		Approvals:            edgeStoreApprovalLookup{store: s.edgeStore},
+		Identities:           gatewayMCPIdentityResolver{store: s.agentIdentityStore},
+		ChainVerifier:        newAuditChainApprovalVerifier(redisClient, s.auditChainer),
+		DestructiveToolGlobs: destructiveToolGlobsFromEnv(),
 	})
 	// actionGatePipeline is set once during boot before any handler can
 	// observe it, so the field assignment needs no lock — Go's
@@ -124,6 +127,26 @@ func (s *server) wireActionGatePipeline() {
 		"audit_chain_chainer_available", s.auditChainer != nil,
 		"audit_chain_hmac_enabled", s.auditChainer != nil && s.auditChainer.HMACEnabled(),
 	)
+}
+
+// destructiveToolGlobsFromEnv lets an operator override the MCPGate's
+// destructive-tool glob set via CORDUM_MCP_DESTRUCTIVE_TOOL_GLOBS (comma-
+// separated path.Match patterns). Empty/unset returns nil so the gate applies
+// its built-in default set ({*delete*,*remove*,*archive*}); this is the
+// gateway-side override seam the content-aware session-taint deny keys on.
+func destructiveToolGlobsFromEnv() []string {
+	raw := strings.TrimSpace(os.Getenv("CORDUM_MCP_DESTRUCTIVE_TOOL_GLOBS"))
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // edgeStoreApprovalLookup adapts edgecore.RedisStore to the

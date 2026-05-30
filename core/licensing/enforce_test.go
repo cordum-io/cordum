@@ -265,7 +265,20 @@ func TestDefaultEntitlements_EveryNumericFieldAllowsPositiveUsage(t *testing.T) 
 		ent := DefaultEntitlements(plan)
 		for _, c := range checks {
 			t.Run(string(plan)+"/"+c.name, func(t *testing.T) {
-				if err := c.fn(probe, ent); err != nil {
+				err := c.fn(probe, ent)
+				// MaxPolicyBundles is a GATED feature, not a resource limit: the
+				// Community (free) tier is intentionally capped at 0 custom policy
+				// bundles (monetization gate). 0 here is DELIBERATE — enforced by the
+				// loader's policyBundleLimit() Community branch AND CheckPolicyBundleLimit
+				// — not the "accidental unset = deny" misconfiguration this invariant
+				// guards against. So for this one combo positive usage MUST be denied.
+				if plan == PlanCommunity && c.name == "CheckPolicyBundleLimit" {
+					if err == nil {
+						t.Fatalf("plan=community check=CheckPolicyBundleLimit probe=1: expected DENY (free tier is gated to 0 custom policy bundles), got nil")
+					}
+					return
+				}
+				if err != nil {
 					t.Fatalf("plan=%s check=%s probe=1 returned %v — limit field is unset (0 = deny); set Unlimited or a positive cap in TierDefaults", plan, c.name, err)
 				}
 			})

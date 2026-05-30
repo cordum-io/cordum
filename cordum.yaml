@@ -5,7 +5,7 @@
 gateway: https://localhost:8081
 api_key: ${CORDUM_API_KEY}
 tenant: default
-# principal: # not set; falls back to env or built-in default
+principal: alice
 policy_mode: enforce
 cacert: ./certs/ca/ca.crt
 # dashboard_url: # not set; falls back to env or built-in default

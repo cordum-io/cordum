@@ -369,4 +369,90 @@ describe("useAuditEvents", () => {
     expect(url).toContain("limit=500");
     hook.unmount();
   });
+
+  // P2a — live audit poll. The Audit Log "Live" toggle drives options.live;
+  // the hook must translate that into refetchInterval === 2000 (exact, so a
+  // mutated cadence is caught) when ON and false (no auto-poll) when OFF.
+  it("useInfiniteAuditEvents polls at exactly 2000ms only when live=true", async () => {
+    mockFetch([
+      {
+        match: "/audit/events",
+        method: "GET",
+        body: { items: [], next_cursor: "", returned: 0 },
+      },
+    ]);
+    const queryClient = createTestQueryClient();
+    const hook = renderWithQueryClient(
+      () => useInfiniteAuditEvents({}, { live: true }),
+      queryClient,
+    );
+    await hook.waitFor(() => {
+      expect(hook.result.current?.isSuccess).toBe(true);
+    });
+    const query = queryClient.getQueryCache().findAll()[0];
+    expect(query?.observers[0]?.options.refetchInterval).toBe(2000);
+    hook.unmount();
+  });
+
+  it("useInfiniteAuditEvents does NOT auto-poll when live is false or omitted", async () => {
+    mockFetch([
+      {
+        match: "/audit/events",
+        method: "GET",
+        body: { items: [], next_cursor: "", returned: 0 },
+      },
+    ]);
+    // live: false
+    const offClient = createTestQueryClient();
+    const offHook = renderWithQueryClient(
+      () => useInfiniteAuditEvents({}, { live: false }),
+      offClient,
+    );
+    await offHook.waitFor(() => {
+      expect(offHook.result.current?.isSuccess).toBe(true);
+    });
+    expect(
+      offClient.getQueryCache().findAll()[0]?.observers[0]?.options
+        .refetchInterval,
+    ).toBe(false);
+    offHook.unmount();
+
+    // options omitted entirely — default is OFF (preserve prod 15s cadence).
+    const defaultClient = createTestQueryClient();
+    const defaultHook = renderWithQueryClient(
+      () => useInfiniteAuditEvents({}),
+      defaultClient,
+    );
+    await defaultHook.waitFor(() => {
+      expect(defaultHook.result.current?.isSuccess).toBe(true);
+    });
+    expect(
+      defaultClient.getQueryCache().findAll()[0]?.observers[0]?.options
+        .refetchInterval,
+    ).toBe(false);
+    defaultHook.unmount();
+  });
+
+  it("useAuditEvents (one-shot) gates the same 2000ms live poll on the live flag", async () => {
+    mockFetch([
+      {
+        match: "/audit/events",
+        method: "GET",
+        body: { items: [], next_cursor: "", returned: 0 },
+      },
+    ]);
+    const liveClient = createTestQueryClient();
+    const liveHook = renderWithQueryClient(
+      () => useAuditEvents({}, { live: true }),
+      liveClient,
+    );
+    await liveHook.waitFor(() => {
+      expect(liveHook.result.current?.isSuccess).toBe(true);
+    });
+    expect(
+      liveClient.getQueryCache().findAll()[0]?.observers[0]?.options
+        .refetchInterval,
+    ).toBe(2000);
+    liveHook.unmount();
+  });
 });

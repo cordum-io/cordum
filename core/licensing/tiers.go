@@ -65,10 +65,14 @@ var TierDefaults = map[Plan]TierDefaultSpec{
 		MaxPromptChars:     Unlimited,
 		MaxBodyBytes:       Unlimited,
 		MaxArtifactBytes:   Unlimited,
-		MaxPolicyBundles:   Unlimited,
-		ApprovalMode:       ApprovalModeSingle,
-		Audit:              true,
-		BreakGlassAdmin:    true,
+		// Community = free/unlicensed tier: 0 custom policy bundles. 0 is an explicit
+		// cap (post-BUG-016 semantics); the loader skips custom bundles when
+		// bundleLimit==0. Keep 0 — Unlimited here guts free-tier gating (regressed in
+		// cdb31f93's BUG-016 sweep; see entitlements_test + tiers_test).
+		MaxPolicyBundles: 0,
+		ApprovalMode:     ApprovalModeSingle,
+		Audit:            true,
+		BreakGlassAdmin:  true,
 	},
 	PlanTeam: {
 		MaxWorkers:         25,

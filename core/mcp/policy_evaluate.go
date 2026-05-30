@@ -276,6 +276,22 @@ type ToolCallDeps struct {
 	// Tests inject a fresh in-process store per fixture so -count=3
 	// re-runs see a clean state. A nil store disables retry dedupe.
 	DedupeState DedupeStore
+
+	// TaintStore persists prompt-injection session taints (keyed by tenant+
+	// session) detected when scanning tool-call RESULTS, so a later destructive
+	// call in the same session can be DENIED content-awarely. Nil disables the
+	// session-taint feature (like a nil DedupeState). Production wires this via
+	// SelectTaintStore off the shared Redis client; tests inject a fresh
+	// in-process store per fixture.
+	TaintStore TaintStore
+
+	// ResultScanner scans a tool-call result's content for prompt injection.
+	// Injected as a func dep (rather than importing the safetykernel scanner) so
+	// core/mcp keeps no dependency on core/controlplane/safetykernel — the gateway
+	// adapts safetykernel.ScanForPromptInjection at wiring time. Nil disables
+	// result scanning. Paired with TaintStore: BOTH must be non-nil for the read
+	// path to persist a taint.
+	ResultScanner func(content []byte) []ResultFinding
 }
 
 // EvaluateToolCallResult bundles the artifacts a caller might want
@@ -481,6 +497,33 @@ func EvaluateToolCall(ctx context.Context, deps ToolCallDeps, params ToolCallPar
 	descriptor, err := BuildActionDescriptorFromToolCall(meta, descriptorParams, server)
 	if err != nil {
 		return EvaluateToolCallResult{}, err
+	}
+
+	// Pre-dispatch content session-taint stamp (DoD#2): if a PRIOR tool-call
+	// RESULT in this (tenant, session) carried a prompt injection, stamp the
+	// trigger risk tag + citation onto the descriptor so the MCPGate can DENY a
+	// destructive call content-awarely BEFORE any upstream Invoke. The taint is
+	// thus visible to the gate at decision time, never after the side effect.
+	//
+	// LOOKUP-ERROR POSTURE: demo default = log + treat as untainted, so a Redis
+	// blip cannot make the clean (non-tainted) path flaky during a live demo.
+	// Production-hardening alternative (DEFERRED): fail-closed (REQUIRE_HUMAN/DENY)
+	// for destructive tools when the taint store is unavailable — left as a
+	// follow-up so it does not make the live demo fragile.
+	if deps.TaintStore != nil {
+		if t, ok, terr := deps.TaintStore.GetTaint(ctx, meta.Tenant, meta.SessionID); terr != nil {
+			slog.WarnContext(ctx, "mcp.session_taint.lookup_failed",
+				"tenant", meta.Tenant, "session_id", meta.SessionID, "error", terr.Error())
+		} else if ok && t != nil {
+			descriptor.RiskTags = append(descriptor.RiskTags, config.RiskTagSessionPromptInjection)
+			descriptor.SessionTaint = &config.ActionSessionTaint{
+				Pattern:    t.Pattern,
+				Snippet:    t.Snippet,
+				SourceTool: t.Tool,
+				Severity:   t.Severity,
+				DetectedAt: t.DetectedAt,
+			}
+		}
 	}
 
 	event := &edge.AgentActionEvent{
@@ -890,8 +933,92 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 		finalErr = fmt.Errorf("emit post event: %w", err)
 		return nil, finalErr
 	}
+	// Best-effort content session-taint (DoD#1): scan the read RESULT for a
+	// prompt injection and, on a hit, persist a taint keyed by (tenant, session)
+	// so a LATER destructive call in this session is denied content-awarely
+	// (EvaluateToolCall's pre-dispatch stamp + the MCPGate taint deny). Pure side
+	// effect for FUTURE calls: the read already executed upstream, so any failure
+	// inside is logged and never alters this read's result or decision. A dedupe
+	// cache-hit read returns via dedupeBegin without re-invoking upstream and so
+	// won't re-scan — fine: the call that won the slot already persisted the taint.
+	scanResultForSessionTaint(ctx, deps, params.Name, upstreamResult, stableEventID)
 	finalResult = upstreamResult
 	return upstreamResult, nil
+}
+
+// maxResultScanBytes caps the assembled tool-call result content handed to the
+// ResultScanner so a jumbo board read cannot blow up CPU/memory while building
+// the scan buffer (the scanner applies its own cap downstream too). 256 KiB
+// comfortably covers a realistic board read; content beyond it is not scanned.
+const maxResultScanBytes = 256 * 1024
+
+// scanResultForSessionTaint is the best-effort read-side half of the content
+// session-taint mechanism (DoD#1). On the ALLOW path it scans the tool-call
+// RESULT for a prompt injection and, on a hit, persists a taint keyed by
+// (tenant, session) so a LATER destructive call in the same session is denied
+// content-awarely (see EvaluateToolCall's pre-dispatch stamp + the MCPGate taint
+// deny). It is a pure side effect for FUTURE calls: the read already executed
+// upstream, so every failure path here logs and returns WITHOUT touching the
+// caller's result or decision. No-op unless BOTH ResultScanner and TaintStore
+// are wired (feature disabled, like a nil DedupeState).
+func scanResultForSessionTaint(ctx context.Context, deps ToolCallDeps, tool string, result *ToolCallResult, eventID string) {
+	if deps.ResultScanner == nil || deps.TaintStore == nil || result == nil || result.IsError {
+		return
+	}
+	meta, ok := CallMetadataFromContext(ctx)
+	if !ok || meta.Tenant == "" || meta.SessionID == "" {
+		return
+	}
+	content := assembleResultScanContent(result)
+	if len(content) == 0 {
+		return
+	}
+	findings := deps.ResultScanner(content)
+	if len(findings) == 0 {
+		return
+	}
+	// Cite the first finding; the shipped scanner emits uniformly high-severity
+	// hits, so the first is representative. (A future multi-severity scanner
+	// could select the highest here without changing the persisted shape.)
+	f := findings[0]
+	if err := deps.TaintStore.Taint(ctx, meta.Tenant, meta.SessionID, SessionTaint{
+		Tool:          tool,
+		Pattern:       f.Pattern,
+		Snippet:       f.Snippet,
+		Severity:      f.Severity,
+		Confidence:    f.Confidence,
+		DetectedAt:    deps.Clock(),
+		SourceEventID: eventID,
+	}); err != nil {
+		slog.WarnContext(ctx, "mcp.session_taint.persist_failed",
+			"tenant", meta.Tenant, "session_id", meta.SessionID, "tool", tool, "error", err.Error())
+	}
+}
+
+// assembleResultScanContent concatenates a tool-call result's text content plus
+// a bounded JSON encoding of its StructuredContent (an injection can hide in
+// structured fields, not just text), capped at maxResultScanBytes.
+func assembleResultScanContent(result *ToolCallResult) []byte {
+	var b bytes.Buffer
+	for _, item := range result.Content {
+		if b.Len() >= maxResultScanBytes {
+			break
+		}
+		if item.Text != "" {
+			b.WriteString(item.Text)
+			b.WriteByte('\n')
+		}
+	}
+	if result.StructuredContent != nil && b.Len() < maxResultScanBytes {
+		if encoded, err := json.Marshal(result.StructuredContent); err == nil {
+			b.Write(encoded)
+		}
+	}
+	out := b.Bytes()
+	if len(out) > maxResultScanBytes {
+		out = out[:maxResultScanBytes]
+	}
+	return out
 }
 
 // newPostEvent clones the identity/session fields from the pre event
