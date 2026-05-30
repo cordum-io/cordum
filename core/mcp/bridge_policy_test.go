@@ -134,6 +134,72 @@ func TestInvokeToolWithPolicy_DenyDoesNotForwardUpstream(t *testing.T) {
 	}
 }
 
+// TestInvokeToolWithPolicy_DenyStampsInvocationHandle is the GATE-LEVEL
+// anti-regression for the policy-deny audit fix: a pre-dispatch DENY must
+// stamp decision/reason/sub_reason + policy evidence onto the
+// InvocationHandle in ctx, so the terminal mcp.tool_invocation audit event
+// records decision=deny WITH evidence (not a false ALLOW). The
+// auditor-only test (TestToolInvocationAuditor_PolicyDeniedResultAuditsDeny)
+// calls MarkPolicyDenied by hand and would STILL pass if the gate stopped
+// wiring it — this test fails if the MarkPolicyDenied call at
+// policy_evaluate.go is removed, which is the real defect this task guards.
+func TestInvokeToolWithPolicy_DenyStampsInvocationHandle(t *testing.T) {
+	t.Parallel()
+	pipeline := &fakePolicyDispatcher{
+		decision: PolicyDecision{
+			Decision:  pb.DecisionType_DECISION_TYPE_DENY,
+			GateID:    "actiongate.mcp",
+			Code:      "session_tainted",
+			Reason:    "destructive action blocked",
+			SubReason: "session_tainted_prompt_injection",
+			Extra: map[string]string{
+				"taint_snippet":     "SYSTEM OVERRIDE:",
+				"taint_source_tool": "get_board_items_page",
+			},
+		},
+		fired: true,
+	}
+	emitter := &fakeEventEmitter{}
+	upstream := &fakeUpstreamToolCaller{}
+	deps := newToolCallDepsFixture(pipeline, emitter, &fakeArtifactStore{})
+	deps.Upstream = upstream
+
+	h := &InvocationHandle{}
+	ctx := contextWithInvocationHandle(newAuthedToolCallCtx(), h)
+	result, err := InvokeToolWithPolicy(ctx, deps, ToolCallParams{
+		Name:      "all_monday_api",
+		Arguments: json.RawMessage(`{"query":"mutation { delete_item(item_id: 1) { id } }"}`),
+	}, "cordum.monday")
+	if err != nil {
+		t.Fatalf("InvokeToolWithPolicy returned err: %v", err)
+	}
+	if result == nil || !result.IsError {
+		t.Fatalf("deny result should be IsError=true; got %+v", result)
+	}
+	if upstream.calls != 0 {
+		t.Fatalf("deny must not forward upstream; got %d calls", upstream.calls)
+	}
+	// Anti-regression: these are zero unless InvokeToolWithPolicy wires the
+	// gate decision onto the handle via MarkPolicyDenied.
+	if h.decision != "deny" {
+		t.Fatalf("handle.decision = %q, want deny (MarkPolicyDenied not wired from the gate?)", h.decision)
+	}
+	if h.reason != "destructive action blocked" {
+		t.Errorf("handle.reason = %q, want %q", h.reason, "destructive action blocked")
+	}
+	if h.subReason != "session_tainted_prompt_injection" {
+		t.Errorf("handle.subReason = %q, want %q", h.subReason, "session_tainted_prompt_injection")
+	}
+	// Policy EVIDENCE (taint snippet/source) must flow from the decision
+	// Extra to the handle so the audit event carries WHY it was denied.
+	if h.policyExtra["taint_snippet"] != "SYSTEM OVERRIDE:" {
+		t.Errorf("handle.policyExtra[taint_snippet] = %q, want %q", h.policyExtra["taint_snippet"], "SYSTEM OVERRIDE:")
+	}
+	if h.policyExtra["taint_source_tool"] != "get_board_items_page" {
+		t.Errorf("handle.policyExtra[taint_source_tool] = %q, want %q", h.policyExtra["taint_source_tool"], "get_board_items_page")
+	}
+}
+
 // TestInvokeToolWithPolicy_DedupesRetryDoubleEmit asserts the EventID-
 // keyed sync.Once dedupe: when a retry passes the same EventID, the
 // emitter sees pre+post (or pre+failed) exactly once each.

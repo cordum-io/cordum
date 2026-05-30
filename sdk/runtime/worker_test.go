@@ -3,11 +3,11 @@ package runtime
 import (
 	"context"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
-	"strings"
 
 	agentv1 "github.com/cordum-io/cap/v2/cordum/agent/v1"
 	capsdk "github.com/cordum-io/cap/v2/sdk/go"
@@ -885,5 +885,79 @@ func TestWorker_HeartbeatFailureCounter_ResetOnSuccess(t *testing.T) {
 
 	if failures := atomic.LoadInt32(&w.consecutiveHBFailures); failures != 0 {
 		t.Errorf("expected heartbeat failures to reset to 0 after successful publish, got %d", failures)
+	}
+}
+
+// TestWorker_HeartbeatPacket_SetsTraceID verifies the inline heartbeat builder stamps a
+// non-empty trace_id (== workerID) so the packet passes the bus required-field contract. No
+// NATS needed: it builds a minimal worker and calls the extracted builder directly.
+func TestWorker_HeartbeatPacket_SetsTraceID(t *testing.T) {
+	w := &Worker{
+		workerID: "w-7",
+		pool:     "p",
+		cfg:      Config{Type: "echo", MaxParallelJobs: 4, Capabilities: []string{"cap-x"}},
+	}
+
+	pkt := w.buildHeartbeatPacket(2)
+
+	if err := capsdk.ValidateBusPacket(pkt); err != nil {
+		t.Fatalf("ValidateBusPacket rejected heartbeat: %v", err)
+	}
+	if got := pkt.GetTraceId(); got != "w-7" {
+		t.Fatalf("trace_id = %q, want %q", got, "w-7")
+	}
+	if got := pkt.GetSenderId(); got != "w-7" {
+		t.Fatalf("sender_id = %q, want %q", got, "w-7")
+	}
+	hb := pkt.GetHeartbeat()
+	if hb == nil {
+		t.Fatal("expected heartbeat payload")
+	}
+	if got := hb.GetWorkerId(); got != "w-7" {
+		t.Fatalf("heartbeat worker_id = %q, want %q", got, "w-7")
+	}
+	if got := hb.GetPool(); got != "p" {
+		t.Fatalf("heartbeat pool = %q, want %q", got, "p")
+	}
+	if got := hb.GetActiveJobs(); got != 2 {
+		t.Fatalf("heartbeat active_jobs = %d, want 2", got)
+	}
+	if got := hb.GetMaxParallelJobs(); got != 4 {
+		t.Fatalf("heartbeat max_parallel_jobs = %d, want 4", got)
+	}
+}
+
+// TestWorker_HandshakePacket_SetsTraceID verifies the inline handshake builder stamps a
+// non-empty trace_id (== workerID) so the packet passes the bus required-field contract.
+func TestWorker_HandshakePacket_SetsTraceID(t *testing.T) {
+	w := &Worker{
+		workerID: "w-7",
+		pool:     "p",
+		cfg:      Config{Type: "echo", MaxParallelJobs: 4, Capabilities: []string{"cap-x"}},
+	}
+
+	pkt := w.buildHandshakePacket()
+
+	if err := capsdk.ValidateBusPacket(pkt); err != nil {
+		t.Fatalf("ValidateBusPacket rejected handshake: %v", err)
+	}
+	if got := pkt.GetTraceId(); got != "w-7" {
+		t.Fatalf("trace_id = %q, want %q", got, "w-7")
+	}
+	if got := pkt.GetSenderId(); got != "w-7" {
+		t.Fatalf("sender_id = %q, want %q", got, "w-7")
+	}
+	hs := pkt.GetHandshake()
+	if hs == nil {
+		t.Fatal("expected handshake payload")
+	}
+	if got := hs.GetComponentId(); got != "w-7" {
+		t.Fatalf("handshake component_id = %q, want %q", got, "w-7")
+	}
+	if hs.GetRole() != agentv1.ComponentRole_COMPONENT_ROLE_WORKER {
+		t.Fatalf("handshake role = %v, want COMPONENT_ROLE_WORKER", hs.GetRole())
+	}
+	if !hs.GetCapabilities()["cap-x"] {
+		t.Fatalf("handshake capabilities missing cap-x: %v", hs.GetCapabilities())
 	}
 }

@@ -3,6 +3,9 @@ package audit
 import (
 	"encoding/json"
 	"log/slog"
+	"strings"
+
+	"github.com/google/uuid"
 
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -47,8 +50,13 @@ func (p *NATSAuditPublisher) Send(event SIEMEvent) {
 		return
 	}
 
+	// CAP's BusPacket validator rejects an empty or whitespace-only trace_id,
+	// so a packet without one is NAK-looped by the bus and never reaches the
+	// audit consumer / SIEM exporter. Prefer the event's own correlation trace
+	// so SIEM entries can be joined back to the originating governance event.
 	packet := &pb.BusPacket{
 		SenderId:        "audit-publisher",
+		TraceId:         auditExportTraceID(event),
 		CreatedAt:       timestamppb.Now(),
 		ProtocolVersion: capsdk.DefaultProtocolVersion,
 		Payload: &pb.BusPacket_Alert{
@@ -72,6 +80,21 @@ func (p *NATSAuditPublisher) Send(event SIEMEvent) {
 		p.fallback.Send(event)
 		return
 	}
+}
+
+// auditExportTraceID returns a guaranteed non-empty, non-whitespace trace id
+// for the audit-export BusPacket. Precedence is correlation-first: the event's
+// own trace_id, then its chain EventHash, then a generated UUID so the packet
+// always satisfies CAP validation even for synthetic events (e.g. the
+// /api/v1/audit/export/test ping) that carry neither.
+func auditExportTraceID(event SIEMEvent) string {
+	if t := strings.TrimSpace(event.Extra["trace_id"]); t != "" {
+		return t
+	}
+	if h := strings.TrimSpace(event.EventHash); h != "" {
+		return h
+	}
+	return uuid.NewString()
 }
 
 // Close shuts down the fallback exporter.

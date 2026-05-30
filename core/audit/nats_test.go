@@ -3,6 +3,7 @@ package audit
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -106,6 +107,80 @@ func TestNATSAuditPublisher_PublishesToSubject(t *testing.T) {
 	// Verify fallback was NOT used.
 	if fallback.totalEvents() != 0 {
 		t.Fatalf("expected 0 fallback events, got %d", fallback.totalEvents())
+	}
+}
+
+// TestNATSAuditPublisher_SetsTraceID pins the fix for the broken SIEM export
+// path: NATSAuditPublisher.Send must stamp a non-empty, non-whitespace TraceId
+// on the sys.audit.export BusPacket. CAP's ValidateBusPacket rejects an empty
+// or whitespace-only trace_id, so without this every audit-export packet is
+// NAK-looped by the bus and no SIEM sink is ever reached. TraceId precedence is
+// correlation-first: Extra["trace_id"], else EventHash, else a generated id.
+func TestNATSAuditPublisher_SetsTraceID(t *testing.T) {
+	cases := []struct {
+		name      string
+		mutate    func(*SIEMEvent)
+		wantTrace string // "" means "any non-empty value (generated fallback)"
+	}{
+		{
+			name:      "extra_trace_id_wins",
+			mutate:    func(e *SIEMEvent) { e.Extra = map[string]string{"trace_id": "tr-1"} },
+			wantTrace: "tr-1",
+		},
+		{
+			name:      "falls_back_to_event_hash",
+			mutate:    func(e *SIEMEvent) { e.Extra = nil; e.EventHash = "evhash-abc" },
+			wantTrace: "evhash-abc",
+		},
+		{
+			name:      "generated_when_neither_present",
+			mutate:    func(e *SIEMEvent) { e.Extra = nil; e.EventHash = "" },
+			wantTrace: "", // any non-empty, non-whitespace value
+		},
+		{
+			name: "whitespace_sources_ignored_then_generated",
+			mutate: func(e *SIEMEvent) {
+				e.Extra = map[string]string{"trace_id": "   "}
+				e.EventHash = "  "
+			},
+			wantTrace: "", // both sources blank → generated fallback fires
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			bus := &mockAuditBus{}
+			fallback := &mockExporter{}
+			bufExp := NewBufferedExporter(fallback, WithFlushInterval(10*time.Second))
+			defer func() { _ = bufExp.Close() }()
+
+			event := testEvent()
+			tc.mutate(&event)
+
+			NewNATSAuditPublisher(bus, bufExp).Send(event)
+
+			bus.mu.Lock()
+			defer bus.mu.Unlock()
+			if len(bus.published) != 1 {
+				t.Fatalf("expected 1 published message, got %d", len(bus.published))
+			}
+			pkt := bus.published[0].packet
+
+			trace := pkt.GetTraceId()
+			if strings.TrimSpace(trace) == "" {
+				t.Fatalf("TraceId must be non-empty and non-whitespace, got %q", trace)
+			}
+			if tc.wantTrace != "" && trace != tc.wantTrace {
+				t.Fatalf("TraceId = %q, want %q", trace, tc.wantTrace)
+			}
+
+			// The decisive end-to-end assertion: the packet must pass the SAME
+			// CAP validation the bus applies, so it is no longer rejected with
+			// "missing required field(s): trace_id".
+			if err := capsdk.ValidateBusPacket(pkt); err != nil {
+				t.Fatalf("published packet failed CAP validation: %v", err)
+			}
+		})
 	}
 }
 

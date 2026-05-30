@@ -251,6 +251,7 @@ func main() {
 
 func buildHeartbeat(w workerDef, activeJobs int32, cpuLoad, memoryLoad float32) ([]byte, error) {
 	hb := &agentv1.BusPacket{
+		TraceId:         w.ID,
 		SenderId:        w.ID,
 		ProtocolVersion: capsdk.DefaultProtocolVersion,
 		Payload: &agentv1.BusPacket_Heartbeat{

@@ -505,11 +505,13 @@ func EvaluateToolCall(ctx context.Context, deps ToolCallDeps, params ToolCallPar
 	// destructive call content-awarely BEFORE any upstream Invoke. The taint is
 	// thus visible to the gate at decision time, never after the side effect.
 	//
-	// LOOKUP-ERROR POSTURE: demo default = log + treat as untainted, so a Redis
-	// blip cannot make the clean (non-tainted) path flaky during a live demo.
-	// Production-hardening alternative (DEFERRED): fail-closed (REQUIRE_HUMAN/DENY)
-	// for destructive tools when the taint store is unavailable — left as a
-	// follow-up so it does not make the live demo fragile.
+	// LOOKUP-ERROR POSTURE: current default = log + treat as untainted, so a taint-
+	// store blip cannot make the clean (non-tainted) path flaky. The fail-closed
+	// hardening — REQUIRE_HUMAN for a DESTRUCTIVE tool when the taint store is
+	// unavailable, gated behind a default-OFF flag so existing deployments stay
+	// byte-identical — is DECIDED + governance-approved (not "undecided"); the
+	// read-side persist stays fail-open by design. Tracked as a sequenced follow-up
+	// (task-098b8d02) to land after the in-flight EvaluateToolCall/MCPGate edits.
 	if deps.TaintStore != nil {
 		if t, ok, terr := deps.TaintStore.GetTaint(ctx, meta.Tenant, meta.SessionID); terr != nil {
 			slog.WarnContext(ctx, "mcp.session_taint.lookup_failed",
@@ -949,11 +951,28 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 	return upstreamResult, nil
 }
 
-// maxResultScanBytes caps the assembled tool-call result content handed to the
-// ResultScanner so a jumbo board read cannot blow up CPU/memory while building
-// the scan buffer (the scanner applies its own cap downstream too). 256 KiB
-// comfortably covers a realistic board read; content beyond it is not scanned.
+// maxResultScanBytes bounds a single scanned window. Each Content[].Text and each
+// StructuredContent string leaf is scanned in windows of this size; a field larger
+// than this is split into overlapping windows (see scanResultUnits) so an injection
+// at any offset still reaches the scanner. 256 KiB comfortably holds any single
+// board cell / note.
 const maxResultScanBytes = 256 * 1024
+
+// scanWindowOverlapBytes is carried from the tail of one window into the next when a
+// single field is split across windows, so an injection phrase straddling a window
+// boundary is scanned intact. Must exceed the longest directive the scanner matches
+// (the shipped injection patterns are well under 1 KiB).
+const scanWindowOverlapBytes = 1024
+
+// maxResultScanBudgetBytes bounds the TOTAL bytes scanned across all windows for one
+// tool-call result (DoS cap: a jumbo board read cannot pin the scanner). Generous
+// enough to cover a realistic full-page board read end to end; coverage stops past it
+// only for a pathological multi-MiB result.
+const maxResultScanBudgetBytes = 1024 * 1024
+
+// maxResultScanWindows bounds the NUMBER of windows scanned for one result (DoS cap on
+// count, e.g. a result with millions of tiny content items / structured leaves).
+const maxResultScanWindows = 8192
 
 // scanResultForSessionTaint is the best-effort read-side half of the content
 // session-taint mechanism (DoD#1). On the ALLOW path it scans the tool-call
@@ -972,18 +991,15 @@ func scanResultForSessionTaint(ctx context.Context, deps ToolCallDeps, tool stri
 	if !ok || meta.Tenant == "" || meta.SessionID == "" {
 		return
 	}
-	content := assembleResultScanContent(result)
-	if len(content) == 0 {
+	// Scan the result as a bounded sequence of windows (scanResultUnits) so an
+	// injection in ANY field/position — not only one within a single global byte
+	// cap — is detected. Cite the first finding; the shipped scanner emits uniformly
+	// high-severity hits, so the first is representative. (A future multi-severity
+	// scanner could select the highest here without changing the persisted shape.)
+	f, found := scanResultUnits(result, deps.ResultScanner)
+	if !found {
 		return
 	}
-	findings := deps.ResultScanner(content)
-	if len(findings) == 0 {
-		return
-	}
-	// Cite the first finding; the shipped scanner emits uniformly high-severity
-	// hits, so the first is representative. (A future multi-severity scanner
-	// could select the highest here without changing the persisted shape.)
-	f := findings[0]
 	if err := deps.TaintStore.Taint(ctx, meta.Tenant, meta.SessionID, SessionTaint{
 		Tool:          tool,
 		Pattern:       f.Pattern,
@@ -998,30 +1014,101 @@ func scanResultForSessionTaint(ctx context.Context, deps ToolCallDeps, tool stri
 	}
 }
 
-// assembleResultScanContent concatenates a tool-call result's text content plus
-// a bounded JSON encoding of its StructuredContent (an injection can hide in
-// structured fields, not just text), capped at maxResultScanBytes.
-func assembleResultScanContent(result *ToolCallResult) []byte {
-	var b bytes.Buffer
-	for _, item := range result.Content {
-		if b.Len() >= maxResultScanBytes {
-			break
+// scanResultUnits feeds a tool-call result to the scanner as a BOUNDED sequence of
+// windows so an injection in any field/position is detected — not only one that
+// happens to fall within a single global byte cap. (The prior assembleResultScanContent
+// concatenated all content and truncated at one 256 KiB cap, so an injected column
+// after earlier large content, in StructuredContent once Content filled the cap, or
+// split across the cap boundary, was never scanned.) Each Content[].Text and each
+// StructuredContent string leaf is a unit; a unit larger than maxResultScanBytes is
+// split into overlapping windows (scanWindowOverlapBytes) so a phrase split across a
+// boundary is still scanned whole. Scanning stops at the first finding or when the
+// total-bytes (maxResultScanBudgetBytes) / window-count (maxResultScanWindows) budget
+// is exhausted — DoS-safe. Returns the first finding and true on a hit.
+func scanResultUnits(result *ToolCallResult, scan func([]byte) []ResultFinding) (ResultFinding, bool) {
+	if result == nil || scan == nil {
+		return ResultFinding{}, false
+	}
+	var (
+		scannedBytes int
+		windows      int
+		hit          ResultFinding
+		found        bool
+	)
+	// scanUnit scans one string as one or more overlapping windows. It returns true to
+	// STOP all further scanning — either a finding was recorded (found==true) or the
+	// DoS budget is exhausted (found stays false); the caller distinguishes via found.
+	scanUnit := func(s string) bool {
+		if s == "" {
+			return false
 		}
-		if item.Text != "" {
-			b.WriteString(item.Text)
-			b.WriteByte('\n')
+		// Window over the string directly and copy only each window to []byte, so a
+		// single pathologically large field is never materialized whole — peak alloc
+		// is one window (maxResultScanBytes) and total scan work is the budget below.
+		for off := 0; off < len(s); {
+			if windows >= maxResultScanWindows || scannedBytes >= maxResultScanBudgetBytes {
+				return true // DoS budget exhausted
+			}
+			end := off + maxResultScanBytes
+			if end > len(s) {
+				end = len(s)
+			}
+			window := []byte(s[off:end])
+			windows++
+			scannedBytes += len(window)
+			if findings := scan(window); len(findings) > 0 {
+				hit, found = findings[0], true
+				return true
+			}
+			if end == len(s) {
+				break
+			}
+			// Advance with overlap so a phrase straddling the boundary is caught.
+			off = end - scanWindowOverlapBytes
+		}
+		return false
+	}
+
+	for i := range result.Content {
+		if scanUnit(result.Content[i].Text) {
+			return hit, found
 		}
 	}
-	if result.StructuredContent != nil && b.Len() < maxResultScanBytes {
-		if encoded, err := json.Marshal(result.StructuredContent); err == nil {
-			b.Write(encoded)
+	// StructuredContent: scan each string leaf as its own unit so an injection in a
+	// structured field is covered even when Content already consumed budget. Non-string
+	// leaves (numbers/bools) cannot carry a directive; the walk is depth-guarded.
+	walkStructuredStrings(result.StructuredContent, 0, scanUnit)
+	return hit, found
+}
+
+// maxStructuredWalkDepth caps StructuredContent recursion as a defense against a
+// maliciously deep result (realistic board payloads are only a few levels deep).
+const maxStructuredWalkDepth = 64
+
+// walkStructuredStrings visits each string leaf of a JSON-decoded value
+// (map[string]any / []any / string), invoking visit until it returns true (stop).
+// Returns true once visit has signalled stop, so callers short-circuit.
+func walkStructuredStrings(v any, depth int, visit func(string) bool) bool {
+	if depth > maxStructuredWalkDepth {
+		return false
+	}
+	switch t := v.(type) {
+	case string:
+		return visit(t)
+	case map[string]any:
+		for _, val := range t {
+			if walkStructuredStrings(val, depth+1, visit) {
+				return true
+			}
+		}
+	case []any:
+		for _, val := range t {
+			if walkStructuredStrings(val, depth+1, visit) {
+				return true
+			}
 		}
 	}
-	out := b.Bytes()
-	if len(out) > maxResultScanBytes {
-		out = out[:maxResultScanBytes]
-	}
-	return out
+	return false
 }
 
 // newPostEvent clones the identity/session fields from the pre event
