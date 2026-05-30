@@ -265,6 +265,12 @@ services:
       # — set to `true` only in trusted dev environments.
       - CORDUM_DASHBOARD_EMBED_API_KEY=${CORDUM_DASHBOARD_EMBED_API_KEY:-false}
       - TENANT_ID=default
+      # P3a: resolves secret://monday-token for the cordum.monday MCP upstream the
+      # gateway fronts (EnvSecretResolver convention secret://monday-token -> MONDAY_TOKEN).
+      # Empty by default (fronting fails closed to built-in tools). Set MONDAY_TOKEN in
+      # .env for the Monday demo stack; MONDAY_API_TOKEN (the name the demo's own
+      # Monday-demo/.env uses) is accepted as a fallback so either name works.
+      - MONDAY_TOKEN=${MONDAY_TOKEN:-${MONDAY_API_TOKEN:-}}
       - CORDUM_LICENSE_TOKEN=${CORDUM_LICENSE_TOKEN:-}
       - CORDUM_LICENSE_PUBLIC_KEY=${CORDUM_LICENSE_PUBLIC_KEY:-}
       - CORDUM_POLICY_SIGNING_KEY_ID=${CORDUM_POLICY_SIGNING_KEY_ID:-dev-local}

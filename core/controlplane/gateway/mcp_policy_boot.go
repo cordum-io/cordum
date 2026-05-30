@@ -121,6 +121,15 @@ func (p productionArtifactStore) Put(ctx context.Context, req mcp.ArtifactPutReq
 // that case BuildMCPPolicyDeps receives a nil ApprovalHandoff and the
 // EvaluateToolCall path skips the REQUIRE_HUMAN handoff branch.
 func (s *server) attachMCPPolicyDeps(mcpServer *mcp.MCPServer, gate *gatewayApprovalGate) (*mcp.MCPServer, string) {
+	return s.attachMCPPolicyDepsNamed(mcpServer, gate, "")
+}
+
+// attachMCPPolicyDepsNamed is attachMCPPolicyDeps with an explicit gate
+// server-name. serverName=="" falls back to mcpPolicyServerName ("cordum.builtin");
+// when the gateway fronts a registered upstream the caller passes the upstream's
+// name (e.g. "cordum.monday") so the action-gate, approval-hold, and audit
+// attribute every decision to that upstream.
+func (s *server) attachMCPPolicyDepsNamed(mcpServer *mcp.MCPServer, gate *gatewayApprovalGate, serverName string) (*mcp.MCPServer, string) {
 	if s == nil || mcpServer == nil {
 		return mcpServer, "server or mcp_server nil"
 	}
@@ -133,6 +142,10 @@ func (s *server) attachMCPPolicyDeps(mcpServer *mcp.MCPServer, gate *gatewayAppr
 	if s.artifactStore == nil {
 		return mcpServer, "artifactStore nil"
 	}
+	name := serverName
+	if name == "" {
+		name = mcpPolicyServerName
+	}
 	emitter := edgeStoreEventEmitter{store: s.edgeStore}
 	artifactStore := productionArtifactStore{store: s.artifactStore}
 	var redisClient redis.Cmdable
@@ -140,12 +153,12 @@ func (s *server) attachMCPPolicyDeps(mcpServer *mcp.MCPServer, gate *gatewayAppr
 		redisClient = s.jobStore.Client()
 	}
 	policyDeps := BuildMCPPolicyDeps(s.actionGatePipeline, gate, emitter, artifactStore, redisClient)
-	mcpServer = mcpServer.WithPolicyGate(mcpPolicyServerName, policyDeps)
+	mcpServer = mcpServer.WithPolicyGate(name, policyDeps)
 
 	mcpServer = mcpServer.WithApprovalHold(mcp.ApprovalHoldDeps{
 		Store:          s.edgeStore,
 		PolicySnapshot: s.mcpPolicySnapshotFunc(),
-		ServerName:     mcpPolicyServerName,
+		ServerName:     name,
 	})
 	return mcpServer, ""
 }

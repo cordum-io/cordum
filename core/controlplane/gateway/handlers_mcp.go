@@ -241,7 +241,19 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 	if err := mcp.RegisterAllPrompts(promptRegistry); err != nil {
 		slog.Error("mcp prompt registration failed; prompts/list will be empty", "error", err)
 	}
-	mcpServer := mcp.NewServer(transport, toolRegistry, resourceRegistry, mcp.ServerConfig{
+	// EDGE-101 upstream fronting: when a usable remote MCP upstream is registered
+	// for the tenant (e.g. cordum.monday), the gateway's /mcp endpoint proxies THAT
+	// upstream's tools/list + tools/call through the policy gate (gate server-name =
+	// the upstream's name) instead of the built-in tool registry. Opt-in by
+	// registration; fail-closed to the built-in registry when no usable upstream is
+	// configured or the secret/endpoint is unresolved. Demo is single-tenant "default".
+	toolService := mcp.ToolService(toolRegistry)
+	upstreamServerName := ""
+	if frontTS, frontName := s.buildFrontedUpstreamToolService(context.Background(), "default"); frontTS != nil {
+		toolService = frontTS
+		upstreamServerName = frontName
+	}
+	mcpServer := mcp.NewServer(transport, toolService, resourceRegistry, mcp.ServerConfig{
 		Name:            "cordum",
 		Version:         buildinfo.Version,
 		ProtocolVersion: mcp.DefaultProtocolVersion,
@@ -260,7 +272,7 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 	//                                must read false in this branch.
 	if cfg.PolicyGateEnabled {
 		var skipReason string
-		mcpServer, skipReason = s.attachMCPPolicyDeps(mcpServer, approvalGate)
+		mcpServer, skipReason = s.attachMCPPolicyDepsNamed(mcpServer, approvalGate, upstreamServerName)
 		if mcpServer.HasPolicyGate() {
 			slog.Info("mcp.policy_gate wired",
 				"server_name", mcpServer.PolicyServerName(),
