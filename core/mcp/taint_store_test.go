@@ -109,3 +109,41 @@ func TestRedisTaintStore_RoundTripIsolationAndTTL(t *testing.T) {
 		t.Fatalf("after TTL expiry, GetTaint must return ok=false")
 	}
 }
+
+func TestRedisTaintStore_GetTaintSurfacesBackendErrors(t *testing.T) {
+	t.Parallel()
+	client, mr := newMiniRedisDedupeBackend(t)
+	store := NewRedisTaintStore(client, time.Minute)
+	ctx := context.Background()
+
+	if err := store.fallback.Taint(ctx, "tnt_a", "sess_1", sampleSessionTaint()); err != nil {
+		t.Fatalf("seed fallback taint: %v", err)
+	}
+	mr.Close()
+
+	if got, ok, err := store.GetTaint(ctx, "tnt_a", "sess_1"); err == nil {
+		t.Fatalf("GetTaint err=nil, want backend error (got=%+v ok=%v)", got, ok)
+	} else if ok || got != nil {
+		t.Fatalf("GetTaint on backend error got=%+v ok=%v err=%v, want nil,false,error", got, ok, err)
+	}
+}
+
+func TestRedisTaintStore_GetTaintSurfacesDecodeErrors(t *testing.T) {
+	t.Parallel()
+	client, mr := newMiniRedisDedupeBackend(t)
+	store := NewRedisTaintStore(client, time.Minute)
+	ctx := context.Background()
+
+	if err := store.fallback.Taint(ctx, "tnt_a", "sess_1", sampleSessionTaint()); err != nil {
+		t.Fatalf("seed fallback taint: %v", err)
+	}
+	if err := mr.Set(MCPTaintKeyPrefix+taintKey("tnt_a", "sess_1"), "{not-json"); err != nil {
+		t.Fatalf("seed corrupt taint: %v", err)
+	}
+
+	if got, ok, err := store.GetTaint(ctx, "tnt_a", "sess_1"); err == nil {
+		t.Fatalf("GetTaint err=nil, want JSON decode error (got=%+v ok=%v)", got, ok)
+	} else if ok || got != nil {
+		t.Fatalf("GetTaint on decode error got=%+v ok=%v err=%v, want nil,false,error", got, ok, err)
+	}
+}

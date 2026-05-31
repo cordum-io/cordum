@@ -642,7 +642,7 @@ func (s *server) ListSnapshots(ctx context.Context, _ *pb.ListSnapshotsRequest) 
 }
 
 func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, method string) (*pb.PolicyCheckResponse, error) {
-	decision := pb.DecisionType_DECISION_TYPE_DENY
+	var decision pb.DecisionType
 	reason := ""
 
 	topic := strings.TrimSpace(req.GetTopic())

@@ -646,6 +646,31 @@ func TestMCPAuthRejectsCrossTenantRequest(t *testing.T) {
 	}
 }
 
+func TestMCPAuthRejectsNonFrontedTenantWhenUpstreamIsDefaultScoped(t *testing.T) {
+	t.Parallel()
+	s := &server{
+		auth: mcpTestAuth{apiKey: "test-key", tenant: "tenant-b"},
+	}
+	s.setMCPRuntime(&mcpRuntimeState{
+		frontedUpstream: "cordum.monday",
+		frontedTenant:   "default",
+	})
+	t.Cleanup(func() { gatewayMCPState.Delete(s) })
+
+	handler := s.mcpAuth(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("handler must not run for a tenant that would be proxied through default-tenant upstream credentials")
+	})
+	req := httptest.NewRequest(http.MethodPost, "/mcp/message", nil)
+	req.Header.Set("X-API-Key", "test-key")
+	req.Header.Set("X-Tenant-ID", "tenant-b")
+	rr := httptest.NewRecorder()
+	handler(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for non-fronted tenant, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestMCPAuthStashesCoreCallMetadataForHTTPTransport(t *testing.T) {
 	t.Parallel()
 	s := &server{

@@ -13,6 +13,8 @@ import (
 	"github.com/cordum/cordum/core/edge"
 )
 
+const mondayStreamableHTTPProtocolVersion = "2024-11-05"
+
 // fakeUpstreamServer emulates a remote streamable-HTTP MCP server (the shape
 // Monday's mcp.monday.com exposes): initialize -> Mcp-Session-Id header ->
 // notifications/initialized -> tools/list | tools/call. framing selects whether
@@ -64,7 +66,7 @@ func (f *fakeUpstreamServer) handler() http.HandlerFunc {
 				w.Header().Set(mcpSessionIDHeader, "sess-xyz")
 			}
 			f.write(w, msg.ID, map[string]any{
-				"protocolVersion": DefaultProtocolVersion,
+				"protocolVersion": mondayStreamableHTTPProtocolVersion,
 				"serverInfo":      map[string]any{"name": "fake-monday", "version": "1.0.0"},
 				"capabilities":    map[string]any{},
 			}, nil)
@@ -300,8 +302,8 @@ func TestRemoteUpstream_MondayStreamableHTTPFraming(t *testing.T) {
 	if _, ok := rawInit["capabilities"]; !ok {
 		t.Fatal("initialize must include capabilities:{}; Monday rejects the field being omitted")
 	}
-	if ip.ProtocolVersion != DefaultProtocolVersion {
-		t.Fatalf("initialize protocolVersion = %q, want %q", ip.ProtocolVersion, DefaultProtocolVersion)
+	if ip.ProtocolVersion != mondayStreamableHTTPProtocolVersion {
+		t.Fatalf("initialize protocolVersion = %q, want %q", ip.ProtocolVersion, mondayStreamableHTTPProtocolVersion)
 	}
 	if len(ip.Capabilities) != 0 {
 		t.Fatalf("initialize capabilities must be empty, got %v", ip.Capabilities)

@@ -36,6 +36,8 @@ func writePolicyFile(t *testing.T, dir, name string, data []byte) string {
 func clearFileLoaderEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv(policysign.EnvStrictMode, "")
+	t.Setenv(env.EnvProduction, "")
+	t.Setenv(env.EnvMode, "")
 	t.Setenv(envLegacyRequireSig, "")
 	t.Setenv("SAFETY_POLICY_PUBLIC_KEY", "")
 	t.Setenv("SAFETY_POLICY_PUBLIC_KEY_ID", "")

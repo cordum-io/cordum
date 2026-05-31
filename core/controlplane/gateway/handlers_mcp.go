@@ -56,6 +56,8 @@ type mcpRuntimeState struct {
 	approvalHandler  *mcpApprovalHandler
 	sweeperStop      chan struct{}
 	stopOnce         sync.Once
+	frontedUpstream  string
+	frontedTenant    string
 }
 
 var gatewayMCPState sync.Map // map[*server]*mcpRuntimeState
@@ -247,12 +249,16 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 	// upstream's tools/list + tools/call through the policy gate (gate server-name =
 	// the upstream's name) instead of the built-in tool registry. Opt-in by
 	// registration; fail-closed to the built-in registry when no usable upstream is
-	// configured or the secret/endpoint is unresolved. Demo is single-tenant "default".
+	// configured or the secret/endpoint is unresolved. The fronted upstream is
+	// intentionally scoped to the tenant used for resolution below; mcpAuth refuses
+	// other tenants rather than proxying them with default-tenant upstream credentials.
 	toolService := mcp.ToolService(toolRegistry)
 	upstreamServerName := ""
+	upstreamTenant := ""
 	if frontTS, frontName := s.buildFrontedUpstreamToolService(context.Background(), "default"); frontTS != nil {
 		toolService = frontTS
 		upstreamServerName = frontName
+		upstreamTenant = "default"
 	}
 	mcpServer := mcp.NewServer(transport, toolService, resourceRegistry, mcp.ServerConfig{
 		Name:            "cordum",
@@ -313,6 +319,8 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 		approvalStore:    approvalStore,
 		approvalHandler:  approvalHandler,
 		sweeperStop:      sweeperStop,
+		frontedUpstream:  upstreamServerName,
+		frontedTenant:    upstreamTenant,
 	}
 	s.setMCPRuntime(state)
 	go func() {
@@ -362,6 +370,18 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		if authCtx.Tenant != "" && !authCtx.AllowCrossTenant {
 			if strings.TrimSpace(authCtx.Tenant) != tenantID {
 				writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
+				return
+			}
+		}
+		if runtime := s.getMCPRuntime(); runtime != nil && runtime.frontedUpstream != "" {
+			frontedTenant := strings.TrimSpace(runtime.frontedTenant)
+			if frontedTenant != "" && tenantID != frontedTenant {
+				slog.Warn("mcp upstream fronting refused for tenant",
+					"tenant", tenantID,
+					"fronted_tenant", frontedTenant,
+					"upstream", runtime.frontedUpstream,
+				)
+				writeErrorJSON(w, http.StatusForbidden, "mcp upstream fronting is not configured for tenant")
 				return
 			}
 		}

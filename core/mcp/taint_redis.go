@@ -36,12 +36,13 @@ const taintCommandTimeout = 500 * time.Millisecond
 // taint, so a read that taints on instance A denies the delete that lands on
 // instance B.
 //
-// Fail-soft (mirrors RedisDedupeStore): on a nil client or any Redis/encode
-// error, the operation routes through the in-process fallback so a Redis blip
-// degrades to per-instance taint instead of crashing the gate. The read-side
-// caller additionally treats a persist failure as fail-open and the delete-side
-// caller treats a lookup miss/error as untainted (demo reliability) — documented
-// at those call sites, with the production fail-closed alternative noted there.
+// Write-side fail-soft mirrors RedisDedupeStore: on a nil client or any
+// Redis/encode error, Taint routes through the in-process fallback so a Redis
+// blip degrades to per-instance taint instead of crashing the gate. Read-side
+// behavior is stricter: GetTaint only treats redis.Nil as a clean session.
+// Backend and decode failures are returned to the caller so the policy descriptor
+// can record TaintLookupFailed instead of silently masking an unavailable or
+// corrupted shared taint store as untainted.
 type RedisTaintStore struct {
 	client   redis.Cmdable
 	ttl      time.Duration
@@ -88,11 +89,11 @@ func (s *RedisTaintStore) GetTaint(ctx context.Context, tenant, session string) 
 		return nil, false, nil // no taint (clean session) — the common case, not an error
 	}
 	if err != nil {
-		return s.fallback.GetTaint(ctx, tenant, session)
+		return nil, false, err
 	}
 	var t SessionTaint
 	if err := json.Unmarshal(raw, &t); err != nil {
-		return s.fallback.GetTaint(ctx, tenant, session)
+		return nil, false, err
 	}
 	return &t, true, nil
 }

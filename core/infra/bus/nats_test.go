@@ -202,7 +202,7 @@ func TestProcessBusMsgPoisonPill(t *testing.T) {
 	}
 
 	// Malformed data on first delivery should trigger NakDelay (allow retry)
-	action, delay := processBusMsg("test.subject", []byte("not-protobuf-data"), handler,1)
+	action, delay := processBusMsg("test.subject", []byte("not-protobuf-data"), handler, 1)
 	if action != msgActionNakDelay {
 		t.Fatalf("expected NakDelay for poison pill on first delivery, got action=%d", action)
 	}
@@ -214,7 +214,7 @@ func TestProcessBusMsgPoisonPill(t *testing.T) {
 	}
 
 	// Malformed data after threshold deliveries should terminate
-	action, _ = processBusMsg("test.subject", []byte("not-protobuf-data"), handler,poisonUnmarshalThreshold+1)
+	action, _ = processBusMsg("test.subject", []byte("not-protobuf-data"), handler, poisonUnmarshalThreshold+1)
 	if action != msgActionTerm {
 		t.Fatalf("expected Term for corrupt data after %d deliveries, got action=%d", poisonUnmarshalThreshold+1, action)
 	}
@@ -225,7 +225,7 @@ func TestProcessBusMsgPoisonPill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	action, _ = processBusMsg("test.subject", data, handler,1)
+	action, _ = processBusMsg("test.subject", data, handler, 1)
 	if action != msgActionAck {
 		t.Fatalf("expected Ack for valid message, got action=%d", action)
 	}
@@ -242,7 +242,7 @@ func TestProcessBusMsgRetryableError(t *testing.T) {
 	valid := &pb.BusPacket{TraceId: "trace-test", SenderId: "sender-test", Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "job-1"}}}
 	data, _ := proto.Marshal(valid)
 
-	action, delay := processBusMsg("test.subject", data, handler,1)
+	action, delay := processBusMsg("test.subject", data, handler, 1)
 	if action != msgActionNakDelay {
 		t.Fatalf("expected NakDelay for retryable error, got action=%d", action)
 	}
@@ -259,7 +259,7 @@ func TestProcessBusMsgNonRetryableError(t *testing.T) {
 	valid := &pb.BusPacket{TraceId: "trace-test", SenderId: "sender-test", Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "job-1"}}}
 	data, _ := proto.Marshal(valid)
 
-	action, _ := processBusMsg("test.subject", data, handler,1)
+	action, _ := processBusMsg("test.subject", data, handler, 1)
 	if action != msgActionAck {
 		t.Fatalf("expected Ack for non-retryable error, got action=%d", action)
 	}
@@ -274,7 +274,7 @@ func TestProcessBusMsgCorruptAtThreshold(t *testing.T) {
 	corrupt := []byte("definitely-not-protobuf")
 
 	// At exactly the threshold: should still NakDelay (allow retry)
-	action, delay := processBusMsg("test.subject", corrupt, handler,poisonUnmarshalThreshold)
+	action, delay := processBusMsg("test.subject", corrupt, handler, poisonUnmarshalThreshold)
 	if action != msgActionNakDelay {
 		t.Fatalf("expected NakDelay at threshold (%d), got action=%d", poisonUnmarshalThreshold, action)
 	}
@@ -283,13 +283,13 @@ func TestProcessBusMsgCorruptAtThreshold(t *testing.T) {
 	}
 
 	// One above threshold: should terminate
-	action, _ = processBusMsg("test.subject", corrupt, handler,poisonUnmarshalThreshold+1)
+	action, _ = processBusMsg("test.subject", corrupt, handler, poisonUnmarshalThreshold+1)
 	if action != msgActionTerm {
 		t.Fatalf("expected Term above threshold, got action=%d", action)
 	}
 
 	// Zero delivery count (metadata unavailable): should NakDelay
-	action, _ = processBusMsg("test.subject", corrupt, handler,0)
+	action, _ = processBusMsg("test.subject", corrupt, handler, 0)
 	if action != msgActionNakDelay {
 		t.Fatalf("expected NakDelay for zero delivery count, got action=%d", action)
 	}
@@ -309,7 +309,7 @@ func TestProcessBusMsgValidDataHighDeliveryCount(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 
-	action, _ := processBusMsg("test.subject", data, handler,99)
+	action, _ := processBusMsg("test.subject", data, handler, 99)
 	if action != msgActionAck {
 		t.Fatalf("expected Ack for valid message even with high delivery count, got action=%d", action)
 	}
@@ -989,11 +989,11 @@ func TestNewNatsBus_NoAuthAllowedWithOverride(t *testing.T) {
 	t.Setenv(envNATSTLSCert, "")
 	t.Setenv(envNATSTLSKey, "")
 	t.Setenv(envNATSTLSInsecure, "")
-	t.Setenv(envNATSTLSServerName, "")
+	t.Setenv(envNATSTLSServerName, "test.example.com")
 
 	_, err := NewNatsBus(unusedLocalNATSURL(t, "tls"))
 	if err == nil {
-		t.Fatal("expected downstream error (no NATS server / no TLS cfg)")
+		t.Fatal("expected downstream error (no NATS server)")
 	}
 	if strings.Contains(err.Error(), "nats authentication required in production") {
 		t.Fatalf("override should bypass auth-required error: %s", err)
@@ -1040,11 +1040,11 @@ func TestNewNatsBus_AuthConfiguredInProduction_NoOverrideNeeded(t *testing.T) {
 	t.Setenv(envNATSTLSCert, "")
 	t.Setenv(envNATSTLSKey, "")
 	t.Setenv(envNATSTLSInsecure, "")
-	t.Setenv(envNATSTLSServerName, "")
+	t.Setenv(envNATSTLSServerName, "test.example.com")
 
 	_, err := NewNatsBus(unusedLocalNATSURL(t, "tls"))
 	if err == nil {
-		t.Fatal("expected downstream error (no NATS server / no TLS certs)")
+		t.Fatal("expected downstream error (no NATS server)")
 	}
 	if strings.Contains(err.Error(), "nats authentication required in production") {
 		t.Fatalf("auth was configured, should not see auth-required error: %s", err)

@@ -136,16 +136,13 @@ func TestValidateStartupSecrets_EmptyRedisPasswordAllowed(t *testing.T) {
 
 // BUG-014: production with user auth disabled emits a one-time warn so the
 // silent posture is visible at boot. Non-prod is silent; auth-enabled is
-// silent. ValidateStartupSecrets runs once per boot so plain slog.Warn is
+// silent. ValidateStartupSecrets runs once per boot so a plain warning is
 // inherently one-shot.
 func TestValidateStartupSecrets_WarnsOnUserAuthDisabled(t *testing.T) {
-	captureSlog := func(t *testing.T) *bytes.Buffer {
+	captureLogger := func(t *testing.T) (*slog.Logger, *bytes.Buffer) {
 		t.Helper()
 		var buf bytes.Buffer
-		old := slog.Default()
-		slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
-		t.Cleanup(func() { slog.SetDefault(old) })
-		return &buf
+		return slog.New(slog.NewTextHandler(&buf, nil)), &buf
 	}
 
 	const warnText = "user auth disabled"
@@ -157,8 +154,8 @@ func TestValidateStartupSecrets_WarnsOnUserAuthDisabled(t *testing.T) {
 		t.Setenv("CORDUM_ADMIN_PASSWORD", "")
 		t.Setenv("CORDUM_API_KEY", "")
 		t.Setenv("REDIS_PASSWORD", "")
-		buf := captureSlog(t)
-		if err := ValidateStartupSecrets(); err != nil {
+		logger, buf := captureLogger(t)
+		if err := validateStartupSecrets(logger); err != nil {
 			t.Fatalf("validator err = %v", err)
 		}
 		if !strings.Contains(buf.String(), warnText) {
@@ -173,8 +170,8 @@ func TestValidateStartupSecrets_WarnsOnUserAuthDisabled(t *testing.T) {
 		t.Setenv("CORDUM_ADMIN_PASSWORD", "")
 		t.Setenv("CORDUM_API_KEY", "")
 		t.Setenv("REDIS_PASSWORD", "")
-		buf := captureSlog(t)
-		if err := ValidateStartupSecrets(); err != nil {
+		logger, buf := captureLogger(t)
+		if err := validateStartupSecrets(logger); err != nil {
 			t.Fatalf("validator err = %v", err)
 		}
 		if strings.Contains(buf.String(), warnText) {
@@ -186,8 +183,8 @@ func TestValidateStartupSecrets_WarnsOnUserAuthDisabled(t *testing.T) {
 		t.Setenv("CORDUM_SKIP_SECRET_VALIDATION", "")
 		t.Setenv("CORDUM_ENV", "development")
 		t.Setenv("CORDUM_USER_AUTH_ENABLED", "")
-		buf := captureSlog(t)
-		if err := ValidateStartupSecrets(); err != nil {
+		logger, buf := captureLogger(t)
+		if err := validateStartupSecrets(logger); err != nil {
 			t.Fatalf("validator err = %v", err)
 		}
 		if strings.Contains(buf.String(), warnText) {

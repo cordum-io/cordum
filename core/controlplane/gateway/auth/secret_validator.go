@@ -78,6 +78,10 @@ func ValidateSecretStrength(name, value string, minLen int) error {
 // weak for production use. Respects CORDUM_SKIP_SECRET_VALIDATION=true
 // as a dev-only escape hatch.
 func ValidateStartupSecrets() error {
+	return validateStartupSecrets(slog.Default())
+}
+
+func validateStartupSecrets(logger *slog.Logger) error {
 	if skip := os.Getenv("CORDUM_SKIP_SECRET_VALIDATION"); strings.EqualFold(skip, "true") || skip == "1" {
 		return nil
 	}
@@ -93,7 +97,10 @@ func ValidateStartupSecrets() error {
 	// but a silent disable looks like an accident. ValidateStartupSecrets
 	// runs once at boot so a plain Warn is naturally one-time.
 	if !infraenv.Bool("CORDUM_USER_AUTH_ENABLED") {
-		slog.Warn("user auth disabled in production — relying on API key + RBAC")
+		if logger == nil {
+			logger = slog.Default()
+		}
+		logger.Warn("user auth disabled in production — relying on API key + RBAC")
 	}
 
 	// Validate admin password (required in production)
