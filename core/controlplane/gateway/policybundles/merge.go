@@ -1,6 +1,7 @@
 package policybundles
 
 import (
+	"log/slog"
 	"strings"
 
 	"github.com/cordum/cordum/core/infra/config"
@@ -33,11 +34,47 @@ func MergeSafetyPolicies(base, extra *config.SafetyPolicy) *config.SafetyPolicy 
 	if strings.TrimSpace(out.OutputPolicy.FailMode) == "" {
 		out.OutputPolicy.FailMode = strings.TrimSpace(add.OutputPolicy.FailMode)
 	}
-	out.Rules = append(out.Rules, add.Rules...)
-	out.OutputRules = append(out.OutputRules, CloneOutputPolicyRules(add.OutputRules)...)
+	// Merge rule sets with cross-bundle duplicate-ID detection (last-seen wins,
+	// replace-in-place) so the install-recency order in BuildPolicyFromBundles
+	// makes the most-recently-installed bundle win a duplicate id — matching the
+	// authoritative kernel merge (safetykernel mergePolicies) so replay/evals/
+	// simulation predict the same first-match decision production enforces.
+	out.Rules = mergeRulesByID(out.Rules, add.Rules, func(r config.PolicyRule) string { return r.ID })
+	out.OutputRules = mergeRulesByID(out.OutputRules, CloneOutputPolicyRules(add.OutputRules), func(r config.OutputPolicyRule) string { return r.ID })
+	out.InputRules = mergeRulesByID(out.InputRules, add.InputRules, func(r config.InputPolicyRule) string { return r.ID })
 	out.TierDefaults = append(out.TierDefaults, add.TierDefaults...)
 	out.Tenants = MergeTenantPolicies(out.Tenants, add.Tenants)
 	return out
+}
+
+// mergeRulesByID appends add's rules to base, but a rule whose id already exists
+// in base REPLACES the existing one in place (last-seen wins) rather than being
+// appended a second time. id extracts a rule's id. Rules with an empty id are
+// always appended (no dedup key). This mirrors the kernel's mergePolicies so a
+// duplicate rule id across bundles resolves identically (the caller controls
+// precedence via merge order: install-recency last in BuildPolicyFromBundles).
+func mergeRulesByID[T any](base, add []T, id func(T) string) []T {
+	if len(add) == 0 {
+		return base
+	}
+	seen := make(map[string]int, len(base))
+	for i, r := range base {
+		if rid := id(r); rid != "" {
+			seen[rid] = i
+		}
+	}
+	for _, r := range add {
+		if rid := id(r); rid != "" {
+			if idx, dup := seen[rid]; dup {
+				slog.Warn("duplicate policy rule ID in bundle merge — replacing with latest", "rule_id", rid)
+				base[idx] = r
+				continue
+			}
+			seen[rid] = len(base)
+		}
+		base = append(base, r)
+	}
+	return base
 }
 
 // CloneSafetyPolicy deep-copies a safety policy.
