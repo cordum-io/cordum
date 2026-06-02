@@ -986,11 +986,23 @@ gate_4_policy() {
     return 1
   }
 
-  (cd "${ROOT_DIR}" && CORDUM_API_KEY="${API_KEY}" \
+  # Capture the remediation run's output and surface it on failure. This step
+  # previously ran with `>/dev/null 2>&1`, which silently swallowed the cause of
+  # gate-4 failures (e.g. the demo worker failing to register / Redis auth), so a
+  # red nightly showed only "Gate 4 Policy FAIL" with no actionable detail.
+  local remediation_log
+  remediation_log="$(mktemp)"
+  if ! (cd "${ROOT_DIR}" && CORDUM_API_KEY="${API_KEY}" \
     CORDUM_ORG_ID="${ORG_ID}" \
     CORDUM_TENANT_ID="${TENANT_ID}" \
     CORDUM_API_BASE="${API_BASE}" \
-    "${SCRIPT_DIR}/demo_guardrails_run.sh" >/dev/null 2>&1)
+    "${SCRIPT_DIR}/demo_guardrails_run.sh" >"${remediation_log}" 2>&1); then
+    echo "gate 4: demo-guardrails remediation run failed:" >&2
+    sed 's/^/  | /' "${remediation_log}" >&2
+    rm -f "${remediation_log}"
+    return 1
+  fi
+  rm -f "${remediation_log}"
 
   echo "policy evaluate/simulate/explain/remediation/audit checks passed"
 }
