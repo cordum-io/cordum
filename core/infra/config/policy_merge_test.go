@@ -112,6 +112,54 @@ func TestMergePolicies_PreservesRequireHuman(t *testing.T) {
 	}
 }
 
+// TestMergePolicies_RequireHumanFilledFromLaterFragment proves a base fragment
+// WITHOUT a RequireHuman threshold inherits the threshold introduced by a later
+// (extra) fragment — first-non-empty fill, base precedence — instead of dropping
+// it. Without the fill the kernel keeps routing truly-ambiguous matches to hard
+// DENY rather than REQUIRE_HUMAN. This FAILS on the old behavior (zero-value
+// RequireHuman survived) and PASSES on the fix.
+func TestMergePolicies_RequireHumanFilledFromLaterFragment(t *testing.T) {
+	base := &SafetyPolicy{} // no RequireHuman authored
+	later := RequireHumanThreshold{MinSeverityForDeny: "high", MinConfidenceForDeny: 0.8, DowngradeWhenPromptOnly: true}
+	extra := &SafetyPolicy{RequireHuman: later}
+	merged := MergePolicies(base, extra)
+	if merged.RequireHuman != later {
+		t.Fatalf("later fragment's RequireHuman must fill an unset base: got %+v, want %+v", merged.RequireHuman, later)
+	}
+	// Base precedence: a non-empty base RequireHuman is NOT overwritten by extra.
+	baseThreshold := RequireHumanThreshold{MinSeverityForDeny: "critical"}
+	merged2 := MergePolicies(&SafetyPolicy{RequireHuman: baseThreshold}, extra)
+	if merged2.RequireHuman != baseThreshold {
+		t.Fatalf("non-empty base RequireHuman must win (base precedence): got %+v, want %+v", merged2.RequireHuman, baseThreshold)
+	}
+}
+
+// TestMergePolicies_SingleFragmentNormalizesToGlobal proves the nil fast-paths
+// normalize a single workflow/job-scoped fragment to tier=global with an empty
+// selector — matching the multi-fragment path. Without the fix the cloned
+// fragment stayed in its SCOPED shape, so a single scoped bundle merged through
+// either nil branch leaked a non-global tier/selector into the effective policy.
+// This FAILS on the old behavior and PASSES on the fix.
+func TestMergePolicies_SingleFragmentNormalizesToGlobal(t *testing.T) {
+	scoped := &SafetyPolicy{Tier: PolicyTierWorkflow, Selector: PolicySelector{WorkflowID: "wf-prod"}}
+	// nil base path (extra is the lone fragment).
+	fromExtra := MergePolicies(nil, scoped)
+	if fromExtra.Tier != PolicyTierGlobal {
+		t.Fatalf("nil-base path must normalize Tier to global: got %q", fromExtra.Tier)
+	}
+	if fromExtra.Selector != (PolicySelector{}) {
+		t.Fatalf("nil-base path must clear Selector: got %+v", fromExtra.Selector)
+	}
+	// nil extra path (base is the lone fragment).
+	fromBase := MergePolicies(scoped, nil)
+	if fromBase.Tier != PolicyTierGlobal {
+		t.Fatalf("nil-extra path must normalize Tier to global: got %q", fromBase.Tier)
+	}
+	if fromBase.Selector != (PolicySelector{}) {
+		t.Fatalf("nil-extra path must clear Selector: got %+v", fromBase.Selector)
+	}
+}
+
 // TestMergePolicies_FirstNonEmptyScalars pins base-precedence first-non-empty
 // fill of Version/DefaultTenant/DefaultDecision.
 func TestMergePolicies_FirstNonEmptyScalars(t *testing.T) {

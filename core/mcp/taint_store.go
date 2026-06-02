@@ -185,8 +185,21 @@ func (s *inProcessTaintStore) GetTaint(_ context.Context, tenant, session string
 		// default). Re-check under the write lock so a concurrent refresh that
 		// extended the entry is not dropped.
 		s.mu.Lock()
-		if cur, still := s.m[key]; still && s.now().After(cur.expires) {
-			delete(s.m, key)
+		if cur, still := s.m[key]; still {
+			// A concurrent refresh may have extended the entry between the
+			// RUnlock above and acquiring this write lock. Re-read under the
+			// lock: GC + report clean ONLY if it is STILL expired; otherwise
+			// return the refreshed taint (ok=true) so the refresh is not
+			// silently treated as clean for this request (which would weaken
+			// taint gating).
+			if s.now().After(cur.expires) {
+				delete(s.m, key)
+				s.mu.Unlock()
+				return nil, false, nil
+			}
+			refreshed := cur.taint
+			s.mu.Unlock()
+			return &refreshed, true, nil
 		}
 		s.mu.Unlock()
 		return nil, false, nil

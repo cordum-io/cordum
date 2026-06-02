@@ -102,7 +102,7 @@ Before squash-merging the shared consolidation branch into `main`, the
 governor MUST run the landing vet gate and **refuse to merge on a non-zero
 exit**:
 
-```
+```shell
 $ bash tools/scripts/landing_vet_gate.sh
 LANDING VET GATE: PASS — vet clean across all modules; safe to squash-merge.
 EXIT: 0

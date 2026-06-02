@@ -52,7 +52,11 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
   const sessionQuery = useQuery({
     queryKey: ["auth-session-validate"],
     queryFn: () => get<SessionResponse>("/auth/session"),
-    enabled: requiresAuth && isAuthenticated,
+    // Gate on !authLoading so session validation cannot run (and trip the
+    // 401/logout flow) while /auth/config is still resolving — requiresAuth is
+    // fail-closed `true` during loading, so without this a persisted
+    // isAuthenticated user would be validated/logged out prematurely.
+    enabled: !authLoading && requiresAuth && isAuthenticated,
     retry: false,
     staleTime: 60_000,
     refetchOnWindowFocus: false,

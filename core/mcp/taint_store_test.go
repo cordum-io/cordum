@@ -69,6 +69,60 @@ func TestInProcessTaintStore_RoundTripAndIsolation(t *testing.T) {
 	}
 }
 
+
+// TestInProcessTaintStore_ConcurrentRefreshNotReportedClean pins the fix for the
+// expiry-window race: GetTaint snapshots the entry, finds it expired on the STALE
+// snapshot, then re-checks under the write lock. If a concurrent Taint refreshed
+// the entry (new future expiry) in that window, GetTaint must return the refreshed
+// taint (ok=true) rather than report the session clean (which would weaken taint
+// gating). We deterministically land a refresh in the RUnlock->write-lock window
+// by hooking the clock: the first now() call inside GetTaint refreshes the entry.
+// Pre-fix this returned (nil,false); the fix returns the refreshed taint.
+func TestInProcessTaintStore_ConcurrentRefreshNotReportedClean(t *testing.T) {
+	base := time.Unix(2_000_000_000, 0).UTC()
+	nowFixed := base.Add(60 * time.Second) // after the stale expiry, before the refreshed one
+	s := newInProcessTaintStore(time.Hour, 0, func() time.Time { return nowFixed })
+	ctx := context.Background()
+	key := taintKey("tnt_a", "sess_1")
+
+	// Seed an already-expired entry so the GetTaint snapshot reads expired.
+	s.mu.Lock()
+	s.m[key] = inProcessTaintEntry{taint: SessionTaint{Pattern: "stale"}, expires: base}
+	s.mu.Unlock()
+
+	fresh := sampleSessionTaint()
+	fresh.Pattern = "refreshed-by-concurrent-writer"
+	var refreshedOnce bool
+	s.now = func() time.Time {
+		if !refreshedOnce {
+			refreshedOnce = true
+			// Concurrent refresh lands in the RUnlock->write-lock window.
+			s.mu.Lock()
+			s.m[key] = inProcessTaintEntry{taint: fresh, expires: nowFixed.Add(time.Hour)}
+			s.mu.Unlock()
+		}
+		return nowFixed
+	}
+
+	got, ok, err := s.GetTaint(ctx, "tnt_a", "sess_1")
+	if err != nil {
+		t.Fatalf("GetTaint err: %v", err)
+	}
+	if !ok {
+		t.Fatalf("a refresh landing in the expiry window must NOT be reported clean (got ok=false)")
+	}
+	if got == nil || got.Pattern != fresh.Pattern {
+		t.Fatalf("GetTaint must return the refreshed taint, got %+v", got)
+	}
+	// The refreshed entry must survive (not be GC'd as expired).
+	s.mu.RLock()
+	_, still := s.m[key]
+	s.mu.RUnlock()
+	if !still {
+		t.Fatalf("refreshed entry was incorrectly evicted")
+	}
+}
+
 func TestRedisTaintStore_RoundTripIsolationAndTTL(t *testing.T) {
 	t.Parallel()
 	client, mr := newMiniRedisDedupeBackend(t)

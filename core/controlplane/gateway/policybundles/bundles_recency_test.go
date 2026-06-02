@@ -154,6 +154,64 @@ rules:
 	}
 }
 
+// TestBuildPolicyFromBundles_ConflictingDuplicateWinnerFlipsButSnapshotStable
+// documents the install-order-DEPENDENT conflict-resolution contract that the
+// identical-content snapshot test above cannot exercise: two co-installed bundles
+// carry the SAME rule id (dup-rule) with DIFFERENT decisions, so the merge winner
+// follows installed_at recency and FLIPS when the timestamps are swapped — while
+// the cfg:<sha> snapshot folds only the {key,content} SET and therefore stays
+// IDENTICAL across the swap. That divergence (same cache key, different enforced
+// decision) is the stale-cache hazard: a reinstall that only bumps installed_at
+// can flip the winning rule without churning the snapshot, so any cache keyed on
+// cfg:<sha> alone must be invalidated on install-order changes too.
+func TestBuildPolicyFromBundles_ConflictingDuplicateWinnerFlipsButSnapshotStable(t *testing.T) {
+	// Order A: aaa older (deny) / zzz newer (allow) -> newer zzz wins -> allow.
+	mergedA, snapA, err := BuildPolicyFromBundles(map[string]any{
+		"aaa-pack/policy": recencyBundle("deny", "2026-01-01T00:00:00Z"),
+		"zzz-pack/policy": recencyBundle("allow", "2026-02-01T00:00:00Z"),
+	})
+	if err != nil {
+		t.Fatalf("BuildPolicyFromBundles order A: %v", err)
+	}
+	// Order B: timestamps swapped so aaa is now newer (deny) / zzz older (allow)
+	// -> newer aaa wins -> deny. Same content SET, only installed_at flipped.
+	mergedB, snapB, err := BuildPolicyFromBundles(map[string]any{
+		"aaa-pack/policy": recencyBundle("deny", "2026-02-01T00:00:00Z"),
+		"zzz-pack/policy": recencyBundle("allow", "2026-01-01T00:00:00Z"),
+	})
+	if err != nil {
+		t.Fatalf("BuildPolicyFromBundles order B: %v", err)
+	}
+
+	// Each order dedupes the conflicting id to exactly one rule.
+	if ids := ruleIDs(mergedA.Rules); len(ids) != 1 || ids[0] != "dup-rule" {
+		t.Fatalf("order A must dedupe to single dup-rule, got %v", ids)
+	}
+	if ids := ruleIDs(mergedB.Rules); len(ids) != 1 || ids[0] != "dup-rule" {
+		t.Fatalf("order B must dedupe to single dup-rule, got %v", ids)
+	}
+
+	// Winner is install-order DEPENDENT: concrete decisions, flipped by recency.
+	if mergedA.Rules[0].Decision != "allow" {
+		t.Fatalf("order A winner decision=%q, want allow (zzz installed later)", mergedA.Rules[0].Decision)
+	}
+	if mergedB.Rules[0].Decision != "deny" {
+		t.Fatalf("order B winner decision=%q, want deny (aaa installed later)", mergedB.Rules[0].Decision)
+	}
+	if mergedA.Rules[0].Decision == mergedB.Rules[0].Decision {
+		t.Fatalf("conflicting duplicate-id winner must flip with install order, both=%q", mergedA.Rules[0].Decision)
+	}
+
+	// Snapshot is install-order INDEPENDENT (content SET only): identical across
+	// the swap even though the enforced decision differs — the stale-cache hazard.
+	if snapA == "" || snapB == "" {
+		t.Fatalf("expected non-empty snapshots, got %q / %q", snapA, snapB)
+	}
+	if snapA != snapB {
+		t.Fatalf("snapshot must stay stable across install order (content-set only): %q != %q", snapA, snapB)
+	}
+}
+
 // TestMergeSafetyPolicies_DedupesInputAndOutputRules covers the two rule sets
 // the old gateway merge mishandled: InputRules were dropped entirely and
 // OutputRules were appended without dedup.

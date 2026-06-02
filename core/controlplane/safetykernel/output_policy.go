@@ -730,7 +730,7 @@ func normalizeScannerName(raw string) string {
 // silently skip, inerting the whole detection rule — is surfaced loudly rather
 // than failing open silently on a default-deny component.
 func unknownScannerNames(names []string, scanners map[string]OutputScanner) []string {
-	if len(names) == 0 || len(scanners) == 0 {
+	if len(names) == 0 {
 		return nil
 	}
 	var unknown []string
@@ -739,7 +739,12 @@ func unknownScannerNames(names []string, scanners map[string]OutputScanner) []st
 		if n == "" {
 			continue
 		}
-		if _, ok := scanners[n]; !ok {
+		// An empty/unwired registry must report every requested name as unknown
+		// (not nil): otherwise a load path that ends with no scanners silently
+		// disables every scanner-backed rule AND suppresses the WARN/metric this
+		// surfacing exists to provide. A registered-but-nil scanner is likewise
+		// treated as unknown.
+		if scanner, ok := scanners[n]; !ok || scanner == nil {
 			unknown = append(unknown, n)
 		}
 	}

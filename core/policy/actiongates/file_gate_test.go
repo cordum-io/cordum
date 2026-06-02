@@ -85,6 +85,46 @@ func TestFileGate_DenySensitiveUnixRead(t *testing.T) {
 	}
 }
 
+
+// TestFileGate_DenyLeadingSlashDriveLetterBypass closes the "/c:/..." bypass:
+// canonicalization can yield a leading-slash drive spelling that stripDriveLetter
+// previously left intact, so the Windows-hive and home-credential matchers missed
+// it (fail-OPEN). These DENYs exercise the stripDriveLetter leading-slash fix —
+// basenames are kept innocuous so the dir/hive matchers (not matchCredentialBasename)
+// are what fire. The bare-drive case and the benign project path are guards.
+func TestFileGate_DenyLeadingSlashDriveLetterBypass(t *testing.T) {
+	t.Parallel()
+	cases := []fileGateCase{
+		{name: "slash_drive_sam", path: "/c:/windows/system32/config/sam", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "windows_sam"},
+		{name: "slash_drive_security_hive", path: "/c:/windows/system32/config/security", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "windows_security_hive"},
+		{name: "slash_drive_aws_dir", path: "/c:/users/alice/.aws/region.txt", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "user_aws_creds"},
+		{name: "bare_drive_sam_guard", path: "c:/windows/system32/config/sam", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "windows_sam"},
+		{name: "slash_drive_project_allowed", path: "/c:/projects/app/main.go", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_ALLOW},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) { runFileGate(t, tc) })
+	}
+}
+
+// TestFileGate_DenyTrailingDotSpaceTraversalBypass closes the ".. "/". " bypass:
+// hasTraversalSegment misses a dot-segment carrying a trailing space (".. ", ". "),
+// and the old per-segment trim skipped any segment that trimmed to empty, so a
+// literal ".. " survived path.Clean and evaded the matchers — yet Windows opens
+// ".. " as ".." (traversal). The fix strips only the trailing spaces so path.Clean
+// collapses the token. The interior-dot case is an over-block guard (must ALLOW).
+func TestFileGate_DenyTrailingDotSpaceTraversalBypass(t *testing.T) {
+	t.Parallel()
+	cases := []fileGateCase{
+		{name: "dotspace_traversal_to_shadow", path: "/workspace/.. /.. /etc/shadow", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "sensitive_path"},
+		{name: "dotspace_traversal_to_sam", path: "c:/windows/system32/config/x/.. /sam", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "windows_sam"},
+		{name: "single_dotspace_to_shadow", path: "/etc/. /shadow", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_DENY, wantCode: CodeAccessDenied, subReasonHas: "sensitive_path"},
+		{name: "interior_dot_allowed", path: "/workspace/v1.0/main.go", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_ALLOW},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) { runFileGate(t, tc) })
+	}
+}
+
 func TestFileGate_DenyWindowsSensitivePaths(t *testing.T) {
 	t.Parallel()
 	cases := []fileGateCase{

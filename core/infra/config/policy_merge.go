@@ -46,10 +46,20 @@ import (
 // header for the canonical cross-fragment semantics).
 func MergePolicies(base, extra *SafetyPolicy) *SafetyPolicy {
 	if base == nil {
-		return CloneSafetyPolicyWithTierMetadata(extra)
+		out := CloneSafetyPolicyWithTierMetadata(extra)
+		if out != nil {
+			out.Tier = PolicyTierGlobal
+			out.Selector = PolicySelector{}
+		}
+		return out
 	}
 	if extra == nil {
-		return CloneSafetyPolicyWithTierMetadata(base)
+		out := CloneSafetyPolicyWithTierMetadata(base)
+		if out != nil {
+			out.Tier = PolicyTierGlobal
+			out.Selector = PolicySelector{}
+		}
+		return out
 	}
 	out := CloneSafetyPolicyWithTierMetadata(base)
 	add := CloneSafetyPolicyWithTierMetadata(extra)
@@ -63,6 +73,12 @@ func MergePolicies(base, extra *SafetyPolicy) *SafetyPolicy {
 	}
 	if strings.TrimSpace(out.DefaultDecision) == "" {
 		out.DefaultDecision = strings.TrimSpace(add.DefaultDecision)
+	}
+	// RequireHuman: a later fragment introducing the deny→require-human
+	// threshold must fill an unset base (first-non-empty, base precedence) —
+	// otherwise the kernel keeps routing truly-ambiguous matches to hard DENY.
+	if out.RequireHuman == (RequireHumanThreshold{}) {
+		out.RequireHuman = add.RequireHuman
 	}
 	// OutputPolicy: any fragment enabling output scanning keeps it enabled
 	// (fail-safe); FailMode fills first-non-empty with base precedence.

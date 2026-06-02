@@ -201,20 +201,32 @@ func canonicalizeFilePath(s string) string {
 // drive, so without this the Windows-anchored rules fail OPEN on the
 // drive-relative and forward-slash spellings.
 func stripDriveLetter(canon string) string {
-	if len(canon) >= 2 && canon[1] == ':' && canon[0] >= 'a' && canon[0] <= 'z' {
-		return canon[2:]
+	// Account for an optional leading "/" before the drive letter:
+	// canonicalization can yield both "c:/..." and "/c:/..." spellings, and the
+	// latter would otherwise keep its "/c:" prefix and sail past the
+	// drive-stripped matchers (matchHomeUserCredentialDir / matchWindowsRegistryHive),
+	// reopening the fail-open the hardcoded "/c:/..." rows used to cover.
+	offset := 0
+	if strings.HasPrefix(canon, "/") {
+		offset = 1
+	}
+	if len(canon) >= offset+2 && canon[offset+1] == ':' && canon[offset] >= 'a' && canon[offset] <= 'z' {
+		return canon[offset+2:]
 	}
 	return canon
 }
 
 // trimTrailingDotSpaceSegments strips trailing '.' and ' ' characters from each
 // '/'-separated segment, mirroring how Windows normalizes path components on
-// open (a trailing dot or space is ignored). Traversal/dot tokens (".", "..")
-// and any segment that would collapse to empty (e.g. "...", ". ") are left
-// untouched so path structure is preserved for path.Clean / the traversal
-// check. This is used only for match canonicalization, never for real file
-// access, so over-trimming can only ever DENY more, never ALLOW more
-// (fail-closed).
+// open (a trailing dot or space is ignored). Literal "." / ".." tokens are left
+// alone. A segment of ONLY dots+spaces with no trailing space (e.g. "...") is
+// left untouched so path structure is preserved, but a dots+spaces segment WITH
+// a trailing space (e.g. ".. " or ". ") has only its trailing spaces stripped:
+// Windows opens ".. " as ".." (traversal) and ". " as ".", so path.Clean can
+// then collapse the resulting token instead of leaving a literal ".. " segment
+// that bypasses the sensitive-path/traversal matchers. Used only for match
+// canonicalization, never for real file access, so over-trimming can only ever
+// DENY more, never ALLOW more (fail-closed).
 func trimTrailingDotSpaceSegments(s string) string {
 	parts := strings.Split(s, "/")
 	changed := false
@@ -223,7 +235,19 @@ func trimTrailingDotSpaceSegments(s string) string {
 			continue
 		}
 		t := strings.TrimRight(p, ". ")
-		if t == "" || t == p {
+		if t == p {
+			continue
+		}
+		if t == "" {
+			// All dots/spaces (e.g. ".. ", ". "): strip only trailing spaces so
+			// ".. " -> ".." and ". " -> "." get collapsed by path.Clean rather
+			// than surviving as a literal segment that evades the matchers.
+			stripped := strings.TrimRight(p, " ")
+			if stripped == p {
+				continue
+			}
+			parts[i] = stripped
+			changed = true
 			continue
 		}
 		parts[i] = t

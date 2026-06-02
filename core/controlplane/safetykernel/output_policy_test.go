@@ -144,6 +144,32 @@ func TestUnknownScannerNamesResolvesCustom(t *testing.T) {
 	}
 }
 
+
+// TestUnknownScannerNames_EmptyRegistryReportsAllUnknown pins the fail-open fix:
+// an empty (or nil) scanner registry must report every requested name as UNKNOWN
+// (not nil), so an unwired registry surfaces the WARN/metric instead of silently
+// disabling every scanner-backed rule. A registered-but-nil scanner value is
+// likewise unknown. Pre-fix unknownScannerNames returned nil when len(scanners)==0.
+func TestUnknownScannerNames_EmptyRegistryReportsAllUnknown(t *testing.T) {
+	// normalizeScannerName: secret_leak -> secret, code_injection -> injection.
+	got := unknownScannerNames([]string{"secret_leak", "code_injection"}, map[string]OutputScanner{})
+	want := map[string]bool{"secret": true, "injection": true}
+	if len(got) != 2 || !want[got[0]] || !want[got[1]] {
+		t.Fatalf("empty registry must report all requested names unknown, got %v want secret+injection", got)
+	}
+	if g := unknownScannerNames([]string{"secret"}, nil); len(g) != 1 || g[0] != "secret" {
+		t.Fatalf("nil registry must report the name unknown, got %v", g)
+	}
+	// A registered-but-nil scanner value is treated as unknown.
+	if g := unknownScannerNames([]string{"secret"}, map[string]OutputScanner{"secret": nil}); len(g) != 1 || g[0] != "secret" {
+		t.Fatalf("a nil scanner value must be reported unknown, got %v", g)
+	}
+	// Sanity: a valid name against a populated registry still resolves.
+	if g := unknownScannerNames([]string{"secret"}, defaultOutputScanners()); len(g) != 0 {
+		t.Fatalf("valid name against a populated registry must resolve, got %v", g)
+	}
+}
+
 // TestLoadOutputScannersSeedsDefaultsOnMissingYAML confirms the built-in
 // scanners are always seeded even when the operator YAML cannot be loaded, so
 // built-in names never falsely validate as "unknown".
