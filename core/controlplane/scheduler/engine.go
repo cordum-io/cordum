@@ -348,6 +348,17 @@ func (e *Engine) WithWorkerAttestationMode(mode WorkerAttestationMode) *Engine {
 	return e
 }
 
+// WithSessionMiddleware wires the Phase-2 session-token verification
+// middleware. When set (handshake mode warn/enforce), inbound heartbeat /
+// job_result / job_cancel packets are verified against the worker's
+// session token via verifySessionToken; when nil the gate admits — the
+// documented back-compat default for deployments that have not opted into
+// CORDUM_SDK_HANDSHAKE. Mirrors WithWorkerAttestationMode.
+func (e *Engine) WithSessionMiddleware(mw *SessionTokenMiddleware) *Engine {
+	e.sessionMiddleware = mw
+	return e
+}
+
 func (e *Engine) WithContextClient(client redis.UniversalClient) *Engine {
 	e.contextClient = client
 	return e
@@ -1140,6 +1151,15 @@ func authTokenFromPacket(packet *pb.BusPacket) string {
 	if packet == nil {
 		return ""
 	}
+	// Typed field first: cap/v2 SDK workers set the declared
+	// BusPacket.auth_token (field 18); mirror cap/sdk/go
+	// runtime.ExtractSessionToken so the worker-attestation gate reads the
+	// same field the SDK writes (previously this saw only legacy unknown
+	// fields and rejected every typed-token heartbeat).
+	if token := strings.TrimSpace(packet.GetAuthToken()); token != "" {
+		return token
+	}
+	// Legacy fallback: token encoded as an unknown field by older senders.
 	raw := packet.ProtoReflect().GetUnknown()
 	for len(raw) > 0 {
 		fieldNum, wireType, tagLen := protowire.ConsumeTag(raw)

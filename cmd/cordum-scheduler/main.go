@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
@@ -34,6 +35,7 @@ import (
 	"github.com/cordum/cordum/core/infra/schema"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/licensing"
+	"github.com/cordum/cordum/core/policysign"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -181,6 +183,55 @@ func syncApprovalQueueDepth(ctx context.Context, jobStore *store.RedisJobStore, 
 		return
 	}
 	approvalMetrics.SetApprovalQueueDepth("all", int(count))
+}
+
+// buildSessionTokenMiddleware constructs the Phase-2 session-token
+// verification middleware from CORDUM_SDK_HANDSHAKE.
+//
+// Back-compat default: when the var is unset or "off" the feature stays
+// disabled and the gate admits (returns nil, nil) — existing deployments
+// are unaffected on upgrade. In warn/enforce mode it loads the signing key
+// + trust store and builds a Redis-backed issuer. A misconfiguration under
+// enforce is fatal to the caller (fail closed); under warn it is logged and
+// verification is disabled (admit), matching warn's admit-on-missing intent.
+func buildSessionTokenMiddleware(rdb redis.UniversalClient) (*scheduler.SessionTokenMiddleware, error) {
+	raw := strings.TrimSpace(os.Getenv(scheduler.EnvHandshakeMode))
+	if raw == "" {
+		return nil, nil
+	}
+	mode := scheduler.ParseHandshakeMode(raw)
+	if mode == scheduler.HandshakeModeOff {
+		return nil, nil
+	}
+	mw, err := newSessionTokenMiddleware(rdb, mode)
+	if err == nil {
+		slog.Info("session-token verification enabled", "mode", mode.String())
+		return mw, nil
+	}
+	if mode == scheduler.HandshakeModeEnforce {
+		return nil, fmt.Errorf("CORDUM_SDK_HANDSHAKE=enforce requires a valid signing key and trust store: %w", err)
+	}
+	slog.Warn("session-token handshake in warn mode but key material unavailable; verification disabled (admitting)", "error", err)
+	return nil, nil
+}
+
+// newSessionTokenMiddleware loads the signing key, trust store, and builds
+// the Redis-backed issuer + middleware. Split out so the mode/back-compat
+// policy in buildSessionTokenMiddleware stays readable.
+func newSessionTokenMiddleware(rdb redis.UniversalClient, mode scheduler.HandshakeMode) (*scheduler.SessionTokenMiddleware, error) {
+	priv, keyID, err := policysign.LoadPrivateKeyFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	trust, err := policysign.LoadTrustStoreFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	issuer, err := scheduler.NewSessionTokenIssuer(priv, keyID, trust, rdb, scheduler.SessionTokenIssuerOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return scheduler.NewSessionTokenMiddleware(issuer, mode, scheduler.NewHandshakeMissingTracker()), nil
 }
 
 func main() {
@@ -426,6 +477,17 @@ func main() {
 	if configSvc != nil {
 		resolver := scheduler.NewFailModeResolver(configSvc, 30*time.Second)
 		engine.WithFailModeResolver(resolver)
+	}
+
+	// Phase-2 session-token verification (CORDUM_SDK_HANDSHAKE). Unset/off
+	// keeps the gate disabled (documented back-compat admit); warn/enforce
+	// wires a Redis-backed verifier that fails closed on a missing/invalid
+	// token.
+	if sessionMW, err := buildSessionTokenMiddleware(jobStore.Client()); err != nil {
+		slog.Error("session-token handshake enforcement misconfigured; refusing to start", "error", err)
+		os.Exit(1)
+	} else if sessionMW != nil {
+		engine.WithSessionMiddleware(sessionMW)
 	}
 
 	if _, err := cordumotel.InitTracer("cordum-scheduler"); err != nil {

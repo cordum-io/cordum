@@ -167,6 +167,15 @@ func extractSessionToken(packet *pb.BusPacket) string {
 	if packet == nil {
 		return ""
 	}
+	// Typed field first: cap/v2 SDK workers set the declared
+	// BusPacket.auth_token (field 18) via runtime.attachSessionToken, so
+	// after a marshal/reparse off the bus the token lives here and the
+	// unknown set is empty. Mirrors cap/sdk/go runtime.ExtractSessionToken.
+	if token := packet.GetAuthToken(); token != "" {
+		return token
+	}
+	// Legacy fallback: older senders encoded the token as an unknown
+	// field. Retained so un-upgraded workers keep verifying.
 	raw := packet.ProtoReflect().GetUnknown()
 	for len(raw) > 0 {
 		fieldNum, wireType, tagLen := protowire.ConsumeTag(raw)

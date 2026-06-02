@@ -10,19 +10,17 @@ import (
 	"testing"
 
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
-	"google.golang.org/protobuf/encoding/protowire"
 )
 
+// attachTokenForVerify attaches the token via the TYPED BusPacket.auth_token
+// field — the real wire format a cap/v2 SDK worker emits. (Previously this
+// wrote the legacy unknown-field encoding via SetUnknown, which masked the
+// extractor's typed-field blindness; see task-5c18f890.)
 func attachTokenForVerify(packet *pb.BusPacket, token string) {
 	if packet == nil || token == "" {
 		return
 	}
-	raw := packet.ProtoReflect().GetUnknown()
-	buf := make([]byte, 0, len(raw)+len(token)+8)
-	buf = append(buf, raw...)
-	buf = protowire.AppendTag(buf, sessionTokenPacketField, protowire.BytesType)
-	buf = protowire.AppendString(buf, token)
-	packet.ProtoReflect().SetUnknown(buf)
+	packet.AuthToken = token
 }
 
 func TestEngine_VerifySessionToken_OffModePassesEverything(t *testing.T) {
