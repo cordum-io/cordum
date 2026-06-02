@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+#### tools/scripts — landing vet gate catches a committed *_test.go with dropped impl before squash-merge (2026-06-02, task-fd1c736c)
+
+- New `tools/scripts/landing_vet_gate.sh` runs `go vet ./...` over the root module **and** the separate `sdk/` module (root `go vet ./...` does not descend into nested modules) and exits non-zero on any vet error. The governor runs it before squash-merging the shared consolidation branch into `main` (mandatory whenever the batch touches any `*_test.go`) and refuses to merge on failure. It catches the "cascade-drop" class — a checkpoint that COMMITS a `*_test.go` while DROPPING the production impl it references (which left the `cmd/cordum-scheduler` + `core/controlplane/scheduler` test packages uncompilable during the task-5c18f890 landing) — in seconds at landing instead of ~10 min later in the CI `test` (`-race`) / `lint` (`vet`) jobs, where it blocks unrelated tasks. `go build ./...` does NOT catch this (it ignores `_test.go`). Documented in `docs/processes/per-task-checklist.md`. Demo-neutral landing-process hardening.
+
 #### core/mcp - destructive taint-lookup fail-closed flag (2026-05-31, task-098b8d02)
 
 - Added default-OFF `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE`: when enabled, a destructive MCP call whose session-taint lookup errors is held with `REQUIRE_HUMAN` (`taint_lookup_unavailable_failclosed`) instead of proceeding as clean. Read-side taint persist remains fail-open, tainted destructive calls still hard-DENY with `session_tainted_prompt_injection`, and flag-OFF preserves the existing fail-open behavior for compatibility.
