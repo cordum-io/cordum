@@ -139,7 +139,7 @@ func TestCheckInputScopeRuleDeniesWhenContentMissing(t *testing.T) {
 
 	srv := &server{
 		policy:     policy,
-		inputRules: compileInputRules(policy),
+		inputRules: compileInputRules(policy, loadOutputScanners()),
 		scanners:   loadOutputScanners(),
 		snapshot:   "test",
 	}

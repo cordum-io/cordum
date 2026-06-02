@@ -227,12 +227,27 @@ func (d *governanceHealthDeps) VerifyChain(ctx context.Context) (governance.Chai
 		return governance.ChainStatusUnavailable, err
 	}
 
-	result, err := audit.VerifyChain(ctx, client, streamKey, audit.VerifyOptions{
+	opts := audit.VerifyOptions{
 		Limit:                audit.DefaultVerifyLimit,
 		RetentionBoundarySeq: boundary,
-	})
+	}
+	// Verify HMAC tags when HMAC is enabled; the key comes only from the
+	// server's configured chainer (never request input). Mirrors
+	// /api/v1/audit/verify and the compliance-export fix (task-33485ac3).
+	if d.s.auditChainer != nil && d.s.auditChainer.HMACEnabled() {
+		opts.HMACKey = d.s.auditChainer.HMACKeyForVerify()
+	}
+
+	result, err := audit.VerifyChain(ctx, client, streamKey, opts)
 	if err != nil {
 		return governance.ChainStatusUnavailable, err
+	}
+
+	// Fail-closed: HMAC tags seen but no key configured means HMAC was not
+	// verified while Status stayed ok — downgrade ok->partial so the
+	// governance health surface is not a false-green.
+	if len(opts.HMACKey) == 0 && result.HMACSeen && result.Status == audit.VerifyStatusOK {
+		result.Status = audit.VerifyStatusPartial
 	}
 
 	switch result.Status {

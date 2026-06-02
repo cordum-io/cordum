@@ -11,6 +11,7 @@ import (
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/redisutil"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -39,7 +40,7 @@ func TestCompileOutputRulesNormalizesScannersAndEnable(t *testing.T) {
 		},
 	}
 
-	rules := compileOutputRules(policy)
+	rules := compileOutputRules(policy, loadOutputScanners())
 	if len(rules) != 1 {
 		t.Fatalf("expected one compiled rule, got %d", len(rules))
 	}
@@ -51,6 +52,133 @@ func TestCompileOutputRulesNormalizesScannersAndEnable(t *testing.T) {
 	}
 	if rules[0].maxOutputBytes != 4096 {
 		t.Fatalf("expected output_size_gt to map to max bytes, got %d", rules[0].maxOutputBytes)
+	}
+}
+
+// TestCompileOutputRulesSurfacesUnknownScanner asserts an unknown scanner name
+// is observable (metric/WARN) at compile, not silently skipped, while the rule
+// still compiles (behavior-preserving — pruning to empty would flip it to
+// match-all).
+func TestCompileOutputRulesSurfacesUnknownScanner(t *testing.T) {
+	reg := loadOutputScanners()
+	before := testutil.ToFloat64(scannerUnknownTotal)
+	policy := &config.SafetyPolicy{
+		OutputRules: []config.OutputPolicyRule{{
+			ID:       "typo-output",
+			Decision: "deny",
+			Match:    config.OutputPolicyMatch{Scanners: []string{"pii_detector"}},
+		}},
+	}
+	rules := compileOutputRules(policy, reg)
+	if delta := testutil.ToFloat64(scannerUnknownTotal) - before; delta < 1 {
+		t.Fatalf("compiling an output rule with an unknown scanner must increment scannerUnknownTotal (observable), delta=%v", delta)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("output rule must still compile (behavior-preserving, not silently dropped to a match-all), got %d", len(rules))
+	}
+}
+
+// TestCompileInputRulesSurfacesUnknownScanner is the input-rule counterpart.
+func TestCompileInputRulesSurfacesUnknownScanner(t *testing.T) {
+	reg := loadOutputScanners()
+	before := testutil.ToFloat64(scannerUnknownTotal)
+	policy := &config.SafetyPolicy{
+		InputRules: []config.InputPolicyRule{{
+			ID:       "typo-input",
+			Decision: "deny",
+			Match:    config.InputPolicyMatch{Scanners: []string{"pii_detector"}},
+		}},
+	}
+	rules := compileInputRules(policy, reg)
+	if delta := testutil.ToFloat64(scannerUnknownTotal) - before; delta < 1 {
+		t.Fatalf("compiling an input rule with an unknown scanner must increment scannerUnknownTotal (observable), delta=%v", delta)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("input rule must still compile (behavior-preserving), got %d", len(rules))
+	}
+}
+
+// TestUnknownScannerNames unit-tests the compile-time validation helper.
+func TestUnknownScannerNames(t *testing.T) {
+	reg := loadOutputScanners()
+	if got := unknownScannerNames([]string{"pii", "secret", "secret_leak", "injection", "code_injection", "prompt_injection"}, reg); len(got) != 0 {
+		t.Fatalf("valid/aliased scanner names must resolve, got unknown=%v", got)
+	}
+	got := unknownScannerNames([]string{"pii_detector", "pii"}, reg)
+	if len(got) != 1 || got[0] != "pii_detector" {
+		t.Fatalf("unknownScannerNames([pii_detector,pii]) = %v, want [pii_detector]", got)
+	}
+}
+
+// TestCompileValidScannersDoNotWarn is the negative control: valid built-in and
+// aliased scanner names must NOT be flagged as unknown.
+func TestCompileValidScannersDoNotWarn(t *testing.T) {
+	reg := loadOutputScanners()
+	before := testutil.ToFloat64(scannerUnknownTotal)
+	policy := &config.SafetyPolicy{
+		OutputRules: []config.OutputPolicyRule{{
+			ID:       "valid",
+			Decision: "deny",
+			Match:    config.OutputPolicyMatch{Scanners: []string{"secret", "secret_leak", "pii", "injection", "code_injection", "prompt_injection"}},
+		}},
+	}
+	rules := compileOutputRules(policy, reg)
+	if delta := testutil.ToFloat64(scannerUnknownTotal) - before; delta != 0 {
+		t.Fatalf("valid/aliased scanner names must not increment scannerUnknownTotal, delta=%v", delta)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("valid-scanner rule should compile, got %d", len(rules))
+	}
+}
+
+// TestUnknownScannerNamesResolvesCustom confirms a custom scanner present in the
+// loaded registry resolves, while a name not in the registry is still unknown.
+func TestUnknownScannerNamesResolvesCustom(t *testing.T) {
+	reg := defaultOutputScanners()
+	reg["custom_scanner"] = newSecretScanner()
+	if got := unknownScannerNames([]string{"custom_scanner", "pii"}, reg); len(got) != 0 {
+		t.Fatalf("custom + built-in names must resolve, got unknown=%v", got)
+	}
+	if got := unknownScannerNames([]string{"custom_scanner_typo"}, reg); len(got) != 1 {
+		t.Fatalf("an unloaded custom name must be reported unknown, got %v", got)
+	}
+}
+
+// TestLoadOutputScannersSeedsDefaultsOnMissingYAML confirms the built-in
+// scanners are always seeded even when the operator YAML cannot be loaded, so
+// built-in names never falsely validate as "unknown".
+func TestLoadOutputScannersSeedsDefaultsOnMissingYAML(t *testing.T) {
+	t.Setenv(envOutputScannersPath, filepath.Join(t.TempDir(), "does-not-exist.yaml"))
+	reg := loadOutputScanners()
+	for _, name := range []string{"secret", "pii", "injection", "prompt_injection"} {
+		if _, ok := reg[name]; !ok {
+			t.Fatalf("default scanner %q must be seeded even when the YAML is missing", name)
+		}
+	}
+}
+
+// TestCheckOutputAliasedDetectorFires is the end-to-end proof that a valid
+// aliased detector name resolves AND the rule still fires (quarantines).
+func TestCheckOutputAliasedDetectorFires(t *testing.T) {
+	srv := &server{scanners: defaultOutputScanners()}
+	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
+		OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "open"},
+		OutputRules: []config.OutputPolicyRule{{
+			ID:       "out-secret-alias",
+			Decision: "quarantine",
+			Match:    config.OutputPolicyMatch{Topics: []string{"job.*"}, Detectors: []string{"secret_leak"}},
+		}},
+	}, "snap-alias")
+
+	resp, err := srv.CheckOutput(context.Background(), &pb.OutputCheckRequest{
+		JobId: "job-alias", Topic: "job.default", Tenant: "default",
+		OutputContent: []byte("leak AKIA1234567890ABCDEF in text"),
+	})
+	if err != nil {
+		t.Fatalf("check output: %v", err)
+	}
+	if resp.GetDecision() != pb.OutputDecision_OUTPUT_DECISION_QUARANTINE {
+		t.Fatalf("aliased detector secret_leak must resolve and fire, got %v", resp.GetDecision())
 	}
 }
 
@@ -638,7 +766,7 @@ func TestCompileOutputRulesRejectsComplexPatterns(t *testing.T) {
 			},
 		},
 	}
-	rules := compileOutputRules(policy)
+	rules := compileOutputRules(policy, loadOutputScanners())
 	// Rule should be skipped because all patterns are rejected
 	if len(rules) != 0 {
 		t.Fatalf("expected nested quantifier pattern to be rejected, got %d rules", len(rules))
@@ -658,7 +786,7 @@ func TestCompileOutputRulesAcceptsSimplePattern(t *testing.T) {
 			},
 		},
 	}
-	rules := compileOutputRules(policy)
+	rules := compileOutputRules(policy, loadOutputScanners())
 	if len(rules) != 1 {
 		t.Fatalf("expected simple pattern to be accepted, got %d rules", len(rules))
 	}

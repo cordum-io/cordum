@@ -75,12 +75,32 @@ export function usePolicyAccess(): PolicyAccess {
   const principalRole = useConfigStore((s) => s.principalRole);
 
   return useMemo(() => {
+    // Auth config not yet loaded (or the /auth/config fetch failed) — fail
+    // CLOSED, mirroring usePermission. We don't yet know whether auth is
+    // required, so deny every privileged capability rather than paint
+    // affordances we'd have to retract. The no-auth "allow everything" branch
+    // (derivePolicyAccess with requiresAuth=false) must only trigger once the
+    // config has RESOLVED with every mode confirmed disabled — never on the
+    // undefined window. The deny is unconditional (role-independent), so an
+    // admin mid-load is denied too, exactly as usePermission denies them.
+    if (!authConfig) {
+      return {
+        canEdit: false,
+        canPublish: false,
+        canRelease: false,
+        canManageOutputRules: false,
+        canManageTenants: false,
+        isReadOnly: false,
+        requiresAuth: true,
+        userRoles: (user?.roles ?? []).map(normalizeRole).filter(Boolean),
+        principalRole: normalizeRole(principalRole ?? ""),
+      };
+    }
     const requiresAuth = Boolean(
-      !!authConfig &&
-      (authConfig.password_enabled ||
+      authConfig.password_enabled ||
         !!authConfig.user_auth_enabled ||
         authConfig.saml_enabled ||
-        authConfig.oidc_enabled),
+        authConfig.oidc_enabled,
     );
     return derivePolicyAccess({
       requiresAuth,

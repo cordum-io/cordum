@@ -679,8 +679,15 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	// the window from advancing correctly.
 	policyHasVelocity := effectiveVelocityRuleCount(evalPolicy, s.velocityRuleLimit()) > 0
 	requestHasActionDescriptor := requestHasActionDescriptorLabel(req)
+	// Bypass the decision cache for agent-enriched requests: the resolved agent
+	// identity (risk tier / data classifications, fetched from the mutable
+	// AgentIdentityStore in enrichAgentContext AFTER this key is computed) is not
+	// folded into cacheKeyForRequest, so a cached ALLOW would otherwise outlive
+	// an agent escalation. Only when an agent store is wired — otherwise the
+	// agent_id label is inert and caching stays safe (preserving hit-rate).
+	requestHasEnrichedAgent := s.agentStore != nil && requestHasAgentID(req)
 	cacheKey := ""
-	if s.cacheTTL > 0 && !policyHasVelocity && !requestHasActionDescriptor {
+	if s.cacheTTL > 0 && !policyHasVelocity && !requestHasActionDescriptor && !requestHasEnrichedAgent {
 		cacheKey = cacheKeyForRequest(req, snapshot)
 		if cacheKey != "" {
 			if cached := s.getCachedDecision(cacheKey); cached != nil {
@@ -1039,6 +1046,19 @@ func cacheKeyForRequest(req *pb.PolicyCheckRequest, snapshot string) string {
 	}
 	sum := sha256.Sum256(data)
 	return snapshot + ":" + hex.EncodeToString(sum[:])
+}
+
+// requestHasAgentID reports whether the request carries an agent_id label. Such
+// requests are enriched with the resolved agent identity (risk tier / data
+// classifications) from the AgentIdentityStore in enrichAgentContext, AFTER the
+// decision-cache key is computed, so they bypass the cache — a cached decision
+// must never outlive an agent escalation in the store. Returns false for a
+// nil/blank label so non-agent requests keep using the cache.
+func requestHasAgentID(req *pb.PolicyCheckRequest) bool {
+	if req == nil {
+		return false
+	}
+	return strings.TrimSpace(req.GetLabels()["agent_id"]) != ""
 }
 
 func (s *server) getCachedDecision(key string) *pb.PolicyCheckResponse {
@@ -1504,8 +1524,8 @@ func (s *server) setPolicyWithInvariants(ctx context.Context, policy *config.Saf
 	s.global = global
 	s.invariantRules = invariantRules
 	s.invariantOutputRules = invariantOutputRules
-	s.outputRules = compileOutputRules(combined)
-	s.inputRules = compileInputRules(combined)
+	s.outputRules = compileOutputRules(combined, s.scanners)
+	s.inputRules = compileInputRules(combined, s.scanners)
 	if combined != nil {
 		s.requireHumanThreshold = combined.RequireHuman
 	} else {

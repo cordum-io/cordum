@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 )
@@ -65,34 +66,139 @@ func taintKey(tenant, session string) string {
 	return tenant + ":" + session
 }
 
-// inProcessTaintStore is the mutex+map TaintStore for single-instance gateways
-// and tests. No TTL — process lifetime is the only expiry, acceptable because a
-// taint is scoped to a live session and tests inject a fresh store per fixture.
-type inProcessTaintStore struct {
-	mu sync.RWMutex
-	m  map[string]SessionTaint
+// maxInProcessTaints caps the in-process taint map so an attacker cycling
+// fabricated (largely client-supplied) session ids cannot grow it without bound
+// — a memory-exhaustion DoS. Deliberately generous: organic load holds far fewer
+// live taints than this within the TTL window.
+const maxInProcessTaints = 10_000
+
+// inProcessTaintEvictBatch is how far below the cap a cap-triggered eviction
+// drops the map, so eviction amortizes to ~O(1) per write (one sort sweep every
+// ~batch writes) instead of an O(n) oldest-scan on every over-cap write.
+const inProcessTaintEvictBatch = 1_000
+
+// inProcessTaintEntry is a stored taint plus its absolute expiry timestamp.
+type inProcessTaintEntry struct {
+	taint   SessionTaint
+	expires time.Time
 }
 
-// NewInProcessTaintStore returns the dependency-free in-process TaintStore.
+// inProcessTaintStore is the mutex+map TaintStore for single-instance gateways,
+// tests, and the per-instance fallback the Redis store writes into on a Redis
+// error. It is bounded two ways so it cannot leak: a per-entry TTL (a missing
+// taint is the clean default, so expiry is FAIL-SAFE — it can only ever lose a
+// taint, never fabricate one) and a max-entry cap with oldest-by-expiry
+// eviction. A tainted session stays tainted until its TTL within the cap.
+type inProcessTaintStore struct {
+	mu         sync.RWMutex
+	m          map[string]inProcessTaintEntry
+	ttl        time.Duration
+	maxEntries int
+	now        func() time.Time
+}
+
+// NewInProcessTaintStore returns the dependency-free in-process TaintStore,
+// bounded by the resolved taint TTL (CORDUM_MCP_TAINT_TTL / defaultTaintTTL —
+// the same lifetime the Redis backend uses) and maxInProcessTaints entries.
 func NewInProcessTaintStore() TaintStore {
-	return &inProcessTaintStore{m: make(map[string]SessionTaint)}
+	return newInProcessTaintStore(resolveTaintTTL(), maxInProcessTaints, time.Now)
+}
+
+// newInProcessTaintStore is the testable constructor: ttl, cap, and clock are
+// injectable. A non-positive ttl/cap falls back to the defaults; a nil clock to
+// time.Now.
+func newInProcessTaintStore(ttl time.Duration, maxEntries int, now func() time.Time) *inProcessTaintStore {
+	if ttl <= 0 {
+		ttl = defaultTaintTTL
+	}
+	if maxEntries <= 0 {
+		maxEntries = maxInProcessTaints
+	}
+	if now == nil {
+		now = time.Now
+	}
+	return &inProcessTaintStore{
+		m:          make(map[string]inProcessTaintEntry),
+		ttl:        ttl,
+		maxEntries: maxEntries,
+		now:        now,
+	}
 }
 
 func (s *inProcessTaintStore) Taint(_ context.Context, tenant, session string, t SessionTaint) error {
+	key := taintKey(tenant, session)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.m[taintKey(tenant, session)] = t
+	s.m[key] = inProcessTaintEntry{taint: t, expires: s.now().Add(s.ttl)}
+	if len(s.m) > s.maxEntries {
+		s.evictLocked(key)
+	}
 	return nil
 }
 
+// evictLocked bounds the map. It first drops every expired entry (cheap, and the
+// common steady-state bound), then — only if still over the cap (a sustained
+// attack within the TTL window) — drops the oldest-by-expiry entries down to a
+// low watermark in one batch so the cost amortizes. The caller holds s.mu; keep
+// (the just-written entry) is never evicted.
+func (s *inProcessTaintStore) evictLocked(keep string) {
+	now := s.now()
+	for k, e := range s.m {
+		if k != keep && now.After(e.expires) {
+			delete(s.m, k)
+		}
+	}
+	if len(s.m) <= s.maxEntries {
+		return
+	}
+	type keyed struct {
+		key     string
+		expires time.Time
+	}
+	live := make([]keyed, 0, len(s.m))
+	for k, e := range s.m {
+		if k == keep {
+			continue
+		}
+		live = append(live, keyed{key: k, expires: e.expires})
+	}
+	sort.Slice(live, func(i, j int) bool { return live[i].expires.Before(live[j].expires) })
+	target := s.maxEntries - inProcessTaintEvictBatch
+	if target < 1 {
+		target = 1
+	}
+	for i := 0; i < len(live) && len(s.m) > target; i++ {
+		delete(s.m, live[i].key)
+	}
+}
+
 func (s *inProcessTaintStore) GetTaint(_ context.Context, tenant, session string) (*SessionTaint, bool, error) {
+	key := taintKey(tenant, session)
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	t, ok := s.m[taintKey(tenant, session)]
+	e, ok := s.m[key]
+	s.mu.RUnlock()
 	if !ok {
 		return nil, false, nil
 	}
+	if s.now().After(e.expires) {
+		// Expired — opportunistically GC and report clean (the fail-safe
+		// default). Re-check under the write lock so a concurrent refresh that
+		// extended the entry is not dropped.
+		s.mu.Lock()
+		if cur, still := s.m[key]; still && s.now().After(cur.expires) {
+			delete(s.m, key)
+		}
+		s.mu.Unlock()
+		return nil, false, nil
+	}
 	// Return a copy so a caller cannot mutate the stored record via the pointer.
-	cp := t
+	cp := e.taint
 	return &cp, true, nil
+}
+
+// entryCount returns the number of tracked taints (observability + tests).
+func (s *inProcessTaintStore) entryCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.m)
 }

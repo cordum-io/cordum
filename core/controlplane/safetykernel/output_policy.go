@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -35,8 +36,20 @@ var regexRejectedTotal = prometheus.NewCounter(prometheus.CounterOpts{
 	Help: "Total output-rule regex patterns rejected for complexity",
 })
 
+// scannerUnknownTotal counts rule scanner references that did not resolve to a
+// registered scanner at compile time. A miss means the rule cannot detect via
+// that scanner (scanWithScanners silently skips it), so on a default-deny
+// component a single typo turns a deny/quarantine rule into a no-op — this
+// metric (plus a compile-time WARN) makes that misconfiguration observable
+// instead of silent.
+var scannerUnknownTotal = prometheus.NewCounter(prometheus.CounterOpts{
+	Name: "cordum_safety_unknown_scanner_total",
+	Help: "Total rule scanner references that did not resolve to a registered scanner (misconfiguration; the rule cannot detect via them)",
+})
+
 func init() {
 	prometheus.MustRegister(regexRejectedTotal)
+	prometheus.MustRegister(scannerUnknownTotal)
 }
 
 // validateRegexComplexity rejects patterns that are excessively complex.
@@ -577,7 +590,7 @@ func toProtoOutputFindings(findings []outputFinding) []*pb.OutputFinding {
 	return out
 }
 
-func compileOutputRules(policy *config.SafetyPolicy) []compiledOutputRule {
+func compileOutputRules(policy *config.SafetyPolicy, registry map[string]OutputScanner) []compiledOutputRule {
 	if policy == nil || len(policy.OutputRules) == 0 {
 		return nil
 	}
@@ -620,6 +633,7 @@ func compileOutputRules(policy *config.SafetyPolicy) []compiledOutputRule {
 		}
 
 		scanners := mergeScannerLists(rule.Match.Scanners, rule.Match.Detectors)
+		warnUnknownScanners(strings.TrimSpace(rule.ID), scanners, registry)
 		out = append(out, compiledOutputRule{
 			id:             strings.TrimSpace(rule.ID),
 			decision:       decision,
@@ -708,6 +722,60 @@ func normalizeScannerName(raw string) string {
 	default:
 		return name
 	}
+}
+
+// unknownScannerNames returns the normalized scanner names in `names` that do
+// not resolve to a registered scanner. Used at compile time so a rule that
+// references a misspelled or unloaded scanner — which scanWithScanners would
+// silently skip, inerting the whole detection rule — is surfaced loudly rather
+// than failing open silently on a default-deny component.
+func unknownScannerNames(names []string, scanners map[string]OutputScanner) []string {
+	if len(names) == 0 || len(scanners) == 0 {
+		return nil
+	}
+	var unknown []string
+	for _, name := range names {
+		n := normalizeScannerName(name)
+		if n == "" {
+			continue
+		}
+		if _, ok := scanners[n]; !ok {
+			unknown = append(unknown, n)
+		}
+	}
+	return unknown
+}
+
+// knownScannerNames returns the sorted set of registered scanner names, surfaced
+// in the compile-time WARN so an operator who mistypes a name can see the valid
+// set.
+func knownScannerNames(scanners map[string]OutputScanner) []string {
+	if len(scanners) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(scanners))
+	for name := range scanners {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// warnUnknownScanners surfaces (WARN + metric) any scanner names on a rule that
+// did not resolve to a registered scanner. It is intentionally observability
+// ONLY and does NOT drop the names from the rule: pruning a rule's only scanner
+// to an empty list would flip it from inert into a metadata-only match-all
+// (over-block) in evaluate{Input,Output}Rule. On a default-deny component the
+// fix for a typo'd detector is a loud signal, not a silent skip and not a
+// hard policy-load failure (which would brick the kernel on one bad name).
+func warnUnknownScanners(ruleID string, names []string, scanners map[string]OutputScanner) {
+	unknown := unknownScannerNames(names, scanners)
+	if len(unknown) == 0 {
+		return
+	}
+	scannerUnknownTotal.Add(float64(len(unknown)))
+	slog.Warn("safety-kernel: rule references unknown scanner(s); detection via them will NOT run — fix the scanner name",
+		"rule", ruleID, "unknown", unknown, "known", knownScannerNames(scanners))
 }
 
 func containsAnyFold(values, required []string) bool {
