@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -138,5 +139,67 @@ func TestEvaluator_InlineWaitApproved_ConsumesApprovalExactlyOnce(t *testing.T) 
 	}
 	if d2.Decision != claude.DecisionDeny {
 		t.Fatalf("turn 2 decision = %q, want deny — one approval must authorize exactly one execution (already consumed)", d2.Decision)
+	}
+}
+
+// TestAgentdDecisionFromEvaluate_ApprovedConsume_FailsClosed asserts that an
+// approved inline wait NEVER authorizes execution unless the consume CAS this
+// turn succeeds: a nil consumer, a consume error, a nil response, an
+// already-consumed DENY, and an unexpected pending REQUIRE_APPROVAL all fail
+// closed (DENY).
+func TestAgentdDecisionFromEvaluate_ApprovedConsume_FailsClosed(t *testing.T) {
+	t.Parallel()
+
+	cfg := ApprovalDecisionConfig{InlineWaitEnabled: true, InlineWaitTimeout: time.Second, PolicyMode: edgecore.PolicyModeEnforce}
+	cases := []struct {
+		name    string
+		consume ApprovalConsumeFunc
+	}{
+		{name: "nil consumer", consume: nil},
+		{name: "consume error", consume: func(context.Context, string) (*EvaluateResponse, error) {
+			return nil, errors.New("gateway unavailable")
+		}},
+		{name: "consume nil response", consume: func(context.Context, string) (*EvaluateResponse, error) {
+			return nil, nil
+		}},
+		{name: "already consumed deny", consume: func(context.Context, string) (*EvaluateResponse, error) {
+			return &EvaluateResponse{Decision: string(edgecore.DecisionDeny), Reason: "approval already consumed; request a new approval"}, nil
+		}},
+		{name: "unexpected pending require-approval", consume: func(context.Context, string) (*EvaluateResponse, error) {
+			return &EvaluateResponse{Decision: string(edgecore.DecisionRequireApproval), ApprovalRef: "edge_appr_123"}, nil
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			waiter := &fakeApprovalWaiter{result: ApprovalWaitResult{Status: ApprovalWaitApproved, Reason: "approved"}}
+			decision := AgentdDecisionFromEvaluateResponse(context.Background(), approvalRequiredResponse(), cfg, waiter, tc.consume)
+			if decision.Decision != claude.DecisionDeny {
+				t.Fatalf("decision = %q, want deny — an approved poll must not authorize without a successful consume this turn", decision.Decision)
+			}
+		})
+	}
+}
+
+// TestAgentdDecisionFromEvaluate_ApprovedConsumeConstrain_Allows verifies a
+// CONSTRAIN result from the consuming re-evaluate is honored as ALLOW with the
+// gateway's updated input.
+func TestAgentdDecisionFromEvaluate_ApprovedConsumeConstrain_Allows(t *testing.T) {
+	t.Parallel()
+
+	cfg := ApprovalDecisionConfig{InlineWaitEnabled: true, InlineWaitTimeout: time.Second, PolicyMode: edgecore.PolicyModeEnforce}
+	waiter := &fakeApprovalWaiter{result: ApprovalWaitResult{Status: ApprovalWaitApproved}}
+	consume := func(context.Context, string) (*EvaluateResponse, error) {
+		return &EvaluateResponse{
+			Decision:     string(edgecore.DecisionConstrain),
+			UpdatedInput: map[string]any{"command": "echo constrained"},
+		}, nil
+	}
+	decision := AgentdDecisionFromEvaluateResponse(context.Background(), approvalRequiredResponse(), cfg, waiter, consume)
+	if decision.Decision != claude.DecisionAllow {
+		t.Fatalf("decision = %q, want allow (constrain)", decision.Decision)
+	}
+	if got := decision.UpdatedInput["command"]; got != "echo constrained" {
+		t.Fatalf("updated input = %#v, want gateway-constrained command", got)
 	}
 }
