@@ -20,8 +20,33 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// StartRun loads the workflow/run and dispatches any ready steps.
+// StartRun loads the workflow/run and dispatches any ready steps. It acquires
+// the full per-run lock (local mutex + distributed lock when a run-locker is
+// configured). Callers that already hold the distributed run lock (e.g. the
+// reconciler) must use startRunLockHeld instead.
 func (e *Engine) StartRun(ctx context.Context, workflowID, runID string) error {
+	unlock, ok := e.lockRun(runID)
+	if !ok {
+		return nil // Another replica owns this run.
+	}
+	defer unlock()
+	return e.startRunLocked(ctx, workflowID, runID)
+}
+
+// startRunLockHeld is StartRun for a caller that ALREADY holds the distributed
+// run lock (the workflow reconciler). It takes only the engine's local per-run
+// mutex, NOT the non-reentrant distributed lock (which would self-contend on the
+// key the caller already holds and silently no-op). Errors are returned so the
+// caller can retry rather than being dropped.
+func (e *Engine) startRunLockHeld(ctx context.Context, workflowID, runID string) error {
+	unlock := e.lockRunLocal(runID)
+	defer unlock()
+	return e.startRunLocked(ctx, workflowID, runID)
+}
+
+// startRunLocked performs the run start/advance. The caller MUST hold the
+// per-run lock (via lockRun or lockRunLocal).
+func (e *Engine) startRunLocked(ctx context.Context, workflowID, runID string) error {
 	tracer := cordumotel.Tracer("cordum-workflow-engine")
 	ctx, span := tracer.Start(ctx, "workflow.execute_run",
 		oteltrace.WithSpanKind(oteltrace.SpanKindInternal),
@@ -31,12 +56,6 @@ func (e *Engine) StartRun(ctx context.Context, workflowID, runID string) error {
 		attribute.String("cordum.workflow_id", workflowID),
 		attribute.String("cordum.run_id", runID),
 	)
-
-	unlock, ok := e.lockRun(runID)
-	if !ok {
-		return nil // Another replica owns this run.
-	}
-	defer unlock()
 	slog.Debug("run starting", "component", "workflow", "workflowId", workflowID, "runId", runID, "traceId", runID)
 	wfDef, err := e.store.GetWorkflow(ctx, workflowID)
 	var preloadedRun *WorkflowRun

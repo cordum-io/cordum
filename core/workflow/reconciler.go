@@ -102,7 +102,10 @@ func (r *reconciler) HandleJobResult(ctx context.Context, jr *pb.JobResult) erro
 		}()
 	}
 	if r.engine != nil {
-		if err := r.engine.HandleJobResult(ctx, jr); err != nil {
+		// The reconciler holds the distributed run lock acquired above; call the
+		// lock-held engine entrypoint so the engine does NOT re-acquire the same
+		// non-reentrant key (which would self-contend and silently drop the result).
+		if err := r.engine.handleJobResultLockHeld(ctx, jr); err != nil {
 			if errors.Is(err, ErrRunNotFound) {
 				slog.Info("reconciler: discarding result for deleted run",
 					"run_id", runID, "job_id", jr.JobId)
@@ -215,16 +218,34 @@ func (r *reconciler) reconcileRun(ctx context.Context, runID string) {
 		if status != pb.JobStatus_JOB_STATUS_SUCCEEDED && jr.ErrorMessage == "" {
 			jr.ErrorMessage = fmt.Sprintf("job %s terminated with state %s (no error details available)", sr.JobID, state)
 		}
-		// Ignore ErrRunNotFound — run may have been deleted between scan and processing.
-		_ = r.engine.HandleJobResult(ctx, jr)
+		// The reconciler holds the run lock; use the lock-held engine entrypoint so
+		// the engine does not self-contend on the same non-reentrant key. Surface
+		// non-ErrRunNotFound failures instead of silently dropping them
+		// (ErrRunNotFound is expected — the run may have been deleted between the
+		// scan and processing).
+		if err := r.engine.handleJobResultLockHeld(ctx, jr); err != nil && !errors.Is(err, ErrRunNotFound) {
+			slog.Error("reconciler: advancing step from stored job result failed, will retry next tick",
+				"run_id", runID, "job_id", sr.JobID, "error", err)
+		}
 	}
 
-	// Detect approval steps stuck in Waiting with no corresponding job in the
-	// scheduler. This handles the crash gap between UpdateRun (step=Waiting)
-	// and Publish (approval job dispatch) in scheduleReady.
-	r.reconcileStuckWaitingSteps(ctx, run)
+	// The per-step advances above persist fresh run state via the engine. Re-read
+	// the run before stuck-step recovery: reconcileStuckWaitingSteps does a
+	// full-object UpdateRun, so feeding it the stale pre-advance snapshot would
+	// clobber those advances. On a transient re-read failure, skip recovery this
+	// tick (it retries next tick) rather than risk a stale overwrite.
+	if refreshed, rerr := r.workflowStore.GetRun(ctx, runID); rerr == nil && refreshed != nil {
+		run = refreshed
+		// Detect approval steps stuck in Waiting with no corresponding job in the
+		// scheduler. This handles the crash gap between UpdateRun (step=Waiting)
+		// and Publish (approval job dispatch) in scheduleReady.
+		r.reconcileStuckWaitingSteps(ctx, run)
+	} else if rerr != nil {
+		slog.Warn("reconciler: re-read run before stuck-step recovery failed, skipping recovery this tick",
+			"run_id", runID, "error", rerr)
+	}
 
-	if err := r.engine.StartRun(ctx, run.WorkflowID, run.ID); err != nil {
+	if err := r.engine.startRunLockHeld(ctx, run.WorkflowID, run.ID); err != nil {
 		slog.Error("reconciler: StartRun failed, will retry next tick",
 			"run_id", run.ID, "workflow_id", run.WorkflowID, "error", err)
 	}

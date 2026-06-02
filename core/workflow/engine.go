@@ -215,6 +215,44 @@ func (lm *lockManager) acquire(runID string) (func(), bool) {
 	}, true
 }
 
+// acquireLocal obtains ONLY the per-run local mutex (no distributed lock) and
+// returns a release function. It exists for callers that ALREADY hold the
+// distributed run lock (runLockKey) — notably the workflow reconciler — and must
+// NOT re-acquire the non-reentrant distributed lock, which would self-contend
+// (SetNX on a key the caller already holds) and silently no-op. The local mutex
+// still provides intra-process mutual exclusion against every other engine
+// goroutine (delay poller, API handlers, concurrent reconcile) — the only
+// serialization the no-locker gateway engine relies on, so behaviour there is
+// unchanged.
+//
+// Unlike acquire, this always succeeds (the local mutex is a blocking lock), so
+// there is no ok bool. Lock ordering is deadlock-free: the local mutex is the
+// only blocking lock; acquire()'s distributed step is a non-blocking
+// try-or-skip, so no caller holds the distributed lock while blocking on the
+// local mutex in a way that inverts ordering.
+func (lm *lockManager) acquireLocal(runID string) func() {
+	lm.mu.Lock()
+	lock, ok := lm.locks[runID]
+	if !ok {
+		lock = &runLock{}
+		lm.locks[runID] = lock
+	}
+	lock.refs++
+	lm.mu.Unlock()
+
+	lock.mu.Lock()
+
+	return func() {
+		lock.mu.Unlock()
+		lm.mu.Lock()
+		lock.refs--
+		if lock.refs == 0 && lock.terminal {
+			delete(lm.locks, runID)
+		}
+		lm.mu.Unlock()
+	}
+}
+
 // markTerminal flags a run as completed so its lock entry is cleaned up
 // once all active holders release. The Redis lock key is released by the
 // acquire() release function; any stale keys expire via TTL.
@@ -315,6 +353,12 @@ func (e *Engine) lockRun(runID string) (func(), bool) {
 	return e.lockMgr.acquire(runID)
 }
 
+// lockRunLocal acquires ONLY the per-run local mutex (no distributed lock) for a
+// caller that already holds the distributed run lock. See lockManager.acquireLocal.
+func (e *Engine) lockRunLocal(runID string) func() {
+	return e.lockMgr.acquireLocal(runID)
+}
+
 func (e *Engine) currentEntitlements() licensing.Entitlements {
 	if e != nil && e.entitlements != nil {
 		return e.entitlements.Entitlements()
@@ -378,19 +422,52 @@ func (e *Engine) validateWorkflowDefinition(wf *Workflow) error {
 }
 
 // HandleJobResult updates step/run state and dispatches next steps if ready.
+// It acquires the full per-run lock (local mutex + distributed lock when a
+// run-locker is configured). Callers that already hold the distributed run lock
+// (e.g. the reconciler) must use handleJobResultLockHeld instead.
 func (e *Engine) HandleJobResult(ctx context.Context, res *pb.JobResult) error {
-	if res == nil || res.JobId == "" {
+	runID, stepID, ok := prepareJobResult(res)
+	if !ok {
 		return nil
 	}
-	runID, stepID := splitJobID(res.JobId)
+	unlock, acquired := e.lockRun(runID)
+	if !acquired {
+		return nil // Another replica owns this run.
+	}
+	defer unlock()
+	return e.handleJobResultLocked(ctx, res, runID, stepID)
+}
+
+// handleJobResultLockHeld advances a run for a caller that ALREADY holds the
+// distributed run lock (runLockKey) — the workflow reconciler. It takes only the
+// engine's local per-run mutex, NOT the non-reentrant distributed lock (which
+// would self-contend on the key the caller already holds and silently drop the
+// result). Errors are returned to the caller so they surface (NACK/retry)
+// rather than being ACKed-and-dropped.
+func (e *Engine) handleJobResultLockHeld(ctx context.Context, res *pb.JobResult) error {
+	runID, stepID, ok := prepareJobResult(res)
+	if !ok {
+		return nil
+	}
+	unlock := e.lockRunLocal(runID)
+	defer unlock()
+	return e.handleJobResultLocked(ctx, res, runID, stepID)
+}
+
+// prepareJobResult validates a JobResult, extracts the run/step IDs, and logs
+// receipt. Returns ok=false when the result must be ignored (nil/empty/invalid).
+func prepareJobResult(res *pb.JobResult) (runID, stepID string, ok bool) {
+	if res == nil || res.JobId == "" {
+		return "", "", false
+	}
+	runID, stepID = splitJobID(res.JobId)
 	if runID == "" || stepID == "" {
 		slog.Warn("workflow step result ignored",
 			"job_id", res.JobId,
 			"reason", "invalid_job_id",
 		)
-		return nil
+		return "", "", false
 	}
-
 	slog.Info("workflow step result received",
 		"run_id", runID,
 		"step_id", stepID,
@@ -399,13 +476,12 @@ func (e *Engine) HandleJobResult(ctx context.Context, res *pb.JobResult) error {
 		"status", res.GetStatus().String(),
 		"result_ptr", strings.TrimSpace(res.GetResultPtr()),
 	)
+	return runID, stepID, true
+}
 
-	unlock, ok := e.lockRun(runID)
-	if !ok {
-		return nil // Another replica owns this run.
-	}
-	defer unlock()
-
+// handleJobResultLocked updates step/run state and dispatches next steps if
+// ready. The caller MUST hold the per-run lock (via lockRun or lockRunLocal).
+func (e *Engine) handleJobResultLocked(ctx context.Context, res *pb.JobResult, runID, stepID string) error {
 	run, err := e.store.GetRun(ctx, runID)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
