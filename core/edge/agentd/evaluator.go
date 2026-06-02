@@ -97,7 +97,7 @@ func (e *Evaluator) evaluateHook(ctx context.Context, req claude.AgentdRequest, 
 	if cached, ok := e.cache.Get(cacheReq); ok {
 		e.recordCacheLookup(evalReq, "hit")
 		cached.EventID = ""
-		decision := AgentdDecisionFromEvaluateResponse(evalCtx, cached, e.approvalConfig, e.approvalWaiter)
+		decision := AgentdDecisionFromEvaluateResponse(evalCtx, cached, e.approvalConfig, e.approvalWaiter, e.approvalConsumer(evalReq))
 		e.recordDecisionObservability(req, evalReq, cached, decision, startedAt)
 		if err := e.recordDecisionEvidence(writer, requireEvidence, decision, evalReq, DecisionEvidence{
 			State:      e.state,
@@ -146,6 +146,26 @@ type coalescedEvaluateResult struct {
 	decision claude.AgentdDecision
 }
 
+// approvalConsumer returns a consume function that re-issues evaluate carrying
+// the approval_ref so the Gateway runs its single-use ClaimApproval CAS. It
+// reuses the original action-defining request fields (so the Gateway recomputes
+// the same action_hash and matches the approval) and sets WaitForApproval=false
+// because the approval is already resolved — this turn only needs to consume it.
+// Returns nil when no client is configured, in which case an approved inline
+// wait fails closed instead of authorizing without a consume.
+func (e *Evaluator) approvalConsumer(evalReq EvaluateRequest) ApprovalConsumeFunc {
+	if e == nil || e.client == nil {
+		return nil
+	}
+	return func(ctx context.Context, approvalRef string) (*EvaluateResponse, error) {
+		retryReq := evalReq
+		retryReq.ApprovalRef = approvalRef
+		retryReq.WaitForApproval = false
+		retryReq.ApprovalWaitTimeoutMS = 0
+		return e.client.Evaluate(ctx, retryReq)
+	}
+}
+
 func (e *Evaluator) evaluateFreshDecision(evalCtx context.Context, req claude.AgentdRequest, evalReq EvaluateRequest, cacheReq SafeAllowCacheRequest, startedAt time.Time, writer EventWriter, requireEvidence bool) (claude.AgentdDecision, error) {
 	resp, err := e.client.Evaluate(evalCtx, evalReq)
 	if err != nil {
@@ -154,7 +174,7 @@ func (e *Evaluator) evaluateFreshDecision(evalCtx context.Context, req claude.Ag
 	if resp == nil {
 		return e.degradedDecision(req, evalReq, ErrEvaluateResponseMalformed, cacheReq, startedAt, writer, requireEvidence)
 	}
-	decision := AgentdDecisionFromEvaluateResponse(evalCtx, *resp, e.approvalConfig, e.approvalWaiter)
+	decision := AgentdDecisionFromEvaluateResponse(evalCtx, *resp, e.approvalConfig, e.approvalWaiter, e.approvalConsumer(evalReq))
 	e.recordDecisionObservability(req, evalReq, *resp, decision, startedAt)
 	_ = e.cache.Put(cacheRequestWithEvaluateResponse(cacheReq, *resp), *resp)
 	// Gateway evaluate already persisted a hook.policy_decision event under

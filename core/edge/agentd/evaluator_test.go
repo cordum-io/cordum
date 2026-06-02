@@ -345,15 +345,25 @@ func TestEvaluatorRecordsObservabilityForInlineApprovalWait(t *testing.T) {
 
 	recorder := &captureRecorder{}
 	evaluator := NewEvaluator(EvaluatorConfig{
-		Client: &stubEvaluateClient{resp: &EvaluateResponse{
-			Decision:       string(edgecore.DecisionRequireApproval),
-			PolicySnapshot: "snap-eval",
-			EventID:        "evt-metrics-approval",
-			ApprovalRef:    "edge_appr_metrics",
-			ApprovalURL:    "/edge/approvals/edge_appr_metrics",
-			ActionHash:     "sha256:action-approval",
-			InputHash:      "sha256:input-approval",
-		}},
+		Client: &approvalConsumeStubClient{
+			requireResp: &EvaluateResponse{
+				Decision:       string(edgecore.DecisionRequireApproval),
+				PolicySnapshot: "snap-eval",
+				EventID:        "evt-metrics-approval",
+				ApprovalRef:    "edge_appr_metrics",
+				ApprovalURL:    "/edge/approvals/edge_appr_metrics",
+				ActionHash:     "sha256:action-approval",
+				InputHash:      "sha256:input-approval",
+			},
+			consumeResp: &EvaluateResponse{
+				Decision:       string(edgecore.DecisionAllow),
+				PolicySnapshot: "snap-eval",
+				EventID:        "evt-metrics-consume",
+				ActionHash:     "sha256:action-approval",
+				InputHash:      "sha256:input-approval",
+				Reason:         "approved and consumed",
+			},
+		},
 		EventWriter:    &captureEventWriter{},
 		State:          evaluatorTestState(edgecore.PolicyModeEnforce),
 		ApprovalWaiter: &fakeApprovalWaiter{result: ApprovalWaitResult{Status: ApprovalWaitApproved, Reason: "approved"}},
@@ -411,6 +421,28 @@ type stubEvaluateClient struct {
 	resp     *EvaluateResponse
 	err      error
 	requests []EvaluateRequest
+}
+
+// approvalConsumeStubClient models the two-phase inline-wait flow: an evaluate
+// WITHOUT approval_ref returns requireResp (REQUIRE_APPROVAL), and the consuming
+// re-evaluate WITH approval_ref returns consumeResp (the single-use CAS result).
+type approvalConsumeStubClient struct {
+	requireResp *EvaluateResponse
+	consumeResp *EvaluateResponse
+	requests    []EvaluateRequest
+}
+
+func (c *approvalConsumeStubClient) Evaluate(_ context.Context, req EvaluateRequest) (*EvaluateResponse, error) {
+	c.requests = append(c.requests, req)
+	resp := c.requireResp
+	if strings.TrimSpace(req.ApprovalRef) != "" {
+		resp = c.consumeResp
+	}
+	if resp == nil {
+		return nil, errors.New("missing test response")
+	}
+	out := cloneEvaluateResponse(*resp)
+	return &out, nil
 }
 
 func (s *stubEvaluateClient) Evaluate(_ context.Context, req EvaluateRequest) (*EvaluateResponse, error) {
