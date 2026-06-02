@@ -1976,6 +1976,32 @@ func TestMergePolicies_DuplicateInputRuleID(t *testing.T) {
 	}
 }
 
+// TestMergePolicies_OutputPolicyAnyEnable proves the kernel cross-fragment merge
+// adopts the canonical any-enable OutputPolicy semantics (task-198acafd): a guard
+// enabled by ANY fragment stays enabled (fail-safe), and FailMode fills
+// first-non-empty with base precedence. This matches the gateway bundle compiler
+// AND the kernel's own invariants overlay (kernel_invariants.go). Previously the
+// kernel kept only the base (oldest) fragment's OutputPolicy.
+func TestMergePolicies_OutputPolicyAnyEnable(t *testing.T) {
+	// A later fragment that enables output scanning keeps it enabled.
+	base := &config.SafetyPolicy{OutputPolicy: config.OutputPolicyConfig{Enabled: false, FailMode: ""}}
+	extra := &config.SafetyPolicy{OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "closed"}}
+	merged := mergePolicies(base, extra)
+	if !merged.OutputPolicy.Enabled {
+		t.Fatalf("any fragment enabling OutputPolicy must keep it enabled (fail-safe), got %+v", merged.OutputPolicy)
+	}
+	if merged.OutputPolicy.FailMode != "closed" {
+		t.Fatalf("FailMode must fill first-non-empty from the enabling fragment, got %q", merged.OutputPolicy.FailMode)
+	}
+	// Base precedence: a non-empty base FailMode wins over a later fragment's.
+	base2 := &config.SafetyPolicy{OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "open"}}
+	extra2 := &config.SafetyPolicy{OutputPolicy: config.OutputPolicyConfig{Enabled: false, FailMode: "closed"}}
+	merged2 := mergePolicies(base2, extra2)
+	if !merged2.OutputPolicy.Enabled || merged2.OutputPolicy.FailMode != "open" {
+		t.Fatalf("base OutputPolicy must stay enabled with base-precedence FailMode, got %+v", merged2.OutputPolicy)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Velocity — bundle-loaded rules regression tests
 // ---------------------------------------------------------------------------

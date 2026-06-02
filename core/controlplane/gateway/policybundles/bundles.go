@@ -229,25 +229,11 @@ func PolicyBundleContent(value any) (string, bool) {
 	return "", false
 }
 
-// bundleInstalledAt parses a bundle's installed_at (RFC3339) to order the
-// cross-bundle merge by install recency, mirroring the kernel loader's
-// fragmentInstalledAt. A missing, blank, or unparseable value yields the zero
-// time (oldest = lowest merge precedence) so a legacy bundle never overrides a
-// more recently installed one that defines the same rule id.
+// bundleInstalledAt parses a bundle's installed_at (RFC3339) for the install-
+// recency ordering, delegating to the shared config merge package so the gateway
+// bundle compiler and the kernel loader parse timestamps identically.
 func bundleInstalledAt(value any) time.Time {
-	m, ok := value.(map[string]any)
-	if !ok {
-		return time.Time{}
-	}
-	raw, ok := m["installed_at"].(string)
-	if !ok {
-		return time.Time{}
-	}
-	parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(raw))
-	if err != nil {
-		return time.Time{}
-	}
-	return parsed.UTC()
+	return config.PolicyInstalledAt(value)
 }
 
 // SanitizePolicyBundleYAML normalizes and sanitizes policy YAML content.

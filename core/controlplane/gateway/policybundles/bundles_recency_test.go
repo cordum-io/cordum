@@ -205,3 +205,17 @@ rules:
 		t.Fatalf("single-bundle order/content must be unchanged, got %v", ids)
 	}
 }
+
+// TestMergeSafetyPolicies_OutputPolicyAnyEnable locks the gateway compiler's
+// any-enable OutputPolicy semantics (task-198acafd) — now the SINGLE canonical
+// behavior shared with the kernel via config.MergePolicies. A fragment that
+// enables output scanning keeps it enabled across the merge; FailMode fills
+// first-non-empty with base precedence.
+func TestMergeSafetyPolicies_OutputPolicyAnyEnable(t *testing.T) {
+	base := &config.SafetyPolicy{OutputPolicy: config.OutputPolicyConfig{Enabled: false, FailMode: ""}}
+	extra := &config.SafetyPolicy{OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "closed"}}
+	merged := MergeSafetyPolicies(base, extra)
+	if !merged.OutputPolicy.Enabled || merged.OutputPolicy.FailMode != "closed" {
+		t.Fatalf("gateway merge must OR-enable + take first non-empty FailMode, got %+v", merged.OutputPolicy)
+	}
+}
