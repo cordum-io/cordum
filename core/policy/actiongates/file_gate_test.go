@@ -102,7 +102,8 @@ func TestFileGate_DenyLeadingSlashDriveLetterBypass(t *testing.T) {
 		{name: "slash_drive_project_allowed", path: "/c:/projects/app/main.go", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_ALLOW},
 	}
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) { runFileGate(t, tc) })
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) { t.Parallel(); runFileGate(t, tc) })
 	}
 }
 
@@ -121,7 +122,8 @@ func TestFileGate_DenyTrailingDotSpaceTraversalBypass(t *testing.T) {
 		{name: "interior_dot_allowed", path: "/workspace/v1.0/main.go", verb: config.ActionVerbRead, wantDecision: pb.DecisionType_DECISION_TYPE_ALLOW},
 	}
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) { runFileGate(t, tc) })
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) { t.Parallel(); runFileGate(t, tc) })
 	}
 }
 
