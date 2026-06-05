@@ -272,7 +272,19 @@ func (s *server) CheckOutput(ctx context.Context, req *pb.OutputCheckRequest) (*
 		return resp, nil
 	}
 
-	content, contentTruncated := s.contentForScan(ctx, req)
+	content, contentTruncated, contentErr := s.contentForScan(ctx, req)
+	if contentErr != nil {
+		// Fail closed like EvaluateOutput, but return nil gRPC error so callers persist a quarantine decision.
+		resp.Decision = pb.OutputDecision_OUTPUT_DECISION_QUARANTINE
+		resp.Reason = "result pointer unreadable"
+		resp.Findings = toProtoOutputFindings([]outputFinding{{
+			Type:     "pointer_unreadable",
+			Severity: "critical",
+			Detail:   contentErr.Error(),
+			Scanner:  "result_pointer",
+		}})
+		return resp, nil
+	}
 	evalReq := outputEvaluateRequestFromProto(req, content)
 	for _, rule := range rules {
 		matched, findings := evaluateOutputRule(rule, evalReq, scanners)
@@ -433,10 +445,11 @@ func outputEvaluateRequestFromProto(req *pb.OutputCheckRequest, content []byte) 
 	return out
 }
 
-func (s *server) contentForScan(ctx context.Context, req *pb.OutputCheckRequest) ([]byte, bool) {
-	content := req.GetOutputContent()
+func (s *server) contentForScan(ctx context.Context, req *pb.OutputCheckRequest) (content []byte, truncated bool, err error) {
+	content = req.GetOutputContent()
 	if len(content) > 0 {
-		return truncateOutputContent(content)
+		content, truncated := truncateOutputContent(content)
+		return content, truncated, nil
 	}
 	ptr := strings.TrimSpace(req.GetResultPtr())
 	if ptr != "" && s.resultClient == nil {
@@ -453,10 +466,12 @@ func (s *server) contentForScan(ctx context.Context, req *pb.OutputCheckRequest)
 			defer cancel()
 			data, err := s.resultClient.Get(rctx, key).Bytes()
 			if err == nil {
-				return truncateOutputContent(data)
+				content, truncated := truncateOutputContent(data)
+				return content, truncated, nil
 			}
 			if !errors.Is(err, redis.Nil) {
 				slog.Warn("safety-kernel: output pointer fetch failed", "err", err)
+				return nil, false, err
 			}
 		} else {
 			slog.Warn("safety-kernel: invalid output pointer", "err", err)
@@ -464,9 +479,10 @@ func (s *server) contentForScan(ctx context.Context, req *pb.OutputCheckRequest)
 	}
 	msg := strings.TrimSpace(req.GetErrorMessage())
 	if msg == "" {
-		return nil, false
+		return nil, false, nil
 	}
-	return truncateOutputContent([]byte(msg))
+	content, truncated = truncateOutputContent([]byte(msg))
+	return content, truncated, nil
 }
 
 func truncateOutputContent(content []byte) ([]byte, bool) {
