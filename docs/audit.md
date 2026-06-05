@@ -315,6 +315,14 @@ server-derived; no Claude token/auth files are ever read). The compliance export
 | `CORDUM_AUDIT_BUFFER_SIZE` | Async buffer size for export batching |
 | `CORDUM_AUDIT_EXPORT_MAX_RETRIES` | Max retry attempts for failed exports |
 
+On shutdown, `Close` drains queued events to the configured backend with a
+fresh bounded context. The default drain budget is 15 seconds; embedders can
+override it with `WithDrainTimeout`. Events that still cannot export within
+that bound are dropped through the existing `audit batch permanently dropped
+after retries` error log and `auditBatchDrops` metric. Before this drain split,
+context-aware backends such as webhook, Datadog, and CloudWatch could drop
+queued events immediately with `context canceled` during `Close`.
+
 ### Webhook
 
 | Env Var | Description |
