@@ -13,7 +13,7 @@ these entries into a versioned release note and reset this file.
   admits them under `enforce` (previously it dropped the control plane's own
   cancels). The gate now binds the verified token's `Subject` AND the packet
   `SenderId` to the claimed worker identity, closing a forge where a worker's
-  own valid token could drive another worker's job. A typo'd
+  own valid token could drive another worker's job. A typoed
   `CORDUM_SDK_HANDSHAKE` (e.g. `enforse`) now **REFUSES TO BOOT** instead of
   silently degrading to admit (valid values: `off`, `warn`, `enforce`).
   - **Operator action — REQUIRED before enabling `enforce`:** the same Ed25519
