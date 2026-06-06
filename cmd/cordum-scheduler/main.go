@@ -199,7 +199,14 @@ func buildSessionTokenMiddleware(rdb redis.UniversalClient) (*scheduler.SessionT
 	if raw == "" {
 		return nil, nil
 	}
-	mode := scheduler.ParseHandshakeMode(raw)
+	// Strict boot parse: a non-empty value that does not round-trip to a
+	// canonical mode (e.g. a typo'd "enforse") is FATAL — refuse to boot rather
+	// than silently degrade to admit (the call site treats a non-nil error as
+	// os.Exit(1)). The lenient ParseHandshakeMode stays for runtime callers.
+	mode, err := scheduler.ParseHandshakeModeStrict(raw)
+	if err != nil {
+		return nil, err
+	}
 	if mode == scheduler.HandshakeModeOff {
 		return nil, nil
 	}

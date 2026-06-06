@@ -71,6 +71,12 @@ type Engine struct {
 	schemaRegistry   *schemas.Registry
 	outputSafety     model.OutputSafetyChecker // optional output policy enforcement on step results
 	entitlements     *licensing.EntitlementResolver
+	// serviceTokenMinter, when set, mints a short-TTL control-plane service
+	// token (subject "workflow-engine") attached to internal JobCancel
+	// broadcasts so a peer scheduler admits them under
+	// CORDUM_SDK_HANDSHAKE=enforce. Nil = no minting (back-compat; a peer with
+	// the gate off/warn admits token-less cancels).
+	serviceTokenMinter func() (string, error)
 
 	// timerMu guards pendingTimers. pendingTimers tracks cancellable delay
 	// timers so they can be stopped on engine shutdown without leaking goroutines.
@@ -294,6 +300,16 @@ func NewEngine(store *RedisStore, bus model.Bus) *Engine {
 // WithMemory sets an optional memory store used to persist per-step job context payloads.
 func (e *Engine) WithMemory(s store.Store) *Engine {
 	e.mem = s
+	return e
+}
+
+// WithServiceTokenMinter wires a minter that produces a control-plane service
+// token for the workflow-engine identity. When set, publishJobCancel attaches
+// the token so a peer scheduler admits the internal cancel under
+// CORDUM_SDK_HANDSHAKE=enforce. Best-effort: a nil minter (or a mint error)
+// publishes the cancel token-less.
+func (e *Engine) WithServiceTokenMinter(m func() (string, error)) *Engine {
+	e.serviceTokenMinter = m
 	return e
 }
 

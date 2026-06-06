@@ -4,6 +4,31 @@ This file captures user-visible changes that have landed on `main` but
 have not yet been cut into a release. When a release is tagged, copy
 these entries into a versioned release note and reset this file.
 
+## Security
+
+- **scheduler / api-gateway / workflow-engine: control-plane service tokens +
+  subject-binding harden `CORDUM_SDK_HANDSHAKE` for `enforce` (task-948d913b).**
+  Internal `JobResult`/`JobCancel` broadcasts now carry a stateless, short-TTL
+  (~5m) Ed25519 **service token** (`typ=cordum-service`) so a peer scheduler
+  admits them under `enforce` (previously it dropped the control plane's own
+  cancels). The gate now binds the verified token's `Subject` AND the packet
+  `SenderId` to the claimed worker identity, closing a forge where a worker's
+  own valid token could drive another worker's job. A typoed
+  `CORDUM_SDK_HANDSHAKE` (e.g. `enforse`) now **REFUSES TO BOOT** instead of
+  silently degrading to admit (valid values: `off`, `warn`, `enforce`).
+  - **Operator action — REQUIRED before enabling `enforce`:** the same Ed25519
+    signing key must be present on ALL THREE services (scheduler + api-gateway +
+    **workflow-engine**, which previously loaded none). See the
+    `CORDUM_POLICY_SIGNING_*` block in `.env.example`; locally the key is derived
+    from `CORDUM_POLICY_DEV_SIGNING_SEED`. `enforce` stays OFF until this lands.
+  - **Manual live verify (before flipping `enforce` on):** with all three
+    services minting, confirm a scheduler self-cancel, a gateway cancel/result,
+    and a workflow-engine cancel are all admitted by a peer scheduler, while a
+    worker-forged result/cancel (valid worker token, victim identity) is
+    rejected with a `session token identity mismatch` ERROR. The automated
+    equivalent is `TestEnforce_CrossServiceBroadcastMatrix` in
+    `core/controlplane/scheduler`.
+
 ## Changed
 
 - **core: extracted the Unix-timestamp → RFC3339 formatter into

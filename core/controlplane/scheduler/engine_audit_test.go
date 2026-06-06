@@ -26,7 +26,7 @@ func TestScheduler_FailedRetryableDoesNotSilentlyDrop(t *testing.T) {
 
 	// Seed prior dispatch state (the path the job took on its first attempt).
 	jobID := "job-retryable-not-terminal"
-	if err := engine.setJobState(jobID, JobStateRunning); err != nil {
+	if err := engine.setJobState(context.Background(), jobID, JobStateRunning); err != nil {
 		t.Fatalf("seed Running: %v", err)
 	}
 

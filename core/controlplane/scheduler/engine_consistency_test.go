@@ -705,7 +705,7 @@ func TestSetStateTransitionValidation(t *testing.T) {
 
 	jobID := "job-transition"
 	for _, state := range transitions {
-		err := engine.setJobState(jobID, state)
+		err := engine.setJobState(context.Background(), jobID, state)
 		assert.NoError(t, err, "transition to %s should succeed", state)
 	}
 

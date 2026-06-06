@@ -26,6 +26,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/cordum/cordum/core/auth/servicetoken"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/protobuf/encoding/protowire"
 )
@@ -119,7 +120,20 @@ func (m *SessionTokenMiddleware) Verify(ctx context.Context, workerID string, pa
 	if token == "" {
 		return m.handleMissing(workerID)
 	}
-	claims, err := m.issuer.Verify(ctx, token, true)
+	// Route by the signed typ header: a control-plane service token is verified
+	// statelessly (no Redis active record), a worker session token against its
+	// active record. PeekTyp is unverified and used ONLY to pick the path; the
+	// chosen verifier re-asserts typ after the signature check, so a flipped
+	// typ header fails verification rather than mis-routing.
+	var (
+		claims SessionTokenClaims
+		err    error
+	)
+	if servicetoken.PeekTyp(token) == servicetoken.TypService {
+		claims, err = m.issuer.VerifyService(token)
+	} else {
+		claims, err = m.issuer.Verify(ctx, token, true)
+	}
 	if err != nil {
 		return TokenVerificationResult{
 			Verdict: TokenVerdictRejectInvalid,
@@ -130,6 +144,20 @@ func (m *SessionTokenMiddleware) Verify(ctx context.Context, workerID string, pa
 		Verdict: TokenVerdictPass,
 		Claims:  &claims,
 	}
+}
+
+// MintServiceToken mints a control-plane service token for the given reserved
+// identity using the underlying issuer's signing key. It returns ("", nil)
+// when the middleware is nil, has no issuer, or is in Off mode, so producers
+// attach no token in disabled/back-compat deployments (a peer with the gate
+// disabled admits token-less internal broadcasts anyway). A non-nil error is
+// returned for genuine mint failures so callers can log and fail SAFE (a peer
+// rejects a token-less packet under enforce).
+func (m *SessionTokenMiddleware) MintServiceToken(subject string) (string, error) {
+	if m == nil || m.issuer == nil || m.mode == HandshakeModeOff {
+		return "", nil
+	}
+	return m.issuer.MintServiceToken(subject)
 }
 
 // handleMissing picks the verdict for a token-less packet. Enforce:
