@@ -3,8 +3,10 @@ name: "CodeQL"
 on:
   push:
     branches: [ main ]
+  # 'moe/**' included so stacked agent PRs (base = another moe/* branch)
+  # get CodeQL analysis instead of skipping it until the final merge to main.
   pull_request:
-    branches: [ main ]
+    branches: [ main, 'moe/**' ]
   schedule:
     - cron: '0 0 * * 1'
 

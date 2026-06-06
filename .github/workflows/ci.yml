@@ -3,8 +3,10 @@ name: CI
 on:
   push:
     branches: [ main, develop ]
+  # 'moe/**' included so stacked agent PRs (base = another moe/* branch)
+  # get full CI instead of only the unfiltered smoke/e2e workflows.
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main, develop, 'moe/**' ]
 
 jobs:
   test:
