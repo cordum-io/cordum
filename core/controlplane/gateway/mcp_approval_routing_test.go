@@ -55,10 +55,14 @@ func routingTestServer(t *testing.T) (*server, *MCPApprovalStore) {
 	return s, store
 }
 
-func enqueueTestApproval(t *testing.T, store *MCPApprovalStore, requester string) *MCPApprovalRecord {
+func enqueueTestApproval(t *testing.T, store *MCPApprovalStore, requester string, tenantOverride ...string) *MCPApprovalRecord {
 	t.Helper()
+	tenant := "default"
+	if len(tenantOverride) > 0 {
+		tenant = tenantOverride[0]
+	}
 	rec, err := store.EnqueueMCPApproval(context.Background(), &MCPApprovalRequest{
-		Tenant:    "default",
+		Tenant:    tenant,
 		AgentID:   "agent-alpha",
 		ToolName:  "files.delete",
 		ArgsHash:  "h",
@@ -70,12 +74,16 @@ func enqueueTestApproval(t *testing.T, store *MCPApprovalStore, requester string
 	return rec
 }
 
-func signRequest(tenant, principal, role string) *http.Request {
+func signRequest(tenant, principal, role string, allowCrossTenant ...bool) *http.Request {
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/mcp/approvals/x/approve", nil)
 	r.Header.Set("X-Tenant-ID", tenant)
 	r.Header.Set("X-Principal-Id", principal)
 	r.Header.Set("X-Principal-Role", role)
-	return withAuth(r, &auth.AuthContext{Tenant: tenant, PrincipalID: principal, Role: role})
+	allow := false
+	if len(allowCrossTenant) > 0 {
+		allow = allowCrossTenant[0]
+	}
+	return withAuth(r, &auth.AuthContext{Tenant: tenant, PrincipalID: principal, Role: role, AllowCrossTenant: allow})
 }
 
 func TestMCPApprovalRouter_UnavailableReturns503(t *testing.T) {
@@ -189,6 +197,79 @@ func TestMCPApprovalRouter_ListFiltersByTenant(t *testing.T) {
 		if rec.Tenant != "default" {
 			t.Errorf("cross-tenant leak: got tenant %q", rec.Tenant)
 		}
+	}
+}
+
+func TestMCPApprovalResolve_CrossTenantDenied(t *testing.T) {
+	t.Parallel()
+	for _, action := range []string{"approve", "reject"} {
+		t.Run(action, func(t *testing.T) {
+			s, store := routingTestServer(t)
+			approval := enqueueTestApproval(t, store, "tenant-b-requester", "other")
+			r := signRequest("default", "tenant-a-operator", "admin")
+			r.URL.Path = "/api/v1/mcp/approvals/" + approval.ID + "/" + action
+			r.SetPathValue("id", approval.ID)
+
+			rec := httptest.NewRecorder()
+			if action == "approve" {
+				s.handleMCPApprovalApprove(rec, r)
+			} else {
+				s.handleMCPApprovalReject(rec, r)
+			}
+
+			assertCodedError(t, rec, http.StatusNotFound, "approval_not_found")
+			stored, err := store.Get(context.Background(), approval.ID)
+			if err != nil {
+				t.Fatalf("load stored approval: %v", err)
+			}
+			if stored.Status != model.ApprovalStatusPending {
+				t.Fatalf("status = %q, want pending", stored.Status)
+			}
+		})
+	}
+}
+
+func TestMCPApprovalResolve_SameTenantStillWorks(t *testing.T) {
+	t.Parallel()
+	s, store := routingTestServer(t)
+	approval := enqueueTestApproval(t, store, "agent-alpha")
+	r := signRequest("default", "same-tenant-admin", "admin")
+	r.URL.Path = "/api/v1/mcp/approvals/" + approval.ID + "/approve"
+	r.SetPathValue("id", approval.ID)
+
+	rec := httptest.NewRecorder()
+	s.handleMCPApprovalApprove(rec, r)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	stored, err := store.Get(context.Background(), approval.ID)
+	if err != nil {
+		t.Fatalf("load stored approval: %v", err)
+	}
+	if stored.Status != model.ApprovalStatusApproved {
+		t.Fatalf("status = %q, want approved", stored.Status)
+	}
+}
+
+func TestMCPApprovalResolve_CrossTenantAdminAllowed(t *testing.T) {
+	t.Parallel()
+	s, store := routingTestServer(t)
+	approval := enqueueTestApproval(t, store, "tenant-b-requester", "other")
+	r := signRequest("default", "cross-tenant-admin", "admin", true)
+	r.URL.Path = "/api/v1/mcp/approvals/" + approval.ID + "/approve"
+	r.SetPathValue("id", approval.ID)
+
+	rec := httptest.NewRecorder()
+	s.handleMCPApprovalApprove(rec, r)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	stored, err := store.Get(context.Background(), approval.ID)
+	if err != nil {
+		t.Fatalf("load stored approval: %v", err)
+	}
+	if stored.Status != model.ApprovalStatusApproved {
+		t.Fatalf("status = %q, want approved", stored.Status)
 	}
 }
 
