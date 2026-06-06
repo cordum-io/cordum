@@ -741,7 +741,13 @@ func TestLockFence_StateHelpersHonorFence(t *testing.T) {
 
 	err := engine.withJobLock(jobID, ttl, func(lockCtx context.Context) error {
 		// Wait for the fence to drop (renewal abandonment cancels lockCtx).
-		<-lockCtx.Done()
+		// Bounded so a regression in abandonment signaling fails the test
+		// fast instead of hanging the suite until the global timeout.
+		select {
+		case <-lockCtx.Done():
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for lock fence cancellation")
+		}
 
 		// Post-abandonment store writes via the state helpers. All of them
 		// must derive from the fenced context and therefore be rejected.
