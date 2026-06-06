@@ -90,6 +90,10 @@ func TestHandleCancelJob_AttachesGatewayServiceTokenAndSetsWorkerId(t *testing.T
 			assertGatewayServiceToken(t, issuer, m.packet)
 		case capsdk.SubjectCancel:
 			sawCancel = true
+			cancel := m.packet.GetJobCancel()
+			if cancel == nil || cancel.GetRequestedBy() != servicetoken.IdentityGateway {
+				t.Fatalf("cancel RequestedBy = %q, want %q", cancel.GetRequestedBy(), servicetoken.IdentityGateway)
+			}
 			assertGatewayServiceToken(t, issuer, m.packet)
 		}
 	}
