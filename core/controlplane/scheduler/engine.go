@@ -1227,7 +1227,8 @@ func (e *Engine) handleJobRequest(req *pb.JobRequest, traceID string) error {
 			"job_id", safeJobID(req),
 			"topic", safeTopic(req),
 		)
-		if err := e.setJobState(jobID, JobStateFailed); err != nil {
+		// Outside any job lock — engine lifecycle context is the right bound.
+		if err := e.setJobState(e.ctx, jobID, JobStateFailed); err != nil {
 			slog.Error("state transition failed, retrying", "job_id", jobID, "target_state", JobStateFailed, "error", err)
 			return RetryAfter(err, retryDelayStore)
 		}
@@ -1309,7 +1310,7 @@ func (e *Engine) handleJobRequest(req *pb.JobRequest, traceID string) error {
 
 		switch currentState {
 		case "":
-			if err := e.setJobState(jobID, JobStatePending); err != nil {
+			if err := e.setJobState(lockCtx, jobID, JobStatePending); err != nil {
 				return RetryAfter(err, retryDelayStore)
 			}
 		case JobStateScheduled:
@@ -1383,7 +1384,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			"job_id", safeJobID(req),
 			"topic", safeTopic(req),
 		)
-		if err := e.setJobState(safeJobID(req), JobStateFailed); err != nil {
+		if err := e.setJobState(lockCtx, safeJobID(req), JobStateFailed); err != nil {
 			slog.Error("state transition failed, retrying", "job_id", safeJobID(req), "target_state", JobStateFailed, "error", err)
 			return RetryAfter(err, retryDelayStore)
 		}
@@ -1403,7 +1404,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			"topic", topic,
 			"trace_id", traceID,
 		)
-		if err := e.setJobState(jobID, JobStateFailed); err != nil {
+		if err := e.setJobState(lockCtx, jobID, JobStateFailed); err != nil {
 			return RetryAfter(err, retryDelayStore)
 		}
 		e.incJobsCompleted(topic, pb.JobStatus_JOB_STATUS_FAILED.String())
@@ -1445,7 +1446,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 	if attempts >= maxSchedulingRetries {
 		reason := fmt.Sprintf("max scheduling retries exceeded (attempts=%d)", attempts)
 		slog.Warn("giving up on job", "job_id", jobID, "topic", topic, "attempts", attempts)
-		if err := e.setJobState(jobID, JobStateFailed); err != nil {
+		if err := e.setJobState(lockCtx, jobID, JobStateFailed); err != nil {
 			slog.Error("state transition failed, retrying", "job_id", jobID, "target_state", JobStateFailed, "error", err)
 			return RetryAfter(err, retryDelayStore)
 		}
@@ -1487,7 +1488,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			}
 			cancel()
 		}
-		if err := e.setJobState(jobID, JobStateFailed); err != nil {
+		if err := e.setJobState(lockCtx, jobID, JobStateFailed); err != nil {
 			slog.Error("state transition failed, retrying", "job_id", jobID, "target_state", JobStateFailed, "error", err)
 			return RetryAfter(err, retryDelayStore)
 		}
@@ -1541,7 +1542,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 					return RetryAfter(err, retryDelayPublish)
 				}
 			}
-			if err := e.setJobState(jobID, JobStateSucceeded); err != nil {
+			if err := e.setJobState(lockCtx, jobID, JobStateSucceeded); err != nil {
 				return RetryAfter(err, retryDelayStore)
 			}
 			return nil
@@ -1600,7 +1601,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			"reason", record.Reason,
 			"trace_id", traceID,
 		)
-		if err := e.setJobState(jobID, JobStateApproval); err != nil {
+		if err := e.setJobState(lockCtx, jobID, JobStateApproval); err != nil {
 			slog.Error("state transition failed, retrying", "job_id", jobID, "target_state", JobStateApproval, "error", err)
 			return RetryAfter(err, retryDelayStore)
 		}
@@ -1612,7 +1613,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			"reason", record.Reason,
 			"trace_id", traceID,
 		)
-		if err := e.setJobState(jobID, JobStateDenied); err != nil {
+		if err := e.setJobState(lockCtx, jobID, JobStateDenied); err != nil {
 			slog.Error("state transition failed, retrying", "job_id", jobID, "target_state", JobStateDenied, "error", err)
 			return RetryAfter(err, retryDelayStore)
 		}
@@ -1629,7 +1630,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			"reason", record.Reason,
 			"trace_id", traceID,
 		)
-		if err := e.setJobState(jobID, JobStateDenied); err != nil {
+		if err := e.setJobState(lockCtx, jobID, JobStateDenied); err != nil {
 			slog.Error("state transition failed, retrying", "job_id", jobID, "target_state", JobStateDenied, "error", err)
 			return RetryAfter(err, retryDelayStore)
 		}
@@ -1661,7 +1662,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 		}
 		if attempts >= allowedAttempts {
 			reason := fmt.Sprintf("max retries exceeded (attempts=%d, max_retries=%d)", attempts, maxRetries)
-			if err := e.setJobState(jobID, JobStateFailed); err != nil {
+			if err := e.setJobState(lockCtx, jobID, JobStateFailed); err != nil {
 				slog.Error("state transition failed, retrying", "job_id", jobID, "target_state", JobStateFailed, "error", err)
 				return RetryAfter(err, retryDelayStore)
 			}
@@ -1800,7 +1801,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			return RetryAfter(err, backoffDelay(attempts, backoffBase, backoffMax))
 		}
 		dispatchErr := err // capture before setJobState shadows err
-		if err := e.setJobState(jobID, JobStateFailed); err != nil {
+		if err := e.setJobState(lockCtx, jobID, JobStateFailed); err != nil {
 			slog.Error("state transition failed, retrying", "job_id", jobID, "target_state", JobStateFailed, "error", err)
 			return RetryAfter(err, retryDelayStore)
 		}
@@ -1812,7 +1813,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 		return nil
 	}
 
-	if err := e.setJobState(jobID, JobStateScheduled); err != nil {
+	if err := e.setJobState(lockCtx, jobID, JobStateScheduled); err != nil {
 		return RetryAfter(err, retryDelayStore)
 	}
 
@@ -1822,7 +1823,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 
 	// Set DISPATCHED state BEFORE publishing to NATS to prevent duplicate
 	// dispatch on redelivery. If publish fails, we roll back to SCHEDULED.
-	if err := e.setJobState(jobID, JobStateDispatched); err != nil {
+	if err := e.setJobState(lockCtx, jobID, JobStateDispatched); err != nil {
 		return RetryAfter(err, retryDelayStore)
 	}
 
@@ -1843,7 +1844,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			"subject", subject,
 			"error", err,
 		)
-		if rbErr := e.setJobState(jobID, JobStateScheduled); rbErr != nil {
+		if rbErr := e.setJobState(lockCtx, jobID, JobStateScheduled); rbErr != nil {
 			slog.Error("dispatch rollback failed",
 				"job_id", jobID, "error", rbErr)
 		}
@@ -1857,7 +1858,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 	if e.metrics != nil {
 		e.metrics.ObserveDispatchLatency(topic, time.Since(dispatchStart).Seconds())
 	}
-	if err := e.setJobState(jobID, JobStateRunning); err != nil {
+	if err := e.setJobState(lockCtx, jobID, JobStateRunning); err != nil {
 		return RetryAfter(err, retryDelayStore)
 	}
 	return nil
@@ -1934,26 +1935,26 @@ func (e *Engine) applySubmitSchemaValidation(ctx context.Context, req *pb.JobReq
 		return false, RetryAfter(err, retryDelayStore)
 	}
 	if len(violations) > 0 {
-		return e.handleSchemaViolations(req, traceID, schemaID, mode, violations)
+		return e.handleSchemaViolations(ctx, req, traceID, schemaID, mode, violations)
 	}
 	if e.schemaRegistry == nil {
-		return e.failSchemaValidation(req, traceID, schemaID, "schema registry unavailable", "schema_registry_unavailable")
+		return e.failSchemaValidation(ctx, req, traceID, schemaID, "schema registry unavailable", "schema_registry_unavailable")
 	}
 	schemaJSON, err := e.schemaRegistry.Get(ctx, schemaID)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			return e.failSchemaValidation(req, traceID, schemaID, "topic input schema not found", "schema_not_found")
+			return e.failSchemaValidation(ctx, req, traceID, schemaID, "topic input schema not found", "schema_not_found")
 		}
 		return false, RetryAfter(err, retryDelayStore)
 	}
 	violations, err = infraSchema.ValidateJSONPayload(ctx, e.schemaRegistry, schemaID, schemaJSON, payloadJSON)
 	if err != nil {
-		return e.failSchemaValidation(req, traceID, schemaID, "topic input schema invalid", "schema_invalid")
+		return e.failSchemaValidation(ctx, req, traceID, schemaID, "topic input schema invalid", "schema_invalid")
 	}
 	if len(violations) == 0 {
 		return false, nil
 	}
-	return e.handleSchemaViolations(req, traceID, schemaID, mode, violations)
+	return e.handleSchemaViolations(ctx, req, traceID, schemaID, mode, violations)
 }
 
 func (e *Engine) loadSubmitValidationPayload(ctx context.Context, req *pb.JobRequest) ([]byte, []infraSchema.Violation, error) {
@@ -1981,7 +1982,7 @@ func (e *Engine) loadSubmitValidationPayload(ctx context.Context, req *pb.JobReq
 	return data, nil, nil
 }
 
-func (e *Engine) handleSchemaViolations(req *pb.JobRequest, traceID, schemaID string, mode infraSchema.EnforcementMode, violations []infraSchema.Violation) (bool, error) {
+func (e *Engine) handleSchemaViolations(ctx context.Context, req *pb.JobRequest, traceID, schemaID string, mode infraSchema.EnforcementMode, violations []infraSchema.Violation) (bool, error) {
 	if len(violations) == 0 {
 		return false, nil
 	}
@@ -1995,7 +1996,7 @@ func (e *Engine) handleSchemaViolations(req *pb.JobRequest, traceID, schemaID st
 			"trace_id", traceID,
 			"violations", violations,
 		)
-		if err := e.setJobState(jobID, JobStateFailed); err != nil {
+		if err := e.setJobState(ctx, jobID, JobStateFailed); err != nil {
 			return false, RetryAfter(err, retryDelayStore)
 		}
 		e.incJobsCompleted(topic, pb.JobStatus_JOB_STATUS_FAILED.String())
@@ -2015,7 +2016,7 @@ func (e *Engine) handleSchemaViolations(req *pb.JobRequest, traceID, schemaID st
 	return false, nil
 }
 
-func (e *Engine) failSchemaValidation(req *pb.JobRequest, traceID, schemaID, reason, reasonCode string) (bool, error) {
+func (e *Engine) failSchemaValidation(ctx context.Context, req *pb.JobRequest, traceID, schemaID, reason, reasonCode string) (bool, error) {
 	jobID := strings.TrimSpace(req.GetJobId())
 	topic := strings.TrimSpace(req.GetTopic())
 	slog.Error("schema validation unavailable for job request",
@@ -2025,7 +2026,7 @@ func (e *Engine) failSchemaValidation(req *pb.JobRequest, traceID, schemaID, rea
 		"trace_id", traceID,
 		"reason", reason,
 	)
-	if err := e.setJobState(jobID, JobStateFailed); err != nil {
+	if err := e.setJobState(ctx, jobID, JobStateFailed); err != nil {
 		return false, RetryAfter(err, retryDelayStore)
 	}
 	e.incJobsCompleted(topic, pb.JobStatus_JOB_STATUS_FAILED.String())
@@ -2348,7 +2349,7 @@ func (e *Engine) handleJobResult(res *pb.JobResult) error {
 		var outputRecord OutputSafetyRecord
 		if succeeded {
 			persistOutputRecord := false
-			outputRecord = e.checkOutputSafety(jobID, topic, res, jobReq)
+			outputRecord = e.checkOutputSafety(lockCtx, jobID, topic, res, jobReq)
 			switch outputRecord.Decision {
 			case OutputQuarantine, OutputDeny:
 				state = JobStateQuarantined
@@ -2376,7 +2377,7 @@ func (e *Engine) handleJobResult(res *pb.JobResult) error {
 				}
 			}
 			if persistOutputRecord {
-				e.persistOutputSafety(jobID, outputRecord)
+				e.persistOutputSafety(lockCtx, jobID, outputRecord)
 			}
 		}
 
@@ -2386,16 +2387,16 @@ func (e *Engine) handleJobResult(res *pb.JobResult) error {
 		// (terminal-state check at the top of handleJobResult) blocks
 		// reprocessing, permanently orphaning the result data.
 		if res.ResultPtr != "" {
-			if err := e.setResultPtr(jobID, res.ResultPtr); err != nil {
+			if err := e.setResultPtr(lockCtx, jobID, res.ResultPtr); err != nil {
 				e.incResultPtrWriteFailure()
 				slog.Error("result ptr write failed, keeping job in current state for retry",
 					"job_id", jobID, "result_ptr", res.ResultPtr, "error", err)
 				return RetryAfter(err, retryDelayStore)
 			}
 		}
-		e.setWorkerID(jobID, strings.TrimSpace(res.GetWorkerId()))
-		e.setAgentInfoFromWorker(jobID, strings.TrimSpace(res.GetWorkerId()))
-		if err := e.setJobState(jobID, state); err != nil {
+		e.setWorkerID(lockCtx, jobID, strings.TrimSpace(res.GetWorkerId()))
+		e.setAgentInfoFromWorker(lockCtx, jobID, strings.TrimSpace(res.GetWorkerId()))
+		if err := e.setJobState(lockCtx, jobID, state); err != nil {
 			return RetryAfter(err, retryDelayStore)
 		}
 		if succeeded && e.outputSafetyEnabled.Load() && e.outputSafety != nil && jobReq != nil {
@@ -2427,7 +2428,7 @@ func (e *Engine) handleJobResult(res *pb.JobResult) error {
 	})
 }
 
-func (e *Engine) checkOutputSafety(jobID, topic string, res *pb.JobResult, req *pb.JobRequest) OutputSafetyRecord {
+func (e *Engine) checkOutputSafety(ctx context.Context, jobID, topic string, res *pb.JobResult, req *pb.JobRequest) OutputSafetyRecord {
 	record := OutputSafetyRecord{
 		Decision:    OutputAllow,
 		Phase:       "sync",
@@ -2495,7 +2496,7 @@ func (e *Engine) checkOutputSafety(jobID, topic string, res *pb.JobResult, req *
 	if record.Decision == OutputRedact {
 		e.incOutputRedactions(topic)
 	}
-	e.persistOutputSafety(jobID, record)
+	e.persistOutputSafety(ctx, jobID, record)
 	return record
 }
 
@@ -2533,7 +2534,10 @@ func (e *Engine) startAsyncOutputCheck(jobID, topic string, res *pb.JobResult, r
 					CheckedAt:   time.Now().UTC().UnixNano() / int64(time.Microsecond),
 					OriginalPtr: strings.TrimSpace(resCopy.GetResultPtr()),
 				}
-				e.persistOutputSafety(jobID, qRecord)
+				// The goroutine's own ctx is already cancelled by its deferred
+				// cancel when this recover path runs — use the engine lifecycle
+				// context (no lock is held here).
+				e.persistOutputSafety(e.ctx, jobID, qRecord)
 				e.incOutputPolicyQuarantined(topic)
 				e.incOutputDenials(topic)
 				// Best-effort quarantine state transition.
@@ -2596,7 +2600,7 @@ func (e *Engine) startAsyncOutputCheck(jobID, topic string, res *pb.JobResult, r
 		if record.OriginalPtr == "" {
 			record.OriginalPtr = strings.TrimSpace(resCopy.GetResultPtr())
 		}
-		e.persistOutputSafety(jobID, record)
+		e.persistOutputSafety(ctx, jobID, record)
 
 		if record.Decision == OutputRedact {
 			e.incOutputRedactions(topic)
@@ -2631,7 +2635,7 @@ func (e *Engine) startAsyncOutputCheck(jobID, topic string, res *pb.JobResult, r
 						}
 					}
 				}
-				if err := e.setJobState(jobID, JobStateQuarantined); err != nil {
+				if err := e.setJobState(lockCtx, jobID, JobStateQuarantined); err != nil {
 					return err
 				}
 				e.emitOutputAuditEvent(jobID, topic, outputPolicyAsync, reason, record.Decision)
@@ -2726,22 +2730,27 @@ func (e *Engine) materializeRedaction(jobID, topic string, res *pb.JobResult, re
 	return record
 }
 
-func (e *Engine) persistOutputSafety(jobID string, record OutputSafetyRecord) {
+// persistOutputSafety and the state helpers below accept the caller's
+// context as their first parameter and derive the store-op timeout from it.
+// Inside withJobLock critical sections callers MUST pass the fenced lockCtx
+// so writes stop once lock ownership is lost (see withJobLock); callers
+// outside any lock pass e.ctx (or their own lifecycle context) explicitly.
+func (e *Engine) persistOutputSafety(ctx context.Context, jobID string, record OutputSafetyRecord) {
 	if jobID == "" || e.jobStore == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
+	ctx, cancel := context.WithTimeout(ctx, storeOpTimeout)
 	defer cancel()
 	if err := e.jobStore.SetOutputDecision(ctx, jobID, record); err != nil {
 		slog.Error("persist output safety failed", "job_id", jobID, "error", err)
 	}
 }
 
-func (e *Engine) setJobState(jobID string, state JobState) error {
+func (e *Engine) setJobState(ctx context.Context, jobID string, state JobState) error {
 	if e.jobStore == nil || jobID == "" {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
+	ctx, cancel := context.WithTimeout(ctx, storeOpTimeout)
 	defer cancel()
 	if err := e.jobStore.SetState(ctx, jobID, state); err != nil {
 		slog.Error("failed to set job state", "job_id", jobID, "state", state, "error", err)
@@ -2751,11 +2760,11 @@ func (e *Engine) setJobState(jobID string, state JobState) error {
 	return nil
 }
 
-func (e *Engine) setResultPtr(jobID, ptr string) error {
+func (e *Engine) setResultPtr(ctx context.Context, jobID, ptr string) error {
 	if e.jobStore == nil || jobID == "" {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
+	ctx, cancel := context.WithTimeout(ctx, storeOpTimeout)
 	defer cancel()
 	if err := e.jobStore.SetResultPtr(ctx, jobID, ptr); err != nil {
 		slog.Error("failed to persist result ptr", "job_id", jobID, "error", err)
@@ -2764,11 +2773,11 @@ func (e *Engine) setResultPtr(jobID, ptr string) error {
 	return nil
 }
 
-func (e *Engine) setWorkerID(jobID, workerID string) {
+func (e *Engine) setWorkerID(ctx context.Context, jobID, workerID string) {
 	if e.jobStore == nil || jobID == "" || workerID == "" {
 		return
 	}
-	ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
+	ctx, cancel := context.WithTimeout(ctx, storeOpTimeout)
 	defer cancel()
 	if err := e.jobStore.SetWorkerID(ctx, jobID, workerID); err != nil {
 		slog.Warn("worker_id write failed", "job_id", jobID, "worker_id", workerID, "error", err)
@@ -2778,11 +2787,11 @@ func (e *Engine) setWorkerID(jobID, workerID string) {
 // setAgentInfoFromWorker resolves the worker's agent identity and persists it
 // in job metadata for audit events. Uses the cached AgentResolver to avoid
 // per-job Redis lookups.
-func (e *Engine) setAgentInfoFromWorker(jobID, workerID string) {
+func (e *Engine) setAgentInfoFromWorker(ctx context.Context, jobID, workerID string) {
 	if e.agentResolver == nil || e.jobStore == nil || jobID == "" || workerID == "" {
 		return
 	}
-	ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
+	ctx, cancel := context.WithTimeout(ctx, storeOpTimeout)
 	defer cancel()
 	info := e.agentResolver.Resolve(ctx, workerID)
 	if store, ok := e.jobStore.(interface {
