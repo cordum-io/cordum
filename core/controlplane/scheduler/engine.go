@@ -1029,6 +1029,31 @@ func (e *Engine) verifySessionToken(packet *pb.BusPacket, workerID, packetType s
 	result := e.sessionMiddleware.Verify(ctx, workerID, packet)
 	switch result.Verdict {
 	case TokenVerdictPass, TokenVerdictWarnMissing:
+		// Subject-binding + SenderId defense-in-depth. A verified token proves
+		// only WHO holds it (Claims.Subject), not WHOSE job it targets, so bind
+		// the verified identity to the packet's claimed identity (job_result
+		// WorkerId / job_cancel RequestedBy / heartbeat WorkerId, passed as
+		// workerID). Without this, worker A's own valid token could drive worker
+		// B's job. Runs ONLY when a token was actually verified (Claims != nil):
+		// warn/off/missing leave Claims nil and are intentionally untouched, so
+		// token-less traffic still admits under warn. A control-plane service
+		// token passes uniformly because its Subject == SenderId == the claimed
+		// identity on every internal broadcast.
+		if result.Claims != nil {
+			claimedID := strings.TrimSpace(workerID)
+			claimSubject := strings.TrimSpace(result.Claims.Subject)
+			senderID := strings.TrimSpace(safeSenderID(packet))
+			if claimSubject != claimedID || senderID != claimedID {
+				slog.Error("session token identity mismatch; rejecting packet",
+					"packet_type", packetType,
+					"claimed_id", claimedID,
+					"claim_subject", claimSubject,
+					"sender_id", senderID,
+					"mode", e.sessionMiddleware.Mode().String(),
+				)
+				return false
+			}
+		}
 		if result.Err != nil {
 			slog.Warn("session token missing; admitting packet",
 				"packet_type", packetType,
@@ -1538,6 +1563,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 				},
 			}
 			if e.bus != nil {
+				e.attachServiceToken(pkt)
 				if err := e.bus.Publish(capsdk.SubjectResult, pkt); err != nil {
 					return RetryAfter(err, retryDelayPublish)
 				}
@@ -3028,6 +3054,33 @@ func (e *Engine) observeOutputEvalDuration(topic string, seconds float64) {
 	}
 }
 
+// attachServiceToken stamps a short-TTL control-plane service token on an
+// internal broadcast the scheduler publishes to a SUBSCRIBED, gated subject
+// (sys.job.result / sys.job.cancel), so peer schedulers admit it under
+// CORDUM_SDK_HANDSHAKE=enforce. It is best-effort and fails SAFE: on a mint
+// error it logs at ERROR and proceeds WITHOUT a token, so a peer under enforce
+// REJECTS the token-less packet rather than admitting an unauthenticated one.
+// When the gate is Off/disabled the middleware returns ("",nil) and no token is
+// attached (back-compat). Call this ONLY for the scheduler's own self-reject
+// emitters — never for unsubscribed (DLQ/audit) or worker-subject (dispatch)
+// publishes.
+func (e *Engine) attachServiceToken(pkt *pb.BusPacket) {
+	if e == nil || pkt == nil || e.sessionMiddleware == nil {
+		return
+	}
+	tok, err := e.sessionMiddleware.MintServiceToken(defaultSenderID)
+	if err != nil {
+		slog.Error("internal broadcast service-token mint failed; publishing without token (peer rejects under enforce)",
+			"sender_id", defaultSenderID,
+			"error", err,
+		)
+		return
+	}
+	if tok != "" {
+		pkt.AuthToken = tok
+	}
+}
+
 // publishCancel emits a cancellation packet to a broadcast subject (best effort).
 func (e *Engine) publishCancel(jobID, reason string) {
 	if e.bus == nil {
@@ -3045,6 +3098,7 @@ func (e *Engine) publishCancel(jobID, reason string) {
 		ProtocolVersion: protocolVersionV1,
 		Payload:         &pb.BusPacket_JobCancel{JobCancel: cancelReq},
 	}
+	e.attachServiceToken(packet)
 	if err := e.bus.Publish(capsdk.SubjectCancel, packet); err != nil {
 		slog.Error("job cancel publish failed", "job_id", jobID, "error", err)
 	}
@@ -3088,6 +3142,7 @@ func (e *Engine) replayApprovalPublish(traceID string, req *pb.JobRequest, appro
 			return fmt.Errorf("replay approval dlq publish: %w", err)
 		}
 		if approval.PublishTarget == ApprovalPublishTargetDLQAndResult {
+			e.attachServiceToken(packet)
 			if err := e.bus.Publish(capsdk.SubjectResult, packet); err != nil {
 				return fmt.Errorf("replay approval result publish: %w", err)
 			}

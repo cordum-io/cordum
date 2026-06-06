@@ -42,6 +42,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/auth/servicetoken"
 	"github.com/cordum/cordum/core/policysign"
 	"github.com/redis/go-redis/v9"
 )
@@ -241,9 +242,14 @@ func (i *SessionTokenIssuer) Verify(ctx context.Context, token string, checkActi
 	if i == nil {
 		return SessionTokenClaims{}, ErrSessionTokenStoreUnready
 	}
-	claims, err := i.parseAndVerifySignature(token)
+	claims, typ, err := i.parseAndVerifySignature(token)
 	if err != nil {
 		return SessionTokenClaims{}, err
+	}
+	// The worker path accepts ONLY session tokens; a stateless service token
+	// must never ride it (it would bypass the active-record/revocation check).
+	if typ != servicetoken.TypSession {
+		return SessionTokenClaims{}, fmt.Errorf("%w: worker path requires a %s token, got %q", ErrSessionTokenMalformed, servicetoken.TypSession, typ)
 	}
 	if err := i.verifyClaimsTime(claims); err != nil {
 		return SessionTokenClaims{}, err
@@ -265,9 +271,14 @@ func (i *SessionTokenIssuer) Renew(ctx context.Context, token string) (string, S
 	if i == nil {
 		return "", SessionTokenClaims{}, ErrSessionTokenStoreUnready
 	}
-	claims, err := i.parseAndVerifySignature(token)
+	claims, typ, err := i.parseAndVerifySignature(token)
 	if err != nil {
 		return "", SessionTokenClaims{}, err
+	}
+	// Only worker session tokens may be renewed; a stateless service token has
+	// no active record to rotate.
+	if typ != servicetoken.TypSession {
+		return "", SessionTokenClaims{}, fmt.Errorf("%w: only session tokens may be renewed", ErrSessionTokenMalformed)
 	}
 	now := i.now().UTC()
 	if claims.ExpiresAt.Add(i.skew).Before(now) {
@@ -284,6 +295,44 @@ func (i *SessionTokenIssuer) Renew(ctx context.Context, token string) (string, S
 		}
 	}
 	return i.Issue(ctx, claims.Subject, claims.Tenant, claims.SDKVersion)
+}
+
+// VerifyService verifies a control-plane SERVICE token (typ=cordum-service):
+// it checks the signature and expiry but performs NO Redis active-record
+// lookup — a service token is stateless and no peer ever wrote an active
+// record for it (the verify counterpart to servicetoken.MintService). The
+// subject MUST be a reserved control-plane identity; this is a defense-in-depth
+// check beyond Mint, so even a (bug-)minted service token bearing an arbitrary
+// subject is rejected. It takes no context because it touches no I/O.
+func (i *SessionTokenIssuer) VerifyService(token string) (SessionTokenClaims, error) {
+	if i == nil {
+		return SessionTokenClaims{}, ErrSessionTokenStoreUnready
+	}
+	claims, typ, err := i.parseAndVerifySignature(token)
+	if err != nil {
+		return SessionTokenClaims{}, err
+	}
+	if typ != servicetoken.TypService {
+		return SessionTokenClaims{}, fmt.Errorf("%w: service path requires a %s token, got %q", ErrSessionTokenMalformed, servicetoken.TypService, typ)
+	}
+	if !servicetoken.IsReservedIdentity(claims.Subject) {
+		return SessionTokenClaims{}, fmt.Errorf("%w: subject %q is not a reserved service identity", ErrSessionTokenMalformed, claims.Subject)
+	}
+	if err := i.verifyClaimsTime(claims); err != nil {
+		return SessionTokenClaims{}, err
+	}
+	return claims, nil
+}
+
+// MintServiceToken mints a short-TTL, stateless service token for a reserved
+// control-plane identity (e.g. defaultSenderID), signed with the issuer's
+// Ed25519 key. It performs NO Redis write and returns an error for a
+// non-reserved subject.
+func (i *SessionTokenIssuer) MintServiceToken(subject string) (string, error) {
+	if i == nil {
+		return "", ErrSessionTokenStoreUnready
+	}
+	return servicetoken.MintService(i.privateKey, i.keyID, subject, i.now())
 }
 
 // Revoke marks (tenant, jti) revoked until exp. Subsequent Verify calls
@@ -323,45 +372,29 @@ func (i *SessionTokenIssuer) RevokeByAgent(ctx context.Context, tenant, agentID 
 
 // signClaims serialises claims and produces a compact JWS-like token.
 func (i *SessionTokenIssuer) signClaims(claims SessionTokenClaims) (string, error) {
-	header := map[string]string{"alg": sessionTokenAlgorithm, "kid": i.keyID, "typ": "cordum-session"}
-	headerBytes, err := json.Marshal(header)
-	if err != nil {
-		return "", fmt.Errorf("scheduler: marshal session header: %w", err)
-	}
-	claimsBytes, err := json.Marshal(claims)
-	if err != nil {
-		return "", fmt.Errorf("scheduler: marshal session claims: %w", err)
-	}
-	headerSeg := base64.RawURLEncoding.EncodeToString(headerBytes)
-	claimsSeg := base64.RawURLEncoding.EncodeToString(claimsBytes)
-	signingInput := headerSeg + "." + claimsSeg
-	sig, err := policysign.Sign(i.privateKey, i.keyID, []byte(signingInput))
-	if err != nil {
-		return "", fmt.Errorf("scheduler: sign session token: %w", err)
-	}
-	rawSig, err := base64.StdEncoding.DecodeString(sig.Value)
-	if err != nil {
-		return "", fmt.Errorf("scheduler: decode signature segment: %w", err)
-	}
-	return signingInput + "." + base64.RawURLEncoding.EncodeToString(rawSig), nil
+	// Delegate to the shared, typ-aware signer so worker session tokens and
+	// control-plane service tokens share one wire format and one verifier.
+	// servicetoken.Claims and SessionTokenClaims are field-identical, so the
+	// conversion is exact (struct tags are ignored when converting).
+	return servicetoken.Sign(i.privateKey, i.keyID, servicetoken.Claims(claims), servicetoken.TypSession)
 }
 
 // parseAndVerifySignature splits, base64-decodes, JSON-decodes, and
 // verifies the Ed25519 signature on token. It does not consult Redis or
 // check time bounds — those are separate steps so callers can compose
 // (e.g. Renew tolerates a slightly expired token).
-func (i *SessionTokenIssuer) parseAndVerifySignature(token string) (SessionTokenClaims, error) {
+func (i *SessionTokenIssuer) parseAndVerifySignature(token string) (SessionTokenClaims, string, error) {
 	token = strings.TrimSpace(token)
 	if token == "" {
-		return SessionTokenClaims{}, ErrSessionTokenMalformed
+		return SessionTokenClaims{}, "", ErrSessionTokenMalformed
 	}
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
-		return SessionTokenClaims{}, fmt.Errorf("%w: expected 3 segments, got %d", ErrSessionTokenMalformed, len(parts))
+		return SessionTokenClaims{}, "", fmt.Errorf("%w: expected 3 segments, got %d", ErrSessionTokenMalformed, len(parts))
 	}
 	headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil {
-		return SessionTokenClaims{}, fmt.Errorf("%w: header: %v", ErrSessionTokenMalformed, err)
+		return SessionTokenClaims{}, "", fmt.Errorf("%w: header: %v", ErrSessionTokenMalformed, err)
 	}
 	var header struct {
 		Alg string `json:"alg"`
@@ -369,24 +402,32 @@ func (i *SessionTokenIssuer) parseAndVerifySignature(token string) (SessionToken
 		Typ string `json:"typ"`
 	}
 	if err := json.Unmarshal(headerBytes, &header); err != nil {
-		return SessionTokenClaims{}, fmt.Errorf("%w: header parse: %v", ErrSessionTokenMalformed, err)
+		return SessionTokenClaims{}, "", fmt.Errorf("%w: header parse: %v", ErrSessionTokenMalformed, err)
 	}
 	if !strings.EqualFold(header.Alg, sessionTokenAlgorithm) {
-		return SessionTokenClaims{}, fmt.Errorf("%w: alg=%q", ErrSessionTokenSignature, header.Alg)
+		return SessionTokenClaims{}, "", fmt.Errorf("%w: alg=%q", ErrSessionTokenSignature, header.Alg)
+	}
+	// Assert the token kind up front. Verify/VerifyService each additionally
+	// require their specific typ, so a worker (cordum-session) token cannot
+	// ride the stateless service path (revocation bypass) and a service token
+	// cannot be presented as a worker token. The typ is part of the signed
+	// header, so it cannot be flipped without invalidating the signature.
+	if header.Typ != servicetoken.TypSession && header.Typ != servicetoken.TypService {
+		return SessionTokenClaims{}, "", fmt.Errorf("%w: unrecognized typ %q", ErrSessionTokenMalformed, header.Typ)
 	}
 	if strings.TrimSpace(header.KID) == "" {
-		return SessionTokenClaims{}, fmt.Errorf("%w: kid missing", ErrSessionTokenSignature)
+		return SessionTokenClaims{}, "", fmt.Errorf("%w: kid missing", ErrSessionTokenSignature)
 	}
 	pub, ok := i.trust.Lookup(header.KID)
 	if !ok {
-		return SessionTokenClaims{}, fmt.Errorf("%w: %s", ErrSessionTokenUnknownKey, header.KID)
+		return SessionTokenClaims{}, "", fmt.Errorf("%w: %s", ErrSessionTokenUnknownKey, header.KID)
 	}
 	rawSig, err := base64.RawURLEncoding.DecodeString(parts[2])
 	if err != nil {
-		return SessionTokenClaims{}, fmt.Errorf("%w: signature: %v", ErrSessionTokenMalformed, err)
+		return SessionTokenClaims{}, "", fmt.Errorf("%w: signature: %v", ErrSessionTokenMalformed, err)
 	}
 	if len(rawSig) != ed25519.SignatureSize {
-		return SessionTokenClaims{}, fmt.Errorf("%w: signature length %d", ErrSessionTokenMalformed, len(rawSig))
+		return SessionTokenClaims{}, "", fmt.Errorf("%w: signature length %d", ErrSessionTokenMalformed, len(rawSig))
 	}
 	signingInput := []byte(parts[0] + "." + parts[1])
 	sig := policysign.Signature{
@@ -398,22 +439,22 @@ func (i *SessionTokenIssuer) parseAndVerifySignature(token string) (SessionToken
 	}
 	if err := policysign.Verify(pub, signingInput, sig); err != nil {
 		if errors.Is(err, policysign.ErrVerifyFailed) {
-			return SessionTokenClaims{}, ErrSessionTokenSignature
+			return SessionTokenClaims{}, "", ErrSessionTokenSignature
 		}
-		return SessionTokenClaims{}, fmt.Errorf("%w: %v", ErrSessionTokenSignature, err)
+		return SessionTokenClaims{}, "", fmt.Errorf("%w: %v", ErrSessionTokenSignature, err)
 	}
 	claimsBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return SessionTokenClaims{}, fmt.Errorf("%w: claims: %v", ErrSessionTokenMalformed, err)
+		return SessionTokenClaims{}, "", fmt.Errorf("%w: claims: %v", ErrSessionTokenMalformed, err)
 	}
 	var claims SessionTokenClaims
 	if err := json.Unmarshal(claimsBytes, &claims); err != nil {
-		return SessionTokenClaims{}, fmt.Errorf("%w: claims parse: %v", ErrSessionTokenMalformed, err)
+		return SessionTokenClaims{}, "", fmt.Errorf("%w: claims parse: %v", ErrSessionTokenMalformed, err)
 	}
 	if err := claims.Validate(); err != nil {
-		return SessionTokenClaims{}, err
+		return SessionTokenClaims{}, "", err
 	}
-	return claims, nil
+	return claims, header.Typ, nil
 }
 
 func (i *SessionTokenIssuer) verifyClaimsTime(claims SessionTokenClaims) error {

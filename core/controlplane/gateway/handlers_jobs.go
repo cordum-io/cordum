@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/cordum/cordum/core/auth/servicetoken"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
@@ -1186,6 +1187,29 @@ func (s *server) handleGetArtifact(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// attachServiceToken stamps a short-TTL control-plane service token (subject
+// "api-gateway") on an internal broadcast so a peer scheduler admits it under
+// CORDUM_SDK_HANDSHAKE=enforce. Best-effort and fails SAFE: when no issuer is
+// wired (back-compat / gate disabled) it attaches nothing, and a genuine mint
+// failure logs at ERROR and proceeds token-less (a peer under enforce rejects a
+// token-less packet rather than admitting an unauthenticated one). Callers MUST
+// set the JobResult.WorkerId / JobCancel.RequestedBy and the BusPacket SenderId
+// to "api-gateway" so the scheduler's subject-binding accepts the token. Attach
+// AFTER enqueueBusPacket so the token never reaches the SSE/WS stream.
+func (s *server) attachServiceToken(pkt *pb.BusPacket) {
+	if s == nil || pkt == nil || s.sessionIssuer == nil {
+		return
+	}
+	tok, err := s.sessionIssuer.MintServiceToken(servicetoken.IdentityGateway)
+	if err != nil {
+		slog.Error("gateway service-token mint failed; broadcasting without token (peer rejects under enforce)", "error", err)
+		return
+	}
+	if tok != "" {
+		pkt.AuthToken = tok
+	}
+}
+
 func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermissionOrRole(w, r, auth.PermJobsWrite, "admin") {
 		return
@@ -1229,12 +1253,22 @@ func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 		ProtocolVersion: capsdk.DefaultProtocolVersion,
 		Payload: &pb.BusPacket_JobResult{
 			JobResult: &pb.JobResult{
-				JobId:  id,
-				Status: pb.JobStatus_JOB_STATUS_CANCELLED,
+				JobId: id,
+				// WorkerId identifies the cancel actor; setting it to the
+				// gateway's reserved identity makes Subject==SenderId==WorkerId
+				// hold so the scheduler's subject-binding admits the service
+				// token under enforce (it is otherwise empty -> binding rejects).
+				WorkerId: servicetoken.IdentityGateway,
+				Status:   pb.JobStatus_JOB_STATUS_CANCELLED,
 			},
 		},
 	}
 	s.enqueueBusPacket(cancelPacket)
+	// Attach the service token AFTER enqueueing for the SSE/WS stream
+	// (enqueueBusPacket serializes immediately, so the token never reaches
+	// dashboard consumers) and BEFORE the bus publish, so a peer scheduler
+	// admits the cancel result under CORDUM_SDK_HANDSHAKE=enforce.
+	s.attachServiceToken(cancelPacket)
 	// Publish cancel result so scheduler/system listeners can observe the cancel.
 	if err := s.bus.Publish(capsdk.SubjectResult, cancelPacket); err != nil {
 		slog.Error("publish cancel result failed", "job_id", id, "error", err)
@@ -1255,6 +1289,7 @@ func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 		ProtocolVersion: capsdk.DefaultProtocolVersion,
 		Payload:         &pb.BusPacket_JobCancel{JobCancel: cancelReq},
 	}
+	s.attachServiceToken(cancelBusPacket)
 	if err := s.bus.Publish(capsdk.SubjectCancel, cancelBusPacket); err != nil {
 		slog.Error("publish cancel broadcast failed", "job_id", id, "error", err)
 	}

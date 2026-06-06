@@ -90,6 +90,7 @@ func TestHandlePacket_JobResult_ValidTypedTokenReachesSucceeded(t *testing.T) {
 	engine.sessionMiddleware = NewSessionTokenMiddleware(issuer, HandshakeModeEnforce, NewHandshakeMissingTracker())
 
 	pkt := reparseWithTypedAuthToken(t, &pb.BusPacket{
+		SenderId: "w-live",
 		Payload: &pb.BusPacket_JobResult{JobResult: &pb.JobResult{
 			JobId:    "job-live",
 			WorkerId: "w-live",
@@ -198,6 +199,7 @@ func TestWithSessionMiddleware_BuilderEnforcesThroughHandlePacket(t *testing.T) 
 		WithSessionMiddleware(NewSessionTokenMiddleware(issuer, HandshakeModeEnforce, NewHandshakeMissingTracker()))
 
 	pkt := reparseWithTypedAuthToken(t, &pb.BusPacket{
+		SenderId: "w-bld",
 		Payload: &pb.BusPacket_JobResult{JobResult: &pb.JobResult{
 			JobId: "job-bld", WorkerId: "w-bld", Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
 		}},
@@ -303,7 +305,7 @@ func TestHandlePacket_JobCancel_TokenGated(t *testing.T) {
 	storeOK.mu.Unlock()
 	engOK := NewEngine(newCountingBus(), NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), storeOK, nil)
 	engOK.sessionMiddleware = NewSessionTokenMiddleware(issuer, HandshakeModeEnforce, NewHandshakeMissingTracker())
-	okPkt := reparseWithTypedAuthToken(t, &pb.BusPacket{Payload: &pb.BusPacket_JobCancel{JobCancel: &pb.JobCancel{
+	okPkt := reparseWithTypedAuthToken(t, &pb.BusPacket{SenderId: "w-cxl", Payload: &pb.BusPacket_JobCancel{JobCancel: &pb.JobCancel{
 		JobId: "job-cxl-ok", RequestedBy: "w-cxl", Reason: "x",
 	}}}, token)
 	if err := engOK.HandlePacket(okPkt); err != nil {

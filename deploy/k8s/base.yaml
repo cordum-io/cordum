@@ -1092,6 +1092,19 @@ spec:
           value: 5s
         - name: WORKFLOW_ENGINE_RUN_SCAN_LIMIT
           value: "200"
+        # --- Control-plane service-token signing (CORDUM_SDK_HANDSHAKE=enforce) ---
+        # When the scheduler's session-token gate runs in enforce mode, the
+        # workflow-engine must mint a control-plane service token on its internal
+        # JobCancel broadcasts so peer schedulers admit them. Wire the SAME
+        # Ed25519 signing key (single shared kid) the scheduler and api-gateway
+        # use. REQUIRED on all three services before enabling enforce.
+        # - name: CORDUM_POLICY_SIGNING_KEY_ID
+        #   value: "<shared-kid>"
+        # - name: CORDUM_POLICY_SIGNING_KEY
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: cordum-policy-signing
+        #       key: signing-key
         # --- Licensing ---
         # Uncomment when deploying with an enterprise license secret/volume.
         # - name: CORDUM_LICENSE_TOKEN

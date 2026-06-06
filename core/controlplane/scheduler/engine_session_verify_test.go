@@ -75,7 +75,7 @@ func TestEngine_VerifySessionToken_ValidTokenPasses(t *testing.T) {
 	mw := NewSessionTokenMiddleware(issuer, HandshakeModeEnforce, NewHandshakeMissingTracker())
 	e := &Engine{sessionMiddleware: mw}
 	e.ctx, e.cancel = context.Background(), func() {}
-	packet := &pb.BusPacket{}
+	packet := &pb.BusPacket{SenderId: "w-ok"}
 	attachTokenForVerify(packet, token)
 	if !e.verifySessionToken(packet, "w-ok", "job_result") {
 		t.Fatal("valid token must pass")
