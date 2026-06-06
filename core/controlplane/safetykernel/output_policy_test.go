@@ -1149,6 +1149,63 @@ func TestCheckOutput_TruncatedNonSensitiveRules_Unchanged(t *testing.T) {
 	}
 }
 
+// TestCheckOutput_TruncatedMixedPolicy_NonSensitiveMatchStillFailsClosed pins
+// the snapshot-scoped fail-closed contract: when the loaded policy contains
+// ANY sensitive scanner, a truncated output escalates to quarantine even if
+// the rule that matched is non-sensitive. Scoping the escalation to the
+// matched rule instead would let a keyword rule that matches in the scanned
+// head release (redact) an output whose unscanned tail was never seen by the
+// secret scanner — a weaker outcome than a full scan could have produced,
+// which is exactly what the truncation fail-closed mode exists to prevent.
+func TestCheckOutput_TruncatedMixedPolicy_NonSensitiveMatchStillFailsClosed(t *testing.T) {
+	srv := &server{scanners: defaultOutputScanners()}
+	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
+		OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "open"},
+		OutputRules: []config.OutputPolicyRule{
+			{
+				ID:       "out-keyword-redact",
+				Decision: "redact",
+				Match: config.OutputPolicyMatch{
+					Topics:   []string{"job.*"},
+					Keywords: []string{"mixed-policy-needle"},
+				},
+			},
+			{
+				ID:       "out-secret-mixed",
+				Decision: "quarantine",
+				Match: config.OutputPolicyMatch{
+					Topics:   []string{"job.*"},
+					Scanners: []string{"secret"},
+				},
+			},
+		},
+	}, "snap-mixed-policy")
+
+	// Keyword in the scanned head, secret hidden past the scan cap: the
+	// keyword rule matches first, but the secret scanner never saw the tail.
+	content := makeBigContentWithSecret(maxOutputScanBytes + 32)
+	copy(content[100:], []byte("mixed-policy-needle"))
+
+	resp, err := srv.CheckOutput(context.Background(), &pb.OutputCheckRequest{
+		JobId:         "job-mixed-policy",
+		Topic:         "job.default",
+		Tenant:        "default",
+		OutputContent: content,
+	})
+	if err != nil {
+		t.Fatalf("check output: %v", err)
+	}
+	if resp.GetDecision() != pb.OutputDecision_OUTPUT_DECISION_QUARANTINE {
+		t.Fatalf("expected truncated mixed-policy redact match to escalate to quarantine, got %v: %#v", resp.GetDecision(), resp)
+	}
+	if resp.GetRuleId() != "out-keyword-redact" {
+		t.Fatalf("expected escalation attributed to the matched rule, got %q", resp.GetRuleId())
+	}
+	if !hasProtoOutputFinding(resp.GetFindings(), "content_truncated", "high") {
+		t.Fatalf("expected high-severity content_truncated finding, got %#v", resp.GetFindings())
+	}
+}
+
 func TestTruncateOutputContentBelowLimit(t *testing.T) {
 	small := []byte("hello")
 	out, truncated := truncateOutputContent(small)
