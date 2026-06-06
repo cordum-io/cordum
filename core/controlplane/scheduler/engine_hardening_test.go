@@ -655,3 +655,240 @@ func TestActiveRenewals_ReturnsToZeroAfterLock(t *testing.T) {
 		t.Fatalf("expected 0 active renewals after lock release, got %d", got)
 	}
 }
+
+// ---- lock-fence state-helper tests (CRD-14) ----
+
+// fenceWrite records one store write attempt: which operation ran, and the
+// state of the supplied context at call time.
+type fenceWrite struct {
+	op     string
+	ctxErr error
+	cause  error
+}
+
+// fenceRecordingStore wraps fakeJobStore with context-aware write methods:
+// like the real Redis-backed store, every write fails when its context is
+// already cancelled. Each write attempt records ctx.Err() and context.Cause
+// observed at call time. RenewLock always fails when failRenew is set,
+// driving withJobLock into lock abandonment.
+type fenceRecordingStore struct {
+	*fakeJobStore
+	failRenew bool
+
+	obsMu  sync.Mutex
+	writes []fenceWrite
+
+	agentMu   sync.Mutex
+	agentInfo map[string]fenceAgentInfo
+}
+
+// fenceAgentInfo captures a persisted SetAgentInfo write for the live-fence
+// assertion. fakeJobStore has no agent-info storage of its own, so the test
+// double records it here.
+type fenceAgentInfo struct {
+	agentID  string
+	name     string
+	riskTier string
+}
+
+func (s *fenceRecordingStore) RenewLock(ctx context.Context, key, token string, ttl time.Duration) error {
+	if s.failRenew {
+		return errors.New("redis connection refused")
+	}
+	return s.fakeJobStore.RenewLock(ctx, key, token, ttl)
+}
+
+func (s *fenceRecordingStore) observe(op string, ctx context.Context) error {
+	s.obsMu.Lock()
+	s.writes = append(s.writes, fenceWrite{op: op, ctxErr: ctx.Err(), cause: context.Cause(ctx)})
+	s.obsMu.Unlock()
+	return ctx.Err()
+}
+
+func (s *fenceRecordingStore) observations() []fenceWrite {
+	s.obsMu.Lock()
+	defer s.obsMu.Unlock()
+	return append([]fenceWrite(nil), s.writes...)
+}
+
+func (s *fenceRecordingStore) SetState(ctx context.Context, jobID string, state JobState) error {
+	if err := s.observe("SetState", ctx); err != nil {
+		return err
+	}
+	return s.fakeJobStore.SetState(ctx, jobID, state)
+}
+
+func (s *fenceRecordingStore) SetResultPtr(ctx context.Context, jobID, ptr string) error {
+	if err := s.observe("SetResultPtr", ctx); err != nil {
+		return err
+	}
+	return s.fakeJobStore.SetResultPtr(ctx, jobID, ptr)
+}
+
+func (s *fenceRecordingStore) SetWorkerID(ctx context.Context, jobID, workerID string) error {
+	if err := s.observe("SetWorkerID", ctx); err != nil {
+		return err
+	}
+	return s.fakeJobStore.SetWorkerID(ctx, jobID, workerID)
+}
+
+func (s *fenceRecordingStore) SetOutputDecision(ctx context.Context, jobID string, record OutputSafetyRecord) error {
+	if err := s.observe("SetOutputDecision", ctx); err != nil {
+		return err
+	}
+	return s.fakeJobStore.SetOutputDecision(ctx, jobID, record)
+}
+
+// SetAgentInfo satisfies the optional interface that setAgentInfoFromWorker
+// type-asserts against. fakeJobStore does not implement it, so the helper would
+// otherwise skip the store write entirely and escape the fence regression
+// matrix. Recording it here covers the fifth CRD-14 write helper.
+func (s *fenceRecordingStore) SetAgentInfo(ctx context.Context, jobID, agentID, name, riskTier string) error {
+	if err := s.observe("SetAgentInfo", ctx); err != nil {
+		return err
+	}
+	s.agentMu.Lock()
+	if s.agentInfo == nil {
+		s.agentInfo = make(map[string]fenceAgentInfo)
+	}
+	s.agentInfo[jobID] = fenceAgentInfo{agentID: agentID, name: name, riskTier: riskTier}
+	s.agentMu.Unlock()
+	return nil
+}
+
+func (s *fenceRecordingStore) agentInfoFor(jobID string) (fenceAgentInfo, bool) {
+	s.agentMu.Lock()
+	defer s.agentMu.Unlock()
+	info, ok := s.agentInfo[jobID]
+	return info, ok
+}
+
+// TestLockFence_StateHelpersHonorFence is the CRD-14 regression test: once
+// lock renewal is abandoned and the fence context is cancelled, the engine
+// state helpers must not perform store writes with a live context. If a
+// helper derives its timeout from e.ctx instead of the fenced lockCtx, the
+// write succeeds after lock loss and this test fails.
+func TestLockFence_StateHelpersHonorFence(t *testing.T) {
+	store := &fenceRecordingStore{fakeJobStore: newFakeJobStore(), failRenew: true}
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil).
+		WithAgentResolver(NewAgentResolver(nil, nil))
+
+	const jobID = "job-fence-helpers"
+	ttl := 150 * time.Millisecond // renewal every 50ms; abandoned on 3rd failure
+
+	err := engine.withJobLock(jobID, ttl, func(lockCtx context.Context) error {
+		// Wait for the fence to drop (renewal abandonment cancels lockCtx).
+		// Bounded so a regression in abandonment signaling fails the test
+		// fast instead of hanging the suite until the global timeout.
+		select {
+		case <-lockCtx.Done():
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for lock fence cancellation")
+		}
+
+		// Post-abandonment store writes via the state helpers. All of them
+		// must derive from the fenced context and therefore be rejected.
+		_ = engine.setJobState(lockCtx, jobID, JobStateFailed)
+		_ = engine.setResultPtr(lockCtx, jobID, "res:fence")
+		engine.setWorkerID(lockCtx, jobID, "worker-fence")
+		engine.persistOutputSafety(lockCtx, jobID, OutputSafetyRecord{Decision: OutputQuarantine})
+		engine.setAgentInfoFromWorker(lockCtx, jobID, "worker-fence")
+		return nil
+	})
+	if !errors.Is(err, errLockAbandoned) {
+		t.Fatalf("expected errLockAbandoned, got: %v", err)
+	}
+
+	obs := store.observations()
+	if len(obs) != 5 {
+		t.Fatalf("expected 5 write attempts, got %d: %+v", len(obs), obs)
+	}
+	for _, w := range obs {
+		if w.ctxErr == nil {
+			t.Errorf("%s: store write attempted with a LIVE context after lock abandonment; helpers must derive from the cancelled fence context", w.op)
+			continue
+		}
+		if !errors.Is(w.cause, errLockAbandoned) {
+			t.Errorf("%s: cancellation cause = %v, want errLockAbandoned", w.op, w.cause)
+		}
+	}
+
+	// Nothing may have landed in the underlying store after lock loss.
+	store.mu.RLock()
+	_, stateWritten := store.states[jobID]
+	ptr := store.ptrs[jobID]
+	_, outputWritten := store.output[jobID]
+	store.mu.RUnlock()
+	if stateWritten {
+		t.Error("job state was persisted after lock abandonment")
+	}
+	if ptr != "" {
+		t.Error("result ptr was persisted after lock abandonment")
+	}
+	if outputWritten {
+		t.Error("output safety record was persisted after lock abandonment")
+	}
+	if _, agentWritten := store.agentInfoFor(jobID); agentWritten {
+		t.Error("agent info was persisted after lock abandonment")
+	}
+}
+
+// TestLockFence_StateHelpersWorkWithLiveFence guards against over-rotation:
+// with healthy renewals the helpers must keep succeeding inside the lock
+// (no false fail-closed behavior on the happy path).
+func TestLockFence_StateHelpersWorkWithLiveFence(t *testing.T) {
+	store := &fenceRecordingStore{fakeJobStore: newFakeJobStore(), failRenew: false}
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil).
+		WithAgentResolver(NewAgentResolver(nil, nil))
+
+	const jobID = "job-fence-live"
+	err := engine.withJobLock(jobID, jobLockTTL, func(lockCtx context.Context) error {
+		if err := engine.setJobState(lockCtx, jobID, JobStateRunning); err != nil {
+			t.Errorf("setJobState with live fence: %v", err)
+		}
+		if err := engine.setResultPtr(lockCtx, jobID, "res:live"); err != nil {
+			t.Errorf("setResultPtr with live fence: %v", err)
+		}
+		engine.setWorkerID(lockCtx, jobID, "worker-live")
+		engine.persistOutputSafety(lockCtx, jobID, OutputSafetyRecord{Decision: OutputAllow})
+		engine.setAgentInfoFromWorker(lockCtx, jobID, "worker-live")
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("withJobLock: %v", err)
+	}
+
+	obs := store.observations()
+	if len(obs) != 5 {
+		t.Fatalf("expected 5 write attempts, got %d: %+v", len(obs), obs)
+	}
+	for _, w := range obs {
+		if w.ctxErr != nil {
+			t.Errorf("%s: write saw a cancelled context under healthy renewals: %v", w.op, w.ctxErr)
+		}
+	}
+
+	store.mu.RLock()
+	state := store.states[jobID]
+	ptr := store.ptrs[jobID]
+	rec, outputWritten := store.output[jobID]
+	store.mu.RUnlock()
+	if state != JobStateRunning {
+		t.Errorf("state = %q, want %q", state, JobStateRunning)
+	}
+	if ptr != "res:live" {
+		t.Errorf("result ptr = %q, want %q", ptr, "res:live")
+	}
+	if !outputWritten || rec.Decision != OutputAllow {
+		t.Errorf("output record = %+v (written=%v), want Decision=%q", rec, outputWritten, OutputAllow)
+	}
+
+	// The bare AgentResolver resolves any worker to the "unlinked" sentinel,
+	// so the write should land with that identity under a healthy fence.
+	agent, agentWritten := store.agentInfoFor(jobID)
+	if !agentWritten {
+		t.Error("agent info was not persisted under a healthy fence")
+	} else if agent.agentID != agentCacheUnlinked {
+		t.Errorf("agent id = %q, want %q", agent.agentID, agentCacheUnlinked)
+	}
+}
