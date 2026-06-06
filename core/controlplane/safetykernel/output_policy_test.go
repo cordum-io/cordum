@@ -15,6 +15,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+const testAWSAccessKeyID = "AKIA1234567890ABCDEF"
+
 func boolPtr(v bool) *bool { return &v }
 
 func TestCompileOutputRulesNormalizesScannersAndEnable(t *testing.T) {
@@ -790,6 +792,15 @@ func hasOutputFindingType(findings []outputFinding, want string) bool {
 	return false
 }
 
+func hasOutputFinding(findings []outputFinding, wantType, wantSeverity string) bool {
+	for _, finding := range findings {
+		if finding.Type == wantType && finding.Severity == wantSeverity {
+			return true
+		}
+	}
+	return false
+}
+
 func hasProtoOutputFinding(findings []*pb.OutputFinding, wantType, wantSeverity string) bool {
 	for _, finding := range findings {
 		if finding.GetType() == wantType && finding.GetSeverity() == wantSeverity {
@@ -797,6 +808,19 @@ func hasProtoOutputFinding(findings []*pb.OutputFinding, wantType, wantSeverity 
 		}
 	}
 	return false
+}
+
+func makeBigContentWithSecret(secretOffset int) []byte {
+	content := make([]byte, maxOutputScanBytes+1024)
+	for i := range content {
+		content[i] = 'x'
+	}
+	secret := []byte(testAWSAccessKeyID)
+	if secretOffset < 0 || secretOffset+len(secret) > len(content) {
+		panic("secret offset outside test content")
+	}
+	copy(content[secretOffset:], secret)
+	return content
 }
 
 func TestEvaluateOutputKeywordAndContentType(t *testing.T) {
@@ -965,6 +989,163 @@ func TestContentTruncationFinding(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected content_truncated finding in response")
+	}
+}
+
+func TestCheckOutput_TruncatedTailSecret_FailsClosed(t *testing.T) {
+	srv := &server{scanners: defaultOutputScanners()}
+	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
+		OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "open"},
+		OutputRules: []config.OutputPolicyRule{{
+			ID:       "out-secret-tail",
+			Decision: "quarantine",
+			Match: config.OutputPolicyMatch{
+				Topics:   []string{"job.*"},
+				Scanners: []string{"secret"},
+			},
+		}},
+	}, "snap-tail-secret")
+
+	resp, err := srv.CheckOutput(context.Background(), &pb.OutputCheckRequest{
+		JobId:         "job-tail-secret",
+		Topic:         "job.default",
+		Tenant:        "default",
+		OutputContent: makeBigContentWithSecret(maxOutputScanBytes + 32),
+	})
+	if err != nil {
+		t.Fatalf("check output: %v", err)
+	}
+	if resp.GetDecision() != pb.OutputDecision_OUTPUT_DECISION_QUARANTINE {
+		t.Fatalf("expected truncated secret-scanner output to fail closed, got %v: %#v", resp.GetDecision(), resp)
+	}
+	if !hasProtoOutputFinding(resp.GetFindings(), "content_truncated", "high") {
+		t.Fatalf("expected high-severity content_truncated finding, got %#v", resp.GetFindings())
+	}
+}
+
+func TestEvaluateOutput_TruncatedTailSecret_FailsClosed(t *testing.T) {
+	srv := &server{scanners: defaultOutputScanners()}
+	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
+		OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "open"},
+		OutputRules: []config.OutputPolicyRule{{
+			ID:       "out-secret-tail-eval",
+			Decision: "quarantine",
+			Match: config.OutputPolicyMatch{
+				Topics:   []string{"job.*"},
+				Scanners: []string{"secret"},
+			},
+		}},
+	}, "snap-tail-secret-eval")
+
+	resp, err := srv.EvaluateOutput(context.Background(), &OutputEvaluateRequest{
+		JobID:         "job-tail-secret-eval",
+		Topic:         "job.default",
+		Tenant:        "default",
+		OutputContent: makeBigContentWithSecret(maxOutputScanBytes + 32),
+	})
+	if err != nil {
+		t.Fatalf("evaluate output: %v", err)
+	}
+	if resp.Decision != "quarantine" {
+		t.Fatalf("expected truncated secret-scanner output to fail closed, got %q: %#v", resp.Decision, resp)
+	}
+	if !hasOutputFinding(resp.Findings, "content_truncated", "high") {
+		t.Fatalf("expected high-severity content_truncated finding, got %#v", resp.Findings)
+	}
+}
+
+func TestCheckOutput_TruncatedHeadSecret_RedactEscalatesToQuarantine(t *testing.T) {
+	srv := &server{scanners: defaultOutputScanners()}
+	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
+		OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "open"},
+		OutputRules: []config.OutputPolicyRule{{
+			ID:       "out-secret-redact-trunc",
+			Decision: "redact",
+			Match: config.OutputPolicyMatch{
+				Topics:   []string{"job.*"},
+				Scanners: []string{"secret"},
+			},
+		}},
+	}, "snap-redact-trunc")
+
+	resp, err := srv.CheckOutput(context.Background(), &pb.OutputCheckRequest{
+		JobId:         "job-redact-trunc",
+		Topic:         "job.default",
+		Tenant:        "default",
+		OutputContent: makeBigContentWithSecret(8),
+	})
+	if err != nil {
+		t.Fatalf("check output: %v", err)
+	}
+	if resp.GetDecision() != pb.OutputDecision_OUTPUT_DECISION_QUARANTINE {
+		t.Fatalf("expected truncated redaction to escalate to quarantine, got %v: %#v", resp.GetDecision(), resp)
+	}
+	if !hasProtoOutputFinding(resp.GetFindings(), "content_truncated", "high") {
+		t.Fatalf("expected high-severity content_truncated finding, got %#v", resp.GetFindings())
+	}
+}
+
+func TestCheckOutput_UnderCapTailSecret_NormalMatch(t *testing.T) {
+	srv := &server{scanners: defaultOutputScanners()}
+	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
+		OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "open"},
+		OutputRules: []config.OutputPolicyRule{{
+			ID:       "out-secret-under-cap",
+			Decision: "quarantine",
+			Match: config.OutputPolicyMatch{
+				Topics:   []string{"job.*"},
+				Scanners: []string{"secret"},
+			},
+		}},
+	}, "snap-under-cap")
+
+	content := make([]byte, maxOutputScanBytes-128)
+	for i := range content {
+		content[i] = 'x'
+	}
+	copy(content[len(content)-64:], []byte(testAWSAccessKeyID))
+	resp, err := srv.CheckOutput(context.Background(), &pb.OutputCheckRequest{
+		JobId:         "job-under-cap",
+		Topic:         "job.default",
+		Tenant:        "default",
+		OutputContent: content,
+	})
+	if err != nil {
+		t.Fatalf("check output: %v", err)
+	}
+	if resp.GetDecision() != pb.OutputDecision_OUTPUT_DECISION_QUARANTINE {
+		t.Fatalf("expected under-cap tail secret to match normally, got %v: %#v", resp.GetDecision(), resp)
+	}
+	if hasProtoOutputFinding(resp.GetFindings(), "content_truncated", "high") {
+		t.Fatalf("under-cap content must not report truncation, got %#v", resp.GetFindings())
+	}
+}
+
+func TestCheckOutput_TruncatedNonSensitiveRules_Unchanged(t *testing.T) {
+	srv := &server{scanners: defaultOutputScanners()}
+	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
+		OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "open"},
+		OutputRules: []config.OutputPolicyRule{{
+			ID:       "out-keyword-only",
+			Decision: "quarantine",
+			Match: config.OutputPolicyMatch{
+				Topics:   []string{"job.*"},
+				Keywords: []string{"nonexistent-keyword"},
+			},
+		}},
+	}, "snap-keyword-only")
+
+	resp, err := srv.CheckOutput(context.Background(), &pb.OutputCheckRequest{
+		JobId:         "job-keyword-only",
+		Topic:         "job.default",
+		Tenant:        "default",
+		OutputContent: makeBigContentWithSecret(maxOutputScanBytes + 32),
+	})
+	if err != nil {
+		t.Fatalf("check output: %v", err)
+	}
+	if resp.GetDecision() != pb.OutputDecision_OUTPUT_DECISION_ALLOW {
+		t.Fatalf("expected non-sensitive truncated no-match to stay allow, got %v: %#v", resp.GetDecision(), resp)
 	}
 }
 

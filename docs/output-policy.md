@@ -218,6 +218,24 @@ Built-in scanner implementations currently live in `core/controlplane/safetykern
 | `code_injection` / `injection` | Injection and exploit fragments | SQL (`union select`, `drop table`), shell (`rm -rf`, `curl|sh`), prompt injection phrases | `high`, `medium` |
 | `max_output_bytes` rule match | Oversized output | metadata size threshold | policy-defined |
 
+### 6.1 Scan-size limit and truncation fail-mode
+
+Safety Kernel scans at most 2 MiB of output content per evaluation (`maxOutputScanBytes`). This keeps regex and scanner work bounded, but it also means content beyond the cap is not inspected.
+
+When secret/PII/injection-class scanners are enabled, truncated output now fails closed:
+
+- oversized output with no scanner hit in the scanned head is `QUARANTINE` instead of `ALLOW`
+- `REDACT` decisions on truncated output escalate to `QUARANTINE` because redaction only covers the scanned head, not the unscanned tail
+- the response includes a high-severity `content_truncated` finding from `size_check`
+
+Outputs governed only by non-sensitive rules, such as keyword/topic rules without secret, PII, or injection scanners, keep the previous partial-scan behavior.
+
+Operator remediation:
+
+- keep sensitive job outputs below the 2 MiB scan cap when they must be released automatically
+- write large results as bounded artifacts or result pointers whose inspected payload stays below the cap
+- use an output-size rule such as the default `output-size-limit` entry in [3.4 Default rule set](#34-default-rule-set-in-configsafetyyaml) to quarantine large outputs deliberately before operators need to reason about partial scans
+
 ## 7. Scanner Pattern Definitions (`config/output_scanners.yaml`)
 
 Cordum ships scanner definitions in `config/output_scanners.yaml`. Safety Kernel loads this file at startup and falls back to built-in scanners if parsing fails.
