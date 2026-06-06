@@ -382,6 +382,13 @@ services:
       - WORKFLOW_ENGINE_RUN_SCAN_LIMIT=200
       - CORDUM_LICENSE_TOKEN=${CORDUM_LICENSE_TOKEN:-}
       - CORDUM_LICENSE_PUBLIC_KEY=${CORDUM_LICENSE_PUBLIC_KEY:-}
+      # Service-token signing for internal cancel broadcasts. Under
+      # CORDUM_SDK_HANDSHAKE=enforce the workflow-engine mints a control-plane
+      # service token (subject "workflow-engine") on its JobCancel broadcasts so
+      # peer schedulers admit them; it shares the scheduler/gateway signing key
+      # (derived from the dev seed locally). REQUIRED before enabling enforce.
+      - CORDUM_POLICY_SIGNING_KEY_ID=${CORDUM_POLICY_SIGNING_KEY_ID:-dev-local}
+      - CORDUM_POLICY_DEV_SIGNING_SEED=${CORDUM_POLICY_DEV_SIGNING_SEED:-cordum-local-policy-signing-v1}
     volumes:
       - ./certs:/etc/cordum/tls:ro
     ports:

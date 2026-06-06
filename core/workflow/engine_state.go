@@ -525,6 +525,20 @@ func (e *Engine) publishJobCancel(jobID, reason string) error {
 		Payload:         &pb.BusPacket_JobCancel{JobCancel: cancelReq},
 	}
 
+	// Attach a control-plane service token so a peer scheduler admits this
+	// internal cancel under CORDUM_SDK_HANDSHAKE=enforce. Best-effort and fails
+	// SAFE: a mint error publishes token-less (a peer under enforce rejects it
+	// rather than admitting an unauthenticated cancel). Minted once; the ~5m
+	// TTL comfortably covers the retry window below.
+	if e.serviceTokenMinter != nil {
+		if tok, err := e.serviceTokenMinter(); err != nil {
+			slog.Error("workflow-engine service-token mint failed; publishing cancel without token (peer rejects under enforce)",
+				"job_id", jobID, "error", err)
+		} else if tok != "" {
+			packet.AuthToken = tok
+		}
+	}
+
 	backoff := [3]time.Duration{100 * time.Millisecond, 500 * time.Millisecond, 1 * time.Second}
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {

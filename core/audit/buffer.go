@@ -19,6 +19,9 @@ const (
 	defaultChanSize      = 1000
 	defaultExportTimeout = 10 * time.Second
 	defaultMaxRetries    = 3
+	// defaultDrainTimeout gives audit exporters their own bounded drain budget.
+	// Gateway defers server.Close until after its 15s HTTP/gRPC shutdown window.
+	defaultDrainTimeout = 15 * time.Second
 )
 
 var auditBatchDrops = promauto.NewCounter(prometheus.CounterOpts{
@@ -51,10 +54,16 @@ type BufferedExporter struct {
 	done     chan struct{}
 	wg       sync.WaitGroup
 
+	closeOnce sync.Once
+	closeErr  error
+	sendMu    sync.RWMutex
+	closed    bool
+
 	batchSize     int
 	flushInterval time.Duration
 	retryBackoff  time.Duration
 	retentionTTL  time.Duration
+	drainTimeout  time.Duration
 }
 
 // BufferOption configures a BufferedExporter.
@@ -81,6 +90,15 @@ func WithRetentionTTL(d time.Duration) BufferOption {
 	return func(b *BufferedExporter) { b.retentionTTL = d }
 }
 
+// WithDrainTimeout bounds how long Close spends exporting queued events.
+func WithDrainTimeout(d time.Duration) BufferOption {
+	return func(b *BufferedExporter) {
+		if d > 0 {
+			b.drainTimeout = d
+		}
+	}
+}
+
 // NewBufferedExporter wraps an Exporter with async batching.
 func NewBufferedExporter(exp Exporter, opts ...BufferOption) *BufferedExporter {
 	b := &BufferedExporter{
@@ -90,6 +108,7 @@ func NewBufferedExporter(exp Exporter, opts ...BufferOption) *BufferedExporter {
 		batchSize:     defaultBatchSize,
 		flushInterval: defaultFlushInterval,
 		retryBackoff:  time.Second,
+		drainTimeout:  defaultDrainTimeout,
 	}
 	for _, o := range opts {
 		o(b)
@@ -101,14 +120,39 @@ func NewBufferedExporter(exp Exporter, opts ...BufferOption) *BufferedExporter {
 
 // Send enqueues an event for export. Non-blocking; drops if buffer is full.
 func (b *BufferedExporter) Send(event SIEMEvent) {
-	select {
-	case b.ch <- event:
-	default:
-		slog.Warn("audit exporter buffer full, dropping event",
-			"event_type", event.EventType,
-			"action", event.Action,
-		)
+	reason := ""
+	b.sendMu.RLock()
+	if b.closed {
+		reason = "closed"
+	} else {
+		select {
+		case b.ch <- event:
+			b.sendMu.RUnlock()
+			return
+		default:
+			reason = "buffer_full"
+		}
 	}
+	b.sendMu.RUnlock()
+	b.logDroppedEvent(event, reason)
+}
+
+func (b *BufferedExporter) logDroppedEvent(event SIEMEvent, reason string) {
+	select {
+	case <-b.done:
+		if reason == "" {
+			reason = "closed"
+		}
+	default:
+		if reason == "" {
+			reason = "buffer_full"
+		}
+	}
+	slog.Warn("audit exporter dropping event",
+		"reason", reason,
+		"event_type", event.EventType,
+		"action", event.Action,
+	)
 }
 
 // Backend returns the underlying SIEM exporter wrapped by this buffer.
@@ -125,9 +169,17 @@ func (b *BufferedExporter) RetentionTTL() time.Duration {
 
 // Close drains remaining events and shuts down the exporter.
 func (b *BufferedExporter) Close() error {
-	close(b.done)
-	b.wg.Wait()
-	return b.exporter.Close()
+	b.closeOnce.Do(func() {
+		b.sendMu.Lock()
+		b.closed = true
+		close(b.done)
+		b.sendMu.Unlock()
+		b.wg.Wait()
+		if b.exporter != nil {
+			b.closeErr = b.exporter.Close()
+		}
+	})
+	return b.closeErr
 }
 
 func (b *BufferedExporter) loop() {
@@ -135,16 +187,12 @@ func (b *BufferedExporter) loop() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go func() {
-		<-b.done
-		cancel()
-	}()
 
 	batch := make([]SIEMEvent, 0, b.batchSize)
 	ticker := time.NewTicker(b.flushInterval)
 	defer ticker.Stop()
 
-	flush := func() {
+	flush := func(ctx context.Context) {
 		if len(batch) == 0 {
 			return
 		}
@@ -158,31 +206,45 @@ func (b *BufferedExporter) loop() {
 		select {
 		case ev, ok := <-b.ch:
 			if !ok {
-				flush()
+				flush(ctx)
 				return
 			}
 			batch = append(batch, ev)
 			if len(batch) >= b.batchSize {
-				flush()
+				flush(ctx)
 			}
 		case <-ticker.C:
-			flush()
+			flush(ctx)
 		case <-b.done:
-			// Drain remaining events from channel.
-			for {
-				select {
-				case ev := <-b.ch:
-					batch = append(batch, ev)
-					if len(batch) >= b.batchSize {
-						flush()
-					}
-				default:
-					flush()
-					return
-				}
-			}
+			b.drainQueuedEvents(&batch, flush)
+			return
 		}
 	}
+}
+
+func (b *BufferedExporter) drainQueuedEvents(batch *[]SIEMEvent, flush func(context.Context)) {
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), b.effectiveDrainTimeout())
+	defer drainCancel()
+
+	for {
+		select {
+		case ev := <-b.ch:
+			*batch = append(*batch, ev)
+			if len(*batch) >= b.batchSize {
+				flush(drainCtx)
+			}
+		default:
+			flush(drainCtx)
+			return
+		}
+	}
+}
+
+func (b *BufferedExporter) effectiveDrainTimeout() time.Duration {
+	if b.drainTimeout > 0 {
+		return b.drainTimeout
+	}
+	return defaultDrainTimeout
 }
 
 func (b *BufferedExporter) exportWithRetry(ctx context.Context, events []SIEMEvent) {
