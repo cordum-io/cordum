@@ -322,9 +322,9 @@ export function EdgeApprovalsSection({ fullPage = false }: EdgeApprovalsSectionP
   };
 
   const handleDeny = (reason: string) => {
-    if (!denyTarget || rejectMutation.isPending) return;
+    if (!denyTarget || rejectMutation.isPending || !reason.trim()) return;
     rejectMutation.mutate(
-      { approvalRef: denyTarget.approvalRef, reason: reason || "Denied by operator." },
+      { approvalRef: denyTarget.approvalRef, reason: reason.trim() },
       {
         onSuccess: () => {
           if (selected?.approvalRef === denyTarget.approvalRef) setSelected(null);
