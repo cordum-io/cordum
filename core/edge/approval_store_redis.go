@@ -353,6 +353,9 @@ func (s *RedisStore) ListApprovals(ctx context.Context, query ListApprovalsQuery
 			if principalID != "" && approval.PrincipalID != principalID {
 				continue
 			}
+			if query.SessionID != "" && approval.SessionID != query.SessionID {
+				continue
+			}
 			items = append(items, *approval)
 		}
 		sort.SliceStable(items, func(i, j int) bool {

@@ -777,13 +777,13 @@ const (
 )
 
 // boundEdgeEvaluateApprovalTTL clamps the caller-requested approval TTL to
-// the [1s, 5min] window (EDGE-059). Values <= 0 return the 5-min default.
-// Values > 5min also return the 5-min default — callers can ONLY shorten
+// the [1s, 20min] window (EDGE-059). Values <= 0 return the 20-min default.
+// Values > 20min also return the 20-min default — callers can ONLY shorten
 // the TTL, preserving the security floor against malicious indefinite-hold
 // requests. Mirror of boundEdgeEvaluateWaitTimeout for the approval-TTL
 // field on edgeEvaluateRequest.
 func boundEdgeEvaluateApprovalTTL(requestedSec int) time.Duration {
-	const defaultApprovalTTL = 5 * time.Minute
+	const defaultApprovalTTL = 20 * time.Minute
 	const minApprovalTTL = time.Second
 	if requestedSec <= 0 {
 		return defaultApprovalTTL

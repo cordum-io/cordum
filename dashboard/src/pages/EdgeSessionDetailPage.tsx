@@ -21,7 +21,6 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import type { AgentActionEvent, EdgeDecision } from "@/api/types";
-import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { Skeleton } from "@/components/ui/Skeleton";
@@ -31,7 +30,6 @@ import {
   useEdgeSessionEvents,
   useEdgeExecutions,
 } from "@/hooks/useEdgeSessions";
-import { EdgeApprovalsDrawer } from "@/components/edge/EdgeApprovalsDrawer";
 import { EdgeArtifactsPanel } from "@/components/edge/EdgeArtifactsPanel";
 import { EdgeEventInspector } from "@/components/edge/EdgeEventInspector";
 import { MCPLane } from "@/components/timeline/lanes/MCPLane";
@@ -91,7 +89,6 @@ export default function EdgeSessionDetailPage() {
   const eventsQuery = useEdgeSessionEvents(sessionId, { limit: 500 });
   const executionsQuery = useEdgeExecutions({ sessionId });
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
-  const [approvalsOpen, setApprovalsOpen] = useState(false);
   const [filter, setFilter] = useState<Filter>({ executionId: "", decision: "", kind: "" });
   // EDGE-050 — UI surface for the 3-events-per-hook collapse. Default
   // hides pre-evaluation receipts (status=degraded agentd-receipt rows)
@@ -168,9 +165,12 @@ export default function EdgeSessionDetailPage() {
         <div className="flex flex-wrap items-center gap-2">
           <StatusBadge variant={statusVariant(session.status)}>{session.status}</StatusBadge>
           <StatusBadge variant="info">{session.policyMode}</StatusBadge>
-          <Button variant="outline" size="sm" onClick={() => setApprovalsOpen(true)}>
+          <Link
+            to="/approvals?lane=edge"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface-1 px-3 py-1.5 text-sm font-medium text-foreground hover:bg-surface-2 transition-colors"
+          >
             <Inbox className="h-3.5 w-3.5" /> Approvals
-          </Button>
+          </Link>
         </div>
       </header>
 
@@ -253,13 +253,6 @@ export default function EdgeSessionDetailPage() {
         event={selectedEvent}
         open={selectedEvent !== null}
         onClose={() => setSelectedEventId(null)}
-      />
-      <EdgeApprovalsDrawer
-        open={approvalsOpen}
-        onClose={() => setApprovalsOpen(false)}
-        sessionId={session.sessionId}
-        events={events}
-        currentPrincipalId={session.principalId}
       />
     </div>
   );
