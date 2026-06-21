@@ -116,7 +116,7 @@ jobs:
 
       - name: Scan image for vulnerabilities (Trivy)
         id: trivy
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: cordum/${{ matrix.name }}:verify
           format: sarif
@@ -228,7 +228,7 @@ jobs:
           docker stop dash-verify && docker rm dash-verify
 
       - name: Scan dashboard image for vulnerabilities (Trivy)
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: cordum/dashboard:verify
           format: sarif
@@ -341,7 +341,7 @@ jobs:
             "test -x /usr/local/bin/demo-quickstart-worker && echo 'binary ok'"
 
       - name: Scan demo-quickstart-worker image for vulnerabilities (Trivy)
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: cordum/demo-quickstart-worker:verify
           format: sarif
