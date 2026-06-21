@@ -279,7 +279,7 @@ jobs:
 
     - name: Comment Lighthouse scores on PR
       if: always() && steps.lhci.outcome != 'skipped'
-      uses: actions/github-script@v7
+      uses: actions/github-script@v9
       with:
         script: |
           const fs = require('fs');
