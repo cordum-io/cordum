@@ -69,7 +69,7 @@ jobs:
         with:
           go-version: '1.25'
       - name: Download simulator binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: cordum-gateway-sim
           path: sdk/conformance/simulator/bin/
@@ -111,7 +111,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e sdk/python
       - name: Download simulator binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: cordum-gateway-sim
           path: sdk/conformance/simulator/bin/
@@ -154,7 +154,7 @@ jobs:
         run: |
           (cd sdk/typescript && npm install --no-audit --no-fund && npm run build)
       - name: Download simulator binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: cordum-gateway-sim
           path: sdk/conformance/simulator/bin/
@@ -190,7 +190,7 @@ jobs:
         with:
           node-version: '20'
       - name: Download all harness JUnits
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: sdk/conformance/_ci_artifacts/
           pattern: conformance-*-junit*
