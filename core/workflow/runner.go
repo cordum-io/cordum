@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
+	"github.com/cordum/cordum/core/auth/servicetoken"
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
@@ -19,11 +19,13 @@ import (
 	"github.com/cordum/cordum/core/infra/health"
 	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	"github.com/cordum/cordum/core/licensing"
+	"github.com/cordum/cordum/core/policysign"
+	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	"log/slog"
 
 	"github.com/cordum/cordum/core/infra/registry"
-	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/schema"
+	"github.com/cordum/cordum/core/infra/store"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -130,6 +132,32 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 		WithRunLocker(jobStore)
 	if maxForEachItems > 0 {
 		engine = engine.WithMaxForEachItems(maxForEachItems)
+	}
+
+	// Wire control-plane service-token minting for internal cancel broadcasts.
+	// The workflow-engine binary loads NO signing key by default; minting is
+	// enabled only when one is configured. CORDUM_SDK_HANDSHAKE=enforce REQUIRES
+	// the key be deployed here (see deploy config); absent a key, cancels
+	// publish token-less, which a peer scheduler admits under off/warn.
+	if priv, kid, kerr := policysign.LoadPrivateKeyFromEnv(); kerr == nil {
+		engine = engine.WithServiceTokenMinter(func() (string, error) {
+			return servicetoken.MintService(priv, kid, servicetoken.IdentityWorkflow, time.Now())
+		})
+		slog.Info("workflow-engine service-token minting enabled", "kid", kid)
+	} else {
+		// Enforce mode with no signing key is a startup misconfiguration:
+		// every internal cancel would publish token-less and be rejected by
+		// enforce-mode schedulers, leaving cancelled/timed-out runs with
+		// still-running jobs. Fail fast instead of degrading silently.
+		// NOTE: the env value is compared locally instead of reusing
+		// scheduler.ParseHandshakeModeStrict — importing the scheduler
+		// package here creates a test-only import cycle (core/audit tests
+		// import core/workflow; scheduler imports core/audit). The scheduler
+		// remains the authority for strict mode validation at its own boot.
+		if mode := strings.ToLower(strings.TrimSpace(os.Getenv("CORDUM_SDK_HANDSHAKE"))); mode == "enforce" {
+			return fmt.Errorf("workflow-engine requires a control-plane service-token signing key when CORDUM_SDK_HANDSHAKE=enforce (internal cancel broadcasts would be rejected by enforce-mode schedulers): %w", kerr)
+		}
+		slog.Info("workflow-engine service-token minting disabled (no signing key configured); internal cancels are unauthenticated and dropped by peer schedulers only under CORDUM_SDK_HANDSHAKE=enforce", "reason", kerr)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

@@ -25,6 +25,19 @@ type TierDefaultSpec struct {
 	MaxConcurrentJobs  int64
 	RequestsPerSecond  int64
 	AuditRetentionDays int64
+	// BUG-016: every numeric limit enforce.go checks must be explicitly
+	// populated. Pre-BUG-016, an unset (0) numeric field was treated as
+	// "unlimited" — fragile because a misconfigured plan denying nothing
+	// is the opposite of design intent. checkNumericLimit now denies on
+	// 0; therefore each field MUST be set to Unlimited or a real cap.
+	MaxWorkflowSteps   int64
+	MaxActiveWorkflows int64
+	MaxTenants         int64
+	MaxSchemaCount     int64
+	MaxPromptChars     int64
+	MaxBodyBytes       int64
+	MaxArtifactBytes   int64
+	MaxPolicyBundles   int64
 	ApprovalMode       ApprovalMode
 	Audit              bool
 	RBAC               bool
@@ -45,15 +58,35 @@ var TierDefaults = map[Plan]TierDefaultSpec{
 		MaxConcurrentJobs:  3,
 		RequestsPerSecond:  500,
 		AuditRetentionDays: 7,
-		ApprovalMode:       ApprovalModeSingle,
-		Audit:              true,
-		BreakGlassAdmin:    true,
+		MaxWorkflowSteps:   Unlimited,
+		MaxActiveWorkflows: Unlimited,
+		MaxTenants:         Unlimited,
+		MaxSchemaCount:     Unlimited,
+		MaxPromptChars:     Unlimited,
+		MaxBodyBytes:       Unlimited,
+		MaxArtifactBytes:   Unlimited,
+		// Community = free/unlicensed tier: 0 custom policy bundles. 0 is an explicit
+		// cap (post-BUG-016 semantics); the loader skips custom bundles when
+		// bundleLimit==0. Keep 0 — Unlimited here guts free-tier gating (regressed in
+		// cdb31f93's BUG-016 sweep; see entitlements_test + tiers_test).
+		MaxPolicyBundles: 0,
+		ApprovalMode:     ApprovalModeSingle,
+		Audit:            true,
+		BreakGlassAdmin:  true,
 	},
 	PlanTeam: {
 		MaxWorkers:         25,
 		MaxConcurrentJobs:  25,
 		RequestsPerSecond:  2000,
 		AuditRetentionDays: 90,
+		MaxWorkflowSteps:   Unlimited,
+		MaxActiveWorkflows: Unlimited,
+		MaxTenants:         Unlimited,
+		MaxSchemaCount:     Unlimited,
+		MaxPromptChars:     Unlimited,
+		MaxBodyBytes:       Unlimited,
+		MaxArtifactBytes:   Unlimited,
+		MaxPolicyBundles:   Unlimited,
 		ApprovalMode:       ApprovalModeMulti,
 		Audit:              true,
 		BreakGlassAdmin:    true,
@@ -63,6 +96,14 @@ var TierDefaults = map[Plan]TierDefaultSpec{
 		MaxConcurrentJobs:  Unlimited,
 		RequestsPerSecond:  10000,
 		AuditRetentionDays: Unlimited,
+		MaxWorkflowSteps:   Unlimited,
+		MaxActiveWorkflows: Unlimited,
+		MaxTenants:         Unlimited,
+		MaxSchemaCount:     Unlimited,
+		MaxPromptChars:     Unlimited,
+		MaxBodyBytes:       Unlimited,
+		MaxArtifactBytes:   Unlimited,
+		MaxPolicyBundles:   Unlimited,
 		ApprovalMode:       ApprovalModeCustom,
 		Audit:              true,
 		RBAC:               true,
@@ -141,6 +182,14 @@ func applyTierDefaultSpec(target *Entitlements, spec TierDefaultSpec) {
 	setNamedIntField(target, spec.MaxConcurrentJobs, "MaxConcurrentJobs")
 	setNamedIntField(target, spec.RequestsPerSecond, "RequestsPerSecond", "RateLimitRPS", "MaxRequestsPerSecond", "RPS")
 	setNamedIntField(target, spec.AuditRetentionDays, "AuditRetentionDays")
+	setNamedIntField(target, spec.MaxWorkflowSteps, "MaxWorkflowSteps")
+	setNamedIntField(target, spec.MaxActiveWorkflows, "MaxActiveWorkflows")
+	setNamedIntField(target, spec.MaxTenants, "MaxTenants")
+	setNamedIntField(target, spec.MaxSchemaCount, "MaxSchemaCount", "MaxSchemas")
+	setNamedIntField(target, spec.MaxPromptChars, "MaxPromptChars")
+	setNamedIntField(target, spec.MaxBodyBytes, "MaxBodyBytes")
+	setNamedIntField(target, spec.MaxArtifactBytes, "MaxArtifactBytes")
+	setNamedIntField(target, spec.MaxPolicyBundles, "MaxPolicyBundles")
 	setNamedStringField(target, string(spec.ApprovalMode), "ApprovalMode")
 	setNamedBoolField(target, spec.Audit, "Audit")
 	setNamedBoolField(target, spec.RBAC, "RBAC", "AdvancedRBAC")

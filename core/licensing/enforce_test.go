@@ -137,6 +137,73 @@ func TestNumericEnforcementChecksAcrossTiers(t *testing.T) {
 	}
 }
 
+// TestWorkflowChecksHonorLimitsMapOverride locks task-db35c079: CheckWorkflowSteps
+// and CheckActiveWorkflows now route through effectiveLimit(), so an
+// Entitlements.Limits override applies when the struct field is unset (0) — parity
+// with the sibling checks (CheckPolicyBundleLimit, …). Mutation guard: with the
+// pre-fix code (struct field read directly), a 0 field denies all positive usage
+// (BUG-016), so the at-limit assertion below would fail — i.e. reverting the fix
+// breaks this test.
+func TestWorkflowChecksHonorLimitsMapOverride(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		check    func(int64, Entitlements) *TierLimitError
+		limitKey string
+		allowed  int64
+	}{
+		{name: "workflow steps", check: CheckWorkflowSteps, limitKey: "max_workflow_steps", allowed: 7},
+		{name: "active workflows", check: CheckActiveWorkflows, limitKey: "max_active_workflows", allowed: 3},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			// Struct field left 0 so effectiveLimit must consult the Limits map.
+			ent := Entitlements{Limits: map[string]int64{tc.limitKey: tc.allowed}}
+
+			if err := tc.check(tc.allowed, ent); err != nil {
+				t.Fatalf("at limit (%d) should pass via Limits override for %s: %v", tc.allowed, tc.limitKey, err)
+			}
+			over := tc.allowed + 1
+			err := tc.check(over, ent)
+			if err == nil {
+				t.Fatalf("over limit (%d) should fail via Limits override for %s", over, tc.limitKey)
+			}
+			if err.Limit != tc.limitKey {
+				t.Fatalf("Limit = %q, want %q", err.Limit, tc.limitKey)
+			}
+			if err.Allowed != tc.allowed {
+				t.Fatalf("Allowed = %d, want %d", err.Allowed, tc.allowed)
+			}
+			if err.Current != over {
+				t.Fatalf("Current = %d, want %d", err.Current, over)
+			}
+		})
+	}
+}
+
+// TestWorkflowChecksStructFieldTakesPriorityOverLimitsMap guards the ADDITIVE
+// contract: a set struct field still wins over a Limits-map entry (effectiveLimit
+// returns the field when non-zero), so the task-60dc3610 struct-field path is not
+// replaced — only supplemented.
+func TestWorkflowChecksStructFieldTakesPriorityOverLimitsMap(t *testing.T) {
+	t.Parallel()
+
+	ent := Entitlements{
+		MaxWorkflowSteps:   5,
+		MaxActiveWorkflows: 5,
+		Limits:             map[string]int64{"max_workflow_steps": 99, "max_active_workflows": 99},
+	}
+	if err := CheckWorkflowSteps(6, ent); err == nil {
+		t.Fatal("CheckWorkflowSteps(6) must fail at struct-field cap 5, not the Limits map's 99")
+	}
+	if err := CheckActiveWorkflows(6, ent); err == nil {
+		t.Fatal("CheckActiveWorkflows(6) must fail at struct-field cap 5, not the Limits map's 99")
+	}
+}
+
 func TestCheckApprovalMode(t *testing.T) {
 	t.Parallel()
 
@@ -206,4 +273,82 @@ func maxInt64(a, b int64) int64 {
 		return a
 	}
 	return b
+}
+
+// BUG-016 — allowed=0 must DENY any positive usage; Unlimited is the only
+// "no cap" sentinel. Zero usage against zero cap still passes (current<=allowed).
+func TestCheckNumericLimit_ZeroAllowedDeniesPositive(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name        string
+		current     int64
+		allowed     int64
+		shouldAllow bool
+	}{
+		{"zero_cap_denies_positive", 1, 0, false},
+		{"zero_cap_allows_zero_usage", 0, 0, true},
+		{"unlimited_allows_anything", 5, Unlimited, true},
+		{"under_cap_allowed", 5, 10, true},
+		{"at_cap_allowed", 10, 10, true},
+		{"over_cap_denied", 11, 10, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkNumericLimit("test", tc.current, tc.allowed)
+			if tc.shouldAllow {
+				if err != nil {
+					t.Fatalf("want allow (nil), got error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("want deny, got nil")
+			}
+		})
+	}
+}
+
+// BUG-016 regression lock: every Plan in DefaultEntitlements must populate
+// every numeric limit field to Unlimited (or a real cap). An accidental 0
+// would now deny instead of "implicitly unlimited" — this test fires before
+// that misconfiguration ships.
+func TestDefaultEntitlements_EveryNumericFieldAllowsPositiveUsage(t *testing.T) {
+	t.Parallel()
+	const probe int64 = 1
+	checks := []struct {
+		name string
+		fn   func(int64, Entitlements) *TierLimitError
+	}{
+		{"CheckWorkerLimit", CheckWorkerLimit},
+		{"CheckJobConcurrency", CheckJobConcurrency},
+		{"CheckWorkflowSteps", CheckWorkflowSteps},
+		{"CheckActiveWorkflows", CheckActiveWorkflows},
+		{"CheckPolicyBundleLimit", CheckPolicyBundleLimit},
+		{"CheckSchemaCount", CheckSchemaCount},
+		{"CheckRateLimitRPS", CheckRateLimitRPS},
+		{"CheckArtifactSize", CheckArtifactSize},
+	}
+	for _, plan := range []Plan{PlanCommunity, PlanTeam, PlanEnterprise} {
+		ent := DefaultEntitlements(plan)
+		for _, c := range checks {
+			t.Run(string(plan)+"/"+c.name, func(t *testing.T) {
+				err := c.fn(probe, ent)
+				// MaxPolicyBundles is a GATED feature, not a resource limit: the
+				// Community (free) tier is intentionally capped at 0 custom policy
+				// bundles (monetization gate). 0 here is DELIBERATE — enforced by the
+				// loader's policyBundleLimit() Community branch AND CheckPolicyBundleLimit
+				// — not the "accidental unset = deny" misconfiguration this invariant
+				// guards against. So for this one combo positive usage MUST be denied.
+				if plan == PlanCommunity && c.name == "CheckPolicyBundleLimit" {
+					if err == nil {
+						t.Fatalf("plan=community check=CheckPolicyBundleLimit probe=1: expected DENY (free tier is gated to 0 custom policy bundles), got nil")
+					}
+					return
+				}
+				if err != nil {
+					t.Fatalf("plan=%s check=%s probe=1 returned %v — limit field is unset (0 = deny); set Unlimited or a positive cap in TierDefaults", plan, c.name, err)
+				}
+			})
+		}
+	}
 }

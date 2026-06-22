@@ -367,6 +367,9 @@ type errorMemStore struct{}
 func (e *errorMemStore) PutContext(context.Context, string, []byte) error {
 	return fmt.Errorf("store unavailable")
 }
+func (e *errorMemStore) DeleteContext(context.Context, string) error {
+	return fmt.Errorf("store unavailable")
+}
 func (e *errorMemStore) GetContext(context.Context, string) ([]byte, error) {
 	return nil, fmt.Errorf("store unavailable")
 }

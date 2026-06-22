@@ -16,6 +16,7 @@ import (
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/mcp"
 )
 
@@ -642,6 +643,79 @@ func TestMCPAuthRejectsCrossTenantRequest(t *testing.T) {
 
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 for cross-tenant request, got %d", rr.Code)
+	}
+}
+
+func TestMCPAuthRejectsNonFrontedTenantWhenUpstreamIsDefaultScoped(t *testing.T) {
+	t.Parallel()
+	s := &server{
+		auth: mcpTestAuth{apiKey: "test-key", tenant: "tenant-b"},
+	}
+	s.setMCPRuntime(&mcpRuntimeState{
+		frontedUpstream: "cordum.monday",
+		frontedTenant:   "default",
+	})
+	t.Cleanup(func() { gatewayMCPState.Delete(s) })
+
+	handler := s.mcpAuth(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("handler must not run for a tenant that would be proxied through default-tenant upstream credentials")
+	})
+	req := httptest.NewRequest(http.MethodPost, "/mcp/message", nil)
+	req.Header.Set("X-API-Key", "test-key")
+	req.Header.Set("X-Tenant-ID", "tenant-b")
+	rr := httptest.NewRecorder()
+	handler(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for non-fronted tenant, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestMCPAuthStashesCoreCallMetadataForHTTPTransport(t *testing.T) {
+	t.Parallel()
+	s := &server{
+		auth: mcpTestAuth{apiKey: "test-key", tenant: "default"},
+	}
+	handler := s.mcpAuth(func(w http.ResponseWriter, r *http.Request) {
+		meta, ok := mcp.CallMetadataFromContext(r.Context())
+		if !ok {
+			t.Fatal("mcp.CallMetadata missing from request context")
+		}
+		if meta.Tenant != "default" || meta.Principal != "tester" || meta.AgentID != "agent-alpha" {
+			t.Fatalf("unexpected call metadata: %+v", meta)
+		}
+		if meta.SessionID != "sess-alpha" || meta.ExecutionID != "mcp-sess-alpha" {
+			t.Fatalf("unexpected session/execution metadata: %+v", meta)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	req := httptest.NewRequest(http.MethodPost, "/mcp/message", nil)
+	req.Header.Set("X-API-Key", "test-key")
+	req.Header.Set("X-Tenant-ID", "default")
+	req.Header.Set("X-Agent-Id", "agent-alpha")
+	req.Header.Set("X-MCP-Session-ID", "sess-alpha")
+	rr := httptest.NewRecorder()
+	handler(rr, req)
+
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestEnsureMCPHTTPTraceParentsCreatesEdgeParents(t *testing.T) {
+	t.Parallel()
+	backend := newTestRedisBackend(t)
+	client := newSharedTestRedisClient(t, backend)
+	s := &server{edgeStore: edge.NewRedisStoreFromClient(client)}
+
+	if err := s.ensureMCPHTTPTraceParents(context.Background(), "default", "agent-alpha", "tester", "sess-alpha", "mcp-sess-alpha"); err != nil {
+		t.Fatalf("ensureMCPHTTPTraceParents: %v", err)
+	}
+	if _, ok, err := s.edgeStore.GetSession(context.Background(), "default", "sess-alpha"); err != nil || !ok {
+		t.Fatalf("GetSession ok=%v err=%v", ok, err)
+	}
+	if got, ok, err := s.edgeStore.GetExecution(context.Background(), "default", "mcp-sess-alpha"); err != nil || !ok || got.SessionID != "sess-alpha" {
+		t.Fatalf("GetExecution got=%+v ok=%v err=%v", got, ok, err)
 	}
 }
 

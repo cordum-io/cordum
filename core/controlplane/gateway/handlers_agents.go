@@ -18,7 +18,12 @@ import (
 const agentIdentityFeature = "agent_identity"
 
 type createAgentRequest struct {
-	Name                     string   `json:"name"`
+	Name string `json:"name"`
+	// AgentID, when set, registers this identity for an existing worker. The
+	// server links worker_id -> identity (LinkWorker) so audit/scheduler
+	// resolution via GetByWorkerID surfaces the human label instead of the raw
+	// agent_id (#314). Empty preserves the prior behaviour (unlinked identity).
+	AgentID                  string   `json:"agent_id,omitempty"`
 	Description              string   `json:"description,omitempty"`
 	Owner                    string   `json:"owner"`
 	Team                     string   `json:"team,omitempty"`
@@ -125,6 +130,17 @@ func (s *server) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// When registering an identity for an existing worker, refuse if that
+	// worker is already linked — otherwise LinkWorker below would overwrite
+	// the global worker->identity mapping and orphan the prior identity.
+	workerID := strings.TrimSpace(req.AgentID)
+	if workerID != "" {
+		if existing, lookupErr := s.agentIdentityStore.GetByWorkerID(r.Context(), workerID); lookupErr == nil && existing != nil {
+			writeJSONError(w, http.StatusConflict, errorCodeAgentWorkerConflict, "worker is already linked to an agent identity")
+			return
+		}
+	}
+
 	identity := store.AgentIdentity{
 		TenantID:                 tenant,
 		Name:                     strings.TrimSpace(req.Name),
@@ -146,6 +162,19 @@ func (s *server) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, errorCodeAgentRequestInvalid, err.Error())
 		return
+	}
+
+	// Link the worker so GetByWorkerID-based resolution (audit enrichment,
+	// scheduler, MCP/job principals) maps this worker's agent_id to the new
+	// identity. Without this the identity exists but audit rows still fall
+	// back to the raw agent_id — the exact bug #314 set out to fix. The
+	// identity is already persisted, so surface a link failure rather than
+	// reporting a misleading success.
+	if workerID != "" {
+		if linkErr := s.agentIdentityStore.LinkWorker(r.Context(), created.ID, workerID); linkErr != nil {
+			writeInternalError(w, r, "link worker to agent identity", linkErr)
+			return
+		}
 	}
 
 	slog.Info("agent identity created",
@@ -311,6 +340,18 @@ func (s *server) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeInternalError(w, r, "get agent identity", err)
 		return
+	}
+	if identity == nil {
+		// Fallback: `id` may be a worker id linked to an identity (e.g. a
+		// heartbeating worker registered via the dashboard empty-state flow,
+		// #314). Resolve through the worker link, then re-apply the tenant
+		// scope that GetByWorkerID does not enforce — preserving the
+		// existence-oracle hardening of the direct lookup above.
+		if linked, linkErr := s.agentIdentityStore.GetByWorkerID(r.Context(), id); linkErr == nil && linked != nil {
+			if tenant == "" || strings.TrimSpace(linked.TenantID) == tenant {
+				identity = linked
+			}
+		}
 	}
 	if identity == nil {
 		writeJSONError(w, http.StatusNotFound, errorCodeAgentNotFound, "agent identity not found")

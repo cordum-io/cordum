@@ -139,7 +139,7 @@ jobs:
           else
             echo "skip=false" >>"$GITHUB_OUTPUT"
           fi
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         if: steps.have_secrets.outputs.skip == 'false'
         with:
           pattern: bin-*-darwin-${{ matrix.target.goarch }}
@@ -196,7 +196,7 @@ jobs:
           } else {
             "skip=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           }
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         if: steps.have_secrets.outputs.skip == 'false'
         with:
           pattern: bin-*-windows-amd64
@@ -244,7 +244,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Collect (signed if available, else unsigned cross-compiled)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts/
       - name: Stage binaries
@@ -343,7 +343,7 @@ jobs:
     if: ${{ !contains(github.ref, '-rc') }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: release-bundle
           path: release/

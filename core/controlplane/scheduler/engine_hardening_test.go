@@ -677,6 +677,18 @@ type fenceRecordingStore struct {
 
 	obsMu  sync.Mutex
 	writes []fenceWrite
+
+	agentMu   sync.Mutex
+	agentInfo map[string]fenceAgentInfo
+}
+
+// fenceAgentInfo captures a persisted SetAgentInfo write for the live-fence
+// assertion. fakeJobStore has no agent-info storage of its own, so the test
+// double records it here.
+type fenceAgentInfo struct {
+	agentID  string
+	name     string
+	riskTier string
 }
 
 func (s *fenceRecordingStore) RenewLock(ctx context.Context, key, token string, ttl time.Duration) error {
@@ -727,6 +739,30 @@ func (s *fenceRecordingStore) SetOutputDecision(ctx context.Context, jobID strin
 	return s.fakeJobStore.SetOutputDecision(ctx, jobID, record)
 }
 
+// SetAgentInfo satisfies the optional interface that setAgentInfoFromWorker
+// type-asserts against. fakeJobStore does not implement it, so the helper would
+// otherwise skip the store write entirely and escape the fence regression
+// matrix. Recording it here covers the fifth CRD-14 write helper.
+func (s *fenceRecordingStore) SetAgentInfo(ctx context.Context, jobID, agentID, name, riskTier string) error {
+	if err := s.observe("SetAgentInfo", ctx); err != nil {
+		return err
+	}
+	s.agentMu.Lock()
+	if s.agentInfo == nil {
+		s.agentInfo = make(map[string]fenceAgentInfo)
+	}
+	s.agentInfo[jobID] = fenceAgentInfo{agentID: agentID, name: name, riskTier: riskTier}
+	s.agentMu.Unlock()
+	return nil
+}
+
+func (s *fenceRecordingStore) agentInfoFor(jobID string) (fenceAgentInfo, bool) {
+	s.agentMu.Lock()
+	defer s.agentMu.Unlock()
+	info, ok := s.agentInfo[jobID]
+	return info, ok
+}
+
 // TestLockFence_StateHelpersHonorFence is the CRD-14 regression test: once
 // lock renewal is abandoned and the fence context is cancelled, the engine
 // state helpers must not perform store writes with a live context. If a
@@ -734,14 +770,21 @@ func (s *fenceRecordingStore) SetOutputDecision(ctx context.Context, jobID strin
 // write succeeds after lock loss and this test fails.
 func TestLockFence_StateHelpersHonorFence(t *testing.T) {
 	store := &fenceRecordingStore{fakeJobStore: newFakeJobStore(), failRenew: true}
-	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil)
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil).
+		WithAgentResolver(NewAgentResolver(nil, nil))
 
 	const jobID = "job-fence-helpers"
 	ttl := 150 * time.Millisecond // renewal every 50ms; abandoned on 3rd failure
 
 	err := engine.withJobLock(jobID, ttl, func(lockCtx context.Context) error {
 		// Wait for the fence to drop (renewal abandonment cancels lockCtx).
-		<-lockCtx.Done()
+		// Bounded so a regression in abandonment signaling fails the test
+		// fast instead of hanging the suite until the global timeout.
+		select {
+		case <-lockCtx.Done():
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for lock fence cancellation")
+		}
 
 		// Post-abandonment store writes via the state helpers. All of them
 		// must derive from the fenced context and therefore be rejected.
@@ -749,6 +792,7 @@ func TestLockFence_StateHelpersHonorFence(t *testing.T) {
 		_ = engine.setResultPtr(lockCtx, jobID, "res:fence")
 		engine.setWorkerID(lockCtx, jobID, "worker-fence")
 		engine.persistOutputSafety(lockCtx, jobID, OutputSafetyRecord{Decision: OutputQuarantine})
+		engine.setAgentInfoFromWorker(lockCtx, jobID, "worker-fence")
 		return nil
 	})
 	if !errors.Is(err, errLockAbandoned) {
@@ -756,8 +800,8 @@ func TestLockFence_StateHelpersHonorFence(t *testing.T) {
 	}
 
 	obs := store.observations()
-	if len(obs) != 4 {
-		t.Fatalf("expected 4 write attempts, got %d: %+v", len(obs), obs)
+	if len(obs) != 5 {
+		t.Fatalf("expected 5 write attempts, got %d: %+v", len(obs), obs)
 	}
 	for _, w := range obs {
 		if w.ctxErr == nil {
@@ -784,6 +828,9 @@ func TestLockFence_StateHelpersHonorFence(t *testing.T) {
 	if outputWritten {
 		t.Error("output safety record was persisted after lock abandonment")
 	}
+	if _, agentWritten := store.agentInfoFor(jobID); agentWritten {
+		t.Error("agent info was persisted after lock abandonment")
+	}
 }
 
 // TestLockFence_StateHelpersWorkWithLiveFence guards against over-rotation:
@@ -791,7 +838,8 @@ func TestLockFence_StateHelpersHonorFence(t *testing.T) {
 // (no false fail-closed behavior on the happy path).
 func TestLockFence_StateHelpersWorkWithLiveFence(t *testing.T) {
 	store := &fenceRecordingStore{fakeJobStore: newFakeJobStore(), failRenew: false}
-	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil)
+	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil).
+		WithAgentResolver(NewAgentResolver(nil, nil))
 
 	const jobID = "job-fence-live"
 	err := engine.withJobLock(jobID, jobLockTTL, func(lockCtx context.Context) error {
@@ -803,6 +851,7 @@ func TestLockFence_StateHelpersWorkWithLiveFence(t *testing.T) {
 		}
 		engine.setWorkerID(lockCtx, jobID, "worker-live")
 		engine.persistOutputSafety(lockCtx, jobID, OutputSafetyRecord{Decision: OutputAllow})
+		engine.setAgentInfoFromWorker(lockCtx, jobID, "worker-live")
 		return nil
 	})
 	if err != nil {
@@ -810,8 +859,8 @@ func TestLockFence_StateHelpersWorkWithLiveFence(t *testing.T) {
 	}
 
 	obs := store.observations()
-	if len(obs) != 4 {
-		t.Fatalf("expected 4 write attempts, got %d: %+v", len(obs), obs)
+	if len(obs) != 5 {
+		t.Fatalf("expected 5 write attempts, got %d: %+v", len(obs), obs)
 	}
 	for _, w := range obs {
 		if w.ctxErr != nil {
@@ -832,5 +881,14 @@ func TestLockFence_StateHelpersWorkWithLiveFence(t *testing.T) {
 	}
 	if !outputWritten || rec.Decision != OutputAllow {
 		t.Errorf("output record = %+v (written=%v), want Decision=%q", rec, outputWritten, OutputAllow)
+	}
+
+	// The bare AgentResolver resolves any worker to the "unlinked" sentinel,
+	// so the write should land with that identity under a healthy fence.
+	agent, agentWritten := store.agentInfoFor(jobID)
+	if !agentWritten {
+		t.Error("agent info was not persisted under a healthy fence")
+	} else if agent.agentID != agentCacheUnlinked {
+		t.Errorf("agent id = %q, want %q", agent.agentID, agentCacheUnlinked)
 	}
 }

@@ -79,6 +79,17 @@ func main() {
 	}
 
 	runtime.Register(agent, "job.hello-pack.echo", handler)
+	// The scheduler dispatches via either the topic subject above OR this
+	// per-worker direct subject (worker.<id>.jobs) depending on whether it
+	// targeted this specific worker. Hello-worker has ONE handler type, so
+	// binding the same `handler` to both subjects works.
+	//
+	// ⚠️ Do NOT copy this line verbatim into a multi-topic worker — a typed
+	// handler on the direct subject will silently mis-route every job whose
+	// topic differs from its own (the same `handler` runs regardless of
+	// JobRequest.Topic). For workers that register more than one topic, use
+	// a topic-aware dispatcher on the direct subject — see
+	// examples/multi-topic-worker-go/ for the canonical pattern.
 	runtime.Register(agent, runtime.DirectSubject(workerID), handler)
 
 	if err := agent.Start(); err != nil {

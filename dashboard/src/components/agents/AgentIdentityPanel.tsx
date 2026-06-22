@@ -4,17 +4,22 @@
  * Was a standalone route at /agents/identity/:id until the v2.5 IA cut
  * folded it into the agent detail surface.
  */
+import { useState } from "react";
 import { motion } from "framer-motion";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { SkeletonCard } from "@/components/ui/Skeleton";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { Button } from "@/components/ui/Button";
 import {
   Shield, Fingerprint, Tag, Clock, AlertTriangle, Activity, FileQuestion,
 } from "lucide-react";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import { ApiError } from "@/api/client";
 import { useAgentIdentity, useAgentStats } from "@/hooks/useAgentIdentities";
+import { useWorker } from "@/hooks/useWorkers";
+import { useConfigStore } from "@/state/config";
+import AgentIdentityCreateForm from "./AgentIdentityCreateForm";
 
 const riskTierConfig: Record<string, { color: string; bg: string; border: string }> = {
   low:      { color: "text-emerald-400", bg: "bg-emerald-500/10", border: "border-emerald-500/30" },
@@ -53,15 +58,52 @@ interface AgentIdentityPanelProps {
 export default function AgentIdentityPanel({ agentId }: AgentIdentityPanelProps) {
   const { data: agent, isLoading, isError, error } = useAgentIdentity(agentId);
   const { data: stats, isLoading: statsLoading, isError: statsError } = useAgentStats(agentId);
+  // Heartbeat data for the empty-state pre-fill. Loaded eagerly so the form
+  // can pop instantly when the operator clicks "Create identity" — no extra
+  // round trip. Falls back gracefully if the worker isn't heartbeating.
+  const { data: heartbeat } = useWorker(agentId);
+  const defaultOwner = useConfigStore((s) => s.principalId);
+  const [showCreateForm, setShowCreateForm] = useState(false);
 
   if (isError) {
     if (error instanceof ApiError && error.status === 404) {
+      // Empty state with an actionable CTA. Previously this was a text-only
+      // placeholder pointing operators at "the /agents catalog or cordumctl"
+      // — they'd leave the page, lose context, and meanwhile every audit
+      // row for this worker fell back to the raw agent_id (issue #314).
+      // Now: explanation + a button that pre-fills from the worker's
+      // heartbeat (when available) and POSTs in place.
       return (
-        <EmptyState
-          icon={<FileQuestion className="w-6 h-6" />}
-          title="No identity profile"
-          description="This worker is online but does not have a registered Agent Identity. Identities are created via the /agents catalog or the cordumctl agents identity create CLI."
-        />
+        <div className="space-y-4">
+          <EmptyState
+            icon={<FileQuestion className="w-6 h-6" />}
+            title="No identity registered for this agent"
+            description="This worker is reporting heartbeats but has no Agent Identity record. Audit rows for its jobs will show the raw agent_id as the label instead of a human-readable agent name. Register an identity below to fix the attribution surface."
+            action={
+              !showCreateForm ? (
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={() => setShowCreateForm(true)}
+                  data-testid="agent-identity-create-button"
+                >
+                  Create identity
+                </Button>
+              ) : undefined
+            }
+          />
+          {showCreateForm && (
+            <div className="instrument-card">
+              <AgentIdentityCreateForm
+                agentId={agentId}
+                heartbeat={heartbeat ?? undefined}
+                defaultOwner={defaultOwner || undefined}
+                onCreated={() => setShowCreateForm(false)}
+                onCancel={() => setShowCreateForm(false)}
+              />
+            </div>
+          )}
+        </div>
       );
     }
     return <ErrorBanner message={error instanceof Error ? error.message : "Failed to load agent identity"} />;

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/policysign"
 )
 
@@ -35,6 +36,8 @@ func writePolicyFile(t *testing.T, dir, name string, data []byte) string {
 func clearFileLoaderEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv(policysign.EnvStrictMode, "")
+	t.Setenv(env.EnvProduction, "")
+	t.Setenv(env.EnvMode, "")
 	t.Setenv(envLegacyRequireSig, "")
 	t.Setenv("SAFETY_POLICY_PUBLIC_KEY", "")
 	t.Setenv("SAFETY_POLICY_PUBLIC_KEY_ID", "")
@@ -270,5 +273,40 @@ func TestResolveFileLoaderMode(t *testing.T) {
 	t.Setenv(policysign.EnvStrictMode, "off")
 	if got := resolveFileLoaderMode(); got != policysign.ModeOff {
 		t.Errorf("explicit off wins, got %v", got)
+	}
+}
+
+// BUG-001: an unrecognized CORDUM_POLICY_STRICT used to silently downgrade to
+// ModeWarn even in production. After the fix, production fails closed
+// (ModeEnforce) while non-production keeps the legacy lenient fallback.
+func TestResolveFileLoaderMode_InvalidValue_ProdFailsClosed(t *testing.T) {
+	cases := []struct {
+		name   string
+		strict string
+	}{
+		{"typo", "enforse"},
+		{"mixed_case_punctuation", "Enforce!"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name+"_production_enforces", func(t *testing.T) {
+			clearFileLoaderEnv(t)
+			t.Setenv(policysign.EnvStrictMode, tc.strict)
+			t.Setenv(env.EnvProduction, "true")
+			t.Setenv(env.EnvMode, "")
+
+			if got := resolveFileLoaderMode(); got != policysign.ModeEnforce {
+				t.Fatalf("invalid strict %q in production: got %v, want ModeEnforce", tc.strict, got)
+			}
+		})
+		t.Run(tc.name+"_non_production_warns", func(t *testing.T) {
+			clearFileLoaderEnv(t)
+			t.Setenv(policysign.EnvStrictMode, tc.strict)
+			t.Setenv(env.EnvProduction, "")
+			t.Setenv(env.EnvMode, "")
+
+			if got := resolveFileLoaderMode(); got != policysign.ModeWarn {
+				t.Fatalf("invalid strict %q outside production: got %v, want ModeWarn", tc.strict, got)
+			}
+		})
 	}
 }

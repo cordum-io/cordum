@@ -6,6 +6,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -517,6 +518,20 @@ type ActionDescriptor struct {
 	// untrusted prose ("approved by CFO") and MUST NOT pass on its own.
 	// ApprovalRef is looked up server-side against Cordum approval records.
 	ApprovalClaim *ActionApprovalClaim `json:"approval_claim,omitempty"`
+
+	// SessionTaint cites a prompt-injection finding detected in a PRIOR tool-call
+	// result within the same session. Set pre-dispatch by the MCP policy path when
+	// the session is tainted (content-aware); nil = no taint, backward-compatible
+	// and mirroring the optional TargetResource/ApprovalClaim pointers above. The
+	// payload lets a gate cite the actual injected content; the trigger flag rides
+	// in RiskTags as RiskTagSessionPromptInjection.
+	SessionTaint *ActionSessionTaint `json:"session_taint,omitempty"`
+
+	// TaintLookupFailed is set pre-dispatch when the MCP session-taint lookup
+	// errored for this action. It lets an action gate fail closed for
+	// destructive actions while keeping the zero value backward-compatible with
+	// today's fail-open behavior.
+	TaintLookupFailed bool `json:"taint_lookup_failed,omitempty"`
 }
 
 // ActionTargetResource identifies an object referenced by an action. OwnerTenant
@@ -535,6 +550,27 @@ type ActionTargetResource struct {
 type ActionApprovalClaim struct {
 	ClaimText   string `json:"claim_text,omitempty"`
 	ApprovalRef string `json:"approval_ref,omitempty"`
+}
+
+// RiskTagSessionPromptInjection is the RiskTags entry stamped onto an
+// ActionDescriptor when the caller's session has been tainted by a
+// prompt-injection finding detected in a PRIOR tool-call result. Action gates
+// treat it as the trigger to deny destructive actions content-awarely; the
+// citation payload travels in ActionDescriptor.SessionTaint.
+const RiskTagSessionPromptInjection = "session:prompt-injection"
+
+// ActionSessionTaint is the citation payload describing a prompt-injection
+// finding that tainted the session. It is attached to a destructive
+// ActionDescriptor (alongside RiskTagSessionPromptInjection) so a gate's DENY
+// can cite the actual injected content rather than relying on a metadata rule.
+// All fields are server-derived from the scanner; Snippet is bounded and
+// control-char stripped before it is set (it is attacker-controlled board text).
+type ActionSessionTaint struct {
+	Pattern    string    `json:"pattern,omitempty"`     // scanner pattern/label that matched
+	Snippet    string    `json:"snippet,omitempty"`     // bounded, sanitized excerpt of the injected content
+	SourceTool string    `json:"source_tool,omitempty"` // tool whose result carried the injection
+	Severity   string    `json:"severity,omitempty"`    // scanner severity (e.g. "high")
+	DetectedAt time.Time `json:"detected_at,omitempty"` // when the taint was first detected
 }
 
 // ActionArgsMaxSerializedBytes caps the wire size of ActionDescriptor.Args.
@@ -583,7 +619,7 @@ func ParseSafetyPolicy(data []byte) (*SafetyPolicy, error) {
 		return nil, nil
 	}
 	if err := validateConfigSchema("safety policy", safetyPolicySchemaFile, data); err != nil {
-		return nil, err
+		return nil, enrichSafetyPolicyValidationError(err)
 	}
 	var policy SafetyPolicy
 	if err := yaml.Unmarshal(data, &policy); err != nil {

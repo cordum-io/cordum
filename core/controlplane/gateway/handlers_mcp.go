@@ -17,6 +17,7 @@ import (
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/mcp"
@@ -55,6 +56,8 @@ type mcpRuntimeState struct {
 	approvalHandler  *mcpApprovalHandler
 	sweeperStop      chan struct{}
 	stopOnce         sync.Once
+	frontedUpstream  string
+	frontedTenant    string
 }
 
 var gatewayMCPState sync.Map // map[*server]*mcpRuntimeState
@@ -241,7 +244,23 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 	if err := mcp.RegisterAllPrompts(promptRegistry); err != nil {
 		slog.Error("mcp prompt registration failed; prompts/list will be empty", "error", err)
 	}
-	mcpServer := mcp.NewServer(transport, toolRegistry, resourceRegistry, mcp.ServerConfig{
+	// EDGE-101 upstream fronting: when a usable remote MCP upstream is registered
+	// for the tenant (e.g. cordum.monday), the gateway's /mcp endpoint proxies THAT
+	// upstream's tools/list + tools/call through the policy gate (gate server-name =
+	// the upstream's name) instead of the built-in tool registry. Opt-in by
+	// registration; fail-closed to the built-in registry when no usable upstream is
+	// configured or the secret/endpoint is unresolved. The fronted upstream is
+	// intentionally scoped to the tenant used for resolution below; mcpAuth refuses
+	// other tenants rather than proxying them with default-tenant upstream credentials.
+	toolService := mcp.ToolService(toolRegistry)
+	upstreamServerName := ""
+	upstreamTenant := ""
+	if frontTS, frontName := s.buildFrontedUpstreamToolService(context.Background(), "default"); frontTS != nil {
+		toolService = frontTS
+		upstreamServerName = frontName
+		upstreamTenant = "default"
+	}
+	mcpServer := mcp.NewServer(transport, toolService, resourceRegistry, mcp.ServerConfig{
 		Name:            "cordum",
 		Version:         buildinfo.Version,
 		ProtocolVersion: mcp.DefaultProtocolVersion,
@@ -260,7 +279,7 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 	//                                must read false in this branch.
 	if cfg.PolicyGateEnabled {
 		var skipReason string
-		mcpServer, skipReason = s.attachMCPPolicyDeps(mcpServer, approvalGate)
+		mcpServer, skipReason = s.attachMCPPolicyDepsNamed(mcpServer, approvalGate, upstreamServerName)
 		if mcpServer.HasPolicyGate() {
 			slog.Info("mcp.policy_gate wired",
 				"server_name", mcpServer.PolicyServerName(),
@@ -300,6 +319,8 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 		approvalStore:    approvalStore,
 		approvalHandler:  approvalHandler,
 		sweeperStop:      sweeperStop,
+		frontedUpstream:  upstreamServerName,
+		frontedTenant:    upstreamTenant,
 	}
 	s.setMCPRuntime(state)
 	go func() {
@@ -352,6 +373,18 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 				return
 			}
 		}
+		if runtime := s.getMCPRuntime(); runtime != nil && runtime.frontedUpstream != "" {
+			frontedTenant := strings.TrimSpace(runtime.frontedTenant)
+			if frontedTenant != "" && tenantID != frontedTenant {
+				slog.Warn("mcp upstream fronting refused for tenant",
+					"tenant", tenantID,
+					"fronted_tenant", frontedTenant,
+					"upstream", runtime.frontedUpstream,
+				)
+				writeErrorJSON(w, http.StatusForbidden, "mcp upstream fronting is not configured for tenant")
+				return
+			}
+		}
 		// Stash MCP call metadata so the approval gate (wired into the
 		// ToolRegistry) can evaluate per-tool approval policy without
 		// knowing about gateway identity types. Tenant + principal come
@@ -362,12 +395,30 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		if agentID == "" {
 			agentID = strings.TrimSpace(authCtx.PrincipalID)
 		}
+		principalID := strings.TrimSpace(authCtx.PrincipalID)
+		if principalID == "" {
+			principalID = agentID
+		}
 		mcpCtx := WithMCPCallMetadata(r.Context(), MCPCallMetadata{
 			Tenant:            tenantID,
 			AgentID:           agentID,
-			Principal:         strings.TrimSpace(authCtx.PrincipalID),
+			Principal:         principalID,
 			RequesterIdentity: submitterIdentity(r),
 		})
+		if transportSessionID := strings.TrimSpace(r.Header.Get("X-MCP-Session-ID")); transportSessionID != "" {
+			executionID := "mcp-" + transportSessionID
+			if err := s.ensureMCPHTTPTraceParents(r.Context(), tenantID, agentID, principalID, transportSessionID, executionID); err != nil {
+				writeErrorJSON(w, http.StatusInternalServerError, "mcp trace unavailable")
+				return
+			}
+			mcpCtx = mcp.WithCallMetadata(mcpCtx, mcp.CallMetadata{
+				Tenant:      tenantID,
+				Principal:   principalID,
+				AgentID:     agentID,
+				SessionID:   transportSessionID,
+				ExecutionID: executionID,
+			})
+		}
 		// Also stash tenant for the mcp.tool_called audit hook, which
 		// reads ctx via mcp.TenantFromContext (a separate ctx key from
 		// MCPCallMetadata so core/mcp stays free of gateway-specific
@@ -384,6 +435,39 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	}
+}
+
+func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentID, principalID, sessionID, executionID string) error {
+	if s == nil || s.edgeStore == nil || sessionID == "" || executionID == "" {
+		return nil
+	}
+	now := time.Now().UTC()
+	if _, ok, err := s.edgeStore.GetSession(ctx, tenantID, sessionID); err != nil {
+		return err
+	} else if !ok {
+		if err := s.edgeStore.CreateSession(ctx, edge.EdgeSession{
+			SessionID: sessionID, TenantID: tenantID, PrincipalID: principalID,
+			PrincipalType: edge.PrincipalTypeService, AgentProduct: "mcp-gateway",
+			AgentVersion: buildinfo.Version, Mode: edge.SessionModeLocalDev,
+			PolicyMode: edge.PolicyModeEnforce, Status: edge.SessionStatusRunning,
+			StartedAt: now, EnforcementLayers: edge.EnforcementLayers{"mcp": true},
+			RiskSummary: edge.RiskSummary{MaxRisk: edge.RiskLevelLow},
+			Labels:      edge.Labels{"agent_id": agentID},
+		}); err != nil {
+			return err
+		}
+	}
+	if _, ok, err := s.edgeStore.GetExecution(ctx, tenantID, executionID); err != nil {
+		return err
+	} else if !ok {
+		return s.edgeStore.CreateExecution(ctx, edge.AgentExecution{
+			ExecutionID: executionID, SessionID: sessionID, TenantID: tenantID,
+			Adapter: edge.AdapterMCPGateway, Mode: edge.ExecutionModeLocalDev,
+			WorkerID: agentID, Status: edge.ExecutionStatusRunning,
+			StartedAt: now, Labels: edge.Labels{"agent_id": agentID},
+		})
+	}
+	return nil
 }
 
 // resolveMCPIdentity looks up the agent identity for this MCP request.

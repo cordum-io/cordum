@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -47,6 +48,71 @@ func (m *mockExporter) totalEvents() int {
 	}
 	return n
 }
+
+// contextCheckingMockExporter simulates context-aware HTTP/SIEM exporters.
+type contextCheckingMockExporter struct {
+	mu           sync.Mutex
+	batches      [][]SIEMEvent
+	observedErrs []error
+}
+
+func (m *contextCheckingMockExporter) Export(ctx context.Context, events []SIEMEvent) error {
+	err := ctx.Err()
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.observedErrs = append(m.observedErrs, err)
+	if err != nil {
+		return fmt.Errorf("audit export: %w", err)
+	}
+	cp := make([]SIEMEvent, len(events))
+	copy(cp, events)
+	m.batches = append(m.batches, cp)
+	return nil
+}
+
+func (m *contextCheckingMockExporter) Close() error { return nil }
+
+func (m *contextCheckingMockExporter) totalEvents() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, b := range m.batches {
+		n += len(b)
+	}
+	return n
+}
+
+func (m *contextCheckingMockExporter) cancelledContextCalls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, err := range m.observedErrs {
+		if err != nil {
+			n++
+		}
+	}
+	return n
+}
+
+type blockingExporter struct {
+	calls chan struct{}
+}
+
+func newBlockingExporter() *blockingExporter {
+	return &blockingExporter{calls: make(chan struct{}, 1)}
+}
+
+func (b *blockingExporter) Export(ctx context.Context, _ []SIEMEvent) error {
+	select {
+	case b.calls <- struct{}{}:
+	default:
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (b *blockingExporter) Close() error { return nil }
 
 func TestBufferedExporter_FlushOnBatchSize(t *testing.T) {
 	mock := &mockExporter{}
@@ -97,6 +163,99 @@ func TestBufferedExporter_DrainOnClose(t *testing.T) {
 
 	if got := mock.totalEvents(); got != 7 {
 		t.Errorf("total events after drain = %d, want 7", got)
+	}
+}
+
+func TestBufferedExporter_DrainOnClose_ContextAware(t *testing.T) {
+	mock := &contextCheckingMockExporter{}
+	buf := NewBufferedExporter(mock, WithBatchSize(100), WithFlushInterval(10*time.Second))
+
+	for i := 0; i < 7; i++ {
+		buf.Send(SIEMEvent{Action: "drain-context-aware"})
+	}
+	if err := buf.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	if got := mock.totalEvents(); got != 7 {
+		t.Fatalf("total events after context-aware drain = %d, want 7", got)
+	}
+	if got := mock.cancelledContextCalls(); got != 0 {
+		t.Fatalf("export calls with cancelled context = %d, want 0", got)
+	}
+}
+
+func TestBufferedExporter_CloseLatencyBounded(t *testing.T) {
+	exporter := newBlockingExporter()
+	drainTimeout := 300 * time.Millisecond
+	buf := NewBufferedExporter(exporter,
+		WithBatchSize(100),
+		WithFlushInterval(10*time.Second),
+		WithDrainTimeout(drainTimeout),
+	)
+	for i := 0; i < 3; i++ {
+		buf.Send(SIEMEvent{Action: "blocked-drain"})
+	}
+
+	start := time.Now()
+	err := buf.Close()
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if elapsed > 2*drainTimeout+200*time.Millisecond {
+		t.Fatalf("Close elapsed %s, want <= %s", elapsed, 2*drainTimeout+200*time.Millisecond)
+	}
+	select {
+	case <-exporter.calls:
+	default:
+		t.Fatal("expected exporter to be called during bounded drain")
+	}
+
+	secondStart := time.Now()
+	if err := buf.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+	if secondElapsed := time.Since(secondStart); secondElapsed > 100*time.Millisecond {
+		t.Fatalf("second Close elapsed %s, want <= 100ms", secondElapsed)
+	}
+}
+
+func TestBufferedExporter_CloseEmptyQueueFast(t *testing.T) {
+	mock := &contextCheckingMockExporter{}
+	buf := NewBufferedExporter(mock,
+		WithBatchSize(100),
+		WithFlushInterval(10*time.Second),
+		WithDrainTimeout(300*time.Millisecond),
+	)
+
+	start := time.Now()
+	if err := buf.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
+		t.Fatalf("Close empty queue elapsed %s, want <= 100ms", elapsed)
+	}
+	if got := mock.totalEvents(); got != 0 {
+		t.Fatalf("total events after empty close = %d, want 0", got)
+	}
+}
+
+func TestBufferedExporter_SendAfterCloseDrops(t *testing.T) {
+	mock := &contextCheckingMockExporter{}
+	buf := NewBufferedExporter(mock, WithBatchSize(100), WithFlushInterval(10*time.Second))
+	if err := buf.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	for i := 0; i < 3; i++ {
+		buf.Send(SIEMEvent{Action: "after-close"})
+	}
+	if got := len(buf.ch); got != 0 {
+		t.Fatalf("buffer len after Send on closed exporter = %d, want 0", got)
+	}
+	if got := mock.totalEvents(); got != 0 {
+		t.Fatalf("exported events after Send on closed exporter = %d, want 0", got)
 	}
 }
 

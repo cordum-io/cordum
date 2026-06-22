@@ -302,6 +302,21 @@ func newPromptInjectionScanner() *regexScanner {
 			Expression: regexp.MustCompile(`(?i)(disregard|forget)\s+(all\s+)?(your\s+)?(rules|instructions|guidelines|restrictions)`),
 			Confidence: 0.9,
 		},
+		{
+			// Embedded destructive API call: untrusted content (e.g. a tool result
+			// or record field) carrying a ready-to-run destructive mutation such as
+			// `delete_item(item_id: ...)`. Smuggling a fully-formed destructive
+			// payload into data the agent reads is a strong, content-aware injection
+			// signal on its own — independent of any "ignore instructions" preamble,
+			// which newer models increasingly refuse anyway. The (item_id|board_id|
+			// ids|id) argument shape keeps this specific to API calls (low false
+			// positives on benign prose).
+			Label:      "embedded destructive API call",
+			Severity:   "high",
+			Pattern:    `(?i)\bdelete_\w+\s*\(\s*(item_id|board_id|ids?)\b`,
+			Expression: regexp.MustCompile(`(?i)\bdelete_\w+\s*\(\s*(item_id|board_id|ids?)\b`),
+			Confidence: 0.9,
+		},
 	})
 }
 

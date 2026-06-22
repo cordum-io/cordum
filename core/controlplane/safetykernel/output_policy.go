@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -35,8 +36,20 @@ var regexRejectedTotal = prometheus.NewCounter(prometheus.CounterOpts{
 	Help: "Total output-rule regex patterns rejected for complexity",
 })
 
+// scannerUnknownTotal counts rule scanner references that did not resolve to a
+// registered scanner at compile time. A miss means the rule cannot detect via
+// that scanner (scanWithScanners silently skips it), so on a default-deny
+// component a single typo turns a deny/quarantine rule into a no-op — this
+// metric (plus a compile-time WARN) makes that misconfiguration observable
+// instead of silent.
+var scannerUnknownTotal = prometheus.NewCounter(prometheus.CounterOpts{
+	Name: "cordum_safety_unknown_scanner_total",
+	Help: "Total rule scanner references that did not resolve to a registered scanner (misconfiguration; the rule cannot detect via them)",
+})
+
 func init() {
 	prometheus.MustRegister(regexRejectedTotal)
+	prometheus.MustRegister(scannerUnknownTotal)
 }
 
 // validateRegexComplexity rejects patterns that are excessively complex.
@@ -174,23 +187,35 @@ func (s *server) EvaluateOutput(ctx context.Context, req *OutputEvaluateRequest)
 		req.OutputContent, contentTruncated = truncateOutputContent(req.OutputContent)
 	}
 
+	hasSensitiveScanners := outputRulesUseSensitiveScanners(rules)
 	for _, rule := range rules {
 		matched, findings := evaluateOutputRule(rule, req, scanners)
-		if contentTruncated {
-			findings = append(findings, outputFinding{
-				Type:     "content_truncated",
-				Severity: "info",
-				Detail:   fmt.Sprintf("content exceeded max regex input size (%d bytes), truncated", maxOutputScanBytes),
-				Scanner:  "size_check",
-			})
-		}
 		if !matched {
 			continue
+		}
+		// Truncated content with sensitive scanners fails closed: a REDACT
+		// decision can only cover the scanned head, not the unscanned tail.
+		if contentTruncated && hasSensitiveScanners && outputDecisionWeakerThanQuarantine(rule.decision) {
+			findings = append(findings, outputTruncatedFailClosedFinding())
+			resp.Decision = "quarantine"
+			resp.Reason = outputTruncatedFailClosedReason
+			resp.RuleID = rule.id
+			resp.Findings = findings
+			return resp, nil
+		}
+		if contentTruncated {
+			findings = append(findings, outputTruncatedInfoFinding())
 		}
 		resp.Decision = outputDecisionString(rule.decision)
 		resp.Reason = outputRuleReason(rule, findings)
 		resp.RuleID = rule.id
 		resp.Findings = findings
+		return resp, nil
+	}
+	if contentTruncated && hasSensitiveScanners {
+		resp.Decision = "quarantine"
+		resp.Reason = outputTruncatedFailClosedReason
+		resp.Findings = []outputFinding{outputTruncatedFailClosedFinding()}
 		return resp, nil
 	}
 
@@ -259,25 +284,49 @@ func (s *server) CheckOutput(ctx context.Context, req *pb.OutputCheckRequest) (*
 		return resp, nil
 	}
 
-	content, contentTruncated := s.contentForScan(ctx, req)
+	content, contentTruncated, contentErr := s.contentForScan(ctx, req)
+	if contentErr != nil {
+		// Fail closed like EvaluateOutput, but return nil gRPC error so callers persist a quarantine decision.
+		resp.Decision = pb.OutputDecision_OUTPUT_DECISION_QUARANTINE
+		resp.Reason = "result pointer unreadable"
+		resp.Findings = toProtoOutputFindings([]outputFinding{{
+			Type:     "pointer_unreadable",
+			Severity: "critical",
+			Detail:   contentErr.Error(),
+			Scanner:  "result_pointer",
+		}})
+		return resp, nil
+	}
 	evalReq := outputEvaluateRequestFromProto(req, content)
+	hasSensitiveScanners := outputRulesUseSensitiveScanners(rules)
 	for _, rule := range rules {
 		matched, findings := evaluateOutputRule(rule, evalReq, scanners)
 		if !matched {
 			continue
 		}
+		// Truncated content with sensitive scanners fails closed: a REDACT
+		// decision can only cover the scanned head, not the unscanned tail.
+		if contentTruncated && hasSensitiveScanners && outputDecisionWeakerThanQuarantine(rule.decision) {
+			findings = append(findings, outputTruncatedFailClosedFinding())
+			resp.Decision = pb.OutputDecision_OUTPUT_DECISION_QUARANTINE
+			resp.Reason = outputTruncatedFailClosedReason
+			resp.RuleId = rule.id
+			resp.Findings = toProtoOutputFindings(findings)
+			return resp, nil
+		}
 		if contentTruncated {
-			findings = append(findings, outputFinding{
-				Type:     "content_truncated",
-				Severity: "info",
-				Detail:   fmt.Sprintf("content exceeded max regex input size (%d bytes), truncated", maxOutputScanBytes),
-				Scanner:  "size_check",
-			})
+			findings = append(findings, outputTruncatedInfoFinding())
 		}
 		resp.Decision = rule.decision
 		resp.Reason = outputRuleReason(rule, findings)
 		resp.RuleId = rule.id
 		resp.Findings = toProtoOutputFindings(findings)
+		return resp, nil
+	}
+	if contentTruncated && hasSensitiveScanners {
+		resp.Decision = pb.OutputDecision_OUTPUT_DECISION_QUARANTINE
+		resp.Reason = outputTruncatedFailClosedReason
+		resp.Findings = toProtoOutputFindings([]outputFinding{outputTruncatedFailClosedFinding()})
 		return resp, nil
 	}
 
@@ -294,6 +343,57 @@ func outputPolicyEnabled(policy *config.SafetyPolicy, rules []compiledOutputRule
 	// Backward compatibility: if output_rules exist but output_policy block is absent,
 	// keep legacy enabled behavior.
 	return strings.TrimSpace(policy.OutputPolicy.FailMode) == ""
+}
+
+const outputTruncatedFailClosedReason = "content truncated; escalating to quarantine for sensitive output scanners"
+
+func outputTruncatedInfoFinding() outputFinding {
+	return outputFinding{
+		Type:     "content_truncated",
+		Severity: "info",
+		Detail:   fmt.Sprintf("content exceeded max regex input size (%d bytes), truncated", maxOutputScanBytes),
+		Scanner:  "size_check",
+	}
+}
+
+func outputTruncatedFailClosedFinding() outputFinding {
+	return outputFinding{
+		Type:     "content_truncated",
+		Severity: "high",
+		Detail:   "content exceeded max scan size (2 MiB); unscanned tail may contain secrets — failing closed",
+		Scanner:  "size_check",
+	}
+}
+
+func outputRulesUseSensitiveScanners(rules []compiledOutputRule) bool {
+	for _, rule := range rules {
+		if outputRuleUsesSensitiveScanner(rule) {
+			return true
+		}
+	}
+	return false
+}
+
+func outputRuleUsesSensitiveScanner(rule compiledOutputRule) bool {
+	for _, scanner := range rule.scanners {
+		if isSensitiveOutputScanner(scanner) {
+			return true
+		}
+	}
+	return false
+}
+
+func isSensitiveOutputScanner(scanner string) bool {
+	switch normalizeScannerName(scanner) {
+	case "secret", "pii", "injection", "prompt_injection":
+		return true
+	default:
+		return false
+	}
+}
+
+func outputDecisionWeakerThanQuarantine(decision pb.OutputDecision) bool {
+	return decision != pb.OutputDecision_OUTPUT_DECISION_QUARANTINE
 }
 
 func outputRuleReason(rule compiledOutputRule, findings []outputFinding) string {
@@ -420,10 +520,11 @@ func outputEvaluateRequestFromProto(req *pb.OutputCheckRequest, content []byte) 
 	return out
 }
 
-func (s *server) contentForScan(ctx context.Context, req *pb.OutputCheckRequest) ([]byte, bool) {
-	content := req.GetOutputContent()
+func (s *server) contentForScan(ctx context.Context, req *pb.OutputCheckRequest) (content []byte, truncated bool, err error) {
+	content = req.GetOutputContent()
 	if len(content) > 0 {
-		return truncateOutputContent(content)
+		content, truncated := truncateOutputContent(content)
+		return content, truncated, nil
 	}
 	ptr := strings.TrimSpace(req.GetResultPtr())
 	if ptr != "" && s.resultClient == nil {
@@ -440,10 +541,12 @@ func (s *server) contentForScan(ctx context.Context, req *pb.OutputCheckRequest)
 			defer cancel()
 			data, err := s.resultClient.Get(rctx, key).Bytes()
 			if err == nil {
-				return truncateOutputContent(data)
+				content, truncated := truncateOutputContent(data)
+				return content, truncated, nil
 			}
 			if !errors.Is(err, redis.Nil) {
 				slog.Warn("safety-kernel: output pointer fetch failed", "err", err)
+				return nil, false, err
 			}
 		} else {
 			slog.Warn("safety-kernel: invalid output pointer", "err", err)
@@ -451,9 +554,10 @@ func (s *server) contentForScan(ctx context.Context, req *pb.OutputCheckRequest)
 	}
 	msg := strings.TrimSpace(req.GetErrorMessage())
 	if msg == "" {
-		return nil, false
+		return nil, false, nil
 	}
-	return truncateOutputContent([]byte(msg))
+	content, truncated = truncateOutputContent([]byte(msg))
+	return content, truncated, nil
 }
 
 func truncateOutputContent(content []byte) ([]byte, bool) {
@@ -577,7 +681,7 @@ func toProtoOutputFindings(findings []outputFinding) []*pb.OutputFinding {
 	return out
 }
 
-func compileOutputRules(policy *config.SafetyPolicy) []compiledOutputRule {
+func compileOutputRules(policy *config.SafetyPolicy, registry map[string]OutputScanner) []compiledOutputRule {
 	if policy == nil || len(policy.OutputRules) == 0 {
 		return nil
 	}
@@ -620,6 +724,7 @@ func compileOutputRules(policy *config.SafetyPolicy) []compiledOutputRule {
 		}
 
 		scanners := mergeScannerLists(rule.Match.Scanners, rule.Match.Detectors)
+		warnUnknownScanners(strings.TrimSpace(rule.ID), scanners, registry)
 		out = append(out, compiledOutputRule{
 			id:             strings.TrimSpace(rule.ID),
 			decision:       decision,
@@ -708,6 +813,65 @@ func normalizeScannerName(raw string) string {
 	default:
 		return name
 	}
+}
+
+// unknownScannerNames returns the normalized scanner names in `names` that do
+// not resolve to a registered scanner. Used at compile time so a rule that
+// references a misspelled or unloaded scanner — which scanWithScanners would
+// silently skip, inerting the whole detection rule — is surfaced loudly rather
+// than failing open silently on a default-deny component.
+func unknownScannerNames(names []string, scanners map[string]OutputScanner) []string {
+	if len(names) == 0 {
+		return nil
+	}
+	var unknown []string
+	for _, name := range names {
+		n := normalizeScannerName(name)
+		if n == "" {
+			continue
+		}
+		// An empty/unwired registry must report every requested name as unknown
+		// (not nil): otherwise a load path that ends with no scanners silently
+		// disables every scanner-backed rule AND suppresses the WARN/metric this
+		// surfacing exists to provide. A registered-but-nil scanner is likewise
+		// treated as unknown.
+		if scanner, ok := scanners[n]; !ok || scanner == nil {
+			unknown = append(unknown, n)
+		}
+	}
+	return unknown
+}
+
+// knownScannerNames returns the sorted set of registered scanner names, surfaced
+// in the compile-time WARN so an operator who mistypes a name can see the valid
+// set.
+func knownScannerNames(scanners map[string]OutputScanner) []string {
+	if len(scanners) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(scanners))
+	for name := range scanners {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// warnUnknownScanners surfaces (WARN + metric) any scanner names on a rule that
+// did not resolve to a registered scanner. It is intentionally observability
+// ONLY and does NOT drop the names from the rule: pruning a rule's only scanner
+// to an empty list would flip it from inert into a metadata-only match-all
+// (over-block) in evaluate{Input,Output}Rule. On a default-deny component the
+// fix for a typo'd detector is a loud signal, not a silent skip and not a
+// hard policy-load failure (which would brick the kernel on one bad name).
+func warnUnknownScanners(ruleID string, names []string, scanners map[string]OutputScanner) {
+	unknown := unknownScannerNames(names, scanners)
+	if len(unknown) == 0 {
+		return
+	}
+	scannerUnknownTotal.Add(float64(len(unknown)))
+	slog.Warn("safety-kernel: rule references unknown scanner(s); detection via them will NOT run — fix the scanner name",
+		"rule", ruleID, "unknown", unknown, "known", knownScannerNames(scanners))
 }
 
 func containsAnyFold(values, required []string) bool {

@@ -95,7 +95,7 @@ func HeartbeatPayload(workerID, pool string, activeJobs, maxParallel int, cpuLoa
 	if err != nil {
 		return nil, err
 	}
-	return applyHeartbeatOptions(payload, opts...)
+	return finalizeHeartbeatPayload(payload, workerID, opts...)
 }
 
 // HeartbeatPayloadWithMemory returns a heartbeat payload including memory utilization.
@@ -104,7 +104,7 @@ func HeartbeatPayloadWithMemory(workerID, pool string, activeJobs, maxParallel i
 	if err != nil {
 		return nil, err
 	}
-	return applyHeartbeatOptions(payload, opts...)
+	return finalizeHeartbeatPayload(payload, workerID, opts...)
 }
 
 // HeartbeatPayloadWithProgress returns a heartbeat payload including optional progress checkpoints.
@@ -113,7 +113,7 @@ func HeartbeatPayloadWithProgress(workerID, pool string, activeJobs, maxParallel
 	if err != nil {
 		return nil, err
 	}
-	return applyHeartbeatOptions(payload, opts...)
+	return finalizeHeartbeatPayload(payload, workerID, opts...)
 }
 
 // EmitHeartbeat publishes a heartbeat once. Call repeatedly on a ticker.
@@ -148,14 +148,32 @@ func publishEnvelope(pub Publisher, subject string, packet *agentv1.BusPacket, k
 	return nil
 }
 
-func applyHeartbeatOptions(payload []byte, opts ...HeartbeatOption) ([]byte, error) {
-	if len(opts) == 0 {
-		return payload, nil
-	}
-
+// finalizeHeartbeatPayload re-stamps a CAP-built heartbeat payload so it satisfies the bus
+// required-field contract, then applies any cordum HeartbeatOptions.
+//
+// WHY: CAP's capworker.HeartbeatPayloadWithProgress — which all three HeartbeatPayload* wrappers
+// delegate to — builds the BusPacket with TraceId:"" and no CreatedAt (cap/sdk/go/worker/worker.go,
+// v2.13.1 lines 217-224), setting only SenderId:workerID and ProtocolVersion. The live scheduler/
+// gateway consumer validates with core capsdk.ValidateBusPacket (trace_id/sender_id/payload), so it
+// drops every sys.heartbeat as "buspacket: missing required field(s): trace_id" -> degraded/empty
+// worker-capacity TTL registry. trace_id == workerID is the natural correlation id (workerID is
+// already SenderId, required and non-empty for an otherwise-valid packet); we deliberately do NOT
+// fabricate a synthetic trace when workerID is blank, since such a packet also fails the sender_id
+// check and a generated id would only mask a misconfigured worker. created_at is stamped when nil so
+// the packet also satisfies CAP's stricter sdk ValidateBusPacket (the only validator this SDK module
+// can import for tests) and matches the inline Worker heartbeat. Always decodes/re-encodes
+// (negligible at the 5-10s cadence) so the stamps land on the no-option path too.
+func finalizeHeartbeatPayload(payload []byte, workerID string, opts ...HeartbeatOption) ([]byte, error) {
 	var packet agentv1.BusPacket
 	if err := proto.Unmarshal(payload, &packet); err != nil {
 		return nil, fmt.Errorf("decode heartbeat packet: %w", err)
+	}
+
+	if strings.TrimSpace(packet.GetTraceId()) == "" {
+		packet.TraceId = workerID
+	}
+	if packet.GetCreatedAt() == nil {
+		packet.CreatedAt = timestamppb.Now()
 	}
 
 	heartbeat := packet.GetHeartbeat()

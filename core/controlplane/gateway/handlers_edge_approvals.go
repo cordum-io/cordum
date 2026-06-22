@@ -325,9 +325,14 @@ func edgeApprovalListQueryFromRequest(r *http.Request, tenantID string) (edgecor
 			return edgecore.ListApprovalsQuery{}, errors.New("invalid status")
 		}
 	}
-	if (query.SessionID != "" || query.ExecutionID != "" || query.ActionHash != "") &&
-		(query.SessionID == "" || query.ExecutionID == "" || query.ActionHash == "") {
-		return edgecore.ListApprovalsQuery{}, errors.New("session_id, execution_id, and action_hash are required together")
+	// action_hash requires all three tuple fields (session_id + execution_id + action_hash).
+	// session_id alone (without execution_id or action_hash) is valid — used by the
+	// EdgeApprovalsDrawer to list all approvals for a session.
+	if query.ActionHash != "" && (query.SessionID == "" || query.ExecutionID == "") {
+		return edgecore.ListApprovalsQuery{}, errors.New("action_hash requires session_id and execution_id")
+	}
+	if query.ExecutionID != "" && query.SessionID == "" {
+		return edgecore.ListApprovalsQuery{}, errors.New("execution_id requires session_id")
 	}
 	return query, nil
 }

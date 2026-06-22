@@ -204,7 +204,10 @@ func TestHandleAuditExport_CSVHappyPath(t *testing.T) {
 		"output_preview", "trace_id", "artifact_id",
 	}
 	wantCols := legacyCols + len(humanCols)
-	if len(rows) < 1 || len(rows[0]) != wantCols {
+	if len(rows) < 1 {
+		t.Fatalf("missing CSV header row")
+	}
+	if len(rows[0]) != wantCols {
 		t.Fatalf("header has wrong column count: got %d want %d: %v", len(rows[0]), wantCols, rows[0])
 	}
 	// Legacy columns must stay in their original positions.

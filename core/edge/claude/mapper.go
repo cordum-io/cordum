@@ -230,11 +230,13 @@ func MapHookInput(input HookInput, ctx MappingContext) (MappedHookAction, error)
 
 	classification, err := edge.ClassifyEvent(actionEvent)
 	if err != nil {
-		// ClassifyEvent rejects only on missing required fields; the
-		// mapper guarantees Layer/Kind/ToolName upstream via degradedReason.
-		// If it fires anyway (future schema drift), surface a degraded
-		// action with reasonUnsupportedToolInputShape so the Gateway can
-		// record an audit event without trusting client classification.
+		// ClassifyEvent rejects on missing required fields or malformed
+		// input (e.g. NUL bytes — see BUG-004); the mapper guarantees
+		// Layer/Kind/ToolName upstream via degradedReason. If it fires
+		// anyway (future schema drift or hostile input), surface a
+		// degraded action with reasonUnsupportedToolInputShape so the
+		// Gateway can record an audit event without trusting client
+		// classification.
 		return MappedHookAction{
 			Layer:         edge.LayerHook,
 			Kind:          kind,
@@ -941,7 +943,18 @@ func preToolUseHookOutput(decision string, resp EdgeDecisionResponse) ClaudeHook
 		hsop.UpdatedInput = resp.UpdatedInput
 		hsop.AdditionalContext = resp.AdditionalContext
 	}
-	return ClaudeHookOutput{HookSpecificOutput: hsop}
+	out := ClaudeHookOutput{HookSpecificOutput: hsop}
+	// Mirror the top-level `decision: "block"` that every other hook event
+	// mapper in this file emits for deny outcomes (userPromptSubmitHookOutput
+	// line ~953, postToolUseHookOutput, configChangeHookOutput). Without
+	// the outer field, Claude Code v2.1.x treats the deny as a soft ask
+	// and proceeds with the tool call in non-interactive (`claude -p`)
+	// mode. PreToolUse was the only path that omitted the mirror.
+	if hsop.PermissionDecision == "deny" {
+		out.Decision = "block"
+		out.Reason = hsop.PermissionDecisionReason
+	}
+	return out
 }
 
 func userPromptSubmitHookOutput(decision string, resp EdgeDecisionResponse) ClaudeHookOutput {

@@ -69,7 +69,7 @@ rm -f .env.bak
 export CORDUM_TENANT_ID=default
 # Gateway uses self-issued TLS in dev (cert minted into ./certs by the stack).
 export CORDUM_GATEWAY=https://localhost:8081
-export CORDUM_GATEWAY_TLS_CA="$(pwd)/certs/ca/ca.crt"  # consumed by cordum-agentd
+export CORDUM_TLS_CA="$(pwd)/certs/ca/ca.crt"  # consumed by cordum-agentd
 
 # 3. Bring up the full stack (~2-3 minutes first time)
 make dev-up

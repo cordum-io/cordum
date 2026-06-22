@@ -96,6 +96,29 @@ output that satisfies it. The architect can amend the DoD via
 chat-only acks do not count. QA may reject any task whose final
 `complete_step` note lacks the per-DoD-item evidence map.
 
+## Landing-side vet gate (governor — before squash-merge)
+
+Before squash-merging the shared consolidation branch into `main`, the
+governor MUST run the landing vet gate and **refuse to merge on a non-zero
+exit**:
+
+```shell
+$ bash tools/scripts/landing_vet_gate.sh
+LANDING VET GATE: PASS — vet clean across all modules; safe to squash-merge.
+EXIT: 0
+```
+
+Mandatory whenever the batch being landed touches any `*_test.go` file (and
+safe to run always). It runs `go vet ./...` over the **root module and the
+separate `sdk/` module** (root `go vet ./...` does not descend into nested
+modules). Rationale: a consolidation/checkpoint can COMMIT a `*_test.go` while
+DROPPING the production impl it references; `go build ./...` does **not** catch
+this (it ignores `_test.go`), so the break otherwise sits on the shared branch
+and only surfaces ~10 min later in the CI `test` (`-race`) / `lint` (`vet`)
+jobs, blocking unrelated tasks. `go vet ./...` compiles the test variant and
+fails in seconds. Postmortem: the dropped session-token gate (task-5c18f890 /
+task-fd1c736c); see `tools/scripts/landing_vet_gate.sh`.
+
 ## Branch policy
 
 All work currently lands on the active consolidation branch

@@ -785,3 +785,54 @@ describe("AuditLogPage Block D — drilldown drawer (DoD #4 amended)", () => {
     expect(container.textContent).toContain("no events verified yet");
   });
 });
+
+// P2a — the "Live" toggle drives useInfiniteAuditEvents({ live }). It defaults
+// OFF (calm 15s cadence) and is an accessible labeled control whose aria-pressed
+// + affordance flip on click. The exact 2s refetch cadence is asserted at the
+// hook level (useAuditEvents.test.ts); here we cover the page wiring + a11y.
+describe("AuditLogPage — Live audit feed toggle (P2a)", () => {
+  it("renders an accessible Live toggle that defaults OFF and flips on click", async () => {
+    server.use(
+      http.get("*/api/v1/audit/events", () =>
+        HttpResponse.json({
+          items: [],
+          total: 0,
+          next_cursor: "",
+          returned: 0,
+        }),
+      ),
+    );
+
+    const { container } = renderWithProviders(
+      <NuqsTestingAdapter searchParams="">
+        <AuditLogPage />
+      </NuqsTestingAdapter>,
+    );
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("No audit events");
+    });
+
+    const findToggle = () =>
+      Array.from(container.querySelectorAll("button")).find((b) =>
+        /live audit feed/i.test(b.getAttribute("aria-label") ?? ""),
+      );
+
+    // Default: Paused (live OFF) — preserves the calm 15s cadence + prod load.
+    const paused = findToggle();
+    expect(paused).toBeTruthy();
+    expect(paused?.getAttribute("aria-pressed")).toBe("false");
+    expect(paused?.getAttribute("aria-label")).toMatch(/resume live audit feed/i);
+    expect(paused?.textContent).toContain("Paused");
+
+    fireEvent.click(paused as HTMLElement);
+
+    // After click: Live ON — aria-pressed flips to true, label/affordance flip.
+    await waitFor(() => {
+      const live = findToggle();
+      expect(live?.getAttribute("aria-pressed")).toBe("true");
+      expect(live?.getAttribute("aria-label")).toMatch(/pause live audit feed/i);
+      expect(live?.textContent).toContain("Live");
+    });
+  });
+});

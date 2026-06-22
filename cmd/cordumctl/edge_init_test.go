@@ -235,3 +235,58 @@ func readFile(t *testing.T, path string) string {
 	}
 	return string(data)
 }
+
+// BUG-015 regression lock: the written cordum.yaml must be 0o600. The file
+// can carry secrets via env-var references; if perms relax on a force re-run,
+// any local user could read it.
+func TestEdgeInitCordumYAMLIs0600(t *testing.T) {
+	cwd := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := runEdgeInitCmd([]string{
+		"--cwd", cwd,
+		"--gateway", "https://localhost:8081",
+		"--tenant", "default",
+		"--principal", "yaron",
+		"--policy-mode", "enforce",
+		"--api-key-env", "CORDUM_API_KEY",
+		"--no-wrapper",
+		"--non-interactive",
+	}, nil, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d stderr=%s", code, stderr.String())
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows permission model differs")
+	}
+	info, err := os.Stat(filepath.Join(cwd, "cordum.yaml"))
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("cordum.yaml mode = %#o, want 0600", got)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = runEdgeInitCmd([]string{
+		"--cwd", cwd,
+		"--gateway", "https://localhost:8081",
+		"--tenant", "default",
+		"--principal", "yaron",
+		"--policy-mode", "enforce",
+		"--api-key-env", "CORDUM_API_KEY",
+		"--no-wrapper",
+		"--non-interactive",
+		"--force",
+	}, nil, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("force exit code = %d stderr=%s", code, stderr.String())
+	}
+	info, err = os.Stat(filepath.Join(cwd, "cordum.yaml"))
+	if err != nil {
+		t.Fatalf("stat after force: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("cordum.yaml mode after force = %#o, want 0600", got)
+	}
+}

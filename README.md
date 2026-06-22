@@ -49,7 +49,9 @@ cd cordum
 `curl`. On Windows use MSYS2 / Git Bash / WSL.
 
 **What you get at the end:**
-- Dashboard at http://localhost:8082 (admin / admin123).
+- Dashboard at http://localhost:8082 — log in as `admin` / `ChangeMe123!`
+  (the default dev password, also saved to `.env` as `CORDUM_ADMIN_PASSWORD`;
+  change it before exposing the stack).
 - Gateway at http://localhost:8081 with a generated `CORDUM_API_KEY` in
   `.env`.
 - TLS CA, server, and client keypairs under `./certs/`.
@@ -233,7 +235,11 @@ docker compose up -d        # starts the stack — no source build needed
 ```
 
 **Dashboard:** http://localhost:8082
-**Login:** `admin` / `admin123` (change in `.env` → `CORDUM_ADMIN_PASSWORD`)
+**Login:** this path leaves user auth off by default — sign in on the dashboard
+with your `CORDUM_API_KEY`. To enable `admin` password login instead, set
+`CORDUM_USER_AUTH_ENABLED=true` and a policy-compliant `CORDUM_ADMIN_PASSWORD`
+(≥ 12 chars, with an uppercase letter, a digit, and a special character) in
+`.env`, then `docker compose up -d`. (The quickstart script does this for you.)
 
 Pin a specific release by exporting `CORDUM_VERSION=1.2.3` before
 `docker compose pull`. Defaults to `:latest`, which only moves on stable
@@ -326,7 +332,7 @@ curl -sS --cacert ./certs/ca/ca.crt \
   -X POST https://localhost:8081/api/v1/jobs \
   -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
   -H "Content-Type: application/json" \
-  -d '{"topic":"job.default","context":{"prompt":"hello"}}'
+  -d '{"topic":"job.default","prompt":"hello"}'
 
 # Stop the stack
 docker compose down
@@ -341,7 +347,7 @@ docker compose logs -f api-gateway
 |-------|-----|
 | Port already in use | `docker compose down` then retry, or check `lsof -i :8082` |
 | Docker out of memory | Allocate at least 4 GB RAM to Docker Desktop |
-| Can't login to dashboard | Default credentials: admin / admin123 |
+| Can't login to dashboard | Default is `admin` / `ChangeMe123!` (in `.env` as `CORDUM_ADMIN_PASSWORD`); ensure `CORDUM_USER_AUTH_ENABLED=true`. Custom passwords must be ≥12 chars + uppercase + digit + special |
 | TLS/SSL cert errors | Remove `./certs/` and re-run — certs auto-regenerate |
 | `openssl` not found | Not needed — quickstart.sh auto-generates keys without it |
 | Go build fails | Requires Go 1.24+ — check with `go version` |

@@ -17,7 +17,7 @@ This table tracks key backend features, their implementation status, and test co
 | Artifact store | Yes | None | Redis-backed store (`core/infra/artifacts`). |
 | Gateway HTTP/WS endpoints | Yes | Unit (`core/controlplane/gateway/gateway_test.go`) | Jobs, workflows, approvals, policy (bundles/publish/rollback/audit), schemas, locks, artifacts, DLQ. |
 | Auth (OSS) | Yes | Unit (gateway tests) | API key allowlist (`CORDUM_API_KEYS`/`CORDUM_API_KEY`) with single-tenant default; `X-Tenant-ID` required on HTTP. |
-| Auth (enterprise) | Yes | Unit (enterprise repo) | Multi-tenant API keys and RBAC enforced by the enterprise auth provider. |
+| Auth (enterprise) | Yes | Unit (gateway tests) | Multi-tenant API keys and RBAC enforced in core (`core/controlplane/gateway/auth/`) behind license entitlements. The standalone `cordum-enterprise` repo was retired 2026-04-23; these features are unified in core, license-gated. |
 | Worker runtime SDK | Yes | None | `sdk/runtime` wraps CAP runtime (typed handlers + pointer hydration). |
 | CLI (cordumctl) | Yes | None | `cmd/cordumctl` + smoke script; ships as `cordumctl`. |
 | Topic Registry | Yes | Unit + integration | `GET/POST/DELETE /api/v1/topics`; submit-time topic validation at gateway and scheduler boundaries; pack manifest `inputSchema`/`outputSchema` registered at install. |
@@ -27,7 +27,7 @@ This table tracks key backend features, their implementation status, and test co
 | Approvals + Delegations | Yes | Unit + integration (`handlers_approvals.go`, `handlers_delegation*.go`) | A2A delegation tokens, cascade revocation, scheduler dispatch-time re-verify, nonce/replay protection, `auth.PermDelegationImpersonate`. |
 | Audit verification pipeline | Yes | Unit + integration (`core/audit/`, `core/audit/exporter*`) | Chain verification + consumer + legal-hold + multi-backend exporter (webhook HMAC-SHA256, syslog RFC 5424, Datadog v2, CloudWatch Logs SigV4). |
 | Governance Timeline + analytics | Yes | Unit (`handlers_governance_*.go`, `useGovernanceHealth`, `useApprovalAnalytics`) | `/api/v1/governance/decisions`, `/api/v1/governance/health`, `/api/v1/governance/approvals/analytics`. |
-| MCP Server | Yes | Unit + integration (`cmd/cordum-mcp`, `gateway_mcp.go`) | stdio + HTTP/SSE transport; tool registry; tool-approval flow; `cordum://` resource resolution; audit hook. |
+| MCP Server | Yes | Unit + integration (`cmd/cordum-mcp`, `handlers_mcp.go`) | stdio + HTTP/SSE transport; tool registry; tool-approval flow; `cordum://` resource resolution; audit hook. |
 | Evals | Yes | Unit + dashboard hooks (`useEvals`) | Evaluations CRUD + run; `EvalsPage` + `EvalDatasetDetailPage` + `EvalRunDetailPage` dashboard surfaces. |
 | Enterprise (consolidated into core) | Yes | Unit (gateway + auth) | SSO/SAML/OIDC, SCIM provisioning, RBAC, SIEM export (4 backends), legal hold — all behind license entitlements; cordum-enterprise repo retired 2026-04-23. |
 | Workflow new step types | Yes | Unit (`core/workflow/*_test.go`) | Switch, parallel, loop, transform, storage, sub-workflow. |

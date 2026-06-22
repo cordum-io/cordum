@@ -21,6 +21,7 @@ import (
 	"github.com/cordum/cordum/core/infra/store"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/nats-io/nats.go"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -138,7 +139,7 @@ func TestCheckInputScopeRuleDeniesWhenContentMissing(t *testing.T) {
 
 	srv := &server{
 		policy:     policy,
-		inputRules: compileInputRules(policy),
+		inputRules: compileInputRules(policy, loadOutputScanners()),
 		scanners:   loadOutputScanners(),
 		snapshot:   "test",
 	}
@@ -709,6 +710,161 @@ default_decision: maybe
 	resp := policy.Evaluate(config.PolicyInput{Tenant: "default", Topic: "job.ops.deploy"})
 	if resp.Decision != "require_approval" {
 		t.Fatalf("expected require_approval from valid fragment, got %q", resp.Decision)
+	}
+}
+
+// sharedRuleYAML is a one-rule fragment whose rule id "shared-rule" matches
+// topic job.shared.test with the given decision — used to probe which bundle
+// wins a cross-bundle duplicate rule id under loadFragments' merge order.
+func sharedRuleYAML(decision string) string {
+	return "rules:\n" +
+		"  - id: shared-rule\n" +
+		"    match:\n" +
+		"      topics:\n" +
+		"        - job.shared.test\n" +
+		"    decision: " + decision + "\n" +
+		"    reason: " + decision + " fragment\n"
+}
+
+// fragmentLoaderForTest seeds a miniredis-backed config service with the given
+// bundle map (cfg:system:policy.data.bundles) and returns a policyLoader.
+func fragmentLoaderForTest(t *testing.T, bundles map[string]any) *policyLoader {
+	t.Helper()
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	t.Cleanup(srv.Close)
+	svc, err := configsvc.New("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("config svc: %v", err)
+	}
+	t.Cleanup(func() { _ = svc.Close() })
+	doc := &configsvc.Document{
+		Scope:   configsvc.ScopeSystem,
+		ScopeID: "policy",
+		Data:    map[string]any{"bundles": bundles},
+	}
+	if err := svc.Set(context.Background(), doc); err != nil {
+		t.Fatalf("set config doc: %v", err)
+	}
+	return &policyLoader{
+		configSvc:   svc,
+		configScope: configsvc.ScopeSystem,
+		configID:    "policy",
+		configKey:   "bundles",
+	}
+}
+
+// mergedSharedDecision loads the fragments and returns the merged decision for
+// topic job.shared.test (i.e. which bundle's "shared-rule" won the merge).
+func mergedSharedDecision(t *testing.T, l *policyLoader) string {
+	t.Helper()
+	policy, _, _, _, err := l.loadFragments(context.Background())
+	if err != nil {
+		t.Fatalf("load fragments: %v", err)
+	}
+	if policy == nil {
+		t.Fatalf("expected merged policy")
+	}
+	return policy.Evaluate(config.PolicyInput{Tenant: "default", Topic: "job.shared.test"}).Decision
+}
+
+// TestLoadFragments_InstallRecencyWinsOverAlphabetical locks task-53777f44:
+// cross-bundle duplicate rule ids resolve by install recency, not bundle-id
+// alphabetical order. "aaa-newer" sorts FIRST but was installed LATER; under the
+// old sort.Strings merge the alphabetically-last "zzz-older" (allow) would win.
+// Install recency must make the most-recently-installed "aaa-newer" (deny) win.
+func TestLoadFragments_InstallRecencyWinsOverAlphabetical(t *testing.T) {
+	loader := fragmentLoaderForTest(t, map[string]any{
+		"zzz-older": map[string]any{
+			"content":      sharedRuleYAML("allow"),
+			"installed_at": "2026-01-01T00:00:00Z",
+		},
+		"aaa-newer": map[string]any{
+			"content":      sharedRuleYAML("deny"),
+			"installed_at": "2026-02-01T00:00:00Z",
+		},
+	})
+	if got := mergedSharedDecision(t, loader); got != "deny" {
+		t.Fatalf("shared-rule decision = %q, want \"deny\" (most-recently-installed aaa-newer must win over alphabetically-later zzz-older)", got)
+	}
+}
+
+// TestLoadFragments_SameInstalledAtTiebreakDeterministic covers the tie path: two
+// bundles with IDENTICAL installed_at (e.g. one pack writing two overlays in the
+// same second). The bundle-id alphabetical tiebreak must decide deterministically
+// ("bbb-tie" sorts after "aaa-tie" -> merges last -> deny wins) and stay identical
+// across repeated loads despite Go map-iteration nondeterminism.
+func TestLoadFragments_SameInstalledAtTiebreakDeterministic(t *testing.T) {
+	loader := fragmentLoaderForTest(t, map[string]any{
+		"aaa-tie": map[string]any{
+			"content":      sharedRuleYAML("allow"),
+			"installed_at": "2026-03-01T00:00:00Z",
+		},
+		"bbb-tie": map[string]any{
+			"content":      sharedRuleYAML("deny"),
+			"installed_at": "2026-03-01T00:00:00Z",
+		},
+	})
+	for i := 0; i < 20; i++ {
+		if got := mergedSharedDecision(t, loader); got != "deny" {
+			t.Fatalf("iter %d: tie decision = %q, want \"deny\" (bbb-tie sorts after aaa-tie -> merges last)", i, got)
+		}
+	}
+}
+
+// TestLoadFragments_MissingOrGarbledInstalledAtIsOldest covers fragmentInstalledAt's
+// defensive paths: a missing installed_at and an unparseable one both resolve to
+// the zero time (oldest = lowest precedence) without panicking, so a bundle with a
+// real (newer) installed_at wins.
+func TestLoadFragments_MissingOrGarbledInstalledAtIsOldest(t *testing.T) {
+	loader := fragmentLoaderForTest(t, map[string]any{
+		"aaa-missing": map[string]any{ // no installed_at -> zero time
+			"content": sharedRuleYAML("allow"),
+		},
+		"bbb-garbled": map[string]any{ // unparseable installed_at -> zero time, no panic
+			"content":      sharedRuleYAML("require_approval"),
+			"installed_at": "not-a-timestamp",
+		},
+		"ccc-legacy-string": sharedRuleYAML("allow"), // legacy bare-string fragment -> zero time
+		"zzz-dated": map[string]any{ // real, newest -> wins
+			"content":      sharedRuleYAML("deny"),
+			"installed_at": "2026-02-01T00:00:00Z",
+		},
+	})
+	if got := mergedSharedDecision(t, loader); got != "deny" {
+		t.Fatalf("shared-rule decision = %q, want \"deny\" (dated bundle must outrank missing/garbled-installed_at bundles)", got)
+	}
+}
+
+// TestLoadFragments_SnapshotIndependentOfInstallOrder guards the StaleSnapshot
+// risk: install recency reorders the MERGE but must NOT change the cfg:<sha>
+// snapshot, which folds {bundle-id, content} in sorted-key order only. Two
+// loaders with the same content but different installed_at (different merge
+// order, even a different winning decision) must produce the SAME snapshot, so
+// reinstalling a pack (which rewrites installed_at) never drifts the cache key.
+func TestLoadFragments_SnapshotIndependentOfInstallOrder(t *testing.T) {
+	contentBundles := func(aInstalled, bInstalled string) map[string]any {
+		return map[string]any{
+			"aaa": map[string]any{"content": sharedRuleYAML("allow"), "installed_at": aInstalled},
+			"bbb": map[string]any{"content": sharedRuleYAML("deny"), "installed_at": bInstalled},
+		}
+	}
+	// Set A: aaa older -> bbb (deny) wins. Set B: bbb older -> aaa (allow) wins.
+	_, _, snapA, _, err := fragmentLoaderForTest(t, contentBundles("2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z")).loadFragments(context.Background())
+	if err != nil {
+		t.Fatalf("load A: %v", err)
+	}
+	_, _, snapB, _, err := fragmentLoaderForTest(t, contentBundles("2026-09-09T00:00:00Z", "2026-03-03T00:00:00Z")).loadFragments(context.Background())
+	if err != nil {
+		t.Fatalf("load B: %v", err)
+	}
+	if snapA == "" || snapB == "" {
+		t.Fatalf("expected non-empty snapshots, got %q / %q", snapA, snapB)
+	}
+	if snapA != snapB {
+		t.Fatalf("snapshot drifted with install order: %q != %q (installed_at must NOT be folded into the hash)", snapA, snapB)
 	}
 }
 
@@ -1486,7 +1642,7 @@ func TestEvaluatePanicRecoveryReturnsDeny(t *testing.T) {
 
 	// Inject a panic via the test hook.
 	origHook := policyEvalTestHook
-	policyEvalTestHook = func() { panic("simulated policy evaluation panic") }
+	policyEvalTestHook = func(*config.PolicyDecision) { panic("simulated policy evaluation panic") }
 	t.Cleanup(func() { policyEvalTestHook = origHook })
 
 	req := &pb.PolicyCheckRequest{
@@ -1522,7 +1678,7 @@ func TestEvaluatePanicRecoveryWithNilMapAccess(t *testing.T) {
 	_ = srv.setPolicy(context.Background(), policy, "snap-nilmap")
 
 	origHook := policyEvalTestHook
-	policyEvalTestHook = func() {
+	policyEvalTestHook = func(*config.PolicyDecision) {
 		var m map[string]string
 		_ = m["trigger"] // safe — won't panic
 		// Force a nil pointer dereference to simulate realistic panic.
@@ -1546,6 +1702,53 @@ func TestEvaluatePanicRecoveryWithNilMapAccess(t *testing.T) {
 	}
 	if !strings.Contains(resp.GetReason(), "policy evaluation panic") {
 		t.Fatalf("expected panic reason, got %q", resp.GetReason())
+	}
+}
+
+// BUG-002: an unrecognized policy decision string used to silently stay at the
+// initial DENY with empty reason and no audit signal. After the fix, the
+// switch's default arm fires: DENY + structured reason naming the bad
+// decision string + slog audit_event=policy_decision_unknown + a metric
+// increment on defaultDecisionTotal{"unknown"} (FIXED label — the raw string
+// is only in the log/reason to avoid Prometheus cardinality blowup).
+func TestEvaluate_UnknownDecisionString_DeniesWithAuditedReason(t *testing.T) {
+	srv := &server{}
+	policy := &config.SafetyPolicy{
+		DefaultTenant: "default",
+		Tenants: map[string]config.TenantPolicy{
+			"default": {AllowTopics: []string{"job.*"}},
+		},
+	}
+	if err := srv.setPolicy(context.Background(), policy, "snap-unknown"); err != nil {
+		t.Fatalf("setPolicy: %v", err)
+	}
+
+	origHook := policyEvalTestHook
+	policyEvalTestHook = func(d *config.PolicyDecision) { d.Decision = "audit_only" }
+	t.Cleanup(func() { policyEvalTestHook = origHook })
+
+	before := testutil.ToFloat64(defaultDecisionTotal.WithLabelValues("unknown"))
+
+	req := &pb.PolicyCheckRequest{
+		JobId:  "job-unknown",
+		Topic:  "job.test",
+		Tenant: "default",
+	}
+	resp, err := srv.Evaluate(context.Background(), req)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY {
+		t.Fatalf("FAIL-OPEN BUG: unknown decision must DENY, got %v", resp.GetDecision())
+	}
+	if !strings.Contains(resp.GetReason(), "unknown policy decision string") {
+		t.Fatalf("reason should name the new default arm, got %q", resp.GetReason())
+	}
+	if !strings.Contains(resp.GetReason(), "audit_only") {
+		t.Fatalf("reason should include the bad decision string, got %q", resp.GetReason())
+	}
+	if delta := testutil.ToFloat64(defaultDecisionTotal.WithLabelValues("unknown")) - before; delta != 1 {
+		t.Fatalf("metric defaultDecisionTotal{unknown} delta = %v, want 1", delta)
 	}
 }
 
@@ -1770,6 +1973,32 @@ func TestMergePolicies_DuplicateInputRuleID(t *testing.T) {
 				t.Errorf("expected ir1 replaced by extra (critical/extra), got %s/%s", r.Severity, r.Reason)
 			}
 		}
+	}
+}
+
+// TestMergePolicies_OutputPolicyAnyEnable proves the kernel cross-fragment merge
+// adopts the canonical any-enable OutputPolicy semantics (task-198acafd): a guard
+// enabled by ANY fragment stays enabled (fail-safe), and FailMode fills
+// first-non-empty with base precedence. This matches the gateway bundle compiler
+// AND the kernel's own invariants overlay (kernel_invariants.go). Previously the
+// kernel kept only the base (oldest) fragment's OutputPolicy.
+func TestMergePolicies_OutputPolicyAnyEnable(t *testing.T) {
+	// A later fragment that enables output scanning keeps it enabled.
+	base := &config.SafetyPolicy{OutputPolicy: config.OutputPolicyConfig{Enabled: false, FailMode: ""}}
+	extra := &config.SafetyPolicy{OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "closed"}}
+	merged := mergePolicies(base, extra)
+	if !merged.OutputPolicy.Enabled {
+		t.Fatalf("any fragment enabling OutputPolicy must keep it enabled (fail-safe), got %+v", merged.OutputPolicy)
+	}
+	if merged.OutputPolicy.FailMode != "closed" {
+		t.Fatalf("FailMode must fill first-non-empty from the enabling fragment, got %q", merged.OutputPolicy.FailMode)
+	}
+	// Base precedence: a non-empty base FailMode wins over a later fragment's.
+	base2 := &config.SafetyPolicy{OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "open"}}
+	extra2 := &config.SafetyPolicy{OutputPolicy: config.OutputPolicyConfig{Enabled: false, FailMode: "closed"}}
+	merged2 := mergePolicies(base2, extra2)
+	if !merged2.OutputPolicy.Enabled || merged2.OutputPolicy.FailMode != "open" {
+		t.Fatalf("base OutputPolicy must stay enabled with base-precedence FailMode, got %+v", merged2.OutputPolicy)
 	}
 }
 

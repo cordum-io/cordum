@@ -1,5 +1,7 @@
 # Cordum Docs
 
+> **Product documentation** is published from the `Cordum-site/docs-site` Docusaurus tree to <https://docs.cordum.io>. This `docs/` folder holds in-repo reference material; the cordum repo has no docs site of its own.
+
 Documentation for Cordum — the safety-first agent orchestration platform.
 
 All API calls require `X-API-Key` and `X-Tenant-ID` headers (set `CORDUM_API_KEY`

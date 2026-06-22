@@ -62,7 +62,7 @@ cordumctl doctor
   you want to run first).
 - If pack is installed but still zero → check the worker container
   logs: `docker compose logs <pack-worker>`. Worker tokens may have
-  expired; see [worker-credentials.md](../deployment/worker-credentials.md).
+  expired; see [Worker credentials API reference](../api-reference.md#worker-credentials).
 
 ### `build_info`
 
@@ -128,7 +128,7 @@ cordumctl doctor
 
 - `warn: CA cert expires in Nd` (N < 7) → regenerate soon. Rotation
   is backwards-compatible if you stage it (see
-  [deployment/certs.md](../deployment/certs.md)).
+  [TLS setup](../guides/tls-setup.md)).
 - `fail: CA cert expires in Xh` (X < 24) → regenerate now:
   `cordumctl generate-certs --force --days 365`, then restart all
   services so the new cert is picked up.
@@ -193,6 +193,6 @@ stack: baseline → stop NATS → assert recovery. Invoke via
   and check.
 - [docs/troubleshooting.md](../troubleshooting.md) — post-install
   runtime issues (flaky workers, job-timeouts, DLQ pile-up).
-- [docs/deployment/certs.md](../deployment/certs.md) — cert rotation.
+- [docs/guides/tls-setup.md](../guides/tls-setup.md) — cert rotation.
 - [tools/scripts/quickstart.sh](../../tools/scripts/quickstart.sh) —
   doctor runs as the final verification step.

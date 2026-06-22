@@ -614,28 +614,72 @@ All endpoints require admin role. Write operations (PUT, DELETE) require the `RB
 
 ### Available Permissions
 
-| Permission | Description |
-|-----------|-------------|
-| `admin.*` | Full access (wildcard) |
-| `jobs.read` | View jobs |
-| `jobs.write` | Create/edit jobs |
-| `jobs.approve` | Approve jobs |
-| `workflows.read` | View workflows |
-| `workflows.write` | Create/edit workflows |
-| `workers.read` | View workers |
-| `config.read` | View configuration |
-| `config.write` | Edit configuration |
-| `audit.read` | View audit log |
-| `packs.install` | Install packs |
-| `packs.uninstall` | Uninstall packs |
-| `policy.read` | View policies |
-| `policy.write` | Edit policies |
-| `schemas.read` | View schemas |
-| `schemas.write` | Edit schemas |
-| `users.read` | View users |
-| `users.write` | Manage users |
-| `roles.read` | View roles |
-| `roles.write` | Manage roles |
+<!-- BEGIN:rbac-permissions -->
+
+_Generated from `core/controlplane/gateway/auth/rbac.go` (`auth.AllPermissions`) — do not edit by hand; run `make docs-tables`. 58 permissions._
+
+| Permission | Resource | Action |
+|------------|----------|--------|
+| `admin.*` | `admin` | `*` |
+| `agents.delegate` | `agents` | `delegate` |
+| `agents.read` | `agents` | `read` |
+| `agents.write` | `agents` | `write` |
+| `apiKeys.read` | `apiKeys` | `read` |
+| `apiKeys.write` | `apiKeys` | `write` |
+| `audit.export` | `audit` | `export` |
+| `audit.read` | `audit` | `read` |
+| `audit.verify` | `audit` | `verify` |
+| `config.read` | `config` | `read` |
+| `config.write` | `config` | `write` |
+| `delegation.impersonate` | `delegation` | `impersonate` |
+| `delegation.read` | `delegation` | `read` |
+| `dlq.read` | `dlq` | `read` |
+| `dlq.write` | `dlq` | `write` |
+| `edge.runtime.ingest` | `edge.runtime` | `ingest` |
+| `evals.datasets.delete` | `evals.datasets` | `delete` |
+| `evals.datasets.read` | `evals.datasets` | `read` |
+| `evals.datasets.write` | `evals.datasets` | `write` |
+| `evals.runs.delete` | `evals.runs` | `delete` |
+| `evals.runs.execute` | `evals.runs` | `execute` |
+| `evals.runs.read` | `evals.runs` | `read` |
+| `governance.read` | `governance` | `read` |
+| `jobs.approve` | `jobs` | `approve` |
+| `jobs.read` | `jobs` | `read` |
+| `jobs.write` | `jobs` | `write` |
+| `legalHold.read` | `legalHold` | `read` |
+| `legalHold.write` | `legalHold` | `write` |
+| `license.read` | `license` | `read` |
+| `locks.read` | `locks` | `read` |
+| `mcp.read` | `mcp` | `read` |
+| `mcp.verify` | `mcp` | `verify` |
+| `memory.read` | `memory` | `read` |
+| `packs.install` | `packs` | `install` |
+| `packs.read` | `packs` | `read` |
+| `packs.uninstall` | `packs` | `uninstall` |
+| `packs.verify` | `packs` | `verify` |
+| `policy.read` | `policy` | `read` |
+| `policy.write` | `policy` | `write` |
+| `pools.write` | `pools` | `write` |
+| `roles.read` | `roles` | `read` |
+| `roles.write` | `roles` | `write` |
+| `schemas.read` | `schemas` | `read` |
+| `schemas.write` | `schemas` | `write` |
+| `shadow.exception.high_risk` | `shadow.exception` | `high_risk` |
+| `telemetry.export` | `telemetry` | `export` |
+| `telemetry.read` | `telemetry` | `read` |
+| `telemetry.write` | `telemetry` | `write` |
+| `topics.read` | `topics` | `read` |
+| `topics.write` | `topics` | `write` |
+| `users.read` | `users` | `read` |
+| `users.write` | `users` | `write` |
+| `workerCredentials.read` | `workerCredentials` | `read` |
+| `workerCredentials.write` | `workerCredentials` | `write` |
+| `workers.read` | `workers` | `read` |
+| `workers.write` | `workers` | `write` |
+| `workflows.read` | `workflows` | `read` |
+| `workflows.write` | `workflows` | `write` |
+
+<!-- END:rbac-permissions -->
 
 ---
 
@@ -2988,17 +3032,18 @@ curl -X POST https://gateway:8081/api/v1/pools/gpu-batch/drain \
 
 ## Endpoint Index (Registered Routes)
 
-The following routes are registered in gateway route setup.
+The following routes are registered in the gateway (`registerRoute` calls). Generated from code.
+
+<!-- BEGIN:rest-routes -->
+
+_Generated from `core/controlplane/gateway/gateway.go`, `core/controlplane/gateway/handlers_mcp.go` (registration order) — do not edit by hand; run `make docs-tables`. 226 routes._
 
 | Method | Path |
-|---|---|
+|--------|------|
 | GET | `/health` |
+| GET | `/api/v1/health` |
 | GET | `/api/v1/auth/config` |
-| GET | `/api/v1/auth/sso/oidc/login` |
-| GET | `/api/v1/auth/sso/oidc/callback` |
-| GET | `/api/v1/auth/sso/saml/metadata` |
-| GET | `/api/v1/auth/sso/saml/login` |
-| POST | `/api/v1/auth/sso/saml/acs` |
+| PUT | `/api/v1/auth/oidc/group-role-mapping` |
 | POST | `/api/v1/auth/login` |
 | GET | `/api/v1/auth/session` |
 | POST | `/api/v1/auth/logout` |
@@ -3011,23 +3056,111 @@ The following routes are registered in gateway route setup.
 | GET | `/api/v1/auth/keys` |
 | POST | `/api/v1/auth/keys` |
 | DELETE | `/api/v1/auth/keys/{id}` |
+| GET | `/api/v1/auth/roles` |
+| GET | `/api/v1/auth/roles/{name}` |
+| PUT | `/api/v1/auth/roles/{name}` |
+| DELETE | `/api/v1/auth/roles/{name}` |
 | GET | `/api/v1/workers` |
 | GET | `/api/v1/workers/{id}` |
 | GET | `/api/v1/workers/{id}/jobs` |
+| POST | `/api/v1/workers/{id}/revoke-session` |
 | GET | `/api/v1/workers/credentials` |
 | POST | `/api/v1/workers/credentials` |
 | DELETE | `/api/v1/workers/credentials/{worker_id}` |
+| GET | `/api/v1/agents` |
+| POST | `/api/v1/agents` |
+| GET | `/api/v1/agents/{id}` |
+| PUT | `/api/v1/agents/{id}` |
+| DELETE | `/api/v1/agents/{id}` |
+| GET | `/api/v1/agents/{id}/stats` |
+| GET | `/api/v1/agents/{id}/delegations` |
+| POST | `/api/v1/agents/{id}/delegate` |
+| GET | `/api/v1/delegations` |
+| POST | `/api/v1/agents/verify-delegation` |
+| POST | `/api/v1/agents/revoke-delegation` |
+| GET | `/api/v1/pools` |
+| GET | `/api/v1/pools/{name}` |
+| GET | `/api/v1/topics` |
+| POST | `/api/v1/topics` |
+| DELETE | `/api/v1/topics/{name}` |
+| PUT | `/api/v1/pools/{name}` |
+| PATCH | `/api/v1/pools/{name}` |
+| DELETE | `/api/v1/pools/{name}` |
+| POST | `/api/v1/pools/{name}/drain` |
+| PUT | `/api/v1/pools/{name}/topics/{topic}` |
+| DELETE | `/api/v1/pools/{name}/topics/{topic}` |
 | GET | `/api/v1/status` |
+| GET | `/api/v1/license` |
+| GET | `/api/v1/license/usage` |
+| POST | `/api/v1/license/reload` |
+| GET | `/api/v1/telemetry/status` |
+| GET | `/api/v1/telemetry/inspect` |
+| GET | `/api/v1/telemetry/export` |
+| GET | `/api/v1/telemetry/usage` |
+| POST | `/api/v1/telemetry/consent` |
+| GET | `/api/v1/admin/locks` |
+| GET | `/api/v1/audit/export` |
+| GET | `/api/v1/audit/export/health` |
+| GET | `/api/v1/audit/export/config` |
+| POST | `/api/v1/audit/export/test` |
+| GET | `/api/v1/audit/verify` |
+| GET | `/api/v1/audit/events` |
+| GET | `/api/v1/governance/health` |
+| POST | `/api/v1/audit/legal-hold` |
+| GET | `/api/v1/audit/legal-holds` |
+| DELETE | `/api/v1/audit/legal-hold/{id}` |
 | GET | `/api/v1/jobs` |
-| POST | `/api/v1/jobs` |
+| GET | `/api/v1/copilot/sessions/{sessionId}` |
 | GET | `/api/v1/jobs/{id}` |
 | GET | `/api/v1/jobs/{id}/stream` |
 | GET | `/api/v1/jobs/{id}/decisions` |
 | POST | `/api/v1/jobs/{id}/cancel` |
 | POST | `/api/v1/jobs/{id}/remediate` |
+| POST | `/api/v1/edge/sessions` |
+| GET | `/api/v1/edge/sessions` |
+| GET | `/api/v1/edge/sessions/{session_id}` |
+| POST | `/api/v1/edge/sessions/{session_id}/heartbeat` |
+| POST | `/api/v1/edge/sessions/{session_id}/end` |
+| POST | `/api/v1/edge/executions` |
+| GET | `/api/v1/edge/executions` |
+| GET | `/api/v1/edge/executions/{execution_id}` |
+| POST | `/api/v1/edge/executions/{execution_id}/end` |
+| GET | `/api/v1/edge/approvals` |
+| GET | `/api/v1/edge/approvals/{approval_ref}` |
+| POST | `/api/v1/edge/approvals/{approval_ref}/approve` |
+| POST | `/api/v1/edge/approvals/{approval_ref}/reject` |
+| POST | `/api/v1/edge/approvals/{approval_ref}/wait` |
+| POST | `/api/v1/edge/evaluate` |
+| POST | `/api/v1/edge/binary-integrity/events` |
+| GET | `/api/v1/edge/binary-integrity/events` |
+| POST | `/api/v1/edge/shadow-agents` |
+| GET | `/api/v1/edge/shadow-agents` |
+| GET | `/api/v1/edge/shadow-agents/{finding_id}` |
+| POST | `/api/v1/edge/shadow-agents/{finding_id}/resolve` |
+| POST | `/api/v1/edge/shadow-agents/{finding_id}/suppress` |
+| POST | `/api/v1/edge/shadow-agents/{finding_id}/ignore` |
+| POST | `/api/v1/edge/shadow-agents/{finding_id}/remediation` |
+| POST | `/api/v1/edge/shadow/exception` |
+| GET | `/api/v1/edge/shadow/exception/{exception_id}` |
+| DELETE | `/api/v1/edge/shadow/exception/{exception_id}` |
+| GET | `/api/v1/edge/shadow/exceptions` |
+| GET | `/api/v1/edge/mcp/upstreams` |
+| GET | `/api/v1/edge/mcp/upstreams/list` |
+| POST | `/api/v1/edge/mcp/upstreams` |
+| GET | `/api/v1/edge/mcp/upstreams/{name}` |
+| PUT | `/api/v1/edge/mcp/upstreams/{name}` |
+| POST | `/api/v1/edge/mcp/upstreams/{name}/disable` |
+| POST | `/api/v1/edge/mcp/upstreams/{name}/enable` |
+| POST | `/api/v1/edge/events` |
+| POST | `/api/v1/edge/events/batch` |
+| GET | `/api/v1/edge/sessions/{session_id}/events` |
+| GET | `/api/v1/edge/executions/{execution_id}/events` |
+| POST | `/api/v1/edge/sessions/{session_id}/export` |
+| POST | `/api/v1/edge/runtime/events` |
 | GET | `/api/v1/memory` |
 | POST | `/api/v1/artifacts` |
 | GET | `/api/v1/artifacts/{ptr}` |
+| POST | `/api/v1/jobs` |
 | GET | `/api/v1/traces/{id}` |
 | GET | `/api/v1/workflows` |
 | POST | `/api/v1/workflows` |
@@ -3035,7 +3168,6 @@ The following routes are registered in gateway route setup.
 | DELETE | `/api/v1/workflows/{id}` |
 | POST | `/api/v1/workflows/{id}/runs` |
 | GET | `/api/v1/workflows/{id}/runs` |
-| POST | `/api/v1/workflows/{id}/dry-run` |
 | GET | `/api/v1/workflow-runs` |
 | GET | `/api/v1/workflow-runs/{id}` |
 | GET | `/api/v1/workflow-runs/{id}/timeline` |
@@ -3043,12 +3175,11 @@ The following routes are registered in gateway route setup.
 | POST | `/api/v1/workflow-runs/{id}/chat` |
 | DELETE | `/api/v1/workflow-runs/{id}` |
 | POST | `/api/v1/workflow-runs/{id}/rerun` |
+| POST | `/api/v1/workflows/{id}/dry-run` |
 | GET | `/api/v1/config` |
 | GET | `/api/v1/config/effective` |
+| PUT | `/api/v1/config` |
 | POST | `/api/v1/config` |
-| GET | `/api/v1/topics` |
-| POST | `/api/v1/topics` |
-| DELETE | `/api/v1/topics/{name}` |
 | GET | `/api/v1/packs` |
 | GET | `/api/v1/packs/{id}` |
 | POST | `/api/v1/packs/install` |
@@ -3073,40 +3204,67 @@ The following routes are registered in gateway route setup.
 | POST | `/api/v1/approvals/{job_id}/approve` |
 | POST | `/api/v1/approvals/{job_id}/reject` |
 | POST | `/api/v1/approvals/{job_id}/repair` |
+| GET | `/api/v1/approvals/{job_id}/context` |
+| GET | `/api/v1/governance/decisions` |
+| GET | `/api/v1/governance/approvals/analytics` |
+| GET | `/api/v1/mcp/approvals` |
+| GET | `/api/v1/mcp/approvals/{id}` |
+| POST | `/api/v1/mcp/approvals/{id}/approve` |
+| POST | `/api/v1/mcp/approvals/{id}/reject` |
+| POST | `/api/v1/mcp/verify-signature` |
+| GET | `/api/v1/mcp/outbound` |
+| GET | `/api/v1/mcp/usage` |
+| GET | `/api/v1/mcp/tools` |
+| GET | `/api/v1/agents/{id}/tools` |
+| GET | `/api/v1/agents/{id}/denied-events` |
+| GET | `/api/v1/mcp/gateway/health` |
+| GET | `/api/v1/mcp/gateway/config` |
+| POST | `/api/v1/mcp/gateway/upstream` |
+|  | `/api/v1/mcp/gateway/upstream/` |
+| POST | `/api/v1/mcp/gateway/clients/connect` |
 | POST | `/api/v1/policy/evaluate` |
 | POST | `/api/v1/policy/simulate` |
 | POST | `/api/v1/policy/explain` |
 | GET | `/api/v1/policy/snapshots` |
 | GET | `/api/v1/policy/rules` |
+| GET | `/api/v1/policy/output/rules` |
+| GET | `/api/v1/policy/output/stats` |
+| PUT | `/api/v1/policy/output/rules/{id}` |
 | GET | `/api/v1/policy/velocity-rules` |
-| POST | `/api/v1/policy/velocity-rules` |
 | GET | `/api/v1/policy/velocity-rules/stats` |
+| POST | `/api/v1/policy/velocity-rules` |
 | PUT | `/api/v1/policy/velocity-rules/{id}` |
 | DELETE | `/api/v1/policy/velocity-rules/{id}` |
+| GET | `/api/v1/policy/global` |
+| PUT | `/api/v1/policy/global` |
 | GET | `/api/v1/policy/bundles` |
 | GET | `/api/v1/policy/bundles/{id}` |
 | PUT | `/api/v1/policy/bundles/{id}` |
 | DELETE | `/api/v1/policy/bundles/{id}` |
 | POST | `/api/v1/policy/bundles/{id}/simulate` |
+| PUT | `/api/v1/policy/shadows/{id}` |
+| GET | `/api/v1/policy/shadows/{id}` |
+| DELETE | `/api/v1/policy/shadows/{id}` |
+| GET | `/api/v1/policy/shadows/{id}/results/summary` |
+| GET | `/api/v1/policy/shadows/{id}/results/comparisons` |
+| GET | `/api/v1/policy/shadows/{id}/results/timeseries` |
 | GET | `/api/v1/policy/bundles/snapshots` |
 | POST | `/api/v1/policy/bundles/snapshots` |
 | GET | `/api/v1/policy/bundles/snapshots/{id}` |
 | POST | `/api/v1/policy/publish` |
 | POST | `/api/v1/policy/rollback` |
 | GET | `/api/v1/policy/audit` |
-| GET | `/api/v1/policy/output/rules` |
-| GET | `/api/v1/policy/output/stats` |
-| PUT | `/api/v1/policy/output/rules/{id}` |
-| GET | `/api/v1/pools` |
-| GET | `/api/v1/pools/{name}` |
-| PUT | `/api/v1/pools/{name}` |
-| PATCH | `/api/v1/pools/{name}` |
-| DELETE | `/api/v1/pools/{name}` |
-| POST | `/api/v1/pools/{name}/drain` |
-| PUT | `/api/v1/pools/{name}/topics/{topic}` |
-| DELETE | `/api/v1/pools/{name}/topics/{topic}` |
-| GET | `/api/v1/admin/locks` |
-| GET | `/api/v1/stream` (websocket upgrade) |
+| POST | `/api/v1/policy/replay` |
+| POST | `/api/v1/policy/analytics` |
+| POST | `/api/v1/evals/datasets/from-incidents` |
+| POST | `/api/v1/evals/datasets` |
+| GET | `/api/v1/evals/datasets` |
+|  | `/api/v1/evals/datasets/` |
+| GET | `/api/v1/evals/runs/{run_id}` |
+| DELETE | `/api/v1/evals/runs/{run_id}` |
+|  | `/api/v1/stream` |
 | GET | `/mcp/sse` |
 | POST | `/mcp/message` |
 | GET | `/mcp/status` |
+
+<!-- END:rest-routes -->

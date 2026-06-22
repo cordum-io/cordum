@@ -86,6 +86,48 @@ type Entitlements struct {
 	AgentIdentity      bool             `json:"agent_identity,omitempty"`
 	Features           map[string]bool  `json:"features,omitempty"`
 	Limits             map[string]int64 `json:"limits,omitempty"`
+
+	// present records which JSON keys were explicitly set when this Entitlements
+	// was unmarshaled from a (signature-verified) license claim. The resolver
+	// merge uses it to treat an explicitly-set scalar limit as AUTHORITATIVE over
+	// the tier default — so a claim may RESTRICT a limit below the default
+	// (security-safe; the prior MAX-merge under-enforced) — while keeping the
+	// tier default for UNSET fields (BUG-016 0=deny / Unlimited=no-cap intact).
+	// nil for in-code values (e.g. DefaultEntitlements), which are the merge BASE
+	// not an override. Unexported → never (de)serialized; ignored by the merge.
+	present map[string]struct{}
+}
+
+// UnmarshalJSON decodes the fields and ALSO records which JSON keys were
+// explicitly present (into the unexported present set), so the resolver merge
+// can distinguish an explicitly-set limit from an unset/zero one. The type alias
+// prevents infinite UnmarshalJSON recursion.
+func (e *Entitlements) UnmarshalJSON(data []byte) error {
+	type alias Entitlements
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*e = Entitlements(a)
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(data, &keys); err != nil {
+		return err
+	}
+	e.present = make(map[string]struct{}, len(keys))
+	for k := range keys {
+		e.present[k] = struct{}{}
+	}
+	return nil
+}
+
+// wasSet reports whether jsonKey was explicitly present in the JSON this
+// Entitlements was unmarshaled from. False for in-code values (present == nil).
+func (e Entitlements) wasSet(jsonKey string) bool {
+	if e.present == nil {
+		return false
+	}
+	_, ok := e.present[jsonKey]
+	return ok
 }
 
 func (c Claims) FeatureEnabled(name string) bool {

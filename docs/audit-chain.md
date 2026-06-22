@@ -103,7 +103,8 @@ Redis but doesn't have the key cannot forge valid HMAC tags.
 
 ### Configuration
 
-Set the `CORDUM_AUDIT_HMAC_KEY` environment variable to a **hex-encoded**
+Set the `CORDUM_AUDIT_HMAC_KEY` environment variable (mandatory in
+production unless `CORDUM_AUDIT_HMAC_OPTIONAL=true`) to a **hex-encoded**
 key of at least 32 bytes (256 bits). Hex is consistent with `event_hash`
 encoding elsewhere in the audit chain:
 
@@ -116,6 +117,10 @@ export CORDUM_AUDIT_HMAC_KEY="<hex-encoded-key>"
 ```
 
 When not set, HMAC is disabled and the chain operates with SHA-256 only.
+In production (`CORDUM_ENV=production`), the gateway refuses to boot in
+this state unless `CORDUM_AUDIT_HMAC_OPTIONAL=true` is set as an explicit
+escape hatch (which logs a loud warning and weakens ProvenanceGate's
+`audit_chain_compromised` defense).
 
 ### Key Rotation
 

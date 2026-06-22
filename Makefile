@@ -5,6 +5,9 @@ PROTO_FILES = api.proto context.proto output_policy.proto
 OPENAPI_OUT = docs/api/openapi
 
 BIN_DIR ?= bin
+# GOEXE is '.exe' on Windows and empty elsewhere (via `go env GOEXE`, which respects
+# GOOS) so explicit `-o` outputs get the right extension and cross-compiles stay correct.
+GOEXE := $(shell go env GOEXE)
 SERVICES = cordum-api-gateway cordum-scheduler cordum-safety-kernel cordum-workflow-engine cordum-context-engine cordum-mcp cordumctl cordum-hook cordum-agentd cordum-claude
 
 VERSION ?= dev
@@ -36,7 +39,7 @@ build-all: $(SERVICES:%=build-%)
 
 build-%: proto
 	@mkdir -p $(BIN_DIR)
-	go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$* ./cmd/$*
+	go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$*$(GOEXE) ./cmd/$*
 
 test:
 	go test ./...
@@ -55,6 +58,15 @@ openapi:
 
 openapi-validate:
 	./tools/scripts/openapi-validate.sh
+
+# docs-tables regenerates the code-derived enumeration tables (RBAC permissions,
+# REST route index, MCP tool catalog) into the in-repo docs between their
+# BEGIN/END markers. docs-tables-check fails (for CI) when they are out of date.
+docs-tables:
+	go run ./tools/scripts/gen_docs_tables
+
+docs-tables-check:
+	go run ./tools/scripts/gen_docs_tables -check
 
 docker:
 	@test -n "$(SERVICE)" || (echo "SERVICE is required (e.g. SERVICE=cordum-scheduler)" && exit 1)
@@ -98,13 +110,19 @@ dev-logs:
 # produces fresh agentd talking to a stale gateway, and the post-EDGE-041
 # `_redacted` keys silently miss the bare-key classifier in the old image,
 # which falls through to default-deny and breaks every rule match.
+#
+# EDGE-044 (extended): safety-kernel is rebuilt in lockstep too. The kernel makes
+# the actual ALLOW/DENY decision over gRPC; a STALE kernel (e.g. the :latest base
+# under a source-rebuilt gateway) silently FALSE-ALLOWs actions it should DENY
+# (denied_count stays 0). Both governance components on the Edge decision path
+# (api-gateway classifier + safety-kernel decision) must be fresh together.
 edge-rebuild-e2e:
-	go build -o ./bin/cordum-hook ./cmd/cordum-hook
-	go build -o ./bin/cordum-agentd ./cmd/cordum-agentd
-	go build -o ./bin/cordumctl ./cmd/cordumctl
-	go build -o ./bin/cordum-claude ./cmd/cordum-claude
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml build api-gateway
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --no-deps api-gateway
+	go build -o ./bin/cordum-hook$(GOEXE) ./cmd/cordum-hook
+	go build -o ./bin/cordum-agentd$(GOEXE) ./cmd/cordum-agentd
+	go build -o ./bin/cordumctl$(GOEXE) ./cmd/cordumctl
+	go build -o ./bin/cordum-claude$(GOEXE) ./cmd/cordum-claude
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml build api-gateway safety-kernel
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --no-deps api-gateway safety-kernel
 
 help:
 	@echo ""
@@ -156,4 +174,5 @@ soak-ws-full:
 release-local:
 	@bash tools/scripts/release-local.sh
 
-.PHONY: help proto build build-all $(SERVICES:%=build-%) test test-integration coverage coverage-core openapi openapi-validate docker smoke verify-images demo-quickstart-test demo-mock-bank-test dev-up dev-down dev-logs edge-rebuild-e2e soak-ws soak-ws-quick soak-ws-full release-local
+# Do NOT add build-% / $(SERVICES:%=build-%) here: make skips pattern-rule search for phony targets (manual sec. 4.6), silently disabling the build-% recipe above ("Nothing to be done for build-<svc>"). Outputs live in bin/, so build-% is always out-of-date and rebuilds anyway.
+.PHONY: help proto build build-all test test-integration coverage coverage-core openapi openapi-validate docs-tables docs-tables-check docker smoke verify-images demo-quickstart-test demo-mock-bank-test dev-up dev-down dev-logs edge-rebuild-e2e soak-ws soak-ws-quick soak-ws-full release-local

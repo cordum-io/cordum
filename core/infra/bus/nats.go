@@ -62,6 +62,7 @@ const (
 	envNATSTLSInsecure   = "NATS_TLS_INSECURE"
 	envNATSTLSServerName = "NATS_TLS_SERVER_NAME"
 	envNATSAllowPlain    = "CORDUM_NATS_ALLOW_PLAINTEXT"
+	envNATSAllowNoAuth   = "CORDUM_NATS_ALLOW_NOAUTH"
 	envNATSUsername      = "NATS_USERNAME"
 	envNATSPassword      = "NATS_PASSWORD"
 	envNATSNKey          = "NATS_NKEY"
@@ -115,7 +116,9 @@ var (
 // In production mode (CORDUM_ENV=production or CORDUM_PRODUCTION=true),
 // non-TLS URLs are rejected unless CORDUM_NATS_ALLOW_PLAINTEXT=true.
 // Authentication is configured via NATS_USERNAME/NATS_PASSWORD, NATS_TOKEN,
-// or NATS_NKEY env vars. A warning is logged if production has no auth.
+// or NATS_NKEY env vars. In production, NewNatsBus refuses to start when no
+// auth mechanism is configured unless CORDUM_NATS_ALLOW_NOAUTH=true is set as
+// an explicit override (which still logs a warning).
 func NewNatsBus(url string) (*NatsBus, error) {
 	production := env.IsProduction()
 
@@ -156,7 +159,10 @@ func NewNatsBus(url string) (*NatsBus, error) {
 	// Authentication: try username/password, then token, then NKey.
 	authConfigured := natsApplyAuth(&opts)
 	if production && !authConfigured {
-		slog.Warn("bus: NATS authentication not configured in production — set NATS_USERNAME/NATS_PASSWORD, NATS_TOKEN, or NATS_NKEY")
+		if !parseBoolEnv(envNATSAllowNoAuth) {
+			return nil, fmt.Errorf("nats authentication required in production: set NATS_USERNAME+NATS_PASSWORD, NATS_TOKEN, or NATS_NKEY — or set %s=true to override", envNATSAllowNoAuth)
+		}
+		slog.Warn("bus: NATS authentication not configured in production — override active", "override", envNATSAllowNoAuth)
 	}
 
 	nc, err := nats.Connect(url, opts...)
@@ -459,7 +465,7 @@ func (b *NatsBus) SubscribeWithContext(subject, queue string, handler func(conte
 
 	cb := func(msg *nats.Msg) {
 		ctx := cordumotel.ExtractTraceContext(context.Background(), msg.Header)
-		action, _ := processBusMsgCtx(ctx, msg.Data, handler, 0)
+		action, _ := processBusMsgCtx(ctx, subject, msg.Data, handler, 0)
 		if action != msgActionAck {
 			slog.Error("bus: handler error", "subject", subject)
 		}
@@ -529,7 +535,7 @@ func (b *NatsBus) jsCallbackCtx(subject string, handler func(context.Context, *p
 
 		// Extract trace context from NATS headers.
 		ctx := cordumotel.ExtractTraceContext(context.Background(), msg.Header)
-		action, delay := processBusMsgCtx(ctx, msg.Data, handler, numDelivered)
+		action, delay := processBusMsgCtx(ctx, subject, msg.Data, handler, numDelivered)
 
 		if b.redis != nil && streamSeq > 0 {
 			iKey := inflightKey(streamName, streamSeq)
@@ -568,9 +574,19 @@ func (b *NatsBus) jsCallbackCtx(subject string, handler func(context.Context, *p
 }
 
 // processBusMsgCtx is like processBusMsg but passes a context to the handler.
-func processBusMsgCtx(ctx context.Context, data []byte, handler func(context.Context, *pb.BusPacket) error, numDelivered uint64) (msgAction, time.Duration) {
+func processBusMsgCtx(ctx context.Context, subject string, data []byte, handler func(context.Context, *pb.BusPacket) error, numDelivered uint64) (msgAction, time.Duration) {
 	var packet pb.BusPacket
 	if err := proto.Unmarshal(data, &packet); err != nil {
+		busUnmarshalFailureTotal.WithLabelValues(subject, "unmarshal").Inc()
+		slog.Error("bus: packet unmarshal failed", "audit_event", "bus_packet_unmarshal_failed", "subject", subject, "err", err)
+		if numDelivered > poisonUnmarshalThreshold {
+			return msgActionTerm, 0
+		}
+		return msgActionNakDelay, 5 * time.Second
+	}
+	if err := capsdk.ValidateBusPacket(&packet); err != nil {
+		busUnmarshalFailureTotal.WithLabelValues(subject, "invalid").Inc()
+		slog.Error("bus: packet invalid", "audit_event", "bus_packet_invalid", "subject", subject, "err", err)
 		if numDelivered > poisonUnmarshalThreshold {
 			return msgActionTerm, 0
 		}
@@ -669,7 +685,7 @@ func (b *NatsBus) subscribe(subject, queue string, handler func(*pb.BusPacket) e
 				rCancel()
 			}
 
-			action, delay := processBusMsg(msg.Data, handler, numDelivered)
+			action, delay := processBusMsg(subject, msg.Data, handler, numDelivered)
 
 			// Clear in-flight tracking after processing.
 			if b.redis != nil && streamSeq > 0 {
@@ -751,7 +767,13 @@ func (b *NatsBus) subscribe(subject, queue string, handler func(*pb.BusPacket) e
 	cb := func(msg *nats.Msg) {
 		var packet pb.BusPacket
 		if err := proto.Unmarshal(msg.Data, &packet); err != nil {
-			slog.Error("bus: failed to unmarshal packet", "subject", subject, "err", err)
+			busUnmarshalFailureTotal.WithLabelValues(subject, "unmarshal").Inc()
+			slog.Error("bus: packet unmarshal failed", "audit_event", "bus_packet_unmarshal_failed", "subject", subject, "err", err)
+			return
+		}
+		if err := capsdk.ValidateBusPacket(&packet); err != nil {
+			busUnmarshalFailureTotal.WithLabelValues(subject, "invalid").Inc()
+			slog.Error("bus: packet invalid", "audit_event", "bus_packet_invalid", "subject", subject, "err", err)
 			return
 		}
 		if err := handler(&packet); err != nil {
@@ -800,12 +822,23 @@ const poisonUnmarshalThreshold uint64 = 3
 
 // processBusMsg unmarshals raw message data, invokes the handler, and returns
 // the action to take plus an optional NAK delay. numDelivered is the JetStream
-// delivery count (0 when metadata is unavailable).
-func processBusMsg(data []byte, handler func(*pb.BusPacket) error, numDelivered uint64) (msgAction, time.Duration) {
+// delivery count (0 when metadata is unavailable). subject is used only for
+// observability (metric label + audit event); it does not affect the action.
+func processBusMsg(subject string, data []byte, handler func(*pb.BusPacket) error, numDelivered uint64) (msgAction, time.Duration) {
 	var packet pb.BusPacket
 	if err := proto.Unmarshal(data, &packet); err != nil {
 		// If unmarshal fails after multiple redeliveries, the payload is
 		// permanently corrupt. Terminate to prevent queue starvation.
+		busUnmarshalFailureTotal.WithLabelValues(subject, "unmarshal").Inc()
+		slog.Error("bus: packet unmarshal failed", "audit_event", "bus_packet_unmarshal_failed", "subject", subject, "err", err)
+		if numDelivered > poisonUnmarshalThreshold {
+			return msgActionTerm, 0
+		}
+		return msgActionNakDelay, 5 * time.Second
+	}
+	if err := capsdk.ValidateBusPacket(&packet); err != nil {
+		busUnmarshalFailureTotal.WithLabelValues(subject, "invalid").Inc()
+		slog.Error("bus: packet invalid", "audit_event", "bus_packet_invalid", "subject", subject, "err", err)
 		if numDelivered > poisonUnmarshalThreshold {
 			return msgActionTerm, 0
 		}

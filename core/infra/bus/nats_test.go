@@ -17,6 +17,7 @@ import (
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	natsserver "github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	goredis "github.com/redis/go-redis/v9"
 	"google.golang.org/protobuf/proto"
 )
@@ -201,7 +202,7 @@ func TestProcessBusMsgPoisonPill(t *testing.T) {
 	}
 
 	// Malformed data on first delivery should trigger NakDelay (allow retry)
-	action, delay := processBusMsg([]byte("not-protobuf-data"), handler, 1)
+	action, delay := processBusMsg("test.subject", []byte("not-protobuf-data"), handler, 1)
 	if action != msgActionNakDelay {
 		t.Fatalf("expected NakDelay for poison pill on first delivery, got action=%d", action)
 	}
@@ -213,18 +214,18 @@ func TestProcessBusMsgPoisonPill(t *testing.T) {
 	}
 
 	// Malformed data after threshold deliveries should terminate
-	action, _ = processBusMsg([]byte("not-protobuf-data"), handler, poisonUnmarshalThreshold+1)
+	action, _ = processBusMsg("test.subject", []byte("not-protobuf-data"), handler, poisonUnmarshalThreshold+1)
 	if action != msgActionTerm {
 		t.Fatalf("expected Term for corrupt data after %d deliveries, got action=%d", poisonUnmarshalThreshold+1, action)
 	}
 
 	// Valid protobuf should ACK and call handler
-	valid := &pb.BusPacket{Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "job-1"}}}
+	valid := &pb.BusPacket{TraceId: "trace-test", SenderId: "sender-test", Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "job-1"}}}
 	data, err := proto.Marshal(valid)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	action, _ = processBusMsg(data, handler, 1)
+	action, _ = processBusMsg("test.subject", data, handler, 1)
 	if action != msgActionAck {
 		t.Fatalf("expected Ack for valid message, got action=%d", action)
 	}
@@ -238,10 +239,10 @@ func TestProcessBusMsgRetryableError(t *testing.T) {
 		return RetryAfter(errors.New("transient"), 2*time.Second)
 	}
 
-	valid := &pb.BusPacket{Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "job-1"}}}
+	valid := &pb.BusPacket{TraceId: "trace-test", SenderId: "sender-test", Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "job-1"}}}
 	data, _ := proto.Marshal(valid)
 
-	action, delay := processBusMsg(data, handler, 1)
+	action, delay := processBusMsg("test.subject", data, handler, 1)
 	if action != msgActionNakDelay {
 		t.Fatalf("expected NakDelay for retryable error, got action=%d", action)
 	}
@@ -255,10 +256,10 @@ func TestProcessBusMsgNonRetryableError(t *testing.T) {
 		return errors.New("permanent failure")
 	}
 
-	valid := &pb.BusPacket{Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "job-1"}}}
+	valid := &pb.BusPacket{TraceId: "trace-test", SenderId: "sender-test", Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "job-1"}}}
 	data, _ := proto.Marshal(valid)
 
-	action, _ := processBusMsg(data, handler, 1)
+	action, _ := processBusMsg("test.subject", data, handler, 1)
 	if action != msgActionAck {
 		t.Fatalf("expected Ack for non-retryable error, got action=%d", action)
 	}
@@ -273,7 +274,7 @@ func TestProcessBusMsgCorruptAtThreshold(t *testing.T) {
 	corrupt := []byte("definitely-not-protobuf")
 
 	// At exactly the threshold: should still NakDelay (allow retry)
-	action, delay := processBusMsg(corrupt, handler, poisonUnmarshalThreshold)
+	action, delay := processBusMsg("test.subject", corrupt, handler, poisonUnmarshalThreshold)
 	if action != msgActionNakDelay {
 		t.Fatalf("expected NakDelay at threshold (%d), got action=%d", poisonUnmarshalThreshold, action)
 	}
@@ -282,13 +283,13 @@ func TestProcessBusMsgCorruptAtThreshold(t *testing.T) {
 	}
 
 	// One above threshold: should terminate
-	action, _ = processBusMsg(corrupt, handler, poisonUnmarshalThreshold+1)
+	action, _ = processBusMsg("test.subject", corrupt, handler, poisonUnmarshalThreshold+1)
 	if action != msgActionTerm {
 		t.Fatalf("expected Term above threshold, got action=%d", action)
 	}
 
 	// Zero delivery count (metadata unavailable): should NakDelay
-	action, _ = processBusMsg(corrupt, handler, 0)
+	action, _ = processBusMsg("test.subject", corrupt, handler, 0)
 	if action != msgActionNakDelay {
 		t.Fatalf("expected NakDelay for zero delivery count, got action=%d", action)
 	}
@@ -302,18 +303,82 @@ func TestProcessBusMsgValidDataHighDeliveryCount(t *testing.T) {
 		return nil
 	}
 
-	valid := &pb.BusPacket{Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "job-1"}}}
+	valid := &pb.BusPacket{TraceId: "trace-test", SenderId: "sender-test", Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "job-1"}}}
 	data, err := proto.Marshal(valid)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
 
-	action, _ := processBusMsg(data, handler, 99)
+	action, _ := processBusMsg("test.subject", data, handler, 99)
 	if action != msgActionAck {
 		t.Fatalf("expected Ack for valid message even with high delivery count, got action=%d", action)
 	}
 	if !handlerCalled {
 		t.Fatal("handler should be called for valid message regardless of delivery count")
+	}
+}
+
+// BUG-008: a malformed packet used to be silently dropped on the non-durable
+// path and produced no metric/audit even on the durable path. processBusMsg
+// now emits busUnmarshalFailureTotal{subject,reason="unmarshal"} and a
+// structured audit event.
+func TestProcessBusMsg_UnmarshalFailure_EmitsMetricAndAudit(t *testing.T) {
+	handler := func(p *pb.BusPacket) error { return nil }
+	subj := "test.unmarshal.fail"
+	before := testutil.ToFloat64(busUnmarshalFailureTotal.WithLabelValues(subj, "unmarshal"))
+
+	action, _ := processBusMsg(subj, []byte("not-protobuf-data"), handler, 1)
+	if action != msgActionNakDelay {
+		t.Fatalf("action = %d, want NakDelay", action)
+	}
+	if delta := testutil.ToFloat64(busUnmarshalFailureTotal.WithLabelValues(subj, "unmarshal")) - before; delta != 1 {
+		t.Fatalf("metric{unmarshal} delta = %v, want 1", delta)
+	}
+}
+
+// BUG-010: proto.Unmarshal accepts a BusPacket with empty TraceId/SenderId/nil
+// Payload. The new ValidateBusPacket guard rejects these and emits
+// busUnmarshalFailureTotal{subject,reason="invalid"} + audit event. Same
+// NakDelay/Term-after-poison action as an unmarshal failure.
+func TestProcessBusMsg_InvalidPacket_EmitsMetricAndAudit(t *testing.T) {
+	handlerCalled := false
+	handler := func(p *pb.BusPacket) error {
+		handlerCalled = true
+		return nil
+	}
+
+	// Marshal a packet missing TraceId+SenderId — wire-valid, semantically invalid.
+	bad := &pb.BusPacket{Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "j"}}}
+	data, err := proto.Marshal(bad)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	subj := "test.invalid"
+	before := testutil.ToFloat64(busUnmarshalFailureTotal.WithLabelValues(subj, "invalid"))
+
+	action, delay := processBusMsg(subj, data, handler, 1)
+	if action != msgActionNakDelay {
+		t.Fatalf("action = %d, want NakDelay for invalid packet (first delivery)", action)
+	}
+	if delay != 5*time.Second {
+		t.Fatalf("delay = %v, want 5s", delay)
+	}
+	if handlerCalled {
+		t.Fatal("handler must not be called for invalid packet")
+	}
+	if delta := testutil.ToFloat64(busUnmarshalFailureTotal.WithLabelValues(subj, "invalid")) - before; delta != 1 {
+		t.Fatalf("metric{invalid} delta = %v, want 1", delta)
+	}
+
+	// Above poison threshold: must Term instead of NakDelay.
+	action, _ = processBusMsg(subj, data, handler, poisonUnmarshalThreshold+1)
+	if action != msgActionTerm {
+		t.Fatalf("action above threshold = %d, want Term", action)
+	}
+	// Sanity-check ValidateBusPacket caught it for the right reason.
+	if err := capsdk.ValidateBusPacket(bad); err == nil {
+		t.Fatal("expected ValidateBusPacket to reject the bad packet")
 	}
 }
 
@@ -672,7 +737,9 @@ func TestBroadcastFanout_BothReplicasReceive(t *testing.T) {
 
 	// Publish a heartbeat.
 	if err := bus1.Publish(capsdk.SubjectHeartbeat, &pb.BusPacket{
-		Payload: &pb.BusPacket_Heartbeat{Heartbeat: &pb.Heartbeat{WorkerId: "w1"}},
+		TraceId:  "trace-test",
+		SenderId: "sender-test",
+		Payload:  &pb.BusPacket_Heartbeat{Heartbeat: &pb.Heartbeat{WorkerId: "w1"}},
 	}); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
@@ -725,7 +792,9 @@ func TestQueueGroup_OnlyOneReceives(t *testing.T) {
 	// Publish multiple messages.
 	for i := 0; i < 10; i++ {
 		if err := bus1.Publish(capsdk.SubjectSubmit, &pb.BusPacket{
-			Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "job-q"}},
+			TraceId:  "trace-test",
+			SenderId: "sender-test",
+			Payload:  &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "job-q"}},
 		}); err != nil {
 			t.Fatalf("publish: %v", err)
 		}
@@ -787,7 +856,9 @@ func TestBroadcastWithJetStream(t *testing.T) {
 
 	// Publish a DLQ message.
 	if err := bus1.Publish(capsdk.SubjectDLQ, &pb.BusPacket{
-		Payload: &pb.BusPacket_JobResult{JobResult: &pb.JobResult{JobId: "dlq-1"}},
+		TraceId:  "trace-test",
+		SenderId: "sender-test",
+		Payload:  &pb.BusPacket_JobResult{JobResult: &pb.JobResult{JobId: "dlq-1"}},
 	}); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
@@ -870,6 +941,113 @@ func TestNewNatsBus_TLSURLNotBlockedByEnforcement(t *testing.T) {
 	// Should be a TLS config error, not an enforcement error.
 	if strings.Contains(err.Error(), "CORDUM_NATS_ALLOW_PLAINTEXT") {
 		t.Fatalf("tls:// should not trigger plaintext enforcement: %s", err)
+	}
+}
+
+// --- Auth-required-in-production tests (BUG-007 hardening) ---
+
+func TestNewNatsBus_NoAuthRejectedInProduction(t *testing.T) {
+	t.Setenv("CORDUM_ENV", "production")
+	t.Setenv("CORDUM_PRODUCTION", "")
+	t.Setenv("CORDUM_NATS_ALLOW_PLAINTEXT", "")
+	t.Setenv("CORDUM_NATS_ALLOW_NOAUTH", "")
+	t.Setenv(envNATSUsername, "")
+	t.Setenv(envNATSPassword, "")
+	t.Setenv(envNATSToken, "")
+	t.Setenv(envNATSNKey, "")
+	// Set ServerName so natsTLSConfigFromEnv returns a valid cfg without needing
+	// real cert files — otherwise its production-tls-required check fires before
+	// the auth check we want to assert.
+	t.Setenv(envNATSTLSCA, "")
+	t.Setenv(envNATSTLSCert, "")
+	t.Setenv(envNATSTLSKey, "")
+	t.Setenv(envNATSTLSInsecure, "")
+	t.Setenv(envNATSTLSServerName, "test.example.com")
+
+	_, err := NewNatsBus(unusedLocalNATSURL(t, "tls"))
+	if err == nil {
+		t.Fatal("expected error for missing NATS auth in production")
+	}
+	if !strings.Contains(err.Error(), "nats authentication required in production") {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if !strings.Contains(err.Error(), "CORDUM_NATS_ALLOW_NOAUTH") {
+		t.Fatalf("error should mention override env var: %s", err)
+	}
+}
+
+func TestNewNatsBus_NoAuthAllowedWithOverride(t *testing.T) {
+	t.Setenv("CORDUM_ENV", "production")
+	t.Setenv("CORDUM_PRODUCTION", "")
+	t.Setenv("CORDUM_NATS_ALLOW_PLAINTEXT", "")
+	t.Setenv("CORDUM_NATS_ALLOW_NOAUTH", "true")
+	t.Setenv(envNATSUsername, "")
+	t.Setenv(envNATSPassword, "")
+	t.Setenv(envNATSToken, "")
+	t.Setenv(envNATSNKey, "")
+	t.Setenv(envNATSTLSCA, "")
+	t.Setenv(envNATSTLSCert, "")
+	t.Setenv(envNATSTLSKey, "")
+	t.Setenv(envNATSTLSInsecure, "")
+	t.Setenv(envNATSTLSServerName, "test.example.com")
+
+	_, err := NewNatsBus(unusedLocalNATSURL(t, "tls"))
+	if err == nil {
+		t.Fatal("expected downstream error (no NATS server)")
+	}
+	if strings.Contains(err.Error(), "nats authentication required in production") {
+		t.Fatalf("override should bypass auth-required error: %s", err)
+	}
+	if strings.Contains(err.Error(), "CORDUM_NATS_ALLOW_NOAUTH") {
+		t.Fatalf("override should not surface in error: %s", err)
+	}
+}
+
+func TestNewNatsBus_NoAuthAllowedInDev(t *testing.T) {
+	t.Setenv("CORDUM_ENV", "development")
+	t.Setenv("CORDUM_PRODUCTION", "")
+	t.Setenv("CORDUM_NATS_ALLOW_PLAINTEXT", "")
+	t.Setenv("CORDUM_NATS_ALLOW_NOAUTH", "")
+	t.Setenv(envNATSUsername, "")
+	t.Setenv(envNATSPassword, "")
+	t.Setenv(envNATSToken, "")
+	t.Setenv(envNATSNKey, "")
+	t.Setenv(envNATSTLSCA, "")
+	t.Setenv(envNATSTLSCert, "")
+	t.Setenv(envNATSTLSKey, "")
+	t.Setenv(envNATSTLSInsecure, "")
+	t.Setenv(envNATSTLSServerName, "")
+
+	_, err := NewNatsBus(unusedLocalNATSURL(t, "nats"))
+	if err == nil {
+		t.Fatal("expected downstream connection error in dev")
+	}
+	if strings.Contains(err.Error(), "nats authentication required in production") {
+		t.Fatalf("dev mode should not enforce auth: %s", err)
+	}
+}
+
+func TestNewNatsBus_AuthConfiguredInProduction_NoOverrideNeeded(t *testing.T) {
+	t.Setenv("CORDUM_ENV", "production")
+	t.Setenv("CORDUM_PRODUCTION", "")
+	t.Setenv("CORDUM_NATS_ALLOW_PLAINTEXT", "")
+	t.Setenv("CORDUM_NATS_ALLOW_NOAUTH", "")
+	t.Setenv(envNATSUsername, "alice")
+	t.Setenv(envNATSPassword, "secret123")
+	t.Setenv(envNATSToken, "")
+	t.Setenv(envNATSNKey, "")
+	t.Setenv(envNATSTLSCA, "")
+	t.Setenv(envNATSTLSCert, "")
+	t.Setenv(envNATSTLSKey, "")
+	t.Setenv(envNATSTLSInsecure, "")
+	t.Setenv(envNATSTLSServerName, "test.example.com")
+
+	_, err := NewNatsBus(unusedLocalNATSURL(t, "tls"))
+	if err == nil {
+		t.Fatal("expected downstream error (no NATS server)")
+	}
+	if strings.Contains(err.Error(), "nats authentication required in production") {
+		t.Fatalf("auth was configured, should not see auth-required error: %s", err)
 	}
 }
 
@@ -997,6 +1175,9 @@ func TestNatsMaxAckPending_BelowLimit(t *testing.T) {
 func TestNewNatsBus_ProductionNoAuthProceedsWithWarning(t *testing.T) {
 	t.Setenv("CORDUM_ENV", "production")
 	t.Setenv("CORDUM_NATS_ALLOW_PLAINTEXT", "true")
+	// BUG-007: production no-auth is refused by default; the override allows the
+	// warn-and-continue path this test was originally written to assert.
+	t.Setenv(envNATSAllowNoAuth, "true")
 	t.Setenv("NATS_USERNAME", "")
 	t.Setenv("NATS_PASSWORD", "")
 	t.Setenv("NATS_TOKEN", "")
@@ -1049,6 +1230,8 @@ func TestQueueGroupWithJetStream(t *testing.T) {
 	// Publish 5 messages with unique IDs (JetStream deduplicates by MsgId).
 	for i := 0; i < 5; i++ {
 		if err := bus1.Publish(capsdk.SubjectSubmit, &pb.BusPacket{
+			TraceId:  "trace-test",
+			SenderId: "sender-test",
 			Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{
 				JobId: "job-js-q-" + time.Now().Format("150405.000") + "-" + string(rune('a'+i)),
 			}},

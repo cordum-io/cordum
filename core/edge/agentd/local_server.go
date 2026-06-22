@@ -524,7 +524,7 @@ func subtleMismatch(got, want string) bool {
 	copy(gotPadded[:], got)
 	copy(wantPadded[:], want)
 
-	match := subtle.ConstantTimeEq(int32(len(got)), int32(len(want)))
+	match := subtle.ConstantTimeEq(int32(len(got)), int32(len(want))) // #nosec G115 -- subtle.ConstantTimeEq requires int32; nonce lengths are tiny/bounded and the check must stay branch-free for constant time
 	match &= subtle.ConstantTimeLessOrEq(1, len(got))
 	match &= subtle.ConstantTimeLessOrEq(1, len(want))
 	match &= subtle.ConstantTimeLessOrEq(len(got), subtleMismatchPadLen)
@@ -549,7 +549,10 @@ func PrepareUnixSocketPath(_ context.Context, socketPath string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create socket dir: %w", err)
 	}
-	_ = os.Chmod(dir, 0o700)
+	chmodErr := os.Chmod(dir, 0o700) // #nosec G302 -- directory needs the owner execute bit to be traversable; 0700 is owner-only
+	if chmodErr != nil {
+		return fmt.Errorf("harden socket dir perms: %w", chmodErr)
+	}
 	if info, err := os.Lstat(socketPath); err == nil {
 		if info.Mode()&os.ModeSocket == 0 {
 			return fmt.Errorf("refusing to remove non-socket path %s", socketPath)

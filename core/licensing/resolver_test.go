@@ -2,6 +2,7 @@ package licensing
 
 import (
 	"crypto/ed25519"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"slices"
@@ -53,6 +54,89 @@ func TestEntitlementResolverNoLicenseFallsBackToCommunity(t *testing.T) {
 	if got := limitValue(info.Limits, "audit_retention_days"); got != 7 {
 		t.Fatalf("audit_retention_days = %d, want 7", got)
 	}
+}
+
+// TestMergeEntitlements_PresenceAware locks the BUG-016-sibling fix: a verified
+// claim's EXPLICITLY-set scalar limit is authoritative over the tier default
+// (may restrict below it — security-safe), while UNSET fields keep the tier
+// default (no sparse-license DENY). Claims are built via json.Unmarshal so the
+// Entitlements.present set is populated exactly as on the real verified-claim path.
+func TestMergeEntitlements_PresenceAware(t *testing.T) {
+	t.Parallel()
+	claim := func(t *testing.T, js string) Entitlements {
+		t.Helper()
+		var e Entitlements
+		if err := json.Unmarshal([]byte(js), &e); err != nil {
+			t.Fatalf("unmarshal claim: %v", err)
+		}
+		return e
+	}
+
+	t.Run("explicit_lower_honored", func(t *testing.T) {
+		m := mergeEntitlements(DefaultEntitlements(PlanEnterprise), claim(t, `{"max_workflow_steps":1}`))
+		if m.MaxWorkflowSteps != 1 {
+			t.Fatalf("MaxWorkflowSteps = %d, want 1 (explicit lower must win over Unlimited default)", m.MaxWorkflowSteps)
+		}
+	})
+
+	t.Run("unset_keeps_tier_default_not_zero", func(t *testing.T) {
+		def := DefaultEntitlements(PlanEnterprise)
+		m := mergeEntitlements(def, claim(t, `{"max_workflow_steps":1}`))
+		if m.MaxWorkers != def.MaxWorkers {
+			t.Fatalf("MaxWorkers = %d, want tier default %d (unset field must NOT be zeroed — sparse-DENY hazard)", m.MaxWorkers, def.MaxWorkers)
+		}
+		if m.MaxActiveWorkflows != def.MaxActiveWorkflows {
+			t.Fatalf("MaxActiveWorkflows = %d, want tier default %d", m.MaxActiveWorkflows, def.MaxActiveWorkflows)
+		}
+	})
+
+	t.Run("explicit_zero_is_deny", func(t *testing.T) {
+		m := mergeEntitlements(DefaultEntitlements(PlanEnterprise), claim(t, `{"max_workflow_steps":0}`))
+		if m.MaxWorkflowSteps != 0 {
+			t.Fatalf("MaxWorkflowSteps = %d, want 0 (explicit 0 = deny, must be honored)", m.MaxWorkflowSteps)
+		}
+	})
+
+	t.Run("explicit_unlimited_honored", func(t *testing.T) {
+		m := mergeEntitlements(DefaultEntitlements(PlanCommunity), claim(t, `{"requests_per_second":-1}`))
+		if m.RequestsPerSecond != Unlimited {
+			t.Fatalf("RequestsPerSecond = %d, want Unlimited (%d)", m.RequestsPerSecond, Unlimited)
+		}
+	})
+
+	t.Run("claim_can_still_raise", func(t *testing.T) {
+		m := mergeEntitlements(DefaultEntitlements(PlanCommunity), claim(t, `{"max_workers":100}`))
+		if m.MaxWorkers != 100 {
+			t.Fatalf("MaxWorkers = %d, want 100 (raising above the tier default is honored)", m.MaxWorkers)
+		}
+	})
+
+	t.Run("community_policy_bundles_default_preserved_when_unset", func(t *testing.T) {
+		// Guards against re-fighting task-c850d8ac: Community MaxPolicyBundles=0
+		// must survive a claim that does not mention it.
+		m := mergeEntitlements(DefaultEntitlements(PlanCommunity), claim(t, `{"max_workers":5}`))
+		if m.MaxPolicyBundles != 0 {
+			t.Fatalf("MaxPolicyBundles = %d, want 0 (Community free-tier gate, unset by claim)", m.MaxPolicyBundles)
+		}
+	})
+
+	for _, plan := range []Plan{PlanCommunity, PlanTeam, PlanEnterprise} {
+		t.Run("explicit_lower_across_tiers/"+string(plan), func(t *testing.T) {
+			m := mergeEntitlements(DefaultEntitlements(plan), claim(t, `{"max_active_workflows":2}`))
+			if m.MaxActiveWorkflows != 2 {
+				t.Fatalf("plan=%s MaxActiveWorkflows = %d, want 2", plan, m.MaxActiveWorkflows)
+			}
+		})
+	}
+
+	t.Run("in_code_override_keeps_legacy_max_merge", func(t *testing.T) {
+		// An override built in-code (no JSON) has present==nil → applyPresentLimits
+		// is a no-op → legacy MAX-merge preserved (1 < Community's 3 is ignored).
+		m := mergeEntitlements(DefaultEntitlements(PlanCommunity), Entitlements{MaxWorkers: 1})
+		if m.MaxWorkers != 3 {
+			t.Fatalf("MaxWorkers = %d, want 3 (in-code override has no presence → legacy max-merge, lower value ignored)", m.MaxWorkers)
+		}
+	})
 }
 
 func TestEntitlementResolverInvalidLicenseFallsBackToCommunity(t *testing.T) {

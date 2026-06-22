@@ -68,8 +68,9 @@ For full TLS details, see [TLS Setup Guide](guides/tls-setup.md).
 
 ## Enterprise gateway
 
-Enterprise setup and licensing live in the enterprise repo. See `docs/enterprise.md`
-for details.
+Enterprise features (SSO/SAML, SCIM, advanced RBAC, SIEM export, legal hold) are
+built into core behind license entitlements — the standalone `cordum-enterprise`
+repo was retired 2026-04-23. See `docs/enterprise.md` for setup and licensing.
 
 ## Run a workflow smoke test
 

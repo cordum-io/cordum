@@ -807,7 +807,7 @@ Complete list of production-relevant environment variables:
 | `CORDUM_DASHBOARD_EMBED_API_KEY` | Gateway | Embed API key in dashboard JS (DO NOT use in production) |
 | `CORDUM_ALLOW_HEADER_PRINCIPAL` | Gateway | Allow `X-Principal` header override (disabled in production) |
 | `GATEWAY_HTTP_ADDR` | Gateway | HTTP listen address (default `:8081`) |
-| `GATEWAY_GRPC_ADDR` | Gateway | gRPC listen address (default `:50051`) |
+| `GATEWAY_GRPC_ADDR` | Gateway | gRPC listen address (default `:8080`) |
 | `GATEWAY_METRICS_ADDR` | Gateway | Metrics listen address (default `:9092`) |
 | `GATEWAY_METRICS_PUBLIC` | Gateway | Allow public metrics bind (`1` to allow) |
 | `GATEWAY_HTTP_TLS_CERT` | Gateway | Path to HTTP TLS certificate |

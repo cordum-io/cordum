@@ -115,8 +115,8 @@ func TestHumanSummary_RepresentativeRows(t *testing.T) {
 			if got == "" {
 				t.Fatalf("HumanSummary returned empty for %s", tc.name)
 			}
-			if len(got) > maxSummaryLen {
-				t.Fatalf("summary exceeds bound %d: %d chars: %q", maxSummaryLen, len(got), got)
+			if n := utf8.RuneCountInString(got); n > maxSummaryLen {
+				t.Fatalf("summary exceeds bound %d: %d runes: %q", maxSummaryLen, n, got)
 			}
 			low := strings.ToLower(got)
 			for _, want := range tc.mustContain {
@@ -125,7 +125,9 @@ func TestHumanSummary_RepresentativeRows(t *testing.T) {
 				}
 			}
 			for _, bad := range tc.mustReject {
-				if strings.Contains(got, bad) {
+				// Case-insensitive: a case-flipped leak ("BEARER xxx") must
+				// still trip this gate. `low` is got lowercased above.
+				if strings.Contains(low, strings.ToLower(bad)) {
 					t.Errorf("summary %q leaked forbidden %q", got, bad)
 				}
 			}

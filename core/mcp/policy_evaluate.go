@@ -276,6 +276,22 @@ type ToolCallDeps struct {
 	// Tests inject a fresh in-process store per fixture so -count=3
 	// re-runs see a clean state. A nil store disables retry dedupe.
 	DedupeState DedupeStore
+
+	// TaintStore persists prompt-injection session taints (keyed by tenant+
+	// session) detected when scanning tool-call RESULTS, so a later destructive
+	// call in the same session can be DENIED content-awarely. Nil disables the
+	// session-taint feature (like a nil DedupeState). Production wires this via
+	// SelectTaintStore off the shared Redis client; tests inject a fresh
+	// in-process store per fixture.
+	TaintStore TaintStore
+
+	// ResultScanner scans a tool-call result's content for prompt injection.
+	// Injected as a func dep (rather than importing the safetykernel scanner) so
+	// core/mcp keeps no dependency on core/controlplane/safetykernel — the gateway
+	// adapts safetykernel.ScanForPromptInjection at wiring time. Nil disables
+	// result scanning. Paired with TaintStore: BOTH must be non-nil for the read
+	// path to persist a taint.
+	ResultScanner func(content []byte) []ResultFinding
 }
 
 // EvaluateToolCallResult bundles the artifacts a caller might want
@@ -481,6 +497,35 @@ func EvaluateToolCall(ctx context.Context, deps ToolCallDeps, params ToolCallPar
 	descriptor, err := BuildActionDescriptorFromToolCall(meta, descriptorParams, server)
 	if err != nil {
 		return EvaluateToolCallResult{}, err
+	}
+
+	// Pre-dispatch content session-taint stamp (DoD#2): if a PRIOR tool-call
+	// RESULT in this (tenant, session) carried a prompt injection, stamp the
+	// trigger risk tag + citation onto the descriptor so the MCPGate can DENY a
+	// destructive call content-awarely BEFORE any upstream Invoke. The taint is
+	// thus visible to the gate at decision time, never after the side effect.
+	//
+	// LOOKUP-ERROR POSTURE: record lookup failures on the descriptor so MCPGate
+	// can fail-closed for DESTRUCTIVE tools only when
+	// CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE is enabled. The flag defaults OFF,
+	// preserving today's fail-open behavior; the read-side persist path remains
+	// fail-open by design. Decision captured in
+	// Monday-demo/artifacts/taint-fail-open-decision.md (task-098b8d02).
+	if deps.TaintStore != nil {
+		if t, ok, terr := deps.TaintStore.GetTaint(ctx, meta.Tenant, meta.SessionID); terr != nil {
+			descriptor.TaintLookupFailed = true
+			slog.WarnContext(ctx, "mcp.session_taint.lookup_failed",
+				"tenant", meta.Tenant, "session_id", meta.SessionID, "error", terr.Error())
+		} else if ok && t != nil {
+			descriptor.RiskTags = append(descriptor.RiskTags, config.RiskTagSessionPromptInjection)
+			descriptor.SessionTaint = &config.ActionSessionTaint{
+				Pattern:    t.Pattern,
+				Snippet:    t.Snippet,
+				SourceTool: t.Tool,
+				Severity:   t.Severity,
+				DetectedAt: t.DetectedAt,
+			}
+		}
 	}
 
 	event := &edge.AgentActionEvent{
@@ -866,6 +911,9 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 			Content: []ContentItem{{Type: "text", Text: dec.Reason}},
 			IsError: true,
 		}
+		if h := InvocationHandleFromContext(ctx); h != nil {
+			h.MarkPolicyDenied(dec.Reason, dec.SubReason, dec.Extra)
+		}
 		finalResult = denyResult
 		skipDedupeCache = true
 		return denyResult, nil
@@ -890,8 +938,177 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 		finalErr = fmt.Errorf("emit post event: %w", err)
 		return nil, finalErr
 	}
+	// Best-effort content session-taint (DoD#1): scan the read RESULT for a
+	// prompt injection and, on a hit, persist a taint keyed by (tenant, session)
+	// so a LATER destructive call in this session is denied content-awarely
+	// (EvaluateToolCall's pre-dispatch stamp + the MCPGate taint deny). Pure side
+	// effect for FUTURE calls: the read already executed upstream, so any failure
+	// inside is logged and never alters this read's result or decision. A dedupe
+	// cache-hit read returns via dedupeBegin without re-invoking upstream and so
+	// won't re-scan — fine: the call that won the slot already persisted the taint.
+	scanResultForSessionTaint(ctx, deps, params.Name, upstreamResult, stableEventID)
 	finalResult = upstreamResult
 	return upstreamResult, nil
+}
+
+// maxResultScanBytes bounds a single scanned window. Each Content[].Text and each
+// StructuredContent string leaf is scanned in windows of this size; a field larger
+// than this is split into overlapping windows (see scanResultUnits) so an injection
+// at any offset still reaches the scanner. 256 KiB comfortably holds any single
+// board cell / note.
+const maxResultScanBytes = 256 * 1024
+
+// scanWindowOverlapBytes is carried from the tail of one window into the next when a
+// single field is split across windows, so an injection phrase straddling a window
+// boundary is scanned intact. Must exceed the longest directive the scanner matches
+// (the shipped injection patterns are well under 1 KiB).
+const scanWindowOverlapBytes = 1024
+
+// maxResultScanBudgetBytes bounds the TOTAL bytes scanned across all windows for one
+// tool-call result (DoS cap: a jumbo board read cannot pin the scanner). Generous
+// enough to cover a realistic full-page board read end to end; coverage stops past it
+// only for a pathological multi-MiB result.
+const maxResultScanBudgetBytes = 1024 * 1024
+
+// maxResultScanWindows bounds the NUMBER of windows scanned for one result (DoS cap on
+// count, e.g. a result with millions of tiny content items / structured leaves).
+const maxResultScanWindows = 8192
+
+// scanResultForSessionTaint is the best-effort read-side half of the content
+// session-taint mechanism (DoD#1). On the ALLOW path it scans the tool-call
+// RESULT for a prompt injection and, on a hit, persists a taint keyed by
+// (tenant, session) so a LATER destructive call in the same session is denied
+// content-awarely (see EvaluateToolCall's pre-dispatch stamp + the MCPGate taint
+// deny). It is a pure side effect for FUTURE calls: the read already executed
+// upstream, so every failure path here logs and returns WITHOUT touching the
+// caller's result or decision. No-op unless BOTH ResultScanner and TaintStore
+// are wired (feature disabled, like a nil DedupeState).
+func scanResultForSessionTaint(ctx context.Context, deps ToolCallDeps, tool string, result *ToolCallResult, eventID string) {
+	if deps.ResultScanner == nil || deps.TaintStore == nil || result == nil || result.IsError {
+		return
+	}
+	meta, ok := CallMetadataFromContext(ctx)
+	if !ok || meta.Tenant == "" || meta.SessionID == "" {
+		return
+	}
+	// Scan the result as a bounded sequence of windows (scanResultUnits) so an
+	// injection in ANY field/position — not only one within a single global byte
+	// cap — is detected. Cite the first finding; the shipped scanner emits uniformly
+	// high-severity hits, so the first is representative. (A future multi-severity
+	// scanner could select the highest here without changing the persisted shape.)
+	f, found := scanResultUnits(result, deps.ResultScanner)
+	if !found {
+		return
+	}
+	if err := deps.TaintStore.Taint(ctx, meta.Tenant, meta.SessionID, SessionTaint{
+		Tool:          tool,
+		Pattern:       f.Pattern,
+		Snippet:       f.Snippet,
+		Severity:      f.Severity,
+		Confidence:    f.Confidence,
+		DetectedAt:    deps.Clock(),
+		SourceEventID: eventID,
+	}); err != nil {
+		slog.WarnContext(ctx, "mcp.session_taint.persist_failed",
+			"tenant", meta.Tenant, "session_id", meta.SessionID, "tool", tool, "error", err.Error())
+	}
+}
+
+// scanResultUnits feeds a tool-call result to the scanner as a BOUNDED sequence of
+// windows so an injection in any field/position is detected — not only one that
+// happens to fall within a single global byte cap. (The prior assembleResultScanContent
+// concatenated all content and truncated at one 256 KiB cap, so an injected column
+// after earlier large content, in StructuredContent once Content filled the cap, or
+// split across the cap boundary, was never scanned.) Each Content[].Text and each
+// StructuredContent string leaf is a unit; a unit larger than maxResultScanBytes is
+// split into overlapping windows (scanWindowOverlapBytes) so a phrase split across a
+// boundary is still scanned whole. Scanning stops at the first finding or when the
+// total-bytes (maxResultScanBudgetBytes) / window-count (maxResultScanWindows) budget
+// is exhausted — DoS-safe. Returns the first finding and true on a hit.
+func scanResultUnits(result *ToolCallResult, scan func([]byte) []ResultFinding) (ResultFinding, bool) {
+	if result == nil || scan == nil {
+		return ResultFinding{}, false
+	}
+	var (
+		scannedBytes int
+		windows      int
+		hit          ResultFinding
+		found        bool
+	)
+	// scanUnit scans one string as one or more overlapping windows. It returns true to
+	// STOP all further scanning — either a finding was recorded (found==true) or the
+	// DoS budget is exhausted (found stays false); the caller distinguishes via found.
+	scanUnit := func(s string) bool {
+		if s == "" {
+			return false
+		}
+		// Window over the string directly and copy only each window to []byte, so a
+		// single pathologically large field is never materialized whole — peak alloc
+		// is one window (maxResultScanBytes) and total scan work is the budget below.
+		for off := 0; off < len(s); {
+			if windows >= maxResultScanWindows || scannedBytes >= maxResultScanBudgetBytes {
+				return true // DoS budget exhausted
+			}
+			end := off + maxResultScanBytes
+			if end > len(s) {
+				end = len(s)
+			}
+			window := []byte(s[off:end])
+			windows++
+			scannedBytes += len(window)
+			if findings := scan(window); len(findings) > 0 {
+				hit, found = findings[0], true
+				return true
+			}
+			if end == len(s) {
+				break
+			}
+			// Advance with overlap so a phrase straddling the boundary is caught.
+			off = end - scanWindowOverlapBytes
+		}
+		return false
+	}
+
+	for i := range result.Content {
+		if scanUnit(result.Content[i].Text) {
+			return hit, found
+		}
+	}
+	// StructuredContent: scan each string leaf as its own unit so an injection in a
+	// structured field is covered even when Content already consumed budget. Non-string
+	// leaves (numbers/bools) cannot carry a directive; the walk is depth-guarded.
+	walkStructuredStrings(result.StructuredContent, 0, scanUnit)
+	return hit, found
+}
+
+// maxStructuredWalkDepth caps StructuredContent recursion as a defense against a
+// maliciously deep result (realistic board payloads are only a few levels deep).
+const maxStructuredWalkDepth = 64
+
+// walkStructuredStrings visits each string leaf of a JSON-decoded value
+// (map[string]any / []any / string), invoking visit until it returns true (stop).
+// Returns true once visit has signalled stop, so callers short-circuit.
+func walkStructuredStrings(v any, depth int, visit func(string) bool) bool {
+	if depth > maxStructuredWalkDepth {
+		return false
+	}
+	switch t := v.(type) {
+	case string:
+		return visit(t)
+	case map[string]any:
+		for _, val := range t {
+			if walkStructuredStrings(val, depth+1, visit) {
+				return true
+			}
+		}
+	case []any:
+		for _, val := range t {
+			if walkStructuredStrings(val, depth+1, visit) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // newPostEvent clones the identity/session fields from the pre event

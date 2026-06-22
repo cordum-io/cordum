@@ -182,10 +182,81 @@ func canonicalizeFilePath(s string) string {
 	if strings.HasPrefix(s, "~/") {
 		s = "/home/_user_/" + strings.TrimPrefix(s, "~/")
 	}
+	// Windows ignores trailing dots/spaces on each path component when opening
+	// a file (so `...\config\SAM.`, `...\config\SAM ` and `...\config.\SAM` all
+	// open the SAM hive). Trim them per segment BEFORE matching so those
+	// spellings can't bypass the sensitive-path/credential rules.
+	s = trimTrailingDotSpaceSegments(s)
 	// path.Clean to collapse repeats. Note: path.Clean('//./...') keeps the
 	// device-namespace marker, which our device check needs.
 	s = path.Clean(s)
 	return s
+}
+
+// stripDriveLetter removes a leading Windows drive-letter prefix (e.g. "c:")
+// from an already-canonicalized (lowercased, forward-slash) path. It lets the
+// drive-absolute (`c:/...`), drive-relative (`/windows/...`) and other-drive
+// (`d:/...`) spellings of a Windows system/user path collapse to one
+// drive-agnostic form for matching. canonicalizeFilePath never prepends a
+// drive, so without this the Windows-anchored rules fail OPEN on the
+// drive-relative and forward-slash spellings.
+func stripDriveLetter(canon string) string {
+	// Account for an optional leading "/" before the drive letter:
+	// canonicalization can yield both "c:/..." and "/c:/..." spellings, and the
+	// latter would otherwise keep its "/c:" prefix and sail past the
+	// drive-stripped matchers (matchHomeUserCredentialDir / matchWindowsRegistryHive),
+	// reopening the fail-open the hardcoded "/c:/..." rows used to cover.
+	offset := 0
+	if strings.HasPrefix(canon, "/") {
+		offset = 1
+	}
+	if len(canon) >= offset+2 && canon[offset+1] == ':' && canon[offset] >= 'a' && canon[offset] <= 'z' {
+		return canon[offset+2:]
+	}
+	return canon
+}
+
+// trimTrailingDotSpaceSegments strips trailing '.' and ' ' characters from each
+// '/'-separated segment, mirroring how Windows normalizes path components on
+// open (a trailing dot or space is ignored). Literal "." / ".." tokens are left
+// alone. A segment of ONLY dots+spaces with no trailing space (e.g. "...") is
+// left untouched so path structure is preserved, but a dots+spaces segment WITH
+// a trailing space (e.g. ".. " or ". ") has only its trailing spaces stripped:
+// Windows opens ".. " as ".." (traversal) and ". " as ".", so path.Clean can
+// then collapse the resulting token instead of leaving a literal ".. " segment
+// that bypasses the sensitive-path/traversal matchers. Used only for match
+// canonicalization, never for real file access, so over-trimming can only ever
+// DENY more, never ALLOW more (fail-closed).
+func trimTrailingDotSpaceSegments(s string) string {
+	parts := strings.Split(s, "/")
+	changed := false
+	for i, p := range parts {
+		if p == "." || p == ".." {
+			continue
+		}
+		t := strings.TrimRight(p, ". ")
+		if t == p {
+			continue
+		}
+		if t == "" {
+			// All dots/spaces (e.g. ".. ", ". "): strip only trailing spaces so
+			// ".. " -> ".." and ". " -> "." get collapsed by path.Clean rather
+			// than surviving as a literal segment that evades the matchers.
+			stripped := strings.TrimRight(p, " ")
+			if stripped == p {
+				continue
+			}
+			parts[i] = stripped
+			changed = true
+			continue
+		}
+		parts[i] = t
+		changed = true
+	}
+	if !changed {
+		return s
+	}
+	return strings.Join(parts, "/")
 }
 
 var windowsEnvRe = regexp.MustCompile(`%([A-Za-z_][A-Za-z0-9_]*)%`)
@@ -250,11 +321,11 @@ var sensitivePaths = []struct {
 	{"/root/.aws/", false, "sensitive_path:aws_creds"},
 	{"/root/.docker/", false, "sensitive_path:docker_config"},
 	{"/root/.kube/", false, "sensitive_path:kube_config"},
-	// Windows registry hives + SAM (always).
-	{"c:/windows/system32/config/sam", false, "sensitive_path:windows_sam"},
-	{"c:/windows/system32/config/security", false, "sensitive_path:windows_security_hive"},
-	{"c:/windows/system32/config/system", false, "sensitive_path:windows_system_hive"},
-	{"c:/windows/system32/config/software", false, "sensitive_path:windows_software_hive"},
+	// NOTE: Windows registry credential hives (SAM/SYSTEM/SECURITY/SOFTWARE)
+	// are matched by matchWindowsRegistryHive, NOT here. A hardcoded `c:/`
+	// prefix in this table fails OPEN on drive-relative (`\Windows\...`),
+	// forward-slash (`/windows/...`) and other-drive (`d:/...`) spellings
+	// because canonicalizeFilePath never prepends a drive letter.
 	// Write-only (e.g. /etc/passwd is world-readable on Unix).
 	{"/etc/passwd", true, "sensitive_path:etc_passwd_write"},
 	{"/etc/group", true, "sensitive_path:etc_group_write"},
@@ -264,6 +335,11 @@ var sensitivePaths = []struct {
 }
 
 func matchSensitivePath(canon string, write bool) (string, bool) {
+	// Windows registry credential hives — always deny (read + write),
+	// drive-letter-agnostic (see matchWindowsRegistryHive).
+	if reason, ok := matchWindowsRegistryHive(canon); ok {
+		return reason, true
+	}
 	for _, rule := range sensitivePaths {
 		if rule.writeOnly && !write {
 			continue
@@ -284,6 +360,12 @@ func matchSensitivePath(canon string, write bool) (string, bool) {
 // lowercase), and C:/Users/<user>/.aws/ etc. We tolerate any single segment
 // for the user.
 func matchHomeUserCredentialDir(canon string) (string, bool) {
+	// Strip a leading drive letter so Windows user profiles on ANY drive
+	// (`c:/users/`, `d:/users/`, ...) and the drive-relative `\Users\...`
+	// spelling all reduce to the `/users/` root below. A hardcoded `c:/users/`
+	// row used to fail OPEN on non-C-drive profiles (e.g. D:\Users\bob\.aws\
+	// credentials, whose basename is not a known credential file).
+	canon = stripDriveLetter(canon)
 	suspects := []struct {
 		root      string
 		sub       string
@@ -297,10 +379,6 @@ func matchHomeUserCredentialDir(canon string) (string, bool) {
 		{"/users/", "/.aws/", "sensitive_path:user_aws_creds"},
 		{"/users/", "/.docker/", "sensitive_path:user_docker_config"},
 		{"/users/", "/.kube/", "sensitive_path:user_kube_config"},
-		{"c:/users/", "/.ssh/", "sensitive_path:user_ssh"},
-		{"c:/users/", "/.aws/", "sensitive_path:user_aws_creds"},
-		{"c:/users/", "/.docker/", "sensitive_path:user_docker_config"},
-		{"c:/users/", "/.kube/", "sensitive_path:user_kube_config"},
 	}
 	for _, s := range suspects {
 		if !strings.HasPrefix(canon, s.root) {
@@ -319,25 +397,97 @@ func matchHomeUserCredentialDir(canon string) (string, bool) {
 	return "", false
 }
 
+// windowsHiveRootAlt enumerates the EXACT credential-bearing top-level roots
+// (after stripDriveLetter) that each hold a copy of the registry hives:
+//   - `windows`: the live %SystemRoot%.
+//   - `windows.old`: the previous install kept by every in-place Windows upgrade;
+//     a classic OFFLINE SAM-dump location, readable without locking the live hive.
+//   - `_env_windows_.~bt` / `_env_windows_.~ws`: the $WINDOWS.~BT / $WINDOWS.~WS
+//     upgrade staging roots. canonicalizeFilePath's POSIX env expansion rewrites
+//     the leading `$WINDOWS` token to the `_env_windows_` placeholder, so that is
+//     the form the matcher actually sees (the real-path cases in
+//     TestFileGate_DenyWindowsHiveAlternateRoots are the drift guard).
+//
+// EXACT enumeration (not a `windows.*` wildcard), consumed only after a leading
+// `^/`, so a root matches ONLY at the top level: a nested `/x/windows/...`, a
+// hyphenated `windows-old`, a `windowsfoo` prefix and arbitrary `*.old` dirs all
+// stay ALLOW (TestFileGate_AllowAlternateRootLookalikesNotOverBlocked).
+const windowsHiveRootAlt = `(?:windows|windows\.old|_env_windows_\.~(?:bt|ws))`
+
+// windowsHiveRe matches the Windows registry credential hives (SAM, SYSTEM,
+// SECURITY, SOFTWARE) under System32\config on any windowsHiveRootAlt root — including their
+// RegBack copies AND their write-ahead transaction logs / startup backups
+// (`.LOG`, `.LOG1`, `.LOG2`, `.sav`) — on a drive-stripped canonical path. The
+// transaction logs and `.sav` copies carry the SAME credential-bearing data as
+// the live hive (Windows replays the logs into the hive on mount), so they are
+// a documented SAM-dump alternative when the live hive file is locked. Applied
+// to stripDriveLetter(canon) so the drive-absolute, drive-relative and
+// other-drive spellings all match; canon is already lowercased upstream, so
+// SAM.LOG1 and sam.log1 are equivalent. Denied for read AND write.
+//
+// The anchoring after the hive word is load-bearing: the optional
+// `\.(?:log\d*|sav)` only fires on a TRUE log/backup suffix of the EXACT hive
+// name, and the trailing `(?:/.*)?$` still requires a path separator or
+// end-of-string — so non-hive siblings such as `software_report.txt`,
+// `systeminfo.log`, `softwarelist.json` and the `systemprofile\` user dir stay
+// ALLOW (see TestFileGate_AllowHiveLookalikesNotOverBlocked).
+var windowsHiveRe = regexp.MustCompile(`^/` + windowsHiveRootAlt + `/system32/config/(?:regback/)?(sam|security|system|software)(?:\.(?:log\d*|sav))?(?:/.*)?$`)
+
+// windowsHiveCLFSRe matches the Common Log File System (CLFS) backing files of
+// the registry's transactional engine under System32\config — the
+// `{guid}.TM.blf` base log and `{guid}.TMContainer<n>.regtrans-ms` containers
+// (incl. the `TxR\` subdir). These replay uncommitted hive transactions and so
+// expose the same secrets as the hive. Scoped STRICTLY to the config subtree so
+// generic CLFS logs elsewhere on disk are NOT over-blocked.
+var windowsHiveCLFSRe = regexp.MustCompile(`^/` + windowsHiveRootAlt + `/system32/config/(?:txr/)?[^/]+\.tm(?:container[0-9]*)?\.(?:blf|regtrans-ms)$`)
+
+// matchWindowsRegistryHive reports whether canon targets a Windows registry
+// credential hive — or its transaction-log/backup/CLFS siblings, which hold the
+// same secrets — drive-letter-agnostically (see windowsHiveRe / windowsHiveCLFSRe
+// / the fail-open this closes). Returns the per-hive sub-reason on a hit.
+func matchWindowsRegistryHive(canon string) (string, bool) {
+	stripped := stripDriveLetter(canon)
+	if m := windowsHiveRe.FindStringSubmatch(stripped); m != nil {
+		switch m[1] {
+		case "sam":
+			return "sensitive_path:windows_sam", true
+		case "security":
+			return "sensitive_path:windows_security_hive", true
+		case "system":
+			return "sensitive_path:windows_system_hive", true
+		case "software":
+			return "sensitive_path:windows_software_hive", true
+		}
+	}
+	// CLFS transaction containers ({guid}.TM.blf / *.TMContainer*.regtrans-ms)
+	// cannot be attributed to a single hive, so they get a dedicated sub-reason.
+	if windowsHiveCLFSRe.MatchString(stripped) {
+		return "sensitive_path:windows_registry_clfs", true
+	}
+	return "", false
+}
+
 // Basename credential patterns. These DENY regardless of directory.
 //
 // Two forms: exact basenames (e.g. id_rsa) and suffix patterns (e.g. *.pem).
 // Pattern matching is intentionally narrow — overly broad globs would over-refuse.
 var credentialExact = map[string]string{
-	"id_rsa":           "credential:ssh_rsa",
-	"id_rsa.pub":       "credential:ssh_rsa_pub",
-	"id_ed25519":       "credential:ssh_ed25519",
-	"id_ed25519.pub":   "credential:ssh_ed25519_pub",
-	"id_dsa":           "credential:ssh_dsa",
-	"id_ecdsa":         "credential:ssh_ecdsa",
-	".npmrc":           "credential:npmrc",
-	".netrc":           "credential:netrc",
-	".env":             "credential:dotenv",
-	".pgpass":          "credential:pgpass",
+	"id_rsa":         "credential:ssh_rsa",
+	"id_rsa.pub":     "credential:ssh_rsa_pub",
+	"id_ed25519":     "credential:ssh_ed25519",
+	"id_ed25519.pub": "credential:ssh_ed25519_pub",
+	"id_dsa":         "credential:ssh_dsa",
+	"id_ecdsa":       "credential:ssh_ecdsa",
+	".npmrc":         "credential:npmrc",
+	".netrc":         "credential:netrc",
+	// NOTE: ".env" and its ".env.<suffix>" variants are matched by
+	// matchEnvCredential (in lockstep with core/edge/classifier.go
+	// matchesEnvSecretFile), not here, so template spellings stay ALLOW.
+	".pgpass":           "credential:pgpass",
 	".dockerconfigjson": "credential:docker_pull_secret",
-	"credentials.json": "credential:gcp_or_generic_creds",
-	"keystore.jks":     "credential:jks",
-	"truststore.jks":   "credential:jks",
+	"credentials.json":  "credential:gcp_or_generic_creds",
+	"keystore.jks":      "credential:jks",
+	"truststore.jks":    "credential:jks",
 }
 
 var credentialSuffix = []struct {
@@ -371,6 +521,11 @@ func matchCredentialBasename(canon string) (string, bool) {
 	if base == "" {
 		return "", false
 	}
+	// Dotenv secret family (.env, .env.local, .env.production, ...) excluding
+	// template spellings — kept in lockstep with the Edge classifier.
+	if reason, ok := matchEnvCredential(base); ok {
+		return reason, true
+	}
 	if reason, ok := credentialExact[base]; ok {
 		return reason, true
 	}
@@ -385,6 +540,30 @@ func matchCredentialBasename(canon string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// envSecretTemplateSuffixes are the conventionally non-secret ".env" template
+// spellings committed to source control. KEEP IN LOCKSTEP with
+// core/edge/classifier.go matchesEnvSecretFile (EDGE-064): if you change one,
+// change the other (and the lockstep test in file_gate_test.go).
+var envSecretTemplateSuffixes = []string{".example", ".sample", ".template", ".dist", ".defaults"}
+
+// matchEnvCredential reports whether base (a path basename) is a dotenv secret
+// file: ".env" or any ".env.<suffix>" variant (.env.local, .env.production,
+// .env.staging, ...), EXCLUDING the known non-secret template spellings. It
+// mirrors core/edge/classifier.go matchesEnvSecretFile so FileGate and the Edge
+// classifier never disagree on what a secret .env file is. Previously only the
+// bare ".env" was caught, so .env.<env> variants fell through to ALLOW.
+func matchEnvCredential(base string) (string, bool) {
+	if base != ".env" && !strings.HasPrefix(base, ".env.") {
+		return "", false
+	}
+	for _, suf := range envSecretTemplateSuffixes {
+		if base == ".env"+suf {
+			return "", false
+		}
+	}
+	return "credential:dotenv", true
 }
 
 func isWriteVerb(v config.ActionVerb) bool {

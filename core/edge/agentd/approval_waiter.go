@@ -70,17 +70,26 @@ func (c *GatewayClient) WaitForApproval(ctx context.Context, req ApprovalWaitReq
 	return approvalWaitResultFromEdgeApproval(approval), nil
 }
 
+// ApprovalConsumeFunc re-issues /api/v1/edge/evaluate carrying the approval_ref so
+// the Gateway runs its single-use ClaimApproval CAS, returning the post-consume
+// decision. Inline-wait ALLOW is gated on this: a passive "approved" poll must
+// never authorize execution by itself. A nil consumer makes an approved inline
+// wait fail closed (DENY) rather than allow without consuming.
+type ApprovalConsumeFunc func(ctx context.Context, approvalRef string) (*EvaluateResponse, error)
+
 // AgentdDecisionFromEvaluateResponse maps a fresh Gateway evaluate response to
 // the compact hook-facing decision shape. Approval waits are opt-in and bounded;
-// the default REQUIRE_APPROVAL behavior is immediate deny/retry guidance.
-func AgentdDecisionFromEvaluateResponse(ctx context.Context, resp EvaluateResponse, cfg ApprovalDecisionConfig, waiter ApprovalWaiter) claude.AgentdDecision {
+// the default REQUIRE_APPROVAL behavior is immediate deny/retry guidance. On an
+// approved inline wait, consume re-issues evaluate with the approval_ref so the
+// single-use CAS runs before ALLOW (see approvalRequiredDecision).
+func AgentdDecisionFromEvaluateResponse(ctx context.Context, resp EvaluateResponse, cfg ApprovalDecisionConfig, waiter ApprovalWaiter, consume ApprovalConsumeFunc) claude.AgentdDecision {
 	switch strings.ToUpper(strings.TrimSpace(resp.Decision)) {
 	case string(edgecore.DecisionAllow):
 		return claude.AgentdDecision{Decision: claude.DecisionAllow}
 	case string(edgecore.DecisionDeny):
 		return claude.AgentdDecision{Decision: claude.DecisionDeny, Reason: decisionReason(resp)}
 	case string(edgecore.DecisionRequireApproval):
-		return approvalRequiredDecision(ctx, resp, cfg, waiter)
+		return approvalRequiredDecision(ctx, resp, cfg, waiter, consume)
 	case string(edgecore.DecisionThrottle):
 		reason := decisionReason(resp)
 		if reason == "" {
@@ -94,7 +103,7 @@ func AgentdDecisionFromEvaluateResponse(ctx context.Context, resp EvaluateRespon
 	}
 }
 
-func approvalRequiredDecision(ctx context.Context, resp EvaluateResponse, cfg ApprovalDecisionConfig, waiter ApprovalWaiter) claude.AgentdDecision {
+func approvalRequiredDecision(ctx context.Context, resp EvaluateResponse, cfg ApprovalDecisionConfig, waiter ApprovalWaiter, consume ApprovalConsumeFunc) claude.AgentdDecision {
 	ref := strings.TrimSpace(resp.ApprovalRef)
 	if ref == "" {
 		return claude.AgentdDecision{Decision: claude.DecisionDeny, Reason: "Cordum approval is required but no approval reference was returned; action was not run"}
@@ -130,11 +139,12 @@ func approvalRequiredDecision(ctx context.Context, resp EvaluateResponse, cfg Ap
 	}
 	switch result.Status {
 	case ApprovalWaitApproved:
-		return claude.AgentdDecision{
-			Decision:     claude.DecisionAllow,
-			Reason:       boundDecisionText(result.Reason),
-			UpdatedInput: cloneAnyMap(result.UpdatedInput),
-		}
+		// EDGE consume-once: a polled "approved" status is NOT authorization.
+		// Consume the approval via the Gateway single-use CAS (re-issue evaluate
+		// with the approval_ref) and ALLOW only if THIS turn consumed it. Any
+		// failure or non-ALLOW result fails closed, so one human approval
+		// authorizes exactly one execution.
+		return consumeApprovedInlineWait(ctx, resp, ref, result, consume)
 	case ApprovalWaitRejected:
 		reason := "approval rejected"
 		if strings.TrimSpace(result.Reason) != "" {
@@ -154,6 +164,61 @@ func approvalRequiredDecision(ctx context.Context, resp EvaluateResponse, cfg Ap
 			Reason:            boundDecisionText(fmt.Sprintf("approval wait timed out for %s; approve then retry the tool call", ref)),
 			ApprovalRef:       ref,
 			AdditionalContext: approvalAdditionalContext(resp),
+		}
+	}
+}
+
+// consumeApprovedInlineWait turns an approved inline wait into a terminal
+// decision by performing the single-use consume CAS for THIS turn via consume
+// (re-issue evaluate with the approval_ref). A passive "approved" status is not
+// authorization; ALLOW is returned only when the Gateway confirms the consume.
+func consumeApprovedInlineWait(ctx context.Context, resp EvaluateResponse, ref string, waitResult ApprovalWaitResult, consume ApprovalConsumeFunc) claude.AgentdDecision {
+	if consume == nil {
+		return claude.AgentdDecision{
+			Decision:          claude.DecisionDeny,
+			Reason:            boundDecisionText(fmt.Sprintf("approval %s approved but no consume path is configured; action was not run", ref)),
+			ApprovalRef:       ref,
+			AdditionalContext: approvalAdditionalContext(resp),
+		}
+	}
+	consumeResp, err := consume(ctx, ref)
+	if err != nil || consumeResp == nil {
+		return claude.AgentdDecision{
+			Decision:          claude.DecisionDeny,
+			Reason:            boundDecisionText(fmt.Sprintf("approval %s approved but could not be consumed; action was not run", ref)),
+			ApprovalRef:       ref,
+			AdditionalContext: approvalAdditionalContext(resp),
+		}
+	}
+	return decisionFromConsumedEvaluate(*consumeResp, ref, waitResult)
+}
+
+// decisionFromConsumedEvaluate maps the consuming re-evaluate response to a
+// terminal hook decision. ALLOW only when the Gateway confirms the single-use
+// CAS succeeded (ALLOW/CONSTRAIN); every other decision (already-consumed,
+// rejected, expired, error) fails closed. The reviewer's wait-result reason/
+// updated input is preferred, falling back to the consume response.
+func decisionFromConsumedEvaluate(resp EvaluateResponse, ref string, waitResult ApprovalWaitResult) claude.AgentdDecision {
+	switch strings.ToUpper(strings.TrimSpace(resp.Decision)) {
+	case string(edgecore.DecisionAllow), string(edgecore.DecisionConstrain):
+		updated := cloneAnyMap(waitResult.UpdatedInput)
+		if updated == nil {
+			updated = cloneAnyMap(resp.UpdatedInput)
+		}
+		reason := boundDecisionText(waitResult.Reason)
+		if reason == "" {
+			reason = boundDecisionText(resp.Reason)
+		}
+		return claude.AgentdDecision{Decision: claude.DecisionAllow, Reason: reason, UpdatedInput: updated}
+	default:
+		reason := decisionReason(resp)
+		if reason == "" {
+			reason = fmt.Sprintf("approval %s could not be consumed; action was not run", ref)
+		}
+		return claude.AgentdDecision{
+			Decision:    claude.DecisionDeny,
+			Reason:      boundDecisionText(reason),
+			ApprovalRef: ref,
 		}
 	}
 }

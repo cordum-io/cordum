@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"math/rand/v2"
 	"strconv"
 	"strings"
@@ -36,6 +35,12 @@ const (
 	// HMAC-SHA256 signing key. When set, every appended audit event is
 	// signed with this key. Generate with: openssl rand -hex 32
 	EnvHMACKey = "CORDUM_AUDIT_HMAC_KEY"
+
+	// EnvHMACOptional, when set to true, allows production boot without
+	// CORDUM_AUDIT_HMAC_KEY (escape hatch; logs a loud warning). Required
+	// because the audit chain underwrites ProvenanceGate audit_chain_compromised
+	// — unsigned chains weaken that defense.
+	EnvHMACOptional = "CORDUM_AUDIT_HMAC_OPTIONAL"
 
 	chainHeadInfix = "head:"
 	// chainMaxCASRetries caps how many times a single Append will retry
@@ -100,9 +105,12 @@ type Chainer struct {
 type ChainerOption func(*Chainer)
 
 // WithHMACKey enables HMAC-SHA256 event authentication. The key must be at
-// least 32 bytes (256 bits); shorter keys are logged as an error and
-// silently ignored (HMAC stays disabled) rather than crashing the process.
-// A nil or empty key disables HMAC (the default).
+// least 32 bytes (256 bits); a non-empty shorter key PANICS — the caller
+// cannot recover and silent downgrade-to-no-HMAC would weaken the chain
+// invisibly (BUG-013). A nil or empty key disables HMAC (the default).
+// Callers wiring this from env should pre-validate the length and emit a
+// clean startup error instead of letting this option panic — see
+// initAuditPipeline at gateway.go:1032 for the canonical pattern.
 //
 // Key rotation: deploy the new key via CORDUM_AUDIT_HMAC_KEY on all
 // replicas. Events signed with the old key will show hmac_mismatch
@@ -115,12 +123,7 @@ func WithHMACKey(key []byte) ChainerOption {
 			return
 		}
 		if len(key) < 32 {
-			slog.Error("audit chain: HMAC key must be at least 32 bytes — HMAC disabled",
-				"got_bytes", len(key),
-				"hint", "generate a valid key with: openssl rand -hex 32",
-			)
-			c.hmacKey = nil
-			return
+			panic(fmt.Sprintf("audit chain: HMAC key must be at least 32 bytes (got %d); generate one with: openssl rand -hex 32", len(key)))
 		}
 		c.hmacKey = make([]byte, len(key))
 		copy(c.hmacKey, key)

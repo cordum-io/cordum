@@ -30,9 +30,11 @@ func CloneAnyMap(m map[string]any) map[string]any {
 }
 
 // DeepCloneAnyMap returns a deep copy of the map, recursively cloning
-// nested map[string]any values and []any slices. Primitive types (int,
-// float64, string, bool) are copied by value. Unlike JSON round-trip,
-// this preserves Go types — int stays int, not float64.
+// nested containers so no reference is shared with the original:
+// map[string]any, map[any]any (from yaml.v2), []any, []string, and
+// []map[string]any. Primitive types (int, float64, string, bool) are
+// copied by value. Unlike JSON round-trip, this preserves Go types —
+// int stays int, not float64.
 func DeepCloneAnyMap(m map[string]any) map[string]any {
 	if m == nil {
 		return nil
@@ -52,6 +54,22 @@ func deepCloneValue(v any) any {
 		cp := make([]any, len(val))
 		for i, elem := range val {
 			cp[i] = deepCloneValue(elem)
+		}
+		return cp
+	case map[any]any:
+		// yaml.v2 unmarshals nested objects as map[any]any. Keys are scalars
+		// (copied by value); values are cloned recursively.
+		cp := make(map[any]any, len(val))
+		for mk, mv := range val {
+			cp[mk] = deepCloneValue(mv)
+		}
+		return cp
+	case []string:
+		return append([]string(nil), val...)
+	case []map[string]any:
+		cp := make([]map[string]any, len(val))
+		for i, m := range val {
+			cp[i] = DeepCloneAnyMap(m)
 		}
 		return cp
 	default:

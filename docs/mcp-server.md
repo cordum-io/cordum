@@ -30,7 +30,7 @@ Primary code paths:
 - `core/mcp/server.go`
 - `core/mcp/transport_stdio.go`
 - `core/mcp/transport_http.go`
-- `core/controlplane/gateway/gateway_mcp.go`
+- `core/controlplane/gateway/handlers_mcp.go`
 
 ## Transport Modes
 

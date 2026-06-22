@@ -43,6 +43,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/auth/servicetoken"
 	"github.com/cordum/cordum/core/infra/store"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	"github.com/redis/go-redis/v9"
@@ -205,6 +206,17 @@ func (s *HandshakeService) parseRequest(raw []byte) (*capsdk.HandshakeRequest, e
 }
 
 func (s *HandshakeService) process(ctx context.Context, req *capsdk.HandshakeRequest, isRenew bool) ([]byte, error) {
+	// Reserve the control-plane service identities: no worker may handshake AS
+	// a control-plane service (cordum-scheduler / api-gateway / workflow-engine)
+	// and thereby obtain a real, signed session token whose Subject is a
+	// reserved identity. Together with the typ assertion on the verify path,
+	// this is what makes the service-token scheme non-spoofable: a worker can
+	// neither mint a service token (no key) nor be issued a worker token whose
+	// subject impersonates a control-plane service. Checked first so it never
+	// consumes a nonce or an identity lookup.
+	if servicetoken.IsReservedIdentity(req.AgentID) {
+		return s.reject(ctx, req.RequestID, req.Tenant, req.AgentID, req.SDKVersion, capsdk.HandshakeRejectCapabilityDenied, "agent id is reserved for control-plane service tokens")
+	}
 	now := s.now().UTC()
 	skew := req.Timestamp.Sub(now)
 	if skew > s.skew || -skew > s.skew {

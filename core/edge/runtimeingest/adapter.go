@@ -498,7 +498,7 @@ func (a *Adapter) shouldAccept(sourceID string, env RuntimeEventEnvelope) bool {
 	}
 	h := fnv.New64a()
 	_, _ = fmt.Fprintf(h, "%s|%s|%s", sourceID, env.Kind, env.SourceEventID)
-	return int(h.Sum64()%uint64(a.sampleDen)) < a.sampleNum
+	return int(h.Sum64()%uint64(a.sampleDen)) < a.sampleNum // #nosec G115 -- modulo by the positive int sampleDen yields a value in [0, sampleDen), which always fits int
 }
 
 // DecodeBatch decodes the wire batch with strict-schema enforcement so

@@ -40,7 +40,7 @@ type inputEvaluateRequest struct {
 }
 
 // compileInputRules mirrors compileOutputRules for input-side content scanning.
-func compileInputRules(policy *config.SafetyPolicy) []compiledInputRule {
+func compileInputRules(policy *config.SafetyPolicy, registry map[string]OutputScanner) []compiledInputRule {
 	if policy == nil || len(policy.InputRules) == 0 {
 		return nil
 	}
@@ -96,6 +96,7 @@ func compileInputRules(policy *config.SafetyPolicy) []compiledInputRule {
 		}
 
 		scannerList := mergeScannerLists(rule.Match.Scanners, rule.Match.Detectors)
+		warnUnknownScanners(strings.TrimSpace(rule.ID), scannerList, registry)
 		ruleTier := rule.Tier
 		if strings.TrimSpace(ruleTier) == "" {
 			ruleTier = policy.Tier

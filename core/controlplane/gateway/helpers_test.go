@@ -449,6 +449,18 @@ func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 	})
 
 	s.wireGovernanceEvaluator()
+	// Test default: Community tier (preserving its feature flags — RBAC/SSO/etc.
+	// OFF, which many auth/step-up tests rely on) but with MaxPolicyBundles lifted
+	// to Unlimited. This is the pre-existing green baseline: before the free-tier
+	// custom-bundle gate was restored (Community MaxPolicyBundles 0), the test
+	// gateway effectively had unlimited bundles, so policy-bundle/eval/replay tests
+	// could PUT secops/ (custom) bundles freely. Keep that here so handler-mechanic
+	// tests aren't incidentally 403-ed by the gate; the gate itself is covered by
+	// the dedicated tier tests (licensing tiers_test/enforce_test) and the explicit
+	// TestHandlePutPolicyBundle_MaxPolicyBundlesLimit (which sets its own limit).
+	setTestEntitlements(t, s, licensing.PlanCommunity, func(e *licensing.Entitlements) {
+		e.MaxPolicyBundles = licensing.Unlimited
+	})
 	return s, bus, safetyClient
 }
 

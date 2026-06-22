@@ -28,8 +28,8 @@ import (
 	"syscall"
 	"time"
 
-	capsdk "github.com/cordum-io/cap/v2/sdk/go"
 	agentv1 "github.com/cordum-io/cap/v2/cordum/agent/v1"
+	capsdk "github.com/cordum-io/cap/v2/sdk/go"
 	"github.com/cordum/cordum/sdk/runtime"
 	"github.com/nats-io/nats.go"
 	"google.golang.org/protobuf/proto"
@@ -196,6 +196,7 @@ func connectNATS(natsURL string) (*nats.Conn, error) {
 func heartbeatLoop(ctx context.Context, nc *nats.Conn) {
 	build := func() ([]byte, error) {
 		hb := &agentv1.BusPacket{
+			TraceId:         workerID,
 			SenderId:        workerID,
 			ProtocolVersion: capsdk.DefaultProtocolVersion,
 			Payload: &agentv1.BusPacket_Heartbeat{

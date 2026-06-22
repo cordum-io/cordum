@@ -265,10 +265,17 @@ services:
       # — set to `true` only in trusted dev environments.
       - CORDUM_DASHBOARD_EMBED_API_KEY=${CORDUM_DASHBOARD_EMBED_API_KEY:-false}
       - TENANT_ID=default
+      # P3a: resolves secret://monday-token for the cordum.monday MCP upstream the
+      # gateway fronts (EnvSecretResolver convention secret://monday-token -> MONDAY_TOKEN).
+      # Empty by default (fronting fails closed to built-in tools). Set MONDAY_TOKEN in
+      # .env for the Monday demo stack; MONDAY_API_TOKEN (the name the demo's own
+      # Monday-demo/.env uses) is accepted as a fallback so either name works.
+      - MONDAY_TOKEN=${MONDAY_TOKEN:-${MONDAY_API_TOKEN:-}}
       - CORDUM_LICENSE_TOKEN=${CORDUM_LICENSE_TOKEN:-}
       - CORDUM_LICENSE_PUBLIC_KEY=${CORDUM_LICENSE_PUBLIC_KEY:-}
       - CORDUM_POLICY_SIGNING_KEY_ID=${CORDUM_POLICY_SIGNING_KEY_ID:-dev-local}
       - CORDUM_POLICY_DEV_SIGNING_SEED=${CORDUM_POLICY_DEV_SIGNING_SEED:-cordum-local-policy-signing-v1}
+      - CORDUM_MCP_DESTRUCTIVE_TOOL_GLOBS=${CORDUM_MCP_DESTRUCTIVE_TOOL_GLOBS:-}
       - CORDUM_TELEMETRY_MODE=off
       # Unset by default — the audit chain engages unconditionally at gateway boot. Set this to
       # webhook|syslog|datadog|cloudwatch to stream events to an external SIEM, or to
@@ -276,6 +283,10 @@ services:
       - CORDUM_AUDIT_EXPORT_TYPE=${CORDUM_AUDIT_EXPORT_TYPE:-}
       - AUDIT_TRANSPORT=${AUDIT_TRANSPORT:-nats}
       - CORDUM_AUDIT_CHAIN_FAIL=${CORDUM_AUDIT_CHAIN_FAIL:-permissive}
+      # Optional tamper-evident HMAC over the audit chain (core/audit WithHMACKey).
+      # Unset = chain runs without HMAC; set a >=32-byte random key to enable
+      # hmac_verified>0 on /api/v1/audit/verify (short keys are rejected — BUG-013).
+      - CORDUM_AUDIT_HMAC_KEY=${CORDUM_AUDIT_HMAC_KEY:-}
       - CORDUM_AUDIT_EXPORT_WEBHOOK_URL=${CORDUM_AUDIT_EXPORT_WEBHOOK_URL:-}
       - CORDUM_AUDIT_EXPORT_WEBHOOK_SECRET=${CORDUM_AUDIT_EXPORT_WEBHOOK_SECRET:-}
       - CORDUM_AUDIT_EXPORT_SYSLOG_ADDR=${CORDUM_AUDIT_EXPORT_SYSLOG_ADDR:-}
@@ -371,6 +382,13 @@ services:
       - WORKFLOW_ENGINE_RUN_SCAN_LIMIT=200
       - CORDUM_LICENSE_TOKEN=${CORDUM_LICENSE_TOKEN:-}
       - CORDUM_LICENSE_PUBLIC_KEY=${CORDUM_LICENSE_PUBLIC_KEY:-}
+      # Service-token signing for internal cancel broadcasts. Under
+      # CORDUM_SDK_HANDSHAKE=enforce the workflow-engine mints a control-plane
+      # service token (subject "workflow-engine") on its JobCancel broadcasts so
+      # peer schedulers admit them; it shares the scheduler/gateway signing key
+      # (derived from the dev seed locally). REQUIRED before enabling enforce.
+      - CORDUM_POLICY_SIGNING_KEY_ID=${CORDUM_POLICY_SIGNING_KEY_ID:-dev-local}
+      - CORDUM_POLICY_DEV_SIGNING_SEED=${CORDUM_POLICY_DEV_SIGNING_SEED:-cordum-local-policy-signing-v1}
     volumes:
       - ./certs:/etc/cordum/tls:ro
     ports:

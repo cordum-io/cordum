@@ -222,6 +222,16 @@ cfg:system:policy.data.bundles["<pack_id>/<name>"] = {
 Safety kernel merges file/URL policy with config service fragments on load/reload.
 Snapshot hashes are combined (e.g. `baseSnapshot|cfg:<hash>`).
 
+**Merge precedence (cross-bundle duplicate rule IDs).** When two bundles define the
+same rule `id`, the kernel resolves the conflict by **install recency**: bundles
+merge in `installed_at`-ascending order (bundle id alphabetical as a deterministic
+tiebreak), so the **most-recently-installed bundle wins**. Reinstall or upgrade a
+pack and its changed rule takes effect even when another co-installed bundle defines
+the same rule id. A missing or unparseable `installed_at` is treated as oldest
+(lowest precedence). Kernel security invariants are applied separately as a security
+floor and are unaffected by this ordering; the snapshot hash depends only on the
+bundle content set (not install order), so reloads stay stable.
+
 Policy rules may include **remediations** to suggest safer alternatives:
 
 ```yaml
@@ -503,8 +513,8 @@ docker compose up -d
 # Start your pack worker (joins the Cordum network)
 docker compose -f my-pack/deploy/docker-compose.yaml up -d
 
-# Submit a test job
-curl -s -X POST http://localhost:8080/api/v1/jobs \
+# Submit a test job (gateway is TLS by default)
+curl -s --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/jobs \
   -H "X-API-Key: $CORDUM_API_KEY" \
   -H "X-Tenant-ID: default" \
   -H "Content-Type: application/json" \
@@ -521,7 +531,7 @@ set -euo pipefail
 cordumctl pack install ./my-pack
 
 # Submit job and capture ID
-JOB_ID=$(curl -s -X POST http://localhost:8080/api/v1/jobs \
+JOB_ID=$(curl -s --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/jobs \
   -H "X-API-Key: $CORDUM_API_KEY" \
   -H "X-Tenant-ID: default" \
   -H "Content-Type: application/json" \
@@ -529,7 +539,7 @@ JOB_ID=$(curl -s -X POST http://localhost:8080/api/v1/jobs \
 
 # Poll for completion (max 30s)
 for i in $(seq 1 30); do
-  STATUS=$(curl -s http://localhost:8080/api/v1/jobs/$JOB_ID \
+  STATUS=$(curl -s --cacert ./certs/ca/ca.crt https://localhost:8081/api/v1/jobs/$JOB_ID \
     -H "X-API-Key: $CORDUM_API_KEY" \
     -H "X-Tenant-ID: default" | jq -r '.status')
   [ "$STATUS" = "succeeded" ] && echo "PASS" && exit 0

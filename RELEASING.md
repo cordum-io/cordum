@@ -166,43 +166,43 @@ be amd64-only during the transition period — see Issue #TBD).
 
 ## Documentation sync
 
-Cordum docs live on **four surfaces**. Any quickstart or user-facing
-doc edit has to land on all four before it ships — otherwise users on
+Cordum docs live on **three surfaces**. Any quickstart or user-facing
+doc edit has to land on all three before it ships — otherwise users on
 cordum.io read a different story than users of the repo.
 
-The four surfaces:
+The three surfaces:
 
 | # | Surface | Path | Audience |
 |---|---------|------|----------|
 | 1 | **Source** | `cordum/docs/*.md` | Repo readers via `git clone`; the canonical copy. |
-| 2 | **Docusaurus (core)** | `cordum/docs-site/docs/**` | GitHub Pages build at `docs.cordum.io`. Mostly identical to #1 with Docusaurus frontmatter. |
-| 3 | **Docusaurus (marketing)** | `Cordum-site/docs-site/docs/**` | `cordum.io/docs` (marketing-site docs tab). Body should mirror #1 verbatim modulo frontmatter. |
-| 4 | **Next.js marketing pages** | `Cordum-site/site/src/app/docs/<slug>/page.tsx` + `docsData.ts` | `cordum.io/docs/<slug>` hand-rolled pages with "Autonomous AI Agents / Agent Control Plane" framing per `Cordum-site/CLAUDE.md`. |
+| 2 | **Docusaurus docs site** | `Cordum-site/docs-site/docs/**` | `docs.cordum.io` — built by Docusaurus and rsync'd to the docs origin by the Cordum-site `Deploy Docs Site` workflow. Mirrors #1 modulo Docusaurus frontmatter. |
+| 3 | **Next.js marketing pages** | `Cordum-site/site/src/app/docs/<slug>/page.tsx` + `docsData.ts` | `cordum.io/docs/<slug>` hand-rolled pages with "Autonomous AI Agents / Agent Control Plane" framing per `Cordum-site/CLAUDE.md`. |
+
+> `docs.cordum.io` is served **only** from `Cordum-site/docs-site`; the
+> `cordum` repo has no docs site of its own.
 
 ### Required edit order
 
 1. **Edit the source** at `cordum/docs/<page>.md`. This is the only
    copy you *author*. Every downstream surface either mirrors or
    paraphrases from here.
-2. **Rebuild the core Docusaurus site** to catch Markdown → Docusaurus
-   issues locally:
-   ```bash
-   cd cordum/docs-site && npm run build
-   ```
-   Fix any broken-link warnings before moving on.
-3. **Mirror to the marketing Docusaurus site.** Copy the source body
+2. **Mirror to the Docusaurus docs site.** Copy the source body
    verbatim into `Cordum-site/docs-site/docs/<path>/<page>.md`,
-   preserving only the marketing-site frontmatter (`title`,
+   preserving only the Docusaurus frontmatter (`title`,
    `sidebar_position`, `slug`) and any docusaurus-specific enrichments
-   (`:::tip` blocks, cross-refs to marketing-only tutorials) that have
-   no equivalent upstream.
-4. **Update the Next.js hand-rolled page** at
+   (`:::tip` blocks, cross-refs to docs-only tutorials) that have no
+   equivalent upstream. Rebuild to catch Markdown → Docusaurus issues
+   and broken links before moving on:
+   ```bash
+   cd Cordum-site/docs-site && npm run build
+   ```
+3. **Update the Next.js hand-rolled page** at
    `Cordum-site/site/src/app/docs/<slug>/page.tsx` if this page has a
    bespoke marketing rewrite. Update `Cordum-site/site/src/app/docs/docsData.ts`
    if the nav title or description changed. Keep the marketing voice
    ("Autonomous AI Agents", "Agent Control Plane") — refer to
    `Cordum-site/CLAUDE.md` for the brand guardrails.
-5. **Validate the marketing site:**
+4. **Validate the marketing site:**
    ```bash
    cd Cordum-site/site
    npm run lint
@@ -210,27 +210,26 @@ The four surfaces:
    ```
    The `NEXT_DIST_DIR` override is per `Cordum-site/CLAUDE.md` —
    required on Windows when `.next` is locked by a dev server.
-6. **Confirm lychee passes** either locally (`lychee ./docs/**/*.md
-   ./docs-site/docs/**/*.md`) or by pushing to a PR branch where the
-   `Deploy Docs to GitHub Pages / link-check` CI job runs on every
-   docs edit.
+5. **Confirm docs links pass** by pushing to a `Cordum-site` PR branch;
+   the `Deploy Docs Site` workflow builds the Docusaurus site, where
+   broken links surface as build warnings.
 
-### Why the four-surface structure exists
+### Why the three-surface structure exists
 
 - The **source** is the git-cloneable README for engineers who live
   in the repo. Narrow, precise, code-adjacent voice.
-- The **core Docusaurus site** deploys from the same repo via GitHub
-  Pages and is the "neutral" documentation portal.
-- The **marketing Docusaurus site** is served under `cordum.io` and
-  exists in the Cordum-site repo so marketing can iterate on chrome,
-  nav, and branding without touching the core repo.
+- The **Docusaurus docs site** is served at `docs.cordum.io` and is the
+  "neutral" documentation portal. It lives in the Cordum-site repo so
+  the docs chrome, nav, and branding can iterate without touching the
+  core repo, and it publishes via the Cordum-site `Deploy Docs Site`
+  workflow (rsync to the docs origin, Cloudflare-fronted).
 - The **Next.js pages** are curated landing pages for the docs that
   matter most to new users. They carry the category-positioning copy
   ("Agent Control Plane for Autonomous AI Agents") that doesn't fit
   inside raw Markdown.
 
-Future editors: if you change any of surfaces 1–3 without also
-refreshing 4, cordum.io ends up telling a different story than the
-repo. Past mistakes on this front (cordumctl quickstart referenced
-in the marketing hero after the command was deleted from the repo)
-are the reason this section exists.
+Future editors: if you change surface 1 or 2 without also refreshing 3,
+cordum.io ends up telling a different story than the repo. Past mistakes
+on this front (cordumctl quickstart referenced in the marketing hero
+after the command was deleted from the repo) are the reason this section
+exists.

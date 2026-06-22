@@ -67,6 +67,34 @@ Cross-tenant target writes are blocked by the upstream `tenant_gate` before
 control reaches the MCP gate; the MCP gate trusts the tenant gate for that
 boundary and does not re-check `TargetResource.OwnerTenant`.
 
+
+### Session-taint destructive scope
+
+The session-taint deny is deliberately conjunctive: Cordum denies only when a
+prior tool result has tainted the MCP session with prompt-injection content AND
+the next tool call is destructive. The destructive classifier is a scoping
+predicate, never a standalone policy decision. A clean session issuing the same
+delete mutation is not denied by taint, and a tainted session running a read or
+benign mutation still flows through the normal allow-list checks.
+
+Destructive scope is detected in two ways:
+
+- tool-name globs (`CORDUM_MCP_DESTRUCTIVE_TOOL_GLOBS`, default
+  `*delete*,*remove*,*archive*`);
+- GraphQL-proxy arguments: string arguments named by
+  `CORDUM_MCP_DESTRUCTIVE_MUTATION_ARG_KEYS` (default
+  `query,mutation,gql,graphql`) are scanned for a GraphQL `mutation` document,
+  and the invoked field name is matched against
+  `CORDUM_MCP_DESTRUCTIVE_MUTATION_GLOBS` (default
+  `delete_*,remove_*,archive_*,delete,remove,archive`).
+
+The second path covers generic API passthrough tools (for example an upstream
+`all_monday_api` tool) whose tool name is not destructive but whose arguments
+carry a destructive mutation such as `delete_item`, `delete_items`, or
+`delete_board`. The decision records only the matched identifier (for example
+`mutation:delete_item`) in `Extra["taint_destructive_match"]`; it does not copy
+raw attacker-controlled GraphQL text into the audit reason.
+
 ## Verb classification
 
 When the descriptor carries a destructive `ActionVerb`, the mutation gate

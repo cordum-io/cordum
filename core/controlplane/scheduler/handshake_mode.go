@@ -22,6 +22,7 @@ package scheduler
 // worker reports a successful handshake.
 
 import (
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -61,6 +62,29 @@ func ParseHandshakeMode(raw string) HandshakeMode {
 		return HandshakeModeEnforce
 	}
 	return HandshakeModeWarn
+}
+
+// ParseHandshakeModeStrict is the BOOT-time parser. Unlike the lenient
+// ParseHandshakeMode (which maps any unrecognized value to warn for runtime
+// callers), it returns an error for any non-empty value that does not
+// round-trip to a canonical mode — so a typo'd CORDUM_SDK_HANDSHAKE (e.g.
+// "enforse") refuses to boot rather than silently degrading to admit. An empty
+// value maps to Off (gate disabled) to preserve back-compat for deployments
+// that never set the variable.
+func ParseHandshakeModeStrict(raw string) (HandshakeMode, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return HandshakeModeOff, nil
+	}
+	switch HandshakeMode(strings.ToLower(trimmed)) {
+	case HandshakeModeOff:
+		return HandshakeModeOff, nil
+	case HandshakeModeWarn:
+		return HandshakeModeWarn, nil
+	case HandshakeModeEnforce:
+		return HandshakeModeEnforce, nil
+	}
+	return "", fmt.Errorf("unrecognized CORDUM_SDK_HANDSHAKE value %q; valid values: off, warn, enforce", trimmed)
 }
 
 // SkipsHandshake reports whether the mode bypasses the handshake

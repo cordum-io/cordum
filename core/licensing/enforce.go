@@ -22,11 +22,11 @@ func CheckJobConcurrency(current int64, entitlements Entitlements) *TierLimitErr
 }
 
 func CheckWorkflowSteps(current int64, entitlements Entitlements) *TierLimitError {
-	return checkNumericLimit("max_workflow_steps", current, entitlements.MaxWorkflowSteps)
+	return checkNumericLimit("max_workflow_steps", current, effectiveLimit(entitlements.MaxWorkflowSteps, entitlements.Limits, "max_workflow_steps"))
 }
 
 func CheckActiveWorkflows(current int64, entitlements Entitlements) *TierLimitError {
-	return checkNumericLimit("max_active_workflows", current, entitlements.MaxActiveWorkflows)
+	return checkNumericLimit("max_active_workflows", current, effectiveLimit(entitlements.MaxActiveWorkflows, entitlements.Limits, "max_active_workflows"))
 }
 
 func CheckApprovalMode(requested, allowed string) *TierLimitError {
@@ -76,8 +76,12 @@ func (e *TierLimitError) ToHTTPError() TierLimitHTTPError {
 	}
 }
 
+// checkNumericLimit returns nil if usage is allowed, or a TierLimitError if
+// it exceeds the cap. BUG-016: an allowed value of 0 now denies any positive
+// usage — Unlimited is the sole "no cap" sentinel. Plans MUST opt into
+// unlimited via the Unlimited constant; an accidental zero is a deny.
 func checkNumericLimit(limit string, current, allowed int64) *TierLimitError {
-	if allowed == 0 || allowed == Unlimited || current <= allowed {
+	if allowed == Unlimited || current <= allowed {
 		return nil
 	}
 	return newTierLimitError(limit, current, allowed)

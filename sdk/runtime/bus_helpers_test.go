@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	agentv1 "github.com/cordum-io/cap/v2/cordum/agent/v1"
+	capsdk "github.com/cordum-io/cap/v2/sdk/go"
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 )
@@ -120,4 +121,95 @@ func unknownStringField(raw []byte, fieldNumber protowire.Number) (string, bool)
 		raw = raw[valueLen:]
 	}
 	return "", false
+}
+
+// TestHeartbeatPayload_SetsTraceID covers the LIVE worker heartbeat path
+// (runtime.HeartbeatPayload* -> CAP capworker.HeartbeatPayloadWithProgress, which
+// hardcodes TraceId:""). CAP v2.x ValidateBusPacket — the same required-field contract
+// the scheduler/gateway bus enforces — rejects an empty trace_id, so without a stamp every
+// sys.heartbeat is dropped as "buspacket: missing required field(s): trace_id". This asserts
+// the wrapper stamps trace_id == workerID across all three constructors, with and without an
+// option, and leaves the heartbeat payload intact.
+func TestHeartbeatPayload_SetsTraceID(t *testing.T) {
+	const (
+		workerID  = "hb-worker-1"
+		pool      = "hb-pool"
+		authToken = "attestation-xyz"
+	)
+
+	builders := []struct {
+		name  string
+		build func(opts ...HeartbeatOption) ([]byte, error)
+	}{
+		{
+			name: "HeartbeatPayload",
+			build: func(opts ...HeartbeatOption) ([]byte, error) {
+				return HeartbeatPayload(workerID, pool, 2, 8, 12.5, opts...)
+			},
+		},
+		{
+			name: "HeartbeatPayloadWithMemory",
+			build: func(opts ...HeartbeatOption) ([]byte, error) {
+				return HeartbeatPayloadWithMemory(workerID, pool, 2, 8, 12.5, 33.0, opts...)
+			},
+		},
+		{
+			name: "HeartbeatPayloadWithProgress",
+			build: func(opts ...HeartbeatOption) ([]byte, error) {
+				return HeartbeatPayloadWithProgress(workerID, pool, 2, 8, 12.5, 33.0, 50, "memo-1", opts...)
+			},
+		},
+	}
+
+	for _, b := range builders {
+		for _, withOpt := range []bool{false, true} {
+			name := b.name + "/noOption"
+			if withOpt {
+				name = b.name + "/withOption"
+			}
+			t.Run(name, func(t *testing.T) {
+				var opts []HeartbeatOption
+				if withOpt {
+					opts = append(opts, WithAuthToken(authToken))
+				}
+
+				data, err := b.build(opts...)
+				if err != nil {
+					t.Fatalf("build heartbeat: %v", err)
+				}
+
+				var pkt agentv1.BusPacket
+				if err := proto.Unmarshal(data, &pkt); err != nil {
+					t.Fatalf("unmarshal packet: %v", err)
+				}
+
+				// (a) The bus rejects an empty trace_id; this is the exact contract it enforces.
+				if err := capsdk.ValidateBusPacket(&pkt); err != nil {
+					t.Fatalf("ValidateBusPacket rejected heartbeat: %v", err)
+				}
+				// (b) trace_id is stamped with the workerID correlation id.
+				if got := pkt.GetTraceId(); got != workerID {
+					t.Fatalf("trace_id = %q, want %q", got, workerID)
+				}
+				// (c) the heartbeat payload is intact and options are applied only when supplied.
+				hb := pkt.GetHeartbeat()
+				if hb == nil {
+					t.Fatal("expected heartbeat payload")
+				}
+				if hb.GetWorkerId() != workerID {
+					t.Fatalf("heartbeat worker_id = %q, want %q", hb.GetWorkerId(), workerID)
+				}
+				if hb.GetPool() != pool {
+					t.Fatalf("heartbeat pool = %q, want %q", hb.GetPool(), pool)
+				}
+				if withOpt {
+					if hb.GetAuthToken() != authToken {
+						t.Fatalf("auth_token = %q, want %q (option not applied)", hb.GetAuthToken(), authToken)
+					}
+				} else if hb.GetAuthToken() != "" {
+					t.Fatalf("auth_token = %q, want empty (no option supplied)", hb.GetAuthToken())
+				}
+			})
+		}
+	}
 }

@@ -369,13 +369,19 @@ func writeNDJSONExport(
 	}
 
 	count := 0
+	scanned := 0
 	truncated := false
 	err = walkChainStream(ctx, client, opts.StreamKey, opts.From, opts.To, int64(opts.MaxEvents), func(ev SIEMEvent) error {
+		// `scanned` mirrors walkChainStream's cap (which counts SCANNED events
+		// in [from, to]); `count` is the POST-filter emit total. We need both:
+		// EventCount must reflect what the caller actually got (filtered),
+		// while TruncatedAtMax must reflect whether the scan hit the cap —
+		// otherwise a filtered export that exhausts MaxEvents would falsely
+		// report truncated=false.
+		scanned++
 		// Row filter applies ONLY here, at the top of the emit callback —
 		// never in the opts.Verifier call above or in walkChainStream's cursor
-		// advance, so chain verification stays full-range. `count` below
-		// increments only on a successful write, so EventCount automatically
-		// becomes the POST-filter total.
+		// advance, so chain verification stays full-range.
 		if !opts.rowMatches(ev) {
 			return nil
 		}
@@ -403,7 +409,7 @@ func writeNDJSONExport(
 		manifest.EventCount = count
 		return manifest, err
 	}
-	if count >= opts.MaxEvents {
+	if scanned >= opts.MaxEvents {
 		truncated = true
 	}
 	manifest.EventCount = count
@@ -556,8 +562,13 @@ func writeCSVExport(
 	}
 
 	count := 0
+	scanned := 0
 	truncated := false
 	err = walkChainStream(ctx, client, opts.StreamKey, opts.From, opts.To, int64(opts.MaxEvents), func(ev SIEMEvent) error {
+		// See writeNDJSONExport for why scanned/count are both tracked:
+		// walkChainStream caps SCANNED events, so truncated must come from
+		// `scanned`, not the post-filter `count`.
+		scanned++
 		// Row filter applies ONLY here (see writeNDJSONExport for the full
 		// invariant note): the opts.Verifier pass above already covered the
 		// full range; this gate only decides which rows are written.
@@ -587,7 +598,7 @@ func writeCSVExport(
 		manifest.EventCount = count
 		return manifest, err
 	}
-	if count >= opts.MaxEvents {
+	if scanned >= opts.MaxEvents {
 		truncated = true
 	}
 	manifest.EventCount = count

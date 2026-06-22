@@ -1,7 +1,26 @@
 /*
  * DESIGN: "Control Surface" — Agent Detail
  * OPERATE / Agents / :id
- * Agent-specific view: metrics, safety breakdown, policy bindings, recent jobs
+ * Agent-specific view: metrics, safety breakdown, policy bindings, recent jobs.
+ *
+ * Activity tab — GOVERNANCE DECISIONS (task-1c35b397): the Activity tab leads
+ * with the agent's own governed-action history (MCP tool calls, Edge actions,
+ * job decisions) via <AgentDecisionsPanel>, ABOVE the existing CAP-job hourly
+ * chart + Recent Jobs. The panel REUSES the audit feed
+ * (GET /api/v1/audit/events?agent_id=<id> through useInfiniteAuditEvents) — it
+ * is NOT a new endpoint and adds no parallel decision store, so the OpenAPI
+ * spec is unchanged and src/api/generated was NOT regenerated.
+ *
+ * Identity linkage (GitHub #314): for a heartbeating worker the route :id IS
+ * the audit agent_id (verified for p4a-local-ollama-agent), so the panel filters
+ * by the route id directly. The identity-UUID route (?tab=identity) has id !=
+ * agent_id and shows a documented empty-state rather than an error.
+ *
+ * Resilience: the worker/job load guards do NOT full-page-error on the Activity
+ * (or Identity) tab — an MCP-client agent whose /workers/{id} 404s still surfaces
+ * its decision timeline; only Overview hard-errors. Attacker-controlled taint
+ * snippets in the evidence column are rendered as escaped React text (never
+ * dangerouslySetInnerHTML); they are bounded/redacted server-side.
  */
 import { useMemo, useCallback } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
@@ -27,23 +46,13 @@ import { ChartTooltipCompact as ChartTooltip } from "@/components/ui/ChartToolti
 import type { Job } from "@/api/types";
 import { AgentDelegationsPanel } from "@/components/delegations/AgentDelegationsPanel";
 import AgentIdentityPanel from "@/components/agents/AgentIdentityPanel";
+import { SafetyBadge } from "@/components/agents/SafetyBadge";
+import { AgentDecisionsPanel } from "@/components/agents/AgentDecisionsPanel";
 import { FEATURE_FLAGS } from "@/config/flags";
 
 function tabFromSearch(value: string | null, tabs: Array<{ id: string }>): string {
   if (!value || !tabs.some((tab) => tab.id === value)) return "overview";
   return value;
-}
-
-function SafetyBadge({ decision }: { decision: string }) {
-  const config: Record<string, { color: string; bg: string; label: string }> = {
-    allow: { color: "text-[var(--color-success)]", bg: "bg-[var(--color-success)]/10", label: "ALLOW" },
-    deny: { color: "text-[var(--color-governance)]", bg: "bg-[var(--color-governance)]/10", label: "DENY" },
-    require_approval: { color: "text-[var(--color-warning)]", bg: "bg-[var(--color-warning)]/10", label: "APPROVAL" },
-    allow_with_constraints: { color: "text-[var(--color-info)]", bg: "bg-[var(--color-info)]/10", label: "CONSTRAINED" },
-    throttle: { color: "text-[var(--color-warning)]", bg: "bg-[var(--color-warning)]/10", label: "THROTTLE" },
-  };
-  const c = config[decision] ?? { color: "text-muted-foreground", bg: "bg-surface-2", label: decision.toUpperCase() };
-  return <span className={cn("px-1.5 py-0.5 rounded font-mono text-xs font-semibold", c.color, c.bg)}>{c.label}</span>;
 }
 
 function deriveSafetyBreakdown(jobs: Job[]) {
@@ -142,7 +151,10 @@ export default function AgentDetailPage() {
   const allowRate = totalDecisions > 0 ? Math.round((safetyBreakdown.allow / totalDecisions) * 100) : 0;
   const tabs = [
     { id: "overview", label: "Overview" },
-    { id: "activity", label: "Activity", count: jobs?.length ?? 0 },
+    // Activity now spans the agent's GOVERNANCE DECISIONS (audit feed), not
+    // just its CAP jobs, so jobs.length is a misleading count — an MCP-only
+    // agent with rich decision history would read "0". Show no count.
+    { id: "activity", label: "Activity" },
     { id: "identity", label: "Identity" },
     ...(FEATURE_FLAGS.delegationDashboard
       ? [{ id: "delegations", label: "Delegations" }]
@@ -159,7 +171,10 @@ export default function AgentDetailPage() {
     ? ["online", "active", "idle", "busy"].includes(agent.status)
     : false;
 
-  if (agentError && activeTab !== "identity") {
+  // Activity + Identity must never be hidden by a worker/job load failure: an
+  // MCP-client agent whose /workers/{id} 404s still has governed-action history
+  // to surface. Only Overview full-page-errors on a worker/job failure.
+  if (agentError && activeTab !== "identity" && activeTab !== "activity") {
     return (
       <div className="space-y-6">
         <PageHeader
@@ -187,7 +202,7 @@ export default function AgentDetailPage() {
     );
   }
 
-  if (agentLoading && activeTab !== "identity") {
+  if (agentLoading && activeTab !== "identity" && activeTab !== "activity") {
     return (
       <div className="space-y-6">
         <PageHeader
@@ -210,7 +225,7 @@ export default function AgentDetailPage() {
     );
   }
 
-  if (jobsError && (activeTab === "overview" || activeTab === "activity")) {
+  if (jobsError && activeTab === "overview") {
     return <ErrorBanner message={jobsErr instanceof Error ? jobsErr.message : "Failed to load agent jobs"} onRetry={() => void refetchJobs()} />;
   }
 
@@ -419,6 +434,29 @@ export default function AgentDetailPage() {
             exit={{ opacity: 0, y: -8 }}
             className="grid grid-cols-1 gap-6 lg:grid-cols-12"
           >
+            {/* Governance decisions LEAD the Activity tab: the agent's own MCP
+                tool-call, Edge action and job decisions (reused audit feed),
+                above the CAP-job chart. Renders independently of worker/job
+                load state so an MCP-only agent still shows its history. */}
+            {id && (
+              <motion.div variants={item} className="lg:col-span-12">
+                <AgentDecisionsPanel agentId={id} />
+              </motion.div>
+            )}
+
+            {(agentError || jobsError) && (
+              <motion.div variants={item} className="lg:col-span-12">
+                <div className="instrument-card flex items-center gap-2 py-3">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-[var(--color-warning)]" />
+                  <p className="text-xs text-muted-foreground">
+                    Live worker telemetry is unavailable, so the job chart below
+                    may be incomplete — the governance-decision timeline above is
+                    unaffected.
+                  </p>
+                </div>
+              </motion.div>
+            )}
+
             <motion.div variants={item} className="lg:col-span-12">
               <div className="instrument-card">
                 <div className="mb-6 flex items-center justify-between">

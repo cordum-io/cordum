@@ -82,4 +82,10 @@ export const baseHandlers = [
   http.get("*/api/v1/policy/audit", () =>
     HttpResponse.json({ items: [], total: 0, has_more: false, offset: 0 }),
   ),
+  // SIEM audit feed default (/audit/events) — empty page so AuditLogPage
+  // (useInfiniteAuditEvents) renders EmptyState without a per-test handler.
+  // Per-test overrides via server.use() inject fixtures / error responses.
+  http.get("*/api/v1/audit/events", () =>
+    HttpResponse.json({ items: [], next_cursor: "", returned: 0 }),
+  ),
 ];

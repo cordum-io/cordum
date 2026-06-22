@@ -85,7 +85,7 @@ type Implementation struct {
 // InitializeParams is the parameter object for initialize requests.
 type InitializeParams struct {
 	ProtocolVersion string          `json:"protocolVersion"`
-	Capabilities    map[string]any  `json:"capabilities,omitempty"`
+	Capabilities    map[string]any  `json:"capabilities"`
 	ClientInfo      *Implementation `json:"clientInfo,omitempty"`
 }
 

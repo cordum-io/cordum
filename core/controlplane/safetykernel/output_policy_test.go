@@ -11,8 +11,11 @@ import (
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/redisutil"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/redis/go-redis/v9"
 )
+
+const testAWSAccessKeyID = "AKIA1234567890ABCDEF"
 
 func boolPtr(v bool) *bool { return &v }
 
@@ -39,7 +42,7 @@ func TestCompileOutputRulesNormalizesScannersAndEnable(t *testing.T) {
 		},
 	}
 
-	rules := compileOutputRules(policy)
+	rules := compileOutputRules(policy, loadOutputScanners())
 	if len(rules) != 1 {
 		t.Fatalf("expected one compiled rule, got %d", len(rules))
 	}
@@ -51,6 +54,158 @@ func TestCompileOutputRulesNormalizesScannersAndEnable(t *testing.T) {
 	}
 	if rules[0].maxOutputBytes != 4096 {
 		t.Fatalf("expected output_size_gt to map to max bytes, got %d", rules[0].maxOutputBytes)
+	}
+}
+
+// TestCompileOutputRulesSurfacesUnknownScanner asserts an unknown scanner name
+// is observable (metric/WARN) at compile, not silently skipped, while the rule
+// still compiles (behavior-preserving — pruning to empty would flip it to
+// match-all).
+func TestCompileOutputRulesSurfacesUnknownScanner(t *testing.T) {
+	reg := loadOutputScanners()
+	before := testutil.ToFloat64(scannerUnknownTotal)
+	policy := &config.SafetyPolicy{
+		OutputRules: []config.OutputPolicyRule{{
+			ID:       "typo-output",
+			Decision: "deny",
+			Match:    config.OutputPolicyMatch{Scanners: []string{"pii_detector"}},
+		}},
+	}
+	rules := compileOutputRules(policy, reg)
+	if delta := testutil.ToFloat64(scannerUnknownTotal) - before; delta < 1 {
+		t.Fatalf("compiling an output rule with an unknown scanner must increment scannerUnknownTotal (observable), delta=%v", delta)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("output rule must still compile (behavior-preserving, not silently dropped to a match-all), got %d", len(rules))
+	}
+}
+
+// TestCompileInputRulesSurfacesUnknownScanner is the input-rule counterpart.
+func TestCompileInputRulesSurfacesUnknownScanner(t *testing.T) {
+	reg := loadOutputScanners()
+	before := testutil.ToFloat64(scannerUnknownTotal)
+	policy := &config.SafetyPolicy{
+		InputRules: []config.InputPolicyRule{{
+			ID:       "typo-input",
+			Decision: "deny",
+			Match:    config.InputPolicyMatch{Scanners: []string{"pii_detector"}},
+		}},
+	}
+	rules := compileInputRules(policy, reg)
+	if delta := testutil.ToFloat64(scannerUnknownTotal) - before; delta < 1 {
+		t.Fatalf("compiling an input rule with an unknown scanner must increment scannerUnknownTotal (observable), delta=%v", delta)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("input rule must still compile (behavior-preserving), got %d", len(rules))
+	}
+}
+
+// TestUnknownScannerNames unit-tests the compile-time validation helper.
+func TestUnknownScannerNames(t *testing.T) {
+	reg := loadOutputScanners()
+	if got := unknownScannerNames([]string{"pii", "secret", "secret_leak", "injection", "code_injection", "prompt_injection"}, reg); len(got) != 0 {
+		t.Fatalf("valid/aliased scanner names must resolve, got unknown=%v", got)
+	}
+	got := unknownScannerNames([]string{"pii_detector", "pii"}, reg)
+	if len(got) != 1 || got[0] != "pii_detector" {
+		t.Fatalf("unknownScannerNames([pii_detector,pii]) = %v, want [pii_detector]", got)
+	}
+}
+
+// TestCompileValidScannersDoNotWarn is the negative control: valid built-in and
+// aliased scanner names must NOT be flagged as unknown.
+func TestCompileValidScannersDoNotWarn(t *testing.T) {
+	reg := loadOutputScanners()
+	before := testutil.ToFloat64(scannerUnknownTotal)
+	policy := &config.SafetyPolicy{
+		OutputRules: []config.OutputPolicyRule{{
+			ID:       "valid",
+			Decision: "deny",
+			Match:    config.OutputPolicyMatch{Scanners: []string{"secret", "secret_leak", "pii", "injection", "code_injection", "prompt_injection"}},
+		}},
+	}
+	rules := compileOutputRules(policy, reg)
+	if delta := testutil.ToFloat64(scannerUnknownTotal) - before; delta != 0 {
+		t.Fatalf("valid/aliased scanner names must not increment scannerUnknownTotal, delta=%v", delta)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("valid-scanner rule should compile, got %d", len(rules))
+	}
+}
+
+// TestUnknownScannerNamesResolvesCustom confirms a custom scanner present in the
+// loaded registry resolves, while a name not in the registry is still unknown.
+func TestUnknownScannerNamesResolvesCustom(t *testing.T) {
+	reg := defaultOutputScanners()
+	reg["custom_scanner"] = newSecretScanner()
+	if got := unknownScannerNames([]string{"custom_scanner", "pii"}, reg); len(got) != 0 {
+		t.Fatalf("custom + built-in names must resolve, got unknown=%v", got)
+	}
+	if got := unknownScannerNames([]string{"custom_scanner_typo"}, reg); len(got) != 1 {
+		t.Fatalf("an unloaded custom name must be reported unknown, got %v", got)
+	}
+}
+
+// TestUnknownScannerNames_EmptyRegistryReportsAllUnknown pins the fail-open fix:
+// an empty (or nil) scanner registry must report every requested name as UNKNOWN
+// (not nil), so an unwired registry surfaces the WARN/metric instead of silently
+// disabling every scanner-backed rule. A registered-but-nil scanner value is
+// likewise unknown. Pre-fix unknownScannerNames returned nil when len(scanners)==0.
+func TestUnknownScannerNames_EmptyRegistryReportsAllUnknown(t *testing.T) {
+	// normalizeScannerName: secret_leak -> secret, code_injection -> injection.
+	got := unknownScannerNames([]string{"secret_leak", "code_injection"}, map[string]OutputScanner{})
+	want := map[string]bool{"secret": true, "injection": true}
+	if len(got) != 2 || !want[got[0]] || !want[got[1]] {
+		t.Fatalf("empty registry must report all requested names unknown, got %v want secret+injection", got)
+	}
+	if g := unknownScannerNames([]string{"secret"}, nil); len(g) != 1 || g[0] != "secret" {
+		t.Fatalf("nil registry must report the name unknown, got %v", g)
+	}
+	// A registered-but-nil scanner value is treated as unknown.
+	if g := unknownScannerNames([]string{"secret"}, map[string]OutputScanner{"secret": nil}); len(g) != 1 || g[0] != "secret" {
+		t.Fatalf("a nil scanner value must be reported unknown, got %v", g)
+	}
+	// Sanity: a valid name against a populated registry still resolves.
+	if g := unknownScannerNames([]string{"secret"}, defaultOutputScanners()); len(g) != 0 {
+		t.Fatalf("valid name against a populated registry must resolve, got %v", g)
+	}
+}
+
+// TestLoadOutputScannersSeedsDefaultsOnMissingYAML confirms the built-in
+// scanners are always seeded even when the operator YAML cannot be loaded, so
+// built-in names never falsely validate as "unknown".
+func TestLoadOutputScannersSeedsDefaultsOnMissingYAML(t *testing.T) {
+	t.Setenv(envOutputScannersPath, filepath.Join(t.TempDir(), "does-not-exist.yaml"))
+	reg := loadOutputScanners()
+	for _, name := range []string{"secret", "pii", "injection", "prompt_injection"} {
+		if _, ok := reg[name]; !ok {
+			t.Fatalf("default scanner %q must be seeded even when the YAML is missing", name)
+		}
+	}
+}
+
+// TestCheckOutputAliasedDetectorFires is the end-to-end proof that a valid
+// aliased detector name resolves AND the rule still fires (quarantines).
+func TestCheckOutputAliasedDetectorFires(t *testing.T) {
+	srv := &server{scanners: defaultOutputScanners()}
+	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
+		OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "open"},
+		OutputRules: []config.OutputPolicyRule{{
+			ID:       "out-secret-alias",
+			Decision: "quarantine",
+			Match:    config.OutputPolicyMatch{Topics: []string{"job.*"}, Detectors: []string{"secret_leak"}},
+		}},
+	}, "snap-alias")
+
+	resp, err := srv.CheckOutput(context.Background(), &pb.OutputCheckRequest{
+		JobId: "job-alias", Topic: "job.default", Tenant: "default",
+		OutputContent: []byte("leak AKIA1234567890ABCDEF in text"),
+	})
+	if err != nil {
+		t.Fatalf("check output: %v", err)
+	}
+	if resp.GetDecision() != pb.OutputDecision_OUTPUT_DECISION_QUARANTINE {
+		t.Fatalf("aliased detector secret_leak must resolve and fire, got %v", resp.GetDecision())
 	}
 }
 
@@ -343,6 +498,94 @@ func TestCheckOutputDereferencesResultPointer(t *testing.T) {
 	}
 }
 
+func TestCheckOutput_FailClosedOnResultGetError(t *testing.T) {
+	resultClient := redis.NewClient(&redis.Options{
+		Addr:         "127.0.0.1:1",
+		MaxRetries:   0,
+		DialTimeout:  20 * time.Millisecond,
+		ReadTimeout:  20 * time.Millisecond,
+		WriteTimeout: 20 * time.Millisecond,
+	})
+	t.Cleanup(func() { _ = resultClient.Close() })
+
+	srv := &server{
+		scanners:     defaultOutputScanners(),
+		resultClient: resultClient,
+	}
+	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
+		OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "open"},
+		OutputRules: []config.OutputPolicyRule{
+			{
+				ID:       "out-secret-pointer-fail",
+				Decision: "quarantine",
+				Match: config.OutputPolicyMatch{
+					Topics:   []string{"job.*"},
+					Scanners: []string{"secret"},
+				},
+			},
+		},
+	}, "snap-check-pointer-fail")
+
+	resp, err := srv.CheckOutput(context.Background(), &pb.OutputCheckRequest{
+		JobId:     "job-pointer-fail",
+		Topic:     "job.default",
+		ResultPtr: "redis://res:job-pointer-fail",
+	})
+	if err != nil {
+		t.Fatalf("check output: %v", err)
+	}
+	if resp.GetDecision() != pb.OutputDecision_OUTPUT_DECISION_QUARANTINE {
+		t.Fatalf("expected result pointer read error to fail closed, got %v: %#v", resp.GetDecision(), resp)
+	}
+	if !hasProtoOutputFinding(resp.GetFindings(), "pointer_unreadable", "critical") {
+		t.Fatalf("expected critical pointer_unreadable finding, got %#v", resp.GetFindings())
+	}
+}
+
+func TestCheckOutput_RedisNilPointerStaysAllow(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	defer mr.Close()
+
+	resultClient, err := redisutil.NewClient("redis://" + mr.Addr())
+	if err != nil {
+		t.Fatalf("new redis client: %v", err)
+	}
+	defer func() { _ = resultClient.Close() }()
+
+	srv := &server{
+		scanners:     defaultOutputScanners(),
+		resultClient: resultClient,
+	}
+	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
+		OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "open"},
+		OutputRules: []config.OutputPolicyRule{
+			{
+				ID:       "out-secret-pointer-missing",
+				Decision: "quarantine",
+				Match: config.OutputPolicyMatch{
+					Topics:   []string{"job.*"},
+					Scanners: []string{"secret"},
+				},
+			},
+		},
+	}, "snap-check-pointer-missing")
+
+	resp, err := srv.CheckOutput(context.Background(), &pb.OutputCheckRequest{
+		JobId:     "job-pointer-missing",
+		Topic:     "job.default",
+		ResultPtr: "redis://res:job-pointer-missing",
+	})
+	if err != nil {
+		t.Fatalf("check output: %v", err)
+	}
+	if resp.GetDecision() != pb.OutputDecision_OUTPUT_DECISION_ALLOW {
+		t.Fatalf("expected redis.Nil pointer to stay allow-by-default, got %v: %#v", resp.GetDecision(), resp)
+	}
+}
+
 func TestCheckOutputKeywordMatching(t *testing.T) {
 	srv := &server{
 		scanners: defaultOutputScanners(),
@@ -549,6 +792,37 @@ func hasOutputFindingType(findings []outputFinding, want string) bool {
 	return false
 }
 
+func hasOutputFinding(findings []outputFinding, wantType, wantSeverity string) bool {
+	for _, finding := range findings {
+		if finding.Type == wantType && finding.Severity == wantSeverity {
+			return true
+		}
+	}
+	return false
+}
+
+func hasProtoOutputFinding(findings []*pb.OutputFinding, wantType, wantSeverity string) bool {
+	for _, finding := range findings {
+		if finding.GetType() == wantType && finding.GetSeverity() == wantSeverity {
+			return true
+		}
+	}
+	return false
+}
+
+func makeBigContentWithSecret(secretOffset int) []byte {
+	content := make([]byte, maxOutputScanBytes+1024)
+	for i := range content {
+		content[i] = 'x'
+	}
+	secret := []byte(testAWSAccessKeyID)
+	if secretOffset < 0 || secretOffset+len(secret) > len(content) {
+		panic("secret offset outside test content")
+	}
+	copy(content[secretOffset:], secret)
+	return content
+}
+
 func TestEvaluateOutputKeywordAndContentType(t *testing.T) {
 	srv := &server{
 		scanners: defaultOutputScanners(),
@@ -638,7 +912,7 @@ func TestCompileOutputRulesRejectsComplexPatterns(t *testing.T) {
 			},
 		},
 	}
-	rules := compileOutputRules(policy)
+	rules := compileOutputRules(policy, loadOutputScanners())
 	// Rule should be skipped because all patterns are rejected
 	if len(rules) != 0 {
 		t.Fatalf("expected nested quantifier pattern to be rejected, got %d rules", len(rules))
@@ -658,7 +932,7 @@ func TestCompileOutputRulesAcceptsSimplePattern(t *testing.T) {
 			},
 		},
 	}
-	rules := compileOutputRules(policy)
+	rules := compileOutputRules(policy, loadOutputScanners())
 	if len(rules) != 1 {
 		t.Fatalf("expected simple pattern to be accepted, got %d rules", len(rules))
 	}
@@ -715,6 +989,220 @@ func TestContentTruncationFinding(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected content_truncated finding in response")
+	}
+}
+
+func TestCheckOutput_TruncatedTailSecret_FailsClosed(t *testing.T) {
+	srv := &server{scanners: defaultOutputScanners()}
+	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
+		OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "open"},
+		OutputRules: []config.OutputPolicyRule{{
+			ID:       "out-secret-tail",
+			Decision: "quarantine",
+			Match: config.OutputPolicyMatch{
+				Topics:   []string{"job.*"},
+				Scanners: []string{"secret"},
+			},
+		}},
+	}, "snap-tail-secret")
+
+	resp, err := srv.CheckOutput(context.Background(), &pb.OutputCheckRequest{
+		JobId:         "job-tail-secret",
+		Topic:         "job.default",
+		Tenant:        "default",
+		OutputContent: makeBigContentWithSecret(maxOutputScanBytes + 32),
+	})
+	if err != nil {
+		t.Fatalf("check output: %v", err)
+	}
+	if resp.GetDecision() != pb.OutputDecision_OUTPUT_DECISION_QUARANTINE {
+		t.Fatalf("expected truncated secret-scanner output to fail closed, got %v: %#v", resp.GetDecision(), resp)
+	}
+	if !hasProtoOutputFinding(resp.GetFindings(), "content_truncated", "high") {
+		t.Fatalf("expected high-severity content_truncated finding, got %#v", resp.GetFindings())
+	}
+}
+
+func TestEvaluateOutput_TruncatedTailSecret_FailsClosed(t *testing.T) {
+	srv := &server{scanners: defaultOutputScanners()}
+	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
+		OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "open"},
+		OutputRules: []config.OutputPolicyRule{{
+			ID:       "out-secret-tail-eval",
+			Decision: "quarantine",
+			Match: config.OutputPolicyMatch{
+				Topics:   []string{"job.*"},
+				Scanners: []string{"secret"},
+			},
+		}},
+	}, "snap-tail-secret-eval")
+
+	resp, err := srv.EvaluateOutput(context.Background(), &OutputEvaluateRequest{
+		JobID:         "job-tail-secret-eval",
+		Topic:         "job.default",
+		Tenant:        "default",
+		OutputContent: makeBigContentWithSecret(maxOutputScanBytes + 32),
+	})
+	if err != nil {
+		t.Fatalf("evaluate output: %v", err)
+	}
+	if resp.Decision != "quarantine" {
+		t.Fatalf("expected truncated secret-scanner output to fail closed, got %q: %#v", resp.Decision, resp)
+	}
+	if !hasOutputFinding(resp.Findings, "content_truncated", "high") {
+		t.Fatalf("expected high-severity content_truncated finding, got %#v", resp.Findings)
+	}
+}
+
+func TestCheckOutput_TruncatedHeadSecret_RedactEscalatesToQuarantine(t *testing.T) {
+	srv := &server{scanners: defaultOutputScanners()}
+	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
+		OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "open"},
+		OutputRules: []config.OutputPolicyRule{{
+			ID:       "out-secret-redact-trunc",
+			Decision: "redact",
+			Match: config.OutputPolicyMatch{
+				Topics:   []string{"job.*"},
+				Scanners: []string{"secret"},
+			},
+		}},
+	}, "snap-redact-trunc")
+
+	resp, err := srv.CheckOutput(context.Background(), &pb.OutputCheckRequest{
+		JobId:         "job-redact-trunc",
+		Topic:         "job.default",
+		Tenant:        "default",
+		OutputContent: makeBigContentWithSecret(8),
+	})
+	if err != nil {
+		t.Fatalf("check output: %v", err)
+	}
+	if resp.GetDecision() != pb.OutputDecision_OUTPUT_DECISION_QUARANTINE {
+		t.Fatalf("expected truncated redaction to escalate to quarantine, got %v: %#v", resp.GetDecision(), resp)
+	}
+	if !hasProtoOutputFinding(resp.GetFindings(), "content_truncated", "high") {
+		t.Fatalf("expected high-severity content_truncated finding, got %#v", resp.GetFindings())
+	}
+}
+
+func TestCheckOutput_UnderCapTailSecret_NormalMatch(t *testing.T) {
+	srv := &server{scanners: defaultOutputScanners()}
+	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
+		OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "open"},
+		OutputRules: []config.OutputPolicyRule{{
+			ID:       "out-secret-under-cap",
+			Decision: "quarantine",
+			Match: config.OutputPolicyMatch{
+				Topics:   []string{"job.*"},
+				Scanners: []string{"secret"},
+			},
+		}},
+	}, "snap-under-cap")
+
+	content := make([]byte, maxOutputScanBytes-128)
+	for i := range content {
+		content[i] = 'x'
+	}
+	copy(content[len(content)-64:], []byte(testAWSAccessKeyID))
+	resp, err := srv.CheckOutput(context.Background(), &pb.OutputCheckRequest{
+		JobId:         "job-under-cap",
+		Topic:         "job.default",
+		Tenant:        "default",
+		OutputContent: content,
+	})
+	if err != nil {
+		t.Fatalf("check output: %v", err)
+	}
+	if resp.GetDecision() != pb.OutputDecision_OUTPUT_DECISION_QUARANTINE {
+		t.Fatalf("expected under-cap tail secret to match normally, got %v: %#v", resp.GetDecision(), resp)
+	}
+	if hasProtoOutputFinding(resp.GetFindings(), "content_truncated", "high") {
+		t.Fatalf("under-cap content must not report truncation, got %#v", resp.GetFindings())
+	}
+}
+
+func TestCheckOutput_TruncatedNonSensitiveRules_Unchanged(t *testing.T) {
+	srv := &server{scanners: defaultOutputScanners()}
+	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
+		OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "open"},
+		OutputRules: []config.OutputPolicyRule{{
+			ID:       "out-keyword-only",
+			Decision: "quarantine",
+			Match: config.OutputPolicyMatch{
+				Topics:   []string{"job.*"},
+				Keywords: []string{"nonexistent-keyword"},
+			},
+		}},
+	}, "snap-keyword-only")
+
+	resp, err := srv.CheckOutput(context.Background(), &pb.OutputCheckRequest{
+		JobId:         "job-keyword-only",
+		Topic:         "job.default",
+		Tenant:        "default",
+		OutputContent: makeBigContentWithSecret(maxOutputScanBytes + 32),
+	})
+	if err != nil {
+		t.Fatalf("check output: %v", err)
+	}
+	if resp.GetDecision() != pb.OutputDecision_OUTPUT_DECISION_ALLOW {
+		t.Fatalf("expected non-sensitive truncated no-match to stay allow, got %v: %#v", resp.GetDecision(), resp)
+	}
+}
+
+// TestCheckOutput_TruncatedMixedPolicy_NonSensitiveMatchStillFailsClosed pins
+// the snapshot-scoped fail-closed contract: when the loaded policy contains
+// ANY sensitive scanner, a truncated output escalates to quarantine even if
+// the rule that matched is non-sensitive. Scoping the escalation to the
+// matched rule instead would let a keyword rule that matches in the scanned
+// head release (redact) an output whose unscanned tail was never seen by the
+// secret scanner — a weaker outcome than a full scan could have produced,
+// which is exactly what the truncation fail-closed mode exists to prevent.
+func TestCheckOutput_TruncatedMixedPolicy_NonSensitiveMatchStillFailsClosed(t *testing.T) {
+	srv := &server{scanners: defaultOutputScanners()}
+	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
+		OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "open"},
+		OutputRules: []config.OutputPolicyRule{
+			{
+				ID:       "out-keyword-redact",
+				Decision: "redact",
+				Match: config.OutputPolicyMatch{
+					Topics:   []string{"job.*"},
+					Keywords: []string{"mixed-policy-needle"},
+				},
+			},
+			{
+				ID:       "out-secret-mixed",
+				Decision: "quarantine",
+				Match: config.OutputPolicyMatch{
+					Topics:   []string{"job.*"},
+					Scanners: []string{"secret"},
+				},
+			},
+		},
+	}, "snap-mixed-policy")
+
+	// Keyword in the scanned head, secret hidden past the scan cap: the
+	// keyword rule matches first, but the secret scanner never saw the tail.
+	content := makeBigContentWithSecret(maxOutputScanBytes + 32)
+	copy(content[100:], []byte("mixed-policy-needle"))
+
+	resp, err := srv.CheckOutput(context.Background(), &pb.OutputCheckRequest{
+		JobId:         "job-mixed-policy",
+		Topic:         "job.default",
+		Tenant:        "default",
+		OutputContent: content,
+	})
+	if err != nil {
+		t.Fatalf("check output: %v", err)
+	}
+	if resp.GetDecision() != pb.OutputDecision_OUTPUT_DECISION_QUARANTINE {
+		t.Fatalf("expected truncated mixed-policy redact match to escalate to quarantine, got %v: %#v", resp.GetDecision(), resp)
+	}
+	if resp.GetRuleId() != "out-keyword-redact" {
+		t.Fatalf("expected escalation attributed to the matched rule, got %q", resp.GetRuleId())
+	}
+	if !hasProtoOutputFinding(resp.GetFindings(), "content_truncated", "high") {
+		t.Fatalf("expected high-severity content_truncated finding, got %#v", resp.GetFindings())
 	}
 }
 
@@ -788,7 +1276,10 @@ func TestContentForScanNilResultClient(t *testing.T) {
 		ErrorMessage: "fallback error msg",
 	}
 
-	content, truncated := srv.contentForScan(context.Background(), req)
+	content, truncated, err := srv.contentForScan(context.Background(), req)
+	if err != nil {
+		t.Fatalf("content for scan: %v", err)
+	}
 	if truncated {
 		t.Fatal("expected no truncation for short error message")
 	}
@@ -801,7 +1292,10 @@ func TestContentForScanNilResultClient(t *testing.T) {
 	req2 := &pb.OutputCheckRequest{
 		ResultPtr: "redis://result:job-456",
 	}
-	content2, _ := srv.contentForScan(context.Background(), req2)
+	content2, _, err := srv.contentForScan(context.Background(), req2)
+	if err != nil {
+		t.Fatalf("content for scan without fallback: %v", err)
+	}
 	if content2 != nil {
 		t.Fatalf("expected nil content when no fallback available, got %q", string(content2))
 	}

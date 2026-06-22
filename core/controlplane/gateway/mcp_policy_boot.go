@@ -98,29 +98,12 @@ func (p productionArtifactStore) Put(ctx context.Context, req mcp.ArtifactPutReq
 	}, nil
 }
 
-// attachMCPPolicyDeps applies the EDGE-102 + EDGE-103 wiring to a freshly
-// constructed MCPServer when the gateway's `mcp.policy_gate_enabled`
-// flag is on. Returns the (possibly modified) server plus a non-empty
-// reason string when wiring was skipped because a required production
-// dep is missing. The caller logs the reason so operators have one
-// greppable signal for misconfigured boots.
-//
-// Required deps (each guarded up-front, no noop fallback):
-//   - s.actionGatePipeline — the production gate-decision source. A nil
-//     pipeline would be wrapped in an adapter that always returns the
-//     zero decision, silently downgrading every tools/call to ALLOW.
-//   - s.edgeStore — the AppendEvent destination. A nil store would be
-//     wrapped in an adapter that returns "edge store unavailable" on
-//     every emit, surfacing as -32603 on every tools/call instead of
-//     a single boot-time failure signal.
-//   - s.artifactStore — the oversized-payload sink. Nil here would
-//     fail every oversized arg with "artifact store unavailable".
-//
-// gate (gatewayApprovalGate) may be nil when Redis is unavailable —
-// handlers_mcp.go already warns and disables the MCP approval gate; in
-// that case BuildMCPPolicyDeps receives a nil ApprovalHandoff and the
-// EvaluateToolCall path skips the REQUIRE_HUMAN handoff branch.
-func (s *server) attachMCPPolicyDeps(mcpServer *mcp.MCPServer, gate *gatewayApprovalGate) (*mcp.MCPServer, string) {
+// attachMCPPolicyDepsNamed is attachMCPPolicyDeps with an explicit gate
+// server-name. serverName=="" falls back to mcpPolicyServerName ("cordum.builtin");
+// when the gateway fronts a registered upstream the caller passes the upstream's
+// name (e.g. "cordum.monday") so the action-gate, approval-hold, and audit
+// attribute every decision to that upstream.
+func (s *server) attachMCPPolicyDepsNamed(mcpServer *mcp.MCPServer, gate *gatewayApprovalGate, serverName string) (*mcp.MCPServer, string) {
 	if s == nil || mcpServer == nil {
 		return mcpServer, "server or mcp_server nil"
 	}
@@ -133,6 +116,10 @@ func (s *server) attachMCPPolicyDeps(mcpServer *mcp.MCPServer, gate *gatewayAppr
 	if s.artifactStore == nil {
 		return mcpServer, "artifactStore nil"
 	}
+	name := serverName
+	if name == "" {
+		name = mcpPolicyServerName
+	}
 	emitter := edgeStoreEventEmitter{store: s.edgeStore}
 	artifactStore := productionArtifactStore{store: s.artifactStore}
 	var redisClient redis.Cmdable
@@ -140,12 +127,12 @@ func (s *server) attachMCPPolicyDeps(mcpServer *mcp.MCPServer, gate *gatewayAppr
 		redisClient = s.jobStore.Client()
 	}
 	policyDeps := BuildMCPPolicyDeps(s.actionGatePipeline, gate, emitter, artifactStore, redisClient)
-	mcpServer = mcpServer.WithPolicyGate(mcpPolicyServerName, policyDeps)
+	mcpServer = mcpServer.WithPolicyGate(name, policyDeps)
 
 	mcpServer = mcpServer.WithApprovalHold(mcp.ApprovalHoldDeps{
 		Store:          s.edgeStore,
 		PolicySnapshot: s.mcpPolicySnapshotFunc(),
-		ServerName:     mcpPolicyServerName,
+		ServerName:     name,
 	})
 	return mcpServer, ""
 }

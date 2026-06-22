@@ -118,7 +118,7 @@ func TestRunLegacyNonceURLWithoutEnvFailsClosedClearly(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code=%d stderr=%q", code, stderr)
 	}
-	assertCompactJSON(t, stdout, `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Cordum Edge unavailable; blocking by fail-closed policy"}}`)
+	assertCompactJSON(t, stdout, `{"decision":"block","reason":"Cordum Edge unavailable; blocking by fail-closed policy","hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Cordum Edge unavailable; blocking by fail-closed policy"}}`)
 	if !strings.Contains(stderr, "CORDUM_AGENTD_HOOK_NONCE") || !strings.Contains(stderr, "not embedded in CORDUM_AGENTD_URL") {
 		t.Fatalf("stderr missing clear nonce migration error: %q", stderr)
 	}

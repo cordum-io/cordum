@@ -9,8 +9,8 @@ Recommendations for optimizing Cordum gateway throughput in production deploymen
 The gateway rate limiter uses a **single Redis Lua script** per request (atomic INCR + conditional EXPIRE in a 1-second sliding window). This is already optimal — no WATCH/MULTI serialization.
 
 **Tuning:**
-- `API_RATE_LIMIT_RPS` — requests per second per API key (default: 2000, or tier limit)
-- `API_RATE_LIMIT_BURST` — burst capacity (default: 2× RPS)
+- `API_RATE_LIMIT_RPS` — requests per second per API key (default: 30, raised by license tier)
+- `API_RATE_LIMIT_BURST` — burst capacity (default: 50)
 - Use `REDIS_RATE_LIMIT=false` to fall back to in-memory token bucket (lower latency, not distributed)
 
 ## Status Endpoint Cache
@@ -82,8 +82,8 @@ go tool pprof http://localhost:6060/debug/pprof/heap
 | Setting | Default | Recommended |
 |---------|---------|-------------|
 | `GOMAXPROCS` | auto (host CPUs) | Match CPU limit |
-| `API_RATE_LIMIT_RPS` | 2000 | Tier limit or higher |
-| `API_RATE_LIMIT_BURST` | 2× RPS | 2× RPS |
+| `API_RATE_LIMIT_RPS` | 30 | Tier limit or higher |
+| `API_RATE_LIMIT_BURST` | 50 | Tier limit or higher |
 | `REDIS_RATE_LIMIT` | true (Redis) | true for distributed |
 | Gateway replicas | 1 | 3-5 for production |
 | Redis `maxclients` | 10000 | Monitor connected_clients |

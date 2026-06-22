@@ -69,8 +69,26 @@ func Run(ctx context.Context, opts RunOptions) int {
 	if err != nil {
 		return handleAgentdError(stderr, stdout, input, req, err, opts, startedAt)
 	}
-	recordHookObservability(opts, req, decision.Decision, hookDenyReasonCode(req, ""), false, false, startedAt)
-	return writeRunOutput(stderr, stdout, input.HookEventName, decision, opts)
+	// Compute the hook output once, derive the metric/audit-recorded
+	// decision from it. Previously this fired recordHookObservability with
+	// the raw `decision.Decision` BEFORE hookOutputForRun synthesized a deny
+	// for the degraded+enforce case — so a fail-closed PreToolUse showed
+	// up in metrics as the original `RECORDED` decision with degraded=false,
+	// even though the hook actually emitted a block. CodeRabbit on #319
+	// caught this; recording after synthesis keeps metrics honest.
+	out := hookOutputForRun(input.HookEventName, decision, opts)
+	effectiveDecision := decision.Decision
+	degraded := decision.Degraded
+	failClosed := false
+	reasonCode := hookDenyReasonCode(req, "")
+	if input.HookEventName == "PreToolUse" && decision.Degraded && enforcesOnDegraded(opts) {
+		effectiveDecision = DecisionDeny
+		degraded = true
+		failClosed = true
+		reasonCode = "degraded_policy_enforced"
+	}
+	recordHookObservability(opts, req, effectiveDecision, reasonCode, degraded, failClosed, startedAt)
+	return writeRunOutputComputed(stderr, stdout, out)
 }
 
 func hookAgentdClient(opts RunOptions, postBudget time.Duration) (AgentdClient, error) {
@@ -90,8 +108,12 @@ func evaluateAgentdHook(ctx context.Context, agentd AgentdClient, req AgentdRequ
 	return agentd.EvaluateHook(agentdCtx, req)
 }
 
-func writeRunOutput(stderr, stdout io.Writer, eventName string, decision AgentdDecision, opts RunOptions) int {
-	out := hookOutputForRun(eventName, decision, opts)
+// writeRunOutputComputed is the shared write tail. Run() computes
+// hookOutputForRun upstream so it can derive the observability decision
+// from the synthesis path; handleAgentdError and the fail-closed paths go
+// through here too. Keeping the empty-check and the writeJSON error
+// handling in one place means no caller has to remember the contract.
+func writeRunOutputComputed(stderr, stdout io.Writer, out ClaudeHookOutput) int {
 	if isEmptyOutput(out) {
 		return 0
 	}
@@ -157,10 +179,24 @@ func handleAgentdError(stderr, stdout io.Writer, input HookInput, req AgentdRequ
 		recordHookObservability(opts, req, DecisionDeny, code, true, true, startedAt)
 		return 0
 	}
-	if localDevEnforce(opts) && input.HookEventName == "PreToolUse" {
-		localReason := "Cordum Edge local enforcer unavailable; blocking unclassified action"
+	// enforce + local-dev-enforce both degrade-CLOSED for risky / unknown
+	// PreToolUse actions. cordumctl edge doctor documents this contract
+	// ("enforce degrades closed for risky/unknown actions"), but until this
+	// fix only local-dev-enforce was wired up — `enforce` silently fell
+	// through to the catch-all `return 0` below (0 bytes of stdout, exit 0
+	// = Claude proceeds). End-to-end traces caught Write going through in
+	// policy_mode=enforce when agentd was unreachable (post EOF).
+	if (localDevEnforce(opts) || enforceMode(opts)) && input.HookEventName == "PreToolUse" {
+		// Preserve the "local enforcer" wording for local-dev-enforce so
+		// downstream monitors matching on the exact string keep firing;
+		// production enforce gets the unqualified phrasing.
+		enforcerLabel := "Cordum Edge enforcer"
+		if localDevEnforce(opts) {
+			enforcerLabel = "Cordum Edge local enforcer"
+		}
+		localReason := enforcerLabel + " unavailable; blocking unclassified action"
 		if riskyPreToolUse(input) {
-			localReason = "Cordum Edge local enforcer unavailable; blocking risky action"
+			localReason = enforcerLabel + " unavailable; blocking risky action"
 		}
 		out := failClosedOutput(input.HookEventName, localReason)
 		if werr := writeJSON(stdout, out); werr != nil {
@@ -222,6 +258,13 @@ func hookPolicyMode(opts RunOptions) string {
 	if mode := strings.TrimSpace(envValue(opts.Env, "CORDUM_EDGE_MODE")); mode != "" {
 		return mode
 	}
+	// The launcher sets both CORDUM_EDGE_MODE and CORDUM_EDGE_POLICY_MODE
+	// (see launcher_metadata.go); honor either so the hook reads the same
+	// value the operator passed via --policy-mode regardless of which env
+	// var survives a downstream wrapper.
+	if mode := strings.TrimSpace(envValue(opts.Env, "CORDUM_EDGE_POLICY_MODE")); mode != "" {
+		return mode
+	}
 	if parseBool(envValue(opts.Env, "CORDUM_AGENTD_FAIL_CLOSED")) {
 		return string(edgecore.PolicyModeEnterpriseStrict)
 	}
@@ -273,30 +316,53 @@ func failClosed(opts RunOptions) bool {
 	return parseBool(envValue(opts.Env, "CORDUM_AGENTD_FAIL_CLOSED")) || strings.EqualFold(envValue(opts.Env, "CORDUM_EDGE_MODE"), "enterprise-strict")
 }
 
-// localDevEnforce reports whether CORDUM_EDGE_MODE selects an enforcing posture
-// for the degrade-closed fallback in handleAgentdError. It matches the canonical
-// "enforce" token the launcher actually emits (settings.go sets CORDUM_EDGE_MODE
-// to the policy-mode string), so a risky PreToolUse degrades closed even when
-// CORDUM_AGENTD_FAIL_CLOSED is unset. This is defense-in-depth behind the
-// FailClosed wiring (task-2781fa7e), not a replacement; the launcher remains the
-// single source of truth for the token. The legacy "local-dev-enforce"/
-// "local-dev enforce" aliases are kept for compatibility.
 func localDevEnforce(opts RunOptions) bool {
 	mode := strings.ToLower(strings.TrimSpace(envValue(opts.Env, "CORDUM_EDGE_MODE")))
-	return mode == string(edgecore.PolicyModeEnforce) ||
-		mode == "local-dev-enforce" ||
-		mode == "local-dev enforce"
+	return mode == "local-dev-enforce" || mode == "local-dev enforce"
+}
+
+// enforceMode reports whether the active policy mode is "enforce" — the
+// production-shape mode where risky / unknown PreToolUse actions must
+// fail closed when agentd is unreachable. Distinct from failClosed
+// (which is the strictest enterprise-strict deny-everything-on-degraded)
+// and from localDevEnforce (which targets the dev workstation
+// explicitly). Reads both CORDUM_EDGE_POLICY_MODE and CORDUM_EDGE_MODE
+// because the launcher sets both (launcher_metadata.go); a downstream
+// wrapper that drops one of them shouldn't silently downgrade the
+// fail-mode posture.
+func enforceMode(opts RunOptions) bool {
+	if mode := strings.ToLower(strings.TrimSpace(envValue(opts.Env, "CORDUM_EDGE_POLICY_MODE"))); mode == "enforce" {
+		return true
+	}
+	return strings.EqualFold(envValue(opts.Env, "CORDUM_EDGE_MODE"), "enforce")
+}
+
+// fileMutationTools is the static set of Claude Code tools whose contract
+// includes writing or deleting on the operator's filesystem. Each of
+// these is risky-by-default for PreToolUse fail-closed gating — the
+// safety-kernel rules in cordum-edge-pack treat them as file.write
+// capability and the demo's claude-code.require-approval-for-edits rule
+// gates exactly this set. Kept as a map for O(1) lookup; case matters
+// because Claude Code tool names are PascalCase.
+var fileMutationTools = map[string]struct{}{
+	"Write":        {},
+	"Edit":         {},
+	"MultiEdit":    {},
+	"NotebookEdit": {},
 }
 
 func riskyPreToolUse(input HookInput) bool {
-	// Empty tool name is unclassifiable: fail closed on the degrade-closed path.
+	// Tool-less or unknown invocation — fail closed to surface the gap.
 	if input.ToolName == "" {
 		return true
 	}
-	// File-mutating Claude tools must be risky so the degrade-closed path blocks
-	// edits, not just shell (epic-8c29308d issue #3).
-	switch strings.ToLower(strings.TrimSpace(input.ToolName)) {
-	case "write", "edit", "multiedit", "notebookedit":
+	// File-mutation tools are always risky for PreToolUse: their contract
+	// is "modify the filesystem". Previously this function only flagged
+	// Bash + destructive shell, which let Write / Edit / MultiEdit /
+	// NotebookEdit slip through enforcer-unavailable paths even though
+	// the demo policy pack's require-approval-for-edits rule clearly
+	// intends to gate them.
+	if _, ok := fileMutationTools[input.ToolName]; ok {
 		return true
 	}
 	if !strings.EqualFold(input.ToolName, "Bash") {
@@ -345,8 +411,47 @@ func hookOutputForRun(eventName string, decision AgentdDecision, opts RunOptions
 		return ClaudeHookOutputForDecision(eventName, decision)
 	case "FileChanged":
 		return ClaudeHookOutput{}
+	case "PreToolUse":
+		// When agentd flagged the response as degraded (gateway evaluation
+		// could not complete in time and a RECORDED placeholder came back
+		// instead of a real allow/deny/require_approval), the previous code
+		// fell through to ClaudeHookOutputForDecision → preToolUseOutput's
+		// `default:` case, which returns an empty output → Claude proceeds.
+		// In policy_mode=enforce / enterprise-strict that is a silent
+		// fail-OPEN on every risky tool call whenever the safety kernel
+		// is briefly slow. Fail-CLOSE instead: synthesize a deny with a
+		// reason that names the degraded state so the audit trail and the
+		// model both see why the call was blocked.
+		if decision.Degraded && enforcesOnDegraded(opts) {
+			reason := strings.TrimSpace(decision.Reason)
+			if reason == "" {
+				reason = "Cordum Edge evaluation not ready; blocking under policy_mode=" + hookPolicyMode(opts)
+			} else {
+				reason = "Cordum Edge evaluation degraded (" + reason + "); blocking under policy_mode=" + hookPolicyMode(opts)
+			}
+			return ClaudeHookOutputForDecision(eventName, AgentdDecision{
+				Decision: DecisionDeny,
+				Reason:   reason,
+			})
+		}
+		return ClaudeHookOutputForDecision(eventName, decision)
 	default:
 		return ClaudeHookOutputForDecision(eventName, decision)
+	}
+}
+
+// enforcesOnDegraded reports whether the active policy mode requires the
+// hook to treat a degraded agentd response as a deny. Today: enforce and
+// enterprise-strict do; observe does not (it just records). Centralized
+// here so the mode set stays in one place and future modes don't have to
+// touch hookOutputForRun.
+func enforcesOnDegraded(opts RunOptions) bool {
+	switch strings.ToLower(strings.TrimSpace(hookPolicyMode(opts))) {
+	case string(edgecore.PolicyModeEnforce),
+		string(edgecore.PolicyModeEnterpriseStrict):
+		return true
+	default:
+		return false
 	}
 }
 

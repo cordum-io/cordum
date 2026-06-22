@@ -19,7 +19,7 @@ func TestAgentdDecisionFromEvaluateRequiresApprovalDefaultsToImmediateRetryDeny(
 	t.Parallel()
 
 	waiter := &fakeApprovalWaiter{}
-	decision := AgentdDecisionFromEvaluateResponse(context.Background(), approvalRequiredResponse(), ApprovalDecisionConfig{}, waiter)
+	decision := AgentdDecisionFromEvaluateResponse(context.Background(), approvalRequiredResponse(), ApprovalDecisionConfig{}, waiter, nil)
 
 	if decision.Decision != claude.DecisionRequireApproval {
 		t.Fatalf("decision = %q, want require_approval (hook maps to immediate deny)", decision.Decision)
@@ -38,7 +38,7 @@ func TestAgentdDecisionFromEvaluateRequiresApprovalDefaultsToImmediateRetryDeny(
 	}
 }
 
-func TestAgentdDecisionFromEvaluateInlineWaitApprovedAllowsWithUpdatedInput(t *testing.T) {
+func TestAgentdDecisionFromEvaluateInlineWaitApprovedConsumesThenAllows(t *testing.T) {
 	t.Parallel()
 
 	waiter := &fakeApprovalWaiter{result: ApprovalWaitResult{
@@ -47,7 +47,17 @@ func TestAgentdDecisionFromEvaluateInlineWaitApprovedAllowsWithUpdatedInput(t *t
 		UpdatedInput: map[string]any{"command": "npm test -- --runInBand"},
 	}}
 	cfg := ApprovalDecisionConfig{InlineWaitEnabled: true, InlineWaitTimeout: 2 * time.Second, PolicyMode: edgecore.PolicyModeEnforce}
-	decision := AgentdDecisionFromEvaluateResponse(context.Background(), approvalRequiredResponse(), cfg, waiter)
+
+	// The approved inline wait must consume the approval (single-use CAS) before
+	// ALLOW — a passive "approved" poll is not authorization.
+	var consumedRef string
+	consumeCalls := 0
+	consume := func(_ context.Context, ref string) (*EvaluateResponse, error) {
+		consumeCalls++
+		consumedRef = ref
+		return &EvaluateResponse{Decision: string(edgecore.DecisionAllow), Reason: "consumed"}, nil
+	}
+	decision := AgentdDecisionFromEvaluateResponse(context.Background(), approvalRequiredResponse(), cfg, waiter, consume)
 
 	if waiter.calls != 1 {
 		t.Fatalf("waiter calls = %d, want 1", waiter.calls)
@@ -61,8 +71,11 @@ func TestAgentdDecisionFromEvaluateInlineWaitApprovedAllowsWithUpdatedInput(t *t
 	if _, ok := waiter.lastDeadline(); !ok {
 		t.Fatal("wait context had no deadline; inline wait must be bounded")
 	}
+	if consumeCalls != 1 || consumedRef != "edge_appr_123" {
+		t.Fatalf("consume calls = %d ref = %q, want 1 consume of edge_appr_123 (ALLOW must run the single-use CAS)", consumeCalls, consumedRef)
+	}
 	if decision.Decision != claude.DecisionAllow {
-		t.Fatalf("approved decision = %q, want allow", decision.Decision)
+		t.Fatalf("approved+consumed decision = %q, want allow", decision.Decision)
 	}
 	if got := decision.UpdatedInput["command"]; got != "npm test -- --runInBand" {
 		t.Fatalf("updated input command = %#v, want reviewer update", got)
@@ -91,7 +104,7 @@ func TestAgentdDecisionFromEvaluateInlineWaitRejectedTimeoutAndErrorDeny(t *test
 				InlineWaitEnabled: true,
 				InlineWaitTimeout: 500 * time.Millisecond,
 				PolicyMode:        edgecore.PolicyModeEnterpriseStrict,
-			}, tc.waiter)
+			}, tc.waiter, nil)
 			if decision.Decision != claude.DecisionDeny {
 				t.Fatalf("decision = %q, want deny", decision.Decision)
 			}
@@ -116,7 +129,7 @@ func TestAgentdDecisionFromEvaluateMapsAllowQuietlyAndRiskyDenyWithConciseCopy(t
 		Reason:             "safe command allowed by policy",
 		PermissionDecision: "allow",
 		CacheEligible:      true,
-	}, ApprovalDecisionConfig{}, nil)
+	}, ApprovalDecisionConfig{}, nil, nil)
 	if allow.Decision != claude.DecisionAllow {
 		t.Fatalf("allow decision = %q, want allow", allow.Decision)
 	}
@@ -129,7 +142,7 @@ func TestAgentdDecisionFromEvaluateMapsAllowQuietlyAndRiskyDenyWithConciseCopy(t
 		Reason:          strings.Repeat("blocked risky action ", 40),
 		RuleID:          "edge.deny.risky",
 		TerminalMessage: "Cordum Edge blocked this risky action. It was not run.",
-	}, ApprovalDecisionConfig{}, nil)
+	}, ApprovalDecisionConfig{}, nil, nil)
 	if deny.Decision != claude.DecisionDeny {
 		t.Fatalf("deny decision = %q, want deny", deny.Decision)
 	}

@@ -133,6 +133,45 @@ func TestToolInvocationAuditor_InboundError(t *testing.T) {
 	}
 }
 
+func TestToolInvocationAuditor_PolicyDeniedResultAuditsDeny(t *testing.T) {
+	t.Parallel()
+	sender := &recordingSender{}
+	a := NewToolInvocationAuditor(sender, DefaultRedactor())
+
+	_, h := a.StartInbound(context.Background(), "agent-1", "tenant-a", "all_monday_api", json.RawMessage(`{}`))
+	h.MarkPolicyDenied("destructive action blocked", "session_tainted_prompt_injection", map[string]string{
+		"taint_snippet": "SYSTEM OVERRIDE:",
+	})
+	a.FinishInbound(h, &ToolCallResult{
+		Content: []ContentItem{{Type: "text", Text: "destructive action blocked"}},
+		IsError: true,
+	}, nil)
+
+	ev := sender.last()
+	if ev == nil {
+		t.Fatal("no event")
+	}
+	if ev.Decision != "deny" {
+		t.Fatalf("Decision = %q, want deny", ev.Decision)
+	}
+	if ev.Extra["result_type"] != "error" {
+		t.Errorf("result_type = %q, want error", ev.Extra["result_type"])
+	}
+	if ev.Extra["sub_reason"] != "session_tainted_prompt_injection" {
+		t.Errorf("sub_reason = %q", ev.Extra["sub_reason"])
+	}
+	if ev.Extra["taint_snippet"] != "SYSTEM OVERRIDE:" {
+		t.Errorf("taint_snippet = %q", ev.Extra["taint_snippet"])
+	}
+	// Pin the EVIDENCE, not just the decision label: emit() copies the
+	// policy reason into Extra["error_code"] so a SIEM consumer can see
+	// WHY the call was denied. A regression that drops the reason would
+	// keep Decision=deny but strip the evidence — assert it explicitly.
+	if ev.Extra["error_code"] != "destructive action blocked" {
+		t.Errorf("error_code = %q, want %q (deny reason as evidence)", ev.Extra["error_code"], "destructive action blocked")
+	}
+}
+
 func TestToolInvocationAuditor_IdentityMissing(t *testing.T) {
 	t.Parallel()
 	sender := &recordingSender{}
@@ -150,6 +189,70 @@ func TestToolInvocationAuditor_IdentityMissing(t *testing.T) {
 	}
 	if ev.Extra["identity_missing"] != "true" {
 		t.Errorf("identity_missing marker absent")
+	}
+}
+
+// TestToolInvocationAuditor_UpstreamIsErrorNotPolicyDeny is the DoD#3
+// blast-radius guard: an ordinary upstream/bridge error (e.g. the
+// BridgeError -> IsError payload at tools_mutating.go:489-505) returns an
+// IsError result with NO Go error and NO MarkPolicyDenied, and MUST stay
+// decision=allow with NO policy-deny evidence. Without this the fix could
+// regress into mislabeling every upstream 500 as a policy DENY.
+func TestToolInvocationAuditor_UpstreamIsErrorNotPolicyDeny(t *testing.T) {
+	t.Parallel()
+	sender := &recordingSender{}
+	a := NewToolInvocationAuditor(sender, DefaultRedactor())
+
+	_, h := a.StartInbound(context.Background(), "agent-1", "tenant-a", "all_monday_api", json.RawMessage(`{}`))
+	a.FinishInbound(h, &ToolCallResult{
+		Content: []ContentItem{{Type: "text", Text: `{"error":"upstream 500","code":"internal_error"}`}},
+		IsError: true,
+	}, nil)
+
+	ev := sender.last()
+	if ev == nil {
+		t.Fatal("no event")
+	}
+	if ev.Decision != "allow" {
+		t.Fatalf("Decision = %q, want allow (an ordinary upstream isError must NOT be a policy deny)", ev.Decision)
+	}
+	if ev.Extra["result_type"] != "error" {
+		t.Errorf("result_type = %q, want error", ev.Extra["result_type"])
+	}
+	if got, ok := ev.Extra["sub_reason"]; ok {
+		t.Errorf("sub_reason must be absent on a non-policy error; got %q", got)
+	}
+	for _, k := range []string{"taint_snippet", "taint_source_tool", "taint_pattern"} {
+		if got, ok := ev.Extra[k]; ok {
+			t.Errorf("policy-evidence key %q must be absent on a non-policy error; got %q", k, got)
+		}
+	}
+}
+
+// TestToolInvocationAuditor_ApprovalRequiredStaysAllow locks the approval
+// shape: an *ApprovalRequired (the tool body never ran, awaiting an
+// operator) is NOT a policy DENY. A future change to emit() must not
+// silently flip approval-required into decision=deny.
+func TestToolInvocationAuditor_ApprovalRequiredStaysAllow(t *testing.T) {
+	t.Parallel()
+	sender := &recordingSender{}
+	a := NewToolInvocationAuditor(sender, DefaultRedactor())
+
+	_, h := a.StartInbound(context.Background(), "agent-1", "tenant-a", "fs.write", json.RawMessage(`{}`))
+	a.FinishInbound(h, nil, &ApprovalRequired{ApprovalID: "appr-1", Tool: "fs.write"})
+
+	ev := sender.last()
+	if ev == nil {
+		t.Fatal("no event")
+	}
+	if ev.Decision != "allow" {
+		t.Fatalf("Decision = %q, want allow (approval-required must NOT be a deny)", ev.Decision)
+	}
+	if ev.Extra["result_type"] != "error" {
+		t.Errorf("result_type = %q, want error", ev.Extra["result_type"])
+	}
+	if ev.Extra["approval_status"] != "required" {
+		t.Errorf("approval_status = %q, want required", ev.Extra["approval_status"])
 	}
 }
 

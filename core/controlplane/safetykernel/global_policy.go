@@ -21,8 +21,10 @@ const EdgeActionTopic = "job.edge.action"
 // policy. The four section slices project SafetyPolicy.Rules /
 // SafetyPolicy.OutputRules into per-evaluator buckets, while Invariants
 // and OutputInvariants hold the separately-authored security floor that
-// applies to ALL four surfaces (DENY-uncrossable precedence enforced by
-// the merger; see policybundles.MergeSafetyPolicies).
+// applies to ALL four surfaces (DENY-uncrossable precedence enforced by the
+// accessor methods below, which prepend Invariants ahead of each section;
+// the kernel bakes the same floor into its evaluated policy via
+// applyKernelInvariants).
 //
 // The buckets are not exclusive in semantics — the kernel's existing
 // rule iterator continues to operate on the unified policy.Rules slice —
@@ -48,13 +50,16 @@ type GlobalPolicy struct {
 
 // FromSafetyPolicy projects a merged *config.SafetyPolicy plus a separately-
 // authored Invariants overlay into the typed GlobalPolicy view. The merged
-// policy is the output of policybundles.BuildPolicyFromBundles; the snapshot
-// argument is the "cfg:<sha256>" string produced by that same call.
+// policy is produced by the kernel's policy loader (policyLoader.loadFragments
+// orders fragments by installed_at and merges them via mergePolicies, the
+// authoritative production merge); the snapshot argument is the "cfg:<sha256>"
+// string produced by that same loader.
 //
 // invariants and outputInvariants are the rules sourced from the dedicated
-// secops/invariants bundle. They are stored separately so the evaluator can
-// enforce DENY-uncrossable precedence; see policybundles.MergeSafetyPolicies
-// for the merger that bakes this precedence into the compiled policy.
+// secops/invariants bundle. They are stored separately so the accessor
+// methods can prepend them with DENY-uncrossable precedence; the kernel
+// bakes the same security floor into its combined evaluation policy via
+// applyKernelInvariants.
 //
 // nil policy is permitted and yields an empty GlobalPolicy with the snapshot
 // fields populated — this is the fail-closed shape the kernel uses when no

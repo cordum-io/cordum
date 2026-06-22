@@ -83,7 +83,11 @@ func TestWithHMACKey_EmptyKeyDisabled(t *testing.T) {
 	}
 }
 
-func TestWithHMACKey_ShortKeyDisablesHMAC(t *testing.T) {
+// BUG-013: short non-empty keys now PANIC inside WithHMACKey (callers cannot
+// recover from a silent downgrade-to-no-HMAC). Pre-validation lives at
+// gateway.go:1032 so a misconfigured CORDUM_AUDIT_HMAC_KEY yields a clean
+// startup error rather than a panic-crash.
+func TestWithHMACKey_ShortKeyPanics(t *testing.T) {
 	t.Parallel()
 	mr, err := miniredis.Run()
 	if err != nil {
@@ -92,12 +96,12 @@ func TestWithHMACKey_ShortKeyDisablesHMAC(t *testing.T) {
 	t.Cleanup(mr.Close)
 	client := testredis.NewClient(t, mr.Addr())
 
-	// A short key should log an error and leave HMAC disabled,
-	// NOT panic or crash the process.
-	c := NewChainer(client, "", WithHMACKey([]byte("too-short")))
-	if c.HMACEnabled() {
-		t.Fatal("HMACEnabled() should be false for short key (graceful disable)")
-	}
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic on short non-empty key")
+		}
+	}()
+	_ = NewChainer(client, "", WithHMACKey([]byte("too-short")))
 }
 
 // ---------------------------------------------------------------------------

@@ -89,11 +89,11 @@ type edgeEvaluateRequest struct {
 	WaitForApproval       bool `json:"wait_for_approval"`
 	ApprovalWaitTimeoutMS int  `json:"approval_wait_timeout_ms"`
 
-	// ApprovalTTLSeconds shortens the default 5-minute approval TTL when set
+	// ApprovalTTLSeconds overrides the default 20-minute approval TTL when set
 	// (EDGE-059: enables e2e gates that need to exercise approval expiration
 	// inside a bounded sleep window). Server-side cap: callers can ONLY
-	// shorten the TTL, never extend it past the 5-minute default — preserves
-	// the existing security floor. Min 1 second; values <= 0 use the default.
+	// shorten the TTL, never extend it past the 20-minute default — preserves
+	// the security floor. Min 1 second; values <= 0 use the default.
 	ApprovalTTLSeconds int `json:"approval_ttl_seconds,omitempty"`
 }
 
@@ -777,13 +777,13 @@ const (
 )
 
 // boundEdgeEvaluateApprovalTTL clamps the caller-requested approval TTL to
-// the [1s, 5min] window (EDGE-059). Values <= 0 return the 5-min default.
-// Values > 5min also return the 5-min default — callers can ONLY shorten
+// the [1s, 20min] window (EDGE-059). Values <= 0 return the 20-min default.
+// Values > 20min also return the 20-min default — callers can ONLY shorten
 // the TTL, preserving the security floor against malicious indefinite-hold
 // requests. Mirror of boundEdgeEvaluateWaitTimeout for the approval-TTL
 // field on edgeEvaluateRequest.
 func boundEdgeEvaluateApprovalTTL(requestedSec int) time.Duration {
-	const defaultApprovalTTL = 5 * time.Minute
+	const defaultApprovalTTL = 20 * time.Minute
 	const minApprovalTTL = time.Second
 	if requestedSec <= 0 {
 		return defaultApprovalTTL
@@ -1182,7 +1182,7 @@ func (s *server) enqueueEdgeEvaluateApproval(ctx context.Context, store edgecore
 		ActionHash:     strings.TrimSpace(actionHash),
 		InputHash:      strings.TrimSpace(event.InputHash),
 		// EDGE-059 — caller-shortened TTL via edgeEvaluateRequest.ApprovalTTLSeconds.
-		// boundEdgeEvaluateApprovalTTL caps at the previously-hardcoded 5-min default.
+		// boundEdgeEvaluateApprovalTTL caps at the 20-min default.
 		TTL:      boundEdgeEvaluateApprovalTTL(ttlSecondsHint),
 		Labels:   edgecore.Labels{"source": "edge.evaluate"},
 		Metadata: edgecore.Metadata{"source": "edge.evaluate"},

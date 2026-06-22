@@ -9,10 +9,12 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
@@ -33,19 +35,43 @@ import (
 	"github.com/cordum/cordum/core/infra/schema"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/licensing"
+	"github.com/cordum/cordum/core/policysign"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
-// healthDeps holds references to scheduler dependencies for the /health endpoint.
+// healthDeps holds references to scheduler dependencies for the /health
+// endpoint. The fields are guarded by mu because the metrics server (which
+// serves /health) is started before these are wired during multi-second
+// dependency init, so ServeHTTP may read them concurrently with setDeps.
 type healthDeps struct {
+	mu           sync.RWMutex
 	jobStore     *store.RedisJobStore
 	bus          *bus.NatsBus
 	safetyClient *scheduler.SafetyClient
 }
 
+// setDeps publishes the scheduler dependencies for the /health endpoint under
+// the write lock, synchronizing the startup goroutine's assignment against any
+// concurrent ServeHTTP reads.
+func (h *healthDeps) setDeps(jobStore *store.RedisJobStore, b *bus.NatsBus, safetyClient *scheduler.SafetyClient) {
+	h.mu.Lock()
+	h.jobStore = jobStore
+	h.bus = b
+	h.safetyClient = safetyClient
+	h.mu.Unlock()
+}
+
 func (h *healthDeps) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
+
+	// Snapshot the deps under the read lock: they are published via setDeps on
+	// the startup goroutine while this handler may already be serving.
+	h.mu.RLock()
+	jobStore := h.jobStore
+	natsBus := h.bus
+	safetyClient := h.safetyClient
+	h.mu.RUnlock()
 
 	type depStatus struct {
 		Status string `json:"status"`
@@ -55,8 +81,8 @@ func (h *healthDeps) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	allOK := true
 
 	// Redis
-	if h.jobStore != nil {
-		if err := h.jobStore.Ping(ctx); err != nil {
+	if jobStore != nil {
+		if err := jobStore.Ping(ctx); err != nil {
 			result["redis"] = depStatus{Status: "error", Error: err.Error()}
 			allOK = false
 		} else {
@@ -68,7 +94,7 @@ func (h *healthDeps) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// NATS
-	if h.bus != nil && h.bus.IsConnected() {
+	if natsBus != nil && natsBus.IsConnected() {
 		result["nats"] = depStatus{Status: "ok"}
 	} else {
 		result["nats"] = depStatus{Status: "error", Error: "disconnected"}
@@ -76,7 +102,7 @@ func (h *healthDeps) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Safety kernel (optional — degrade gracefully)
-	if h.safetyClient != nil {
+	if safetyClient != nil {
 		result["safety"] = depStatus{Status: "ok"}
 	} else {
 		result["safety"] = depStatus{Status: "warn", Error: "not configured"}
@@ -157,6 +183,62 @@ func syncApprovalQueueDepth(ctx context.Context, jobStore *store.RedisJobStore, 
 		return
 	}
 	approvalMetrics.SetApprovalQueueDepth("all", int(count))
+}
+
+// buildSessionTokenMiddleware constructs the Phase-2 session-token
+// verification middleware from CORDUM_SDK_HANDSHAKE.
+//
+// Back-compat default: when the var is unset or "off" the feature stays
+// disabled and the gate admits (returns nil, nil) — existing deployments
+// are unaffected on upgrade. In warn/enforce mode it loads the signing key
+// + trust store and builds a Redis-backed issuer. A misconfiguration under
+// enforce is fatal to the caller (fail closed); under warn it is logged and
+// verification is disabled (admit), matching warn's admit-on-missing intent.
+func buildSessionTokenMiddleware(rdb redis.UniversalClient) (*scheduler.SessionTokenMiddleware, error) {
+	raw := strings.TrimSpace(os.Getenv(scheduler.EnvHandshakeMode))
+	if raw == "" {
+		return nil, nil
+	}
+	// Strict boot parse: a non-empty value that does not round-trip to a
+	// canonical mode (e.g. a typo'd "enforse") is FATAL — refuse to boot rather
+	// than silently degrade to admit (the call site treats a non-nil error as
+	// os.Exit(1)). The lenient ParseHandshakeMode stays for runtime callers.
+	mode, err := scheduler.ParseHandshakeModeStrict(raw)
+	if err != nil {
+		return nil, err
+	}
+	if mode == scheduler.HandshakeModeOff {
+		return nil, nil
+	}
+	mw, err := newSessionTokenMiddleware(rdb, mode)
+	if err == nil {
+		slog.Info("session-token verification enabled", "mode", mode.String())
+		return mw, nil
+	}
+	if mode == scheduler.HandshakeModeEnforce {
+		return nil, fmt.Errorf("CORDUM_SDK_HANDSHAKE=enforce requires a valid signing key and trust store: %w", err)
+	}
+	slog.Warn("session-token handshake in warn mode but key material unavailable; verification disabled (admitting)", "error", err)
+	return nil, nil
+}
+
+// newSessionTokenMiddleware loads the signing key, trust store, and builds
+// the Redis-backed issuer + middleware. Split out so the mode/back-compat
+// policy in buildSessionTokenMiddleware stays readable.
+func newSessionTokenMiddleware(rdb redis.UniversalClient, mode scheduler.HandshakeMode) (*scheduler.SessionTokenMiddleware, error) {
+	priv, keyID, err := policysign.LoadPrivateKeyFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	trust, err := policysign.LoadTrustStoreFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	issuer, err := scheduler.NewSessionTokenIssuer(priv, keyID, trust, rdb, scheduler.SessionTokenIssuerOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return scheduler.NewSessionTokenMiddleware(issuer, mode, scheduler.NewHandshakeMissingTracker()), nil
 }
 
 func main() {
@@ -276,9 +358,7 @@ func main() {
 	sagaManager.WithSafety(safetyClient)
 
 	// Populate health check dependencies now that all critical deps are created.
-	healthDep.jobStore = jobStore
-	healthDep.bus = natsBus
-	healthDep.safetyClient = safetyClient
+	healthDep.setDeps(jobStore, natsBus, safetyClient)
 
 	// Register readiness checks for the probe endpoints.
 	probes.RegisterReadiness("redis", func(ctx context.Context) error {
@@ -404,6 +484,17 @@ func main() {
 	if configSvc != nil {
 		resolver := scheduler.NewFailModeResolver(configSvc, 30*time.Second)
 		engine.WithFailModeResolver(resolver)
+	}
+
+	// Phase-2 session-token verification (CORDUM_SDK_HANDSHAKE). Unset/off
+	// keeps the gate disabled (documented back-compat admit); warn/enforce
+	// wires a Redis-backed verifier that fails closed on a missing/invalid
+	// token.
+	if sessionMW, err := buildSessionTokenMiddleware(jobStore.Client()); err != nil {
+		slog.Error("session-token handshake enforcement misconfigured; refusing to start", "error", err)
+		os.Exit(1)
+	} else if sessionMW != nil {
+		engine.WithSessionMiddleware(sessionMW)
 	}
 
 	if _, err := cordumotel.InitTracer("cordum-scheduler"); err != nil {

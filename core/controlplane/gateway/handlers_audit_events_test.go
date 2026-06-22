@@ -283,6 +283,83 @@ func TestHandleAuditEvents_EventTypeFilter(t *testing.T) {
 	}
 }
 
+// TestHandleAuditEvents_PolicyDeniedMCPInvocationSurfacesDeny is the DoD#2
+// audit-API evidence for the MCP policy-deny fix: a policy-denied
+// mcp.tool_invocation event (the SIEMEvent shape emit() produces for a
+// MarkPolicyDenied call — Decision=deny, result_type=error, sub_reason +
+// taint evidence) must surface through /api/v1/audit/events as decision=deny
+// WITH the policy evidence intact, while an ordinary allowed invocation in
+// the same query stays decision=allow. This pins the end-to-end contract the
+// dashboard/SIEM rely on: a blocked call is shown as DENY, not a false ALLOW.
+func TestHandleAuditEvents_PolicyDeniedMCPInvocationSurfacesDeny(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	seedAuditEvents(t, s, "default", []audit.SIEMEvent{
+		{
+			EventType: audit.EventMCPToolInvocation,
+			Severity:  audit.SeverityInfo,
+			Action:    "invoke",
+			Decision:  "allow",
+			Extra:     map[string]string{"tool_name": "get_board_items_page", "result_type": "ok"},
+		},
+		{
+			EventType: audit.EventMCPToolInvocation,
+			Severity:  audit.SeverityHigh,
+			Action:    "invoke",
+			Decision:  "deny",
+			Reason:    "session_tainted_prompt_injection",
+			Extra: map[string]string{
+				"tool_name":         "all_monday_api",
+				"result_type":       "error",
+				"sub_reason":        "session_tainted_prompt_injection",
+				"error_code":        "destructive action blocked",
+				"taint_snippet":     "SYSTEM OVERRIDE:",
+				"taint_source_tool": "get_board_items_page",
+			},
+		},
+	})
+
+	rec := httptest.NewRecorder()
+	req := adminCtx(httptest.NewRequest(http.MethodGet,
+		"/api/v1/audit/events?tenant=default&event_type="+audit.EventMCPToolInvocation, nil))
+	s.handleListAuditEvents(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d: %s", rec.Code, rec.Body.String())
+	}
+	resp := decodeAuditEventsResponse(t, rec)
+	if len(resp.Items) != 2 {
+		t.Fatalf("returned %d items, want 2 mcp.tool_invocation; items=%+v", len(resp.Items), resp.Items)
+	}
+
+	deniedIdx, denyCount, allowCount := -1, 0, 0
+	for i := range resp.Items {
+		switch resp.Items[i].Decision {
+		case "deny":
+			denyCount++
+			deniedIdx = i
+		case "allow":
+			allowCount++
+		}
+	}
+	if denyCount != 1 || allowCount != 1 {
+		t.Fatalf("want exactly 1 deny + 1 allow through the audit API; got deny=%d allow=%d items=%+v",
+			denyCount, allowCount, resp.Items)
+	}
+	denied := resp.Items[deniedIdx]
+	if denied.Extra["result_type"] != "error" {
+		t.Errorf("denied result_type=%q, want error", denied.Extra["result_type"])
+	}
+	if denied.Extra["sub_reason"] != "session_tainted_prompt_injection" {
+		t.Errorf("denied sub_reason=%q, want session_tainted_prompt_injection", denied.Extra["sub_reason"])
+	}
+	// Policy EVIDENCE must survive the audit-API round-trip (not just the label).
+	if denied.Extra["taint_snippet"] != "SYSTEM OVERRIDE:" {
+		t.Errorf("denied taint_snippet=%q, want the policy evidence to surface via the API", denied.Extra["taint_snippet"])
+	}
+	if denied.Extra["error_code"] != "destructive action blocked" {
+		t.Errorf("denied error_code=%q, want the deny reason as evidence", denied.Extra["error_code"])
+	}
+}
+
 // TestHandleAuditEvents_TimeRangeFilter pins ?from / ?to inclusively
 // bound results by timestamp. Seed events spanning a 10ms window; query
 // the middle 4ms; assert only the middle events surface.

@@ -10,6 +10,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/policysign"
 )
 
@@ -198,6 +199,10 @@ func TestNewBundleVerifier_SnapshotsEnv(t *testing.T) {
 }
 
 func TestNewBundleVerifier_BadModeDefaultsToWarn(t *testing.T) {
+	// Pin non-production so the BUG-001 fix (prod fail-closed on invalid
+	// strict mode) doesn't make this assertion env-dependent.
+	t.Setenv(env.EnvProduction, "")
+	t.Setenv(env.EnvMode, "")
 	t.Setenv(policysign.EnvStrictMode, "wobble")
 	v := newBundleVerifier()
 	if v.mode != policysign.ModeWarn {
@@ -354,5 +359,37 @@ func TestLoadFragments_WarnAcceptsUnsignedBundle(t *testing.T) {
 	}
 	if policy == nil {
 		t.Fatal("expected policy to load in warn mode")
+	}
+}
+
+// BUG-001: an invalid CORDUM_POLICY_STRICT used to leave newBundleVerifier in
+// ModeWarn even in production. After the fix, production fails closed.
+func TestNewBundleVerifier_InvalidStrict_ProdFailsClosed(t *testing.T) {
+	cases := []struct {
+		name   string
+		strict string
+	}{
+		{"typo", "enforse"},
+		{"mixed_case_punctuation", "Enforce!"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name+"_production_enforces", func(t *testing.T) {
+			t.Setenv(policysign.EnvStrictMode, tc.strict)
+			t.Setenv(env.EnvProduction, "true")
+			t.Setenv(env.EnvMode, "")
+
+			if got := newBundleVerifier().mode; got != policysign.ModeEnforce {
+				t.Fatalf("invalid strict %q in production: got %v, want ModeEnforce", tc.strict, got)
+			}
+		})
+		t.Run(tc.name+"_non_production_warns", func(t *testing.T) {
+			t.Setenv(policysign.EnvStrictMode, tc.strict)
+			t.Setenv(env.EnvProduction, "")
+			t.Setenv(env.EnvMode, "")
+
+			if got := newBundleVerifier().mode; got != policysign.ModeWarn {
+				t.Fatalf("invalid strict %q outside production: got %v, want ModeWarn", tc.strict, got)
+			}
+		})
 	}
 }

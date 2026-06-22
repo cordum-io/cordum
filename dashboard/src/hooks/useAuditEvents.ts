@@ -33,6 +33,18 @@ export interface AuditEventsFilters {
   limit?: number;
 }
 
+// AUDIT_LIVE_INTERVAL_MS is the poll cadence used when the Audit Log "Live"
+// toggle is ON (P2a / demo): new decisions stream in within ~2s. Live is OFF by
+// default so normal users keep the calm staleTime:15_000 cadence + prod load.
+export const AUDIT_LIVE_INTERVAL_MS = 2000;
+
+// AuditLiveOptions opts a consumer into live polling. `live` is a fetch CADENCE,
+// not a data dimension, so it is deliberately kept OUT of the queryKey (toggling
+// it must not invalidate/refetch the cached pages, only change refetchInterval).
+export interface AuditLiveOptions {
+  live?: boolean;
+}
+
 // Wire-level envelope returned by GET /api/v1/audit/events.
 interface AuditEventsEnvelope {
   items: SiemAuditEventInput[];
@@ -96,6 +108,7 @@ function deriveUserMessage(err: unknown): string | undefined {
 // rewriting state plumbing.
 export function useAuditEvents(
   filters: AuditEventsFilters = {},
+  options: AuditLiveOptions = {},
 ): UseAuditEventsResult {
   // Stabilise the filter object so React Query doesn't refetch on
   // identical-content rerenders. Same scalar-join strategy as useAudit.
@@ -123,6 +136,8 @@ export function useAuditEvents(
       );
     },
     staleTime: 15_000,
+    // Live poll opt-in (P2a): ~2s cadence when enabled, else no auto-refetch.
+    refetchInterval: options.live ? AUDIT_LIVE_INTERVAL_MS : false,
   });
 
   const items = useMemo<AuditEntry[]>(() => {
@@ -175,6 +190,7 @@ interface UseInfiniteAuditEventsResult
 
 export function useInfiniteAuditEvents(
   filters: AuditEventsFilters = {},
+  options: AuditLiveOptions = {},
 ): UseInfiniteAuditEventsResult {
   // Stabilise the filter object across renders so a parent rerender
   // with new-object-same-content filters doesn't blow away the cached
@@ -229,6 +245,8 @@ export function useInfiniteAuditEvents(
     getNextPageParam: (lastPage) =>
       lastPage.next_cursor ? lastPage.next_cursor : undefined,
     staleTime: 15_000,
+    // Live poll opt-in (P2a): ~2s cadence when enabled, else no auto-refetch.
+    refetchInterval: options.live ? AUDIT_LIVE_INTERVAL_MS : false,
   });
 
   const pages = useMemo<AuditEventsEnvelope[]>(

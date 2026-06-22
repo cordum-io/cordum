@@ -405,7 +405,7 @@ func TestGatewayEdgeEvaluateRequireApprovalResponseIncludesRetryMetadata(t *test
 }
 
 // EDGE-059 — /api/v1/edge/evaluate must let callers shorten the default
-// 5-minute approval TTL via approval_ttl_seconds in the request body.
+// 20-minute approval TTL via approval_ttl_seconds in the request body.
 // Pre-fix the TTL was hardcoded; e2e gates that needed to exercise
 // approval expiration (EDGE-056 gate_approval_expired) had no way to
 // shorten the wait without violating the bounded-sleep rail. Per
@@ -489,18 +489,18 @@ func TestEnqueueEdgeEvaluateApprovalDefaultTTLWhenUnset(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	expiresIn := stored.ExpiresAt.Sub(now)
-	// Expect ≈ 5min — allow [4m55s, 5m05s] slack.
-	if expiresIn < 295*time.Second || expiresIn > 305*time.Second {
-		t.Fatalf("default TTL → expires_at delta = %v, want ~5min ±5s", expiresIn)
+	// Expect ≈ 20min — allow [19m55s, 20m05s] slack.
+	if expiresIn < 1195*time.Second || expiresIn > 1205*time.Second {
+		t.Fatalf("default TTL → expires_at delta = %v, want ~20min ±5s", expiresIn)
 	}
 }
 
 func TestEnqueueEdgeEvaluateApprovalCapsExtendAttempts(t *testing.T) {
 	s, handler, session := setupEdgeEvaluateApprovalRequiredServer(t)
 
-	// Caller asks for 999 seconds (16+ minutes) — server-side cap drops to 5min default.
+	// Caller asks for 2400 seconds (40 minutes) — server-side cap drops to 20min default.
 	rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate",
-		edgeEvaluateBodyWithApprovalTTL(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", map[string]any{"command": "npm test"}, 999))
+		edgeEvaluateBodyWithApprovalTTL(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", map[string]any{"command": "npm test"}, 2400))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("evaluate status = %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
@@ -511,8 +511,8 @@ func TestEnqueueEdgeEvaluateApprovalCapsExtendAttempts(t *testing.T) {
 		t.Fatalf("GetApproval(%q): (%#v,%v,%v)", resp.ApprovalRef, stored, ok, err)
 	}
 	expiresIn := stored.ExpiresAt.Sub(time.Now().UTC())
-	if expiresIn < 295*time.Second || expiresIn > 305*time.Second {
-		t.Fatalf("approval_ttl_seconds=999 (>5min cap) → expires_at delta = %v, want ~5min ±5s (cap fired)", expiresIn)
+	if expiresIn < 1195*time.Second || expiresIn > 1205*time.Second {
+		t.Fatalf("approval_ttl_seconds=2400 (>20min cap) → expires_at delta = %v, want ~20min ±5s (cap fired)", expiresIn)
 	}
 }
 
@@ -532,8 +532,8 @@ func TestEnqueueEdgeEvaluateApprovalEnforcesNegativeFallthroughToDefault(t *test
 		t.Fatalf("GetApproval(%q): (%#v,%v,%v)", resp.ApprovalRef, stored, ok, err)
 	}
 	expiresIn := stored.ExpiresAt.Sub(time.Now().UTC())
-	if expiresIn < 295*time.Second || expiresIn > 305*time.Second {
-		t.Fatalf("approval_ttl_seconds=-5 → expires_at delta = %v, want ~5min ±5s (negative falls through to default)", expiresIn)
+	if expiresIn < 1195*time.Second || expiresIn > 1205*time.Second {
+		t.Fatalf("approval_ttl_seconds=-5 → expires_at delta = %v, want ~20min ±5s (negative falls through to default)", expiresIn)
 	}
 }
 
@@ -838,7 +838,7 @@ func TestGatewayEdgeEvaluateAutoConsumeExpiredApprovalReturnsDeny(t *testing.T) 
 	// production expiry sweep walks the per-tenant pending index and marks
 	// approvals with ExpiresAt < now as ApprovalStatusExpired, which is the
 	// exact code path the lookup must observe. The store default TTL is
-	// 5 minutes (core/edge/approval_store.go); 1h is comfortably past that.
+	// 20 minutes (core/edge/approval_store.go); 1h is comfortably past that.
 	expiredAt := time.Now().UTC().Add(time.Hour)
 	if _, err := s.edgeStore.ExpireApprovals(context.Background(), edgeRouteTenant, expiredAt); err != nil {
 		t.Fatalf("ExpireApprovals: %v", err)

@@ -255,8 +255,8 @@ func (w *Worker) dispatch(ctx context.Context, msg *nats.Msg, handler func(conte
 
 		if res == nil {
 			res = &agentv1.JobResult{
-				JobId:        req.GetJobId(),
-				Status:       agentv1.JobStatus_JOB_STATUS_FAILED,
+				JobId:  req.GetJobId(),
+				Status: agentv1.JobStatus_JOB_STATUS_FAILED,
 			}
 			if !panicRecovered && err == nil {
 				res.ErrorMessage = "handler returned nil"
@@ -314,6 +314,31 @@ func (w *Worker) dispatch(ctx context.Context, msg *nats.Msg, handler func(conte
 	}()
 }
 
+// buildHeartbeatPacket builds the heartbeat BusPacket for the current worker state. TraceId is set
+// to the workerID correlation id (== SenderId) so the packet passes the bus required-field contract
+// (CAP/core capsdk.ValidateBusPacket reject an empty trace_id, which would drop every sys.heartbeat
+// at the scheduler/gateway consumer). It is set in the struct literal so it is present inside the
+// signed bytes when capsdk.SignPacket runs.
+func (w *Worker) buildHeartbeatPacket(active int32) *agentv1.BusPacket {
+	return &agentv1.BusPacket{
+		TraceId:         w.workerID,
+		SenderId:        w.workerID,
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
+		CreatedAt:       timestamppb.Now(),
+		Payload: &agentv1.BusPacket_Heartbeat{
+			Heartbeat: &agentv1.Heartbeat{
+				WorkerId:        w.workerID,
+				Pool:            w.pool,
+				Type:            w.cfg.Type,
+				ActiveJobs:      active,
+				MaxParallelJobs: w.cfg.MaxParallelJobs,
+				Capabilities:    w.cfg.Capabilities,
+				Labels:          w.cfg.Labels,
+			},
+		},
+	}
+}
+
 func (w *Worker) startHeartbeat(ctx context.Context) {
 	interval := w.cfg.HeartbeatEvery
 	if interval <= 0 {
@@ -325,23 +350,7 @@ func (w *Worker) startHeartbeat(ctx context.Context) {
 	w.cancelMu.Unlock()
 
 	payloadFn := func() ([]byte, error) {
-		active := atomic.LoadInt32(&w.active)
-		packet := &agentv1.BusPacket{
-			SenderId:        w.workerID,
-			ProtocolVersion: capsdk.DefaultProtocolVersion,
-			CreatedAt:       timestamppb.Now(),
-			Payload: &agentv1.BusPacket_Heartbeat{
-				Heartbeat: &agentv1.Heartbeat{
-					WorkerId:        w.workerID,
-					Pool:            w.pool,
-					Type:            w.cfg.Type,
-					ActiveJobs:      active,
-					MaxParallelJobs: w.cfg.MaxParallelJobs,
-					Capabilities:    w.cfg.Capabilities,
-					Labels:          w.cfg.Labels,
-				},
-			},
-		}
+		packet := w.buildHeartbeatPacket(atomic.LoadInt32(&w.active))
 		if w.cfg.PrivateKey != nil {
 			if err := capsdk.SignPacket(packet, w.cfg.PrivateKey); err != nil {
 				return nil, err
@@ -400,23 +409,7 @@ func (w *Worker) startHeartbeat(ctx context.Context) {
 }
 
 func (w *Worker) publishHandshake() {
-	caps := make(map[string]bool, len(w.cfg.Capabilities))
-	for _, c := range w.cfg.Capabilities {
-		caps[c] = true
-	}
-	packet := &agentv1.BusPacket{
-		SenderId:        w.workerID,
-		ProtocolVersion: capsdk.DefaultProtocolVersion,
-		CreatedAt:       timestamppb.Now(),
-		Payload: &agentv1.BusPacket_Handshake{
-			Handshake: &agentv1.Handshake{
-				ComponentId:       w.workerID,
-				Role:              agentv1.ComponentRole_COMPONENT_ROLE_WORKER,
-				SupportedVersions: []int32{capsdk.DefaultProtocolVersion},
-				Capabilities:      caps,
-			},
-		},
-	}
+	packet := w.buildHandshakePacket()
 	if w.cfg.PrivateKey != nil {
 		if err := capsdk.SignPacket(packet, w.cfg.PrivateKey); err != nil {
 			w.logger.Printf("worker: sign handshake failed: %v", err)
@@ -430,6 +423,29 @@ func (w *Worker) publishHandshake() {
 	}
 	if err := w.conn.Publish(capsdk.SubjectHandshake, data); err != nil {
 		w.logger.Printf("worker: publish handshake failed: %v", err)
+	}
+}
+
+// buildHandshakePacket builds the worker handshake BusPacket. TraceId == workerID for the same bus
+// required-field reason as buildHeartbeatPacket, set in the literal so it is inside any signed bytes.
+func (w *Worker) buildHandshakePacket() *agentv1.BusPacket {
+	caps := make(map[string]bool, len(w.cfg.Capabilities))
+	for _, c := range w.cfg.Capabilities {
+		caps[c] = true
+	}
+	return &agentv1.BusPacket{
+		TraceId:         w.workerID,
+		SenderId:        w.workerID,
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
+		CreatedAt:       timestamppb.Now(),
+		Payload: &agentv1.BusPacket_Handshake{
+			Handshake: &agentv1.Handshake{
+				ComponentId:       w.workerID,
+				Role:              agentv1.ComponentRole_COMPONENT_ROLE_WORKER,
+				SupportedVersions: []int32{capsdk.DefaultProtocolVersion},
+				Capabilities:      caps,
+			},
+		},
 	}
 }
 

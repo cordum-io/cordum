@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 	"github.com/cordum/cordum/core/infra/config"
@@ -145,8 +146,17 @@ func BuildPolicyFromBundles(bundles map[string]any) (*config.SafetyPolicy, strin
 	}
 	sort.Strings(keys)
 	hasher := sha256.New()
-	var merged *config.SafetyPolicy
 	var invariants *config.SafetyPolicy
+	// PASS 1 (alphabetical key order): hash {key,content} and parse each
+	// fragment. Hashing stays in sorted-key order over {key,content} only, so an
+	// identical content SET yields a reload-stable cfg:<sha> regardless of
+	// install order. Accepted non-invariant fragments are collected with their
+	// installed_at for the install-recency merge below.
+	type orderedFragment struct {
+		policy      *config.SafetyPolicy
+		installedAt time.Time
+	}
+	pending := make(map[string]orderedFragment, len(keys))
 	for _, key := range keys {
 		content, ok := PolicyBundleContent(bundles[key])
 		if !ok || strings.TrimSpace(content) == "" {
@@ -161,13 +171,31 @@ func BuildPolicyFromBundles(bundles map[string]any) (*config.SafetyPolicy, strin
 			return nil, "", fmt.Errorf("parse policy bundle %q: %w", key, err)
 		}
 		if key == PolicyInvariantsBundleKey {
-			// Defer invariants — applied with precedence after the
-			// rest of the merge so DENYs land at the front and ALLOWs
-			// land at the back regardless of bundle key sort order.
+			// Defer invariants — applied with precedence after the merge so
+			// DENYs land at the front and ALLOWs at the back regardless of order.
 			invariants = policy
 			continue
 		}
-		merged = MergeSafetyPolicies(merged, policy)
+		pending[key] = orderedFragment{policy: policy, installedAt: bundleInstalledAt(bundles[key])}
+	}
+	// PASS 2: merge accepted fragments by INSTALL RECENCY — installed_at
+	// ascending so the most-recently-installed bundle merges LAST and wins
+	// cross-bundle duplicate rule ids (bundle-key alphabetical tiebreak for a
+	// total order). This matches the authoritative kernel loader (loadFragments)
+	// so replay/evals/simulation predict the same decision production enforces.
+	mergeOrder := make([]string, 0, len(pending))
+	for key := range pending {
+		mergeOrder = append(mergeOrder, key)
+	}
+	sort.Slice(mergeOrder, func(i, j int) bool {
+		if ti, tj := pending[mergeOrder[i]].installedAt, pending[mergeOrder[j]].installedAt; !ti.Equal(tj) {
+			return ti.Before(tj)
+		}
+		return mergeOrder[i] < mergeOrder[j]
+	})
+	var merged *config.SafetyPolicy
+	for _, key := range mergeOrder {
+		merged = MergeSafetyPolicies(merged, pending[key].policy)
 	}
 	if invariants != nil {
 		merged = ApplyInvariants(merged, invariants)
@@ -199,6 +227,13 @@ func PolicyBundleContent(value any) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// bundleInstalledAt parses a bundle's installed_at (RFC3339) for the install-
+// recency ordering, delegating to the shared config merge package so the gateway
+// bundle compiler and the kernel loader parse timestamps identically.
+func bundleInstalledAt(value any) time.Time {
+	return config.PolicyInstalledAt(value)
 }
 
 // SanitizePolicyBundleYAML normalizes and sanitizes policy YAML content.

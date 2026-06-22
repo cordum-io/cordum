@@ -50,7 +50,11 @@ type HandshakeRequest struct {
 
 // HandshakeResponse is the scheduler's reply.
 type HandshakeResponse struct {
-	SessionToken string    `json:"session_token,omitempty"`
+	// SessionToken is a bearer secret. The `redact:"true"` struct tag marks
+	// it for a future bus/log sanitiser to strip — there is no active
+	// consumer of the tag today (it is a forward marker). Callers MUST
+	// NEVER log this field raw regardless of the tag.
+	SessionToken string    `json:"session_token,omitempty" redact:"true"`
 	TokenExp     time.Time `json:"token_exp,omitempty"`
 	RequestID    string    `json:"request_id"`
 	Rejected     bool      `json:"rejected,omitempty"`

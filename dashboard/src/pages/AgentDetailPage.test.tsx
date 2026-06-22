@@ -73,6 +73,12 @@ vi.mock("@/components/agents/AgentIdentityPanel", () => ({
   ),
 }));
 
+vi.mock("@/components/agents/AgentDecisionsPanel", () => ({
+  AgentDecisionsPanel: ({ agentId }: { agentId: string }) => (
+    <div data-testid="agent-decisions-panel">decisions for {agentId}</div>
+  ),
+}));
+
 vi.mock("recharts", () => ({
   ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   BarChart: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -211,6 +217,68 @@ describe("AgentDetailPage", () => {
       expect(container.textContent).toContain("Safety Decisions");
       expect(container.querySelector('[data-testid="agent-identity-panel"]')).toBeNull();
       expect(container.querySelector('[data-testid="agent-delegations-panel"]')).toBeNull();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("renders the governance decisions panel above the hourly chart on the activity tab", () => {
+    const { container, cleanup } = renderPage("/agents/worker-1?tab=activity");
+
+    try {
+      expect(
+        container.querySelector('[data-testid="agent-decisions-panel"]'),
+      ).not.toBeNull();
+      const text = container.textContent ?? "";
+      const panelAt = text.indexOf("decisions for worker-1");
+      const chartAt = text.indexOf("Hourly Activity");
+      expect(panelAt).toBeGreaterThanOrEqual(0);
+      expect(chartAt).toBeGreaterThanOrEqual(0);
+      // The decisions timeline leads the activity tab, above the job chart.
+      expect(panelAt).toBeLessThan(chartAt);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("still surfaces the decisions panel on the activity tab when the worker 404s and jobs fail", () => {
+    // An MCP-client agent that runs no CAP jobs: /workers/{id} 404s and the
+    // job feed errors, but its governed-action history must still render.
+    hookState.worker = null;
+    hookState.workerError = new Error("worker not found");
+    hookState.jobs = [];
+    hookState.jobsError = new Error("jobs unavailable");
+
+    const { container, cleanup } = renderPage(
+      "/agents/p4a-local-ollama-agent?tab=activity",
+    );
+
+    try {
+      expect(
+        container.querySelector('[data-testid="agent-decisions-panel"]'),
+      ).not.toBeNull();
+      expect(container.textContent).toContain(
+        "decisions for p4a-local-ollama-agent",
+      );
+      // The full-page error guards must NOT fire on the activity tab.
+      expect(container.textContent).not.toContain("Failed to load agent");
+      expect(container.textContent).not.toContain("Failed to load agent jobs");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("does not show a misleading numeric job-count badge on the Activity tab", () => {
+    // beforeEach seeds one job; the tab must not advertise that as the
+    // decision count (an MCP-only agent would otherwise read as "0").
+    const { container, cleanup } = renderPage();
+
+    try {
+      const activityTab = Array.from(
+        container.querySelectorAll('button[role="tab"]'),
+      ).find((b) => b.getAttribute("aria-label") === "Activity");
+      expect(activityTab).toBeTruthy();
+      expect(/\d/.test(activityTab?.textContent ?? "")).toBe(false);
     } finally {
       cleanup();
     }

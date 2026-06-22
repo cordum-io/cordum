@@ -15,6 +15,7 @@ import {
 import { useDialogA11y } from "@/hooks/useDialogA11y";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { McpApprovalsSection } from "@/components/approvals/McpApprovalsSection";
+import { EdgeApprovalsSection } from "@/components/approvals/EdgeApprovalsSection";
 import { WorkflowContext } from "@/components/approvals/WorkflowContext";
 import {
   StatusBadge,
@@ -529,25 +530,10 @@ export default function ApprovalsPage() {
     error,
     refetch,
   } = useApprovals();
-  // task-266f21ad: `?lane=edge` is the URL contract the new Edge sidebar
-  // item lands on (via /edge/approvals → /approvals?lane=edge redirect).
-  // Today's /approvals feed does not yet carry Edge-sourced approvals
-  // (those flow through EdgeApprovalsDrawer on EdgeSessionDetailPage);
-  // the lane filter is wired here so the URL contract is correct now and
-  // will surface real items the moment a future task wires edge approvals
-  // into the global feed. Predicate matches the existing `source` /
-  // `kind` strings used by getApprovalSourceMeta — extend the OR-list as
-  // new edge-source labels appear in `decisionSummary.source`.
   const [searchParams] = useSearchParams();
   const lane = searchParams.get("lane")?.trim().toLowerCase() ?? "";
   const allApprovals = approvalsData?.items ?? [];
-  const approvals = useMemo(() => {
-    if (lane !== "edge") return allApprovals;
-    return allApprovals.filter((a) => {
-      const src = a.decisionSummary?.source?.toLowerCase() ?? "";
-      return src.startsWith("edge");
-    });
-  }, [allApprovals, lane]);
+  const approvals = useMemo(() => allApprovals, [allApprovals]);
   const approveMutation = useApproveJob();
   const rejectMutation = useRejectJob();
 
@@ -627,21 +613,22 @@ export default function ApprovalsPage() {
     <div className="space-y-6">
       <PageHeader
         label="Safety"
-        title="Approvals"
-        subtitle="Review the business decision first, then inspect technical audit detail only when needed."
-        actions={
-          <Button variant="outline" size="sm" onClick={() => refetch()}>
-            <RefreshCw className="mr-1 h-3 w-3" />
-            Refresh
-          </Button>
+        title={lane === "edge" ? "Edge Approvals" : "Approvals"}
+        subtitle={
+          lane === "edge"
+            ? "Review governed Claude Code actions. Approve to allow the retry; deny to block it permanently."
+            : "Review the business decision first, then inspect technical audit detail only when needed."
         }
       />
 
-      {/* MCP tool-call approvals — surfaced above job approvals so
-          operators see the high-privilege agent-driven calls before
-          the routine job queue. Each card shows tool_name + requester
-          + args-preview (modal) + approve/reject. */}
-      <McpApprovalsSection statusFilter="pending" />
+      {lane === "edge" ? (
+        <EdgeApprovalsSection fullPage />
+      ) : (
+        <>
+          {/* MCP tool-call approvals — surfaced above job approvals so
+              operators see the high-privilege agent-driven calls before
+              the routine job queue. */}
+          <McpApprovalsSection statusFilter="pending" />
 
       <motion.div
         initial={{ opacity: 0, y: 12 }}
@@ -1232,6 +1219,8 @@ export default function ApprovalsPage() {
           </motion.div>
         </>
       )}
+      </>
+    )}
     </div>
   );
 }

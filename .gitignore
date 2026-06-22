@@ -70,6 +70,8 @@ dashboard/lh-*.json
 production_gate_results.json
 *.go.[0-9]*
 certs/
+tools/dev-keys/
+docker-compose.local.yml
 
 # Internal design spec — kept local, not committed
 docs/specs/telemetry-install-firstuse-pings.md

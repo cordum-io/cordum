@@ -208,6 +208,78 @@ func TestTLSOptionsEnvFallback(t *testing.T) {
 	}
 }
 
+// TestTLSOptionsAutoDetectsLocalhostCA locks the local-dev CA auto-detect added
+// to tlsOptions(): for a localhost-https gateway with no explicit CA and
+// verification enabled, ./certs/ca/ca.crt (relative to cwd) is loaded so REST
+// commands trust the local self-signed stack without a manual CORDUM_TLS_CA —
+// while an explicit CA wins, a remote/non-https gateway is never auto-detected,
+// and --insecure short-circuits it. Mirrors edge_config_test.go's auto-cacert cases.
+func TestTLSOptionsAutoDetectsLocalhostCA(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, "certs", "ca"), 0o755); err != nil {
+		t.Fatalf("mkdir certs/ca: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "certs", "ca", "ca.crt"), []byte("test-ca"), 0o600); err != nil {
+		t.Fatalf("write ca.crt: %v", err)
+	}
+	t.Chdir(tmp) // auto-detect keys off cwd; restored at test end (Go 1.24+)
+
+	cases := []struct {
+		name       string
+		gateway    string
+		cacertFlag string
+		envCA      string
+		insecure   bool
+		want       string
+	}{
+		{name: "localhost_with_port_auto_detects", gateway: "https://localhost:8081", want: "./certs/ca/ca.crt"},
+		{name: "localhost_no_port_auto_detects", gateway: "https://localhost", want: "./certs/ca/ca.crt"},
+		{name: "explicit_env_wins", gateway: "https://localhost:8081", envCA: "/explicit/ca.crt", want: "/explicit/ca.crt"},
+		{name: "explicit_flag_wins", gateway: "https://localhost:8081", cacertFlag: "/flag/ca.crt", want: "/flag/ca.crt"},
+		{name: "remote_https_not_detected", gateway: "https://gw.prod.example.com:8081", want: ""},
+		{name: "http_localhost_not_detected", gateway: "http://localhost:8081", want: ""},
+		{name: "insecure_skips_detect", gateway: "https://localhost:8081", insecure: true, want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CORDUM_TLS_CA", tc.envCA)
+			t.Setenv("CORDUM_TLS_INSECURE", "")
+			fs := newFlagSet("auto-ca-" + tc.name)
+			args := []string{"--gateway", tc.gateway}
+			if tc.cacertFlag != "" {
+				args = append(args, "--cacert", tc.cacertFlag)
+			}
+			if tc.insecure {
+				args = append(args, "--insecure")
+			}
+			fs.ParseArgs(args)
+			opts := fs.tlsOptions()
+			if opts.CACertPath != tc.want {
+				t.Fatalf("CACertPath = %q, want %q", opts.CACertPath, tc.want)
+			}
+		})
+	}
+}
+
+// TestTLSOptionsNoAutoDetectWithoutCAFile confirms the auto-detect fails CLOSED:
+// a localhost-https gateway with NO ./certs/ca/ca.crt present resolves to an
+// empty CA (the caller then verifies against system roots) — it never silently
+// disables verification.
+func TestTLSOptionsNoAutoDetectWithoutCAFile(t *testing.T) {
+	t.Chdir(t.TempDir()) // empty cwd: no certs/ca/ca.crt
+	t.Setenv("CORDUM_TLS_CA", "")
+	t.Setenv("CORDUM_TLS_INSECURE", "")
+	fs := newFlagSet("no-ca-file")
+	fs.ParseArgs([]string{"--gateway", "https://localhost:8081"})
+	opts := fs.tlsOptions()
+	if opts.CACertPath != "" {
+		t.Fatalf("CACertPath = %q, want empty (no CA file to auto-detect)", opts.CACertPath)
+	}
+	if opts.InsecureSkipVerify {
+		t.Fatalf("InsecureSkipVerify must stay false — auto-detect never weakens verification")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Regression: newClientFromFlags uses strict TLS error handling
 // ---------------------------------------------------------------------------

@@ -25,7 +25,7 @@ import (
 // The self-approval guard mirrors handleApproveJob's pattern: the
 // approver's composite identity (API-key hash + principal ID) is
 // compared against the approval's Requester via identitiesOverlap.
-// Match → HTTP 403 + code=self_approval_denied + audit entry.
+// Match → HTTP 403 + code=self_approval_denied.
 
 // mcpApprovalHandler is a small struct so tests can inject a fake store
 // without standing up the full server. Production code constructs it
@@ -36,9 +36,9 @@ type mcpApprovalHandler struct {
 	// caller. In production it is submitterIdentity(r); tests override
 	// with a deterministic stub.
 	getApproverIdentity func(r *http.Request) string
-	// approverPrincipalID returns the display ID for logging/audit.
+	// approverPrincipalID returns the display ID stored on the resolved record.
 	approverPrincipalID func(r *http.Request) string
-	// approverRole returns the role for audit.
+	// approverRole is retained for job-approval parity; MCP handlers do not audit today.
 	approverRole func(r *http.Request) string
 }
 
@@ -162,6 +162,12 @@ func (h *mcpApprovalHandler) resolve(w http.ResponseWriter, r *http.Request, id 
 			return
 		}
 		writeMCPApprovalStoreError(w, r, "load mcp approval for resolution", err, slog.String("approval_id", id))
+		return
+	}
+	// Tenant scoping — mirror Get/List: callers may only resolve approvals for
+	// their own tenant unless AllowCrossTenant is set.
+	if !h.callerMayViewTenant(r, rec.Tenant) {
+		writeJSONError(w, http.StatusNotFound, "approval_not_found", "no such mcp approval")
 		return
 	}
 

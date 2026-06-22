@@ -238,6 +238,108 @@ func TestMCPGate_AllowedResourceMatches(t *testing.T) {
 	}
 }
 
+func TestMCPGate_TaintLookupFailureFailClosedMatrix(t *testing.T) {
+	t.Parallel()
+
+	identity := mcpFullIdentity()
+	identity.AllowedTools = append(identity.AllowedTools, "delete_*")
+
+	cases := []struct {
+		name             string
+		flagOn           bool
+		tool             string
+		lookupFailed     bool
+		riskTags         []string
+		wantDecision     pb.DecisionType
+		wantCode         string
+		wantSubReason    string
+		wantDenySubstr   string
+		wantRequireHuman bool
+	}{
+		{
+			name:             "flag_on_lookup_failed_destructive_requires_human",
+			flagOn:           true,
+			tool:             "delete_item",
+			lookupFailed:     true,
+			wantDecision:     pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN,
+			wantCode:         CodeRequireHuman,
+			wantSubReason:    "taint_lookup_unavailable_failclosed",
+			wantRequireHuman: true,
+		},
+		{
+			name:         "flag_on_lookup_failed_non_destructive_allows",
+			flagOn:       true,
+			tool:         "read_item",
+			lookupFailed: true,
+			wantDecision: pb.DecisionType_DECISION_TYPE_ALLOW,
+		},
+		{
+			name:         "flag_off_lookup_failed_destructive_allows",
+			tool:         "delete_item",
+			lookupFailed: true,
+			wantDecision: pb.DecisionType_DECISION_TYPE_ALLOW,
+		},
+		{
+			name:         "flag_on_clean_destructive_allows",
+			flagOn:       true,
+			tool:         "delete_item",
+			wantDecision: pb.DecisionType_DECISION_TYPE_ALLOW,
+		},
+		{
+			name:         "flag_off_clean_destructive_allows",
+			tool:         "delete_item",
+			wantDecision: pb.DecisionType_DECISION_TYPE_ALLOW,
+		},
+		{
+			name:           "flag_on_tainted_destructive_still_denies",
+			flagOn:         true,
+			tool:           "delete_item",
+			riskTags:       []string{config.RiskTagSessionPromptInjection},
+			wantDecision:   pb.DecisionType_DECISION_TYPE_DENY,
+			wantCode:       CodeAccessDenied,
+			wantSubReason:  "session_tainted_prompt_injection",
+			wantDenySubstr: "prompt injection",
+		},
+		{
+			name:           "flag_off_tainted_destructive_still_denies",
+			tool:           "delete_item",
+			riskTags:       []string{config.RiskTagSessionPromptInjection},
+			wantDecision:   pb.DecisionType_DECISION_TYPE_DENY,
+			wantCode:       CodeAccessDenied,
+			wantSubReason:  "session_tainted_prompt_injection",
+			wantDenySubstr: "prompt injection",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gate := newMCPGateWithIdentity(identity, func(opts *MCPGateOptions) {
+				opts.FailClosedDestructiveOnTaintLookupError = tc.flagOn
+			})
+			in := withAgentIDLabel(mcpInputAction("vault", tc.tool), mcpAgentA)
+			in.Action.TaintLookupFailed = tc.lookupFailed
+			in.Action.RiskTags = append([]string(nil), tc.riskTags...)
+
+			dec := gate.Evaluate(mcpAuthCtx(), in)
+			if dec.Decision != tc.wantDecision {
+				t.Fatalf("decision = %v, want %v (code=%q sub=%q reason=%q)", dec.Decision, tc.wantDecision, dec.Code, dec.SubReason, dec.Reason)
+			}
+			if tc.wantCode != "" && dec.Code != tc.wantCode {
+				t.Fatalf("code = %q, want %q", dec.Code, tc.wantCode)
+			}
+			if tc.wantSubReason != "" && dec.SubReason != tc.wantSubReason {
+				t.Fatalf("sub_reason = %q, want %q", dec.SubReason, tc.wantSubReason)
+			}
+			if tc.wantDenySubstr != "" && !strings.Contains(dec.Reason, tc.wantDenySubstr) {
+				t.Fatalf("reason = %q, want substring %q", dec.Reason, tc.wantDenySubstr)
+			}
+			if tc.wantRequireHuman && !strings.Contains(dec.Reason, "taint store unavailable") {
+				t.Fatalf("reason = %q, want taint-store-unavailable hold", dec.Reason)
+			}
+		})
+	}
+}
+
 func TestMCPGate_DangerousParamsDenied(t *testing.T) {
 	t.Parallel()
 	customRules := map[string][]DangerousParamRule{

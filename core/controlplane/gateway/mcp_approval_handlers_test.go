@@ -50,6 +50,10 @@ func seedPending(t *testing.T, h *mcpApprovalHandler, agent, tool string) *MCPAp
 	return rec
 }
 
+func withDefaultMCPApprovalAuth(req *http.Request, principal string) *http.Request {
+	return withAuth(req, &auth.AuthContext{Tenant: "default", PrincipalID: principal, Role: "admin"})
+}
+
 // TestApproveRejectsSelfApproval is the canonical plan-6 test: the
 // approver's principal equals the approval's requester → 403 with
 // code=self_approval_denied. No resolution happens — the record stays
@@ -60,6 +64,7 @@ func TestApproveRejectsSelfApproval(t *testing.T) {
 	rec := seedPending(t, h, "agent-1", "files.delete")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/mcp/"+rec.ID+"/approve", strings.NewReader(`{"reason":"lgtm"}`))
+	req = withDefaultMCPApprovalAuth(req, "agent-1")
 	rr := httptest.NewRecorder()
 	h.Approve(rr, req, rec.ID)
 
@@ -96,6 +101,7 @@ func TestMCPApprovalRejectsSameKeyDifferentPrincipalComposite(t *testing.T) {
 	mustWriteMCPApprovalRecord(t, h.store, rec)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/mcp/"+rec.ID+"/approve", strings.NewReader(`{"reason":"lgtm"}`))
+	req = withDefaultMCPApprovalAuth(req, "bob")
 	rr := httptest.NewRecorder()
 	h.Approve(rr, req, rec.ID)
 	if rr.Code != http.StatusForbidden {
@@ -118,6 +124,7 @@ func TestMCPApprovalRejectsSamePrincipalDifferentKeyComposite(t *testing.T) {
 	mustWriteMCPApprovalRecord(t, h.store, rec)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/mcp/"+rec.ID+"/approve", strings.NewReader(`{"reason":"lgtm"}`))
+	req = withDefaultMCPApprovalAuth(req, "alice")
 	rr := httptest.NewRecorder()
 	h.Approve(rr, req, rec.ID)
 	if rr.Code != http.StatusForbidden {
@@ -180,6 +187,7 @@ func TestApproveSucceedsForDifferentPrincipal(t *testing.T) {
 	rec := seedPending(t, h, "agent-1", "files.delete")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/mcp/"+rec.ID+"/approve", strings.NewReader(`{"reason":"reviewed"}`))
+	req = withDefaultMCPApprovalAuth(req, "admin-1")
 	rr := httptest.NewRecorder()
 	h.Approve(rr, req, rec.ID)
 
@@ -211,6 +219,7 @@ func TestRejectFlipsToRejected(t *testing.T) {
 	rec := seedPending(t, h, "agent-1", "files.delete")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/mcp/"+rec.ID+"/reject", strings.NewReader(`{"reason":"too risky"}`))
+	req = withDefaultMCPApprovalAuth(req, "admin-1")
 	rr := httptest.NewRecorder()
 	h.Reject(rr, req, rec.ID)
 
@@ -232,6 +241,7 @@ func TestApprove404ForMissing(t *testing.T) {
 	t.Parallel()
 	h := newTestMCPHandler(t, "admin-1")
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/mcp/does-not-exist/approve", nil)
+	req = withDefaultMCPApprovalAuth(req, "admin-1")
 	rr := httptest.NewRecorder()
 	h.Approve(rr, req, "does-not-exist")
 

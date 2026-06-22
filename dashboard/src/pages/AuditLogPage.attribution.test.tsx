@@ -8,6 +8,7 @@ import {
   waitFor,
 } from "@/test-utils/render";
 import AuditLogPage from "./AuditLogPage";
+import { assertNoSeriousAxeViolations } from "@/test-utils/a11y";
 
 // Render-level coverage for the human-readable audit attribution UI
 // (task-c8d4b056): summary text in the table + drawer, the Hide system/routine
@@ -60,6 +61,10 @@ describe("AuditLogPage human-readable attribution", () => {
     await waitFor(() => {
       expect(container.textContent ?? "").toContain("Billing Bot was denied Bash");
     });
+    // A11y regression gate for this customer-visible surface. Per the repo
+    // convention (dashboard/CLAUDE.md), async-data page tests assert axe AFTER
+    // the loaded paint rather than via the synchronous runAxe sugar.
+    await assertNoSeriousAxeViolations(container);
     const text = container.textContent ?? "";
     expect(text).toContain("Billing Bot"); // agent label / pivot
     expect(text).toContain("deny"); // decision badge

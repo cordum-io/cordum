@@ -62,11 +62,24 @@ vi.mock("@tanstack/react-query", () => ({
 }));
 
 // Mock config store
+type MockConfigState = {
+  apiKey: string;
+  apiBaseUrl: string;
+  authMode: "apikey" | "session" | "anonymous";
+  isAuthenticated: boolean;
+};
 let mockApiKey = "test-key";
 let mockApiBaseUrl = "";
+let mockAuthMode: MockConfigState["authMode"] = "apikey";
+let mockIsAuthenticated = true;
 vi.mock("../state/config", () => ({
-  useConfigStore: (selector: (s: { apiKey: string; apiBaseUrl: string }) => unknown) =>
-    selector({ apiKey: mockApiKey, apiBaseUrl: mockApiBaseUrl }),
+  useConfigStore: (selector: (s: MockConfigState) => unknown) =>
+    selector({
+      apiKey: mockApiKey,
+      apiBaseUrl: mockApiBaseUrl,
+      authMode: mockAuthMode,
+      isAuthenticated: mockIsAuthenticated,
+    }),
 }));
 
 // Import after mocks
@@ -89,6 +102,8 @@ describe("useEventStream", () => {
     MockWebSocket.instances = [];
     mockInvalidateQueries.mockClear();
     mockApiKey = "test-key";
+    mockAuthMode = "apikey";
+    mockIsAuthenticated = true;
     useEventStore.setState({
       status: "disconnected",
       events: [],
@@ -114,6 +129,38 @@ describe("useEventStream", () => {
     expect(ws.protocols).toHaveLength(2);
     expect(ws.protocols[0]).toBe("cordum-api-key");
     expect(ws.protocols[1]).toMatch(/^[A-Za-z0-9_-]+$/);
+  });
+
+  it("connects WITHOUT subprotocol in session mode (cookie auth)", () => {
+    // Session-mode login (e.g. password / SSO) keeps apiKey empty on purpose
+    // — auth flows via the httpOnly cordum_session cookie the gateway set.
+    // Previously the hook bailed on `!apiKey` and the status badge stuck on
+    // "disconnected". The fix: connect anyway, just without the subprotocol,
+    // and let the cookie carry the credential.
+    mockAuthMode = "session";
+    mockApiKey = "";
+    useEventStream();
+    expect(MockWebSocket.instances).toHaveLength(1);
+    expect(MockWebSocket.instances[0].protocols).toHaveLength(0);
+  });
+
+  it("does not connect when not authenticated", () => {
+    mockIsAuthenticated = false;
+    mockAuthMode = "anonymous";
+    mockApiKey = "";
+    useEventStream();
+    expect(MockWebSocket.instances).toHaveLength(0);
+  });
+
+  it("does not connect in apikey mode when apiKey is empty", () => {
+    // Defensive: if authMode says apikey but the key is missing (transient
+    // state during update), don't open a connection that would immediately
+    // 401 — the gateway requires the subprotocol credential in this mode.
+    mockAuthMode = "apikey";
+    mockApiKey = "";
+    mockIsAuthenticated = true;
+    useEventStream();
+    expect(MockWebSocket.instances).toHaveLength(0);
   });
 
   it("sets status to connected on open", () => {

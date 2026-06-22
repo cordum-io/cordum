@@ -44,7 +44,7 @@ func CommandContext(ctx context.Context, argv0 string, args []string, opts Optio
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := exec.CommandContext(ctx, name, args...) // #nosec G204 -- hardened wrapper: NormalizeExecutablePath resolves name to an absolute path (bare names via LookPath, traversal rejected, optional allow-prefix gate) so exec does no implicit PATH lookup; args/arg-paths/env validated above
 	cmd.Env = env
 	if strings.TrimSpace(opts.Dir) != "" {
 		dir, err := NormalizeDir(opts.Dir, nil)
@@ -75,10 +75,20 @@ func NormalizeExecutablePath(argv0 string, allowedPrefixes []string) (string, er
 	if containsTraversal(raw) {
 		return "", fmt.Errorf("safeexec: argv0 path traversal rejected: %s", raw)
 	}
+	candidate := raw
 	if !hasPath {
-		return filepath.Clean(raw), nil
+		// A bare name (no path separator) would otherwise be resolved by
+		// exec.Command against $PATH at spawn time, which an attacker who
+		// controls PATH can influence. Resolve it explicitly now so the
+		// caller always execs a fully-qualified path and the result goes
+		// through the same allow-prefix gate as a path-qualified argv0.
+		resolved, err := exec.LookPath(raw)
+		if err != nil {
+			return "", fmt.Errorf("safeexec: resolve argv0 %q: %w", raw, err)
+		}
+		candidate = resolved
 	}
-	abs, err := filepath.Abs(filepath.Clean(raw))
+	abs, err := filepath.Abs(filepath.Clean(candidate))
 	if err != nil {
 		return "", fmt.Errorf("safeexec: normalize argv0: %w", err)
 	}

@@ -14,6 +14,7 @@ Thanks for helping improve Cordum.
 1. Fork the repo and create a feature branch.
 2. Make focused changes (small, reviewable commits).
 3. Update docs in `docs/` when you add commands, binaries, or behavior changes.
+   (The public docs site, <https://docs.cordum.io>, is built from `Cordum-site/docs-site` — not this repo.)
 4. Run tests locally (`go test ./...`).
 5. Open a PR with a clear description and test results.
 

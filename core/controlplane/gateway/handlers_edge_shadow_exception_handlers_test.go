@@ -31,7 +31,7 @@ func shadowCtxWithRole(req *http.Request, role string) *http.Request {
 
 func validExceptionCreateBody() shadowExceptionCreateRequest {
 	return shadowExceptionCreateRequest{
-		ExpiresAt:       time.Date(2026, 6, 17, 0, 0, 0, 0, time.UTC),
+		ExpiresAt:       time.Now().Add(30 * 24 * time.Hour),
 		Reason:          "approved by SRE for known kube-system DaemonSet pattern",
 		ScopeSourceType: "kubernetes",
 		ScopeSourceID:   "k8s-detector-1",

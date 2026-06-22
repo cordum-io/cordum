@@ -267,6 +267,60 @@ func TestConfigWritePublishesNotification(t *testing.T) {
 	}
 }
 
+// TestConfigWritePublishesNotification_PolicyScope verifies that a WRAPPED
+// config write to the system/policy scope — the exact path `cordumctl pack
+// install` uses to apply a policy overlay (cmd/cordumctl/pack.go
+// applyPolicyOverlay -> setConfig -> POST /api/v1/config scope=system
+// scope_id=policy) — also publishes a sys.config.changed notification carrying
+// scope_id=policy, so the Safety Kernel reloads the new bundles live with no
+// restart and no manual cache clear. Regression guard for task-2e36d64a: the
+// reported "pack install did not propagate" was NOT a missing publish (this
+// path DOES notify); pinning scope_id=policy prevents a future regression that
+// special-cases the policy scope to skip the broadcast.
+func TestConfigWritePublishesNotification_PolicyScope(t *testing.T) {
+	s, stubBus, _ := newTestGateway(t)
+
+	body, _ := json.Marshal(map[string]any{
+		"scope":    "system",
+		"scope_id": "policy",
+		"data": map[string]any{
+			"bundles": map[string]any{
+				"pack.demo/safety": map[string]any{"fragment": "version: t\nrules: []\n"},
+			},
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/config", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+	s.handleSetConfig(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	stubBus.mu.Lock()
+	defer stubBus.mu.Unlock()
+	var found bool
+	for _, msg := range stubBus.published {
+		if msg.subject != capsdk.SubjectConfigChanged {
+			continue
+		}
+		alert := msg.packet.GetAlert()
+		if alert == nil {
+			t.Fatalf("expected Alert payload in config change notification")
+		}
+		if alert.Details["scope"] != "system" || alert.Details["scope_id"] != "policy" {
+			t.Fatalf("expected scope=system/scope_id=policy, got %q/%q",
+				alert.Details["scope"], alert.Details["scope_id"])
+		}
+		found = true
+		break
+	}
+	if !found {
+		t.Fatalf("expected sys.config.changed notification for the system/policy (pack-install) write path")
+	}
+}
+
 // TestConfigWritePublishesNotification_NilBus verifies that handleSetConfig
 // works gracefully when bus is nil (no NATS available).
 func TestConfigWritePublishesNotification_NilBus(t *testing.T) {

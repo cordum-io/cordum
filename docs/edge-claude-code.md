@@ -35,6 +35,21 @@ Claude Code command hook -> cordum-hook -> local cordum-agentd -> Gateway evalua
 - Gateway/Safety Kernel own tenant-aware policy evaluation, approvals, audit,
   metrics, and redaction before persistence.
 
+### Local agentd loopback listener (platform note)
+
+`cordumctl edge claude` reserves a loopback `127.0.0.1` port for `cordum-agentd`
+and starts agentd on it automatically — no `--agentd-url` override is required on
+any platform.
+
+- On Unix/macOS the launcher hands the reserved listener socket to `cordum-agentd`
+  across `exec` (handle inheritance), so there is no reserve-then-bind gap.
+- On Windows the launcher uses a close-then-bind path instead: it reserves the
+  loopback port, releases it, passes only the URL, and `cordum-agentd` binds that
+  port itself. Socket-handle inheritance is Unix-only here, and the close-then-bind
+  path avoids the Windows `bind: Only one usage of each socket address` failure that
+  the inheritance path triggered (`cordum-agentd exited before becoming ready`). The
+  `--agentd-url` override is therefore **not** required on Windows.
+
 ## Settings generation
 
 The wrapper renders temporary Claude command-hook settings with:

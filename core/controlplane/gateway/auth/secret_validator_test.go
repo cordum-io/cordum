@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"bytes"
+	"log/slog"
 	"strings"
 	"testing"
 )
@@ -130,4 +132,63 @@ func TestValidateStartupSecrets_EmptyRedisPasswordAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected empty Redis password to be allowed, got: %v", err)
 	}
+}
+
+// BUG-014: production with user auth disabled emits a one-time warn so the
+// silent posture is visible at boot. Non-prod is silent; auth-enabled is
+// silent. ValidateStartupSecrets runs once per boot so a plain warning is
+// inherently one-shot.
+func TestValidateStartupSecrets_WarnsOnUserAuthDisabled(t *testing.T) {
+	captureLogger := func(t *testing.T) (*slog.Logger, *bytes.Buffer) {
+		t.Helper()
+		var buf bytes.Buffer
+		return slog.New(slog.NewTextHandler(&buf, nil)), &buf
+	}
+
+	const warnText = "user auth disabled"
+
+	t.Run("production_user_auth_disabled_warns", func(t *testing.T) {
+		t.Setenv("CORDUM_SKIP_SECRET_VALIDATION", "")
+		t.Setenv("CORDUM_ENV", "production")
+		t.Setenv("CORDUM_USER_AUTH_ENABLED", "")
+		t.Setenv("CORDUM_ADMIN_PASSWORD", "")
+		t.Setenv("CORDUM_API_KEY", "")
+		t.Setenv("REDIS_PASSWORD", "")
+		logger, buf := captureLogger(t)
+		if err := validateStartupSecrets(logger); err != nil {
+			t.Fatalf("validator err = %v", err)
+		}
+		if !strings.Contains(buf.String(), warnText) {
+			t.Fatalf("expected warn containing %q, got: %s", warnText, buf.String())
+		}
+	})
+
+	t.Run("production_user_auth_enabled_silent", func(t *testing.T) {
+		t.Setenv("CORDUM_SKIP_SECRET_VALIDATION", "")
+		t.Setenv("CORDUM_ENV", "production")
+		t.Setenv("CORDUM_USER_AUTH_ENABLED", "true")
+		t.Setenv("CORDUM_ADMIN_PASSWORD", "")
+		t.Setenv("CORDUM_API_KEY", "")
+		t.Setenv("REDIS_PASSWORD", "")
+		logger, buf := captureLogger(t)
+		if err := validateStartupSecrets(logger); err != nil {
+			t.Fatalf("validator err = %v", err)
+		}
+		if strings.Contains(buf.String(), warnText) {
+			t.Fatalf("expected NO warn when user auth enabled, got: %s", buf.String())
+		}
+	})
+
+	t.Run("non_production_silent", func(t *testing.T) {
+		t.Setenv("CORDUM_SKIP_SECRET_VALIDATION", "")
+		t.Setenv("CORDUM_ENV", "development")
+		t.Setenv("CORDUM_USER_AUTH_ENABLED", "")
+		logger, buf := captureLogger(t)
+		if err := validateStartupSecrets(logger); err != nil {
+			t.Fatalf("validator err = %v", err)
+		}
+		if strings.Contains(buf.String(), warnText) {
+			t.Fatalf("expected NO warn outside production, got: %s", buf.String())
+		}
+	})
 }

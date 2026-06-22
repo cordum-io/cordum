@@ -240,6 +240,38 @@ func TestEvaluateToolCall_DenyEmitsFailedNotPre(t *testing.T) {
 	}
 }
 
+func TestEvaluateToolCall_TaintLookupFailureStampsDescriptorFlag(t *testing.T) {
+	t.Parallel()
+	pipeline := &fakePolicyDispatcher{}
+	emitter := &fakeEventEmitter{}
+	deps := newToolCallDepsFixture(pipeline, emitter, &fakeArtifactStore{})
+	deps.TaintStore = &failingTaintStore{}
+
+	_, err := EvaluateToolCall(newAuthedToolCallCtx(), deps, ToolCallParams{
+		Name:      "delete_item",
+		Arguments: json.RawMessage(`{"item_id":123}`),
+	}, "monday")
+	if err != nil {
+		t.Fatalf("EvaluateToolCall returned err: %v", err)
+	}
+	if len(pipeline.calls) != 1 {
+		t.Fatalf("expected one policy dispatch, got %d", len(pipeline.calls))
+	}
+	desc := pipeline.calls[0].Action
+	if desc == nil {
+		t.Fatal("policy dispatch missing action descriptor")
+	}
+	if !desc.TaintLookupFailed {
+		t.Fatal("TaintLookupFailed = false, want true when GetTaint errors")
+	}
+	if len(desc.RiskTags) != 0 {
+		t.Fatalf("RiskTags = %v, want no prompt-injection tag on lookup error", desc.RiskTags)
+	}
+	if desc.SessionTaint != nil {
+		t.Fatalf("SessionTaint = %+v, want nil because lookup error has no citation", desc.SessionTaint)
+	}
+}
+
 // TestEvaluateToolCall_LargePayloadUsesArtifactPointer asserts the
 // redaction-then-artifact-pointer hand-off. When redacted args exceed
 // MaxInputRedactedBytes, the event carries a truncated summary plus an

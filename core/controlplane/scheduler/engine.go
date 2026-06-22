@@ -349,6 +349,17 @@ func (e *Engine) WithWorkerAttestationMode(mode WorkerAttestationMode) *Engine {
 	return e
 }
 
+// WithSessionMiddleware wires the Phase-2 session-token verification
+// middleware. When set (handshake mode warn/enforce), inbound heartbeat /
+// job_result / job_cancel packets are verified against the worker's
+// session token via verifySessionToken; when nil the gate admits — the
+// documented back-compat default for deployments that have not opted into
+// CORDUM_SDK_HANDSHAKE. Mirrors WithWorkerAttestationMode.
+func (e *Engine) WithSessionMiddleware(mw *SessionTokenMiddleware) *Engine {
+	e.sessionMiddleware = mw
+	return e
+}
+
 func (e *Engine) WithContextClient(client redis.UniversalClient) *Engine {
 	e.contextClient = client
 	return e
@@ -1019,6 +1030,31 @@ func (e *Engine) verifySessionToken(packet *pb.BusPacket, workerID, packetType s
 	result := e.sessionMiddleware.Verify(ctx, workerID, packet)
 	switch result.Verdict {
 	case TokenVerdictPass, TokenVerdictWarnMissing:
+		// Subject-binding + SenderId defense-in-depth. A verified token proves
+		// only WHO holds it (Claims.Subject), not WHOSE job it targets, so bind
+		// the verified identity to the packet's claimed identity (job_result
+		// WorkerId / job_cancel RequestedBy / heartbeat WorkerId, passed as
+		// workerID). Without this, worker A's own valid token could drive worker
+		// B's job. Runs ONLY when a token was actually verified (Claims != nil):
+		// warn/off/missing leave Claims nil and are intentionally untouched, so
+		// token-less traffic still admits under warn. A control-plane service
+		// token passes uniformly because its Subject == SenderId == the claimed
+		// identity on every internal broadcast.
+		if result.Claims != nil {
+			claimedID := strings.TrimSpace(workerID)
+			claimSubject := strings.TrimSpace(result.Claims.Subject)
+			senderID := strings.TrimSpace(safeSenderID(packet))
+			if claimSubject != claimedID || senderID != claimedID {
+				slog.Error("session token identity mismatch; rejecting packet",
+					"packet_type", packetType,
+					"claimed_id", claimedID,
+					"claim_subject", claimSubject,
+					"sender_id", senderID,
+					"mode", e.sessionMiddleware.Mode().String(),
+				)
+				return false
+			}
+		}
 		if result.Err != nil {
 			slog.Warn("session token missing; admitting packet",
 				"packet_type", packetType,
@@ -1141,6 +1177,15 @@ func authTokenFromPacket(packet *pb.BusPacket) string {
 	if packet == nil {
 		return ""
 	}
+	// Typed field first: cap/v2 SDK workers set the declared
+	// BusPacket.auth_token (field 18); mirror cap/sdk/go
+	// runtime.ExtractSessionToken so the worker-attestation gate reads the
+	// same field the SDK writes (previously this saw only legacy unknown
+	// fields and rejected every typed-token heartbeat).
+	if token := strings.TrimSpace(packet.GetAuthToken()); token != "" {
+		return token
+	}
+	// Legacy fallback: token encoded as an unknown field by older senders.
 	raw := packet.ProtoReflect().GetUnknown()
 	for len(raw) > 0 {
 		fieldNum, wireType, tagLen := protowire.ConsumeTag(raw)
@@ -1519,6 +1564,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 				},
 			}
 			if e.bus != nil {
+				e.attachServiceToken(pkt)
 				if err := e.bus.Publish(capsdk.SubjectResult, pkt); err != nil {
 					return RetryAfter(err, retryDelayPublish)
 				}
@@ -2831,6 +2877,12 @@ func applyConstraints(req *pb.JobRequest, constraints *pb.PolicyConstraints) {
 	}
 	if data, err := protojson.Marshal(constraints); err == nil {
 		req.Env["CORDUM_POLICY_CONSTRAINTS"] = string(data)
+	} else {
+		policyConstraintsSerialiseFailedTotal.Inc()
+		slog.Error("scheduler: serialise policy constraints failed",
+			"audit_event", "policy_constraints_serialise_failed",
+			"job_id", req.GetJobId(),
+			"err", err)
 	}
 	if constraints.GetRedactionLevel() != "" {
 		req.Env["CORDUM_REDACTION_LEVEL"] = constraints.GetRedactionLevel()
@@ -3012,6 +3064,33 @@ func (e *Engine) observeOutputEvalDuration(topic string, seconds float64) {
 	}
 }
 
+// attachServiceToken stamps a short-TTL control-plane service token on an
+// internal broadcast the scheduler publishes to a SUBSCRIBED, gated subject
+// (sys.job.result / sys.job.cancel), so peer schedulers admit it under
+// CORDUM_SDK_HANDSHAKE=enforce. It is best-effort and fails SAFE: on a mint
+// error it logs at ERROR and proceeds WITHOUT a token, so a peer under enforce
+// REJECTS the token-less packet rather than admitting an unauthenticated one.
+// When the gate is Off/disabled the middleware returns ("",nil) and no token is
+// attached (back-compat). Call this ONLY for the scheduler's own self-reject
+// emitters — never for unsubscribed (DLQ/audit) or worker-subject (dispatch)
+// publishes.
+func (e *Engine) attachServiceToken(pkt *pb.BusPacket) {
+	if e == nil || pkt == nil || e.sessionMiddleware == nil {
+		return
+	}
+	tok, err := e.sessionMiddleware.MintServiceToken(defaultSenderID)
+	if err != nil {
+		slog.Error("internal broadcast service-token mint failed; publishing without token (peer rejects under enforce)",
+			"sender_id", defaultSenderID,
+			"error", err,
+		)
+		return
+	}
+	if tok != "" {
+		pkt.AuthToken = tok
+	}
+}
+
 // publishCancel emits a cancellation packet to a broadcast subject (best effort).
 func (e *Engine) publishCancel(jobID, reason string) {
 	if e.bus == nil {
@@ -3029,6 +3108,7 @@ func (e *Engine) publishCancel(jobID, reason string) {
 		ProtocolVersion: protocolVersionV1,
 		Payload:         &pb.BusPacket_JobCancel{JobCancel: cancelReq},
 	}
+	e.attachServiceToken(packet)
 	if err := e.bus.Publish(capsdk.SubjectCancel, packet); err != nil {
 		slog.Error("job cancel publish failed", "job_id", jobID, "error", err)
 	}
@@ -3072,6 +3152,7 @@ func (e *Engine) replayApprovalPublish(traceID string, req *pb.JobRequest, appro
 			return fmt.Errorf("replay approval dlq publish: %w", err)
 		}
 		if approval.PublishTarget == ApprovalPublishTargetDLQAndResult {
+			e.attachServiceToken(packet)
 			if err := e.bus.Publish(capsdk.SubjectResult, packet); err != nil {
 				return fmt.Errorf("replay approval result publish: %w", err)
 			}

@@ -20,7 +20,7 @@ Prereqs: Docker + Docker Compose. The smoke test script requires `curl` and `jq`
 | `context-engine` | `Dockerfile` (SERVICE=cordum-context-engine) | 50070 (gRPC) | `nc -z localhost 50070` | redis |
 | `safety-kernel` | `Dockerfile` (SERVICE=cordum-safety-kernel) | 50051 (gRPC) | `nc -z localhost 50051` | nats |
 | `scheduler` | `Dockerfile` (SERVICE=cordum-scheduler) | 9090 (metrics) | `GET /metrics` on :9090 | nats, redis, safety-kernel |
-| `api-gateway` | `Dockerfile` (SERVICE=cordum-api-gateway) | 8080 (HTTP), 8081 (health), 9092 (metrics) | `GET /health` on :8081 | nats, redis, scheduler, safety-kernel |
+| `api-gateway` | `Dockerfile` (SERVICE=cordum-api-gateway) | 8080 (gRPC, host: 9080), 8081 (HTTPS REST), 9092 (metrics) | `GET /health` on :8081 (HTTPS) | nats, redis, scheduler, safety-kernel |
 | `workflow-engine` | `Dockerfile` (SERVICE=cordum-workflow-engine) | 9093 (HTTP) | `GET /health` on :9093 | nats, redis, scheduler |
 | `dashboard` | `dashboard/Dockerfile` | 8082→8080 (nginx) | `GET /healthz` on :8080 | api-gateway |
 
@@ -190,7 +190,7 @@ healthcheck:
 | context-engine | `nc -z localhost 50070` | gRPC port open |
 | safety-kernel | `nc -z localhost 50051` | gRPC port open |
 | scheduler | `wget --spider -q http://127.0.0.1:9090/metrics` | Prometheus metrics endpoint |
-| api-gateway | `wget --spider -q http://127.0.0.1:8081/health` | Dedicated health HTTP endpoint |
+| api-gateway | `wget --spider -q --no-check-certificate https://127.0.0.1:8081/health` | Dedicated health HTTPS endpoint (gateway is TLS by default) |
 | workflow-engine | `wget --spider -q http://127.0.0.1:9093/health` | Dedicated health HTTP endpoint |
 | dashboard | `curl -f http://127.0.0.1:8080/healthz` | Nginx healthz endpoint |
 
@@ -206,12 +206,12 @@ docker inspect --format='{{.State.Health.Status}}' cordum-api-gateway-1
 # View recent health check logs
 docker inspect --format='{{range .State.Health.Log}}{{.Output}}{{end}}' cordum-redis-1
 
-# Hit gateway health endpoint directly
-curl -s http://localhost:8081/health | jq .
+# Hit gateway health endpoint directly (TLS on by default)
+curl -s --cacert ./certs/ca/ca.crt https://localhost:8081/health | jq .
 
 # Hit gateway status endpoint (detailed)
-curl -s -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  http://localhost:8080/api/v1/status | jq .
+curl -s --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/status | jq .
 ```
 
 ### Tuning Health Checks for Slow Machines
@@ -252,8 +252,8 @@ healthcheck:
 | `REDIS_URL` | `redis://:$REDIS_PASSWORD@redis:6379` | Redis connection URL |
 | `SAFETY_KERNEL_ADDR` | `safety-kernel:50051` | gRPC address of safety kernel |
 | `TENANT_ID` | `default` | Default tenant ID |
-| `API_RATE_LIMIT_RPS` | `2000` | Requests per second limit |
-| `API_RATE_LIMIT_BURST` | `4000` | Burst capacity |
+| `API_RATE_LIMIT_RPS` | `30` | Authenticated per-tenant requests/sec limit |
+| `API_RATE_LIMIT_BURST` | `50` | Authenticated burst capacity |
 | `REDIS_DATA_TTL` | `24h` | TTL for cached data in Redis |
 | `JOB_META_TTL` | `168h` | TTL for job metadata |
 | `CORDUM_USER_AUTH_ENABLED` | `false` | Enable user/password authentication |
@@ -479,7 +479,7 @@ The Go services don't support hot reload inside Docker. For rapid iteration:
 2. Run Go services locally with `go run ./cmd/cordum-api-gateway`
 3. Point local services at Docker infra: `NATS_URL=nats://localhost:4222 REDIS_URL=redis://:$REDIS_PASSWORD@localhost:6379`
 
-For the dashboard, run `npm run dev` in `dashboard/` and configure `VITE_API_URL=http://localhost:8080/api/v1`.
+For the dashboard, run `npm run dev` in `dashboard/` and configure `VITE_API_URL=https://localhost:8081/api/v1` (the gateway HTTP API listens on `8081` over TLS; `8080` is the internal gRPC port, host-mapped to `9080`).
 
 ---
 
@@ -601,7 +601,7 @@ CORDUM_API_KEYS='[{"key":"k1","role":"admin","tenant":"default","expires_at":"20
 To rotate keys without a restart, set `CORDUM_API_KEYS_PATH` to a file with the
 same content; the gateway reloads on change.
 
-Enterprise deployments (multi-tenant keys, RBAC, SSO, SIEM export) are configured in the enterprise repo.
+Enterprise features (multi-tenant keys, RBAC, SSO, SIEM export) are built into core behind license entitlements — the standalone `cordum-enterprise` repo was retired 2026-04-23. See [`enterprise.md`](enterprise.md).
 
 ## Config Mounts
 

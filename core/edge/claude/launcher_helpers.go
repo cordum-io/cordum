@@ -55,7 +55,7 @@ func prepareLaunchTempRoot(parent string) (string, func(), error) {
 	if err != nil {
 		return "", nil, fmt.Errorf("create launcher temp dir: %w", err)
 	}
-	_ = os.Chmod(root, 0o700)
+	_ = os.Chmod(root, 0o700) // #nosec G302 -- directory needs the owner execute bit to be traversable; 0700 is owner-only
 	return root, func() { removeAllWithRetry(root, 2*time.Second, 20*time.Millisecond) }, nil
 }
 

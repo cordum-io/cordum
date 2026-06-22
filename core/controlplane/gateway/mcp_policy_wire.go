@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/cordum/cordum/core/controlplane/safetykernel"
 	"github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/mcp"
@@ -274,5 +275,36 @@ func BuildMCPPolicyDeps(pipeline *actiongates.Pipeline, gate *gatewayApprovalGat
 		// CORDUM_MCP_DEDUPE_BACKEND={redis,memory}; unknown values
 		// degrade to memory without panicking the boot.
 		DedupeState: mcp.SelectDedupeStore(os.Getenv(mcp.DedupeBackendEnvVar), redisClient),
+		// Content session-taint (P3c): scan tool-call RESULTS with the shipped
+		// prompt-injection scanner and persist a taint keyed by (tenant, session)
+		// so a later destructive call in the same session is DENIED content-
+		// awarely. ResultScanner is injected here (not imported by core/mcp) to
+		// avoid a core/mcp->safetykernel import cycle; TaintStore reuses the SAME
+		// shared Redis client as dedupe (epic rail: no parallel subsystems), with
+		// its TTL from CORDUM_MCP_TAINT_TTL and backend from CORDUM_MCP_TAINT_BACKEND.
+		ResultScanner: promptInjectionResultScanner,
+		TaintStore:    mcp.SelectTaintStore(os.Getenv(mcp.TaintBackendEnvVar), redisClient),
 	}
+}
+
+// promptInjectionResultScanner adapts the SHIPPED safetykernel prompt-injection
+// scanner to the mcp.ResultScanner dep shape. This is the seam that lets core/mcp
+// reuse the exact shipped detector WITHOUT importing safetykernel (which would be
+// an import cycle): the gateway — the layer that may import both — bridges the
+// two finding types here.
+func promptInjectionResultScanner(content []byte) []mcp.ResultFinding {
+	raw := safetykernel.ScanForPromptInjection(content)
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make([]mcp.ResultFinding, 0, len(raw))
+	for _, f := range raw {
+		out = append(out, mcp.ResultFinding{
+			Pattern:    f.Pattern,
+			Snippet:    f.Snippet,
+			Severity:   f.Severity,
+			Confidence: f.Confidence,
+		})
+	}
+	return out
 }

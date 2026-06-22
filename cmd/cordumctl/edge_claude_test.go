@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -55,7 +56,15 @@ func TestEdgeClaudeDryRunSettingsOutputRedactsSecrets(t *testing.T) {
 		t.Fatalf("agentd socket URL leaked nonce: %s", env["CORDUM_AGENTD_SOCKET"])
 	}
 	listenerKey, listenerValue := listenerhandoff.ValueForCurrentPlatform(env)
-	if listenerValue == "" {
+	if runtime.GOOS == "windows" {
+		// Windows uses the close-then-bind legacy path (handle inheritance is
+		// Unix-only — see core/edge/claude/listener_inheritance_windows.go), so
+		// agentd re-binds the freed loopback port itself and the launcher hands
+		// off no listener handle.
+		if listenerValue != "" {
+			t.Fatalf("windows agentd must not receive an inherited listener (legacy close-then-bind), got %s=%q", listenerKey, listenerValue)
+		}
+	} else if listenerValue == "" {
 		t.Fatalf("agentd helper did not receive inherited listener %s: %#v", listenerKey, env)
 	}
 }

@@ -12,7 +12,7 @@ func TestPreToolUseOutputOmitsEmptyOptionalFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal returned error: %v", err)
 	}
-	assertCompactJSON(t, string(data), `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"blocked"}}`)
+	assertCompactJSON(t, string(data), `{"decision":"block","reason":"blocked","hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"blocked"}}`)
 }
 
 func TestRequireApprovalMapsToImmediateDenyWithApprovalRef(t *testing.T) {
@@ -21,7 +21,7 @@ func TestRequireApprovalMapsToImmediateDenyWithApprovalRef(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal returned error: %v", err)
 	}
-	assertCompactJSON(t, string(data), `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"approval required; approval_ref=edge_appr_123; approve then retry the tool call"}}`)
+	assertCompactJSON(t, string(data), `{"decision":"block","reason":"approval required; approval_ref=edge_appr_123; approve then retry the tool call","hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"approval required; approval_ref=edge_appr_123; approve then retry the tool call"}}`)
 }
 
 func TestPreToolUseAskIncludesUpdatedInput(t *testing.T) {

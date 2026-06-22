@@ -216,9 +216,12 @@ const defaultAgentCacheTTL = 30 * time.Second
 // policyLookupIP allows tests to override DNS resolution for policy URL validation.
 var policyLookupIP = net.LookupIP
 
-// policyEvalTestHook is called inside the evaluate recover closure before policy.Evaluate.
-// It is nil in production; tests may set it to inject panics for fail-closed verification.
-var policyEvalTestHook func()
+// policyEvalTestHook is called inside the evaluate recover closure AFTER
+// policy.Evaluate. It is nil in production; tests may set it to inject panics
+// for fail-closed verification, or to mutate the resolved policyDecision (e.g.
+// to inject an unrecognized decision string and exercise the switch's default
+// arm).
+var policyEvalTestHook func(*config.PolicyDecision)
 
 var defaultDecisionTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 	Name: "cordum_safety_default_decision_total",
@@ -639,7 +642,7 @@ func (s *server) ListSnapshots(ctx context.Context, _ *pb.ListSnapshotsRequest) 
 }
 
 func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, method string) (*pb.PolicyCheckResponse, error) {
-	decision := pb.DecisionType_DECISION_TYPE_DENY
+	var decision pb.DecisionType
 	reason := ""
 
 	topic := strings.TrimSpace(req.GetTopic())
@@ -676,8 +679,15 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	// the window from advancing correctly.
 	policyHasVelocity := effectiveVelocityRuleCount(evalPolicy, s.velocityRuleLimit()) > 0
 	requestHasActionDescriptor := requestHasActionDescriptorLabel(req)
+	// Bypass the decision cache for agent-enriched requests: the resolved agent
+	// identity (risk tier / data classifications, fetched from the mutable
+	// AgentIdentityStore in enrichAgentContext AFTER this key is computed) is not
+	// folded into cacheKeyForRequest, so a cached ALLOW would otherwise outlive
+	// an agent escalation. Only when an agent store is wired — otherwise the
+	// agent_id label is inert and caching stays safe (preserving hit-rate).
+	requestHasEnrichedAgent := s.agentStore != nil && requestHasAgentID(req)
 	cacheKey := ""
-	if s.cacheTTL > 0 && !policyHasVelocity && !requestHasActionDescriptor {
+	if s.cacheTTL > 0 && !policyHasVelocity && !requestHasActionDescriptor && !requestHasEnrichedAgent {
 		cacheKey = cacheKeyForRequest(req, snapshot)
 		if cacheKey != "" {
 			if cached := s.getCachedDecision(cacheKey); cached != nil {
@@ -803,19 +813,19 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 				}
 			}
 		}()
-		if policyEvalTestHook != nil {
-			policyEvalTestHook()
-		}
 		if policyHasVelocity {
 			policyDecision = s.evaluateRulesWithVelocity(ctx, evalPolicy, input, req.GetJobId(), method)
 		} else {
 			policyDecision = evalPolicy.Evaluate(input)
 		}
-		if tp, ok := evalPolicy.Tenants[tenant]; ok {
-			if ok, mcpReason := config.MCPAllowed(tp.MCP, input.MCP); !ok {
+		if tp, hasTenant := evalPolicy.Tenants[tenant]; hasTenant {
+			if allowed, mcpReason := config.MCPAllowed(tp.MCP, input.MCP); !allowed {
 				policyDecision.Decision = "deny"
 				policyDecision.Reason = mcpReason
 			}
+		}
+		if policyEvalTestHook != nil {
+			policyEvalTestHook(&policyDecision)
 		}
 	}()
 	slog.Debug("policy evaluation complete", "component", "safety", "tenant", tenant, "topic", topic, "decision", policyDecision.Decision, "ruleId", policyDecision.RuleID, "ruleTier", policyDecision.RuleTier, "duration", time.Since(evalStart).String())
@@ -848,6 +858,14 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 		if constraints != nil {
 			decision = pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS
 		}
+	default:
+		decision = pb.DecisionType_DECISION_TYPE_DENY
+		reason = "internal: unknown policy decision string: " + policyDecision.Decision
+		slog.Error("safety-kernel: unknown policy decision string",
+			"component", "safety", "audit_event", "policy_decision_unknown",
+			"decision", policyDecision.Decision, "tenant", tenant,
+			"topic", topic, "job_id", req.GetJobId())
+		defaultDecisionTotal.WithLabelValues("unknown").Inc()
 	}
 
 	// Effective config can further restrict allowed topics or MCP access.
@@ -1028,6 +1046,19 @@ func cacheKeyForRequest(req *pb.PolicyCheckRequest, snapshot string) string {
 	}
 	sum := sha256.Sum256(data)
 	return snapshot + ":" + hex.EncodeToString(sum[:])
+}
+
+// requestHasAgentID reports whether the request carries an agent_id label. Such
+// requests are enriched with the resolved agent identity (risk tier / data
+// classifications) from the AgentIdentityStore in enrichAgentContext, AFTER the
+// decision-cache key is computed, so they bypass the cache — a cached decision
+// must never outlive an agent escalation in the store. Returns false for a
+// nil/blank label so non-agent requests keep using the cache.
+func requestHasAgentID(req *pb.PolicyCheckRequest) bool {
+	if req == nil {
+		return false
+	}
+	return strings.TrimSpace(req.GetLabels()["agent_id"]) != ""
 }
 
 func (s *server) getCachedDecision(key string) *pb.PolicyCheckResponse {
@@ -1493,8 +1524,8 @@ func (s *server) setPolicyWithInvariants(ctx context.Context, policy *config.Saf
 	s.global = global
 	s.invariantRules = invariantRules
 	s.invariantOutputRules = invariantOutputRules
-	s.outputRules = compileOutputRules(combined)
-	s.inputRules = compileInputRules(combined)
+	s.outputRules = compileOutputRules(combined, s.scanners)
+	s.inputRules = compileInputRules(combined, s.scanners)
 	if combined != nil {
 		s.requireHumanThreshold = combined.RequireHuman
 	} else {
@@ -1652,6 +1683,17 @@ func (l *policyLoader) Load(ctx context.Context) (*config.SafetyPolicy, *config.
 //     change invalidates the cfg:<sha> cache key downstream.
 //   - snapshot: "cfg:<sha256>" identifier; "" when no bundles loaded.
 //   - customBundleCount: count of secops/-prefixed bundles within the tier.
+//
+// Cross-bundle duplicate rule IDs resolve by INSTALL RECENCY: bundles merge in
+// installed_at-ascending order (bundle-id alphabetical as a deterministic
+// tiebreak), so the most-recently-installed bundle wins — reinstalling or
+// upgrading a pack makes its changed rule take effect even when another
+// co-installed bundle defines the same rule id. A missing or unparseable
+// installed_at is treated as oldest (lowest precedence). Kernel security
+// invariants are applied separately as a security floor, independent of this
+// ordering; the snapshot hash folds only {bundle-id, content} in sorted-key
+// order, so an identical content set stays reload-stable regardless of install
+// order.
 func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy, *config.SafetyPolicy, string, int, error) {
 	if l == nil || l.configSvc == nil {
 		return nil, nil, "", 0, nil
@@ -1682,6 +1724,16 @@ func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy,
 	customBundleCount := 0
 	bundleLimit := l.policyBundleLimit()
 	verifier := newBundleVerifier()
+	// PASS 1 (alphabetical sorted-key order, unchanged): verify, parse, hash,
+	// and account for tier-limit/malformed skips + invariants exactly as before,
+	// so the snapshot hash, customBundleCount, and skip counts stay a pure
+	// function of the content SET (independent of install order). Accepted
+	// non-invariant fragments are collected for the install-recency merge below.
+	type orderedFragment struct {
+		policy      *config.SafetyPolicy
+		installedAt time.Time
+	}
+	pending := make(map[string]orderedFragment, len(keys))
 	for _, key := range keys {
 		content, ok := extractPolicyFragment(rawBundles[key])
 		if !ok || strings.TrimSpace(content) == "" {
@@ -1716,7 +1768,9 @@ func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy,
 		// Hash the bundle content regardless of whether it is the
 		// invariants bundle or a regular fragment — any change to
 		// invariants must invalidate downstream caches keyed on the
-		// cfg:<sha> snapshot identifier.
+		// cfg:<sha> snapshot identifier. Hashing stays in sorted-key order
+		// over {key,content} only (NOT install order) so an identical
+		// content set yields a reload-stable cfg:<sha>.
 		hasher.Write([]byte(key))
 		hasher.Write([]byte{0})
 		hasher.Write([]byte(content))
@@ -1724,17 +1778,37 @@ func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy,
 			// Hold invariants aside; setPolicyWithBundleCount applies
 			// them with security-floor precedence via
 			// applyKernelInvariants and also retains the rules in the
-			// GlobalPolicy view as a distinct section.
+			// GlobalPolicy view as a distinct section. Invariants are a
+			// security floor and never participate in the ordered merge.
 			invariants = policy
 			if isCustomBundle {
 				customBundleCount++
 			}
 			continue
 		}
-		merged = mergePolicies(merged, policy)
+		pending[key] = orderedFragment{policy: policy, installedAt: fragmentInstalledAt(rawBundles[key])}
 		if isCustomBundle {
 			customBundleCount++
 		}
+	}
+	// PASS 2: merge accepted fragments by INSTALL RECENCY — installed_at
+	// ascending so the most-recently-installed bundle merges LAST and wins
+	// cross-bundle duplicate rule IDs (reinstall/upgrade a changed rule and it
+	// takes effect even when another co-installed bundle defines the same id),
+	// with bundle-id alphabetical tiebreak for a total order that never relies
+	// on Go map iteration.
+	mergeOrder := make([]string, 0, len(pending))
+	for key := range pending {
+		mergeOrder = append(mergeOrder, key)
+	}
+	sort.Slice(mergeOrder, func(i, j int) bool {
+		if ti, tj := pending[mergeOrder[i]].installedAt, pending[mergeOrder[j]].installedAt; !ti.Equal(tj) {
+			return ti.Before(tj)
+		}
+		return mergeOrder[i] < mergeOrder[j]
+	})
+	for _, key := range mergeOrder {
+		merged = mergePolicies(merged, pending[key].policy)
 	}
 	if skippedCount > 0 {
 		slog.Warn("policy fragments skipped due to errors",
@@ -1768,6 +1842,13 @@ func extractPolicyFragment(value any) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// fragmentInstalledAt parses a bundle's installed_at (RFC3339) for the
+// install-recency ordering, delegating to the shared config merge package so
+// the kernel loader and the gateway bundle compiler parse timestamps identically.
+func fragmentInstalledAt(value any) time.Time {
+	return config.PolicyInstalledAt(value)
 }
 
 func bundleEnabled(bundle map[string]any) bool {
@@ -1808,162 +1889,23 @@ func combineSnapshots(base, extra string) string {
 }
 
 func mergePolicies(base, extra *config.SafetyPolicy) *config.SafetyPolicy {
-	if base == nil {
-		return clonePolicyWithTierMetadata(extra)
-	}
-	if extra == nil {
-		return clonePolicyWithTierMetadata(base)
-	}
-	out := clonePolicyWithTierMetadata(base)
-	add := clonePolicyWithTierMetadata(extra)
-	out.Tier = config.PolicyTierGlobal
-	out.Selector = config.PolicySelector{}
-	if out.Version == "" {
-		out.Version = add.Version
-	}
-	if out.DefaultTenant == "" {
-		out.DefaultTenant = add.DefaultTenant
-	}
-	if strings.TrimSpace(out.DefaultDecision) == "" {
-		out.DefaultDecision = strings.TrimSpace(add.DefaultDecision)
-	}
-	// Merge input rules with duplicate detection (last-seen wins)
-	seenInput := make(map[string]int, len(out.Rules))
-	for i, r := range out.Rules {
-		if r.ID != "" {
-			seenInput[r.ID] = i
-		}
-	}
-	for _, r := range add.Rules {
-		if r.ID != "" {
-			if idx, dup := seenInput[r.ID]; dup {
-				slog.Warn("duplicate policy rule ID in merge — replacing with latest",
-					"rule_id", r.ID, "decision", r.Decision)
-				out.Rules[idx] = r
-				continue
-			}
-			seenInput[r.ID] = len(out.Rules)
-		}
-		out.Rules = append(out.Rules, r)
-	}
-
-	// Merge output rules with duplicate detection
-	seenOutput := make(map[string]int, len(out.OutputRules))
-	for i, r := range out.OutputRules {
-		if r.ID != "" {
-			seenOutput[r.ID] = i
-		}
-	}
-	for _, r := range add.OutputRules {
-		if r.ID != "" {
-			if idx, dup := seenOutput[r.ID]; dup {
-				slog.Warn("duplicate output policy rule ID in merge — replacing with latest",
-					"rule_id", r.ID)
-				out.OutputRules[idx] = r
-				continue
-			}
-			seenOutput[r.ID] = len(out.OutputRules)
-		}
-		out.OutputRules = append(out.OutputRules, r)
-	}
-	// Merge input rules with duplicate detection
-	seenInputRules := make(map[string]int, len(out.InputRules))
-	for i, r := range out.InputRules {
-		if r.ID != "" {
-			seenInputRules[r.ID] = i
-		}
-	}
-	for _, r := range add.InputRules {
-		if r.ID != "" {
-			if idx, dup := seenInputRules[r.ID]; dup {
-				slog.Warn("duplicate input policy rule ID in merge — replacing with latest",
-					"rule_id", r.ID)
-				out.InputRules[idx] = r
-				continue
-			}
-			seenInputRules[r.ID] = len(out.InputRules)
-		}
-		out.InputRules = append(out.InputRules, r)
-	}
-	out.TierDefaults = append(out.TierDefaults, add.TierDefaults...)
-	out.Tenants = mergeTenantPolicies(out.Tenants, add.Tenants)
-	return out
+	// Delegates to the shared policy-bundle merge so the kernel loader and the
+	// gateway bundle compiler can never re-diverge. OutputPolicy now OR-merges
+	// across fragments (any-enable + first-non-empty FailMode) — the single
+	// canonical behavior shared with the gateway, matching the kernel's own
+	// invariants overlay. See core/infra/config/policy_merge.go (task-198acafd;
+	// extracted in task-48567e75; ordering/dedup aligned in task-0ba2bc0d).
+	return config.MergePolicies(base, extra)
 }
 
+// clonePolicy deep-copies a safety policy via the shared config merge package.
 func clonePolicy(policy *config.SafetyPolicy) *config.SafetyPolicy {
-	if policy == nil {
-		return nil
-	}
-	out := &config.SafetyPolicy{
-		Version:         policy.Version,
-		Tier:            policy.Tier,
-		Selector:        config.TrimPolicySelector(policy.Selector),
-		DefaultTenant:   policy.DefaultTenant,
-		DefaultDecision: policy.DefaultDecision,
-		InputPolicy:     policy.InputPolicy,
-		OutputPolicy:    policy.OutputPolicy,
-		RequireHuman:    policy.RequireHuman,
-		Rules:           append([]config.PolicyRule{}, policy.Rules...),
-		OutputRules:     append([]config.OutputPolicyRule{}, policy.OutputRules...),
-		InputRules:      append([]config.InputPolicyRule{}, policy.InputRules...),
-		TierDefaults:    append([]config.PolicyTierDefault{}, policy.TierDefaults...),
-		Tenants:         map[string]config.TenantPolicy{},
-	}
-	if policy.Tenants != nil {
-		for k, v := range policy.Tenants {
-			out.Tenants[k] = cloneTenantPolicy(v)
-		}
-	}
-	return out
+	return config.CloneSafetyPolicy(policy)
 }
 
-func mergeTenantPolicies(base map[string]config.TenantPolicy, extra map[string]config.TenantPolicy) map[string]config.TenantPolicy {
-	out := map[string]config.TenantPolicy{}
-	for k, v := range base {
-		out[k] = cloneTenantPolicy(v)
-	}
-	for tenant, add := range extra {
-		current, ok := out[tenant]
-		if !ok {
-			out[tenant] = cloneTenantPolicy(add)
-			continue
-		}
-		merged := current
-		merged.AllowTopics = append(merged.AllowTopics, add.AllowTopics...)
-		merged.DenyTopics = append(merged.DenyTopics, add.DenyTopics...)
-		merged.AllowedRepoHosts = append(merged.AllowedRepoHosts, add.AllowedRepoHosts...)
-		merged.DeniedRepoHosts = append(merged.DeniedRepoHosts, add.DeniedRepoHosts...)
-		if add.MaxConcurrent > 0 && (merged.MaxConcurrent == 0 || add.MaxConcurrent < merged.MaxConcurrent) {
-			merged.MaxConcurrent = add.MaxConcurrent
-		}
-		merged.MCP = mergeMCPPolicy(merged.MCP, add.MCP)
-		out[tenant] = merged
-	}
-	return out
-}
-
-func cloneTenantPolicy(policy config.TenantPolicy) config.TenantPolicy {
-	return config.TenantPolicy{
-		AllowTopics:      append([]string{}, policy.AllowTopics...),
-		DenyTopics:       append([]string{}, policy.DenyTopics...),
-		AllowedRepoHosts: append([]string{}, policy.AllowedRepoHosts...),
-		DeniedRepoHosts:  append([]string{}, policy.DeniedRepoHosts...),
-		MaxConcurrent:    policy.MaxConcurrent,
-		MCP:              policy.MCP,
-	}
-}
-
+// mergeMCPPolicy merges two MCP policies via the shared config merge package.
 func mergeMCPPolicy(base, extra config.MCPPolicy) config.MCPPolicy {
-	return config.MCPPolicy{
-		AllowServers:   append(base.AllowServers, extra.AllowServers...),
-		DenyServers:    append(base.DenyServers, extra.DenyServers...),
-		AllowTools:     append(base.AllowTools, extra.AllowTools...),
-		DenyTools:      append(base.DenyTools, extra.DenyTools...),
-		AllowResources: append(base.AllowResources, extra.AllowResources...),
-		DenyResources:  append(base.DenyResources, extra.DenyResources...),
-		AllowActions:   append(base.AllowActions, extra.AllowActions...),
-		DenyActions:    append(base.DenyActions, extra.DenyActions...),
-	}
+	return config.MergeMCPPolicy(base, extra)
 }
 
 func policySourceFromEnv(path string) string {
