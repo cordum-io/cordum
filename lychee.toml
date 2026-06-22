@@ -1,0 +1,37 @@
+# Configuration for the docs/** offline markdown link-check.
+# Consumed by .github/workflows/docs-linkcheck.yml (lychee-action).
+#
+# Scope: relative FILE links + in-document anchors under docs/**/*.md.
+# External http(s) URLs are intentionally NOT checked (offline = true):
+# they are flaky / rate-limited in CI and docs.cordum.io 403s CI clients,
+# so checking them would make this gating job non-deterministic.
+
+offline = true
+no_progress = true
+max_concurrency = 32
+
+# --- Source trees excluded from scanning -------------------------------------
+# Historical / dated audit records that intentionally reference now-removed
+# paths (per the docs-consolidation epic), plus the Docusaurus static-asset
+# folder whose README placeholders use route-style (not-on-disk) links.
+exclude_path = [
+  "docs/internal/_audit",
+  "docs/internal/cleanup",
+  "docs/static",
+]
+
+# --- Individual links excluded (pre-existing baseline breaks) ----------------
+# These relative links were already broken when this gate was introduced
+# (lychee --offline baseline, 2026-05-24). The content fixes are owned by the
+# docs-accuracy task (task-8e555500); excluding them here snapshots the known
+# baseline so the gate fails only on NEW breakage, not pre-existing debt.
+exclude = [
+  # docs/cli-reference.md, docs/configuration-reference.md:
+  #   link "(delegation.md)" resolves to docs/delegation.md; file lives at docs/auth/delegation.md
+  "docs/delegation\\.md$",
+  # docs/mcp/resources.md: "(../../api/openapi.yaml)" — spec file not present in repo
+  "/api/openapi\\.yaml$",
+  # docs/troubleshooting/install.md: targets were never created under docs/deployment/
+  "docs/deployment/certs\\.md$",
+  "docs/deployment/worker-credentials\\.md$",
+]

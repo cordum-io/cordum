@@ -13,6 +13,7 @@ import (
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	edgecore "github.com/cordum/cordum/core/edge"
+	"github.com/cordum/cordum/core/model"
 	"github.com/google/uuid"
 )
 
@@ -34,26 +35,32 @@ func edgeMaxExecutionsPerSession() int64 {
 }
 
 type edgeSessionCreateRequest struct {
-	TenantID          string                     `json:"tenant_id"`
-	PrincipalID       string                     `json:"principal_id"`
-	PrincipalType     edgecore.PrincipalType     `json:"principal_type"`
-	AgentProduct      string                     `json:"agent_product"`
-	AgentVersion      string                     `json:"agent_version"`
-	Mode              edgecore.SessionMode       `json:"mode"`
-	Repo              string                     `json:"repo"`
-	GitRemote         string                     `json:"git_remote"`
-	GitBranch         string                     `json:"git_branch"`
-	GitSHA            string                     `json:"git_sha"`
-	CWD               string                     `json:"cwd"`
-	HostID            string                     `json:"host_id"`
-	DeviceID          string                     `json:"device_id"`
-	TraceID           string                     `json:"trace_id"`
-	WorkflowRunID     string                     `json:"workflow_run_id"`
-	JobID             string                     `json:"job_id"`
-	PolicySnapshot    string                     `json:"policy_snapshot"`
-	EnforcementLayers edgecore.EnforcementLayers `json:"enforcement_layers"`
-	PolicyMode        edgecore.PolicyMode        `json:"policy_mode"`
-	Labels            edgecore.Labels            `json:"labels"`
+	TenantID      string                 `json:"tenant_id"`
+	PrincipalID   string                 `json:"principal_id"`
+	PrincipalType edgecore.PrincipalType `json:"principal_type"`
+	AgentProduct  string                 `json:"agent_product"`
+	AgentVersion  string                 `json:"agent_version"`
+	// AgentName / PrincipalDisplayName are OPTIONAL human display labels
+	// (task-c8d4b056). They are accepted ONLY as labels: the Gateway
+	// secret-redacts then sanitizes/bounds them and never derives the
+	// authenticated principal from them (principal_id/type stay server-derived).
+	AgentName            string                     `json:"agent_name"`
+	PrincipalDisplayName string                     `json:"principal_display_name"`
+	Mode                 edgecore.SessionMode       `json:"mode"`
+	Repo                 string                     `json:"repo"`
+	GitRemote            string                     `json:"git_remote"`
+	GitBranch            string                     `json:"git_branch"`
+	GitSHA               string                     `json:"git_sha"`
+	CWD                  string                     `json:"cwd"`
+	HostID               string                     `json:"host_id"`
+	DeviceID             string                     `json:"device_id"`
+	TraceID              string                     `json:"trace_id"`
+	WorkflowRunID        string                     `json:"workflow_run_id"`
+	JobID                string                     `json:"job_id"`
+	PolicySnapshot       string                     `json:"policy_snapshot"`
+	EnforcementLayers    edgecore.EnforcementLayers `json:"enforcement_layers"`
+	PolicyMode           edgecore.PolicyMode        `json:"policy_mode"`
+	Labels               edgecore.Labels            `json:"labels"`
 }
 
 type edgeSessionCreateResponse struct {
@@ -222,27 +229,29 @@ func (s *server) executeCreateEdgeSession(r *http.Request, store edgecore.Store,
 	}
 
 	session := edgecore.EdgeSession{
-		SessionID:         sessionID,
-		TenantID:          tenantID,
-		PrincipalID:       redactedPrincipalID,
-		PrincipalType:     principalType,
-		AgentProduct:      redacted.AgentProduct,
-		AgentVersion:      redacted.AgentVersion,
-		Mode:              mode,
-		Repo:              redacted.Repo,
-		GitRemote:         redacted.GitRemote,
-		GitBranch:         redacted.GitBranch,
-		GitSHA:            redacted.GitSHA,
-		CWD:               redacted.CWD,
-		HostID:            redacted.HostID,
-		DeviceID:          redacted.DeviceID,
-		TraceID:           traceID,
-		WorkflowRunID:     redacted.WorkflowRunID,
-		JobID:             redacted.JobID,
-		PolicySnapshot:    policySnapshot,
-		EnforcementLayers: redacted.EnforcementLayers,
-		PolicyMode:        policyMode,
-		Status:            edgecore.SessionStatusRunning,
+		SessionID:            sessionID,
+		TenantID:             tenantID,
+		PrincipalID:          redactedPrincipalID,
+		PrincipalType:        principalType,
+		AgentProduct:         redacted.AgentProduct,
+		AgentVersion:         redacted.AgentVersion,
+		AgentName:            redacted.AgentName,
+		PrincipalDisplayName: redacted.PrincipalDisplayName,
+		Mode:                 mode,
+		Repo:                 redacted.Repo,
+		GitRemote:            redacted.GitRemote,
+		GitBranch:            redacted.GitBranch,
+		GitSHA:               redacted.GitSHA,
+		CWD:                  redacted.CWD,
+		HostID:               redacted.HostID,
+		DeviceID:             redacted.DeviceID,
+		TraceID:              traceID,
+		WorkflowRunID:        redacted.WorkflowRunID,
+		JobID:                redacted.JobID,
+		PolicySnapshot:       policySnapshot,
+		EnforcementLayers:    redacted.EnforcementLayers,
+		PolicyMode:           policyMode,
+		Status:               edgecore.SessionStatusRunning,
 		RiskSummary: edgecore.RiskSummary{
 			MaxRisk: edgecore.RiskLevelLow,
 		},
@@ -950,22 +959,24 @@ func edgeExecutionListQuery(r *http.Request, tenantID string) edgecore.ListExecu
 }
 
 type redactedEdgeSessionCreateRequest struct {
-	PrincipalID       string
-	AgentProduct      string
-	AgentVersion      string
-	Repo              string
-	GitRemote         string
-	GitBranch         string
-	GitSHA            string
-	CWD               string
-	HostID            string
-	DeviceID          string
-	TraceID           string
-	WorkflowRunID     string
-	JobID             string
-	PolicySnapshot    string
-	EnforcementLayers edgecore.EnforcementLayers
-	Labels            edgecore.Labels
+	PrincipalID          string
+	AgentProduct         string
+	AgentVersion         string
+	AgentName            string
+	PrincipalDisplayName string
+	Repo                 string
+	GitRemote            string
+	GitBranch            string
+	GitSHA               string
+	CWD                  string
+	HostID               string
+	DeviceID             string
+	TraceID              string
+	WorkflowRunID        string
+	JobID                string
+	PolicySnapshot       string
+	EnforcementLayers    edgecore.EnforcementLayers
+	Labels               edgecore.Labels
 }
 
 func (r redactedEdgeSessionCreateRequest) String(value string) (string, error) {
@@ -996,6 +1007,15 @@ func redactEdgeSessionCreateRequest(req edgeSessionCreateRequest) (redactedEdgeS
 		return out, err
 	}
 	if out.AgentVersion, err = redactEdgeString(req.AgentVersion); err != nil {
+		return out, err
+	}
+	// Display labels are secret-redacted (so a token pasted as a label never
+	// lands) THEN sanitized + bounded via the shared model.SanitizeAgentName so
+	// the stored label is identical whether it arrives here or over CAP.
+	if out.AgentName, err = redactEdgeDisplayLabel(req.AgentName); err != nil {
+		return out, err
+	}
+	if out.PrincipalDisplayName, err = redactEdgeDisplayLabel(req.PrincipalDisplayName); err != nil {
 		return out, err
 	}
 	if out.Repo, err = redactEdgeString(req.Repo); err != nil {
@@ -1065,6 +1085,20 @@ func redactEdgeExecutionCreateRequest(req edgeExecutionCreateRequest) (redactedE
 		return out, err
 	}
 	return out, nil
+}
+
+// redactEdgeDisplayLabel sanitizes an OPTIONAL human display label
+// (agent_name / principal_display_name). It first runs the value through the
+// secret redactor so a credential pasted into a label is scrubbed, then through
+// model.SanitizeAgentName to collapse whitespace, drop control characters, and
+// bound the length — yielding a safe, bounded display string. Empty in, empty
+// out. The label is NEVER treated as an authentication authority.
+func redactEdgeDisplayLabel(value string) (string, error) {
+	redacted, err := redactEdgeString(value)
+	if err != nil {
+		return "", err
+	}
+	return model.SanitizeAgentName(redacted), nil
 }
 
 func redactEdgeString(value string) (string, error) {

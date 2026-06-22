@@ -10,6 +10,7 @@ import (
 	"time"
 
 	edgecore "github.com/cordum/cordum/core/edge"
+	"github.com/cordum/cordum/core/model"
 )
 
 type SessionManagerConfig struct {
@@ -361,22 +362,24 @@ func createSessionRequestFromMetadata(meta LocalSessionMetadata, policy edgecore
 		principalType = edgecore.PrincipalTypeUnknown
 	}
 	return CreateSessionRequest{
-		TenantID:          meta.TenantID,
-		PrincipalID:       meta.PrincipalID,
-		PrincipalType:     principalType,
-		AgentProduct:      nonEmpty(meta.AgentProduct, "claude-code"),
-		AgentVersion:      meta.AgentVersion,
-		Mode:              mode,
-		Repo:              meta.Repo,
-		GitRemote:         meta.GitRemote,
-		GitBranch:         meta.GitBranch,
-		GitSHA:            meta.GitSHA,
-		CWD:               meta.CWD,
-		HostID:            meta.HostID,
-		DeviceID:          meta.DeviceID,
-		PolicyMode:        policy,
-		EnforcementLayers: edgecore.EnforcementLayers{"hook": true, "agentd": true},
-		Labels:            meta.Labels,
+		TenantID:             meta.TenantID,
+		PrincipalID:          meta.PrincipalID,
+		PrincipalType:        principalType,
+		AgentProduct:         nonEmpty(meta.AgentProduct, "claude-code"),
+		AgentVersion:         meta.AgentVersion,
+		AgentName:            meta.AgentName,
+		PrincipalDisplayName: meta.PrincipalDisplayName,
+		Mode:                 mode,
+		Repo:                 meta.Repo,
+		GitRemote:            meta.GitRemote,
+		GitBranch:            meta.GitBranch,
+		GitSHA:               meta.GitSHA,
+		CWD:                  meta.CWD,
+		HostID:               meta.HostID,
+		DeviceID:             meta.DeviceID,
+		PolicyMode:           policy,
+		EnforcementLayers:    edgecore.EnforcementLayers{"hook": true, "agentd": true},
+		Labels:               meta.Labels,
 	}
 }
 
@@ -433,5 +436,16 @@ func GatherLocalMetadata(opts LocalMetadataOptions) LocalSessionMetadata {
 		CWD:           cwd,
 		HostID:        nonEmpty(strings.TrimSpace(envString(opts.Env, "CORDUM_EDGE_HOST_ID")), host),
 		DeviceID:      strings.TrimSpace(envString(opts.Env, "CORDUM_EDGE_DEVICE_ID")),
+		// Explicit, operator-provided display labels (task-c8d4b056). Sanitized
+		// locally for clean transport; the Gateway re-sanitizes on receipt and
+		// derives principal identity from authenticated context, never these
+		// labels. No Claude token/auth files are read — env/flags only.
+		AgentName: model.SanitizeAgentName(nonEmpty(
+			strings.TrimSpace(envString(opts.Env, "CORDUM_EDGE_AGENT_NAME")),
+			strings.TrimSpace(envString(opts.Env, "CORDUM_AGENT_NAME")),
+		)),
+		PrincipalDisplayName: model.SanitizeAgentName(
+			strings.TrimSpace(envString(opts.Env, "CORDUM_EDGE_PRINCIPAL_DISPLAY_NAME")),
+		),
 	}
 }

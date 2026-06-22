@@ -23,6 +23,12 @@ export interface AuditEventsFilters {
   from?: string;
   to?: string;
   search?: string;
+  // category narrows to the server governance/routine taxonomy ("governance"
+  // backs the Hide system/routine toggle). agentId is an exact agent-id match;
+  // agent is a human agent-name substring (task-c8d4b056).
+  category?: string;
+  agentId?: string;
+  agent?: string;
   cursor?: string;
   limit?: number;
 }
@@ -64,6 +70,9 @@ function buildQueryString(filters: AuditEventsFilters): string {
   if (filters.from) params.set("from", filters.from);
   if (filters.to) params.set("to", filters.to);
   if (filters.search) params.set("search", filters.search);
+  if (filters.category) params.set("category", filters.category);
+  if (filters.agentId) params.set("agent_id", filters.agentId);
+  if (filters.agent) params.set("agent", filters.agent);
   const qs = params.toString();
   return qs ? `?${qs}` : "";
 }
@@ -98,6 +107,9 @@ export function useAuditEvents(
       filters.from ?? "",
       filters.to ?? "",
       filters.search ?? "",
+      filters.category ?? "",
+      filters.agentId ?? "",
+      filters.agent ?? "",
       filters.cursor ?? "",
       filters.limit ?? 0,
     ],
@@ -175,6 +187,9 @@ export function useInfiniteAuditEvents(
       from: filters.from,
       to: filters.to,
       search: filters.search,
+      category: filters.category,
+      agentId: filters.agentId,
+      agent: filters.agent,
       limit: filters.limit,
     }),
     [
@@ -183,6 +198,9 @@ export function useInfiniteAuditEvents(
       filters.from ?? "",
       filters.to ?? "",
       filters.search ?? "",
+      filters.category ?? "",
+      filters.agentId ?? "",
+      filters.agent ?? "",
       filters.limit ?? 0,
     ],
   );

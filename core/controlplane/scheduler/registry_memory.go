@@ -3,10 +3,12 @@ package scheduler
 import (
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/cordum/cordum/core/infra/registry"
+	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -48,6 +50,29 @@ func NewMemoryRegistryWithTTL(ttl time.Duration) *MemoryRegistry {
 	}
 	go r.expireLoop()
 	return r
+}
+
+// AgentName returns the worker's self-reported CAP display label (Heartbeat or
+// Handshake agent_name), sanitized + bounded via model.SanitizeAgentName.
+// task-c8d4b056. It is a DISPLAY label only — NEVER an authentication
+// authority: agent resolution must prefer authenticated Agent Identity records
+// over this value. Returns "" when the worker is unknown or sent no label.
+func (r *MemoryRegistry) AgentName(workerID string) string {
+	workerID = strings.TrimSpace(workerID)
+	if r == nil || workerID == "" {
+		return ""
+	}
+	r.mu.RLock()
+	entry, ok := r.workers[workerID]
+	r.mu.RUnlock()
+	if !ok || entry == nil {
+		return ""
+	}
+	name := entry.hb.GetAgentName()
+	if name == "" {
+		name = entry.handshake.GetAgentName()
+	}
+	return model.SanitizeAgentName(name)
 }
 
 func (r *MemoryRegistry) UpdateHeartbeat(hb *pb.Heartbeat) {

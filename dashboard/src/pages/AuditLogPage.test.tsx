@@ -1,9 +1,46 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
+  AUDIT_EXPORT_HEADERS,
+  buildAuditExportRows,
   filterEventsBySeq,
   parseSeqParam,
   shouldFetchNextAuditPage,
 } from "./AuditLogPage";
+import { toCsv } from "@/lib/export";
+import type { AuditEntry } from "@/api/types";
+
+function sampleAuditEntry(over: Partial<AuditEntry> = {}): AuditEntry {
+  return {
+    id: "evt-1",
+    timestamp: "2026-05-15T12:00:00Z",
+    eventType: "edge.action_denied",
+    actor: "user:alice",
+    resourceType: "edge",
+    resourceId: "res-1",
+    action: "edge.action",
+    message: "blocked path",
+    humanSummary: "Billing Bot was denied Bash — deny (blocked path)",
+    actorLabel: "Alice Ops",
+    agentLabel: "Billing Bot",
+    agentName: "Billing Bot",
+    agentId: "agent-7",
+    decision: "deny",
+    matchedRule: "no-prod-writes",
+    reason: "blocked path",
+    severity: "high",
+    governanceCategory: "governance",
+    sessionId: "sess-9",
+    executionId: "exec-3",
+    jobId: "",
+    seq: 100,
+    eventHash: "h2",
+    prevHash: "h1",
+    inputPreview: "command: read config",
+    traceId: "tr-1",
+    artifactId: "sha256:abc",
+    ...over,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Mock the API client before any imports that reference it
@@ -246,43 +283,68 @@ describe("AuditLogPage component agent filter integration", () => {
   });
 });
 
-describe("AuditLogPage CSV export logic", () => {
-  it("generates CSV with correct headers", () => {
-    const events = [
-      {
-        timestamp: "2026-03-25T10:00:00Z",
-        action: "job.created",
-        actor: "admin",
-        resource: "job",
-        resourceId: "j-123",
-        detail: "Created job",
-      },
-    ];
-    const rows = events.map((e) =>
-      [
-        e.timestamp,
-        e.action,
-        e.actor,
-        e.resource,
-        e.resourceId ?? "",
-        (e.detail ?? "").replace(/,/g, ";"),
-      ].join(","),
-    );
-    const csv = [
-      "timestamp,action,actor,resource,resourceId,detail",
-      ...rows,
-    ].join("\n");
-
-    expect(csv).toContain("timestamp,action,actor,resource,resourceId,detail");
-    expect(csv).toContain("2026-03-25T10:00:00Z");
-    expect(csv).toContain("job.created");
+describe("buildAuditExportRows + toCsv (human-readable export)", () => {
+  it("projects each cell onto AUDIT_EXPORT_HEADERS in order", () => {
+    const rows = buildAuditExportRows([sampleAuditEntry()]);
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    expect(row).toHaveLength(AUDIT_EXPORT_HEADERS.length);
+    // Spot-check that columns land in their documented positions.
+    const col = (name: string) =>
+      row[(AUDIT_EXPORT_HEADERS as readonly string[]).indexOf(name)];
+    expect(col("Summary")).toBe("Billing Bot was denied Bash — deny (blocked path)");
+    expect(col("Severity")).toBe("high");
+    expect(col("Agent")).toBe("Billing Bot");
+    expect(col("Decision")).toBe("deny");
+    expect(col("Rule")).toBe("no-prod-writes");
+    expect(col("Session ID")).toBe("sess-9");
+    expect(col("Execution ID")).toBe("exec-3");
+    expect(col("Chain Seq")).toBe("100");
+    expect(col("Event Hash")).toBe("h2");
+    expect(col("Input Preview")).toBe("command: read config");
+    expect(col("Trace ID")).toBe("tr-1");
+    expect(col("Artifact ID")).toBe("sha256:abc");
   });
 
-  it("escapes commas in detail field", () => {
-    const detail = "Error: invalid input, retry later";
-    const escaped = detail.replace(/,/g, ";");
-    expect(escaped).toBe("Error: invalid input; retry later");
-    expect(escaped).not.toContain(",");
+  it("RFC-4180 escapes commas, quotes, and newlines via toCsv", () => {
+    const csv = toCsv(
+      ["A", "B"],
+      [["plain", 'has, comma'], ['has "quote"', "line\nbreak"]],
+    );
+    const lines = csv.split("\n");
+    expect(lines[0]).toBe("A,B");
+    // comma-bearing cell is quoted; quote-bearing cell doubles its quotes.
+    expect(csv).toContain('"has, comma"');
+    expect(csv).toContain('"has ""quote"""');
+    // a newline inside a cell must be wrapped in quotes (stays one logical row).
+    expect(csv).toContain('"line\nbreak"');
+  });
+
+  it("neutralises spreadsheet formula-injection at the cell source", () => {
+    const rows = buildAuditExportRows([
+      sampleAuditEntry({
+        humanSummary: "=cmd|' /c calc'!A1",
+        actorLabel: "+danger",
+        reason: "-2-3",
+      }),
+    ]);
+    const row = rows[0];
+    const col = (name: string) =>
+      row[(AUDIT_EXPORT_HEADERS as readonly string[]).indexOf(name)];
+    // Formula-trigger first char is prefixed with a single quote.
+    expect(col("Summary").startsWith("'=")).toBe(true);
+    expect(col("Actor").startsWith("'+")).toBe(true);
+    expect(col("Reason").startsWith("'-")).toBe(true);
+  });
+
+  it("emits a header line plus one line per row", () => {
+    const csv = toCsv(
+      [...AUDIT_EXPORT_HEADERS],
+      buildAuditExportRows([sampleAuditEntry(), sampleAuditEntry({ id: "evt-2" })]),
+    );
+    const lines = csv.split("\n");
+    expect(lines[0]).toBe(AUDIT_EXPORT_HEADERS.join(","));
+    expect(lines).toHaveLength(3); // header + 2 data rows
   });
 });
 

@@ -195,11 +195,27 @@ func TestHandleAuditExport_CSVHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("csv.ReadAll: %v", err)
 	}
-	if len(rows) < 1 || len(rows[0]) != 21 {
-		t.Fatalf("header has wrong column count: %v", rows[0])
+	// task-c8d4b056 appended 11 humanized columns AFTER the frozen 21 legacy
+	// columns (additive — legacy positions unchanged, edge.export.v1 unbumped).
+	const legacyCols = 21
+	humanCols := []string{
+		"human_summary", "actor_label", "agent_label", "resource_label",
+		"session_id", "execution_id", "resource_id", "input_preview",
+		"output_preview", "trace_id", "artifact_id",
 	}
+	wantCols := legacyCols + len(humanCols)
+	if len(rows) < 1 || len(rows[0]) != wantCols {
+		t.Fatalf("header has wrong column count: got %d want %d: %v", len(rows[0]), wantCols, rows[0])
+	}
+	// Legacy columns must stay in their original positions.
 	if rows[0][0] != "timestamp" || rows[0][19] != "soc2_controls" || rows[0][20] != "extra_json" {
-		t.Errorf("header columns unexpected: %v", rows[0])
+		t.Errorf("legacy header columns unexpected: %v", rows[0])
+	}
+	// Humanized columns must be appended after the legacy set, in order.
+	for i, h := range humanCols {
+		if rows[0][legacyCols+i] != h {
+			t.Errorf("appended column %d = %q, want %q", i, rows[0][legacyCols+i], h)
+		}
 	}
 	if len(rows) != 1+3 {
 		t.Errorf("expected 3 data rows, got %d", len(rows)-1)

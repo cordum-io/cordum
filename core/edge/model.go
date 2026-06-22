@@ -189,31 +189,37 @@ type ExecutionMetrics struct {
 
 // EdgeSession is the top-level governed interaction with an agent.
 type EdgeSession struct {
-	SessionID         string            `json:"session_id"`
-	TenantID          string            `json:"tenant_id"`
-	PrincipalID       string            `json:"principal_id"`
-	PrincipalType     PrincipalType     `json:"principal_type"`
-	AgentProduct      string            `json:"agent_product"`
-	AgentVersion      string            `json:"agent_version"`
-	Mode              SessionMode       `json:"mode"`
-	Repo              string            `json:"repo"`
-	GitRemote         string            `json:"git_remote"`
-	GitBranch         string            `json:"git_branch"`
-	GitSHA            string            `json:"git_sha"`
-	CWD               string            `json:"cwd"`
-	HostID            string            `json:"host_id"`
-	DeviceID          string            `json:"device_id"`
-	TraceID           string            `json:"trace_id"`
-	WorkflowRunID     string            `json:"workflow_run_id"`
-	JobID             string            `json:"job_id"`
-	PolicySnapshot    string            `json:"policy_snapshot"`
-	EnforcementLayers EnforcementLayers `json:"enforcement_layers"`
-	PolicyMode        PolicyMode        `json:"policy_mode"`
-	Status            SessionStatus     `json:"status"`
-	RiskSummary       RiskSummary       `json:"risk_summary"`
-	StartedAt         time.Time         `json:"started_at"`
-	EndedAt           *time.Time        `json:"ended_at"`
-	Labels            Labels            `json:"labels"`
+	SessionID     string        `json:"session_id"`
+	TenantID      string        `json:"tenant_id"`
+	PrincipalID   string        `json:"principal_id"`
+	PrincipalType PrincipalType `json:"principal_type"`
+	AgentProduct  string        `json:"agent_product"`
+	AgentVersion  string        `json:"agent_version"`
+	// AgentName / PrincipalDisplayName are OPTIONAL, already-sanitized human
+	// display labels (task-c8d4b056) — evidence labels only, never an auth
+	// authority; principal_id/type stay server-derived. omitempty keeps the
+	// wire shape unchanged for sessions created without explicit labels.
+	AgentName            string            `json:"agent_name,omitempty"`
+	PrincipalDisplayName string            `json:"principal_display_name,omitempty"`
+	Mode                 SessionMode       `json:"mode"`
+	Repo                 string            `json:"repo"`
+	GitRemote            string            `json:"git_remote"`
+	GitBranch            string            `json:"git_branch"`
+	GitSHA               string            `json:"git_sha"`
+	CWD                  string            `json:"cwd"`
+	HostID               string            `json:"host_id"`
+	DeviceID             string            `json:"device_id"`
+	TraceID              string            `json:"trace_id"`
+	WorkflowRunID        string            `json:"workflow_run_id"`
+	JobID                string            `json:"job_id"`
+	PolicySnapshot       string            `json:"policy_snapshot"`
+	EnforcementLayers    EnforcementLayers `json:"enforcement_layers"`
+	PolicyMode           PolicyMode        `json:"policy_mode"`
+	Status               SessionStatus     `json:"status"`
+	RiskSummary          RiskSummary       `json:"risk_summary"`
+	StartedAt            time.Time         `json:"started_at"`
+	EndedAt              *time.Time        `json:"ended_at"`
+	Labels               Labels            `json:"labels"`
 }
 
 // AgentExecution is evidence/runtime metadata for a concrete governed agent run.

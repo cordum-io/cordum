@@ -1257,6 +1257,31 @@ export interface AuditEntry {
   snapshotBefore?: Record<string, unknown>;
   snapshotAfter?: Record<string, unknown>;
   bundleIds?: string[];
+  // Human-readable attribution (task-c8d4b056). Backend-provided when present,
+  // with a deterministic client fallback so older backends still render a
+  // summary. All values are already secret-scrubbed/bounded server-side; the
+  // dashboard never reconstructs them from raw payload.
+  humanSummary?: string;
+  actorLabel?: string;
+  agentLabel?: string;
+  resourceLabel?: string;
+  governanceCategory?: string; // "governance" | "routine" (server taxonomy)
+  agentId?: string;
+  agentName?: string;
+  agentProduct?: string;
+  decision?: string;
+  matchedRule?: string;
+  reason?: string;
+  seq?: number;
+  jobId?: string;
+  sessionId?: string;
+  executionId?: string;
+  eventHash?: string;
+  prevHash?: string;
+  inputPreview?: string;
+  outputPreview?: string;
+  traceId?: string;
+  artifactId?: string;
 }
 
 // ---------------------------------------------------------------------------

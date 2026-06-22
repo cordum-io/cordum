@@ -46,6 +46,8 @@
     "layer": { "type": "string", "enum": ["hook", "mcp", "llm", "runtime", "workflow", "system"] },
     "kind": { "type": "string", "minLength": 1 },
     "agent_product": { "type": "string" },
+    "agent_name": { "type": "string", "maxLength": 128 },
+    "principal_display_name": { "type": "string", "maxLength": 128 },
     "tool_name": { "type": "string" },
     "tool_use_id": { "type": "string" },
     "action_name": { "type": "string" },

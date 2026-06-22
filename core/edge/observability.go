@@ -535,6 +535,7 @@ func SIEMEventForAction(event AgentActionEvent) audit.SIEMEvent {
 		EventType:    eventType,
 		Severity:     severity,
 		TenantID:     boundedID(event.TenantID),
+		AgentName:    boundedShortString(event.AgentName, model.MaxAgentNameLen),
 		Action:       boundedShortString(event.ActionName, 64),
 		Decision:     NormalizeDecision(string(event.Decision)),
 		MatchedRule:  boundedShortString(event.RuleID, 80),
@@ -563,6 +564,7 @@ func SIEMEventForSessionStarted(session EdgeSession) audit.SIEMEvent {
 		EventType: audit.EventEdgeSessionStarted,
 		Severity:  audit.SeverityInfo,
 		TenantID:  boundedID(session.TenantID),
+		AgentName: boundedShortString(session.AgentName, model.MaxAgentNameLen),
 		Action:    "edge_session_create",
 		Identity:  boundedID(session.PrincipalID),
 		Extra:     sessionExtra(session),
@@ -588,6 +590,7 @@ func SIEMEventForSessionEnded(session EdgeSession) audit.SIEMEvent {
 		EventType: audit.EventEdgeSessionEnded,
 		Severity:  severity,
 		TenantID:  boundedID(session.TenantID),
+		AgentName: boundedShortString(session.AgentName, model.MaxAgentNameLen),
 		Action:    "edge_session_end",
 		Identity:  boundedID(session.PrincipalID),
 		Extra:     sessionExtra(session),
@@ -758,6 +761,14 @@ func actionExtra(event AgentActionEvent) map[string]string {
 	if v := strings.TrimSpace(event.ApprovalRef); v != "" {
 		extra["approval_ref"] = boundedShortString(v, 64)
 	}
+	// Human principal display label (task-c8d4b056). Already sanitized at the
+	// session boundary + backfilled onto the action; re-bounded defensively.
+	// NOTE: agent attribution rides the structured SIEMEvent.AgentName field —
+	// agent_product is deliberately NOT copied into action Extra (it is a
+	// non-allowlisted caller label here; see observability_test.go).
+	if v := strings.TrimSpace(event.PrincipalDisplayName); v != "" {
+		extra["principal_display_name"] = boundedShortString(v, model.MaxAgentNameLen)
+	}
 	// EDGE governance descriptive targets (task-6a93a0fc): copy ONLY the
 	// hard-coded classifier-descriptor allowlist from event.Labels into Extra
 	// so an incident responder sees WHAT class of thing was targeted (secret
@@ -771,6 +782,16 @@ func actionExtra(event AgentActionEvent) map[string]string {
 	}
 	if summary := actionTargetSummary(event); summary != "" {
 		extra["target_summary"] = summary
+	}
+	// Langfuse-like investigability pointer (task-c8d4b056 step 8): surface the
+	// FIRST artifact's content hash as a safe pointer so an investigator can
+	// pivot to the redacted evidence bundle. NEVER the content itself — the
+	// audit row stays free of raw input/output; only the SHA pointer is copied.
+	for _, ptr := range event.ArtifactPointers {
+		if sha := strings.TrimSpace(ptr.SHA256); sha != "" {
+			extra["artifact_id"] = boundedShortString(sha, 80)
+			break
+		}
 	}
 	extra["redaction_status"] = redactionStatusForAction(event)
 	return extra
@@ -848,6 +869,12 @@ func sessionExtra(session EdgeSession) map[string]string {
 	}
 	if v := strings.TrimSpace(session.AgentProduct); v != "" {
 		extra["agent_product"] = boundedShortString(v, 32)
+	}
+	// Human principal display label (task-c8d4b056), already sanitized at the
+	// session-create boundary; re-bounded defensively. Lets the audit summary's
+	// ActorLabel read a friendly name instead of the bare principal_id.
+	if v := strings.TrimSpace(session.PrincipalDisplayName); v != "" {
+		extra["principal_display_name"] = boundedShortString(v, model.MaxAgentNameLen)
 	}
 	return extra
 }

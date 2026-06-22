@@ -84,26 +84,31 @@ type httpDoer interface {
 }
 
 type CreateSessionRequest struct {
-	TenantID          string                     `json:"tenant_id"`
-	PrincipalID       string                     `json:"principal_id"`
-	PrincipalType     edgecore.PrincipalType     `json:"principal_type"`
-	AgentProduct      string                     `json:"agent_product"`
-	AgentVersion      string                     `json:"agent_version"`
-	Mode              edgecore.SessionMode       `json:"mode"`
-	Repo              string                     `json:"repo"`
-	GitRemote         string                     `json:"git_remote"`
-	GitBranch         string                     `json:"git_branch"`
-	GitSHA            string                     `json:"git_sha"`
-	CWD               string                     `json:"cwd"`
-	HostID            string                     `json:"host_id"`
-	DeviceID          string                     `json:"device_id"`
-	TraceID           string                     `json:"trace_id,omitempty"`
-	WorkflowRunID     string                     `json:"workflow_run_id,omitempty"`
-	JobID             string                     `json:"job_id,omitempty"`
-	PolicySnapshot    string                     `json:"policy_snapshot"`
-	EnforcementLayers edgecore.EnforcementLayers `json:"enforcement_layers"`
-	PolicyMode        edgecore.PolicyMode        `json:"policy_mode"`
-	Labels            edgecore.Labels            `json:"labels"`
+	TenantID      string                 `json:"tenant_id"`
+	PrincipalID   string                 `json:"principal_id"`
+	PrincipalType edgecore.PrincipalType `json:"principal_type"`
+	AgentProduct  string                 `json:"agent_product"`
+	AgentVersion  string                 `json:"agent_version"`
+	// Optional operator-provided human display labels (task-c8d4b056); the
+	// Gateway secret-redacts + sanitizes them and never derives identity from
+	// them. omitempty keeps the wire shape unchanged when unset.
+	AgentName            string                     `json:"agent_name,omitempty"`
+	PrincipalDisplayName string                     `json:"principal_display_name,omitempty"`
+	Mode                 edgecore.SessionMode       `json:"mode"`
+	Repo                 string                     `json:"repo"`
+	GitRemote            string                     `json:"git_remote"`
+	GitBranch            string                     `json:"git_branch"`
+	GitSHA               string                     `json:"git_sha"`
+	CWD                  string                     `json:"cwd"`
+	HostID               string                     `json:"host_id"`
+	DeviceID             string                     `json:"device_id"`
+	TraceID              string                     `json:"trace_id,omitempty"`
+	WorkflowRunID        string                     `json:"workflow_run_id,omitempty"`
+	JobID                string                     `json:"job_id,omitempty"`
+	PolicySnapshot       string                     `json:"policy_snapshot"`
+	EnforcementLayers    edgecore.EnforcementLayers `json:"enforcement_layers"`
+	PolicyMode           edgecore.PolicyMode        `json:"policy_mode"`
+	Labels               edgecore.Labels            `json:"labels"`
 }
 
 type CreateSessionResponse struct {
@@ -147,7 +152,12 @@ type LocalSessionMetadata struct {
 	CWD           string
 	HostID        string
 	DeviceID      string
-	Labels        edgecore.Labels
+	// AgentName / PrincipalDisplayName are optional, sanitized operator labels
+	// gathered from CORDUM_EDGE_AGENT_NAME / CORDUM_AGENT_NAME and
+	// CORDUM_EDGE_PRINCIPAL_DISPLAY_NAME (task-c8d4b056).
+	AgentName            string
+	PrincipalDisplayName string
+	Labels               edgecore.Labels
 }
 
 type SessionState struct {

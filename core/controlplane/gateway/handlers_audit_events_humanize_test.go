@@ -47,7 +47,7 @@ func TestMatchesFilters_AgentAndSearchAndCategory(t *testing.T) {
 }
 
 func TestToAuditEventResponseItem_HumanFieldsAndRedaction(t *testing.T) {
-	const secret = "sk-live-SECRETCANARY0123456789ABCDEF"
+	const secret = "sk-test-SECRETCANARY0123456789ABCDEF"
 	ev := &audit.SIEMEvent{
 		Seq:         5,
 		EventType:   audit.EventEdgeActionDenied,

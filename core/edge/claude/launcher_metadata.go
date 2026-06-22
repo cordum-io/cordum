@@ -141,7 +141,11 @@ func writeLaunchSettings(root string, cfg launchConfig, meta LaunchMetadata, sta
 		SessionID: state.SessionID, ExecutionID: state.ExecutionID, AgentdURL: cfg.AgentdURL,
 		AgentdHookNonce: cfg.HookNonce, HookCommand: cfg.HookCommand, HookTimeout: DefaultHookTimeout,
 		PolicyMode: cfg.PolicyMode, ApprovalWaitTimeout: cfg.ApprovalWaitTimeout, Platform: runtime.GOOS,
-		ExtraEnv: map[string]string{"CORDUM_TENANT_ID": cfg.TenantID, "CORDUM_EDGE_PRINCIPAL_ID": meta.PrincipalID},
+		// Fail closed for every mode except observe: enforce + enterprise-strict (and any
+		// unknown/future enforce-like mode, incl. the runner-side "local-dev-enforce") must
+		// block tools when agentd is unreachable. observe stays fail-open by design.
+		FailClosed: !strings.EqualFold(strings.TrimSpace(cfg.PolicyMode), "observe"),
+		ExtraEnv:   map[string]string{"CORDUM_TENANT_ID": cfg.TenantID, "CORDUM_EDGE_PRINCIPAL_ID": meta.PrincipalID},
 	})
 	if err != nil {
 		return "", nil, err

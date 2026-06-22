@@ -177,6 +177,15 @@ func classifyHookEvent(event AgentActionEvent, out *ActionClassification) {
 		classifyFilePath(inputStringAny(event.InputRedacted, "file_path_redacted", "file_path", "path_redacted", "path"), false, out)
 	case "edit", "write", "multiedit":
 		classifyFilePath(inputStringAny(event.InputRedacted, "file_path_redacted", "file_path", "path_redacted", "path"), true, out)
+	case "grep", "glob":
+		// EDGE-073: Grep/Glob read the filesystem but previously fell through to
+		// the unknown/default branch, so a `Grep path=.env` / `Glob **/.env`
+		// bypassed secret-path classification exactly like `cat .env` did.
+		classifyFileSearch(
+			inputStringAny(event.InputRedacted, "path_redacted", "path"),
+			inputStringAny(event.InputRedacted, "pattern_redacted", "pattern"),
+			out,
+		)
 	case "delete", "remove":
 		classifyFileDelete(inputStringAny(event.InputRedacted, "file_path_redacted", "file_path", "path_redacted", "path"), out)
 	case "move", "rename":
@@ -196,7 +205,26 @@ func classifyHookEvent(event AgentActionEvent, out *ActionClassification) {
 	}
 }
 
+// classifyBashCommand classifies a shell command by shape (destructive /
+// network / install / safe allowlist / unknown) and THEN overlays secret-path
+// access detection on top.
+//
+// EDGE-073 — cross-tool secret-read closure. classifyBashCommandShape buckets a
+// command by its verb form but never routes the command's file ARGUMENTS through
+// the path classifier the way the Read/Edit/Write tools do. That asymmetry let
+// `cat .env`, `grep API_KEY .env`, `cp config/.env /tmp/x`, `od -c ~/.ssh/id_rsa`,
+// and ~30 sibling forms walk past the deny-secret-reads policy that blocks
+// `Read .env` — the firewall enforced a naming convention (which TOOL) instead of
+// a boundary (which FILE). overlaySecretPathAccess closes that by tagging
+// path.class=secret + the `secrets` risk tag whenever a path-like argument
+// resolves to a secret file, so the EXISTING deny-secret-reads rule (which keys
+// on secrets + path.class=secret) fires regardless of which tool was used.
 func classifyBashCommand(command string, out *ActionClassification) {
+	classifyBashCommandShape(command, out)
+	overlaySecretPathAccess(command, out)
+}
+
+func classifyBashCommandShape(command string, out *ActionClassification) {
 	out.ActionName = "bash.exec"
 	out.Capability = capabilityShell
 	out.RiskTags = []string{"exec"}
@@ -365,6 +393,10 @@ func classifyRuntimeEvent(event AgentActionEvent, out *ActionClassification) {
 		out.Labels["runtime.event"] = "process.exec"
 		if process := inputStringAny(event.InputRedacted, "process", "command", "exe"); process != "" {
 			out.Labels["runtime.process"] = safeLabelValue(process, "unknown")
+			// EDGE-073: a runtime-observed exec of `cat /home/u/.env` is the same
+			// secret read as the Bash-hook form; overlay the secret-path tag so the
+			// deny-secret-reads rule fires at the runtime layer too.
+			overlaySecretPathAccess(process, out)
 		}
 	case string(EventKindRuntimeFileRead), string(EventKindRuntimeFileWrite):
 		runtimeEvent := strings.TrimPrefix(kind, "runtime.")
@@ -632,6 +664,140 @@ func isSourceCodePath(path string) bool {
 		strings.HasSuffix(path, ".py") ||
 		strings.HasSuffix(path, ".java") ||
 		strings.HasSuffix(path, ".kt")
+}
+
+// classifyFileSearch classifies a filesystem search tool (Grep/Glob) as a file
+// read and routes its path + pattern arguments through secret-path detection.
+// EDGE-073: these tools access files but previously fell through to the unknown
+// branch, leaving `Grep path=.env` / `Glob **/.env` unclassified for secrets.
+func classifyFileSearch(pathArg, patternArg string, out *ActionClassification) {
+	out.ActionName = "file.read"
+	out.Capability = capabilityFileRead
+	out.RiskTags = []string{"filesystem", "read"}
+	addPathLabels(pathArg, out)
+	// A benign base path can still target secret files through the glob/regex
+	// pattern (e.g. base="." pattern="**/.env"); scan the pattern with the same
+	// path-like-gated secret check used for shell arguments.
+	if out.Labels["path.class"] != "secret" && referencesSecretPath(patternArg) {
+		out.Labels["path.class"] = "secret"
+	}
+	switch out.Labels["path.class"] {
+	case "secret":
+		out.RiskTags = append(out.RiskTags, "secrets")
+	case "source_code":
+		out.RiskTags = append(out.RiskTags, "source_code")
+	}
+}
+
+// overlaySecretPathAccess tags a shell/exec command that references a secret-class
+// file path. It is additive — it never changes command.class and runs for every
+// command shape — so a secret exfil via an otherwise-"network" curl or an
+// otherwise-"safe" form still trips the secret rule. See classifyBashCommand.
+func overlaySecretPathAccess(command string, out *ActionClassification) {
+	if !referencesSecretPath(command) {
+		return
+	}
+	out.Labels["path.class"] = "secret"
+	out.RiskTags = append(out.RiskTags, "secrets")
+}
+
+// referencesSecretPath reports whether any path-like token in a command/argument
+// string names a secret-class file. Only path-like tokens are tested (see
+// looksLikePath) so isSecretPath's broad token/credential/password substring
+// matches do not fire on bare keywords: `git log --grep=password` and
+// `echo my token` are NOT flagged, while `cat .env`, `cat id_rsa`,
+// `grep KEY ~/.ssh/config`, and `cp config/.env /tmp/x` are.
+//
+// This is a deliberately conservative, stateless flag-on-reference check. It
+// does NOT resolve shell variables/globs ($HOME, ~, **/.env) or correlate
+// copy-then-read across separate commands; those residual gaps are closed by
+// audit-trail correlation, not classify-time detection (EDGE-073).
+func referencesSecretPath(command string) bool {
+	if strings.TrimSpace(command) == "" {
+		return false
+	}
+	for _, field := range strings.Fields(command) {
+		for _, cand := range pathTokenCandidates(field) {
+			if !looksLikePath(cand) {
+				continue
+			}
+			if isSecretPath(normalizePathForClass(cand)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// pathTokenCandidates expands one whitespace-delimited field into the path-token
+// candidates worth testing: the unquoted token, plus the segment after a `=` so
+// `--upload-file=.env` / `--data=@secret.key` surface their path.
+func pathTokenCandidates(field string) []string {
+	out := make([]string, 0, 2)
+	if t := unquoteShellToken(field); t != "" {
+		out = append(out, t)
+	}
+	if i := strings.LastIndexByte(field, '='); i >= 0 && i+1 < len(field) {
+		if t := unquoteShellToken(field[i+1:]); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// looksLikePath reports whether a command token is shaped like a filesystem path
+// rather than a bare keyword, so secret scanning ignores arguments like
+// `password` or `--grep=token`. A token qualifies when it contains a path
+// separator, begins with a path anchor (. ~ /), looks like a Windows drive path
+// (c:\...), or is a known bare secret basename/extension (id_rsa, server.key).
+func looksLikePath(tok string) bool {
+	if tok == "" {
+		return false
+	}
+	if strings.ContainsAny(tok, "/\\") {
+		return true
+	}
+	switch tok[0] {
+	case '.', '~', '/':
+		return true
+	}
+	if len(tok) >= 2 && tok[1] == ':' { // drive-letter prefix, e.g. c:env
+		return true
+	}
+	return isKnownSecretBasename(tok)
+}
+
+// isKnownSecretBasename matches bare secret filenames/extensions that carry no
+// path separator (so `cat id_rsa` and `cat server.key` are caught) without
+// treating arbitrary words as paths.
+func isKnownSecretBasename(tok string) bool {
+	lower := strings.ToLower(tok)
+	for _, ext := range []string{".pem", ".key", ".crt", ".p12", ".pfx", ".kdbx"} {
+		if strings.HasSuffix(lower, ext) {
+			return true
+		}
+	}
+	switch lower {
+	case "id_rsa", "id_ed25519", "id_ecdsa",
+		".netrc", ".npmrc", ".pypirc", ".dockercfg", ".htpasswd":
+		return true
+	}
+	return false
+}
+
+// unquoteShellToken strips a single layer of matched surrounding quotes and a
+// leading curl-style `@` data prefix so `cat ".env"`, `cat '.env'`, and
+// `curl --data @.env` all surface the `.env` path token.
+func unquoteShellToken(tok string) string {
+	tok = strings.TrimSpace(tok)
+	tok = strings.TrimPrefix(tok, "@")
+	if len(tok) >= 2 {
+		first, last := tok[0], tok[len(tok)-1]
+		if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
+			tok = tok[1 : len(tok)-1]
+		}
+	}
+	return strings.TrimSpace(tok)
 }
 
 func isDestructiveShell(command string) bool {

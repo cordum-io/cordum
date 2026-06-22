@@ -1,0 +1,55 @@
+name: docs-linkcheck
+
+# Markdown link-check for the in-repo docs/** surface (the canonical docs
+# source per RELEASING.md). Replaces the lychee check that was dropped with
+# .github/workflows/docs-deploy.yml when the orphan docs-site/ tree was retired
+# (task-729b21ef / PR #291). This is link-checking ONLY — it does NOT build or
+# deploy any docs-site.
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "docs/**"
+      - "lychee.toml"
+      - ".github/workflows/docs-linkcheck.yml"
+  pull_request:
+    paths:
+      - "docs/**"
+      - "lychee.toml"
+      - ".github/workflows/docs-linkcheck.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-linkcheck-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  link-check:
+    name: link-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run lychee (offline, gating)
+        # SHA-pinned third-party action per the repo convention (dependabot
+        # github-actions ecosystem tracks it); same pin docs-deploy.yml used.
+        uses: lycheeverse/lychee-action@8646ba30535128ac92d33dfc9133794bfdd9b411 # v2
+        with:
+          # Run options (offline, exclude_path, exclude, max_concurrency) live
+          # in ./lychee.toml. --offline checks relative FILE links + in-doc
+          # anchors only; external http(s) URLs are intentionally NOT checked
+          # (flaky / rate-limited in CI, and docs.cordum.io 403s CI clients),
+          # which keeps this gate deterministic.
+          args: >-
+            --config ./lychee.toml
+            --no-progress
+            'docs/**/*.md'
+          # Gating: fail the job on any NEW broken link. Pre-existing baseline
+          # breaks are snapshotted in lychee.toml (content fixes are tracked to
+          # task-8e555500), so the gate fails only on regressions, not debt.
+          fail: true

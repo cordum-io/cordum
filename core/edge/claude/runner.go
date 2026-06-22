@@ -273,14 +273,34 @@ func failClosed(opts RunOptions) bool {
 	return parseBool(envValue(opts.Env, "CORDUM_AGENTD_FAIL_CLOSED")) || strings.EqualFold(envValue(opts.Env, "CORDUM_EDGE_MODE"), "enterprise-strict")
 }
 
+// localDevEnforce reports whether CORDUM_EDGE_MODE selects an enforcing posture
+// for the degrade-closed fallback in handleAgentdError. It matches the canonical
+// "enforce" token the launcher actually emits (settings.go sets CORDUM_EDGE_MODE
+// to the policy-mode string), so a risky PreToolUse degrades closed even when
+// CORDUM_AGENTD_FAIL_CLOSED is unset. This is defense-in-depth behind the
+// FailClosed wiring (task-2781fa7e), not a replacement; the launcher remains the
+// single source of truth for the token. The legacy "local-dev-enforce"/
+// "local-dev enforce" aliases are kept for compatibility.
 func localDevEnforce(opts RunOptions) bool {
 	mode := strings.ToLower(strings.TrimSpace(envValue(opts.Env, "CORDUM_EDGE_MODE")))
-	return mode == "local-dev-enforce" || mode == "local-dev enforce"
+	return mode == string(edgecore.PolicyModeEnforce) ||
+		mode == "local-dev-enforce" ||
+		mode == "local-dev enforce"
 }
 
 func riskyPreToolUse(input HookInput) bool {
+	// Empty tool name is unclassifiable: fail closed on the degrade-closed path.
+	if input.ToolName == "" {
+		return true
+	}
+	// File-mutating Claude tools must be risky so the degrade-closed path blocks
+	// edits, not just shell (epic-8c29308d issue #3).
+	switch strings.ToLower(strings.TrimSpace(input.ToolName)) {
+	case "write", "edit", "multiedit", "notebookedit":
+		return true
+	}
 	if !strings.EqualFold(input.ToolName, "Bash") {
-		return input.ToolName == ""
+		return false
 	}
 	raw, ok := input.ToolInput["command"]
 	if !ok {

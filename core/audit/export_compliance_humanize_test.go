@@ -53,7 +53,7 @@ func sampleHumanizeEvent() SIEMEvent {
 			"trace_id":      "tr-1",
 			"artifact_id":   "sha256:abc",
 			"input_preview": "command read file",
-			"api_key":       "sk-live-SECRETCANARY0123456789ABCDEF", // non-allowlisted
+			"api_key":       "sk-test-SECRETCANARY0123456789ABCDEF", // non-allowlisted
 		},
 	}
 }

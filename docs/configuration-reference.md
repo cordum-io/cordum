@@ -735,10 +735,19 @@ No license = Community tier (3 workers, 3 concurrent jobs, 500 RPS, 7-day audit 
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CORDUM_TELEMETRY_MODE` | `anonymous` | Telemetry mode: `off` (no collection), `local_only` (collect but don't report), `anonymous` (collect and report aggregate stats) |
+| `CORDUM_TELEMETRY_MODE` | `local_only` | Telemetry mode: `off` (no collection, no pings), `local_only` (collect to Redis, no ongoing reporting), `anonymous` (collect and report aggregate stats every 24h) |
 | `CORDUM_TELEMETRY_ENDPOINT` | `https://telemetry.cordum.io/v1/report` | HTTPS endpoint for anonymous telemetry reports |
 
-Telemetry is independent from licensing. It never collects PII, prompts, secrets, or job content. Operators can opt out at any time via `CORDUM_TELEMETRY_MODE=off` or `POST /api/v1/telemetry/consent`.
+**One-time anonymous pings (opt-out).** Unless `CORDUM_TELEMETRY_MODE=off`, Cordum sends exactly **two** anonymous pings over the lifetime of an install:
+
+- **Install ping** — sent once on first collector startup. Contains: `install_id` (salted SHA-256, no PII), `event=install`, `schema_version`, Cordum `version`, `tier`, `mode`, `os`, `arch`. No usage counts, feature flags, or engagement data.
+- **First-use ping** — sent once after the first job or workflow completes. Contains the install-ping fields plus `workers`, `jobs_24h`, `workflows_24h`, and `packs_installed`. No per-feature detail or engagement object.
+
+Both pings fire in **both** `local_only` (default) and `anonymous` mode; only `off` suppresses them. Each fires at most once per install (idempotent across restarts and HA replicas). Switching to `off` before a ping has fired cancels it.
+
+Ongoing 24h aggregate reports (`event=periodic`) are sent **only** in `anonymous` mode.
+
+Telemetry is independent from licensing. It never collects PII, prompts, secrets, or job content. Operators can opt out of everything (including the one-time pings) at any time via `CORDUM_TELEMETRY_MODE=off` or `POST /api/v1/telemetry/consent`.
 
 ### NATS TLS
 

@@ -70,3 +70,9 @@ dashboard/lh-*.json
 production_gate_results.json
 *.go.[0-9]*
 certs/
+
+# Internal design spec — kept local, not committed
+docs/specs/telemetry-install-firstuse-pings.md
+
+# Accidental Windows env-var dir from a mis-expanded %SystemDrive% path (not repo content)
+%SystemDrive%/
