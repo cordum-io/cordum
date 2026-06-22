@@ -249,8 +249,6 @@ export default function AuditLogPage() {
 
   const systemHidden = hideSystem === "1";
 
-  const systemHidden = hideSystem === "1";
-
   useEffect(() => {
     get<{ items?: Array<{ id: string; name: string }> }>("/agents")
       .then((res) => {
