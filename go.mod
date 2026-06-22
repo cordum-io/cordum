@@ -2,6 +2,11 @@ module github.com/cordum/cordum
 
 go 1.25.12
 
+// Pin the build toolchain to go1.26.4+, which carries the fixes for
+// GO-2026-5037/5038/5039 (crypto/x509, mime, net/textproto). Builds with an
+// older 1.26.x stdlib remain vulnerable, so make the minimum explicit.
+toolchain go1.26.4
+
 require (
 	github.com/ProtonMail/go-crypto v1.4.1
 	github.com/alicebob/miniredis/v2 v2.36.1

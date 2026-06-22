@@ -20,6 +20,22 @@ type MemoryRegistry struct {
 	readyTTL  time.Duration
 	stopCh    chan struct{}
 	closeOnce sync.Once
+	// ageObserver, when set, is invoked once per live worker on every
+	// expiry sweep with (workerID, lastSeen, now). It lets the scheduler
+	// surface a heartbeat-age gauge that actually grows as a worker goes
+	// silent — recording it only at receive time pins every worker to age≈0.
+	ageObserver func(workerID string, lastSeen, now time.Time)
+}
+
+// SetHeartbeatAgeObserver wires an optional callback invoked for each live
+// worker on every expiry sweep. Safe to call once during setup; nil-safe.
+func (r *MemoryRegistry) SetHeartbeatAgeObserver(fn func(workerID string, lastSeen, now time.Time)) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.ageObserver = fn
+	r.mu.Unlock()
 }
 
 type workerEntry struct {
@@ -288,8 +304,13 @@ func (r *MemoryRegistry) expireLoop() {
 
 func (r *MemoryRegistry) expire() {
 	now := time.Now()
+	type ageSample struct {
+		id       string
+		lastSeen time.Time
+	}
+	var samples []ageSample
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	obs := r.ageObserver
 	for id, entry := range r.workers {
 		if entry.expired(now, r.ttl) {
 			delete(r.workers, id)
@@ -298,6 +319,15 @@ func (r *MemoryRegistry) expire() {
 		if entry.readinessExpired(now, r.readyTTL) {
 			entry.clearReadiness()
 		}
+		if obs != nil {
+			samples = append(samples, ageSample{id: id, lastSeen: entry.lastSeen})
+		}
+	}
+	r.mu.Unlock()
+	// Invoke the observer outside the lock so a slow/blocking metrics sink
+	// cannot stall heartbeat processing or re-enter the registry.
+	for _, s := range samples {
+		obs(s.id, s.lastSeen, now)
 	}
 }
 

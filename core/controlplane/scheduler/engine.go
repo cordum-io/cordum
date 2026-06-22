@@ -325,6 +325,15 @@ func (e *Engine) WithTrustMetrics(metrics *WorkerTrustMetrics) *Engine {
 		return nil
 	}
 	e.trustMetrics = metrics
+	// Drive the heartbeat-age gauge from the registry's periodic expiry sweep
+	// so it reflects growing staleness, not just age≈0 at receive time.
+	if metrics != nil {
+		if r, ok := e.registry.(interface {
+			SetHeartbeatAgeObserver(func(string, time.Time, time.Time))
+		}); ok {
+			r.SetHeartbeatAgeObserver(metrics.ObserveHeartbeatAge)
+		}
+	}
 	return e
 }
 

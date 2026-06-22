@@ -486,7 +486,17 @@ func (s *server) resolveMCPIdentity(r *http.Request) *mcp.AgentIdentity {
 	}
 	ctx := r.Context()
 	if id := strings.TrimSpace(r.Header.Get(mcpAgentIDHeader)); id != "" {
-		identity, err := s.agentIdentityStore.Get(ctx, "", id)
+		// Scope the lookup to the request's tenant (already authenticated
+		// and tenant-validated by mcpAuth). Passing an empty tenant would
+		// hit the store's documented system-lookup bypass, letting one
+		// tenant assume another tenant's agent identity — and its
+		// AllowedTools / AllowedServers / RiskTier — by guessing a
+		// non-secret X-Agent-Id. Fail closed if the tenant is absent.
+		tenant := tenantFromRequest(r)
+		if tenant == "" {
+			return nil
+		}
+		identity, err := s.agentIdentityStore.Get(ctx, tenant, id)
 		if err != nil || identity == nil {
 			return nil
 		}

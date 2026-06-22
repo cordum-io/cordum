@@ -892,11 +892,20 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	// scheduler cannot provide the content, and pure metadata rules do not require
 	// content at all.
 	//
-	// Input rules can only escalate (allow→deny or allow→require_approval), never downgrade.
+	// Input rules can only escalate (→deny or →require_human), never downgrade.
+	// They therefore run on every non-terminal base decision that still lets
+	// the request proceed in some form — ALLOW, ALLOW_WITH_CONSTRAINTS, and
+	// THROTTLE. THROTTLE must be included: it is weaker than DENY, so skipping
+	// the scanners on a throttled base let injection/secret content that an
+	// input rule would escalate to DENY slip through with only rate-limiting.
+	// DENY / REQUIRE_HUMAN bases are already at-or-above any escalation target,
+	// so there is nothing for the scanners to add there.
 	ruleID := policyDecision.RuleID
 	ruleTier := policyDecision.RuleTier
 	if len(inputRules) > 0 {
-		if decision == pb.DecisionType_DECISION_TYPE_ALLOW || decision == pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS {
+		if decision == pb.DecisionType_DECISION_TYPE_ALLOW ||
+			decision == pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS ||
+			decision == pb.DecisionType_DECISION_TYPE_THROTTLE {
 			// Mirror the output-policy tracing: wrap input rule evaluation
 			// in an opt-in span so production deployments with
 			// CORDUM_OTEL_ENDPOINT set get full input-side telemetry. The
@@ -1923,7 +1932,14 @@ func loadPolicyBundle(source string) (*config.SafetyPolicy, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	if err := verifyPolicySignature(data, source); err != nil {
+	// Verify the file/URL policy with the same trust-store verifier the
+	// Redis-bundle path uses (CORDUM_POLICY_STRICT off/warn/enforce, prod
+	// defaults to enforce). The legacy single-key verifier silently accepted
+	// unsigned policy outside production and never consulted the trust store,
+	// leaving the file path weaker than the bundle path. LoadTrustStoreFromEnv
+	// folds the legacy SAFETY_POLICY_PUBLIC_KEY in, so existing deployments
+	// keep verifying.
+	if err := verifyFilePolicySignature(data, source); err != nil {
 		return nil, "", err
 	}
 	policy, err := config.ParseSafetyPolicy(data)
