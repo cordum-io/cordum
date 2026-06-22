@@ -2,9 +2,11 @@ module github.com/cordum/cordum
 
 go 1.25.12
 
-// Pin the build toolchain to go1.26.4+, which carries the fixes for
-// GO-2026-5037/5038/5039 (crypto/x509, mime, net/textproto). Builds with an
-// older 1.26.x stdlib remain vulnerable, so make the minimum explicit.
+// Request the go1.26.4 toolchain, which carries the fixes for
+// GO-2026-5037/5038/5039 (crypto/x509, mime, net/textproto). Under the default
+// GOTOOLCHAIN=auto, builds fetch/use 1.26.4. This is advisory, not enforced: a
+// builder pinned to GOTOOLCHAIN=local with an older 1.26.x ignores it, so CI
+// must also run on go1.26.4+ for the stdlib CVE fixes to actually apply.
 toolchain go1.26.4
 
 require (

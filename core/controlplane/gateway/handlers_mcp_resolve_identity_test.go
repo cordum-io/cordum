@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/store"
 )
 
@@ -98,5 +99,79 @@ func TestResolveMCPIdentity_NoTenantReturnsNil(t *testing.T) {
 
 	if got := s.resolveMCPIdentity(req); got != nil {
 		t.Fatalf("resolveMCPIdentity with no tenant = %+v, want nil (fail-closed)", got)
+	}
+}
+
+// TestResolveMCPIdentity_WorkerIDPathRejectsCrossTenant covers the SECOND
+// resolution path (no X-Agent-Id header → GetByWorkerID by authenticated
+// principal). GetByWorkerID looks the agent up with an empty tenant, so the
+// resolved identity's tenant must be checked against the request tenant —
+// a worker credential bound to another tenant's agent must not apply that
+// agent's scope.
+func TestResolveMCPIdentity_WorkerIDPathRejectsCrossTenant(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+	created, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+		ID:           "agent-wkr-a",
+		TenantID:     "tenant-a",
+		Name:         "Tenant-A Worker Agent",
+		Owner:        "alice@example.com",
+		RiskTier:     "high",
+		AllowedTools: []string{"private_tool"},
+		Status:       "active",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := s.agentIdentityStore.LinkWorker(ctx, created.ID, "worker-x"); err != nil {
+		t.Fatalf("LinkWorker: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	req.Header.Set("X-Tenant-ID", "tenant-b") // cross-tenant request
+	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, &auth.AuthContext{
+		PrincipalID: "worker-x",
+		Tenant:      "tenant-b",
+	}))
+
+	if got := s.resolveMCPIdentity(req); got != nil {
+		t.Fatalf("worker-ID path resolved a cross-tenant identity: %+v", got)
+	}
+}
+
+// TestResolveMCPIdentity_WorkerIDPathSameTenant is the positive control for
+// the worker-ID path: a same-tenant worker still resolves its identity.
+func TestResolveMCPIdentity_WorkerIDPathSameTenant(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+	created, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+		ID:           "agent-wkr-ok",
+		TenantID:     "tenant-a",
+		Name:         "Tenant-A Worker Agent",
+		Owner:        "alice@example.com",
+		RiskTier:     "low",
+		AllowedTools: []string{"safe_tool"},
+		Status:       "active",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := s.agentIdentityStore.LinkWorker(ctx, created.ID, "worker-y"); err != nil {
+		t.Fatalf("LinkWorker: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	req.Header.Set("X-Tenant-ID", "tenant-a")
+	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, &auth.AuthContext{
+		PrincipalID: "worker-y",
+		Tenant:      "tenant-a",
+	}))
+
+	got := s.resolveMCPIdentity(req)
+	if got == nil {
+		t.Fatal("same-tenant worker-ID path = nil, want identity")
+	}
+	if len(got.AllowedTools) != 1 || got.AllowedTools[0] != "safe_tool" {
+		t.Fatalf("AllowedTools = %v, want [safe_tool]", got.AllowedTools)
 	}
 }
