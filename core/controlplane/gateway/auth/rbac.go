@@ -75,6 +75,7 @@ const (
 	PermPolicyWrite             = "policy.write"
 	PermPoolsWrite              = "pools.write"
 	PermRuntimeIngest           = "edge.runtime.ingest"
+	PermLLMIngest               = "edge.llm.ingest"
 	PermTelemetryRead           = "telemetry.read"
 	PermTelemetryWrite          = "telemetry.write"
 	PermTelemetryExport         = "telemetry.export"
@@ -122,6 +123,7 @@ var AllPermissions = []string{
 	PermPolicyRead, PermPolicyWrite,
 	PermPoolsWrite,
 	PermRuntimeIngest,
+	PermLLMIngest,
 	PermTelemetryRead, PermTelemetryWrite, PermTelemetryExport,
 	PermTopicsRead, PermTopicsWrite,
 	PermWorkerCredentialsRead, PermWorkerCredentialsWrite,
@@ -258,6 +260,9 @@ var basicRolePermissions = map[string][]string{
 	},
 	"runtime_collector": {
 		PermRuntimeIngest,
+	},
+	"llm_proxy": {
+		PermLLMIngest,
 	},
 }
 

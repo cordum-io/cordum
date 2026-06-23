@@ -1591,6 +1591,72 @@ paths:
           $ref: '#/components/responses/EdgeServiceUnavailable'
         '500':
           $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/llm/events:
+    post:
+      operationId: ingestEdgeLLMEvents
+      summary: Ingest intercepted LLM chat turns from a trusted proxy
+      description: >-
+        Disabled by default. When `CORDUM_EDGE_LLM_INGEST_ENABLED` is unset (or
+        non-truthy) the route returns 503 `service_unavailable` and persists
+        nothing. When enabled, an authenticated LLM proxy holding
+        `edge.llm.ingest` submits a bounded batch of intercepted model
+        interactions (prompt/response/cost). The gateway redacts prompt and
+        response content via the Edge redactor, classifies and records each turn
+        as an `AgentActionEvent` with `layer=llm` and `decision=RECORDED`, and
+        returns a per-event advisory decision (`record` | `redact`) plus the
+        redacted content and detected secret finding types. The ALLOW/DENY
+        policy decision is NOT made here — a proxy that must block a prompt pairs
+        this call with `POST /api/v1/edge/evaluate` (layer-agnostic, already
+        classifies `layer=llm`). The `source.source_id` must match the
+        authenticated proxy principal and the referenced session/execution must
+        exist in the tenant under the `llm-proxy` execution adapter. An optional
+        bounded `nonce` is deduplicated against a Redis replay window scoped to
+        `(tenant, llm-proxy)`. Raw provider keys, headers, cookies, and
+        authorization values are rejected at the strict-schema decode boundary.
+        All-or-nothing batch acceptance. See `docs/edge/llm-proxy-governance.md`.
+      tags:
+      - Edge
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EdgeLLMIngestRequest'
+      responses:
+        '200':
+          description: Duplicate nonce detected; replay suppressed idempotently
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeLLMIngestResponse'
+        '201':
+          description: LLM events redacted and appended
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeLLMIngestResponse'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '404':
+          $ref: '#/components/responses/EdgeNotFound'
+        '413':
+          $ref: '#/components/responses/EdgePayloadTooLarge'
+        '429':
+          description: Replay window cardinality exceeded (`replay_window_full`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeError'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
   /api/v1/edge/sessions/{session_id}/events:
     get:
       operationId: listEdgeSessionEvents
@@ -10471,6 +10537,165 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/EdgeRuntimeIngestDropReport'
+        replayed:
+          type: boolean
+          default: false
+          description: True when a duplicate nonce was suppressed and no events were appended.
+    EdgeLLMIngestSource:
+      type: object
+      required: [source_id]
+      additionalProperties: false
+      properties:
+        source_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Stable identifier of the trusted LLM proxy; must match the authenticated proxy principal.
+    EdgeLLMMessage:
+      type: object
+      additionalProperties: false
+      description: One role-tagged chat message; content is redacted before persistence.
+      properties:
+        role:
+          type: string
+          maxLength: 256
+        content:
+          type: string
+    EdgeLLMTokens:
+      type: object
+      additionalProperties: false
+      description: Optional token accounting for usage/cost evidence.
+      properties:
+        input_tokens:
+          type: integer
+          minimum: 0
+        output_tokens:
+          type: integer
+          minimum: 0
+        total_tokens:
+          type: integer
+          minimum: 0
+    EdgeLLMEventEnvelope:
+      type: object
+      required: [tenant_id, session_id, execution_id, source_event_id, observed_at, kind]
+      additionalProperties: false
+      description: One intercepted LLM interaction. Smuggled keys (authorization, headers, cookies, api_key, provider keys) are rejected at the strict-schema decode boundary; content and messages are redacted by the gateway before persistence.
+      properties:
+        tenant_id:
+          type: string
+        session_id:
+          type: string
+        execution_id:
+          type: string
+        source_event_id:
+          type: string
+          minLength: 1
+        observed_at:
+          type: string
+          format: date-time
+        kind:
+          type: string
+          enum:
+          - llm.request.pre
+          - llm.request.post
+          - llm.stream.chunk
+          - llm.cost.recorded
+        outcome_status:
+          type: string
+          enum: ["", ok, failed, degraded]
+        agent_product:
+          type: string
+          maxLength: 256
+        provider:
+          type: string
+          maxLength: 256
+        model:
+          type: string
+          maxLength: 256
+        direction:
+          type: string
+          enum: ["", prompt, response]
+        content:
+          type: string
+          description: Prompt or completion text; redacted by the gateway before persistence.
+        messages:
+          type: array
+          maxItems: 64
+          items:
+            $ref: '#/components/schemas/EdgeLLMMessage'
+        tokens:
+          $ref: '#/components/schemas/EdgeLLMTokens'
+        cost_usd:
+          type: number
+          minimum: 0
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+          maxProperties: 16
+        artifact_ptrs:
+          type: array
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/EdgeArtifactPointer'
+    EdgeLLMIngestRequest:
+      type: object
+      required: [source, events]
+      additionalProperties: false
+      properties:
+        source:
+          $ref: '#/components/schemas/EdgeLLMIngestSource'
+        nonce:
+          type: string
+          minLength: 16
+          maxLength: 64
+          pattern: '^[A-Za-z0-9-]{16,64}$'
+          description: Optional replay-protection nonce. When present it is deduplicated against a Redis replay window scoped to `(tenant, llm-proxy)`. Set `CORDUM_EDGE_LLM_REPLAY_REQUIRED=true` to mandate it.
+        batch_id:
+          type: string
+          maxLength: 256
+          description: Operator correlation identifier only; not used for replay protection.
+        events:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items:
+            $ref: '#/components/schemas/EdgeLLMEventEnvelope'
+    EdgeLLMEventDecision:
+      type: object
+      required: [source_event_id, kind, decision, redacted]
+      additionalProperties: false
+      description: Per-event advisory outcome. `decision=redact` means a secret was detected and the proxy should forward `redacted_content` (subject to `truncated`) instead of the original. This is NOT a policy allow/deny decision.
+      properties:
+        source_event_id:
+          type: string
+        kind:
+          type: string
+        decision:
+          type: string
+          enum: [record, redact]
+        redacted:
+          type: boolean
+        truncated:
+          type: boolean
+        redacted_content:
+          type: string
+        findings:
+          type: array
+          items:
+            type: string
+          description: Detected secret finding TYPES (never values), e.g. aws_credential, bearer_token, private_key.
+    EdgeLLMIngestResponse:
+      type: object
+      required: [accepted_count]
+      properties:
+        accepted_count:
+          type: integer
+          minimum: 0
+        decisions:
+          type: array
+          items:
+            $ref: '#/components/schemas/EdgeLLMEventDecision'
         replayed:
           type: boolean
           default: false

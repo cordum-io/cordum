@@ -616,7 +616,7 @@ All endpoints require admin role. Write operations (PUT, DELETE) require the `RB
 
 <!-- BEGIN:rbac-permissions -->
 
-_Generated from `core/controlplane/gateway/auth/rbac.go` (`auth.AllPermissions`) — do not edit by hand; run `make docs-tables`. 58 permissions._
+_Generated from `core/controlplane/gateway/auth/rbac.go` (`auth.AllPermissions`) — do not edit by hand; run `make docs-tables`. 59 permissions._
 
 | Permission | Resource | Action |
 |------------|----------|--------|
@@ -635,6 +635,7 @@ _Generated from `core/controlplane/gateway/auth/rbac.go` (`auth.AllPermissions`)
 | `delegation.read` | `delegation` | `read` |
 | `dlq.read` | `dlq` | `read` |
 | `dlq.write` | `dlq` | `write` |
+| `edge.llm.ingest` | `edge.llm` | `ingest` |
 | `edge.runtime.ingest` | `edge.runtime` | `ingest` |
 | `evals.datasets.delete` | `evals.datasets` | `delete` |
 | `evals.datasets.read` | `evals.datasets` | `read` |
@@ -3036,7 +3037,7 @@ The following routes are registered in the gateway (`registerRoute` calls). Gene
 
 <!-- BEGIN:rest-routes -->
 
-_Generated from `core/controlplane/gateway/gateway.go`, `core/controlplane/gateway/handlers_mcp.go` (registration order) — do not edit by hand; run `make docs-tables`. 226 routes._
+_Generated from `core/controlplane/gateway/gateway.go`, `core/controlplane/gateway/handlers_mcp.go` (registration order) — do not edit by hand; run `make docs-tables`. 227 routes._
 
 | Method | Path |
 |--------|------|
@@ -3157,6 +3158,7 @@ _Generated from `core/controlplane/gateway/gateway.go`, `core/controlplane/gatew
 | GET | `/api/v1/edge/executions/{execution_id}/events` |
 | POST | `/api/v1/edge/sessions/{session_id}/export` |
 | POST | `/api/v1/edge/runtime/events` |
+| POST | `/api/v1/edge/llm/events` |
 | GET | `/api/v1/memory` |
 | POST | `/api/v1/artifacts` |
 | GET | `/api/v1/artifacts/{ptr}` |
