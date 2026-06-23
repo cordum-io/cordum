@@ -24,6 +24,11 @@ type UpstreamServerRef struct {
 	Endpoint      string
 	Command       []string
 	AuthSecretRef string
+	// Tenant and AgentID are used by clients (e.g. VS Code Copilot) whose
+	// MCP config carries the Cordum auth headers (X-Tenant-ID / X-Agent-Id)
+	// directly. Other adapters ignore them.
+	Tenant  string
+	AgentID string
 }
 
 // AttachAdapter is the per-client contract that bridges the common
@@ -56,6 +61,11 @@ func DefaultConfigPath(client, homeDir string) string {
 		return filepath.Join(homeDir, ".codex", "config.toml")
 	case "cursor":
 		return filepath.Join(homeDir, ".cursor", "mcp.json")
+	case "vscode":
+		// VS Code Copilot agent mode reads a user-level mcp.json. The
+		// workspace form (.vscode/mcp.json) is also supported; operators can
+		// override with --config-path for per-workspace setup.
+		return filepath.Join(homeDir, ".vscode", "mcp.json")
 	default:
 		return ""
 	}
@@ -274,6 +284,8 @@ func AttachSchemaProvenance(client string) (url, date string) {
 		return codexSchemaURL, codexSchemaDate
 	case "cursor":
 		return cursorSchemaURL, cursorSchemaDate
+	case "vscode":
+		return vscodeSchemaURL, vscodeSchemaDate
 	}
 	return "", ""
 }

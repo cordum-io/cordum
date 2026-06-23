@@ -35,8 +35,11 @@ type CopilotSession struct {
 }
 
 // Store resolves Copilot session transcript details for the requesting user.
+// tenant is the caller's resolved tenant and is the authorization boundary:
+// implementations must scope reads to it and never return another tenant's
+// session.
 type Store interface {
-	GetSession(ctx context.Context, sessionID, userID string) (*CopilotSession, error)
+	GetSession(ctx context.Context, tenant, sessionID, userID string) (*CopilotSession, error)
 }
 
 // NotImplementedStore is the default gateway dependency until the Context
@@ -44,6 +47,6 @@ type Store interface {
 // can show a graceful backend-wiring-pending state.
 type NotImplementedStore struct{}
 
-func (NotImplementedStore) GetSession(context.Context, string, string) (*CopilotSession, error) {
+func (NotImplementedStore) GetSession(context.Context, string, string, string) (*CopilotSession, error) {
 	return nil, ErrNotImplemented
 }

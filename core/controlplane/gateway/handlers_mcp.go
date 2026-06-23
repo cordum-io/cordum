@@ -31,6 +31,12 @@ import (
 // populate MCPCallMetadata so the approval gate can log who is asking.
 const mcpAgentIDHeader = "X-Agent-Id"
 
+// mcpCopilotSessionIDHeader optionally groups a client's tool calls into a
+// Copilot audit session. Clients (e.g. VS Code Copilot agent mode) set it so
+// the invocation auditor can stamp the session id and the submit handler can
+// label spawned jobs with it. Falls back to the MCP transport session id.
+const mcpCopilotSessionIDHeader = "X-Copilot-Session-Id"
+
 type mcpGatewayConfig struct {
 	Enabled   bool
 	Transport string
@@ -222,7 +228,15 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 		// the auditor ran with built-in heuristics only — QA reopen
 		// fix for the DoD "Arguments redacted per policy rules".
 		redactor := s.buildMCPArgumentRedactor(context.Background())
-		invocationAuditor = mcp.NewToolInvocationAuditor(s.auditExporter, redactor)
+		// Tap the invocation audit stream into Copilot session transcripts when
+		// the Redis store is wired. The decorator only acts on inbound
+		// invocation events that carry a copilot_session_id; it always forwards
+		// to the inner sender so the audit Merkle chain is unaffected.
+		auditSender := s.auditExporter
+		if s.copilotSessionStore != nil {
+			auditSender = newCopilotIngestSender(s.auditExporter, s.copilotSessionStore)
+		}
+		invocationAuditor = mcp.NewToolInvocationAuditor(auditSender, redactor)
 		s.setMCPInvocationAuditor(invocationAuditor)
 		go s.runMCPRedactionReload(invocationAuditor)
 		slog.Info("mcp tool-invocation auditor enabled",
@@ -424,6 +438,16 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		// MCPCallMetadata so core/mcp stays free of gateway-specific
 		// identity types).
 		mcpCtx = mcp.WithTenant(mcpCtx, tenantID)
+		// Thread an optional Copilot session id (explicit header → transport
+		// session id) so tool invocations can be grouped into an audit session
+		// and spawned jobs labelled with it.
+		copilotSessionID := strings.TrimSpace(r.Header.Get(mcpCopilotSessionIDHeader))
+		if copilotSessionID == "" {
+			copilotSessionID = strings.TrimSpace(r.Header.Get("X-MCP-Session-ID"))
+		}
+		if copilotSessionID != "" {
+			mcpCtx = mcp.WithCopilotSessionID(mcpCtx, copilotSessionID)
+		}
 		r = r.WithContext(mcpCtx)
 		// Attach *mcp.AgentIdentity so ToolRegistry.ListTools and the
 		// scope filter can evaluate the caller's AllowedTools /

@@ -20,25 +20,27 @@ const defaultMCPGatewayEndpoint = "https://localhost:8081/api/v1/mcp/gateway/ups
 // gateway flags.
 func runMCPAttachCmd(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		_, _ = fmt.Fprintln(stderr, "usage: cordumctl mcp <preview|attach|rollback> --client <claude_code|codex|cursor>")
+		_, _ = fmt.Fprintln(stderr, "usage: cordumctl mcp <preview|attach|rollback> --client <claude_code|codex|cursor|vscode>")
 		return 2
 	}
 	verb := args[0]
 	rest := args[1:]
 	fs := flag.NewFlagSet("mcp "+verb, flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	client := fs.String("client", "", "client to target: claude_code | codex | cursor")
+	client := fs.String("client", "", "client to target: claude_code | codex | cursor | vscode")
 	configPath := fs.String("config-path", "", "override the default per-client config path (test/CI use)")
 	apply := fs.Bool("apply", false, "for `attach` only: write changes (without this flag, attach refuses to write)")
 	gatewayName := fs.String("gateway-name", "cordum-gateway", "MCP server entry name to add/update")
 	gatewayTransport := fs.String("gateway-transport", "http", "transport: http | sse | stdio")
 	gatewayEndpoint := fs.String("gateway-endpoint", defaultMCPGatewayEndpoint, "HTTP/SSE endpoint URL")
 	gatewaySecretRef := fs.String("gateway-secret-ref", "", "optional secret:// reference for the gateway auth token")
+	gatewayTenant := fs.String("gateway-tenant", "", "tenant id for header-based clients (vscode): sets X-Tenant-ID")
+	gatewayAgentID := fs.String("gateway-agent-id", "", "agent identity id for header-based clients (vscode): sets X-Agent-Id")
 	if err := fs.Parse(rest); err != nil {
 		return 2
 	}
 	if *client == "" {
-		_, _ = fmt.Fprintln(stderr, "missing --client (claude_code | codex | cursor)")
+		_, _ = fmt.Fprintln(stderr, "missing --client (claude_code | codex | cursor | vscode)")
 		return 2
 	}
 	adapter, err := buildAttachAdapter(*client, *configPath)
@@ -51,6 +53,8 @@ func runMCPAttachCmd(args []string, stdout, stderr io.Writer) int {
 		Transport:     *gatewayTransport,
 		Endpoint:      *gatewayEndpoint,
 		AuthSecretRef: *gatewaySecretRef,
+		Tenant:        *gatewayTenant,
+		AgentID:       *gatewayAgentID,
 	}
 	switch verb {
 	case "preview":
@@ -84,7 +88,7 @@ func buildAttachAdapter(client, configPath string) (AttachAdapter, error) {
 		}
 		configPath = DefaultConfigPath(client, home)
 		if configPath == "" {
-			return nil, fmt.Errorf("unknown client %q (want claude_code | codex | cursor)", client)
+			return nil, fmt.Errorf("unknown client %q (want claude_code | codex | cursor | vscode)", client)
 		}
 	}
 	switch client {
@@ -94,7 +98,9 @@ func buildAttachAdapter(client, configPath string) (AttachAdapter, error) {
 		return newCodexAdapter(configPath), nil
 	case "cursor":
 		return newCursorAdapter(configPath), nil
+	case "vscode":
+		return newVSCodeAdapter(configPath), nil
 	default:
-		return nil, fmt.Errorf("unknown client %q (want claude_code | codex | cursor)", client)
+		return nil, fmt.Errorf("unknown client %q (want claude_code | codex | cursor | vscode)", client)
 	}
 }
