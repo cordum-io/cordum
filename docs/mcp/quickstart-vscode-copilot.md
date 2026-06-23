@@ -55,12 +55,14 @@ auth `headers`). Preview first, then apply:
 
 ```bash
 cordumctl mcp preview --client vscode \
-  --gateway-endpoint https://<gateway>:8081/api/v1/mcp \
+  --gateway-transport sse \
+  --gateway-endpoint https://<gateway>:8081/mcp/sse \
   --gateway-tenant <tenant> \
   --gateway-agent-id <copilot-agent-id>
 
 cordumctl mcp attach --apply --client vscode \
-  --gateway-endpoint https://<gateway>:8081/api/v1/mcp \
+  --gateway-transport sse \
+  --gateway-endpoint https://<gateway>:8081/mcp/sse \
   --gateway-tenant <tenant> \
   --gateway-agent-id <copilot-agent-id> \
   --config-path .vscode/mcp.json   # omit for the user-level ~/.vscode/mcp.json
@@ -76,8 +78,8 @@ This produces:
   ],
   "servers": {
     "cordum": {
-      "type": "http",
-      "url": "https://<gateway>:8081/api/v1/mcp",
+      "type": "sse",
+      "url": "https://<gateway>:8081/mcp/sse",
       "headers": {
         "X-API-Key": "${input:cordum-api-key}",
         "X-Tenant-ID": "<tenant>",
