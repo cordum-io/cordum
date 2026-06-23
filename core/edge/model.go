@@ -69,6 +69,7 @@ type AgentAdapter string
 
 const (
 	AdapterClaudeCodeHook AgentAdapter = "claude-code-hook"
+	AdapterCopilotHook    AgentAdapter = "copilot-hook"
 	AdapterMCPGateway     AgentAdapter = "mcp-gateway"
 	AdapterLLMProxy       AgentAdapter = "llm-proxy"
 	AdapterRuntimeSidecar AgentAdapter = "runtime-sidecar"
