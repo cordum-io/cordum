@@ -18,7 +18,7 @@ const (
 
 	// vscodeAPIKeyInputID is the `inputs` entry id the headers reference. VS
 	// Code prompts for it once and stores it in the OS secret store.
-	vscodeAPIKeyInputID = "cordum-api-key"
+	vscodeAPIKeyInputID = "cordum-api-key" // #nosec G101 -- VS Code inputs[] id (a label), not a credential
 )
 
 // vscodeAdapter implements AttachAdapter for VS Code Copilot's mcp.json. It

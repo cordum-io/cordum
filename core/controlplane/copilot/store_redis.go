@@ -187,9 +187,10 @@ func (s *RedisStore) AppendMessage(ctx context.Context, tenant, userID, sessionI
 // idempotent: the same tool invocation produces the same message id.
 func messageID(tenant, sessionID string, msg CopilotMessage) string {
 	h := sha256.New()
-	fmt.Fprintf(h, "%s|%s|%s|%d|%s", tenant, sessionID, msg.Role, msg.Timestamp.UnixNano(), msg.Content)
+	// hash.Hash.Write never returns an error; ignore explicitly for errcheck.
+	_, _ = fmt.Fprintf(h, "%s|%s|%s|%d|%s", tenant, sessionID, msg.Role, msg.Timestamp.UnixNano(), msg.Content)
 	for _, j := range msg.JobIDs {
-		fmt.Fprintf(h, "|%s", j)
+		_, _ = fmt.Fprintf(h, "|%s", j)
 	}
 	return "msg-" + hex.EncodeToString(h.Sum(nil))[:24]
 }
