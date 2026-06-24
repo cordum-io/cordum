@@ -17,6 +17,9 @@ export CORDUM_API_KEY="${CORDUM_API_KEY:-demo-llm-proxy-key}"
 export CORDUM_PROXY_PRINCIPAL="${CORDUM_PROXY_PRINCIPAL:-llm-proxy-1}"
 export CORDUM_CA_CERT="${CORDUM_CA_CERT:-$REPO_ROOT/certs/ca/ca.crt}"
 export UPSTREAM="${UPSTREAM:-mock}"
+# The local dev stack's gateway cert has no "localhost" SAN, so skip TLS verify
+# toward it for the demo. Unset for a stack with a proper cert.
+export CORDUM_TLS_INSECURE="${CORDUM_TLS_INSECURE:-true}"
 PROXY_PORT="${PROXY_PORT:-8088}"
 export CORDUM_PROXY_URL="http://localhost:${PROXY_PORT}/v1"
 

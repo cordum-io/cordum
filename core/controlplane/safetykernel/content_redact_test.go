@@ -53,6 +53,20 @@ func TestRedactContent_InPlacePreservesProse(t *testing.T) {
 	}
 }
 
+func TestScanContent_LLMProviderKey(t *testing.T) {
+	// Unquoted OpenAI/Anthropic-style key must be caught (LLM-proxy critical).
+	for _, c := range []string{
+		"OPENAI_API_KEY=sk-demo1234567890ABCDEFitsnotreal",
+		"use sk-ant-api03-abcdef0123456789ABCDEF please",
+		"stripe sk_live_abcdef0123456789ABCDEF",
+	} {
+		fs := ScanContent([]byte(c), ContentScanOptions{IncludeSecrets: true})
+		if ckTypes(fs)["secret_leak"] == 0 {
+			t.Fatalf("expected secret_leak for %q: %+v", c, fs)
+		}
+	}
+}
+
 func TestScanContent_Keyword(t *testing.T) {
 	fs := ScanContent([]byte("We discussed Project Titan today."), ContentScanOptions{Keywords: []string{"Project Titan"}})
 	if ckTypes(fs)["keyword_match"] == 0 {

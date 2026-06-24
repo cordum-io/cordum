@@ -79,6 +79,19 @@ The single integration change for any LangChain app:
 ChatOpenAI(model="gpt-4o-mini", base_url="http://localhost:8088/v1", api_key=...)
 ```
 
+## Verified end-to-end (Docker)
+
+Run against the local dev stack, one meeting transcript through the proxy:
+- **Egress:** none of the raw values (names, emails, phone, card, comp, codename, `sk-` key) reached the model.
+- **Audit:** the turn is recorded as `layer=llm`, `decision=RECORDED`, with `llm.finding.{pii,secret_leak,keyword_match,custom}` labels and **only redacted** input stored — e.g. `OPENAI_API_KEY=<redacted:secret_leak>`.
+
+## Gotchas (from the E2E run)
+
+- **Two keys.** Creating the edge session/execution needs an `admin`/`user` role; ingest needs the `llm_proxy` role. The proxy uses `CORDUM_BOOTSTRAP_API_KEY` for the former and `CORDUM_API_KEY` for the latter.
+- **RBAC stacks:** if RBAC is entitled, create the role once — `PUT /api/v1/auth/roles/llm_proxy {"permissions":["edge.llm.ingest"]}` (`setup.sh` does this).
+- **Container env:** the gateway must receive `CORDUM_EDGE_LLM_*` + `CORDUM_API_KEYS` in its *container* environment (compose `environment:`/override), not just a root `.env` the compose file doesn't map.
+- **Local TLS:** the dev gateway cert has no `localhost` SAN → set `CORDUM_TLS_INSECURE=true` for the proxy (run_demo.sh does this).
+
 ## Configuration
 
 Gateway-side (`config/gateway.demo.env`, read by the gateway via

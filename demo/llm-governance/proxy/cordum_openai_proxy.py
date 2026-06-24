@@ -47,6 +47,9 @@ from fastapi.responses import JSONResponse
 
 GATEWAY = os.getenv("CORDUM_GATEWAY", "https://localhost:8081").rstrip("/")
 API_KEY = os.getenv("CORDUM_API_KEY", "")
+# Session/execution creation requires an admin/user role; LLM ingest requires the
+# least-privilege llm_proxy role. They are distinct keys (defaults to API_KEY).
+BOOTSTRAP_KEY = os.getenv("CORDUM_BOOTSTRAP_API_KEY", API_KEY)
 TENANT = os.getenv("CORDUM_TENANT", "default")
 PRINCIPAL = os.getenv("CORDUM_PROXY_PRINCIPAL", "llm-proxy-1")
 CA_CERT = os.getenv("CORDUM_CA_CERT", "./certs/ca/ca.crt")
@@ -54,17 +57,19 @@ UPSTREAM = os.getenv("UPSTREAM", "mock").lower()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE = os.getenv("OPENAI_BASE", "https://api.openai.com/v1").rstrip("/")
 
-# verify: path to CA bundle when present, else skip (demo-only).
-_VERIFY: Any = CA_CERT if os.path.exists(CA_CERT) else False
+# TLS verification toward the gateway. Set CORDUM_TLS_INSECURE=true for a local
+# self-signed dev stack whose server cert has no "localhost" SAN (demo only).
+_INSECURE = os.getenv("CORDUM_TLS_INSECURE", "").lower() in ("1", "true", "yes")
+_VERIFY: Any = False if _INSECURE else (CA_CERT if os.path.exists(CA_CERT) else False)
 
 app = FastAPI(title="Cordum OpenAI governance proxy")
 
 _state: dict[str, str] = {}  # session_id / execution_id, created at startup
 
 
-def _gw_headers() -> dict[str, str]:
+def _gw_headers(key: str) -> dict[str, str]:
     return {
-        "X-API-Key": API_KEY,
+        "X-API-Key": key,
         "X-Tenant-ID": TENANT,
         "Content-Type": "application/json",
     }
@@ -79,7 +84,7 @@ def _bootstrap_session() -> None:
     with httpx.Client(verify=_VERIFY, timeout=10.0) as c:
         sess = c.post(
             f"{GATEWAY}/api/v1/edge/sessions",
-            headers=_gw_headers(),
+            headers=_gw_headers(BOOTSTRAP_KEY),
             json={
                 "agent_product": "meeting-assistant",
                 "agent_version": "demo",
@@ -92,7 +97,7 @@ def _bootstrap_session() -> None:
         session_id = sess.json()["session_id"]
         exe = c.post(
             f"{GATEWAY}/api/v1/edge/executions",
-            headers=_gw_headers(),
+            headers=_gw_headers(BOOTSTRAP_KEY),
             json={
                 "session_id": session_id,
                 "adapter": "llm-proxy",
@@ -120,7 +125,7 @@ def _ingest(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """POST a batch of LLM events to the gateway; return per-event decisions."""
     body = {"source": {"source_id": PRINCIPAL}, "events": events}
     with httpx.Client(verify=_VERIFY, timeout=15.0) as c:
-        resp = c.post(f"{GATEWAY}/api/v1/edge/llm/events", headers=_gw_headers(), json=body)
+        resp = c.post(f"{GATEWAY}/api/v1/edge/llm/events", headers=_gw_headers(API_KEY), json=body)
         resp.raise_for_status()
         return resp.json().get("decisions", [])
 
@@ -206,7 +211,7 @@ async def chat_completions(request: Request) -> JSONResponse:
     print(f"\n[cordum-proxy] turn={turn} model={model}")
     print(f"  prompt findings: {in_findings or 'none'}")
     if in_findings:
-        print("  → OpenAI will receive the REDACTED prompt (sensitive spans masked)")
+        print("  -> OpenAI will receive the REDACTED prompt (sensitive spans masked)")
 
     if UPSTREAM == "openai" and OPENAI_API_KEY:
         completion = _real_completion(body, redacted_messages)

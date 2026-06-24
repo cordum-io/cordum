@@ -222,6 +222,24 @@ func newSecretScanner() *regexScanner {
 			Expression: regexp.MustCompile(`gh[pousr]_[A-Za-z0-9]{20,}`),
 			Confidence: 0.98,
 		},
+		{
+			// LLM provider API keys (OpenAI sk-/sk-proj-, Anthropic sk-ant-).
+			// Critical for an LLM-proxy: an unquoted `sk-...` in a prompt would
+			// otherwise slip past the quoted-credential-assignment rule above.
+			Label:      "llm provider api key",
+			Severity:   "critical",
+			Pattern:    `\bsk-[A-Za-z0-9_-]{16,}`,
+			Expression: regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{16,}`),
+			Confidence: 0.95,
+		},
+		{
+			// Stripe-style live/test secret keys.
+			Label:      "stripe secret key",
+			Severity:   "critical",
+			Pattern:    `\bsk_(?:live|test)_[A-Za-z0-9]{16,}`,
+			Expression: regexp.MustCompile(`\bsk_(?:live|test)_[A-Za-z0-9]{16,}`),
+			Confidence: 0.97,
+		},
 	})
 }
 
