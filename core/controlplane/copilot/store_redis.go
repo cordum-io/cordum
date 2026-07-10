@@ -32,11 +32,18 @@ const (
 	envMaxMessages     = "COPILOT_SESSION_MAX_MESSAGES"
 )
 
-// storedSession wraps the wire CopilotSession with its owning tenant. The wire
-// shape (CopilotSession) is left untouched so the read handler and SDK models
-// need no changes.
+// storedSession wraps the wire CopilotSession with its owning tenant and
+// creating principal. The wire shape (CopilotSession) is left untouched so
+// the read handler and SDK models need no changes.
 type storedSession struct {
-	Tenant  string         `json:"tenant"`
+	Tenant string `json:"tenant"`
+	// Owner is the principal (agent/user identity) that made the first
+	// AppendMessage call for this session id. It is recorded once, on
+	// creation, and enforced on every subsequent append — see the
+	// ownership check in AppendMessage. Sessions written before this field
+	// existed decode with Owner == "" and are adopted by whichever
+	// principal appends to them next.
+	Owner   string         `json:"owner,omitempty"`
 	Session CopilotSession `json:"session"`
 }
 
@@ -99,12 +106,20 @@ func (s *RedisStore) GetSession(ctx context.Context, tenant, sessionID, userID s
 // AppendMessage records one transcript entry, creating the session on first
 // write. It is idempotent on msg.ID (so audit-stream replays do not duplicate
 // entries) and atomic under concurrent appends via WATCH/MULTI.
+//
+// Ownership: the principal (userID) that makes the first AppendMessage call
+// for a session id is recorded as its owner. Every later append for that
+// session id must come from the same principal, or the call fails with
+// ErrOwnerMismatch — this is what stops one agent/user from guessing another
+// principal's session id and injecting fabricated transcript entries (see
+// gateway.copilotIngestSender, the only production caller).
 func (s *RedisStore) AppendMessage(ctx context.Context, tenant, userID, sessionID string, msg CopilotMessage) error {
 	if s == nil || s.client == nil {
 		return ErrNotImplemented
 	}
 	tenant = strings.TrimSpace(tenant)
 	sessionID = strings.TrimSpace(sessionID)
+	userID = strings.TrimSpace(userID)
 	if tenant == "" || sessionID == "" {
 		return fmt.Errorf("copilot store: tenant and session id required")
 	}
@@ -117,16 +132,25 @@ func (s *RedisStore) AppendMessage(ctx context.Context, tenant, userID, sessionI
 	key := sessionKey(tenant, sessionID)
 
 	txf := func(tx *redis.Tx) error {
-		stored := storedSession{Tenant: tenant, Session: CopilotSession{ID: sessionID, UserID: userID, CreatedAt: msg.Timestamp}}
+		stored := storedSession{Tenant: tenant, Owner: userID, Session: CopilotSession{ID: sessionID, UserID: userID, CreatedAt: msg.Timestamp}}
 		data, err := tx.Get(ctx, key).Bytes()
 		switch {
 		case errors.Is(err, redis.Nil):
-			// new session — use the initialized value above
+			// new session — the initialized value above already records this
+			// writer as the owner.
 		case err != nil:
 			return err
 		default:
 			if err := json.Unmarshal(data, &stored); err != nil {
 				return err
+			}
+			switch owner := strings.TrimSpace(stored.Owner); {
+			case owner == "":
+				// Session predates ownership tracking — adopt the current
+				// writer so future appends are protected too.
+				stored.Owner = userID
+			case owner != userID:
+				return ErrOwnerMismatch
 			}
 		}
 		// Idempotency: a replayed audit event must not duplicate a message.

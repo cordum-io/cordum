@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -48,6 +49,18 @@ func (c *copilotIngestSender) ingest(event audit.SIEMEvent) {
 	if sessionID == "" {
 		return
 	}
+	// The session id is client-supplied (X-Copilot-Session-Id, see
+	// handlers_mcp.go). Enforce the same format the read path
+	// (handleGetCopilotSession) requires so this write path can't be used to
+	// smuggle oversized or otherwise malformed keys into the store — and so
+	// a session written here is always addressable by the read path's regex.
+	if !copilotSessionIDPattern.MatchString(sessionID) {
+		slog.Warn("copilot ingest: rejected malformed session id",
+			"tenant", strings.TrimSpace(event.TenantID),
+			"session_id_preview", truncateContent(sessionID, 32),
+			"session_id_len", len(sessionID))
+		return
+	}
 	tenant := strings.TrimSpace(event.TenantID)
 	if tenant == "" {
 		return
@@ -59,9 +72,19 @@ func (c *copilotIngestSender) ingest(event audit.SIEMEvent) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	// userID = the calling agent identity; the read path is operator-readable
-	// within the tenant, so this only seeds the per-user index.
-	if err := c.store.AppendMessage(ctx, tenant, strings.TrimSpace(event.AgentID), sessionID, msg); err != nil {
+	// agentID doubles as the session owner: the store binds the first
+	// AppendMessage for a session id to this principal and rejects later
+	// appends from a different one (copilot.ErrOwnerMismatch). That is what
+	// stops a different agent from setting X-Copilot-Session-Id to another
+	// user's (guessed) session id and injecting fabricated transcript
+	// entries into it.
+	agentID := strings.TrimSpace(event.AgentID)
+	if err := c.store.AppendMessage(ctx, tenant, agentID, sessionID, msg); err != nil {
+		if errors.Is(err, copilot.ErrOwnerMismatch) {
+			slog.Warn("copilot ingest: rejected cross-principal append",
+				"session_id", sessionID, "tenant", tenant, "agent_id", copilotLogPrincipal(agentID))
+			return
+		}
 		slog.Warn("copilot ingest: append message failed",
 			"session_id", sessionID, "tenant", tenant, "error", err)
 	}

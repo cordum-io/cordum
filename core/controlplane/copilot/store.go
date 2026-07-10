@@ -10,6 +10,13 @@ var (
 	ErrNotFound       = errors.New("copilot session not found")
 	ErrNotImplemented = errors.New("copilot session store not implemented")
 	ErrCrossTenant    = errors.New("copilot session tenant access denied")
+	// ErrOwnerMismatch is returned by AppendMessage when the calling
+	// principal differs from the principal that originally created the
+	// session. Without this, any authenticated principal within a tenant
+	// could set an arbitrary/guessed session id and have AppendMessage
+	// insert fabricated transcript entries into another principal's
+	// session.
+	ErrOwnerMismatch = errors.New("copilot session owned by a different principal")
 )
 
 // CopilotMessage is one persisted chat transcript entry in a Copilot session.
