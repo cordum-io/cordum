@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go-version: ['1.25']
+        go-version: ['1.26.3']
 
     steps:
     - uses: actions/checkout@v7
@@ -88,7 +88,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v6
       with:
-        go-version: '1.25'
+        go-version: '1.26.3'
         cache: false
 
     - name: Drop local replace directives (CI uses published modules)
@@ -110,7 +110,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v6
       with:
-        go-version: '1.25'
+        go-version: '1.26.3'
         cache: false
 
     - name: Drop local replace directives (CI uses published modules)
@@ -349,7 +349,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v6
       with:
-        go-version: '1.25'
+        go-version: '1.26.3'
         cache: false
 
     - name: Drop local replace directives (CI uses published modules)
@@ -434,7 +434,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v6
       with:
-        go-version: '1.25'
+        go-version: '1.26.3'
         cache: false
 
     - name: Drop local replace directives (CI uses published modules)
@@ -469,7 +469,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v6
       with:
-        go-version: '1.25'
+        go-version: '1.26.3'
 
     - name: Generate TLS certificates
       run: |
@@ -519,7 +519,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v6
       with:
-        go-version: '1.25'
+        go-version: '1.26.3'
         cache: false
 
     - name: Install oasdiff

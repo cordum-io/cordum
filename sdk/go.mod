@@ -1,6 +1,6 @@
 module github.com/cordum/cordum/sdk
 
-go 1.25.10
+go 1.26.3
 
 require (
 	github.com/alicebob/miniredis/v2 v2.36.1
