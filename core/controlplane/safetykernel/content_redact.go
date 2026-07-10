@@ -118,14 +118,26 @@ func RedactContent(content []byte, opts ContentScanOptions) (string, []ContentFi
 	var b strings.Builder
 	cursor := 0
 	for _, f := range findings {
-		if f.Offset < cursor || f.Offset < 0 || f.Offset+f.Length > len(text) {
-			continue // overlaps a prior span, or out of range — skip
+		if f.Offset < 0 || f.Offset+f.Length > len(text) {
+			continue // out of range — skip
+		}
+		end := f.Offset + f.Length
+		if f.Offset < cursor {
+			// Overlaps a span already redacted. Even though this finding's
+			// own marker is dropped (the earlier finding's marker wins), its
+			// span must still be folded into the redacted region — otherwise
+			// any tail extending past the earlier finding's end would be
+			// copied out verbatim as raw, unredacted text below.
+			if end > cursor {
+				cursor = end
+			}
+			continue
 		}
 		b.WriteString(text[cursor:f.Offset])
 		b.WriteString("<redacted:")
 		b.WriteString(f.Type)
 		b.WriteString(">")
-		cursor = f.Offset + f.Length
+		cursor = end
 	}
 	b.WriteString(text[cursor:])
 	return b.String(), findings

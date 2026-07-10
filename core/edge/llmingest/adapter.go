@@ -579,14 +579,39 @@ func buildLLMInput(env LLMEventEnvelope) map[string]any {
 	return input
 }
 
-// redactedContentString returns the redacted "content" value as a string for
-// the proxy to forward, when present. Structured "messages" are not flattened
-// here — the proxy reconstructs those from its own copy guided by Findings.
+// redactedContentString returns the redacted content as a string for the
+// proxy to forward, when present. Single-turn envelopes use the "content"
+// key directly; multi-message envelopes (built via env.Messages) carry their
+// redacted text under "messages" instead, so those are flattened into a
+// "role: content" transcript — otherwise RedactedContent would stay empty for
+// every chat-style envelope even when Decision == DecisionRedact, and a
+// caller following the DecisionRedact contract could fall back to forwarding
+// the unredacted original.
 func redactedContentString(inputRedacted map[string]any) string {
 	if v, ok := inputRedacted["content"].(string); ok {
 		return v
 	}
-	return ""
+	msgs, ok := inputRedacted["messages"].([]any)
+	if !ok || len(msgs) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(msgs))
+	for _, m := range msgs {
+		entry, ok := m.(map[string]any)
+		if !ok {
+			continue
+		}
+		content, _ := entry["content"].(string)
+		if content == "" {
+			continue
+		}
+		if role, ok := entry["role"].(string); ok && role != "" {
+			parts = append(parts, role+": "+content)
+			continue
+		}
+		parts = append(parts, content)
+	}
+	return strings.Join(parts, "\n")
 }
 
 func uniqueFindingTypes(findings []edgecore.RedactionFinding) []string {

@@ -82,6 +82,57 @@ func TestMap_CleanContentViaInjectedRedactor(t *testing.T) {
 	}
 }
 
+// TestMap_MultiMessageRedactedContentPopulated proves that a chat-style
+// envelope (env.Messages, not env.Content) still populates RedactedContent
+// via the injected ContentRedactor when Decision == DecisionRedact — the
+// proxy contract for DecisionRedact says it "SHOULD forward RedactedContent
+// instead of the original", so this field must not stay empty just because
+// the envelope used the multi-message shape.
+func TestMap_MultiMessageRedactedContentPopulated(t *testing.T) {
+	fake := func(content string) (string, []string) {
+		if strings.Contains(content, "alice@example.com") {
+			return strings.ReplaceAll(content, "alice@example.com", "<redacted:pii>"), []string{"pii"}
+		}
+		return content, nil
+	}
+	a := NewAdapter(AdapterOptions{Redactor: fake})
+	env := LLMEventEnvelope{
+		TenantID:      "tenant-a",
+		SessionID:     "sess-1",
+		ExecutionID:   "exec-1",
+		SourceEventID: "evt-1",
+		ObservedAt:    time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC),
+		Kind:          KindRequestPre,
+		Provider:      "openai",
+		Model:         "gpt-4o-mini",
+		Direction:     DirectionPrompt,
+		Messages: []LLMMessage{
+			{Role: "system", Content: "Be concise."},
+			{Role: "user", Content: "Summarize 1:1; ping alice@example.com."},
+		},
+	}
+	res, err := a.Map(LLMBatch{
+		Source: SourceIdentity{ID: "openai-proxy"},
+		Events: []LLMEventEnvelope{env},
+	})
+	if err != nil {
+		t.Fatalf("Map: %v", err)
+	}
+	d := res.Decisions[0]
+	if d.Decision != DecisionRedact {
+		t.Fatalf("decision = %q, want redact", d.Decision)
+	}
+	if d.RedactedContent == "" {
+		t.Fatal("RedactedContent must be populated for a multi-message envelope when Decision == redact")
+	}
+	if strings.Contains(d.RedactedContent, "alice@example.com") {
+		t.Fatalf("redacted content leaked PII: %q", d.RedactedContent)
+	}
+	if !strings.Contains(d.RedactedContent, "Be concise.") || !strings.Contains(d.RedactedContent, "Summarize 1:1") {
+		t.Fatalf("expected both message contents flattened in: %q", d.RedactedContent)
+	}
+}
+
 // TestMap_FallsBackWithoutRedactor proves a nil redactor still redacts secrets
 // via the generic edge redactor (the standalone/test path) — Phase 2 behavior.
 func TestMap_FallsBackWithoutRedactor(t *testing.T) {
