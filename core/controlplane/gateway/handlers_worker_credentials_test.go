@@ -528,6 +528,60 @@ func TestRevokeCredentialClearsAgentLink(t *testing.T) {
 	}
 }
 
+// TestCreateWorkerCredential_RejectsCrossTenantAgentID locks the cross-tenant
+// finding: handleCreateWorkerCredential validated req.AgentID via an
+// empty-tenant lookup (s.agentIdentityStore.Get(ctx, "", req.AgentID)) and
+// never checked the resolved agent's TenantID against the credential's own
+// tenant. That let a tenant-scoped admin link a worker credential to ANY
+// other tenant's agent identity by guessing/knowing its ID, inheriting that
+// agent's AllowedTools / RiskTier / scope. The fix must reject with the same
+// "nonexistent agent identity" error used for a genuinely missing agent_id
+// (no existence oracle for cross-tenant IDs).
+func TestCreateWorkerCredential_RejectsCrossTenantAgentID(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	seedWorkerCredentialAccessConfig(t, s)
+	ctx := context.Background()
+
+	// Agent identity belongs to tenant-a.
+	victim, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+		TenantID: "tenant-a", Name: "victim-agent", Owner: "alice", RiskTier: "high", Status: "active",
+	})
+	if err != nil {
+		t.Fatalf("create victim agent: %v", err)
+	}
+
+	// Caller is authenticated to tenant-b but points agent_id at tenant-a's agent.
+	body := bytes.NewBufferString(`{"worker_id":"cross-tenant-worker","allowed_pools":["default"],"allowed_topics":["job.external"],"agent_id":"` + victim.ID + `"}`)
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/workers/credentials", body), &auth.AuthContext{
+		Tenant: "tenant-b", Role: "admin", PrincipalID: "mallory",
+	})
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.handleCreateWorkerCredential(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for cross-tenant agent_id, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Must not have linked the credential to the other tenant's agent.
+	linked, err := s.agentIdentityStore.GetByWorkerID(ctx, "cross-tenant-worker")
+	if err != nil {
+		t.Fatalf("GetByWorkerID: %v", err)
+	}
+	if linked != nil {
+		t.Fatalf("cross-tenant agent_id was linked: %+v", linked)
+	}
+
+	// The credential itself must not have been created either.
+	record, err := s.workerCredentialStore.Get(ctx, "tenant-b", "cross-tenant-worker")
+	if err != nil {
+		t.Fatalf("get worker credential after rejected create: %v", err)
+	}
+	if record != nil {
+		t.Fatalf("credential was created despite rejected agent_id: %+v", record)
+	}
+}
+
 func equalStringSlices(got, want []string) bool {
 	if len(got) != len(want) {
 		return false

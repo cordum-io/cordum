@@ -760,7 +760,7 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	}
 
 	input.SecretsPresent = secretsPresent(input.Meta, req.GetLabels())
-	s.enrichAgentContext(ctx, req.GetLabels(), &input)
+	s.enrichAgentContext(ctx, tenant, req.GetLabels(), &input)
 
 	// Action-layer gates run BEFORE legacy rule evaluation. The pipeline
 	// short-circuits on the first non-ALLOW decision; an empty result
@@ -1212,7 +1212,18 @@ func toProtoRemediations(remediations []config.PolicyRemediation) []*pb.PolicyRe
 // enrichAgentContext looks up agent identity from labels and populates
 // policy meta with agent context for policy evaluation. Uses a TTL cache
 // to avoid per-evaluation Redis lookups.
-func (s *server) enrichAgentContext(ctx context.Context, labels map[string]string, input *config.PolicyInput) {
+//
+// tenant must be the calling request's own tenant (already resolved by the
+// caller — see evaluate()). The AgentIdentityStore lookup below uses an
+// empty-tenant lookup, which is a system-level bypass that skips the
+// store's own tenant check, so it must be verified here: without it, a
+// worker credential (or guessed agent_id) linked to another tenant's agent
+// identity could have that agent's risk_tier / data_classifications
+// influence policy decisions for jobs submitted by a different tenant. The
+// cache key includes the tenant for the same reason — keying on agentID
+// alone would let a cross-tenant lookup poison the cache entry that a
+// same-tenant request later reads.
+func (s *server) enrichAgentContext(ctx context.Context, tenant string, labels map[string]string, input *config.PolicyInput) {
 	if s.agentStore == nil || len(labels) == 0 {
 		return
 	}
@@ -1222,7 +1233,14 @@ func (s *server) enrichAgentContext(ctx context.Context, labels map[string]strin
 	}
 	input.Meta.AgentID = agentID
 
-	identity := s.getAgentFromCache(agentID)
+	tenant = strings.TrimSpace(tenant)
+	if tenant == "" {
+		slog.Warn("safety-kernel: agent enrichment skipped — no tenant on request", "agent_id", agentID)
+		return
+	}
+
+	cacheKey := agentCacheKey(tenant, agentID)
+	identity := s.getAgentFromCache(cacheKey)
 	if identity == nil {
 		var err error
 		identity, err = s.agentStore.Get(ctx, "", agentID)
@@ -1233,7 +1251,12 @@ func (s *server) enrichAgentContext(ctx context.Context, labels map[string]strin
 		if identity == nil {
 			return
 		}
-		s.putAgentInCache(agentID, identity)
+		if strings.TrimSpace(identity.TenantID) != tenant {
+			slog.Warn("safety-kernel: cross-tenant agent identity ignored",
+				"agent_id", agentID, "agent_tenant", identity.TenantID, "request_tenant", tenant)
+			return
+		}
+		s.putAgentInCache(cacheKey, identity)
 	}
 
 	input.Meta.AgentRiskTier = identity.RiskTier
@@ -1242,21 +1265,28 @@ func (s *server) enrichAgentContext(ctx context.Context, labels map[string]strin
 	input.Meta.AgentTeam = identity.Team
 }
 
-func (s *server) getAgentFromCache(agentID string) *store.AgentIdentity {
+// agentCacheKey scopes the agent enrichment cache by tenant as well as
+// agent ID so a cross-tenant lookup can never poison the cache entry a
+// same-tenant request later reads.
+func agentCacheKey(tenant, agentID string) string {
+	return tenant + "\x00" + agentID
+}
+
+func (s *server) getAgentFromCache(cacheKey string) *store.AgentIdentity {
 	s.agentCacheMu.Lock()
 	defer s.agentCacheMu.Unlock()
 	if s.agentCache == nil {
 		return nil
 	}
-	entry, ok := s.agentCache[agentID]
+	entry, ok := s.agentCache[cacheKey]
 	if !ok || time.Now().After(entry.expires) {
-		delete(s.agentCache, agentID)
+		delete(s.agentCache, cacheKey)
 		return nil
 	}
 	return entry.identity
 }
 
-func (s *server) putAgentInCache(agentID string, identity *store.AgentIdentity) {
+func (s *server) putAgentInCache(cacheKey string, identity *store.AgentIdentity) {
 	s.agentCacheMu.Lock()
 	defer s.agentCacheMu.Unlock()
 	if s.agentCache == nil {
@@ -1266,7 +1296,7 @@ func (s *server) putAgentInCache(agentID string, identity *store.AgentIdentity) 
 	if ttl == 0 {
 		ttl = defaultAgentCacheTTL
 	}
-	s.agentCache[agentID] = agentCacheEntry{
+	s.agentCache[cacheKey] = agentCacheEntry{
 		identity: identity,
 		expires:  time.Now().Add(ttl),
 	}

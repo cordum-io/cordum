@@ -30,6 +30,7 @@ func TestDecisionCacheBypassedForAgentRequests(t *testing.T) {
 	// The agent is currently escalated to "critical" in the store.
 	if _, err := agentStore.Create(context.Background(), store.AgentIdentity{
 		ID:       "agent-esc",
+		TenantID: "default",
 		Name:     "escalated-agent",
 		Owner:    "admin",
 		RiskTier: "critical",
@@ -116,7 +117,7 @@ func TestDecisionCacheNotPopulatedForAgentRequests(t *testing.T) {
 	t.Cleanup(func() { _ = client.Close() })
 
 	agentStore := store.NewAgentIdentityStoreFromClient(client)
-	if _, err := agentStore.Create(context.Background(), store.AgentIdentity{ID: "agent-low", Name: "low", Owner: "admin", RiskTier: "low"}); err != nil {
+	if _, err := agentStore.Create(context.Background(), store.AgentIdentity{ID: "agent-low", TenantID: "default", Name: "low", Owner: "admin", RiskTier: "low"}); err != nil {
 		t.Fatalf("create agent: %v", err)
 	}
 
