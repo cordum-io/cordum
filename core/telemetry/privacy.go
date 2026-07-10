@@ -44,9 +44,13 @@ var (
 )
 
 // NormalizeMode converts an arbitrary string into a supported telemetry mode.
-// Unknown or empty values default to local_only (collect to Redis, no remote
-// reporting). Operators must explicitly set CORDUM_TELEMETRY_MODE=anonymous
-// to enable remote reporting.
+// Unknown or empty values default to local_only: metrics are collected to
+// Redis only (no periodic remote reporting), but two one-time anonymous
+// HTTPS pings (install + first-use) are still sent to telemetry.cordum.io
+// regardless of mode, UNLESS mode is "off". Operators must explicitly set
+// CORDUM_TELEMETRY_MODE=off to fully disable all outbound telemetry, or
+// CORDUM_TELEMETRY_MODE=anonymous to additionally enable periodic remote
+// reporting of collected metrics.
 func NormalizeMode(raw string) Mode {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case string(ModeOff), "disabled", "false", "0", "no":
@@ -70,7 +74,10 @@ func (m Mode) Enabled() bool {
 	return NormalizeMode(string(m)) != ModeOff
 }
 
-// ReportingEnabled reports whether remote reporting is enabled.
+// ReportingEnabled reports whether periodic remote reporting of collected
+// metrics is enabled (true only for ModeAnonymous). This does NOT govern the
+// one-time install/first-use pings, which are sent in any mode except off —
+// see maybeSendInstallPing / maybeSendFirstUsePing in collector.go.
 func (m Mode) ReportingEnabled() bool {
 	return NormalizeMode(string(m)) == ModeAnonymous
 }

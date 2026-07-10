@@ -733,10 +733,20 @@ No license = Community tier (3 workers, 3 concurrent jobs, 500 RPS, 7-day audit 
 
 ### Telemetry
 
+> **Behavior change for upgrading operators**: Starting with this release, the
+> **default** telemetry mode (`local_only`, i.e. `CORDUM_TELEMETRY_MODE` unset)
+> now makes **two outbound HTTPS calls per install** to `telemetry.cordum.io` —
+> a one-time install ping and a one-time first-use ping (see below). Previously,
+> `local_only` made **no** network calls at all. If you were relying on
+> `local_only`'s old no-network behavior — including air-gapped or network-
+> restricted self-hosted deployments — set `CORDUM_TELEMETRY_MODE=off` to
+> restore fully local, zero-outbound-call telemetry. `local_only` no longer
+> means "no remote calls"; it now means "no *ongoing* remote reporting."
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CORDUM_TELEMETRY_MODE` | `local_only` | Telemetry mode: `off` (no collection, no pings), `local_only` (collect to Redis, no ongoing reporting), `anonymous` (collect and report aggregate stats every 24h) |
-| `CORDUM_TELEMETRY_ENDPOINT` | `https://telemetry.cordum.io/v1/report` | HTTPS endpoint for anonymous telemetry reports |
+| `CORDUM_TELEMETRY_MODE` | `local_only` | Telemetry mode: `off` (no collection, no pings — the only mode with zero outbound calls), `local_only` (collect to Redis; no ongoing reporting, but the two one-time pings below still fire), `anonymous` (collect and report aggregate stats every 24h, in addition to the two one-time pings) |
+| `CORDUM_TELEMETRY_ENDPOINT` | `https://telemetry.cordum.io/v1/report` | HTTPS endpoint for anonymous telemetry reports and the one-time pings |
 
 **One-time anonymous pings (opt-out).** Unless `CORDUM_TELEMETRY_MODE=off`, Cordum sends exactly **two** anonymous pings over the lifetime of an install:
 
