@@ -210,14 +210,53 @@ func TestLLMIngest_RedactsSecretInPrompt(t *testing.T) {
 	if strings.Contains(rr.Body.String(), llmTestAWSKey) {
 		t.Fatalf("response leaked the raw secret: %s", rr.Body.String())
 	}
+	// The handler redacts via the shared Safety Kernel scanners, which classify
+	// an AWS key under the "secret_leak" finding type.
 	found := false
 	for _, f := range d.Findings {
-		if f == "aws_credential" {
+		if f == "secret_leak" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("findings missing aws_credential: %v", d.Findings)
+		t.Fatalf("findings missing secret_leak: %v", d.Findings)
+	}
+}
+
+// TestLLMIngest_RedactsPIIViaKernelScanners proves the LLM-proxy path reuses the
+// shared kernel PII scanner (not a duplicate edge regex): an email in a meeting
+// prompt is masked in place, the surrounding prose is preserved, and the raw
+// address never appears in the response or stored event.
+func TestLLMIngest_RedactsPIIViaKernelScanners(t *testing.T) {
+	enableLLMIngest(t)
+	s, _ := newEdgeRouteTestServer(t)
+	setupLLMIngestRBAC(t, s)
+	session, execution := createLLMIngestParents(t, s, "pii", edgecore.AdapterLLMProxy)
+	rr := postLLMIngestWithAuth(t, s, llmIngestAuthContext(testLLMProxyRole, "llm-proxy-1"),
+		llmIngestBody("llm-proxy-1", session.SessionID, execution.ExecutionID, "evt-pii",
+			"Summarize the 1:1; follow up with alice@example.com next week."))
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 body=%s", rr.Code, rr.Body.String())
+	}
+	resp := decodeLLMIngestResponse(t, rr)
+	d := resp.Decisions[0]
+	if d.Decision != llmingest.DecisionRedact {
+		t.Fatalf("decision = %q, want redact", d.Decision)
+	}
+	if strings.Contains(rr.Body.String(), "alice@example.com") {
+		t.Fatalf("response leaked PII: %s", rr.Body.String())
+	}
+	if !strings.Contains(d.RedactedContent, "Summarize the 1:1") {
+		t.Fatalf("prose not preserved: %q", d.RedactedContent)
+	}
+	found := false
+	for _, f := range d.Findings {
+		if f == "pii" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("findings missing pii: %v", d.Findings)
 	}
 }
 

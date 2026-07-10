@@ -174,15 +174,30 @@ type MapResult struct {
 	Dropped   []DropReport
 }
 
-// AdapterOptions configures the adapter. Reserved for forward compatibility;
-// the LLM adapter intentionally has no sampling knob (every chat is governed).
-type AdapterOptions struct{}
+// ContentRedactor redacts a single prompt/response content string and returns
+// the redacted text plus the finding TYPES detected (never raw values). It is
+// INJECTED by the gateway so the LLM-proxy path reuses the shared Safety Kernel
+// scanners — the edge layer never imports the control plane (see
+// safetykernel.RedactContent / the scanners_export injection pattern). When the
+// adapter has no redactor, content falls back to the generic edge secret
+// redactor so the package stays usable and testable standalone.
+type ContentRedactor func(content string) (redacted string, findings []string)
+
+// AdapterOptions configures the adapter. There is intentionally no sampling
+// knob (every chat is governed).
+type AdapterOptions struct {
+	// Redactor, when set, redacts prompt/response content via the shared kernel
+	// scanners. Nil falls back to the generic edge secret redactor.
+	Redactor ContentRedactor
+}
 
 // Adapter validates + maps LLM envelopes into edge.AgentActionEvent records.
-type Adapter struct{}
+type Adapter struct {
+	opts AdapterOptions
+}
 
-// NewAdapter constructs an adapter.
-func NewAdapter(_ AdapterOptions) *Adapter { return &Adapter{} }
+// NewAdapter constructs an adapter with the supplied (optional) injected redactor.
+func NewAdapter(opts AdapterOptions) *Adapter { return &Adapter{opts: opts} }
 
 // Map validates the batch and maps every envelope into an edge.AgentActionEvent
 // plus a per-event advisory decision. The first invalid envelope aborts the
@@ -214,7 +229,7 @@ func (a *Adapter) Map(batch LLMBatch) (MapResult, error) {
 		} else if len(raw) > MaxLLMRawEnvelopeBytes {
 			return MapResult{}, fmt.Errorf("events[%d]: %w: envelope %d bytes > cap %d", i, ErrLLMBatchTooLarge, len(raw), MaxLLMRawEnvelopeBytes)
 		}
-		evt, decision, err := mapEnvelope(sourceID, env)
+		evt, decision, err := a.mapEnvelope(sourceID, env)
 		if err != nil {
 			return MapResult{}, fmt.Errorf("events[%d]: %w", i, err)
 		}
@@ -310,24 +325,10 @@ func isValidDirection(direction string) bool {
 	return false
 }
 
-func mapEnvelope(sourceID string, env LLMEventEnvelope) (edgecore.AgentActionEvent, EventDecision, error) {
-	input := buildLLMInput(env)
-	redacted, err := edgecore.RedactValue(input, edgecore.RedactionOptions{
-		HashMode:       edgecore.RedactionHashNone,
-		MaxDepth:       6,
-		MaxItems:       MaxLLMMessages*2 + 16,
-		MaxStringBytes: MaxLLMRedactedStringBytes,
-		MaxTotalBytes:  MaxLLMRedactedTotalBytes,
-	})
+func (a *Adapter) mapEnvelope(sourceID string, env LLMEventEnvelope) (edgecore.AgentActionEvent, EventDecision, error) {
+	inputRedacted, findingTypes, redactedFlag, truncatedFlag, err := a.redactInput(env)
 	if err != nil {
-		return edgecore.AgentActionEvent{}, EventDecision{}, fmt.Errorf("%w: redaction failed", ErrInvalidEnvelope)
-	}
-	inputRedacted, _ := redacted.Value.(map[string]any)
-	if inputRedacted == nil {
-		// Whole value tripped the too-large guard and collapsed to a string
-		// placeholder. Preserve it under a recognized key so the event still
-		// classifies and the audit trail records that content was present.
-		inputRedacted = map[string]any{"content": redacted.Value}
+		return edgecore.AgentActionEvent{}, EventDecision{}, err
 	}
 
 	eventID := stableEventID(sourceID, env)
@@ -343,8 +344,7 @@ func mapEnvelope(sourceID string, env LLMEventEnvelope) (edgecore.AgentActionEve
 	if d := strings.TrimSpace(env.Direction); d != "" {
 		labels["llm.direction"] = d
 	}
-	findingTypes := uniqueFindingTypes(redacted.Findings)
-	if redacted.Redacted || len(findingTypes) > 0 {
+	if redactedFlag || len(findingTypes) > 0 {
 		labels["llm.redacted"] = "true"
 		for _, ft := range findingTypes {
 			if len(labels) >= edgecore.MaxLabelEntries {
@@ -408,15 +408,122 @@ func mapEnvelope(sourceID string, env LLMEventEnvelope) (edgecore.AgentActionEve
 		SourceEventID:   env.SourceEventID,
 		Kind:            env.Kind,
 		Decision:        DecisionRecord,
-		Redacted:        redacted.Redacted,
-		Truncated:       redacted.Truncated,
+		Redacted:        redactedFlag,
+		Truncated:       truncatedFlag,
 		RedactedContent: redactedContentString(inputRedacted),
 		Findings:        findingTypes,
 	}
-	if redacted.Redacted || len(findingTypes) > 0 {
+	if redactedFlag || len(findingTypes) > 0 {
 		decision.Decision = DecisionRedact
 	}
 	return event, decision, nil
+}
+
+// redactInput produces the redacted InputRedacted map for an envelope plus the
+// finding types, whether anything was redacted, and whether content was
+// truncated. With an injected ContentRedactor (the shared Safety Kernel
+// scanners) it redacts prompt/response content in place, preserving prose;
+// otherwise it falls back to the generic edge secret redactor over the whole
+// input map so the package remains usable standalone.
+func (a *Adapter) redactInput(env LLMEventEnvelope) (map[string]any, []string, bool, bool, error) {
+	if a.opts.Redactor == nil {
+		input := buildLLMInput(env)
+		redacted, err := edgecore.RedactValue(input, edgecore.RedactionOptions{
+			HashMode:       edgecore.RedactionHashNone,
+			MaxDepth:       6,
+			MaxItems:       MaxLLMMessages*2 + 16,
+			MaxStringBytes: MaxLLMRedactedStringBytes,
+			MaxTotalBytes:  MaxLLMRedactedTotalBytes,
+		})
+		if err != nil {
+			return nil, nil, false, false, fmt.Errorf("%w: redaction failed", ErrInvalidEnvelope)
+		}
+		inputRedacted, _ := redacted.Value.(map[string]any)
+		if inputRedacted == nil {
+			// Whole value tripped the too-large guard and collapsed to a string
+			// placeholder. Preserve it under a recognized key so the event still
+			// classifies and the audit trail records that content was present.
+			inputRedacted = map[string]any{"content": redacted.Value}
+		}
+		return inputRedacted, uniqueFindingTypes(redacted.Findings), redacted.Redacted, redacted.Truncated, nil
+	}
+
+	input := map[string]any{}
+	if v := strings.TrimSpace(env.Provider); v != "" {
+		input["provider"] = v
+	}
+	if v := strings.TrimSpace(env.Model); v != "" {
+		input["model"] = v
+	}
+	if v := strings.TrimSpace(env.Direction); v != "" {
+		input["direction"] = v
+	}
+	seen := map[string]struct{}{}
+	var findingTypes []string
+	anyRedacted := false
+	truncated := false
+	redact := func(s string) string {
+		bounded, t := boundLLMString(s)
+		if t {
+			truncated = true
+		}
+		out, fs := a.opts.Redactor(bounded)
+		for _, f := range fs {
+			anyRedacted = true
+			if _, ok := seen[f]; !ok {
+				seen[f] = struct{}{}
+				findingTypes = append(findingTypes, f)
+			}
+		}
+		return out
+	}
+	if env.Content != "" {
+		input["content"] = redact(env.Content)
+	}
+	if len(env.Messages) > 0 {
+		msgs := make([]any, 0, len(env.Messages))
+		for _, m := range env.Messages {
+			entry := map[string]any{}
+			if r := strings.TrimSpace(m.Role); r != "" {
+				entry["role"] = r
+			}
+			if m.Content != "" {
+				entry["content"] = redact(m.Content)
+			}
+			if len(entry) > 0 {
+				msgs = append(msgs, entry)
+			}
+		}
+		if len(msgs) > 0 {
+			input["messages"] = msgs
+		}
+	}
+	if env.Tokens != nil {
+		if env.Tokens.Input > 0 {
+			input["input_tokens"] = env.Tokens.Input
+		}
+		if env.Tokens.Output > 0 {
+			input["output_tokens"] = env.Tokens.Output
+		}
+		if env.Tokens.Total > 0 {
+			input["total_tokens"] = env.Tokens.Total
+		}
+	}
+	if env.CostUSD > 0 {
+		input["cost_usd"] = env.CostUSD
+	}
+	sort.Strings(findingTypes)
+	return input, findingTypes, anyRedacted, truncated, nil
+}
+
+// boundLLMString truncates content to MaxLLMRedactedStringBytes so stored
+// evidence stays bounded; returns whether truncation occurred. A trailing
+// partial rune left by the byte cut is harmless — JSON marshalling sanitizes it.
+func boundLLMString(s string) (string, bool) {
+	if len(s) <= MaxLLMRedactedStringBytes {
+		return s, false
+	}
+	return s[:MaxLLMRedactedStringBytes], true
 }
 
 // buildLLMInput assembles the pre-redaction input map using keys the edge
@@ -472,14 +579,39 @@ func buildLLMInput(env LLMEventEnvelope) map[string]any {
 	return input
 }
 
-// redactedContentString returns the redacted "content" value as a string for
-// the proxy to forward, when present. Structured "messages" are not flattened
-// here — the proxy reconstructs those from its own copy guided by Findings.
+// redactedContentString returns the redacted content as a string for the
+// proxy to forward, when present. Single-turn envelopes use the "content"
+// key directly; multi-message envelopes (built via env.Messages) carry their
+// redacted text under "messages" instead, so those are flattened into a
+// "role: content" transcript — otherwise RedactedContent would stay empty for
+// every chat-style envelope even when Decision == DecisionRedact, and a
+// caller following the DecisionRedact contract could fall back to forwarding
+// the unredacted original.
 func redactedContentString(inputRedacted map[string]any) string {
 	if v, ok := inputRedacted["content"].(string); ok {
 		return v
 	}
-	return ""
+	msgs, ok := inputRedacted["messages"].([]any)
+	if !ok || len(msgs) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(msgs))
+	for _, m := range msgs {
+		entry, ok := m.(map[string]any)
+		if !ok {
+			continue
+		}
+		content, _ := entry["content"].(string)
+		if content == "" {
+			continue
+		}
+		if role, ok := entry["role"].(string); ok && role != "" {
+			parts = append(parts, role+": "+content)
+			continue
+		}
+		parts = append(parts, content)
+	}
+	return strings.Join(parts, "\n")
 }
 
 func uniqueFindingTypes(findings []edgecore.RedactionFinding) []string {

@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/safetykernel"
 	edgecore "github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/edge/llmingest"
 	"github.com/cordum/cordum/core/edge/runtimeingest"
@@ -103,7 +104,7 @@ func (s *server) handleEdgeLLMIngest(w http.ResponseWriter, r *http.Request) {
 	for i := range batch.Events {
 		batch.Events[i].TenantID = tenantID
 	}
-	adapter := llmingest.NewAdapter(llmingest.AdapterOptions{})
+	adapter := llmingest.NewAdapter(llmingest.AdapterOptions{Redactor: llmContentRedactor()})
 	result, err := adapter.Map(batch)
 	if err != nil {
 		writeLLMIngestAdapterError(w, r, err)
@@ -143,6 +144,31 @@ func (s *server) handleEdgeLLMIngest(w http.ResponseWriter, r *http.Request) {
 		AcceptedCount: len(result.Events),
 		Decisions:     result.Decisions,
 	})
+}
+
+// llmContentRedactor builds the LLM-proxy content redactor from the SHARED
+// Safety Kernel scanners (PII + secrets + operator terms), configured via
+// CORDUM_EDGE_LLM_* env. It is injected into the llmingest adapter so the edge
+// layer reuses the control plane's single detection source of truth without
+// importing it.
+func llmContentRedactor() llmingest.ContentRedactor {
+	opts := safetykernel.ContentScanOptionsFromEnv(os.Getenv)
+	return func(content string) (string, []string) {
+		redacted, findings := safetykernel.RedactContent([]byte(content), opts)
+		if len(findings) == 0 {
+			return redacted, nil
+		}
+		seen := make(map[string]struct{}, len(findings))
+		types := make([]string, 0, len(findings))
+		for _, f := range findings {
+			if _, ok := seen[f.Type]; ok {
+				continue
+			}
+			seen[f.Type] = struct{}{}
+			types = append(types, f.Type)
+		}
+		return redacted, types
+	}
 }
 
 func writeLLMIngestResponse(w http.ResponseWriter, status int, resp llmIngestResponse) {
