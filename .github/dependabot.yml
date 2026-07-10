@@ -5,3 +5,23 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+
+  # Keep Go module dependencies current.
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      go-deps:
+        patterns:
+          - "*"
+
+  # Keep dashboard npm dependencies current.
+  - package-ecosystem: "npm"
+    directory: "/dashboard"
+    schedule:
+      interval: "weekly"
+    groups:
+      dashboard-deps:
+        patterns:
+          - "*"
