@@ -18,7 +18,7 @@ jobs:
     timeout-minutes: 30
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Set up Go
       uses: actions/setup-go@v6
@@ -26,7 +26,7 @@ jobs:
         go-version: '1.25'
 
     - name: Cache Go modules
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: ~/go/pkg/mod
         key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
@@ -109,7 +109,7 @@ jobs:
     timeout-minutes: 30
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Set up Go
       uses: actions/setup-go@v6
@@ -117,7 +117,7 @@ jobs:
         go-version: '1.25'
 
     - name: Cache Go modules
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: ~/go/pkg/mod
         key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
@@ -195,7 +195,7 @@ jobs:
     timeout-minutes: 90
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Set up Go
       uses: actions/setup-go@v6
@@ -203,7 +203,7 @@ jobs:
         go-version: '1.25'
 
     - name: Cache Go modules
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: ~/go/pkg/mod
         key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
