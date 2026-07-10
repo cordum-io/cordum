@@ -174,8 +174,91 @@ func computeClassificationCompleteness(c ActionClassification) (bool, []string) 
 	return false, missing
 }
 
-func classifyHookEvent(event AgentActionEvent, out *ActionClassification) {
+// agentProductGitHubCopilot is the CORDUM_AGENT_PRODUCT value cordum-hook's
+// copilot adapter stamps on every GitHub Copilot (VS Code agent mode) hook
+// event when the caller hasn't already set one — see copilotEnv in
+// cmd/cordum-hook/main.go and the hard-coded "github-copilot" env value
+// GenerateHookSettings writes in core/edge/copilot/hooksettings.go. Matched
+// case-insensitively below because AgentProduct is caller-suppliable
+// (CORDUM_AGENT_PRODUCT) and is not itself a trusted/normalized enum.
+const agentProductGitHubCopilot = "github-copilot"
+
+// copilotToolNameAliases maps GitHub Copilot's VS Code agent-mode tool names
+// to the Claude Code tool-name buckets classifyHookEvent's switch already
+// understands. dispatchCopilot (cmd/cordum-hook/main.go) reuses claude.Run
+// unchanged for Copilot hook events because the hook JSON *envelope* (
+// hook_event_name/tool_name/tool_input) matches Claude Code's — but the
+// *tool_name values inside that envelope* are Copilot's own vocabulary
+// (run_in_terminal, read_file, ...), not Claude's (bash, read, ...). Without
+// this alias table every Copilot tool call falls into classifyHookEvent's
+// default branch (capability=edge.unknown) and none of the capability-keyed
+// policy rules (claude-code.deny-destructive-shell on exec.shell,
+// claude-code.require-approval-for-edits on file.write, deny-secret-reads on
+// the `secrets` risk tag) ever fire for Copilot, no matter how dangerous the
+// underlying command is.
+//
+// Tool names sourced from the task spec / VS Code Copilot Chat agent-mode
+// built-in tools; this repo has no other authoritative list (verified via
+// repo-wide search) as of this fix. Extend this table if Copilot ships
+// additional built-in tools that map cleanly onto an existing bucket.
+var copilotToolNameAliases = map[string]string{
+	// Shell execution — the destructive-shell / network / install detectors
+	// in classifyBashCommand all operate on the free-form command string
+	// (read via inputStringAny's command_redacted/command fallback, which
+	// matches Copilot's run_in_terminal `command` field), so aliasing the
+	// tool name alone is sufficient to route destructive commands like
+	// `rm -rf` through the same detection Claude Code's Bash tool gets.
+	"run_in_terminal": "bash",
+
+	// Reads.
+	"read_file": "read",
+
+	// Edits to an existing file.
+	"insert_edit_into_file":        "edit",
+	"replace_string_in_file":       "edit",
+	"multi_replace_string_in_file": "multiedit",
+	"apply_patch":                  "edit",
+
+	// New file / directory creation — routed through the same "write"
+	// bucket as Claude's Write tool (capability=file.write).
+	"create_file":      "write",
+	"create_directory": "write",
+
+	// Deletion.
+	"delete_file": "delete",
+
+	// Directory/content search. classifyHookEvent's switch does not
+	// currently special-case "glob"/"grep" (Claude Code tool calls with
+	// those names also fall to the default branch today), so these still
+	// land on the same review_required default as everything else — listed
+	// here so the alias table stays forward-compatible if glob/grep
+	// handling is added later, and so the mapping intent is explicit.
+	"list_dir":        "glob",
+	"file_search":     "glob",
+	"grep_search":     "grep",
+	"semantic_search": "grep",
+}
+
+// normalizeHookToolName folds event.ToolName into the lowercase bucket
+// classifyHookEvent's switch understands. Claude Code events are returned
+// unchanged (byte-for-byte identical behavior to before this function
+// existed). Copilot-sourced events (event.AgentProduct == "github-copilot")
+// are first looked up in copilotToolNameAliases; a Copilot tool name with no
+// known alias falls through unchanged, same as an unrecognized Claude Code
+// tool name, and lands on the fail-closed default branch below.
+func normalizeHookToolName(event AgentActionEvent) string {
 	toolFold := strings.ToLower(strings.TrimSpace(event.ToolName))
+	if !strings.EqualFold(strings.TrimSpace(event.AgentProduct), agentProductGitHubCopilot) {
+		return toolFold
+	}
+	if alias, ok := copilotToolNameAliases[toolFold]; ok {
+		return alias
+	}
+	return toolFold
+}
+
+func classifyHookEvent(event AgentActionEvent, out *ActionClassification) {
+	toolFold := normalizeHookToolName(event)
 	// EDGE-041: cordum-hook's mapper renames Claude tool_input fields with a
 	// `_redacted` suffix so the dashboard sanitizer renders them. Classifier
 	// reads accept BOTH the renamed and bare keys so historical events stored
