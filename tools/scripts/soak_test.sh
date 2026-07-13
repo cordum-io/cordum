@@ -22,6 +22,10 @@
 # =============================================================================
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=tools/scripts/soak_test_lib.sh
+source "${SCRIPT_DIR}/soak_test_lib.sh"
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -90,7 +94,11 @@ api_body() {
 }
 
 record_status() {
-  local endpoint="$1" status="$2"
+  local endpoint="$1" status="$2" expected="${3:-}"
+  if [[ -n "${expected}" ]]; then
+    echo "$(date +%s) ${endpoint} ${status} expected=${expected}" >> "${HTTP_LOG}"
+    return
+  fi
   echo "$(date +%s) ${endpoint} ${status}" >> "${HTTP_LOG}"
 }
 
@@ -198,9 +206,9 @@ LAST_LOG_CHECK_TS=0
 # Fixed job payloads for determinism
 JOB_PAYLOADS=(
   '{"prompt":"soak test echo","topic":"job.default","priority":"normal"}'
-  '{"prompt":"","topic":"job.default","priority":"normal"}'
   '{"prompt":"soak test high","topic":"job.default","priority":"high"}'
 )
+INVALID_JOB_PAYLOAD='{"prompt":"","topic":"job.default","priority":"normal"}'
 
 log "Starting load phase (${DURATION_MINUTES} minutes)..."
 
@@ -213,6 +221,8 @@ while [[ $(date +%s) -lt ${END_TIME} ]]; do
     status=$(api POST /jobs -d "${payload}")
     record_status "POST:/jobs" "${status}"
   done
+  status=$(api POST /jobs -d "${INVALID_JOB_PAYLOAD}")
+  record_status "POST:/jobs:invalid-empty-prompt" "${status}" 400
 
   # --- Hit read endpoints ---
   for endpoint in /jobs /approvals /config /dlq /health; do
@@ -262,7 +272,7 @@ WARNINGS=()
 
 # --- 1. HTTP error rate ---
 TOTAL_REQUESTS=$(wc -l < "${HTTP_LOG}" || echo "0")
-ERROR_REQUESTS=$(awk '$3 >= 400 || $3 == "000"' "${HTTP_LOG}" | wc -l || echo "0")
+ERROR_REQUESTS=$(count_unexpected_http_responses "${HTTP_LOG}")
 if [[ ${TOTAL_REQUESTS} -gt 0 ]]; then
   # Use integer arithmetic (multiply by 100 first for precision)
   ERROR_RATE_X100=$(( ERROR_REQUESTS * 10000 / TOTAL_REQUESTS ))
@@ -279,7 +289,8 @@ fi
 
 # --- 2. 4xx retry storm detection ---
 # Check if any endpoint has >50% of its requests returning 4xx in succession
-STORM_ENDPOINTS=$(awk '$3 >= 400 && $3 < 500' "${HTTP_LOG}" | awk '{print $2}' | sort | uniq -c | sort -rn | head -5 || true)
+STORM_ENDPOINTS=$(unexpected_client_error_endpoints "${HTTP_LOG}" |
+  LC_ALL=C sort | uniq -c | sort -rn | sed -n '1,5p')
 while IFS= read -r line; do
   if [[ -z "${line}" ]]; then continue; fi
   count=$(echo "${line}" | awk '{print $1}')
@@ -317,16 +328,15 @@ fi
 # --- 4. Log storm detection ---
 if command -v docker >/dev/null 2>&1; then
   # Get last 5 minutes of logs and check for repeated lines
-  recent_logs=$(docker compose logs --since 300s 2>/dev/null || true)
+  recent_logs=$(docker compose logs --no-color --since 300s 2>/dev/null || true)
   if [[ -n "${recent_logs}" ]]; then
-    storm_lines=$(echo "${recent_logs}" | \
-      sed 's/^[^ ]* //' | \
-      sort | uniq -c | sort -rn | head -5)
+    storm_lines=$(printf '%s\n' "${recent_logs}" | top_repeated_log_lines)
     while IFS= read -r line; do
       if [[ -z "${line}" ]]; then continue; fi
       count=$(echo "${line}" | awk '{print $1}')
       if [[ ${count} -gt ${LOG_STORM_THRESHOLD} ]]; then
-        msg=$(echo "${line}" | sed 's/^[[:space:]]*[0-9]* //' | head -c 120)
+        msg=$(echo "${line}" | sed 's/^[[:space:]]*[0-9]* //')
+        msg="${msg:0:120}"
         FAILURES+=("Log storm: '${msg}' repeated ${count} times in 5 minutes (limit ${LOG_STORM_THRESHOLD})")
       fi
     done <<< "${storm_lines}"

@@ -46,6 +46,10 @@ HELPER="${SANDBOX}/production_gate_functions.sh"
   extract_function policy_probe_ready
   extract_function cleanup_gate14_snapshot
   extract_function validate_gate14_publish_response
+  extract_function build_selected_gates
+  extract_function json_escape
+  extract_full_function write_results_json
+  extract_function is_blocking_gate
 } >"${HELPER}"
 # shellcheck source=/dev/null
 source "${HELPER}"
@@ -217,6 +221,41 @@ for replica in api-gateway-2 scheduler-2 workflow-engine-2; do
   assert_contains "${replica} inherits the CI license public key" \
     "${replica_block}" 'CORDUM_LICENSE_PUBLIC_KEY=${CORDUM_LICENSE_PUBLIC_KEY:-}'
 done
+
+if declare -F build_selected_gates >/dev/null 2>&1; then
+  SELECT_GATE=""
+  EXCLUDED_GATES=(6)
+  SELECTED_GATES=()
+  build_selected_gates
+  assert_eq "gate selection can exclude shared-runner performance gate" \
+    "${SELECTED_GATES[*]}" "1 2 3 4 5 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21"
+
+  SELECT_GATE="6"
+  EXCLUDED_GATES=()
+  SELECTED_GATES=()
+  build_selected_gates
+  assert_eq "explicit gate 6 selection remains available for advisory runs" \
+    "${SELECTED_GATES[*]}" "6"
+
+  RESULTS_FILE="${SANDBOX}/excluded-gate-results.json"
+  API_BASE="https://localhost:8081"
+  TENANT_ID="default"
+  STRICT_MODE=1
+  SELECT_GATE=""
+  EXCLUDED_GATES=(6)
+  SELECTED_GATES=(1)
+  BLOCKING_GATES=(1)
+  GATE_NAME[1]="Gate 1 Deploy"
+  GATE_STATUS[1]="PASS"
+  GATE_DURATION_MS[1]=1
+  GATE_MESSAGE[1]="ok"
+  write_results_json
+  assert_eq "gate results identify the exclusion honestly" \
+    "$(jq -r '.selected_gate' "${RESULTS_FILE}")" "all-except-6"
+else
+  echo "FAIL: gate exclusion behavior: build_selected_gates is not defined" >&2
+  FAIL=$((FAIL + 1))
+fi
 
 gate_errexit_probe() {
   echo "before failure"

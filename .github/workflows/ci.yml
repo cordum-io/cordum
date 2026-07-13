@@ -142,6 +142,7 @@ jobs:
         bash tools/scripts/production_gate_http.test.sh
         bash tools/scripts/production_gate.test.sh
         bash tools/scripts/nightly_workflows.test.sh
+        bash tools/scripts/soak_test_lib.test.sh
 
   dashboard-test:
     name: Dashboard Tests

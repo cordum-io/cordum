@@ -24,10 +24,11 @@ require() {
 
 usage() {
   cat <<'EOF'
-Usage: ./tools/scripts/production_gate.sh [--gate N] [--skip-rebuild] [--strict]
+Usage: ./tools/scripts/production_gate.sh [--gate N] [--exclude-gate N] [--skip-rebuild] [--strict]
 
 Runs production readiness gates.
   --gate N         Run only gate N (1..21)
+  --exclude-gate N Exclude gate N from an all-gates run (repeatable)
   --skip-rebuild   Skip docker compose down/rebuild in gate 1
   --strict         Make ALL gates blocking (for release pipelines).
                    Also settable via STRICT_MODE=1 env var.
@@ -3605,6 +3606,9 @@ write_results_json() {
 
   generated_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
   selected_gate="${SELECT_GATE:-all}"
+  if [[ -z "${SELECT_GATE}" && ${#EXCLUDED_GATES[@]} -gt 0 ]]; then
+    selected_gate="all-except-$(IFS=,; echo "${EXCLUDED_GATES[*]}")"
+  fi
   gate_lines=""
 
   for gate_no in "${SELECTED_GATES[@]}"; do
@@ -3657,6 +3661,29 @@ is_blocking_gate() {
     [[ "${bg}" == "${gate_no}" ]] && return 0
   done
   return 1
+}
+
+build_selected_gates() {
+  local gate excluded skip
+  if [[ -n "${SELECT_GATE}" ]]; then
+    [[ "${SELECT_GATE}" =~ ^([1-9]|1[0-9]|2[01])$ ]] || die "--gate must be 1..21"
+    (( ${#EXCLUDED_GATES[@]} == 0 )) || die "--gate cannot be combined with --exclude-gate"
+    SELECTED_GATES=("${SELECT_GATE}")
+    return
+  fi
+
+  SELECTED_GATES=()
+  for gate in {1..21}; do
+    skip=0
+    for excluded in "${EXCLUDED_GATES[@]}"; do
+      if [[ "${gate}" == "${excluded}" ]]; then
+        skip=1
+        break
+      fi
+    done
+    (( skip == 1 )) || SELECTED_GATES+=("${gate}")
+  done
+  (( ${#SELECTED_GATES[@]} > 0 )) || die "at least one production gate must be selected"
 }
 
 print_summary() {
@@ -3752,6 +3779,7 @@ MOCK_BANK_WORKER_STARTED=0
 GATE14_ROLLBACK_SNAPSHOT_ID=""
 SKIP_REBUILD=0
 SELECT_GATE=""
+EXCLUDED_GATES=()
 
 # Gate classification: blocking failures prevent release, advisory failures are logged only.
 # Blocking: Deploy(1), Auth(2), Policy(4), Reliability(5), Security(7), Identity(9), Release Config(18)
@@ -3792,6 +3820,12 @@ while [[ $# -gt 0 ]]; do
       SELECT_GATE="$2"
       shift 2
       ;;
+    --exclude-gate)
+      [[ $# -ge 2 ]] || die "--exclude-gate requires a value"
+      [[ "$2" =~ ^([1-9]|1[0-9]|2[01])$ ]] || die "--exclude-gate must be 1..21"
+      EXCLUDED_GATES+=("$2")
+      shift 2
+      ;;
     --skip-rebuild)
       SKIP_REBUILD=1
       shift
@@ -3817,12 +3851,7 @@ if [[ "${STRICT_MODE:-0}" == "1" ]]; then
   ADVISORY_GATES=()
 fi
 
-if [[ -n "${SELECT_GATE}" ]]; then
-  [[ "${SELECT_GATE}" =~ ^([1-9]|1[0-9]|2[01])$ ]] || die "--gate must be 1..21"
-  SELECTED_GATES=("${SELECT_GATE}")
-else
-  SELECTED_GATES=(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21)
-fi
+build_selected_gates
 
 build_auth_headers
 build_curl_tls_opts
