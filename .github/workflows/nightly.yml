@@ -269,6 +269,8 @@ jobs:
       env:
         CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
         REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
+        CORDUM_API_BASE: https://localhost:8081/api/v1
+        CORDUM_TLS_CA: certs/ca/ca.crt
         SOAK_DURATION_MINUTES: ${{ inputs.soak_duration || '60' }}
 
     - name: Upload soak results

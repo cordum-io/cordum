@@ -9,6 +9,8 @@
 # Environment:
 #   CORDUM_API_KEY            Required. API key for gateway auth.
 #   CORDUM_API_BASE           Gateway base URL (default: http://localhost:8081/api/v1)
+#   CORDUM_TLS_CA             Optional CA certificate for HTTPS gateways.
+#   CORDUM_TLS_INSECURE       Set to 1/true only for local insecure TLS.
 #   SOAK_DURATION_MINUTES     Test duration in minutes (default: 60)
 #   SOAK_INTERVAL_SECONDS     Seconds between request batches (default: 5)
 #   SOAK_MEMORY_DRIFT_PCT     Max allowed memory growth % (default: 50)
@@ -34,6 +36,8 @@ ERROR_RATE_PCT="${SOAK_ERROR_RATE_PCT:-1}"
 RESULTS_FILE="${SOAK_RESULTS_FILE:-soak_results.json}"
 METRICS_FILE="${SOAK_METRICS_FILE:-soak_metrics.log}"
 HTTP_LOG="${SOAK_HTTP_LOG:-soak_http.log}"
+TLS_CA="${CORDUM_TLS_CA:-}"
+CURL_TLS_OPTS=()
 
 SOAK_ID="soak-$(date +%s)"
 
@@ -50,12 +54,22 @@ require() {
 log() { echo "[soak] $(date +%H:%M:%S) $*"; }
 die() { echo "[soak] ERROR: $*" >&2; exit 1; }
 
+if [[ "${CORDUM_TLS_INSECURE:-}" =~ ^(1|true|TRUE|yes|YES)$ ]]; then
+  CURL_TLS_OPTS=(-k)
+elif [[ -n "${TLS_CA}" ]]; then
+  [[ -r "${TLS_CA}" ]] || die "CORDUM_TLS_CA is not readable: ${TLS_CA}"
+  CURL_TLS_OPTS=(--cacert "${TLS_CA}")
+  if [[ "${OS:-}" == "Windows_NT" ]]; then
+    CURL_TLS_OPTS+=(--ssl-no-revoke)
+  fi
+fi
+
 api() {
   local method="$1" path="$2"
   shift 2
   local url="${API_BASE}${path}"
   local status
-  status=$(curl -s -o /dev/null -w "%{http_code}" \
+  status=$(curl -s "${CURL_TLS_OPTS[@]}" -o /dev/null -w "%{http_code}" \
     -X "$method" "$url" \
     -H "X-API-Key: ${API_KEY}" \
     -H "X-Tenant-ID: ${TENANT_ID}" \
@@ -68,7 +82,7 @@ api_body() {
   local method="$1" path="$2"
   shift 2
   local url="${API_BASE}${path}"
-  curl -s -X "$method" "$url" \
+  curl -s "${CURL_TLS_OPTS[@]}" -X "$method" "$url" \
     -H "X-API-Key: ${API_KEY}" \
     -H "X-Tenant-ID: ${TENANT_ID}" \
     -H "Content-Type: application/json" \
