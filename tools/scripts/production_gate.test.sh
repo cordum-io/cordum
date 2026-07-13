@@ -3,6 +3,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCRIPT="${ROOT}/tools/scripts/production_gate.sh"
+DEMO_GUARDRAILS_RUN="${ROOT}/tools/scripts/demo_guardrails_run.sh"
+HA_COMPOSE="${ROOT}/docker-compose.ha.yaml"
 SANDBOX="$(mktemp -d -t production-gate-test.XXXXXX)"
 trap 'rm -rf "${SANDBOX}"' EXIT
 
@@ -15,6 +17,24 @@ extract_function() {
   ' "${SCRIPT}"
 }
 
+extract_full_function() {
+  local fn="$1"
+  awk -v fn="${fn}" '
+    $0 == fn "() {" {emit=1; seen=1}
+    emit && seen && $0 != fn "() {" && $0 ~ /^[A-Za-z_][A-Za-z0-9_]*\(\) \{$/ {exit}
+    emit {print}
+  ' "${SCRIPT}"
+}
+
+extract_compose_service() {
+  local service="  $1:"
+  awk -v service="${service}" '
+    $0 == service {emit=1}
+    emit && $0 != service && $0 ~ /^  [A-Za-z0-9_-]+:$/ {exit}
+    emit {print}
+  ' "${HA_COMPOSE}"
+}
+
 HELPER="${SANDBOX}/production_gate_functions.sh"
 {
   echo 'set -euo pipefail'
@@ -23,6 +43,13 @@ HELPER="${SANDBOX}/production_gate_functions.sh"
   echo 'sanitize_message() { local msg="${1:-}"; msg="${msg//$'\''\n'\''/ }"; printf "%s" "${msg}"; }'
   extract_function ensure_compose_cmd
   extract_function run_gate
+  extract_function policy_probe_ready
+  extract_function cleanup_gate14_snapshot
+  extract_function validate_gate14_publish_response
+  extract_function build_selected_gates
+  extract_function json_escape
+  extract_full_function write_results_json
+  extract_function is_blocking_gate
 } >"${HELPER}"
 # shellcheck source=/dev/null
 source "${HELPER}"
@@ -87,6 +114,148 @@ assert_not_contains "mock-bank worker start avoids command substitution hang" "$
 assert_contains "mock-bank worker default does not trust stale registry entries" "${worker_start_fn}" 'CORDUM_PRODUCTION_GATE_REUSE_MOCK_BANK_WORKER'
 cleanup_fn="$(extract_function cleanup)"
 assert_contains "mock-bank cleanup only kills owned worker" "${cleanup_fn}" 'MOCK_BANK_WORKER_STARTED:-0'
+
+gate_4_fn="$(extract_full_function gate_4_policy)"
+assert_contains "gate 4 invokes non-executable remediation script through bash" "${gate_4_fn}" 'bash "${SCRIPT_DIR}/demo_guardrails_run.sh"'
+assert_contains "gate 4 builds a cordumctl fallback for the remediation demo" "${gate_4_fn}" 'go build -o "${remediation_cordumctl}" ./cmd/cordumctl'
+assert_contains "gate 4 passes the resolved cordumctl to the remediation demo" "${gate_4_fn}" 'CORDUMCTL_BIN="${remediation_cordumctl}"'
+demo_guardrails_run="$(cat "${DEMO_GUARDRAILS_RUN}")"
+assert_contains "guardrails runner invokes non-executable demo through bash" "${demo_guardrails_run}" 'bash "${ROOT_DIR}/tools/scripts/demo_guardrails.sh"'
+
+ensure_agent_fn="$(extract_full_function ensure_mcp_gate_agent)"
+assert_contains "gate 8 agent creation includes bounded status/body diagnostics" "${ensure_agent_fn}" 'format_api_failure'
+gate_8_fn="$(extract_full_function gate_8_extensions)"
+policy_ready_fn="$(extract_function policy_probe_ready)"
+assert_contains "policy readiness recognizes the exact input allow rule" "${policy_ready_fn}" 'gate-output-allow-bank-validator'
+assert_contains "policy readiness recognizes redacted rule IDs" "${policy_ready_fn}" 'matched'
+assert_contains "gate 8 delegates readiness validation" "${gate_8_fn}" 'policy_probe_ready "${output_decision}" "${output_rule}"'
+assert_contains "gate 8 requires an allow decision from the exact rule" "${gate_8_fn}" '(( output_policy_ready == 1 ))'
+assert_contains "gate 8 preserves policy-probe HTTP status and body" "${gate_8_fn}" 'api_response POST /policy/evaluate'
+assert_contains "gate 8 timeout emits bounded policy-probe diagnostics" "${gate_8_fn}" 'format_api_failure "${output_policy_status}" "${output_policy_resp}"'
+assert_contains "gate 8 clean probe uses non-reserved labels" "${gate_8_fn}" 'bank_validator_job_body "normal compliance-safe summary"'
+assert_not_contains "gate 8 does not spoof the reserved source label" "${gate_8_fn}" '"_source": "workflow"'
+
+if declare -F policy_probe_ready >/dev/null 2>&1; then
+  policy_probe_ready ALLOW gate-output-allow-bank-validator
+  assert_eq "policy readiness accepts the exact allow rule" "$?" "0"
+  policy_probe_ready DECISION_TYPE_ALLOW matched
+  assert_eq "policy readiness accepts a redacted allow rule" "$?" "0"
+  readiness_rc=0
+  policy_probe_ready DENY gate-output-allow-bank-validator || readiness_rc=$?
+  assert_eq "policy readiness rejects an exact deny" "${readiness_rc}" "1"
+  readiness_rc=0
+  policy_probe_ready ALLOW stale-rule || readiness_rc=$?
+  assert_eq "policy readiness rejects an unrelated allow rule" "${readiness_rc}" "1"
+else
+  echo "FAIL: policy readiness behavior: policy_probe_ready is not defined" >&2
+  FAIL=$((FAIL + 1))
+fi
+
+gate_14_fn="$(extract_full_function gate_14_policy_lifecycle)"
+assert_contains "gate 14 publishes the selected existing bundle explicitly" "${gate_14_fn}" 'bundle_ids'
+assert_contains "gate 14 publish failure includes bounded status/body diagnostics" "${gate_14_fn}" 'format_api_failure'
+assert_contains "gate 14 arms rollback before publish" "${gate_14_fn}" 'trap cleanup_gate14_snapshot EXIT'
+assert_contains "gate 14 verifies the selected bundle became active" "${gate_14_fn}" 'validate_gate14_publish_response'
+assert_contains "gate 14 verifies an observable publish marker" "${gate_14_fn}" 'bundle_message}" == "${publish_marker}'
+
+if declare -F cleanup_gate14_snapshot >/dev/null 2>&1; then
+  cleanup_log="${SANDBOX}/gate14-cleanup.log"
+  cleanup() { echo cleanup >>"${cleanup_log}"; }
+  rollback_gate14_snapshot() { echo "rollback:$1" >>"${cleanup_log}"; return "${ROLLBACK_RC}"; }
+
+  : >"${cleanup_log}"
+  GATE14_ROLLBACK_SNAPSHOT_ID="snapshot-ok"
+  ROLLBACK_RC=0
+  cleanup_gate14_snapshot
+  assert_eq "gate 14 exit cleanup rolls back an armed snapshot" \
+    "$(head -n 1 "${cleanup_log}")" "rollback:snapshot-ok"
+  assert_eq "gate 14 exit cleanup disarms after successful rollback" \
+    "${GATE14_ROLLBACK_SNAPSHOT_ID}" ""
+  assert_eq "gate 14 exit cleanup preserves general cleanup" \
+    "$(tail -n 1 "${cleanup_log}")" "cleanup"
+
+  : >"${cleanup_log}"
+  GATE14_ROLLBACK_SNAPSHOT_ID="snapshot-failed"
+  ROLLBACK_RC=1
+  cleanup_gate14_snapshot 2>/dev/null
+  assert_eq "gate 14 retains failed rollback for diagnostics" \
+    "${GATE14_ROLLBACK_SNAPSHOT_ID}" "snapshot-failed"
+else
+  echo "FAIL: gate 14 cleanup behavior: cleanup_gate14_snapshot is not defined" >&2
+  FAIL=$((FAIL + 1))
+fi
+
+if declare -F validate_gate14_publish_response >/dev/null 2>&1; then
+  valid_publish='{"published":["secops/output"],"snapshot_before":"before","snapshot_after":"after"}'
+  validate_gate14_publish_response "${valid_publish}" "secops/output" >/dev/null
+  assert_eq "gate 14 accepts a real selected-bundle mutation" "$?" "0"
+  invalid_publish='{"published":["other"],"snapshot_before":"same","snapshot_after":"same"}'
+  invalid_rc=0
+  validate_gate14_publish_response "${invalid_publish}" "secops/output" >/dev/null 2>&1 || invalid_rc=$?
+  assert_eq "gate 14 rejects a publish no-op response" "${invalid_rc}" "1"
+else
+  echo "FAIL: gate 14 publish validation: validate_gate14_publish_response is not defined" >&2
+  FAIL=$((FAIL + 1))
+fi
+
+gate_16_fn="$(extract_full_function gate_16_degradation)"
+assert_contains "gate 16 key creation failure includes bounded status/body diagnostics" "${gate_16_fn}" 'format_api_failure'
+assert_contains "gate 16 never logs a successful credential response" "${gate_16_fn}" 'credential response omitted because it may contain an API key'
+
+gate_19_fn="$(extract_full_function gate_19_ha)"
+assert_not_contains "gate 19 avoids errexit-unsafe post-increment expressions" "${gate_19_fn}" '++'
+assert_contains "gate 19 submits policy-scoped validator jobs" "${gate_19_fn}" 'bank_validator_job_body'
+assert_not_contains "gate 19 does not count denied or failed jobs as HA success" "${gate_19_fn}" 'SUCCEEDED|FAILED|DENIED|CANCELLED|TIMEOUT|OUTPUT_QUARANTINED)'
+scheduler_replica_block="$(printf '%s\n' "${gate_19_fn}" | awk '
+  /if \(\( sched_count < 2 \)\); then/ {emit=1}
+  emit {print}
+  emit && /^    fi$/ {exit}
+')"
+assert_contains "gate 19 fails when the second scheduler replica is absent" \
+  "${scheduler_replica_block}" 'ha_failed=1'
+
+for replica in api-gateway-2 scheduler-2 workflow-engine-2; do
+  replica_block="$(extract_compose_service "${replica}")"
+  assert_contains "${replica} inherits the CI license token" \
+    "${replica_block}" 'CORDUM_LICENSE_TOKEN=${CORDUM_LICENSE_TOKEN:-}'
+  assert_contains "${replica} inherits the CI license public key" \
+    "${replica_block}" 'CORDUM_LICENSE_PUBLIC_KEY=${CORDUM_LICENSE_PUBLIC_KEY:-}'
+done
+
+if declare -F build_selected_gates >/dev/null 2>&1; then
+  SELECT_GATE=""
+  EXCLUDED_GATES=(6)
+  SELECTED_GATES=()
+  build_selected_gates
+  assert_eq "gate selection can exclude shared-runner performance gate" \
+    "${SELECTED_GATES[*]}" "1 2 3 4 5 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21"
+
+  SELECT_GATE="6"
+  EXCLUDED_GATES=()
+  SELECTED_GATES=()
+  build_selected_gates
+  assert_eq "explicit gate 6 selection remains available for advisory runs" \
+    "${SELECTED_GATES[*]}" "6"
+
+  RESULTS_FILE="${SANDBOX}/excluded-gate-results.json"
+  API_BASE="https://localhost:8081"
+  TENANT_ID="default"
+  STRICT_MODE=1
+  SELECT_GATE=""
+  EXCLUDED_GATES=(6)
+  SELECTED_GATES=(1)
+  BLOCKING_GATES=(1)
+  GATE_NAME[1]="Gate 1 Deploy"
+  GATE_STATUS[1]="PASS"
+  GATE_DURATION_MS[1]=1
+  GATE_MESSAGE[1]="ok"
+  write_results_json
+  assert_eq "gate results identify the exclusion honestly" \
+    "$(jq -r '.selected_gate' "${RESULTS_FILE}")" "all-except-6"
+else
+  echo "FAIL: gate exclusion behavior: build_selected_gates is not defined" >&2
+  FAIL=$((FAIL + 1))
+fi
 
 gate_errexit_probe() {
   echo "before failure"
