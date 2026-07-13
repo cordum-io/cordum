@@ -31,6 +31,8 @@ assert_count "all nightly service jobs enable managed-key storage" "${NIGHTLY}" 
   'CORDUM_USER_AUTH_ENABLED=true' 3
 assert_count "all nightly service jobs provision admin passwords" "${NIGHTLY}" \
   'CORDUM_ADMIN_PASSWORD=' 3
+assert_count "integration tests isolate fixture license environment" "${INTEGRATION}" \
+  'env -u CORDUM_LICENSE_TOKEN -u CORDUM_LICENSE_PUBLIC_KEY go test -v -tags=integration -timeout 10m ./...' 1
 
 echo "SUMMARY: ${PASS} pass, ${FAIL} fail"
 [[ "${FAIL}" -eq 0 ]]

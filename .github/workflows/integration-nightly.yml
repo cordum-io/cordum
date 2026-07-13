@@ -81,7 +81,10 @@ jobs:
         CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
 
     - name: Run Go integration tests
-      run: go test -v -tags=integration -timeout 10m ./...
+      # The services already inherited the generated CI license when Compose
+      # started. Keep it out of the test process so unit-test license fixtures
+      # are not shadowed by the job-wide GITHUB_ENV values.
+      run: env -u CORDUM_LICENSE_TOKEN -u CORDUM_LICENSE_PUBLIC_KEY go test -v -tags=integration -timeout 10m ./...
       env:
         CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
         REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
