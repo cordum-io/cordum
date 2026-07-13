@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 INTEGRATION="${ROOT}/.github/workflows/integration-nightly.yml"
 NIGHTLY="${ROOT}/.github/workflows/nightly.yml"
+DEMO_E2E="${ROOT}/.github/workflows/demo-mock-bank-e2e.yml"
 PASS=0
 FAIL=0
 
@@ -33,6 +34,8 @@ assert_count "all nightly service jobs provision admin passwords" "${NIGHTLY}" \
   'CORDUM_ADMIN_PASSWORD=' 3
 assert_count "integration tests isolate fixture license environment" "${INTEGRATION}" \
   'env -u CORDUM_LICENSE_TOKEN -u CORDUM_LICENSE_PUBLIC_KEY go test -v -tags=integration -timeout 10m ./...' 1
+assert_count "mock-bank e2e provisions an ephemeral CI license" "${DEMO_E2E}" \
+  'go run ./tools/cilicense >> "$GITHUB_ENV"' 1
 
 echo "SUMMARY: ${PASS} pass, ${FAIL} fail"
 [[ "${FAIL}" -eq 0 ]]
