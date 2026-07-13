@@ -1,6 +1,6 @@
 module github.com/cordum/cordum
 
-go 1.26.0
+go 1.25.10
 
 require (
 	github.com/ProtonMail/go-crypto v1.4.1
@@ -36,9 +36,9 @@ require (
 	google.golang.org/grpc v1.81.1
 	google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af
 	gopkg.in/yaml.v3 v3.0.1
-	k8s.io/api v0.36.2
-	k8s.io/apimachinery v0.36.2
-	k8s.io/client-go v0.36.2
+	k8s.io/api v0.35.6
+	k8s.io/apimachinery v0.35.6
+	k8s.io/client-go v0.35.6
 )
 
 require (

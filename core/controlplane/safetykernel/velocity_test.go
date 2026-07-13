@@ -80,25 +80,18 @@ func TestVelocityCheckOnly_DoesNotRecord(t *testing.T) {
 
 func TestVelocity_SlidingWindow_OldEntriesExpire(t *testing.T) {
 	vc, _ := newTestVelocityChecker(t)
-	// Use a 1-second window so the test can verify expiry via real time.Sleep
-	cfg := &config.VelocityConfig{MaxRequests: 2, WindowSeconds: 1, Key: "labels.session_id"}
+	cfg := &config.VelocityConfig{MaxRequests: 2, WindowSeconds: 60, Key: "labels.session_id"}
+	ctx := context.Background()
+	key := velocityKey("rule-1", "sess-abc")
+	expiredScore := float64(time.Now().Unix() - int64(cfg.WindowSeconds) - 1)
 
-	// Add 2 requests
-	_, _, err := vc.CheckAndRecord(context.Background(), "rule-1", "sess-abc", "job-1", cfg)
+	err := vc.client.ZAdd(ctx, key,
+		redis.Z{Score: expiredScore, Member: "job-1"},
+		redis.Z{Score: expiredScore, Member: "job-2"},
+	).Err()
 	require.NoError(t, err)
-	_, _, err = vc.CheckAndRecord(context.Background(), "rule-1", "sess-abc", "job-2", cfg)
-	require.NoError(t, err)
 
-	// 3rd should exceed
-	exceeded, _, err := vc.CheckAndRecord(context.Background(), "rule-1", "sess-abc", "job-3", cfg)
-	require.NoError(t, err)
-	assert.True(t, exceeded)
-
-	// Wait for the 1-second window to pass
-	time.Sleep(1100 * time.Millisecond)
-
-	// After window expires, new request should be within limit
-	exceeded, count, err := vc.CheckAndRecord(context.Background(), "rule-1", "sess-abc", "job-4", cfg)
+	exceeded, count, err := vc.CheckAndRecord(ctx, "rule-1", "sess-abc", "job-3", cfg)
 	require.NoError(t, err)
 	assert.False(t, exceeded)
 	assert.Equal(t, int64(1), count)

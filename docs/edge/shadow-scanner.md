@@ -223,7 +223,7 @@ that designs it.
 
 ### 9.2 EDGE-143.1 — Kubernetes shadow detector library (shipped)
 
-Library package at `core/edge/shadow/k8s/`. Vendors `k8s.io/client-go@v0.34.8`
+Library package at `core/edge/shadow/k8s/`. Vendors `k8s.io/client-go@v0.35.6`
 as the **first Kubernetes dependency in cordum** (transitive
 `k8s.io/api`, `k8s.io/apimachinery`). Observe-only by design and by
 the type system: the detector holds a narrow internal `kubeReader`
