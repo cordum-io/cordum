@@ -15,6 +15,15 @@ updates:
       go-deps:
         patterns:
           - "*"
+    # Kubernetes 0.36 requires Go 1.26; keep the supported Go 1.25 toolchain
+    # until that migration is handled deliberately across CI and images.
+    ignore:
+      - dependency-name: "k8s.io/api"
+        versions: [">= 0.36.0"]
+      - dependency-name: "k8s.io/apimachinery"
+        versions: [">= 0.36.0"]
+      - dependency-name: "k8s.io/client-go"
+        versions: [">= 0.36.0"]
 
   # Keep dashboard npm dependencies current.
   - package-ecosystem: "npm"
@@ -25,3 +34,14 @@ updates:
       dashboard-deps:
         patterns:
           - "*"
+    # These majors require source migrations; do not bundle them into routine
+    # dependency refreshes where their generated/type changes obscure the diff.
+    ignore:
+      - dependency-name: "orval"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "zod"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "recharts"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]

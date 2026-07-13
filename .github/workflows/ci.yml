@@ -136,6 +136,14 @@ jobs:
     - name: Self-test the secret/shell-exec lint guard
       run: bash tools/scripts/lint_no_secret_log.test.sh
 
+    - name: Self-test workflow and production-gate contracts
+      run: |
+        bash tools/scripts/fetch_stargazers.test.sh
+        bash tools/scripts/production_gate_http.test.sh
+        bash tools/scripts/production_gate.test.sh
+        bash tools/scripts/nightly_workflows.test.sh
+        bash tools/scripts/soak_test_lib.test.sh
+
   dashboard-test:
     name: Dashboard Tests
     runs-on: ubuntu-latest
