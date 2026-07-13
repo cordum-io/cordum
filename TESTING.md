@@ -580,7 +580,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.26.3'
       - run: go test -race -coverprofile=coverage.out ./...
       - uses: codecov/codecov-action@v3
         with:
@@ -601,7 +601,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.26.3'
       - run: go test -tags=integration ./...
         env:
           TEST_NATS_URL: nats://localhost:4222
@@ -613,7 +613,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.26.3'
       - run: go test -bench=. -benchmem ./... | tee bench.txt
       - uses: benchmark-action/github-action-benchmark@v1
         with:

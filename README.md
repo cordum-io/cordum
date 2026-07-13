@@ -45,7 +45,7 @@ cd cordum
 ```
 
 **Prerequisites:** Docker Desktop v4+ (or Engine v20.10+ with Compose v2,
-≥ 4 GB RAM allocated), Go 1.24+ (for first-run cert generation), and
+≥ 4 GB RAM allocated), Go 1.26.3+ (for first-run cert generation), and
 `curl`. On Windows use MSYS2 / Git Bash / WSL.
 
 **What you get at the end:**
@@ -350,7 +350,7 @@ docker compose logs -f api-gateway
 | Can't login to dashboard | Default is `admin` / `ChangeMe123!` (in `.env` as `CORDUM_ADMIN_PASSWORD`); ensure `CORDUM_USER_AUTH_ENABLED=true`. Custom passwords must be ≥12 chars + uppercase + digit + special |
 | TLS/SSL cert errors | Remove `./certs/` and re-run — certs auto-regenerate |
 | `openssl` not found | Not needed — quickstart.sh auto-generates keys without it |
-| Go build fails | Requires Go 1.24+ — check with `go version` |
+| Go build fails | Requires Go 1.26.3+ — check with `go version` |
 | Stale config after changes | `redis-cli DEL cfg:system:default` then restart |
 
 For detailed troubleshooting, see [docs/troubleshooting.md](docs/troubleshooting.md).

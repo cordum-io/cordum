@@ -4,7 +4,7 @@ Thanks for helping improve Cordum.
 
 ## Getting started
 
-- Go toolchain: `go 1.24`
+- Go toolchain: `go 1.26.3`
 - Tests: `go test ./...`
 - Coverage: `make coverage` (all) or `make coverage-core` (enforces 80% on `core/`)
 - Format: `gofmt -w` on Go files
