@@ -15,6 +15,15 @@ extract_function() {
   ' "${SCRIPT}"
 }
 
+extract_full_function() {
+  local fn="$1"
+  awk -v fn="${fn}" '
+    $0 == fn "() {" {emit=1; seen=1}
+    emit && seen && $0 != fn "() {" && $0 ~ /^[A-Za-z_][A-Za-z0-9_]*\(\) \{$/ {exit}
+    emit {print}
+  ' "${SCRIPT}"
+}
+
 HELPER="${SANDBOX}/production_gate_functions.sh"
 {
   echo 'set -euo pipefail'
@@ -23,6 +32,8 @@ HELPER="${SANDBOX}/production_gate_functions.sh"
   echo 'sanitize_message() { local msg="${1:-}"; msg="${msg//$'\''\n'\''/ }"; printf "%s" "${msg}"; }'
   extract_function ensure_compose_cmd
   extract_function run_gate
+  extract_function cleanup_gate14_snapshot
+  extract_function validate_gate14_publish_response
 } >"${HELPER}"
 # shellcheck source=/dev/null
 source "${HELPER}"
@@ -87,6 +98,75 @@ assert_not_contains "mock-bank worker start avoids command substitution hang" "$
 assert_contains "mock-bank worker default does not trust stale registry entries" "${worker_start_fn}" 'CORDUM_PRODUCTION_GATE_REUSE_MOCK_BANK_WORKER'
 cleanup_fn="$(extract_function cleanup)"
 assert_contains "mock-bank cleanup only kills owned worker" "${cleanup_fn}" 'MOCK_BANK_WORKER_STARTED:-0'
+
+gate_4_fn="$(extract_full_function gate_4_policy)"
+assert_contains "gate 4 invokes non-executable remediation script through bash" "${gate_4_fn}" 'bash "${SCRIPT_DIR}/demo_guardrails_run.sh"'
+
+ensure_agent_fn="$(extract_full_function ensure_mcp_gate_agent)"
+assert_contains "gate 8 agent creation includes bounded status/body diagnostics" "${ensure_agent_fn}" 'format_api_failure'
+
+gate_14_fn="$(extract_full_function gate_14_policy_lifecycle)"
+assert_contains "gate 14 publishes the selected existing bundle explicitly" "${gate_14_fn}" 'bundle_ids'
+assert_contains "gate 14 publish failure includes bounded status/body diagnostics" "${gate_14_fn}" 'format_api_failure'
+assert_contains "gate 14 arms rollback before publish" "${gate_14_fn}" 'trap cleanup_gate14_snapshot EXIT'
+assert_contains "gate 14 verifies the selected bundle became active" "${gate_14_fn}" 'validate_gate14_publish_response'
+assert_contains "gate 14 verifies an observable publish marker" "${gate_14_fn}" 'bundle_message}" == "${publish_marker}'
+
+if declare -F cleanup_gate14_snapshot >/dev/null 2>&1; then
+  cleanup_log="${SANDBOX}/gate14-cleanup.log"
+  cleanup() { echo cleanup >>"${cleanup_log}"; }
+  rollback_gate14_snapshot() { echo "rollback:$1" >>"${cleanup_log}"; return "${ROLLBACK_RC}"; }
+
+  : >"${cleanup_log}"
+  GATE14_ROLLBACK_SNAPSHOT_ID="snapshot-ok"
+  ROLLBACK_RC=0
+  cleanup_gate14_snapshot
+  assert_eq "gate 14 exit cleanup rolls back an armed snapshot" \
+    "$(head -n 1 "${cleanup_log}")" "rollback:snapshot-ok"
+  assert_eq "gate 14 exit cleanup disarms after successful rollback" \
+    "${GATE14_ROLLBACK_SNAPSHOT_ID}" ""
+  assert_eq "gate 14 exit cleanup preserves general cleanup" \
+    "$(tail -n 1 "${cleanup_log}")" "cleanup"
+
+  : >"${cleanup_log}"
+  GATE14_ROLLBACK_SNAPSHOT_ID="snapshot-failed"
+  ROLLBACK_RC=1
+  cleanup_gate14_snapshot 2>/dev/null
+  assert_eq "gate 14 retains failed rollback for diagnostics" \
+    "${GATE14_ROLLBACK_SNAPSHOT_ID}" "snapshot-failed"
+else
+  echo "FAIL: gate 14 cleanup behavior: cleanup_gate14_snapshot is not defined" >&2
+  FAIL=$((FAIL + 1))
+fi
+
+if declare -F validate_gate14_publish_response >/dev/null 2>&1; then
+  valid_publish='{"published":["secops/output"],"snapshot_before":"before","snapshot_after":"after"}'
+  validate_gate14_publish_response "${valid_publish}" "secops/output" >/dev/null
+  assert_eq "gate 14 accepts a real selected-bundle mutation" "$?" "0"
+  invalid_publish='{"published":["other"],"snapshot_before":"same","snapshot_after":"same"}'
+  invalid_rc=0
+  validate_gate14_publish_response "${invalid_publish}" "secops/output" >/dev/null 2>&1 || invalid_rc=$?
+  assert_eq "gate 14 rejects a publish no-op response" "${invalid_rc}" "1"
+else
+  echo "FAIL: gate 14 publish validation: validate_gate14_publish_response is not defined" >&2
+  FAIL=$((FAIL + 1))
+fi
+
+gate_16_fn="$(extract_full_function gate_16_degradation)"
+assert_contains "gate 16 key creation failure includes bounded status/body diagnostics" "${gate_16_fn}" 'format_api_failure'
+assert_contains "gate 16 never logs a successful credential response" "${gate_16_fn}" 'credential response omitted because it may contain an API key'
+
+gate_19_fn="$(extract_full_function gate_19_ha)"
+assert_not_contains "gate 19 avoids errexit-unsafe post-increment expressions" "${gate_19_fn}" '++'
+assert_contains "gate 19 submits policy-scoped validator jobs" "${gate_19_fn}" 'bank_validator_job_body'
+assert_not_contains "gate 19 does not count denied or failed jobs as HA success" "${gate_19_fn}" 'SUCCEEDED|FAILED|DENIED|CANCELLED|TIMEOUT|OUTPUT_QUARANTINED)'
+scheduler_replica_block="$(printf '%s\n' "${gate_19_fn}" | awk '
+  /if \(\( sched_count < 2 \)\); then/ {emit=1}
+  emit {print}
+  emit && /^    fi$/ {exit}
+')"
+assert_contains "gate 19 fails when the second scheduler replica is absent" \
+  "${scheduler_replica_block}" 'ha_failed=1'
 
 gate_errexit_probe() {
   echo "before failure"

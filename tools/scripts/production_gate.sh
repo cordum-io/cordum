@@ -189,6 +189,51 @@ api_url() {
   printf '%s/api/v1%s' "${API_BASE}" "${path}"
 }
 
+api_response() {
+  local method="$1"
+  local path="$2"
+  shift 2
+  local attempt raw rc
+  for attempt in 1 2 3; do
+    raw="$(curl -sS -w $'\n%{http_code}' -X "${method}" \
+      "${CURL_TIMEOUT_OPTS[@]}" "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "$@" "$(api_url "${path}")" 2>/dev/null)" && {
+      printf '%s' "${raw}"
+      return 0
+    }
+    rc=$?
+    # Retry failures that happen before an HTTP request can be committed.
+    # A receive-side failure (56) is retryable only for read-only methods;
+    # retrying a mutating request could duplicate a committed operation.
+    if [[ ${rc} -eq 7 || ${rc} -eq 35 || \
+      (${rc} -eq 56 && "${method}" =~ ^(GET|HEAD|OPTIONS)$) ]]; then
+      sleep 1
+      continue
+    fi
+    printf '%s' "${raw}"
+    return "${rc}"
+  done
+  printf '%s' "${raw}"
+  return "${rc:-1}"
+}
+
+api_response_code() {
+  printf '%s' "${1##*$'\n'}"
+}
+
+api_response_body() {
+  printf '%s' "${1%$'\n'*}"
+}
+
+format_api_failure() {
+  local code="${1:-000}"
+  local body
+  local max_chars="${API_DIAGNOSTIC_MAX_CHARS:-512}"
+  [[ "${max_chars}" =~ ^[1-9][0-9]*$ ]] || max_chars=512
+  body="$(sanitize_message "${2:-}")"
+  body="${body//$'\r'/ }"
+  printf 'status=%s body=%s' "${code}" "${body:0:max_chars}"
+}
+
 api_code() {
   local method="$1"
   local path="$2"
@@ -198,7 +243,8 @@ api_code() {
     _raw="$(curl -sS -w $'\n%{http_code}' -X "${method}" \
       "${CURL_TIMEOUT_OPTS[@]}" "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "$@" "$(api_url "${path}")" 2>/dev/null)" && { printf '%s' "${_raw##*$'\n'}"; return 0; }
     _rc=$?
-    if [[ ${_rc} -eq 7 || ${_rc} -eq 35 || ${_rc} -eq 56 ]]; then
+    if [[ ${_rc} -eq 7 || ${_rc} -eq 35 || \
+      (${_rc} -eq 56 && "${method}" =~ ^(GET|HEAD|OPTIONS)$) ]]; then
       sleep 1
       continue
     fi
@@ -217,8 +263,9 @@ api_body() {
   for _attempt in 1 2 3; do
     _out="$(curl -sS -X "${method}" "${CURL_TIMEOUT_OPTS[@]}" "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "$@" "$(api_url "${path}")" 2>/dev/null)" && { printf '%s' "${_out}"; return 0; }
     _rc=$?
-    # Retry on transient TLS/connection errors (curl 7=connect, 35=ssl, 56=recv)
-    if [[ ${_rc} -eq 7 || ${_rc} -eq 35 || ${_rc} -eq 56 ]]; then
+    # Receive failures are safe to retry only for read-only methods.
+    if [[ ${_rc} -eq 7 || ${_rc} -eq 35 || \
+      (${_rc} -eq 56 && "${method}" =~ ^(GET|HEAD|OPTIONS)$) ]]; then
       sleep 1
       continue
     fi
@@ -496,7 +543,7 @@ wait_for_demo_guardrails_policy() {
 }
 
 ensure_mcp_gate_agent() {
-  local payload resp agent_id name
+  local payload raw resp code agent_id name
 
   name="production-gate-mcp-$(date +%s)-$$"
   payload="$(jq -cn --arg name "${name}" '{
@@ -506,10 +553,12 @@ ensure_mcp_gate_agent() {
     allowed_tools: ["cordum_status"],
     data_classifications: ["public"]
   }')"
-  resp="$(api_call POST /agents "${payload}")"
+  raw="$(api_response POST /agents "${JSON_HEADERS[@]}" -d "${payload}" || true)"
+  resp="$(api_response_body "${raw}")"
+  code="$(api_response_code "${raw}")"
   agent_id="$(echo "${resp}" | jq -r '.id // empty' 2>/dev/null || true)"
   if [[ -z "${agent_id}" ]]; then
-    echo "failed to create MCP production-gate agent identity" >&2
+    echo "failed to create MCP production-gate agent identity ($(format_api_failure "${code}" "${resp}"))" >&2
     return 1
   fi
   printf '%s' "${agent_id}"
@@ -616,6 +665,45 @@ cleanup() {
   rm -f "${MOCK_BANK_PID_FILE}" /tmp/gate_ws_*.tmp 2>/dev/null || true
 }
 trap cleanup EXIT
+
+rollback_gate14_snapshot() {
+  local snapshot_id="$1"
+  local payload raw body code
+  payload="$(jq -cn --arg sid "${snapshot_id}" '{snapshot_id: $sid}')"
+  raw="$(api_response POST /policy/rollback "${JSON_HEADERS[@]}" -d "${payload}" || true)"
+  body="$(api_response_body "${raw}")"
+  code="$(api_response_code "${raw}")"
+  if [[ "${code}" != "200" && "${code}" != "204" ]]; then
+    echo "policy rollback failed ($(format_api_failure "${code}" "${body}"))" >&2
+    return 1
+  fi
+}
+
+cleanup_gate14_snapshot() {
+  local snapshot_id="${GATE14_ROLLBACK_SNAPSHOT_ID:-}"
+  if [[ -n "${snapshot_id}" ]]; then
+    if rollback_gate14_snapshot "${snapshot_id}"; then
+      GATE14_ROLLBACK_SNAPSHOT_ID=""
+    else
+      echo "gate 14 cleanup could not restore snapshot ${snapshot_id}" >&2
+    fi
+  fi
+  cleanup
+}
+
+validate_gate14_publish_response() {
+  local body="$1"
+  local bundle_id="$2"
+  local before after published
+  before="$(echo "${body}" | jq -r '.snapshot_before // empty' 2>/dev/null || true)"
+  after="$(echo "${body}" | jq -r '.snapshot_after // empty' 2>/dev/null || true)"
+  published="$(echo "${body}" | jq -r --arg id "${bundle_id}" \
+    '(.published // []) | index($id) != null' 2>/dev/null || true)"
+  if [[ "${published}" != "true" || -z "${before}" || -z "${after}" || "${before}" == "${after}" ]]; then
+    echo "policy publish response did not prove a selected-bundle mutation" >&2
+    return 1
+  fi
+}
 
 gate_1_deploy() {
   local code
@@ -996,7 +1084,7 @@ gate_4_policy() {
     CORDUM_ORG_ID="${ORG_ID}" \
     CORDUM_TENANT_ID="${TENANT_ID}" \
     CORDUM_API_BASE="${API_BASE}" \
-    "${SCRIPT_DIR}/demo_guardrails_run.sh" >"${remediation_log}" 2>&1); then
+    bash "${SCRIPT_DIR}/demo_guardrails_run.sh" >"${remediation_log}" 2>&1); then
     echo "gate 4: demo-guardrails remediation run failed:" >&2
     sed 's/^/  | /' "${remediation_log}" >&2
     rm -f "${remediation_log}"
@@ -2456,10 +2544,12 @@ gate_13_config() {
 # ---------------------------------------------------------------------------
 gate_14_policy_lifecycle() {
   local code resp
-  local bundles_list bundle_id bundle_detail
+  local bundle_id bundle_detail bundle_raw bundle_state_before bundle_state_after
+  local bundle_enabled bundle_message bundle_updated_at
   local snapshot_id snapshot_list
   local sim_resp sim_decision
   local rules_list
+  local publish_marker publish_payload publish_raw publish_body
 
   # --- List bundles ---
   code="$(api_code GET /policy/bundles)"
@@ -2474,9 +2564,17 @@ gate_14_policy_lifecycle() {
   if [[ -z "${bundle_id}" ]]; then
     bundle_id="secops/output"
   fi
-  code="$(api_code GET "/policy/bundles/${bundle_id//\//%2F}")"
+  bundle_raw="$(api_response GET "/policy/bundles/${bundle_id//\//%2F}" || true)"
+  bundle_detail="$(api_response_body "${bundle_raw}")"
+  code="$(api_response_code "${bundle_raw}")"
   [[ "${code}" == "200" ]] || {
     echo "get policy bundle expected 200, got ${code}" >&2
+    return 1
+  }
+  bundle_state_before="$(echo "${bundle_detail}" | jq -c \
+    '{content, enabled, author, message}' 2>/dev/null || true)"
+  [[ -n "${bundle_state_before}" ]] || {
+    echo "get policy bundle returned invalid JSON" >&2
     return 1
   }
 
@@ -2518,9 +2616,29 @@ gate_14_policy_lifecycle() {
   }
 
   # --- Publish ---
-  code="$(api_code POST /policy/publish "${JSON_HEADERS[@]}" -d '{}')"
+  publish_marker="production-gate-${BASHPID:-$$}-$(date -u +%s)"
+  publish_payload="$(jq -cn --arg id "${bundle_id}" --arg message "${publish_marker}" \
+    '{bundle_ids:[$id], message:$message}')"
+  GATE14_ROLLBACK_SNAPSHOT_ID="${snapshot_id}"
+  trap cleanup_gate14_snapshot EXIT
+  publish_raw="$(api_response POST /policy/publish "${JSON_HEADERS[@]}" -d "${publish_payload}" || true)"
+  publish_body="$(api_response_body "${publish_raw}")"
+  code="$(api_response_code "${publish_raw}")"
   [[ "${code}" == "200" || "${code}" == "204" ]] || {
-    echo "policy publish expected 200/204, got ${code}" >&2
+    echo "policy publish expected 200/204 ($(format_api_failure "${code}" "${publish_body}"))" >&2
+    return 1
+  }
+  validate_gate14_publish_response "${publish_body}" "${bundle_id}"
+
+  bundle_raw="$(api_response GET "/policy/bundles/${bundle_id//\//%2F}" || true)"
+  bundle_detail="$(api_response_body "${bundle_raw}")"
+  code="$(api_response_code "${bundle_raw}")"
+  bundle_enabled="$(echo "${bundle_detail}" | jq -r '.enabled // false' 2>/dev/null || true)"
+  bundle_message="$(echo "${bundle_detail}" | jq -r '.message // empty' 2>/dev/null || true)"
+  bundle_updated_at="$(echo "${bundle_detail}" | jq -r '.updated_at // empty' 2>/dev/null || true)"
+  [[ "${code}" == "200" && "${bundle_enabled}" == "true" && \
+    "${bundle_message}" == "${publish_marker}" && -n "${bundle_updated_at}" ]] || {
+    echo "published bundle did not expose the expected active mutation" >&2
     return 1
   }
 
@@ -2534,10 +2652,16 @@ gate_14_policy_lifecycle() {
   }
 
   # --- Rollback ---
-  code="$(api_code POST /policy/rollback "${JSON_HEADERS[@]}" \
-    -d "$(jq -cn --arg sid "${snapshot_id}" '{snapshot_id: $sid}')")"
-  [[ "${code}" == "200" || "${code}" == "204" ]] || {
-    echo "policy rollback expected 200/204, got ${code}" >&2
+  rollback_gate14_snapshot "${snapshot_id}"
+  GATE14_ROLLBACK_SNAPSHOT_ID=""
+
+  bundle_raw="$(api_response GET "/policy/bundles/${bundle_id//\//%2F}" || true)"
+  bundle_detail="$(api_response_body "${bundle_raw}")"
+  code="$(api_response_code "${bundle_raw}")"
+  bundle_state_after="$(echo "${bundle_detail}" | jq -c \
+    '{content, enabled, author, message}' 2>/dev/null || true)"
+  [[ "${code}" == "200" && "${bundle_state_after}" == "${bundle_state_before}" ]] || {
+    echo "policy rollback did not restore the selected bundle" >&2
     return 1
   }
 
@@ -2641,7 +2765,8 @@ gate_16_degradation() {
   local code resp
   local job_resp job_id job_state
   local approval_job approval_state
-  local submitter_key_resp submitter_key_id submitter_key_secret
+  local submitter_key_raw submitter_key_resp submitter_key_code submitter_key_diagnostic
+  local submitter_key_id submitter_key_secret
 
   ensure_mock_bank_pack
   ensure_mock_bank_worker
@@ -2650,11 +2775,18 @@ gate_16_degradation() {
   # Submit the approval-required job with a distinct temporary API key, then
   # reject it with the main gate key. This preserves the product's separation
   # of duties/self-approval guard while still exercising the rejection path.
-  submitter_key_resp="$(api_call POST /auth/keys "$(jq -cn --arg n "pg16-submit-$(date +%s)-$$" '{name:$n, scopes:["admin"]}')")"
+  submitter_key_raw="$(api_response POST /auth/keys "${JSON_HEADERS[@]}" \
+    -d "$(jq -cn --arg n "pg16-submit-$(date +%s)-$$" '{name:$n, scopes:["admin"]}')" || true)"
+  submitter_key_resp="$(api_response_body "${submitter_key_raw}")"
+  submitter_key_code="$(api_response_code "${submitter_key_raw}")"
   submitter_key_id="$(echo "${submitter_key_resp}" | jq -r '.key.id // .id // .key_id // empty' 2>/dev/null || true)"
   submitter_key_secret="$(echo "${submitter_key_resp}" | jq -r '.secret // .key // .api_key // empty' 2>/dev/null || true)"
   [[ -n "${submitter_key_id}" && -n "${submitter_key_secret}" ]] || {
-    echo "failed to create gate16 submitter API key" >&2
+    submitter_key_diagnostic="${submitter_key_resp}"
+    if [[ "${submitter_key_code}" == 2* ]]; then
+      submitter_key_diagnostic="credential response omitted because it may contain an API key"
+    fi
+    echo "failed to create gate16 submitter API key ($(format_api_failure "${submitter_key_code}" "${submitter_key_diagnostic}"))" >&2
     return 1
   }
   GATE16_SUBMITTER_KEY_ID="${submitter_key_id}"
@@ -3089,7 +3221,8 @@ gate_19_ha() {
     sched_count="$(printf '%s' "${sched_count}" | tr -d '[:space:]')"
     [[ "${sched_count}" =~ ^[0-9]+$ ]] || sched_count=0
     if (( sched_count < 2 )); then
-      log "gate 19: expected 2 scheduler replicas, found ${sched_count}"
+      echo "gate 19: expected 2 scheduler replicas, found ${sched_count}" >&2
+      ha_failed=1
     fi
     log "gate 19: HA topology deployed (gw1 + gw2, ${sched_count} schedulers)"
   fi
@@ -3100,7 +3233,7 @@ gate_19_ha() {
     ensure_mock_bank_worker || true
     local job_ids=()
     local submit_body
-    submit_body="$(jq -cn '{prompt:"gate19 ha dispatch", topic:"job.bank-validators.process"}')"
+    submit_body="$(bank_validator_job_body "gate19 ha dispatch")"
 
     # Submit 20 via gateway-1
     local i
@@ -3124,16 +3257,18 @@ gate_19_ha() {
     done
 
     log "gate 19: submitted ${#job_ids[@]} jobs, polling for terminal states..."
+    if (( ${#job_ids[@]} != 40 )); then
+      echo "gate 19: expected 40 accepted jobs, got ${#job_ids[@]}" >&2
+      ha_failed=1
+    fi
 
     # Poll all jobs to terminal (300s timeout)
-    local completed=0 timed_out=0
+    local timed_out=0
     for jid in "${job_ids[@]}"; do
       local state
       state="$(poll_job_terminal "${jid}" 300 || true)"
       if [[ "${state}" == "__POLL_TIMEOUT__" ]]; then
-        (( timed_out++ ))
-      else
-        (( completed++ ))
+        timed_out=$((timed_out + 1))
       fi
     done
 
@@ -3149,22 +3284,22 @@ gate_19_ha() {
       ha_failed=1
     fi
 
-    # Verify each job has exactly one terminal state via API
-    local terminal_count=0
+    # A denied or failed job never exercised dispatch, so only success proves HA.
+    local success_count=0
     for jid in "${job_ids[@]}"; do
       local st
       st="$(api_body GET "/jobs/${jid}" | jq -r '.state // empty' 2>/dev/null || true)"
       case "${st}" in
-        SUCCEEDED|FAILED|DENIED|CANCELLED|TIMEOUT|OUTPUT_QUARANTINED)
-          (( terminal_count++ ))
+        SUCCEEDED)
+          success_count=$((success_count + 1))
           ;;
       esac
     done
-    if (( terminal_count != ${#job_ids[@]} )); then
-      echo "gate 19: only ${terminal_count}/${#job_ids[@]} jobs reached terminal state" >&2
+    if (( success_count != ${#job_ids[@]} )); then
+      echo "gate 19: only ${success_count}/${#job_ids[@]} jobs succeeded" >&2
       ha_failed=1
     else
-      log "gate 19: all ${terminal_count} jobs reached terminal state — no duplicates"
+      log "gate 19: all ${success_count} jobs succeeded — no duplicates"
       if (( timed_out > 0 )); then
         log "gate 19: first-pass poll timeout(s) recovered by final state verification"
       fi
@@ -3176,6 +3311,8 @@ gate_19_ha() {
     log "gate 19: scenario 3 — distributed rate limit..."
     local rate_codes_200=0 rate_codes_429=0 rate_total=30
     local rate_pids=()
+    local rate_body
+    rate_body="$(bank_validator_job_body "gate19 rate burst")"
 
     # Collect status codes through a temp file. Do not echo from background
     # workers; gate summaries sanitize stdout into the failure message.
@@ -3185,7 +3322,7 @@ gate_19_ha() {
       (
         local code
         code="$(api_code POST /jobs "${JSON_HEADERS[@]}" \
-          -d "$(jq -cn '{prompt:"gate19 rate burst gw1", topic:"job.bank-validators.process"}')" 2>/dev/null || echo "000")"
+          -d "${rate_body}" 2>/dev/null || echo "000")"
         echo "${code}" >> "${rate_tmpfile}"
       ) &
       rate_pids+=($!)
@@ -3194,7 +3331,7 @@ gate_19_ha() {
       (
         local code
         code="$(api_code_2 POST /jobs "${JSON_HEADERS[@]}" \
-          -d "$(jq -cn '{prompt:"gate19 rate burst gw2", topic:"job.bank-validators.process"}')" 2>/dev/null || echo "000")"
+          -d "${rate_body}" 2>/dev/null || echo "000")"
         echo "${code}" >> "${rate_tmpfile}"
       ) &
       rate_pids+=($!)
@@ -3240,7 +3377,7 @@ gate_19_ha() {
     log "gate 19: scenario 5 — scheduler failover..."
     ensure_mock_bank_worker || true
     local failover_body
-    failover_body="$(jq -cn '{prompt:"gate19 failover pre-stop", topic:"job.bank-validators.process"}')"
+    failover_body="$(bank_validator_job_body "gate19 failover pre-stop")"
 
     # Submit 5 jobs before stopping scheduler-2
     local pre_jobs=()
@@ -3259,7 +3396,7 @@ gate_19_ha() {
 
     # Submit 5 more jobs — scheduler-1 should handle them
     local post_body
-    post_body="$(jq -cn '{prompt:"gate19 failover post-stop", topic:"job.bank-validators.process"}')"
+    post_body="$(bank_validator_job_body "gate19 failover post-stop")"
     local post_jobs=()
     for i in $(seq 1 5); do
       local resp jid
@@ -3278,24 +3415,28 @@ gate_19_ha() {
       st="$(poll_job_terminal "${jid}" 600 || true)"
       if [[ "${st}" == "__POLL_TIMEOUT__" ]]; then
         log "gate 19: failover job ${jid} timed out during first-pass polling; rechecking final state"
-        (( failover_timeouts++ ))
+        failover_timeouts=$((failover_timeouts + 1))
         continue
       fi
     done
 
-    local failover_total failover_terminal_count=0
+    local failover_total failover_success_count=0
     failover_total="$((${#pre_jobs[@]} + ${#post_jobs[@]}))"
+    if (( failover_total != 10 )); then
+      echo "gate 19: expected 10 accepted failover jobs, got ${failover_total}" >&2
+      all_failover_ok=0
+    fi
     for jid in "${pre_jobs[@]}" "${post_jobs[@]}"; do
       local final_st
       final_st="$(api_body GET "/jobs/${jid}" | jq -r '.state // empty' 2>/dev/null || true)"
       case "${final_st}" in
-        SUCCEEDED|FAILED|DENIED|CANCELLED|TIMEOUT|OUTPUT_QUARANTINED)
-          (( failover_terminal_count++ ))
+        SUCCEEDED)
+          failover_success_count=$((failover_success_count + 1))
           ;;
       esac
     done
-    if (( failover_terminal_count != failover_total )); then
-      echo "gate 19: only ${failover_terminal_count}/${failover_total} failover jobs reached terminal state" >&2
+    if (( failover_success_count != failover_total )); then
+      echo "gate 19: only ${failover_success_count}/${failover_total} failover jobs succeeded" >&2
       all_failover_ok=0
     elif (( failover_timeouts > 0 )); then
       log "gate 19: first-pass failover poll timeout(s) recovered by final state verification"
@@ -3313,7 +3454,7 @@ gate_19_ha() {
 
     # Submit 2 more after restart — verify no duplicate processing
     local verify_body
-    verify_body="$(jq -cn '{prompt:"gate19 post-restart verify", topic:"job.bank-validators.process"}')"
+    verify_body="$(bank_validator_job_body "gate19 post-restart verify")"
     local verify_jobs=()
     for i in 1 2; do
       local resp jid
@@ -3321,8 +3462,17 @@ gate_19_ha() {
       jid="$(echo "${resp}" | jq -r '.job_id // empty' 2>/dev/null || true)"
       [[ -n "${jid}" ]] && verify_jobs+=("${jid}")
     done
+    if (( ${#verify_jobs[@]} != 2 )); then
+      echo "gate 19: expected 2 accepted post-restart jobs, got ${#verify_jobs[@]}" >&2
+      ha_failed=1
+    fi
     for jid in "${verify_jobs[@]}"; do
-      poll_job_terminal "${jid}" 120 >/dev/null 2>&1 || true
+      local verify_state
+      verify_state="$(poll_job_terminal "${jid}" 120 || true)"
+      if [[ "${verify_state}" != "SUCCEEDED" ]]; then
+        echo "gate 19: post-restart job ${jid} expected SUCCEEDED, got ${verify_state:-empty}" >&2
+        ha_failed=1
+      fi
     done
     log "gate 19: post-restart verification complete"
   fi
@@ -3542,6 +3692,7 @@ else
 fi
 MOCK_BANK_WORKER_PID=""
 MOCK_BANK_WORKER_STARTED=0
+GATE14_ROLLBACK_SNAPSHOT_ID=""
 SKIP_REBUILD=0
 SELECT_GATE=""
 
