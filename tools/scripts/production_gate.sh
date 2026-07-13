@@ -1091,12 +1091,26 @@ gate_4_policy() {
   # previously ran with `>/dev/null 2>&1`, which silently swallowed the cause of
   # gate-4 failures (e.g. the demo worker failing to register / Redis auth), so a
   # red nightly showed only "Gate 4 Policy FAIL" with no actionable detail.
-  local remediation_log
+  local remediation_log remediation_cordumctl goexe
+  remediation_cordumctl="${CORDUMCTL_BIN:-}"
+  if [[ -z "${remediation_cordumctl}" || ! -x "${remediation_cordumctl}" ]]; then
+    remediation_cordumctl="$(command -v cordumctl 2>/dev/null || true)"
+  fi
+  if [[ -z "${remediation_cordumctl}" ]]; then
+    goexe="$(go env GOEXE)"
+    remediation_cordumctl="${ROOT_DIR}/bin/cordumctl${goexe}"
+    mkdir -p "$(dirname "${remediation_cordumctl}")"
+    (cd "${ROOT_DIR}" && go build -o "${remediation_cordumctl}" ./cmd/cordumctl) || {
+      echo "gate 4: failed to build cordumctl for the remediation demo" >&2
+      return 1
+    }
+  fi
   remediation_log="$(mktemp)"
   if ! (cd "${ROOT_DIR}" && CORDUM_API_KEY="${API_KEY}" \
     CORDUM_ORG_ID="${ORG_ID}" \
     CORDUM_TENANT_ID="${TENANT_ID}" \
     CORDUM_API_BASE="${API_BASE}" \
+    CORDUMCTL_BIN="${remediation_cordumctl}" \
     bash "${SCRIPT_DIR}/demo_guardrails_run.sh" >"${remediation_log}" 2>&1); then
     echo "gate 4: demo-guardrails remediation run failed:" >&2
     sed 's/^/  | /' "${remediation_log}" >&2

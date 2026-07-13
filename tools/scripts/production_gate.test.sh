@@ -113,6 +113,8 @@ assert_contains "mock-bank cleanup only kills owned worker" "${cleanup_fn}" 'MOC
 
 gate_4_fn="$(extract_full_function gate_4_policy)"
 assert_contains "gate 4 invokes non-executable remediation script through bash" "${gate_4_fn}" 'bash "${SCRIPT_DIR}/demo_guardrails_run.sh"'
+assert_contains "gate 4 builds a cordumctl fallback for the remediation demo" "${gate_4_fn}" 'go build -o "${remediation_cordumctl}" ./cmd/cordumctl'
+assert_contains "gate 4 passes the resolved cordumctl to the remediation demo" "${gate_4_fn}" 'CORDUMCTL_BIN="${remediation_cordumctl}"'
 demo_guardrails_run="$(cat "${DEMO_GUARDRAILS_RUN}")"
 assert_contains "guardrails runner invokes non-executable demo through bash" "${demo_guardrails_run}" 'bash "${ROOT_DIR}/tools/scripts/demo_guardrails.sh"'
 
