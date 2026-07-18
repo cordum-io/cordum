@@ -64,35 +64,21 @@ jobs:
   detect-unstars:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    concurrency:
+      group: star-tracker-detect-unstars
+      cancel-in-progress: false
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
       - name: Fetch current stargazers
+        id: fetch_stargazers
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Fetch all stargazers (paginated, up to 10 pages = 1000 stars)
-          echo "[]" > /tmp/current_stars.json
-          PAGE=1
-          while [ $PAGE -le 10 ]; do
-            RESULT=$(gh api "repos/${REPO_FULL_NAME}/stargazers?per_page=100&page=${PAGE}" \
-              -H "Accept: application/vnd.github.v3.star+json" 2>/dev/null || echo "[]")
-
-            COUNT=$(echo "$RESULT" | jq length)
-            if [ "$COUNT" = "0" ] || [ -z "$COUNT" ]; then
-              break
-            fi
-
-            # Merge into current list
-            jq -s '.[0] + .[1]' /tmp/current_stars.json <(echo "$RESULT") > /tmp/current_stars_merged.json
-            mv /tmp/current_stars_merged.json /tmp/current_stars.json
-
-            if [ "$COUNT" -lt 100 ]; then
-              break
-            fi
-            PAGE=$((PAGE + 1))
-          done
-
-          # Extract just usernames, sorted
-          jq -r '.[].user.login' /tmp/current_stars.json | sort -u > /tmp/current_usernames.txt
+          bash tools/scripts/fetch_stargazers.sh \
+            --repo "${REPO_FULL_NAME}" \
+            --output /tmp/current_usernames.txt
           TOTAL=$(wc -l < /tmp/current_usernames.txt | tr -d ' ')
           echo "📊 Current stargazers: ${TOTAL}"
 
@@ -103,21 +89,21 @@ jobs:
           mkdir -p /tmp/previous
           # Find the latest artifact named "stargazer-snapshot" across all runs
           ARTIFACT_ID=$(gh api "repos/${REPO_FULL_NAME}/actions/artifacts?name=stargazer-snapshot&per_page=1" \
-            --jq '.artifacts[0].id // empty' 2>/dev/null || true)
+            --jq '.artifacts[0].id // empty')
           if [ -z "$ARTIFACT_ID" ]; then
             echo "No previous snapshot artifact found"
             exit 0
           fi
           gh api "repos/${REPO_FULL_NAME}/actions/artifacts/${ARTIFACT_ID}/zip" \
-            > /tmp/previous/snapshot.zip 2>/dev/null || true
-          if [ -f /tmp/previous/snapshot.zip ] && [ -s /tmp/previous/snapshot.zip ]; then
-            cd /tmp/previous && unzip -o snapshot.zip && rm snapshot.zip
-            # The uploaded file is current_usernames.txt, rename to expected name
-            if [ -f current_usernames.txt ]; then
-              mv current_usernames.txt stargazers.txt
-            fi
+            > /tmp/previous/snapshot.zip
+          cd /tmp/previous
+          unzip -o snapshot.zip
+          rm snapshot.zip
+          if [ ! -f current_usernames.txt ]; then
+            echo "Snapshot artifact is missing current_usernames.txt" >&2
+            exit 1
           fi
-        continue-on-error: true
+          mv current_usernames.txt stargazers.txt
 
       - name: Compare and detect unstars
         env:
@@ -177,6 +163,7 @@ jobs:
           echo "📧 Unstar alert sent to ${NOTIFY_EMAIL}"
 
       - name: Save current snapshot
+        if: success() && steps.fetch_stargazers.outcome == 'success'
         uses: actions/upload-artifact@v7
         with:
           name: stargazer-snapshot
