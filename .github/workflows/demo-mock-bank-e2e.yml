@@ -52,6 +52,9 @@ jobs:
           echo "CORDUM_API_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
           echo "REDIS_PASSWORD=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
 
+      - name: Configure licensed CI runtime
+        run: go run ./tools/cilicense >> "$GITHUB_ENV"
+
       - name: Generate TLS certificates
         run: |
           ./bin/cordumctl generate-certs --dir ./certs
