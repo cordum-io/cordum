@@ -5,7 +5,30 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 )
+
+// The built-in secret and PII scanners have no per-call configuration (their
+// regexes are fixed), so they are compiled once and shared. Only the keyword
+// and operator (extra-pattern) scanners are truly dynamic and stay per-call.
+// The scanners are read-only during Scan, so sharing a single instance across
+// goroutines is safe.
+var (
+	sharedSecretScannerOnce sync.Once
+	sharedSecretScannerInst *regexScanner
+	sharedPIIScannerOnce    sync.Once
+	sharedPIIScannerInst    *piiScanner
+)
+
+func sharedSecretScanner() *regexScanner {
+	sharedSecretScannerOnce.Do(func() { sharedSecretScannerInst = newSecretScanner() })
+	return sharedSecretScannerInst
+}
+
+func sharedPIIScanner() *piiScanner {
+	sharedPIIScannerOnce.Do(func() { sharedPIIScannerInst = newPIIScanner() })
+	return sharedPIIScannerInst
+}
 
 // ContentFinding is the exported, package-agnostic shape of one detection hit
 // in arbitrary content. It mirrors the internal outputFinding so callers
@@ -56,10 +79,10 @@ func ScanContent(content []byte, opts ContentScanOptions) []ContentFinding {
 	}
 	var scanners []OutputScanner
 	if opts.IncludeSecrets {
-		scanners = append(scanners, newSecretScanner())
+		scanners = append(scanners, sharedSecretScanner())
 	}
 	if opts.IncludePII {
-		scanners = append(scanners, newPIIScanner())
+		scanners = append(scanners, sharedPIIScanner())
 	}
 	if len(opts.Keywords) > 0 {
 		scanners = append(scanners, newKeywordScanner(opts.Keywords))

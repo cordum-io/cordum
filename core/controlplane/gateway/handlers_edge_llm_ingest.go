@@ -17,6 +17,8 @@ package gateway
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -127,14 +129,18 @@ func (s *server) handleEdgeLLMIngest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	proceed, reserved := s.checkLLMIngestReplay(w, r, tenantID, proxyID, batch.Nonce)
+	// Bind replay suppression to BOTH the nonce AND a fingerprint of the batch
+	// payload so a reused nonce carrying a different chat turn is audited as a
+	// new batch instead of being silently dropped as a replay.
+	fingerprint := llmBatchFingerprint(batch)
+	proceed, reserved := s.checkLLMIngestReplay(w, r, tenantID, proxyID, batch.Nonce, fingerprint, result.Decisions)
 	if !proceed {
 		return
 	}
 	if len(result.Events) > 0 {
 		if _, err := store.AppendEvents(r.Context(), result.Events); err != nil {
 			if reserved {
-				s.releaseLLMIngestReplayReservation(r.Context(), tenantID, proxyID, batch.Nonce)
+				s.releaseLLMIngestReplayReservation(r.Context(), tenantID, proxyID, batch.Nonce, fingerprint)
 			}
 			writeEdgeEventStoreError(w, r, err, "append llm events")
 			return
@@ -316,11 +322,40 @@ func (v *llmIngestParentValidator) execution(ctx context.Context, tenantID, exec
 // Replay window — reuses the proven runtimeingest.ReplayWindow with an LLM
 // collector namespace so the keyspace never collides with runtime telemetry.
 // AppendEvents does not dedup by EventID, so this is what makes a proxy retry
-// (same nonce) idempotent. Nonce is optional for LLM (one synchronous call per
-// chat turn); when absent, dedup is skipped.
+// (same nonce + same batch) idempotent. The reservation member combines the
+// nonce with a fingerprint of the batch payload, so a reused nonce carrying a
+// different chat turn is NOT mistaken for a replay. Nonce is optional for LLM
+// (one synchronous call per chat turn); when absent, dedup is skipped.
 // ---------------------------------------------------------------------------
 
 func llmReplayCollector(proxyID string) string { return "llm:" + strings.TrimSpace(proxyID) }
+
+// llmBatchFingerprint is a stable digest of the batch events. It scopes the
+// replay reservation to the batch payload so that reusing a nonce with a
+// DIFFERENT chat turn does not alias onto an earlier reservation (which would
+// return 200 replayed and skip the mandatory AppendEvents audit path). A true
+// retry (same nonce + identical events) reproduces the same fingerprint and is
+// correctly suppressed as a duplicate.
+func llmBatchFingerprint(batch llmingest.LLMBatch) string {
+	raw, err := json.Marshal(batch.Events)
+	if err != nil {
+		// Envelopes already decoded/validated, so this is unreachable in
+		// practice; fall back to keying on the nonce alone rather than failing.
+		return ""
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+// llmReplayNonceValue combines the proxy-supplied nonce with the batch
+// fingerprint into the replay-window member so the reservation is unique per
+// (nonce, batch) pair. Both Reserve and Release must use the same value.
+func llmReplayNonceValue(nonce, fingerprint string) string {
+	if fingerprint == "" {
+		return nonce
+	}
+	return nonce + ":" + fingerprint
+}
 
 func (s *server) llmIngestReplayWindow() *runtimeingest.ReplayWindow {
 	if s == nil {
@@ -339,7 +374,7 @@ func (s *server) llmIngestReplayWindow() *runtimeingest.ReplayWindow {
 	)
 }
 
-func (s *server) checkLLMIngestReplay(w http.ResponseWriter, r *http.Request, tenantID, proxyID, nonce string) (bool, bool) {
+func (s *server) checkLLMIngestReplay(w http.ResponseWriter, r *http.Request, tenantID, proxyID, nonce, fingerprint string, decisions []llmingest.EventDecision) (bool, bool) {
 	if strings.TrimSpace(nonce) == "" {
 		return true, false
 	}
@@ -348,7 +383,7 @@ func (s *server) checkLLMIngestReplay(w http.ResponseWriter, r *http.Request, te
 		writeEdgeInternalError(w, r, "llm replay-window unavailable", errors.New("llm replay window unavailable"))
 		return false, false
 	}
-	accepted, err := window.Reserve(r.Context(), tenantID, llmReplayCollector(proxyID), nonce)
+	accepted, err := window.Reserve(r.Context(), tenantID, llmReplayCollector(proxyID), llmReplayNonceValue(nonce, fingerprint))
 	if err != nil {
 		if errors.Is(err, runtimeingest.ErrReplayWindowFull) {
 			writeEdgeError(w, r, http.StatusTooManyRequests, edgeErrCodeReplayWindowFull,
@@ -359,13 +394,16 @@ func (s *server) checkLLMIngestReplay(w http.ResponseWriter, r *http.Request, te
 		return false, false
 	}
 	if !accepted {
-		writeLLMIngestResponse(w, http.StatusOK, llmIngestResponse{Replayed: true})
+		// True replay of the same batch: return the mapped decisions so a proxy
+		// retrying after a lost response still receives the redacted content it
+		// must forward, instead of an empty advisory.
+		writeLLMIngestResponse(w, http.StatusOK, llmIngestResponse{Replayed: true, Decisions: decisions})
 		return false, false
 	}
 	return true, true
 }
 
-func (s *server) releaseLLMIngestReplayReservation(ctx context.Context, tenantID, proxyID, nonce string) {
+func (s *server) releaseLLMIngestReplayReservation(ctx context.Context, tenantID, proxyID, nonce, fingerprint string) {
 	window := s.llmIngestReplayWindow()
 	if window == nil {
 		return
@@ -375,7 +413,7 @@ func (s *server) releaseLLMIngestReplayReservation(ctx context.Context, tenantID
 	}
 	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	if err := window.Release(releaseCtx, tenantID, llmReplayCollector(proxyID), nonce); err != nil {
+	if err := window.Release(releaseCtx, tenantID, llmReplayCollector(proxyID), llmReplayNonceValue(nonce, fingerprint)); err != nil {
 		slog.Warn("release llm replay reservation failed",
 			"tenant_id", tenantID, "proxy_id", proxyID, "error", err)
 	}

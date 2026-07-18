@@ -284,6 +284,17 @@ func validateEnvelope(env LLMEventEnvelope) error {
 	if len(env.Labels) > MaxLLMLabelEntries {
 		return fmt.Errorf("%w: labels has %d entries, max %d", ErrInvalidEnvelope, len(env.Labels), MaxLLMLabelEntries)
 	}
+	// Reject negative accounting up front — buildLLMInput only emits values > 0,
+	// so a negative token count or cost would otherwise pass validation and be
+	// silently dropped, losing the accounting evidence.
+	if env.Tokens != nil {
+		if env.Tokens.Input < 0 || env.Tokens.Output < 0 || env.Tokens.Total < 0 {
+			return fmt.Errorf("%w: token counts must be non-negative", ErrInvalidEnvelope)
+		}
+	}
+	if env.CostUSD < 0 {
+		return fmt.Errorf("%w: cost_usd must be non-negative", ErrInvalidEnvelope)
+	}
 	tenantID := strings.TrimSpace(env.TenantID)
 	sessionID := strings.TrimSpace(env.SessionID)
 	executionID := strings.TrimSpace(env.ExecutionID)
@@ -645,18 +656,18 @@ func sanitizeLLMLabels(labels map[string]string) (edgecore.Labels, error) {
 		if trimmedKey == "" {
 			return nil, fmt.Errorf("%w: label key is required", ErrInvalidEnvelope)
 		}
-		if len(key) > edgecore.MaxLabelKeyBytes {
+		if len(trimmedKey) > edgecore.MaxLabelKeyBytes {
 			return nil, fmt.Errorf("%w: label key exceeds %d bytes", ErrInvalidEnvelope, edgecore.MaxLabelKeyBytes)
 		}
 		// Drop reserved keys and any key whose name itself trips redaction.
-		if strings.HasPrefix(trimmedKey, "llm.") || llmLabelKeyIsSensitive(key) {
+		if strings.HasPrefix(trimmedKey, "llm.") || llmLabelKeyIsSensitive(trimmedKey) {
 			continue
 		}
 		redactedValue, err := redactLLMLabelValue(value)
 		if err != nil {
 			return nil, err
 		}
-		out[key] = redactedValue
+		out[trimmedKey] = redactedValue
 	}
 	return out, nil
 }

@@ -60,7 +60,13 @@ OPENAI_BASE = os.getenv("OPENAI_BASE", "https://api.openai.com/v1").rstrip("/")
 # TLS verification toward the gateway. Set CORDUM_TLS_INSECURE=true for a local
 # self-signed dev stack whose server cert has no "localhost" SAN (demo only).
 _INSECURE = os.getenv("CORDUM_TLS_INSECURE", "").lower() in ("1", "true", "yes")
-_VERIFY: Any = False if _INSECURE else (CA_CERT if os.path.exists(CA_CERT) else False)
+if _INSECURE:
+    _VERIFY: Any = False
+elif os.path.exists(CA_CERT):
+    _VERIFY = CA_CERT
+else:
+    _VERIFY = False
+    print(f"[cordum-proxy] WARNING: CA cert not found at {CA_CERT}; TLS verification disabled")
 
 app = FastAPI(title="Cordum OpenAI governance proxy")
 

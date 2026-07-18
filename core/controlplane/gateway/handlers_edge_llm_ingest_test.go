@@ -331,4 +331,41 @@ func TestLLMIngest_ReplayDedup(t *testing.T) {
 	if !resp.Replayed {
 		t.Fatalf("replayed flag should be true on duplicate nonce: %+v", resp)
 	}
+	// A true replay must still return the mapped decisions so a proxy retrying
+	// after a lost response gets the redacted content it must forward.
+	if len(resp.Decisions) != 1 {
+		t.Fatalf("replay should echo the mapped decisions, got %+v", resp)
+	}
+}
+
+// TestLLMIngest_ReplayReusedNonceDifferentBatch proves the replay window is
+// scoped to the batch payload, not the nonce alone: reusing a nonce with a
+// DIFFERENT chat turn must be audited as a new batch (201), not silently
+// dropped as a replay (200) which would violate the mandatory audit path.
+func TestLLMIngest_ReplayReusedNonceDifferentBatch(t *testing.T) {
+	enableLLMIngest(t)
+	s, _ := newEdgeRouteTestServer(t)
+	setupLLMIngestRBAC(t, s)
+	session, execution := createLLMIngestParents(t, s, "replaydiff", edgecore.AdapterLLMProxy)
+	nonce := "nonce-llm-replaydiff-0001"
+
+	first := postLLMIngestWithAuth(t, s, llmIngestAuthContext(testLLMProxyRole, "llm-proxy-1"),
+		llmIngestBodyWithNonce("llm-proxy-1", session.SessionID, execution.ExecutionID, "evt-a", "first turn", nonce))
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first submit status = %d, want 201 body=%s", first.Code, first.Body.String())
+	}
+	// Same nonce, different event content → different fingerprint → must be
+	// accepted and recorded, not suppressed.
+	second := postLLMIngestWithAuth(t, s, llmIngestAuthContext(testLLMProxyRole, "llm-proxy-1"),
+		llmIngestBodyWithNonce("llm-proxy-1", session.SessionID, execution.ExecutionID, "evt-b", "totally different turn", nonce))
+	if second.Code != http.StatusCreated {
+		t.Fatalf("reused nonce with different batch status = %d, want 201 body=%s", second.Code, second.Body.String())
+	}
+	resp := decodeLLMIngestResponse(t, second)
+	if resp.Replayed {
+		t.Fatalf("different batch under a reused nonce must not be flagged replayed: %+v", resp)
+	}
+	if resp.AcceptedCount != 1 {
+		t.Fatalf("accepted_count = %d, want 1", resp.AcceptedCount)
+	}
 }

@@ -264,6 +264,7 @@ func TestDecodeBatch_RejectsTrailingData(t *testing.T) {
 }
 
 func TestDecodeBatch_NonceOptionalByDefault(t *testing.T) {
+	t.Setenv("CORDUM_EDGE_LLM_REPLAY_REQUIRED", "")
 	body := `{"source":{"source_id":"p"},"events":[]}`
 	if _, err := DecodeBatch(strings.NewReader(body)); err != nil {
 		t.Fatalf("nonce should be optional by default: %v", err)
@@ -271,6 +272,7 @@ func TestDecodeBatch_NonceOptionalByDefault(t *testing.T) {
 }
 
 func TestDecodeBatch_RejectsBadNonce(t *testing.T) {
+	t.Setenv("CORDUM_EDGE_LLM_REPLAY_REQUIRED", "")
 	body := `{"source":{"source_id":"p"},"nonce":"short","events":[]}`
 	if _, err := DecodeBatch(strings.NewReader(body)); err == nil {
 		t.Fatal("expected rejection of too-short nonce")

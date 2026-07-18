@@ -176,9 +176,9 @@ func (s *piiScanner) Scan(content []byte) []outputFinding {
 
 func defaultOutputScanners() map[string]OutputScanner {
 	return map[string]OutputScanner{
-		"secret_leak":      newSecretScanner(),
-		"secret":           newSecretScanner(),
-		"pii":              newPIIScanner(),
+		"secret_leak":      sharedSecretScanner(),
+		"secret":           sharedSecretScanner(),
+		"pii":              sharedPIIScanner(),
 		"code_injection":   newInjectionScanner(),
 		"injection":        newInjectionScanner(),
 		"prompt_injection": newPromptInjectionScanner(),

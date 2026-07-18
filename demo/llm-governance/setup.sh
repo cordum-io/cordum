@@ -37,8 +37,13 @@ EOF
   exit 0
 fi
 
-echo ">> Appending demo gateway settings to $ENV_FILE"
-{ echo ""; echo "# --- llm-governance demo (added by setup.sh) ---"; cat "$DEMO_ENV"; } >> "$ENV_FILE"
+MARKER="# --- llm-governance demo (added by setup.sh) ---"
+if grep -qF "$MARKER" "$ENV_FILE" 2>/dev/null; then
+  echo ">> Demo gateway settings already present in $ENV_FILE; skipping append"
+else
+  echo ">> Appending demo gateway settings to $ENV_FILE"
+  { echo ""; echo "$MARKER"; cat "$DEMO_ENV"; } >> "$ENV_FILE"
+fi
 
 echo ">> Restarting api-gateway"
 echo "   NOTE: the gateway must receive the CORDUM_EDGE_LLM_* + CORDUM_API_KEYS"
