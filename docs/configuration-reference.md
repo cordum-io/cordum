@@ -735,8 +735,12 @@ No license = Community tier (3 workers, 3 concurrent jobs, 500 RPS, 7-day audit 
 
 > **Behavior change for upgrading operators**: Starting with this release, the
 > **default** telemetry mode (`local_only`, i.e. `CORDUM_TELEMETRY_MODE` unset)
-> now makes **two outbound HTTPS calls per install** to `telemetry.cordum.io` —
-> a one-time install ping and a one-time first-use ping (see below). Previously,
+> now makes **up to two successful outbound HTTPS pings per install** to
+> `telemetry.cordum.io` — a one-time install ping and a one-time first-use ping
+> (see below). Each ping is delivered *at most once* on success, but a failed
+> delivery is retried on a later collector start, so the actual number of
+> outbound attempts may exceed two (and a permanently unreachable endpoint may
+> result in fewer than two successfully delivered pings). Previously,
 > `local_only` made **no** network calls at all. If you were relying on
 > `local_only`'s old no-network behavior — including air-gapped or network-
 > restricted self-hosted deployments — set `CORDUM_TELEMETRY_MODE=off` to
@@ -748,12 +752,12 @@ No license = Community tier (3 workers, 3 concurrent jobs, 500 RPS, 7-day audit 
 | `CORDUM_TELEMETRY_MODE` | `local_only` | Telemetry mode: `off` (no collection, no pings — the only mode with zero outbound calls), `local_only` (collect to Redis; no ongoing reporting, but the two one-time pings below still fire), `anonymous` (collect and report aggregate stats every 24h, in addition to the two one-time pings) |
 | `CORDUM_TELEMETRY_ENDPOINT` | `https://telemetry.cordum.io/v1/report` | HTTPS endpoint for anonymous telemetry reports and the one-time pings |
 
-**One-time anonymous pings (opt-out).** Unless `CORDUM_TELEMETRY_MODE=off`, Cordum sends exactly **two** anonymous pings over the lifetime of an install:
+**One-time anonymous pings (opt-out).** Unless `CORDUM_TELEMETRY_MODE=off`, Cordum sends **at most one successful ping per event** over the lifetime of an install — an install ping and a first-use ping. A failed delivery releases its one-time marker and is retried on a later collector start, so total outbound attempts may exceed two while permanent delivery failures may yield fewer than two successful pings:
 
 - **Install ping** — sent once on first collector startup. Contains: `install_id` (salted SHA-256, no PII), `event=install`, `schema_version`, Cordum `version`, `tier`, `mode`, `os`, `arch`. No usage counts, feature flags, or engagement data.
 - **First-use ping** — sent once after the first job or workflow completes. Contains the install-ping fields plus `workers`, `jobs_24h`, `workflows_24h`, and `packs_installed`. No per-feature detail or engagement object.
 
-Both pings fire in **both** `local_only` (default) and `anonymous` mode; only `off` suppresses them. Each fires at most once per install (idempotent across restarts and HA replicas). Switching to `off` before a ping has fired cancels it.
+Both pings fire in **both** `local_only` (default) and `anonymous` mode; only `off` suppresses them. Each succeeds at most once per install (idempotent across restarts and HA replicas); a failed send is retried until it succeeds or the install is switched to `off`. Switching to `off` before a ping has successfully fired cancels it.
 
 Ongoing 24h aggregate reports (`event=periodic`) are sent **only** in `anonymous` mode.
 
