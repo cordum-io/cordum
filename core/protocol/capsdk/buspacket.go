@@ -1,8 +1,7 @@
 package capsdk
 
-// BusPacket required-field validator. Mirrors ValidateHandshakeRequest's
-// contract: a minimal post-unmarshal guard that catches packets which a
-// permissive proto.Unmarshal accepted but every downstream handler would
+// BusPacket required-field validator: a minimal post-unmarshal guard that
+// catches packets which a permissive proto.Unmarshal accepted but every downstream handler would
 // have to re-check independently. Keep MINIMAL — over-rejection silently
 // drops legitimate traffic.
 

@@ -2,7 +2,7 @@ package scheduler
 
 // Phase-2 boundary-hardening worker session tokens.
 //
-// On a successful handshake (cap/sdk/go.HandshakeRequest), the scheduler
+// On a successful authenticated protobuf trust handshake, the scheduler
 // mints an Ed25519-signed session token that the worker attaches to every
 // subsequent BusPacket. Token verification is the authoritative trust
 // signal the scheduler uses for dispatch and policy decisions; heartbeat
