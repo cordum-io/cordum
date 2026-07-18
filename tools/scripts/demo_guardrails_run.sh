@@ -216,4 +216,4 @@ CORDUM_TLS_CA="${CORDUM_TLS_CA:-}" \
 CORDUM_TLS_INSECURE="${CORDUM_TLS_INSECURE:-}" \
 CORDUMCTL="${CORDUMCTL:-}" \
 CORDUMCTL_BIN="${CORDUMCTL_BIN:-}" \
-"${ROOT_DIR}/tools/scripts/demo_guardrails.sh"
+bash "${ROOT_DIR}/tools/scripts/demo_guardrails.sh"
