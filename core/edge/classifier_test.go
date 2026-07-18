@@ -1202,6 +1202,64 @@ func TestClassifierAcceptsRenamedRedactedKeys_BashSafeBuild(t *testing.T) {
 	}
 }
 
+func TestClassifierCopilotApplyPatchExtractsEmbeddedPath(t *testing.T) {
+	// apply_patch carries no file_path field — the target is embedded in the
+	// V4A patch body. The classifier must parse it so secrets/source_code
+	// tagging still fires for a Copilot apply_patch edit.
+	event := AgentActionEvent{
+		Layer:        LayerHook,
+		Kind:         EventKindHookPreToolUse,
+		ToolName:     "apply_patch",
+		AgentProduct: "github-copilot",
+		InputRedacted: map[string]any{
+			"input": "*** Begin Patch\n*** Update File: src/protected.go\n@@\n-old\n+new\n*** End Patch\n",
+		},
+	}
+	cls, err := ClassifyEvent(event)
+	if err != nil {
+		t.Fatalf("ClassifyEvent: %v", err)
+	}
+	if cls.Capability != "file.write" {
+		t.Fatalf("Capability = %q, want file.write", cls.Capability)
+	}
+	if cls.Labels["path.class"] != "source_code" {
+		t.Fatalf("Labels[path.class] = %q, want source_code (labels=%v)", cls.Labels["path.class"], cls.Labels)
+	}
+	if !containsString(cls.RiskTags, "source_code") {
+		t.Fatalf("RiskTags = %v, missing source_code", cls.RiskTags)
+	}
+}
+
+func TestClassifierCopilotMultiReplaceExtractsReplacementPaths(t *testing.T) {
+	// multi_replace_string_in_file carries its targets under
+	// replacements[].filePath; the most sensitive path class must win.
+	event := AgentActionEvent{
+		Layer:        LayerHook,
+		Kind:         EventKindHookPreToolUse,
+		ToolName:     "multi_replace_string_in_file",
+		AgentProduct: "github-copilot",
+		InputRedacted: map[string]any{
+			"replacements": []any{
+				map[string]any{"filePath": "/repo/README.md"},
+				map[string]any{"filePath": "/repo/config/.env"},
+			},
+		},
+	}
+	cls, err := ClassifyEvent(event)
+	if err != nil {
+		t.Fatalf("ClassifyEvent: %v", err)
+	}
+	if cls.Capability != "file.write" {
+		t.Fatalf("Capability = %q, want file.write", cls.Capability)
+	}
+	if cls.Labels["path.class"] != "secret" {
+		t.Fatalf("Labels[path.class] = %q, want secret (labels=%v)", cls.Labels["path.class"], cls.Labels)
+	}
+	if !containsString(cls.RiskTags, "secrets") {
+		t.Fatalf("RiskTags = %v, missing secrets", cls.RiskTags)
+	}
+}
+
 func TestClassifierRejectsBareKeysWhenRenamedAreAlsoMissing(t *testing.T) {
 	// Sanity: with no recognizable input keys, classifier still produces a
 	// well-formed classification (capability/path.class set to safe defaults)

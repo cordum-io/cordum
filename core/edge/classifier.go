@@ -270,7 +270,7 @@ func classifyHookEvent(event AgentActionEvent, out *ActionClassification) {
 	case "read":
 		classifyFilePath(inputStringAny(event.InputRedacted, "file_path_redacted", "file_path", "path_redacted", "path"), false, out)
 	case "edit", "write", "multiedit":
-		classifyFilePath(inputStringAny(event.InputRedacted, "file_path_redacted", "file_path", "path_redacted", "path"), true, out)
+		classifyFileEdit(event.InputRedacted, out)
 	case "delete", "remove":
 		classifyFileDelete(inputStringAny(event.InputRedacted, "file_path_redacted", "file_path", "path_redacted", "path"), out)
 	case "move", "rename":
@@ -365,6 +365,96 @@ func classifyFilePath(path string, write bool, out *ActionClassification) {
 	if out.Labels["path.class"] == "source_code" {
 		out.RiskTags = append(out.RiskTags, "source_code")
 	}
+}
+
+// classifyFileEdit classifies an edit/write/multiedit action across every file
+// the tool targets. Beyond the standard file_path/path fields it also covers
+// Copilot tool payloads that carry their targets elsewhere:
+// multi_replace_string_in_file lists them under replacements[].filePath, and
+// apply_patch embeds them in the patch body's file headers. Without this the
+// classifier would read an empty path for those tools and skip secrets/
+// source_code tagging. When several files are edited at once the most sensitive
+// path class wins.
+func classifyFileEdit(input map[string]any, out *ActionClassification) {
+	paths := editFilePaths(input)
+	var primary string
+	if len(paths) > 0 {
+		primary = paths[0]
+	}
+	classifyFilePath(primary, true, out)
+	for _, p := range paths[min(1, len(paths)):] {
+		mergePathLabels(out.Labels, classifyPathLabels(p))
+	}
+	switch out.Labels["path.class"] {
+	case "secret":
+		addRiskTagOnce(out, "secrets")
+	case "source_code":
+		addRiskTagOnce(out, "source_code")
+	}
+}
+
+// editFilePaths returns every file path an edit/write tool targets. The standard
+// file_path/path field comes first (preserving single-file behavior); it then
+// appends multi_replace_string_in_file's replacements[].filePath entries and any
+// file headers parsed from an apply_patch patch body.
+func editFilePaths(input map[string]any) []string {
+	var paths []string
+	if p := inputStringAny(input, "file_path_redacted", "file_path", "path_redacted", "path"); p != "" {
+		paths = append(paths, p)
+	}
+	paths = append(paths, replacementFilePaths(input)...)
+	if patch := inputStringAny(input, "patch_redacted", "patch", "input_redacted", "input"); patch != "" {
+		paths = append(paths, applyPatchFilePaths(patch)...)
+	}
+	return paths
+}
+
+// replacementFilePaths pulls filePath values out of a
+// multi_replace_string_in_file replacements array.
+func replacementFilePaths(input map[string]any) []string {
+	list, ok := input["replacements"].([]any)
+	if !ok {
+		return nil
+	}
+	var paths []string
+	for _, item := range list {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if p := inputStringAny(m, "filePath_redacted", "filePath", "file_path_redacted", "file_path", "path"); p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths
+}
+
+// applyPatchFilePaths extracts the file paths from an apply_patch (V4A) patch
+// body, whose file headers look like `*** Update File: path`, `*** Add File:
+// path`, `*** Delete File: path`, or `*** Move to: path`.
+func applyPatchFilePaths(patch string) []string {
+	var paths []string
+	for _, line := range strings.Split(patch, "\n") {
+		trimmed := strings.TrimLeft(strings.TrimSpace(line), "* ")
+		for _, prefix := range []string{"Update File:", "Add File:", "Delete File:", "Move to:"} {
+			if rest, ok := strings.CutPrefix(trimmed, prefix); ok {
+				if p := strings.TrimSpace(rest); p != "" {
+					paths = append(paths, p)
+				}
+				break
+			}
+		}
+	}
+	return paths
+}
+
+func addRiskTagOnce(out *ActionClassification, tag string) {
+	for _, existing := range out.RiskTags {
+		if existing == tag {
+			return
+		}
+	}
+	out.RiskTags = append(out.RiskTags, tag)
 }
 
 func classifyFileDelete(path string, out *ActionClassification) {

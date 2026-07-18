@@ -40,8 +40,10 @@ func TestGenerateHookSettings_ShapeAndGovernanceEvents(t *testing.T) {
 		if !strings.HasPrefix(e.Command, "/opt/cordum/bin/cordum-hook copilot ") {
 			t.Fatalf("%s command = %q, want cordum-hook copilot prefix", ev, e.Command)
 		}
-		if e.Timeout != 4500 {
-			t.Fatalf("%s timeout = %d, want 4500 default", ev, e.Timeout)
+		// timeout is emitted in SECONDS (Copilot/GitHub hook unit); the 4500ms
+		// default converts to 5s, not a 4500s (75 min) window.
+		if e.Timeout != 5 {
+			t.Fatalf("%s timeout = %d, want 5s (from 4500ms default)", ev, e.Timeout)
 		}
 		if e.Env["CORDUM_AGENT_PRODUCT"] != "github-copilot" {
 			t.Fatalf("%s missing product attribution: %v", ev, e.Env)
@@ -75,6 +77,43 @@ func TestGenerateHookSettings_NoSecretsBaked(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(string(out)), "nonce") || strings.Contains(string(out), "sk-") {
 		t.Fatalf("generated config must not bake secrets: %s", out)
+	}
+}
+
+func TestGenerateHookSettings_StripsAgentdNonce(t *testing.T) {
+	out, err := GenerateHookSettings(HookSettingsOptions{
+		AgentdURL: "http://127.0.0.1:8765/v1/edge/hooks/copilot?nonce=super-secret-xyz",
+	})
+	if err != nil {
+		t.Fatalf("GenerateHookSettings: %v", err)
+	}
+	s := string(out)
+	if strings.Contains(s, "nonce") || strings.Contains(s, "super-secret-xyz") {
+		t.Fatalf("agentd nonce must be stripped from generated config: %s", s)
+	}
+	if !strings.Contains(s, "http://127.0.0.1:8765/v1/edge/hooks/copilot") {
+		t.Fatalf("stripped agentd url should be preserved: %s", s)
+	}
+}
+
+func TestGenerateHookSettings_QuotesCommandPathWithSpaces(t *testing.T) {
+	out, err := GenerateHookSettings(HookSettingsOptions{
+		HookCommand: "/Applications/Cordum Edge/cordum-hook",
+	})
+	if err != nil {
+		t.Fatalf("GenerateHookSettings: %v", err)
+	}
+	var doc struct {
+		Hooks map[string][]struct {
+			Command string `json:"command"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(out, &doc); err != nil {
+		t.Fatalf("unmarshal: %v\n%s", err, out)
+	}
+	want := `'/Applications/Cordum Edge/cordum-hook' copilot pre-tool-use`
+	if got := doc.Hooks["PreToolUse"][0].Command; got != want {
+		t.Fatalf("command = %q, want %q", got, want)
 	}
 }
 

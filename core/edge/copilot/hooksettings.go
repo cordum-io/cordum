@@ -12,6 +12,7 @@ package copilot
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 )
 
@@ -64,25 +65,25 @@ func GenerateHookSettings(opts HookSettingsOptions) ([]byte, error) {
 	if containsSensitiveValue(cmd) {
 		return nil, fmt.Errorf("hook command contains a sensitive value")
 	}
-	if containsSensitiveValue(opts.AgentdURL) {
+	// Strip the loopback auth nonce before it can be baked into the persisted
+	// config (mirrors the Claude settings generator's agentdURLForSettings).
+	agentdURL := stripAgentdURLNonce(opts.AgentdURL)
+	if containsSensitiveValue(agentdURL) {
 		return nil, fmt.Errorf("agentd url contains a sensitive value")
 	}
 	mode := strings.TrimSpace(opts.PolicyMode)
 	if mode == "" {
 		mode = "enforce"
 	}
-	timeout := opts.TimeoutMS
-	if timeout <= 0 {
-		timeout = 4500
-	}
+	timeout := timeoutSeconds(opts.TimeoutMS)
 
 	env := map[string]string{
 		"CORDUM_AGENT_PRODUCT":      "github-copilot",
 		"CORDUM_EDGE_POLICY_MODE":   mode,
 		"CORDUM_AGENTD_FAIL_CLOSED": boolEnv(opts.FailClosed),
 	}
-	if u := strings.TrimSpace(opts.AgentdURL); u != "" {
-		env["CORDUM_AGENTD_URL"] = u
+	if agentdURL != "" {
+		env["CORDUM_AGENTD_URL"] = agentdURL
 	}
 
 	doc := hooksDocument{Hooks: map[string][]hookCommandEntry{}}
@@ -94,12 +95,70 @@ func GenerateHookSettings(opts HookSettingsOptions) ([]byte, error) {
 		}
 		doc.Hooks[e.event] = []hookCommandEntry{{
 			Type:    "command",
-			Command: cmd + " copilot " + e.sub,
+			Command: quoteCommandPath(cmd) + " copilot " + e.sub,
 			Timeout: timeout,
 			Env:     entryEnv,
 		}}
 	}
 	return json.MarshalIndent(doc, "", "  ")
+}
+
+// timeoutSeconds converts the caller's millisecond hook budget into the SECONDS
+// unit the GitHub/Copilot hook `timeout` field expects. Emitting TimeoutMS
+// verbatim would turn the 4500 default into a 4500-second (75 minute) window
+// during which a stuck hook could block the agent. Defaults to 4500ms (5s) and
+// never rounds below 1s.
+func timeoutSeconds(ms int) int {
+	if ms <= 0 {
+		ms = 4500
+	}
+	sec := (ms + 999) / 1000
+	if sec < 1 {
+		sec = 1
+	}
+	return sec
+}
+
+// stripAgentdURLNonce removes the loopback auth nonce query param from an agentd
+// URL before it is baked into a generated hooks config. The nonce is a local
+// agentd auth credential supplied to the hook at runtime via env and must never
+// be persisted. Mirrors the Claude settings generator's stripAgentdURLNonce.
+func stripAgentdURLNonce(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	u, err := url.Parse(trimmed)
+	if err != nil {
+		return trimmed
+	}
+	q := u.Query()
+	if _, ok := q["nonce"]; !ok {
+		return trimmed
+	}
+	q.Del("nonce")
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+// quoteCommandPath wraps a hook command path in POSIX single quotes when it
+// contains characters bash would interpret unquoted (whitespace, quotes,
+// backslash) so an absolute path like `/Applications/Cordum Edge/cordum-hook`
+// survives the `<cmd> copilot <event>` concatenation intact. Mirrors the Claude
+// settings generator's quoteCommandPath.
+func quoteCommandPath(command string) string {
+	trimmed := strings.TrimSpace(command)
+	if trimmed == "" {
+		return trimmed
+	}
+	if (strings.HasPrefix(trimmed, `"`) && strings.HasSuffix(trimmed, `"`)) ||
+		(strings.HasPrefix(trimmed, `'`) && strings.HasSuffix(trimmed, `'`)) {
+		return trimmed
+	}
+	if strings.ContainsAny(trimmed, " \t\"'\\") {
+		return `'` + strings.ReplaceAll(trimmed, `'`, `'\''`) + `'`
+	}
+	return trimmed
 }
 
 func boolEnv(b bool) string {

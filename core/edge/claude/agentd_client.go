@@ -45,6 +45,13 @@ type AgentdRequest struct {
 	RawPayload      []byte         `json:"raw_payload,omitempty"`
 	HookCommandArgs []string       `json:"hook_command_args,omitempty"`
 
+	// AgentProduct identifies the agent that fired the hook (e.g. "claude-code"
+	// or "github-copilot"). Carried so agentd's evaluator/local-event builder
+	// attribute the action to the right product instead of hardcoding
+	// claude-code. Optional: older hook builds omit it and agentd falls back to
+	// claude-code.
+	AgentProduct string `json:"agent_product,omitempty"`
+
 	// EDGE-016 mapped/redacted/hashed fields. All optional so older agentd
 	// builds keep working; presence indicates the hook ran the mapper.
 	Layer         string            `json:"edge_layer,omitempty"`
