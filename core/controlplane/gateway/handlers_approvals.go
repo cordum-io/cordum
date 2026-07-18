@@ -1482,9 +1482,17 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 			result = handlerResult{http.StatusConflict, approvalConflictPayload(http.StatusConflict, conflictCode, conflictMessage)}
 			return nil
 		}
-		if tenant, tenantErr := s.jobStore.GetTenant(ctx, jobID); tenantErr != nil {
-			slog.Warn("reject: tenant lookup failed", "job_id", jobID, "error", tenantErr)
-		} else if tenant != "" {
+		// Fail closed on a tenant-lookup error to prevent cross-tenant
+		// rejection, matching handleApproveJob. Proceeding without the check
+		// (the old behavior) let a Redis blip skip tenant isolation on a
+		// mutating action.
+		tenant, tenantErr := s.jobStore.GetTenant(ctx, jobID)
+		if tenantErr != nil {
+			slog.Error("reject: tenant lookup failed, denying access", "job_id", jobID, "error", tenantErr)
+			result = handlerResult{http.StatusServiceUnavailable, "tenant lookup unavailable"}
+			return nil
+		}
+		if tenant != "" {
 			if err := s.requireTenantAccess(r, tenant); err != nil {
 				result = handlerResult{http.StatusForbidden, "tenant access denied"}
 				return nil
