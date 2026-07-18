@@ -52,9 +52,7 @@ export const getListWorkerCredentialsQueryKey = () => {
 export const getListWorkerCredentialsQueryOptions = <
   TData = Awaited<ReturnType<typeof listWorkerCredentials>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
 >(options?: {
   query?: Partial<
     UseQueryOptions<
@@ -76,23 +74,19 @@ export const getListWorkerCredentialsQueryOptions = <
     Awaited<ReturnType<typeof listWorkerCredentials>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListWorkerCredentialsQueryResult = NonNullable<
   Awaited<ReturnType<typeof listWorkerCredentials>>
 >;
 export type ListWorkerCredentialsQueryError =
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | ServiceUnavailableResponse;
+  UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse;
 
 export function useListWorkerCredentials<
   TData = Awaited<ReturnType<typeof listWorkerCredentials>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
 >(
   options: {
     query: Partial<
@@ -113,14 +107,12 @@ export function useListWorkerCredentials<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListWorkerCredentials<
   TData = Awaited<ReturnType<typeof listWorkerCredentials>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
 >(
   options?: {
     query?: Partial<
@@ -140,13 +132,13 @@ export function useListWorkerCredentials<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListWorkerCredentials<
   TData = Awaited<ReturnType<typeof listWorkerCredentials>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
 >(
   options?: {
     query?: Partial<
@@ -158,7 +150,9 @@ export function useListWorkerCredentials<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List external worker credentials
  */
@@ -166,9 +160,7 @@ export function useListWorkerCredentials<
 export function useListWorkerCredentials<
   TData = Awaited<ReturnType<typeof listWorkerCredentials>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
 >(
   options?: {
     query?: Partial<
@@ -180,13 +172,15 @@ export function useListWorkerCredentials<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListWorkerCredentialsQueryOptions(options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
