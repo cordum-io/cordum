@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -62,12 +63,34 @@ func DefaultConfigPath(client, homeDir string) string {
 	case "cursor":
 		return filepath.Join(homeDir, ".cursor", "mcp.json")
 	case "vscode":
-		// VS Code Copilot agent mode reads a user-level mcp.json. The
-		// workspace form (.vscode/mcp.json) is also supported; operators can
-		// override with --config-path for per-workspace setup.
-		return filepath.Join(homeDir, ".vscode", "mcp.json")
+		// VS Code Copilot agent mode reads a user-level mcp.json from the VS
+		// Code user-profile directory (what "MCP: Open User Configuration"
+		// opens) — NOT ~/.vscode/mcp.json, which VS Code ignores. Derive the
+		// real per-OS location. Operators wanting per-workspace scope override
+		// with --config-path .vscode/mcp.json.
+		return vscodeUserConfigPath(homeDir)
 	default:
 		return ""
+	}
+}
+
+// vscodeUserConfigPath returns the VS Code user-profile mcp.json path for the
+// current OS, derived from homeDir:
+//
+//	Windows: %APPDATA%\Code\User\mcp.json  (~ homeDir\AppData\Roaming\...)
+//	macOS:   ~/Library/Application Support/Code/User/mcp.json
+//	Linux:   ~/.config/Code/User/mcp.json
+//
+// These are the stable-channel defaults; portable installs or VS Code Insiders
+// differ, so operators can still override with --config-path.
+func vscodeUserConfigPath(homeDir string) string {
+	switch runtime.GOOS {
+	case "windows":
+		return filepath.Join(homeDir, "AppData", "Roaming", "Code", "User", "mcp.json")
+	case "darwin":
+		return filepath.Join(homeDir, "Library", "Application Support", "Code", "User", "mcp.json")
+	default:
+		return filepath.Join(homeDir, ".config", "Code", "User", "mcp.json")
 	}
 }
 

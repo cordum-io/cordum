@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
@@ -19,6 +20,9 @@ import (
 type copilotIngestSender struct {
 	inner audit.AuditSender
 	store *copilot.RedisStore
+	// wg tracks in-flight async ingest goroutines so Close can drain them
+	// (and never leak a goroutine or drop a pending transcript write).
+	wg sync.WaitGroup
 }
 
 func newCopilotIngestSender(inner audit.AuditSender, store *copilot.RedisStore) audit.AuditSender {
@@ -29,11 +33,32 @@ func newCopilotIngestSender(inner audit.AuditSender, store *copilot.RedisStore) 
 }
 
 func (c *copilotIngestSender) Send(event audit.SIEMEvent) {
-	c.ingest(event)
+	// Forward to the inner sender first so the audit/tool-call path is never
+	// blocked by the Redis ingest (which can wait up to its 2s timeout under
+	// Redis slowness). Then run ingest asynchronously on a copy of the event
+	// — the Extra map is deep-copied so the goroutine cannot race with any
+	// mutation the caller makes to the original event after Send returns.
 	c.inner.Send(event)
+	ev := event
+	if event.Extra != nil {
+		ev.Extra = make(map[string]string, len(event.Extra))
+		for k, v := range event.Extra {
+			ev.Extra[k] = v
+		}
+	}
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		c.ingest(ev)
+	}()
 }
 
-func (c *copilotIngestSender) Close() error { return c.inner.Close() }
+// Close drains any in-flight async ingests before closing the inner sender so
+// a shutdown does not leak goroutines or drop a pending transcript write.
+func (c *copilotIngestSender) Close() error {
+	c.wg.Wait()
+	return c.inner.Close()
+}
 
 func (c *copilotIngestSender) ingest(event audit.SIEMEvent) {
 	defer func() {

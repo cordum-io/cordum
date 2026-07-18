@@ -43,6 +43,14 @@ func runMCPAttachCmd(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintln(stderr, "missing --client (claude_code | codex | cursor | vscode)")
 		return 2
 	}
+	// The vscode adapter renders an HTTP/SSE server entry (url + headers) and
+	// never populates UpstreamServerRef.Command, so a stdio transport would
+	// emit a stdio server with no executable — a config VS Code cannot launch.
+	// Fail fast instead of writing it.
+	if *client == "vscode" && *gatewayTransport == "stdio" {
+		_, _ = fmt.Fprintln(stderr, "--gateway-transport stdio is not supported for --client vscode; use http or sse")
+		return 2
+	}
 	adapter, err := buildAttachAdapter(*client, *configPath)
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, err.Error())

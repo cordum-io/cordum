@@ -52,6 +52,7 @@ func TestCopilotIngest_AppendsOnInvocationWithSession(t *testing.T) {
 	if len(inner.sent) != 1 {
 		t.Fatalf("inner.sent = %d, want 1", len(inner.sent))
 	}
+	dec.wg.Wait() // ingest runs asynchronously; drain it before asserting the store
 	sess, err := store.GetSession(context.Background(), "tenant-a", "sess-1", "copilot-1")
 	if err != nil {
 		t.Fatalf("GetSession: %v", err)
@@ -111,6 +112,7 @@ func TestCopilotIngest_SamePrincipalSecondAppendSucceeds(t *testing.T) {
 		if len(inner.sent) != i+1 {
 			t.Fatalf("inner.sent = %d, want %d", len(inner.sent), i+1)
 		}
+		dec.wg.Wait() // drain each async ingest so both appends land in order
 	}
 	got, err := store.GetSession(context.Background(), "tenant-a", "sess-legit", "copilot-1")
 	if err != nil {
@@ -134,6 +136,7 @@ func TestCopilotIngest_CrossPrincipalAppendRejected(t *testing.T) {
 			"tool_name":          "cordum_list_jobs",
 		},
 	})
+	dec.wg.Wait() // alice must win ownership before mallory's append is attempted
 	// A different agent within the same tenant guesses/sets the same
 	// X-Copilot-Session-Id header and tries to inject a transcript entry.
 	dec.Send(audit.SIEMEvent{
@@ -146,6 +149,7 @@ func TestCopilotIngest_CrossPrincipalAppendRejected(t *testing.T) {
 			"tool_name":          "fabricated_call",
 		},
 	})
+	dec.wg.Wait() // drain mallory's (rejected) async ingest before asserting
 	// The event is still forwarded to the inner sender either way — ingest
 	// never affects the audit chain.
 	if len(inner.sent) != 2 {

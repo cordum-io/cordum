@@ -65,7 +65,7 @@ cordumctl mcp attach --apply --client vscode \
   --gateway-endpoint https://<gateway>:8081/mcp/sse \
   --gateway-tenant <tenant> \
   --gateway-agent-id <copilot-agent-id> \
-  --config-path .vscode/mcp.json   # omit for the user-level ~/.vscode/mcp.json
+  --config-path .vscode/mcp.json   # per-workspace; omit for the user-profile mcp.json (VS Code "MCP: Open User Configuration")
 ```
 
 This produces:
@@ -96,7 +96,7 @@ agent id are non-secret literals.
 
 > **Self-signed gateways:** trust the gateway CA in the OS trust store (or set
 > `NODE_EXTRA_CA_CERTS` for VS Code) so the TLS handshake succeeds.
-
+>
 > **Group calls into one audit session (optional):** add
 > `"X-Copilot-Session-Id": "<some-id>"` to `headers` to group a workspace's
 > calls under one Copilot session and label spawned jobs with it. If omitted,

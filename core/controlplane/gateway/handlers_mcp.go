@@ -24,6 +24,7 @@ import (
 	mcpresources "github.com/cordum/cordum/core/mcp/resources"
 	mcptools "github.com/cordum/cordum/core/mcp/tools"
 	"github.com/cordum/cordum/core/model"
+	"github.com/google/uuid"
 )
 
 // mcpAgentIDHeader is the request header that identifies the calling
@@ -419,7 +420,26 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 			Principal:         principalID,
 			RequesterIdentity: submitterIdentity(r),
 		})
-		if transportSessionID := strings.TrimSpace(r.Header.Get("X-MCP-Session-ID")); transportSessionID != "" {
+		// Resolve the transport session id exactly as the HTTP transport
+		// does (header → ?session_id) so the middleware and transport agree.
+		transportSessionID := strings.TrimSpace(r.Header.Get("X-MCP-Session-ID"))
+		if transportSessionID == "" {
+			transportSessionID = strings.TrimSpace(r.URL.Query().Get("session_id"))
+		}
+		// VS Code's type:"http" config POSTs neither X-MCP-Session-ID nor
+		// X-Copilot-Session-Id. The HTTP transport would otherwise mint a
+		// "direct-<uuid>" session id only *after* this middleware builds
+		// mcpCtx, leaving copilot_session_id empty — so the transcript is
+		// dropped and cordum_submit_job misses its session_id label. Mint the
+		// id here in the transport's own format and write it back onto the
+		// request so the transport reuses the same id, keeping the audit
+		// session, trace parents, and spawned-job label consistent. Scoped to
+		// POST so the SSE GET keeps its server-assigned session id.
+		if transportSessionID == "" && r.Method == http.MethodPost {
+			transportSessionID = "direct-" + uuid.NewString()
+			r.Header.Set("X-MCP-Session-ID", transportSessionID)
+		}
+		if transportSessionID != "" {
 			executionID := "mcp-" + transportSessionID
 			if err := s.ensureMCPHTTPTraceParents(r.Context(), tenantID, agentID, principalID, transportSessionID, executionID); err != nil {
 				writeErrorJSON(w, http.StatusInternalServerError, "mcp trace unavailable")
@@ -438,12 +458,12 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		// MCPCallMetadata so core/mcp stays free of gateway-specific
 		// identity types).
 		mcpCtx = mcp.WithTenant(mcpCtx, tenantID)
-		// Thread an optional Copilot session id (explicit header → transport
-		// session id) so tool invocations can be grouped into an audit session
-		// and spawned jobs labelled with it.
+		// Thread the Copilot session id (explicit header → transport session
+		// id, now always populated for POSTs) so tool invocations can be
+		// grouped into an audit session and spawned jobs labelled with it.
 		copilotSessionID := strings.TrimSpace(r.Header.Get(mcpCopilotSessionIDHeader))
 		if copilotSessionID == "" {
-			copilotSessionID = strings.TrimSpace(r.Header.Get("X-MCP-Session-ID"))
+			copilotSessionID = transportSessionID
 		}
 		if copilotSessionID != "" {
 			mcpCtx = mcp.WithCopilotSessionID(mcpCtx, copilotSessionID)
