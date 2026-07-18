@@ -39,6 +39,12 @@ jobs:
     - name: Generate Redis password
       run: echo "REDIS_PASSWORD=$(openssl rand -hex 32)" >> $GITHUB_ENV
 
+    - name: Configure licensed CI runtime
+      run: |
+        go run ./tools/cilicense >> "$GITHUB_ENV"
+        echo "CORDUM_USER_AUTH_ENABLED=true" >> "$GITHUB_ENV"
+        echo "CORDUM_ADMIN_PASSWORD=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+
     - name: Generate TLS certificates
       run: |
         go run ./cmd/cordumctl generate-certs --dir ./certs
@@ -75,7 +81,10 @@ jobs:
         CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
 
     - name: Run Go integration tests
-      run: go test -v -tags=integration -timeout 10m ./...
+      # The services already inherited the generated CI license when Compose
+      # started. Keep it out of the test process so unit-test license fixtures
+      # are not shadowed by the job-wide GITHUB_ENV values.
+      run: env -u CORDUM_LICENSE_TOKEN -u CORDUM_LICENSE_PUBLIC_KEY go test -v -tags=integration -timeout 10m ./...
       env:
         CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
         REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
