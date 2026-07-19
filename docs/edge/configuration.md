@@ -69,13 +69,35 @@ reserve below Claude's 5s deadline.
 | `CORDUM_EDGE_MODE` | generated settings mirror the selected policy mode | Hook-side mode for local/dev settings. Enterprise templates set `enterprise-strict`. |
 | `CORDUM_AGENTD_FAIL_CLOSED` | `false` | When true, hook/agentd fail closed if local governance cannot start or respond safely. |
 | `CORDUM_AGENTD_INLINE_APPROVAL_WAIT` | `false`; wrapper enables it for local/demo sessions | Local/demo-only inline wait for `REQUIRE_APPROVAL`; enterprise UX should not rely on interactive defer semantics. |
-| `CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` | `30s` | Strict wait budget. Rejection, timeout, pending, or wait errors deny and require retry. |
+| `CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` | `30s` | Strict wait budget. Rejection, timeout, pending, or wait errors deny and require retry. **Must be strictly below Claude Code's 5s hook deadline — see the warning below.** |
+
+> **Inline approval wait must stay under the hook deadline.**
+> `CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` defaults to `30s`, but Claude
+> Code's PreToolUse command-hook deadline is `5s`. If the inline wait outlives
+> that deadline, Claude Code times out the hook and **fails open** — the tool
+> runs, and there is no user-visible warning that governance was skipped.
+> Unlike `CORDUM_AGENTD_HOOK_TIMEOUT`, this value is **not** validated against
+> the 5s deadline (it is only checked for `>0` and `<=5m`), so an unsafe
+> combination is accepted silently.
+>
+> Use one of:
+>
+> 1. Set `CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` strictly below `5s`
+>    (leave headroom for response writing, as `CORDUM_AGENTD_HOOK_TIMEOUT` does
+>    at `4.5s`).
+> 2. Disable inline wait (`CORDUM_AGENTD_INLINE_APPROVAL_WAIT=false`) so
+>    `REQUIRE_APPROVAL` denies immediately with retry guidance.
+> 3. Prefer deny-and-retry over block-and-wait: return the approval reference to
+>    the agent and let it retry after a reviewer resolves it, rather than
+>    holding the hook open.
 
 Policy-mode summary:
 
 - `observe`: allow degraded actions and record evidence where possible.
 - `enforce`: allow only known-safe actions during degraded misses; risky or
-  unknown actions deny/fail closed.
+  unknown actions deny/fail closed **only when `CORDUM_AGENTD_FAIL_CLOSED` is
+  enabled**. `CORDUM_AGENTD_FAIL_CLOSED` defaults to `false`, so an `enforce`
+  session that does not set it fails **open** when agentd errors or times out.
 - `enterprise-strict`: fail closed when Cordum governance is unavailable.
 - Workflow actions tagged `requires-edge-governance` fail closed on Gateway miss
   regardless of session mode.

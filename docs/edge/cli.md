@@ -119,7 +119,7 @@ review.
 | Mode | Gateway/agentd unavailable | Intended use |
 | --- | --- | --- |
 | `observe` | Allow degraded and write evidence where possible. | Discovery/local visibility. |
-| `enforce` | Allow only known-safe degraded actions; deny risky/unknown actions. | Developer enforcement and demos. |
+| `enforce` | Allow only known-safe degraded actions; deny risky/unknown actions — requires `CORDUM_AGENTD_FAIL_CLOSED=true`, which is not the default. Without it the session fails **open** on agentd error/timeout. | Developer enforcement and demos. |
 | `enterprise-strict` | Fail closed. | Managed enterprise rollout. |
 
 Malformed hook input fails closed with redacted stderr. Hook timeout values must

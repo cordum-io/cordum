@@ -42,6 +42,7 @@ cordumctl edge doctor \
 | `--api-key` | `CORDUM_API_KEY` | Gateway API key. The value is never printed. |
 | `--tenant` | `CORDUM_TENANT_ID` or `default` | Tenant sent as `X-Tenant-ID`. |
 | `--policy-mode` | `CORDUM_EDGE_POLICY_MODE` or `enforce` | Reports degraded/fail-closed implications. |
+| `--fail-closed` | `CORDUM_AGENTD_FAIL_CLOSED` (unset = not explicitly configured) | Effective fail-closed posture used to judge an `enforce` session. `true`/`false` is taken as authoritative; an unset or unparseable value is treated as unproven, never as fail-closed. |
 | `--claude-path` | `CLAUDE_PATH` or PATH lookup | Claude Code executable to verify. |
 | `--hook-command` | `CORDUM_HOOK_COMMAND` or `cordum-hook` | Hook command embedded in generated settings. |
 | `--agentd-path` | `CORDUM_AGENTD_PATH` or PATH lookup | `cordum-agentd` executable to verify. |
@@ -112,7 +113,9 @@ The `fix` field is present only when a concise remediation exists. Do not parse
 | Mode | Doctor copy means |
 | --- | --- |
 | `observe` | Cordum may degrade open: actions can continue while evidence is marked degraded. Fix warnings before relying on the audit trail. |
-| `enforce` | Risky or unknown degraded actions should fail closed while known-safe actions may proceed. Fix failures before demos. |
+| `enforce` + `CORDUM_AGENTD_FAIL_CLOSED=true` | Risky or unknown degraded actions fail closed while known-safe actions may proceed. Reported as `ok`. Fix failures before demos. |
+| `enforce` + `CORDUM_AGENTD_FAIL_CLOSED=false` | The session is **fail-open**: an agentd error or timeout allows the action. Reported as `warn` (exit code `2`). |
+| `enforce` with no explicit `CORDUM_AGENTD_FAIL_CLOSED` | Posture is undetermined from outside the session, so the doctor names the deciding variable instead of claiming a guarantee. Reported as `ok` to keep exit codes stable; run the doctor inside the session, or pass `--fail-closed`, to confirm. |
 | `enterprise-strict` | Warnings are expected until managed settings and supervised agentd bootstrap are deployed. Any missing Gateway, Safety Kernel, agentd, hook, or settings path can block governed Claude actions. |
 
 `enterprise-strict` in the developer wrapper is still not a fleet enforcement
