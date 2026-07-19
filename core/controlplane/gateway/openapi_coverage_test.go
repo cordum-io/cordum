@@ -90,6 +90,44 @@ func TestOpenAPICreateShadowAgentFindingEvidenceContract(t *testing.T) {
 	}
 }
 
+func TestOpenAPIWorkerCredentialProofKeyContract(t *testing.T) {
+	spec := loadGatewayOpenAPISpec(t)
+	schemas := spec.Components.Schemas
+	requestRef := spec.Paths["/api/v1/workers/credentials"].Post.RequestBody.Content.ApplicationJSON.Schema.Ref
+	if requestRef != "#/components/schemas/CreateWorkerCredentialRequest" {
+		t.Fatalf("worker credential request schema = %q", requestRef)
+	}
+	request := schemas["CreateWorkerCredentialRequest"]
+	for _, field := range []string{"proof_key_id", "proof_algorithm", "proof_public_key_pem"} {
+		if _, ok := request.Properties[field]; !ok {
+			t.Fatalf("CreateWorkerCredentialRequest missing %q", field)
+		}
+	}
+	algorithm := request.Properties["proof_algorithm"]
+	if !stringSliceContains(algorithm.Enum, "ECDSA_P256_SHA256") || len(algorithm.Enum) != 1 {
+		t.Fatalf("proof_algorithm enum = %v, want exact ECDSA_P256_SHA256", algorithm.Enum)
+	}
+	keyID := request.Properties["proof_key_id"]
+	if keyID.MaxLength != 128 {
+		t.Fatalf("proof_key_id maxLength = %d, want 128", keyID.MaxLength)
+	}
+	publicKey := request.Properties["proof_public_key_pem"]
+	if publicKey.MaxLength != 4096 || !publicKey.WriteOnly {
+		t.Fatalf("proof_public_key_pem = %+v, want maxLength=4096 writeOnly=true", publicKey)
+	}
+	response := schemas["WorkerCredential"]
+	responseKeyID, ok := response.Properties["proof_key_id"]
+	if !ok {
+		t.Fatal("WorkerCredential response missing proof_key_id")
+	}
+	if responseKeyID.MaxLength != 128 {
+		t.Fatalf("WorkerCredential proof_key_id maxLength = %d, want 128", responseKeyID.MaxLength)
+	}
+	if _, ok := response.Properties["proof_public_key_pem"]; ok {
+		t.Fatal("WorkerCredential response must not expose proof_public_key_pem")
+	}
+}
+
 // TestOpenAPIRedoclyLint runs redocly lint on the spec. Gated behind
 // OPENAPI_FULL=1 because it shells out to npx and pulls redocly on
 // first run — fine in CI, noisy for a plain `go test`.
@@ -119,7 +157,8 @@ type gatewayOpenAPISpec struct {
 }
 
 type gatewayOpenAPIPathItem struct {
-	Get gatewayOpenAPIOperation `yaml:"get"`
+	Get  gatewayOpenAPIOperation `yaml:"get"`
+	Post gatewayOpenAPIOperation `yaml:"post"`
 }
 
 type gatewayOpenAPISchema struct {
@@ -133,11 +172,24 @@ type gatewayOpenAPIRequiredBranch struct {
 }
 
 type gatewayOpenAPIProperty struct {
-	Enum []string `yaml:"enum"`
+	Enum      []string `yaml:"enum"`
+	MaxLength int      `yaml:"maxLength"`
+	WriteOnly bool     `yaml:"writeOnly"`
 }
 
 type gatewayOpenAPIOperation struct {
-	Parameters []gatewayOpenAPIParameter `yaml:"parameters"`
+	Parameters  []gatewayOpenAPIParameter `yaml:"parameters"`
+	RequestBody gatewayOpenAPIRequestBody `yaml:"requestBody"`
+}
+
+type gatewayOpenAPIRequestBody struct {
+	Content struct {
+		ApplicationJSON struct {
+			Schema struct {
+				Ref string `yaml:"$ref"`
+			} `yaml:"schema"`
+		} `yaml:"application/json"`
+	} `yaml:"content"`
 }
 
 type gatewayOpenAPIParameter struct {

@@ -1,6 +1,7 @@
 # Heartbeat Demotion: From Authority to Telemetry
 
-> Phase-2 boundary hardening. Related work: SDK handshake (task-66b8fb92), topic registry (task-436f67e1), audit chain worker_trust_change events (task-2497391e).
+> Phase-2 boundary hardening. The authenticated protocol and enrollment
+> contract are in [`docs/sdk/handshake.md`](../sdk/handshake.md).
 
 ## 1. Motivation
 
@@ -21,7 +22,11 @@ That signal fails silently for at least five reasons:
 
 Every one of those misdiagnosed dispatch outages costs oncall time and erodes trust in the control plane.
 
-The fix: the scheduler now issues a cryptographically-bound **session token** on a successful worker handshake (task-66b8fb92). That token is the authoritative trust signal. Heartbeats demote to pure telemetry — still useful for freshness UI and health dashboards, never again for policy.
+The fix: the scheduler now issues a cryptographically bound **session token**
+after an authenticated worker proof. In either active session-authority mode,
+that token is the authoritative trust signal. Heartbeats demote to comparison
+or pure telemetry; the shipped compatibility mode deliberately retains legacy
+heartbeat authority until operators complete the rollout.
 
 ## 2. Old vs new authority chain
 
@@ -44,7 +49,8 @@ A single network blip broke both signals in lockstep.
 ### After (authority ≡ session token, heartbeat ≡ telemetry)
 
 ```
-    WorkerHandshake(pb) ──────►  SessionTokenIssuer.Issue
+    Authenticated CAP challenge + worker proof
+                         ──────►  SessionTokenIssuer.IssueBound
                                   │
                                   │  writes session:worker:<id>
                                   │        session:revoked:<tenant>:<jti>
@@ -64,7 +70,10 @@ A single network blip broke both signals in lockstep.
                                       Prometheus age gauge, health UI
 ```
 
-The scheduler and gateway both read `WorkerTrustState` via `TrustResolver.ResolveTrust(ctx, agentID)` — a pure read path over the Redis keys the session-token issuer writes.
+The scheduler and gateway both read `WorkerTrustState` via
+`TrustResolver.ResolveTrust(ctx, workerID)` — a pure read path over the Redis
+keys the session-token issuer writes. A generic capability `Handshake` or an
+unsigned/tokenless heartbeat cannot create that state.
 
 ## 3. What heartbeat is still good for
 
@@ -74,7 +83,8 @@ Heartbeats remain a valuable **freshness signal** that operators and humans cons
 - **Prometheus `cordum_scheduler_worker_heartbeat_age_seconds` gauge**. Used for SLO panels (p95 heartbeat age) and diagnosing GC pauses or NATS lag.
 - **Per-worker metrics carried in the heartbeat body**: `cpu_load`, `gpu_utilization`, `memory_load`, `active_jobs`. The scheduler still uses these to pick a least-loaded worker *from the set of trusted workers*.
 
-What heartbeats are **not** allowed to do, anywhere in the codebase:
+Once `CORDUM_HEARTBEAT_MODE` is `warn` or `telemetry`, heartbeats are **not**
+allowed to:
 
 - Gate `/api/v1/workers` visibility.
 - Gate dispatch eligibility.
@@ -84,40 +94,64 @@ Every call site that previously did one of these is catalogued in the internal h
 
 ## 4. Rollout plan
 
-The demotion is feature-flagged by `CORDUM_HEARTBEAT_MODE`, which drives a three-phase migration:
+The demotion is driven by the strict pair `CORDUM_SDK_HANDSHAKE` plus
+`CORDUM_HEARTBEAT_MODE`. Scheduler and gateway reject unknown values and
+contradictory active/legacy pairs at boot.
 
-### Phase A — `authority` (default on first release)
+### Phase A — compatibility (shipped default)
 
 ```
 CORDUM_HEARTBEAT_MODE=authority
+CORDUM_SDK_HANDSHAKE=off
 ```
 
 - Legacy behaviour. Heartbeat TTL gates dispatch exactly as before.
-- Session authority is computed but not consulted — all new code paths are compiled-in but inert.
+- The authenticated responder/session authority is disabled.
 - Operators can validate the new plumbing (dashboards, metrics, audit events) without any behavioural change.
 
-### Phase B — `warn` (release N+1, default)
+### Phase B — observation (recommended transition)
 
 ```
 CORDUM_HEARTBEAT_MODE=warn
+CORDUM_SDK_HANDSHAKE=warn
 ```
 
 - Session token becomes the authority for dispatch + visibility.
 - The legacy heartbeat-recency signal is still computed on the decision path, purely to compare it with session authority.
+- A tokenless heartbeat is retained only as bounded observability. It never
+  enters or replaces the dispatch snapshot and cannot refresh liveness.
+- A tokenless generic capability handshake is retained only as telemetry. It
+  cannot set trusted readiness/capabilities or grant dispatch eligibility; only
+  the capability nested in a verified authenticate exchange is authoritative.
 - Every disagreement emits a structured ERROR log **and** a `heartbeat_disagreement` SIEMEvent on the audit chain, with `direction` = `session_allows_heartbeat_blocks` | `session_blocks_heartbeat_allows`.
 - Operators watch the disagreement rate. The expected trajectory is high initially (workers still on old SDK without handshake), tapering to near zero as the fleet upgrades.
 
 Exit criterion for this phase: the `heartbeat_disagreement` event rate settles near zero and has been near zero for at least one full business week.
 
-### Phase C — `telemetry` (release N+2, target)
+### Phase C — enforcement (recommended target)
 
 ```
 CORDUM_HEARTBEAT_MODE=telemetry
+CORDUM_SDK_HANDSHAKE=enforce
 ```
 
 - Session token is the only authority. Heartbeat recency is not consulted on the decision path at all.
 - `heartbeat_disagreement` events no longer fire — the mode doesn't compute both signals.
 - Heartbeat age is still exposed everywhere (metrics, `/api/v1/workers`, dashboard) as a freshness indicator.
+
+Before Phase B, enroll worker P-256 proof keys, pin the scheduler P-256 public
+key on every worker, and deploy the Ed25519 session signing/trust authority to
+scheduler and gateway. Before Phase C, deploy the same Ed25519 authority to the
+workflow engine for authenticated internal cancels. `WORKER_ATTESTATION` must
+remain `off` in both active phases: legacy bearer attestation and bound sessions
+assign incompatible meanings to `BusPacket.auth_token`, so scheduler boot
+rejects `warn`/`enforce` attestation with active handshake.
+
+The accepted matrix is broader than the recommended phases: handshake `off`
+requires heartbeat `authority`; handshake `warn` or `enforce` accepts heartbeat
+`warn` or `telemetry`. For example, `enforce`+`warn` retains disagreement
+evidence with strict packet admission, while `warn`+`telemetry` removes
+heartbeat comparison before strict packet admission.
 
 ### Mode-transition audit
 
@@ -178,9 +212,15 @@ All events are SIEMEvent-shaped and flow through the existing audit chain (task-
 
 ## 8. Rollback
 
-Every site that enforces session authority checks `mode.EnforcesSession()` — returning `false` for `HeartbeatModeAuthority`. Reverting `CORDUM_HEARTBEAT_MODE=authority` is therefore a **no-code-change rollback**: the scheduler immediately resumes legacy heartbeat-TTL semantics, and the dashboard gracefully falls back to the heartbeat-recency `online` computation when the trust resolver is not consulted.
-
-This is the ergonomic rollback we deliberately kept: if a fleet-wide regression surfaces in `warn` mode, operators flip back to `authority` via one env-var redeploy, not a rebuild.
+Every site that enforces session authority checks `mode.EnforcesSession()` —
+returning false for `HeartbeatModeAuthority`. Roll back scheduler and gateway
+together to `CORDUM_SDK_HANDSHAKE=off` plus
+`CORDUM_HEARTBEAT_MODE=authority`. Remove the four
+`CORDUM_HANDSHAKE_*` process environment variables at the same time because an
+off-mode scheduler rejects an accidentally configured proof authority. The
+scheduler then resumes legacy heartbeat-TTL semantics and the API falls back to
+heartbeat-recency `online` computation without a rebuild. Do not leave a mixed
+pair during a rolling deployment.
 
 ## 9. Further reading
 

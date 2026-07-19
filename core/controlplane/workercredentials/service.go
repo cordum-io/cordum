@@ -52,28 +52,34 @@ var ErrCredentialNotFound = errors.New("worker credential not found")
 
 // Credential is the canonical worker identity record stored at cfg:system:workers.
 type Credential struct {
-	WorkerID       string   `json:"worker_id"`
-	TenantID       string   `json:"tenant_id"`
-	CredentialHash string   `json:"credential_hash"`
-	AllowedPools   []string `json:"allowed_pools,omitempty"`
-	AllowedTopics  []string `json:"allowed_topics,omitempty"`
-	PackID         string   `json:"pack_id,omitempty"`
-	AgentID        string   `json:"agent_id,omitempty"`
-	CreatedBy      string   `json:"created_by"`
-	CreatedAt      string   `json:"created_at"`
-	RevokedAt      string   `json:"revoked_at,omitempty"`
+	WorkerID          string   `json:"worker_id"`
+	TenantID          string   `json:"tenant_id"`
+	CredentialHash    string   `json:"credential_hash"`
+	ProofKeyID        string   `json:"proof_key_id,omitempty"`
+	ProofAlgorithm    string   `json:"proof_algorithm,omitempty"`
+	ProofPublicKeyPEM string   `json:"proof_public_key_pem,omitempty"`
+	AllowedPools      []string `json:"allowed_pools,omitempty"`
+	AllowedTopics     []string `json:"allowed_topics,omitempty"`
+	PackID            string   `json:"pack_id,omitempty"`
+	AgentID           string   `json:"agent_id,omitempty"`
+	CreatedBy         string   `json:"created_by"`
+	CreatedAt         string   `json:"created_at"`
+	RevokedAt         string   `json:"revoked_at,omitempty"`
 }
 
 // IssueInput describes a new or rotated worker credential.
 type IssueInput struct {
-	TenantID      string
-	WorkerID      string
-	AllowedPools  []string
-	AllowedTopics []string
-	PackID        string
-	AgentID       string
-	CreatedBy     string
-	CreatedAt     time.Time
+	TenantID          string
+	WorkerID          string
+	ProofKeyID        string
+	ProofAlgorithm    string
+	ProofPublicKeyPEM string
+	AllowedPools      []string
+	AllowedTopics     []string
+	PackID            string
+	AgentID           string
+	CreatedBy         string
+	CreatedAt         time.Time
 }
 
 type CreateLimit struct {
@@ -130,6 +136,7 @@ func (s *Service) create(ctx context.Context, input IssueInput, limit *CreateLim
 		return IssuedCredential{}, err
 	}
 
+	storedRecord := record
 	if err := s.config.SetWithRetry(ctx, configsvc.ScopeSystem, scopeIDWorkers, workerCredentialCreateCASAttempts, func(doc *configsvc.Document) error {
 		existing, err := decodeDocument(doc)
 		if err != nil {
@@ -139,12 +146,17 @@ func (s *Service) create(ctx context.Context, input IssueInput, limit *CreateLim
 			return ErrCredentialNotFound
 		}
 		current, replacing := existing[record.WorkerID]
+		candidate, err := credentialForWrite(record, current, replacing)
+		if err != nil {
+			return err
+		}
 		if limit != nil && (!replacing || current.Revoked()) {
-			if err := checkCreateLimit(existing, record.TenantID, *limit); err != nil {
+			if err := checkCreateLimit(existing, candidate.TenantID, *limit); err != nil {
 				return err
 			}
 		}
-		existing[record.WorkerID] = record
+		existing[candidate.WorkerID] = candidate
+		storedRecord = candidate
 		doc.Scope = configsvc.ScopeSystem
 		doc.ScopeID = scopeIDWorkers
 		doc.Data = encodeDocument(existing)
@@ -153,16 +165,28 @@ func (s *Service) create(ctx context.Context, input IssueInput, limit *CreateLim
 		return IssuedCredential{}, err
 	}
 
-	return IssuedCredential{Credential: record, Token: token}, nil
+	return IssuedCredential{Credential: storedRecord, Token: token}, nil
 }
 
 // Get returns the stored worker credential, or nil when the worker has not
 // been provisioned.
 func (s *Service) Get(ctx context.Context, tenantID, workerID string) (*Credential, error) {
+	record, err := s.GetByWorkerID(ctx, workerID)
+	if err != nil || record == nil {
+		return record, err
+	}
+	if !credentialVisibleToTenant(*record, tenantID) {
+		return nil, nil
+	}
+	return record, nil
+}
+
+// GetByWorkerID returns a credential regardless of tenant for trusted internal
+// identity resolution. HTTP handlers must use Get so tenant scoping is kept.
+func (s *Service) GetByWorkerID(ctx context.Context, workerID string) (*Credential, error) {
 	if s == nil || s.config == nil {
 		return nil, fmt.Errorf("worker credential store unavailable")
 	}
-	tenantID = strings.TrimSpace(tenantID)
 	workerID = strings.TrimSpace(workerID)
 	if workerID == "" {
 		return nil, fmt.Errorf("worker id required")
@@ -185,7 +209,7 @@ func (s *Service) Get(ctx context.Context, tenantID, workerID string) (*Credenti
 		}
 	}
 	record, ok := records[workerID]
-	if !ok || !credentialVisibleToTenant(record, tenantID) {
+	if !ok {
 		return nil, nil
 	}
 	out := record
@@ -274,7 +298,7 @@ func (s *Service) Revoke(ctx context.Context, tenantID, workerID string) error {
 // Verify checks a plaintext token against the stored Argon2id hash for the
 // given worker ID. Revoked or missing records are treated as invalid.
 func (s *Service) Verify(ctx context.Context, workerID, token string) (*Credential, bool, error) {
-	record, err := s.Get(ctx, "", workerID)
+	record, err := s.GetByWorkerID(ctx, workerID)
 	if err != nil || record == nil {
 		return record, false, err
 	}
@@ -313,15 +337,18 @@ func credentialFromIssueInput(input IssueInput, hash string) (Credential, error)
 		createdAt = time.Now().UTC()
 	}
 	record := Credential{
-		WorkerID:       strings.TrimSpace(input.WorkerID),
-		TenantID:       tenantOrDefault(input.TenantID),
-		CredentialHash: strings.TrimSpace(hash),
-		AllowedPools:   normalizeStrings(input.AllowedPools),
-		AllowedTopics:  normalizeStrings(input.AllowedTopics),
-		PackID:         strings.TrimSpace(input.PackID),
-		AgentID:        strings.TrimSpace(input.AgentID),
-		CreatedBy:      strings.TrimSpace(input.CreatedBy),
-		CreatedAt:      createdAt.Format(time.RFC3339),
+		WorkerID:          strings.TrimSpace(input.WorkerID),
+		TenantID:          tenantOrDefault(input.TenantID),
+		CredentialHash:    strings.TrimSpace(hash),
+		ProofKeyID:        strings.TrimSpace(input.ProofKeyID),
+		ProofAlgorithm:    strings.TrimSpace(input.ProofAlgorithm),
+		ProofPublicKeyPEM: input.ProofPublicKeyPEM,
+		AllowedPools:      normalizeStrings(input.AllowedPools),
+		AllowedTopics:     normalizeStrings(input.AllowedTopics),
+		PackID:            strings.TrimSpace(input.PackID),
+		AgentID:           strings.TrimSpace(input.AgentID),
+		CreatedBy:         strings.TrimSpace(input.CreatedBy),
+		CreatedAt:         createdAt.Format(time.RFC3339),
 	}
 	if record.CreatedBy == "" {
 		record.CreatedBy = defaultCreatedBy
@@ -386,6 +413,9 @@ func encodeDocument(records map[string]Credential) map[string]any {
 }
 
 func validateCredential(record Credential) (Credential, error) {
+	if len([]byte(record.ProofPublicKeyPEM)) > maxProofPublicKeyPEMBytes {
+		return Credential{}, fmt.Errorf("proof public key PEM too large")
+	}
 	record = normalizeCredential(record)
 	if record.WorkerID == "" {
 		return Credential{}, fmt.Errorf("worker id required")
@@ -410,13 +440,16 @@ func validateCredential(record Credential) (Credential, error) {
 	if _, _, _, err := parsePHC(record.CredentialHash); err != nil {
 		return Credential{}, fmt.Errorf("credential hash invalid: %w", err)
 	}
-	return record, nil
+	return validateAndNormalizeProofKey(record)
 }
 
 func normalizeCredential(record Credential) Credential {
 	record.WorkerID = strings.TrimSpace(record.WorkerID)
 	record.TenantID = tenantOrDefault(record.TenantID)
 	record.CredentialHash = strings.TrimSpace(record.CredentialHash)
+	record.ProofKeyID = strings.TrimSpace(record.ProofKeyID)
+	record.ProofAlgorithm = strings.TrimSpace(record.ProofAlgorithm)
+	record.ProofPublicKeyPEM = strings.TrimSpace(record.ProofPublicKeyPEM)
 	record.AllowedPools = normalizeStrings(record.AllowedPools)
 	record.AllowedTopics = normalizeStrings(record.AllowedTopics)
 	record.PackID = strings.TrimSpace(record.PackID)

@@ -1,6 +1,9 @@
 package scheduler
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // RED coverage for task-948d913b: the strict boot-time parser. The lenient
 // ParseHandshakeMode maps any unrecognized value to warn (kept for runtime
@@ -9,13 +12,15 @@ import "testing"
 func TestParseHandshakeModeStrict(t *testing.T) {
 	t.Parallel()
 	valid := map[string]HandshakeMode{
-		"":          HandshakeModeOff, // unset stays back-compat (gate disabled)
 		"off":       HandshakeModeOff,
 		"OFF":       HandshakeModeOff,
 		" warn ":    HandshakeModeWarn,
 		"warn":      HandshakeModeWarn,
 		"enforce":   HandshakeModeEnforce,
 		" ENFORCE ": HandshakeModeEnforce,
+	}
+	if _, err := ParseHandshakeModeStrict("   "); err == nil || !strings.Contains(err.Error(), "must be explicitly set") {
+		t.Fatalf("empty mode must fail closed with explicit-mode guidance; got %v", err)
 	}
 	for in, want := range valid {
 		got, err := ParseHandshakeModeStrict(in)
