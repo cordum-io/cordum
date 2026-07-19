@@ -3,6 +3,8 @@ package bus
 import (
 	"context"
 	"errors"
+	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -13,6 +15,29 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 )
+
+func TestQueueRespondFlushesInterestBeforeReportingReady(t *testing.T) {
+	source, err := os.ReadFile("raw_request.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(source)
+	flush := strings.Index(body, "b.nc.Flush()")
+	track := strings.Index(body, "b.trackSub(sub)")
+	if flush < 0 || track < 0 || flush > track {
+		t.Fatalf("QueueRespond must Flush interest before tracking/reporting readiness: flush=%d track=%d", flush, track)
+	}
+}
+
+func TestQueueRespondTracksThroughClosedGate(t *testing.T) {
+	source, err := os.ReadFile("raw_request.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(source), "if !b.trackSub(sub)") {
+		t.Fatal("QueueRespond must reject and drain a subscription when the bus closed concurrently")
+	}
+}
 
 var _ model.RawRequestResponder = (*NatsBus)(nil)
 var _ model.BusSubscription = (*nats.Subscription)(nil)
@@ -146,6 +171,25 @@ func TestExecuteRawHandlerEnforcesDeadline(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed > 250*time.Millisecond {
 		t.Fatalf("handler timeout took %v", elapsed)
+	}
+}
+
+func TestExecuteRawHandlerCannotCompleteSideEffectAfterTimeout(t *testing.T) {
+	release := make(chan struct{})
+	var sideEffects atomic.Int32
+	config := rawRequestConfig{maxPayloadBytes: 32, handlerTimeout: 10 * time.Millisecond}
+	_, err := executeRawHandler(context.Background(), []byte("request"), config, func(context.Context, model.RawRequest) (model.RawResponse, error) {
+		<-release
+		sideEffects.Add(1)
+		return model.RawResponse("late"), nil
+	})
+	if !errors.Is(err, errRawHandlerTimeout) {
+		t.Fatalf("error = %v, want %v", err, errRawHandlerTimeout)
+	}
+	close(release)
+	time.Sleep(25 * time.Millisecond)
+	if got := sideEffects.Load(); got != 0 {
+		t.Fatalf("post-timeout side effects = %d, want 0", got)
 	}
 }
 

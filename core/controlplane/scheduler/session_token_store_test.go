@@ -87,3 +87,19 @@ func TestSessionTokenIssueBound_CorruptPriorBindingFailsClosed(t *testing.T) {
 		t.Fatalf("corrupt store minted authority: token=%q claims=%+v", token, claims)
 	}
 }
+
+func TestSessionStoreKeysCannotCollideAcrossTenantSeparators(t *testing.T) {
+	left := revokedKey("a:b", "j")
+	right := revokedKey("a", "b:j")
+	if left == right {
+		t.Fatalf("revocation keys collide: %q", left)
+	}
+}
+
+func TestLegacyWorkerKeyCannotEnterBoundNamespace(t *testing.T) {
+	legacy := workerKey("v2:tenant:worker")
+	bound := boundWorkerKey("tenant", "worker")
+	if legacy == bound || strings.HasPrefix(legacy, sessionWorkerKeyPrefix+"v2:") {
+		t.Fatalf("legacy worker key %q entered bound namespace %q", legacy, bound)
+	}
+}
