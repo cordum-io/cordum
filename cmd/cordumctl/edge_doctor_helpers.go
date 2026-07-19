@@ -193,14 +193,32 @@ func edgeIsLoopbackHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-func edgeModeImplication(mode string) string {
+// edgeModeImplication describes what the configured mode means for actions
+// taken while governance is degraded. The enforce wording is qualified by the
+// effective CORDUM_AGENTD_FAIL_CLOSED posture: enforce alone does not deny, so
+// stating an unconditional denial would be false for a fail-open session --
+// which is precisely the state this string is rendered in (agentd unreachable).
+func edgeModeImplication(env *edgeDoctorEnv) string {
+	mode := ""
+	raw := ""
+	if env != nil {
+		mode = env.policyMode
+		raw = env.failClosed
+	}
 	switch edgePolicyModeOrDefault(mode) {
 	case "observe":
 		return "observe mode degrades open"
 	case "enterprise-strict":
 		return "enterprise-strict fails closed"
 	default:
-		return "enforce mode denies risky/unknown degraded actions"
+		failClosed, explicit := edgeFailClosedExplicit(raw)
+		if explicit && failClosed {
+			return "enforce mode denies risky/unknown degraded actions (CORDUM_AGENTD_FAIL_CLOSED=true)"
+		}
+		if explicit {
+			return "enforce mode is FAIL-OPEN (CORDUM_AGENTD_FAIL_CLOSED=false): degraded actions are ALLOWED"
+		}
+		return "enforce mode denies degraded actions only when CORDUM_AGENTD_FAIL_CLOSED is enabled"
 	}
 }
 
