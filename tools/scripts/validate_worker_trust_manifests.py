@@ -16,6 +16,11 @@ COMPOSE_FILES = {
     "docker-compose.release.yml": ("scheduler", "api-gateway"),
     "docker-compose.ha.yaml": ("scheduler-2", "api-gateway-2"),
 }
+WORKFLOW_COMPOSE_FILES = {
+    "docker-compose.yml": "workflow-engine",
+    "docker-compose.release.yml": "workflow-engine",
+    "docker-compose.ha.yaml": "workflow-engine-2",
+}
 
 
 def load_yaml(path: Path) -> Any:
@@ -51,6 +56,13 @@ def check_compose(root: Path) -> list[str]:
         for name in services:
             service = document.get("services", {}).get(name, {})
             errors.extend(check_pair(f"{relative} {name}", compose_env(service), expected))
+    for relative, name in WORKFLOW_COMPOSE_FILES.items():
+        document = load_yaml(root / relative)
+        service = document.get("services", {}).get(name, {})
+        errors.extend(check_pair(
+            f"{relative} {name}", compose_env(service),
+            {HANDSHAKE: "${CORDUM_SDK_HANDSHAKE:-off}"},
+        ))
     return errors
 
 
@@ -63,7 +75,11 @@ def deployment_env(document: dict[str, Any], container_name: str) -> dict[str, s
 
 
 def check_kubernetes(root: Path) -> list[str]:
-    targets = {"cordum-scheduler": "scheduler", "cordum-api-gateway": "gateway"}
+    targets = {
+        "cordum-scheduler": ("scheduler", {HANDSHAKE: "off", HEARTBEAT: "authority"}),
+        "cordum-api-gateway": ("gateway", {HANDSHAKE: "off", HEARTBEAT: "authority"}),
+        "cordum-workflow-engine": ("workflow-engine", {HANDSHAKE: "off"}),
+    }
     found: set[str] = set()
     errors: list[str] = []
     with (root / "deploy/k8s/base.yaml").open(encoding="utf-8") as handle:
@@ -71,11 +87,15 @@ def check_kubernetes(root: Path) -> list[str]:
             if not document or document.get("kind") != "Deployment":
                 continue
             name = document.get("metadata", {}).get("name", "")
-            container_name = targets.get(name)
-            if container_name is None:
+            target = targets.get(name)
+            if target is None:
                 continue
+            container_name, expected = target
             found.add(name)
-            errors.extend(check_pair(f"deploy/k8s/base.yaml {name}", deployment_env(document, container_name), {HANDSHAKE: "off", HEARTBEAT: "authority"}))
+            errors.extend(check_pair(
+                f"deploy/k8s/base.yaml {name}",
+                deployment_env(document, container_name), expected,
+            ))
     for missing in sorted(set(targets) - found):
         errors.append(f"deploy/k8s/base.yaml missing deployment {missing}")
     return errors
@@ -121,7 +141,7 @@ def main() -> int:
         for error in errors:
             print(f"FAIL:{error}")
         return 1
-    print("OK:scheduler and gateway default to off + authority; Helm active refs are complete")
+    print("OK:scheduler and gateway default to off + authority; workflow engine defaults handshake off; Helm active refs are complete")
     return 0
 
 

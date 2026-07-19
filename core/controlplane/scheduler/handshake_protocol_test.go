@@ -6,6 +6,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,11 +21,11 @@ import (
 type protocolTrustResolver struct {
 	identity *HandshakeTrustIdentity
 	err      error
-	calls    int
+	calls    atomic.Int32
 }
 
 func (r *protocolTrustResolver) Resolve(_ context.Context, workerID, keyID string) (*HandshakeTrustIdentity, error) {
-	r.calls++
+	r.calls.Add(1)
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -44,12 +45,12 @@ func TestAuthenticateResolutionFailureDoesNotResolveTwiceForSafeRejection(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	fixture.resolver.calls = 0
+	fixture.resolver.calls.Store(0)
 	fixture.resolver.err = authenticationResolution("credential_rejected")
 	_, _ = fixture.service.HandleAuthenticate(context.Background(),
 		protocolAuthenticate(t, fixture, challenge.GetWorkerHandshakeChallenge(), ""))
-	if fixture.resolver.calls != 1 {
-		t.Fatalf("authenticate resolver calls = %d, want 1", fixture.resolver.calls)
+	if calls := fixture.resolver.calls.Load(); calls != 1 {
+		t.Fatalf("authenticate resolver calls = %d, want 1", calls)
 	}
 }
 

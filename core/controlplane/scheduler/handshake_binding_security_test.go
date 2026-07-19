@@ -66,7 +66,7 @@ func TestHandshakeServiceSecurity_SafeRejectionRequiresValidWorkerProof(t *testi
 	packet := protocolAuthenticate(t, fixture, issuedProtocolChallenge(t, fixture), "")
 	packet.GetWorkerHandshakeAuthenticate().CapabilityHandshake.Capabilities["progress"] = false
 	resignAuthenticate(t, packet, fixture.workerKey)
-	fixture.resolver.calls = 0
+	fixture.resolver.calls.Store(0)
 
 	result, err := fixture.service.HandleAuthenticate(context.Background(), packet)
 	if err != nil || result == nil || result.GetWorkerHandshakeResult().GetAccepted() || result.GetAuthToken() != "" {
@@ -76,8 +76,8 @@ func TestHandshakeServiceSecurity_SafeRejectionRequiresValidWorkerProof(t *testi
 	if err := capsdk.VerifyTrustHandshake(result, keys); err != nil {
 		t.Fatalf("verify safe rejection: %v", err)
 	}
-	if fixture.resolver.calls != 1 {
-		t.Fatalf("safe rejection resolver calls = %d, want 1", fixture.resolver.calls)
+	if calls := fixture.resolver.calls.Load(); calls != 1 {
+		t.Fatalf("safe rejection resolver calls = %d, want 1", calls)
 	}
 }
 

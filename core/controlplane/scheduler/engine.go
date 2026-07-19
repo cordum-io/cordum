@@ -3128,6 +3128,7 @@ func (e *Engine) replayApprovalPublish(traceID string, req *pb.JobRequest, appro
 			Payload: &pb.BusPacket_JobResult{
 				JobResult: &pb.JobResult{
 					JobId:         jobID,
+					WorkerId:      defaultSenderID,
 					Status:        pb.JobStatus_JOB_STATUS_DENIED,
 					ErrorCode:     "approval_rejected",
 					ErrorCodeEnum: pb.ErrorCode_ERROR_CODE_SAFETY_DENIED,
@@ -3188,7 +3189,7 @@ func (e *Engine) emitDLQ(jobID, topic string, status pb.JobStatus, reason string
 				ErrorCodeEnum: mapStringToErrorCode(reasonCode),
 				ErrorMessage:  reason,
 				ResultPtr:     "",
-				WorkerId:      "",
+				WorkerId:      defaultSenderID,
 			},
 		},
 	}
