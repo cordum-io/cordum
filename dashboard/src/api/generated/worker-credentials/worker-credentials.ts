@@ -23,7 +23,7 @@ import type {
 
 import type {
   BadRequestResponse,
-  CreateWorkerCredentialBody,
+  CreateWorkerCredentialRequest,
   ForbiddenResponse,
   ListWorkerCredentials200,
   NotFoundResponse,
@@ -197,14 +197,14 @@ export function useListWorkerCredentials<
  * @summary Create or rotate a worker credential
  */
 export const createWorkerCredential = (
-  createWorkerCredentialBody: CreateWorkerCredentialBody,
+  createWorkerCredentialRequest: CreateWorkerCredentialRequest,
   signal?: AbortSignal,
 ) => {
   return apiClient<WorkerCredentialIssue | WorkerCredentialIssue>({
     url: `/api/v1/workers/credentials`,
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    data: createWorkerCredentialBody,
+    data: createWorkerCredentialRequest,
     signal,
   });
 };
@@ -221,13 +221,13 @@ export const getCreateWorkerCredentialMutationOptions = <
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof createWorkerCredential>>,
     TError,
-    { data: CreateWorkerCredentialBody },
+    { data: CreateWorkerCredentialRequest },
     TContext
   >;
 }): UseMutationOptions<
   Awaited<ReturnType<typeof createWorkerCredential>>,
   TError,
-  { data: CreateWorkerCredentialBody },
+  { data: CreateWorkerCredentialRequest },
   TContext
 > => {
   const mutationKey = ["createWorkerCredential"];
@@ -241,7 +241,7 @@ export const getCreateWorkerCredentialMutationOptions = <
 
   const mutationFn: MutationFunction<
     Awaited<ReturnType<typeof createWorkerCredential>>,
-    { data: CreateWorkerCredentialBody }
+    { data: CreateWorkerCredentialRequest }
   > = (props) => {
     const { data } = props ?? {};
 
@@ -254,7 +254,7 @@ export const getCreateWorkerCredentialMutationOptions = <
 export type CreateWorkerCredentialMutationResult = NonNullable<
   Awaited<ReturnType<typeof createWorkerCredential>>
 >;
-export type CreateWorkerCredentialMutationBody = CreateWorkerCredentialBody;
+export type CreateWorkerCredentialMutationBody = CreateWorkerCredentialRequest;
 export type CreateWorkerCredentialMutationError =
   | BadRequestResponse
   | UnauthorizedResponse
@@ -278,7 +278,7 @@ export const useCreateWorkerCredential = <
     mutation?: UseMutationOptions<
       Awaited<ReturnType<typeof createWorkerCredential>>,
       TError,
-      { data: CreateWorkerCredentialBody },
+      { data: CreateWorkerCredentialRequest },
       TContext
     >;
   },
@@ -286,7 +286,7 @@ export const useCreateWorkerCredential = <
 ): UseMutationResult<
   Awaited<ReturnType<typeof createWorkerCredential>>,
   TError,
-  { data: CreateWorkerCredentialBody },
+  { data: CreateWorkerCredentialRequest },
   TContext
 > => {
   const mutationOptions = getCreateWorkerCredentialMutationOptions(options);

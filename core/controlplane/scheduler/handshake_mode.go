@@ -8,18 +8,16 @@ package scheduler
 //   1. off — legacy. Scheduler skips the handshake entirely; old
 //      workers (and tests) are dispatched without a session token.
 //      Useful for environments that haven't upgraded any workers yet.
-//   2. warn — handshake is attempted; a missing or rejected
+//   2. warn — handshake is required for token minting; a missing or rejected
 //      handshake is logged at ERROR (rate-limited to one event per
 //      worker per hour to avoid flooding) but dispatch still
-//      proceeds for handshakeless workers. This is the default
-//      one-release migration window.
+//      proceeds for handshakeless workers during the migration window.
 //   3. enforce — handshake is required. Workers without a valid
 //      session token are refused dispatch. Strict-mode for
 //      regulated tenants and post-migration deployments.
 //
-// Operators upgrade by leaving the default (warn) until they have
-// visibility of the warn-mode logs, then flip to enforce once every
-// worker reports a successful handshake.
+// Scheduler boot requires an explicit mode. Operators can select warn until
+// every worker reports a successful handshake, then flip to enforce.
 
 import (
 	"fmt"
@@ -40,6 +38,14 @@ const (
 
 	// EnvHandshakeMode is the env var operators set to pick the mode.
 	EnvHandshakeMode = "CORDUM_SDK_HANDSHAKE"
+	// EnvHandshakeSchedulerID is the authenticated scheduler sender identity.
+	EnvHandshakeSchedulerID = "CORDUM_HANDSHAKE_SCHEDULER_ID"
+	// EnvHandshakeSchedulerKeyID identifies the pinned P-256 proof key.
+	EnvHandshakeSchedulerKeyID = "CORDUM_HANDSHAKE_SCHEDULER_KEY_ID"
+	// EnvHandshakePrivateKeyFile points to the scheduler PKCS#8/SEC1 P-256 key.
+	EnvHandshakePrivateKeyFile = "CORDUM_HANDSHAKE_PRIVATE_KEY_FILE"
+	// EnvHandshakePublicKeyFile points to the matching SPKI public-key export.
+	EnvHandshakePublicKeyFile = "CORDUM_HANDSHAKE_PUBLIC_KEY_FILE"
 
 	// handshakeMissingLogInterval bounds how often warn-mode emits
 	// a per-worker "missing handshake" ERROR. Once per worker per
@@ -68,13 +74,13 @@ func ParseHandshakeMode(raw string) HandshakeMode {
 // ParseHandshakeMode (which maps any unrecognized value to warn for runtime
 // callers), it returns an error for any non-empty value that does not
 // round-trip to a canonical mode — so a typo'd CORDUM_SDK_HANDSHAKE (e.g.
-// "enforse") refuses to boot rather than silently degrading to admit. An empty
-// value maps to Off (gate disabled) to preserve back-compat for deployments
-// that never set the variable.
+// "enforse") refuses to boot rather than silently degrading to admit. An
+// empty value is also an error: operators must make the security posture
+// explicit instead of inheriting a permissive rollout default.
 func ParseHandshakeModeStrict(raw string) (HandshakeMode, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
-		return HandshakeModeOff, nil
+		return "", fmt.Errorf("%s must be explicitly set to off, warn, or enforce", EnvHandshakeMode)
 	}
 	switch HandshakeMode(strings.ToLower(trimmed)) {
 	case HandshakeModeOff:
@@ -165,6 +171,8 @@ func (t *HandshakeMissingTracker) WithClock(now func() time.Time) *HandshakeMiss
 	if t == nil || now == nil {
 		return t
 	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.now = now
 	return t
 }
@@ -194,9 +202,18 @@ func (t *HandshakeMissingTracker) ShouldLog(workerID string) bool {
 	if id == "" {
 		return false
 	}
-	now := t.now()
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.now == nil {
+		t.now = time.Now
+	}
+	if t.interval <= 0 {
+		t.interval = handshakeMissingLogInterval
+	}
+	if t.lastLog == nil {
+		t.lastLog = make(map[string]time.Time)
+	}
+	now := t.now()
 	last, ok := t.lastLog[id]
 	if ok && now.Sub(last) < t.interval {
 		return false

@@ -33,6 +33,7 @@ import (
 	"github.com/cordum/cordum/sdk/runtime"
 	"github.com/nats-io/nats.go"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
@@ -194,31 +195,24 @@ func connectNATS(natsURL string) (*nats.Conn, error) {
 }
 
 func heartbeatLoop(ctx context.Context, nc *nats.Conn) {
-	build := func() ([]byte, error) {
-		hb := &agentv1.BusPacket{
-			TraceId:         workerID,
-			SenderId:        workerID,
-			ProtocolVersion: capsdk.DefaultProtocolVersion,
-			Payload: &agentv1.BusPacket_Heartbeat{
-				Heartbeat: &agentv1.Heartbeat{
-					WorkerId:        workerID,
-					Pool:            workerPool,
-					Type:            "cpu",
-					MaxParallelJobs: 4,
-					Capabilities:    []string{"demo-quickstart.greet"},
-					Labels: map[string]string{
-						"name": "Quickstart Greeter",
-						"env":  "demo",
-					},
-				},
-			},
-		}
-		return proto.Marshal(hb)
-	}
+	build := buildHeartbeat
 	if payload, err := build(); err == nil {
 		_ = runtime.EmitHeartbeat(nc, payload)
 	}
 	runtime.HeartbeatLoop(ctx, nc, build)
+}
+
+func buildHeartbeat() ([]byte, error) {
+	packet := &agentv1.BusPacket{
+		TraceId: workerID, SenderId: workerID, CreatedAt: timestamppb.Now(),
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
+		Payload: &agentv1.BusPacket_Heartbeat{Heartbeat: &agentv1.Heartbeat{
+			WorkerId: workerID, Pool: workerPool, Type: "cpu", MaxParallelJobs: 4,
+			Capabilities: []string{"demo-quickstart.greet"},
+			Labels:       map[string]string{"name": "Quickstart Greeter", "env": "demo"},
+		}},
+	}
+	return proto.Marshal(packet)
 }
 
 // metricsHandler returns the /metrics endpoint in Prometheus text format.
