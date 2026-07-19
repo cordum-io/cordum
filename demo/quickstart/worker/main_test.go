@@ -10,8 +10,10 @@ import (
 	"testing"
 	"time"
 
-	capruntime "github.com/cordum-io/cap/v2/sdk/go/runtime"
 	agentv1 "github.com/cordum-io/cap/v2/cordum/agent/v1"
+	capsdk "github.com/cordum-io/cap/v2/sdk/go"
+	capruntime "github.com/cordum-io/cap/v2/sdk/go/runtime"
+	"google.golang.org/protobuf/proto"
 )
 
 // parseGreetPayload is the JSON decoder used by the tests below. It
@@ -44,6 +46,21 @@ func newCtx(t *testing.T, topic, jobID string) capruntime.Context {
 			JobId: jobID,
 			Topic: topic,
 		},
+	}
+}
+
+func TestBuildHeartbeatSatisfiesCAPEnvelopeValidation(t *testing.T) {
+	payload, err := buildHeartbeat()
+	if err != nil {
+		t.Fatalf("buildHeartbeat: %v", err)
+	}
+
+	var packet agentv1.BusPacket
+	if err := proto.Unmarshal(payload, &packet); err != nil {
+		t.Fatalf("unmarshal heartbeat: %v", err)
+	}
+	if err := capsdk.ValidateBusPacket(&packet); err != nil {
+		t.Fatalf("CAP rejected demo heartbeat: %v", err)
 	}
 }
 
