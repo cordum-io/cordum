@@ -68,7 +68,7 @@ export const getGetLicenseQueryOptions = <
     Awaited<ReturnType<typeof getLicense>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetLicenseQueryResult = NonNullable<
@@ -95,7 +95,7 @@ export function useGetLicense<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetLicense<
   TData = Awaited<ReturnType<typeof getLicense>>,
@@ -115,7 +115,9 @@ export function useGetLicense<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetLicense<
   TData = Awaited<ReturnType<typeof getLicense>>,
   TError = UnauthorizedResponse | ForbiddenResponse,
@@ -126,7 +128,9 @@ export function useGetLicense<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get resolved license metadata
  */
@@ -141,13 +145,15 @@ export function useGetLicense<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetLicenseQueryOptions(options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -172,9 +178,7 @@ export const getGetLicenseUsageQueryKey = () => {
 export const getGetLicenseUsageQueryOptions = <
   TData = Awaited<ReturnType<typeof getLicenseUsage>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(options?: {
   query?: Partial<
     UseQueryOptions<Awaited<ReturnType<typeof getLicenseUsage>>, TError, TData>
@@ -192,23 +196,19 @@ export const getGetLicenseUsageQueryOptions = <
     Awaited<ReturnType<typeof getLicenseUsage>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetLicenseUsageQueryResult = NonNullable<
   Awaited<ReturnType<typeof getLicenseUsage>>
 >;
 export type GetLicenseUsageQueryError =
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse;
 
 export function useGetLicenseUsage<
   TData = Awaited<ReturnType<typeof getLicenseUsage>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   options: {
     query: Partial<
@@ -229,14 +229,12 @@ export function useGetLicenseUsage<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetLicenseUsage<
   TData = Awaited<ReturnType<typeof getLicenseUsage>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   options?: {
     query?: Partial<
@@ -256,13 +254,13 @@ export function useGetLicenseUsage<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetLicenseUsage<
   TData = Awaited<ReturnType<typeof getLicenseUsage>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   options?: {
     query?: Partial<
@@ -274,7 +272,9 @@ export function useGetLicenseUsage<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get entitlement usage vs limits
  */
@@ -282,9 +282,7 @@ export function useGetLicenseUsage<
 export function useGetLicenseUsage<
   TData = Awaited<ReturnType<typeof getLicenseUsage>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   options?: {
     query?: Partial<
@@ -296,13 +294,15 @@ export function useGetLicenseUsage<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetLicenseUsageQueryOptions(options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -322,9 +322,7 @@ export const reloadLicense = (signal?: AbortSignal) => {
 
 export const getReloadLicenseMutationOptions = <
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -363,18 +361,14 @@ export type ReloadLicenseMutationResult = NonNullable<
 >;
 
 export type ReloadLicenseMutationError =
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | ServiceUnavailableResponse;
+  UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse;
 
 /**
  * @summary Reload the active license
  */
 export const useReloadLicense = <
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
   TContext = unknown,
 >(
   options?: {

@@ -157,9 +157,7 @@ export const getListLegalHoldsQueryKey = (params?: ListLegalHoldsParams) => {
 export const getListLegalHoldsQueryOptions = <
   TData = Awaited<ReturnType<typeof listLegalHolds>>,
   TError =
-    | UnauthorizedResponse
-    | TierLimitResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | TierLimitResponse | ServiceUnavailableResponse,
 >(
   params?: ListLegalHoldsParams,
   options?: {
@@ -180,23 +178,19 @@ export const getListLegalHoldsQueryOptions = <
     Awaited<ReturnType<typeof listLegalHolds>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListLegalHoldsQueryResult = NonNullable<
   Awaited<ReturnType<typeof listLegalHolds>>
 >;
 export type ListLegalHoldsQueryError =
-  | UnauthorizedResponse
-  | TierLimitResponse
-  | ServiceUnavailableResponse;
+  UnauthorizedResponse | TierLimitResponse | ServiceUnavailableResponse;
 
 export function useListLegalHolds<
   TData = Awaited<ReturnType<typeof listLegalHolds>>,
   TError =
-    | UnauthorizedResponse
-    | TierLimitResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | TierLimitResponse | ServiceUnavailableResponse,
 >(
   params: undefined | ListLegalHoldsParams,
   options: {
@@ -214,14 +208,12 @@ export function useListLegalHolds<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListLegalHolds<
   TData = Awaited<ReturnType<typeof listLegalHolds>>,
   TError =
-    | UnauthorizedResponse
-    | TierLimitResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | TierLimitResponse | ServiceUnavailableResponse,
 >(
   params?: ListLegalHoldsParams,
   options?: {
@@ -238,13 +230,13 @@ export function useListLegalHolds<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListLegalHolds<
   TData = Awaited<ReturnType<typeof listLegalHolds>>,
   TError =
-    | UnauthorizedResponse
-    | TierLimitResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | TierLimitResponse | ServiceUnavailableResponse,
 >(
   params?: ListLegalHoldsParams,
   options?: {
@@ -253,7 +245,9 @@ export function useListLegalHolds<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List legal holds
  */
@@ -261,9 +255,7 @@ export function useListLegalHolds<
 export function useListLegalHolds<
   TData = Awaited<ReturnType<typeof listLegalHolds>>,
   TError =
-    | UnauthorizedResponse
-    | TierLimitResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | TierLimitResponse | ServiceUnavailableResponse,
 >(
   params?: ListLegalHoldsParams,
   options?: {
@@ -272,13 +264,15 @@ export function useListLegalHolds<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListLegalHoldsQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
