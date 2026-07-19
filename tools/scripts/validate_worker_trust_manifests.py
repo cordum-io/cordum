@@ -54,15 +54,16 @@ def check_compose(root: Path) -> list[str]:
     return errors
 
 
-def deployment_env(document: dict[str, Any]) -> dict[str, str]:
+def deployment_env(document: dict[str, Any], container_name: str) -> dict[str, str]:
     containers = document["spec"]["template"]["spec"].get("containers", [])
-    if not containers:
-        return {}
-    return {entry["name"]: str(entry.get("value", "")) for entry in containers[0].get("env", [])}
+    for container in containers:
+        if container.get("name") == container_name:
+            return {entry["name"]: str(entry.get("value", "")) for entry in container.get("env", [])}
+    return {}
 
 
 def check_kubernetes(root: Path) -> list[str]:
-    targets = {"cordum-scheduler", "cordum-api-gateway"}
+    targets = {"cordum-scheduler": "scheduler", "cordum-api-gateway": "gateway"}
     found: set[str] = set()
     errors: list[str] = []
     with (root / "deploy/k8s/base.yaml").open(encoding="utf-8") as handle:
@@ -70,11 +71,12 @@ def check_kubernetes(root: Path) -> list[str]:
             if not document or document.get("kind") != "Deployment":
                 continue
             name = document.get("metadata", {}).get("name", "")
-            if name not in targets:
+            container_name = targets.get(name)
+            if container_name is None:
                 continue
             found.add(name)
-            errors.extend(check_pair(f"deploy/k8s/base.yaml {name}", deployment_env(document), {HANDSHAKE: "off", HEARTBEAT: "authority"}))
-    for missing in sorted(targets - found):
+            errors.extend(check_pair(f"deploy/k8s/base.yaml {name}", deployment_env(document, container_name), {HANDSHAKE: "off", HEARTBEAT: "authority"}))
+    for missing in sorted(set(targets) - found):
         errors.append(f"deploy/k8s/base.yaml missing deployment {missing}")
     return errors
 

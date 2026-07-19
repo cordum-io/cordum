@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
 VALIDATOR="$ROOT/tools/scripts/validate_deploy_manifests.sh"
+TRUST_VALIDATOR="$ROOT/tools/scripts/validate_worker_trust_manifests.py"
 HELM_CHART="$ROOT/cordum-helm"
 
 fail() {
@@ -187,9 +188,40 @@ PY
   assert_contains "$output" "worker trust manifest checker failed"
 }
 
+test_manifest_checker_rejects_env_on_wrong_container() {
+  local tmp output
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' RETURN
+  copy_validation_fixture "$tmp"
+  python - "$tmp/deploy/k8s/base.yaml" <<'PY'
+from pathlib import Path
+import sys
+import yaml
+
+path = Path(sys.argv[1])
+documents = list(yaml.safe_load_all(path.read_text()))
+for document in documents:
+    if (not document or document.get("kind") != "Deployment" or
+            document.get("metadata", {}).get("name") != "cordum-scheduler"):
+        continue
+    containers = document["spec"]["template"]["spec"]["containers"]
+    scheduler = next(item for item in containers if item.get("name") == "scheduler")
+    trust = {"CORDUM_SDK_HANDSHAKE", "CORDUM_HEARTBEAT_MODE"}
+    decoy_env = [entry for entry in scheduler.get("env", []) if entry.get("name") in trust]
+    scheduler["env"] = [entry for entry in scheduler.get("env", []) if entry.get("name") not in trust]
+    containers.insert(0, {"name": "trust-decoy", "env": decoy_env})
+path.write_text(yaml.safe_dump_all(documents, sort_keys=False))
+PY
+  if output="$(python "$TRUST_VALIDATOR" "$tmp" 2>&1)"; then
+    fail "worker-trust checker accepted env on a decoy sidecar"
+  fi
+  assert_contains "$output" "cordum-scheduler"
+}
+
 test_default_chart_is_explicitly_legacy_safe
 test_active_chart_requires_and_renders_all_authorities
 test_chart_enforces_mode_classes
 test_strict_validator_rejects_trust_default_drift
 test_strict_validator_rejects_checker_crash
+test_manifest_checker_rejects_env_on_wrong_container
 echo "PASS: deployment trust defaults and Helm authority refs"
