@@ -54,7 +54,7 @@ echo "   override) before restarting — see config/gateway.demo.env."
 
 # When RBAC is entitled, the llm_proxy role must exist with edge.llm.ingest
 # (built-in roles do not include it). Idempotent; harmless in non-RBAC mode.
-ADMIN_KEY="$(grep -E '^CORDUM_API_KEY=' "$ENV_FILE" | head -1 | cut -d= -f2 | tr -d '"')"
+ADMIN_KEY="$(grep -E '^CORDUM_API_KEY=' "$ENV_FILE" | head -1 | cut -d= -f2- | tr -d '"\r' || true)"
 if [[ -n "$ADMIN_KEY" ]]; then
   echo ">> Ensuring llm_proxy RBAC role (edge.llm.ingest)"
   curl -ksS -X PUT "https://localhost:8081/api/v1/auth/roles/llm_proxy" \

@@ -1648,7 +1648,7 @@ paths:
         '413':
           $ref: '#/components/responses/EdgePayloadTooLarge'
         '429':
-          description: Replay window cardinality exceeded (`replay_window_full`)
+          description: Per-execution event cap exceeded (`event_cap_exceeded`), or replay window cardinality exceeded (`replay_window_full`)
           content:
             application/json:
               schema:
@@ -10548,6 +10548,8 @@ components:
           maxLength: 256
         content:
           type: string
+          maxLength: 1048576
+          description: Message text; bounded by the 1 MiB raw-envelope cap and redacted by the gateway before persistence.
     EdgeLLMTokens:
       type: object
       additionalProperties: false
@@ -10604,7 +10606,8 @@ components:
           enum: ["", prompt, response]
         content:
           type: string
-          description: Prompt or completion text; redacted by the gateway before persistence.
+          maxLength: 1048576
+          description: Prompt or completion text; bounded by the 1 MiB raw-envelope cap and redacted by the gateway before persistence.
         messages:
           type: array
           maxItems: 64
