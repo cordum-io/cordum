@@ -20,11 +20,12 @@ package scheduler
 // every worker reports a successful handshake, then flip to enforce.
 
 import (
-	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cordum/cordum/core/infra/handshakemode"
 )
 
 // HandshakeMode enumerates the rollout modes for the SDK handshake
@@ -37,7 +38,7 @@ const (
 	HandshakeModeEnforce HandshakeMode = "enforce"
 
 	// EnvHandshakeMode is the env var operators set to pick the mode.
-	EnvHandshakeMode = "CORDUM_SDK_HANDSHAKE"
+	EnvHandshakeMode = handshakemode.EnvName
 	// EnvHandshakeSchedulerID is the authenticated scheduler sender identity.
 	EnvHandshakeSchedulerID = "CORDUM_HANDSHAKE_SCHEDULER_ID"
 	// EnvHandshakeSchedulerKeyID identifies the pinned P-256 proof key.
@@ -54,43 +55,10 @@ const (
 	handshakeMissingLogInterval = time.Hour
 )
 
-// ParseHandshakeMode normalises a raw env-var value. Unknown values
-// fall back to warn (the safe default — keeps dispatch flowing while
-// operators investigate). Empty defaults to warn so a fresh deploy
-// gets the migration-friendly mode without opt-in.
-func ParseHandshakeMode(raw string) HandshakeMode {
-	switch HandshakeMode(strings.ToLower(strings.TrimSpace(raw))) {
-	case HandshakeModeOff:
-		return HandshakeModeOff
-	case HandshakeModeWarn:
-		return HandshakeModeWarn
-	case HandshakeModeEnforce:
-		return HandshakeModeEnforce
-	}
-	return HandshakeModeWarn
-}
-
-// ParseHandshakeModeStrict is the BOOT-time parser. Unlike the lenient
-// ParseHandshakeMode (which maps any unrecognized value to warn for runtime
-// callers), it returns an error for any non-empty value that does not
-// round-trip to a canonical mode — so a typo'd CORDUM_SDK_HANDSHAKE (e.g.
-// "enforse") refuses to boot rather than silently degrading to admit. An
-// empty value is also an error: operators must make the security posture
-// explicit instead of inheriting a permissive rollout default.
+// ParseHandshakeModeStrict delegates to the shared fail-closed mode authority.
 func ParseHandshakeModeStrict(raw string) (HandshakeMode, error) {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return "", fmt.Errorf("%s must be explicitly set to off, warn, or enforce", EnvHandshakeMode)
-	}
-	switch HandshakeMode(strings.ToLower(trimmed)) {
-	case HandshakeModeOff:
-		return HandshakeModeOff, nil
-	case HandshakeModeWarn:
-		return HandshakeModeWarn, nil
-	case HandshakeModeEnforce:
-		return HandshakeModeEnforce, nil
-	}
-	return "", fmt.Errorf("unrecognized CORDUM_SDK_HANDSHAKE value %q; valid values: off, warn, enforce", trimmed)
+	mode, err := handshakemode.Parse(raw)
+	return HandshakeMode(mode), err
 }
 
 // SkipsHandshake reports whether the mode bypasses the handshake

@@ -151,6 +151,9 @@ func (s *HandshakeService) buildHandshakeResult(challenge *agentv1.WorkerHandsha
 	if err := capsdk.SignTrustHandshake(packet, s.schedulerKey); err != nil {
 		return nil, err
 	}
+	if err := capsdk.ValidateWorkerTrustPacket(packet); err != nil {
+		return nil, err
+	}
 	return packet, nil
 }
 
