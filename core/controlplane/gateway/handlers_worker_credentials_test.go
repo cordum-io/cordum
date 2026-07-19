@@ -436,7 +436,7 @@ func TestRotateCredentialClearsAgentLink(t *testing.T) {
 
 	// Create an agent identity.
 	agent, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
-		Name: "test-agent", Owner: "admin", RiskTier: "low", Status: "active",
+		TenantID: "default", Name: "test-agent", Owner: "admin", RiskTier: "low", Status: "active",
 	})
 	if err != nil {
 		t.Fatalf("create agent: %v", err)
@@ -489,7 +489,7 @@ func TestRevokeCredentialClearsAgentLink(t *testing.T) {
 	ctx := context.Background()
 
 	agent, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
-		Name: "revoke-agent", Owner: "admin", RiskTier: "low", Status: "active",
+		TenantID: "default", Name: "revoke-agent", Owner: "admin", RiskTier: "low", Status: "active",
 	})
 	if err != nil {
 		t.Fatalf("create agent: %v", err)

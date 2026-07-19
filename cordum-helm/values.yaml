@@ -372,7 +372,7 @@ scheduler:
     jobMetaTTL: 168h
     workerSnapshotInterval: 5s
     configReloadInterval: "" # SCHEDULER_CONFIG_RELOAD_INTERVAL
-    workerAttestation: off # WORKER_ATTESTATION
+    workerAttestation: "off" # WORKER_ATTESTATION
     workerReadinessRequired: false # WORKER_READINESS_REQUIRED
     workerReadinessTTL: "" # WORKER_READINESS_TTL
     schemaEnforcement: warn # SCHEMA_ENFORCEMENT
@@ -386,6 +386,31 @@ scheduler:
     requests:
       cpu: 100m
       memory: 128Mi
+
+# Authenticated worker-session trust. The shipped chart is deliberately legacy
+# safe. Flip mode and heartbeatMode together only after provisioning every
+# referenced secret; template validation fails closed on an incomplete active
+# bundle. See docs/sdk/handshake.md.
+workerTrust:
+  mode: "off" # CORDUM_SDK_HANDSHAKE: off, warn, enforce
+  heartbeatMode: authority # CORDUM_HEARTBEAT_MODE: authority, warn, telemetry
+  schedulerId: cordum-scheduler
+  schedulerKeyId: ""
+  schedulerProof:
+    privateKeySecret:
+      name: ""
+      key: ""
+    publicKeySecret:
+      name: ""
+      key: ""
+  sessionSigning:
+    keyId: ""
+    privateKeySecret:
+      name: ""
+      key: ""
+    publicKeySecret:
+      name: ""
+      key: ""
 
 safetyKernel:
   enabled: true

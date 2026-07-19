@@ -63,7 +63,7 @@ func TestEngineDispatchesToDirectWorkerAndMarksSucceeded(t *testing.T) {
 		}
 		res := &pb.BusPacket{
 			TraceId:         packet.TraceId,
-			SenderId:        "worker-w-default",
+			SenderId:        "w-default",
 			ProtocolVersion: capsdk.DefaultProtocolVersion,
 			CreatedAt:       timestamppb.Now(),
 			Payload: &pb.BusPacket_JobResult{
@@ -84,7 +84,7 @@ func TestEngineDispatchesToDirectWorkerAndMarksSucceeded(t *testing.T) {
 	// Heartbeat to register worker in pool "default"
 	hb := &pb.BusPacket{
 		TraceId:         "trace-hb",
-		SenderId:        "worker-w-default",
+		SenderId:        "w-default",
 		ProtocolVersion: capsdk.DefaultProtocolVersion,
 		CreatedAt:       timestamppb.Now(),
 		Payload: &pb.BusPacket_Heartbeat{

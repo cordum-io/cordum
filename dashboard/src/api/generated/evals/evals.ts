@@ -227,7 +227,7 @@ export const getListEvalDatasetsQueryOptions = <
     Awaited<ReturnType<typeof listEvalDatasets>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListEvalDatasetsQueryResult = NonNullable<
@@ -267,7 +267,7 @@ export function useListEvalDatasets<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListEvalDatasets<
   TData = Awaited<ReturnType<typeof listEvalDatasets>>,
@@ -296,7 +296,9 @@ export function useListEvalDatasets<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListEvalDatasets<
   TData = Awaited<ReturnType<typeof listEvalDatasets>>,
   TError =
@@ -316,7 +318,9 @@ export function useListEvalDatasets<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List eval datasets
  */
@@ -340,13 +344,15 @@ export function useListEvalDatasets<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListEvalDatasetsQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -415,10 +421,7 @@ export type CreateEvalDatasetMutationResult = NonNullable<
 >;
 export type CreateEvalDatasetMutationBody = CreateEvalDatasetBody;
 export type CreateEvalDatasetMutationError =
-  | Error
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | ServiceUnavailableResponse;
+  Error | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse;
 
 /**
  * @summary Create a curated eval dataset
@@ -502,7 +505,7 @@ export const getListEvalDatasetVersionsQueryOptions = <
     Awaited<ReturnType<typeof listEvalDatasetVersions>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListEvalDatasetVersionsQueryResult = NonNullable<
@@ -542,7 +545,7 @@ export function useListEvalDatasetVersions<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListEvalDatasetVersions<
   TData = Awaited<ReturnType<typeof listEvalDatasetVersions>>,
@@ -571,7 +574,9 @@ export function useListEvalDatasetVersions<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListEvalDatasetVersions<
   TData = Awaited<ReturnType<typeof listEvalDatasetVersions>>,
   TError =
@@ -591,7 +596,9 @@ export function useListEvalDatasetVersions<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List versions for an eval dataset family
  */
@@ -615,13 +622,15 @@ export function useListEvalDatasetVersions<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListEvalDatasetVersionsQueryOptions(name, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -692,7 +701,7 @@ export const getGetEvalDatasetByNameVersionQueryOptions = <
     Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetEvalDatasetByNameVersionQueryResult = NonNullable<
@@ -735,7 +744,7 @@ export function useGetEvalDatasetByNameVersion<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetEvalDatasetByNameVersion<
   TData = Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>,
@@ -766,7 +775,9 @@ export function useGetEvalDatasetByNameVersion<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetEvalDatasetByNameVersion<
   TData = Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>,
   TError =
@@ -788,7 +799,9 @@ export function useGetEvalDatasetByNameVersion<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get a dataset by name and version
  */
@@ -814,7 +827,9 @@ export function useGetEvalDatasetByNameVersion<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetEvalDatasetByNameVersionQueryOptions(
     name,
     version,
@@ -824,7 +839,7 @@ export function useGetEvalDatasetByNameVersion<
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -878,7 +893,7 @@ export const getGetEvalDatasetQueryOptions = <
     Awaited<ReturnType<typeof getEvalDataset>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetEvalDatasetQueryResult = NonNullable<
@@ -914,7 +929,7 @@ export function useGetEvalDataset<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetEvalDataset<
   TData = Awaited<ReturnType<typeof getEvalDataset>>,
@@ -939,7 +954,9 @@ export function useGetEvalDataset<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetEvalDataset<
   TData = Awaited<ReturnType<typeof getEvalDataset>>,
   TError =
@@ -955,7 +972,9 @@ export function useGetEvalDataset<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get one eval dataset
  */
@@ -975,13 +994,15 @@ export function useGetEvalDataset<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetEvalDatasetQueryOptions(id, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -1352,7 +1373,7 @@ export const getListEvalRunsQueryOptions = <
     Awaited<ReturnType<typeof listEvalRuns>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListEvalRunsQueryResult = NonNullable<
@@ -1391,7 +1412,7 @@ export function useListEvalRuns<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListEvalRuns<
   TData = Awaited<ReturnType<typeof listEvalRuns>>,
@@ -1418,7 +1439,9 @@ export function useListEvalRuns<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListEvalRuns<
   TData = Awaited<ReturnType<typeof listEvalRuns>>,
   TError =
@@ -1436,7 +1459,9 @@ export function useListEvalRuns<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List historical runs for one eval dataset
  */
@@ -1458,13 +1483,15 @@ export function useListEvalRuns<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListEvalRunsQueryOptions(id, params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -1518,7 +1545,7 @@ export const getGetEvalRunQueryOptions = <
     Awaited<ReturnType<typeof getEvalRun>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetEvalRunQueryResult = NonNullable<
@@ -1554,7 +1581,7 @@ export function useGetEvalRun<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetEvalRun<
   TData = Awaited<ReturnType<typeof getEvalRun>>,
@@ -1579,7 +1606,9 @@ export function useGetEvalRun<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetEvalRun<
   TData = Awaited<ReturnType<typeof getEvalRun>>,
   TError =
@@ -1595,7 +1624,9 @@ export function useGetEvalRun<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get one eval run
  */
@@ -1615,13 +1646,15 @@ export function useGetEvalRun<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetEvalRunQueryOptions(runId, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 

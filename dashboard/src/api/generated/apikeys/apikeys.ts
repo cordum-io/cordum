@@ -52,9 +52,7 @@ export const getListAPIKeysQueryKey = () => {
 export const getListAPIKeysQueryOptions = <
   TData = Awaited<ReturnType<typeof listAPIKeys>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(options?: {
   query?: Partial<
     UseQueryOptions<Awaited<ReturnType<typeof listAPIKeys>>, TError, TData>
@@ -72,23 +70,19 @@ export const getListAPIKeysQueryOptions = <
     Awaited<ReturnType<typeof listAPIKeys>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListAPIKeysQueryResult = NonNullable<
   Awaited<ReturnType<typeof listAPIKeys>>
 >;
 export type ListAPIKeysQueryError =
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse;
 
 export function useListAPIKeys<
   TData = Awaited<ReturnType<typeof listAPIKeys>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   options: {
     query: Partial<
@@ -105,14 +99,12 @@ export function useListAPIKeys<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListAPIKeys<
   TData = Awaited<ReturnType<typeof listAPIKeys>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   options?: {
     query?: Partial<
@@ -128,13 +120,13 @@ export function useListAPIKeys<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListAPIKeys<
   TData = Awaited<ReturnType<typeof listAPIKeys>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   options?: {
     query?: Partial<
@@ -142,7 +134,9 @@ export function useListAPIKeys<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List API keys
  */
@@ -150,9 +144,7 @@ export function useListAPIKeys<
 export function useListAPIKeys<
   TData = Awaited<ReturnType<typeof listAPIKeys>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   options?: {
     query?: Partial<
@@ -160,13 +152,15 @@ export function useListAPIKeys<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListAPIKeysQueryOptions(options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 

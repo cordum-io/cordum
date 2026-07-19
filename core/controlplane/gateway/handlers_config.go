@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/auth/servicetoken"
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/gateway/packs"
@@ -215,7 +216,7 @@ func (s *server) publishConfigChanged(scope, scopeID string) {
 	}
 	packet := &pb.BusPacket{
 		TraceId:         uuid.New().String(),
-		SenderId:        "api-gateway",
+		SenderId:        servicetoken.IdentityGateway,
 		CreatedAt:       timestamppb.Now(),
 		ProtocolVersion: capsdk.DefaultProtocolVersion,
 		Payload: &pb.BusPacket_Alert{
@@ -232,6 +233,9 @@ func (s *server) publishConfigChanged(scope, scopeID string) {
 				},
 			},
 		},
+	}
+	if !s.authorizeConfigChanged(packet) {
+		return
 	}
 	if err := s.bus.Publish(capsdk.SubjectConfigChanged, packet); err != nil {
 		slog.Warn("config change notification publish failed", "error", err)

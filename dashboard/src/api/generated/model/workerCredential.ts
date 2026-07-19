@@ -5,6 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
+import type { WorkerCredentialProofAlgorithm } from "./workerCredentialProofAlgorithm";
 
 export interface WorkerCredential {
   worker_id: string;
@@ -12,6 +13,14 @@ export interface WorkerCredential {
   allowed_pools?: string[];
   allowed_topics?: string[];
   pack_id?: string;
+  agent_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   * @pattern ^[A-Za-z0-9][A-Za-z0-9._:-]*$
+   */
+  proof_key_id?: string;
+  proof_algorithm?: WorkerCredentialProofAlgorithm;
   created_by: string;
   created_at: string;
   revoked_at?: string;

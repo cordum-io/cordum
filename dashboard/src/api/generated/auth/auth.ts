@@ -80,7 +80,7 @@ export const getGetAuthConfigQueryOptions = <
     Awaited<ReturnType<typeof getAuthConfig>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetAuthConfigQueryResult = NonNullable<
@@ -107,7 +107,7 @@ export function useGetAuthConfig<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetAuthConfig<
   TData = Awaited<ReturnType<typeof getAuthConfig>>,
@@ -127,7 +127,9 @@ export function useGetAuthConfig<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetAuthConfig<
   TData = Awaited<ReturnType<typeof getAuthConfig>>,
   TError = InternalServerErrorResponse,
@@ -138,7 +140,9 @@ export function useGetAuthConfig<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get authentication configuration
  */
@@ -153,13 +157,15 @@ export function useGetAuthConfig<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetAuthConfigQueryOptions(options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -396,15 +402,14 @@ export const getGetSessionQueryOptions = <
     Awaited<ReturnType<typeof getSession>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetSessionQueryResult = NonNullable<
   Awaited<ReturnType<typeof getSession>>
 >;
 export type GetSessionQueryError =
-  | UnauthorizedResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | InternalServerErrorResponse;
 
 export function useGetSession<
   TData = Awaited<ReturnType<typeof getSession>>,
@@ -425,7 +430,7 @@ export function useGetSession<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetSession<
   TData = Awaited<ReturnType<typeof getSession>>,
@@ -445,7 +450,9 @@ export function useGetSession<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetSession<
   TData = Awaited<ReturnType<typeof getSession>>,
   TError = UnauthorizedResponse | InternalServerErrorResponse,
@@ -456,7 +463,9 @@ export function useGetSession<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get current session
  */
@@ -471,13 +480,15 @@ export function useGetSession<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetSessionQueryOptions(options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -577,9 +588,7 @@ export const changeOwnPassword = (
 
 export const getChangeOwnPasswordMutationOptions = <
   TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | InternalServerErrorResponse,
+    BadRequestResponse | UnauthorizedResponse | InternalServerErrorResponse,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -620,18 +629,14 @@ export type ChangeOwnPasswordMutationResult = NonNullable<
 >;
 export type ChangeOwnPasswordMutationBody = ChangePasswordRequest;
 export type ChangeOwnPasswordMutationError =
-  | BadRequestResponse
-  | UnauthorizedResponse
-  | InternalServerErrorResponse;
+  BadRequestResponse | UnauthorizedResponse | InternalServerErrorResponse;
 
 /**
  * @summary Change own password
  */
 export const useChangeOwnPassword = <
   TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | InternalServerErrorResponse,
+    BadRequestResponse | UnauthorizedResponse | InternalServerErrorResponse,
   TContext = unknown,
 >(
   options?: {
@@ -671,9 +676,7 @@ export const getListRolesQueryKey = () => {
 export const getListRolesQueryOptions = <
   TData = Awaited<ReturnType<typeof listRoles>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
 >(options?: {
   query?: Partial<
     UseQueryOptions<Awaited<ReturnType<typeof listRoles>>, TError, TData>
@@ -691,23 +694,19 @@ export const getListRolesQueryOptions = <
     Awaited<ReturnType<typeof listRoles>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListRolesQueryResult = NonNullable<
   Awaited<ReturnType<typeof listRoles>>
 >;
 export type ListRolesQueryError =
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | ServiceUnavailableResponse;
+  UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse;
 
 export function useListRoles<
   TData = Awaited<ReturnType<typeof listRoles>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
 >(
   options: {
     query: Partial<
@@ -724,14 +723,12 @@ export function useListRoles<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListRoles<
   TData = Awaited<ReturnType<typeof listRoles>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
 >(
   options?: {
     query?: Partial<
@@ -747,13 +744,13 @@ export function useListRoles<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListRoles<
   TData = Awaited<ReturnType<typeof listRoles>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
 >(
   options?: {
     query?: Partial<
@@ -761,7 +758,9 @@ export function useListRoles<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List RBAC roles
  */
@@ -769,9 +768,7 @@ export function useListRoles<
 export function useListRoles<
   TData = Awaited<ReturnType<typeof listRoles>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
 >(
   options?: {
     query?: Partial<
@@ -779,13 +776,15 @@ export function useListRoles<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListRolesQueryOptions(options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -837,7 +836,7 @@ export const getGetRoleQueryOptions = <
     enabled: !!name,
     ...queryOptions,
   } as UseQueryOptions<Awaited<ReturnType<typeof getRole>>, TError, TData> & {
-    queryKey: DataTag<QueryKey, TData>;
+    queryKey: DataTag<QueryKey, TData, TError>;
   };
 };
 
@@ -876,7 +875,7 @@ export function useGetRole<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetRole<
   TData = Awaited<ReturnType<typeof getRole>>,
@@ -902,7 +901,9 @@ export function useGetRole<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetRole<
   TData = Awaited<ReturnType<typeof getRole>>,
   TError =
@@ -919,7 +920,9 @@ export function useGetRole<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get a single RBAC role
  */
@@ -940,13 +943,15 @@ export function useGetRole<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetRoleQueryOptions(name, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 

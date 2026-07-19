@@ -185,9 +185,7 @@ export const simulatePolicy = (
 
 export const getSimulatePolicyMutationOptions = <
   TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | InternalServerErrorResponse,
+    BadRequestResponse | UnauthorizedResponse | InternalServerErrorResponse,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -228,18 +226,14 @@ export type SimulatePolicyMutationResult = NonNullable<
 >;
 export type SimulatePolicyMutationBody = PolicyCheckRequest;
 export type SimulatePolicyMutationError =
-  | BadRequestResponse
-  | UnauthorizedResponse
-  | InternalServerErrorResponse;
+  BadRequestResponse | UnauthorizedResponse | InternalServerErrorResponse;
 
 /**
  * @summary Simulate policy evaluation (no side effects)
  */
 export const useSimulatePolicy = <
   TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | InternalServerErrorResponse,
+    BadRequestResponse | UnauthorizedResponse | InternalServerErrorResponse,
   TContext = unknown,
 >(
   options?: {
@@ -397,15 +391,14 @@ export const getListPolicySnapshotsQueryOptions = <
     Awaited<ReturnType<typeof listPolicySnapshots>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListPolicySnapshotsQueryResult = NonNullable<
   Awaited<ReturnType<typeof listPolicySnapshots>>
 >;
 export type ListPolicySnapshotsQueryError =
-  | UnauthorizedResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | InternalServerErrorResponse;
 
 export function useListPolicySnapshots<
   TData = Awaited<ReturnType<typeof listPolicySnapshots>>,
@@ -430,7 +423,7 @@ export function useListPolicySnapshots<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListPolicySnapshots<
   TData = Awaited<ReturnType<typeof listPolicySnapshots>>,
@@ -454,7 +447,9 @@ export function useListPolicySnapshots<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListPolicySnapshots<
   TData = Awaited<ReturnType<typeof listPolicySnapshots>>,
   TError = UnauthorizedResponse | InternalServerErrorResponse,
@@ -469,7 +464,9 @@ export function useListPolicySnapshots<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List policy snapshots
  */
@@ -488,13 +485,15 @@ export function useListPolicySnapshots<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListPolicySnapshotsQueryOptions(options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -547,15 +546,14 @@ export const getListPolicyRulesQueryOptions = <
     Awaited<ReturnType<typeof listPolicyRules>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListPolicyRulesQueryResult = NonNullable<
   Awaited<ReturnType<typeof listPolicyRules>>
 >;
 export type ListPolicyRulesQueryError =
-  | UnauthorizedResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | InternalServerErrorResponse;
 
 export function useListPolicyRules<
   TData = Awaited<ReturnType<typeof listPolicyRules>>,
@@ -581,7 +579,7 @@ export function useListPolicyRules<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListPolicyRules<
   TData = Awaited<ReturnType<typeof listPolicyRules>>,
@@ -606,7 +604,9 @@ export function useListPolicyRules<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListPolicyRules<
   TData = Awaited<ReturnType<typeof listPolicyRules>>,
   TError = UnauthorizedResponse | InternalServerErrorResponse,
@@ -622,7 +622,9 @@ export function useListPolicyRules<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List policy rules
  */
@@ -642,13 +644,15 @@ export function useListPolicyRules<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListPolicyRulesQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -690,15 +694,14 @@ export const getListOutputRulesQueryOptions = <
     Awaited<ReturnType<typeof listOutputRules>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListOutputRulesQueryResult = NonNullable<
   Awaited<ReturnType<typeof listOutputRules>>
 >;
 export type ListOutputRulesQueryError =
-  | UnauthorizedResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | InternalServerErrorResponse;
 
 export function useListOutputRules<
   TData = Awaited<ReturnType<typeof listOutputRules>>,
@@ -723,7 +726,7 @@ export function useListOutputRules<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListOutputRules<
   TData = Awaited<ReturnType<typeof listOutputRules>>,
@@ -747,7 +750,9 @@ export function useListOutputRules<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListOutputRules<
   TData = Awaited<ReturnType<typeof listOutputRules>>,
   TError = UnauthorizedResponse | InternalServerErrorResponse,
@@ -762,7 +767,9 @@ export function useListOutputRules<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List output policy rules
  */
@@ -781,13 +788,15 @@ export function useListOutputRules<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListOutputRulesQueryOptions(options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -848,9 +857,7 @@ export type UpsertOutputRuleMutationResult = NonNullable<
 >;
 export type UpsertOutputRuleMutationBody = OutputRule;
 export type UpsertOutputRuleMutationError =
-  | Error
-  | UnauthorizedResponse
-  | InternalServerErrorResponse;
+  Error | UnauthorizedResponse | InternalServerErrorResponse;
 
 /**
  * @summary Create or update an output policy rule
@@ -918,15 +925,14 @@ export const getGetPolicyGlobalQueryOptions = <
     Awaited<ReturnType<typeof getPolicyGlobal>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetPolicyGlobalQueryResult = NonNullable<
   Awaited<ReturnType<typeof getPolicyGlobal>>
 >;
 export type GetPolicyGlobalQueryError =
-  | UnauthorizedResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | InternalServerErrorResponse;
 
 export function useGetPolicyGlobal<
   TData = Awaited<ReturnType<typeof getPolicyGlobal>>,
@@ -951,7 +957,7 @@ export function useGetPolicyGlobal<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetPolicyGlobal<
   TData = Awaited<ReturnType<typeof getPolicyGlobal>>,
@@ -975,7 +981,9 @@ export function useGetPolicyGlobal<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetPolicyGlobal<
   TData = Awaited<ReturnType<typeof getPolicyGlobal>>,
   TError = UnauthorizedResponse | InternalServerErrorResponse,
@@ -990,7 +998,9 @@ export function useGetPolicyGlobal<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Read the unified Global policy authority
  */
@@ -1009,13 +1019,15 @@ export function useGetPolicyGlobal<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetPolicyGlobalQueryOptions(options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -1162,15 +1174,14 @@ export const getListPolicyBundlesQueryOptions = <
     Awaited<ReturnType<typeof listPolicyBundles>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListPolicyBundlesQueryResult = NonNullable<
   Awaited<ReturnType<typeof listPolicyBundles>>
 >;
 export type ListPolicyBundlesQueryError =
-  | UnauthorizedResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | InternalServerErrorResponse;
 
 export function useListPolicyBundles<
   TData = Awaited<ReturnType<typeof listPolicyBundles>>,
@@ -1195,7 +1206,7 @@ export function useListPolicyBundles<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListPolicyBundles<
   TData = Awaited<ReturnType<typeof listPolicyBundles>>,
@@ -1219,7 +1230,9 @@ export function useListPolicyBundles<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListPolicyBundles<
   TData = Awaited<ReturnType<typeof listPolicyBundles>>,
   TError = UnauthorizedResponse | InternalServerErrorResponse,
@@ -1234,7 +1247,9 @@ export function useListPolicyBundles<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List policy bundles
  */
@@ -1253,13 +1268,15 @@ export function useListPolicyBundles<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListPolicyBundlesQueryOptions(options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -1284,9 +1301,7 @@ export const getGetPolicyBundleQueryKey = (id?: string) => {
 export const getGetPolicyBundleQueryOptions = <
   TData = Awaited<ReturnType<typeof getPolicyBundle>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -1316,23 +1331,19 @@ export const getGetPolicyBundleQueryOptions = <
     Awaited<ReturnType<typeof getPolicyBundle>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetPolicyBundleQueryResult = NonNullable<
   Awaited<ReturnType<typeof getPolicyBundle>>
 >;
 export type GetPolicyBundleQueryError =
-  | UnauthorizedResponse
-  | NotFoundResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse;
 
 export function useGetPolicyBundle<
   TData = Awaited<ReturnType<typeof getPolicyBundle>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options: {
@@ -1354,14 +1365,12 @@ export function useGetPolicyBundle<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetPolicyBundle<
   TData = Awaited<ReturnType<typeof getPolicyBundle>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -1382,13 +1391,13 @@ export function useGetPolicyBundle<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetPolicyBundle<
   TData = Awaited<ReturnType<typeof getPolicyBundle>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -1401,7 +1410,9 @@ export function useGetPolicyBundle<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get a policy bundle with content
  */
@@ -1409,9 +1420,7 @@ export function useGetPolicyBundle<
 export function useGetPolicyBundle<
   TData = Awaited<ReturnType<typeof getPolicyBundle>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -1424,13 +1433,15 @@ export function useGetPolicyBundle<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetPolicyBundleQueryOptions(id, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -1498,10 +1509,7 @@ export type UpdatePolicyBundleMutationResult = NonNullable<
 >;
 export type UpdatePolicyBundleMutationBody = UpdatePolicyBundleRequest;
 export type UpdatePolicyBundleMutationError =
-  | Error
-  | UnauthorizedResponse
-  | NotFoundResponse
-  | InternalServerErrorResponse;
+  Error | UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse;
 
 /**
  * @summary Update a policy bundle
@@ -1690,10 +1698,7 @@ export type SimulatePolicyBundleMutationResult = NonNullable<
 >;
 export type SimulatePolicyBundleMutationBody = SimulatePolicyBundleBody;
 export type SimulatePolicyBundleMutationError =
-  | Error
-  | UnauthorizedResponse
-  | NotFoundResponse
-  | InternalServerErrorResponse;
+  Error | UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse;
 
 /**
  * @summary Simulate a policy bundle against a request
@@ -1764,15 +1769,14 @@ export const getListBundleSnapshotsQueryOptions = <
     Awaited<ReturnType<typeof listBundleSnapshots>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListBundleSnapshotsQueryResult = NonNullable<
   Awaited<ReturnType<typeof listBundleSnapshots>>
 >;
 export type ListBundleSnapshotsQueryError =
-  | UnauthorizedResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | InternalServerErrorResponse;
 
 export function useListBundleSnapshots<
   TData = Awaited<ReturnType<typeof listBundleSnapshots>>,
@@ -1797,7 +1801,7 @@ export function useListBundleSnapshots<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListBundleSnapshots<
   TData = Awaited<ReturnType<typeof listBundleSnapshots>>,
@@ -1821,7 +1825,9 @@ export function useListBundleSnapshots<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListBundleSnapshots<
   TData = Awaited<ReturnType<typeof listBundleSnapshots>>,
   TError = UnauthorizedResponse | InternalServerErrorResponse,
@@ -1836,7 +1842,9 @@ export function useListBundleSnapshots<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List policy bundle snapshots
  */
@@ -1855,13 +1863,15 @@ export function useListBundleSnapshots<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListBundleSnapshotsQueryOptions(options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -1926,8 +1936,7 @@ export type CreateBundleSnapshotMutationResult = NonNullable<
 >;
 export type CreateBundleSnapshotMutationBody = CreateBundleSnapshotBody;
 export type CreateBundleSnapshotMutationError =
-  | UnauthorizedResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | InternalServerErrorResponse;
 
 /**
  * @summary Create a policy bundle snapshot
@@ -1973,9 +1982,7 @@ export const getGetBundleSnapshotQueryKey = (id?: string) => {
 export const getGetBundleSnapshotQueryOptions = <
   TData = Awaited<ReturnType<typeof getBundleSnapshot>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -2005,23 +2012,19 @@ export const getGetBundleSnapshotQueryOptions = <
     Awaited<ReturnType<typeof getBundleSnapshot>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetBundleSnapshotQueryResult = NonNullable<
   Awaited<ReturnType<typeof getBundleSnapshot>>
 >;
 export type GetBundleSnapshotQueryError =
-  | UnauthorizedResponse
-  | NotFoundResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse;
 
 export function useGetBundleSnapshot<
   TData = Awaited<ReturnType<typeof getBundleSnapshot>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options: {
@@ -2043,14 +2046,12 @@ export function useGetBundleSnapshot<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetBundleSnapshot<
   TData = Awaited<ReturnType<typeof getBundleSnapshot>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -2071,13 +2072,13 @@ export function useGetBundleSnapshot<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetBundleSnapshot<
   TData = Awaited<ReturnType<typeof getBundleSnapshot>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -2090,7 +2091,9 @@ export function useGetBundleSnapshot<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get a policy bundle snapshot
  */
@@ -2098,9 +2101,7 @@ export function useGetBundleSnapshot<
 export function useGetBundleSnapshot<
   TData = Awaited<ReturnType<typeof getBundleSnapshot>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -2113,13 +2114,15 @@ export function useGetBundleSnapshot<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetBundleSnapshotQueryOptions(id, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -2287,7 +2290,7 @@ export const getGetPolicyShadowQueryOptions = <
     Awaited<ReturnType<typeof getPolicyShadow>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetPolicyShadowQueryResult = NonNullable<
@@ -2331,7 +2334,7 @@ export function useGetPolicyShadow<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetPolicyShadow<
   TData = Awaited<ReturnType<typeof getPolicyShadow>>,
@@ -2362,7 +2365,9 @@ export function useGetPolicyShadow<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetPolicyShadow<
   TData = Awaited<ReturnType<typeof getPolicyShadow>>,
   TError =
@@ -2384,7 +2389,9 @@ export function useGetPolicyShadow<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get the shadow policy for a bundle
  */
@@ -2410,13 +2417,15 @@ export function useGetPolicyShadow<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetPolicyShadowQueryOptions(id, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -2594,17 +2603,14 @@ export const getGetPolicyShadowResultsSummaryQueryOptions = <
     Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetPolicyShadowResultsSummaryQueryResult = NonNullable<
   Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>
 >;
 export type GetPolicyShadowResultsSummaryQueryError =
-  | Error
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | ServiceUnavailableResponse;
+  Error | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse;
 
 export function useGetPolicyShadowResultsSummary<
   TData = Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>,
@@ -2635,7 +2641,7 @@ export function useGetPolicyShadowResultsSummary<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetPolicyShadowResultsSummary<
   TData = Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>,
@@ -2665,7 +2671,9 @@ export function useGetPolicyShadowResultsSummary<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetPolicyShadowResultsSummary<
   TData = Awaited<ReturnType<typeof getPolicyShadowResultsSummary>>,
   TError =
@@ -2686,7 +2694,9 @@ export function useGetPolicyShadowResultsSummary<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Aggregate shadow-evaluation counts over a time window
  */
@@ -2711,7 +2721,9 @@ export function useGetPolicyShadowResultsSummary<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetPolicyShadowResultsSummaryQueryOptions(
     id,
     params,
@@ -2721,7 +2733,7 @@ export function useGetPolicyShadowResultsSummary<
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -2799,17 +2811,14 @@ export const getGetPolicyShadowResultsComparisonsQueryOptions = <
     Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetPolicyShadowResultsComparisonsQueryResult = NonNullable<
   Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>
 >;
 export type GetPolicyShadowResultsComparisonsQueryError =
-  | Error
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | ServiceUnavailableResponse;
+  Error | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse;
 
 export function useGetPolicyShadowResultsComparisons<
   TData = Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>,
@@ -2840,7 +2849,7 @@ export function useGetPolicyShadowResultsComparisons<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetPolicyShadowResultsComparisons<
   TData = Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>,
@@ -2870,7 +2879,9 @@ export function useGetPolicyShadowResultsComparisons<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetPolicyShadowResultsComparisons<
   TData = Awaited<ReturnType<typeof getPolicyShadowResultsComparisons>>,
   TError =
@@ -2891,7 +2902,9 @@ export function useGetPolicyShadowResultsComparisons<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Paginated shadow-vs-active decision comparisons
  */
@@ -2916,7 +2929,9 @@ export function useGetPolicyShadowResultsComparisons<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetPolicyShadowResultsComparisonsQueryOptions(
     id,
     params,
@@ -2926,7 +2941,7 @@ export function useGetPolicyShadowResultsComparisons<
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -3003,17 +3018,14 @@ export const getGetPolicyShadowResultsTimeseriesQueryOptions = <
     Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetPolicyShadowResultsTimeseriesQueryResult = NonNullable<
   Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>
 >;
 export type GetPolicyShadowResultsTimeseriesQueryError =
-  | Error
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | ServiceUnavailableResponse;
+  Error | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse;
 
 export function useGetPolicyShadowResultsTimeseries<
   TData = Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>,
@@ -3044,7 +3056,7 @@ export function useGetPolicyShadowResultsTimeseries<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetPolicyShadowResultsTimeseries<
   TData = Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>,
@@ -3074,7 +3086,9 @@ export function useGetPolicyShadowResultsTimeseries<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetPolicyShadowResultsTimeseries<
   TData = Awaited<ReturnType<typeof getPolicyShadowResultsTimeseries>>,
   TError =
@@ -3095,7 +3109,9 @@ export function useGetPolicyShadowResultsTimeseries<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Zero-filled bucketed timeseries of shadow outcomes
  */
@@ -3120,7 +3136,9 @@ export function useGetPolicyShadowResultsTimeseries<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetPolicyShadowResultsTimeseriesQueryOptions(
     id,
     params,
@@ -3130,7 +3148,7 @@ export function useGetPolicyShadowResultsTimeseries<
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -3195,9 +3213,7 @@ export type PublishPolicyMutationResult = NonNullable<
 >;
 export type PublishPolicyMutationBody = PublishPolicyRequest;
 export type PublishPolicyMutationError =
-  | Error
-  | UnauthorizedResponse
-  | InternalServerErrorResponse;
+  Error | UnauthorizedResponse | InternalServerErrorResponse;
 
 /**
  * @summary Publish policy bundles to production
@@ -3287,10 +3303,7 @@ export type RollbackPolicyMutationResult = NonNullable<
 >;
 export type RollbackPolicyMutationBody = RollbackPolicyRequest;
 export type RollbackPolicyMutationError =
-  | Error
-  | UnauthorizedResponse
-  | NotFoundResponse
-  | InternalServerErrorResponse;
+  Error | UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse;
 
 /**
  * @summary Rollback policy to a previous snapshot
@@ -3371,15 +3384,14 @@ export const getGetPolicyAuditQueryOptions = <
     Awaited<ReturnType<typeof getPolicyAudit>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetPolicyAuditQueryResult = NonNullable<
   Awaited<ReturnType<typeof getPolicyAudit>>
 >;
 export type GetPolicyAuditQueryError =
-  | UnauthorizedResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | InternalServerErrorResponse;
 
 export function useGetPolicyAudit<
   TData = Awaited<ReturnType<typeof getPolicyAudit>>,
@@ -3401,7 +3413,7 @@ export function useGetPolicyAudit<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetPolicyAudit<
   TData = Awaited<ReturnType<typeof getPolicyAudit>>,
@@ -3422,7 +3434,9 @@ export function useGetPolicyAudit<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetPolicyAudit<
   TData = Awaited<ReturnType<typeof getPolicyAudit>>,
   TError = UnauthorizedResponse | InternalServerErrorResponse,
@@ -3434,7 +3448,9 @@ export function useGetPolicyAudit<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get policy audit log
  */
@@ -3450,13 +3466,15 @@ export function useGetPolicyAudit<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetPolicyAuditQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -3487,9 +3505,7 @@ export const getGetOutputPolicyStatsQueryKey = (
 export const getGetOutputPolicyStatsQueryOptions = <
   TData = Awaited<ReturnType<typeof getOutputPolicyStats>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   params?: GetOutputPolicyStatsParams,
   options?: {
@@ -3515,23 +3531,19 @@ export const getGetOutputPolicyStatsQueryOptions = <
     Awaited<ReturnType<typeof getOutputPolicyStats>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetOutputPolicyStatsQueryResult = NonNullable<
   Awaited<ReturnType<typeof getOutputPolicyStats>>
 >;
 export type GetOutputPolicyStatsQueryError =
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse;
 
 export function useGetOutputPolicyStats<
   TData = Awaited<ReturnType<typeof getOutputPolicyStats>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   params: undefined | GetOutputPolicyStatsParams,
   options: {
@@ -3553,14 +3565,12 @@ export function useGetOutputPolicyStats<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetOutputPolicyStats<
   TData = Awaited<ReturnType<typeof getOutputPolicyStats>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   params?: GetOutputPolicyStatsParams,
   options?: {
@@ -3581,13 +3591,13 @@ export function useGetOutputPolicyStats<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetOutputPolicyStats<
   TData = Awaited<ReturnType<typeof getOutputPolicyStats>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   params?: GetOutputPolicyStatsParams,
   options?: {
@@ -3600,7 +3610,9 @@ export function useGetOutputPolicyStats<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get aggregate output policy statistics
  */
@@ -3608,9 +3620,7 @@ export function useGetOutputPolicyStats<
 export function useGetOutputPolicyStats<
   TData = Awaited<ReturnType<typeof getOutputPolicyStats>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   params?: GetOutputPolicyStatsParams,
   options?: {
@@ -3623,13 +3633,15 @@ export function useGetOutputPolicyStats<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetOutputPolicyStatsQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -3654,9 +3666,7 @@ export const getListVelocityRulesQueryKey = () => {
 export const getListVelocityRulesQueryOptions = <
   TData = Awaited<ReturnType<typeof listVelocityRules>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(options?: {
   query?: Partial<
     UseQueryOptions<
@@ -3678,23 +3688,19 @@ export const getListVelocityRulesQueryOptions = <
     Awaited<ReturnType<typeof listVelocityRules>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListVelocityRulesQueryResult = NonNullable<
   Awaited<ReturnType<typeof listVelocityRules>>
 >;
 export type ListVelocityRulesQueryError =
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse;
 
 export function useListVelocityRules<
   TData = Awaited<ReturnType<typeof listVelocityRules>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   options: {
     query: Partial<
@@ -3715,14 +3721,12 @@ export function useListVelocityRules<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListVelocityRules<
   TData = Awaited<ReturnType<typeof listVelocityRules>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   options?: {
     query?: Partial<
@@ -3742,13 +3746,13 @@ export function useListVelocityRules<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListVelocityRules<
   TData = Awaited<ReturnType<typeof listVelocityRules>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   options?: {
     query?: Partial<
@@ -3760,7 +3764,9 @@ export function useListVelocityRules<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List velocity rules
  */
@@ -3768,9 +3774,7 @@ export function useListVelocityRules<
 export function useListVelocityRules<
   TData = Awaited<ReturnType<typeof listVelocityRules>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   options?: {
     query?: Partial<
@@ -3782,13 +3786,15 @@ export function useListVelocityRules<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListVelocityRulesQueryOptions(options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -3910,9 +3916,7 @@ export const getGetVelocityRuleStatsQueryKey = () => {
 export const getGetVelocityRuleStatsQueryOptions = <
   TData = Awaited<ReturnType<typeof getVelocityRuleStats>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(options?: {
   query?: Partial<
     UseQueryOptions<
@@ -3934,23 +3938,19 @@ export const getGetVelocityRuleStatsQueryOptions = <
     Awaited<ReturnType<typeof getVelocityRuleStats>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetVelocityRuleStatsQueryResult = NonNullable<
   Awaited<ReturnType<typeof getVelocityRuleStats>>
 >;
 export type GetVelocityRuleStatsQueryError =
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse;
 
 export function useGetVelocityRuleStats<
   TData = Awaited<ReturnType<typeof getVelocityRuleStats>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   options: {
     query: Partial<
@@ -3971,14 +3971,12 @@ export function useGetVelocityRuleStats<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetVelocityRuleStats<
   TData = Awaited<ReturnType<typeof getVelocityRuleStats>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   options?: {
     query?: Partial<
@@ -3998,13 +3996,13 @@ export function useGetVelocityRuleStats<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetVelocityRuleStats<
   TData = Awaited<ReturnType<typeof getVelocityRuleStats>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   options?: {
     query?: Partial<
@@ -4016,7 +4014,9 @@ export function useGetVelocityRuleStats<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get velocity rule statistics
  */
@@ -4024,9 +4024,7 @@ export function useGetVelocityRuleStats<
 export function useGetVelocityRuleStats<
   TData = Awaited<ReturnType<typeof getVelocityRuleStats>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   options?: {
     query?: Partial<
@@ -4038,13 +4036,15 @@ export function useGetVelocityRuleStats<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetVelocityRuleStatsQueryOptions(options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 

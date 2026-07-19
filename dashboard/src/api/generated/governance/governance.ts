@@ -88,7 +88,7 @@ export const getListGovernanceDecisionsQueryOptions = <
     Awaited<ReturnType<typeof listGovernanceDecisions>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListGovernanceDecisionsQueryResult = NonNullable<
@@ -128,7 +128,7 @@ export function useListGovernanceDecisions<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListGovernanceDecisions<
   TData = Awaited<ReturnType<typeof listGovernanceDecisions>>,
@@ -157,7 +157,9 @@ export function useListGovernanceDecisions<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListGovernanceDecisions<
   TData = Awaited<ReturnType<typeof listGovernanceDecisions>>,
   TError =
@@ -177,7 +179,9 @@ export function useListGovernanceDecisions<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Query the governance decision log
  */
@@ -201,13 +205,15 @@ export function useListGovernanceDecisions<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListGovernanceDecisionsQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -247,9 +253,7 @@ export const getGetGovernanceHealthQueryKey = (
 export const getGetGovernanceHealthQueryOptions = <
   TData = Awaited<ReturnType<typeof getGovernanceHealth>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   params?: GetGovernanceHealthParams,
   options?: {
@@ -275,23 +279,19 @@ export const getGetGovernanceHealthQueryOptions = <
     Awaited<ReturnType<typeof getGovernanceHealth>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetGovernanceHealthQueryResult = NonNullable<
   Awaited<ReturnType<typeof getGovernanceHealth>>
 >;
 export type GetGovernanceHealthQueryError =
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse;
 
 export function useGetGovernanceHealth<
   TData = Awaited<ReturnType<typeof getGovernanceHealth>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   params: undefined | GetGovernanceHealthParams,
   options: {
@@ -313,14 +313,12 @@ export function useGetGovernanceHealth<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetGovernanceHealth<
   TData = Awaited<ReturnType<typeof getGovernanceHealth>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   params?: GetGovernanceHealthParams,
   options?: {
@@ -341,13 +339,13 @@ export function useGetGovernanceHealth<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetGovernanceHealth<
   TData = Awaited<ReturnType<typeof getGovernanceHealth>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   params?: GetGovernanceHealthParams,
   options?: {
@@ -360,7 +358,9 @@ export function useGetGovernanceHealth<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Composite governance health score per tenant
  */
@@ -368,9 +368,7 @@ export function useGetGovernanceHealth<
 export function useGetGovernanceHealth<
   TData = Awaited<ReturnType<typeof getGovernanceHealth>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   params?: GetGovernanceHealthParams,
   options?: {
@@ -383,13 +381,15 @@ export function useGetGovernanceHealth<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetGovernanceHealthQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -435,10 +435,7 @@ export const getGetApprovalAnalyticsQueryKey = (
 export const getGetApprovalAnalyticsQueryOptions = <
   TData = Awaited<ReturnType<typeof getApprovalAnalytics>>,
   TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | Error,
+    BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
 >(
   params?: GetApprovalAnalyticsParams,
   options?: {
@@ -464,25 +461,19 @@ export const getGetApprovalAnalyticsQueryOptions = <
     Awaited<ReturnType<typeof getApprovalAnalytics>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetApprovalAnalyticsQueryResult = NonNullable<
   Awaited<ReturnType<typeof getApprovalAnalytics>>
 >;
 export type GetApprovalAnalyticsQueryError =
-  | BadRequestResponse
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | Error;
+  BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error;
 
 export function useGetApprovalAnalytics<
   TData = Awaited<ReturnType<typeof getApprovalAnalytics>>,
   TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | Error,
+    BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
 >(
   params: undefined | GetApprovalAnalyticsParams,
   options: {
@@ -504,15 +495,12 @@ export function useGetApprovalAnalytics<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetApprovalAnalytics<
   TData = Awaited<ReturnType<typeof getApprovalAnalytics>>,
   TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | Error,
+    BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
 >(
   params?: GetApprovalAnalyticsParams,
   options?: {
@@ -533,14 +521,13 @@ export function useGetApprovalAnalytics<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetApprovalAnalytics<
   TData = Awaited<ReturnType<typeof getApprovalAnalytics>>,
   TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | Error,
+    BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
 >(
   params?: GetApprovalAnalyticsParams,
   options?: {
@@ -553,7 +540,9 @@ export function useGetApprovalAnalytics<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Approval analytics (time-to-approve, auto vs manual, bottlenecks)
  */
@@ -561,10 +550,7 @@ export function useGetApprovalAnalytics<
 export function useGetApprovalAnalytics<
   TData = Awaited<ReturnType<typeof getApprovalAnalytics>>,
   TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | Error,
+    BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
 >(
   params?: GetApprovalAnalyticsParams,
   options?: {
@@ -577,13 +563,15 @@ export function useGetApprovalAnalytics<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetApprovalAnalyticsQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
