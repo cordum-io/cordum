@@ -154,9 +154,20 @@ func unsubscribeHandshakeSubscriptions(subscriptions []model.BusSubscription) er
 		if missingHandshakeDependency(reflect.ValueOf(subscription)) {
 			continue
 		}
-		if err := subscription.Unsubscribe(); err != nil {
+		if err := drainHandshakeSubscription(subscription); err != nil {
 			failures = append(failures, err)
 		}
 	}
 	return errors.Join(failures...)
+}
+
+func drainHandshakeSubscription(subscription model.BusSubscription) error {
+	drainer, ok := subscription.(interface{ Drain() error })
+	if !ok {
+		return subscription.Unsubscribe()
+	}
+	if err := drainer.Drain(); err != nil {
+		return errors.Join(err, subscription.Unsubscribe())
+	}
+	return nil
 }

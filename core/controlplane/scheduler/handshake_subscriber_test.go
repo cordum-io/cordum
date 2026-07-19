@@ -3,10 +3,54 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	capsdk "github.com/cordum-io/cap/v2/sdk/go"
+	"github.com/cordum/cordum/core/model"
 )
+
+type drainableHandshakeResponder struct {
+	subscriptions  []*drainableHandshakeSubscription
+	drainErr       error
+	unsubscribeErr error
+}
+
+func (r *drainableHandshakeResponder) QueueRespond(_, _ string, _ model.RawRequestHandler) (model.BusSubscription, error) {
+	subscription := &drainableHandshakeSubscription{
+		drainErr: r.drainErr, unsubscribeErr: r.unsubscribeErr,
+	}
+	r.subscriptions = append(r.subscriptions, subscription)
+	return subscription, nil
+}
+
+type drainableHandshakeSubscription struct {
+	mu               sync.Mutex
+	drainCalls       int
+	unsubscribeCalls int
+	drainErr         error
+	unsubscribeErr   error
+}
+
+func (s *drainableHandshakeSubscription) Drain() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.drainCalls++
+	return s.drainErr
+}
+
+func (s *drainableHandshakeSubscription) Unsubscribe() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.unsubscribeCalls++
+	return s.unsubscribeErr
+}
+
+func (s *drainableHandshakeSubscription) calls() (int, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.drainCalls, s.unsubscribeCalls
+}
 
 func TestNewHandshakeSubscriberRequiresLiveDependencies(t *testing.T) {
 	service := &fakeHandshakeProtocolService{}
@@ -127,5 +171,47 @@ func TestHandshakeSubscriberCleansPartialStartAndCloseFailures(t *testing.T) {
 	}
 	if err := subscriber.Close(); err != nil {
 		t.Fatalf("second Close error = %v", err)
+	}
+}
+
+func TestHandshakeSubscriberCloseDrainsSupportedSubscriptions(t *testing.T) {
+	bus := &drainableHandshakeResponder{}
+	subscriber, err := NewHandshakeSubscriber(bus, &fakeHandshakeProtocolService{})
+	if err != nil {
+		t.Fatalf("new subscriber: %v", err)
+	}
+	if err := subscriber.Start(); err != nil {
+		t.Fatalf("start subscriber: %v", err)
+	}
+	if err := subscriber.Close(); err != nil {
+		t.Fatalf("close subscriber: %v", err)
+	}
+	for index, subscription := range bus.subscriptions {
+		drains, unsubscribes := subscription.calls()
+		if drains != 1 || unsubscribes != 0 {
+			t.Fatalf("subscription %d cleanup = drains:%d unsubscribes:%d, want drains:1 unsubscribes:0", index, drains, unsubscribes)
+		}
+	}
+}
+
+func TestHandshakeSubscriberDrainFailureFallsBackToUnsubscribe(t *testing.T) {
+	drainErr, unsubscribeErr := errors.New("drain failed"), errors.New("unsubscribe failed")
+	bus := &drainableHandshakeResponder{drainErr: drainErr, unsubscribeErr: unsubscribeErr}
+	subscriber, err := NewHandshakeSubscriber(bus, &fakeHandshakeProtocolService{})
+	if err != nil {
+		t.Fatalf("new subscriber: %v", err)
+	}
+	if err := subscriber.Start(); err != nil {
+		t.Fatalf("start subscriber: %v", err)
+	}
+	err = subscriber.Close()
+	if !errors.Is(err, drainErr) || !errors.Is(err, unsubscribeErr) {
+		t.Fatalf("close error = %v, want drain and unsubscribe failures", err)
+	}
+	for index, subscription := range bus.subscriptions {
+		drains, unsubscribes := subscription.calls()
+		if drains != 1 || unsubscribes != 1 {
+			t.Fatalf("subscription %d cleanup = drains:%d unsubscribes:%d, want drains:1 unsubscribes:1", index, drains, unsubscribes)
+		}
 	}
 }
