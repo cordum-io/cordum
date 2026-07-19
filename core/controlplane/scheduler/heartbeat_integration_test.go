@@ -263,9 +263,10 @@ func TestHeartbeatFlushOnOnlineTransition_DispatchesPendingJobs(t *testing.T) {
 	// First heartbeat for this worker → offline→online transition →
 	// scheduler flushes pending dispatch for pool "integration".
 	packet := &pb.BusPacket{
-		SenderId:  "worker-integration",
-		TraceId:   "trace-integration",
-		CreatedAt: timestamppb.Now(),
+		SenderId:        "worker-integration",
+		TraceId:         "trace-integration",
+		ProtocolVersion: protocolVersionV1,
+		CreatedAt:       timestamppb.Now(),
 		Payload: &pb.BusPacket_Heartbeat{
 			Heartbeat: &pb.Heartbeat{
 				WorkerId: "worker-integration",
