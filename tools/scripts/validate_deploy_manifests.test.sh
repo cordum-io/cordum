@@ -145,7 +145,7 @@ copy_validation_fixture() {
 }
 
 test_strict_validator_rejects_trust_default_drift() {
-  local tmp output
+  local tmp checker_output output
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' RETURN
   copy_validation_fixture "$tmp"
@@ -160,11 +160,15 @@ if needle not in text:
     raise SystemExit("fixture did not contain scheduler handshake default")
 path.write_text(text.replace(needle, "", 1))
 PY
+  if checker_output="$(python "$TRUST_VALIDATOR" "$tmp" 2>&1)"; then
+    fail "worker-trust checker accepted a missing scheduler handshake default"
+  fi
+  assert_contains "$checker_output" "docker-compose.yml scheduler"
+  assert_contains "$checker_output" "CORDUM_SDK_HANDSHAKE=off"
   if output="$(CORDUM_DEPLOY_ROOT="$tmp" "$VALIDATOR" --strict 2>&1)"; then
     fail "strict validator accepted a missing scheduler handshake default"
   fi
-  assert_contains "$output" "docker-compose.yml scheduler"
-  assert_contains "$output" "CORDUM_SDK_HANDSHAKE=off"
+  assert_contains "$output" "worker trust manifest checker failed"
 }
 
 test_strict_validator_rejects_checker_crash() {
