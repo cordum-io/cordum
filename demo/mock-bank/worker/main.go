@@ -22,6 +22,7 @@ import (
 	"github.com/cordum/cordum/sdk/runtime"
 	"github.com/nats-io/nats.go"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
@@ -253,6 +254,7 @@ func buildHeartbeat(w workerDef, activeJobs int32, cpuLoad, memoryLoad float32) 
 	hb := &agentv1.BusPacket{
 		TraceId:         w.ID,
 		SenderId:        w.ID,
+		CreatedAt:       timestamppb.Now(),
 		ProtocolVersion: capsdk.DefaultProtocolVersion,
 		Payload: &agentv1.BusPacket_Heartbeat{
 			Heartbeat: &agentv1.Heartbeat{

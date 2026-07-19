@@ -39,6 +39,9 @@ func TestMintServiceToken_VerifyServiceRoundTrip(t *testing.T) {
 	if claims.Tenant != servicetoken.ReservedTenant {
 		t.Fatalf("tenant = %q, want %q", claims.Tenant, servicetoken.ReservedTenant)
 	}
+	if claims.Audience != "" || claims.AgentID != "" || claims.ProofKeyID != "" {
+		t.Fatalf("service token gained worker-only bindings: %+v", claims)
+	}
 }
 
 func TestVerifyService_RejectsWorkerSessionToken(t *testing.T) {

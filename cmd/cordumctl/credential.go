@@ -7,8 +7,6 @@ import (
 	"sort"
 	"strings"
 	"text/tabwriter"
-
-	"github.com/cordum/cordum/core/controlplane/gateway/pools"
 )
 
 type workerCredentialListResponse struct {
@@ -16,19 +14,26 @@ type workerCredentialListResponse struct {
 }
 
 type workerCredentialCreateRequest struct {
-	WorkerID      string   `json:"worker_id"`
-	AllowedPools  []string `json:"allowed_pools"`
-	AllowedTopics []string `json:"allowed_topics"`
+	WorkerID          string   `json:"worker_id"`
+	AllowedPools      []string `json:"allowed_pools"`
+	AllowedTopics     []string `json:"allowed_topics"`
+	AgentID           string   `json:"agent_id,omitempty"`
+	ProofKeyID        string   `json:"proof_key_id,omitempty"`
+	ProofAlgorithm    string   `json:"proof_algorithm,omitempty"`
+	ProofPublicKeyPEM string   `json:"proof_public_key_pem,omitempty"`
 }
 
 type workerCredentialRecord struct {
-	WorkerID      string   `json:"worker_id"`
-	AllowedPools  []string `json:"allowed_pools"`
-	AllowedTopics []string `json:"allowed_topics"`
-	PackID        string   `json:"pack_id"`
-	CreatedBy     string   `json:"created_by"`
-	CreatedAt     string   `json:"created_at"`
-	RevokedAt     string   `json:"revoked_at"`
+	WorkerID       string   `json:"worker_id"`
+	AllowedPools   []string `json:"allowed_pools"`
+	AllowedTopics  []string `json:"allowed_topics"`
+	PackID         string   `json:"pack_id"`
+	AgentID        string   `json:"agent_id"`
+	ProofKeyID     string   `json:"proof_key_id"`
+	ProofAlgorithm string   `json:"proof_algorithm"`
+	CreatedBy      string   `json:"created_by"`
+	CreatedAt      string   `json:"created_at"`
+	RevokedAt      string   `json:"revoked_at"`
 }
 
 type issuedWorkerCredential struct {
@@ -92,7 +97,11 @@ Commands:
 Flags for create:
   --worker-id <worker_id>                        Worker identity to provision
   --allowed-pools pool1,pool2                    Allowed worker pools
-  --allowed-topics topic1,topic2                 Allowed job topics`)
+  --allowed-topics topic1,topic2                 Allowed job topics
+  --agent-id <agent_id>                          Active same-tenant agent (required with proof key)
+  --proof-key-id <key_id>                        Enrolled worker proof key ID
+  --proof-public-key-file <path>                 P-256 public key in SPKI PEM
+  --proof-algorithm ECDSA_P256_SHA256            Proof algorithm (only supported value)`)
 }
 
 func runWorkerCredentialList(args []string) error {
@@ -115,13 +124,15 @@ func runWorkerCredentialList(args []string) error {
 	})
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "WORKER ID\tSTATUS\tPOOLS\tTOPICS\tPACK ID\tCREATED BY\tCREATED AT")
+	_, _ = fmt.Fprintln(w, "WORKER ID\tSTATUS\tAGENT ID\tPROOF KEY\tPOOLS\tTOPICS\tPACK ID\tCREATED BY\tCREATED AT")
 	for _, item := range resp.Items {
 		_, _ = fmt.Fprintf(
 			w,
-			"%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			item.WorkerID,
 			workerCredentialStatus(item),
+			valueOrDash(item.AgentID),
+			workerProofKeySummary(item),
 			sliceOrDash(item.AllowedPools),
 			sliceOrDash(item.AllowedTopics),
 			valueOrDash(item.PackID),
@@ -138,6 +149,8 @@ func runWorkerCredentialCreate(args []string) error {
 	workerIDFlag := fs.String("worker-id", "", "worker identity to provision")
 	allowedPools := fs.String("allowed-pools", "", "comma-separated allowed pools")
 	allowedTopics := fs.String("allowed-topics", "", "comma-separated allowed topics")
+	agentID := fs.String("agent-id", "", "canonical agent identity to link")
+	proofFlags := addWorkerProofKeyFlags(fs)
 	fs.ParseArgs(args)
 
 	workerID, err := workerIDFromArgs(fs, workerIDFlag)
@@ -145,25 +158,28 @@ func runWorkerCredentialCreate(args []string) error {
 		return err
 	}
 
-	poolsList := splitComma(*allowedPools)
-	for _, poolName := range poolsList {
-		if err := pools.ValidatePoolName(poolName); err != nil {
-			return err
-		}
+	poolsList, topicsList, err := validateWorkerCredentialAccessFlags(*allowedPools, *allowedTopics)
+	if err != nil {
+		return err
 	}
-
-	topicsList := splitComma(*allowedTopics)
-	for _, topic := range topicsList {
-		if err := pools.ValidateTopicName(topic); err != nil {
-			return err
-		}
+	proofKeyID, proofAlgorithm, proofPublicKeyPEM, err := proofFlags.values()
+	if err != nil {
+		return err
+	}
+	agentIDValue := strings.TrimSpace(*agentID)
+	if proofKeyID != "" && agentIDValue == "" {
+		return fmt.Errorf("--agent-id is required with proof enrollment")
 	}
 
 	client := restClientFromFlags(fs)
 	resp, err := client.createCredential(context.Background(), workerCredentialCreateRequest{
-		WorkerID:      workerID,
-		AllowedPools:  poolsList,
-		AllowedTopics: topicsList,
+		WorkerID:          workerID,
+		AllowedPools:      poolsList,
+		AllowedTopics:     topicsList,
+		AgentID:           agentIDValue,
+		ProofKeyID:        proofKeyID,
+		ProofAlgorithm:    proofAlgorithm,
+		ProofPublicKeyPEM: proofPublicKeyPEM,
 	})
 	if err != nil {
 		return err

@@ -31,6 +31,7 @@ import (
 // trip GetAuthToken() holds the token and GetUnknown() is empty.
 func reparseWithTypedAuthToken(t *testing.T, packet *pb.BusPacket, token string) *pb.BusPacket {
 	t.Helper()
+	packet = completeSecurityTestEnvelope(packet)
 	packet.AuthToken = token
 	raw, err := proto.Marshal(packet)
 	if err != nil {
@@ -75,7 +76,7 @@ func TestHandlePacket_JobResult_ValidTypedTokenReachesSucceeded(t *testing.T) {
 	t.Parallel()
 	issuer, _, _, cleanup := newTestIssuer(t, SessionTokenIssuerOptions{})
 	defer cleanup()
-	token, _, err := issuer.Issue(context.Background(), "w-live", "tenant-live", "v1")
+	token, _, err := issuer.IssueBound(context.Background(), boundTestBinding("w-live", "tenant-live", "v1"))
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -185,7 +186,7 @@ func TestWithSessionMiddleware_BuilderEnforcesThroughHandlePacket(t *testing.T) 
 	t.Parallel()
 	issuer, _, _, cleanup := newTestIssuer(t, SessionTokenIssuerOptions{})
 	defer cleanup()
-	token, _, err := issuer.Issue(context.Background(), "w-bld", "tenant-bld", "v1")
+	token, _, err := issuer.IssueBound(context.Background(), boundTestBinding("w-bld", "tenant-bld", "v1"))
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -255,9 +256,9 @@ func TestHandlePacket_JobResult_NoMiddlewareAdmits(t *testing.T) {
 
 	engine := NewEngine(newCountingBus(), NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil)
 	// Intentionally no WithSessionMiddleware.
-	pkt := &pb.BusPacket{Payload: &pb.BusPacket_JobResult{JobResult: &pb.JobResult{
+	pkt := completeSecurityTestEnvelope(&pb.BusPacket{Payload: &pb.BusPacket_JobResult{JobResult: &pb.JobResult{
 		JobId: "job-nomw", WorkerId: "w-any", Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
-	}}}
+	}}})
 	if err := engine.HandlePacket(pkt); err != nil {
 		t.Fatalf("HandlePacket: %v", err)
 	}
@@ -275,7 +276,7 @@ func TestHandlePacket_JobCancel_TokenGated(t *testing.T) {
 	t.Parallel()
 	issuer, _, _, cleanup := newTestIssuer(t, SessionTokenIssuerOptions{})
 	defer cleanup()
-	token, _, err := issuer.Issue(context.Background(), "w-cxl", "tenant-cxl", "v1")
+	token, _, err := issuer.IssueBound(context.Background(), boundTestBinding("w-cxl", "tenant-cxl", "v1"))
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}

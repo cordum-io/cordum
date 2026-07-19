@@ -15,6 +15,7 @@ import (
 	gnats "github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func TestReconcilerTimeoutsDefaults(t *testing.T) {
@@ -397,8 +398,10 @@ func TestWatchConfigChangesNotificationTriggersReload(t *testing.T) {
 	defer nc.Close()
 
 	packet := &pb.BusPacket{
-		TraceId:  "test-notify",
-		SenderId: "test-gateway",
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
+		TraceId:         "test-notify",
+		SenderId:        "test-gateway",
+		CreatedAt:       timestamppb.Now(),
 		Payload: &pb.BusPacket_Alert{
 			Alert: &pb.SystemAlert{
 				Message: "config changed",

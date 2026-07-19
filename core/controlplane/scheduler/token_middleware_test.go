@@ -84,7 +84,7 @@ func TestSessionTokenMiddleware_ValidTokenPasses(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	token, claims, err := issuer.Issue(ctx, "w1", "tenant-ok", "v1")
+	token, claims, err := issuer.IssueBound(ctx, boundTestBinding("w1", "tenant-ok", "v1"))
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestSessionTokenMiddleware_RevokedTokenRejects(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	token, claims, err := issuer.Issue(ctx, "w1", "tenant-rev", "v1")
+	token, claims, err := issuer.IssueBound(ctx, boundTestBinding("w1", "tenant-rev", "v1"))
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestSessionTokenMiddleware_TamperedTokenRejects(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	token, _, err := issuer.Issue(ctx, "w1", "tenant-tamper", "v1")
+	token, _, err := issuer.IssueBound(ctx, boundTestBinding("w1", "tenant-tamper", "v1"))
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -156,6 +156,26 @@ func TestSessionTokenMiddleware_TamperedTokenRejects(t *testing.T) {
 	}
 }
 
+func TestSessionTokenMiddleware_UnknownModeRejects(t *testing.T) {
+	t.Parallel()
+	issuer, _, _, cleanup := newTestIssuer(t, SessionTokenIssuerOptions{})
+	defer cleanup()
+
+	middleware := NewSessionTokenMiddleware(
+		issuer, HandshakeMode("enforse"), NewHandshakeMissingTracker(),
+	)
+	result := middleware.Verify(context.Background(), "worker-a", &pb.BusPacket{})
+	if result.Verdict != TokenVerdictRejectInvalid {
+		t.Fatalf("verdict=%v want reject_invalid", result.Verdict)
+	}
+	if result.Err == nil {
+		t.Fatal("unknown mode rejection must carry an error")
+	}
+	if token, err := middleware.MintServiceToken("cordum-scheduler"); err == nil || token != "" {
+		t.Fatalf("MintServiceToken() = %q, %v; want empty token and error", token, err)
+	}
+}
+
 func TestSessionTokenMiddleware_ExpiredTokenRejects(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 4, 19, 12, 0, 0, 0, time.UTC)
@@ -166,7 +186,7 @@ func TestSessionTokenMiddleware_ExpiredTokenRejects(t *testing.T) {
 	})
 	defer cleanup()
 
-	token, _, err := issuer.Issue(context.Background(), "w1", "tenant-exp", "v1")
+	token, _, err := issuer.IssueBound(context.Background(), boundTestBinding("w1", "tenant-exp", "v1"))
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -191,7 +211,7 @@ func TestSessionTokenMiddleware_RevokeMidSession(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	token, claims, err := issuer.Issue(ctx, "w1", "tenant-rev", "v1")
+	token, claims, err := issuer.IssueBound(ctx, boundTestBinding("w1", "tenant-rev", "v1"))
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}

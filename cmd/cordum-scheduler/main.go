@@ -14,8 +14,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
-
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/cordum/cordum/core/configsvc"
@@ -35,7 +33,6 @@ import (
 	"github.com/cordum/cordum/core/infra/schema"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/licensing"
-	"github.com/cordum/cordum/core/policysign"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -185,68 +182,33 @@ func syncApprovalQueueDepth(ctx context.Context, jobStore *store.RedisJobStore, 
 	approvalMetrics.SetApprovalQueueDepth("all", int(count))
 }
 
-// buildSessionTokenMiddleware constructs the Phase-2 session-token
-// verification middleware from CORDUM_SDK_HANDSHAKE.
-//
-// Back-compat default: when the var is unset or "off" the feature stays
-// disabled and the gate admits (returns nil, nil) — existing deployments
-// are unaffected on upgrade. In warn/enforce mode it loads the signing key
-// + trust store and builds a Redis-backed issuer. A misconfiguration under
-// enforce is fatal to the caller (fail closed); under warn it is logged and
-// verification is disabled (admit), matching warn's admit-on-missing intent.
-func buildSessionTokenMiddleware(rdb redis.UniversalClient) (*scheduler.SessionTokenMiddleware, error) {
-	raw := strings.TrimSpace(os.Getenv(scheduler.EnvHandshakeMode))
-	if raw == "" {
-		return nil, nil
-	}
-	// Strict boot parse: a non-empty value that does not round-trip to a
-	// canonical mode (e.g. a typo'd "enforse") is FATAL — refuse to boot rather
-	// than silently degrade to admit (the call site treats a non-nil error as
-	// os.Exit(1)). The lenient ParseHandshakeMode stays for runtime callers.
-	mode, err := scheduler.ParseHandshakeModeStrict(raw)
-	if err != nil {
-		return nil, err
-	}
-	if mode == scheduler.HandshakeModeOff {
-		return nil, nil
-	}
-	mw, err := newSessionTokenMiddleware(rdb, mode)
-	if err == nil {
-		slog.Info("session-token verification enabled", "mode", mode.String())
-		return mw, nil
-	}
-	if mode == scheduler.HandshakeModeEnforce {
-		return nil, fmt.Errorf("CORDUM_SDK_HANDSHAKE=enforce requires a valid signing key and trust store: %w", err)
-	}
-	slog.Warn("session-token handshake in warn mode but key material unavailable; verification disabled (admitting)", "error", err)
-	return nil, nil
-}
-
-// newSessionTokenMiddleware loads the signing key, trust store, and builds
-// the Redis-backed issuer + middleware. Split out so the mode/back-compat
-// policy in buildSessionTokenMiddleware stays readable.
-func newSessionTokenMiddleware(rdb redis.UniversalClient, mode scheduler.HandshakeMode) (*scheduler.SessionTokenMiddleware, error) {
-	priv, keyID, err := policysign.LoadPrivateKeyFromEnv()
-	if err != nil {
-		return nil, err
-	}
-	trust, err := policysign.LoadTrustStoreFromEnv()
-	if err != nil {
-		return nil, err
-	}
-	issuer, err := scheduler.NewSessionTokenIssuer(priv, keyID, trust, rdb, scheduler.SessionTokenIssuerOptions{})
-	if err != nil {
-		return nil, err
-	}
-	return scheduler.NewSessionTokenMiddleware(issuer, mode, scheduler.NewHandshakeMissingTracker()), nil
-}
-
 func main() {
 	logging.Init("scheduler")
 	slog.Info("cordum scheduler starting...")
 	buildinfo.Log("cordum-scheduler")
 
 	cfg := config.Load()
+	heartbeatMode, err := scheduler.ParseHeartbeatModeStrict(os.Getenv(scheduler.EnvHeartbeatMode))
+	if err != nil {
+		slog.Error("heartbeat authority configuration invalid; refusing to start", "error", err)
+		os.Exit(1)
+	}
+	heartbeatMode.LogActiveMode(slog.Default())
+	workerAttestationMode, err := scheduler.ParseWorkerAttestationModeStrict(os.Getenv(scheduler.EnvWorkerAttestation))
+	if err != nil {
+		slog.Error("worker attestation configuration invalid; refusing to start", "error", err)
+		os.Exit(1)
+	}
+	handshakeConfig, err := loadHandshakeSecurityConfig()
+	if err != nil {
+		slog.Error("worker handshake security configuration invalid; refusing to start", "error", err)
+		os.Exit(1)
+	}
+	if err := validateWorkerSecurityModes(handshakeConfig.mode, workerAttestationMode); err != nil {
+		slog.Error("worker security modes conflict; refusing to start", "error", err)
+		os.Exit(1)
+	}
+	handshakeConfig.mode.LogActiveMode(slog.Default())
 
 	timeoutsCfg, err := config.LoadTimeouts(cfg.TimeoutConfigPath)
 	if err != nil {
@@ -397,6 +359,30 @@ func main() {
 	}
 	defer func() { _ = configSvc.Close() }()
 
+	handshakeBundle, handshakeAuditSender, err := initializeHandshakeSecurity(
+		handshakeConfig, jobStore.Client(), configSvc, natsBus,
+	)
+	if err != nil {
+		slog.Error("worker handshake security dependencies invalid; refusing to start", "error", err)
+		os.Exit(1)
+	}
+	if handshakeAuditSender != nil {
+		defer func() { _ = handshakeAuditSender.Close() }()
+		slog.Info("worker handshake security enabled",
+			"mode", handshakeBundle.mode.String(),
+			"scheduler_id", handshakeConfig.schedulerID,
+			"scheduler_key_id", handshakeConfig.schedulerKeyID,
+			"public_key_sha256", handshakeBundle.publicKeySHA256,
+		)
+	}
+	dispatchGate, err := newProductionDispatchGateForModes(
+		handshakeBundle.mode, heartbeatMode, handshakeBundle.dispatchResolver,
+	)
+	if err != nil {
+		slog.Error("dispatch trust authority unavailable; refusing to start", "error", err)
+		os.Exit(1)
+	}
+
 	schemaRegistry, err := schema.NewRegistry(cfg.RedisURL)
 	if err != nil {
 		slog.Error("failed to connect to Redis for schema registry", "error", err)
@@ -461,6 +447,8 @@ func main() {
 	).WithConfig(configSvc).
 		WithTopicRegistry(topicregistry.NewService(configSvc)).
 		WithWorkerCredentialCache(workerCredentialCache).
+		WithWorkerAttestationMode(workerAttestationMode).
+		WithDispatchGate(dispatchGate).
 		WithSchemaRegistry(schemaRegistry).
 		WithEntitlements(entitlementResolver).
 		WithContextClient(jobStore.Client()).
@@ -486,15 +474,25 @@ func main() {
 		engine.WithFailModeResolver(resolver)
 	}
 
-	// Phase-2 session-token verification (CORDUM_SDK_HANDSHAKE). Unset/off
-	// keeps the gate disabled (documented back-compat admit); warn/enforce
-	// wires a Redis-backed verifier that fails closed on a missing/invalid
-	// token.
-	if sessionMW, err := buildSessionTokenMiddleware(jobStore.Client()); err != nil {
-		slog.Error("session-token handshake enforcement misconfigured; refusing to start", "error", err)
-		os.Exit(1)
-	} else if sessionMW != nil {
-		engine.WithSessionMiddleware(sessionMW)
+	if handshakeBundle.middleware != nil {
+		engine.WithSessionMiddleware(handshakeBundle.middleware)
+	}
+	if handshakeBundle.service != nil {
+		handshakeSubscriber, err := scheduler.NewHandshakeSubscriber(natsBus, handshakeBundle.service)
+		if err != nil {
+			slog.Error("worker handshake responder construction failed; refusing to start", "error", err)
+			os.Exit(1)
+		}
+		if err := handshakeSubscriber.Start(); err != nil {
+			_ = handshakeSubscriber.Close()
+			slog.Error("worker handshake responder start failed; refusing to start", "error", err)
+			os.Exit(1)
+		}
+		defer func() {
+			if err := handshakeSubscriber.Close(); err != nil {
+				slog.Error("worker handshake responder shutdown failed", "error", err)
+			}
+		}()
 	}
 
 	if _, err := cordumotel.InitTracer("cordum-scheduler"); err != nil {
