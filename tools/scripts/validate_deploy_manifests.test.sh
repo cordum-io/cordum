@@ -165,7 +165,7 @@ PY
   fi
   assert_contains "$checker_output" "docker-compose.yml scheduler"
   assert_contains "$checker_output" "CORDUM_SDK_HANDSHAKE=off"
-  if output="$(CORDUM_DEPLOY_ROOT="$tmp" "$VALIDATOR" --strict 2>&1)"; then
+  if output="$(CORDUM_DEPLOY_ROOT="$tmp" bash "$VALIDATOR" --strict 2>&1)"; then
     fail "strict validator accepted a missing scheduler handshake default"
   fi
   assert_contains "$output" "worker trust manifest checker failed"
@@ -186,7 +186,7 @@ data = yaml.safe_load(path.read_text())
 data["services"]["scheduler-2"] = None
 path.write_text(yaml.safe_dump(data, sort_keys=False))
 PY
-  if output="$(CORDUM_DEPLOY_ROOT="$tmp" "$VALIDATOR" --strict 2>&1)"; then
+  if output="$(CORDUM_DEPLOY_ROOT="$tmp" bash "$VALIDATOR" --strict 2>&1)"; then
     fail "strict validator accepted a crashed worker-trust checker"
   fi
   assert_contains "$output" "worker trust manifest checker failed"
