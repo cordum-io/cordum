@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/sha256"
@@ -55,7 +56,7 @@ func loadPinnedHandshakeKeyPair(privatePath, publicPath string) (*ecdsa.PrivateK
 }
 
 func readBoundedHandshakeKey(path string, limit int64) ([]byte, error) {
-	file, err := os.Open(path)
+	file, err := os.Open(path) // #nosec G304 -- administrator-configured key path is the intended input.
 	if err != nil {
 		return nil, err
 	}
@@ -122,17 +123,20 @@ func validP256PrivateKey(key *ecdsa.PrivateKey) bool {
 	if key == nil || key.D == nil || !validP256PublicKey(&key.PublicKey) {
 		return false
 	}
-	curve := elliptic.P256()
-	if key.D.Sign() <= 0 || key.D.Cmp(curve.Params().N) >= 0 {
+	privateKey, err := key.ECDH()
+	if err != nil {
 		return false
 	}
-	x, y := curve.ScalarBaseMult(key.D.Bytes())
-	return x.Cmp(key.X) == 0 && y.Cmp(key.Y) == 0
+	publicKey, err := key.PublicKey.ECDH()
+	return err == nil && bytes.Equal(privateKey.PublicKey().Bytes(), publicKey.Bytes())
 }
 
 func validP256PublicKey(key *ecdsa.PublicKey) bool {
-	return key != nil && key.Curve == elliptic.P256() && key.X != nil && key.Y != nil &&
-		elliptic.P256().IsOnCurve(key.X, key.Y)
+	if key == nil || key.Curve != elliptic.P256() || key.X == nil || key.Y == nil {
+		return false
+	}
+	_, err := key.ECDH()
+	return err == nil
 }
 
 func clearBytes(value []byte) {

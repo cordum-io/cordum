@@ -44,7 +44,7 @@ const (
 	TrustReasonExpired           = "session_expired"
 	TrustReasonRevoked           = "session_revoked"
 	TrustReasonStoreUnready      = "trust_store_unready"
-	TrustReasonCredentialInvalid = "credential_invalid"
+	TrustReasonCredentialInvalid = "credential_invalid" // #nosec G101 -- stable audit label, not credential material.
 )
 
 // WorkerTrustState is the authoritative trust signal for a worker.

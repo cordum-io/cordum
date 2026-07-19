@@ -39,7 +39,9 @@ func writeActiveRecordForTest(t *testing.T, mr *miniredis.Miniredis, key string,
 	if err != nil {
 		t.Fatalf("marshal active record: %v", err)
 	}
-	mr.Set(key, string(raw))
+	if err := mr.Set(key, string(raw)); err != nil {
+		t.Fatalf("write active record: %v", err)
+	}
 }
 
 func TestSessionTokenIssueBound_RoundTripsWorkerAuthority(t *testing.T) {

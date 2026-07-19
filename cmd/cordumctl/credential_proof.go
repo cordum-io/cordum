@@ -53,14 +53,17 @@ func (f workerProofKeyFlags) values() (string, string, string, error) {
 }
 
 func readWorkerProofPublicKey(path string) (string, error) {
-	file, err := os.Open(path)
+	file, err := os.Open(path) // #nosec G304 -- operator explicitly selects the public key to enroll.
 	if err != nil {
 		return "", fmt.Errorf("read proof public key file: %w", err)
 	}
-	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, maxWorkerProofPublicKeyFileBytes+1))
-	if err != nil {
-		return "", fmt.Errorf("read proof public key file: %w", err)
+	data, readErr := io.ReadAll(io.LimitReader(file, maxWorkerProofPublicKeyFileBytes+1))
+	closeErr := file.Close()
+	if readErr != nil {
+		return "", fmt.Errorf("read proof public key file: %w", readErr)
+	}
+	if closeErr != nil {
+		return "", fmt.Errorf("close proof public key file: %w", closeErr)
 	}
 	if len(data) > maxWorkerProofPublicKeyFileBytes {
 		return "", fmt.Errorf("proof public key file too large (max %d bytes)", maxWorkerProofPublicKeyFileBytes)

@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -171,12 +172,12 @@ func validHandshakePrivateKey(key *ecdsa.PrivateKey) bool {
 	if key == nil || key.D == nil || key.Curve != elliptic.P256() || key.X == nil || key.Y == nil {
 		return false
 	}
-	curve := elliptic.P256()
-	if key.D.Sign() <= 0 || key.D.Cmp(curve.Params().N) >= 0 || !curve.IsOnCurve(key.X, key.Y) {
+	privateKey, err := key.ECDH()
+	if err != nil {
 		return false
 	}
-	x, y := curve.ScalarBaseMult(key.D.Bytes())
-	return x.Cmp(key.X) == 0 && y.Cmp(key.Y) == 0
+	publicKey, err := key.PublicKey.ECDH()
+	return err == nil && bytes.Equal(privateKey.PublicKey().Bytes(), publicKey.Bytes())
 }
 
 // HandleChallenge verifies a signed request before creating shared state.

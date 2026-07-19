@@ -72,7 +72,9 @@ func TestEngineWarnTokenlessCapabilityIsTelemetryOnly(t *testing.T) {
 	packet.Payload = &pb.BusPacket_Handshake{
 		Handshake: capabilityHandshake("worker-1", "node/1", "jobs.allowed"),
 	}
-	engine.HandlePacket(packet)
+	if err := engine.HandlePacket(packet); err != nil {
+		t.Fatalf("handle tokenless warn capability: %v", err)
+	}
 
 	state := registry.ReadinessSnapshot()["worker-1"]
 	if state.Ready || state.Trusted || len(state.ReadyTopics) != 0 {
@@ -128,7 +130,9 @@ func TestEngineEnforceRejectsCapabilityWithMismatchedBoundClaims(t *testing.T) {
 		Handshake: capabilityHandshake("worker-1", "node/1", "jobs.allowed"),
 	}
 	packet.AuthToken = token
-	engine.HandlePacket(packet)
+	if err := engine.HandlePacket(packet); err != nil {
+		t.Fatalf("handle mismatched enforce capability: %v", err)
+	}
 
 	registry.mu.RLock()
 	_, recorded := registry.workers["worker-1"]

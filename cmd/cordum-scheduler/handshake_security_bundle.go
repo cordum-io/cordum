@@ -121,7 +121,7 @@ func newHandshakeSecurityBundle(cfg handshakeSecurityConfig, deps handshakeSecur
 
 func newSessionTokenIssuer(rdb redis.UniversalClient) (*scheduler.SessionTokenIssuer, error) {
 	if missingSecurityValue(reflect.ValueOf(rdb)) {
-		return nil, errors.New("Redis session store required")
+		return nil, errors.New("redis session store required")
 	}
 	privateKey, keyID, err := policysign.LoadPrivateKeyFromEnv()
 	if err != nil {

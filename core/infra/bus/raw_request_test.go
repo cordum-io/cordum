@@ -181,7 +181,11 @@ func TestProcessRawRequestDoesNotPublishRejectedPayload(t *testing.T) {
 			if err != nil {
 				t.Fatalf("subscribe reply: %v", err)
 			}
-			defer replies.Unsubscribe()
+			defer func() {
+				if err := replies.Unsubscribe(); err != nil {
+					t.Errorf("unsubscribe reply: %v", err)
+				}
+			}()
 			if err := bus.nc.Flush(); err != nil {
 				t.Fatalf("flush reply subscription: %v", err)
 			}

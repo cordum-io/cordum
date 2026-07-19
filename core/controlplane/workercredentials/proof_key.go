@@ -112,8 +112,10 @@ func parseProofPublicKey(publicPEM string) (*ecdsa.PublicKey, error) {
 	if !ok {
 		return nil, fmt.Errorf("proof public key must be ECDSA")
 	}
-	if publicKey.Curve != elliptic.P256() || publicKey.X == nil || publicKey.Y == nil ||
-		!elliptic.P256().IsOnCurve(publicKey.X, publicKey.Y) {
+	if publicKey.Curve != elliptic.P256() || publicKey.X == nil || publicKey.Y == nil {
+		return nil, fmt.Errorf("proof public key must use P-256")
+	}
+	if _, err := publicKey.ECDH(); err != nil {
 		return nil, fmt.Errorf("proof public key must use P-256")
 	}
 	return publicKey, nil

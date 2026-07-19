@@ -24,7 +24,11 @@ func TestHandshakeSubscriberRoutesTypedPacketsAndPreservesUnknownFields(t *testi
 	if err := subscriber.Start(); err != nil {
 		t.Fatalf("start subscriber: %v", err)
 	}
-	defer subscriber.Close()
+	defer func() {
+		if err := subscriber.Close(); err != nil {
+			t.Errorf("close subscriber: %v", err)
+		}
+	}()
 	challengeContext := invokeChallengeRoute(t, bus, challengeResponse)
 	authContext := invokeAuthenticateRoute(t, bus, authResponse)
 	assertHandshakeServiceRoutes(t, service, challengeContext, authContext)
@@ -122,7 +126,11 @@ func TestHandshakeSubscriberRejectsBadInputAndServiceFailuresOpaquely(t *testing
 			if err := subscriber.Start(); err != nil {
 				t.Fatalf("start subscriber: %v", err)
 			}
-			defer subscriber.Close()
+			defer func() {
+				if err := subscriber.Close(); err != nil {
+					t.Errorf("close subscriber: %v", err)
+				}
+			}()
 			assertOpaqueChallengeRejection(t, bus, service, test)
 		})
 	}
@@ -178,7 +186,11 @@ func TestHandshakeSubscriberAuthenticateFailureIsOpaque(t *testing.T) {
 	if err := subscriber.Start(); err != nil {
 		t.Fatalf("start subscriber: %v", err)
 	}
-	defer subscriber.Close()
+	defer func() {
+		if err := subscriber.Close(); err != nil {
+			t.Errorf("close subscriber: %v", err)
+		}
+	}()
 	request := marshalHandshakeRaw(t, &agentv1.BusPacket{
 		Payload: &agentv1.BusPacket_WorkerHandshakeAuthenticate{
 			WorkerHandshakeAuthenticate: &agentv1.WorkerHandshakeAuthenticate{},

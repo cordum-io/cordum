@@ -54,7 +54,9 @@ func TestSessionTokenRevokeByWorker_CorruptBoundRecordFailsClosed(t *testing.T) 
 	if _, _, err := issuer.IssueBound(ctx, binding); err != nil {
 		t.Fatalf("issue bound: %v", err)
 	}
-	mr.Set(boundWorkerKey(binding.Tenant, binding.WorkerID), "not-json")
+	if err := mr.Set(boundWorkerKey(binding.Tenant, binding.WorkerID), "not-json"); err != nil {
+		t.Fatalf("write corrupt bound record: %v", err)
+	}
 
 	if err := issuer.RevokeByWorker(ctx, binding.Tenant, binding.WorkerID); err == nil {
 		t.Fatal("corrupt tenant-scoped record must fail closed")

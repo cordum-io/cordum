@@ -14,9 +14,17 @@ func TestHandshakeSubscriberSharesChallengeAcrossSchedulerReplicas(t *testing.T)
 	defer fixture.cleanup()
 	busA, busB := &fakeHandshakeResponder{}, &fakeHandshakeResponder{}
 	subscriberA := startReplicaSubscriber(t, busA, fixture.service)
-	defer subscriberA.Close()
+	defer func() {
+		if err := subscriberA.Close(); err != nil {
+			t.Errorf("close replica A subscriber: %v", err)
+		}
+	}()
 	subscriberB := startReplicaSubscriber(t, busB, newReplicaHandshakeService(t, fixture))
-	defer subscriberB.Close()
+	defer func() {
+		if err := subscriberB.Close(); err != nil {
+			t.Errorf("close replica B subscriber: %v", err)
+		}
+	}()
 
 	challenge := requestChallengeFromReplica(t, fixture, busA)
 	authenticate := protocolAuthenticate(t, fixture, challenge, "")
