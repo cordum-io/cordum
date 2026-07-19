@@ -2201,6 +2201,9 @@ curl -sS http://localhost:8081/api/v1/topics \
   "items": [
     {
       "worker_id": "external-worker-01",
+      "agent_id": "agt_01...",
+      "proof_key_id": "external-worker-01-proof-v1",
+      "proof_algorithm": "ECDSA_P256_SHA256",
       "allowed_pools": ["sre-investigator"],
       "allowed_topics": ["job.sre-investigator.collect.k8s"],
       "pack_id": "",
@@ -2226,6 +2229,10 @@ Notes:
 ```json
 {
   "worker_id": "external-worker-01",
+  "agent_id": "agt_01...",
+  "proof_key_id": "external-worker-01-proof-v1",
+  "proof_algorithm": "ECDSA_P256_SHA256",
+  "proof_public_key_pem": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----",
   "allowed_pools": ["sre-investigator"],
   "allowed_topics": ["job.sre-investigator.collect.k8s"]
 }
@@ -2234,6 +2241,10 @@ Notes:
 Rules:
 
 - `worker_id` must be non-empty and must not contain whitespace.
+- Authenticated worker trust requires `agent_id`, `proof_key_id`,
+  `proof_algorithm=ECDSA_P256_SHA256`, and an SPKI P-256
+  `proof_public_key_pem` together. The agent must exist in the same tenant and
+  be authoritatively linked to this worker.
 - `allowed_pools` must reference existing pools.
 - `allowed_topics` must reference existing registered topics when the topic registry is populated.
 - Creating a credential for an existing `worker_id` rotates it and returns a fresh token.
@@ -2243,6 +2254,9 @@ Rules:
 ```json
 {
   "worker_id": "external-worker-01",
+  "agent_id": "agt_01...",
+  "proof_key_id": "external-worker-01-proof-v1",
+  "proof_algorithm": "ECDSA_P256_SHA256",
   "allowed_pools": ["sre-investigator"],
   "allowed_topics": ["job.sre-investigator.collect.k8s"],
   "pack_id": "",
@@ -2254,7 +2268,13 @@ Rules:
 
 Important:
 
-- The plaintext `token` is returned only once at creation/rotation time. Store it immediately.
+- The plaintext `token` is returned only once at creation/rotation time. Store
+  it only if the deployment is still using legacy `WORKER_ATTESTATION`.
+- The proof public key is stored but omitted from list/response bodies; only its
+  key ID and algorithm are exposed. Never submit the proof private key.
+- The one-time bearer `token` belongs to legacy `WORKER_ATTESTATION`. It is not
+  a P-256 proof key or worker session and cannot be used together with active
+  `CORDUM_SDK_HANDSHAKE` modes.
 
 - Errors: `400`, `403`, `404`, `500`, `503`
 
@@ -2273,6 +2293,10 @@ curl -sS -X POST http://localhost:8081/api/v1/workers/credentials \
   -H 'Content-Type: application/json' \
   -d '{
     "worker_id":"external-worker-01",
+    "agent_id":"agt_01...",
+    "proof_key_id":"external-worker-01-proof-v1",
+    "proof_algorithm":"ECDSA_P256_SHA256",
+    "proof_public_key_pem":"-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----",
     "allowed_pools":["sre-investigator"],
     "allowed_topics":["job.sre-investigator.collect.k8s"]
   }'

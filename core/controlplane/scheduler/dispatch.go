@@ -52,9 +52,8 @@ type DispatchGate struct {
 }
 
 // NewDispatchGate constructs a gate for the given resolver and mode.
-// A nil resolver is allowed and results in pass-through behaviour for
-// the session-enforcing modes (so the gate degrades to the legacy
-// heartbeat-TTL path if the operator forgets to wire a resolver).
+// A nil resolver is allowed so authority-mode deployments remain compatible.
+// Warn/telemetry modes fail closed unless resolver is tenant-bound.
 func NewDispatchGate(resolver *TrustResolver, mode HeartbeatMode) *DispatchGate {
 	return &DispatchGate{resolver: resolver, mode: mode, logger: slog.Default()}
 }
@@ -78,13 +77,13 @@ func (g *DispatchGate) Mode() HeartbeatMode {
 	return g.mode
 }
 
-// EnforcesSession is a shorthand that returns whether this gate will
-// actually filter (true in warn + telemetry modes, false otherwise).
+// EnforcesSession reports the configured policy, independent of dependency
+// readiness. An active policy with a missing authority must still fail closed.
 func (g *DispatchGate) EnforcesSession() bool {
 	if g == nil {
 		return false
 	}
-	return g.mode.EnforcesSession() && g.resolver != nil
+	return g.mode.EnforcesSession()
 }
 
 // EligibleWorkers returns the dispatch-eligible snapshot for reg.
@@ -107,6 +106,10 @@ func (g *DispatchGate) EligibleWorkers(ctx context.Context, reg DispatchRegistry
 	}
 	if !g.EnforcesSession() {
 		return reg.Snapshot(), nil
+	}
+	if !g.hasBoundAuthority() {
+		g.logMissingAuthority("all workers dropped")
+		return map[string]*pb.Heartbeat{}, nil
 	}
 	source := reg.Snapshot()
 	if full, ok := reg.(snapshotAllCapable); ok {
@@ -156,6 +159,10 @@ func (g *DispatchGate) IsWorkerEligible(ctx context.Context, workerID string, le
 		}
 		return legacyIsAlive(workerID), nil
 	}
+	if !g.hasBoundAuthority() {
+		g.logMissingAuthority("worker rejected")
+		return false, nil
+	}
 	state, err := g.resolver.ResolveTrust(ctx, workerID)
 	if err != nil {
 		g.logger.Warn("dispatch gate: trust resolve failed; worker rejected",
@@ -173,6 +180,17 @@ func (g *DispatchGate) IsWorkerEligible(ctx context.Context, workerID string, le
 		}
 	}
 	return alive, nil
+}
+
+func (g *DispatchGate) hasBoundAuthority() bool {
+	return g != nil && g.resolver != nil && g.resolver.BoundAuthorityReady()
+}
+
+func (g *DispatchGate) logMissingAuthority(outcome string) {
+	if g == nil || g.logger == nil {
+		return
+	}
+	g.logger.Error("dispatch gate: bound trust authority unavailable", "mode", g.mode.String(), "outcome", outcome)
 }
 
 // heartbeatAliveLookup returns a per-worker heartbeat-alive

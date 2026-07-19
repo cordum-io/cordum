@@ -15,22 +15,27 @@ import (
 )
 
 type createWorkerCredentialRequest struct {
-	WorkerID      string   `json:"worker_id"`
-	AllowedPools  []string `json:"allowed_pools"`
-	AllowedTopics []string `json:"allowed_topics"`
-	AgentID       string   `json:"agent_id,omitempty"`
+	WorkerID          string   `json:"worker_id"`
+	AllowedPools      []string `json:"allowed_pools"`
+	AllowedTopics     []string `json:"allowed_topics"`
+	AgentID           string   `json:"agent_id,omitempty"`
+	ProofKeyID        string   `json:"proof_key_id,omitempty"`
+	ProofAlgorithm    string   `json:"proof_algorithm,omitempty"`
+	ProofPublicKeyPEM string   `json:"proof_public_key_pem,omitempty"`
 }
 
 type workerCredentialResponse struct {
-	WorkerID      string   `json:"worker_id"`
-	TenantID      string   `json:"tenant_id,omitempty"`
-	AllowedPools  []string `json:"allowed_pools,omitempty"`
-	AllowedTopics []string `json:"allowed_topics,omitempty"`
-	PackID        string   `json:"pack_id,omitempty"`
-	AgentID       string   `json:"agent_id,omitempty"`
-	CreatedBy     string   `json:"created_by"`
-	CreatedAt     string   `json:"created_at"`
-	RevokedAt     string   `json:"revoked_at,omitempty"`
+	WorkerID       string   `json:"worker_id"`
+	TenantID       string   `json:"tenant_id,omitempty"`
+	AllowedPools   []string `json:"allowed_pools,omitempty"`
+	AllowedTopics  []string `json:"allowed_topics,omitempty"`
+	PackID         string   `json:"pack_id,omitempty"`
+	AgentID        string   `json:"agent_id,omitempty"`
+	ProofKeyID     string   `json:"proof_key_id,omitempty"`
+	ProofAlgorithm string   `json:"proof_algorithm,omitempty"`
+	CreatedBy      string   `json:"created_by"`
+	CreatedAt      string   `json:"created_at"`
+	RevokedAt      string   `json:"revoked_at,omitempty"`
 }
 
 type issueWorkerCredentialResponse struct {
@@ -123,17 +128,6 @@ func (s *server) handleCreateWorkerCredential(w http.ResponseWriter, r *http.Req
 		return
 	}
 	req.AgentID = strings.TrimSpace(req.AgentID)
-	if req.AgentID != "" && s.agentIdentityStore != nil {
-		agent, err := s.agentIdentityStore.Get(r.Context(), "", req.AgentID)
-		if err != nil {
-			writeInternalError(w, r, "validate agent identity", err)
-			return
-		}
-		if agent == nil {
-			writeJSONError(w, http.StatusBadRequest, errorCodeWorkerCredBindingInvalid, "agent_id references nonexistent agent identity")
-			return
-		}
-	}
 	if err := s.validateWorkerCredentialAccess(r, req.AllowedPools, req.AllowedTopics); err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, ErrPoolNotFound) || errors.Is(err, ErrTopicNotFound) {
@@ -148,18 +142,29 @@ func (s *server) handleCreateWorkerCredential(w http.ResponseWriter, r *http.Req
 		writeInternalError(w, r, "get worker credential", err)
 		return
 	}
+	if err := s.resolveWorkerCredentialAgent(r.Context(), tenant, &req, existing); err != nil {
+		if errors.Is(err, errWorkerCredentialAgentStoreUnavailable) {
+			writeInternalError(w, r, "validate agent identity", err)
+			return
+		}
+		writeJSONError(w, http.StatusBadRequest, errorCodeWorkerCredBindingInvalid, err.Error())
+		return
+	}
 
 	createdBy := strings.TrimSpace(policybundles.PolicyActorID(r))
 	if createdBy == "" {
 		createdBy = "admin"
 	}
 	issued, err := s.workerCredentialStore.CreateWithLimit(r.Context(), workercredentials.IssueInput{
-		TenantID:      tenant,
-		WorkerID:      req.WorkerID,
-		AllowedPools:  req.AllowedPools,
-		AllowedTopics: req.AllowedTopics,
-		AgentID:       req.AgentID,
-		CreatedBy:     createdBy,
+		TenantID:          tenant,
+		WorkerID:          req.WorkerID,
+		AllowedPools:      req.AllowedPools,
+		AllowedTopics:     req.AllowedTopics,
+		AgentID:           req.AgentID,
+		ProofKeyID:        req.ProofKeyID,
+		ProofAlgorithm:    req.ProofAlgorithm,
+		ProofPublicKeyPEM: req.ProofPublicKeyPEM,
+		CreatedBy:         createdBy,
 	}, workercredentials.CreateLimit{
 		Entitlements:     s.currentEntitlements(),
 		ConnectedWorkers: s.connectedWorkerCount(),
@@ -179,11 +184,11 @@ func (s *server) handleCreateWorkerCredential(w http.ResponseWriter, r *http.Req
 	}
 
 	if s.agentIdentityStore != nil {
-		if req.AgentID != "" {
-			if linkErr := s.agentIdentityStore.LinkWorker(r.Context(), req.AgentID, req.WorkerID); linkErr != nil {
+		if issued.Credential.AgentID != "" {
+			if linkErr := s.agentIdentityStore.LinkWorker(r.Context(), issued.Credential.AgentID, req.WorkerID); linkErr != nil {
 				slog.Error("link worker to agent identity failed",
 					"worker_id", req.WorkerID,
-					"agent_id", req.AgentID,
+					"agent_id", issued.Credential.AgentID,
 					"error", linkErr,
 				)
 				writeInternalError(w, r, "link worker to agent identity", linkErr)
@@ -339,14 +344,16 @@ func validateWorkerID(workerID string) error {
 
 func workerCredentialResponseFromRecord(record workercredentials.Credential) workerCredentialResponse {
 	return workerCredentialResponse{
-		WorkerID:      record.WorkerID,
-		TenantID:      record.TenantID,
-		AllowedPools:  record.AllowedPools,
-		AllowedTopics: record.AllowedTopics,
-		PackID:        record.PackID,
-		AgentID:       record.AgentID,
-		CreatedBy:     record.CreatedBy,
-		CreatedAt:     record.CreatedAt,
-		RevokedAt:     record.RevokedAt,
+		WorkerID:       record.WorkerID,
+		TenantID:       record.TenantID,
+		AllowedPools:   record.AllowedPools,
+		AllowedTopics:  record.AllowedTopics,
+		PackID:         record.PackID,
+		AgentID:        record.AgentID,
+		ProofKeyID:     record.ProofKeyID,
+		ProofAlgorithm: record.ProofAlgorithm,
+		CreatedBy:      record.CreatedBy,
+		CreatedAt:      record.CreatedAt,
+		RevokedAt:      record.RevokedAt,
 	}
 }

@@ -2,7 +2,7 @@ package scheduler
 
 // Phase-2 boundary-hardening worker session tokens.
 //
-// On a successful handshake (cap/sdk/go.HandshakeRequest), the scheduler
+// On a successful authenticated protobuf trust handshake, the scheduler
 // mints an Ed25519-signed session token that the worker attaches to every
 // subsequent BusPacket. Token verification is the authoritative trust
 // signal the scheduler uses for dispatch and policy decisions; heartbeat
@@ -22,8 +22,9 @@ package scheduler
 //
 // Redis layout:
 //
-//   session:worker:<agent_id>       JSON {"jti","exp_unix"} TTL = exp - now
-//   session:revoked:<tenant>:<jti>  "1" with TTL = exp - now
+//   session:worker:<agent_id>                  legacy active session
+//   session:worker:v2:<tenant_b64>:<worker_b64> authenticated active session
+//   session:revoked:<tenant>:<jti>             "1" with TTL = exp - now
 //
 // The per-agent record lets the handler invalidate the prior token on
 // renew (single active token per worker). The per-tenant revocation key
@@ -77,6 +78,9 @@ var (
 type SessionTokenClaims struct {
 	Subject    string    `json:"sub"`
 	Tenant     string    `json:"tenant"`
+	Audience   string    `json:"aud,omitempty"`
+	AgentID    string    `json:"agent_id,omitempty"`
+	ProofKeyID string    `json:"proof_key_id,omitempty"`
 	SDKVersion string    `json:"sdk_ver"`
 	JTI        string    `json:"jti"`
 	IssuedAt   time.Time `json:"iat"`
@@ -97,6 +101,9 @@ func (c SessionTokenClaims) Validate() error {
 	}
 	if strings.TrimSpace(c.SDKVersion) == "" {
 		missing = append(missing, "sdk_ver")
+	}
+	if c.hasBindingClaims() {
+		missing = append(missing, c.missingBindingClaims()...)
 	}
 	if strings.TrimSpace(c.JTI) == "" {
 		missing = append(missing, "jti")
@@ -262,39 +269,11 @@ func (i *SessionTokenIssuer) Verify(ctx context.Context, token string, checkActi
 	return claims, nil
 }
 
-// Renew validates the prior token (signature + structural claims; expiry
-// is allowed within skew so a worker that was briefly offline can still
-// renew), revokes its JTI, and issues a fresh token for the same
-// (agent, tenant, sdkVer). A token whose signature does not verify or
-// whose exp is older than skew is refused.
+// Renew validates the prior token and atomically rotates it only if it is still
+// the current active session. Redis is mandatory for renewal; an untracked,
+// revoked, superseded, or unavailable session always fails closed.
 func (i *SessionTokenIssuer) Renew(ctx context.Context, token string) (string, SessionTokenClaims, error) {
-	if i == nil {
-		return "", SessionTokenClaims{}, ErrSessionTokenStoreUnready
-	}
-	claims, typ, err := i.parseAndVerifySignature(token)
-	if err != nil {
-		return "", SessionTokenClaims{}, err
-	}
-	// Only worker session tokens may be renewed; a stateless service token has
-	// no active record to rotate.
-	if typ != servicetoken.TypSession {
-		return "", SessionTokenClaims{}, fmt.Errorf("%w: only session tokens may be renewed", ErrSessionTokenMalformed)
-	}
-	now := i.now().UTC()
-	if claims.ExpiresAt.Add(i.skew).Before(now) {
-		return "", SessionTokenClaims{}, ErrSessionTokenExpired
-	}
-	if claims.IssuedAt.After(now.Add(i.skew)) {
-		return "", SessionTokenClaims{}, ErrSessionTokenNotYetValid
-	}
-	if i.redis != nil {
-		if revoked, err := i.isRevoked(ctx, claims.Tenant, claims.JTI); err != nil {
-			return "", SessionTokenClaims{}, err
-		} else if revoked {
-			return "", SessionTokenClaims{}, ErrSessionTokenRevoked
-		}
-	}
-	return i.Issue(ctx, claims.Subject, claims.Tenant, claims.SDKVersion)
+	return i.renew(ctx, token, nil)
 }
 
 // VerifyService verifies a control-plane SERVICE token (typ=cordum-service):
@@ -354,20 +333,34 @@ func (i *SessionTokenIssuer) Revoke(ctx context.Context, tenant, jti string, exp
 	return i.redis.Set(ctx, key, "1", ttl).Err()
 }
 
-// RevokeByAgent revokes the currently active token for agent (looked up
-// from the per-agent record). Returns nil if no active token is on file.
+// RevokeByAgent preserves the legacy API contract: agentID identifies the
+// subject stored at session:worker:<agentID>. During migration it also checks a
+// bound worker record with the same identifier. New worker-ID callers should
+// use RevokeByWorker so the authority being revoked is explicit.
 func (i *SessionTokenIssuer) RevokeByAgent(ctx context.Context, tenant, agentID string) error {
+	return i.revokeByIdentifier(ctx, tenant, agentID)
+}
+
+// RevokeByWorker revokes the tenant-scoped bound worker session and any legacy
+// session whose subject is the same worker ID. Returns nil if neither is active.
+func (i *SessionTokenIssuer) RevokeByWorker(ctx context.Context, tenant, workerID string) error {
+	return i.revokeByIdentifier(ctx, tenant, workerID)
+}
+
+func (i *SessionTokenIssuer) revokeByIdentifier(ctx context.Context, tenant, identifier string) error {
 	if i == nil || i.redis == nil {
 		return ErrSessionTokenStoreUnready
 	}
-	rec, err := i.loadActive(ctx, agentID)
+	records, err := i.loadRevocationTargets(ctx, tenant, identifier)
 	if err != nil {
 		return err
 	}
-	if rec == nil {
-		return nil
+	for _, rec := range records {
+		if err := i.Revoke(ctx, rec.Tenant, rec.JTI, time.Unix(rec.ExpUnix, 0)); err != nil {
+			return err
+		}
 	}
-	return i.Revoke(ctx, tenant, rec.JTI, time.Unix(rec.ExpUnix, 0))
+	return nil
 }
 
 // signClaims serialises claims and produces a compact JWS-like token.
@@ -477,7 +470,7 @@ func (i *SessionTokenIssuer) assertActive(ctx context.Context, claims SessionTok
 	} else if revoked {
 		return ErrSessionTokenRevoked
 	}
-	rec, err := i.loadActive(ctx, claims.Subject)
+	rec, err := i.loadActiveForClaims(ctx, claims)
 	if err != nil {
 		return err
 	}
@@ -491,7 +484,7 @@ func (i *SessionTokenIssuer) assertActive(ctx context.Context, claims SessionTok
 	if rec.JTI != claims.JTI {
 		return ErrSessionTokenSuperseded
 	}
-	return nil
+	return rec.validateClaims(claims)
 }
 
 func (i *SessionTokenIssuer) persistIssue(ctx context.Context, claims SessionTokenClaims) error {
@@ -500,17 +493,24 @@ func (i *SessionTokenIssuer) persistIssue(ctx context.Context, claims SessionTok
 	}
 	// Read prior record (if any) and revoke it so the previously issued
 	// token cannot still authorise inbound packets.
-	prior, err := i.loadActive(ctx, claims.Subject)
+	prior, err := i.loadActiveForClaims(ctx, claims)
 	if err != nil {
 		return err
 	}
 	if prior != nil && prior.JTI != claims.JTI {
-		// Best-effort revoke of the prior JTI; ignore failures from
-		// already-expired entries (Set with negative TTL returns from
-		// our Revoke as nil).
-		_ = i.Revoke(ctx, claims.Tenant, prior.JTI, time.Unix(prior.ExpUnix, 0))
+		if claims.hasBindingClaims() {
+			if err := prior.validateStoredBinding(claims.Tenant, claims.Subject); err != nil {
+				return err
+			}
+		}
+		// Revoke returns nil for already-expired entries. Every real store
+		// failure must abort before the active record is replaced; otherwise a
+		// caller could receive fresh authority while the old token stays live.
+		if err := i.Revoke(ctx, prior.Tenant, prior.JTI, time.Unix(prior.ExpUnix, 0)); err != nil {
+			return fmt.Errorf("scheduler: revoke prior session: %w", err)
+		}
 	}
-	rec := activeRecord{JTI: claims.JTI, ExpUnix: claims.ExpiresAt.Unix(), Tenant: claims.Tenant}
+	rec := newActiveRecord(claims)
 	payload, err := json.Marshal(rec)
 	if err != nil {
 		return fmt.Errorf("scheduler: marshal active record: %w", err)
@@ -519,7 +519,7 @@ func (i *SessionTokenIssuer) persistIssue(ctx context.Context, claims SessionTok
 	if ttl <= 0 {
 		return ErrSessionTokenExpired
 	}
-	return i.redis.Set(ctx, workerKey(claims.Subject), payload, ttl).Err()
+	return i.redis.Set(ctx, activeKeyForClaims(claims), payload, ttl).Err()
 }
 
 func (i *SessionTokenIssuer) loadActive(ctx context.Context, agentID string) (*activeRecord, error) {
@@ -546,9 +546,14 @@ func (i *SessionTokenIssuer) isRevoked(ctx context.Context, tenant, jti string) 
 }
 
 type activeRecord struct {
-	JTI     string `json:"jti"`
-	ExpUnix int64  `json:"exp_unix"`
-	Tenant  string `json:"tenant"`
+	JTI        string `json:"jti"`
+	ExpUnix    int64  `json:"exp_unix"`
+	WorkerID   string `json:"worker_id,omitempty"`
+	AgentID    string `json:"agent_id,omitempty"`
+	Tenant     string `json:"tenant"`
+	Audience   string `json:"aud,omitempty"`
+	ProofKeyID string `json:"proof_key_id,omitempty"`
+	SDKVersion string `json:"sdk_ver,omitempty"`
 }
 
 // parseActiveRecord decodes the JSON active-token record persisted by

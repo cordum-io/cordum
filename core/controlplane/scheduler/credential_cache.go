@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sort"
 	"strings"
@@ -17,6 +18,7 @@ const (
 	WorkerAttestationOff     WorkerAttestationMode = "off"
 	WorkerAttestationWarn    WorkerAttestationMode = "warn"
 	WorkerAttestationEnforce WorkerAttestationMode = "enforce"
+	EnvWorkerAttestation                           = "WORKER_ATTESTATION"
 )
 
 func ParseWorkerAttestationMode(raw string) WorkerAttestationMode {
@@ -29,6 +31,21 @@ func ParseWorkerAttestationMode(raw string) WorkerAttestationMode {
 		return WorkerAttestationOff
 	default:
 		return WorkerAttestationOff
+	}
+}
+
+// ParseWorkerAttestationModeStrict validates scheduler boot configuration.
+// The permissive parser remains for compatibility at non-boot call sites.
+func ParseWorkerAttestationModeStrict(raw string) (WorkerAttestationMode, error) {
+	normalized := strings.ToLower(strings.TrimSpace(raw))
+	if normalized == "" {
+		return WorkerAttestationOff, nil
+	}
+	switch WorkerAttestationMode(normalized) {
+	case WorkerAttestationOff, WorkerAttestationWarn, WorkerAttestationEnforce:
+		return WorkerAttestationMode(normalized), nil
+	default:
+		return "", fmt.Errorf("%s must be off, warn, or enforce", EnvWorkerAttestation)
 	}
 }
 
@@ -48,8 +65,10 @@ type WorkerCredentialCache struct {
 	service *workercredentials.Service
 	list    func(context.Context) ([]workercredentials.Credential, error)
 
-	mu      sync.RWMutex
-	records map[string]workercredentials.Credential
+	mu             sync.RWMutex
+	records        map[string]workercredentials.Credential
+	authority      map[string]workercredentials.Credential
+	authorityReady bool
 
 	refreshing atomic.Bool
 }
@@ -63,7 +82,8 @@ func NewWorkerCredentialCache(service *workercredentials.Service) *WorkerCredent
 			}
 			return service.List(ctx, "")
 		},
-		records: map[string]workercredentials.Credential{},
+		records:   map[string]workercredentials.Credential{},
+		authority: map[string]workercredentials.Credential{},
 	}
 }
 
@@ -75,6 +95,7 @@ func (c *WorkerCredentialCache) Refresh(ctx context.Context) error {
 		return nil
 	}
 	defer c.refreshing.Store(false)
+	c.clearAuthority()
 
 	list := c.list
 	if list == nil && c.service != nil {
@@ -97,6 +118,8 @@ func (c *WorkerCredentialCache) Refresh(ctx context.Context) error {
 	}
 
 	c.mu.Lock()
+	c.authority = cloneCredentialMap(next)
+	c.authorityReady = true
 	if c.records == nil {
 		c.records = make(map[string]workercredentials.Credential, len(next))
 	}
@@ -143,6 +166,63 @@ func (c *WorkerCredentialCache) Verify(workerID, token string) (*workercredentia
 		return nil, false, err
 	}
 	return &record, ok, nil
+}
+
+func (c *WorkerCredentialCache) clearAuthority() {
+	c.mu.Lock()
+	c.authority = nil
+	c.authorityReady = false
+	c.mu.Unlock()
+}
+
+func cloneCredentialMap(records map[string]workercredentials.Credential) map[string]workercredentials.Credential {
+	clone := make(map[string]workercredentials.Credential, len(records))
+	for workerID, record := range records {
+		clone[workerID] = cloneCredentialRecord(record)
+	}
+	return clone
+}
+
+// Lookup returns an immutable snapshot of the active worker credential.
+// It is intentionally separate from Verify: authenticated session tokens bind
+// to the enrolled proof authority rather than the legacy bearer credential.
+func (c *WorkerCredentialCache) Lookup(workerID string) (*workercredentials.Credential, bool) {
+	if c == nil || c.refreshing.Load() {
+		return nil, false
+	}
+	workerID = strings.TrimSpace(workerID)
+	if workerID == "" {
+		return nil, false
+	}
+	c.mu.RLock()
+	record, ok := c.authority[workerID]
+	ready := c.authorityReady
+	refreshing := c.refreshing.Load()
+	record = cloneCredentialRecord(record)
+	c.mu.RUnlock()
+	if refreshing || !ready || !ok || record.Revoked() {
+		return nil, false
+	}
+	return &record, true
+}
+
+// RefreshAuthority synchronously reloads the canonical authorization snapshot.
+// A concurrent or failed refresh is unavailable rather than stale authority.
+func (c *WorkerCredentialCache) RefreshAuthority(ctx context.Context) bool {
+	if c == nil {
+		return false
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := c.Refresh(ctx); err != nil || c.refreshing.Load() {
+		return false
+	}
+	c.mu.RLock()
+	ready := c.authorityReady
+	refreshing := c.refreshing.Load()
+	c.mu.RUnlock()
+	return ready && !refreshing
 }
 
 func cloneCredentialRecord(record workercredentials.Credential) workercredentials.Credential {

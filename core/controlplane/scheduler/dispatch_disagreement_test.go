@@ -103,21 +103,17 @@ func TestEngine_WarnModeFlowEmitsPerWorker(t *testing.T) {
 		Now:      clk.Now,
 	})
 	defer cleanup()
-	resolver := NewTrustResolver(rdb).WithClock(clk.Now)
+	resolver, credentials := newBoundDispatchResolverForTest(t, rdb)
+	resolver.WithClock(clk.Now)
 
 	reg := NewMemoryRegistry()
 	defer reg.Close()
 	ctx := context.Background()
 	// valid + stale ⇒ session_allows_heartbeat_blocks
-	if _, _, err := issuer.Issue(ctx, "w-allow", "tenant-w", "v1"); err != nil {
-		t.Fatalf("issue allow: %v", err)
-	}
+	issueDispatchSession(t, ctx, issuer, credentials, "w-allow", "tenant-w")
 	reg.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "w-allow", Pool: "p"})
 	// revoked + fresh ⇒ session_blocks_heartbeat_allows
-	_, claims, err := issuer.Issue(ctx, "w-block", "tenant-w", "v1")
-	if err != nil {
-		t.Fatalf("issue block: %v", err)
-	}
+	claims := issueDispatchSession(t, ctx, issuer, credentials, "w-block", "tenant-w")
 	if err := issuer.Revoke(ctx, claims.Tenant, claims.JTI, claims.ExpiresAt); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
@@ -171,14 +167,13 @@ func TestEngine_TelemetryModeDoesNotEmitDisagreement(t *testing.T) {
 		Now:      clk.Now,
 	})
 	defer cleanup()
-	resolver := NewTrustResolver(rdb).WithClock(clk.Now)
+	resolver, credentials := newBoundDispatchResolverForTest(t, rdb)
+	resolver.WithClock(clk.Now)
 
 	reg := NewMemoryRegistry()
 	defer reg.Close()
 	ctx := context.Background()
-	if _, _, err := issuer.Issue(ctx, "w1", "t", "v1"); err != nil {
-		t.Fatalf("issue: %v", err)
-	}
+	issueDispatchSession(t, ctx, issuer, credentials, "w1", "t")
 	reg.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "w1", Pool: "p"})
 	// Make heartbeat stale.
 	reg.mu.Lock()

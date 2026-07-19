@@ -8,7 +8,9 @@
 # --strict  Treat warnings as errors.
 
 set -euo pipefail
-cd "$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="${CORDUM_DEPLOY_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || echo .)}"
+cd "$ROOT"
 
 STRICT=false
 [[ "${1:-}" == "--strict" ]] && STRICT=true
@@ -243,6 +245,29 @@ if [ -f "$RELEASE_COMPOSE" ]; then
       fail "Release compose missing required-or-fail for $VARNAME"
     fi
   done
+fi
+
+# ─────────────────────────────────────────────────────────
+# Gate 9: Worker trust defaults and active Helm authority refs
+# ─────────────────────────────────────────────────────────
+echo ""
+echo "=== Gate 9: Worker trust deployment contract ==="
+TRUST_CHECKER="$SCRIPT_DIR/validate_worker_trust_manifests.py"
+if [ -f "$TRUST_CHECKER" ]; then
+  set +e
+  TRUST_RESULTS=$(python "$TRUST_CHECKER" "$ROOT" 2>&1)
+  TRUST_EXIT=$?
+  set -e
+  while IFS=: read -r status message; do
+    [ -z "$status" ] && continue
+    case "$status" in
+      FAIL) fail "$message" ;;
+      OK) info "$message" ;;
+    esac
+  done <<< "$TRUST_RESULTS"
+  [ "$TRUST_EXIT" -ne 0 ] && fail "worker trust manifest checker failed (exit $TRUST_EXIT)"
+else
+  fail "worker trust manifest checker is missing"
 fi
 
 # ─────────────────────────────────────────────────────────
