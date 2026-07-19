@@ -81,21 +81,22 @@ func IsReservedIdentity(subject string) bool {
 }
 
 // Claims are the JWT-style claims of a token. The JSON tags MUST match
-// scheduler.SessionTokenClaims so the scheduler's verifier decodes a service
-// token's claims correctly; this is pinned by a cross-package round-trip test
-// (MintService -> scheduler.VerifyService).
+// scheduler.SessionTokenClaims. Audience, AgentID, and ProofKeyID are populated
+// only for proof-bound worker sessions; stateless service tokens omit them.
 type Claims struct {
 	Subject    string    `json:"sub"`
 	Tenant     string    `json:"tenant"`
+	Audience   string    `json:"aud,omitempty"`
+	AgentID    string    `json:"agent_id,omitempty"`
+	ProofKeyID string    `json:"proof_key_id,omitempty"`
 	SDKVersion string    `json:"sdk_ver"`
 	JTI        string    `json:"jti"`
 	IssuedAt   time.Time `json:"iat"`
 	ExpiresAt  time.Time `json:"exp"`
 }
 
-// Validate ensures every required claim is present and exp is strictly after
-// iat. It mirrors scheduler.SessionTokenClaims.Validate so a service token and
-// a worker token are held to the same structural bar.
+// Validate checks the claims shared by both token kinds. The scheduler applies
+// the additional proof-bound worker requirements on session-token paths.
 func (c Claims) Validate() error {
 	var missing []string
 	if strings.TrimSpace(c.Subject) == "" {

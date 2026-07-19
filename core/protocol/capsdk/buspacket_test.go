@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func TestValidateBusPacket(t *testing.T) {
@@ -46,8 +47,11 @@ func TestValidateBusPacket(t *testing.T) {
 			errContains: "trace_id",
 		},
 		{
-			name:    "valid",
-			pkt:     &pb.BusPacket{TraceId: "t", SenderId: "s", Payload: validPayload},
+			name: "valid",
+			pkt: &pb.BusPacket{
+				TraceId: "t", SenderId: "s", ProtocolVersion: DefaultProtocolVersion,
+				CreatedAt: timestamppb.Now(), Payload: validPayload,
+			},
 			wantErr: false,
 		},
 	}

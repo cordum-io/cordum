@@ -158,6 +158,72 @@ are warned about in NOTES.txt but not blocked (legitimate use cases exist).
 {{- if and .Values.global.production .Values.redis.auth.enabled (not .Values.redis.auth.password) (not .Values.redis.auth.existingSecret) -}}
 {{- fail "FATAL: Redis auth is enabled in production mode but no password or existingSecret is configured" -}}
 {{- end -}}
+{{- include "cordum.validateWorkerTrust" . -}}
+{{- end -}}
+
+{{- define "cordum.validateWorkerTrust" -}}
+{{- $trust := .Values.workerTrust -}}
+{{- $mode := $trust.mode | default "" -}}
+{{- $heartbeat := $trust.heartbeatMode | default "" -}}
+{{- if not (has $mode (list "off" "warn" "enforce")) -}}
+{{- fail "FATAL: workerTrust.mode must be off, warn, or enforce" -}}
+{{- end -}}
+{{- if not (has $heartbeat (list "authority" "warn" "telemetry")) -}}
+{{- fail "FATAL: workerTrust.heartbeatMode must be authority, warn, or telemetry" -}}
+{{- end -}}
+{{- if and (eq $mode "off") (ne $heartbeat "authority") -}}
+{{- fail "FATAL: workerTrust.mode=off requires workerTrust.heartbeatMode=authority" -}}
+{{- end -}}
+{{- if and (ne $mode "off") (eq $heartbeat "authority") -}}
+{{- fail "FATAL: active workerTrust.mode requires heartbeatMode=warn or telemetry" -}}
+{{- end -}}
+{{- if ne $mode "off" -}}
+{{- if ne (.Values.scheduler.env.workerAttestation | default "off") "off" -}}
+{{- fail "FATAL: active workerTrust.mode requires scheduler.env.workerAttestation=off" -}}
+{{- end -}}
+{{- $required := dict
+  "workerTrust.schedulerId" $trust.schedulerId
+  "workerTrust.schedulerKeyId" $trust.schedulerKeyId
+  "workerTrust.schedulerProof.privateKeySecret.name" $trust.schedulerProof.privateKeySecret.name
+  "workerTrust.schedulerProof.privateKeySecret.key" $trust.schedulerProof.privateKeySecret.key
+  "workerTrust.schedulerProof.publicKeySecret.name" $trust.schedulerProof.publicKeySecret.name
+  "workerTrust.schedulerProof.publicKeySecret.key" $trust.schedulerProof.publicKeySecret.key
+  "workerTrust.sessionSigning.keyId" $trust.sessionSigning.keyId
+  "workerTrust.sessionSigning.privateKeySecret.name" $trust.sessionSigning.privateKeySecret.name
+  "workerTrust.sessionSigning.privateKeySecret.key" $trust.sessionSigning.privateKeySecret.key
+  "workerTrust.sessionSigning.publicKeySecret.name" $trust.sessionSigning.publicKeySecret.name
+  "workerTrust.sessionSigning.publicKeySecret.key" $trust.sessionSigning.publicKeySecret.key -}}
+{{- range $name, $value := $required -}}
+{{- if not $value -}}{{- fail (printf "FATAL: %s is required for active workerTrust.mode" $name) -}}{{- end -}}
+{{- end -}}
+{{- if not (regexMatch "^[A-Za-z0-9_]+$" $trust.sessionSigning.keyId) -}}
+{{- fail "FATAL: workerTrust.sessionSigning.keyId must contain only letters, digits, or underscore" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "cordum.workerTrustModeEnv" -}}
+- name: CORDUM_SDK_HANDSHAKE
+  value: {{ .Values.workerTrust.mode | quote }}
+- name: CORDUM_HEARTBEAT_MODE
+  value: {{ .Values.workerTrust.heartbeatMode | quote }}
+{{- end -}}
+
+{{- define "cordum.workerSessionSigningEnv" -}}
+{{- if ne .Values.workerTrust.mode "off" }}
+- name: CORDUM_POLICY_SIGNING_KEY_ID
+  value: {{ .Values.workerTrust.sessionSigning.keyId | quote }}
+- name: CORDUM_POLICY_SIGNING_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.workerTrust.sessionSigning.privateKeySecret.name | quote }}
+      key: {{ .Values.workerTrust.sessionSigning.privateKeySecret.key | quote }}
+- name: {{ printf "CORDUM_POLICY_PUBLIC_KEY_%s" (upper .Values.workerTrust.sessionSigning.keyId) }}
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.workerTrust.sessionSigning.publicKeySecret.name | quote }}
+      key: {{ .Values.workerTrust.sessionSigning.publicKeySecret.key | quote }}
+{{- end }}
 {{- end -}}
 
 {{- define "cordum.safetyKernelAddr" -}}

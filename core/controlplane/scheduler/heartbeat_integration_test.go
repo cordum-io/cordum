@@ -51,14 +51,13 @@ func TestHeartbeatDemotion_AuthorityModeBlocksStaleHeartbeat(t *testing.T) {
 		Now:      clk.Now,
 	})
 	defer cleanup()
-	resolver := NewTrustResolver(rdb).WithClock(clk.Now)
+	resolver, credentials := newBoundDispatchResolverForTest(t, rdb)
+	resolver.WithClock(clk.Now)
 
 	reg := NewMemoryRegistry()
 	defer reg.Close()
 	ctx := context.Background()
-	if _, _, err := issuer.Issue(ctx, "w-auth", "tenant-auth", "v1"); err != nil {
-		t.Fatalf("issue: %v", err)
-	}
+	issueDispatchSession(t, ctx, issuer, credentials, "w-auth", "tenant-auth")
 	reg.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "w-auth", Pool: "p"})
 	staleHeartbeatSince(reg)
 
@@ -80,14 +79,13 @@ func TestHeartbeatDemotion_TelemetryModeDispatchesStaleHeartbeat(t *testing.T) {
 		Now:      clk.Now,
 	})
 	defer cleanup()
-	resolver := NewTrustResolver(rdb).WithClock(clk.Now)
+	resolver, credentials := newBoundDispatchResolverForTest(t, rdb)
+	resolver.WithClock(clk.Now)
 
 	reg := NewMemoryRegistry()
 	defer reg.Close()
 	ctx := context.Background()
-	if _, _, err := issuer.Issue(ctx, "w-tel", "tenant-tel", "v1"); err != nil {
-		t.Fatalf("issue: %v", err)
-	}
+	issueDispatchSession(t, ctx, issuer, credentials, "w-tel", "tenant-tel")
 	reg.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "w-tel", Pool: "p"})
 	staleHeartbeatSince(reg)
 
@@ -114,15 +112,13 @@ func TestHeartbeatDemotion_RevokedSessionBlocksFreshHeartbeat(t *testing.T) {
 		Now:      clk.Now,
 	})
 	defer cleanup()
-	resolver := NewTrustResolver(rdb).WithClock(clk.Now)
+	resolver, credentials := newBoundDispatchResolverForTest(t, rdb)
+	resolver.WithClock(clk.Now)
 
 	reg := NewMemoryRegistry()
 	defer reg.Close()
 	ctx := context.Background()
-	_, claims, err := issuer.Issue(ctx, "w-rev", "tenant-rev", "v1")
-	if err != nil {
-		t.Fatalf("issue: %v", err)
-	}
+	claims := issueDispatchSession(t, ctx, issuer, credentials, "w-rev", "tenant-rev")
 	reg.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "w-rev", Pool: "p"})
 	// Heartbeat is fresh here — lastSeen = time.Now().
 
@@ -150,23 +146,19 @@ func TestHeartbeatDemotion_WarnModeEmitsDisagreementsOnBothSides(t *testing.T) {
 		Now:      clk.Now,
 	})
 	defer cleanup()
-	resolver := NewTrustResolver(rdb).WithClock(clk.Now)
+	resolver, credentials := newBoundDispatchResolverForTest(t, rdb)
+	resolver.WithClock(clk.Now)
 
 	reg := NewMemoryRegistry()
 	defer reg.Close()
 	ctx := context.Background()
 
 	// A: valid + stale ⇒ session_allows_heartbeat_blocks.
-	if _, _, err := issuer.Issue(ctx, "w-allow", "tenant-w", "v1"); err != nil {
-		t.Fatalf("issue A: %v", err)
-	}
+	issueDispatchSession(t, ctx, issuer, credentials, "w-allow", "tenant-w")
 	reg.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "w-allow", Pool: "p"})
 
 	// B: revoked + fresh ⇒ session_blocks_heartbeat_allows.
-	_, claimsB, err := issuer.Issue(ctx, "w-block", "tenant-w", "v1")
-	if err != nil {
-		t.Fatalf("issue B: %v", err)
-	}
+	claimsB := issueDispatchSession(t, ctx, issuer, credentials, "w-block", "tenant-w")
 	if err := issuer.Revoke(ctx, claimsB.Tenant, claimsB.JTI, claimsB.ExpiresAt); err != nil {
 		t.Fatalf("revoke B: %v", err)
 	}
@@ -208,14 +200,13 @@ func TestHeartbeatDemotion_ModeFlipFlipsOutcome(t *testing.T) {
 		Now:      clk.Now,
 	})
 	defer cleanup()
-	resolver := NewTrustResolver(rdb).WithClock(clk.Now)
+	resolver, credentials := newBoundDispatchResolverForTest(t, rdb)
+	resolver.WithClock(clk.Now)
 
 	reg := NewMemoryRegistry()
 	defer reg.Close()
 	ctx := context.Background()
-	if _, _, err := issuer.Issue(ctx, "w-flip", "tenant-flip", "v1"); err != nil {
-		t.Fatalf("issue: %v", err)
-	}
+	issueDispatchSession(t, ctx, issuer, credentials, "w-flip", "tenant-flip")
 	reg.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "w-flip", Pool: "p"})
 	staleHeartbeatSince(reg)
 
@@ -272,9 +263,10 @@ func TestHeartbeatFlushOnOnlineTransition_DispatchesPendingJobs(t *testing.T) {
 	// First heartbeat for this worker → offline→online transition →
 	// scheduler flushes pending dispatch for pool "integration".
 	packet := &pb.BusPacket{
-		SenderId:  "worker-integration",
-		TraceId:   "trace-integration",
-		CreatedAt: timestamppb.Now(),
+		SenderId:        "worker-integration",
+		TraceId:         "trace-integration",
+		ProtocolVersion: protocolVersionV1,
+		CreatedAt:       timestamppb.Now(),
 		Payload: &pb.BusPacket_Heartbeat{
 			Heartbeat: &pb.Heartbeat{
 				WorkerId: "worker-integration",

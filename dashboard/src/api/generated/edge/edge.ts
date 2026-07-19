@@ -263,7 +263,7 @@ export const getListEdgeSessionsQueryOptions = <
     Awaited<ReturnType<typeof listEdgeSessions>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListEdgeSessionsQueryResult = NonNullable<
@@ -303,7 +303,7 @@ export function useListEdgeSessions<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListEdgeSessions<
   TData = Awaited<ReturnType<typeof listEdgeSessions>>,
@@ -332,7 +332,9 @@ export function useListEdgeSessions<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListEdgeSessions<
   TData = Awaited<ReturnType<typeof listEdgeSessions>>,
   TError =
@@ -352,7 +354,9 @@ export function useListEdgeSessions<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List Edge sessions for a tenant
  */
@@ -376,13 +380,15 @@ export function useListEdgeSessions<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListEdgeSessionsQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -438,7 +444,7 @@ export const getGetEdgeSessionQueryOptions = <
     Awaited<ReturnType<typeof getEdgeSession>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetEdgeSessionQueryResult = NonNullable<
@@ -476,7 +482,7 @@ export function useGetEdgeSession<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetEdgeSession<
   TData = Awaited<ReturnType<typeof getEdgeSession>>,
@@ -502,7 +508,9 @@ export function useGetEdgeSession<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetEdgeSession<
   TData = Awaited<ReturnType<typeof getEdgeSession>>,
   TError =
@@ -519,7 +527,9 @@ export function useGetEdgeSession<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get an Edge session
  */
@@ -540,13 +550,15 @@ export function useGetEdgeSession<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetEdgeSessionQueryOptions(sessionId, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -809,7 +821,7 @@ export const getListEdgeExecutionsQueryOptions = <
     Awaited<ReturnType<typeof listEdgeExecutions>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListEdgeExecutionsQueryResult = NonNullable<
@@ -851,7 +863,7 @@ export function useListEdgeExecutions<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListEdgeExecutions<
   TData = Awaited<ReturnType<typeof listEdgeExecutions>>,
@@ -881,7 +893,9 @@ export function useListEdgeExecutions<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListEdgeExecutions<
   TData = Awaited<ReturnType<typeof listEdgeExecutions>>,
   TError =
@@ -902,7 +916,9 @@ export function useListEdgeExecutions<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List Edge agent executions for a tenant
  */
@@ -927,13 +943,15 @@ export function useListEdgeExecutions<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListEdgeExecutionsQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -1109,7 +1127,7 @@ export const getGetEdgeExecutionQueryOptions = <
     Awaited<ReturnType<typeof getEdgeExecution>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetEdgeExecutionQueryResult = NonNullable<
@@ -1151,7 +1169,7 @@ export function useGetEdgeExecution<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetEdgeExecution<
   TData = Awaited<ReturnType<typeof getEdgeExecution>>,
@@ -1181,7 +1199,9 @@ export function useGetEdgeExecution<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetEdgeExecution<
   TData = Awaited<ReturnType<typeof getEdgeExecution>>,
   TError =
@@ -1202,7 +1222,9 @@ export function useGetEdgeExecution<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get an Edge agent execution
  */
@@ -1227,13 +1249,15 @@ export function useGetEdgeExecution<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetEdgeExecutionQueryOptions(executionId, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -1399,7 +1423,7 @@ export const getListEdgeApprovalsQueryOptions = <
     Awaited<ReturnType<typeof listEdgeApprovals>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListEdgeApprovalsQueryResult = NonNullable<
@@ -1441,7 +1465,7 @@ export function useListEdgeApprovals<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListEdgeApprovals<
   TData = Awaited<ReturnType<typeof listEdgeApprovals>>,
@@ -1471,7 +1495,9 @@ export function useListEdgeApprovals<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListEdgeApprovals<
   TData = Awaited<ReturnType<typeof listEdgeApprovals>>,
   TError =
@@ -1492,7 +1518,9 @@ export function useListEdgeApprovals<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List Edge action approvals
  */
@@ -1517,13 +1545,15 @@ export function useListEdgeApprovals<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListEdgeApprovalsQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -1584,7 +1614,7 @@ export const getGetEdgeApprovalQueryOptions = <
     Awaited<ReturnType<typeof getEdgeApproval>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetEdgeApprovalQueryResult = NonNullable<
@@ -1626,7 +1656,7 @@ export function useGetEdgeApproval<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetEdgeApproval<
   TData = Awaited<ReturnType<typeof getEdgeApproval>>,
@@ -1656,7 +1686,9 @@ export function useGetEdgeApproval<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetEdgeApproval<
   TData = Awaited<ReturnType<typeof getEdgeApproval>>,
   TError =
@@ -1677,7 +1709,9 @@ export function useGetEdgeApproval<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get an Edge action approval
  */
@@ -1702,13 +1736,15 @@ export function useGetEdgeApproval<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetEdgeApprovalQueryOptions(approvalRef, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -2233,7 +2269,7 @@ export const getListEdgeMCPUpstreamsQueryOptions = <
     Awaited<ReturnType<typeof listEdgeMCPUpstreams>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListEdgeMCPUpstreamsQueryResult = NonNullable<
@@ -2275,7 +2311,7 @@ export function useListEdgeMCPUpstreams<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListEdgeMCPUpstreams<
   TData = Awaited<ReturnType<typeof listEdgeMCPUpstreams>>,
@@ -2305,7 +2341,9 @@ export function useListEdgeMCPUpstreams<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListEdgeMCPUpstreams<
   TData = Awaited<ReturnType<typeof listEdgeMCPUpstreams>>,
   TError =
@@ -2326,7 +2364,9 @@ export function useListEdgeMCPUpstreams<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List approved upstream MCP servers
  */
@@ -2351,13 +2391,15 @@ export function useListEdgeMCPUpstreams<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListEdgeMCPUpstreamsQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -2540,7 +2582,7 @@ export const getListEdgeMCPUpstreamsLegacyQueryOptions = <
     Awaited<ReturnType<typeof listEdgeMCPUpstreamsLegacy>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListEdgeMCPUpstreamsLegacyQueryResult = NonNullable<
@@ -2582,7 +2624,7 @@ export function useListEdgeMCPUpstreamsLegacy<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListEdgeMCPUpstreamsLegacy<
   TData = Awaited<ReturnType<typeof listEdgeMCPUpstreamsLegacy>>,
@@ -2612,7 +2654,9 @@ export function useListEdgeMCPUpstreamsLegacy<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListEdgeMCPUpstreamsLegacy<
   TData = Awaited<ReturnType<typeof listEdgeMCPUpstreamsLegacy>>,
   TError =
@@ -2633,7 +2677,9 @@ export function useListEdgeMCPUpstreamsLegacy<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List approved upstream MCP servers (compatibility path)
  */
@@ -2658,7 +2704,9 @@ export function useListEdgeMCPUpstreamsLegacy<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListEdgeMCPUpstreamsLegacyQueryOptions(
     params,
     options,
@@ -2667,7 +2715,7 @@ export function useListEdgeMCPUpstreamsLegacy<
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -2728,7 +2776,7 @@ export const getGetEdgeMCPUpstreamQueryOptions = <
     Awaited<ReturnType<typeof getEdgeMCPUpstream>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetEdgeMCPUpstreamQueryResult = NonNullable<
@@ -2772,7 +2820,7 @@ export function useGetEdgeMCPUpstream<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetEdgeMCPUpstream<
   TData = Awaited<ReturnType<typeof getEdgeMCPUpstream>>,
@@ -2803,7 +2851,9 @@ export function useGetEdgeMCPUpstream<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetEdgeMCPUpstream<
   TData = Awaited<ReturnType<typeof getEdgeMCPUpstream>>,
   TError =
@@ -2825,7 +2875,9 @@ export function useGetEdgeMCPUpstream<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get an upstream MCP server entry
  */
@@ -2851,13 +2903,15 @@ export function useGetEdgeMCPUpstream<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetEdgeMCPUpstreamQueryOptions(name, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -3678,7 +3732,7 @@ export const getListEdgeSessionEventsQueryOptions = <
     Awaited<ReturnType<typeof listEdgeSessionEvents>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListEdgeSessionEventsQueryResult = NonNullable<
@@ -3723,7 +3777,7 @@ export function useListEdgeSessionEvents<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListEdgeSessionEvents<
   TData = Awaited<ReturnType<typeof listEdgeSessionEvents>>,
@@ -3755,7 +3809,9 @@ export function useListEdgeSessionEvents<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListEdgeSessionEvents<
   TData = Awaited<ReturnType<typeof listEdgeSessionEvents>>,
   TError =
@@ -3778,7 +3834,9 @@ export function useListEdgeSessionEvents<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List Edge events for a session
  */
@@ -3805,7 +3863,9 @@ export function useListEdgeSessionEvents<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListEdgeSessionEventsQueryOptions(
     sessionId,
     params,
@@ -3815,7 +3875,7 @@ export function useListEdgeSessionEvents<
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -4004,7 +4064,7 @@ export const getListEdgeExecutionEventsQueryOptions = <
     Awaited<ReturnType<typeof listEdgeExecutionEvents>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListEdgeExecutionEventsQueryResult = NonNullable<
@@ -4049,7 +4109,7 @@ export function useListEdgeExecutionEvents<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListEdgeExecutionEvents<
   TData = Awaited<ReturnType<typeof listEdgeExecutionEvents>>,
@@ -4081,7 +4141,9 @@ export function useListEdgeExecutionEvents<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListEdgeExecutionEvents<
   TData = Awaited<ReturnType<typeof listEdgeExecutionEvents>>,
   TError =
@@ -4104,7 +4166,9 @@ export function useListEdgeExecutionEvents<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List Edge events for an execution
  */
@@ -4131,7 +4195,9 @@ export function useListEdgeExecutionEvents<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListEdgeExecutionEventsQueryOptions(
     executionId,
     params,
@@ -4141,7 +4207,7 @@ export function useListEdgeExecutionEvents<
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -4311,7 +4377,7 @@ export const getListShadowAgentFindingsQueryOptions = <
     Awaited<ReturnType<typeof listShadowAgentFindings>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListShadowAgentFindingsQueryResult = NonNullable<
@@ -4353,7 +4419,7 @@ export function useListShadowAgentFindings<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListShadowAgentFindings<
   TData = Awaited<ReturnType<typeof listShadowAgentFindings>>,
@@ -4383,7 +4449,9 @@ export function useListShadowAgentFindings<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListShadowAgentFindings<
   TData = Awaited<ReturnType<typeof listShadowAgentFindings>>,
   TError =
@@ -4404,7 +4472,9 @@ export function useListShadowAgentFindings<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List shadow-agent findings
  */
@@ -4429,13 +4499,15 @@ export function useListShadowAgentFindings<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListShadowAgentFindingsQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -4499,7 +4571,7 @@ export const getGetShadowAgentFindingQueryOptions = <
     Awaited<ReturnType<typeof getShadowAgentFinding>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetShadowAgentFindingQueryResult = NonNullable<
@@ -4541,7 +4613,7 @@ export function useGetShadowAgentFinding<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetShadowAgentFinding<
   TData = Awaited<ReturnType<typeof getShadowAgentFinding>>,
@@ -4571,7 +4643,9 @@ export function useGetShadowAgentFinding<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetShadowAgentFinding<
   TData = Awaited<ReturnType<typeof getShadowAgentFinding>>,
   TError =
@@ -4592,7 +4666,9 @@ export function useGetShadowAgentFinding<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get a shadow-agent finding by id
  */
@@ -4617,13 +4693,15 @@ export function useGetShadowAgentFinding<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetShadowAgentFindingQueryOptions(findingId, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -5251,7 +5329,7 @@ export const getGetShadowExceptionQueryOptions = <
     Awaited<ReturnType<typeof getShadowException>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetShadowExceptionQueryResult = NonNullable<
@@ -5295,7 +5373,7 @@ export function useGetShadowException<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetShadowException<
   TData = Awaited<ReturnType<typeof getShadowException>>,
@@ -5326,7 +5404,9 @@ export function useGetShadowException<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetShadowException<
   TData = Awaited<ReturnType<typeof getShadowException>>,
   TError =
@@ -5348,7 +5428,9 @@ export function useGetShadowException<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Read a single shadow exception (EDGE-143.6)
  */
@@ -5374,13 +5456,15 @@ export function useGetShadowException<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetShadowExceptionQueryOptions(exceptionId, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -5563,7 +5647,7 @@ export const getListShadowExceptionsQueryOptions = <
     Awaited<ReturnType<typeof listShadowExceptions>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListShadowExceptionsQueryResult = NonNullable<
@@ -5605,7 +5689,7 @@ export function useListShadowExceptions<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListShadowExceptions<
   TData = Awaited<ReturnType<typeof listShadowExceptions>>,
@@ -5635,7 +5719,9 @@ export function useListShadowExceptions<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListShadowExceptions<
   TData = Awaited<ReturnType<typeof listShadowExceptions>>,
   TError =
@@ -5656,7 +5742,9 @@ export function useListShadowExceptions<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List shadow exceptions for the caller's tenant (EDGE-143.6)
  */
@@ -5681,13 +5769,15 @@ export function useListShadowExceptions<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListShadowExceptionsQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -5882,7 +5972,7 @@ export const getListBinaryVerifyQueryOptions = <
     Awaited<ReturnType<typeof listBinaryVerify>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListBinaryVerifyQueryResult = NonNullable<
@@ -5924,7 +6014,7 @@ export function useListBinaryVerify<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListBinaryVerify<
   TData = Awaited<ReturnType<typeof listBinaryVerify>>,
@@ -5954,7 +6044,9 @@ export function useListBinaryVerify<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListBinaryVerify<
   TData = Awaited<ReturnType<typeof listBinaryVerify>>,
   TError =
@@ -5975,7 +6067,9 @@ export function useListBinaryVerify<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List binary-verify outcomes for a tenant
  */
@@ -6000,13 +6094,15 @@ export function useListBinaryVerify<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListBinaryVerifyQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 

@@ -155,9 +155,7 @@ export const getListUsersQueryKey = () => {
 export const getListUsersQueryOptions = <
   TData = Awaited<ReturnType<typeof listUsers>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(options?: {
   query?: Partial<
     UseQueryOptions<Awaited<ReturnType<typeof listUsers>>, TError, TData>
@@ -175,23 +173,19 @@ export const getListUsersQueryOptions = <
     Awaited<ReturnType<typeof listUsers>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListUsersQueryResult = NonNullable<
   Awaited<ReturnType<typeof listUsers>>
 >;
 export type ListUsersQueryError =
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse;
 
 export function useListUsers<
   TData = Awaited<ReturnType<typeof listUsers>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   options: {
     query: Partial<
@@ -208,14 +202,12 @@ export function useListUsers<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListUsers<
   TData = Awaited<ReturnType<typeof listUsers>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   options?: {
     query?: Partial<
@@ -231,13 +223,13 @@ export function useListUsers<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListUsers<
   TData = Awaited<ReturnType<typeof listUsers>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   options?: {
     query?: Partial<
@@ -245,7 +237,9 @@ export function useListUsers<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List all users
  */
@@ -253,9 +247,7 @@ export function useListUsers<
 export function useListUsers<
   TData = Awaited<ReturnType<typeof listUsers>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   options?: {
     query?: Partial<
@@ -263,13 +255,15 @@ export function useListUsers<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListUsersQueryOptions(options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 

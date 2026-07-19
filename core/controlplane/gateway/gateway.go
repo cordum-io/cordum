@@ -226,13 +226,15 @@ type server struct {
 	edgeRecorder      edgecore.Recorder
 	edgeSweeperCancel context.CancelFunc
 
-	legalHoldStore    *audit.LegalHoldStore
-	statusCacheObj    *statusCache
-	policyShadowStore *policyshadow.Store
-	mcpDenyRing       *denyEventRing
-	sessionIssuer     *scheduler.SessionTokenIssuer
-	trustResolver     *scheduler.TrustResolver
-	heartbeatMode     scheduler.HeartbeatMode
+	legalHoldStore     *audit.LegalHoldStore
+	statusCacheObj     *statusCache
+	policyShadowStore  *policyshadow.Store
+	mcpDenyRing        *denyEventRing
+	sessionIssuer      *scheduler.SessionTokenIssuer
+	serviceTokenMinter serviceTokenMinter
+	trustResolver      *scheduler.TrustResolver
+	heartbeatMode      scheduler.HeartbeatMode
+	handshakeMode      scheduler.HandshakeMode
 
 	apiRL    rateLimiter
 	publicRL rateLimiter
@@ -571,6 +573,10 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		return fmt.Errorf("connect redis job store: %w", err)
 	}
 	defer func() { _ = jobStore.Close() }()
+	gatewayHandshake, err := loadGatewayHandshakeSecurity(jobStore.Client())
+	if err != nil {
+		return fmt.Errorf("gateway worker handshake security configuration invalid: %w", err)
+	}
 
 	decisionLogStore, err := store.NewRedisDecisionLogStore(cfg.RedisURL)
 	if err != nil {
@@ -760,6 +766,9 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		heartbeatMode:          scheduler.ParseHeartbeatMode(os.Getenv(scheduler.EnvHeartbeatMode)),
 		shutdownCh:             make(chan struct{}),
 	}
+	s.WithGatewayHandshakeSecurity(
+		gatewayHandshake.mode, gatewayHandshake.heartbeatMode, gatewayHandshake.issuer,
+	)
 	// Production action-gate pipeline wiring. Must be called after the
 	// server struct is populated (edgeStore + agentIdentityStore must be
 	// non-nil for the gate dependencies to bind) and before any HTTP

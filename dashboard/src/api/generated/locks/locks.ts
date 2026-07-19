@@ -56,9 +56,7 @@ export const getGetLockQueryKey = (params?: GetLockParams) => {
 export const getGetLockQueryOptions = <
   TData = Awaited<ReturnType<typeof getLock>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   params: GetLockParams,
   options?: {
@@ -79,23 +77,19 @@ export const getGetLockQueryOptions = <
     Awaited<ReturnType<typeof getLock>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetLockQueryResult = NonNullable<
   Awaited<ReturnType<typeof getLock>>
 >;
 export type GetLockQueryError =
-  | UnauthorizedResponse
-  | NotFoundResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse;
 
 export function useGetLock<
   TData = Awaited<ReturnType<typeof getLock>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   params: GetLockParams,
   options: {
@@ -113,14 +107,12 @@ export function useGetLock<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetLock<
   TData = Awaited<ReturnType<typeof getLock>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   params: GetLockParams,
   options?: {
@@ -137,13 +129,13 @@ export function useGetLock<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetLock<
   TData = Awaited<ReturnType<typeof getLock>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   params: GetLockParams,
   options?: {
@@ -152,7 +144,9 @@ export function useGetLock<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get lock status for a resource
  */
@@ -160,9 +154,7 @@ export function useGetLock<
 export function useGetLock<
   TData = Awaited<ReturnType<typeof getLock>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   params: GetLockParams,
   options?: {
@@ -171,13 +163,15 @@ export function useGetLock<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetLockQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -199,9 +193,7 @@ export const acquireLock = (lockRequest: LockRequest, signal?: AbortSignal) => {
 
 export const getAcquireLockMutationOptions = <
   TError =
-    | UnauthorizedResponse
-    | ConflictResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ConflictResponse | InternalServerErrorResponse,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -242,18 +234,14 @@ export type AcquireLockMutationResult = NonNullable<
 >;
 export type AcquireLockMutationBody = LockRequest;
 export type AcquireLockMutationError =
-  | UnauthorizedResponse
-  | ConflictResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | ConflictResponse | InternalServerErrorResponse;
 
 /**
  * @summary Acquire a distributed lock
  */
 export const useAcquireLock = <
   TError =
-    | UnauthorizedResponse
-    | ConflictResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ConflictResponse | InternalServerErrorResponse,
   TContext = unknown,
 >(
   options?: {
@@ -290,9 +278,7 @@ export const releaseLock = (lockRequest: LockRequest, signal?: AbortSignal) => {
 
 export const getReleaseLockMutationOptions = <
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -333,18 +319,14 @@ export type ReleaseLockMutationResult = NonNullable<
 >;
 export type ReleaseLockMutationBody = LockRequest;
 export type ReleaseLockMutationError =
-  | UnauthorizedResponse
-  | NotFoundResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse;
 
 /**
  * @summary Release a distributed lock
  */
 export const useReleaseLock = <
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
   TContext = unknown,
 >(
   options?: {
@@ -381,9 +363,7 @@ export const renewLock = (lockRequest: LockRequest, signal?: AbortSignal) => {
 
 export const getRenewLockMutationOptions = <
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -424,18 +404,14 @@ export type RenewLockMutationResult = NonNullable<
 >;
 export type RenewLockMutationBody = LockRequest;
 export type RenewLockMutationError =
-  | UnauthorizedResponse
-  | NotFoundResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse;
 
 /**
  * @summary Renew a distributed lock TTL
  */
 export const useRenewLock = <
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
   TContext = unknown,
 >(
   options?: {
@@ -475,9 +451,7 @@ export const getListAdminLocksQueryKey = () => {
 export const getListAdminLocksQueryOptions = <
   TData = Awaited<ReturnType<typeof listAdminLocks>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
 >(options?: {
   query?: Partial<
     UseQueryOptions<Awaited<ReturnType<typeof listAdminLocks>>, TError, TData>
@@ -495,23 +469,19 @@ export const getListAdminLocksQueryOptions = <
     Awaited<ReturnType<typeof listAdminLocks>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListAdminLocksQueryResult = NonNullable<
   Awaited<ReturnType<typeof listAdminLocks>>
 >;
 export type ListAdminLocksQueryError =
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | ServiceUnavailableResponse;
+  UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse;
 
 export function useListAdminLocks<
   TData = Awaited<ReturnType<typeof listAdminLocks>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
 >(
   options: {
     query: Partial<
@@ -528,14 +498,12 @@ export function useListAdminLocks<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListAdminLocks<
   TData = Awaited<ReturnType<typeof listAdminLocks>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
 >(
   options?: {
     query?: Partial<
@@ -551,13 +519,13 @@ export function useListAdminLocks<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListAdminLocks<
   TData = Awaited<ReturnType<typeof listAdminLocks>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
 >(
   options?: {
     query?: Partial<
@@ -565,7 +533,9 @@ export function useListAdminLocks<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List active distributed locks
  */
@@ -573,9 +543,7 @@ export function useListAdminLocks<
 export function useListAdminLocks<
   TData = Awaited<ReturnType<typeof listAdminLocks>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
 >(
   options?: {
     query?: Partial<
@@ -583,13 +551,15 @@ export function useListAdminLocks<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListAdminLocksQueryOptions(options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
