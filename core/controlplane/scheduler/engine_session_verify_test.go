@@ -68,7 +68,7 @@ func TestEngine_VerifySessionToken_ValidTokenPasses(t *testing.T) {
 	issuer, _, _, cleanup := newTestIssuer(t, SessionTokenIssuerOptions{})
 	defer cleanup()
 	ctx := context.Background()
-	token, _, err := issuer.Issue(ctx, "w-ok", "tenant-ok", "v1")
+	token, _, err := issuer.IssueBound(ctx, boundTestBinding("w-ok", "tenant-ok", "v1"))
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestEngine_VerifySessionToken_RevokedTokenRejects(t *testing.T) {
 	issuer, _, _, cleanup := newTestIssuer(t, SessionTokenIssuerOptions{})
 	defer cleanup()
 	ctx := context.Background()
-	token, claims, err := issuer.Issue(ctx, "w-rev", "tenant-rev", "v1")
+	token, claims, err := issuer.IssueBound(ctx, boundTestBinding("w-rev", "tenant-rev", "v1"))
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}

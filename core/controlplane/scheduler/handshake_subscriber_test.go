@@ -91,7 +91,7 @@ func assertAuthenticatedRegistrations(t *testing.T, bus *fakeHandshakeResponder)
 
 func assertLegacySubjectsUnregistered(t *testing.T, bus *fakeHandshakeResponder, service *fakeHandshakeProtocolService) {
 	t.Helper()
-	legacySubjects := []string{capsdk.WorkerHandshakeSubject, capsdk.WorkerHandshakeRenewSubject, capsdk.SubjectHandshake}
+	legacySubjects := []string{"sys.worker.handshake", "sys.worker.handshake.renew", capsdk.SubjectHandshake}
 	for _, legacy := range legacySubjects {
 		if _, err := bus.invoke(context.Background(), legacy, nil); !errors.Is(err, errNoHandshakeRegistration) {
 			t.Fatalf("legacy subject %q has a responder: %v", legacy, err)

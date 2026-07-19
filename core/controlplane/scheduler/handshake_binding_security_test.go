@@ -107,7 +107,9 @@ func TestHandshakeServiceSecurity_RejectsUnknownNestedFields(t *testing.T) {
 	defer fixture.cleanup()
 	packet := protocolAuthenticate(t, fixture, issuedProtocolChallenge(t, fixture), "")
 	packet.GetWorkerHandshakeAuthenticate().CapabilityHandshake.ProtoReflect().SetUnknown([]byte{0xa0, 0x06, 0x01})
-	resignAuthenticate(t, packet, fixture.workerKey)
+	// Mutate after signing: current stable builders intentionally refuse to
+	// sign a structurally invalid packet. The server must still reject the
+	// malicious wire input for its unknown field before trusting the signature.
 	assertAuthenticateRejected(t, fixture, packet, invalidRequestReason())
 }
 

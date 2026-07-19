@@ -81,18 +81,16 @@ type TokenVerificationResult struct {
 }
 
 // SessionTokenMiddleware wires the issuer + mode + rate-limit tracker
-// into a single verify call. All fields are required in production;
-// nil issuer degrades the middleware to a no-op (Off mode semantics)
-// so unit tests don't need Redis.
+// into a single verify call. An active mode without an issuer fails closed;
+// only explicit Off mode is a no-op.
 type SessionTokenMiddleware struct {
 	issuer  *SessionTokenIssuer
 	mode    HandshakeMode
 	missing *HandshakeMissingTracker
 }
 
-// NewSessionTokenMiddleware builds a middleware. A nil issuer makes
-// every call return TokenVerdictPass (the middleware is effectively
-// disabled); pass a real *SessionTokenIssuer in production.
+// NewSessionTokenMiddleware builds a middleware. Pass a real issuer whenever
+// mode is Warn or Enforce; a nil issuer in either active mode rejects traffic.
 func NewSessionTokenMiddleware(issuer *SessionTokenIssuer, mode HandshakeMode, missing *HandshakeMissingTracker) *SessionTokenMiddleware {
 	return &SessionTokenMiddleware{issuer: issuer, mode: mode, missing: missing}
 }
@@ -113,8 +111,14 @@ func (m *SessionTokenMiddleware) Mode() HandshakeMode {
 // The workerID argument scopes the rate-limit tracker in warn mode so
 // a noisy worker doesn't flood the logs.
 func (m *SessionTokenMiddleware) Verify(ctx context.Context, workerID string, packet *pb.BusPacket) TokenVerificationResult {
-	if m == nil || m.issuer == nil || m.mode == HandshakeModeOff {
+	if m == nil || m.mode == HandshakeModeOff {
 		return TokenVerificationResult{Verdict: TokenVerdictPass}
+	}
+	if m.issuer == nil {
+		return TokenVerificationResult{
+			Verdict: TokenVerdictRejectInvalid,
+			Err:     ErrSessionTokenStoreUnready,
+		}
 	}
 	token := strings.TrimSpace(extractSessionToken(packet))
 	if token == "" {
@@ -132,7 +136,7 @@ func (m *SessionTokenMiddleware) Verify(ctx context.Context, workerID string, pa
 	if servicetoken.PeekTyp(token) == servicetoken.TypService {
 		claims, err = m.issuer.VerifyService(token)
 	} else {
-		claims, err = m.issuer.Verify(ctx, token, true)
+		claims, err = m.issuer.VerifyBound(ctx, token, true)
 	}
 	if err != nil {
 		return TokenVerificationResult{

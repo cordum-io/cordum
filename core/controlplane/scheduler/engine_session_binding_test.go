@@ -27,7 +27,7 @@ func TestVerifySessionToken_SubjectMismatchRejected(t *testing.T) {
 	t.Parallel()
 	issuer, _, _, cleanup := newTestIssuer(t, SessionTokenIssuerOptions{})
 	defer cleanup()
-	token, _, err := issuer.Issue(context.Background(), "w-a", "tenant-a", "v1")
+	token, _, err := issuer.IssueBound(context.Background(), boundTestBinding("w-a", "tenant-a", "v1"))
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -45,7 +45,7 @@ func TestVerifySessionToken_SenderIdMismatchRejected(t *testing.T) {
 	t.Parallel()
 	issuer, _, _, cleanup := newTestIssuer(t, SessionTokenIssuerOptions{})
 	defer cleanup()
-	token, _, err := issuer.Issue(context.Background(), "w-a", "tenant-a", "v1")
+	token, _, err := issuer.IssueBound(context.Background(), boundTestBinding("w-a", "tenant-a", "v1"))
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestVerifySessionToken_MatchingIdentityPasses(t *testing.T) {
 	t.Parallel()
 	issuer, _, _, cleanup := newTestIssuer(t, SessionTokenIssuerOptions{})
 	defer cleanup()
-	token, _, err := issuer.Issue(context.Background(), "w-ok", "tenant-ok", "v1")
+	token, _, err := issuer.IssueBound(context.Background(), boundTestBinding("w-ok", "tenant-ok", "v1"))
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestHandlePacket_JobResult_ForgedSubjectDoesNotComplete(t *testing.T) {
 	t.Parallel()
 	issuer, _, _, cleanup := newTestIssuer(t, SessionTokenIssuerOptions{})
 	defer cleanup()
-	token, _, err := issuer.Issue(context.Background(), "w-a", "tenant-a", "v1")
+	token, _, err := issuer.IssueBound(context.Background(), boundTestBinding("w-a", "tenant-a", "v1"))
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}

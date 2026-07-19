@@ -36,10 +36,11 @@ type handshakeSecurityDependencies struct {
 }
 
 type handshakeSecurityBundle struct {
-	mode            scheduler.HandshakeMode
-	middleware      *scheduler.SessionTokenMiddleware
-	service         *scheduler.HandshakeService
-	publicKeySHA256 string
+	mode             scheduler.HandshakeMode
+	middleware       *scheduler.SessionTokenMiddleware
+	service          *scheduler.HandshakeService
+	dispatchResolver *scheduler.TrustResolver
+	publicKeySHA256  string
 }
 
 func loadHandshakeSecurityConfig() (handshakeSecurityConfig, error) {
@@ -94,9 +95,14 @@ func newHandshakeSecurityBundle(cfg handshakeSecurityConfig, deps handshakeSecur
 	if err != nil {
 		return nil, fmt.Errorf("scheduler: session-token authority unavailable: %w", err)
 	}
-	resolver, err := newHandshakeTrustResolver(deps)
+	credentials := workercredentials.NewService(deps.config)
+	resolver, err := newHandshakeTrustResolver(deps, credentials)
 	if err != nil {
 		return nil, err
+	}
+	dispatchResolver, err := scheduler.NewBoundTrustResolver(deps.redis, credentials)
+	if err != nil {
+		return nil, fmt.Errorf("scheduler: construct bound dispatch trust resolver: %w", err)
 	}
 	service, err := scheduler.NewHandshakeService(issuer, resolver,
 		scheduler.NewRedisHandshakeChallengeStore(deps.redis), deps.audit,
@@ -109,6 +115,7 @@ func newHandshakeSecurityBundle(cfg handshakeSecurityConfig, deps handshakeSecur
 	}
 	bundle.middleware = scheduler.NewSessionTokenMiddleware(issuer, cfg.mode, scheduler.NewHandshakeMissingTracker())
 	bundle.service = service
+	bundle.dispatchResolver = dispatchResolver
 	return bundle, nil
 }
 
@@ -127,8 +134,7 @@ func newSessionTokenIssuer(rdb redis.UniversalClient) (*scheduler.SessionTokenIs
 	return scheduler.NewSessionTokenIssuer(privateKey, keyID, trust, rdb, scheduler.SessionTokenIssuerOptions{})
 }
 
-func newHandshakeTrustResolver(deps handshakeSecurityDependencies) (scheduler.HandshakeTrustResolver, error) {
-	credentials := workercredentials.NewService(deps.config)
+func newHandshakeTrustResolver(deps handshakeSecurityDependencies, credentials *workercredentials.Service) (scheduler.HandshakeTrustResolver, error) {
 	agents := store.NewAgentIdentityStoreFromClient(deps.redis)
 	resolver, err := scheduler.NewCredentialHandshakeTrustResolver(credentials, agents)
 	if err != nil {

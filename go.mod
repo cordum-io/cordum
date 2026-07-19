@@ -5,7 +5,7 @@ go 1.25.12
 require (
 	github.com/ProtonMail/go-crypto v1.4.1
 	github.com/alicebob/miniredis/v2 v2.36.1
-	github.com/cordum-io/cap/v2 v2.14.1-0.20260718203344-30edbbb0deea
+	github.com/cordum-io/cap/v2 v2.14.1-0.20260719013833-1d21f9fed83f
 	github.com/cordum/cordum/sdk v0.0.0
 	github.com/coreos/go-oidc/v3 v3.18.0
 	github.com/crewjam/saml v0.5.1

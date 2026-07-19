@@ -64,7 +64,7 @@ func TestEnforce_CrossServiceBroadcastMatrix(t *testing.T) {
 
 	// (2) A worker-forged result (valid worker token for w-a, claiming w-victim)
 	// is REJECTED — worker A cannot drive worker B's job.
-	workerTok, _, err := issuer.Issue(context.Background(), "w-a", "tenant-a", "v1")
+	workerTok, _, err := issuer.IssueBound(context.Background(), boundTestBinding("w-a", "tenant-a", "v1"))
 	if err != nil {
 		t.Fatalf("issue worker token: %v", err)
 	}

@@ -42,6 +42,11 @@ func TestSchedulerBootWiresWorkerHandshakeResponder(t *testing.T) {
 	required := []string{
 		"loadHandshakeSecurityConfig",
 		"initializeHandshakeSecurity",
+		"ParseHeartbeatModeStrict",
+		"ParseWorkerAttestationModeStrict",
+		"NewBoundTrustResolver",
+		"WithDispatchGate",
+		"WithWorkerAttestationMode",
 		"NewHandshakeService",
 		"WithSessionMiddleware",
 		"NewHandshakeSubscriber",

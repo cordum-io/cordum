@@ -99,6 +99,59 @@ jobs:
     - name: Run integration-tagged tests
       run: go test -v -tags=integration -timeout 10m ./...
 
+  handshake-trust-interop:
+    name: Handshake Trust Interop
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      CAP_REV: 1d21f9fed83fc633b754454aca45b0866ed85d01
+      CAP_HANDSHAKE_CAP_SHA: 1d21f9fed83fc633b754454aca45b0866ed85d01
+      CAP_HANDSHAKE_REDIS_URL: redis://127.0.0.1:6379/0
+    services:
+      redis:
+        image: redis:7.4.2-alpine@sha256:02419de7eddf55aa5bcf49efb74e88fa8d931b4d77c07eff8a6b2144472b6952
+        ports:
+        - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 15
+
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Check out exact CAP dependency
+      uses: actions/checkout@v7
+      with:
+        repository: cordum-io/cap
+        ref: ${{ env.CAP_REV }}
+        path: cap
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version: '1.25'
+        cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.11'
+
+    - name: Set up Node
+      uses: actions/setup-node@v6
+      with:
+        node-version: '22'
+        cache: npm
+        cache-dependency-path: cap/sdk/node/package-lock.json
+
+    - name: Verify workflow trust pins
+      run: ./tools/scripts/handshake_interop_workflow.test.sh
+
+    - name: Run installed-artifact handshake interop
+      run: ./tests/handshakeinterop/run.sh "$GITHUB_WORKSPACE/cap"
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -143,6 +196,7 @@ jobs:
         bash tools/scripts/production_gate.test.sh
         bash tools/scripts/nightly_workflows.test.sh
         bash tools/scripts/soak_test_lib.test.sh
+        bash tools/scripts/handshake_interop_workflow.test.sh
 
   dashboard-test:
     name: Dashboard Tests

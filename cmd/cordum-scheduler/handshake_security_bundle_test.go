@@ -101,7 +101,8 @@ func TestNewHandshakeSecurityBundleRequiresAllAuthorities(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build complete security bundle: %v", err)
 	}
-	if bundle.middleware == nil || bundle.service == nil || bundle.publicKeySHA256 == "" {
+	if bundle.middleware == nil || bundle.service == nil || bundle.dispatchResolver == nil ||
+		!bundle.dispatchResolver.BoundAuthorityReady() || bundle.publicKeySHA256 == "" {
 		t.Fatalf("bundle is incomplete: %#v", bundle)
 	}
 }
@@ -114,8 +115,22 @@ func TestNewHandshakeSecurityBundleOffNeedsNoAuthorities(t *testing.T) {
 		t.Fatal(err)
 	}
 	bundle, err := newHandshakeSecurityBundle(cfg, handshakeSecurityDependencies{})
-	if err != nil || bundle == nil || bundle.middleware != nil || bundle.service != nil {
+	if err != nil || bundle == nil || bundle.middleware != nil || bundle.service != nil || bundle.dispatchResolver != nil {
 		t.Fatalf("explicit off should produce an inactive bundle; bundle=%#v err=%v", bundle, err)
+	}
+}
+
+func TestNewProductionDispatchGateRequiresBoundAuthorityInSessionModes(t *testing.T) {
+	for _, mode := range []scheduler.HeartbeatMode{scheduler.HeartbeatModeWarn, scheduler.HeartbeatModeTelemetry} {
+		t.Run(mode.String(), func(t *testing.T) {
+			if _, err := newProductionDispatchGate(mode, nil); err == nil {
+				t.Fatal("session-authority mode accepted missing bound resolver")
+			}
+		})
+	}
+	gate, err := newProductionDispatchGate(scheduler.HeartbeatModeAuthority, nil)
+	if err != nil || gate == nil || gate.EnforcesSession() {
+		t.Fatalf("legacy authority gate rejected: gate=%#v err=%v", gate, err)
 	}
 }
 

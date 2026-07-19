@@ -39,11 +39,12 @@ import (
 // resolver populates exactly one Reason per call so callers logging
 // or auditing the decision can pin a stable string.
 const (
-	TrustReasonValid        = "valid"
-	TrustReasonNoSession    = "no_session"
-	TrustReasonExpired      = "session_expired"
-	TrustReasonRevoked      = "session_revoked"
-	TrustReasonStoreUnready = "trust_store_unready"
+	TrustReasonValid             = "valid"
+	TrustReasonNoSession         = "no_session"
+	TrustReasonExpired           = "session_expired"
+	TrustReasonRevoked           = "session_revoked"
+	TrustReasonStoreUnready      = "trust_store_unready"
+	TrustReasonCredentialInvalid = "credential_invalid"
 )
 
 // WorkerTrustState is the authoritative trust signal for a worker.
@@ -87,8 +88,10 @@ func (s WorkerTrustState) IsAlive() bool {
 // Wraps the Redis client so callers don't need to know the key
 // layout. Safe for concurrent use; Redis client handles locking.
 type TrustResolver struct {
-	redis redis.UniversalClient
-	now   func() time.Time
+	redis       redis.UniversalClient
+	credentials BoundTrustCredentialResolver
+	boundOnly   bool
+	now         func() time.Time
 }
 
 // NewTrustResolver constructs a TrustResolver. nil client is allowed
@@ -115,13 +118,20 @@ func (r *TrustResolver) ResolveTrust(ctx context.Context, agentID string) (Worke
 	if r == nil || r.redis == nil {
 		return WorkerTrustState{Reason: TrustReasonStoreUnready}, nil
 	}
-	if strings.TrimSpace(agentID) == "" {
+	if agentID == "" || strings.TrimSpace(agentID) != agentID {
 		return WorkerTrustState{Reason: TrustReasonNoSession}, errors.New("scheduler: trust resolve requires agent id")
+	}
+	if r.boundOnly {
+		return r.resolveBoundTrust(ctx, agentID)
 	}
 	rec, err := r.loadActiveRecord(ctx, agentID)
 	if err != nil {
 		return WorkerTrustState{Reason: TrustReasonStoreUnready}, err
 	}
+	return r.stateFromRecord(ctx, rec)
+}
+
+func (r *TrustResolver) stateFromRecord(ctx context.Context, rec *activeRecord) (WorkerTrustState, error) {
 	if rec == nil {
 		return WorkerTrustState{Reason: TrustReasonNoSession}, nil
 	}
@@ -169,7 +179,11 @@ func (r *TrustResolver) ResolveTrustBatch(ctx context.Context, agentIDs []string
 }
 
 func (r *TrustResolver) loadActiveRecord(ctx context.Context, agentID string) (*activeRecord, error) {
-	raw, err := r.redis.Get(ctx, workerKey(agentID)).Bytes()
+	return r.loadActiveKey(ctx, workerKey(agentID))
+}
+
+func (r *TrustResolver) loadActiveKey(ctx context.Context, key string) (*activeRecord, error) {
+	raw, err := r.redis.Get(ctx, key).Bytes()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return nil, nil

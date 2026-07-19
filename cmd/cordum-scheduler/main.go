@@ -188,9 +188,24 @@ func main() {
 	buildinfo.Log("cordum-scheduler")
 
 	cfg := config.Load()
+	heartbeatMode, err := scheduler.ParseHeartbeatModeStrict(os.Getenv(scheduler.EnvHeartbeatMode))
+	if err != nil {
+		slog.Error("heartbeat authority configuration invalid; refusing to start", "error", err)
+		os.Exit(1)
+	}
+	heartbeatMode.LogActiveMode(slog.Default())
+	workerAttestationMode, err := scheduler.ParseWorkerAttestationModeStrict(os.Getenv(scheduler.EnvWorkerAttestation))
+	if err != nil {
+		slog.Error("worker attestation configuration invalid; refusing to start", "error", err)
+		os.Exit(1)
+	}
 	handshakeConfig, err := loadHandshakeSecurityConfig()
 	if err != nil {
 		slog.Error("worker handshake security configuration invalid; refusing to start", "error", err)
+		os.Exit(1)
+	}
+	if err := validateWorkerSecurityModes(handshakeConfig.mode, workerAttestationMode); err != nil {
+		slog.Error("worker security modes conflict; refusing to start", "error", err)
 		os.Exit(1)
 	}
 	handshakeConfig.mode.LogActiveMode(slog.Default())
@@ -360,6 +375,13 @@ func main() {
 			"public_key_sha256", handshakeBundle.publicKeySHA256,
 		)
 	}
+	dispatchGate, err := newProductionDispatchGateForModes(
+		handshakeBundle.mode, heartbeatMode, handshakeBundle.dispatchResolver,
+	)
+	if err != nil {
+		slog.Error("dispatch trust authority unavailable; refusing to start", "error", err)
+		os.Exit(1)
+	}
 
 	schemaRegistry, err := schema.NewRegistry(cfg.RedisURL)
 	if err != nil {
@@ -425,6 +447,8 @@ func main() {
 	).WithConfig(configSvc).
 		WithTopicRegistry(topicregistry.NewService(configSvc)).
 		WithWorkerCredentialCache(workerCredentialCache).
+		WithWorkerAttestationMode(workerAttestationMode).
+		WithDispatchGate(dispatchGate).
 		WithSchemaRegistry(schemaRegistry).
 		WithEntitlements(entitlementResolver).
 		WithContextClient(jobStore.Client()).

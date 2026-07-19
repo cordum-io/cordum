@@ -445,10 +445,10 @@ func TestSchedulerRejectsUnknownTopicFromBus(t *testing.T) {
 	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil).WithTopicRegistry(regSvc)
 
 	req := &pb.JobRequest{JobId: "job-unknown-topic", Topic: "job.missing", TenantId: "default"}
-	packet := &pb.BusPacket{
+	packet := completeSecurityTestEnvelope(&pb.BusPacket{
 		TraceId: "trace-unknown-topic",
 		Payload: &pb.BusPacket_JobRequest{JobRequest: req},
-	}
+	})
 
 	if err := engine.HandlePacket(packet); err != nil {
 		t.Fatalf("HandlePacket returned error: %v", err)
@@ -502,7 +502,7 @@ func TestSchedulerAcceptsTenantScopedTopicFromBus(t *testing.T) {
 	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil).
 		WithTopicRegistry(regSvc)
 	req := &pb.JobRequest{JobId: "job-tenant-topic", Topic: "job.tenant.echo", TenantId: "tenant-a"}
-	packet := &pb.BusPacket{TraceId: "trace-tenant-topic", Payload: &pb.BusPacket_JobRequest{JobRequest: req}}
+	packet := completeSecurityTestEnvelope(&pb.BusPacket{TraceId: "trace-tenant-topic", Payload: &pb.BusPacket_JobRequest{JobRequest: req}})
 
 	if err := engine.HandlePacket(packet); err != nil {
 		t.Fatalf("HandlePacket returned error: %v", err)
@@ -558,10 +558,10 @@ func TestSchedulerSchemaEnforceRejects(t *testing.T) {
 		TenantId:   "default",
 		ContextPtr: infraStore.PointerForKey(ctxKey),
 	}
-	packet := &pb.BusPacket{
+	packet := completeSecurityTestEnvelope(&pb.BusPacket{
 		TraceId: "trace-schema-enforce",
 		Payload: &pb.BusPacket_JobRequest{JobRequest: req},
-	}
+	})
 
 	if err := engine.HandlePacket(packet); err != nil {
 		t.Fatalf("HandlePacket returned error: %v", err)
@@ -631,10 +631,10 @@ func TestSchedulerSchemaWarnAllows(t *testing.T) {
 		TenantId:   "default",
 		ContextPtr: infraStore.PointerForKey(ctxKey),
 	}
-	packet := &pb.BusPacket{
+	packet := completeSecurityTestEnvelope(&pb.BusPacket{
 		TraceId: "trace-schema-warn",
 		Payload: &pb.BusPacket_JobRequest{JobRequest: req},
-	}
+	})
 
 	if err := engine.HandlePacket(packet); err != nil {
 		t.Fatalf("HandlePacket returned error: %v", err)
@@ -1039,7 +1039,7 @@ func TestUnattestedWorkerEnforceMode(t *testing.T) {
 	}
 }
 
-func TestAttestationOffMode(t *testing.T) {
+func TestAttestationOffModeDoesNotBypassEnvelopeIdentity(t *testing.T) {
 	registry := newTestRegistry(t)
 	engine := NewEngine(&fakeBus{}, NewSafetyBasic(), registry, NewNaiveStrategy(), newFakeJobStore(), nil).
 		WithWorkerAttestationMode(WorkerAttestationOff)
@@ -1049,11 +1049,8 @@ func TestAttestationOffMode(t *testing.T) {
 	}
 
 	snapshot := registry.Snapshot()
-	if len(snapshot) != 1 {
-		t.Fatalf("expected attestation off mode to skip checks, got %+v", snapshot)
-	}
-	if snapshot["worker-off"] == nil {
-		t.Fatalf("expected worker-off in registry, got %+v", snapshot)
+	if len(snapshot) != 0 {
+		t.Fatalf("attestation off admitted a mismatched envelope: %+v", snapshot)
 	}
 }
 
@@ -3110,10 +3107,10 @@ func TestTenantMismatchRejectsJob(t *testing.T) {
 		TenantId: "org-a",
 		Env:      map[string]string{"tenant_id": "org-b"},
 	}
-	packet := &pb.BusPacket{
+	packet := completeSecurityTestEnvelope(&pb.BusPacket{
 		Payload: &pb.BusPacket_JobRequest{JobRequest: req},
 		TraceId: "trace-tenant-test",
-	}
+	})
 	err := engine.HandlePacket(packet)
 	if err != nil {
 		t.Fatalf("expected nil error on tenant mismatch (job dropped), got %v", err)
@@ -3146,10 +3143,10 @@ func TestTenantMatchAcceptsJob(t *testing.T) {
 		TenantId: "org-a",
 		Env:      map[string]string{"tenant_id": "org-a"},
 	}
-	packet := &pb.BusPacket{
+	packet := completeSecurityTestEnvelope(&pb.BusPacket{
 		Payload: &pb.BusPacket_JobRequest{JobRequest: req},
 		TraceId: "trace-tenant-ok",
-	}
+	})
 	err := engine.HandlePacket(packet)
 	if err != nil {
 		t.Fatalf("expected no error for matching tenant, got %v", err)
