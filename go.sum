@@ -22,6 +22,8 @@ github.com/cordum-io/cap/v2 v2.14.1-0.20260719044335-1d73d52c203c h1:6KISoEE6a8J
 github.com/cordum-io/cap/v2 v2.14.1-0.20260719044335-1d73d52c203c/go.mod h1:NEQzP0Xu0fqpk4ZufJzxcmYUYY+ZW1Ka+XIhohAWOIk=
 github.com/cordum-io/cap/v2 v2.14.1-0.20260719113921-b9972f135b78 h1:DREIFT5de1DFwbolQq6tRx0bIxdEDg/ZDsr5HXiJwJ4=
 github.com/cordum-io/cap/v2 v2.14.1-0.20260719113921-b9972f135b78/go.mod h1:NEQzP0Xu0fqpk4ZufJzxcmYUYY+ZW1Ka+XIhohAWOIk=
+github.com/cordum-io/cap/v2 v2.14.1-0.20260719123704-7aff0d43002c h1:Eb4Lxwszn6FQVQFU7628lY7JWgX4i+3R0uhZ0cY28s4=
+github.com/cordum-io/cap/v2 v2.14.1-0.20260719123704-7aff0d43002c/go.mod h1:NEQzP0Xu0fqpk4ZufJzxcmYUYY+ZW1Ka+XIhohAWOIk=
 github.com/coreos/go-oidc/v3 v3.18.0 h1:V9orjXynvu5wiC9SemFTWnG4F45v403aIcjWo0d41+A=
 github.com/coreos/go-oidc/v3 v3.18.0/go.mod h1:DYCf24+ncYi+XkIH97GY1+dqoRlbaSI26KVTCI9SrY4=
 github.com/creack/pty v1.1.9/go.mod h1:oKZEueFk5CKHvIhNR5MUki03XCEU+Q6VDXinZuGJ33E=
