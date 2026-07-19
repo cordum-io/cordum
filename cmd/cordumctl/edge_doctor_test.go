@@ -149,6 +149,11 @@ func (f edgeDoctorFixture) args(extra ...string) []string {
 func runEdgeDoctorForTest(t *testing.T, args ...string) (int, string, string) {
 	t.Helper()
 	t.Setenv("CORDUM_API_KEY", "")
+	// --fail-closed defaults from CORDUM_AGENTD_FAIL_CLOSED, and an inherited
+	// "false" makes the policy-mode check warn (exit 2). Clear it so results do
+	// not depend on the developer's shell. Tests that exercise the env default
+	// invoke runEdgeDoctorCmd directly instead.
+	t.Setenv("CORDUM_AGENTD_FAIL_CLOSED", "")
 	var stdout, stderr bytes.Buffer
 	code := runEdgeDoctorCmd(args, &stdout, &stderr)
 	return code, stdout.String(), stderr.String()

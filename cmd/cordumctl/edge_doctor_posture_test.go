@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"strings"
 	"testing"
@@ -152,12 +153,17 @@ func TestEdgeDoctorFailClosedFlagWiring(t *testing.T) {
 
 	t.Run("env var supplies the default", func(t *testing.T) {
 		fx := newEdgeDoctorFixture(t)
+		t.Setenv("CORDUM_API_KEY", "")
 		t.Setenv("CORDUM_AGENTD_FAIL_CLOSED", "false")
-		code, stdout, _ := runEdgeDoctorForTest(t, fx.args("--json")...)
+		// Invoked directly rather than through runEdgeDoctorForTest: that helper
+		// clears CORDUM_AGENTD_FAIL_CLOSED for determinism, which is exactly the
+		// input under test here.
+		var stdout, stderr bytes.Buffer
+		code := runEdgeDoctorCmd(fx.args("--json"), &stdout, &stderr)
 		if code != 2 {
-			t.Fatalf("exit=%d, want 2 (env fail-open must warn); stdout=%s", code, stdout)
+			t.Fatalf("exit=%d, want 2 (env fail-open must warn); stdout=%s", code, stdout.String())
 		}
-		payload := decodeEdgeDoctorJSON(t, stdout)
+		payload := decodeEdgeDoctorJSON(t, stdout.String())
 		assertEdgeDoctorCheck(t, payload, "policy_mode_implications", stateWarn)
 	})
 
