@@ -86,7 +86,7 @@ func (s *interopServer) ownsHandshakeKey(key string, value []byte) bool {
 		if key == activeSessionKey(identity) || key == "session:worker:"+identity.workerID {
 			return true
 		}
-		if strings.HasPrefix(key, "session:revoked:"+identity.tenantID+":") {
+		if strings.HasPrefix(key, revokedSessionPrefix(identity)) {
 			return true
 		}
 		if strings.HasPrefix(key, handshakeStatePrefix("request", identity.workerID)) ||

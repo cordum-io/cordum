@@ -212,10 +212,15 @@ func requestAuthenticate(connection *nats.Conn, wire []byte, start <-chan struct
 }
 
 func activeSessionKey(identity *interopIdentity) string {
-	encode := func(value string) string {
-		return base64.RawURLEncoding.EncodeToString([]byte(strings.TrimSpace(value)))
-	}
-	return "session:worker:v2:" + encode(identity.tenantID) + ":" + encode(identity.workerID)
+	return "session:worker:v2:" + encodedSessionKeyPart(identity.tenantID) + ":" + encodedSessionKeyPart(identity.workerID)
+}
+
+func encodedSessionKeyPart(value string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(strings.TrimSpace(value)))
+}
+
+func revokedSessionPrefix(identity *interopIdentity) string {
+	return "session:revoked:" + encodedSessionKeyPart(identity.tenantID) + ":"
 }
 
 func (s *interopServer) activeRecord(identity *interopIdentity) []byte {
