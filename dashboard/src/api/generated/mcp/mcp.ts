@@ -90,7 +90,7 @@ export const getMcpSSEQueryOptions = <
     Awaited<ReturnType<typeof mcpSSE>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type McpSSEQueryResult = NonNullable<Awaited<ReturnType<typeof mcpSSE>>>;
@@ -115,7 +115,7 @@ export function useMcpSSE<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useMcpSSE<
   TData = Awaited<ReturnType<typeof mcpSSE>>,
@@ -135,7 +135,9 @@ export function useMcpSSE<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useMcpSSE<
   TData = Awaited<ReturnType<typeof mcpSSE>>,
   TError = UnauthorizedResponse | ForbiddenResponse | Error,
@@ -146,7 +148,9 @@ export function useMcpSSE<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary MCP Server-Sent Events stream
  */
@@ -161,13 +165,15 @@ export function useMcpSSE<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getMcpSSEQueryOptions(options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -192,10 +198,7 @@ export const mcpMessage = (
 
 export const getMcpMessageMutationOptions = <
   TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | Error,
+    BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -236,20 +239,14 @@ export type McpMessageMutationResult = NonNullable<
 >;
 export type McpMessageMutationBody = JsonRpcRequest;
 export type McpMessageMutationError =
-  | BadRequestResponse
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | Error;
+  BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error;
 
 /**
  * @summary Send a JSON-RPC 2.0 message to MCP server
  */
 export const useMcpMessage = <
   TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | Error,
+    BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
   TContext = unknown,
 >(
   options?: {
@@ -302,7 +299,7 @@ export const getMcpStatusQueryOptions = <
     Awaited<ReturnType<typeof mcpStatus>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type McpStatusQueryResult = NonNullable<
@@ -329,7 +326,7 @@ export function useMcpStatus<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useMcpStatus<
   TData = Awaited<ReturnType<typeof mcpStatus>>,
@@ -349,7 +346,9 @@ export function useMcpStatus<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useMcpStatus<
   TData = Awaited<ReturnType<typeof mcpStatus>>,
   TError = UnauthorizedResponse | ForbiddenResponse,
@@ -360,7 +359,9 @@ export function useMcpStatus<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get MCP server status
  */
@@ -375,13 +376,15 @@ export function useMcpStatus<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getMcpStatusQueryOptions(options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -427,7 +430,7 @@ export const getGetMcpGatewayHealthQueryOptions = <
     Awaited<ReturnType<typeof getMcpGatewayHealth>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetMcpGatewayHealthQueryResult = NonNullable<
@@ -458,7 +461,7 @@ export function useGetMcpGatewayHealth<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetMcpGatewayHealth<
   TData = Awaited<ReturnType<typeof getMcpGatewayHealth>>,
@@ -482,7 +485,9 @@ export function useGetMcpGatewayHealth<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetMcpGatewayHealth<
   TData = Awaited<ReturnType<typeof getMcpGatewayHealth>>,
   TError = ServiceUnavailableResponse,
@@ -497,7 +502,9 @@ export function useGetMcpGatewayHealth<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary EDGE-100 MCP Gateway skeleton — health probe
  */
@@ -516,13 +523,15 @@ export function useGetMcpGatewayHealth<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetMcpGatewayHealthQueryOptions(options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -568,15 +577,14 @@ export const getGetMcpGatewayConfigQueryOptions = <
     Awaited<ReturnType<typeof getMcpGatewayConfig>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetMcpGatewayConfigQueryResult = NonNullable<
   Awaited<ReturnType<typeof getMcpGatewayConfig>>
 >;
 export type GetMcpGatewayConfigQueryError =
-  | UnauthorizedResponse
-  | ServiceUnavailableResponse;
+  UnauthorizedResponse | ServiceUnavailableResponse;
 
 export function useGetMcpGatewayConfig<
   TData = Awaited<ReturnType<typeof getMcpGatewayConfig>>,
@@ -601,7 +609,7 @@ export function useGetMcpGatewayConfig<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetMcpGatewayConfig<
   TData = Awaited<ReturnType<typeof getMcpGatewayConfig>>,
@@ -625,7 +633,9 @@ export function useGetMcpGatewayConfig<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetMcpGatewayConfig<
   TData = Awaited<ReturnType<typeof getMcpGatewayConfig>>,
   TError = UnauthorizedResponse | ServiceUnavailableResponse,
@@ -640,7 +650,9 @@ export function useGetMcpGatewayConfig<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary EDGE-100 MCP Gateway skeleton — effective per-tenant config (redacted)
  */
@@ -659,13 +671,15 @@ export function useGetMcpGatewayConfig<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetMcpGatewayConfigQueryOptions(options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -728,8 +742,7 @@ export type PostMcpGatewayUpstreamMutationResult = NonNullable<
 >;
 
 export type PostMcpGatewayUpstreamMutationError =
-  | UnauthorizedResponse
-  | ServiceUnavailableResponse;
+  UnauthorizedResponse | ServiceUnavailableResponse;
 
 /**
  * @summary EDGE-100 MCP Gateway skeleton — upstream forwarding (disabled by default)
@@ -813,8 +826,7 @@ export type PostMcpGatewayClientsConnectMutationResult = NonNullable<
 >;
 
 export type PostMcpGatewayClientsConnectMutationError =
-  | UnauthorizedResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | InternalServerErrorResponse;
 
 /**
  * @summary EDGE-100 MCP Gateway skeleton — register an MCP client connect
@@ -867,9 +879,7 @@ export const getListMcpApprovalsQueryKey = (
 export const getListMcpApprovalsQueryOptions = <
   TData = Awaited<ReturnType<typeof listMcpApprovals>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
 >(
   params?: ListMcpApprovalsParams,
   options?: {
@@ -895,23 +905,19 @@ export const getListMcpApprovalsQueryOptions = <
     Awaited<ReturnType<typeof listMcpApprovals>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListMcpApprovalsQueryResult = NonNullable<
   Awaited<ReturnType<typeof listMcpApprovals>>
 >;
 export type ListMcpApprovalsQueryError =
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | ServiceUnavailableResponse;
+  UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse;
 
 export function useListMcpApprovals<
   TData = Awaited<ReturnType<typeof listMcpApprovals>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
 >(
   params: undefined | ListMcpApprovalsParams,
   options: {
@@ -933,14 +939,12 @@ export function useListMcpApprovals<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListMcpApprovals<
   TData = Awaited<ReturnType<typeof listMcpApprovals>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
 >(
   params?: ListMcpApprovalsParams,
   options?: {
@@ -961,13 +965,13 @@ export function useListMcpApprovals<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListMcpApprovals<
   TData = Awaited<ReturnType<typeof listMcpApprovals>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
 >(
   params?: ListMcpApprovalsParams,
   options?: {
@@ -980,7 +984,9 @@ export function useListMcpApprovals<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List MCP tool-call approvals
  */
@@ -988,9 +994,7 @@ export function useListMcpApprovals<
 export function useListMcpApprovals<
   TData = Awaited<ReturnType<typeof listMcpApprovals>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
 >(
   params?: ListMcpApprovalsParams,
   options?: {
@@ -1003,13 +1007,15 @@ export function useListMcpApprovals<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListMcpApprovalsQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -1063,7 +1069,7 @@ export const getGetMcpApprovalQueryOptions = <
     Awaited<ReturnType<typeof getMcpApproval>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetMcpApprovalQueryResult = NonNullable<
@@ -1099,7 +1105,7 @@ export function useGetMcpApproval<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetMcpApproval<
   TData = Awaited<ReturnType<typeof getMcpApproval>>,
@@ -1124,7 +1130,9 @@ export function useGetMcpApproval<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetMcpApproval<
   TData = Awaited<ReturnType<typeof getMcpApproval>>,
   TError =
@@ -1140,7 +1148,9 @@ export function useGetMcpApproval<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get one MCP approval record
  */
@@ -1160,13 +1170,15 @@ export function useGetMcpApproval<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetMcpApprovalQueryOptions(id, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -1434,9 +1446,7 @@ export type VerifyMcpSignatureMutationResult = NonNullable<
 >;
 export type VerifyMcpSignatureMutationBody = VerifyMcpSignatureBody;
 export type VerifyMcpSignatureMutationError =
-  | Error
-  | UnauthorizedResponse
-  | ForbiddenResponse;
+  Error | UnauthorizedResponse | ForbiddenResponse;
 
 /**
  * @summary Verify an outbound MCP signature (admin-gated)
@@ -1515,17 +1525,14 @@ export const getListMcpOutboundQueryOptions = <
     Awaited<ReturnType<typeof listMcpOutbound>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListMcpOutboundQueryResult = NonNullable<
   Awaited<ReturnType<typeof listMcpOutbound>>
 >;
 export type ListMcpOutboundQueryError =
-  | Error
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | ServiceUnavailableResponse;
+  Error | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse;
 
 export function useListMcpOutbound<
   TData = Awaited<ReturnType<typeof listMcpOutbound>>,
@@ -1555,7 +1562,7 @@ export function useListMcpOutbound<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListMcpOutbound<
   TData = Awaited<ReturnType<typeof listMcpOutbound>>,
@@ -1584,7 +1591,9 @@ export function useListMcpOutbound<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListMcpOutbound<
   TData = Awaited<ReturnType<typeof listMcpOutbound>>,
   TError =
@@ -1604,7 +1613,9 @@ export function useListMcpOutbound<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List outbound MCP signed-call events
  */
@@ -1628,13 +1639,15 @@ export function useListMcpOutbound<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListMcpOutboundQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -1688,17 +1701,14 @@ export const getGetMcpUsageQueryOptions = <
     Awaited<ReturnType<typeof getMcpUsage>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetMcpUsageQueryResult = NonNullable<
   Awaited<ReturnType<typeof getMcpUsage>>
 >;
 export type GetMcpUsageQueryError =
-  | Error
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | ServiceUnavailableResponse;
+  Error | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse;
 
 export function useGetMcpUsage<
   TData = Awaited<ReturnType<typeof getMcpUsage>>,
@@ -1724,7 +1734,7 @@ export function useGetMcpUsage<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetMcpUsage<
   TData = Awaited<ReturnType<typeof getMcpUsage>>,
@@ -1749,7 +1759,9 @@ export function useGetMcpUsage<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetMcpUsage<
   TData = Awaited<ReturnType<typeof getMcpUsage>>,
   TError =
@@ -1765,7 +1777,9 @@ export function useGetMcpUsage<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Outbound MCP usage buckets from the audit chain
  */
@@ -1785,13 +1799,15 @@ export function useGetMcpUsage<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetMcpUsageQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -1841,16 +1857,14 @@ export const getListMcpToolsQueryOptions = <
     Awaited<ReturnType<typeof listMcpTools>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListMcpToolsQueryResult = NonNullable<
   Awaited<ReturnType<typeof listMcpTools>>
 >;
 export type ListMcpToolsQueryError =
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | Error;
+  UnauthorizedResponse | ForbiddenResponse | Error;
 
 export function useListMcpTools<
   TData = Awaited<ReturnType<typeof listMcpTools>>,
@@ -1872,7 +1886,7 @@ export function useListMcpTools<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListMcpTools<
   TData = Awaited<ReturnType<typeof listMcpTools>>,
@@ -1893,7 +1907,9 @@ export function useListMcpTools<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListMcpTools<
   TData = Awaited<ReturnType<typeof listMcpTools>>,
   TError = UnauthorizedResponse | ForbiddenResponse | Error,
@@ -1905,7 +1921,9 @@ export function useListMcpTools<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List MCP tools visible to an agent or the full catalogue
  */
@@ -1921,13 +1939,15 @@ export function useListMcpTools<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListMcpToolsQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -1987,17 +2007,14 @@ export const getGetAgentToolVisibilityQueryOptions = <
     Awaited<ReturnType<typeof getAgentToolVisibility>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetAgentToolVisibilityQueryResult = NonNullable<
   Awaited<ReturnType<typeof getAgentToolVisibility>>
 >;
 export type GetAgentToolVisibilityQueryError =
-  | Error
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | ServiceUnavailableResponse;
+  Error | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse;
 
 export function useGetAgentToolVisibility<
   TData = Awaited<ReturnType<typeof getAgentToolVisibility>>,
@@ -2027,7 +2044,7 @@ export function useGetAgentToolVisibility<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetAgentToolVisibility<
   TData = Awaited<ReturnType<typeof getAgentToolVisibility>>,
@@ -2056,7 +2073,9 @@ export function useGetAgentToolVisibility<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetAgentToolVisibility<
   TData = Awaited<ReturnType<typeof getAgentToolVisibility>>,
   TError =
@@ -2076,7 +2095,9 @@ export function useGetAgentToolVisibility<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List MCP tools visible to a specific agent identity
  */
@@ -2100,13 +2121,15 @@ export function useGetAgentToolVisibility<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetAgentToolVisibilityQueryOptions(id, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -2162,15 +2185,14 @@ export const getGetAgentDeniedEventsQueryOptions = <
     Awaited<ReturnType<typeof getAgentDeniedEvents>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetAgentDeniedEventsQueryResult = NonNullable<
   Awaited<ReturnType<typeof getAgentDeniedEvents>>
 >;
 export type GetAgentDeniedEventsQueryError =
-  | UnauthorizedResponse
-  | ForbiddenResponse;
+  UnauthorizedResponse | ForbiddenResponse;
 
 export function useGetAgentDeniedEvents<
   TData = Awaited<ReturnType<typeof getAgentDeniedEvents>>,
@@ -2196,7 +2218,7 @@ export function useGetAgentDeniedEvents<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetAgentDeniedEvents<
   TData = Awaited<ReturnType<typeof getAgentDeniedEvents>>,
@@ -2221,7 +2243,9 @@ export function useGetAgentDeniedEvents<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetAgentDeniedEvents<
   TData = Awaited<ReturnType<typeof getAgentDeniedEvents>>,
   TError = UnauthorizedResponse | ForbiddenResponse,
@@ -2237,7 +2261,9 @@ export function useGetAgentDeniedEvents<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Recent mcp_tool_denied events for an agent identity
  */
@@ -2257,13 +2283,15 @@ export function useGetAgentDeniedEvents<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetAgentDeniedEventsQueryOptions(id, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 

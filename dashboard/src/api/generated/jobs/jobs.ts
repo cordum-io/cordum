@@ -180,15 +180,14 @@ export const getListJobsQueryOptions = <
     Awaited<ReturnType<typeof listJobs>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListJobsQueryResult = NonNullable<
   Awaited<ReturnType<typeof listJobs>>
 >;
 export type ListJobsQueryError =
-  | UnauthorizedResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | InternalServerErrorResponse;
 
 export function useListJobs<
   TData = Awaited<ReturnType<typeof listJobs>>,
@@ -210,7 +209,7 @@ export function useListJobs<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListJobs<
   TData = Awaited<ReturnType<typeof listJobs>>,
@@ -231,7 +230,9 @@ export function useListJobs<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListJobs<
   TData = Awaited<ReturnType<typeof listJobs>>,
   TError = UnauthorizedResponse | InternalServerErrorResponse,
@@ -243,7 +244,9 @@ export function useListJobs<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List jobs
  */
@@ -259,13 +262,15 @@ export function useListJobs<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListJobsQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -290,9 +295,7 @@ export const getGetJobQueryKey = (id?: string) => {
 export const getGetJobQueryOptions = <
   TData = Awaited<ReturnType<typeof getJob>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -315,22 +318,18 @@ export const getGetJobQueryOptions = <
     enabled: !!id,
     ...queryOptions,
   } as UseQueryOptions<Awaited<ReturnType<typeof getJob>>, TError, TData> & {
-    queryKey: DataTag<QueryKey, TData>;
+    queryKey: DataTag<QueryKey, TData, TError>;
   };
 };
 
 export type GetJobQueryResult = NonNullable<Awaited<ReturnType<typeof getJob>>>;
 export type GetJobQueryError =
-  | UnauthorizedResponse
-  | NotFoundResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse;
 
 export function useGetJob<
   TData = Awaited<ReturnType<typeof getJob>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options: {
@@ -348,14 +347,12 @@ export function useGetJob<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetJob<
   TData = Awaited<ReturnType<typeof getJob>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -372,13 +369,13 @@ export function useGetJob<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetJob<
   TData = Awaited<ReturnType<typeof getJob>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -387,7 +384,9 @@ export function useGetJob<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get job details
  */
@@ -395,9 +394,7 @@ export function useGetJob<
 export function useGetJob<
   TData = Awaited<ReturnType<typeof getJob>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -406,13 +403,15 @@ export function useGetJob<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetJobQueryOptions(id, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -437,9 +436,7 @@ export const getGetJobDecisionsQueryKey = (id?: string) => {
 export const getGetJobDecisionsQueryOptions = <
   TData = Awaited<ReturnType<typeof getJobDecisions>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -469,23 +466,19 @@ export const getGetJobDecisionsQueryOptions = <
     Awaited<ReturnType<typeof getJobDecisions>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetJobDecisionsQueryResult = NonNullable<
   Awaited<ReturnType<typeof getJobDecisions>>
 >;
 export type GetJobDecisionsQueryError =
-  | UnauthorizedResponse
-  | NotFoundResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse;
 
 export function useGetJobDecisions<
   TData = Awaited<ReturnType<typeof getJobDecisions>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options: {
@@ -507,14 +500,12 @@ export function useGetJobDecisions<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetJobDecisions<
   TData = Awaited<ReturnType<typeof getJobDecisions>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -535,13 +526,13 @@ export function useGetJobDecisions<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetJobDecisions<
   TData = Awaited<ReturnType<typeof getJobDecisions>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -554,7 +545,9 @@ export function useGetJobDecisions<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get safety decisions for a job
  */
@@ -562,9 +555,7 @@ export function useGetJobDecisions<
 export function useGetJobDecisions<
   TData = Awaited<ReturnType<typeof getJobDecisions>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -577,13 +568,15 @@ export function useGetJobDecisions<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetJobDecisionsQueryOptions(id, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -823,7 +816,7 @@ export const getStreamJobQueryOptions = <
     enabled: !!id,
     ...queryOptions,
   } as UseQueryOptions<Awaited<ReturnType<typeof streamJob>>, TError, TData> & {
-    queryKey: DataTag<QueryKey, TData>;
+    queryKey: DataTag<QueryKey, TData, TError>;
   };
 };
 
@@ -831,9 +824,7 @@ export type StreamJobQueryResult = NonNullable<
   Awaited<ReturnType<typeof streamJob>>
 >;
 export type StreamJobQueryError =
-  | void
-  | UnauthorizedResponse
-  | NotFoundResponse;
+  void | UnauthorizedResponse | NotFoundResponse;
 
 export function useStreamJob<
   TData = Awaited<ReturnType<typeof streamJob>>,
@@ -855,7 +846,7 @@ export function useStreamJob<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useStreamJob<
   TData = Awaited<ReturnType<typeof streamJob>>,
@@ -876,7 +867,9 @@ export function useStreamJob<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useStreamJob<
   TData = Awaited<ReturnType<typeof streamJob>>,
   TError = void | UnauthorizedResponse | NotFoundResponse,
@@ -888,7 +881,9 @@ export function useStreamJob<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Stream job events (WebSocket)
  */
@@ -904,13 +899,15 @@ export function useStreamJob<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getStreamJobQueryOptions(id, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -935,9 +932,7 @@ export const getGetTraceQueryKey = (id?: string) => {
 export const getGetTraceQueryOptions = <
   TData = Awaited<ReturnType<typeof getTrace>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -960,7 +955,7 @@ export const getGetTraceQueryOptions = <
     enabled: !!id,
     ...queryOptions,
   } as UseQueryOptions<Awaited<ReturnType<typeof getTrace>>, TError, TData> & {
-    queryKey: DataTag<QueryKey, TData>;
+    queryKey: DataTag<QueryKey, TData, TError>;
   };
 };
 
@@ -968,16 +963,12 @@ export type GetTraceQueryResult = NonNullable<
   Awaited<ReturnType<typeof getTrace>>
 >;
 export type GetTraceQueryError =
-  | UnauthorizedResponse
-  | NotFoundResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse;
 
 export function useGetTrace<
   TData = Awaited<ReturnType<typeof getTrace>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options: {
@@ -995,14 +986,12 @@ export function useGetTrace<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetTrace<
   TData = Awaited<ReturnType<typeof getTrace>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -1019,13 +1008,13 @@ export function useGetTrace<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetTrace<
   TData = Awaited<ReturnType<typeof getTrace>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -1034,7 +1023,9 @@ export function useGetTrace<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get trace records for a job
  */
@@ -1042,9 +1033,7 @@ export function useGetTrace<
 export function useGetTrace<
   TData = Awaited<ReturnType<typeof getTrace>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -1053,13 +1042,15 @@ export function useGetTrace<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetTraceQueryOptions(id, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 

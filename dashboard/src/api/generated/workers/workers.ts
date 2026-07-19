@@ -55,9 +55,7 @@ export const getListWorkersQueryKey = () => {
 export const getListWorkersQueryOptions = <
   TData = Awaited<ReturnType<typeof listWorkers>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(options?: {
   query?: Partial<
     UseQueryOptions<Awaited<ReturnType<typeof listWorkers>>, TError, TData>
@@ -75,23 +73,19 @@ export const getListWorkersQueryOptions = <
     Awaited<ReturnType<typeof listWorkers>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListWorkersQueryResult = NonNullable<
   Awaited<ReturnType<typeof listWorkers>>
 >;
 export type ListWorkersQueryError =
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse;
 
 export function useListWorkers<
   TData = Awaited<ReturnType<typeof listWorkers>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   options: {
     query: Partial<
@@ -108,14 +102,12 @@ export function useListWorkers<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListWorkers<
   TData = Awaited<ReturnType<typeof listWorkers>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   options?: {
     query?: Partial<
@@ -131,13 +123,13 @@ export function useListWorkers<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListWorkers<
   TData = Awaited<ReturnType<typeof listWorkers>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   options?: {
     query?: Partial<
@@ -145,7 +137,9 @@ export function useListWorkers<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List registered workers and heartbeats
  */
@@ -153,9 +147,7 @@ export function useListWorkers<
 export function useListWorkers<
   TData = Awaited<ReturnType<typeof listWorkers>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   options?: {
     query?: Partial<
@@ -163,13 +155,15 @@ export function useListWorkers<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListWorkersQueryOptions(options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -220,7 +214,7 @@ export const getGetWorkerQueryOptions = <
     enabled: !!id,
     ...queryOptions,
   } as UseQueryOptions<Awaited<ReturnType<typeof getWorker>>, TError, TData> & {
-    queryKey: DataTag<QueryKey, TData>;
+    queryKey: DataTag<QueryKey, TData, TError>;
   };
 };
 
@@ -257,7 +251,7 @@ export function useGetWorker<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetWorker<
   TData = Awaited<ReturnType<typeof getWorker>>,
@@ -282,7 +276,9 @@ export function useGetWorker<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetWorker<
   TData = Awaited<ReturnType<typeof getWorker>>,
   TError =
@@ -298,7 +294,9 @@ export function useGetWorker<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get a single worker runtime snapshot
  */
@@ -318,13 +316,15 @@ export function useGetWorker<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetWorkerQueryOptions(id, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -389,7 +389,7 @@ export const getGetWorkerJobsQueryOptions = <
     Awaited<ReturnType<typeof getWorkerJobs>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetWorkerJobsQueryResult = NonNullable<
@@ -428,7 +428,7 @@ export function useGetWorkerJobs<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetWorkerJobs<
   TData = Awaited<ReturnType<typeof getWorkerJobs>>,
@@ -455,7 +455,9 @@ export function useGetWorkerJobs<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetWorkerJobs<
   TData = Awaited<ReturnType<typeof getWorkerJobs>>,
   TError =
@@ -473,7 +475,9 @@ export function useGetWorkerJobs<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List jobs associated with a worker
  */
@@ -495,13 +499,15 @@ export function useGetWorkerJobs<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetWorkerJobsQueryOptions(id, params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 

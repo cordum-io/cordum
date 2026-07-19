@@ -73,7 +73,7 @@ export const getListPoolsQueryOptions = <
     Awaited<ReturnType<typeof listPools>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListPoolsQueryResult = NonNullable<
@@ -100,7 +100,7 @@ export function useListPools<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListPools<
   TData = Awaited<ReturnType<typeof listPools>>,
@@ -120,7 +120,9 @@ export function useListPools<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListPools<
   TData = Awaited<ReturnType<typeof listPools>>,
   TError = UnauthorizedResponse | ForbiddenResponse,
@@ -131,7 +133,9 @@ export function useListPools<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List worker pools
  */
@@ -146,13 +150,15 @@ export function useListPools<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListPoolsQueryOptions(options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -203,7 +209,7 @@ export const getGetPoolQueryOptions = <
     enabled: !!name,
     ...queryOptions,
   } as UseQueryOptions<Awaited<ReturnType<typeof getPool>>, TError, TData> & {
-    queryKey: DataTag<QueryKey, TData>;
+    queryKey: DataTag<QueryKey, TData, TError>;
   };
 };
 
@@ -240,7 +246,7 @@ export function useGetPool<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetPool<
   TData = Awaited<ReturnType<typeof getPool>>,
@@ -265,7 +271,9 @@ export function useGetPool<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetPool<
   TData = Awaited<ReturnType<typeof getPool>>,
   TError =
@@ -281,7 +289,9 @@ export function useGetPool<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get pool detail
  */
@@ -301,13 +311,15 @@ export function useGetPool<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetPoolQueryOptions(name, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
