@@ -74,6 +74,19 @@ func TestVerifySessionToken_MatchingIdentityPasses(t *testing.T) {
 	}
 }
 
+func TestVerifySessionToken_WarnMissingStillRejectsSenderMismatch(t *testing.T) {
+	t.Parallel()
+	issuer, _, _, cleanup := newTestIssuer(t, SessionTokenIssuerOptions{})
+	defer cleanup()
+	engine := &Engine{sessionMiddleware: NewSessionTokenMiddleware(
+		issuer, HandshakeModeWarn, NewHandshakeMissingTracker(),
+	)}
+	packet := &pb.BusPacket{SenderId: "worker-attacker"}
+	if engine.verifySessionToken(packet, "worker-victim", "job_cancel") {
+		t.Fatal("warn-mode tokenless packet must not cross sender identity boundaries")
+	}
+}
+
 func TestVerifySessionToken_ServiceTokenAdmittedAndBound(t *testing.T) {
 	t.Parallel()
 	issuer, _, _, cleanup := newTestIssuer(t, SessionTokenIssuerOptions{})

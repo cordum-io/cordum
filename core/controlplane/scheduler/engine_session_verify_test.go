@@ -58,7 +58,7 @@ func TestEngine_VerifySessionToken_WarnMissingAdmitsWithLog(t *testing.T) {
 	e.ctx, e.cancel = context.Background(), func() {}
 
 	// Warn mode + missing token → admit.
-	if !e.verifySessionToken(&pb.BusPacket{}, "w-warn", "heartbeat") {
+	if !e.verifySessionToken(&pb.BusPacket{SenderId: "w-warn"}, "w-warn", "heartbeat") {
 		t.Fatal("warn mode must admit missing-token packets")
 	}
 }

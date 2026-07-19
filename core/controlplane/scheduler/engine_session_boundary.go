@@ -42,13 +42,16 @@ func (e *Engine) evaluateTokenVerification(packet *pb.BusPacket, workerID, packe
 }
 
 func (e *Engine) verifiedIdentityMatches(packet *pb.BusPacket, workerID, packetType string, claims *SessionTokenClaims) bool {
-	if claims == nil {
+	if claims == nil && (e.sessionMiddleware == nil || e.sessionMiddleware.Mode() != HandshakeModeWarn) {
 		return true
 	}
 	claimedID := strings.TrimSpace(workerID)
-	claimSubject := strings.TrimSpace(claims.Subject)
 	senderID := strings.TrimSpace(safeSenderID(packet))
-	if claimSubject == claimedID && senderID == claimedID {
+	claimSubject := claimedID
+	if claims != nil {
+		claimSubject = strings.TrimSpace(claims.Subject)
+	}
+	if claimedID != "" && claimSubject == claimedID && senderID == claimedID {
 		return true
 	}
 	slog.Error("session token identity mismatch; rejecting packet",

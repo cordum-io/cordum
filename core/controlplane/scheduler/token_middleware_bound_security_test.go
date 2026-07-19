@@ -57,6 +57,9 @@ func TestSessionTokenMiddlewareActiveModeRejectsMissingIssuer(t *testing.T) {
 	if result.Verdict != TokenVerdictRejectInvalid {
 		t.Fatalf("missing issuer verdict = %s, want reject_invalid", result.Verdict)
 	}
+	if token, err := middleware.MintServiceToken("cordum-scheduler"); err == nil || token != "" {
+		t.Fatalf("missing issuer mint = %q, %v; want empty token and error", token, err)
+	}
 }
 
 func TestEngineUnknownTokenVerdictFailsClosed(t *testing.T) {

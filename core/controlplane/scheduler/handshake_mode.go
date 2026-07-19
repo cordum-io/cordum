@@ -171,6 +171,8 @@ func (t *HandshakeMissingTracker) WithClock(now func() time.Time) *HandshakeMiss
 	if t == nil || now == nil {
 		return t
 	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.now = now
 	return t
 }
@@ -200,9 +202,18 @@ func (t *HandshakeMissingTracker) ShouldLog(workerID string) bool {
 	if id == "" {
 		return false
 	}
-	now := t.now()
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.now == nil {
+		t.now = time.Now
+	}
+	if t.interval <= 0 {
+		t.interval = handshakeMissingLogInterval
+	}
+	if t.lastLog == nil {
+		t.lastLog = make(map[string]time.Time)
+	}
+	now := t.now()
 	last, ok := t.lastLog[id]
 	if ok && now.Sub(last) < t.interval {
 		return false

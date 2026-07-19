@@ -31,6 +31,8 @@ import (
 	"google.golang.org/protobuf/encoding/protowire"
 )
 
+var errSessionTokenModeInvalid = errors.New("scheduler: session token middleware mode invalid")
+
 // TokenVerdict is the decision the middleware returns for an inbound
 // packet. Callers pattern-match on the verdict to decide whether to
 // admit, log-and-admit, or reject the packet.
@@ -114,6 +116,9 @@ func (m *SessionTokenMiddleware) Verify(ctx context.Context, workerID string, pa
 	if m == nil || m.mode == HandshakeModeOff {
 		return TokenVerificationResult{Verdict: TokenVerdictPass}
 	}
+	if m.mode != HandshakeModeWarn && m.mode != HandshakeModeEnforce {
+		return TokenVerificationResult{Verdict: TokenVerdictRejectInvalid, Err: errSessionTokenModeInvalid}
+	}
 	if m.issuer == nil {
 		return TokenVerificationResult{
 			Verdict: TokenVerdictRejectInvalid,
@@ -152,14 +157,19 @@ func (m *SessionTokenMiddleware) Verify(ctx context.Context, workerID string, pa
 
 // MintServiceToken mints a control-plane service token for the given reserved
 // identity using the underlying issuer's signing key. It returns ("", nil)
-// when the middleware is nil, has no issuer, or is in Off mode, so producers
-// attach no token in disabled/back-compat deployments (a peer with the gate
-// disabled admits token-less internal broadcasts anyway). A non-nil error is
-// returned for genuine mint failures so callers can log and fail SAFE (a peer
-// rejects a token-less packet under enforce).
+// when the middleware is nil or in Off mode, so producers attach no token in
+// disabled/back-compat deployments. Active modes fail closed when the issuer
+// is missing or the mode is unknown. A non-nil error is returned for genuine
+// mint failures so callers can log and fail safe.
 func (m *SessionTokenMiddleware) MintServiceToken(subject string) (string, error) {
-	if m == nil || m.issuer == nil || m.mode == HandshakeModeOff {
+	if m == nil || m.mode == HandshakeModeOff {
 		return "", nil
+	}
+	if m.mode != HandshakeModeWarn && m.mode != HandshakeModeEnforce {
+		return "", errSessionTokenModeInvalid
+	}
+	if m.issuer == nil {
+		return "", ErrSessionTokenStoreUnready
 	}
 	return m.issuer.MintServiceToken(subject)
 }
