@@ -25,14 +25,22 @@ func (e *Engine) publishWithTrace(ctx context.Context, subject string, packet *p
 	return e.bus.Publish(subject, packet)
 }
 
-func makeJobPacket(traceID string, req *pb.JobRequest) *pb.BusPacket {
-	return &pb.BusPacket{
+func (e *Engine) makeJobPacket(traceID string, req *pb.JobRequest) *pb.BusPacket {
+	packet := &pb.BusPacket{
 		TraceId:         traceID,
 		SenderId:        "workflow-engine",
 		CreatedAt:       timestamppb.Now(),
 		ProtocolVersion: capsdk.DefaultProtocolVersion,
 		Payload:         &pb.BusPacket_JobRequest{JobRequest: req},
 	}
+	if e != nil && e.serviceTokenMinter != nil {
+		if token, err := e.serviceTokenMinter(); err != nil {
+			slog.Error("workflow-engine service-token mint failed; publishing job without token (peer rejects under enforce)", "error", err)
+		} else if token != "" {
+			packet.AuthToken = token
+		}
+	}
+	return packet
 }
 
 func (e *Engine) evaluateStructuredStepInput(run *WorkflowRun, step *Step, scope map[string]any, inputKind string) (map[string]any, error) {

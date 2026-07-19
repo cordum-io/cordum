@@ -98,6 +98,14 @@ func sessionClaimsMatchCredential(claims *SessionTokenClaims, record *workercred
 }
 
 func (e *Engine) verifyConfigChangeAuthority(packet *pb.BusPacket) bool {
+	return e.verifyReservedServiceAuthority(packet, "config change", false)
+}
+
+func (e *Engine) verifyJobSubmissionAuthority(packet *pb.BusPacket) bool {
+	return e.verifyReservedServiceAuthority(packet, "job submission", true)
+}
+
+func (e *Engine) verifyReservedServiceAuthority(packet *pb.BusPacket, action string, admitWarnMissing bool) bool {
 	if !e.activeSessionMode() {
 		return true
 	}
@@ -111,8 +119,9 @@ func (e *Engine) verifyConfigChangeAuthority(packet *pb.BusPacket) bool {
 		servicetoken.IsReservedIdentity(claims.Subject) &&
 		strings.TrimSpace(claims.Subject) == strings.TrimSpace(packet.GetSenderId())
 	if !allowed {
-		slog.Error("unauthorized config change rejected",
+		slog.Error("unauthorized reserved-service action rejected",
+			"action", action,
 			"sender_id", safeSenderID(packet), "verdict", result.Verdict.String(), "error", result.Err)
 	}
-	return allowed
+	return allowed || (admitWarnMissing && e.sessionMiddleware.Mode() == HandshakeModeWarn && result.Verdict == TokenVerdictWarnMissing)
 }

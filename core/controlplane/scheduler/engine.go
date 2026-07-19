@@ -356,6 +356,9 @@ func (e *Engine) WithWorkerAttestationMode(mode WorkerAttestationMode) *Engine {
 // CORDUM_SDK_HANDSHAKE. Mirrors WithWorkerAttestationMode.
 func (e *Engine) WithSessionMiddleware(mw *SessionTokenMiddleware) *Engine {
 	e.sessionMiddleware = mw
+	if e.saga != nil {
+		e.saga.WithSessionMiddleware(mw)
+	}
 	return e
 }
 
@@ -379,6 +382,9 @@ func (e *Engine) schemaValidationMode() infraSchema.EnforcementMode {
 // WithSaga wires a saga manager for compensation tracking.
 func (e *Engine) WithSaga(saga *SagaManager) *Engine {
 	e.saga = saga
+	if saga != nil {
+		saga.WithSessionMiddleware(e.sessionMiddleware)
+	}
 	return e
 }
 
@@ -873,6 +879,9 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
 	case *pb.BusPacket_JobRequest:
 		req := payload.JobRequest
 		if req == nil {
+			return nil
+		}
+		if !e.verifyJobSubmissionAuthority(p) {
 			return nil
 		}
 		if err := capvalidate.ValidateJobRequest(req); err != nil {
@@ -1850,6 +1859,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			JobRequest: req,
 		},
 	}
+	e.attachServiceToken(packet)
 
 	publishErr := e.publishWithTrace(lockCtx, subject, packet)
 	if err := publishErr; err != nil {
@@ -3044,14 +3054,13 @@ func (e *Engine) observeOutputEvalDuration(topic string, seconds float64) {
 
 // attachServiceToken stamps a short-TTL control-plane service token on an
 // internal broadcast the scheduler publishes to a SUBSCRIBED, gated subject
-// (sys.job.result / sys.job.cancel), so peer schedulers admit it under
+// (sys.job.submit / sys.job.result / sys.job.cancel), so peer schedulers admit it under
 // CORDUM_SDK_HANDSHAKE=enforce. It is best-effort and fails SAFE: on a mint
 // error it logs at ERROR and proceeds WITHOUT a token, so a peer under enforce
 // REJECTS the token-less packet rather than admitting an unauthenticated one.
 // When the gate is Off/disabled the middleware returns ("",nil) and no token is
-// attached (back-compat). Call this ONLY for the scheduler's own self-reject
-// emitters — never for unsubscribed (DLQ/audit) or worker-subject (dispatch)
-// publishes.
+// attached (back-compat). Call this for scheduler-owned authenticated
+// control-plane publishes, never for unsubscribed DLQ/audit traffic.
 func (e *Engine) attachServiceToken(pkt *pb.BusPacket) {
 	if e == nil || pkt == nil || e.sessionMiddleware == nil {
 		return
