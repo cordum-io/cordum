@@ -199,7 +199,7 @@ func (s *HandshakeService) HandleAuthenticate(ctx context.Context, packet *agent
 		return response, nil
 	}
 	s.emitHandshakeAudit(ctx, packet, identity, "authenticate", "reject", failure)
-	challenge := s.challengeForSafeRejection(ctx, packet, identity)
+	challenge := s.challengeForSafeRejection(packet, identity)
 	if challenge == nil {
 		return nil, &HandshakeError{reason: failure.reason}
 	}

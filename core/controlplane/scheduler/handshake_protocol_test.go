@@ -20,9 +20,11 @@ import (
 type protocolTrustResolver struct {
 	identity *HandshakeTrustIdentity
 	err      error
+	calls    int
 }
 
 func (r *protocolTrustResolver) Resolve(_ context.Context, workerID, keyID string) (*HandshakeTrustIdentity, error) {
+	r.calls++
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -32,6 +34,23 @@ func (r *protocolTrustResolver) Resolve(_ context.Context, workerID, keyID strin
 	copy := *r.identity
 	copy.AllowedTopics = append([]string(nil), r.identity.AllowedTopics...)
 	return &copy, nil
+}
+
+func TestAuthenticateResolutionFailureDoesNotResolveTwiceForSafeRejection(t *testing.T) {
+	fixture := newProtocolHandshakeFixture(t)
+	defer fixture.cleanup()
+	challenge, err := fixture.service.HandleChallenge(context.Background(), protocolChallengeRequest(t, fixture,
+		agentv1.WorkerHandshakePurpose_WORKER_HANDSHAKE_PURPOSE_ISSUE))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.resolver.calls = 0
+	fixture.resolver.err = authenticationResolution("credential_rejected")
+	_, _ = fixture.service.HandleAuthenticate(context.Background(),
+		protocolAuthenticate(t, fixture, challenge.GetWorkerHandshakeChallenge(), ""))
+	if fixture.resolver.calls != 1 {
+		t.Fatalf("authenticate resolver calls = %d, want 1", fixture.resolver.calls)
+	}
 }
 
 type protocolAuditSink struct {

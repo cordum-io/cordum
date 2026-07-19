@@ -571,9 +571,11 @@ func parseActiveRecord(raw []byte) (*activeRecord, error) {
 	return &rec, nil
 }
 
-func workerKey(agentID string) string { return sessionWorkerKeyPrefix + agentID }
+func workerKey(agentID string) string {
+	return sessionWorkerKeyPrefix + "legacy:" + encodeSessionKeyPart(agentID)
+}
 func revokedKey(tenant, jti string) string {
-	return sessionRevokedKeyPrefix + tenant + ":" + jti
+	return sessionRevokedKeyPrefix + encodeSessionKeyPart(tenant) + ":" + encodeSessionKeyPart(jti)
 }
 
 // newJTI returns a 128-bit random hex-encoded identifier suitable for

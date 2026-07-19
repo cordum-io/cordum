@@ -106,7 +106,7 @@ func validateHandshakeAgent(credential *workercredentials.Credential, identity *
 
 func resolvedHandshakeIdentity(credential *workercredentials.Credential, identity *store.AgentIdentity, publicKey *ecdsa.PublicKey) *HandshakeTrustIdentity {
 	return &HandshakeTrustIdentity{
-		WorkerID: credential.WorkerID, AgentID: identity.ID, TenantID: credential.TenantID,
+		WorkerID: credential.WorkerID, AgentID: strings.TrimSpace(credential.AgentID), TenantID: credential.TenantID,
 		ProofKeyID: credential.ProofKeyID, PublicKey: publicKey,
 		AllowedTopics: append([]string(nil), credential.AllowedTopics...), AgentName: identity.Name,
 	}
