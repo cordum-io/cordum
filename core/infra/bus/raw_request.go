@@ -35,11 +35,6 @@ var defaultRawRequestConfig = rawRequestConfig{
 	handlerTimeout:  rawRequestHandlerTimeout,
 }
 
-type rawHandlerResult struct {
-	response model.RawResponse
-	err      error
-}
-
 // QueueRespond registers a core-NATS queue subscriber for bounded raw
 // request/reply traffic. It deliberately bypasses JetStream persistence.
 func (b *NatsBus) QueueRespond(subject, queue string, handler model.RawRequestHandler) (model.BusSubscription, error) {
@@ -62,7 +57,14 @@ func (b *NatsBus) QueueRespond(subject, queue string, handler model.RawRequestHa
 	if err != nil {
 		return nil, fmt.Errorf("queue respond %s: %w", subject, err)
 	}
-	b.trackSub(sub)
+	if err := b.nc.Flush(); err != nil {
+		_ = sub.Drain()
+		return nil, fmt.Errorf("queue respond %s flush: %w", subject, err)
+	}
+	if !b.trackSub(sub) {
+		_ = sub.Drain()
+		return nil, errors.New("bus is draining")
+	}
 	return sub, nil
 }
 
@@ -94,34 +96,27 @@ func executeRawHandler(parent context.Context, request []byte, config rawRequest
 	ctx, cancel := context.WithTimeout(parent, config.handlerTimeout)
 	defer cancel()
 
-	resultCh := make(chan rawHandlerResult, 1)
 	requestCopy := append(model.RawRequest(nil), request...)
-	go callRawHandler(ctx, requestCopy, handler, resultCh)
-	select {
-	case result := <-resultCh:
-		if ctx.Err() != nil {
-			return nil, errRawHandlerTimeout
-		}
-		if result.err != nil {
-			return nil, result.err
-		}
-		if len(result.response) > config.maxPayloadBytes {
-			return nil, errRawPayloadTooLarge
-		}
-		return result.response, nil
-	case <-ctx.Done():
+	response, err := callRawHandler(ctx, requestCopy, handler)
+	if ctx.Err() != nil {
 		return nil, errRawHandlerTimeout
 	}
+	if err != nil {
+		return nil, err
+	}
+	if len(response) > config.maxPayloadBytes {
+		return nil, errRawPayloadTooLarge
+	}
+	return response, nil
 }
 
-func callRawHandler(ctx context.Context, request model.RawRequest, handler model.RawRequestHandler, resultCh chan<- rawHandlerResult) {
+func callRawHandler(ctx context.Context, request model.RawRequest, handler model.RawRequestHandler) (response model.RawResponse, err error) {
 	defer func() {
 		if recover() != nil {
-			resultCh <- rawHandlerResult{err: errRawHandlerPanic}
+			response, err = nil, errRawHandlerPanic
 		}
 	}()
-	response, err := handler(ctx, request)
-	resultCh <- rawHandlerResult{response: response, err: err}
+	return handler(ctx, request)
 }
 
 func logRawRequestFailure(subject string, err error) {
