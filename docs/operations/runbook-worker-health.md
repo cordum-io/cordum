@@ -88,8 +88,38 @@ Replace legacy heartbeat-staleness alerts with their session-authority equivalen
 1. Pull the worker's session-state reason: `GET /api/v1/workers/{id}` and inspect `session_state` + `session_revoked`.
 2. If `session_state == "session_revoked"`: this is an operator action; confirm via the audit chain (`event_type == "worker_trust_change"`).
 3. If `session_state == "session_expired"`: the worker failed to renew. Check the worker process for `handshake_renew` errors; restart if needed.
-4. If `session_state == "no_session"`: the worker never handshook. Confirm the worker is on an SDK version that issues a handshake (SDK handshake gap remediation, task-66b8fb92) and that `CORDUM_SDK_HANDSHAKE` is not set to `off`.
-5. If `session_state == "trust_store_unready"`: the gateway-side resolver is not wired. Check `CORDUM_HEARTBEAT_MODE` and the scheduler boot log for "heartbeat mode active" lines.
+4. If `session_state == "no_session"`: the worker never completed the
+   authenticated challenge/proof exchange. Confirm the installed Go, Python,
+   or Node SDK has a complete worker-trust config, the worker/agent/tenant link
+   is enrolled, and both control-plane modes are active.
+5. If `session_state == "trust_store_unready"`: stop rollout. Check Redis,
+   the Ed25519 private/public key pair and key ID on scheduler/gateway, and the
+   scheduler boot log. Do not fall back to a self-reported capability
+   handshake.
+6. If state is `valid` but a packet is rejected, inspect only the stable
+   rejection category and public IDs. Verify token subject, packet sender,
+   worker ID, tenant, agent, proof-key ID, and audience are the same binding.
+   Never print the token or raw proof while debugging.
+
+## Authenticated-handshake remediation
+
+| Failure | Remediation |
+|---|---|
+| Scheduler/gateway refuses to boot on mode | Use `off` only with `authority`, or `warn`/`enforce` with `warn`/`telemetry`. Empty, typoed, or contradictory values are fatal by design. |
+| P-256 authority missing/mismatched | Provide all four `CORDUM_HANDSHAKE_*` settings. Confirm the private key and public SPKI file are the same P-256 key. |
+| Session signing authority missing | Provide a real Ed25519 signing key, key ID, and matching `CORDUM_POLICY_PUBLIC_KEY_<ID>` entry. Check Redis before retrying. |
+| `unknown_agent`, wrong tenant, or identity mismatch | Confirm the tenant-scoped agent record exists and the worker credential links that exact agent and worker. |
+| Unknown/revoked proof key | Rotate to a new worker P-256 key ID and public key; deploy its private key only on the worker. |
+| Audience/scheduler mismatch | Use audience `cordum-scheduler` and the exact pinned scheduler ID/key ID. |
+| Replay, expired challenge, or skew | Correct clocks and start a new challenge. Never resend the same authenticate packet. |
+| Altered nonce/trace/version/capability/signature | Treat as tampering or incompatible bytes; isolate the NATS path and restart the exchange. |
+| Expired/revoked/superseded session | Stop new work admission and re-authenticate. Review `worker_trust_change` audit events before clearing an operator revocation. |
+| Legacy handshake waits forever | Expected. There is no responder or mint path on old handshake/renew subjects; upgrade to the protobuf challenge/authenticate flow. |
+
+Keep diagnostic logs secret-safe: tenant/worker/agent IDs, bounded trace/request
+IDs, public key ID/fingerprint, mode, and rejection category are sufficient.
+Session tokens, private keys, raw signatures, nonces, authorization headers,
+and complete packets must not enter logs, tickets, or SIEM payloads.
 
 ## Heartbeat-age escalation (NOT a session-authority alert)
 
@@ -101,19 +131,35 @@ If `cordum_scheduler_worker_heartbeat_age_seconds` trends upward while `session_
 
 This condition alone is **not** a dispatch outage. Do not page oncall for it — file a ticket for the platform team instead.
 
-## Rollout mode quick reference
+## Recommended rollout quick reference
 
-| `CORDUM_HEARTBEAT_MODE` | Session authority | Heartbeat recency | Disagreement SIEMEvent |
-|---|---|---|---|
-| `authority` (legacy) | ignored | gates dispatch | no |
-| `warn` (transitional) | gates dispatch | compared as telemetry | yes (`heartbeat_disagreement`) |
-| `telemetry` (target) | gates dispatch | informational only | no |
+| Phase | `CORDUM_SDK_HANDSHAKE` | `CORDUM_HEARTBEAT_MODE` | Dispatch authority | Heartbeat use |
+|---|---|---|---|---|
+| Compatibility | `off` | `authority` | Legacy heartbeat TTL | Gates dispatch |
+| Transition | `warn` | `warn` | Bound worker session | Compared; emits `heartbeat_disagreement` |
+| Target | `enforce` | `telemetry` | Bound worker session | Informational only |
 
-Operators should stay in `warn` for at least one release, review the `heartbeat_disagreement` event rate, and then flip to `telemetry` once the count settles near zero.
+These are rollout recommendations, not the complete accepted matrix. Boot
+validation accepts `off` only with `authority`, and either `warn` or `enforce`
+with either `warn` or `telemetry` heartbeat mode.
+
+In transition, a tokenless heartbeat or generic capability handshake may be
+retained for diagnosis, but it must never update trusted liveness, readiness,
+capability authority, or the dispatch snapshot. If a tokenless advertisement
+appears to make a worker eligible, treat that as a security regression.
+
+Flip both variables together on scheduler and gateway. Before `warn`, enroll
+worker proof keys, pin the scheduler P-256 public key on workers, deploy the
+Ed25519 session signing/trust authority to scheduler and gateway, and keep
+`WORKER_ATTESTATION=off`. Before `enforce`, deploy the same Ed25519 authority to
+workflow engine so internal cancel broadcasts remain authenticated. Stay in
+the transition phase until disagreement and missing-token rates are understood.
+Rollback both variables to `off` + `authority`; do not leave a mixed pair.
 
 ## References
 
 - `docs/architecture/heartbeat-demotion.md` — strategic context.
+- `docs/sdk/handshake.md` — enrollment, keys, protobuf flow, rotation, and NATS ACLs.
 - Internal heartbeat-demotion call-site audit used to plan the rewire (Cordum engineering).
 - `core/controlplane/scheduler/trust_state.go` — trust resolver source.
 - `core/controlplane/scheduler/metrics.go` — gauge registration.
