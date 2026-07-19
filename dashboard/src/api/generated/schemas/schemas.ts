@@ -50,9 +50,7 @@ export const createSchema = (
 
 export const getCreateSchemaMutationOptions = <
   TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | InternalServerErrorResponse,
+    BadRequestResponse | UnauthorizedResponse | InternalServerErrorResponse,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -93,18 +91,14 @@ export type CreateSchemaMutationResult = NonNullable<
 >;
 export type CreateSchemaMutationBody = SchemaRecord;
 export type CreateSchemaMutationError =
-  | BadRequestResponse
-  | UnauthorizedResponse
-  | InternalServerErrorResponse;
+  BadRequestResponse | UnauthorizedResponse | InternalServerErrorResponse;
 
 /**
  * @summary Register a JSON schema
  */
 export const useCreateSchema = <
   TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | InternalServerErrorResponse,
+    BadRequestResponse | UnauthorizedResponse | InternalServerErrorResponse,
   TContext = unknown,
 >(
   options?: {
@@ -161,15 +155,14 @@ export const getListSchemasQueryOptions = <
     Awaited<ReturnType<typeof listSchemas>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListSchemasQueryResult = NonNullable<
   Awaited<ReturnType<typeof listSchemas>>
 >;
 export type ListSchemasQueryError =
-  | UnauthorizedResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | InternalServerErrorResponse;
 
 export function useListSchemas<
   TData = Awaited<ReturnType<typeof listSchemas>>,
@@ -190,7 +183,7 @@ export function useListSchemas<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListSchemas<
   TData = Awaited<ReturnType<typeof listSchemas>>,
@@ -210,7 +203,9 @@ export function useListSchemas<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListSchemas<
   TData = Awaited<ReturnType<typeof listSchemas>>,
   TError = UnauthorizedResponse | InternalServerErrorResponse,
@@ -221,7 +216,9 @@ export function useListSchemas<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List registered schemas
  */
@@ -236,13 +233,15 @@ export function useListSchemas<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListSchemasQueryOptions(options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -267,9 +266,7 @@ export const getGetSchemaQueryKey = (id?: string) => {
 export const getGetSchemaQueryOptions = <
   TData = Awaited<ReturnType<typeof getSchema>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -292,7 +289,7 @@ export const getGetSchemaQueryOptions = <
     enabled: !!id,
     ...queryOptions,
   } as UseQueryOptions<Awaited<ReturnType<typeof getSchema>>, TError, TData> & {
-    queryKey: DataTag<QueryKey, TData>;
+    queryKey: DataTag<QueryKey, TData, TError>;
   };
 };
 
@@ -300,16 +297,12 @@ export type GetSchemaQueryResult = NonNullable<
   Awaited<ReturnType<typeof getSchema>>
 >;
 export type GetSchemaQueryError =
-  | UnauthorizedResponse
-  | NotFoundResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse;
 
 export function useGetSchema<
   TData = Awaited<ReturnType<typeof getSchema>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options: {
@@ -327,14 +320,12 @@ export function useGetSchema<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetSchema<
   TData = Awaited<ReturnType<typeof getSchema>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -351,13 +342,13 @@ export function useGetSchema<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetSchema<
   TData = Awaited<ReturnType<typeof getSchema>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -366,7 +357,9 @@ export function useGetSchema<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get a schema by ID
  */
@@ -374,9 +367,7 @@ export function useGetSchema<
 export function useGetSchema<
   TData = Awaited<ReturnType<typeof getSchema>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -385,13 +376,15 @@ export function useGetSchema<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetSchemaQueryOptions(id, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -407,9 +400,7 @@ export const deleteSchema = (id: string) => {
 
 export const getDeleteSchemaMutationOptions = <
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -450,18 +441,14 @@ export type DeleteSchemaMutationResult = NonNullable<
 >;
 
 export type DeleteSchemaMutationError =
-  | UnauthorizedResponse
-  | NotFoundResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse;
 
 /**
  * @summary Delete a schema
  */
 export const useDeleteSchema = <
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
   TContext = unknown,
 >(
   options?: {
