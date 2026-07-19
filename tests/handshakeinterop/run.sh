@@ -31,8 +31,10 @@ assert_cap_revision() {
 }
 
 assert_cap_revision
-temp_root="$(mktemp -d "${RUNNER_TEMP:-/tmp}/cap-handshake-interop.XXXXXX")"
-cleanup() { rm -rf -- "$temp_root"; }
+. "$cordum_root/tests/handshakeinterop/cleanup.sh"
+temp_base="$(cd "${RUNNER_TEMP:-/tmp}" && pwd -P)"
+temp_root="$(mktemp -d "$temp_base/cap-handshake-interop.XXXXXX")"
+cleanup() { remove_owned_temp "$temp_root" "$temp_base"; }
 trap cleanup EXIT
 
 build_go_client() {
