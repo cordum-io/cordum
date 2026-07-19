@@ -5832,20 +5832,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                worker_id:
-                  type: string
-                allowed_pools:
-                  type: array
-                  items:
-                    type: string
-                allowed_topics:
-                  type: array
-                  items:
-                    type: string
-              required:
-              - worker_id
+              $ref: '#/components/schemas/CreateWorkerCredentialRequest'
       responses:
         '200':
           description: Credential rotated
@@ -13794,6 +13781,45 @@ components:
       - id
       - updated_at
       - state
+    CreateWorkerCredentialRequest:
+      type: object
+      description: >-
+        Creates or rotates a worker credential. Proof-key fields are optional
+        for legacy credentials, but when any proof-key field is supplied all
+        three and agent_id must be supplied together. Rotating an active proof
+        credential without proof-key fields preserves its enrolled key and
+        authoritative agent link after revalidation; changing agent_id for a
+        proof-bearing credential requires a full proof-key replacement bundle.
+      properties:
+        worker_id:
+          type: string
+        allowed_pools:
+          type: array
+          items:
+            type: string
+        allowed_topics:
+          type: array
+          items:
+            type: string
+        agent_id:
+          type: string
+          description: Active agent identity in the same tenant; required for proof-key enrollment.
+        proof_key_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z0-9][A-Za-z0-9._:-]*$
+        proof_algorithm:
+          type: string
+          enum:
+          - ECDSA_P256_SHA256
+        proof_public_key_pem:
+          type: string
+          maxLength: 4096
+          writeOnly: true
+          description: ECDSA P-256 public key encoded as SubjectPublicKeyInfo PEM.
+      required:
+      - worker_id
     WorkerCredential:
       type: object
       properties:
@@ -13811,6 +13837,17 @@ components:
             type: string
         pack_id:
           type: string
+        agent_id:
+          type: string
+        proof_key_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z0-9][A-Za-z0-9._:-]*$
+        proof_algorithm:
+          type: string
+          enum:
+          - ECDSA_P256_SHA256
         created_by:
           type: string
         created_at:

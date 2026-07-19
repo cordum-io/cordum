@@ -62,9 +62,7 @@ export const getListApprovalsQueryKey = (params?: ListApprovalsParams) => {
 export const getListApprovalsQueryOptions = <
   TData = Awaited<ReturnType<typeof listApprovals>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   params?: ListApprovalsParams,
   options?: {
@@ -85,23 +83,19 @@ export const getListApprovalsQueryOptions = <
     Awaited<ReturnType<typeof listApprovals>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListApprovalsQueryResult = NonNullable<
   Awaited<ReturnType<typeof listApprovals>>
 >;
 export type ListApprovalsQueryError =
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse;
 
 export function useListApprovals<
   TData = Awaited<ReturnType<typeof listApprovals>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   params: undefined | ListApprovalsParams,
   options: {
@@ -119,14 +113,12 @@ export function useListApprovals<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListApprovals<
   TData = Awaited<ReturnType<typeof listApprovals>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   params?: ListApprovalsParams,
   options?: {
@@ -143,13 +135,13 @@ export function useListApprovals<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListApprovals<
   TData = Awaited<ReturnType<typeof listApprovals>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   params?: ListApprovalsParams,
   options?: {
@@ -158,7 +150,9 @@ export function useListApprovals<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List pending approvals
  */
@@ -166,9 +160,7 @@ export function useListApprovals<
 export function useListApprovals<
   TData = Awaited<ReturnType<typeof listApprovals>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   params?: ListApprovalsParams,
   options?: {
@@ -177,13 +169,15 @@ export function useListApprovals<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListApprovalsQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -440,7 +434,7 @@ export const getGetApprovalContextQueryOptions = <
     Awaited<ReturnType<typeof getApprovalContext>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetApprovalContextQueryResult = NonNullable<
@@ -480,7 +474,7 @@ export function useGetApprovalContext<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetApprovalContext<
   TData = Awaited<ReturnType<typeof getApprovalContext>>,
@@ -509,7 +503,9 @@ export function useGetApprovalContext<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetApprovalContext<
   TData = Awaited<ReturnType<typeof getApprovalContext>>,
   TError =
@@ -529,7 +525,9 @@ export function useGetApprovalContext<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get enriched approval context for a single job
  */
@@ -553,13 +551,15 @@ export function useGetApprovalContext<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetApprovalContextQueryOptions(jobId, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 

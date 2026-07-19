@@ -268,19 +268,18 @@ func TestCancelAndResultRaceSerializedByLock(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		cancelPacket := &pb.BusPacket{
+		cancelPacket := completeSecurityTestEnvelope(&pb.BusPacket{
 			Payload: &pb.BusPacket_JobCancel{
 				JobCancel: &pb.JobCancel{
-					JobId:  "job-race",
-					Reason: "user requested",
+					JobId: "job-race", RequestedBy: "worker-1", Reason: "user requested",
 				},
 			},
-		}
+		})
 		cancelErr = engine.HandlePacket(cancelPacket)
 	}()
 	go func() {
 		defer wg.Done()
-		resultPacket := &pb.BusPacket{
+		resultPacket := completeSecurityTestEnvelope(&pb.BusPacket{
 			Payload: &pb.BusPacket_JobResult{
 				JobResult: &pb.JobResult{
 					JobId:    "job-race",
@@ -288,7 +287,7 @@ func TestCancelAndResultRaceSerializedByLock(t *testing.T) {
 					Status:   pb.JobStatus_JOB_STATUS_SUCCEEDED,
 				},
 			},
-		}
+		})
 		resultErr = engine.HandlePacket(resultPacket)
 	}()
 	wg.Wait()

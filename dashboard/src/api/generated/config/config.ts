@@ -72,15 +72,14 @@ export const getGetConfigQueryOptions = <
     Awaited<ReturnType<typeof getConfig>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetConfigQueryResult = NonNullable<
   Awaited<ReturnType<typeof getConfig>>
 >;
 export type GetConfigQueryError =
-  | UnauthorizedResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | InternalServerErrorResponse;
 
 export function useGetConfig<
   TData = Awaited<ReturnType<typeof getConfig>>,
@@ -102,7 +101,7 @@ export function useGetConfig<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetConfig<
   TData = Awaited<ReturnType<typeof getConfig>>,
@@ -123,7 +122,9 @@ export function useGetConfig<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetConfig<
   TData = Awaited<ReturnType<typeof getConfig>>,
   TError = UnauthorizedResponse | InternalServerErrorResponse,
@@ -135,7 +136,9 @@ export function useGetConfig<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get configuration
  */
@@ -151,13 +154,15 @@ export function useGetConfig<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetConfigQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -406,15 +411,14 @@ export const getGetEffectiveConfigQueryOptions = <
     Awaited<ReturnType<typeof getEffectiveConfig>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetEffectiveConfigQueryResult = NonNullable<
   Awaited<ReturnType<typeof getEffectiveConfig>>
 >;
 export type GetEffectiveConfigQueryError =
-  | UnauthorizedResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | InternalServerErrorResponse;
 
 export function useGetEffectiveConfig<
   TData = Awaited<ReturnType<typeof getEffectiveConfig>>,
@@ -440,7 +444,7 @@ export function useGetEffectiveConfig<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetEffectiveConfig<
   TData = Awaited<ReturnType<typeof getEffectiveConfig>>,
@@ -465,7 +469,9 @@ export function useGetEffectiveConfig<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetEffectiveConfig<
   TData = Awaited<ReturnType<typeof getEffectiveConfig>>,
   TError = UnauthorizedResponse | InternalServerErrorResponse,
@@ -481,7 +487,9 @@ export function useGetEffectiveConfig<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get merged effective configuration
  */
@@ -501,13 +509,15 @@ export function useGetEffectiveConfig<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetEffectiveConfigQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 

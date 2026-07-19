@@ -13,6 +13,7 @@ installed on user machines rather than as Kubernetes pods.
 | `secrets.apiKey` | Yes | API authentication key (`openssl rand -hex 32`) |
 | `redis.auth.password` | Yes (when `redis.auth.enabled=true`) | Redis password (`openssl rand -hex 32`) |
 | `secrets.adminPassword` | When `gateway.env.userAuthEnabled=true` | Admin user password |
+| `workerTrust.*` proof/signing secret refs | When `workerTrust.mode=warn` or `enforce` | Complete scheduler P-256 proof and shared Ed25519 session authority; the chart fails on a partial active bundle. |
 
 ## Install (local chart)
 
@@ -157,6 +158,65 @@ Dashboard: `http://localhost:8082`
 HTTP requests must include `X-API-Key` and `X-Tenant-ID` (use `gateway.env.tenantId` as the default tenant).
 
 ## Security Configuration
+
+### Authenticated worker trust
+
+The chart deliberately defaults scheduler and gateway to
+`CORDUM_SDK_HANDSHAKE=off` plus `CORDUM_HEARTBEAT_MODE=authority`. Do not flip
+one without the other. Active mode requires an enrolled worker fleet plus two
+separate authorities:
+
+1. a scheduler ECDSA P-256 proof key (private + matching public SPKI PEM);
+2. an Ed25519 session-signing key and matching public key. Scheduler, gateway,
+   and workflow engine receive the same Ed25519 secret refs so the enforce-mode
+   control plane can authenticate its internal broadcasts.
+
+Create Kubernetes secrets without placing private bytes in values files:
+
+```bash
+kubectl -n cordum create secret generic cordum-scheduler-proof \
+  --from-file=private.pem=./scheduler-proof-private.pem \
+  --from-file=public.pem=./scheduler-proof-public.pem
+
+kubectl -n cordum create secret generic cordum-session-signing \
+  --from-file=private.pem=./session-signing-private.pem \
+  --from-file=public.pem=./session-signing-public.pem
+```
+
+Then use an operator-owned values file containing references only:
+
+```yaml
+workerTrust:
+  mode: warn
+  heartbeatMode: warn
+  schedulerId: cordum-scheduler
+  schedulerKeyId: scheduler-proof-v1
+  schedulerProof:
+    privateKeySecret: {name: cordum-scheduler-proof, key: private.pem}
+    publicKeySecret: {name: cordum-scheduler-proof, key: public.pem}
+  sessionSigning:
+    # Letters, digits, and underscore only; this maps to
+    # CORDUM_POLICY_PUBLIC_KEY_SESSION_V1.
+    keyId: session_v1
+    privateKeySecret: {name: cordum-session-signing, key: private.pem}
+    publicKeySecret: {name: cordum-session-signing, key: public.pem}
+scheduler:
+  env:
+    workerAttestation: "off"
+```
+
+Run `helm upgrade --install ... -f worker-trust-values.yaml`. The template
+rejects unknown/contradictory modes, active legacy `WORKER_ATTESTATION`, a
+partial P-256 pair, or a partial Ed25519 signing/trust pair. The recommended
+rollout moves from
+`warn`+`warn` to `enforce`+`telemetry` only after tokenless heartbeat and
+capability traffic is zero or understood. Tokenless advertisements in warn are
+telemetry only; they never establish readiness, liveness, or dispatch trust.
+
+Use NATS TLS/auth and least-privilege publish/subscribe ACLs for
+`sys.worker.handshake.challenge`, `sys.worker.handshake.authenticate`, and
+request inboxes. See [authenticated worker handshake](../docs/sdk/handshake.md)
+for enrollment, key rotation, revocation, renewal, ACLs, and rollback.
 
 ### Redis Authentication
 

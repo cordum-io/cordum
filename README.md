@@ -429,6 +429,7 @@ cordum/
 | [Core Reference](docs/CORE.md) | Deep technical details |
 | [Docker Guide](docs/DOCKER.md) | Running with Compose |
 | [Agent Protocol](docs/AGENT_PROTOCOL.md) | CAP bus + pointer semantics |
+| [Authenticated Worker Trust](docs/sdk/handshake.md) | Worker enrollment, challenge/proof sessions, rollout, and rotation |
 | [MCP Server](docs/mcp-server.md) | MCP stdio + HTTP/SSE integration |
 | [Pack Format](docs/pack.md) | How to package agent capabilities |
 | [Local E2E](docs/LOCAL_E2E.md) | Full local walkthrough |
@@ -500,6 +501,15 @@ func main() {
 ```
 
 SDKs: **Go** (stable) | [**Python**](https://github.com/cordum-io/cap) | [**Node**](https://github.com/cordum-io/cap)
+
+Stable CAP Go, Python, and Node runtimes implement the same authenticated
+protobuf worker-trust contract. A legacy capability handshake or heartbeat is
+telemetry, not identity proof, unless it is bound into an accepted session.
+Deployments remain at the explicit compatibility default
+`CORDUM_SDK_HANDSHAKE=off` + `CORDUM_HEARTBEAT_MODE=authority` until worker
+proof keys and control-plane signing authorities are provisioned. Follow the
+[authenticated worker trust guide](docs/sdk/handshake.md) before enabling
+`warn` or `enforce`.
 
 ## Integration Packs
 

@@ -9,7 +9,23 @@ func (s *server) WithSessionIssuer(issuer *scheduler.SessionTokenIssuer) *server
 		return nil
 	}
 	s.sessionIssuer = issuer
+	s.serviceTokenMinter = issuer
 	return s
+}
+
+// WithGatewayHandshakeSecurity wires both authority modes and the issuer as one
+// boundary so active-mode publishers cannot retain a nil minter by accident.
+func (s *server) WithGatewayHandshakeSecurity(
+	mode scheduler.HandshakeMode,
+	heartbeatMode scheduler.HeartbeatMode,
+	issuer *scheduler.SessionTokenIssuer,
+) *server {
+	if s == nil {
+		return nil
+	}
+	s.handshakeMode = mode
+	s.heartbeatMode = heartbeatMode
+	return s.WithSessionIssuer(issuer)
 }
 
 // WithTrustResolver wires the authoritative worker-trust resolver.

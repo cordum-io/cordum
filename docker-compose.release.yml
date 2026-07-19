@@ -143,6 +143,8 @@ services:
       NATS_TLS_KEY: /etc/cordum/tls/client/tls.key
       NATS_TLS_SERVER_NAME: nats
       NATS_USE_JETSTREAM: "1"
+      CORDUM_SDK_HANDSHAKE: "${CORDUM_SDK_HANDSHAKE:-off}"
+      CORDUM_HEARTBEAT_MODE: "${CORDUM_HEARTBEAT_MODE:-authority}"
       REDIS_URL: "rediss://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379"
       REDIS_TLS_CA: /etc/cordum/tls/ca/ca.crt
       REDIS_TLS_CERT: /etc/cordum/tls/client/tls.crt
@@ -191,6 +193,8 @@ services:
       NATS_TLS_KEY: /etc/cordum/tls/client/tls.key
       NATS_TLS_SERVER_NAME: nats
       NATS_USE_JETSTREAM: "1"
+      CORDUM_SDK_HANDSHAKE: "${CORDUM_SDK_HANDSHAKE:-off}"
+      CORDUM_HEARTBEAT_MODE: "${CORDUM_HEARTBEAT_MODE:-authority}"
       REDIS_URL: "rediss://:${REDIS_PASSWORD:?error: REDIS_PASSWORD is not set}@redis:6379"
       REDIS_TLS_CA: /etc/cordum/tls/ca/ca.crt
       REDIS_TLS_CERT: /etc/cordum/tls/client/tls.crt
