@@ -104,8 +104,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     env:
-      CAP_REV: 1d73d52c203c88a0e4d6f0f7a82f5a584eb05fe6
-      CAP_HANDSHAKE_CAP_SHA: 1d73d52c203c88a0e4d6f0f7a82f5a584eb05fe6
+      CAP_REV: 7aff0d43002c2eaf903feee7f56838e75665a274
+      CAP_HANDSHAKE_CAP_SHA: 7aff0d43002c2eaf903feee7f56838e75665a274
       CAP_HANDSHAKE_REDIS_URL: redis://127.0.0.1:6379/0
     services:
       redis:

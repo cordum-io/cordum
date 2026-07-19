@@ -1,10 +1,10 @@
 module github.com/cordum/cordum/sdk
 
-go 1.25.10
+go 1.25.12
 
 require (
 	github.com/alicebob/miniredis/v2 v2.36.1
-	github.com/cordum-io/cap/v2 v2.13.1
+	github.com/cordum-io/cap/v2 v2.14.1-0.20260719123704-7aff0d43002c
 	github.com/nats-io/nats-server/v2 v2.12.6
 	github.com/nats-io/nats.go v1.49.0
 	github.com/redis/go-redis/v9 v9.7.3
@@ -23,7 +23,7 @@ require (
 	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	golang.org/x/crypto v0.52.0 // indirect
-	golang.org/x/net v0.54.0 // indirect
+	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 	golang.org/x/time v0.15.0 // indirect

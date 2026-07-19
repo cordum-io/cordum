@@ -96,13 +96,7 @@ func main() {
 	// AFTER the metrics server stopped, delaying graceful exit.
 	log.Printf("[demo-quickstart] nats connected (url=%s)", natsURL)
 
-	agent := &runtime.Agent{
-		NATS:     nc,
-		NATSURL:  natsURL,
-		RedisURL: redisURL,
-		Store:    blobStore,
-		SenderID: workerID,
-	}
+	agent := runtime.NewLegacyUnsignedAgent(natsURL, redisURL, workerID, nc, blobStore)
 	runtime.Register(agent, topicGreet, greetHandler)
 	runtime.Register(agent, "worker."+workerID+".jobs", greetHandler)
 

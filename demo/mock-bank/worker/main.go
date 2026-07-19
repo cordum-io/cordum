@@ -191,13 +191,7 @@ func main() {
 	for _, w := range bankWorkers {
 		worker := w
 
-		agent := &runtime.Agent{
-			NATS:     nc,
-			NATSURL:  natsURL,
-			RedisURL: redisURL,
-			Store:    blobStore,
-			SenderID: worker.ID,
-		}
+		agent := runtime.NewLegacyUnsignedAgent(natsURL, redisURL, worker.ID, nc, blobStore)
 
 		// Per-workerDef in-flight counter. The heartbeat callback reads
 		// it on each tick so /api/v1/workers reflects actual load, not

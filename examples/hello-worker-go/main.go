@@ -59,13 +59,7 @@ func main() {
 		log.Fatalf("nats connect: %v", err)
 	}
 
-	agent := &runtime.Agent{
-		NATSURL:  natsURL,
-		RedisURL: redisURL,
-		NATS:     nc,
-		Store:    store,
-		SenderID: workerID,
-	}
+	agent := runtime.NewLegacyUnsignedAgent(natsURL, redisURL, workerID, nc, store)
 
 	handler := func(ctx runtime.Context, input echoInput) (echoOutput, error) {
 		message := strings.TrimSpace(input.Message)

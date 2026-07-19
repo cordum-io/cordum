@@ -60,3 +60,17 @@ func TestValidateRedisURL(t *testing.T) {
 		}
 	}
 }
+
+func TestNewLegacyUnsignedAgentMakesCompatibilityExplicit(t *testing.T) {
+	agent := NewLegacyUnsignedAgent("nats://example", "redis://example", "legacy-worker", nil, nil)
+
+	if !agent.AllowUnsigned {
+		t.Fatal("legacy agent must explicitly opt into unsigned compatibility")
+	}
+	if agent.NATSURL != "nats://example" || agent.RedisURL != "redis://example" {
+		t.Fatalf("agent URLs = %q, %q", agent.NATSURL, agent.RedisURL)
+	}
+	if agent.SenderID != "legacy-worker" {
+		t.Fatalf("sender ID = %q, want legacy-worker", agent.SenderID)
+	}
+}
