@@ -69,35 +69,66 @@ reserve below Claude's 5s deadline.
 | `CORDUM_EDGE_MODE` | generated settings mirror the selected policy mode | Hook-side mode for local/dev settings. Enterprise templates set `enterprise-strict`. |
 | `CORDUM_AGENTD_FAIL_CLOSED` | `false` | When true, hook/agentd fail closed if local governance cannot start or respond safely. |
 | `CORDUM_AGENTD_INLINE_APPROVAL_WAIT` | `false`; wrapper enables it for local/demo sessions | Local/demo-only inline wait for `REQUIRE_APPROVAL`; enterprise UX should not rely on interactive defer semantics. |
-| `CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` | `30s` | Strict wait budget. Rejection, timeout, pending, or wait errors deny and require retry. **Must be strictly below Claude Code's 5s hook deadline — see the warning below.** |
+| `CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` | `30s` | Nominal wait budget. Rejection, timeout, pending, or wait errors deny and require retry. In practice it is always clamped well below this by the surrounding hook budget — see the note below — so it never actually gets close to Claude Code's 5s hook deadline. |
 
-> **Inline approval wait must stay under the hook deadline.**
-> `CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` defaults to `30s`, but Claude
-> Code's PreToolUse command-hook deadline is `5s`. If the inline wait outlives
-> that deadline, Claude Code times out the hook and **fails open** — the tool
-> runs, and there is no user-visible warning that governance was skipped.
-> Unlike `CORDUM_AGENTD_HOOK_TIMEOUT`, this value is **not** validated against
-> the 5s deadline (it is only checked for `>0` and `<=5m`), so an unsafe
-> combination is accepted silently.
+> **The 30s default looks unsafe next to Claude's 5s hook deadline, but it is
+> not: the wait is already clamped by the same budget that bounds the whole
+> hook call, and the result denies either way.**
 >
-> Use one of:
+> `CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` is **not** independently
+> validated against the 5s deadline (it is only checked for `>0` and `<=5m`),
+> which reads like an unsafe combination at face value. It isn't, for two
+> layered reasons:
 >
-> 1. Set `CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` strictly below `5s`
->    (leave headroom for response writing, as `CORDUM_AGENTD_HOOK_TIMEOUT` does
->    at `4.5s`).
-> 2. Disable inline wait (`CORDUM_AGENTD_INLINE_APPROVAL_WAIT=false`) so
->    `REQUIRE_APPROVAL` denies immediately with retry guidance.
-> 3. Prefer deny-and-retry over block-and-wait: return the approval reference to
->    the agent and let it retry after a reviewer resolves it, rather than
->    holding the hook open.
+> 1. **The wait can never run for its nominal duration.** agentd derives the
+>    wait's context from the *incoming hook request's own context*
+>    (`context.WithTimeout(ctx, timeout)` in `approvalRequiredDecision`,
+>    `core/edge/agentd/approval_waiter.go`), which Go resolves to the
+>    *earlier* of the two deadlines. That parent request is already bounded to
+>    a few seconds by `CORDUM_AGENTD_HOOK_TIMEOUT` on both sides —
+>    `cordum-hook`'s own outbound POST budget (`DefaultAgentdPostBudget = 4s`,
+>    derived from its `4.5s` total wall-clock budget) and agentd's per-request
+>    `evaluationContext` (`defaultHookTimeout = 5s` internally). So a `30s`
+>    (or any) `INLINE_APPROVAL_WAIT_TIMEOUT` is silently capped to whatever is
+>    left of that budget — typically ~4s — regardless of its configured
+>    value. `cordum-hook` itself is validated to always finish strictly below
+>    Claude's 5s deadline (`validateHookTimeout`,
+>    `core/edge/claude/hook_input.go`), so Claude's own hook-process timeout
+>    is not expected to fire at all in this path.
+> 2. **Even if it did, enforce mode denies anyway.** An unresolved wait
+>    returns an error, which `handleAgentdError` treats like any other agentd
+>    timeout: `enforce` mode denies risky/unclassified `PreToolUse` actions via
+>    its own `enforceMode` check, independent of `CORDUM_AGENTD_FAIL_CLOSED`
+>    (see the policy-mode summary below). `enterprise-strict` denies
+>    unconditionally. Only `observe` allows through on a timeout — the same as
+>    it does for every other degraded path, with or without inline wait.
+>
+> The practical implication is UX, not a fail-open security gap: because the
+> wait is clamped to a few seconds regardless of the configured value, a human
+> reviewer effectively has no realistic chance to approve inline before it
+> times out and denies. Don't rely on `CORDUM_AGENTD_INLINE_APPROVAL_WAIT` for
+> interactive review. Prefer one of:
+>
+> 1. Disable inline wait (`CORDUM_AGENTD_INLINE_APPROVAL_WAIT=false`, the raw
+>    agentd default) so `REQUIRE_APPROVAL` denies immediately with retry
+>    guidance instead of blocking and then denying anyway.
+> 2. Prefer deny-and-retry over block-and-wait: return the approval reference
+>    to the agent and let it retry after a reviewer resolves it, rather than
+>    holding the hook open for a wait that cannot outlive the hook budget.
 
 Policy-mode summary:
 
 - `observe`: allow degraded actions and record evidence where possible.
-- `enforce`: allow only known-safe actions during degraded misses; risky or
-  unknown actions deny/fail closed **only when `CORDUM_AGENTD_FAIL_CLOSED` is
-  enabled**. `CORDUM_AGENTD_FAIL_CLOSED` defaults to `false`, so an `enforce`
-  session that does not set it fails **open** when agentd errors or times out.
+- `enforce`: allow only known-safe actions during degraded Gateway misses;
+  risky or unknown actions deny/fail closed regardless of
+  `CORDUM_AGENTD_FAIL_CLOSED` (`agentd.ApplyFailMode`'s enforce branch never
+  reads that env var, and `cordum-hook`'s `handleAgentdError` denies
+  `PreToolUse` actions via its own `enforceMode` check when the local agentd
+  process itself is unreachable). `CORDUM_AGENTD_FAIL_CLOSED` only changes the
+  outcome for the narrower case of the local agentd process being unreachable
+  on a **non**-`PreToolUse` hook event (`UserPromptSubmit`/`PostToolUse`/
+  `PostToolUseFailure`/`ConfigChange`): those are allowed through when the flag
+  is unset/false, and denied when it is `true`.
 - `enterprise-strict`: fail closed when Cordum governance is unavailable.
 - Workflow actions tagged `requires-edge-governance` fail closed on Gateway miss
   regardless of session mode.
