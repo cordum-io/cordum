@@ -183,6 +183,34 @@ configured P-256 handshake settings, so remove those four environment variables
 from the process when rolling back. Retain key material in the secret manager;
 do not copy it into logs or manifests.
 
+### Unsigned workers must opt in explicitly
+
+Even in the `off` compatibility phase, the CAP Go runtime fails closed at
+startup: `agent.Start()` returns `cap-runtime: signing keys required; set
+AllowUnsigned for explicit unsigned legacy mode` when the `Agent` carries
+neither `PublicKeys`/`PrivateKey` nor `AllowUnsigned: true`. Running unsigned
+is a decision the worker has to state in source rather than inherit silently.
+
+```go
+agent := &runtime.Agent{
+    NATSURL:       natsURL,
+    RedisURL:      redisURL,
+    SenderID:      workerID,
+    AllowUnsigned: true, // no trust identity; local development only
+}
+```
+
+`AllowUnsigned` only relaxes the `off` phase. In `warn` and `enforce` the
+runtime validates the worker trust config instead and never consults the flag,
+so a worker with no trust identity cannot advance past `off` regardless of how
+it is set. Prefer provisioning worker trust keys (see *Enroll a worker*) for
+anything that leaves a developer machine.
+
+Note that `off` rejects a *configured* trust identity outright — the same
+startup check fails with `handshake mode off conflicts with worker trust
+configuration` if any worker trust field is populated while the mode is `off`.
+Unsigned and enrolled are mutually exclusive postures, not a spectrum.
+
 ## Session lifecycle
 
 - The accepted session is Ed25519-signed, audience-bound to
