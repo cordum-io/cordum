@@ -187,6 +187,7 @@ func TestCopilotIngest_MalformedSessionIDRejectedOnWrite(t *testing.T) {
 	if len(inner.sent) != 1 {
 		t.Fatalf("inner.sent = %d, want 1 (always forwarded)", len(inner.sent))
 	}
+	dec.wg.Wait() // ingest runs asynchronously; drain it before asserting rejection
 	if _, err := store.GetSession(context.Background(), "tenant-a", "not a valid/session id", "copilot-1"); err == nil {
 		t.Fatal("expected no session written for a malformed session id")
 	}
@@ -208,6 +209,7 @@ func TestCopilotIngest_OversizedSessionIDRejectedOnWrite(t *testing.T) {
 	if len(inner.sent) != 1 {
 		t.Fatalf("inner.sent = %d, want 1 (always forwarded)", len(inner.sent))
 	}
+	dec.wg.Wait() // ingest runs asynchronously; drain it before asserting rejection
 	if _, err := store.GetSession(context.Background(), "tenant-a", oversized, "copilot-1"); err == nil {
 		t.Fatal("expected no session written for an oversized session id")
 	}
