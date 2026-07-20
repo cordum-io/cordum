@@ -486,7 +486,10 @@ type Output struct {
 }
 
 func main() {
-    agent := &runtime.Agent{Retries: 2}
+    // AllowUnsigned is required when the worker holds no signing keys;
+    // CAP fails closed at startup otherwise. Provision worker trust keys
+    // for anything beyond local development -- see docs/sdk/handshake.md.
+    agent := &runtime.Agent{Retries: 2, AllowUnsigned: true}
 
     runtime.Register(agent, "job.summarize", func(ctx runtime.Context, input Input) (Output, error) {
         // Your agent logic here
