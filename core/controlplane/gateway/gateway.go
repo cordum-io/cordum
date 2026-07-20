@@ -36,6 +36,7 @@ import (
 	"github.com/cordum/cordum/core/infra/artifacts"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
+	"github.com/cordum/cordum/core/infra/capprofile"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/health"
@@ -44,6 +45,7 @@ import (
 	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/cordum/cordum/core/infra/registry"
+	"github.com/cordum/cordum/core/infra/resourceio"
 	"github.com/cordum/cordum/core/infra/schema"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/tlsreload"
@@ -129,12 +131,13 @@ const (
 
 type server struct {
 	pb.UnimplementedCordumApiServer
-	memStore            store.Store
-	jobStore            *store.RedisJobStore // Typed for ListRecentJobs
-	edgeStore           edgecore.Store
-	runtimeReplayWindow *runtimeingest.ReplayWindow
-	shadowFindingStore  shadow.Store
-	mcpUpstreamRegistry edgecore.MCPUpstreamRegistry
+	memStore             store.Store
+	jobStore             *store.RedisJobStore // Typed for ListRecentJobs
+	memoryResourceReader resourceio.Reader
+	edgeStore            edgecore.Store
+	runtimeReplayWindow  *runtimeingest.ReplayWindow
+	shadowFindingStore   shadow.Store
+	mcpUpstreamRegistry  edgecore.MCPUpstreamRegistry
 	// mcpUpstreamRegistryMu guards lazy fallback initialization for
 	// test/minimal server instances that do not set mcpUpstreamRegistry
 	// during construction.
@@ -387,6 +390,19 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	if cfg == nil {
 		cfg = config.Load()
 	}
+	// Resolve the explicit CAP profile before any dependency work so an
+	// unrecognised value fails startup instead of silently downgrading.
+	capProfile, profileErr := capprofile.FromEnv()
+	if profileErr != nil {
+		return fmt.Errorf("CAP profile configuration invalid: %w", profileErr)
+	}
+	// Production dependencies are intentionally incomplete on this branch.
+	// Reject that unsupported selection before auth/telemetry constructors can
+	// start watchers or any transport listener can become reachable.
+	bootstrapReadiness := gatewayProductionReadiness(gatewayHandshakeSecurity{})
+	if err := enforceGatewayProductionReadiness(capProfile, bootstrapReadiness); err != nil {
+		return err
+	}
 	entitlementResolver := resolveEntitlementResolver(entitlementResolvers...)
 
 	if _, err := cordumotel.InitTracer("cordum-api-gateway"); err != nil {
@@ -577,6 +593,7 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	if err != nil {
 		return fmt.Errorf("gateway worker handshake security configuration invalid: %w", err)
 	}
+	capReadiness := gatewayProductionReadiness(gatewayHandshake)
 
 	decisionLogStore, err := store.NewRedisDecisionLogStore(cfg.RedisURL)
 	if err != nil {
@@ -590,11 +607,9 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	}
 	defer natsBus.Close()
 
-	if err := bus.PublishHandshake(natsBus, "api-gateway", pb.ComponentRole_COMPONENT_ROLE_GATEWAY, map[string]bool{
-		"http": true, "grpc": true, "websocket": true, "mcp": true,
-	}); err != nil {
-		slog.Warn("handshake publish failed", "error", err)
-	}
+	// The capability advertisement is published after all dependencies are
+	// initialized (see below, just before the HTTP server starts), so the
+	// gateway never announces capabilities it cannot yet honour.
 
 	workflowStore, err := wf.NewRedisWorkflowStore(cfg.RedisURL)
 	if err != nil {
@@ -940,6 +955,19 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	s.edgeSweeperCancel = edgeSweepCancel
 	go edgeSweeper.Run(edgeSweepCtx)
 	go edgeApprovalSweeper.Run(edgeSweepCtx)
+
+	// The production gate passed before any listener, subscription, or
+	// background goroutine was started. Advertise only after those compatible
+	// runtime surfaces are live.
+	logGatewayProfileActivation(capProfile, capReadiness)
+	if err := bus.PublishHandshake(
+		natsBus, "api-gateway", pb.ComponentRole_COMPONENT_ROLE_GATEWAY,
+		capProfile.Capabilities(map[string]bool{
+			"http": true, "grpc": true, "websocket": true, "mcp": true,
+		}, capReadiness),
+	); err != nil {
+		slog.Warn("handshake publish failed", "error", err)
+	}
 
 	return startHTTPServer(s, httpAddr, metricsAddr, grpcServer)
 }
@@ -1449,6 +1477,7 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 
 	// 4.5 Memory pointers (debug)
 	s.registerRoute(mux, "GET /api/v1/memory", s.instrumented("/api/v1/memory", s.handleGetMemory))
+	s.registerRoute(mux, "POST /api/v1/memory/resolve", s.instrumented("/api/v1/memory/resolve", s.handleResolveMemory))
 	// 4.6 Artifact store
 	s.registerRoute(mux, "POST /api/v1/artifacts", s.instrumented("/api/v1/artifacts", s.handlePutArtifact))
 	s.registerRoute(mux, "GET /api/v1/artifacts/{ptr}", s.instrumented("/api/v1/artifacts/{ptr}", s.handleGetArtifact))

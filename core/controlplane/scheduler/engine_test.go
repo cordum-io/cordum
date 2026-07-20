@@ -117,6 +117,11 @@ type fakeJobStore struct {
 	locks          map[string]time.Time
 	failureReasons map[string]string
 	reqs           map[string]*pb.JobRequest
+	dispatchID     map[string]string
+	dispatchAttmpt map[string]int
+	dispatchWorker map[string]string
+	dispatchTenant map[string]string
+	dispatchEvents map[string]map[string]bool
 }
 
 type sagaJobStore struct {
@@ -550,6 +555,7 @@ func TestSchedulerSchemaEnforceRejects(t *testing.T) {
 		WithTopicRegistry(regSvc).
 		WithSchemaRegistry(schemaRegistry).
 		WithContextClient(jobStore.Client()).
+		WithLegacyResourceCompatibility(nil).
 		WithSchemaEnforcement(infraSchema.EnforcementEnforce)
 
 	req := &pb.JobRequest{
@@ -623,6 +629,7 @@ func TestSchedulerSchemaWarnAllows(t *testing.T) {
 		WithTopicRegistry(regSvc).
 		WithSchemaRegistry(schemaRegistry).
 		WithContextClient(jobStore.Client()).
+		WithLegacyResourceCompatibility(nil).
 		WithSchemaEnforcement(infraSchema.EnforcementWarn)
 
 	req := &pb.JobRequest{
@@ -842,6 +849,58 @@ func (s *fakeJobStore) GetOutputDecision(_ context.Context, jobID string) (Outpu
 
 func (s *fakeJobStore) SetWorkerID(_ context.Context, _, _ string) error {
 	return nil
+}
+
+// BeginDispatch mirrors RedisJobStore's real fencing semantics (unconditional
+// new-dispatch-wins, monotonic attempt) so tests exercising step-10 fencing
+// behavior get faithful results from this fake, not a permissive no-op.
+func (s *fakeJobStore) BeginDispatch(_ context.Context, jobID, workerID, tenant string) (string, int, error) {
+	if jobID == "" || workerID == "" || tenant == "" {
+		return "", 0, fmt.Errorf("jobID, workerID, and tenant required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.dispatchID == nil {
+		s.dispatchID = map[string]string{}
+		s.dispatchAttmpt = map[string]int{}
+		s.dispatchWorker = map[string]string{}
+		s.dispatchTenant = map[string]string{}
+		s.dispatchEvents = map[string]map[string]bool{}
+	}
+	dispatchID := fmt.Sprintf("fake-dispatch-%s-%d", jobID, len(s.dispatchID)+1)
+	s.dispatchAttmpt[jobID]++
+	attempt := s.dispatchAttmpt[jobID]
+	s.dispatchID[jobID] = dispatchID
+	s.dispatchWorker[jobID] = workerID
+	s.dispatchTenant[jobID] = tenant
+	s.dispatchEvents[jobID+":"+dispatchID] = map[string]bool{}
+	return dispatchID, attempt, nil
+}
+
+// AcceptJobEvent mirrors RedisJobStore's real fencing semantics.
+func (s *fakeJobStore) AcceptJobEvent(
+	_ context.Context, jobID, dispatchID string, attempt int, workerID, tenant, eventMessageID string,
+) (bool, error) {
+	if jobID == "" || dispatchID == "" || workerID == "" || tenant == "" || eventMessageID == "" {
+		return false, fmt.Errorf("jobID, dispatchID, workerID, tenant, and eventMessageID required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.dispatchID == nil || s.dispatchID[jobID] != dispatchID ||
+		s.dispatchAttmpt[jobID] != attempt || s.dispatchWorker[jobID] != workerID ||
+		s.dispatchTenant[jobID] != tenant {
+		return false, nil
+	}
+	events := s.dispatchEvents[jobID+":"+dispatchID]
+	if events == nil {
+		events = map[string]bool{}
+		s.dispatchEvents[jobID+":"+dispatchID] = events
+	}
+	if events[eventMessageID] {
+		return false, nil
+	}
+	events[eventMessageID] = true
+	return true, nil
 }
 
 func (s *fakeJobStore) IncrAttempts(_ context.Context, jobID string) error {
@@ -1936,6 +1995,81 @@ func TestHandleJobResultUpdatesState(t *testing.T) {
 		t.Fatalf("handle job result: %v", err)
 	}
 
+	if state := jobStore.states["job-1"]; state != JobStateSucceeded {
+		t.Fatalf("expected job state SUCCEEDED, got %s", state)
+	}
+	if ptr := jobStore.ptrs["job-1"]; ptr != "redis://res:job-1" {
+		t.Fatalf("expected result ptr redis://res:job-1, got %s", ptr)
+	}
+}
+
+// TestHandleJobResultDispatchFencingRejectsStaleAttempt proves the wiring in
+// handleJobResult: a JobResult echoing a stale DispatchIdentity (from an
+// attempt that is no longer current) is dropped BEFORE any state mutation —
+// the job state must remain unchanged and no result pointer recorded
+// (task-a13f83fa step-10).
+func TestHandleJobResultDispatchFencingRejectsStaleAttempt(t *testing.T) {
+	bus := &fakeBus{}
+	jobStore := newFakeJobStore()
+	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), jobStore, nil)
+	ctx := context.Background()
+
+	if err := jobStore.SetTenant(ctx, "job-1", "tenant-a"); err != nil {
+		t.Fatalf("SetTenant: %v", err)
+	}
+	staleDispatch, staleAttempt, err := jobStore.BeginDispatch(ctx, "job-1", "worker-1", "tenant-a")
+	if err != nil {
+		t.Fatalf("BeginDispatch (stale): %v", err)
+	}
+	_, _, err = jobStore.BeginDispatch(ctx, "job-1", "worker-1", "tenant-a") // supersedes it
+	if err != nil {
+		t.Fatalf("BeginDispatch (current): %v", err)
+	}
+
+	res := &pb.JobResult{
+		JobId: "job-1", Status: pb.JobStatus_JOB_STATUS_SUCCEEDED, ResultPtr: "redis://res:job-1",
+		Dispatch: &pb.DispatchIdentity{
+			DispatchId: staleDispatch, Attempt: uint64(staleAttempt), AssignedWorkerId: "worker-1",
+		},
+	}
+
+	if err := engine.handleJobResult(res); err != nil {
+		t.Fatalf("handle job result: %v", err)
+	}
+	if state := jobStore.states["job-1"]; state == JobStateSucceeded {
+		t.Fatalf("stale-attempt result was applied: job state = %s", state)
+	}
+	if ptr := jobStore.ptrs["job-1"]; ptr != "" {
+		t.Fatalf("stale-attempt result pointer was recorded: %q", ptr)
+	}
+}
+
+// TestHandleJobResultDispatchFencingAcceptsCurrentAttempt proves a JobResult
+// echoing the CURRENT DispatchIdentity is applied normally.
+func TestHandleJobResultDispatchFencingAcceptsCurrentAttempt(t *testing.T) {
+	bus := &fakeBus{}
+	jobStore := newFakeJobStore()
+	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), jobStore, nil)
+	ctx := context.Background()
+
+	if err := jobStore.SetTenant(ctx, "job-1", "tenant-a"); err != nil {
+		t.Fatalf("SetTenant: %v", err)
+	}
+	dispatchID, attempt, err := jobStore.BeginDispatch(ctx, "job-1", "worker-1", "tenant-a")
+	if err != nil {
+		t.Fatalf("BeginDispatch: %v", err)
+	}
+
+	res := &pb.JobResult{
+		JobId: "job-1", Status: pb.JobStatus_JOB_STATUS_SUCCEEDED, ResultPtr: "redis://res:job-1",
+		Dispatch: &pb.DispatchIdentity{
+			DispatchId: dispatchID, Attempt: uint64(attempt), AssignedWorkerId: "worker-1",
+		},
+	}
+
+	if err := engine.handleJobResult(res); err != nil {
+		t.Fatalf("handle job result: %v", err)
+	}
 	if state := jobStore.states["job-1"]; state != JobStateSucceeded {
 		t.Fatalf("expected job state SUCCEEDED, got %s", state)
 	}

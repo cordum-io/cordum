@@ -286,15 +286,16 @@ func TestSafetyClientAttachesInputContentFromContextPtr(t *testing.T) {
 		t.Fatalf("seed redis context: %v", err)
 	}
 
-	client := &SafetyClient{
+	client := (&SafetyClient{
 		client:        pb.NewSafetyKernelClient(conn),
 		conn:          conn,
 		cb:            newTestCB(),
 		contextClient: rdb,
-	}
+	}).WithLegacyResourceCompatibility(nil)
 
 	record, err := client.Check(ctx, &pb.JobRequest{
 		JobId:      "job-ctx",
+		TenantId:   "tenant-a",
 		Topic:      "job.visa-governance.evaluate",
 		ContextPtr: store.PointerForKey(store.MakeContextKey("job-ctx")),
 	})

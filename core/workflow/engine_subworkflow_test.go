@@ -16,7 +16,7 @@ func TestSubWorkflowSucceeds(t *testing.T) {
 	defer func() { _ = store.Close() }()
 
 	bus := &recordingBus{}
-	engine := NewEngine(store, bus)
+	engine := NewEngine(store, bus).WithLegacyResourceCompatibility(nil)
 
 	saveWorkflowDef(t, store, buildChildWorkflow("wf-child-success"))
 	saveWorkflowDef(t, store, buildParentSubWorkflow("wf-parent-success", "wf-child-success", nil))
@@ -51,7 +51,7 @@ func TestSubWorkflowSucceeds(t *testing.T) {
 	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
 		JobId:     fmt.Sprintf("%s:child_step@1", childRunID),
 		Status:    pb.JobStatus_JOB_STATUS_SUCCEEDED,
-		ResultPtr: "redis://res:child-success",
+		ResultPtr: legacyResultPointer(fmt.Sprintf("%s:child_step@1", childRunID)),
 	}); err != nil {
 		t.Fatalf("handle job result: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestSubWorkflowFailsWhenChildFails(t *testing.T) {
 	store := newWorkflowStore(t)
 	defer func() { _ = store.Close() }()
 
-	engine := NewEngine(store, &recordingBus{})
+	engine := NewEngine(store, &recordingBus{}).WithLegacyResourceCompatibility(nil)
 
 	saveWorkflowDef(t, store, buildChildWorkflow("wf-child-fail"))
 	saveWorkflowDef(t, store, buildParentSubWorkflow("wf-parent-fail", "wf-child-fail", nil))
@@ -136,7 +136,7 @@ func TestSubWorkflowInputMapping(t *testing.T) {
 	store := newWorkflowStore(t)
 	defer func() { _ = store.Close() }()
 
-	engine := NewEngine(store, &recordingBus{})
+	engine := NewEngine(store, &recordingBus{}).WithLegacyResourceCompatibility(nil)
 
 	saveWorkflowDef(t, store, buildChildWorkflow("wf-child-input-map"))
 	saveWorkflowDef(t, store, buildParentSubWorkflow("wf-parent-input-map", "wf-child-input-map", map[string]any{
@@ -181,7 +181,7 @@ func TestSubWorkflowOutputMapping(t *testing.T) {
 	store := newWorkflowStore(t)
 	defer func() { _ = store.Close() }()
 
-	engine := NewEngine(store, &recordingBus{})
+	engine := NewEngine(store, &recordingBus{}).WithLegacyResourceCompatibility(nil)
 
 	saveWorkflowDef(t, store, buildChildWorkflow("wf-child-output-map"))
 	saveWorkflowDef(t, store, buildParentSubWorkflow("wf-parent-output-map", "wf-child-output-map", map[string]any{
@@ -214,7 +214,7 @@ func TestSubWorkflowOutputMapping(t *testing.T) {
 	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
 		JobId:     fmt.Sprintf("%s:child_step@1", childRunID),
 		Status:    pb.JobStatus_JOB_STATUS_SUCCEEDED,
-		ResultPtr: "redis://res:child-output-map",
+		ResultPtr: legacyResultPointer(fmt.Sprintf("%s:child_step@1", childRunID)),
 	}); err != nil {
 		t.Fatalf("handle job result: %v", err)
 	}
@@ -234,7 +234,7 @@ func TestSubWorkflowOutputMapping(t *testing.T) {
 	if output["ticket"] != "TCK-007" {
 		t.Fatalf("expected mapped ticket, got %#v", output["ticket"])
 	}
-	if output["result_ptr"] != "redis://res:child-output-map" {
+	if output["result_ptr"] != legacyResultPointer(fmt.Sprintf("%s:child_step@1", childRunID)) {
 		t.Fatalf("expected mapped result pointer, got %#v", output["result_ptr"])
 	}
 	if output["child_status"] != "succeeded" {
@@ -246,7 +246,7 @@ func TestSubWorkflowCircularDetected(t *testing.T) {
 	store := newWorkflowStore(t)
 	defer func() { _ = store.Close() }()
 
-	engine := NewEngine(store, &recordingBus{})
+	engine := NewEngine(store, &recordingBus{}).WithLegacyResourceCompatibility(nil)
 
 	saveWorkflowDef(t, store, buildParentSubWorkflow("wf-a", "wf-b", nil))
 	saveWorkflowDef(t, store, buildParentSubWorkflow("wf-b", "wf-a", nil))
@@ -296,7 +296,7 @@ func TestSubWorkflowContextInheritanceAndCallStack(t *testing.T) {
 	store := newWorkflowStore(t)
 	defer func() { _ = store.Close() }()
 
-	engine := NewEngine(store, &recordingBus{})
+	engine := NewEngine(store, &recordingBus{}).WithLegacyResourceCompatibility(nil)
 
 	saveWorkflowDef(t, store, buildChildWorkflow("wf-child-context"))
 	saveWorkflowDef(t, store, buildParentSubWorkflow("wf-parent-context", "wf-child-context", nil))

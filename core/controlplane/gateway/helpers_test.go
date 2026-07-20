@@ -449,6 +449,9 @@ func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 	})
 
 	s.wireGovernanceEvaluator()
+	// Existing gateway tests exercise the explicit migration bridge. Tests for
+	// production defaults construct a server directly and remain fail closed.
+	s.WithLegacyMemoryCompatibility(nil)
 	// Test default: Community tier (preserving its feature flags — RBAC/SSO/etc.
 	// OFF, which many auth/step-up tests rely on) but with MaxPolicyBundles lifted
 	// to Unlimited. This is the pre-existing green baseline: before the free-tier

@@ -37,6 +37,8 @@ type NatsBus struct {
 	hooksMu            sync.RWMutex
 	reconnectHandlers  []func(*nats.Conn)
 	disconnectHandlers []func(*nats.Conn, error)
+	rawPacketAdmission RawPacketAdmission
+	rawAdmissionFrozen bool
 
 	// redis is an optional Redis client for crash-safe message processing.
 	// When set, durable JetStream subscriptions use Redis for idempotency
@@ -434,6 +436,7 @@ func (b *NatsBus) SubscribeWithContext(subject, queue string, handler func(conte
 	if handler == nil {
 		return errors.New("nil handler")
 	}
+	admit := b.freezeRawPacketAdmission()
 	if b.jsEnabled && isDurableSubject(subject) {
 		opts := []nats.SubOpt{
 			nats.ManualAck(),
@@ -450,7 +453,7 @@ func (b *NatsBus) SubscribeWithContext(subject, queue string, handler func(conte
 			sub *nats.Subscription
 			err error
 		)
-		cb := b.jsCallbackCtx(subject, handler)
+		cb := b.jsCallbackCtx(subject, handler, admit)
 		if queue == "" {
 			sub, err = b.js.Subscribe(subject, cb, opts...)
 		} else {
@@ -465,7 +468,7 @@ func (b *NatsBus) SubscribeWithContext(subject, queue string, handler func(conte
 
 	cb := func(msg *nats.Msg) {
 		ctx := cordumotel.ExtractTraceContext(context.Background(), msg.Header)
-		action, _ := processBusMsgCtx(ctx, subject, msg.Data, handler, 0)
+		action, _ := processInboundWithAdmission(ctx, admit, msg.Subject, msg.Data, handler, 0)
 		if action != msgActionAck {
 			slog.Error("bus: handler error", "subject", subject)
 		}
@@ -488,7 +491,11 @@ func (b *NatsBus) SubscribeWithContext(subject, queue string, handler func(conte
 
 // jsCallbackCtx builds a JetStream message callback that extracts trace
 // context from NATS headers before decoding and invoking the handler.
-func (b *NatsBus) jsCallbackCtx(subject string, handler func(context.Context, *pb.BusPacket) error) func(*nats.Msg) {
+func (b *NatsBus) jsCallbackCtx(
+	subject string,
+	handler func(context.Context, *pb.BusPacket) error,
+	admit RawPacketAdmission,
+) func(*nats.Msg) {
 	return func(msg *nats.Msg) {
 		var numDelivered uint64
 		var streamName string
@@ -497,19 +504,15 @@ func (b *NatsBus) jsCallbackCtx(subject string, handler func(context.Context, *p
 			numDelivered = meta.NumDelivered
 			streamName = meta.Stream
 			streamSeq = meta.Sequence.Stream
-			if numDelivered >= uint64(maxJSRedeliveries) {
-				slog.Warn("bus: terminating poison message (ctx)", "subject", subject, "deliveries", numDelivered)
-				if b.OnMessageTerminated != nil {
-					if dlqErr := b.OnMessageTerminated(subject, msg.Data, numDelivered); dlqErr != nil {
-						_ = msg.NakWithDelay(5 * time.Second)
-						return
-					}
-				}
-				if termErr := msg.Term(); termErr != nil {
-					slog.Error("bus: term failed (ctx)", "subject", subject, "err", termErr)
-				}
-				return
-			}
+		}
+		ctx := cordumotel.ExtractTraceContext(context.Background(), msg.Header)
+		packet, action, delay, proceed := preAdmitRawPacket(ctx, admit, msg.Subject, msg.Data)
+		if !proceed {
+			b.settleRawAdmission(msg, subject, action, delay)
+			return
+		}
+		if b.terminateMaxDelivery(msg, subject, numDelivered) {
+			return
 		}
 
 		// Idempotency guard (same as standard subscribe path).
@@ -533,9 +536,9 @@ func (b *NatsBus) jsCallbackCtx(subject string, handler func(context.Context, *p
 			rCancel()
 		}
 
-		// Extract trace context from NATS headers.
-		ctx := cordumotel.ExtractTraceContext(context.Background(), msg.Header)
-		action, delay := processBusMsgCtx(ctx, subject, msg.Data, handler, numDelivered)
+		action, delay = processAfterRawAdmission(
+			ctx, admit != nil, packet, msg.Subject, msg.Data, handler, numDelivered,
+		)
 
 		if b.redis != nil && streamSeq > 0 {
 			iKey := inflightKey(streamName, streamSeq)
@@ -571,6 +574,45 @@ func (b *NatsBus) jsCallbackCtx(subject string, handler func(context.Context, *p
 			}
 		}
 	}
+}
+
+func (b *NatsBus) settleRawAdmission(
+	msg *nats.Msg,
+	subject string,
+	action msgAction,
+	delay time.Duration,
+) {
+	switch action {
+	case msgActionTerm:
+		if err := msg.Term(); err != nil {
+			slog.Error("bus: term raw admission failed", "subject", subject, "err", err)
+		}
+	case msgActionNak:
+		_ = msg.Nak()
+	case msgActionNakDelay:
+		_ = msg.NakWithDelay(delay)
+	case msgActionAck:
+		_ = msg.Ack()
+	default:
+		_ = msg.Term()
+	}
+}
+
+func (b *NatsBus) terminateMaxDelivery(msg *nats.Msg, subject string, numDelivered uint64) bool {
+	if numDelivered < uint64(maxJSRedeliveries) {
+		return false
+	}
+	slog.Warn("bus: terminating admitted poison message", "subject", subject, "deliveries", numDelivered)
+	if b.OnMessageTerminated != nil {
+		if err := b.OnMessageTerminated(subject, msg.Data, numDelivered); err != nil {
+			_ = msg.NakWithDelay(5 * time.Second)
+			return true
+		}
+	}
+	if err := msg.Term(); err != nil {
+		slog.Error("bus: term admitted message failed", "subject", subject, "err", err)
+	}
+	return true
 }
 
 // processBusMsgCtx is like processBusMsg but passes a context to the handler.
@@ -626,6 +668,7 @@ func (b *NatsBus) subscribe(subject, queue string, handler func(*pb.BusPacket) e
 	if handler == nil {
 		return nil, errors.New("nil handler")
 	}
+	admit := b.freezeRawPacketAdmission()
 	if b != nil && b.jsEnabled && isDurableSubject(subject) {
 		cb := func(msg *nats.Msg) {
 			var numDelivered uint64
@@ -635,26 +678,19 @@ func (b *NatsBus) subscribe(subject, queue string, handler func(*pb.BusPacket) e
 				numDelivered = meta.NumDelivered
 				streamName = meta.Stream
 				streamSeq = meta.Sequence.Stream
-				// Terminate messages that have reached max delivery — they are poison pills
-				// blocking the queue for all messages behind them.
-				if numDelivered >= uint64(maxJSRedeliveries) {
-					slog.Warn("bus: terminating poison message", "subject", subject, "deliveries", numDelivered, "stream_seq", meta.Sequence.Stream, "consumer_seq", meta.Sequence.Consumer)
-					// DLQ write BEFORE Term — prevents data loss if we crash between Term and DLQ write.
-					if b.OnMessageTerminated != nil {
-						if dlqErr := b.OnMessageTerminated(subject, msg.Data, numDelivered); dlqErr != nil {
-							slog.Error("bus: dlq write failed, nak-ing for retry", "subject", subject, "err", dlqErr)
-							_ = msg.NakWithDelay(5 * time.Second)
-							return
-						}
-					}
-					if termErr := msg.Term(); termErr != nil {
-						slog.Error("bus: term failed", "subject", subject, "err", termErr)
-					}
-					return
-				}
-				if numDelivered > 50 {
-					slog.Warn("bus: message redelivered many times", "subject", subject, "deliveries", numDelivered, "max", maxJSRedeliveries)
-				}
+			}
+			ctx := context.Background()
+			packet, action, delay, proceed := preAdmitRawPacket(ctx, admit, msg.Subject, msg.Data)
+			if !proceed {
+				b.settleRawAdmission(msg, subject, action, delay)
+				return
+			}
+			if b.terminateMaxDelivery(msg, subject, numDelivered) {
+				return
+			}
+			if numDelivered > 50 {
+				slog.Warn("bus: admitted message redelivered many times", "subject", subject,
+					"deliveries", numDelivered, "max", maxJSRedeliveries)
 			}
 
 			// Idempotency guard: skip processing if already handled by another replica.
@@ -685,7 +721,9 @@ func (b *NatsBus) subscribe(subject, queue string, handler func(*pb.BusPacket) e
 				rCancel()
 			}
 
-			action, delay := processBusMsg(subject, msg.Data, handler, numDelivered)
+			action, delay = processAfterRawAdmission(
+				ctx, admit != nil, packet, msg.Subject, msg.Data, contextualHandler(handler), numDelivered,
+			)
 
 			// Clear in-flight tracking after processing.
 			if b.redis != nil && streamSeq > 0 {
@@ -765,19 +803,11 @@ func (b *NatsBus) subscribe(subject, queue string, handler func(*pb.BusPacket) e
 	}
 
 	cb := func(msg *nats.Msg) {
-		var packet pb.BusPacket
-		if err := proto.Unmarshal(msg.Data, &packet); err != nil {
-			busUnmarshalFailureTotal.WithLabelValues(subject, "unmarshal").Inc()
-			slog.Error("bus: packet unmarshal failed", "audit_event", "bus_packet_unmarshal_failed", "subject", subject, "err", err)
-			return
-		}
-		if err := capsdk.ValidateBusPacket(&packet); err != nil {
-			busUnmarshalFailureTotal.WithLabelValues(subject, "invalid").Inc()
-			slog.Error("bus: packet invalid", "audit_event", "bus_packet_invalid", "subject", subject, "err", err)
-			return
-		}
-		if err := handler(&packet); err != nil {
-			slog.Error("bus: handler error", "subject", subject, "err", err)
+		action, _ := processInboundWithAdmission(
+			context.Background(), admit, msg.Subject, msg.Data, contextualHandler(handler), 0,
+		)
+		if action != msgActionAck {
+			slog.Error("bus: inbound message rejected", "subject", msg.Subject)
 		}
 	}
 	if queue == "" {

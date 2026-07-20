@@ -15,6 +15,7 @@ import (
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
+	"github.com/cordum/cordum/core/infra/capprofile"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/health"
 	cordumotel "github.com/cordum/cordum/core/infra/otel"
@@ -48,6 +49,17 @@ func Run(cfg *config.Config) error {
 func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementResolver) error {
 	if cfg == nil {
 		cfg = config.Load()
+	}
+
+	// Resolve the explicit CAP profile before any dependency work so an
+	// unrecognised value fails startup instead of silently downgrading.
+	capProfile, profileErr := capprofile.FromEnv()
+	if profileErr != nil {
+		return fmt.Errorf("CAP profile configuration invalid: %w", profileErr)
+	}
+	capReadiness := workflowProductionReadiness()
+	if err := enforceWorkflowProductionReadiness(capProfile, capReadiness); err != nil {
+		return err
 	}
 
 	if _, err := cordumotel.InitTracer("cordum-workflow-engine"); err != nil {
@@ -118,11 +130,9 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 	}
 	defer natsBus.Close()
 
-	if err := bus.PublishHandshake(natsBus, "workflow-engine", pb.ComponentRole_COMPONENT_ROLE_ORCHESTRATOR, map[string]bool{
-		"workflows": true, "approvals": true,
-	}); err != nil {
-		slog.Warn("handshake publish failed", "error", err)
-	}
+	// The capability advertisement is published after the engine and its
+	// service-token minting are wired (see below), so the workflow engine never
+	// announces capabilities it cannot yet honour.
 
 	engine := NewEngine(workflowStore, natsBus).
 		WithMemory(memStore).
@@ -190,6 +200,19 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 		return nil
 	}); err != nil {
 		return fmt.Errorf("subscribe %s: %w", capsdk.SubjectResult, err)
+	}
+
+	// The production gate passed before any listener, subscription, or
+	// background goroutine was started. Advertise only after the compatible
+	// runtime surfaces are live.
+	logWorkflowProfileActivation(capProfile, capReadiness)
+	if err := bus.PublishHandshake(
+		natsBus, "workflow-engine", pb.ComponentRole_COMPONENT_ROLE_ORCHESTRATOR,
+		capProfile.Capabilities(map[string]bool{
+			"workflows": true, "approvals": true,
+		}, capReadiness),
+	); err != nil {
+		slog.Warn("handshake publish failed", "error", err)
 	}
 
 	wfProbes := health.New()

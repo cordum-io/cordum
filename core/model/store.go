@@ -121,6 +121,20 @@ type JobStore interface {
 	GetOutputDecision(ctx context.Context, jobID string) (OutputSafetyRecord, error)
 	// Worker tracking
 	SetWorkerID(ctx context.Context, jobID, workerID string) error
+	// BeginDispatch atomically assigns a fresh, unpredictable dispatch_id and
+	// a monotonically-increasing attempt for jobID, binding workerID/tenant
+	// as the authoritative assignment for that attempt. Callers MUST NOT
+	// publish a dispatch until this returns successfully, and MUST call
+	// AcceptJobEvent before any pointer/state/audit/DLQ/workflow mutation
+	// from a subsequent Result/Progress/Cancel (task-a13f83fa step-10).
+	BeginDispatch(ctx context.Context, jobID, workerID, tenant string) (dispatchID string, attempt int, err error)
+	// AcceptJobEvent atomically verifies that dispatchID/attempt/workerID/
+	// tenant exactly match the CURRENT dispatch fence for jobID and that
+	// eventMessageID has not already been accepted for this dispatch
+	// (idempotent dedupe). It returns true only when the caller may proceed
+	// to mutate job state; a stale/future/wrong-worker/duplicate event
+	// returns false (and must be audited + ACKed/dropped, never applied).
+	AcceptJobEvent(ctx context.Context, jobID, dispatchID string, attempt int, workerID, tenant, eventMessageID string) (bool, error)
 }
 
 // DecisionLogStore indexes governance decisions for the Policy Decision Log.

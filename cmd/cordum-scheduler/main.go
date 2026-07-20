@@ -210,6 +210,22 @@ func main() {
 	}
 	handshakeConfig.mode.LogActiveMode(slog.Default())
 
+	// Resolve the explicit CAP profile before any dependency work. An
+	// unrecognised value must terminate startup here rather than silently
+	// downgrading to compat later.
+	capProfile, err := resolveSchedulerProfile()
+	if err != nil {
+		slog.Error("CAP profile configuration invalid; refusing to start", "error", err)
+		os.Exit(1)
+	}
+	// This branch deliberately reports mandatory production boundaries as
+	// unavailable. Reject that unsupported selection before constructors can
+	// start transport clients or background maintenance loops.
+	if err := enforceProductionReadiness(capProfile, schedulerProductionDeps{}.readiness()); err != nil {
+		slog.Error("CAP-PRODUCTION is not fully wired; refusing to start", "error", err)
+		os.Exit(1)
+	}
+
 	timeoutsCfg, err := config.LoadTimeouts(cfg.TimeoutConfigPath)
 	if err != nil {
 		explicitPath := os.Getenv("TIMEOUT_CONFIG_PATH")
@@ -255,13 +271,6 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    1 << 20,
 	}
-	go func() {
-		slog.Info("scheduler metrics started", "addr", metricsAddr+"/metrics")
-		if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("metrics server error", "error", err)
-		}
-	}()
-
 	jobStore, err := store.NewRedisJobStore(cfg.RedisURL)
 	if err != nil {
 		slog.Error("failed to connect to Redis for job store", "error", err)
@@ -285,11 +294,10 @@ func main() {
 	}
 	defer natsBus.Close()
 
-	if err := bus.PublishHandshake(natsBus, "scheduler", pb.ComponentRole_COMPONENT_ROLE_SCHEDULER, map[string]bool{
-		"safety_check": true, "routing": true, "compensation": true,
-	}); err != nil {
-		slog.Warn("handshake publish failed", "error", err)
-	}
+	// The capability advertisement is deliberately NOT published here. Under
+	// CAP-PRODUCTION a component may claim conformance only after the
+	// authenticated handshake responder and every mandatory dependency are
+	// initialized, so the handshake is published once startup completes below.
 
 	sagaRedis, err := redisutil.NewClient(cfg.RedisURL)
 	if err != nil {
@@ -399,8 +407,6 @@ func main() {
 
 	// Instance registry: self-register this scheduler replica in Redis.
 	instReg := agentregistry.NewInstanceRegistry(sagaRedis, "scheduler", instanceID, buildinfo.Version, buildinfo.Commit)
-	instReg.Start(ctx)
-	defer instReg.Stop()
 
 	if err := configSvc.EnsureDefault(ctx); err != nil {
 		slog.Warn("auto-bootstrap default config failed", "error", err)
@@ -477,6 +483,32 @@ func main() {
 	if handshakeBundle.middleware != nil {
 		engine.WithSessionMiddleware(handshakeBundle.middleware)
 	}
+
+	// Validate the selected profile before starting any listener, subscription,
+	// or background goroutine. Dependency construction and live probes above are
+	// side-effect bounded; runtime activation happens only after this gate.
+	capDeps := schedulerProductionDeps{
+		handshakeEnforcing:     handshakeConfig.mode.EnforcesHandshake(),
+		safetyConfigured:       safetyClient != nil,
+		outputSafetyConfigured: outputSafetyClient != nil,
+		failClosed:             schedulerFailClosed(engine),
+		replayStoreReachable:   probeReplayStore(context.Background(), sagaRedis),
+	}
+	capReadiness := capDeps.readiness()
+	if err := enforceProductionReadiness(capProfile, capReadiness); err != nil {
+		slog.Error("CAP-PRODUCTION selected but dependencies are not initialized; refusing to start", "error", err)
+		os.Exit(1)
+	}
+
+	go func() {
+		slog.Info("scheduler metrics started", "addr", metricsAddr+"/metrics")
+		if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("metrics server error", "error", err)
+		}
+	}()
+	instReg.Start(ctx)
+	defer instReg.Stop()
+
 	if handshakeBundle.service != nil {
 		handshakeSubscriber, err := scheduler.NewHandshakeSubscriber(natsBus, handshakeBundle.service)
 		if err != nil {
@@ -513,6 +545,18 @@ func main() {
 		slog.Error("failed to start scheduler engine", "error", err)
 		os.Exit(1)
 	}
+
+	logProfileActivation(slog.Default(), capProfile, capReadiness)
+
+	// Advertise only now, and stamp the CAP-PRODUCTION capability only when the
+	// gate above passed.
+	if err := bus.PublishHandshake(
+		natsBus, "scheduler", pb.ComponentRole_COMPONENT_ROLE_SCHEDULER,
+		schedulerCapabilities(capProfile, capReadiness),
+	); err != nil {
+		slog.Warn("handshake publish failed", "error", err)
+	}
+
 	probes.SetStartupComplete()
 
 	snapshotStore, err := store.NewRedisStore(cfg.RedisURL)

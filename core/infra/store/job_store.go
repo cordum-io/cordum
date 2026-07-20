@@ -49,6 +49,10 @@ const (
 	metaFieldAgentRiskTier         = "agent_risk_tier"
 	metaFieldSubmittedBy           = "submitted_by"
 	metaFieldAttempts              = "attempts"
+	metaFieldDispatchID            = "dispatch_id"
+	metaFieldDispatchAttempt       = "dispatch_attempt"
+	metaFieldDispatchWorkerID      = "dispatch_worker_id"
+	metaFieldDispatchTenant        = "dispatch_tenant"
 	metaFieldDeadline              = "deadline_unix"
 	metaFieldSafetyDecision        = "safety_decision"
 	metaFieldDelegationLineage     = "delegation_lineage"
@@ -1194,6 +1198,13 @@ func jobEventsKey(jobID string) string {
 	return jobEventsKeyPrefix + jobID
 }
 
+// jobDispatchEventsKey scopes accepted event-message-id dedupe to one exact
+// dispatch attempt, so a new attempt starts with a clean dedupe set instead
+// of inheriting a prior attempt's message ids.
+func jobDispatchEventsKey(jobID, dispatchID string) string {
+	return jobMetaKeyPrefix + jobID + ":dispatch:" + dispatchID + ":events"
+}
+
 func outputDecisionKey(jobID string) string {
 	if jobID == "" {
 		return ""
@@ -1411,6 +1422,91 @@ func (s *RedisJobStore) SetWorkerID(ctx context.Context, jobID, workerID string)
 		return fmt.Errorf("job store set worker_id %s/%s: %w", jobID, workerID, err)
 	}
 	return nil
+}
+
+// beginDispatchScript atomically assigns a new dispatch fence: it requires
+// the job meta hash to already exist (the job was submitted), then
+// increments the dispatch attempt counter and overwrites dispatch_id/
+// worker/tenant unconditionally — a NEW dispatch always wins (the caller
+// is responsible for only calling this once per real dispatch decision).
+var beginDispatchScript = redis.NewScript(`
+local metaKey = KEYS[1]
+if redis.call('EXISTS', metaKey) == 0 then
+  return {0, ''}
+end
+local attempt = redis.call('HINCRBY', metaKey, ARGV[1], 1)
+redis.call('HSET', metaKey, ARGV[2], ARGV[3], ARGV[4], ARGV[5], ARGV[6], ARGV[7])
+return {1, tostring(attempt)}
+`)
+
+// BeginDispatch atomically assigns a fresh, unpredictable dispatch_id and a
+// monotonically-increasing attempt for jobID, binding workerID/tenant as
+// this attempt's authoritative assignment. See model.JobStore.BeginDispatch.
+func (s *RedisJobStore) BeginDispatch(ctx context.Context, jobID, workerID, tenant string) (string, int, error) {
+	if jobID == "" || workerID == "" || tenant == "" {
+		return "", 0, fmt.Errorf("jobID, workerID, and tenant required")
+	}
+	dispatchID := uuid.NewString()
+	res, err := beginDispatchScript.Run(ctx, s.client, []string{jobMetaKey(jobID)},
+		metaFieldDispatchAttempt,
+		metaFieldDispatchID, dispatchID,
+		metaFieldDispatchWorkerID, workerID,
+		metaFieldDispatchTenant, tenant,
+	).Result()
+	if err != nil {
+		return "", 0, fmt.Errorf("job store begin dispatch %s: %w", jobID, err)
+	}
+	values, ok := res.([]interface{})
+	if !ok || len(values) != 2 {
+		return "", 0, fmt.Errorf("job store begin dispatch %s: malformed script result", jobID)
+	}
+	admitted, _ := values[0].(int64)
+	if admitted != 1 {
+		return "", 0, fmt.Errorf("job store begin dispatch %s: job not found", jobID)
+	}
+	attemptStr, _ := values[1].(string)
+	attempt := parseInt(attemptStr)
+	return dispatchID, attempt, nil
+}
+
+// acceptJobEventScript atomically verifies the event's dispatch fence
+// exactly matches the CURRENT one and dedupes the event message id within
+// this dispatch attempt's own scope.
+var acceptJobEventScript = redis.NewScript(`
+local metaKey = KEYS[1]
+local dedupeKey = KEYS[2]
+if redis.call('HGET', metaKey, ARGV[1]) ~= ARGV[2] then return 0 end
+if redis.call('HGET', metaKey, ARGV[3]) ~= ARGV[4] then return 0 end
+if redis.call('HGET', metaKey, ARGV[5]) ~= ARGV[6] then return 0 end
+if redis.call('HGET', metaKey, ARGV[7]) ~= ARGV[8] then return 0 end
+local added = redis.call('SADD', dedupeKey, ARGV[9])
+redis.call('EXPIRE', dedupeKey, 3600)
+if added == 0 then return 0 end
+return 1
+`)
+
+// AcceptJobEvent atomically verifies dispatchID/attempt/workerID/tenant
+// exactly match the current dispatch fence and that eventMessageID has not
+// already been accepted for this dispatch. See model.JobStore.AcceptJobEvent.
+func (s *RedisJobStore) AcceptJobEvent(
+	ctx context.Context, jobID, dispatchID string, attempt int, workerID, tenant, eventMessageID string,
+) (bool, error) {
+	if jobID == "" || dispatchID == "" || workerID == "" || tenant == "" || eventMessageID == "" {
+		return false, fmt.Errorf("jobID, dispatchID, workerID, tenant, and eventMessageID required")
+	}
+	res, err := acceptJobEventScript.Run(ctx, s.client,
+		[]string{jobMetaKey(jobID), jobDispatchEventsKey(jobID, dispatchID)},
+		metaFieldDispatchID, dispatchID,
+		metaFieldDispatchAttempt, strconv.Itoa(attempt),
+		metaFieldDispatchWorkerID, workerID,
+		metaFieldDispatchTenant, tenant,
+		eventMessageID,
+	).Result()
+	if err != nil {
+		return false, fmt.Errorf("job store accept job event %s: %w", jobID, err)
+	}
+	accepted, _ := res.(int64)
+	return accepted == 1, nil
 }
 
 // ListWorkerJobs returns the most recent jobs processed by a specific worker.

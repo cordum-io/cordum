@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/redis/go-redis/v9"
@@ -17,6 +18,7 @@ import (
 const (
 	defaultRedisURL = "redis://localhost:6379"
 	pointerPrefix   = "redis://"
+	maxPointerBytes = 1024
 	// data TTL guards against unbounded Redis growth; configurable via env.
 	defaultDataTTL           = 24 * time.Hour
 	defaultRedisOpTimeout    = 2 * time.Second
@@ -236,12 +238,26 @@ func KeyFromPointer(ptr string) (string, error) {
 	if ptr == "" {
 		return "", errors.New("empty pointer")
 	}
+	if len(ptr) > maxPointerBytes {
+		return "", errors.New("pointer exceeds maximum length")
+	}
 	if !strings.HasPrefix(ptr, pointerPrefix) {
-		return "", fmt.Errorf("invalid pointer prefix: %s", ptr)
+		return "", errors.New("invalid pointer prefix")
 	}
 	key := strings.TrimPrefix(ptr, pointerPrefix)
 	if key == "" {
 		return "", errors.New("missing key in pointer")
+	}
+	if strings.ContainsAny(key, "?#%/\\") || strings.Contains(key, "..") {
+		return "", errors.New("non-canonical key in pointer")
+	}
+	if at, colon := strings.IndexByte(key, '@'), strings.IndexByte(key, ':'); at >= 0 && (colon < 0 || at < colon) {
+		return "", errors.New("userinfo is not allowed in pointer")
+	}
+	for _, r := range key {
+		if unicode.IsControl(r) || unicode.IsSpace(r) {
+			return "", errors.New("non-canonical key in pointer")
+		}
 	}
 	return key, nil
 }

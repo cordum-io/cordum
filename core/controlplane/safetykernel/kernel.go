@@ -35,6 +35,7 @@ import (
 	infraHealth "github.com/cordum/cordum/core/infra/health"
 	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	"github.com/cordum/cordum/core/infra/redisutil"
+	"github.com/cordum/cordum/core/infra/resourceio"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/tlsreload"
 	"github.com/cordum/cordum/core/licensing"
@@ -91,6 +92,7 @@ type server struct {
 	snapshot              string
 	snapshots             []string
 	resultClient          redis.UniversalClient
+	resourceReader        resourceio.Reader
 	velocityChecker       *velocityChecker
 	policyVersion         atomic.Uint64
 	cacheMu               sync.Mutex
@@ -1031,16 +1033,18 @@ func shadowDecisionName(decision pb.DecisionType, approvalRequired bool) string 
 	}
 }
 
+// cacheKeyForRequest binds the FULL canonical request (including JobId) plus
+// the active policy snapshot. JobId is deliberately NOT stripped: job-scoped
+// policies (see resolvePolicyScope/scopedPolicyForRequest) select a
+// job-specific variant, so omitting JobId let a cached decision for one job
+// leak to a structurally-identical request from a different job. See
+// mem:task-task-a13f83fab9f84c8292cc01e424a5494c-handoff and
+// TestCacheKeyForRequest_DoesNotCollideAcrossJobs.
 func cacheKeyForRequest(req *pb.PolicyCheckRequest, snapshot string) string {
 	if req == nil {
 		return ""
 	}
-	clone, ok := proto.Clone(req).(*pb.PolicyCheckRequest)
-	if !ok || clone == nil {
-		return ""
-	}
-	clone.JobId = ""
-	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(clone)
+	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(req)
 	if err != nil {
 		return ""
 	}

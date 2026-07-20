@@ -47,6 +47,10 @@ func newMemoryStore(t *testing.T) (*store.RedisStore, *miniredis.Miniredis) {
 	return rs, srv
 }
 
+func legacyResultPointer(jobID string) string {
+	return store.PointerForKey(store.MakeResultKey(jobID))
+}
+
 func TestEvalTemplateString(t *testing.T) {
 	scope := map[string]any{"input": map[string]any{"name": "core"}}
 	val, err := evalTemplateString("${input.name}", scope)

@@ -340,14 +340,14 @@ func TestHandleJobResultSecretContentEventuallyQuarantined(t *testing.T) {
 			}, nil
 		},
 	}
-	checker := &OutputSafetyClient{
+	checker := (&OutputSafetyClient{
 		client:       fakePolicy,
 		resultClient: resultClient,
 		cb: NewRedisCircuitBreaker(nil, "cordum:cb:safety:output:test", CircuitBreakerOpts{
 			FailThreshold: outputCircuitFailBudget,
 			OpenDuration:  outputCircuitOpenFor,
 		}),
-	}
+	}).WithLegacyResourceCompatibility(nil)
 
 	jobID := "job-real-secret"
 	store := newSagaJobStore()
@@ -412,14 +412,14 @@ func TestHandleJobResultCleanContentRemainsAllowed(t *testing.T) {
 			}, nil
 		},
 	}
-	checker := &OutputSafetyClient{
+	checker := (&OutputSafetyClient{
 		client:       fakePolicy,
 		resultClient: resultClient,
 		cb: NewRedisCircuitBreaker(nil, "cordum:cb:safety:output:test", CircuitBreakerOpts{
 			FailThreshold: outputCircuitFailBudget,
 			OpenDuration:  outputCircuitOpenFor,
 		}),
-	}
+	}).WithLegacyResourceCompatibility(nil)
 
 	jobID := "job-real-clean"
 	store := newSagaJobStore()

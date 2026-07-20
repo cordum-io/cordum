@@ -24,13 +24,24 @@ func TestCacheKeyForRequestStable(t *testing.T) {
 		Labels: map[string]string{"k": "v"},
 	}
 	key1 := cacheKeyForRequest(req, "snap")
+	// A different JobId MUST change the cache key: job-scoped policies
+	// (resolvePolicyScope/scopedPolicyForRequest) select a job-specific
+	// variant by JobId, so reusing a decision across jobs is a security bug
+	// (see TestCacheKeyForRequest_DoesNotCollideAcrossJobs and
+	// mem:task-task-a13f83fab9f84c8292cc01e424a5494c-handoff).
 	req.JobId = "job-2"
 	key2 := cacheKeyForRequest(req, "snap")
 	if key1 == "" || key2 == "" {
 		t.Fatalf("expected non-empty cache keys")
 	}
-	if key1 != key2 {
-		t.Fatalf("expected cache key to ignore job id")
+	if key1 == key2 {
+		t.Fatalf("expected cache key to change with job id")
+	}
+	// Same JobId + same request content must still be stable/deterministic.
+	req.JobId = "job-1"
+	key1Again := cacheKeyForRequest(req, "snap")
+	if key1 != key1Again {
+		t.Fatalf("expected cache key to be stable for identical input")
 	}
 	if cacheKeyForRequest(nil, "snap") != "" {
 		t.Fatalf("expected empty cache key for nil request")

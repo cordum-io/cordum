@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -239,6 +240,34 @@ func (s *SagaManager) sendBrokenCompensationToDLQ(workflowID string, raw []byte,
 	}
 }
 
+// sendCompensationSafetyFailureToDLQ preserves a compensation request that
+// could not be safety-checked (error or explicit unavailability) so it is
+// never silently lost nor dispatched unvalidated. Best-effort: publish
+// failures are logged but not propagated.
+func (s *SagaManager) sendCompensationSafetyFailureToDLQ(workflowID string, req *pb.JobRequest, reason error) {
+	if s == nil || s.bus == nil {
+		return
+	}
+	packet := &pb.BusPacket{
+		TraceId:         "saga-safety-unavailable-" + uuid.NewString(),
+		SenderId:        sagaSenderID,
+		CreatedAt:       timestamppb.Now(),
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
+		Payload: &pb.BusPacket_JobResult{
+			JobResult: &pb.JobResult{
+				JobId:        req.GetJobId(),
+				Status:       pb.JobStatus_JOB_STATUS_FAILED_FATAL,
+				ErrorCode:    "compensation_safety_unavailable",
+				ErrorMessage: fmt.Sprintf("workflow %s: compensation safety check failed closed: %v", workflowID, reason),
+			},
+		},
+	}
+	if err := s.bus.Publish(capsdk.SubjectDLQ, packet); err != nil {
+		slog.Error("failed to send safety-unavailable compensation to DLQ",
+			"workflow_id", workflowID, "job_id", req.GetJobId(), "error", err)
+	}
+}
+
 func (s *SagaManager) dispatchCompensation(req *pb.JobRequest, workflowID string) error {
 	if req == nil || s == nil || s.bus == nil {
 		return nil
@@ -270,22 +299,28 @@ func (s *SagaManager) dispatchCompensation(req *pb.JobRequest, workflowID string
 		req.Env[sagaWorkflowLabel] = workflowID
 	}
 
-	// Soft safety check: deny → skip compensation, unavailable → proceed.
+	// Safety check: deny -> skip compensation; error/unavailable -> fail
+	// closed (DLQ, never proceed unvalidated). See
+	// ValidateCompensationSafety / TestSagaCompensationSafetyUnavailable_MustNotDispatch.
 	if s.safety != nil {
 		safetyCtx, safetyCancel := context.WithTimeout(context.Background(), storeOpTimeout)
 		record, err := s.safety.Check(safetyCtx, req)
 		safetyCancel()
-		if err != nil {
-			slog.Warn("safety check error for compensation, proceeding",
-				"job_id", req.JobId, "workflow_id", workflowID, "error", err)
-		} else if record.Decision == SafetyDeny {
+		unavailable := err == nil && record.Decision == SafetyUnavailable
+		if safetyErr := ValidateCompensationSafety(&record, err, unavailable); safetyErr != nil {
+			if errors.Is(safetyErr, ErrSafetyUnavailable) {
+				slog.Error("safety unavailable for compensation, failing closed to DLQ",
+					"job_id", req.JobId, "workflow_id", workflowID, "check_error", err)
+				if s.metrics != nil {
+					s.metrics.IncSagaCompensationFailed()
+				}
+				s.sendCompensationSafetyFailureToDLQ(workflowID, req, safetyErr)
+				return nil
+			}
 			slog.Warn("compensation denied by safety, skipping",
 				"job_id", req.JobId, "workflow_id", workflowID,
 				"reason", record.Reason, "rule_id", record.RuleID)
 			return nil
-		} else if record.Decision == SafetyUnavailable {
-			slog.Warn("safety unavailable for compensation, proceeding",
-				"job_id", req.JobId, "workflow_id", workflowID)
 		}
 	}
 
@@ -353,11 +388,19 @@ func buildCompensationRequest(base *pb.JobRequest) (*pb.JobRequest, error) {
 	if comp.Budget != nil {
 		req.Budget = comp.Budget
 	}
-	if comp.TenantId != "" {
-		req.TenantId = comp.TenantId
+	// Tenant/principal are privilege-bearing: a compensation override is
+	// only honored when it exactly repeats the parent's own identity, never
+	// when it would widen it (DoD "prevents compensation escalation"). A
+	// diverging override is silently ignored (parent's value is kept)
+	// rather than erroring, matching this function's existing "override
+	// wins if present, else inherit" contract for non-privilege fields.
+	if comp.TenantId != "" && comp.TenantId != req.TenantId {
+		slog.Warn("compensation tenant override ignored: would escalate beyond parent",
+			"job_id", req.JobId, "parent_tenant", req.TenantId, "compensation_tenant", comp.TenantId)
 	}
-	if comp.PrincipalId != "" {
-		req.PrincipalId = comp.PrincipalId
+	if comp.PrincipalId != "" && comp.PrincipalId != req.PrincipalId {
+		slog.Warn("compensation principal override ignored: would escalate beyond parent",
+			"job_id", req.JobId, "parent_principal", req.PrincipalId, "compensation_principal", comp.PrincipalId)
 	}
 	if comp.Meta != nil {
 		req.Meta = mergeJobMetadata(req.Meta, comp.Meta)
@@ -432,17 +475,37 @@ func mergeStringMap(base, override map[string]string) map[string]string {
 	return out
 }
 
+// isSubsetOfRiskTags reports whether every tag in candidate already appears
+// in allowed. An empty/nil allowed set makes any non-empty candidate NOT a
+// subset (a base with no risk tags cannot be escalated to one that has any).
+func isSubsetOfRiskTags(candidate, allowed []string) bool {
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, tag := range allowed {
+		allowedSet[tag] = struct{}{}
+	}
+	for _, tag := range candidate {
+		if _, ok := allowedSet[tag]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 func mergeJobMetadata(base, override *pb.JobMetadata) *pb.JobMetadata {
 	if base == nil && override == nil {
 		return nil
 	}
-	if base == nil {
-		return proto.Clone(override).(*pb.JobMetadata)
-	}
 	if override == nil {
 		return base
 	}
-	out := proto.Clone(base).(*pb.JobMetadata)
+	// A nil base has no capability/risk tags to inherit from, which is the
+	// most restrictive starting point — the escalation guards below then
+	// apply uniformly instead of an unchecked full clone of override.
+	baseOrEmpty := base
+	if baseOrEmpty == nil {
+		baseOrEmpty = &pb.JobMetadata{}
+	}
+	out := proto.Clone(baseOrEmpty).(*pb.JobMetadata)
 	if override.TenantId != "" {
 		out.TenantId = override.TenantId
 	}
@@ -455,10 +518,14 @@ func mergeJobMetadata(base, override *pb.JobMetadata) *pb.JobMetadata {
 	if override.IdempotencyKey != "" {
 		out.IdempotencyKey = override.IdempotencyKey
 	}
-	if override.Capability != "" {
+	// Capability/risk tags are privilege-bearing: an override MAY only
+	// repeat the base's own capability and MAY only subset the base's own
+	// risk tags, never introduce a new/different one (compensation must
+	// never escalate beyond its parent's authority).
+	if override.Capability != "" && override.Capability == out.Capability {
 		out.Capability = override.Capability
 	}
-	if len(override.RiskTags) > 0 {
+	if len(override.RiskTags) > 0 && isSubsetOfRiskTags(override.RiskTags, baseOrEmpty.RiskTags) {
 		out.RiskTags = append([]string{}, override.RiskTags...)
 	}
 	if len(override.Requires) > 0 {

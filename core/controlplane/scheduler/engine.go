@@ -21,8 +21,8 @@ import (
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	"github.com/cordum/cordum/core/infra/config"
 	cordumotel "github.com/cordum/cordum/core/infra/otel"
+	"github.com/cordum/cordum/core/infra/resourceio"
 	infraSchema "github.com/cordum/cordum/core/infra/schema"
-	infraStore "github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
@@ -102,6 +102,7 @@ type Engine struct {
 	saga                    *SagaManager
 	entitlements            *licensing.EntitlementResolver
 	contextClient           redis.UniversalClient // optional, for loading payloads referenced by ContextPtr
+	resourceReader          resourceio.Reader
 	failModeResolver        *FailModeResolver
 	dispatchGate            *DispatchGate
 	dispatchAuditSink       AuditSink
@@ -1841,6 +1842,29 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 		return RetryAfter(err, retryDelayStore)
 	}
 
+	// Fence this physical dispatch BEFORE publishing: a fresh unpredictable
+	// dispatch_id + monotonic attempt let the worker echo them in Result/
+	// Progress/Cancel, so AcceptJobEvent can reject a late event from a
+	// stale attempt before any side effect (task-a13f83fa step-10).
+	dispatchWorkerID := extractWorkerFromSubject(subject)
+	if e.jobStore != nil && dispatchWorkerID != "" {
+		dispatchTenant := ExtractTenant(req)
+		dispatchCtx, dispatchCancel := context.WithTimeout(lockCtx, storeOpTimeout)
+		dispatchID, attempt, dispatchErr := e.jobStore.BeginDispatch(dispatchCtx, jobID, dispatchWorkerID, dispatchTenant)
+		dispatchCancel()
+		if dispatchErr != nil {
+			slog.Error("begin dispatch fencing failed, rolling back to SCHEDULED",
+				"job_id", jobID, "worker_id", dispatchWorkerID, "error", dispatchErr)
+			if rbErr := e.setJobState(lockCtx, jobID, JobStateScheduled); rbErr != nil {
+				slog.Error("dispatch rollback failed", "job_id", jobID, "error", rbErr)
+			}
+			return RetryAfter(dispatchErr, retryDelayStore)
+		}
+		req.Dispatch = &pb.DispatchIdentity{
+			DispatchId: dispatchID, Attempt: uint64(attempt), AssignedWorkerId: dispatchWorkerID,
+		}
+	}
+
 	packet := &pb.BusPacket{
 		TraceId:         traceID,
 		SenderId:        defaultSenderID,
@@ -1975,23 +1999,12 @@ func (e *Engine) loadSubmitValidationPayload(ctx context.Context, req *pb.JobReq
 	if req == nil {
 		return []byte("null"), nil, nil
 	}
-	ptr := strings.TrimSpace(req.GetContextPtr())
-	if ptr == "" {
-		return nil, []infraSchema.Violation{{Path: "$.context_ptr", Message: "context payload required for schema validation"}}, nil
+	if req.GetContextRef() == nil && strings.TrimSpace(req.GetContextPtr()) == "" {
+		return nil, []infraSchema.Violation{{Path: "$.context_ref", Message: "context payload required for schema validation"}}, nil
 	}
-	if e == nil || e.contextClient == nil {
-		return nil, []infraSchema.Violation{{Path: "$.context_ptr", Message: "context payload unavailable for schema validation"}}, nil
-	}
-	key, err := infraStore.KeyFromPointer(ptr)
-	if err != nil {
-		return nil, []infraSchema.Violation{{Path: "$.context_ptr", Message: "invalid context pointer"}}, nil
-	}
-	data, err := e.contextClient.Get(ctx, key).Bytes()
-	if err != nil {
-		if errors.Is(err, redis.Nil) {
-			return nil, []infraSchema.Violation{{Path: "$.context_ptr", Message: "context payload not found"}}, nil
-		}
-		return nil, nil, fmt.Errorf("load context payload for %s: %w", strings.TrimSpace(req.GetJobId()), err)
+	data, err := e.readContextResource(ctx, req)
+	if err != nil || len(data) == 0 {
+		return nil, []infraSchema.Violation{{Path: "$.context_ref", Message: "context payload rejected for schema validation"}}, nil
 	}
 	return data, nil, nil
 }
@@ -2281,6 +2294,42 @@ func (e *Engine) handleJobResult(res *pb.JobResult) error {
 			defer cancel()
 			state, err := e.jobStore.GetState(ctx, jobID)
 			if err == nil && terminalStates[state] {
+				return nil
+			}
+		}
+		// Dispatch/attempt fencing (task-a13f83fa step-10): when the worker
+		// echoed a DispatchIdentity, this MUST be the exact current fence
+		// before any further mutation (pointer/state/worker/output-safety/
+		// audit/DLQ/metrics/workflow/saga) runs. A stale attempt, wrong
+		// worker, or already-accepted result for this attempt is dropped
+		// here — never applied twice, never applied from a superseded
+		// attempt. Absent DispatchIdentity (legacy/pre-upgrade worker) falls
+		// through unchanged — this is the explicit migration boundary, not
+		// a silent downgrade.
+		if dispatch := res.GetDispatch(); dispatch != nil && e.jobStore != nil {
+			tenantCtx, tenantCancel := context.WithTimeout(lockCtx, storeOpTimeout)
+			tenant, tenantErr := e.jobStore.GetTenant(tenantCtx, jobID)
+			tenantCancel()
+			if tenantErr != nil {
+				slog.Warn("dispatch fencing: tenant lookup failed, dropping event",
+					"job_id", jobID, "error", tenantErr)
+				return nil
+			}
+			fenceCtx, fenceCancel := context.WithTimeout(lockCtx, storeOpTimeout)
+			accepted, fenceErr := e.jobStore.AcceptJobEvent(
+				fenceCtx, jobID, dispatch.GetDispatchId(), int(dispatch.GetAttempt()),
+				dispatch.GetAssignedWorkerId(), tenant, dispatch.GetDispatchId()+":result",
+			)
+			fenceCancel()
+			if fenceErr != nil {
+				slog.Error("dispatch fencing check failed, dropping event",
+					"job_id", jobID, "dispatch_id", dispatch.GetDispatchId(), "error", fenceErr)
+				return nil
+			}
+			if !accepted {
+				slog.Warn("dispatch fencing rejected stale/duplicate/unauthorized result",
+					"job_id", jobID, "dispatch_id", dispatch.GetDispatchId(),
+					"attempt", dispatch.GetAttempt(), "worker_id", dispatch.GetAssignedWorkerId())
 				return nil
 			}
 		}

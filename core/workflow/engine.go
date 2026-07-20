@@ -13,6 +13,7 @@ import (
 	"log/slog"
 
 	cordumotel "github.com/cordum/cordum/core/infra/otel"
+	"github.com/cordum/cordum/core/infra/resourceio"
 	schemas "github.com/cordum/cordum/core/infra/schema"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/licensing"
@@ -69,7 +70,9 @@ type Engine struct {
 	OnStepFinished   func(runID, stepID string, status StepStatus)
 	config           ConfigProvider
 	schemaRegistry   *schemas.Registry
+	resourceReader   resourceio.Reader
 	outputSafety     model.OutputSafetyChecker // optional output policy enforcement on step results
+	jobRequests      jobRequestReader          // authoritative persisted request context for output policy
 	entitlements     *licensing.EntitlementResolver
 	// serviceTokenMinter, when set, mints a short-TTL control-plane service
 	// token (subject "workflow-engine") attached to internal JobCancel
@@ -327,6 +330,9 @@ func (e *Engine) WithSchemaRegistry(registry *schemas.Registry) *Engine {
 
 // WithOutputSafety sets an optional output safety checker for inter-step policy enforcement.
 func (e *Engine) WithOutputSafety(c model.OutputSafetyChecker) *Engine {
+	if isNilOutputSafety(c) {
+		c = nil
+	}
 	e.outputSafety = c
 	return e
 }
@@ -349,7 +355,14 @@ func (e *Engine) WithContext(ctx context.Context) *Engine {
 // WithRunLocker sets a distributed lock provider for cross-replica run locking.
 // When set, the engine acquires a Redis-backed lock in addition to the local mutex.
 func (e *Engine) WithRunLocker(locker RunLocker) *Engine {
+	if isNilRunLocker(locker) {
+		locker = nil
+	}
 	e.lockMgr.locker = locker
+	e.jobRequests = nil
+	if reader, ok := locker.(jobRequestReader); ok && !isNilJobRequestReader(reader) {
+		e.jobRequests = reader
+	}
 	return e
 }
 
@@ -490,7 +503,8 @@ func prepareJobResult(res *pb.JobResult) (runID, stepID string, ok bool) {
 		"job_id", res.JobId,
 		"worker_id", strings.TrimSpace(res.GetWorkerId()),
 		"status", res.GetStatus().String(),
-		"result_ptr", strings.TrimSpace(res.GetResultPtr()),
+		"has_result_ref", res.GetResultRef() != nil,
+		"has_legacy_result", res.GetResultPtr() != "",
 	)
 	return runID, stepID, true
 }
@@ -571,23 +585,11 @@ func (e *Engine) handleJobResultLocked(ctx context.Context, res *pb.JobResult, r
 			return nil
 		}
 		retry, delay := applyResult(child, res, stepDef)
-		if !retry && child.Status == StepStatusSucceeded && res.ResultPtr != "" {
-			if err := e.validateStepOutput(stepDef, res.ResultPtr); err != nil {
-				child.Status = StepStatusFailed
-				child.CompletedAt = &now
-				child.Error = map[string]any{"message": err.Error()}
-				e.appendTimeline(ctx, run, "step_output_invalid", stepID, res.JobId, string(child.Status), res.ResultPtr, err.Error(), nil)
-				// Preserve ResultPtr for quarantined output inspection.
-				recordStepOutput(ctx, e.mem, run, stepID, stepDef, res.ResultPtr, false)
-			}
+		if !retry && child.Status == StepStatusSucceeded && hasJobResultResource(res) {
+			e.processStepOutput(ctx, run, stepID, stepDef, child, res, false)
 		}
 		if !retry && (child.Status == StepStatusSucceeded || child.Status == StepStatusFailed || child.Status == StepStatusDenied || child.Status == StepStatusCancelled || child.Status == StepStatusTimedOut) {
-			e.appendTimeline(ctx, run, "step_completed", stepID, res.JobId, string(child.Status), res.ResultPtr, res.ErrorMessage, nil)
-		}
-		if !retry && child.Status == StepStatusSucceeded && res.ResultPtr != "" {
-			if !e.checkStepOutputPolicy(ctx, run, stepID, child, res) {
-				recordStepOutput(ctx, e.mem, run, stepID, stepDef, res.ResultPtr, false)
-			}
+			e.appendTimeline(ctx, run, "step_completed", stepID, res.JobId, string(child.Status), "", res.ErrorMessage, nil)
 		}
 		parent.Children[stepID] = child
 		run.Steps[stepID] = child
@@ -640,23 +642,11 @@ func (e *Engine) handleJobResultLocked(ctx context.Context, res *pb.JobResult, r
 			return nil
 		}
 		retry, delay := applyResult(stepRun, res, stepDef)
-		if !retry && stepRun.Status == StepStatusSucceeded && res.ResultPtr != "" {
-			if err := e.validateStepOutput(stepDef, res.ResultPtr); err != nil {
-				stepRun.Status = StepStatusFailed
-				stepRun.CompletedAt = &now
-				stepRun.Error = map[string]any{"message": err.Error()}
-				e.appendTimeline(ctx, run, "step_output_invalid", stepID, res.JobId, string(stepRun.Status), res.ResultPtr, err.Error(), nil)
-				// Preserve ResultPtr for quarantined output inspection.
-				recordStepOutput(ctx, e.mem, run, stepID, stepDef, res.ResultPtr, true)
-			}
+		if !retry && stepRun.Status == StepStatusSucceeded && hasJobResultResource(res) {
+			e.processStepOutput(ctx, run, stepID, stepDef, stepRun, res, true)
 		}
 		if !retry && (stepRun.Status == StepStatusSucceeded || stepRun.Status == StepStatusFailed || stepRun.Status == StepStatusDenied || stepRun.Status == StepStatusCancelled || stepRun.Status == StepStatusTimedOut) {
-			e.appendTimeline(ctx, run, "step_completed", stepID, res.JobId, string(stepRun.Status), res.ResultPtr, res.ErrorMessage, nil)
-		}
-		if !retry && stepRun.Status == StepStatusSucceeded && res.ResultPtr != "" {
-			if !e.checkStepOutputPolicy(ctx, run, stepID, stepRun, res) {
-				recordStepOutput(ctx, e.mem, run, stepID, stepDef, res.ResultPtr, true)
-			}
+			e.appendTimeline(ctx, run, "step_completed", stepID, res.JobId, string(stepRun.Status), "", res.ErrorMessage, nil)
 		}
 		run.Steps[stepID] = stepRun
 		if !retry && (stepRun.Status == StepStatusFailed || stepRun.Status == StepStatusDenied || stepRun.Status == StepStatusTimedOut) {

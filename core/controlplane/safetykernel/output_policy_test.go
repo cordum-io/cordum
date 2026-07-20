@@ -467,10 +467,10 @@ func TestCheckOutputDereferencesResultPointer(t *testing.T) {
 		t.Fatalf("seed result pointer content: %v", err)
 	}
 
-	srv := &server{
+	srv := (&server{
 		scanners:     defaultOutputScanners(),
 		resultClient: resultClient,
-	}
+	}).withLegacyResourceCompatibility(nil)
 	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
 		OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "open"},
 		OutputRules: []config.OutputPolicyRule{
@@ -487,6 +487,7 @@ func TestCheckOutputDereferencesResultPointer(t *testing.T) {
 
 	resp, err := srv.CheckOutput(context.Background(), &pb.OutputCheckRequest{
 		JobId:     "job-pointer",
+		Tenant:    "tenant-a",
 		Topic:     "job.default",
 		ResultPtr: "redis://res:job-pointer",
 	})
@@ -495,6 +496,9 @@ func TestCheckOutputDereferencesResultPointer(t *testing.T) {
 	}
 	if resp.GetDecision() != pb.OutputDecision_OUTPUT_DECISION_QUARANTINE {
 		t.Fatalf("expected quarantine from pointer content, got %v", resp.GetDecision())
+	}
+	if resp.GetRuleId() != "out-secret" {
+		t.Fatalf("pointer content was not evaluated by expected rule: %#v", resp)
 	}
 }
 
@@ -508,10 +512,10 @@ func TestCheckOutput_FailClosedOnResultGetError(t *testing.T) {
 	})
 	t.Cleanup(func() { _ = resultClient.Close() })
 
-	srv := &server{
+	srv := (&server{
 		scanners:     defaultOutputScanners(),
 		resultClient: resultClient,
-	}
+	}).withLegacyResourceCompatibility(nil)
 	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
 		OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "open"},
 		OutputRules: []config.OutputPolicyRule{
@@ -528,6 +532,7 @@ func TestCheckOutput_FailClosedOnResultGetError(t *testing.T) {
 
 	resp, err := srv.CheckOutput(context.Background(), &pb.OutputCheckRequest{
 		JobId:     "job-pointer-fail",
+		Tenant:    "tenant-a",
 		Topic:     "job.default",
 		ResultPtr: "redis://res:job-pointer-fail",
 	})
@@ -537,12 +542,12 @@ func TestCheckOutput_FailClosedOnResultGetError(t *testing.T) {
 	if resp.GetDecision() != pb.OutputDecision_OUTPUT_DECISION_QUARANTINE {
 		t.Fatalf("expected result pointer read error to fail closed, got %v: %#v", resp.GetDecision(), resp)
 	}
-	if !hasProtoOutputFinding(resp.GetFindings(), "pointer_unreadable", "critical") {
-		t.Fatalf("expected critical pointer_unreadable finding, got %#v", resp.GetFindings())
+	if !hasProtoOutputFinding(resp.GetFindings(), "resource_rejected", "critical") {
+		t.Fatalf("expected critical resource_rejected finding, got %#v", resp.GetFindings())
 	}
 }
 
-func TestCheckOutput_RedisNilPointerStaysAllow(t *testing.T) {
+func TestCheckOutput_RedisNilPointerFailsClosed(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {
 		t.Skipf("miniredis unavailable: %v", err)
@@ -555,10 +560,10 @@ func TestCheckOutput_RedisNilPointerStaysAllow(t *testing.T) {
 	}
 	defer func() { _ = resultClient.Close() }()
 
-	srv := &server{
+	srv := (&server{
 		scanners:     defaultOutputScanners(),
 		resultClient: resultClient,
-	}
+	}).withLegacyResourceCompatibility(nil)
 	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
 		OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "open"},
 		OutputRules: []config.OutputPolicyRule{
@@ -575,14 +580,18 @@ func TestCheckOutput_RedisNilPointerStaysAllow(t *testing.T) {
 
 	resp, err := srv.CheckOutput(context.Background(), &pb.OutputCheckRequest{
 		JobId:     "job-pointer-missing",
+		Tenant:    "tenant-a",
 		Topic:     "job.default",
 		ResultPtr: "redis://res:job-pointer-missing",
 	})
 	if err != nil {
 		t.Fatalf("check output: %v", err)
 	}
-	if resp.GetDecision() != pb.OutputDecision_OUTPUT_DECISION_ALLOW {
-		t.Fatalf("expected redis.Nil pointer to stay allow-by-default, got %v: %#v", resp.GetDecision(), resp)
+	if resp.GetDecision() != pb.OutputDecision_OUTPUT_DECISION_QUARANTINE {
+		t.Fatalf("expected redis.Nil pointer to fail closed, got %v: %#v", resp.GetDecision(), resp)
+	}
+	if !hasProtoOutputFinding(resp.GetFindings(), "resource_rejected", "critical") {
+		t.Fatalf("expected resource_rejected finding, got %#v", resp.GetFindings())
 	}
 }
 
@@ -763,9 +772,11 @@ func TestEvaluateOutput_FailClosedOnResultGetError(t *testing.T) {
 		},
 	}, "snap-pointer-fail")
 	srv.resultClient = resultClient
+	srv.withLegacyResourceCompatibility(nil)
 
 	resp, err := srv.EvaluateOutput(context.Background(), &OutputEvaluateRequest{
 		JobID:     "job-pointer-fail",
+		Tenant:    "tenant-a",
 		Topic:     "job.default",
 		ResultPtr: "redis://res:job-pointer-fail",
 	})
@@ -778,8 +789,8 @@ func TestEvaluateOutput_FailClosedOnResultGetError(t *testing.T) {
 	if resp.Decision == "allow" {
 		t.Fatalf("expected result pointer read error to fail closed, got allow: %#v", resp)
 	}
-	if resp.Decision == "quarantine" && !hasOutputFindingType(resp.Findings, "pointer_unreadable") {
-		t.Fatalf("expected pointer_unreadable finding on quarantine response, got %#v", resp.Findings)
+	if resp.Decision == "quarantine" && !hasOutputFindingType(resp.Findings, "resource_rejected") {
+		t.Fatalf("expected resource_rejected finding on quarantine response, got %#v", resp.Findings)
 	}
 }
 
@@ -1264,7 +1275,7 @@ func BenchmarkCheckOutputFastPath(b *testing.B) {
 	}
 }
 
-func TestContentForScanNilResultClient(t *testing.T) {
+func TestContentForScanNilResultClientRejectsPointer(t *testing.T) {
 	// Server with nil resultClient — simulates deployment without Redis result store.
 	srv := &server{
 		resultClient: nil,
@@ -1272,31 +1283,28 @@ func TestContentForScanNilResultClient(t *testing.T) {
 
 	// Request with a result pointer but no inline content.
 	req := &pb.OutputCheckRequest{
+		JobId:        "job-123",
+		Tenant:       "tenant-a",
 		ResultPtr:    "redis://result:job-123",
 		ErrorMessage: "fallback error msg",
 	}
 
 	content, truncated, err := srv.contentForScan(context.Background(), req)
-	if err != nil {
-		t.Fatalf("content for scan: %v", err)
+	if err == nil {
+		t.Fatal("expected pointer rejection when legacy compatibility is disabled")
 	}
-	if truncated {
-		t.Fatal("expected no truncation for short error message")
-	}
-	// Should fall back to error message when resultClient is nil.
-	if string(content) != "fallback error msg" {
-		t.Fatalf("expected fallback to error message, got %q", string(content))
+	if truncated || content != nil {
+		t.Fatalf("unexpected content/truncation: %q, %v", content, truncated)
 	}
 
 	// Request with neither content nor error message.
 	req2 := &pb.OutputCheckRequest{
+		JobId:     "job-456",
+		Tenant:    "tenant-a",
 		ResultPtr: "redis://result:job-456",
 	}
 	content2, _, err := srv.contentForScan(context.Background(), req2)
-	if err != nil {
-		t.Fatalf("content for scan without fallback: %v", err)
-	}
-	if content2 != nil {
-		t.Fatalf("expected nil content when no fallback available, got %q", string(content2))
+	if err == nil || content2 != nil {
+		t.Fatalf("expected rejection with nil content, got %q, %v", string(content2), err)
 	}
 }

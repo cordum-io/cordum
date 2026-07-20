@@ -17,6 +17,7 @@ import (
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	edgecore "github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/infra/bus"
+	"github.com/cordum/cordum/core/infra/resourceio"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
@@ -519,29 +520,27 @@ func (s *server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 					item["gate_type"] = v
 				}
 			}
-			// Dereference context_ptr to include the actual job input payload
-			// (e.g. transfer amount, customer, reason) so approvers see what
-			// they are approving.
-			if ptr := strings.TrimSpace(req.GetContextPtr()); ptr != "" {
+			if ptr := strings.TrimSpace(req.GetContextPtr()); ptr != "" && s.memoryResourceReader.Compatibility.Enabled {
+				// Display-only location reference, gated the same as legacy
+				// dereference itself: strict/production mode never surfaces
+				// a raw legacy pointer, even just as a string.
 				item["context_ptr"] = ptr
+			}
+			if req.GetContextRef() != nil || strings.TrimSpace(req.GetContextPtr()) != "" {
 				contextStatus = "unavailable"
-				if s.memStore != nil {
-					if key, err := store.KeyFromPointer(ptr); err == nil {
-						if raw, err := s.memStore.GetContext(r.Context(), key); err == nil {
-							if len(raw) == 0 {
-								contextStatus = "missing"
-							} else if err := json.Unmarshal(raw, &payload); err == nil {
-								contextStatus = "available"
-								item["job_input"] = payload
-							} else {
-								contextStatus = "malformed"
-							}
-						} else if errors.Is(err, redis.Nil) {
-							contextStatus = "missing"
-						}
-					} else {
-						contextStatus = "malformed"
-					}
+				err := s.readGatewayJSONResource(r.Context(), gatewayJobResourceRequest{
+					JobID: job.ID, TenantID: job.Tenant, Reference: req.GetContextRef(),
+					LegacyPointer: req.GetContextPtr(), LegacyKind: resourceio.LegacyContext,
+					Component: "gateway.approval.context",
+				}, &payload)
+				switch {
+				case err == nil:
+					contextStatus = "available"
+					item["job_input"] = payload
+				case errors.Is(err, redis.Nil):
+					contextStatus = "missing"
+				case errors.Is(err, errGatewayResourceMalformed):
+					contextStatus = "malformed"
 				}
 			}
 			if workflowMeta := approvalWorkflowMetadata(payload); workflowMeta != nil {
@@ -1656,11 +1655,14 @@ func (s *server) handleApprovalContext(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "tenant lookup unavailable")
 		return
 	}
-	if tenant != "" {
-		if err := s.requireTenantAccess(r, tenant); err != nil {
-			writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
-			return
-		}
+	tenant = strings.TrimSpace(tenant)
+	if tenant == "" {
+		writeErrorJSON(w, http.StatusServiceUnavailable, "tenant lookup unavailable")
+		return
+	}
+	if err := s.requireTenantAccess(r, tenant); err != nil {
+		writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
+		return
 	}
 
 	// Load safety decision.
@@ -1706,15 +1708,11 @@ func (s *server) handleApprovalContext(w http.ResponseWriter, r *http.Request) {
 		blastRadius     map[string]any
 		rollbackHint    string
 		jobTopic        string
-		jobTenant       string
+		jobTenant       = tenant
 	)
 	if req, reqErr := s.jobStore.GetJobRequest(ctx, jobID); reqErr == nil && req != nil {
 		labels := req.GetLabels()
 		jobTopic = strings.TrimSpace(req.GetTopic())
-		jobTenant = strings.TrimSpace(req.GetTenantId())
-		if jobTenant == "" && labels != nil {
-			jobTenant = strings.TrimSpace(labels["tenant_id"])
-		}
 		blastRadius = buildBlastRadius(req, labels)
 		rollbackHint = strings.TrimSpace(labels["rollback_hint"])
 
@@ -1723,21 +1721,21 @@ func (s *server) handleApprovalContext(w http.ResponseWriter, r *http.Request) {
 			payload       map[string]any
 			contextStatus = "absent"
 		)
-		if ptr := strings.TrimSpace(req.GetContextPtr()); ptr != "" {
+		if req.GetContextRef() != nil || strings.TrimSpace(req.GetContextPtr()) != "" {
 			contextStatus = "unavailable"
-			if s.memStore != nil {
-				if key, keyErr := store.KeyFromPointer(ptr); keyErr == nil {
-					if raw, getErr := s.memStore.GetContext(ctx, key); getErr == nil {
-						if len(raw) == 0 {
-							contextStatus = "missing"
-						} else if jsonErr := json.Unmarshal(raw, &payload); jsonErr == nil {
-							contextStatus = "available"
-							approvalItem["job_input"] = payload
-						} else {
-							contextStatus = "malformed"
-						}
-					}
-				}
+			err := s.readGatewayJSONResource(ctx, gatewayJobResourceRequest{
+				JobID: jobID, TenantID: tenant, Reference: req.GetContextRef(),
+				LegacyPointer: req.GetContextPtr(), LegacyKind: resourceio.LegacyContext,
+				Component: "gateway.approval.detail",
+			}, &payload)
+			switch {
+			case err == nil:
+				contextStatus = "available"
+				approvalItem["job_input"] = payload
+			case errors.Is(err, redis.Nil):
+				contextStatus = "missing"
+			case errors.Is(err, errGatewayResourceMalformed):
+				contextStatus = "malformed"
 			}
 		}
 		summary := buildApprovalDecisionSummary(req, safetyRecord.Reason, payload, contextStatus)

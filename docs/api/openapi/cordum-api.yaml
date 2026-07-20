@@ -5370,6 +5370,88 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /api/v1/memory/resolve:
+    post:
+      operationId: resolveMemoryResource
+      summary: Resolve a structured resource in an authenticated job scope
+      tags:
+      - Memory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - job_id
+              - reference
+              properties:
+                job_id:
+                  type: string
+                  minLength: 1
+                  maxLength: 256
+                reference:
+                  type: object
+                  additionalProperties: false
+                  required:
+                  - resolverId
+                  - uri
+                  - sha256
+                  - mediaType
+                  - sizeBytes
+                  - expiresAt
+                  - purpose
+                  properties:
+                    resolverId:
+                      type: string
+                    uri:
+                      type: string
+                      maxLength: 2048
+                    sha256:
+                      type: string
+                      format: byte
+                    mediaType:
+                      type: string
+                    sizeBytes:
+                      type: integer
+                      format: uint64
+                      minimum: 1
+                    expiresAt:
+                      type: string
+                      format: date-time
+                    purpose:
+                      type: string
+      responses:
+        '200':
+          description: Integrity-verified resource content and safe metadata
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                - media_type
+                - size_bytes
+                - base64
+                properties:
+                  media_type:
+                    type: string
+                  size_bytes:
+                    type: integer
+                  base64:
+                    type: string
+                    format: byte
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /api/v1/artifacts:
     post:
       operationId: createArtifact
