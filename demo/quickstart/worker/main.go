@@ -102,6 +102,9 @@ func main() {
 		RedisURL: redisURL,
 		Store:    blobStore,
 		SenderID: workerID,
+		// Quickstart runs with the handshake off and no trust identity;
+		// CAP fails closed at startup without this explicit opt-in.
+		AllowUnsigned: true,
 	}
 	runtime.Register(agent, topicGreet, greetHandler)
 	runtime.Register(agent, "worker."+workerID+".jobs", greetHandler)
