@@ -19,6 +19,7 @@ import (
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
+	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
 	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	"github.com/cordum/cordum/core/infra/resourceio"
@@ -799,10 +800,14 @@ func (e *Engine) HandlePacketWithContext(ctx context.Context, p *pb.BusPacket) e
 		e.lastTraceCtx = ctx
 		e.traceCtxMu.Unlock()
 	}
-	return e.HandlePacket(p)
+	return e.handlePacket(ctx, p)
 }
 
 func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
+	return e.handlePacket(context.Background(), p)
+}
+
+func (e *Engine) handlePacket(ctx context.Context, p *pb.BusPacket) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("scheduler: packet subscription panic",
@@ -989,7 +994,8 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
 			"result_ptr", res.ResultPtr,
 		)
 		if e.productionIdentity.Load() {
-			return e.handleProductionJobResult(p, res, tokenResult.Claims)
+			authority, _ := bus.RawAdmissionAuthorityFromContext(ctx)
+			return e.handleProductionJobResult(authority, p, res, tokenResult.Claims)
 		}
 		return e.handleCompatJobResult(p, res)
 	case *pb.BusPacket_JobProgress:
@@ -1010,7 +1016,8 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
 		if identityErr != nil {
 			return nil
 		}
-		return e.handleProductionProgress(p, progress, tokenResult.Claims)
+		authority, _ := bus.RawAdmissionAuthorityFromContext(ctx)
+		return e.handleProductionProgress(authority, p, progress, tokenResult.Claims)
 	case *pb.BusPacket_JobCancel:
 		cancelReq := payload.JobCancel
 		if cancelReq == nil {
@@ -1041,7 +1048,8 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
 				return authErr
 			}
 			if !authorized {
-				return e.handleProductionWorkerCancel(p, cancelReq, tokenResult.Claims)
+				authority, _ := bus.RawAdmissionAuthorityFromContext(ctx)
+				return e.handleProductionWorkerCancel(authority, p, cancelReq, tokenResult.Claims)
 			}
 			return e.handleProductionServiceCancel(cancelReq)
 		}

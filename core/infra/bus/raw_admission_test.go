@@ -107,6 +107,71 @@ func TestRawAdmissionAcceptedInvokesHandler(t *testing.T) {
 	}
 }
 
+func TestRawAdmissionAuthorityReachesHandlerUnchanged(t *testing.T) {
+	identity := &pb.IdentityBinding{
+		TenantId: "tenant-a", PrincipalId: "principal-a", ActorId: "actor-a",
+	}
+	authority := &RawAdmissionAuthority{
+		ActualSubject: "sys.job.result", SessionSubject: "worker-a",
+		TenantID: "tenant-a", Identity: identity,
+		MessageID: []byte("0123456789abcdef"), UnsignedDigest: []byte("digest-a"),
+	}
+	b := &NatsBus{}
+	b.SetRawPacketAdmission(func(context.Context, string, []byte) RawAdmissionResult {
+		return RawAdmissionResult{
+			Disposition: RawAdmissionAccepted,
+			Packet:      &pb.BusPacket{TraceId: "accepted"},
+			Authority:   authority,
+		}
+	})
+
+	action, _ := b.processInboundMsgCtx(
+		context.Background(), authority.ActualSubject, []byte("raw"),
+		func(ctx context.Context, _ *pb.BusPacket) error {
+			got, ok := RawAdmissionAuthorityFromContext(ctx)
+			if !ok {
+				t.Fatal("handler context is missing verified raw authority")
+			}
+			if got.ActualSubject != authority.ActualSubject || got.SessionSubject != authority.SessionSubject ||
+				got.TenantID != authority.TenantID || !proto.Equal(got.Identity, authority.Identity) ||
+				!bytes.Equal(got.MessageID, authority.MessageID) || !bytes.Equal(got.UnsignedDigest, authority.UnsignedDigest) {
+				t.Fatalf("handler authority = %#v, want %#v", got, authority)
+			}
+			got.Identity.TenantId = "mutated"
+			got.MessageID[0] ^= 1
+			got.UnsignedDigest[0] ^= 1
+			return nil
+		}, 1,
+	)
+	if action != msgActionAck {
+		t.Fatalf("action = %v, want ack", action)
+	}
+	if authority.Identity.GetTenantId() != "tenant-a" || string(authority.MessageID) != "0123456789abcdef" || string(authority.UnsignedDigest) != "digest-a" {
+		t.Fatalf("handler mutated admission-owned authority: %#v", authority)
+	}
+}
+
+func TestRawAdmissionAuthorityIsAbsentInCompatibilityMode(t *testing.T) {
+	packet := validNATSTestPacket(&pb.BusPacket{
+		TraceId: "trace-compat", SenderId: "sender-compat",
+		Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "job-compat"}},
+	})
+	raw, err := proto.Marshal(packet)
+	if err != nil {
+		t.Fatalf("marshal compatibility packet: %v", err)
+	}
+	b := &NatsBus{}
+	action, _ := b.processInboundMsgCtx(context.Background(), "job.actual", raw, func(ctx context.Context, _ *pb.BusPacket) error {
+		if _, ok := RawAdmissionAuthorityFromContext(ctx); ok {
+			t.Fatal("compatibility handler received production authority")
+		}
+		return nil
+	}, 1)
+	if action != msgActionAck {
+		t.Fatalf("action = %v, want ack", action)
+	}
+}
+
 func TestRawAdmissionFailsClosedOnInvalidAcceptedResult(t *testing.T) {
 	b := &NatsBus{}
 	b.SetRawPacketAdmission(func(context.Context, string, []byte) RawAdmissionResult {

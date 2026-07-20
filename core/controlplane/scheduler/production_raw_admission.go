@@ -83,21 +83,30 @@ func NewProductionRawAdmissionHook(
 			return productionRawAdmissionError(err)
 		}
 		session = snapshotAuthenticatedProductionSession(session)
-		var packet *agentv1.BusPacket
-		outcome, err := frozenBoundary.Handle(ctx, subject, session, raw, func(_ context.Context, admitted *agentv1.BusPacket) error {
-			packet = admitted
-			return nil
-		})
+		verified, outcome, err := frozenBoundary.admitVerified(ctx, subject, session, raw)
 		if err != nil {
 			return productionRawAdmissionError(err)
 		}
 		if outcome == capsdk.ReplayOutcomeDuplicate {
 			return bus.RawAdmissionResult{Disposition: bus.RawAdmissionDuplicate}
 		}
-		if outcome != capsdk.ReplayOutcomeFirst || packet == nil {
+		if outcome != capsdk.ReplayOutcomeFirst || !verified.IsVerified() {
 			return bus.RawAdmissionResult{Disposition: bus.RawAdmissionRetry}
 		}
-		return bus.RawAdmissionResult{Disposition: bus.RawAdmissionAccepted, Packet: packet}
+		packet := verified.Packet()
+		digest := verified.SignedBodyDigest()
+		return bus.RawAdmissionResult{
+			Disposition: bus.RawAdmissionAccepted,
+			Packet:      packet,
+			Authority: &bus.RawAdmissionAuthority{
+				ActualSubject:  verified.Subject(),
+				SessionSubject: verified.Sender(),
+				TenantID:       verified.Tenant(),
+				Identity:       session.Identity,
+				MessageID:      verified.MessageID(),
+				UnsignedDigest: append([]byte(nil), digest[:]...),
+			},
+		}
 	}
 }
 
@@ -129,29 +138,51 @@ func (b *ProductionRawBoundary) Handle(
 	raw []byte,
 	handler func(context.Context, *agentv1.BusPacket) error,
 ) (capsdk.ReplayOutcome, error) {
-	if err := b.validateInputs(ctx, actualSubject, session, raw, handler); err != nil {
-		return 0, err
+	if handler == nil {
+		return 0, ErrProductionAdmissionUnavailable
+	}
+	verified, outcome, err := b.admitVerified(ctx, actualSubject, session, raw)
+	if err != nil || outcome != capsdk.ReplayOutcomeFirst {
+		return outcome, err
+	}
+	return outcome, handler(ctx, verified.Packet())
+}
+
+func (b *ProductionRawBoundary) admitVerified(
+	ctx context.Context,
+	actualSubject string,
+	session AuthenticatedProductionSession,
+	raw []byte,
+) (capsdk.VerifiedProductionPacket, capsdk.ReplayOutcome, error) {
+	if err := b.validateInputs(ctx, actualSubject, session, raw); err != nil {
+		return capsdk.VerifiedProductionPacket{}, 0, err
 	}
 	trust := b.trust(actualSubject, session)
-	packet, err := capsdk.VerifyProductionPacket(raw, trust)
+	verified, err := capsdk.VerifyTrustedProductionPacket(raw, trust)
 	if err != nil {
-		return 0, err
+		return capsdk.VerifiedProductionPacket{}, 0, err
 	}
+	packet := verified.Packet()
 	if err := capsdk.ValidateBusPacket(packet); err != nil {
-		return 0, err
+		return capsdk.VerifiedProductionPacket{}, 0, err
 	}
 	if err := validateAuthenticatedProductionIdentity(packet, session); err != nil {
-		return 0, err
+		return capsdk.VerifiedProductionPacket{}, 0, err
 	}
-	digest, err := capsdk.ProductionSignedBodyDigest(raw)
-	if err != nil {
-		return 0, err
-	}
-	metadata := packet.GetSignatureMetadata()
-	replayExpiry := metadata.GetExpiresAt().AsTime().Add(trust.ClockSkew)
+	outcome, err := b.admitReplay(verified, packet, trust.ClockSkew)
+	return verified, outcome, err
+}
+
+func (b *ProductionRawBoundary) admitReplay(
+	verified capsdk.VerifiedProductionPacket,
+	packet *agentv1.BusPacket,
+	clockSkew time.Duration,
+) (capsdk.ReplayOutcome, error) {
+	digest := verified.SignedBodyDigest()
+	replayExpiry := packet.GetSignatureMetadata().GetExpiresAt().AsTime().Add(clockSkew)
 	outcome, err := b.Replay.Admit(
-		session.Identity.GetTenantId(), actualSubject, session.Subject,
-		metadata.GetMessageId(), digest[:], replayExpiry,
+		verified.Tenant(), verified.Subject(), verified.Sender(),
+		verified.MessageID(), digest[:], replayExpiry,
 	)
 	if err != nil {
 		if errors.Is(err, capsdk.ErrReplayConflict) {
@@ -159,13 +190,10 @@ func (b *ProductionRawBoundary) Handle(
 		}
 		return 0, capsdk.ErrReplayStoreUnavailable
 	}
-	if outcome == capsdk.ReplayOutcomeDuplicate {
-		return outcome, nil
-	}
-	if outcome != capsdk.ReplayOutcomeFirst {
+	if outcome != capsdk.ReplayOutcomeFirst && outcome != capsdk.ReplayOutcomeDuplicate {
 		return 0, ErrProductionAdmissionUnavailable
 	}
-	return outcome, handler(ctx, packet)
+	return outcome, nil
 }
 
 func (b *ProductionRawBoundary) validateInputs(
@@ -173,9 +201,8 @@ func (b *ProductionRawBoundary) validateInputs(
 	actualSubject string,
 	session AuthenticatedProductionSession,
 	raw []byte,
-	handler func(context.Context, *agentv1.BusPacket) error,
 ) error {
-	if b == nil || b.ResolveKey == nil || b.Replay == nil || handler == nil || actualSubject == "" {
+	if b == nil || b.ResolveKey == nil || b.Replay == nil || actualSubject == "" {
 		return ErrProductionAdmissionUnavailable
 	}
 	if ctx == nil {

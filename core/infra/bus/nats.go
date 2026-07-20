@@ -38,6 +38,7 @@ type NatsBus struct {
 	reconnectHandlers  []func(*nats.Conn)
 	disconnectHandlers []func(*nats.Conn, error)
 	rawPacketAdmission RawPacketAdmission
+	packetEncoder      PacketEncoder
 	rawAdmissionFrozen bool
 
 	// redis is an optional Redis client for crash-safe message processing.
@@ -355,7 +356,7 @@ func (b *NatsBus) PublishWithContext(ctx context.Context, subject string, packet
 	if packet == nil {
 		return errNilPacket
 	}
-	data, err := proto.Marshal(packet)
+	data, err := b.encodePacket(ctx, subject, packet)
 	if err != nil {
 		return fmt.Errorf("marshal bus packet: %w", err)
 	}
@@ -394,7 +395,7 @@ func (b *NatsBus) Publish(subject string, packet *pb.BusPacket) error {
 	if packet == nil {
 		return errNilPacket
 	}
-	data, err := proto.Marshal(packet)
+	data, err := b.encodePacket(context.Background(), subject, packet)
 	if err != nil {
 		return fmt.Errorf("marshal bus packet: %w", err)
 	}
@@ -506,7 +507,7 @@ func (b *NatsBus) jsCallbackCtx(
 			streamSeq = meta.Sequence.Stream
 		}
 		ctx := cordumotel.ExtractTraceContext(context.Background(), msg.Header)
-		packet, action, delay, proceed := preAdmitRawPacket(ctx, admit, msg.Subject, msg.Data)
+		packet, authority, action, delay, proceed := preAdmitRawPacket(ctx, admit, msg.Subject, msg.Data)
 		if !proceed {
 			b.settleRawAdmission(msg, subject, action, delay)
 			return
@@ -537,7 +538,7 @@ func (b *NatsBus) jsCallbackCtx(
 		}
 
 		action, delay = processAfterRawAdmission(
-			ctx, admit != nil, packet, msg.Subject, msg.Data, handler, numDelivered,
+			ctx, admit != nil, packet, authority, msg.Subject, msg.Data, handler, numDelivered,
 		)
 
 		if b.redis != nil && streamSeq > 0 {
@@ -634,6 +635,7 @@ func processBusMsgCtx(ctx context.Context, subject string, data []byte, handler 
 		}
 		return msgActionNakDelay, 5 * time.Second
 	}
+	observeCompatibilityPacket(&packet)
 	if err := handler(ctx, &packet); err != nil {
 		if delay, ok := RetryDelay(err); ok {
 			if delay > 0 {
@@ -680,7 +682,7 @@ func (b *NatsBus) subscribe(subject, queue string, handler func(*pb.BusPacket) e
 				streamSeq = meta.Sequence.Stream
 			}
 			ctx := context.Background()
-			packet, action, delay, proceed := preAdmitRawPacket(ctx, admit, msg.Subject, msg.Data)
+			packet, authority, action, delay, proceed := preAdmitRawPacket(ctx, admit, msg.Subject, msg.Data)
 			if !proceed {
 				b.settleRawAdmission(msg, subject, action, delay)
 				return
@@ -722,7 +724,7 @@ func (b *NatsBus) subscribe(subject, queue string, handler func(*pb.BusPacket) e
 			}
 
 			action, delay = processAfterRawAdmission(
-				ctx, admit != nil, packet, msg.Subject, msg.Data, contextualHandler(handler), numDelivered,
+				ctx, admit != nil, packet, authority, msg.Subject, msg.Data, contextualHandler(handler), numDelivered,
 			)
 
 			// Clear in-flight tracking after processing.

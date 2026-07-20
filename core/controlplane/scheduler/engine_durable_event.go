@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/auth/servicetoken"
+	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
@@ -15,12 +16,13 @@ import (
 )
 
 func (e *Engine) acceptProductionDispatchEvent(
+	authority *bus.RawAdmissionAuthority,
 	packet *pb.BusPacket, dispatch *pb.DispatchIdentity, claims *SessionTokenClaims, kind string,
 ) (bool, error) {
 	if packet == nil || dispatch == nil || claims == nil || e.jobStore == nil {
 		return false, nil
 	}
-	messageID, digest, err := signedEventEvidence(packet)
+	messageID, digest, err := trustedEventEvidence(authority, packet, claims)
 	if err != nil {
 		return false, nil
 	}
@@ -59,9 +61,10 @@ func productionEventJobID(packet *pb.BusPacket) string {
 }
 
 func (e *Engine) handleProductionProgress(
+	authority *bus.RawAdmissionAuthority,
 	packet *pb.BusPacket, progress *pb.JobProgress, claims *SessionTokenClaims,
 ) error {
-	accepted, err := e.acceptProductionDispatchEvent(packet, progress.GetDispatch(), claims, "progress")
+	accepted, err := e.acceptProductionDispatchEvent(authority, packet, progress.GetDispatch(), claims, "progress")
 	if err != nil || !accepted {
 		return err
 	}
@@ -78,6 +81,7 @@ func (e *Engine) productionCancelAuthorized(
 }
 
 func (e *Engine) handleProductionWorkerCancel(
+	authority *bus.RawAdmissionAuthority,
 	packet *pb.BusPacket, cancel *pb.JobCancel, claims *SessionTokenClaims,
 ) error {
 	if cancel.GetDispatch() == nil || claims == nil {
@@ -87,7 +91,7 @@ func (e *Engine) handleProductionWorkerCancel(
 	if !ok {
 		return RetryAfter(errors.New("production durable job event store unavailable"), retryDelayStore)
 	}
-	messageID, digest, err := signedEventEvidence(packet)
+	messageID, digest, err := trustedEventEvidence(authority, packet, claims)
 	if err != nil {
 		return nil
 	}

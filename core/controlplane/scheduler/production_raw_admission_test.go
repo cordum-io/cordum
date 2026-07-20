@@ -125,6 +125,40 @@ func TestProductionRawBoundaryScopesSuccessfulKeyLookupToSession(t *testing.T) {
 	}
 }
 
+func TestProductionRawBoundaryAcceptsConfiguredKeyRotationOverlap(t *testing.T) {
+	oldKey := newProductionTestKey(t)
+	newKey := newProductionTestKey(t)
+	session := productionTestSession()
+	boundary := productionTestBoundary(oldKey, capsdk.NewInMemoryReplayStore())
+	boundary.ResolveKey = func(tenant, sender, keyID string) (*ecdsa.PublicKey, error) {
+		if tenant != "tenant-a" || sender != "worker-a" {
+			return nil, nil
+		}
+		switch keyID {
+		case "old-key":
+			return &oldKey.PublicKey, nil
+		case "new-key":
+			return &newKey.PublicKey, nil
+		default:
+			return nil, nil
+		}
+	}
+	for _, tc := range []struct {
+		keyID string
+		key   *ecdsa.PrivateKey
+		id    byte
+	}{{"old-key", oldKey, 40}, {"new-key", newKey, 41}} {
+		packet := productionTestPacket(session.Identity, productionTestMessageID(tc.id))
+		packet.SignatureMetadata.KeyId = tc.keyID
+		raw := signProductionTestPacket(t, tc.key, packet)
+		outcome, err := boundary.Handle(context.Background(), productionTestSubject, session, raw,
+			func(context.Context, *agentv1.BusPacket) error { return nil })
+		if err != nil || outcome != capsdk.ReplayOutcomeFirst {
+			t.Fatalf("key %q admission = (%v, %v), want first", tc.keyID, outcome, err)
+		}
+	}
+}
+
 func TestProductionRawBoundaryDistinguishesRedeliveryFromReplayConflict(t *testing.T) {
 	t.Parallel()
 	key := newProductionTestKey(t)

@@ -18,11 +18,11 @@ func TestProductionProgressFenceRejectsRedeliveryStaleAndWrongWorker(t *testing.
 		SignatureMetadata: &pb.SignatureMetadata{MessageId: []byte("progress-msg-001")},
 		Payload:           &pb.BusPacket_JobProgress{JobProgress: progress},
 	}
-	accepted, err := engine.acceptProductionDispatchEvent(packet, progress.GetDispatch(), claims, "progress")
+	accepted, err := engine.acceptProductionDispatchEvent(productionEventAuthority(t, packet), packet, progress.GetDispatch(), claims, "progress")
 	if err != nil || !accepted {
 		t.Fatalf("current progress = (%v, %v), want accepted", accepted, err)
 	}
-	accepted, err = engine.acceptProductionDispatchEvent(packet, progress.GetDispatch(), claims, "progress")
+	accepted, err = engine.acceptProductionDispatchEvent(productionEventAuthority(t, packet), packet, progress.GetDispatch(), claims, "progress")
 	if err != nil || accepted {
 		t.Fatalf("redelivered progress = (%v, %v), want duplicate reject", accepted, err)
 	}
@@ -30,13 +30,13 @@ func TestProductionProgressFenceRejectsRedeliveryStaleAndWrongWorker(t *testing.
 		t.Fatalf("BeginDispatch(newer) error = %v", err)
 	}
 	packet.SignatureMetadata.MessageId = []byte("progress-msg-002")
-	accepted, err = engine.acceptProductionDispatchEvent(packet, progress.GetDispatch(), claims, "progress")
+	accepted, err = engine.acceptProductionDispatchEvent(productionEventAuthority(t, packet), packet, progress.GetDispatch(), claims, "progress")
 	if err != nil || accepted {
 		t.Fatalf("stale progress = (%v, %v), want reject", accepted, err)
 	}
 	wrong := *claims
 	wrong.Subject = "worker-evil"
-	accepted, err = engine.acceptProductionDispatchEvent(packet, progress.GetDispatch(), &wrong, "progress")
+	accepted, err = engine.acceptProductionDispatchEvent(productionEventAuthority(t, packet), packet, progress.GetDispatch(), &wrong, "progress")
 	if err != nil || accepted {
 		t.Fatalf("wrong-worker progress = (%v, %v), want reject", accepted, err)
 	}
@@ -91,10 +91,10 @@ func TestProductionWorkerCancelAtomicallyAppliesOnce(t *testing.T) {
 		SignatureMetadata: &pb.SignatureMetadata{MessageId: []byte("cancel-msg-00001")},
 		Payload:           &pb.BusPacket_JobCancel{JobCancel: cancel},
 	}
-	if err := engine.handleProductionWorkerCancel(packet, cancel, claims); err != nil {
+	if err := engine.handleProductionWorkerCancel(productionEventAuthority(t, packet), packet, cancel, claims); err != nil {
 		t.Fatalf("handleProductionWorkerCancel(first) error = %v", err)
 	}
-	if err := engine.handleProductionWorkerCancel(packet, cancel, claims); err != nil {
+	if err := engine.handleProductionWorkerCancel(productionEventAuthority(t, packet), packet, cancel, claims); err != nil {
 		t.Fatalf("handleProductionWorkerCancel(redelivery) error = %v", err)
 	}
 	state, err := jobStore.GetState(context.Background(), cancel.GetJobId())
@@ -126,14 +126,14 @@ func TestProductionWorkerCancelRejectsMessageIDDigestConflict(t *testing.T) {
 		SignatureMetadata: &pb.SignatureMetadata{MessageId: []byte("cancel-conflict1")},
 		Payload:           &pb.BusPacket_JobCancel{JobCancel: cancel},
 	}
-	if err := engine.handleProductionWorkerCancel(packet, cancel, claims); err != nil {
+	if err := engine.handleProductionWorkerCancel(productionEventAuthority(t, packet), packet, cancel, claims); err != nil {
 		t.Fatalf("handleProductionWorkerCancel(first) error = %v", err)
 	}
 	bus.mu.Lock()
 	published := len(bus.published)
 	bus.mu.Unlock()
 	cancel.Reason = "tampered"
-	if err := engine.handleProductionWorkerCancel(packet, cancel, claims); err != nil {
+	if err := engine.handleProductionWorkerCancel(productionEventAuthority(t, packet), packet, cancel, claims); err != nil {
 		t.Fatalf("handleProductionWorkerCancel(conflict) error = %v", err)
 	}
 	bus.mu.Lock()
@@ -159,7 +159,7 @@ func TestProductionWorkerCancelRejectsStaleAttemptWithoutMutation(t *testing.T) 
 	); err != nil {
 		t.Fatalf("BeginDispatch(new attempt) error = %v", err)
 	}
-	if err := engine.handleProductionWorkerCancel(packet, cancel, claims); err != nil {
+	if err := engine.handleProductionWorkerCancel(productionEventAuthority(t, packet), packet, cancel, claims); err != nil {
 		t.Fatalf("handleProductionWorkerCancel(stale) error = %v", err)
 	}
 	state, err := jobStore.GetState(context.Background(), result.GetJobId())

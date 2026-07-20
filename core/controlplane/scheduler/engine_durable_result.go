@@ -1,14 +1,16 @@
 package scheduler
 
 import (
+	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
+	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
@@ -23,14 +25,20 @@ type durableResultEffect struct {
 }
 
 func (e *Engine) handleProductionJobResult(
+	authority *bus.RawAdmissionAuthority,
 	packet *pb.BusPacket, result *pb.JobResult, claims *SessionTokenClaims,
 ) error {
 	durable, ok := e.jobStore.(model.DurableJobEventStore)
 	if !ok {
 		return RetryAfter(errors.New("production durable job event store unavailable"), retryDelayStore)
 	}
-	apply, err := e.buildDurableResultApply(packet, result, claims)
+	apply, err := e.buildDurableResultApply(authority, packet, result, claims)
 	if err != nil {
+		var retryable interface{ RetryDelay() time.Duration }
+		if !errors.As(err, &retryable) {
+			slog.Warn("production job result rejected", "job_id", result.GetJobId(), "reason", "raw_authority_mismatch")
+			return nil
+		}
 		return err
 	}
 	disposition, err := durable.ApplyJobResult(e.ctx, apply)
@@ -49,12 +57,13 @@ func (e *Engine) handleProductionJobResult(
 }
 
 func (e *Engine) buildDurableResultApply(
+	authority *bus.RawAdmissionAuthority,
 	packet *pb.BusPacket, result *pb.JobResult, claims *SessionTokenClaims,
 ) (model.JobResultApply, error) {
 	if packet == nil || result == nil || result.GetDispatch() == nil || claims == nil {
 		return model.JobResultApply{}, nilDispatchFenceError(result)
 	}
-	messageID, digest, err := signedEventEvidence(packet)
+	messageID, digest, err := trustedEventEvidence(authority, packet, claims)
 	if err != nil {
 		return model.JobResultApply{}, err
 	}
@@ -86,17 +95,26 @@ func nilDispatchFenceError(result *pb.JobResult) error {
 	return fmt.Errorf("production result %s missing authenticated dispatch evidence", jobID)
 }
 
-func signedEventEvidence(packet *pb.BusPacket) ([]byte, []byte, error) {
+func trustedEventEvidence(
+	authority *bus.RawAdmissionAuthority,
+	packet *pb.BusPacket,
+	claims *SessionTokenClaims,
+) ([]byte, []byte, error) {
+	if authority == nil || packet == nil || claims == nil || authority.ActualSubject == "" ||
+		len(authority.MessageID) != 16 || len(authority.UnsignedDigest) != 32 {
+		return nil, nil, errors.New("production event missing verified raw authority")
+	}
+	if authority.SessionSubject != strings.TrimSpace(claims.Subject) ||
+		authority.TenantID != strings.TrimSpace(claims.Tenant) ||
+		packet.GetSenderId() != authority.SessionSubject ||
+		!sameProductionIdentity(packet.GetIdentity(), authority.Identity) {
+		return nil, nil, ErrProductionSessionIdentity
+	}
 	metadata := packet.GetSignatureMetadata()
-	if metadata == nil || len(metadata.GetMessageId()) != 16 || len(packet.GetSignature()) == 0 {
-		return nil, nil, errors.New("production result missing signed message evidence")
+	if metadata == nil || !bytes.Equal(metadata.GetMessageId(), authority.MessageID) {
+		return nil, nil, errors.New("production event signature metadata mismatch")
 	}
-	wire, err := proto.MarshalOptions{Deterministic: true}.Marshal(packet)
-	if err != nil {
-		return nil, nil, fmt.Errorf("marshal signed result evidence: %w", err)
-	}
-	digest := sha256.Sum256(wire)
-	return append([]byte(nil), metadata.GetMessageId()...), digest[:], nil
+	return append([]byte(nil), authority.MessageID...), append([]byte(nil), authority.UnsignedDigest...), nil
 }
 
 func (e *Engine) loadResultTopic(jobID string) (string, error) {

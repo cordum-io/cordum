@@ -1,16 +1,46 @@
 package scheduler
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"testing"
 	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
+	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"google.golang.org/protobuf/proto"
 )
+
+func TestTrustedEventEvidenceUsesExactVerifiedRawMetadata(t *testing.T) {
+	identity := &pb.IdentityBinding{TenantId: "tenant-a", PrincipalId: "principal-a", ActorId: "actor-a"}
+	packet := &pb.BusPacket{
+		SenderId: "worker-1", Identity: identity,
+		SignatureMetadata: &pb.SignatureMetadata{MessageId: []byte("0123456789abcdef")},
+	}
+	claims := &SessionTokenClaims{Subject: "worker-1", Tenant: "tenant-a"}
+	wantDigest := bytes.Repeat([]byte{0xA5}, 32)
+	authority := &bus.RawAdmissionAuthority{
+		ActualSubject: "sys.job.result", SessionSubject: "worker-1", TenantID: "tenant-a",
+		Identity: identity, MessageID: []byte("0123456789abcdef"), UnsignedDigest: wantDigest,
+	}
+
+	messageID, digest, err := trustedEventEvidence(authority, packet, claims)
+	if err != nil {
+		t.Fatalf("trustedEventEvidence() error = %v", err)
+	}
+	if !bytes.Equal(messageID, authority.MessageID) || !bytes.Equal(digest, wantDigest) {
+		t.Fatalf("evidence = %x/%x, want exact authority %x/%x", messageID, digest, authority.MessageID, wantDigest)
+	}
+	packet.SignatureMetadata.MessageId = []byte("fedcba9876543210")
+	if _, _, err := trustedEventEvidence(authority, packet, claims); err == nil {
+		t.Fatal("trustedEventEvidence() accepted packet/authority message-id mismatch")
+	}
+}
 
 func TestHandleJobResultProductionRejectsMissingDispatchFence(t *testing.T) {
 	jobStore := newFakeJobStore()
@@ -61,7 +91,7 @@ func TestDurableResultOutboxReplaysAfterPublishFailure(t *testing.T) {
 	engine, jobStore, bus, result, packet, claims := productionResultFixture(t)
 	bus.publishErr = errors.New("broker unavailable")
 	bus.failSubject = "sys.internal.job.result.accepted"
-	if err := engine.handleProductionJobResult(packet, result, claims); err == nil {
+	if err := engine.handleProductionJobResult(productionEventAuthority(t, packet), packet, result, claims); err == nil {
 		t.Fatal("first handleProductionJobResult() error = nil, want retry")
 	}
 	effects, err := jobStore.PendingJobEffects(context.Background(), 10)
@@ -88,10 +118,10 @@ func TestHandleProductionJobResultUsesAuthenticatedFenceAndAppliesOnce(t *testin
 	engine, jobStore, bus, result, packet, claims := productionResultFixture(t)
 	result.WorkerId = "attacker-echo"
 
-	if err := engine.handleProductionJobResult(packet, result, claims); err != nil {
+	if err := engine.handleProductionJobResult(productionEventAuthority(t, packet), packet, result, claims); err != nil {
 		t.Fatalf("handleProductionJobResult(first) error = %v", err)
 	}
-	if err := engine.handleProductionJobResult(packet, result, claims); err != nil {
+	if err := engine.handleProductionJobResult(productionEventAuthority(t, packet), packet, result, claims); err != nil {
 		t.Fatalf("handleProductionJobResult(redelivery) error = %v", err)
 	}
 	state, err := jobStore.GetState(context.Background(), result.GetJobId())
@@ -117,7 +147,7 @@ func TestHandleProductionJobResultRejectsStaleAttemptWithoutMutation(t *testing.
 	); err != nil {
 		t.Fatalf("BeginDispatch(new attempt) error = %v", err)
 	}
-	if err := engine.handleProductionJobResult(packet, result, claims); err != nil {
+	if err := engine.handleProductionJobResult(productionEventAuthority(t, packet), packet, result, claims); err != nil {
 		t.Fatalf("stale handleProductionJobResult() error = %v", err)
 	}
 	state, err := jobStore.GetState(context.Background(), result.GetJobId())
@@ -134,7 +164,7 @@ func TestHandleProductionJobResultRejectsStaleAttemptWithoutMutation(t *testing.
 func TestHandleProductionJobResultRejectsWrongTokenTenant(t *testing.T) {
 	engine, jobStore, bus, result, packet, claims := productionResultFixture(t)
 	claims.Tenant = "tenant-evil"
-	if err := engine.handleProductionJobResult(packet, result, claims); err != nil {
+	if err := engine.handleProductionJobResult(productionEventAuthority(t, packet), packet, result, claims); err != nil {
 		t.Fatalf("wrong-tenant handleProductionJobResult() error = %v", err)
 	}
 	state, err := jobStore.GetState(context.Background(), result.GetJobId())
@@ -153,7 +183,7 @@ func TestHandleProductionJobResultRetriesTransientStoreFailure(t *testing.T) {
 	if err := jobStore.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
-	err := engine.handleProductionJobResult(packet, result, claims)
+	err := engine.handleProductionJobResult(productionEventAuthority(t, packet), packet, result, claims)
 	var retryable interface{ RetryDelay() time.Duration }
 	if !errors.As(err, &retryable) {
 		t.Fatalf("transient store error = %v, want retryable", err)
@@ -167,7 +197,7 @@ func TestHandleProductionJobResultRetainsAsyncOutputSafety(t *testing.T) {
 		contentRecord: OutputSafetyRecord{Decision: OutputAllow, Phase: "async"},
 	}
 	engine.WithOutputSafety(checker).WithOutputSafetyEnabled(true)
-	if err := engine.handleProductionJobResult(packet, result, claims); err != nil {
+	if err := engine.handleProductionJobResult(productionEventAuthority(t, packet), packet, result, claims); err != nil {
 		t.Fatalf("handleProductionJobResult() error = %v", err)
 	}
 	engine.wg.Wait()
@@ -226,4 +256,19 @@ func productionResultFixture(
 	engine.productionIdentity.Store(true)
 	claims := &SessionTokenClaims{Subject: "worker-1", Tenant: "tenant-a"}
 	return engine, jobStore, bus, result, packet, claims
+}
+
+func productionEventAuthority(t *testing.T, packet *pb.BusPacket) *bus.RawAdmissionAuthority {
+	t.Helper()
+	wire, err := proto.MarshalOptions{Deterministic: true}.Marshal(packet)
+	if err != nil {
+		t.Fatalf("marshal production event fixture: %v", err)
+	}
+	digest := sha256.Sum256(wire)
+	return &bus.RawAdmissionAuthority{
+		ActualSubject: "sys.job.event", SessionSubject: packet.GetSenderId(),
+		TenantID: packet.GetIdentity().GetTenantId(), Identity: packet.GetIdentity(),
+		MessageID:      append([]byte(nil), packet.GetSignatureMetadata().GetMessageId()...),
+		UnsignedDigest: append([]byte(nil), digest[:]...),
+	}
 }

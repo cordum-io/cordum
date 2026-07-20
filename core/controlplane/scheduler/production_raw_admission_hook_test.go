@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	capsdk "github.com/cordum-io/cap/v2/sdk/go"
 	"github.com/cordum/cordum/core/infra/bus"
 	natsserver "github.com/nats-io/nats-server/v2/server"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestInstallProductionRawAdmissionFreezesWithFirstSubscription(t *testing.T) {
@@ -115,6 +117,17 @@ func TestProductionRawAdmissionHookMapsVerifiedDelivery(t *testing.T) {
 	first := hook(context.Background(), productionTestSubject, raw)
 	if first.Disposition != bus.RawAdmissionAccepted || first.Packet == nil {
 		t.Fatalf("first result = %#v, want accepted packet", first)
+	}
+	digest, err := capsdk.ProductionSignedBodyDigest(raw)
+	if err != nil {
+		t.Fatalf("signed body digest: %v", err)
+	}
+	if first.Authority == nil || first.Authority.ActualSubject != productionTestSubject ||
+		first.Authority.SessionSubject != session.Subject || first.Authority.TenantID != session.Identity.GetTenantId() ||
+		!bytes.Equal(first.Authority.MessageID, productionTestMessageID(10)) ||
+		!bytes.Equal(first.Authority.UnsignedDigest, digest[:]) ||
+		first.Authority.Identity == session.Identity || !proto.Equal(first.Authority.Identity, session.Identity) {
+		t.Fatalf("first authority = %#v, want exact verified transport metadata", first.Authority)
 	}
 	duplicate := hook(context.Background(), productionTestSubject, raw)
 	if duplicate.Disposition != bus.RawAdmissionDuplicate || duplicate.Packet != nil {

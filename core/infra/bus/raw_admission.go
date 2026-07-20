@@ -24,6 +24,7 @@ const (
 type RawAdmissionResult struct {
 	Disposition RawAdmissionDisposition
 	Packet      *pb.BusPacket
+	Authority   *RawAdmissionAuthority
 	RetryAfter  time.Duration
 }
 
@@ -49,6 +50,9 @@ func (b *NatsBus) SetRawPacketAdmission(admit RawPacketAdmission) error {
 		return ErrRawAdmissionFrozen
 	}
 	b.rawPacketAdmission = admit
+	if admit == nil {
+		busCompatibilityTotal.WithLabelValues(compatReasonConfiguredFailOpen).Inc()
+	}
 	return nil
 }
 
@@ -90,11 +94,11 @@ func processInboundWithAdmission(
 	handler func(context.Context, *pb.BusPacket) error,
 	numDelivered uint64,
 ) (msgAction, time.Duration) {
-	packet, action, delay, proceed := preAdmitRawPacket(ctx, admit, subject, data)
+	packet, authority, action, delay, proceed := preAdmitRawPacket(ctx, admit, subject, data)
 	if !proceed {
 		return action, delay
 	}
-	return processAfterRawAdmission(ctx, admit != nil, packet, subject, data, handler, numDelivered)
+	return processAfterRawAdmission(ctx, admit != nil, packet, authority, subject, data, handler, numDelivered)
 }
 
 func preAdmitRawPacket(
@@ -102,9 +106,9 @@ func preAdmitRawPacket(
 	admit RawPacketAdmission,
 	subject string,
 	data []byte,
-) (*pb.BusPacket, msgAction, time.Duration, bool) {
+) (*pb.BusPacket, *RawAdmissionAuthority, msgAction, time.Duration, bool) {
 	if admit == nil {
-		return nil, msgActionAck, 0, true
+		return nil, nil, msgActionAck, 0, true
 	}
 	return evaluateRawAdmission(admit(ctx, subject, data))
 }
@@ -113,6 +117,7 @@ func processAfterRawAdmission(
 	ctx context.Context,
 	admitted bool,
 	packet *pb.BusPacket,
+	authority *RawAdmissionAuthority,
 	subject string,
 	data []byte,
 	handler func(context.Context, *pb.BusPacket) error,
@@ -121,25 +126,25 @@ func processAfterRawAdmission(
 	if !admitted {
 		return processBusMsgCtx(ctx, subject, data, handler, numDelivered)
 	}
-	return packetHandlerAction(handler(ctx, packet))
+	return packetHandlerAction(handler(withRawAdmissionAuthority(ctx, authority), packet))
 }
 
-func evaluateRawAdmission(result RawAdmissionResult) (*pb.BusPacket, msgAction, time.Duration, bool) {
+func evaluateRawAdmission(result RawAdmissionResult) (*pb.BusPacket, *RawAdmissionAuthority, msgAction, time.Duration, bool) {
 	switch result.Disposition {
 	case RawAdmissionAccepted:
 		if result.Packet == nil {
-			return nil, msgActionTerm, 0, false
+			return nil, nil, msgActionTerm, 0, false
 		}
-		return result.Packet, msgActionAck, 0, true
+		return result.Packet, result.Authority, msgActionAck, 0, true
 	case RawAdmissionDuplicate:
-		return nil, msgActionAck, 0, false
+		return nil, nil, msgActionAck, 0, false
 	case RawAdmissionRetry:
 		if result.RetryAfter > 0 {
-			return nil, msgActionNakDelay, result.RetryAfter, false
+			return nil, nil, msgActionNakDelay, result.RetryAfter, false
 		}
-		return nil, msgActionNak, 0, false
+		return nil, nil, msgActionNak, 0, false
 	default:
-		return nil, msgActionTerm, 0, false
+		return nil, nil, msgActionTerm, 0, false
 	}
 }
 
