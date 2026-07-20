@@ -77,7 +77,7 @@ export const getListMarketplacePacksQueryOptions = <
     Awaited<ReturnType<typeof listMarketplacePacks>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListMarketplacePacksQueryResult = NonNullable<
@@ -116,7 +116,7 @@ export function useListMarketplacePacks<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListMarketplacePacks<
   TData = Awaited<ReturnType<typeof listMarketplacePacks>>,
@@ -144,7 +144,9 @@ export function useListMarketplacePacks<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListMarketplacePacks<
   TData = Awaited<ReturnType<typeof listMarketplacePacks>>,
   TError =
@@ -163,7 +165,9 @@ export function useListMarketplacePacks<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List packs available in the marketplace
  */
@@ -186,13 +190,15 @@ export function useListMarketplacePacks<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListMarketplacePacksQueryOptions(options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 

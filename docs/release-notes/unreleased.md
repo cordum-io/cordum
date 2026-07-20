@@ -6,6 +6,29 @@ these entries into a versioned release note and reset this file.
 
 ## Security
 
+- **Authenticated worker trust is now a bound proof/session contract, not a
+  self-reported capability (task-a4b71af7).** Current stable CAP Go, Python,
+  and Node workers use one protobuf P-256 challenge/proof flow. Cordum binds
+  tenant, worker, agent, proof key, scheduler identity, audience
+  `cordum-scheduler`, nonces, trace/request IDs, version, and capabilities
+  before issuing an Ed25519 session backed by Redis. Renewal requires the
+  current active token and supersedes the old one. Old generic handshake/renew
+  subjects have no responder and cannot mint; in WARN, tokenless heartbeat or
+  capability advertisements remain telemetry only and never establish
+  liveness, readiness, or dispatch authority.
+  - **Operator action:** keep the shipped `CORDUM_SDK_HANDSHAKE=off` +
+    `CORDUM_HEARTBEAT_MODE=authority` defaults until every worker proof key is
+    enrolled and the P-256 scheduler proof plus Ed25519 session authority are
+    deployed. The recommended rollout moves together to `warn`+`warn`, then
+    `enforce`+`telemetry`. Active handshake requires
+    `WORKER_ATTESTATION=off`; contradictory or incomplete configuration refuses
+    to boot/render.
+  - Compose, Kubernetes base, and Helm now declare the safe default explicitly.
+    Helm active mode requires complete secret references, while the strict
+    deploy validator and mutation test run in CI. Follow
+    `docs/sdk/handshake.md` for enrollment, key rotation/revocation, renewal,
+    NATS TLS/auth/ACLs, secret-safe logging, rollback, and remediation.
+
 - **scheduler / api-gateway / workflow-engine: control-plane service tokens +
   subject-binding harden `CORDUM_SDK_HANDSHAKE` for `enforce` (task-948d913b).**
   Internal `JobResult`/`JobCancel` broadcasts now carry a stateless, short-TTL

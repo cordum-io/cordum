@@ -20,7 +20,25 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	goredis "github.com/redis/go-redis/v9"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+func validNATSTestPacket(packet *pb.BusPacket) *pb.BusPacket {
+	packet.ProtocolVersion = capsdk.DefaultProtocolVersion
+	packet.CreatedAt = timestamppb.Now()
+	switch payload := packet.GetPayload().(type) {
+	case *pb.BusPacket_Heartbeat:
+		packet.SenderId = payload.Heartbeat.GetWorkerId()
+	case *pb.BusPacket_JobResult:
+		if payload.JobResult.WorkerId == "" {
+			payload.JobResult.WorkerId = packet.GetSenderId()
+		}
+		packet.SenderId = payload.JobResult.GetWorkerId()
+	case *pb.BusPacket_Handshake:
+		packet.SenderId = payload.Handshake.GetComponentId()
+	}
+	return packet
+}
 
 func unusedLocalNATSURL(t *testing.T, scheme string) string {
 	t.Helper()
@@ -220,7 +238,7 @@ func TestProcessBusMsgPoisonPill(t *testing.T) {
 	}
 
 	// Valid protobuf should ACK and call handler
-	valid := &pb.BusPacket{TraceId: "trace-test", SenderId: "sender-test", Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "job-1"}}}
+	valid := validNATSTestPacket(&pb.BusPacket{TraceId: "trace-test", SenderId: "sender-test", Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "job-1"}}})
 	data, err := proto.Marshal(valid)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -239,7 +257,7 @@ func TestProcessBusMsgRetryableError(t *testing.T) {
 		return RetryAfter(errors.New("transient"), 2*time.Second)
 	}
 
-	valid := &pb.BusPacket{TraceId: "trace-test", SenderId: "sender-test", Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "job-1"}}}
+	valid := validNATSTestPacket(&pb.BusPacket{TraceId: "trace-test", SenderId: "sender-test", Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "job-1"}}})
 	data, _ := proto.Marshal(valid)
 
 	action, delay := processBusMsg("test.subject", data, handler, 1)
@@ -256,7 +274,7 @@ func TestProcessBusMsgNonRetryableError(t *testing.T) {
 		return errors.New("permanent failure")
 	}
 
-	valid := &pb.BusPacket{TraceId: "trace-test", SenderId: "sender-test", Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "job-1"}}}
+	valid := validNATSTestPacket(&pb.BusPacket{TraceId: "trace-test", SenderId: "sender-test", Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "job-1"}}})
 	data, _ := proto.Marshal(valid)
 
 	action, _ := processBusMsg("test.subject", data, handler, 1)
@@ -303,7 +321,7 @@ func TestProcessBusMsgValidDataHighDeliveryCount(t *testing.T) {
 		return nil
 	}
 
-	valid := &pb.BusPacket{TraceId: "trace-test", SenderId: "sender-test", Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "job-1"}}}
+	valid := validNATSTestPacket(&pb.BusPacket{TraceId: "trace-test", SenderId: "sender-test", Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "job-1"}}})
 	data, err := proto.Marshal(valid)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -736,11 +754,11 @@ func TestBroadcastFanout_BothReplicasReceive(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Publish a heartbeat.
-	if err := bus1.Publish(capsdk.SubjectHeartbeat, &pb.BusPacket{
+	if err := bus1.Publish(capsdk.SubjectHeartbeat, validNATSTestPacket(&pb.BusPacket{
 		TraceId:  "trace-test",
 		SenderId: "sender-test",
 		Payload:  &pb.BusPacket_Heartbeat{Heartbeat: &pb.Heartbeat{WorkerId: "w1"}},
-	}); err != nil {
+	})); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
 	_ = bus1.nc.Flush()
@@ -791,11 +809,11 @@ func TestQueueGroup_OnlyOneReceives(t *testing.T) {
 
 	// Publish multiple messages.
 	for i := 0; i < 10; i++ {
-		if err := bus1.Publish(capsdk.SubjectSubmit, &pb.BusPacket{
+		if err := bus1.Publish(capsdk.SubjectSubmit, validNATSTestPacket(&pb.BusPacket{
 			TraceId:  "trace-test",
 			SenderId: "sender-test",
 			Payload:  &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{JobId: "job-q"}},
-		}); err != nil {
+		})); err != nil {
 			t.Fatalf("publish: %v", err)
 		}
 	}
@@ -855,11 +873,11 @@ func TestBroadcastWithJetStream(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Publish a DLQ message.
-	if err := bus1.Publish(capsdk.SubjectDLQ, &pb.BusPacket{
+	if err := bus1.Publish(capsdk.SubjectDLQ, validNATSTestPacket(&pb.BusPacket{
 		TraceId:  "trace-test",
 		SenderId: "sender-test",
 		Payload:  &pb.BusPacket_JobResult{JobResult: &pb.JobResult{JobId: "dlq-1"}},
-	}); err != nil {
+	})); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
 
@@ -1229,13 +1247,13 @@ func TestQueueGroupWithJetStream(t *testing.T) {
 
 	// Publish 5 messages with unique IDs (JetStream deduplicates by MsgId).
 	for i := 0; i < 5; i++ {
-		if err := bus1.Publish(capsdk.SubjectSubmit, &pb.BusPacket{
+		if err := bus1.Publish(capsdk.SubjectSubmit, validNATSTestPacket(&pb.BusPacket{
 			TraceId:  "trace-test",
 			SenderId: "sender-test",
 			Payload: &pb.BusPacket_JobRequest{JobRequest: &pb.JobRequest{
 				JobId: "job-js-q-" + time.Now().Format("150405.000") + "-" + string(rune('a'+i)),
 			}},
-		}); err != nil {
+		})); err != nil {
 			t.Fatalf("publish: %v", err)
 		}
 	}

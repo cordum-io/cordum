@@ -100,6 +100,21 @@ func TestHandshakeMissingTracker_NilSafe(t *testing.T) {
 	tr.WithInterval(time.Minute)
 }
 
+func TestHandshakeMissingTracker_ZeroValueIsSafe(t *testing.T) {
+	t.Parallel()
+	var tracker HandshakeMissingTracker
+	if !tracker.ShouldLog("worker-a") {
+		t.Fatal("zero-value tracker must log the first observation")
+	}
+	if tracker.ShouldLog("worker-a") {
+		t.Fatal("zero-value tracker must rate-limit a repeated observation")
+	}
+	tracker.Reset()
+	if !tracker.ShouldLog("worker-a") {
+		t.Fatal("Reset must restore first-observation behavior")
+	}
+}
+
 func TestHandshakeMissingTracker_Reset(t *testing.T) {
 	t.Parallel()
 	tr := NewHandshakeMissingTracker().WithInterval(time.Hour)

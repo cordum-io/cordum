@@ -22,6 +22,7 @@ import (
 	"github.com/cordum/cordum/sdk/runtime"
 	"github.com/nats-io/nats.go"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
@@ -187,6 +188,7 @@ func main() {
 	// Start all workers
 	log.Printf("[mock-bank] starting %d workers across %d pools...", len(bankWorkers), countPools())
 
+	started := 0
 	for _, w := range bankWorkers {
 		worker := w
 
@@ -196,6 +198,11 @@ func main() {
 			RedisURL: redisURL,
 			Store:    blobStore,
 			SenderID: worker.ID,
+			// The demo profile runs CORDUM_SDK_HANDSHAKE=off and mints no
+			// worker trust identity, so CAP's fail-closed startup gate
+			// requires this explicit unsigned-legacy opt-in. Real
+			// deployments provision signing keys and drop this instead.
+			AllowUnsigned: true,
 		}
 
 		// Per-workerDef in-flight counter. The heartbeat callback reads
@@ -216,6 +223,7 @@ func main() {
 			log.Printf("[mock-bank] warning: agent %s start failed: %v", worker.ID, err)
 			continue
 		}
+		started++
 
 		// Heartbeat goroutine — builds full proto with capabilities, labels, region
 		go func() {
@@ -235,9 +243,19 @@ func main() {
 			worker.ID, worker.Pool, worker.Region, worker.Topics, worker.Capacity)
 	}
 
+	// A fleet where nothing started is not "ready" — reporting it as such
+	// turns a one-line startup error into a downstream heartbeat-timeout
+	// mystery. Fail loudly instead, and never overstate the live count.
+	if started == 0 {
+		log.Fatalf("[mock-bank] no agents started (0/%d) — refusing to report a ready fleet", len(bankWorkers))
+	}
+	if started < len(bankWorkers) {
+		log.Printf("[mock-bank] warning: only %d/%d agents started", started, len(bankWorkers))
+	}
+
 	log.Println("")
 	log.Println("=== MegaCorp Agent Fleet Ready ===")
-	log.Printf("Workers: %d", len(bankWorkers))
+	log.Printf("Workers: %d", started)
 	log.Printf("Pools:   %d", countPools())
 	log.Println("Press Ctrl+C to stop...")
 
@@ -253,6 +271,7 @@ func buildHeartbeat(w workerDef, activeJobs int32, cpuLoad, memoryLoad float32) 
 	hb := &agentv1.BusPacket{
 		TraceId:         w.ID,
 		SenderId:        w.ID,
+		CreatedAt:       timestamppb.Now(),
 		ProtocolVersion: capsdk.DefaultProtocolVersion,
 		Payload: &agentv1.BusPacket_Heartbeat{
 			Heartbeat: &agentv1.Heartbeat{

@@ -23,12 +23,14 @@ type MemoryRegistry struct {
 }
 
 type workerEntry struct {
-	hb          *pb.Heartbeat
-	handshake   *pb.Handshake
-	ready       bool
-	readyTopics []string
-	readyAt     time.Time
-	lastSeen    time.Time
+	hb               *pb.Heartbeat
+	handshake        *pb.Handshake
+	handshakeTrusted bool
+	ready            bool
+	readyTopics      []string
+	readyAt          time.Time
+	lastSeen         time.Time // heartbeat liveness only; handshakes never refresh it
+	handshakeSeen    time.Time
 }
 
 const defaultWorkerTTL = 30 * time.Second
@@ -146,6 +148,12 @@ func (r *MemoryRegistry) UpdateHeartbeatWithTransition(hb *pb.Heartbeat) bool {
 }
 
 func (r *MemoryRegistry) UpdateHandshake(hs *pb.Handshake) {
+	r.UpdateHandshakeTrust(hs, true)
+}
+
+// UpdateHandshakeTrust records a capability advertisement without allowing an
+// untrusted update to grant or replace dispatch readiness.
+func (r *MemoryRegistry) UpdateHandshakeTrust(hs *pb.Handshake, trusted bool) {
 	if hs == nil || hs.ComponentId == "" {
 		return
 	}
@@ -154,12 +162,20 @@ func (r *MemoryRegistry) UpdateHandshake(hs *pb.Handshake) {
 	defer r.mu.Unlock()
 	now := time.Now()
 	entry, ok := r.workers[hs.ComponentId]
+	if ok && entry.handshakeTrusted && !trusted {
+		return
+	}
 	if ok {
 		entry.handshake = hs
-		entry.lastSeen = now
+		entry.handshakeSeen = now
 	} else {
-		entry = &workerEntry{handshake: hs, lastSeen: now}
+		entry = &workerEntry{handshake: hs, handshakeSeen: now}
 		r.workers[hs.ComponentId] = entry
+	}
+	entry.handshakeTrusted = trusted
+	if !trusted {
+		entry.clearReadiness()
+		return
 	}
 	topics := readyTopicsFromHandshake(hs)
 	if len(topics) == 0 {
@@ -236,7 +252,7 @@ func (r *MemoryRegistry) ReadinessSnapshot() map[string]WorkerReadiness {
 		if entry.hb == nil || now.Sub(entry.lastSeen) > r.ttl {
 			continue
 		}
-		state := WorkerReadiness{}
+		state := WorkerReadiness{Trusted: entry.handshakeTrusted}
 		if entry.readinessActive(now, r.readyTTL) {
 			state.Ready = true
 			state.ReadyTopics = append([]string(nil), entry.readyTopics...)
@@ -251,7 +267,7 @@ func (r *MemoryRegistry) IsAlive(workerID string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	entry, ok := r.workers[workerID]
-	if !ok {
+	if !ok || entry.hb == nil {
 		return false
 	}
 	return time.Since(entry.lastSeen) <= r.ttl
@@ -275,7 +291,7 @@ func (r *MemoryRegistry) expire() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for id, entry := range r.workers {
-		if now.Sub(entry.lastSeen) > r.ttl {
+		if entry.expired(now, r.ttl) {
 			delete(r.workers, id)
 			continue
 		}
@@ -369,6 +385,16 @@ func (entry *workerEntry) readinessExpired(now time.Time, readyTTL time.Duration
 		return false
 	}
 	return now.Sub(entry.readyAt) > readyTTL
+}
+
+func (entry *workerEntry) expired(now time.Time, ttl time.Duration) bool {
+	if entry == nil {
+		return true
+	}
+	if entry.hb != nil {
+		return entry.lastSeen.IsZero() || now.Sub(entry.lastSeen) > ttl
+	}
+	return entry.handshakeSeen.IsZero() || now.Sub(entry.handshakeSeen) > ttl
 }
 
 func (r *MemoryRegistry) expiryInterval() time.Duration {

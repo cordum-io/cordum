@@ -85,7 +85,7 @@ export const getGetCopilotSessionQueryOptions = <
     Awaited<ReturnType<typeof getCopilotSession>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetCopilotSessionQueryResult = NonNullable<
@@ -129,7 +129,7 @@ export function useGetCopilotSession<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetCopilotSession<
   TData = Awaited<ReturnType<typeof getCopilotSession>>,
@@ -160,7 +160,9 @@ export function useGetCopilotSession<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetCopilotSession<
   TData = Awaited<ReturnType<typeof getCopilotSession>>,
   TError =
@@ -182,7 +184,9 @@ export function useGetCopilotSession<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get Copilot session detail
  */
@@ -208,13 +212,15 @@ export function useGetCopilotSession<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetCopilotSessionQueryOptions(sessionId, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 

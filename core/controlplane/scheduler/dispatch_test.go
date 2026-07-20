@@ -39,28 +39,21 @@ const (
 
 // prepareWorker applies the desired session + heartbeat condition to
 // the scheduler state and returns the worker ID under test.
-func prepareWorker(t *testing.T, ctx context.Context, issuer *SessionTokenIssuer, clk *fakeClock, reg *MemoryRegistry, id string, sess sessionCondition, hb heartbeatCondition) {
+func prepareWorker(t *testing.T, ctx context.Context, issuer *SessionTokenIssuer, credentials *dispatchCredentialResolver, clk *fakeClock, reg *MemoryRegistry, id string, sess sessionCondition, hb heartbeatCondition) {
 	t.Helper()
 
 	switch sess {
 	case sessionValid:
-		if _, _, err := issuer.Issue(ctx, id, "tenant-matrix", "v1"); err != nil {
-			t.Fatalf("issue %s: %v", id, err)
-		}
+		issueDispatchSession(t, ctx, issuer, credentials, id, "tenant-matrix")
 	case sessionNone:
-		// no-op
+		credentials.add(id, "tenant-matrix")
 	case sessionRevoked:
-		_, claims, err := issuer.Issue(ctx, id, "tenant-matrix", "v1")
-		if err != nil {
-			t.Fatalf("issue %s: %v", id, err)
-		}
+		claims := issueDispatchSession(t, ctx, issuer, credentials, id, "tenant-matrix")
 		if err := issuer.Revoke(ctx, claims.Tenant, claims.JTI, claims.ExpiresAt); err != nil {
 			t.Fatalf("revoke %s: %v", id, err)
 		}
 	case sessionExpired:
-		if _, _, err := issuer.Issue(ctx, id, "tenant-matrix", "v1"); err != nil {
-			t.Fatalf("issue %s: %v", id, err)
-		}
+		issueDispatchSession(t, ctx, issuer, credentials, id, "tenant-matrix")
 		// Fast-forward past the token lifetime so the resolver sees
 		// the exp check fail. Also note: miniredis honours TTL so the
 		// per-agent record may be swept — either Reason=Expired or
@@ -133,12 +126,13 @@ func TestDispatchGate_SessionAuthorityMatrix(t *testing.T) {
 				Now:      localClk.Now,
 			})
 			defer localCleanup()
-			localResolver := NewTrustResolver(localRdb).WithClock(localClk.Now)
+			localResolver, credentials := newBoundDispatchResolverForTest(t, localRdb)
+			localResolver.WithClock(localClk.Now)
 			reg := NewMemoryRegistry()
 			defer reg.Close()
 
 			id := "worker-" + c.name
-			prepareWorker(t, context.Background(), localIssuer, localClk, reg, id, c.session, c.heartbeat)
+			prepareWorker(t, context.Background(), localIssuer, credentials, localClk, reg, id, c.session, c.heartbeat)
 			if c.heartbeat == heartbeatStale {
 				staleAllHeartbeats(reg)
 			}
@@ -168,7 +162,8 @@ func TestDispatchGate_AuthorityModePassThrough(t *testing.T) {
 	clk := &fakeClock{now: now}
 	_, _, rdb, cleanup := newTestIssuer(t, SessionTokenIssuerOptions{Now: clk.Now})
 	defer cleanup()
-	resolver := NewTrustResolver(rdb).WithClock(clk.Now)
+	resolver, _ := newBoundDispatchResolverForTest(t, rdb)
+	resolver.WithClock(clk.Now)
 
 	reg := NewMemoryRegistry()
 	defer reg.Close()
@@ -203,7 +198,8 @@ func TestDispatchGate_WarnEmitsDisagreements(t *testing.T) {
 		Now:      clk.Now,
 	})
 	defer cleanup()
-	resolver := NewTrustResolver(rdb).WithClock(clk.Now)
+	resolver, credentials := newBoundDispatchResolverForTest(t, rdb)
+	resolver.WithClock(clk.Now)
 
 	reg := NewMemoryRegistry()
 	defer reg.Close()
@@ -211,17 +207,12 @@ func TestDispatchGate_WarnEmitsDisagreements(t *testing.T) {
 
 	// Case A: valid session, stale heartbeat (session allows, heartbeat
 	// would have blocked).
-	if _, _, err := issuer.Issue(ctx, "worker-A", "tenant-warn", "v1"); err != nil {
-		t.Fatalf("issue A: %v", err)
-	}
+	issueDispatchSession(t, ctx, issuer, credentials, "worker-A", "tenant-warn")
 	reg.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "worker-A", Pool: "x"})
 
 	// Case B: revoked session, fresh heartbeat (session blocks, heartbeat
 	// would have allowed).
-	_, claimsB, err := issuer.Issue(ctx, "worker-B", "tenant-warn", "v1")
-	if err != nil {
-		t.Fatalf("issue B: %v", err)
-	}
+	claimsB := issueDispatchSession(t, ctx, issuer, credentials, "worker-B", "tenant-warn")
 	if err := issuer.Revoke(ctx, claimsB.Tenant, claimsB.JTI, claimsB.ExpiresAt); err != nil {
 		t.Fatalf("revoke B: %v", err)
 	}
@@ -262,19 +253,19 @@ func TestDispatchGate_WarnEmitsDisagreements(t *testing.T) {
 	}
 }
 
-func TestDispatchGate_NilResolverFallsBack(t *testing.T) {
+func TestDispatchGate_NilResolverFailsClosed(t *testing.T) {
 	t.Parallel()
 	reg := NewMemoryRegistry()
 	defer reg.Close()
 	reg.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "alpha", Pool: "x"})
 
 	gate := NewDispatchGate(nil, HeartbeatModeTelemetry)
-	if gate.EnforcesSession() {
-		t.Fatal("nil resolver must not enforce session")
+	if !gate.EnforcesSession() {
+		t.Fatal("configured session mode must remain enforcing")
 	}
 	out, dis := gate.EligibleWorkers(context.Background(), reg)
-	if _, ok := out["alpha"]; !ok {
-		t.Fatalf("nil resolver must degrade to pass-through; got %+v", out)
+	if len(out) != 0 {
+		t.Fatalf("nil resolver must fail closed; got %+v", out)
 	}
 	if len(dis) != 0 {
 		t.Fatalf("nil resolver must not emit disagreements, got %d", len(dis))
@@ -311,15 +302,13 @@ func TestDispatchGate_RevokeAfterEligibleCallFlipsOutcome(t *testing.T) {
 		Now:      clk.Now,
 	})
 	defer cleanup()
-	resolver := NewTrustResolver(rdb).WithClock(clk.Now)
+	resolver, credentials := newBoundDispatchResolverForTest(t, rdb)
+	resolver.WithClock(clk.Now)
 
 	reg := NewMemoryRegistry()
 	defer reg.Close()
 	ctx := context.Background()
-	_, claims, err := issuer.Issue(ctx, "flip", "tenant-flip", "v1")
-	if err != nil {
-		t.Fatalf("issue: %v", err)
-	}
+	claims := issueDispatchSession(t, ctx, issuer, credentials, "flip", "tenant-flip")
 	reg.UpdateHeartbeat(&pb.Heartbeat{WorkerId: "flip", Pool: "p"})
 
 	gate := NewDispatchGate(resolver, HeartbeatModeTelemetry)
@@ -352,21 +341,17 @@ func TestDispatchGate_MultipleTenantsInSnapshot(t *testing.T) {
 	clk := &fakeClock{now: now}
 	issuer, _, rdb, cleanup := newTestIssuer(t, SessionTokenIssuerOptions{Now: clk.Now})
 	defer cleanup()
-	resolver := NewTrustResolver(rdb).WithClock(clk.Now)
+	resolver, credentials := newBoundDispatchResolverForTest(t, rdb)
+	resolver.WithClock(clk.Now)
 
 	reg := NewMemoryRegistry()
 	defer reg.Close()
 	ctx := context.Background()
 
 	// tenant-A worker: valid.
-	if _, _, err := issuer.Issue(ctx, "a-worker", "tenant-A", "v1"); err != nil {
-		t.Fatalf("issue A: %v", err)
-	}
+	issueDispatchSession(t, ctx, issuer, credentials, "a-worker", "tenant-A")
 	// tenant-B worker: revoked.
-	_, claimsB, err := issuer.Issue(ctx, "b-worker", "tenant-B", "v1")
-	if err != nil {
-		t.Fatalf("issue B: %v", err)
-	}
+	claimsB := issueDispatchSession(t, ctx, issuer, credentials, "b-worker", "tenant-B")
 	if err := issuer.Revoke(ctx, claimsB.Tenant, claimsB.JTI, claimsB.ExpiresAt); err != nil {
 		t.Fatalf("revoke B: %v", err)
 	}
@@ -392,15 +377,14 @@ func TestDispatchGate_ConcurrentEligibleWorkersAreConsistent(t *testing.T) {
 	clk := &fakeClock{now: now}
 	issuer, _, rdb, cleanup := newTestIssuer(t, SessionTokenIssuerOptions{Now: clk.Now})
 	defer cleanup()
-	resolver := NewTrustResolver(rdb).WithClock(clk.Now)
+	resolver, credentials := newBoundDispatchResolverForTest(t, rdb)
+	resolver.WithClock(clk.Now)
 
 	reg := NewMemoryRegistry()
 	defer reg.Close()
 	ctx := context.Background()
 	for _, id := range []string{"w1", "w2", "w3", "w4"} {
-		if _, _, err := issuer.Issue(ctx, id, "tenant-cc", "v1"); err != nil {
-			t.Fatalf("issue %s: %v", id, err)
-		}
+		issueDispatchSession(t, ctx, issuer, credentials, id, "tenant-cc")
 		reg.UpdateHeartbeat(&pb.Heartbeat{WorkerId: id, Pool: "cc"})
 	}
 	gate := NewDispatchGate(resolver, HeartbeatModeTelemetry)
@@ -433,12 +417,11 @@ func TestDispatchGate_IsWorkerEligibleWithNilLegacy(t *testing.T) {
 	clk := &fakeClock{now: now}
 	issuer, _, rdb, cleanup := newTestIssuer(t, SessionTokenIssuerOptions{Now: clk.Now})
 	defer cleanup()
-	resolver := NewTrustResolver(rdb).WithClock(clk.Now)
+	resolver, credentials := newBoundDispatchResolverForTest(t, rdb)
+	resolver.WithClock(clk.Now)
 
 	ctx := context.Background()
-	if _, _, err := issuer.Issue(ctx, "w1", "tenant-acme", "v1"); err != nil {
-		t.Fatalf("issue: %v", err)
-	}
+	issueDispatchSession(t, ctx, issuer, credentials, "w1", "tenant-acme")
 
 	gate := NewDispatchGate(resolver, HeartbeatModeTelemetry)
 	alive, d := gate.IsWorkerEligible(ctx, "w1", nil)
@@ -472,12 +455,11 @@ func TestDispatchGate_ExpiredSessionDroppedImmediately(t *testing.T) {
 		Now:      clk.Now,
 	})
 	defer cleanup()
-	resolver := NewTrustResolver(rdb).WithClock(clk.Now)
+	resolver, credentials := newBoundDispatchResolverForTest(t, rdb)
+	resolver.WithClock(clk.Now)
 
 	ctx := context.Background()
-	if _, _, err := issuer.Issue(ctx, "w1", "tenant-exp", "v1"); err != nil {
-		t.Fatalf("issue: %v", err)
-	}
+	issueDispatchSession(t, ctx, issuer, credentials, "w1", "tenant-exp")
 	clk.Advance(20 * time.Minute)
 
 	reg := NewMemoryRegistry()

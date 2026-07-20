@@ -743,6 +743,10 @@ spec:
           value: nats://nats:4222
         - name: NATS_USE_JETSTREAM
           value: "1"
+        - name: CORDUM_SDK_HANDSHAKE
+          value: "off"
+        - name: CORDUM_HEARTBEAT_MODE
+          value: "authority"
         - name: REDIS_PASSWORD
           valueFrom:
             secretKeyRef:
@@ -914,6 +918,10 @@ spec:
           value: nats://nats:4222
         - name: NATS_USE_JETSTREAM
           value: "1"
+        - name: CORDUM_SDK_HANDSHAKE
+          value: "off"
+        - name: CORDUM_HEARTBEAT_MODE
+          value: "authority"
         - name: REDIS_PASSWORD
           valueFrom:
             secretKeyRef:
