@@ -32,15 +32,17 @@ func TestSagaRecordCompensation(t *testing.T) {
 		WorkflowId:  "wf-1",
 		TenantId:    "tenant",
 		PrincipalId: "principal",
+		Priority:    pb.JobPriority_JOB_PRIORITY_INTERACTIVE,
 		Meta: &pb.JobMetadata{
 			Capability: "cap-base",
 		},
 		Env:    map[string]string{"base": "true"},
 		Labels: map[string]string{"k": "v"},
 		Compensation: &pb.Compensation{
-			Topic:  "job.undo",
-			Env:    map[string]string{"undo": "true"},
-			Labels: map[string]string{"undo": "yes"},
+			Topic:    "job.undo",
+			Priority: pb.JobPriority_JOB_PRIORITY_BATCH,
+			Env:      map[string]string{"undo": "true"},
+			Labels:   map[string]string{"undo": "yes"},
 			Meta: &pb.JobMetadata{
 				IdempotencyKey: "comp-idem",
 			},
@@ -73,8 +75,8 @@ func TestSagaRecordCompensation(t *testing.T) {
 	if stored.Topic != "job.undo" {
 		t.Fatalf("expected topic override, got %q", stored.Topic)
 	}
-	if stored.Priority != pb.JobPriority_JOB_PRIORITY_CRITICAL {
-		t.Fatalf("expected critical priority")
+	if stored.Priority != pb.JobPriority_JOB_PRIORITY_BATCH {
+		t.Fatalf("priority = %s, want explicit compensation priority", stored.Priority)
 	}
 	if stored.Env["base"] != "true" || stored.Env["undo"] != "true" {
 		t.Fatalf("expected merged env, got %+v", stored.Env)
@@ -106,6 +108,7 @@ func TestSagaRollbackDispatchesCompensations(t *testing.T) {
 	entry := &pb.JobRequest{
 		Topic:    "job.undo",
 		TenantId: "tenant",
+		Priority: pb.JobPriority_JOB_PRIORITY_INTERACTIVE,
 		Labels:   map[string]string{"k": "v"},
 	}
 	payload, err := proto.Marshal(entry)
@@ -132,8 +135,8 @@ func TestSagaRollbackDispatchesCompensations(t *testing.T) {
 	if req == nil {
 		t.Fatalf("missing job request payload")
 	}
-	if req.JobId == "" || req.Priority != pb.JobPriority_JOB_PRIORITY_CRITICAL {
-		t.Fatalf("expected compensation job id and critical priority")
+	if req.JobId == "" || req.Priority != pb.JobPriority_JOB_PRIORITY_INTERACTIVE {
+		t.Fatalf("expected compensation job id and preserved priority")
 	}
 	if req.Labels[sagaCompLabel] != "true" || req.Labels[sagaWorkflowLabel] != "wf-2" {
 		t.Fatalf("expected saga labels, got %+v", req.Labels)

@@ -984,6 +984,11 @@ func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 	if !s.requireJobTenantAccess(w, r, id) {
 		return
 	}
+	canonicalIdentity, err := s.loadCanonicalJobIdentity(r.Context(), id)
+	if err != nil {
+		writeErrorJSON(w, http.StatusConflict, "stored job identity is invalid")
+		return
+	}
 
 	state, err := s.jobStore.CancelJob(r.Context(), id)
 	if err != nil {
@@ -1014,6 +1019,7 @@ func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 		SenderId:        "api-gateway",
 		CreatedAt:       timestamppb.Now(),
 		ProtocolVersion: capsdk.DefaultProtocolVersion,
+		Identity:        canonicalIdentity,
 		Payload: &pb.BusPacket_JobResult{
 			JobResult: &pb.JobResult{
 				JobId: id,
@@ -1023,6 +1029,7 @@ func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 				// token under enforce (it is otherwise empty -> binding rejects).
 				WorkerId: servicetoken.IdentityGateway,
 				Status:   pb.JobStatus_JOB_STATUS_CANCELLED,
+				Identity: canonicalIdentity,
 			},
 		},
 	}
@@ -1044,10 +1051,12 @@ func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 		JobId:       id,
 		Reason:      "cancelled via api",
 		RequestedBy: "api-gateway",
+		Identity:    canonicalIdentity,
 	}
 	cancelBusPacket := &pb.BusPacket{
 		TraceId:         id,
 		SenderId:        "api-gateway",
+		Identity:        canonicalIdentity,
 		CreatedAt:       timestamppb.Now(),
 		ProtocolVersion: capsdk.DefaultProtocolVersion,
 		Payload:         &pb.BusPacket_JobCancel{JobCancel: cancelReq},
@@ -2104,6 +2113,10 @@ func (s *server) persistSubmitDeniedJob(
 			MaxInputTokens: int64(req.MaxInputTokens), MaxOutputTokens: req.MaxOutputTokens,
 			MaxTotalTokens: req.MaxTotalTokens, DeadlineMs: req.DeadlineMs,
 		},
+	}
+	jobReq, err = s.normalizeHTTPJobRequest(r, jobReq)
+	if err != nil {
+		return fmt.Errorf("normalize denied job identity: %w", err)
 	}
 
 	if err := s.jobStore.SetState(ctx, jobID, model.JobStatePending); err != nil {

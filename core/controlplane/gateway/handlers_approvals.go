@@ -1248,6 +1248,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 					Budget:      req.Budget,
 					MemoryId:    strings.TrimSpace(req.MemoryId),
 					Meta:        freshMeta,
+					Identity:    req.GetIdentity(),
 				}, s.configSvc, defaultTenant)
 				if freshErr != nil {
 					s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policybundles.PolicyActorID(r), policybundles.PolicyRole(r),

@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -75,6 +76,30 @@ func (s *server) productionHTTPIdentity(
 	normalized, err := s.normalizeHTTPJobRequest(r, probe)
 	if err != nil {
 		return nil, err
+	}
+	return normalized.GetIdentity(), nil
+}
+
+func (s *server) loadCanonicalJobIdentity(
+	ctx context.Context,
+	jobID string,
+) (*pb.IdentityBinding, error) {
+	if s == nil || !s.capProfile.IsProduction() {
+		return nil, nil
+	}
+	if s.jobStore == nil || strings.TrimSpace(jobID) == "" {
+		return nil, fmt.Errorf("job identity unavailable")
+	}
+	req, err := s.jobStore.GetJobRequest(ctx, jobID)
+	if err != nil {
+		return nil, fmt.Errorf("job identity lookup: %w", err)
+	}
+	if req == nil {
+		return nil, fmt.Errorf("job identity lookup: request missing")
+	}
+	normalized, err := jobidentity.NormalizeProductionJobRequest(req, req.GetIdentity())
+	if err != nil {
+		return nil, fmt.Errorf("stored job identity: %w", err)
 	}
 	return normalized.GetIdentity(), nil
 }

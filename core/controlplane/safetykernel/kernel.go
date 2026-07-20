@@ -1292,7 +1292,9 @@ func policyMetaFromRequest(req *pb.PolicyCheckRequest) config.PolicyMeta {
 	meta := req.GetMeta()
 	out := config.PolicyMeta{}
 	if meta == nil {
-		if req.GetPrincipalId() != "" {
+		if req.GetIdentity() != nil {
+			out.ActorID = req.GetIdentity().GetActorId()
+		} else if req.GetPrincipalId() != "" {
 			out.ActorID = req.GetPrincipalId()
 		}
 		return out
@@ -1304,7 +1306,9 @@ func policyMetaFromRequest(req *pb.PolicyCheckRequest) config.PolicyMeta {
 	out.RiskTags = append(out.RiskTags, meta.GetRiskTags()...)
 	out.Requires = append(out.Requires, meta.GetRequires()...)
 	out.PackID = meta.GetPackId()
-	if out.ActorID == "" {
+	if req.GetIdentity() != nil {
+		out.ActorID = req.GetIdentity().GetActorId()
+	} else if out.ActorID == "" {
 		out.ActorID = req.GetPrincipalId()
 	}
 	return out

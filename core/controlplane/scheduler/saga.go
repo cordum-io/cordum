@@ -289,7 +289,6 @@ func (s *SagaManager) dispatchCompensation(req *pb.JobRequest, workflowID string
 	}
 
 	req.JobId = "comp-" + uuid.NewString()
-	req.Priority = pb.JobPriority_JOB_PRIORITY_CRITICAL
 	if req.Labels == nil {
 		req.Labels = map[string]string{}
 	}
@@ -439,7 +438,6 @@ func buildCompensationRequest(base *pb.JobRequest) (*pb.JobRequest, error) {
 		}
 	}
 
-	req.Priority = pb.JobPriority_JOB_PRIORITY_CRITICAL
 	return req, nil
 }
 

@@ -63,3 +63,23 @@ func TestSetJobMetaPersistsCanonicalIdentityFields(t *testing.T) {
 		t.Fatalf("actor = %q, want %q", got, auth.GetActorId())
 	}
 }
+
+func TestSetJobMetaPreservesCompatPartialIdentity(t *testing.T) {
+	server := miniredis.RunT(t)
+	store, err := NewRedisJobStore("redis://" + server.Addr())
+	if err != nil {
+		t.Fatalf("NewRedisJobStore() error = %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	req := &pb.JobRequest{
+		JobId: "job-compat", Topic: "job.test", TenantId: "tenant-a", PrincipalId: "principal-a",
+		Identity: &pb.IdentityBinding{TenantId: "tenant-a", PrincipalId: "principal-a"},
+	}
+
+	if err := store.SetJobMeta(context.Background(), req); err != nil {
+		t.Fatalf("SetJobMeta() error = %v", err)
+	}
+	if got, _ := store.GetTenant(context.Background(), req.GetJobId()); got != "tenant-a" {
+		t.Fatalf("tenant = %q, want compat tenant", got)
+	}
+}

@@ -33,6 +33,19 @@ func TestPolicyMetaFromRequest(t *testing.T) {
 	}
 }
 
+func TestPolicyMetaFromRequestUsesCanonicalIdentityActor(t *testing.T) {
+	req := &pb.PolicyCheckRequest{
+		PrincipalId: "legacy-principal",
+		Meta:        &pb.JobMetadata{ActorId: "legacy-actor"},
+		Identity:    &pb.IdentityBinding{ActorId: "canonical-actor"},
+	}
+
+	meta := policyMetaFromRequest(req)
+	if meta.ActorID != "canonical-actor" {
+		t.Fatalf("actor id = %q, want canonical identity actor", meta.ActorID)
+	}
+}
+
 func TestSecretsPresent(t *testing.T) {
 	labels := map[string]string{"secrets_present": "true"}
 	if !secretsPresent(config.PolicyMeta{}, labels) {

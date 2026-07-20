@@ -939,8 +939,22 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
 		if res == nil {
 			return nil
 		}
-		if !e.verifySessionToken(p, res.GetWorkerId(), "job_result") {
+		tokenResult, allowed := e.verifySessionTokenResult(p, res.GetWorkerId(), "job_result")
+		if !allowed {
 			return nil
+		}
+		if e.productionIdentity.Load() {
+			identityErr := e.validateProductionJobResultIdentity(e.ctx, p, res, tokenResult.Claims)
+			if errors.Is(identityErr, ErrProductionResultIdentityUnavailable) {
+				return RetryAfter(identityErr, retryDelayStore)
+			}
+			if identityErr != nil {
+				slog.Error("production job result identity rejected", "reason", "identity_mismatch")
+				if e.metrics != nil {
+					e.metrics.IncValidationRejections()
+				}
+				return nil
+			}
 		}
 		if err := capvalidate.ValidateJobResult(res); err != nil {
 			slog.Warn("invalid job result rejected",
@@ -965,8 +979,26 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
 		if cancelReq == nil {
 			return nil
 		}
-		if !e.verifySessionToken(p, strings.TrimSpace(cancelReq.GetRequestedBy()), "job_cancel") {
+		tokenResult, allowed := e.verifySessionTokenResult(
+			p, strings.TrimSpace(cancelReq.GetRequestedBy()), "job_cancel",
+		)
+		if !allowed {
 			return nil
+		}
+		if e.productionIdentity.Load() {
+			identityErr := e.validateProductionJobEventIdentity(
+				e.ctx, p, cancelReq.GetJobId(), cancelReq.GetIdentity(), tokenResult.Claims,
+			)
+			if errors.Is(identityErr, ErrProductionResultIdentityUnavailable) {
+				return RetryAfter(identityErr, retryDelayStore)
+			}
+			if identityErr != nil {
+				slog.Error("production job cancel identity rejected", "reason", "identity_mismatch")
+				if e.metrics != nil {
+					e.metrics.IncValidationRejections()
+				}
+				return nil
+			}
 		}
 		slog.Info("job cancel received",
 			"job_id", cancelReq.JobId,
@@ -1896,6 +1928,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 	packet := &pb.BusPacket{
 		TraceId:         traceID,
 		SenderId:        defaultSenderID,
+		Identity:        req.GetIdentity(),
 		CreatedAt:       timestamppb.Now(),
 		ProtocolVersion: protocolVersionV1,
 		Payload: &pb.BusPacket_JobRequest{
