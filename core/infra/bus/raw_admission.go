@@ -74,6 +74,17 @@ func (b *NatsBus) freezeRawPacketAdmission() RawPacketAdmission {
 	return admit
 }
 
+// FreezePacketSecurity makes the configured admission and encoder immutable.
+// Production boot calls this before any subscription or publish can occur.
+func (b *NatsBus) FreezePacketSecurity() {
+	if b == nil {
+		return
+	}
+	b.hooksMu.Lock()
+	b.rawAdmissionFrozen = true
+	b.hooksMu.Unlock()
+}
+
 func (b *NatsBus) processInboundMsgCtx(
 	ctx context.Context,
 	subject string,

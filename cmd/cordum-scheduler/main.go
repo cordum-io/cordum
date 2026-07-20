@@ -218,14 +218,6 @@ func main() {
 		slog.Error("CAP profile configuration invalid; refusing to start", "error", err)
 		os.Exit(1)
 	}
-	// This branch deliberately reports mandatory production boundaries as
-	// unavailable. Reject that unsupported selection before constructors can
-	// start transport clients or background maintenance loops.
-	if err := enforceProductionReadiness(capProfile, schedulerProductionDeps{}.readiness()); err != nil {
-		slog.Error("CAP-PRODUCTION is not fully wired; refusing to start", "error", err)
-		os.Exit(1)
-	}
-
 	timeoutsCfg, err := config.LoadTimeouts(cfg.TimeoutConfigPath)
 	if err != nil {
 		explicitPath := os.Getenv("TIMEOUT_CONFIG_PATH")
@@ -390,6 +382,16 @@ func main() {
 		slog.Error("dispatch trust authority unavailable; refusing to start", "error", err)
 		os.Exit(1)
 	}
+	var productionRuntime schedulerProductionDeps
+	if capProfile.IsProduction() {
+		productionRuntime, err = installSchedulerProductionRuntime(
+			natsBus, handshakeBundle, handshakeConfig, sagaRedis,
+		)
+		if err != nil {
+			slog.Error("CAP-PRODUCTION transport boundary unavailable; refusing to start", "error", err)
+			os.Exit(1)
+		}
+	}
 
 	schemaRegistry, err := schema.NewRegistry(cfg.RedisURL)
 	if err != nil {
@@ -494,8 +496,19 @@ func main() {
 		outputSafetyConfigured: outputSafetyClient != nil,
 		failClosed:             schedulerFailClosed(engine),
 		replayStoreReachable:   probeReplayStore(context.Background(), sagaRedis),
+		rawAdmissionInstalled:  productionRuntime.rawAdmissionInstalled,
+		trustStoreConfigured:   productionRuntime.trustStoreConfigured,
+		sessionResolverReady:   productionRuntime.sessionResolverReady,
+		outboundSignerReady:    productionRuntime.outboundSignerReady,
+		resourceAllowlistted:   productionRuntime.resourceAllowlistted,
 	}
 	capReadiness := capDeps.readiness()
+	if capProfile.IsProduction() {
+		if err := engine.ValidateProductionStartup(capReadiness); err != nil {
+			slog.Error("CAP-PRODUCTION engine validation failed; refusing to start", "error", err)
+			os.Exit(1)
+		}
+	}
 	if err := enforceProductionReadiness(capProfile, capReadiness); err != nil {
 		slog.Error("CAP-PRODUCTION selected but dependencies are not initialized; refusing to start", "error", err)
 		os.Exit(1)

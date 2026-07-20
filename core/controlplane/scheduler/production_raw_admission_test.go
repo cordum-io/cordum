@@ -255,7 +255,7 @@ func productionTestBoundary(key *ecdsa.PrivateKey, replay capsdk.ReplayStore) *P
 
 func productionTestSession() AuthenticatedProductionSession {
 	return AuthenticatedProductionSession{
-		Subject: "worker-a",
+		Subject: "worker-a", Tenant: "tenant-a",
 		Identity: &agentv1.IdentityBinding{
 			TenantId: "tenant-a", PrincipalId: "principal-a", ActorId: "worker-a", DelegationId: "delegation-a",
 		},

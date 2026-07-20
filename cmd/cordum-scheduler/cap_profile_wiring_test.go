@@ -59,6 +59,20 @@ func TestProductionReadinessGateRunsBeforeAdvertisement(t *testing.T) {
 	}
 }
 
+func TestProductionRuntimeInstallsBeforeSchedulerSubscriptions(t *testing.T) {
+	src := readMainSource(t)
+	install := strings.Index(src, "installSchedulerProductionRuntime(")
+	if install < 0 {
+		t.Fatal("main.go has no production runtime installer call")
+	}
+	for _, marker := range []string{"handshakeSubscriber.Start()", "engine.Start()"} {
+		subscribe := strings.Index(src, marker)
+		if subscribe < 0 || install > subscribe {
+			t.Fatalf("production runtime installer must precede %s", marker)
+		}
+	}
+}
+
 func TestProductionReadinessGateRunsBeforeRuntimeActivation(t *testing.T) {
 	src := readMainSource(t)
 	mainStart := strings.Index(src, "func main()")
@@ -71,7 +85,6 @@ func TestProductionReadinessGateRunsBeforeRuntimeActivation(t *testing.T) {
 		t.Fatal("main.go does not enforce CAP-PRODUCTION readiness")
 	}
 	for _, marker := range []string{
-		"infraMetrics.NewProm(", "store.NewRedisJobStore(", "bus.NewNatsBus(",
 		"go func()", "instReg.Start(", "handshakeSubscriber.Start(",
 		"engine.Start(", "go reconciler.Start(", "go pendingReplayer.Start(",
 	} {

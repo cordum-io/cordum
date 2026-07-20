@@ -251,6 +251,27 @@ func TestRawAdmissionConfigurationFreezesOnFirstSubscription(t *testing.T) {
 	}
 }
 
+func TestPacketSecurityCanFreezeBeforeSubscription(t *testing.T) {
+	b := &NatsBus{}
+	if err := b.SetRawPacketAdmission(func(context.Context, string, []byte) RawAdmissionResult {
+		return RawAdmissionResult{Disposition: RawAdmissionRejected}
+	}); err != nil {
+		t.Fatalf("SetRawPacketAdmission: %v", err)
+	}
+	if err := b.SetPacketEncoder(func(context.Context, string, *pb.BusPacket) ([]byte, error) {
+		return []byte("signed"), nil
+	}); err != nil {
+		t.Fatalf("SetPacketEncoder: %v", err)
+	}
+	b.FreezePacketSecurity()
+	if err := b.SetRawPacketAdmission(nil); !errors.Is(err, ErrRawAdmissionFrozen) {
+		t.Fatalf("SetRawPacketAdmission after freeze = %v, want ErrRawAdmissionFrozen", err)
+	}
+	if err := b.SetPacketEncoder(nil); !errors.Is(err, ErrPacketEncoderFrozen) {
+		t.Fatalf("SetPacketEncoder after freeze = %v, want ErrPacketEncoderFrozen", err)
+	}
+}
+
 func TestRawAdmissionPrecedesRedisSideEffectsOnBothJetStreamPaths(t *testing.T) {
 	paths := []struct {
 		name      string

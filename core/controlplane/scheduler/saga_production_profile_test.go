@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/infra/redisutil"
@@ -161,22 +162,64 @@ func TestValidateProductionStartup_RejectsMissingSafetyKernel(t *testing.T) {
 }
 
 func TestValidateProductionStartup_RejectsGlobalFailOpen(t *testing.T) {
-	base := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), newFakeJobStore(), nil)
+	base := productionReadyEngineForTest()
 	if err := base.ValidateProductionStartup(); err != nil {
 		t.Fatalf("baseline (no fail-open configured) ValidateProductionStartup() = %v, want nil", err)
 	}
 
-	inputFailOpen := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), newFakeJobStore(), nil).
-		WithInputFailMode("open")
+	inputFailOpen := productionReadyEngineForTest().WithInputFailMode("open")
 	if err := inputFailOpen.ValidateProductionStartup(); !errors.Is(err, ErrProductionFailOpenConfigured) {
 		t.Fatalf("ValidateProductionStartup() with input fail-open = %v, want ErrProductionFailOpenConfigured", err)
 	}
 
-	asyncFailOpen := NewEngine(&fakeBus{}, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), newFakeJobStore(), nil).
-		WithAsyncFailMode("open")
+	asyncFailOpen := productionReadyEngineForTest().WithAsyncFailMode("open")
 	if err := asyncFailOpen.ValidateProductionStartup(); !errors.Is(err, ErrProductionFailOpenConfigured) {
 		t.Fatalf("ValidateProductionStartup() with async fail-open = %v, want ErrProductionFailOpenConfigured", err)
 	}
+}
+
+func TestValidateProductionStartupRejectsMissingOwnedDependencies(t *testing.T) {
+	base := productionReadyEngineForTest()
+	tests := []struct {
+		name   string
+		mutate func(*Engine)
+	}{
+		{"identity enforcement", func(engine *Engine) { engine.productionIdentity.Store(false) }},
+		{"handshake enforce", func(engine *Engine) { engine.sessionMiddleware.mode = HandshakeModeWarn }},
+		{"output safety", func(engine *Engine) { engine.outputSafetyEnabled.Store(false) }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := productionReadyEngineForTest()
+			tc.mutate(engine)
+			if err := engine.ValidateProductionStartup(); err == nil {
+				t.Fatalf("ValidateProductionStartup() accepted missing %s", tc.name)
+			}
+		})
+	}
+	if err := base.ValidateProductionStartup(); err != nil {
+		t.Fatalf("fully configured ValidateProductionStartup() = %v", err)
+	}
+}
+
+func TestProductionForcesTenantFailModesClosed(t *testing.T) {
+	resolver := NewFailModeResolver(nil, time.Minute)
+	resolver.tenants.Store("tenant-a", &tenantFailModes{
+		inputMode: "open", asyncMode: "open", fetchedAt: time.Now(),
+	})
+	engine := productionReadyEngineForTest()
+	engine.WithFailModeResolver(resolver)
+	if engine.isInputFailOpenForTenant("tenant-a") || engine.isAsyncFailOpenForTenant("tenant-a") {
+		t.Fatal("production engine honored a per-tenant fail-open override")
+	}
+}
+
+func productionReadyEngineForTest() *Engine {
+	engine := &Engine{safety: &SafetyClient{}, outputSafety: &OutputSafetyClient{}}
+	engine.productionIdentity.Store(true)
+	engine.outputSafetyEnabled.Store(true)
+	engine.sessionMiddleware = &SessionTokenMiddleware{mode: HandshakeModeEnforce, issuer: &SessionTokenIssuer{}}
+	return engine
 }
 
 func TestBuildCompensationRequest_RejectsTenantAndPrincipalEscalation(t *testing.T) {

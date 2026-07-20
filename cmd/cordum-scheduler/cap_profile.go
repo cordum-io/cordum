@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"errors"
 	"log/slog"
 	"time"
 
 	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/capprofile"
 	"github.com/cordum/cordum/core/infra/replay"
 	"github.com/redis/go-redis/v9"
@@ -73,6 +76,56 @@ func probeReplayStore(ctx context.Context, client redis.UniversalClient) bool {
 // CAP-PRODUCTION raw admission boundary.
 func newSchedulerReplayStore(client redis.UniversalClient) *replay.RedisReplayStore {
 	return replay.NewRedisReplayStore(client)
+}
+
+func installSchedulerProductionRuntime(
+	target *bus.NatsBus,
+	bundle *handshakeSecurityBundle,
+	config handshakeSecurityConfig,
+	client redis.UniversalClient,
+) (schedulerProductionDeps, error) {
+	if target == nil || bundle == nil || bundle.rawTrustResolver == nil || client == nil {
+		return schedulerProductionDeps{}, scheduler.ErrProductionAdmissionUnavailable
+	}
+	resolveSession, err := scheduler.NewProductionSessionResolver(bundle.middleware)
+	if err != nil {
+		return schedulerProductionDeps{}, err
+	}
+	boundary := &scheduler.ProductionRawBoundary{
+		ResolveKey: schedulerProductionKeyResolver(bundle.rawTrustResolver),
+		Replay:     newSchedulerReplayStore(client),
+	}
+	if err := scheduler.InstallProductionRawAdmission(target, boundary, resolveSession); err != nil {
+		return schedulerProductionDeps{}, err
+	}
+	encoder, err := bus.NewProductionPacketEncoder(bus.ProductionPacketEncoderOptions{
+		Key: config.schedulerPrivateKey, KeyID: config.schedulerKeyID,
+	})
+	if err != nil {
+		return schedulerProductionDeps{}, err
+	}
+	if err := target.SetPacketEncoder(encoder); err != nil {
+		return schedulerProductionDeps{}, err
+	}
+	target.FreezePacketSecurity()
+	return schedulerProductionDeps{
+		rawAdmissionInstalled: true, trustStoreConfigured: true,
+		sessionResolverReady: true, outboundSignerReady: true,
+	}, nil
+}
+
+func schedulerProductionKeyResolver(
+	resolver scheduler.HandshakeTrustResolver,
+) func(string, string, string) (*ecdsa.PublicKey, error) {
+	return func(tenant, sender, keyID string) (*ecdsa.PublicKey, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		identity, err := resolver.Resolve(ctx, sender, keyID)
+		if err != nil || identity == nil || identity.TenantID != tenant || identity.PublicKey == nil {
+			return nil, errors.New("production signing key unavailable")
+		}
+		return identity.PublicKey, nil
+	}
 }
 
 // resolveSchedulerProfile parses the explicit profile switch. An unrecognised

@@ -541,6 +541,9 @@ func (e *Engine) FailModeResolver() *FailModeResolver {
 // If a FailModeResolver is configured, the per-tenant override is used.
 // Otherwise, the global atomic flag is returned.
 func (e *Engine) isInputFailOpenForTenant(orgID string) bool {
+	if e.productionIdentity.Load() {
+		return false
+	}
 	if e.failModeResolver != nil {
 		return e.failModeResolver.InputFailOpen(orgID)
 	}
@@ -551,6 +554,9 @@ func (e *Engine) isInputFailOpenForTenant(orgID string) bool {
 // tenant. If a FailModeResolver is configured, the per-tenant override is used.
 // Otherwise, the global atomic flag is returned.
 func (e *Engine) isAsyncFailOpenForTenant(orgID string) bool {
+	if e.productionIdentity.Load() {
+		return false
+	}
 	if e.failModeResolver != nil {
 		return e.failModeResolver.AsyncFailOpen(orgID)
 	}

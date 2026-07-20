@@ -8,6 +8,7 @@ import (
 
 	agentv1 "github.com/cordum-io/cap/v2/cordum/agent/v1"
 	capsdk "github.com/cordum-io/cap/v2/sdk/go"
+	"github.com/cordum/cordum/core/auth/servicetoken"
 	"github.com/cordum/cordum/core/infra/bus"
 	"google.golang.org/protobuf/proto"
 )
@@ -28,6 +29,7 @@ var (
 // fields may be populated from the packet being admitted.
 type AuthenticatedProductionSession struct {
 	Subject  string
+	Tenant   string
 	Identity *agentv1.IdentityBinding
 }
 
@@ -211,7 +213,7 @@ func (b *ProductionRawBoundary) validateInputs(
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if session.Subject == "" || !completeProductionIdentity(session.Identity) {
+	if session.Subject == "" || session.Tenant == "" || !completeProductionIdentity(session.Identity) {
 		return ErrProductionAdmissionUnavailable
 	}
 	limit := b.MaxRawBytes
@@ -241,10 +243,10 @@ func (b *ProductionRawBoundary) trust(actualSubject string, session Authenticate
 	}
 	return capsdk.ProductionTrustStore{
 		Audience: actualSubject,
-		Tenant:   session.Identity.GetTenantId(),
+		Tenant:   session.Tenant,
 		Sender:   session.Subject,
 		ResolveKey: func(_, _, keyID string) (*ecdsa.PublicKey, error) {
-			return b.ResolveKey(session.Identity.GetTenantId(), session.Subject, keyID)
+			return b.ResolveKey(session.Tenant, session.Subject, keyID)
 		},
 		Now: b.Now, MaxLifetime: maxLifetime, ClockSkew: clockSkew,
 	}
@@ -252,6 +254,9 @@ func (b *ProductionRawBoundary) trust(actualSubject string, session Authenticate
 
 func validateAuthenticatedProductionIdentity(packet *agentv1.BusPacket, session AuthenticatedProductionSession) error {
 	if packet.GetSenderId() != session.Subject || !sameProductionIdentity(packet.GetIdentity(), session.Identity) {
+		return ErrProductionSessionIdentity
+	}
+	if !servicetoken.IsReservedIdentity(session.Subject) && packet.GetIdentity().GetTenantId() != session.Tenant {
 		return ErrProductionSessionIdentity
 	}
 	switch payload := packet.GetPayload().(type) {

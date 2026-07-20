@@ -2,14 +2,60 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"errors"
 	"strings"
 	"testing"
 
 	miniredis "github.com/alicebob/miniredis/v2"
+	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/capprofile"
 	"github.com/redis/go-redis/v9"
 )
+
+type productionTrustResolverStub struct{ key *ecdsa.PublicKey }
+
+func (s productionTrustResolverStub) Resolve(
+	context.Context, string, string,
+) (*scheduler.HandshakeTrustIdentity, error) {
+	return &scheduler.HandshakeTrustIdentity{TenantID: "tenant-a", PublicKey: s.key}, nil
+}
+
+func TestInstallSchedulerProductionRuntimeFreezesLandedBoundaries(t *testing.T) {
+	srv := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	bundle := &handshakeSecurityBundle{
+		middleware: scheduler.NewSessionTokenMiddleware(
+			&scheduler.SessionTokenIssuer{}, scheduler.HandshakeModeEnforce, scheduler.NewHandshakeMissingTracker(),
+		),
+		rawTrustResolver: productionTrustResolverStub{key: &key.PublicKey},
+	}
+	target := &bus.NatsBus{}
+	deps, err := installSchedulerProductionRuntime(target, bundle, handshakeSecurityConfig{
+		schedulerPrivateKey: key, schedulerKeyID: "scheduler-key-1",
+	}, client)
+	if err != nil {
+		t.Fatalf("installSchedulerProductionRuntime: %v", err)
+	}
+	if !deps.rawAdmissionInstalled || !deps.trustStoreConfigured ||
+		!deps.sessionResolverReady || !deps.outboundSignerReady || deps.resourceAllowlistted {
+		t.Fatalf("runtime deps = %+v, want only landed boundaries ready", deps)
+	}
+	if err := target.SetRawPacketAdmission(nil); !errors.Is(err, bus.ErrRawAdmissionFrozen) {
+		t.Fatalf("raw admission after install = %v, want frozen", err)
+	}
+	if err := target.SetPacketEncoder(nil); !errors.Is(err, bus.ErrPacketEncoderFrozen) {
+		t.Fatalf("packet encoder after install = %v, want frozen", err)
+	}
+}
 
 func TestResolveSchedulerProfileRejectsUnknownValue(t *testing.T) {
 	t.Setenv(capprofile.EnvVar, "prod")

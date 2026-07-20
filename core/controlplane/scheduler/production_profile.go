@@ -12,31 +12,45 @@ import (
 	"errors"
 
 	agentv1 "github.com/cordum-io/cap/v2/cordum/agent/v1"
+	"github.com/cordum/cordum/core/infra/capprofile"
 )
 
 var (
-	ErrProductionIdentityMismatch   = errors.New("scheduler: authoritative identity mismatch")
-	ErrLegacyResourceRefDisabled    = errors.New("scheduler: legacy resource reference disabled")
-	ErrStaleDispatchEvent           = errors.New("scheduler: stale or unauthorized dispatch event")
-	ErrSafetyUnavailable            = errors.New("scheduler: safety decision unavailable")
-	ErrProductionMissingSafety      = errors.New("scheduler: CAP-PRODUCTION requires a configured Safety Kernel")
-	ErrProductionFailOpenConfigured = errors.New("scheduler: CAP-PRODUCTION forbids fail-open input/output safety modes")
+	ErrProductionIdentityMismatch    = errors.New("scheduler: authoritative identity mismatch")
+	ErrLegacyResourceRefDisabled     = errors.New("scheduler: legacy resource reference disabled")
+	ErrStaleDispatchEvent            = errors.New("scheduler: stale or unauthorized dispatch event")
+	ErrSafetyUnavailable             = errors.New("scheduler: safety decision unavailable")
+	ErrProductionMissingSafety       = errors.New("scheduler: CAP-PRODUCTION requires a configured Safety Kernel")
+	ErrProductionFailOpenConfigured  = errors.New("scheduler: CAP-PRODUCTION forbids fail-open input/output safety modes")
+	ErrProductionIdentityDisabled    = errors.New("scheduler: CAP-PRODUCTION identity enforcement is disabled")
+	ErrProductionHandshakeDisabled   = errors.New("scheduler: CAP-PRODUCTION requires handshake enforce mode")
+	ErrProductionMissingOutputSafety = errors.New("scheduler: CAP-PRODUCTION requires output safety")
 )
 
 // ValidateProductionStartup rejects an Engine configuration that would
-// violate CAP-PRODUCTION's fail-closed requirement (DoD #1): a missing
-// Safety Kernel, or an active global fail-open mode for input or output
-// safety. Per-tenant fail-open is a resolver implementation concern this
-// function cannot enumerate generically; operators MUST ensure any custom
-// FailModeResolver never returns fail-open under a production profile.
-// Compensation has no fail-open mode to reject — dispatchCompensation
-// always fails closed on safety error/unavailable unconditionally.
-func (e *Engine) ValidateProductionStartup() error {
+// violate CAP-PRODUCTION's owned invariants. Tenant fail-open overrides are
+// unreachable while production identity enforcement is active; the engine
+// does not rely on enumerating a dynamic tenant configuration store.
+func (e *Engine) ValidateProductionStartup(readiness ...capprofile.Readiness) error {
 	if e == nil || e.safety == nil {
 		return ErrProductionMissingSafety
 	}
+	if !e.productionIdentity.Load() {
+		return ErrProductionIdentityDisabled
+	}
+	if e.sessionMiddleware == nil || e.sessionMiddleware.Mode() != HandshakeModeEnforce {
+		return ErrProductionHandshakeDisabled
+	}
+	if e.outputSafety == nil || !e.outputSafetyEnabled.Load() {
+		return ErrProductionMissingOutputSafety
+	}
 	if e.inputFailOpen.Load() || e.asyncFailOpen.Load() {
 		return ErrProductionFailOpenConfigured
+	}
+	for _, state := range readiness {
+		if err := state.Validate(); err != nil {
+			return err
+		}
 	}
 	return nil
 }
