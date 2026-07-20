@@ -2171,15 +2171,18 @@ func (s *server) persistSubmitDeniedJob(
 	packet := &pb.BusPacket{
 		TraceId:         traceID,
 		SenderId:        "api-gateway",
+		Identity:        jobReq.GetIdentity(),
 		CreatedAt:       timestamppb.Now(),
 		ProtocolVersion: capsdk.DefaultProtocolVersion,
 		Payload: &pb.BusPacket_JobResult{
 			JobResult: &pb.JobResult{
 				JobId:         jobID,
+				WorkerId:      servicetoken.IdentityGateway,
 				Status:        pb.JobStatus_JOB_STATUS_DENIED,
 				ErrorCode:     "policy_denied",
 				ErrorCodeEnum: pb.ErrorCode_ERROR_CODE_SAFETY_DENIED,
 				ErrorMessage:  reason,
+				Identity:      jobReq.GetIdentity(),
 			},
 		},
 	}

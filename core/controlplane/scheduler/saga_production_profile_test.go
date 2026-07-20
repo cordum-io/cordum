@@ -89,6 +89,29 @@ func TestSagaCompensation_ExplicitUnavailableDecisionFailsClosedToDLQ(t *testing
 	}
 }
 
+func TestSagaCompensationSafetyFailureEchoesCanonicalIdentity(t *testing.T) {
+	bus := &fakeBus{}
+	saga := newSagaRedisManager(t, bus, &errorSafety{})
+	authority := &pb.IdentityBinding{
+		TenantId: "tenant-a", PrincipalId: "principal-a", ActorId: "actor-a",
+	}
+	req, err := jobidentity.NormalizeProductionJobRequest(
+		&pb.JobRequest{Topic: "job.undo"}, authority,
+	)
+	if err != nil {
+		t.Fatalf("NormalizeProductionJobRequest() error = %v", err)
+	}
+
+	if err := saga.dispatchCompensation(req, "wf-identity"); err != nil {
+		t.Fatalf("dispatchCompensation() error = %v", err)
+	}
+	packet := bus.published[0].packet
+	if !proto.Equal(packet.GetIdentity(), authority) ||
+		!proto.Equal(packet.GetJobResult().GetIdentity(), authority) {
+		t.Fatalf("DLQ identity = envelope:%v result:%v", packet.GetIdentity(), packet.GetJobResult().GetIdentity())
+	}
+}
+
 func TestMergeJobMetadata_RejectsCapabilityAndRiskTagEscalation(t *testing.T) {
 	base := &pb.JobMetadata{Capability: "read-only", RiskTags: []string{"read"}}
 	escalated := &pb.JobMetadata{Capability: "delete-prod", RiskTags: []string{"write", "prod"}}

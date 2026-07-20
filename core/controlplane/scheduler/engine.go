@@ -3300,9 +3300,18 @@ func (e *Engine) emitDLQ(jobID, topic string, status pb.JobStatus, reason string
 	if e.bus == nil {
 		return nil
 	}
+	var identity *pb.IdentityBinding
+	if e.productionIdentity.Load() {
+		var err error
+		identity, err = e.loadProductionJobIdentity(e.ctx, jobID)
+		if err != nil {
+			return fmt.Errorf("dlq production identity: %w", err)
+		}
+	}
 	packet := &pb.BusPacket{
 		TraceId:         jobID,
 		SenderId:        defaultSenderID,
+		Identity:        identity,
 		CreatedAt:       timestamppb.New(createdAt),
 		ProtocolVersion: protocolVersionV1,
 		Payload: &pb.BusPacket_JobResult{
@@ -3313,7 +3322,8 @@ func (e *Engine) emitDLQ(jobID, topic string, status pb.JobStatus, reason string
 				ErrorCodeEnum: mapStringToErrorCode(reasonCode),
 				ErrorMessage:  reason,
 				ResultPtr:     "",
-				WorkerId:      "",
+				WorkerId:      defaultSenderID,
+				Identity:      identity,
 			},
 		},
 	}

@@ -252,14 +252,17 @@ func (s *SagaManager) sendCompensationSafetyFailureToDLQ(workflowID string, req 
 	packet := &pb.BusPacket{
 		TraceId:         "saga-safety-unavailable-" + uuid.NewString(),
 		SenderId:        sagaSenderID,
+		Identity:        req.GetIdentity(),
 		CreatedAt:       timestamppb.Now(),
 		ProtocolVersion: capsdk.DefaultProtocolVersion,
 		Payload: &pb.BusPacket_JobResult{
 			JobResult: &pb.JobResult{
 				JobId:        req.GetJobId(),
+				WorkerId:     sagaSenderID,
 				Status:       pb.JobStatus_JOB_STATUS_FAILED_FATAL,
 				ErrorCode:    "compensation_safety_unavailable",
 				ErrorMessage: fmt.Sprintf("workflow %s: compensation safety check failed closed: %v", workflowID, reason),
+				Identity:     req.GetIdentity(),
 			},
 		},
 	}

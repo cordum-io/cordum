@@ -121,3 +121,33 @@ func TestApprovalRejectionPacketEchoesCanonicalIdentity(t *testing.T) {
 		t.Fatalf("worker id = %q, want api-gateway", packet.GetJobResult().GetWorkerId())
 	}
 }
+
+func TestPersistSubmitDeniedJobProductionEchoesCanonicalIdentity(t *testing.T) {
+	s, bus, _ := newTestGateway(t)
+	s.capProfile = capprofile.Production
+	httpReq := httptest.NewRequest("POST", "/api/v1/jobs", nil)
+	httpReq = withAuth(httpReq, &auth.AuthContext{
+		Tenant: "default", PrincipalID: "principal-a", Role: "user",
+	})
+	err := s.persistSubmitDeniedJob(
+		context.Background(), httpReq, submitJobRequest{Topic: "job.test"},
+		&pb.JobMetadata{TenantId: "default"}, "job-denied", "trace-denied",
+		"default", "principal-a", "", "", "", "", submitPolicyDecision{}, "denied",
+	)
+	if err != nil {
+		t.Fatalf("persistSubmitDeniedJob() error = %v", err)
+	}
+	bus.mu.Lock()
+	defer bus.mu.Unlock()
+	packet := bus.published[len(bus.published)-1].packet
+	want := &pb.IdentityBinding{
+		TenantId: "default", PrincipalId: "principal-a", ActorId: "principal-a",
+	}
+	if !proto.Equal(packet.GetIdentity(), want) ||
+		!proto.Equal(packet.GetJobResult().GetIdentity(), want) {
+		t.Fatalf("denied identity = envelope:%v result:%v", packet.GetIdentity(), packet.GetJobResult().GetIdentity())
+	}
+	if packet.GetJobResult().GetWorkerId() != "api-gateway" {
+		t.Fatalf("worker id = %q, want api-gateway", packet.GetJobResult().GetWorkerId())
+	}
+}

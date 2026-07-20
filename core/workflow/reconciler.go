@@ -214,6 +214,7 @@ func (r *reconciler) reconcileRun(ctx context.Context, runID string) {
 			ErrorMessage: failureReason,
 			WorkerId:     "",
 			ExecutionMs:  0,
+			Identity:     cloneIdentityBinding(run.Identity),
 		}
 		if status != pb.JobStatus_JOB_STATUS_SUCCEEDED && jr.ErrorMessage == "" {
 			jr.ErrorMessage = fmt.Sprintf("job %s terminated with state %s (no error details available)", sr.JobID, state)
