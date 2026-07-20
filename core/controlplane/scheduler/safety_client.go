@@ -13,6 +13,7 @@ import (
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/resourceio"
+	jobidentity "github.com/cordum/cordum/core/protocol/identity"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
@@ -137,6 +138,11 @@ func (c *SafetyClient) Close() error {
 
 // Check forwards the request to the safety kernel; denies on error/timeout.
 func (c *SafetyClient) Check(ctx context.Context, req *pb.JobRequest) (SafetyDecisionRecord, error) {
+	normalized, err := normalizeSafetyJobRequest(req)
+	if err != nil {
+		return SafetyDecisionRecord{Decision: SafetyUnavailable, Reason: "job identity rejected"}, err
+	}
+	req = normalized
 	if c.cb.IsOpen(ctx) {
 		return SafetyDecisionRecord{Decision: SafetyUnavailable, Reason: "safety kernel circuit open"}, nil
 	}
@@ -144,7 +150,7 @@ func (c *SafetyClient) Check(ctx context.Context, req *pb.JobRequest) (SafetyDec
 	ctx, cancel := context.WithTimeout(ctx, safetyTimeout)
 	defer cancel()
 
-	checkReq := &pb.PolicyCheckRequest{
+	checkReq, err := normalizeSafetyPolicyRequest(req, &pb.PolicyCheckRequest{
 		JobId:       req.GetJobId(),
 		Topic:       req.GetTopic(),
 		Tenant:      ExtractTenant(req),
@@ -154,6 +160,9 @@ func (c *SafetyClient) Check(ctx context.Context, req *pb.JobRequest) (SafetyDec
 		Labels:      req.GetLabels(),
 		MemoryId:    req.GetMemoryId(),
 		Meta:        req.GetMeta(),
+	})
+	if err != nil {
+		return SafetyDecisionRecord{Decision: SafetyUnavailable, Reason: "policy identity rejected"}, err
 	}
 	if env := req.GetEnv(); env != nil {
 		if eff := env[config.EffectiveConfigEnvVar]; eff != "" {
@@ -188,6 +197,31 @@ func (c *SafetyClient) Check(ctx context.Context, req *pb.JobRequest) (SafetyDec
 		Remediations:     resp.GetRemediations(),
 	}
 	return record, nil
+}
+
+func normalizeSafetyJobRequest(req *pb.JobRequest) (*pb.JobRequest, error) {
+	if req.GetIdentity() == nil {
+		return req, nil
+	}
+	normalized, err := jobidentity.NormalizeProductionJobRequest(req, req.GetIdentity())
+	if err != nil {
+		return nil, fmt.Errorf("normalize safety job identity: %w", err)
+	}
+	return normalized, nil
+}
+
+func normalizeSafetyPolicyRequest(
+	job *pb.JobRequest,
+	check *pb.PolicyCheckRequest,
+) (*pb.PolicyCheckRequest, error) {
+	if job.GetIdentity() == nil {
+		return check, nil
+	}
+	normalized, err := jobidentity.NormalizeProductionPolicyCheckRequest(check, job.GetIdentity())
+	if err != nil {
+		return nil, fmt.Errorf("normalize safety policy identity: %w", err)
+	}
+	return normalized, nil
 }
 
 func decisionFromProto(dec pb.DecisionType) SafetyDecision {

@@ -15,6 +15,7 @@ import (
 	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
+	jobidentity "github.com/cordum/cordum/core/protocol/identity"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/cordum/cordum/core/protocol/reqhash"
 	"github.com/google/uuid"
@@ -868,6 +869,13 @@ func (s *RedisJobStore) SetJobMeta(ctx context.Context, req *pb.JobRequest) erro
 	if req == nil || req.GetJobId() == "" {
 		return fmt.Errorf("invalid job request")
 	}
+	if completeJobIdentity(req.GetIdentity()) {
+		canonical, err := jobidentity.NormalizeProductionJobRequest(req, req.GetIdentity())
+		if err != nil {
+			return fmt.Errorf("job store canonical identity: %w", err)
+		}
+		req = canonical
+	}
 	metaKey := jobMetaKey(req.GetJobId())
 	meta := req.GetMeta()
 	tenantID := req.GetTenantId()
@@ -957,6 +965,13 @@ func (s *RedisJobStore) SetJobMeta(ctx context.Context, req *pb.JobRequest) erro
 		_ = s.SetIdempotencyKeyScoped(ctx, tenantID, idempotencyKey, req.GetJobId())
 	}
 	return nil
+}
+
+func completeJobIdentity(identity *pb.IdentityBinding) bool {
+	return identity != nil &&
+		strings.TrimSpace(identity.GetTenantId()) != "" &&
+		strings.TrimSpace(identity.GetPrincipalId()) != "" &&
+		strings.TrimSpace(identity.GetActorId()) != ""
 }
 
 // SetSubmittedBy stores the submitter identity on the job metadata hash.

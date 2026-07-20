@@ -1200,6 +1200,11 @@ func (s *server) handleRemediateJob(w http.ResponseWriter, r *http.Request) {
 		newReq.Labels = nil
 		newReq.Meta.Labels = nil
 	}
+	newReq, err = s.normalizeStoredJobRequest(newReq)
+	if err != nil {
+		writeErrorJSON(w, http.StatusConflict, "stored job identity is invalid")
+		return
+	}
 
 	if err := s.jobStore.SetState(r.Context(), newJobID, model.JobStatePending); err != nil {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "failed to initialize job state")
@@ -1226,15 +1231,7 @@ func (s *server) handleRemediateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	packet := &pb.BusPacket{
-		TraceId:         traceID,
-		SenderId:        "api-gateway",
-		CreatedAt:       timestamppb.Now(),
-		ProtocolVersion: capsdk.DefaultProtocolVersion,
-		Payload: &pb.BusPacket_JobRequest{
-			JobRequest: newReq,
-		},
-	}
+	packet := jobRequestPacket(traceID, "api-gateway", newReq)
 	if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
 		writeErrorJSON(w, http.StatusBadGateway, "failed to enqueue job")
 		return
@@ -1532,6 +1529,18 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	delegationExpectedAudience := submitDelegationExpectedAudience(req.Labels["agent_id"], req.DelegationAudienceAgentID)
+	if s.capProfile.IsProduction() {
+		probe := &pb.JobRequest{
+			TenantId: orgID, PrincipalId: principalID, Meta: meta,
+			Env: map[string]string{"tenant_id": orgID},
+		}
+		normalized, normalizeErr := s.normalizeHTTPJobRequest(r, probe)
+		if normalizeErr != nil {
+			writeErrorJSON(w, http.StatusForbidden, "authenticated job identity mismatch")
+			return
+		}
+		meta = normalized.GetMeta()
+	}
 
 	// Inject job content into labels so the safety kernel's tag deriver can
 	// inspect the payload for server-side risk tag derivation.
@@ -1719,6 +1728,11 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 				MaxInputTokens: int64(req.MaxInputTokens), MaxOutputTokens: req.MaxOutputTokens,
 				MaxTotalTokens: req.MaxTotalTokens, DeadlineMs: req.DeadlineMs,
 			},
+		}
+		jobReq, err = s.normalizeHTTPJobRequest(r, jobReq)
+		if err != nil {
+			writeErrorJSON(w, http.StatusForbidden, "authenticated job identity mismatch")
+			return
 		}
 
 		if s.jobStore != nil {
@@ -1928,6 +1942,11 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			DeadlineMs:      req.DeadlineMs,
 		},
 	}
+	jobReq, err = s.normalizeHTTPJobRequest(r, jobReq)
+	if err != nil {
+		writeErrorJSON(w, http.StatusForbidden, "authenticated job identity mismatch")
+		return
+	}
 
 	if s.jobStore != nil {
 		if err := s.jobStore.SetJobMeta(r.Context(), jobReq); err != nil {
@@ -1953,15 +1972,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	packet := &pb.BusPacket{
-		TraceId:         traceID,
-		SenderId:        "api-gateway-http",
-		CreatedAt:       timestamppb.Now(),
-		ProtocolVersion: capsdk.DefaultProtocolVersion,
-		Payload: &pb.BusPacket_JobRequest{
-			JobRequest: jobReq,
-		},
-	}
+	packet := jobRequestPacket(traceID, "api-gateway-http", jobReq)
 
 	if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
 		slog.Error("job publish failed", "job_id", jobID, "error", err)

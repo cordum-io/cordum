@@ -796,15 +796,11 @@ func (s *server) publishApprovalRepair(ctx context.Context, repaired *store.Appr
 	}
 	switch repaired.ApprovalRecord.PublishTarget {
 	case model.ApprovalPublishTargetSubmit:
-		packet := &pb.BusPacket{
-			TraceId:         repaired.TraceID,
-			SenderId:        "api-gateway",
-			CreatedAt:       timestamppb.Now(),
-			ProtocolVersion: capsdk.DefaultProtocolVersion,
-			Payload: &pb.BusPacket_JobRequest{
-				JobRequest: repaired.Request,
-			},
+		request, err := s.normalizeStoredJobRequest(repaired.Request)
+		if err != nil {
+			return fmt.Errorf("approval repair stored identity: %w", err)
 		}
+		packet := jobRequestPacket(repaired.TraceID, "api-gateway", request)
 		if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
 			return err
 		}
@@ -1375,17 +1371,14 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 			result = handlerResult{http.StatusInternalServerError, "failed to persist approval resolution"}
 			return nil
 		}
+		resolved.Request, err = s.normalizeStoredJobRequest(resolved.Request)
+		if err != nil {
+			result = handlerResult{http.StatusConflict, "stored job identity is invalid"}
+			return nil
+		}
 		s.observeApprovalResolutionMetrics(req, safetyRecord, resolved.ApprovalRecord.ApprovedAt, "approved")
 		s.syncApprovalQueueDepth(ctx)
-		packet := &pb.BusPacket{
-			TraceId:         resolved.TraceID,
-			SenderId:        "api-gateway",
-			CreatedAt:       timestamppb.Now(),
-			ProtocolVersion: capsdk.DefaultProtocolVersion,
-			Payload: &pb.BusPacket_JobRequest{
-				JobRequest: resolved.Request,
-			},
-		}
+		packet := jobRequestPacket(resolved.TraceID, "api-gateway", resolved.Request)
 		if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
 			result = handlerResult{http.StatusBadGateway, "publish approval failed"}
 			return nil

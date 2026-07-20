@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/infra/store"
+	jobidentity "github.com/cordum/cordum/core/protocol/identity"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -123,6 +124,44 @@ func TestSafetyClientDeny(t *testing.T) {
 	}
 	if record.Decision != SafetyDeny || record.Reason != "blocked" {
 		t.Fatalf("expected deny, got %v reason=%s", record.Decision, record.Reason)
+	}
+}
+
+func TestSafetyClientRejectsIdentityMismatchBeforeRPC(t *testing.T) {
+	conn, handler, cleanup := startInstrumentedTestSafetyServer(t, pb.DecisionType_DECISION_TYPE_ALLOW, "")
+	defer cleanup()
+	client := &SafetyClient{client: pb.NewSafetyKernelClient(conn), conn: conn, cb: newTestCB()}
+	req := &pb.JobRequest{
+		JobId: "job-1", Topic: "job.test", TenantId: "tenant-attacker",
+		Identity: &pb.IdentityBinding{TenantId: "tenant-a", PrincipalId: "principal-a", ActorId: "principal-a"},
+	}
+
+	_, err := client.Check(context.Background(), req)
+	if !errors.Is(err, jobidentity.ErrProductionIdentityMismatch) {
+		t.Fatalf("Check() error = %v, want identity mismatch", err)
+	}
+	if handler.lastReq != nil {
+		t.Fatalf("identity mismatch reached Safety Kernel: %#v", handler.lastReq)
+	}
+}
+
+func TestSafetyClientCarriesCanonicalIdentityToRPC(t *testing.T) {
+	conn, handler, cleanup := startInstrumentedTestSafetyServer(t, pb.DecisionType_DECISION_TYPE_ALLOW, "")
+	defer cleanup()
+	client := &SafetyClient{client: pb.NewSafetyKernelClient(conn), conn: conn, cb: newTestCB()}
+	auth := &pb.IdentityBinding{TenantId: "tenant-a", PrincipalId: "principal-a", ActorId: "actor-a"}
+	req, err := jobidentity.NormalizeProductionJobRequest(
+		&pb.JobRequest{JobId: "job-1", Topic: "job.test"}, auth,
+	)
+	if err != nil {
+		t.Fatalf("NormalizeProductionJobRequest() error = %v", err)
+	}
+
+	if _, err := client.Check(context.Background(), req); err != nil {
+		t.Fatalf("Check() error = %v", err)
+	}
+	if handler.lastReq == nil || handler.lastReq.GetIdentity().GetActorId() != auth.GetActorId() {
+		t.Fatalf("Safety Kernel identity = %#v, want %#v", handler.lastReq.GetIdentity(), auth)
 	}
 }
 

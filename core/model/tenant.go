@@ -13,6 +13,9 @@ func ExtractTenant(req *pb.JobRequest) string {
 	if req == nil {
 		return DefaultTenant
 	}
+	if identity := req.GetIdentity(); identity != nil && identity.GetTenantId() != "" {
+		return identity.GetTenantId()
+	}
 	if tenant := req.GetTenantId(); tenant != "" {
 		return tenant
 	}
@@ -54,6 +57,9 @@ func ResolveTenantForAudit(authCtxTenant, headerTenant string) string {
 func ExtractPrincipal(req *pb.JobRequest) string {
 	if req == nil {
 		return ""
+	}
+	if identity := req.GetIdentity(); identity != nil && identity.GetPrincipalId() != "" {
+		return identity.GetPrincipalId()
 	}
 	return req.GetPrincipalId()
 }

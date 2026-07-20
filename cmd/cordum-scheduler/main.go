@@ -451,6 +451,7 @@ func main() {
 		jobStore,
 		metrics,
 	).WithConfig(configSvc).
+		WithProductionIdentityEnforcement(capProfile.IsProduction()).
 		WithTopicRegistry(topicregistry.NewService(configSvc)).
 		WithWorkerCredentialCache(workerCredentialCache).
 		WithWorkerAttestationMode(workerAttestationMode).

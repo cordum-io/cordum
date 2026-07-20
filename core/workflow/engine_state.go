@@ -162,6 +162,7 @@ func (e *Engine) RerunFrom(ctx context.Context, runID, stepID string, dryRun boo
 		Status:      RunStatusPending,
 		Steps:       map[string]*StepRun{},
 		TriggeredBy: run.TriggeredBy,
+		Identity:    cloneIdentityBinding(run.Identity),
 		CreatedAt:   now,
 		UpdatedAt:   now,
 		RerunOf:     run.ID,

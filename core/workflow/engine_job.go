@@ -12,6 +12,7 @@ import (
 	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/policylabels"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
+	jobidentity "github.com/cordum/cordum/core/protocol/identity"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -25,14 +26,29 @@ func (e *Engine) publishWithTrace(ctx context.Context, subject string, packet *p
 	return e.bus.Publish(subject, packet)
 }
 
-func makeJobPacket(traceID string, req *pb.JobRequest) *pb.BusPacket {
-	return &pb.BusPacket{
+func (e *Engine) makeJobPacket(traceID string, run *WorkflowRun, req *pb.JobRequest) (*pb.BusPacket, error) {
+	if e != nil && e.productionIdentity {
+		var authority *pb.IdentityBinding
+		if run != nil {
+			authority = run.Identity
+		}
+		normalized, err := jobidentity.NormalizeProductionJobRequest(req, authority)
+		if err != nil {
+			return nil, err
+		}
+		req = normalized
+	}
+	packet := &pb.BusPacket{
 		TraceId:         traceID,
 		SenderId:        "workflow-engine",
 		CreatedAt:       timestamppb.Now(),
 		ProtocolVersion: capsdk.DefaultProtocolVersion,
 		Payload:         &pb.BusPacket_JobRequest{JobRequest: req},
 	}
+	if req != nil && req.GetIdentity() != nil {
+		packet.Identity = req.GetIdentity()
+	}
+	return packet, nil
 }
 
 func (e *Engine) evaluateStructuredStepInput(run *WorkflowRun, step *Step, scope map[string]any, inputKind string) (map[string]any, error) {

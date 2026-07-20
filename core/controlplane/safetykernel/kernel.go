@@ -41,6 +41,7 @@ import (
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/policy/actiongates"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
+	jobidentity "github.com/cordum/cordum/core/protocol/identity"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/nats-io/nats.go"
 	"github.com/prometheus/client_golang/prometheus"
@@ -644,6 +645,15 @@ func (s *server) ListSnapshots(ctx context.Context, _ *pb.ListSnapshotsRequest) 
 }
 
 func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, method string) (*pb.PolicyCheckResponse, error) {
+	normalized, err := normalizePolicyRequestIdentity(req)
+	if err != nil {
+		slog.Warn("safety-kernel: policy identity rejected", "component", "safety", "category", "identity_mismatch")
+		return &pb.PolicyCheckResponse{
+			Decision: pb.DecisionType_DECISION_TYPE_DENY,
+			Reason:   "identity validation failed",
+		}, nil
+	}
+	req = normalized
 	var decision pb.DecisionType
 	reason := ""
 
@@ -1008,6 +1018,17 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	}
 
 	return resp, nil
+}
+
+func normalizePolicyRequestIdentity(req *pb.PolicyCheckRequest) (*pb.PolicyCheckRequest, error) {
+	if req.GetIdentity() == nil {
+		return req, nil
+	}
+	normalized, err := jobidentity.NormalizeProductionPolicyCheckRequest(req, req.GetIdentity())
+	if err != nil {
+		return nil, fmt.Errorf("normalize policy identity: %w", err)
+	}
+	return normalized, nil
 }
 
 func shadowDecisionName(decision pb.DecisionType, approvalRequired bool) string {

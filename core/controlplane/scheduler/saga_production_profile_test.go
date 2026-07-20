@@ -13,6 +13,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/infra/redisutil"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
+	jobidentity "github.com/cordum/cordum/core/protocol/identity"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/protobuf/proto"
 )
@@ -158,19 +159,22 @@ func TestValidateProductionStartup_RejectsGlobalFailOpen(t *testing.T) {
 func TestBuildCompensationRequest_RejectsTenantAndPrincipalEscalation(t *testing.T) {
 	base := &pb.JobRequest{
 		JobId: "job-1", Topic: "job.original", TenantId: "tenant-a", PrincipalId: "principal-a",
+		Meta:     &pb.JobMetadata{TenantId: "tenant-a", ActorId: "actor-a"},
+		Identity: &pb.IdentityBinding{TenantId: "tenant-a", PrincipalId: "principal-a", ActorId: "actor-a"},
 		Compensation: &pb.Compensation{
 			Topic: "job.undo", TenantId: "tenant-VICTIM", PrincipalId: "principal-ADMIN",
 		},
 	}
+	before := proto.Clone(base)
 
 	comp, err := buildCompensationRequest(base)
-	if err != nil {
-		t.Fatalf("buildCompensationRequest: %v", err)
+	if !errors.Is(err, jobidentity.ErrProductionIdentityMismatch) {
+		t.Fatalf("buildCompensationRequest() error = %v, want identity mismatch", err)
 	}
-	if comp.TenantId != "tenant-a" {
-		t.Fatalf("buildCompensationRequest allowed tenant escalation: got %q, want %q", comp.TenantId, "tenant-a")
+	if comp != nil {
+		t.Fatalf("buildCompensationRequest() = %#v, want nil", comp)
 	}
-	if comp.PrincipalId != "principal-a" {
-		t.Fatalf("buildCompensationRequest allowed principal escalation: got %q, want %q", comp.PrincipalId, "principal-a")
+	if !proto.Equal(base, before) {
+		t.Fatal("buildCompensationRequest() mutated rejected request")
 	}
 }

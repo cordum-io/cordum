@@ -131,6 +131,7 @@ const (
 
 type server struct {
 	pb.UnimplementedCordumApiServer
+	capProfile           capprofile.Profile
 	memStore             store.Store
 	jobStore             *store.RedisJobStore // Typed for ListRecentJobs
 	memoryResourceReader resourceio.Reader
@@ -618,7 +619,9 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	defer func() { _ = workflowStore.Close() }()
 	wfCtx, wfCancel := context.WithCancel(context.Background())
 	defer wfCancel()
-	workflowEng := wf.NewEngine(workflowStore, natsBus).WithContext(wfCtx)
+	workflowEng := wf.NewEngine(workflowStore, natsBus).
+		WithContext(wfCtx).
+		WithProductionIdentityEnforcement(capProfile.IsProduction())
 
 	configSvc, err := configsvc.New(cfg.RedisURL)
 	if err != nil {
@@ -728,6 +731,7 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		return fmt.Errorf("shadow finding store: %w", err)
 	}
 	s := &server{
+		capProfile:             capProfile,
 		memStore:               memStore,
 		jobStore:               jobStore,
 		edgeStore:              edgeStore,

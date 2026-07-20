@@ -1,6 +1,10 @@
 package workflow
 
-import "time"
+import (
+	"time"
+
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+)
 
 // StepType identifies the kind of step in a workflow.
 type StepType string
@@ -250,6 +254,7 @@ type WorkflowRun struct {
 	Steps          map[string]*StepRun `json:"steps" db:"steps"`   // JSON
 	TotalCost      float64             `json:"total_cost" db:"total_cost"`
 	TriggeredBy    string              `json:"triggered_by" db:"triggered_by"`
+	Identity       *pb.IdentityBinding `json:"identity,omitempty" db:"identity"`
 	CreatedAt      time.Time           `json:"created_at" db:"created_at"`
 	UpdatedAt      time.Time           `json:"updated_at" db:"updated_at"`
 	Labels         map[string]string   `json:"labels,omitempty" db:"labels"`

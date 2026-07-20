@@ -1,6 +1,23 @@
 package model
 
-import "testing"
+import (
+	"testing"
+
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+)
+
+func TestExtractIdentityUsesCanonicalBindingFirst(t *testing.T) {
+	req := &pb.JobRequest{
+		TenantId: "tenant-mirror", PrincipalId: "principal-mirror",
+		Identity: &pb.IdentityBinding{TenantId: "tenant-canonical", PrincipalId: "principal-canonical"},
+	}
+	if got := ExtractTenant(req); got != "tenant-canonical" {
+		t.Fatalf("ExtractTenant() = %q, want canonical identity", got)
+	}
+	if got := ExtractPrincipal(req); got != "principal-canonical" {
+		t.Fatalf("ExtractPrincipal() = %q, want canonical identity", got)
+	}
+}
 
 // TestResolveTenantForAudit_AuthContextWins asserts the helper returns
 // the authenticated tenant when present, even if a header is supplied.

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
+	jobidentity "github.com/cordum/cordum/core/protocol/identity"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/cordum/cordum/core/protocol/protoutil"
 	"github.com/google/uuid"
@@ -272,6 +273,13 @@ func (s *SagaManager) dispatchCompensation(req *pb.JobRequest, workflowID string
 	if req == nil || s == nil || s.bus == nil {
 		return nil
 	}
+	if req.GetIdentity() != nil {
+		normalized, err := jobidentity.NormalizeProductionJobRequest(req, req.GetIdentity())
+		if err != nil {
+			return fmt.Errorf("compensation identity: %w", err)
+		}
+		req = normalized
+	}
 	topic := strings.TrimSpace(req.Topic)
 	if topic == "" {
 		return fmt.Errorf("compensation topic required")
@@ -327,6 +335,7 @@ func (s *SagaManager) dispatchCompensation(req *pb.JobRequest, workflowID string
 	packet := &pb.BusPacket{
 		TraceId:         req.JobId,
 		SenderId:        sagaSenderID,
+		Identity:        req.GetIdentity(),
 		CreatedAt:       timestamppb.Now(),
 		ProtocolVersion: capsdk.DefaultProtocolVersion,
 		Payload: &pb.BusPacket_JobRequest{
@@ -348,6 +357,13 @@ func (s *SagaManager) dispatchCompensation(req *pb.JobRequest, workflowID string
 func buildCompensationRequest(base *pb.JobRequest) (*pb.JobRequest, error) {
 	if base == nil || base.Compensation == nil {
 		return nil, nil
+	}
+	if base.GetIdentity() != nil {
+		normalized, err := jobidentity.NormalizeProductionJobRequest(base, base.GetIdentity())
+		if err != nil {
+			return nil, fmt.Errorf("compensation identity: %w", err)
+		}
+		base = normalized
 	}
 	comp := base.Compensation
 	topic := strings.TrimSpace(comp.Topic)

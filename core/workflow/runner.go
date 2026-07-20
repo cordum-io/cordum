@@ -136,6 +136,7 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 
 	engine := NewEngine(workflowStore, natsBus).
 		WithMemory(memStore).
+		WithProductionIdentityEnforcement(capProfile.IsProduction()).
 		WithConfig(configSvc).
 		WithSchemaRegistry(schemaRegistry).
 		WithEntitlements(resolver).

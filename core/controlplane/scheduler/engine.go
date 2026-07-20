@@ -26,6 +26,7 @@ import (
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
+	jobidentity "github.com/cordum/cordum/core/protocol/identity"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/cordum/cordum/core/protocol/protoutil"
 	"github.com/redis/go-redis/v9"
@@ -110,6 +111,7 @@ type Engine struct {
 	otelMetrics             otelMetricsBridge     // optional OTEL dual-emission bridge
 	counterClient           redis.UniversalClient // optional, for operational counters shared across services
 	stopped                 atomic.Bool
+	productionIdentity      atomic.Bool
 	activeHandlers          atomic.Int64
 	activeRenewals          atomic.Int64
 	wg                      sync.WaitGroup
@@ -357,6 +359,13 @@ func (e *Engine) WithWorkerAttestationMode(mode WorkerAttestationMode) *Engine {
 // CORDUM_SDK_HANDSHAKE. Mirrors WithWorkerAttestationMode.
 func (e *Engine) WithSessionMiddleware(mw *SessionTokenMiddleware) *Engine {
 	e.sessionMiddleware = mw
+	return e
+}
+
+// WithProductionIdentityEnforcement requires authenticated envelope identity
+// to match every JobRequest mirror before persistence, safety, or dispatch.
+func (e *Engine) WithProductionIdentityEnforcement(enabled bool) *Engine {
+	e.productionIdentity.Store(enabled)
 	return e
 }
 
@@ -876,6 +885,18 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
 		if req == nil {
 			return nil
 		}
+		if e.productionIdentity.Load() {
+			normalized, normalizeErr := jobidentity.NormalizeProductionJobPacket(p, p.GetIdentity())
+			if normalizeErr != nil {
+				slog.Error("production job identity rejected", "reason", "identity_mismatch")
+				if e.metrics != nil {
+					e.metrics.IncValidationRejections()
+				}
+				return nil
+			}
+			p = normalized
+			req = normalized.GetJobRequest()
+		}
 		if err := capvalidate.ValidateJobRequest(req); err != nil {
 			slog.Warn("invalid job request rejected",
 				"job_id", req.GetJobId(),
@@ -1224,6 +1245,13 @@ func (e *Engine) ActiveRenewals() int64 {
 func (e *Engine) handleJobRequest(req *pb.JobRequest, traceID string) error {
 	if req == nil {
 		return nil
+	}
+	if e.productionIdentity.Load() {
+		normalized, err := jobidentity.NormalizeProductionJobRequest(req, req.GetIdentity())
+		if err != nil {
+			return fmt.Errorf("production job identity: %w", err)
+		}
+		req = normalized
 	}
 
 	jobID := strings.TrimSpace(req.JobId)
