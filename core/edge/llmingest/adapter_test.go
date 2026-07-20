@@ -132,6 +132,67 @@ func TestMap_RedactsSecretInMessages(t *testing.T) {
 	if strings.Contains(eventInputString(t, event), awsExampleKey) {
 		t.Fatalf("event leaked secret in messages: %v", event.InputRedacted)
 	}
+	// Finding 1 regression: a message-array-shaped redact decision must return
+	// usable, role-preserving sanitized text, not just a flattened transcript.
+	// Without RedactedMessages, a proxy has no safe way to reconstruct the
+	// per-message shape it must forward.
+	if len(decision.RedactedMessages) != 2 {
+		t.Fatalf("want 2 redacted messages, got %d: %+v", len(decision.RedactedMessages), decision.RedactedMessages)
+	}
+	if decision.RedactedMessages[0].Role != "system" || decision.RedactedMessages[0].Content != "you are helpful" {
+		t.Fatalf("redacted_messages[0] mismatch: %+v", decision.RedactedMessages[0])
+	}
+	if decision.RedactedMessages[1].Role != "user" {
+		t.Fatalf("redacted_messages[1] role mismatch: %+v", decision.RedactedMessages[1])
+	}
+	if strings.Contains(decision.RedactedMessages[1].Content, awsExampleKey) {
+		t.Fatalf("redacted_messages leaked the secret: %+v", decision.RedactedMessages)
+	}
+	// Note: this test exercises the FALLBACK (no injected redactor) path,
+	// whose generic edge redactor replaces the whole tripped string rather
+	// than masking in place — that in-place, prose-preserving behavior is the
+	// injected Safety Kernel scanner's job and is covered separately by
+	// TestMap_MultiMessageRedactedMessagesPopulated in redactor_test.go.
+	//
+	// A proxy must also be able to fall back to the flattened transcript.
+	if decision.RedactedContent == "" {
+		t.Fatal("redacted_content should still be populated for message-array envelopes")
+	}
+	if strings.Contains(decision.RedactedContent, awsExampleKey) {
+		t.Fatalf("redacted_content leaked the secret: %q", decision.RedactedContent)
+	}
+}
+
+// TestMap_NoSecretMessagesStillPopulatesRedactedMessages proves clean
+// message-array content also gets RedactedMessages (not just the redact
+// path), so a proxy can always prefer the structured field for chat-shaped
+// envelopes regardless of decision.
+func TestMap_NoSecretMessagesStillPopulatesRedactedMessages(t *testing.T) {
+	env := baseEnvelope()
+	env.Content = ""
+	env.Messages = []LLMMessage{
+		{Role: "user", Content: "summarize the repo"},
+	}
+	_, decision := mapOne(t, env)
+	if decision.Decision != DecisionRecord {
+		t.Fatalf("decision = %q, want record", decision.Decision)
+	}
+	if len(decision.RedactedMessages) != 1 {
+		t.Fatalf("want 1 redacted message, got %d: %+v", len(decision.RedactedMessages), decision.RedactedMessages)
+	}
+	if decision.RedactedMessages[0].Role != "user" || decision.RedactedMessages[0].Content != "summarize the repo" {
+		t.Fatalf("redacted_messages[0] mismatch: %+v", decision.RedactedMessages[0])
+	}
+}
+
+// TestMap_ContentOnlyEnvelopeHasNoRedactedMessages proves the single-string
+// shape does not spuriously populate RedactedMessages (omitempty should drop
+// the field from the wire response for that shape).
+func TestMap_ContentOnlyEnvelopeHasNoRedactedMessages(t *testing.T) {
+	_, decision := mapOne(t, baseEnvelope())
+	if decision.RedactedMessages != nil {
+		t.Fatalf("content-only envelope should not populate redacted_messages: %+v", decision.RedactedMessages)
+	}
 }
 
 func TestMap_RejectsUnknownKind(t *testing.T) {
@@ -194,7 +255,7 @@ func TestMap_SanitizesLabels(t *testing.T) {
 	env := baseEnvelope()
 	env.Labels = map[string]string{
 		"repo":          "cordum",
-		"authorization": "Bearer should-be-dropped", // sensitive KEY → dropped
+		"authorization": "Bearer should-be-dropped",  // sensitive KEY → dropped
 		"note":          "token is " + awsExampleKey, // sensitive VALUE → redacted
 		"llm.provider":  "attacker-controlled",       // reserved prefix → dropped
 	}

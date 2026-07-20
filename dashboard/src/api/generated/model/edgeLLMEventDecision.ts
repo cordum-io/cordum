@@ -6,6 +6,7 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 import type { EdgeLLMEventDecisionDecision } from "./edgeLLMEventDecisionDecision";
+import type { EdgeLLMMessage } from "./edgeLLMMessage";
 
 /**
  * Per-event advisory outcome. `decision=redact` means a secret was detected and the proxy should forward `redacted_content` (subject to `truncated`) instead of the original. This is NOT a policy allow/deny decision.
@@ -17,6 +18,17 @@ export interface EdgeLLMEventDecision {
   redacted: boolean;
   truncated?: boolean;
   redacted_content?: string;
+  /** Role-preserving redacted chat messages when the submitted event used `messages`. Absent for content-only (single-string) envelopes. */
+  redacted_messages?: EdgeLLMMessage[];
   /** Detected secret finding TYPES (never values), e.g. aws_credential, bearer_token, private_key. */
   findings?: string[];
+  /** Whether this decision reflects a scan of the FULL turn content.
+Always true except for kind=llm.stream.chunk, where it is true
+ONLY when the chunk was submitted with final=true (which requires
+the full aggregated content). A non-final chunk is scanned in
+isolation and can miss a secret split across a chunk boundary —
+proxies MUST NOT treat redaction_complete=false as a governance
+verdict for forwarding purposes.
+ */
+  redaction_complete: boolean;
 }

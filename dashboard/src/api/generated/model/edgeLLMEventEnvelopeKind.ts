@@ -6,6 +6,16 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
+/**
+ * llm.stream.chunk carries one delta of a streamed response and is
+scanned in isolation — a secret split across a chunk boundary can
+evade per-chunk redaction. A chunk is redaction-complete (see
+EdgeLLMEventDecision.redaction_complete) ONLY when submitted with
+final=true and the full aggregated content/messages for the
+stream. See docs/edge/llm-proxy-governance.md "Streaming chunk
+redaction limits".
+
+ */
 export type EdgeLLMEventEnvelopeKind =
   (typeof EdgeLLMEventEnvelopeKind)[keyof typeof EdgeLLMEventEnvelopeKind];
 

@@ -57,10 +57,20 @@ func llmIngestAuthContext(role, principalID string) *auth.AuthContext {
 }
 
 // createLLMIngestParents creates a session (owned by a developer principal, NOT
-// the proxy) plus an execution under the given adapter — the proxy is shared
-// tenant infrastructure, so ingest binds to the llm-proxy adapter, not a
-// per-session collector.
+// the proxy) plus an execution under the given adapter, owned by the default
+// test proxy identity "llm-proxy-1" — the proxy is shared tenant
+// infrastructure, so ingest binds to the llm-proxy adapter, not a per-session
+// collector, but the execution IS bound to whichever proxy created it (see
+// createLLMIngestParentsForProxy / Finding 3 ownership check).
 func createLLMIngestParents(t *testing.T, s *server, suffix string, adapter edgecore.AgentAdapter) (edgecore.EdgeSession, edgecore.AgentExecution) {
+	t.Helper()
+	return createLLMIngestParentsForProxy(t, s, suffix, adapter, "llm-proxy-1")
+}
+
+// createLLMIngestParentsForProxy is createLLMIngestParents with an explicit
+// owning proxyID, so tests can construct executions owned by a DIFFERENT
+// proxy than the one making the request (cross-proxy rejection coverage).
+func createLLMIngestParentsForProxy(t *testing.T, s *server, suffix string, adapter edgecore.AgentAdapter, proxyID string) (edgecore.EdgeSession, edgecore.AgentExecution) {
 	t.Helper()
 	now := time.Now().UTC()
 	session := edgecore.EdgeSession{
@@ -88,7 +98,7 @@ func createLLMIngestParents(t *testing.T, s *server, suffix string, adapter edge
 		Adapter:        adapter,
 		Mode:           edgecore.ExecutionModeEnterpriseManaged,
 		TraceID:        session.TraceID,
-		WorkerID:       "dev-" + suffix,
+		WorkerID:       proxyID,
 		PolicySnapshot: session.PolicySnapshot,
 		Status:         edgecore.ExecutionStatusRunning,
 		StartedAt:      now,
@@ -294,6 +304,40 @@ func TestLLMIngest_RejectsNonLLMProxyExecution(t *testing.T) {
 	session, execution := createLLMIngestParents(t, s, "hookexec", edgecore.AdapterClaudeCodeHook)
 	rr := postLLMIngestWithAuth(t, s, llmIngestAuthContext(testLLMProxyRole, "llm-proxy-1"),
 		llmIngestBody("llm-proxy-1", session.SessionID, execution.ExecutionID, "evt-hook", "hi"))
+	assertEdgeErrorShape(t, rr, http.StatusForbidden, edgeErrCodeAccessDenied)
+}
+
+// TestLLMIngest_RejectsCrossProxyExecution is the Finding 3 regression: an
+// execution owned by proxy A (its WorkerID stamped to proxy A's identity at
+// creation) must not be appendable by an authenticated proxy B, even though
+// both satisfy every other check (same tenant, same session_id, adapter ==
+// llm-proxy). Without the ownership check, proxy B could corrupt proxy A's
+// audit trail merely by learning/guessing proxy A's execution id.
+func TestLLMIngest_RejectsCrossProxyExecution(t *testing.T) {
+	enableLLMIngest(t)
+	s, _ := newEdgeRouteTestServer(t)
+	setupLLMIngestRBAC(t, s)
+	// Execution owned by "llm-proxy-1".
+	session, execution := createLLMIngestParentsForProxy(t, s, "ownerA", edgecore.AdapterLLMProxy, "llm-proxy-1")
+	// A DIFFERENT authenticated proxy ("llm-proxy-2") tries to append to it.
+	// source_id in the body must match the authenticated principal to pass the
+	// earlier source-id check, so this submits as proxy-2 end to end.
+	rr := postLLMIngestWithAuth(t, s, llmIngestAuthContext(testLLMProxyRole, "llm-proxy-2"),
+		llmIngestBody("llm-proxy-2", session.SessionID, execution.ExecutionID, "evt-cross", "hi"))
+	assertEdgeErrorShape(t, rr, http.StatusForbidden, edgeErrCodeAccessDenied)
+}
+
+// TestLLMIngest_RejectsExecutionWithNoOwner proves an execution whose
+// WorkerID was never stamped (empty) is rejected rather than treated as
+// unowned/adoptable by whichever proxy asks first — fail closed on missing
+// ownership evidence, not just on a positive mismatch.
+func TestLLMIngest_RejectsExecutionWithNoOwner(t *testing.T) {
+	enableLLMIngest(t)
+	s, _ := newEdgeRouteTestServer(t)
+	setupLLMIngestRBAC(t, s)
+	session, execution := createLLMIngestParentsForProxy(t, s, "noowner", edgecore.AdapterLLMProxy, "")
+	rr := postLLMIngestWithAuth(t, s, llmIngestAuthContext(testLLMProxyRole, "llm-proxy-1"),
+		llmIngestBody("llm-proxy-1", session.SessionID, execution.ExecutionID, "evt-noowner", "hi"))
 	assertEdgeErrorShape(t, rr, http.StatusForbidden, edgeErrCodeAccessDenied)
 }
 

@@ -117,6 +117,15 @@ type LLMTokens struct {
 // TenantID, SessionID, ExecutionID, SourceEventID, ObservedAt, Kind. Content
 // and Messages are optional (a cost.recorded event carries neither); when
 // present they are redacted before persistence.
+//
+// StreamID, Sequence, and Final are ONLY meaningful for Kind ==
+// KindStreamChunk. They exist so a future reassembly pass (buffering chunks
+// by StreamID, ordering by Sequence, running one redaction scan once Final is
+// set) has a stable key to build on — see the "Streaming chunk redaction
+// limits" section of docs/edge/llm-proxy-governance.md. Per-chunk redaction is
+// NOT redaction-complete on its own: a secret split across a chunk boundary
+// can evade per-chunk scanning even though each chunk in isolation looks
+// clean. See EventDecision.RedactionComplete.
 type LLMEventEnvelope struct {
 	TenantID      string                     `json:"tenant_id"`
 	SessionID     string                     `json:"session_id"`
@@ -135,6 +144,19 @@ type LLMEventEnvelope struct {
 	CostUSD       float64                    `json:"cost_usd,omitempty"`
 	Labels        map[string]string          `json:"labels,omitempty"`
 	ArtifactPtrs  []edgecore.ArtifactPointer `json:"artifact_ptrs,omitempty"`
+	// StreamID groups the chunks of one streamed response. Required
+	// (recommended) on every llm.stream.chunk envelope belonging to a
+	// multi-chunk stream so a future reassembly pass can key a buffer by it.
+	StreamID string `json:"stream_id,omitempty"`
+	// Sequence is the chunk's 0-based position within its StreamID. Optional
+	// today (advisory ordering hint); required by a future reassembly pass.
+	Sequence *int `json:"sequence,omitempty"`
+	// Final marks the LAST chunk of a stream. When true, Content (or
+	// Messages) MUST carry the FULL aggregated response text for that
+	// StreamID — not just the last delta — so the mandatory redaction scan
+	// this envelope goes through (identical to llm.request.post) is a
+	// complete-content scan, not a fragment scan. See RedactionComplete.
+	Final bool `json:"final,omitempty"`
 }
 
 // LLMBatch is the wire batch: one source identity, an optional batch ID for
@@ -148,13 +170,31 @@ type LLMBatch struct {
 
 // EventDecision is the per-event advisory outcome returned to the proxy.
 type EventDecision struct {
-	SourceEventID   string   `json:"source_event_id"`
-	Kind            string   `json:"kind"`
-	Decision        string   `json:"decision"`
-	Redacted        bool     `json:"redacted"`
-	Truncated       bool     `json:"truncated,omitempty"`
-	RedactedContent string   `json:"redacted_content,omitempty"`
-	Findings        []string `json:"findings,omitempty"`
+	SourceEventID   string `json:"source_event_id"`
+	Kind            string `json:"kind"`
+	Decision        string `json:"decision"`
+	Redacted        bool   `json:"redacted"`
+	Truncated       bool   `json:"truncated,omitempty"`
+	RedactedContent string `json:"redacted_content,omitempty"`
+	// RedactedMessages carries the role-preserving redacted messages when the
+	// submitted envelope used the message-array shape (env.Messages), so a
+	// proxy forwarding a chat-shaped turn does not have to reconstruct roles
+	// from the flattened RedactedContent transcript. Derived from the SAME
+	// already-redacted "messages" entries RedactedContent flattens — never a
+	// second, independent redaction pass over raw content.
+	RedactedMessages []LLMMessage `json:"redacted_messages,omitempty"`
+	Findings         []string     `json:"findings,omitempty"`
+	// RedactionComplete reports whether this decision reflects a scan of the
+	// FULL turn content, as opposed to one fragment of a still-in-progress
+	// stream. True for every envelope kind except llm.stream.chunk. A
+	// llm.stream.chunk envelope is redaction-complete ONLY when it was
+	// submitted with final=true (which requires the full aggregated content,
+	// see LLMEventEnvelope.Final) — a non-final chunk is scanned in isolation
+	// and CAN miss a secret split across a chunk boundary. Proxies MUST NOT
+	// treat a RedactionComplete=false decision as a governance verdict for
+	// forwarding purposes: it is per-chunk-only and best-effort. No
+	// omitempty — false is a meaningful, load-bearing value on the wire.
+	RedactionComplete bool `json:"redaction_complete"`
 }
 
 // DropReport explains why one envelope was dropped from a successful Map call.
@@ -284,6 +324,25 @@ func validateEnvelope(env LLMEventEnvelope) error {
 	if len(env.Labels) > MaxLLMLabelEntries {
 		return fmt.Errorf("%w: labels has %d entries, max %d", ErrInvalidEnvelope, len(env.Labels), MaxLLMLabelEntries)
 	}
+	if len(env.StreamID) > MaxLLMShortFieldBytes {
+		return fmt.Errorf("%w: stream_id too long", ErrInvalidEnvelope)
+	}
+	if env.Sequence != nil && *env.Sequence < 0 {
+		return fmt.Errorf("%w: sequence must be non-negative", ErrInvalidEnvelope)
+	}
+	// Fail-closed interim mitigation for streaming-chunk redaction evasion (a
+	// secret split across a chunk boundary can dodge per-chunk scanning): a
+	// chunk marked final=true is the ONLY thing that can make a stream's
+	// redaction decision complete, so it MUST actually carry the full
+	// aggregated content/messages to scan. A final=true chunk with nothing to
+	// scan would let a proxy claim redaction-complete without ever submitting
+	// content that was actually classified — reject it outright rather than
+	// silently accepting a hollow claim. Checks every message's Content (not
+	// just len(Messages)>0): a non-empty Messages slice whose entries are all
+	// role-only with empty Content is just as hollow as an empty slice.
+	if env.Kind == KindStreamChunk && env.Final && !envHasScannableContent(env) {
+		return fmt.Errorf("%w: final stream chunk must carry the full aggregated content or messages for redaction scanning", ErrInvalidEnvelope)
+	}
 	// Reject negative accounting up front — buildLLMInput only emits values > 0,
 	// so a negative token count or cost would otherwise pass validation and be
 	// silently dropped, losing the accounting evidence.
@@ -336,6 +395,23 @@ func isValidDirection(direction string) bool {
 	return false
 }
 
+// envHasScannableContent reports whether the envelope carries ANY text a
+// redactor could actually scan: a non-empty Content, or at least one Message
+// with non-empty Content. A Messages slice whose entries are all role-only
+// (e.g. a tool-call-only turn with no text) does NOT count — len(Messages)>0
+// alone is not evidence of scannable text.
+func envHasScannableContent(env LLMEventEnvelope) bool {
+	if env.Content != "" {
+		return true
+	}
+	for _, m := range env.Messages {
+		if m.Content != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *Adapter) mapEnvelope(sourceID string, env LLMEventEnvelope) (edgecore.AgentActionEvent, EventDecision, error) {
 	inputRedacted, findingTypes, redactedFlag, truncatedFlag, err := a.redactInput(env)
 	if err != nil {
@@ -363,6 +439,14 @@ func (a *Adapter) mapEnvelope(sourceID string, env LLMEventEnvelope) (edgecore.A
 			}
 			labels["llm.finding."+ft] = "true"
 		}
+	}
+	// redactionComplete: see EventDecision.RedactionComplete. Stamped onto the
+	// persisted event too (not just the synchronous response) so an auditor
+	// querying the event store directly can tell a per-chunk-only scan apart
+	// from a complete-content one without re-deriving it from Kind/Final.
+	redactionComplete := env.Kind != KindStreamChunk || env.Final
+	if !redactionComplete {
+		labels["llm.redaction_incomplete"] = "true"
 	}
 
 	event := edgecore.AgentActionEvent{
@@ -416,13 +500,15 @@ func (a *Adapter) mapEnvelope(sourceID string, env LLMEventEnvelope) (edgecore.A
 	}
 
 	decision := EventDecision{
-		SourceEventID:   env.SourceEventID,
-		Kind:            env.Kind,
-		Decision:        DecisionRecord,
-		Redacted:        redactedFlag,
-		Truncated:       truncatedFlag,
-		RedactedContent: redactedContentString(inputRedacted),
-		Findings:        findingTypes,
+		SourceEventID:     env.SourceEventID,
+		Kind:              env.Kind,
+		Decision:          DecisionRecord,
+		Redacted:          redactedFlag,
+		Truncated:         truncatedFlag,
+		RedactedContent:   redactedContentString(inputRedacted),
+		RedactedMessages:  redactedMessagesFromInput(inputRedacted),
+		Findings:          findingTypes,
+		RedactionComplete: redactionComplete,
 	}
 	if redactedFlag || len(findingTypes) > 0 {
 		decision.Decision = DecisionRedact
@@ -623,6 +709,43 @@ func redactedContentString(inputRedacted map[string]any) string {
 		parts = append(parts, content)
 	}
 	return strings.Join(parts, "\n")
+}
+
+// redactedMessagesFromInput returns the role-preserving redacted messages for
+// a message-array-shaped envelope (env.Messages non-empty), so a proxy that
+// needs to forward a sanitized chat turn gets back structured {role, content}
+// entries instead of having to re-split the flattened RedactedContent
+// transcript (which is lossy: a role or content value containing "\n" or
+// ": " cannot be unambiguously parsed back out). Reads the SAME
+// inputRedacted["messages"] entries redactedContentString flattens, so this
+// is not a second redaction pass — just a second projection of the one
+// already-redacted result. Returns nil for content-only envelopes (no
+// "messages" key), leaving RedactedMessages absent from the JSON response via
+// omitempty.
+func redactedMessagesFromInput(inputRedacted map[string]any) []LLMMessage {
+	msgs, ok := inputRedacted["messages"].([]any)
+	if !ok || len(msgs) == 0 {
+		return nil
+	}
+	out := make([]LLMMessage, 0, len(msgs))
+	for _, m := range msgs {
+		entry, ok := m.(map[string]any)
+		if !ok {
+			continue
+		}
+		var msg LLMMessage
+		if role, ok := entry["role"].(string); ok {
+			msg.Role = role
+		}
+		if content, ok := entry["content"].(string); ok {
+			msg.Content = content
+		}
+		out = append(out, msg)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func uniqueFindingTypes(findings []edgecore.RedactionFinding) []string {

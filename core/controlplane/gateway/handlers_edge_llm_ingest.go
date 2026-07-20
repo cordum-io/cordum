@@ -117,10 +117,13 @@ func (s *server) handleEdgeLLMIngest(w http.ResponseWriter, r *http.Request) {
 	// runtime sidecar, the proxy is shared tenant-scoped infrastructure — it is
 	// NOT bound to the session's principal, but it MAY only annotate executions
 	// it created under the llm-proxy adapter (so it cannot pollute hook/MCP
-	// executions).
+	// executions) AND owns (execution.WorkerID must match the authenticated
+	// proxyID) -- otherwise one tenant's LLM proxy could append events onto
+	// another proxy's execution merely by learning/guessing its ExecutionID,
+	// corrupting that other proxy's audit trail.
 	parentValidator := newLLMIngestParentValidator(store)
 	for _, ev := range result.Events {
-		if err := parentValidator.validate(r.Context(), ev); err != nil {
+		if err := parentValidator.validate(r.Context(), ev, proxyID); err != nil {
 			if errors.Is(err, errLLMIngestParentDenied) {
 				writeEdgeForbidden(w, r, err)
 				return
@@ -269,7 +272,11 @@ func newLLMIngestParentValidator(store edgecore.Store) *llmIngestParentValidator
 	}
 }
 
-func (v *llmIngestParentValidator) validate(ctx context.Context, ev edgecore.AgentActionEvent) error {
+func (v *llmIngestParentValidator) validate(ctx context.Context, ev edgecore.AgentActionEvent, proxyID string) error {
+	proxyID = strings.TrimSpace(proxyID)
+	if proxyID == "" {
+		return errLLMIngestParentDenied
+	}
 	if _, err := v.session(ctx, ev.TenantID, ev.SessionID); err != nil {
 		return err
 	}
@@ -281,6 +288,15 @@ func (v *llmIngestParentValidator) validate(ctx context.Context, ev edgecore.Age
 		return edgeEventRequestError{status: http.StatusBadRequest, message: "event session_id does not match execution"}
 	}
 	if execution.Adapter != edgecore.AdapterLLMProxy {
+		return errLLMIngestParentDenied
+	}
+	// Ownership binding: the execution's WorkerID must have been stamped with
+	// the proxy's own identity when it was created. Without this check, ANY
+	// authenticated llm-proxy principal in the tenant could append events to
+	// ANY other llm-proxy execution by learning or guessing its ExecutionID —
+	// cross-proxy contamination of another proxy's conversation audit trail.
+	// Fail closed (reject, not merely log) on a missing or mismatched owner.
+	if strings.TrimSpace(execution.WorkerID) != proxyID {
 		return errLLMIngestParentDenied
 	}
 	return nil

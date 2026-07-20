@@ -10540,6 +10540,7 @@ components:
           description: Stable identifier of the trusted LLM proxy; must match the authenticated proxy principal.
     EdgeLLMMessage:
       type: object
+      required: [role, content]
       additionalProperties: false
       description: One role-tagged chat message; content is redacted before persistence.
       properties:
@@ -10549,7 +10550,7 @@ components:
         content:
           type: string
           maxLength: 1048576
-          description: Message text; bounded by the 1 MiB raw-envelope cap and redacted by the gateway before persistence.
+          description: Message text; bounded by the 1 MiB raw-envelope cap (MaxLLMRawEnvelopeBytes in core/edge/llmingest) and redacted by the gateway before persistence.
     EdgeLLMTokens:
       type: object
       additionalProperties: false
@@ -10589,6 +10590,14 @@ components:
           - llm.request.post
           - llm.stream.chunk
           - llm.cost.recorded
+          description: |
+            llm.stream.chunk carries one delta of a streamed response and is
+            scanned in isolation — a secret split across a chunk boundary can
+            evade per-chunk redaction. A chunk is redaction-complete (see
+            EdgeLLMEventDecision.redaction_complete) ONLY when submitted with
+            final=true and the full aggregated content/messages for the
+            stream. See docs/edge/llm-proxy-governance.md "Streaming chunk
+            redaction limits".
         outcome_status:
           type: string
           enum: ["", ok, failed, degraded]
@@ -10628,6 +10637,17 @@ components:
           maxItems: 32
           items:
             $ref: '#/components/schemas/EdgeArtifactPointer'
+        stream_id:
+          type: string
+          maxLength: 256
+          description: Groups the chunks of one streamed response. Only meaningful for kind=llm.stream.chunk; reserved as the key for a future server-side reassembly pass.
+        sequence:
+          type: integer
+          minimum: 0
+          description: 0-based chunk position within stream_id. Only meaningful for kind=llm.stream.chunk.
+        final:
+          type: boolean
+          description: Marks the last chunk of a stream. When true, content (or messages) MUST carry the full aggregated response text, not just the last delta — required for the mandatory redaction scan to be complete. A final=true chunk with no content or messages is rejected.
     EdgeLLMIngestRequest:
       type: object
       required: [source, events]
@@ -10653,7 +10673,7 @@ components:
             $ref: '#/components/schemas/EdgeLLMEventEnvelope'
     EdgeLLMEventDecision:
       type: object
-      required: [source_event_id, kind, decision, redacted]
+      required: [source_event_id, kind, decision, redacted, redaction_complete]
       additionalProperties: false
       description: Per-event advisory outcome. `decision=redact` means a secret was detected and the proxy should forward `redacted_content` (subject to `truncated`) instead of the original. This is NOT a policy allow/deny decision.
       properties:
@@ -10670,11 +10690,26 @@ components:
           type: boolean
         redacted_content:
           type: string
+        redacted_messages:
+          type: array
+          description: Role-preserving redacted chat messages when the submitted event used `messages`. Absent for content-only (single-string) envelopes.
+          items:
+            $ref: '#/components/schemas/EdgeLLMMessage'
         findings:
           type: array
           items:
             type: string
           description: Detected secret finding TYPES (never values), e.g. aws_credential, bearer_token, private_key.
+        redaction_complete:
+          type: boolean
+          description: |
+            Whether this decision reflects a scan of the FULL turn content.
+            Always true except for kind=llm.stream.chunk, where it is true
+            ONLY when the chunk was submitted with final=true (which requires
+            the full aggregated content). A non-final chunk is scanned in
+            isolation and can miss a secret split across a chunk boundary —
+            proxies MUST NOT treat redaction_complete=false as a governance
+            verdict for forwarding purposes.
     EdgeLLMIngestResponse:
       type: object
       required: [accepted_count]

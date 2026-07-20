@@ -23,6 +23,14 @@ export interface EdgeLLMEventEnvelope {
   /** @minLength 1 */
   source_event_id: string;
   observed_at: string;
+  /** llm.stream.chunk carries one delta of a streamed response and is
+scanned in isolation — a secret split across a chunk boundary can
+evade per-chunk redaction. A chunk is redaction-complete (see
+EdgeLLMEventDecision.redaction_complete) ONLY when submitted with
+final=true and the full aggregated content/messages for the
+stream. See docs/edge/llm-proxy-governance.md "Streaming chunk
+redaction limits".
+ */
   kind: EdgeLLMEventEnvelopeKind;
   outcome_status?: EdgeLLMEventEnvelopeOutcomeStatus;
   /** @maxLength 256 */
@@ -45,4 +53,16 @@ export interface EdgeLLMEventEnvelope {
   labels?: EdgeLLMEventEnvelopeLabels;
   /** @maxItems 32 */
   artifact_ptrs?: EdgeArtifactPointer[];
+  /**
+   * Groups the chunks of one streamed response. Only meaningful for kind=llm.stream.chunk; reserved as the key for a future server-side reassembly pass.
+   * @maxLength 256
+   */
+  stream_id?: string;
+  /**
+   * 0-based chunk position within stream_id. Only meaningful for kind=llm.stream.chunk.
+   * @minimum 0
+   */
+  sequence?: number;
+  /** Marks the last chunk of a stream. When true, content (or messages) MUST carry the full aggregated response text, not just the last delta — required for the mandatory redaction scan to be complete. A final=true chunk with no content or messages is rejected. */
+  final?: boolean;
 }
