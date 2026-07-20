@@ -13,7 +13,9 @@ import (
 	"time"
 
 	agentv1 "github.com/cordum-io/cap/v2/cordum/agent/v1"
+	capsdk "github.com/cordum-io/cap/v2/sdk/go"
 	"github.com/cordum/cordum/sdk/runtime"
+	"google.golang.org/protobuf/proto"
 )
 
 func newCtx(jobID, topic string) runtime.Context {
@@ -22,6 +24,22 @@ func newCtx(jobID, topic string) runtime.Context {
 			JobId: jobID,
 			Topic: topic,
 		},
+	}
+}
+
+func TestBuildHeartbeatSatisfiesCAPEnvelopeValidation(t *testing.T) {
+	worker := workerDef{ID: "worker-a", Pool: "pool-a", Capacity: 2}
+	payload, err := buildHeartbeat(worker, 1, 0.25, 0.5)
+	if err != nil {
+		t.Fatalf("buildHeartbeat: %v", err)
+	}
+
+	var packet agentv1.BusPacket
+	if err := proto.Unmarshal(payload, &packet); err != nil {
+		t.Fatalf("unmarshal heartbeat: %v", err)
+	}
+	if err := capsdk.ValidateBusPacket(&packet); err != nil {
+		t.Fatalf("CAP rejected demo heartbeat: %v", err)
 	}
 }
 
@@ -179,10 +197,10 @@ func TestHandlerEmitsThreeStructuredRecordsOnSuccess(t *testing.T) {
 
 func TestHandlerVerdictBuckets(t *testing.T) {
 	cases := []struct {
-		name       string
-		amount     float64
-		wantRule   string
-		wantVerd   string
+		name     string
+		amount   float64
+		wantRule string
+		wantVerd string
 	}{
 		{"low", 40, "bank-transfer-allow", "allow"},
 		{"review", 200, "bank-transfer-review", "require_approval"},

@@ -89,15 +89,14 @@ export const getListAllWorkflowRunsQueryOptions = <
     Awaited<ReturnType<typeof listAllWorkflowRuns>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListAllWorkflowRunsQueryResult = NonNullable<
   Awaited<ReturnType<typeof listAllWorkflowRuns>>
 >;
 export type ListAllWorkflowRunsQueryError =
-  | UnauthorizedResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | InternalServerErrorResponse;
 
 export function useListAllWorkflowRuns<
   TData = Awaited<ReturnType<typeof listAllWorkflowRuns>>,
@@ -123,7 +122,7 @@ export function useListAllWorkflowRuns<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListAllWorkflowRuns<
   TData = Awaited<ReturnType<typeof listAllWorkflowRuns>>,
@@ -148,7 +147,9 @@ export function useListAllWorkflowRuns<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListAllWorkflowRuns<
   TData = Awaited<ReturnType<typeof listAllWorkflowRuns>>,
   TError = UnauthorizedResponse | InternalServerErrorResponse,
@@ -164,7 +165,9 @@ export function useListAllWorkflowRuns<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List workflow runs across all workflows
  */
@@ -184,13 +187,15 @@ export function useListAllWorkflowRuns<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListAllWorkflowRunsQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -215,9 +220,7 @@ export const getGetWorkflowRunQueryKey = (id?: string) => {
 export const getGetWorkflowRunQueryOptions = <
   TData = Awaited<ReturnType<typeof getWorkflowRun>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -243,23 +246,19 @@ export const getGetWorkflowRunQueryOptions = <
     Awaited<ReturnType<typeof getWorkflowRun>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetWorkflowRunQueryResult = NonNullable<
   Awaited<ReturnType<typeof getWorkflowRun>>
 >;
 export type GetWorkflowRunQueryError =
-  | UnauthorizedResponse
-  | NotFoundResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse;
 
 export function useGetWorkflowRun<
   TData = Awaited<ReturnType<typeof getWorkflowRun>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options: {
@@ -277,14 +276,12 @@ export function useGetWorkflowRun<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetWorkflowRun<
   TData = Awaited<ReturnType<typeof getWorkflowRun>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -301,13 +298,13 @@ export function useGetWorkflowRun<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetWorkflowRun<
   TData = Awaited<ReturnType<typeof getWorkflowRun>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -316,7 +313,9 @@ export function useGetWorkflowRun<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get workflow run detail
  */
@@ -324,9 +323,7 @@ export function useGetWorkflowRun<
 export function useGetWorkflowRun<
   TData = Awaited<ReturnType<typeof getWorkflowRun>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -335,13 +332,15 @@ export function useGetWorkflowRun<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetWorkflowRunQueryOptions(id, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -360,9 +359,7 @@ export const deleteWorkflowRun = (id: string) => {
 
 export const getDeleteWorkflowRunMutationOptions = <
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -403,18 +400,14 @@ export type DeleteWorkflowRunMutationResult = NonNullable<
 >;
 
 export type DeleteWorkflowRunMutationError =
-  | UnauthorizedResponse
-  | NotFoundResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse;
 
 /**
  * @summary Delete a workflow run
  */
 export const useDeleteWorkflowRun = <
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
   TContext = unknown,
 >(
   options?: {
@@ -454,9 +447,7 @@ export const getGetRunTimelineQueryKey = (id?: string) => {
 export const getGetRunTimelineQueryOptions = <
   TData = Awaited<ReturnType<typeof getRunTimeline>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -482,23 +473,19 @@ export const getGetRunTimelineQueryOptions = <
     Awaited<ReturnType<typeof getRunTimeline>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetRunTimelineQueryResult = NonNullable<
   Awaited<ReturnType<typeof getRunTimeline>>
 >;
 export type GetRunTimelineQueryError =
-  | UnauthorizedResponse
-  | NotFoundResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse;
 
 export function useGetRunTimeline<
   TData = Awaited<ReturnType<typeof getRunTimeline>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options: {
@@ -516,14 +503,12 @@ export function useGetRunTimeline<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetRunTimeline<
   TData = Awaited<ReturnType<typeof getRunTimeline>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -540,13 +525,13 @@ export function useGetRunTimeline<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetRunTimeline<
   TData = Awaited<ReturnType<typeof getRunTimeline>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -555,7 +540,9 @@ export function useGetRunTimeline<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get timeline events for a run
  */
@@ -563,9 +550,7 @@ export function useGetRunTimeline<
 export function useGetRunTimeline<
   TData = Awaited<ReturnType<typeof getRunTimeline>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -574,13 +559,15 @@ export function useGetRunTimeline<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetRunTimelineQueryOptions(id, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -605,9 +592,7 @@ export const getGetRunChatQueryKey = (id?: string) => {
 export const getGetRunChatQueryOptions = <
   TData = Awaited<ReturnType<typeof getRunChat>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -633,23 +618,19 @@ export const getGetRunChatQueryOptions = <
     Awaited<ReturnType<typeof getRunChat>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetRunChatQueryResult = NonNullable<
   Awaited<ReturnType<typeof getRunChat>>
 >;
 export type GetRunChatQueryError =
-  | UnauthorizedResponse
-  | NotFoundResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse;
 
 export function useGetRunChat<
   TData = Awaited<ReturnType<typeof getRunChat>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options: {
@@ -667,14 +648,12 @@ export function useGetRunChat<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetRunChat<
   TData = Awaited<ReturnType<typeof getRunChat>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -691,13 +670,13 @@ export function useGetRunChat<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetRunChat<
   TData = Awaited<ReturnType<typeof getRunChat>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -706,7 +685,9 @@ export function useGetRunChat<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get chat messages for a run
  */
@@ -714,9 +695,7 @@ export function useGetRunChat<
 export function useGetRunChat<
   TData = Awaited<ReturnType<typeof getRunChat>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -725,13 +704,15 @@ export function useGetRunChat<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetRunChatQueryOptions(id, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -899,10 +880,7 @@ export type RerunWorkflowMutationResult = NonNullable<
 >;
 export type RerunWorkflowMutationBody = RerunWorkflowBody;
 export type RerunWorkflowMutationError =
-  | Error
-  | UnauthorizedResponse
-  | NotFoundResponse
-  | InternalServerErrorResponse;
+  Error | UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse;
 
 /**
  * @summary Re-run a workflow (optionally from a specific step)
@@ -995,10 +973,7 @@ export type CancelWorkflowRunMutationResult = NonNullable<
 >;
 
 export type CancelWorkflowRunMutationError =
-  | UnauthorizedResponse
-  | NotFoundResponse
-  | Error
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | NotFoundResponse | Error | InternalServerErrorResponse;
 
 /**
  * @summary Cancel a running workflow run

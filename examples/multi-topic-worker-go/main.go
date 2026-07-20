@@ -193,6 +193,9 @@ func main() {
 		NATS:     nc,
 		Store:    store,
 		SenderID: workerID,
+		// Example worker: no trust identity, handshake off. CAP fails
+		// closed at startup without this explicit unsigned-legacy opt-in.
+		AllowUnsigned: true,
 	}
 
 	// ---- the canonical pattern: one dispatcher, registered everywhere ----

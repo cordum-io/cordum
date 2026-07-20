@@ -99,7 +99,7 @@ export const getVerifyAuditChainQueryOptions = <
     Awaited<ReturnType<typeof verifyAuditChain>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type VerifyAuditChainQueryResult = NonNullable<
@@ -141,7 +141,7 @@ export function useVerifyAuditChain<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useVerifyAuditChain<
   TData = Awaited<ReturnType<typeof verifyAuditChain>>,
@@ -171,7 +171,9 @@ export function useVerifyAuditChain<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useVerifyAuditChain<
   TData = Awaited<ReturnType<typeof verifyAuditChain>>,
   TError =
@@ -192,7 +194,9 @@ export function useVerifyAuditChain<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Verify audit chain integrity
  */
@@ -217,13 +221,15 @@ export function useVerifyAuditChain<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getVerifyAuditChainQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -294,7 +300,7 @@ export const getGetAuditEventsQueryOptions = <
     Awaited<ReturnType<typeof getAuditEvents>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetAuditEventsQueryResult = NonNullable<
@@ -332,7 +338,7 @@ export function useGetAuditEvents<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetAuditEvents<
   TData = Awaited<ReturnType<typeof getAuditEvents>>,
@@ -358,7 +364,9 @@ export function useGetAuditEvents<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetAuditEvents<
   TData = Awaited<ReturnType<typeof getAuditEvents>>,
   TError =
@@ -375,7 +383,9 @@ export function useGetAuditEvents<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List audit events from the SIEM feed
  */
@@ -396,13 +406,15 @@ export function useGetAuditEvents<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetAuditEventsQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -468,7 +480,7 @@ export const getExportAuditComplianceQueryOptions = <
     Awaited<ReturnType<typeof exportAuditCompliance>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ExportAuditComplianceQueryResult = NonNullable<
@@ -510,7 +522,7 @@ export function useExportAuditCompliance<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useExportAuditCompliance<
   TData = Awaited<ReturnType<typeof exportAuditCompliance>>,
@@ -540,7 +552,9 @@ export function useExportAuditCompliance<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useExportAuditCompliance<
   TData = Awaited<ReturnType<typeof exportAuditCompliance>>,
   TError =
@@ -561,7 +575,9 @@ export function useExportAuditCompliance<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Stream compliance audit export
  */
@@ -586,13 +602,15 @@ export function useExportAuditCompliance<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getExportAuditComplianceQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -638,15 +656,14 @@ export const getGetAuditExportHealthQueryOptions = <
     Awaited<ReturnType<typeof getAuditExportHealth>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetAuditExportHealthQueryResult = NonNullable<
   Awaited<ReturnType<typeof getAuditExportHealth>>
 >;
 export type GetAuditExportHealthQueryError =
-  | UnauthorizedResponse
-  | TierLimitResponse;
+  UnauthorizedResponse | TierLimitResponse;
 
 export function useGetAuditExportHealth<
   TData = Awaited<ReturnType<typeof getAuditExportHealth>>,
@@ -671,7 +688,7 @@ export function useGetAuditExportHealth<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetAuditExportHealth<
   TData = Awaited<ReturnType<typeof getAuditExportHealth>>,
@@ -695,7 +712,9 @@ export function useGetAuditExportHealth<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetAuditExportHealth<
   TData = Awaited<ReturnType<typeof getAuditExportHealth>>,
   TError = UnauthorizedResponse | TierLimitResponse,
@@ -710,7 +729,9 @@ export function useGetAuditExportHealth<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Audit export health
  */
@@ -729,13 +750,15 @@ export function useGetAuditExportHealth<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetAuditExportHealthQueryOptions(options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -781,15 +804,14 @@ export const getGetAuditExportConfigQueryOptions = <
     Awaited<ReturnType<typeof getAuditExportConfig>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetAuditExportConfigQueryResult = NonNullable<
   Awaited<ReturnType<typeof getAuditExportConfig>>
 >;
 export type GetAuditExportConfigQueryError =
-  | UnauthorizedResponse
-  | ForbiddenResponse;
+  UnauthorizedResponse | ForbiddenResponse;
 
 export function useGetAuditExportConfig<
   TData = Awaited<ReturnType<typeof getAuditExportConfig>>,
@@ -814,7 +836,7 @@ export function useGetAuditExportConfig<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetAuditExportConfig<
   TData = Awaited<ReturnType<typeof getAuditExportConfig>>,
@@ -838,7 +860,9 @@ export function useGetAuditExportConfig<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetAuditExportConfig<
   TData = Awaited<ReturnType<typeof getAuditExportConfig>>,
   TError = UnauthorizedResponse | ForbiddenResponse,
@@ -853,7 +877,9 @@ export function useGetAuditExportConfig<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Audit export config
  */
@@ -872,13 +898,15 @@ export function useGetAuditExportConfig<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetAuditExportConfigQueryOptions(options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 

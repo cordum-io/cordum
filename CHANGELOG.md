@@ -7,6 +7,38 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+#### CAP + scheduler/gateway — authenticated P-256 worker proof and bound session authority replace self-asserted handshake trust (2026-07-19, task-a4b71af7)
+
+- Added one protobuf challenge/authenticate/result contract on
+  `sys.worker.handshake.challenge` and
+  `sys.worker.handshake.authenticate`. Scheduler-signed P-256 challenges,
+  worker P-256 proof, tenant/worker/agent/key/audience correlation, atomic Redis
+  challenge consumption, and Ed25519 active-session state are all required
+  before a token is minted. The fixed audience is `cordum-scheduler`.
+- The legacy generic capability `Handshake`, old handshake/renew subjects,
+  heartbeats, NATS identity, and one-time bearer credentials cannot mint a
+  session. In WARN, tokenless heartbeat/capability data is telemetry only and
+  cannot refresh trusted liveness/readiness or the dispatch snapshot.
+- Stable Go, Python, and Node CAP artifacts expose equivalent public worker
+  trust APIs, strict validation, lifecycle/renewal, and installed-artifact real
+  NATS interoperability evidence. Renewal requires the current bound token and
+  replaces/revokes the prior JTI.
+- Scheduler/gateway boot now requires an explicit compatible class:
+  `off` only with `authority`, or `warn`/`enforce` with
+  `warn`/`telemetry`. The recommended rollout remains `off`+`authority` ->
+  `warn`+`warn` -> `enforce`+`telemetry`. Active handshake
+  refuses legacy `WORKER_ATTESTATION=warn|enforce`, partial/mismatched P-256
+  scheduler proof, missing Ed25519 signing/trust authority, or unavailable
+  Redis/config/audit dependencies.
+- Compose, release/HA Compose, Kubernetes base, and Helm ship the explicit
+  compatibility default `off`+`authority`. Helm active mode accepts secret refs
+  only and fails rendering on incomplete proof/signing refs. The strict
+  deployment validator and its mutation self-test are required in CI lint.
+- Documentation now covers enrollment, rotation/revocation, renewal,
+  least-privilege NATS TLS/auth/ACLs, secret-safe diagnostics, strict rollout
+  and rollback, and rejection remediation. No certification, adopter, or
+  external interoperability claim is implied by repository-local evidence.
+
 #### core/controlplane/scheduler + gateway + core/workflow — control-plane service tokens + subject-binding harden the session-token gate for enforce (2026-06-03, task-948d913b)
 
 - Three entangled hardenings of the Phase-2 session-token gate (`CORDUM_SDK_HANDSHAKE`) so it can run in `enforce`:

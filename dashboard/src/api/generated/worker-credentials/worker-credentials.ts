@@ -23,7 +23,7 @@ import type {
 
 import type {
   BadRequestResponse,
-  CreateWorkerCredentialBody,
+  CreateWorkerCredentialRequest,
   ForbiddenResponse,
   ListWorkerCredentials200,
   NotFoundResponse,
@@ -52,9 +52,7 @@ export const getListWorkerCredentialsQueryKey = () => {
 export const getListWorkerCredentialsQueryOptions = <
   TData = Awaited<ReturnType<typeof listWorkerCredentials>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
 >(options?: {
   query?: Partial<
     UseQueryOptions<
@@ -76,23 +74,19 @@ export const getListWorkerCredentialsQueryOptions = <
     Awaited<ReturnType<typeof listWorkerCredentials>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListWorkerCredentialsQueryResult = NonNullable<
   Awaited<ReturnType<typeof listWorkerCredentials>>
 >;
 export type ListWorkerCredentialsQueryError =
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | ServiceUnavailableResponse;
+  UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse;
 
 export function useListWorkerCredentials<
   TData = Awaited<ReturnType<typeof listWorkerCredentials>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
 >(
   options: {
     query: Partial<
@@ -113,14 +107,12 @@ export function useListWorkerCredentials<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListWorkerCredentials<
   TData = Awaited<ReturnType<typeof listWorkerCredentials>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
 >(
   options?: {
     query?: Partial<
@@ -140,13 +132,13 @@ export function useListWorkerCredentials<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListWorkerCredentials<
   TData = Awaited<ReturnType<typeof listWorkerCredentials>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
 >(
   options?: {
     query?: Partial<
@@ -158,7 +150,9 @@ export function useListWorkerCredentials<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List external worker credentials
  */
@@ -166,9 +160,7 @@ export function useListWorkerCredentials<
 export function useListWorkerCredentials<
   TData = Awaited<ReturnType<typeof listWorkerCredentials>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
 >(
   options?: {
     query?: Partial<
@@ -180,13 +172,15 @@ export function useListWorkerCredentials<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListWorkerCredentialsQueryOptions(options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -197,14 +191,14 @@ export function useListWorkerCredentials<
  * @summary Create or rotate a worker credential
  */
 export const createWorkerCredential = (
-  createWorkerCredentialBody: CreateWorkerCredentialBody,
+  createWorkerCredentialRequest: CreateWorkerCredentialRequest,
   signal?: AbortSignal,
 ) => {
   return apiClient<WorkerCredentialIssue | WorkerCredentialIssue>({
     url: `/api/v1/workers/credentials`,
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    data: createWorkerCredentialBody,
+    data: createWorkerCredentialRequest,
     signal,
   });
 };
@@ -221,13 +215,13 @@ export const getCreateWorkerCredentialMutationOptions = <
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof createWorkerCredential>>,
     TError,
-    { data: CreateWorkerCredentialBody },
+    { data: CreateWorkerCredentialRequest },
     TContext
   >;
 }): UseMutationOptions<
   Awaited<ReturnType<typeof createWorkerCredential>>,
   TError,
-  { data: CreateWorkerCredentialBody },
+  { data: CreateWorkerCredentialRequest },
   TContext
 > => {
   const mutationKey = ["createWorkerCredential"];
@@ -241,7 +235,7 @@ export const getCreateWorkerCredentialMutationOptions = <
 
   const mutationFn: MutationFunction<
     Awaited<ReturnType<typeof createWorkerCredential>>,
-    { data: CreateWorkerCredentialBody }
+    { data: CreateWorkerCredentialRequest }
   > = (props) => {
     const { data } = props ?? {};
 
@@ -254,7 +248,7 @@ export const getCreateWorkerCredentialMutationOptions = <
 export type CreateWorkerCredentialMutationResult = NonNullable<
   Awaited<ReturnType<typeof createWorkerCredential>>
 >;
-export type CreateWorkerCredentialMutationBody = CreateWorkerCredentialBody;
+export type CreateWorkerCredentialMutationBody = CreateWorkerCredentialRequest;
 export type CreateWorkerCredentialMutationError =
   | BadRequestResponse
   | UnauthorizedResponse
@@ -278,7 +272,7 @@ export const useCreateWorkerCredential = <
     mutation?: UseMutationOptions<
       Awaited<ReturnType<typeof createWorkerCredential>>,
       TError,
-      { data: CreateWorkerCredentialBody },
+      { data: CreateWorkerCredentialRequest },
       TContext
     >;
   },
@@ -286,7 +280,7 @@ export const useCreateWorkerCredential = <
 ): UseMutationResult<
   Awaited<ReturnType<typeof createWorkerCredential>>,
   TError,
-  { data: CreateWorkerCredentialBody },
+  { data: CreateWorkerCredentialRequest },
   TContext
 > => {
   const mutationOptions = getCreateWorkerCredentialMutationOptions(options);

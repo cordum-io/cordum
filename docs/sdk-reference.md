@@ -299,6 +299,10 @@ func main() {
         NATSURL:  os.Getenv("NATS_URL"),
         RedisURL: os.Getenv("REDIS_URL"),
         SenderID: "my-worker",
+        // Required when the worker holds no signing keys: CAP fails closed
+        // at startup otherwise. Provision worker trust keys instead of this
+        // for anything beyond local development -- see docs/sdk/handshake.md.
+        AllowUnsigned: true,
     }
 
     runtime.Register(agent, "job.my-pack.echo", func(ctx runtime.Context, in EchoInput) (EchoOutput, error) {
@@ -651,9 +655,10 @@ func TestFullPipeline(t *testing.T) {
     // 2. Start Redis (use miniredis or a container)
     // 3. Create worker
     agent := &runtime.Agent{
-        NATSURL:  natsURL,
-        RedisURL: redisURL,
-        SenderID: "test-worker",
+        NATSURL:       natsURL,
+        RedisURL:      redisURL,
+        SenderID:      "test-worker",
+        AllowUnsigned: true, // test worker: no signing keys, see docs/sdk/handshake.md
     }
     runtime.Register(agent, "job.test.echo", echoHandler)
     agent.Start()
