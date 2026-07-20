@@ -1,8 +1,10 @@
 package workflow
 
 import (
+	"context"
 	"errors"
 	"testing"
+	"time"
 
 	jobidentity "github.com/cordum/cordum/core/protocol/identity"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -58,6 +60,56 @@ func TestCloneIdentityBindingPreservesUnknownsWithoutAliasing(t *testing.T) {
 	cloned.ActorId = "changed"
 	if original.GetActorId() != "principal-a" {
 		t.Fatal("cloneIdentityBinding returned an alias")
+	}
+}
+
+func TestHandleJobResultProductionRejectsRunIdentityMismatchBeforeMutation(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer func() { _ = store.Close() }()
+	ctx := context.Background()
+	wf := &Workflow{ID: "wf-identity", OrgID: "tenant-a", Steps: map[string]*Step{
+		"step": {ID: "step", Type: StepTypeWorker, Topic: "job.test"},
+	}}
+	if err := store.SaveWorkflow(ctx, wf); err != nil {
+		t.Fatalf("SaveWorkflow() error = %v", err)
+	}
+	now := time.Now().UTC()
+	run := productionIdentityRun()
+	run.ID, run.WorkflowID, run.Status = "run-identity", wf.ID, RunStatusRunning
+	run.CreatedAt, run.UpdatedAt = now, now
+	run.Steps = map[string]*StepRun{"step": {
+		StepID: "step", JobID: "run-identity:step@1", Status: StepStatusRunning,
+	}}
+	if err := store.CreateRun(ctx, run); err != nil {
+		t.Fatalf("CreateRun() error = %v", err)
+	}
+	engine := NewEngine(store, &recordingBus{}).WithProductionIdentityEnforcement(true)
+	spoofed := &pb.IdentityBinding{TenantId: "tenant-a", PrincipalId: "admin", ActorId: "admin"}
+
+	err := engine.HandleJobResult(ctx, &pb.JobResult{
+		JobId: "run-identity:step@1", Status: pb.JobStatus_JOB_STATUS_SUCCEEDED, Identity: spoofed,
+	})
+	if err != nil {
+		t.Fatalf("HandleJobResult() error = %v", err)
+	}
+	stored, err := store.GetRun(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("GetRun() error = %v", err)
+	}
+	if got := stored.Steps["step"].Status; got != StepStatusRunning {
+		t.Fatalf("step status = %q, want unchanged running", got)
+	}
+	if err := engine.HandleJobResult(ctx, &pb.JobResult{
+		JobId: "run-identity:step@1", Status: pb.JobStatus_JOB_STATUS_SUCCEEDED, Identity: run.Identity,
+	}); err != nil {
+		t.Fatalf("HandleJobResult(valid identity) error = %v", err)
+	}
+	stored, err = store.GetRun(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("GetRun(valid identity) error = %v", err)
+	}
+	if got := stored.Steps["step"].Status; got != StepStatusSucceeded {
+		t.Fatalf("step status = %q, want succeeded for canonical identity", got)
 	}
 }
 

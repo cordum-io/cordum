@@ -1594,6 +1594,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			pkt := &pb.BusPacket{
 				TraceId:         traceID,
 				SenderId:        defaultSenderID,
+				Identity:        req.GetIdentity(),
 				CreatedAt:       timestamppb.Now(),
 				ProtocolVersion: protocolVersionV1,
 				Payload: &pb.BusPacket_JobResult{
@@ -1601,6 +1602,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 						JobId:    jobID,
 						WorkerId: defaultSenderID,
 						Status:   pb.JobStatus_JOB_STATUS_SUCCEEDED,
+						Identity: req.GetIdentity(),
 					},
 				},
 			}
@@ -3184,14 +3186,26 @@ func (e *Engine) publishCancel(jobID, reason string) {
 	if e.bus == nil {
 		return
 	}
+	var identity *pb.IdentityBinding
+	if e.productionIdentity.Load() {
+		var err error
+		identity, err = e.loadProductionJobIdentity(e.ctx, jobID)
+		if err != nil {
+			slog.Error("production job cancel identity unavailable; cancel not published",
+				"job_id", jobID, "error", err)
+			return
+		}
+	}
 	cancelReq := &pb.JobCancel{
 		JobId:       jobID,
 		Reason:      reason,
 		RequestedBy: defaultSenderID,
+		Identity:    identity,
 	}
 	packet := &pb.BusPacket{
 		TraceId:         jobID,
 		SenderId:        defaultSenderID,
+		Identity:        identity,
 		CreatedAt:       timestamppb.Now(),
 		ProtocolVersion: protocolVersionV1,
 		Payload:         &pb.BusPacket_JobCancel{JobCancel: cancelReq},
@@ -3205,6 +3219,13 @@ func (e *Engine) publishCancel(jobID, reason string) {
 func (e *Engine) replayApprovalPublish(traceID string, req *pb.JobRequest, approval ApprovalRecord) error {
 	if req == nil {
 		return fmt.Errorf("approval replay requires job request")
+	}
+	if e.productionIdentity.Load() {
+		normalized, err := jobidentity.NormalizeProductionJobRequest(req, req.GetIdentity())
+		if err != nil {
+			return fmt.Errorf("approval replay identity: %w", err)
+		}
+		req = normalized
 	}
 	switch approval.PublishTarget {
 	case ApprovalPublishTargetSubmit:
@@ -3224,15 +3245,18 @@ func (e *Engine) replayApprovalPublish(traceID string, req *pb.JobRequest, appro
 		packet := &pb.BusPacket{
 			TraceId:         traceID,
 			SenderId:        defaultSenderID,
+			Identity:        req.GetIdentity(),
 			CreatedAt:       timestamppb.Now(),
 			ProtocolVersion: protocolVersionV1,
 			Payload: &pb.BusPacket_JobResult{
 				JobResult: &pb.JobResult{
 					JobId:         jobID,
+					WorkerId:      defaultSenderID,
 					Status:        pb.JobStatus_JOB_STATUS_DENIED,
 					ErrorCode:     "approval_rejected",
 					ErrorCodeEnum: pb.ErrorCode_ERROR_CODE_SAFETY_DENIED,
 					ErrorMessage:  errorMessage,
+					Identity:      req.GetIdentity(),
 				},
 			},
 		}

@@ -8,6 +8,8 @@ import (
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/capprofile"
+	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/model"
 	jobidentity "github.com/cordum/cordum/core/protocol/identity"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/protobuf/proto"
@@ -83,5 +85,39 @@ func TestProductionHTTPIdentityBindsInitiatingCaller(t *testing.T) {
 	}
 	if got.GetTenantId() != "tenant-a" || got.GetPrincipalId() != "principal-a" || got.GetActorId() != "principal-a" {
 		t.Fatalf("productionHTTPIdentity() = %#v", got)
+	}
+}
+
+func TestPublishApprovalRepairProductionRejectsStoredIdentityMismatch(t *testing.T) {
+	s := &server{capProfile: capprofile.Production}
+	authority := &pb.IdentityBinding{
+		TenantId: "tenant-a", PrincipalId: "principal-a", ActorId: "actor-a",
+	}
+	repaired := &store.ApprovalRepairResult{
+		JobID: "job-1",
+		Request: &pb.JobRequest{
+			JobId: "job-1", Topic: "job.test", TenantId: "tenant-attacker", Identity: authority,
+		},
+		ApprovalRecord: model.ApprovalRecord{PublishTarget: model.ApprovalPublishTargetDLQAndResult},
+	}
+
+	err := s.publishApprovalRepair(context.Background(), repaired)
+	if !errors.Is(err, jobidentity.ErrProductionIdentityMismatch) {
+		t.Fatalf("publishApprovalRepair() error = %v, want identity mismatch", err)
+	}
+}
+
+func TestApprovalRejectionPacketEchoesCanonicalIdentity(t *testing.T) {
+	identity := &pb.IdentityBinding{
+		TenantId: "tenant-a", PrincipalId: "principal-a", ActorId: "actor-a",
+	}
+
+	packet := approvalRejectionPacket("trace-1", "job-1", "denied", identity)
+
+	if !proto.Equal(packet.GetIdentity(), identity) || !proto.Equal(packet.GetJobResult().GetIdentity(), identity) {
+		t.Fatalf("result identities = envelope:%v payload:%v", packet.GetIdentity(), packet.GetJobResult().GetIdentity())
+	}
+	if packet.GetJobResult().GetWorkerId() != "api-gateway" {
+		t.Fatalf("worker id = %q, want api-gateway", packet.GetJobResult().GetWorkerId())
 	}
 }

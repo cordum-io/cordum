@@ -116,7 +116,7 @@ func (e *Engine) validateProductionJobEventIdentity(
 	if err != nil {
 		return err
 	}
-	if jobIdentity.GetTenantId() != payloadIdentity.GetTenantId() {
+	if !sameProductionIdentity(jobIdentity, payloadIdentity) {
 		return ErrProductionResultIdentityMismatch
 	}
 	return nil

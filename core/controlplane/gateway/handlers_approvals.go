@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/auth/servicetoken"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
@@ -790,16 +791,38 @@ func (s *server) approvalRepairPlan(ctx context.Context, jobID string) (*store.A
 	return snapshot, plan, nil
 }
 
+func approvalRejectionPacket(
+	traceID, jobID, errorMessage string,
+	identity *pb.IdentityBinding,
+) *pb.BusPacket {
+	return &pb.BusPacket{
+		TraceId:         traceID,
+		SenderId:        servicetoken.IdentityGateway,
+		Identity:        identity,
+		CreatedAt:       timestamppb.Now(),
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
+		Payload: &pb.BusPacket_JobResult{JobResult: &pb.JobResult{
+			JobId:         jobID,
+			WorkerId:      servicetoken.IdentityGateway,
+			Status:        pb.JobStatus_JOB_STATUS_DENIED,
+			ErrorCode:     "approval_rejected",
+			ErrorCodeEnum: pb.ErrorCode_ERROR_CODE_SAFETY_DENIED,
+			ErrorMessage:  errorMessage,
+			Identity:      identity,
+		}},
+	}
+}
+
 func (s *server) publishApprovalRepair(ctx context.Context, repaired *store.ApprovalRepairResult) error {
 	if repaired == nil || repaired.Request == nil || repaired.ApprovalRecord.PublishTarget == "" {
 		return nil
 	}
+	request, err := s.normalizeStoredJobRequest(repaired.Request)
+	if err != nil {
+		return fmt.Errorf("approval repair stored identity: %w", err)
+	}
 	switch repaired.ApprovalRecord.PublishTarget {
 	case model.ApprovalPublishTargetSubmit:
-		request, err := s.normalizeStoredJobRequest(repaired.Request)
-		if err != nil {
-			return fmt.Errorf("approval repair stored identity: %w", err)
-		}
 		packet := jobRequestPacket(repaired.TraceID, "api-gateway", request)
 		if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
 			return err
@@ -809,25 +832,14 @@ func (s *server) publishApprovalRepair(ctx context.Context, repaired *store.Appr
 		if msg := strings.TrimSpace(repaired.ApprovalRecord.Reason); msg != "" {
 			errorMessage = msg
 		}
-		packet := &pb.BusPacket{
-			TraceId:         repaired.TraceID,
-			SenderId:        "api-gateway",
-			CreatedAt:       timestamppb.Now(),
-			ProtocolVersion: capsdk.DefaultProtocolVersion,
-			Payload: &pb.BusPacket_JobResult{
-				JobResult: &pb.JobResult{
-					JobId:         repaired.JobID,
-					Status:        pb.JobStatus_JOB_STATUS_DENIED,
-					ErrorCode:     "approval_rejected",
-					ErrorCodeEnum: pb.ErrorCode_ERROR_CODE_SAFETY_DENIED,
-					ErrorMessage:  errorMessage,
-				},
-			},
-		}
+		packet := approvalRejectionPacket(
+			repaired.TraceID, repaired.JobID, errorMessage, request.GetIdentity(),
+		)
 		if err := s.bus.Publish(capsdk.SubjectDLQ, packet); err != nil {
 			return err
 		}
 		if repaired.ApprovalRecord.PublishTarget == model.ApprovalPublishTargetDLQAndResult {
+			s.attachServiceToken(packet)
 			if err := s.bus.Publish(capsdk.SubjectResult, packet); err != nil {
 				return err
 			}
@@ -1075,6 +1087,11 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 		req, err := s.jobStore.GetJobRequest(ctx, jobID)
 		if err != nil {
 			result = handlerResult{http.StatusNotFound, "job request not found"}
+			return nil
+		}
+		req, err = s.normalizeStoredJobRequest(req)
+		if err != nil {
+			result = handlerResult{http.StatusConflict, "stored job identity is invalid"}
 			return nil
 		}
 
@@ -1481,6 +1498,11 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 			result = handlerResult{http.StatusNotFound, "job request not found"}
 			return nil
 		}
+		req, reqErr = s.normalizeStoredJobRequest(req)
+		if reqErr != nil {
+			result = handlerResult{http.StatusConflict, "stored job identity is invalid"}
+			return nil
+		}
 
 		// Self-rejection prevention: the submitter cannot resolve their own
 		// approval request (neither approve nor reject). Enforces separation
@@ -1561,27 +1583,14 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 		if reason != "" {
 			errorMessage = reason
 		}
-		packet := &pb.BusPacket{
-			TraceId:         resolved.TraceID,
-			SenderId:        "api-gateway",
-			CreatedAt:       timestamppb.Now(),
-			ProtocolVersion: capsdk.DefaultProtocolVersion,
-			Payload: &pb.BusPacket_JobResult{
-				JobResult: &pb.JobResult{
-					JobId:         jobID,
-					Status:        pb.JobStatus_JOB_STATUS_DENIED,
-					ErrorCode:     "approval_rejected",
-					ErrorCodeEnum: pb.ErrorCode_ERROR_CODE_SAFETY_DENIED,
-					ErrorMessage:  errorMessage,
-				},
-			},
-		}
+		packet := approvalRejectionPacket(resolved.TraceID, jobID, errorMessage, req.GetIdentity())
 		if err := s.bus.Publish(capsdk.SubjectDLQ, packet); err != nil {
 			slog.Error("publish dlq on approval reject failed", "job_id", jobID, "error", err)
 		} else {
 			rejectTopic := strings.TrimSpace(resolved.Request.GetTopic())
 			publishComplete := true
 			if rejectTopic == capsdk.SubjectWorkflowApprovalGate {
+				s.attachServiceToken(packet)
 				if err := s.bus.Publish(capsdk.SubjectResult, packet); err != nil {
 					slog.Error("publish result on workflow gate reject failed", "job_id", jobID, "error", err)
 					publishComplete = false

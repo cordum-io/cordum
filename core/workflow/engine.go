@@ -534,6 +534,11 @@ func (e *Engine) handleJobResultLocked(ctx context.Context, res *pb.JobResult, r
 		slog.Error("get run failed (transient)", "run_id", runID, "error", err)
 		return fmt.Errorf("get run %s: %w", runID, err)
 	}
+	if e.productionIdentity && !sameWorkflowIdentity(run.Identity, res.GetIdentity()) {
+		slog.Error("workflow job result identity rejected",
+			"run_id", runID, "step_id", stepID, "job_id", res.GetJobId())
+		return nil
+	}
 	switch run.Status {
 	case RunStatusSucceeded, RunStatusFailed, RunStatusDenied, RunStatusCancelled, RunStatusTimedOut:
 		e.markRunTerminal(run.ID)
@@ -719,7 +724,7 @@ func (e *Engine) cancelForEachSiblings(ctx context.Context, run *WorkflowRun, pa
 			continue
 		}
 		if child.JobID != "" {
-			if err := e.publishJobCancel(child.JobID, "forEach sibling failed"); err != nil {
+			if err := e.publishJobCancel(child.JobID, "forEach sibling failed", workflowRunIdentity(run)); err != nil {
 				slog.Error("cancel forEach orphan publish failed",
 					"job_id", child.JobID, "step_id", childID, "error", err)
 			}

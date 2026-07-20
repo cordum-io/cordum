@@ -56,17 +56,44 @@ func TestValidateProductionJobResultIdentityBindsSessionTenantToStoredJob(t *tes
 		t.Fatalf("SetJobRequest() error = %v", err)
 	}
 	engine := &Engine{jobStore: store}
-	workerIdentity := &pb.IdentityBinding{
-		TenantId: "tenant-a", PrincipalId: "worker-a", ActorId: "worker-a",
-	}
-	result := &pb.JobResult{JobId: "job-1", WorkerId: "worker-a", Identity: workerIdentity}
-	packet := &pb.BusPacket{SenderId: "worker-a", Identity: workerIdentity}
+	result := &pb.JobResult{JobId: "job-1", WorkerId: "worker-a", Identity: jobIdentity}
+	packet := &pb.BusPacket{SenderId: "worker-a", Identity: jobIdentity}
 
 	if err := engine.validateProductionJobResultIdentity(
 		context.Background(), packet, result,
 		&SessionTokenClaims{Subject: "worker-a", Tenant: "tenant-a"},
 	); err != nil {
 		t.Fatalf("validateProductionJobResultIdentity() error = %v", err)
+	}
+}
+
+func TestValidateProductionJobResultIdentityRejectsSameTenantRequesterMismatch(t *testing.T) {
+	store := newFakeJobStore()
+	jobIdentity := &pb.IdentityBinding{
+		TenantId: "tenant-a", PrincipalId: "requester-a", ActorId: "requester-a",
+	}
+	req, err := jobidentity.NormalizeProductionJobRequest(
+		&pb.JobRequest{JobId: "job-1", Topic: "job.test"}, jobIdentity,
+	)
+	if err != nil {
+		t.Fatalf("NormalizeProductionJobRequest() error = %v", err)
+	}
+	if err := store.SetJobRequest(context.Background(), req); err != nil {
+		t.Fatalf("SetJobRequest() error = %v", err)
+	}
+	spoofed := &pb.IdentityBinding{
+		TenantId: "tenant-a", PrincipalId: "admin", ActorId: "admin",
+	}
+	engine := &Engine{jobStore: store}
+	result := &pb.JobResult{JobId: "job-1", WorkerId: "worker-a", Identity: spoofed}
+	packet := &pb.BusPacket{SenderId: "worker-a", Identity: spoofed}
+
+	err = engine.validateProductionJobResultIdentity(
+		context.Background(), packet, result,
+		&SessionTokenClaims{Subject: "worker-a", Tenant: "tenant-a"},
+	)
+	if !errors.Is(err, ErrProductionResultIdentityMismatch) {
+		t.Fatalf("validateProductionJobResultIdentity() error = %v, want mismatch", err)
 	}
 }
 
@@ -198,5 +225,80 @@ func TestHandlePacketProductionRejectsCrossTenantJobCancel(t *testing.T) {
 	store.mu.RUnlock()
 	if got != JobStateRunning {
 		t.Fatalf("cross-tenant cancel changed state to %q", got)
+	}
+}
+
+func TestPublishCancelProductionEchoesStoredJobIdentity(t *testing.T) {
+	store := newFakeJobStore()
+	identity := &pb.IdentityBinding{
+		TenantId: "tenant-a", PrincipalId: "requester-a", ActorId: "requester-a",
+	}
+	req, err := jobidentity.NormalizeProductionJobRequest(
+		&pb.JobRequest{JobId: "job-1", Topic: "job.test"}, identity,
+	)
+	if err != nil {
+		t.Fatalf("NormalizeProductionJobRequest() error = %v", err)
+	}
+	if err := store.SetJobRequest(context.Background(), req); err != nil {
+		t.Fatalf("SetJobRequest() error = %v", err)
+	}
+	bus := &fakeBus{}
+	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil).
+		WithProductionIdentityEnforcement(true)
+
+	engine.publishCancel("job-1", "test")
+
+	published := bus.snapshotPublished()
+	if len(published) != 1 {
+		t.Fatalf("published packets = %d, want 1", len(published))
+	}
+	packet := published[0].packet
+	if !proto.Equal(packet.GetIdentity(), identity) || !proto.Equal(packet.GetJobCancel().GetIdentity(), identity) {
+		t.Fatalf("cancel identities = envelope:%v payload:%v", packet.GetIdentity(), packet.GetJobCancel().GetIdentity())
+	}
+}
+
+func TestPublishCancelProductionFailsClosedWithoutStoredIdentity(t *testing.T) {
+	bus := &fakeBus{}
+	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), newFakeJobStore(), nil).
+		WithProductionIdentityEnforcement(true)
+
+	engine.publishCancel("missing-job", "test")
+
+	if got := len(bus.snapshotPublished()); got != 0 {
+		t.Fatalf("published packets = %d, want 0", got)
+	}
+}
+
+func TestReplayApprovalPublishProductionEchoesRequestIdentity(t *testing.T) {
+	identity := &pb.IdentityBinding{
+		TenantId: "tenant-a", PrincipalId: "requester-a", ActorId: "requester-a",
+	}
+	req, err := jobidentity.NormalizeProductionJobRequest(
+		&pb.JobRequest{JobId: "job-1", Topic: "sys.workflow.approval.gate"}, identity,
+	)
+	if err != nil {
+		t.Fatalf("NormalizeProductionJobRequest() error = %v", err)
+	}
+	bus := &fakeBus{}
+	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), newFakeJobStore(), nil).
+		WithProductionIdentityEnforcement(true)
+
+	err = engine.replayApprovalPublish("trace-1", req, ApprovalRecord{
+		PublishTarget: ApprovalPublishTargetDLQAndResult,
+	})
+	if err != nil {
+		t.Fatalf("replayApprovalPublish() error = %v", err)
+	}
+	published := bus.snapshotPublished()
+	if len(published) != 2 {
+		t.Fatalf("published packets = %d, want 2", len(published))
+	}
+	result := published[1].packet
+	if !proto.Equal(result.GetIdentity(), identity) || !proto.Equal(result.GetJobResult().GetIdentity(), identity) {
+		t.Fatalf("result identities = envelope:%v payload:%v", result.GetIdentity(), result.GetJobResult().GetIdentity())
+	}
+	if result.GetJobResult().GetWorkerId() != defaultSenderID {
+		t.Fatalf("worker id = %q, want %q", result.GetJobResult().GetWorkerId(), defaultSenderID)
 	}
 }

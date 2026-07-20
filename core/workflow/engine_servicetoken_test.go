@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/auth/servicetoken"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestPublishJobCancel_AttachesWorkflowServiceToken(t *testing.T) {
@@ -81,5 +83,37 @@ func TestPublishJobCancel_NoMinterNoToken(t *testing.T) {
 	}
 	if tok := bus.published[0].packet.GetAuthToken(); tok != "" {
 		t.Fatalf("no minter must attach no token; got %q", tok)
+	}
+}
+
+func TestPublishJobCancelProductionEchoesRunIdentity(t *testing.T) {
+	ws := newWorkflowStore(t)
+	defer func() { _ = ws.Close() }()
+	bus := &failNBus{}
+	identity := &pb.IdentityBinding{
+		TenantId: "tenant-a", PrincipalId: "principal-a", ActorId: "actor-a",
+	}
+	engine := NewEngine(ws, bus).WithProductionIdentityEnforcement(true)
+
+	if err := engine.publishJobCancel("job-production", "cancelling", identity); err != nil {
+		t.Fatalf("publishJobCancel: %v", err)
+	}
+	pkt := bus.published[0].packet
+	if !proto.Equal(pkt.GetIdentity(), identity) || !proto.Equal(pkt.GetJobCancel().GetIdentity(), identity) {
+		t.Fatalf("cancel identities = envelope:%v payload:%v", pkt.GetIdentity(), pkt.GetJobCancel().GetIdentity())
+	}
+}
+
+func TestPublishJobCancelProductionRejectsMissingIdentity(t *testing.T) {
+	ws := newWorkflowStore(t)
+	defer func() { _ = ws.Close() }()
+	bus := &failNBus{}
+	engine := NewEngine(ws, bus).WithProductionIdentityEnforcement(true)
+
+	if err := engine.publishJobCancel("job-production", "cancelling"); err == nil {
+		t.Fatal("publishJobCancel() error = nil, want missing identity rejection")
+	}
+	if bus.publishedCount() != 0 {
+		t.Fatalf("published packets = %d, want 0", bus.publishedCount())
 	}
 }
