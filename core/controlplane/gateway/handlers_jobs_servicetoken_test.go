@@ -154,5 +154,14 @@ func TestHandleCancelJobProductionEchoesStoredIdentity(t *testing.T) {
 		if !proto.Equal(published.packet.GetIdentity(), identity) {
 			t.Fatalf("%s envelope identity = %v", published.subject, published.packet.GetIdentity())
 		}
+		var payloadIdentity *pb.IdentityBinding
+		if published.subject == capsdk.SubjectResult {
+			payloadIdentity = published.packet.GetJobResult().GetIdentity()
+		} else {
+			payloadIdentity = published.packet.GetJobCancel().GetIdentity()
+		}
+		if !proto.Equal(payloadIdentity, identity) {
+			t.Fatalf("%s payload identity = %v", published.subject, payloadIdentity)
+		}
 	}
 }

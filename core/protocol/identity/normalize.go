@@ -22,6 +22,7 @@ var (
 
 type authority struct {
 	tenant, principal, actor, delegation string
+	binding                              *pb.IdentityBinding
 }
 
 type mirror struct {
@@ -59,7 +60,7 @@ func newAuthority(binding *pb.IdentityBinding) (authority, error) {
 	}
 	auth := authority{
 		tenant: binding.GetTenantId(), principal: binding.GetPrincipalId(),
-		actor: binding.GetActorId(), delegation: binding.GetDelegationId(),
+		actor: binding.GetActorId(), delegation: binding.GetDelegationId(), binding: binding,
 	}
 	required := []mirror{
 		{path: "tenant_id", got: auth.tenant},
@@ -172,6 +173,10 @@ func fillEnvironment(env map[string]string, auth authority) map[string]string {
 
 func fillBinding(binding *pb.IdentityBinding, auth authority) *pb.IdentityBinding {
 	if binding == nil {
+		cloned, ok := proto.Clone(auth.binding).(*pb.IdentityBinding)
+		if ok && cloned != nil {
+			return cloned
+		}
 		binding = &pb.IdentityBinding{}
 	}
 	binding.TenantId, binding.PrincipalId = auth.tenant, auth.principal

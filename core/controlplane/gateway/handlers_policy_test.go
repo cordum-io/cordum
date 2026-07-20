@@ -17,6 +17,7 @@ import (
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/safetykernel"
 	edgecore "github.com/cordum/cordum/core/edge"
+	"github.com/cordum/cordum/core/infra/capprofile"
 	runtimeconfig "github.com/cordum/cordum/core/infra/config"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/grpc"
@@ -64,6 +65,33 @@ func TestPolicyEvaluate_AdminAllowed_ReturnsResponse(t *testing.T) {
 
 	if rec.Code == http.StatusForbidden {
 		t.Fatalf("admin should be allowed, got 403: %s", rec.Body.String())
+	}
+}
+
+func TestPolicyEvaluateProductionRejectsActorSpoofBeforeSafetyRPC(t *testing.T) {
+	s, _, safetyClient := newTestGateway(t)
+	s.capProfile = capprofile.Production
+	body, err := json.Marshal(policyCheckRequest{
+		Topic: "job.default", PrincipalId: "principal-a",
+		Meta: &policyMetaRequest{TenantId: "tenant-a", ActorId: "actor-attacker"},
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/policy/evaluate", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withAuth(req, &auth.AuthContext{Tenant: "tenant-a", Role: "admin", PrincipalID: "principal-a"})
+	rec := httptest.NewRecorder()
+
+	s.handlePolicyEvaluate(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	safetyClient.mu.Lock()
+	defer safetyClient.mu.Unlock()
+	if safetyClient.lastReq != nil {
+		t.Fatalf("spoofed policy identity reached Safety Kernel: %#v", safetyClient.lastReq)
 	}
 }
 

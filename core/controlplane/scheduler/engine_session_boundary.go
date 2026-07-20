@@ -109,7 +109,10 @@ func (e *Engine) validateProductionJobEventIdentity(
 		!sameProductionIdentity(packet.GetIdentity(), payloadIdentity) {
 		return ErrProductionResultIdentityMismatch
 	}
-	if claims != nil && claims.Tenant != "" && claims.Tenant != payloadIdentity.GetTenantId() {
+	if claims == nil {
+		return ErrProductionResultIdentityMismatch
+	}
+	if claims.Tenant != "" && claims.Tenant != payloadIdentity.GetTenantId() {
 		return ErrProductionResultIdentityMismatch
 	}
 	jobIdentity, err := e.loadProductionJobIdentity(ctx, jobID)

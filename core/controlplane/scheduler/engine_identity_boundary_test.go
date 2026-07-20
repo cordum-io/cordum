@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	jobidentity "github.com/cordum/cordum/core/protocol/identity"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/protobuf/proto"
@@ -94,6 +95,30 @@ func TestValidateProductionJobResultIdentityRejectsSameTenantRequesterMismatch(t
 	)
 	if !errors.Is(err, ErrProductionResultIdentityMismatch) {
 		t.Fatalf("validateProductionJobResultIdentity() error = %v, want mismatch", err)
+	}
+}
+
+func TestValidateProductionJobEventIdentityRejectsMissingVerifiedClaims(t *testing.T) {
+	store := newFakeJobStore()
+	identity := &pb.IdentityBinding{
+		TenantId: "tenant-a", PrincipalId: "requester-a", ActorId: "requester-a",
+	}
+	req, err := jobidentity.NormalizeProductionJobRequest(
+		&pb.JobRequest{JobId: "job-1", Topic: "job.test"}, identity,
+	)
+	if err != nil {
+		t.Fatalf("NormalizeProductionJobRequest() error = %v", err)
+	}
+	if err := store.SetJobRequest(context.Background(), req); err != nil {
+		t.Fatalf("SetJobRequest() error = %v", err)
+	}
+	engine := &Engine{jobStore: store}
+
+	err = engine.validateProductionJobEventIdentity(
+		context.Background(), &pb.BusPacket{Identity: identity}, "job-1", identity, nil,
+	)
+	if !errors.Is(err, ErrProductionResultIdentityMismatch) {
+		t.Fatalf("validateProductionJobEventIdentity() error = %v, want mismatch", err)
 	}
 }
 
@@ -300,5 +325,43 @@ func TestReplayApprovalPublishProductionEchoesRequestIdentity(t *testing.T) {
 	}
 	if result.GetJobResult().GetWorkerId() != defaultSenderID {
 		t.Fatalf("worker id = %q, want %q", result.GetJobResult().GetWorkerId(), defaultSenderID)
+	}
+}
+
+func TestProcessApprovalGateProductionEchoesRequestIdentity(t *testing.T) {
+	identity := &pb.IdentityBinding{
+		TenantId: "tenant-a", PrincipalId: "requester-a", ActorId: "requester-a",
+	}
+	req, err := jobidentity.NormalizeProductionJobRequest(&pb.JobRequest{
+		JobId: "job-gate", Topic: capsdk.SubjectApprovalGate, Labels: map[string]string{
+			"approval_granted": "true", "approval_snapshot": workflowGateSnapshot,
+		},
+	}, identity)
+	if err != nil {
+		t.Fatalf("NormalizeProductionJobRequest() error = %v", err)
+	}
+	jobHash, err := HashJobRequest(req)
+	if err != nil {
+		t.Fatalf("HashJobRequest() error = %v", err)
+	}
+	store := newFakeJobStore()
+	store.safety[req.GetJobId()] = SafetyDecisionRecord{
+		Decision: SafetyRequireApproval, ApprovalRequired: true,
+		PolicySnapshot: workflowGateSnapshot, JobHash: jobHash,
+	}
+	bus := &fakeBus{}
+	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil).
+		WithProductionIdentityEnforcement(true)
+
+	if err := engine.processJob(testCtx(t), req, "trace-gate"); err != nil {
+		t.Fatalf("processJob() error = %v", err)
+	}
+	published := bus.snapshotPublished()
+	if len(published) != 1 || published[0].subject != capsdk.SubjectResult {
+		t.Fatalf("published = %#v, want one result", published)
+	}
+	packet := published[0].packet
+	if !proto.Equal(packet.GetIdentity(), identity) || !proto.Equal(packet.GetJobResult().GetIdentity(), identity) {
+		t.Fatalf("result identities = envelope:%v payload:%v", packet.GetIdentity(), packet.GetJobResult().GetIdentity())
 	}
 }

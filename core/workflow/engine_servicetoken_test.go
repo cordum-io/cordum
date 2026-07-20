@@ -32,7 +32,7 @@ func TestPublishJobCancel_AttachesWorkflowServiceToken(t *testing.T) {
 		return servicetoken.MintService(priv, "primary", servicetoken.IdentityWorkflow, time.Now())
 	})
 
-	if err := engine.publishJobCancel("job-wf", "cancelling"); err != nil {
+	if err := engine.publishJobCancel("job-wf", "cancelling", nil); err != nil {
 		t.Fatalf("publishJobCancel: %v", err)
 	}
 	if bus.publishedCount() != 1 {
@@ -75,7 +75,7 @@ func TestPublishJobCancel_NoMinterNoToken(t *testing.T) {
 	defer func() { _ = ws.Close() }()
 	bus := &failNBus{}
 	engine := NewEngine(ws, bus) // no minter wired (back-compat)
-	if err := engine.publishJobCancel("job-nomint", "cancelling"); err != nil {
+	if err := engine.publishJobCancel("job-nomint", "cancelling", nil); err != nil {
 		t.Fatalf("publishJobCancel: %v", err)
 	}
 	if bus.publishedCount() != 1 {
@@ -110,7 +110,7 @@ func TestPublishJobCancelProductionRejectsMissingIdentity(t *testing.T) {
 	bus := &failNBus{}
 	engine := NewEngine(ws, bus).WithProductionIdentityEnforcement(true)
 
-	if err := engine.publishJobCancel("job-production", "cancelling"); err == nil {
+	if err := engine.publishJobCancel("job-production", "cancelling", nil); err == nil {
 		t.Fatal("publishJobCancel() error = nil, want missing identity rejection")
 	}
 	if bus.publishedCount() != 0 {

@@ -113,6 +113,46 @@ func TestHandleJobResultProductionRejectsRunIdentityMismatchBeforeMutation(t *te
 	}
 }
 
+func TestSubworkflowRunPropagatesParentIdentity(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer func() { _ = store.Close() }()
+	ctx := context.Background()
+	child := &Workflow{ID: "wf-child-identity", OrgID: "tenant-a", Steps: map[string]*Step{
+		"work": {ID: "work", Type: StepTypeWorker, Topic: "job.test"},
+	}}
+	parent := &Workflow{ID: "wf-parent-identity", OrgID: "tenant-a", Steps: map[string]*Step{
+		"child": {ID: "child", Type: StepTypeSubWorkflow, Input: map[string]any{"workflow_id": child.ID}},
+	}}
+	for _, wf := range []*Workflow{child, parent} {
+		if err := store.SaveWorkflow(ctx, wf); err != nil {
+			t.Fatalf("SaveWorkflow(%s) error = %v", wf.ID, err)
+		}
+	}
+	now := time.Now().UTC()
+	run := productionIdentityRun()
+	run.ID, run.WorkflowID, run.Status = "run-parent-identity", parent.ID, RunStatusPending
+	run.Input, run.Steps, run.CreatedAt, run.UpdatedAt = map[string]any{}, map[string]*StepRun{}, now, now
+	if err := store.CreateRun(ctx, run); err != nil {
+		t.Fatalf("CreateRun() error = %v", err)
+	}
+	engine := NewEngine(store, &recordingBus{}).WithProductionIdentityEnforcement(true)
+
+	if err := engine.StartRun(ctx, parent.ID, run.ID); err != nil {
+		t.Fatalf("StartRun() error = %v", err)
+	}
+	updated, err := store.GetRun(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("GetRun(parent) error = %v", err)
+	}
+	childRun, err := store.GetRun(ctx, updated.Steps["child"].JobID)
+	if err != nil {
+		t.Fatalf("GetRun(child) error = %v", err)
+	}
+	if !proto.Equal(childRun.Identity, run.Identity) {
+		t.Fatalf("child identity = %v, want %v", childRun.Identity, run.Identity)
+	}
+}
+
 func productionIdentityRun() *WorkflowRun {
 	return &WorkflowRun{
 		ID: "run-1", OrgID: "tenant-a",

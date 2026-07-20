@@ -119,6 +119,25 @@ func TestNormalizeProductionJobRequestPreservesUnknownIdentityFields(t *testing.
 	}
 }
 
+func TestNormalizeProductionJobRequestCopiesUnknownsFromMissingAuthorityMirror(t *testing.T) {
+	auth := productionAuthority()
+	unknown := protowire.AppendTag(nil, 100, protowire.BytesType)
+	unknown = protowire.AppendString(unknown, "authority-extension")
+	auth.ProtoReflect().SetUnknown(unknown)
+	input := &pb.JobRequest{Compensation: &pb.Compensation{Topic: "job.undo"}}
+
+	got, err := NormalizeProductionJobRequest(input, auth)
+	if err != nil {
+		t.Fatalf("NormalizeProductionJobRequest() error = %v", err)
+	}
+	if !bytes.Equal(got.GetIdentity().ProtoReflect().GetUnknown(), unknown) {
+		t.Fatal("request identity dropped authority unknown fields")
+	}
+	if !bytes.Equal(got.GetCompensation().GetIdentity().ProtoReflect().GetUnknown(), unknown) {
+		t.Fatal("compensation identity dropped authority unknown fields")
+	}
+}
+
 type mirrorConflictCase struct {
 	name string
 	set  func(*pb.JobRequest)

@@ -1254,6 +1254,10 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 					}
 					return nil
 				}
+				var policyIdentity *pb.IdentityBinding
+				if s.capProfile.IsProduction() {
+					policyIdentity = req.GetIdentity()
+				}
 				freshCheck, freshErr := buildPolicyCheckRequest(ctx, &policyCheckRequest{
 					JobId:       jobID,
 					Topic:       req.GetTopic(),
@@ -1265,7 +1269,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 					Budget:      req.Budget,
 					MemoryId:    strings.TrimSpace(req.MemoryId),
 					Meta:        freshMeta,
-					Identity:    req.GetIdentity(),
+					Identity:    policyIdentity,
 				}, s.configSvc, defaultTenant)
 				if freshErr != nil {
 					s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policybundles.PolicyActorID(r), policybundles.PolicyRole(r),

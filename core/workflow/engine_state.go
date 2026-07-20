@@ -509,14 +509,11 @@ func collectCancelableJobs(sr *StepRun) []string {
 	return out
 }
 
-func (e *Engine) publishJobCancel(jobID, reason string, identities ...*pb.IdentityBinding) error {
+func (e *Engine) publishJobCancel(jobID, reason string, runIdentity *pb.IdentityBinding) error {
 	if e == nil || e.bus == nil || jobID == "" {
 		return nil
 	}
-	var identity *pb.IdentityBinding
-	if len(identities) > 0 {
-		identity = cloneIdentityBinding(identities[0])
-	}
+	identity := cloneIdentityBinding(runIdentity)
 	if e.productionIdentity && !completeWorkflowIdentity(identity) {
 		return fmt.Errorf("publish job cancel %s: production identity required", jobID)
 	}
