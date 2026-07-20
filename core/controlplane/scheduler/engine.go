@@ -279,7 +279,7 @@ func NewEngine(bus Bus, safety SafetyChecker, registry WorkerRegistry, strategy 
 		decisionLog:             NoopDecisionLogStore{},
 		metrics:                 metrics,
 		contextClient:           contextClient,
-		workerAttestation:       ParseWorkerAttestationMode(os.Getenv("WORKER_ATTESTATION")),
+		workerAttestation:       WorkerAttestationOff,
 		workerReadinessRequired: workerReadinessRequiredFromEnv(),
 		schemaEnforcement:       infraSchema.ParseEnforcementMode(os.Getenv("SCHEMA_ENFORCEMENT")),
 		ctx:                     ctx,
@@ -602,7 +602,7 @@ func (e *Engine) Start() error {
 	if err := e.bus.Subscribe(capsdk.SubjectHandshake, "", e.HandlePacket); err != nil {
 		return fmt.Errorf("subscribe handshake: %w", err)
 	}
-	if e.workerAttestationMode().Enabled() && e.workerCredentialCache != nil {
+	if e.needsWorkerCredentialAuthority() && e.workerCredentialCache != nil {
 		if err := e.workerCredentialCache.Refresh(e.ctx); err != nil {
 			slog.Warn("worker credential cache initial refresh failed", "error", err)
 		}
@@ -764,6 +764,9 @@ func (e *Engine) emitApprovalRevisionMismatch(req *pb.JobRequest, stored, assert
 // It receives trace context extracted from NATS headers and threads it
 // through to processJob for distributed tracing continuity.
 func (e *Engine) HandlePacketWithContext(ctx context.Context, p *pb.BusPacket) error {
+	if !e.validateInboundPacket(p, "engine_context") {
+		return nil
+	}
 	// Store the trace context so processJob can pick it up.
 	// We merge the incoming trace context with the engine's lifecycle context.
 	if ctx != nil && ctx != context.Background() {
@@ -793,6 +796,9 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
 	if e.stopped.Load() {
 		return nil
 	}
+	if !e.validateInboundPacket(p, "engine") {
+		return nil
+	}
 
 	e.wg.Add(1)
 	count := e.activeHandlers.Add(1)
@@ -813,10 +819,26 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
 		if hb == nil {
 			return nil
 		}
-		if !e.verifySessionToken(p, hb.GetWorkerId(), "heartbeat") {
+		tokenResult, allowed := e.verifySessionTokenResult(p, hb.GetWorkerId(), "heartbeat")
+		if !allowed {
+			return nil
+		}
+		if tokenResult.Verdict == TokenVerdictWarnMissing {
+			// WARN preserves missing-token observability, but the packet is
+			// telemetry only: never combine it with a prior trusted capability
+			// or session by refreshing the dispatch registry.
+			if e.trustMetrics != nil {
+				e.trustMetrics.ObserveHeartbeat(hb)
+			}
 			return nil
 		}
 		if !e.allowWorkerHeartbeat(p, hb) {
+			return nil
+		}
+		if !e.allowActiveHeartbeatPool(hb, tokenResult.Claims) {
+			slog.Error("worker heartbeat rejected: bound pool authority failed",
+				"worker_id", hb.GetWorkerId(), "pool", hb.GetPool(),
+				"mode", e.sessionMiddleware.Mode().String())
 			return nil
 		}
 		slog.Info("heartbeat received",
@@ -961,7 +983,7 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
 			"ready_topics", readyTopicsFromHandshake(hs),
 		)
 		if hs.Role == pb.ComponentRole_COMPONENT_ROLE_WORKER {
-			e.registry.UpdateHandshake(hs)
+			e.handleCapabilityHandshake(p, hs)
 		}
 		return nil
 	default:
@@ -985,6 +1007,9 @@ func (e *Engine) handleConfigChangedPacket(p *pb.BusPacket) (err error) {
 	if p == nil || e.workerCredentialCache == nil {
 		return nil
 	}
+	if !e.validateInboundPacket(p, "config_change") {
+		return nil
+	}
 	alert := p.GetAlert()
 	if alert == nil || !strings.EqualFold(strings.TrimSpace(alert.GetMessage()), "config changed") {
 		return nil
@@ -992,6 +1017,9 @@ func (e *Engine) handleConfigChangedPacket(p *pb.BusPacket) (err error) {
 	scope := strings.TrimSpace(alert.GetDetails()["scope"])
 	scopeID := strings.TrimSpace(alert.GetDetails()["scope_id"])
 	if scope != string(configsvc.ScopeSystem) || scopeID != "workers" {
+		return nil
+	}
+	if !e.verifyConfigChangeAuthority(p) {
 		return nil
 	}
 	parentCtx := e.ctx
@@ -1019,66 +1047,19 @@ func (e *Engine) workerAttestationMode() WorkerAttestationMode {
 	return e.workerAttestation.Normalized()
 }
 
-func (e *Engine) verifySessionToken(packet *pb.BusPacket, workerID, packetType string) bool {
-	if e == nil || e.sessionMiddleware == nil {
-		return true
-	}
-	ctx := e.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	result := e.sessionMiddleware.Verify(ctx, workerID, packet)
-	switch result.Verdict {
-	case TokenVerdictPass, TokenVerdictWarnMissing:
-		// Subject-binding + SenderId defense-in-depth. A verified token proves
-		// only WHO holds it (Claims.Subject), not WHOSE job it targets, so bind
-		// the verified identity to the packet's claimed identity (job_result
-		// WorkerId / job_cancel RequestedBy / heartbeat WorkerId, passed as
-		// workerID). Without this, worker A's own valid token could drive worker
-		// B's job. Runs ONLY when a token was actually verified (Claims != nil):
-		// warn/off/missing leave Claims nil and are intentionally untouched, so
-		// token-less traffic still admits under warn. A control-plane service
-		// token passes uniformly because its Subject == SenderId == the claimed
-		// identity on every internal broadcast.
-		if result.Claims != nil {
-			claimedID := strings.TrimSpace(workerID)
-			claimSubject := strings.TrimSpace(result.Claims.Subject)
-			senderID := strings.TrimSpace(safeSenderID(packet))
-			if claimSubject != claimedID || senderID != claimedID {
-				slog.Error("session token identity mismatch; rejecting packet",
-					"packet_type", packetType,
-					"claimed_id", claimedID,
-					"claim_subject", claimSubject,
-					"sender_id", senderID,
-					"mode", e.sessionMiddleware.Mode().String(),
-				)
-				return false
-			}
-		}
-		if result.Err != nil {
-			slog.Warn("session token missing; admitting packet",
-				"packet_type", packetType,
-				"worker_id", workerID,
-				"mode", e.sessionMiddleware.Mode().String(),
-				"error", result.Err,
-			)
-		}
-		return true
-	case TokenVerdictRejectMissing, TokenVerdictRejectInvalid:
-		fields := []any{
-			"packet_type", packetType,
-			"worker_id", workerID,
-			"mode", e.sessionMiddleware.Mode().String(),
-			"verdict", result.Verdict.String(),
-		}
-		if result.Err != nil {
-			fields = append(fields, "error", result.Err)
-		}
-		slog.Error("session token rejected inbound packet", fields...)
+func (e *Engine) needsWorkerCredentialAuthority() bool {
+	if e == nil {
 		return false
-	default:
+	}
+	if e.workerAttestationMode().Enabled() {
 		return true
 	}
+	return e.sessionMiddleware != nil && e.sessionMiddleware.Mode() != HandshakeModeOff
+}
+
+func (e *Engine) verifySessionToken(packet *pb.BusPacket, workerID, packetType string) bool {
+	_, allowed := e.verifySessionTokenResult(packet, workerID, packetType)
+	return allowed
 }
 
 func (e *Engine) allowWorkerHeartbeat(packet *pb.BusPacket, hb *pb.Heartbeat) bool {
@@ -1753,9 +1734,11 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 	workers, disagreements := e.eligibleWorkers(lockCtx)
 	e.recordDispatchDisagreements(jobID, topic, disagreements)
 	var readiness map[string]WorkerReadiness
-	if e.workerReadinessRequired {
+	readinessRequired := e.requiresTrustedReadiness()
+	if readinessRequired {
 		readiness = e.registry.ReadinessSnapshot()
 	}
+	workers = e.filterBoundWorkers(workers, readiness, topic)
 	if len(workers) == 0 {
 		slog.Warn("no workers in registry",
 			"topic", topic,
@@ -1767,9 +1750,14 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 		if dispatchAttempt > 0 {
 			workers, disagreements = e.eligibleWorkers(lockCtx)
 			e.recordDispatchDisagreements(jobID, topic, disagreements)
-			if e.workerReadinessRequired {
+			if readinessRequired {
 				readiness = e.registry.ReadinessSnapshot()
 			}
+			workers = e.filterBoundWorkers(workers, readiness, topic)
+		}
+		if e.activeSessionMode() && len(workers) == 0 {
+			err = fmt.Errorf("%w: no trusted worker authorized for topic %q", ErrNoWorkers, topic)
+			break
 		}
 		subject, err = e.strategy.PickSubject(req, workers, readiness)
 		if err != nil {

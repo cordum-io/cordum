@@ -2,392 +2,205 @@ package scheduler
 
 import (
 	"context"
-	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"math/big"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/cordum/cordum/core/audit"
-	"github.com/cordum/cordum/core/infra/store"
-	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
+	agentv1 "github.com/cordum-io/cap/v2/cordum/agent/v1"
+	"google.golang.org/protobuf/proto"
 )
 
-// fakeIdentityResolver is an in-memory AgentIdentityResolver.
-type fakeIdentityResolver struct {
-	records map[string]*store.AgentIdentity
-	err     error
-}
-
-func (f *fakeIdentityResolver) Get(_ context.Context, id string) (*store.AgentIdentity, error) {
-	if f.err != nil {
-		return nil, f.err
+func TestNewHandshakeServiceRequiresSecurityDependencies(t *testing.T) {
+	fixture := newProtocolHandshakeFixture(t)
+	defer fixture.cleanup()
+	valid := protocolServiceOptions(fixture)
+	cases := []struct {
+		name       string
+		issuer     *SessionTokenIssuer
+		resolver   HandshakeTrustResolver
+		challenges HandshakeChallengeStore
+		sink       AuditSink
+		options    HandshakeServiceOptions
+	}{
+		{name: "issuer", resolver: &protocolTrustResolver{}, challenges: fixture.service.challenges, sink: fixture.sink, options: valid},
+		{name: "resolver", issuer: fixture.issuer, challenges: fixture.service.challenges, sink: fixture.sink, options: valid},
+		{name: "challenge store", issuer: fixture.issuer, resolver: &protocolTrustResolver{}, sink: fixture.sink, options: valid},
+		{name: "audit", issuer: fixture.issuer, resolver: &protocolTrustResolver{}, challenges: fixture.service.challenges, options: valid},
 	}
-	rec, ok := f.records[id]
-	if !ok {
-		return nil, nil
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := NewHandshakeService(tc.issuer, tc.resolver, tc.challenges, tc.sink, tc.options); err == nil {
+				t.Fatal("missing security dependency accepted")
+			}
+		})
 	}
-	return rec, nil
 }
 
-// memoryNonceStore is a thread-safe in-memory NonceStore.
-type memoryNonceStore struct {
-	mu   sync.Mutex
-	seen map[string]time.Time
-	err  error
-	now  func() time.Time
-}
-
-func newMemoryNonceStore() *memoryNonceStore {
-	return &memoryNonceStore{seen: map[string]time.Time{}, now: time.Now}
-}
-
-func (m *memoryNonceStore) Claim(_ context.Context, tenant, nonce string, ttl time.Duration) (bool, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.err != nil {
-		return false, m.err
+func TestNewHandshakeServiceRejectsTypedNilSecurityDependencies(t *testing.T) {
+	fixture := newProtocolHandshakeFixture(t)
+	defer fixture.cleanup()
+	options := protocolServiceOptions(fixture)
+	var resolver *protocolTrustResolver
+	var challenges *RedisHandshakeChallengeStore
+	var sink *protocolAuditSink
+	cases := []struct {
+		name       string
+		resolver   HandshakeTrustResolver
+		challenges HandshakeChallengeStore
+		sink       AuditSink
+	}{
+		{name: "resolver", resolver: resolver, challenges: fixture.service.challenges, sink: fixture.sink},
+		{name: "challenge store", resolver: fixture.resolver, challenges: challenges, sink: fixture.sink},
+		{name: "audit", resolver: fixture.resolver, challenges: fixture.service.challenges, sink: sink},
 	}
-	key := tenant + ":" + nonce
-	now := m.now()
-	if exp, ok := m.seen[key]; ok && exp.After(now) {
-		return false, nil
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := NewHandshakeService(fixture.issuer, tc.resolver, tc.challenges, tc.sink, options); err == nil {
+				t.Fatal("typed-nil security dependency accepted")
+			}
+		})
 	}
-	m.seen[key] = now.Add(ttl)
-	return true, nil
 }
 
-// recordingSink captures every emitted SIEMEvent for assertions.
-type recordingSink struct {
-	mu     sync.Mutex
-	events []audit.SIEMEvent
-}
-
-func (r *recordingSink) Emit(_ context.Context, ev audit.SIEMEvent) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.events = append(r.events, ev)
-}
-
-func (r *recordingSink) last() audit.SIEMEvent {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if len(r.events) == 0 {
-		return audit.SIEMEvent{}
+func TestNewHandshakeServiceRejectsMismatchedPrivateScalar(t *testing.T) {
+	fixture := newProtocolHandshakeFixture(t)
+	defer fixture.cleanup()
+	options := protocolServiceOptions(fixture)
+	bad := *fixture.schedulerKey
+	bad.D = new(big.Int).Sub(fixture.schedulerKey.D, big.NewInt(1))
+	if bad.D.Sign() <= 0 {
+		bad.D = big.NewInt(2)
 	}
-	return r.events[len(r.events)-1]
+	options.SchedulerPrivateKey = &bad
+	_, err := NewHandshakeService(fixture.issuer, &protocolTrustResolver{}, fixture.service.challenges, fixture.sink, options)
+	if err == nil || !strings.Contains(err.Error(), "P-256") {
+		t.Fatalf("mismatched private scalar error = %v", err)
+	}
 }
 
-func (r *recordingSink) count() int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return len(r.events)
+func protocolServiceOptions(fixture *protocolHandshakeFixture) HandshakeServiceOptions {
+	return HandshakeServiceOptions{
+		Audience: WorkerHandshakeAudience, SchedulerID: "cordum-scheduler",
+		SchedulerKeyID: "scheduler-key-v1", SchedulerPrivateKey: fixture.schedulerKey,
+		Skew: time.Minute, ChallengeTTL: 30 * time.Second, Now: func() time.Time { return fixture.now },
+	}
 }
 
-func newHandshakeFixture(t *testing.T) (*HandshakeService, *recordingSink, *memoryNonceStore, *fakeIdentityResolver, func()) {
+func TestRedisHandshakeChallengeStoreCompareAndDelete(t *testing.T) {
+	fixture := newProtocolHandshakeFixture(t)
+	defer fixture.cleanup()
+	challenge := issuedProtocolChallenge(t, fixture)
+	wrong := proto.Clone(challenge).(*agentv1.WorkerHandshakeChallenge)
+	wrong.ServerNonce[0] ^= 1
+	status, err := fixture.service.challenges.Consume(context.Background(), wrong)
+	if err != nil || status != HandshakeConsumeMismatch {
+		t.Fatalf("mismatch consume = (%v, %v)", status, err)
+	}
+	status, err = fixture.service.challenges.Consume(context.Background(), challenge)
+	if err != nil || status != HandshakeConsumeMatched {
+		t.Fatalf("exact consume = (%v, %v)", status, err)
+	}
+	status, err = fixture.service.challenges.Consume(context.Background(), challenge)
+	if err != nil || status != HandshakeConsumeMissing {
+		t.Fatalf("replay consume = (%v, %v)", status, err)
+	}
+	created, err := fixture.service.challenges.Create(context.Background(), challenge, time.Minute)
+	if err != nil || created {
+		t.Fatalf("consumed request/nonce replay create = (%t, %v), want replay tombstone", created, err)
+	}
+	status, err = fixture.service.challenges.Consume(context.Background(), challenge)
+	if err != nil || status != HandshakeConsumeMissing {
+		t.Fatalf("rejected replay created challenge state = (%v, %v)", status, err)
+	}
+	assertNoVictimSession(t, fixture)
+	fixture.sessionStore.FastForward(31 * time.Second)
+	created, err = fixture.service.challenges.Create(context.Background(), challenge, time.Minute)
+	if err != nil || !created {
+		t.Fatalf("expired request/nonce tombstones create = (%t, %v), want TTL cleanup", created, err)
+	}
+}
+
+func TestRedisHandshakeChallengeStoreConcurrentConsumeHasOneWinner(t *testing.T) {
+	fixture := newProtocolHandshakeFixture(t)
+	defer fixture.cleanup()
+	challenge := issuedProtocolChallenge(t, fixture)
+	const attempts = 16
+	results := make(chan HandshakeConsumeStatus, attempts)
+	var wait sync.WaitGroup
+	for range attempts {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			status, _ := fixture.service.challenges.Consume(context.Background(), challenge)
+			results <- status
+		}()
+	}
+	wait.Wait()
+	close(results)
+	winners := 0
+	for status := range results {
+		if status == HandshakeConsumeMatched {
+			winners++
+		}
+	}
+	if winners != 1 {
+		t.Fatalf("atomic consume winners = %d, want 1", winners)
+	}
+}
+
+func TestRedisHandshakeChallengeStoreRejectsDuplicateRequestOrNonce(t *testing.T) {
+	fixture := newProtocolHandshakeFixture(t)
+	defer fixture.cleanup()
+	challenge := issuedProtocolChallenge(t, fixture)
+	duplicateRequest := proto.Clone(challenge).(*agentv1.WorkerHandshakeChallenge)
+	duplicateRequest.ChallengeId = "second-challenge"
+	duplicateRequest.ClientNonce[0] ^= 1
+	created, err := fixture.service.challenges.Create(context.Background(), duplicateRequest, time.Minute)
+	if err != nil || created {
+		t.Fatalf("duplicate request create = (%t, %v)", created, err)
+	}
+	duplicateNonce := proto.Clone(challenge).(*agentv1.WorkerHandshakeChallenge)
+	duplicateNonce.ChallengeId = "third-challenge"
+	duplicateNonce.RequestId = "different-request"
+	created, err = fixture.service.challenges.Create(context.Background(), duplicateNonce, time.Minute)
+	if err != nil || created {
+		t.Fatalf("duplicate nonce create = (%t, %v)", created, err)
+	}
+}
+
+func issuedProtocolChallenge(t *testing.T, fixture *protocolHandshakeFixture) *agentv1.WorkerHandshakeChallenge {
 	t.Helper()
-	issuer, _, _, cleanup := newTestIssuer(t, SessionTokenIssuerOptions{})
-	identities := &fakeIdentityResolver{
-		records: map[string]*store.AgentIdentity{
-			"agent-001": {ID: "agent-001", Name: "alpha", Owner: "tenant-acme", Status: "active"},
-		},
-	}
-	nonces := newMemoryNonceStore()
-	sink := &recordingSink{}
-	svc, err := NewHandshakeService(issuer, identities, nonces, sink, HandshakeServiceOptions{
-		Skew:     30 * time.Second,
-		NonceTTL: 2 * time.Minute,
-	})
+	packet, err := fixture.service.HandleChallenge(context.Background(), protocolChallengeRequest(t, fixture, agentv1.WorkerHandshakePurpose_WORKER_HANDSHAKE_PURPOSE_ISSUE))
 	if err != nil {
-		cleanup()
-		t.Fatalf("new handshake service: %v", err)
+		t.Fatalf("issue challenge: %v", err)
 	}
-	return svc, sink, nonces, identities, cleanup
+	return packet.GetWorkerHandshakeChallenge()
 }
 
-func validRequestBytes(t *testing.T, overrides func(*capsdk.HandshakeRequest)) []byte {
-	t.Helper()
-	req := &capsdk.HandshakeRequest{
-		AgentID:    "agent-001",
-		Tenant:     "tenant-acme",
-		SDKVersion: "v2.9.0",
-		Nonce:      strings.Repeat("n", capsdk.WorkerHandshakeNonceLength),
-		RequestID:  "req-1",
-		Timestamp:  time.Now().UTC(),
-	}
-	if overrides != nil {
-		overrides(req)
-	}
-	raw, err := capsdk.MarshalHandshakeRequest(req)
+func TestHandshakeServiceHasNoLegacyJSONMintEntryPoint(t *testing.T) {
+	files, err := filepath.Glob("handshake*.go")
 	if err != nil {
-		t.Fatalf("marshal handshake req: %v", err)
+		t.Fatalf("glob handshake sources: %v", err)
 	}
-	return raw
-}
-
-func TestHandshakeService_HappyPath(t *testing.T) {
-	t.Parallel()
-	svc, sink, _, _, cleanup := newHandshakeFixture(t)
-	defer cleanup()
-
-	raw := validRequestBytes(t, nil)
-	body, err := svc.HandleHandshake(context.Background(), raw)
-	if err != nil {
-		t.Fatalf("handle: %v", err)
-	}
-	resp, err := capsdk.UnmarshalHandshakeResponse(body)
-	if err != nil {
-		t.Fatalf("unmarshal response: %v", err)
-	}
-	if resp.Rejected {
-		t.Fatalf("expected acceptance, got rejection: %+v", resp)
-	}
-	if resp.SessionToken == "" {
-		t.Fatal("missing session token")
-	}
-	if resp.RequestID != "req-1" {
-		t.Fatalf("request id echo mismatch: %q", resp.RequestID)
-	}
-	if resp.TokenExp.IsZero() {
-		t.Fatal("missing token exp")
-	}
-
-	if sink.count() != 1 {
-		t.Fatalf("expected 1 audit event, got %d", sink.count())
-	}
-	ev := sink.last()
-	if ev.EventType != EventWorkerHandshake || ev.Decision != "accept" {
-		t.Fatalf("unexpected audit: %+v", ev)
-	}
-	if ev.Extra["outcome"] != "accepted" {
-		t.Fatalf("extra.outcome=%q", ev.Extra["outcome"])
-	}
-}
-
-func TestHandshakeService_ReplayRejected(t *testing.T) {
-	t.Parallel()
-	svc, sink, _, _, cleanup := newHandshakeFixture(t)
-	defer cleanup()
-
-	raw := validRequestBytes(t, nil)
-	if _, err := svc.HandleHandshake(context.Background(), raw); err != nil {
-		t.Fatalf("first: %v", err)
-	}
-	body, err := svc.HandleHandshake(context.Background(), raw)
-	if err != nil {
-		t.Fatalf("second: %v", err)
-	}
-	resp, err := capsdk.UnmarshalHandshakeResponse(body)
-	if err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if !resp.Rejected || resp.Reason != capsdk.HandshakeRejectReplay {
-		t.Fatalf("expected replay rejection, got %+v", resp)
-	}
-	if sink.count() != 2 {
-		t.Fatalf("expected 2 audit events, got %d", sink.count())
-	}
-	ev := sink.last()
-	if ev.Extra["reason"] != capsdk.HandshakeRejectReplay {
-		t.Fatalf("extra.reason=%q", ev.Extra["reason"])
-	}
-}
-
-func TestHandshakeService_UnknownAgent(t *testing.T) {
-	t.Parallel()
-	svc, _, _, _, cleanup := newHandshakeFixture(t)
-	defer cleanup()
-
-	raw := validRequestBytes(t, func(r *capsdk.HandshakeRequest) { r.AgentID = "ghost" })
-	body, err := svc.HandleHandshake(context.Background(), raw)
-	if err != nil {
-		t.Fatalf("handle: %v", err)
-	}
-	resp, err := capsdk.UnmarshalHandshakeResponse(body)
-	if err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if !resp.Rejected || resp.Reason != capsdk.HandshakeRejectUnknownAgent {
-		t.Fatalf("expected unknown_agent, got %+v", resp)
-	}
-}
-
-func TestHandshakeService_TenantMismatch(t *testing.T) {
-	t.Parallel()
-	svc, _, _, _, cleanup := newHandshakeFixture(t)
-	defer cleanup()
-
-	raw := validRequestBytes(t, func(r *capsdk.HandshakeRequest) {
-		r.Tenant = "tenant-evil"
-		// New nonce so we don't accidentally hit replay.
-		r.Nonce = strings.Repeat("m", capsdk.WorkerHandshakeNonceLength)
-	})
-	body, err := svc.HandleHandshake(context.Background(), raw)
-	if err != nil {
-		t.Fatalf("handle: %v", err)
-	}
-	resp, err := capsdk.UnmarshalHandshakeResponse(body)
-	if err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if !resp.Rejected || resp.Reason != capsdk.HandshakeRejectTenantMismatch {
-		t.Fatalf("expected tenant_mismatch, got %+v", resp)
-	}
-}
-
-func TestHandshakeService_ClockSkew(t *testing.T) {
-	t.Parallel()
-	svc, _, _, _, cleanup := newHandshakeFixture(t)
-	defer cleanup()
-
-	raw := validRequestBytes(t, func(r *capsdk.HandshakeRequest) {
-		r.Timestamp = time.Now().UTC().Add(-5 * time.Minute)
-	})
-	body, err := svc.HandleHandshake(context.Background(), raw)
-	if err != nil {
-		t.Fatalf("handle: %v", err)
-	}
-	resp, err := capsdk.UnmarshalHandshakeResponse(body)
-	if err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if !resp.Rejected || resp.Reason != capsdk.HandshakeRejectClockSkew {
-		t.Fatalf("expected clock_skew, got %+v", resp)
-	}
-}
-
-func TestHandshakeService_SuspendedIdentity(t *testing.T) {
-	t.Parallel()
-	svc, _, _, ids, cleanup := newHandshakeFixture(t)
-	defer cleanup()
-
-	ids.records["agent-001"].Status = "suspended"
-
-	raw := validRequestBytes(t, nil)
-	body, err := svc.HandleHandshake(context.Background(), raw)
-	if err != nil {
-		t.Fatalf("handle: %v", err)
-	}
-	resp, err := capsdk.UnmarshalHandshakeResponse(body)
-	if err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if !resp.Rejected || resp.Reason != capsdk.HandshakeRejectCapabilityDenied {
-		t.Fatalf("expected capability_denied, got %+v", resp)
-	}
-}
-
-func TestHandshakeService_MalformedPayload(t *testing.T) {
-	t.Parallel()
-	svc, _, _, _, cleanup := newHandshakeFixture(t)
-	defer cleanup()
-
-	cases := [][]byte{
-		nil,
-		[]byte("{"),
-		[]byte(`{"agent_id":""}`),
-		[]byte(`{"agent_id":"a","tenant":"t","sdk_version":"v","nonce":"short","request_id":"r","timestamp":"2026-04-18T00:00:00Z"}`),
-	}
-	for _, raw := range cases {
-		body, err := svc.HandleHandshake(context.Background(), raw)
-		if err != nil {
-			t.Fatalf("handle: %v", err)
+	for _, path := range files {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
 		}
-		resp, err := capsdk.UnmarshalHandshakeResponse(body)
-		if err != nil {
-			t.Fatalf("unmarshal: %v", err)
+		parsed, parseErr := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if parseErr != nil {
+			t.Fatalf("parse %s: %v", path, parseErr)
 		}
-		if !resp.Rejected || resp.Reason != capsdk.HandshakeRejectMalformedRequest {
-			t.Fatalf("expected malformed_request, got %+v", resp)
+		for _, declaration := range parsed.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if ok && function.Recv != nil && (function.Name.Name == "HandleHandshake" || function.Name.Name == "HandleRenew") {
+				t.Fatalf("legacy unsigned JSON mint entry point remains: %s", function.Name.Name)
+			}
 		}
-	}
-}
-
-func TestHandshakeService_IdentityStoreFailure(t *testing.T) {
-	t.Parallel()
-	svc, _, _, ids, cleanup := newHandshakeFixture(t)
-	defer cleanup()
-
-	ids.err = errors.New("redis down")
-
-	raw := validRequestBytes(t, nil)
-	body, err := svc.HandleHandshake(context.Background(), raw)
-	if err != nil {
-		t.Fatalf("handle: %v", err)
-	}
-	resp, err := capsdk.UnmarshalHandshakeResponse(body)
-	if err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if !resp.Rejected || resp.Reason != capsdk.HandshakeRejectInternalError {
-		t.Fatalf("expected internal_error, got %+v", resp)
-	}
-}
-
-func TestHandshakeService_NonceStoreFailure(t *testing.T) {
-	t.Parallel()
-	svc, _, nonces, _, cleanup := newHandshakeFixture(t)
-	defer cleanup()
-
-	nonces.err = errors.New("redis hiccup")
-
-	raw := validRequestBytes(t, nil)
-	body, err := svc.HandleHandshake(context.Background(), raw)
-	if err != nil {
-		t.Fatalf("handle: %v", err)
-	}
-	resp, err := capsdk.UnmarshalHandshakeResponse(body)
-	if err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if !resp.Rejected || resp.Reason != capsdk.HandshakeRejectInternalError {
-		t.Fatalf("expected internal_error, got %+v", resp)
-	}
-}
-
-func TestHandshakeService_RenewEmitsRenewedOutcome(t *testing.T) {
-	t.Parallel()
-	svc, sink, _, _, cleanup := newHandshakeFixture(t)
-	defer cleanup()
-
-	raw := validRequestBytes(t, nil)
-	if _, err := svc.HandleRenew(context.Background(), raw); err != nil {
-		t.Fatalf("renew: %v", err)
-	}
-	ev := sink.last()
-	if ev.Extra["outcome"] != "renewed" {
-		t.Fatalf("expected outcome=renewed, got %q", ev.Extra["outcome"])
-	}
-}
-
-func TestNewHandshakeService_RejectsMissingDeps(t *testing.T) {
-	t.Parallel()
-	issuer, _, _, cleanup := newTestIssuer(t, SessionTokenIssuerOptions{})
-	defer cleanup()
-	ids := &fakeIdentityResolver{records: map[string]*store.AgentIdentity{}}
-
-	if _, err := NewHandshakeService(nil, ids, nil, nil, HandshakeServiceOptions{}); err == nil {
-		t.Fatal("expected error for nil issuer")
-	}
-	if _, err := NewHandshakeService(issuer, nil, nil, nil, HandshakeServiceOptions{}); err == nil {
-		t.Fatal("expected error for nil identity resolver")
-	}
-}
-
-func TestNewHandshakeService_ExtendsNonceTTL(t *testing.T) {
-	t.Parallel()
-	issuer, _, _, cleanup := newTestIssuer(t, SessionTokenIssuerOptions{})
-	defer cleanup()
-	ids := &fakeIdentityResolver{records: map[string]*store.AgentIdentity{}}
-
-	svc, err := NewHandshakeService(issuer, ids, nil, nil, HandshakeServiceOptions{
-		Skew:     time.Minute,
-		NonceTTL: time.Second, // smaller than 2x skew
-	})
-	if err != nil {
-		t.Fatalf("new: %v", err)
-	}
-	if svc.nonceTTL < 2*svc.skew {
-		t.Fatalf("nonce TTL not extended: ttl=%s skew=%s", svc.nonceTTL, svc.skew)
 	}
 }

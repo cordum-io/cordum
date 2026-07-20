@@ -417,6 +417,18 @@ spec:
               value: {{ include "cordum.natsUrl" . | quote }}
             - name: NATS_USE_JETSTREAM
               value: "1"
+            {{- include "cordum.workerTrustModeEnv" . | nindent 12 }}
+            {{- include "cordum.workerSessionSigningEnv" . | nindent 12 }}
+            {{- if ne .Values.workerTrust.mode "off" }}
+            - name: CORDUM_HANDSHAKE_SCHEDULER_ID
+              value: {{ .Values.workerTrust.schedulerId | quote }}
+            - name: CORDUM_HANDSHAKE_SCHEDULER_KEY_ID
+              value: {{ .Values.workerTrust.schedulerKeyId | quote }}
+            - name: CORDUM_HANDSHAKE_PRIVATE_KEY_FILE
+              value: /etc/cordum/handshake/private.pem
+            - name: CORDUM_HANDSHAKE_PUBLIC_KEY_FILE
+              value: /etc/cordum/handshake/public.pem
+            {{- end }}
             {{- if .Values.redis.auth.enabled }}
             - name: REDIS_PASSWORD
               valueFrom:
@@ -518,6 +530,16 @@ spec:
               subPath: license.json
               readOnly: true
             {{- end }}
+            {{- if ne .Values.workerTrust.mode "off" }}
+            - name: worker-proof-private
+              mountPath: /etc/cordum/handshake/private.pem
+              subPath: private.pem
+              readOnly: true
+            - name: worker-proof-public
+              mountPath: /etc/cordum/handshake/public.pem
+              subPath: public.pem
+              readOnly: true
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /health
@@ -549,6 +571,20 @@ spec:
         - name: license
           secret:
             secretName: {{ include "cordum.licenseSecretName" . }}
+        {{- end }}
+        {{- if ne .Values.workerTrust.mode "off" }}
+        - name: worker-proof-private
+          secret:
+            secretName: {{ .Values.workerTrust.schedulerProof.privateKeySecret.name | quote }}
+            items:
+              - key: {{ .Values.workerTrust.schedulerProof.privateKeySecret.key | quote }}
+                path: private.pem
+        - name: worker-proof-public
+          secret:
+            secretName: {{ .Values.workerTrust.schedulerProof.publicKeySecret.name | quote }}
+            items:
+              - key: {{ .Values.workerTrust.schedulerProof.publicKeySecret.key | quote }}
+                path: public.pem
         {{- end }}
 ---
 {{- end }}
@@ -594,6 +630,8 @@ spec:
               value: {{ include "cordum.natsUrl" . | quote }}
             - name: NATS_USE_JETSTREAM
               value: "1"
+            {{- include "cordum.workerTrustModeEnv" . | nindent 12 }}
+            {{- include "cordum.workerSessionSigningEnv" . | nindent 12 }}
             {{- if .Values.redis.auth.enabled }}
             - name: REDIS_PASSWORD
               valueFrom:
@@ -1001,6 +1039,7 @@ spec:
               value: {{ include "cordum.natsUrl" . | quote }}
             - name: NATS_USE_JETSTREAM
               value: "1"
+            {{- include "cordum.workerSessionSigningEnv" . | nindent 12 }}
             {{- if .Values.redis.auth.enabled }}
             - name: REDIS_PASSWORD
               valueFrom:

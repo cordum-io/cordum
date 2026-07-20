@@ -1005,15 +1005,46 @@ RBAC roles are stored in Redis (key prefix `rbac:role:`). Default roles (admin, 
 
 ### Gateway + Scheduler — Boundary Hardening
 
-These flags control the canonical topic registry, schema enforcement, worker attestation,
-and readiness gating described in [ADR 009](adr/009-control-plane-boundary-hardening.md).
+These flags control the canonical topic registry, schema enforcement, worker
+identity, and readiness gating described in
+[ADR 009](adr/009-control-plane-boundary-hardening.md). The authenticated
+worker protocol is documented in [SDK handshake](sdk/handshake.md).
 
 | Variable | Default | Type | Service | Description |
 |----------|---------|------|---------|-------------|
 | `SCHEMA_ENFORCEMENT` | `warn` | string (`off`, `warn`, `enforce`) | gateway + scheduler | Controls how registered topic schemas are enforced. The gateway uses it at submit time for `POST /api/v1/jobs`; the scheduler uses the same mode before dispatch. `warn` logs violations and continues, `enforce` rejects/failed-jobs on schema mismatch, `off` skips schema validation. |
 | `WORKER_ATTESTATION` | `off` | string (`off`, `warn`, `enforce`) | scheduler | Controls whether scheduler heartbeat processing requires a valid worker credential token. `warn` accepts the heartbeat but logs attestation failures; `enforce` rejects unattested heartbeats; `off` skips attestation checks. |
+| `CORDUM_SDK_HANDSHAKE` | `off` in shipped manifests; explicit value required at boot | string (`off`, `warn`, `enforce`) | gateway + scheduler | Enables the authenticated CAP protobuf challenge/proof/session contract. In `warn`, tokenless heartbeat/capability advertisements are telemetry only and never refresh liveness, readiness, or dispatch state; invalid tokens are rejected. `enforce` requires a bound session. Unknown or empty runtime values fail boot. |
+| `CORDUM_HEARTBEAT_MODE` | `authority` | string (`authority`, `warn`, `telemetry`) | gateway + scheduler | Selects dispatch authority. `authority` uses legacy heartbeat TTL; `warn` enforces bound session state while comparing heartbeat and emitting disagreements; `telemetry` removes heartbeat from authority decisions. Must transition with `CORDUM_SDK_HANDSHAKE`. |
+| `CORDUM_HANDSHAKE_SCHEDULER_ID` | — | string | scheduler | Scheduler proof identity. Required in handshake `warn`/`enforce`; workers pin the exact value. |
+| `CORDUM_HANDSHAKE_SCHEDULER_KEY_ID` | — | string | scheduler | ID of the ECDSA P-256 scheduler proof key. Required in handshake `warn`/`enforce`. |
+| `CORDUM_HANDSHAKE_PRIVATE_KEY_FILE` | — | path | scheduler | Private ECDSA P-256 scheduler proof key. Secret file; never log or distribute it. |
+| `CORDUM_HANDSHAKE_PUBLIC_KEY_FILE` | — | path | scheduler | Matching public SPKI PEM. Scheduler verifies the pair at boot; distribute/pin this public key on workers. |
+| `CORDUM_POLICY_SIGNING_KEY` / `CORDUM_POLICY_SIGNING_KEY_PATH` | — | secret or path | gateway + scheduler + workflow engine | Ed25519 key used for worker sessions and internal service tokens. Scheduler/gateway require it in active handshake mode; workflow engine requires it before `enforce`. Prefer secret/file injection in production. |
+| `CORDUM_POLICY_SIGNING_KEY_ID` | `default` | string | gateway + scheduler + workflow engine | Ed25519 key ID. Must have a matching `CORDUM_POLICY_PUBLIC_KEY_<ID>` trust entry on every verifier. Helm active mode restricts IDs to letters, digits, and underscore so the environment name is exact. |
 | `WORKER_READINESS_REQUIRED` | `false` | bool | scheduler | When `true`, scheduling only considers workers that have recently advertised matching `ready_topics` in their handshake. When `false`, workers without readiness data remain eligible for backward compatibility. |
 | `WORKER_READINESS_TTL` | `60s` | duration | scheduler | Freshness window for handshake readiness state. After this TTL expires, the worker heartbeat may still be present, but readiness gating treats the worker as not ready until it handshakes again. Invalid or non-positive values fall back to `60s` with a warning log. |
+
+Recommended rollout pairs:
+
+| Rollout phase | `CORDUM_SDK_HANDSHAKE` | `CORDUM_HEARTBEAT_MODE` |
+|---|---|---|
+| Compatibility/default | `off` | `authority` |
+| Migration observation | `warn` | `warn` |
+| Enforced target | `enforce` | `telemetry` |
+
+The validation rule is class-based, not limited to those examples:
+`off` requires `authority`; either active handshake mode (`warn` or `enforce`)
+accepts either session-authority heartbeat mode (`warn` or `telemetry`). Thus
+`enforce`+`warn` and `warn`+`telemetry` are valid when an operator needs their
+respective disagreement/strictness trade-off.
+
+Active handshake mode also requires `WORKER_ATTESTATION=off`; both mechanisms
+consume `BusPacket.auth_token` with incompatible semantics, so scheduler boot
+rejects a mixed configuration. The worker-session audience is fixed to
+`cordum-scheduler` and is not configurable. A legacy capability handshake is
+telemetry unless it is nested inside and signed by the authenticated proof
+exchange; it cannot mint a session by itself.
 
 ### Workflow Engine
 
