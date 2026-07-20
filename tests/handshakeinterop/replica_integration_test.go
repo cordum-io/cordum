@@ -215,6 +215,15 @@ func activeSessionKey(identity *interopIdentity) string {
 	return "session:worker:v2:" + encodedSessionKeyPart(identity.tenantID) + ":" + encodedSessionKeyPart(identity.workerID)
 }
 
+// legacySessionKey mirrors the production legacy worker-session key format
+// built by scheduler.workerKey (core/controlplane/scheduler/session_token.go):
+// "session:worker:legacy:" + encodeSessionKeyPart(subject). workerKey is
+// unexported, so this is a same-package (build-tag-scoped) mirror rather than
+// a hand-duplicated literal at each call site.
+func legacySessionKey(identity *interopIdentity) string {
+	return "session:worker:legacy:" + encodedSessionKeyPart(identity.workerID)
+}
+
 func encodedSessionKeyPart(value string) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(strings.TrimSpace(value)))
 }

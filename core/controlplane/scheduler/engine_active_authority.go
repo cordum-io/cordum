@@ -118,10 +118,21 @@ func (e *Engine) verifyReservedServiceAuthority(packet *pb.BusPacket, action str
 	allowed := result.Verdict == TokenVerdictPass && claims != nil &&
 		servicetoken.IsReservedIdentity(claims.Subject) &&
 		strings.TrimSpace(claims.Subject) == strings.TrimSpace(packet.GetSenderId())
-	if !allowed {
-		slog.Error("unauthorized reserved-service action rejected",
+	if allowed {
+		return true
+	}
+	if admitWarnMissing && e.sessionMiddleware.Mode() == HandshakeModeWarn && result.Verdict == TokenVerdictWarnMissing {
+		// Warn-mode migration policy: the packet is admitted despite the
+		// missing/invalid handshake, so this is NOT a rejection. Log at WARN
+		// so operators can track un-migrated senders without the log crying
+		// wolf about requests that were actually let through.
+		slog.Warn("reserved-service action admitted under warn-mode migration policy (handshake missing or invalid)",
 			"action", action,
 			"sender_id", safeSenderID(packet), "verdict", result.Verdict.String(), "error", result.Err)
+		return true
 	}
-	return allowed || (admitWarnMissing && e.sessionMiddleware.Mode() == HandshakeModeWarn && result.Verdict == TokenVerdictWarnMissing)
+	slog.Error("unauthorized reserved-service action rejected",
+		"action", action,
+		"sender_id", safeSenderID(packet), "verdict", result.Verdict.String(), "error", result.Err)
+	return false
 }
