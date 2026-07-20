@@ -636,6 +636,10 @@ agent := &runtime.Agent{
     NATSURL:  "nats://nats:4222",
     RedisURL: "redis://:$REDIS_PASSWORD@redis:6379",
     SenderID: "my-worker",
+    // Required when the worker holds no signing keys: CAP fails closed
+    // at startup otherwise. Provision worker trust keys instead of this
+    // for anything beyond local development -- see docs/sdk/handshake.md.
+    AllowUnsigned: true,
 }
 
 // 2. Register handlers for pack topics
