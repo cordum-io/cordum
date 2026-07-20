@@ -12,5 +12,9 @@
 export interface EdgeLLMMessage {
   /** @maxLength 256 */
   role?: string;
+  /**
+   * Message text; bounded by the 1 MiB raw-envelope cap and redacted by the gateway before persistence.
+   * @maxLength 1048576
+   */
   content?: string;
 }

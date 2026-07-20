@@ -32,7 +32,10 @@ export interface EdgeLLMEventEnvelope {
   /** @maxLength 256 */
   model?: string;
   direction?: EdgeLLMEventEnvelopeDirection;
-  /** Prompt or completion text; redacted by the gateway before persistence. */
+  /**
+   * Prompt or completion text; bounded by the 1 MiB raw-envelope cap and redacted by the gateway before persistence.
+   * @maxLength 1048576
+   */
   content?: string;
   /** @maxItems 64 */
   messages?: EdgeLLMMessage[];
