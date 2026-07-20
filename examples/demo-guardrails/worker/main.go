@@ -61,6 +61,9 @@ func main() {
 		RedisURL: redisURL,
 		Store:    store,
 		SenderID: workerID,
+		// Example worker: no trust identity, handshake off. CAP fails
+		// closed at startup without this explicit unsigned-legacy opt-in.
+		AllowUnsigned: true,
 	}
 
 	handler := func(ctx runtime.Context, input demoInput) (demoOutput, error) {
