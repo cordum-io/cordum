@@ -2,12 +2,15 @@ module github.com/cordum/cordum
 
 go 1.25.12
 
-// Request the go1.26.4 toolchain, which carries the fixes for
-// GO-2026-5037/5038/5039 (crypto/x509, mime, net/textproto). Under the default
-// GOTOOLCHAIN=auto, builds fetch/use 1.26.4. This is advisory, not enforced: a
-// builder pinned to GOTOOLCHAIN=local with an older 1.26.x ignores it, so CI
-// must also run on go1.26.4+ for the stdlib CVE fixes to actually apply.
-toolchain go1.26.4
+// Request the go1.26.5 toolchain, which carries the fixes for
+// GO-2026-5037/5038/5039 (crypto/x509, mime, net/textproto, fixed in 1.26.4)
+// plus GO-2026-5856 (crypto/tls ECH privacy leak) and GO-2026-4970 (os
+// symlink root escape), both fixed in 1.26.5 and disclosed after the
+// original 1.26.4 pin. Under the default GOTOOLCHAIN=auto, builds fetch/use
+// 1.26.5. This is advisory, not enforced: a builder pinned to
+// GOTOOLCHAIN=local with an older 1.26.x ignores it, so CI must also run on
+// go1.26.5+ for the stdlib CVE fixes to actually apply.
+toolchain go1.26.5
 
 require (
 	github.com/ProtonMail/go-crypto v1.4.1
