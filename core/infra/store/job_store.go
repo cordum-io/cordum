@@ -401,10 +401,24 @@ func (s *RedisJobStore) CancelJob(ctx context.Context, jobID string) (model.JobS
 	if jobID == "" {
 		return "", fmt.Errorf("jobID required")
 	}
+	runtimeExists, err := s.client.Exists(ctx, jobRuntimeKey(jobID)).Result()
+	if err != nil {
+		return "", fmt.Errorf("job store cancel runtime lookup %s: %w", jobID, err)
+	}
+	if runtimeExists != 0 {
+		state, cancelErr := s.CancelAllJobAttempts(ctx, jobID)
+		if cancelErr != nil {
+			return "", cancelErr
+		}
+		if projectErr := s.ProjectJobResult(ctx, jobID, state, "", ""); projectErr != nil {
+			return state, projectErr
+		}
+		return state, nil
+	}
 	metaKey := jobMetaKey(jobID)
 
 	var resultState model.JobState
-	err := s.client.Watch(ctx, func(tx *redis.Tx) error {
+	err = s.client.Watch(ctx, func(tx *redis.Tx) error {
 		current, err := tx.HGet(ctx, metaKey, "state").Result()
 		if err == redis.Nil {
 			legacy, lerr := tx.Get(ctx, jobStateKey(jobID)).Result()
@@ -598,6 +612,26 @@ func redisJobStoreIdempotencyTTL() time.Duration {
 }
 
 func (s *RedisJobStore) SetState(ctx context.Context, jobID string, state model.JobState) error {
+	if jobID == "" || state == "" {
+		return fmt.Errorf("invalid jobID or state")
+	}
+	exists, err := s.client.Exists(ctx, jobRuntimeKey(jobID)).Result()
+	if err != nil {
+		return err
+	}
+	if exists == 0 {
+		return s.SetStateWithContext(ctx, jobID, state, nil)
+	}
+	if err := s.transitionRuntimeState(ctx, jobID, state); err != nil {
+		return err
+	}
+	legacy, err := s.client.HGet(ctx, jobMetaKey(jobID), runtimeStateField).Result()
+	if err != nil && err != redis.Nil {
+		return err
+	}
+	if model.JobState(legacy) == state {
+		return nil
+	}
 	return s.SetStateWithContext(ctx, jobID, state, nil)
 }
 
@@ -828,8 +862,15 @@ func (s *RedisJobStore) buildJobRecords(ctx context.Context, members []redis.Z) 
 }
 
 func (s *RedisJobStore) GetState(ctx context.Context, jobID string) (model.JobState, error) {
+	val, err := s.client.HGet(ctx, jobRuntimeKey(jobID), runtimeStateField).Result()
+	if err == nil {
+		return model.JobState(val), nil
+	}
+	if err != redis.Nil {
+		return "", fmt.Errorf("job store get runtime state %s: %w", jobID, err)
+	}
 	metaKey := jobMetaKey(jobID)
-	val, err := s.client.HGet(ctx, metaKey, "state").Result()
+	val, err = s.client.HGet(ctx, metaKey, "state").Result()
 	if err == nil {
 		return model.JobState(val), nil
 	}
@@ -849,11 +890,23 @@ func (s *RedisJobStore) SetResultPtr(ctx context.Context, jobID, resultPtr strin
 	if err != nil {
 		return fmt.Errorf("job store set result ptr %s: %w", jobID, err)
 	}
+	if exists, existsErr := s.client.Exists(ctx, jobRuntimeKey(jobID)).Result(); existsErr != nil {
+		return existsErr
+	} else if exists != 0 {
+		return s.client.HSet(ctx, jobRuntimeKey(jobID), runtimeResultField, resultPtr).Err()
+	}
 	return nil
 }
 
 func (s *RedisJobStore) GetResultPtr(ctx context.Context, jobID string) (string, error) {
-	val, err := s.client.HGet(ctx, jobMetaKey(jobID), "result_ptr").Result()
+	val, err := s.client.HGet(ctx, jobRuntimeKey(jobID), runtimeResultField).Result()
+	if err == nil {
+		return val, nil
+	}
+	if err != redis.Nil {
+		return "", fmt.Errorf("job store get runtime result ptr %s: %w", jobID, err)
+	}
+	val, err = s.client.HGet(ctx, jobMetaKey(jobID), "result_ptr").Result()
 	if err == nil {
 		return val, nil
 	}
@@ -1213,11 +1266,11 @@ func jobEventsKey(jobID string) string {
 	return jobEventsKeyPrefix + jobID
 }
 
-// jobDispatchEventsKey scopes accepted event-message-id dedupe to one exact
-// dispatch attempt, so a new attempt starts with a clean dedupe set instead
-// of inheriting a prior attempt's message ids.
+// jobDispatchEventsKey retains the legacy helper name while routing every
+// signed event for one job through its single-slot runtime hash. Message IDs
+// remain bound across attempts so replay cannot reset by forcing a retry.
 func jobDispatchEventsKey(jobID, dispatchID string) string {
-	return jobMetaKeyPrefix + jobID + ":dispatch:" + dispatchID + ":events"
+	return jobRuntimeKey(jobID)
 }
 
 func outputDecisionKey(jobID string) string {
@@ -1446,11 +1499,9 @@ func (s *RedisJobStore) SetWorkerID(ctx context.Context, jobID, workerID string)
 // is responsible for only calling this once per real dispatch decision).
 var beginDispatchScript = redis.NewScript(`
 local metaKey = KEYS[1]
-if redis.call('EXISTS', metaKey) == 0 then
-  return {0, ''}
-end
 local attempt = redis.call('HINCRBY', metaKey, ARGV[1], 1)
 redis.call('HSET', metaKey, ARGV[2], ARGV[3], ARGV[4], ARGV[5], ARGV[6], ARGV[7])
+redis.call('EXPIRE', metaKey, tonumber(ARGV[8]))
 return {1, tostring(attempt)}
 `)
 
@@ -1461,12 +1512,19 @@ func (s *RedisJobStore) BeginDispatch(ctx context.Context, jobID, workerID, tena
 	if jobID == "" || workerID == "" || tenant == "" {
 		return "", 0, fmt.Errorf("jobID, workerID, and tenant required")
 	}
+	if _, err := s.GetState(ctx, jobID); err != nil {
+		return "", 0, fmt.Errorf("job store begin dispatch %s: job not found: %w", jobID, err)
+	}
+	if err := s.migrateRuntimeFence(ctx, jobID); err != nil {
+		return "", 0, fmt.Errorf("job store begin dispatch %s: migrate fence: %w", jobID, err)
+	}
 	dispatchID := uuid.NewString()
-	res, err := beginDispatchScript.Run(ctx, s.client, []string{jobMetaKey(jobID)},
+	res, err := beginDispatchScript.Run(ctx, s.client, []string{jobRuntimeKey(jobID)},
 		metaFieldDispatchAttempt,
 		metaFieldDispatchID, dispatchID,
 		metaFieldDispatchWorkerID, workerID,
 		metaFieldDispatchTenant, tenant,
+		strconv.FormatInt(s.runtimeTTLSeconds(), 10),
 	).Result()
 	if err != nil {
 		return "", 0, fmt.Errorf("job store begin dispatch %s: %w", jobID, err)
@@ -1485,37 +1543,39 @@ func (s *RedisJobStore) BeginDispatch(ctx context.Context, jobID, workerID, tena
 }
 
 // acceptJobEventScript atomically verifies the event's dispatch fence
-// exactly matches the CURRENT one and dedupes the event message id within
-// this dispatch attempt's own scope.
+// exactly matches the CURRENT one and dedupes the signed event identity in
+// the job's single-slot runtime hash.
 var acceptJobEventScript = redis.NewScript(`
 local metaKey = KEYS[1]
-local dedupeKey = KEYS[2]
 if redis.call('HGET', metaKey, ARGV[1]) ~= ARGV[2] then return 0 end
 if redis.call('HGET', metaKey, ARGV[3]) ~= ARGV[4] then return 0 end
 if redis.call('HGET', metaKey, ARGV[5]) ~= ARGV[6] then return 0 end
 if redis.call('HGET', metaKey, ARGV[7]) ~= ARGV[8] then return 0 end
-local added = redis.call('SADD', dedupeKey, ARGV[9])
-redis.call('EXPIRE', dedupeKey, 3600)
+local added = redis.call('HSETNX', metaKey, 'event:' .. ARGV[9], ARGV[9])
+redis.call('EXPIRE', metaKey, tonumber(ARGV[10]))
 if added == 0 then return 0 end
 return 1
 `)
 
 // AcceptJobEvent atomically verifies dispatchID/attempt/workerID/tenant
 // exactly match the current dispatch fence and that eventMessageID has not
-// already been accepted for this dispatch. See model.JobStore.AcceptJobEvent.
+// already been accepted for this job. See model.JobStore.AcceptJobEvent.
 func (s *RedisJobStore) AcceptJobEvent(
 	ctx context.Context, jobID, dispatchID string, attempt int, workerID, tenant, eventMessageID string,
 ) (bool, error) {
 	if jobID == "" || dispatchID == "" || workerID == "" || tenant == "" || eventMessageID == "" {
 		return false, fmt.Errorf("jobID, dispatchID, workerID, tenant, and eventMessageID required")
 	}
+	if err := s.migrateRuntimeFence(ctx, jobID); err != nil {
+		return false, fmt.Errorf("job store accept job event %s: migrate fence: %w", jobID, err)
+	}
 	res, err := acceptJobEventScript.Run(ctx, s.client,
-		[]string{jobMetaKey(jobID), jobDispatchEventsKey(jobID, dispatchID)},
+		[]string{jobDispatchEventsKey(jobID, dispatchID)},
 		metaFieldDispatchID, dispatchID,
 		metaFieldDispatchAttempt, strconv.Itoa(attempt),
 		metaFieldDispatchWorkerID, workerID,
 		metaFieldDispatchTenant, tenant,
-		eventMessageID,
+		eventMessageID, strconv.FormatInt(s.runtimeTTLSeconds(), 10),
 	).Result()
 	if err != nil {
 		return false, fmt.Errorf("job store accept job event %s: %w", jobID, err)

@@ -596,6 +596,9 @@ func (e *Engine) Start() error {
 		if err := cs.SubscribeWithContext(capsdk.SubjectCancel, schedulerQueue, e.HandlePacketWithContext); err != nil {
 			return fmt.Errorf("subscribe cancel: %w", err)
 		}
+		if err := cs.SubscribeWithContext(capsdk.SubjectProgress, schedulerQueue, e.HandlePacketWithContext); err != nil {
+			return fmt.Errorf("subscribe progress: %w", err)
+		}
 	} else {
 		if err := e.bus.Subscribe(capsdk.SubjectSubmit, schedulerQueue, e.HandlePacket); err != nil {
 			return fmt.Errorf("subscribe submit: %w", err)
@@ -605,6 +608,18 @@ func (e *Engine) Start() error {
 		}
 		if err := e.bus.Subscribe(capsdk.SubjectCancel, schedulerQueue, e.HandlePacket); err != nil {
 			return fmt.Errorf("subscribe cancel: %w", err)
+		}
+		if err := e.bus.Subscribe(capsdk.SubjectProgress, schedulerQueue, e.HandlePacket); err != nil {
+			return fmt.Errorf("subscribe progress: %w", err)
+		}
+	}
+	if e.productionIdentity.Load() {
+		durable, ok := e.jobStore.(model.DurableJobEventStore)
+		if !ok {
+			return fmt.Errorf("production durable job event store unavailable")
+		}
+		if err := e.startDurableJobEffectReconciler(durable); err != nil {
+			return fmt.Errorf("start durable job effect reconciler: %w", err)
 		}
 	}
 	// Handshakes broadcast to all replicas (like heartbeats).
@@ -973,7 +988,29 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
 			"worker_id", res.WorkerId,
 			"result_ptr", res.ResultPtr,
 		)
-		return e.handleJobResult(res)
+		if e.productionIdentity.Load() {
+			return e.handleProductionJobResult(p, res, tokenResult.Claims)
+		}
+		return e.handleCompatJobResult(p, res)
+	case *pb.BusPacket_JobProgress:
+		progress := payload.JobProgress
+		if progress == nil {
+			return nil
+		}
+		tokenResult, allowed := e.verifySessionTokenResult(p, p.GetSenderId(), "job_progress")
+		if !allowed || !e.productionIdentity.Load() {
+			return nil
+		}
+		identityErr := e.validateProductionJobEventIdentity(
+			e.ctx, p, progress.GetJobId(), progress.GetIdentity(), tokenResult.Claims,
+		)
+		if errors.Is(identityErr, ErrProductionResultIdentityUnavailable) {
+			return RetryAfter(identityErr, retryDelayStore)
+		}
+		if identityErr != nil {
+			return nil
+		}
+		return e.handleProductionProgress(p, progress, tokenResult.Claims)
 	case *pb.BusPacket_JobCancel:
 		cancelReq := payload.JobCancel
 		if cancelReq == nil {
@@ -999,6 +1036,14 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
 				}
 				return nil
 			}
+			authorized, authErr := e.productionCancelAuthorized(p, cancelReq, tokenResult.Claims)
+			if authErr != nil {
+				return authErr
+			}
+			if !authorized {
+				return e.handleProductionWorkerCancel(p, cancelReq, tokenResult.Claims)
+			}
+			return e.handleProductionServiceCancel(cancelReq)
 		}
 		slog.Info("job cancel received",
 			"job_id", cancelReq.JobId,
@@ -1909,10 +1954,15 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 	// Progress/Cancel, so AcceptJobEvent can reject a late event from a
 	// stale attempt before any side effect (task-a13f83fa step-10).
 	dispatchWorkerID := extractWorkerFromSubject(subject)
+	var dispatchID string
+	var dispatchAttempt int
 	if e.jobStore != nil && dispatchWorkerID != "" {
 		dispatchTenant := ExtractTenant(req)
 		dispatchCtx, dispatchCancel := context.WithTimeout(lockCtx, storeOpTimeout)
-		dispatchID, attempt, dispatchErr := e.jobStore.BeginDispatch(dispatchCtx, jobID, dispatchWorkerID, dispatchTenant)
+		var dispatchErr error
+		dispatchID, dispatchAttempt, dispatchErr = e.jobStore.BeginDispatch(
+			dispatchCtx, jobID, dispatchWorkerID, dispatchTenant,
+		)
 		dispatchCancel()
 		if dispatchErr != nil {
 			slog.Error("begin dispatch fencing failed, rolling back to SCHEDULED",
@@ -1923,7 +1973,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			return RetryAfter(dispatchErr, retryDelayStore)
 		}
 		req.Dispatch = &pb.DispatchIdentity{
-			DispatchId: dispatchID, Attempt: uint64(attempt), AssignedWorkerId: dispatchWorkerID,
+			DispatchId: dispatchID, Attempt: uint64(dispatchAttempt), AssignedWorkerId: dispatchWorkerID,
 		}
 	}
 
@@ -1945,7 +1995,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			"subject", subject,
 			"error", err,
 		)
-		if rbErr := e.setJobState(lockCtx, jobID, JobStateScheduled); rbErr != nil {
+		if rbErr := e.rollbackFailedDispatch(lockCtx, jobID, dispatchID, dispatchAttempt); rbErr != nil {
 			slog.Error("dispatch rollback failed",
 				"job_id", jobID, "error", rbErr)
 		}
@@ -1963,6 +2013,22 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 		return RetryAfter(err, retryDelayStore)
 	}
 	return nil
+}
+
+func (e *Engine) rollbackFailedDispatch(
+	ctx context.Context, jobID, dispatchID string, attempt int,
+) error {
+	if durable, ok := e.jobStore.(model.DurableJobEventStore); ok && dispatchID != "" {
+		rolledBack, err := durable.RollbackDispatch(ctx, jobID, dispatchID, attempt)
+		if err != nil {
+			return err
+		}
+		if rolledBack {
+			return e.setJobState(ctx, jobID, JobStateScheduled)
+		}
+		return nil
+	}
+	return e.setJobState(ctx, jobID, JobStateScheduled)
 }
 
 func isRetryableSchedulingError(err error) bool {
@@ -2326,6 +2392,10 @@ func (e *Engine) handleJobResult(res *pb.JobResult) error {
 	}
 	jobID := strings.TrimSpace(res.JobId)
 	if jobID == "" {
+		return nil
+	}
+	if e.productionIdentity.Load() && res.GetDispatch() == nil {
+		slog.Error("production job result rejected", "job_id", jobID, "reason", "dispatch_fence_missing")
 		return nil
 	}
 	// Auto-populate structured ErrorCodeEnum from legacy string ErrorCode

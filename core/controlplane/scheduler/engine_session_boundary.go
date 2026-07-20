@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/cordum/cordum/core/auth/servicetoken"
 	jobidentity "github.com/cordum/cordum/core/protocol/identity"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
@@ -112,7 +113,8 @@ func (e *Engine) validateProductionJobEventIdentity(
 	if claims == nil {
 		return ErrProductionResultIdentityMismatch
 	}
-	if claims.Tenant != "" && claims.Tenant != payloadIdentity.GetTenantId() {
+	if claims.Tenant != "" && claims.Tenant != payloadIdentity.GetTenantId() &&
+		!servicetoken.IsReservedIdentity(claims.Subject) {
 		return ErrProductionResultIdentityMismatch
 	}
 	jobIdentity, err := e.loadProductionJobIdentity(ctx, jobID)

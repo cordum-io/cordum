@@ -29,6 +29,23 @@ func TestWorkflowNeverAdvertisesProductionWhileUnwired(t *testing.T) {
 	}
 }
 
+func TestWorkflowConsumesOnlySchedulerAcceptedResults(t *testing.T) {
+	source, err := os.ReadFile("runner.go")
+	if err != nil {
+		t.Fatalf("ReadFile(runner.go) error = %v", err)
+	}
+	text := string(source)
+	if !strings.Contains(text, "capsdk.SubjectAcceptedResult") {
+		t.Fatal("workflow runner does not subscribe to scheduler-accepted results")
+	}
+	if strings.Contains(text, "SubscribeWithContext(capsdk.SubjectResult") {
+		t.Fatal("workflow runner still subscribes directly to raw worker results")
+	}
+	if !strings.Contains(text, "servicetoken.IdentityScheduler") {
+		t.Fatal("workflow accepted-result handler does not bind the scheduler sender")
+	}
+}
+
 // Selecting production must name the reason startup is refused.
 func TestWorkflowProductionReadinessNamesMissingDependencies(t *testing.T) {
 	err := workflowProductionReadiness().Validate()

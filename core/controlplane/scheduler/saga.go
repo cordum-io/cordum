@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -21,12 +22,19 @@ import (
 )
 
 const (
-	sagaStackKeyFmt   = "saga:%s:stack"
-	sagaLockKeyFmt    = "saga:%s:lock"
+	sagaStackKeyFmt   = "saga:{%s}:stack"
+	sagaLockKeyFmt    = "saga:{%s}:lock"
+	sagaDedupeKeyFmt  = "saga:{%s}:recorded"
 	sagaSenderID      = "cordum-scheduler-saga"
 	sagaCompLabel     = "saga_compensation"
 	sagaWorkflowLabel = "saga_workflow_id"
 )
+
+var recordCompensationScript = redis.NewScript(`
+if redis.call('SADD', KEYS[2], ARGV[1]) == 0 then return 0 end
+redis.call('LPUSH', KEYS[1], ARGV[2])
+return 1
+`)
 
 // SagaManager records and replays compensation jobs for durable rollback.
 type SagaManager struct {
@@ -64,19 +72,39 @@ func (s *SagaManager) WithSafety(sc SafetyChecker) *SagaManager {
 }
 
 func sagaStackKey(workflowID string) string {
-	workflowID = strings.TrimSpace(workflowID)
-	if workflowID == "" {
+	tag := sagaWorkflowTag(workflowID)
+	if tag == "" {
 		return ""
 	}
-	return fmt.Sprintf(sagaStackKeyFmt, workflowID)
+	return fmt.Sprintf(sagaStackKeyFmt, tag)
 }
 
 func sagaLockKey(workflowID string) string {
+	tag := sagaWorkflowTag(workflowID)
+	if tag == "" {
+		return ""
+	}
+	return fmt.Sprintf(sagaLockKeyFmt, tag)
+}
+
+func sagaDedupeKey(workflowID string) string {
+	tag := sagaWorkflowTag(workflowID)
+	if tag == "" {
+		return ""
+	}
+	return fmt.Sprintf(sagaDedupeKeyFmt, tag)
+}
+
+func sagaWorkflowTag(workflowID string) string {
 	workflowID = strings.TrimSpace(workflowID)
 	if workflowID == "" {
 		return ""
 	}
-	return fmt.Sprintf(sagaLockKeyFmt, workflowID)
+	return base64.RawURLEncoding.EncodeToString([]byte(workflowID))
+}
+
+func legacySagaStackKey(workflowID string) string {
+	return "saga:" + strings.TrimSpace(workflowID) + ":stack"
 }
 
 func isCompensationJob(req *pb.JobRequest) bool {
@@ -129,10 +157,18 @@ func (s *SagaManager) RecordCompensation(ctx context.Context, req *pb.JobRequest
 	}
 	cctx, cancel := context.WithTimeout(ctx, storeOpTimeout)
 	defer cancel()
-	if err := s.redis.LPush(cctx, key, data).Err(); err != nil {
+	dedupeID := strings.TrimSpace(req.GetJobId())
+	if dedupeID == "" {
+		digest := sha256.Sum256(data)
+		dedupeID = hex.EncodeToString(digest[:])
+	}
+	recorded, err := recordCompensationScript.Run(
+		cctx, s.redis, []string{key, sagaDedupeKey(workflowID)}, dedupeID, data,
+	).Int()
+	if err != nil {
 		return err
 	}
-	if s.metrics != nil {
+	if recorded == 1 && s.metrics != nil {
 		s.metrics.IncSagaRecorded()
 	}
 	return nil
@@ -182,7 +218,7 @@ func (s *SagaManager) Rollback(ctx context.Context, workflowID string) error {
 
 	for {
 		popCtx, cancel := context.WithTimeout(ctx, storeOpTimeout)
-		data, err := s.redis.LPop(popCtx, key).Bytes()
+		data, err := s.popCompensation(popCtx, key, workflowID)
 		cancel()
 		if err == redis.Nil {
 			break
@@ -213,6 +249,18 @@ func (s *SagaManager) Rollback(ctx context.Context, workflowID string) error {
 	}
 
 	return nil
+}
+
+func (s *SagaManager) popCompensation(ctx context.Context, key, workflowID string) ([]byte, error) {
+	data, err := s.redis.LPop(ctx, key).Bytes()
+	if err != redis.Nil {
+		return data, err
+	}
+	legacy := legacySagaStackKey(workflowID)
+	if legacy == key {
+		return nil, redis.Nil
+	}
+	return s.redis.LPop(ctx, legacy).Bytes()
 }
 
 // sendBrokenCompensationToDLQ publishes a DLQ entry for data that could not

@@ -192,7 +192,10 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 	go rec.Start(ctx)
 
 	// Use context-aware subscription for trace propagation from NATS headers.
-	if err := natsBus.SubscribeWithContext(capsdk.SubjectResult, workflowEngineQueue, func(traceCtx context.Context, p *pb.BusPacket) error {
+	if err := natsBus.SubscribeWithContext(capsdk.SubjectAcceptedResult, workflowEngineQueue, func(traceCtx context.Context, p *pb.BusPacket) error {
+		if p == nil || strings.TrimSpace(p.GetSenderId()) != servicetoken.IdentityScheduler {
+			return nil
+		}
 		if jr := p.GetJobResult(); jr != nil {
 			handlerCtx, handlerCancel := context.WithTimeout(traceCtx, 30*time.Second)
 			defer handlerCancel()
@@ -200,7 +203,7 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 		}
 		return nil
 	}); err != nil {
-		return fmt.Errorf("subscribe %s: %w", capsdk.SubjectResult, err)
+		return fmt.Errorf("subscribe %s: %w", capsdk.SubjectAcceptedResult, err)
 	}
 
 	// The production gate passed before any listener, subscription, or

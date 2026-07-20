@@ -12,7 +12,11 @@ const (
 	SubjectHandshake     = "sys.handshake"
 	SubjectConfigChanged = "sys.config.changed"
 	SubjectAuditExport   = "sys.audit.export"
-	SubjectApprovalGate          = "sys.approval.gate"
+	// SubjectAcceptedResult is scheduler-authored after the worker result has
+	// passed the active profile's scheduler acceptance boundary.
+	SubjectAcceptedResult       = "sys.internal.job.result.accepted"
+	SubjectAcceptedProgress     = "sys.internal.job.progress.accepted"
+	SubjectApprovalGate         = "sys.approval.gate"
 	SubjectWorkflowApprovalGate = "job.cordum.approval-gate"
 
 	// DefaultProtocolVersion matches CAP wire version 1.
