@@ -55,9 +55,7 @@ export const getGetMemoryQueryKey = (params?: GetMemoryParams) => {
 export const getGetMemoryQueryOptions = <
   TData = Awaited<ReturnType<typeof getMemory>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   params?: GetMemoryParams,
   options?: {
@@ -78,23 +76,19 @@ export const getGetMemoryQueryOptions = <
     Awaited<ReturnType<typeof getMemory>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetMemoryQueryResult = NonNullable<
   Awaited<ReturnType<typeof getMemory>>
 >;
 export type GetMemoryQueryError =
-  | UnauthorizedResponse
-  | NotFoundResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse;
 
 export function useGetMemory<
   TData = Awaited<ReturnType<typeof getMemory>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   params: undefined | GetMemoryParams,
   options: {
@@ -112,14 +106,12 @@ export function useGetMemory<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetMemory<
   TData = Awaited<ReturnType<typeof getMemory>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   params?: GetMemoryParams,
   options?: {
@@ -136,13 +128,13 @@ export function useGetMemory<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetMemory<
   TData = Awaited<ReturnType<typeof getMemory>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   params?: GetMemoryParams,
   options?: {
@@ -151,7 +143,9 @@ export function useGetMemory<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get memory data by pointer or key
  */
@@ -159,9 +153,7 @@ export function useGetMemory<
 export function useGetMemory<
   TData = Awaited<ReturnType<typeof getMemory>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   params?: GetMemoryParams,
   options?: {
@@ -170,13 +162,15 @@ export function useGetMemory<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetMemoryQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -298,9 +292,7 @@ export const getGetArtifactQueryKey = (ptr?: string) => {
 export const getGetArtifactQueryOptions = <
   TData = Awaited<ReturnType<typeof getArtifact>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   ptr: string,
   options?: {
@@ -326,23 +318,19 @@ export const getGetArtifactQueryOptions = <
     Awaited<ReturnType<typeof getArtifact>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetArtifactQueryResult = NonNullable<
   Awaited<ReturnType<typeof getArtifact>>
 >;
 export type GetArtifactQueryError =
-  | UnauthorizedResponse
-  | NotFoundResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse;
 
 export function useGetArtifact<
   TData = Awaited<ReturnType<typeof getArtifact>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   ptr: string,
   options: {
@@ -360,14 +348,12 @@ export function useGetArtifact<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetArtifact<
   TData = Awaited<ReturnType<typeof getArtifact>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   ptr: string,
   options?: {
@@ -384,13 +370,13 @@ export function useGetArtifact<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetArtifact<
   TData = Awaited<ReturnType<typeof getArtifact>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   ptr: string,
   options?: {
@@ -399,7 +385,9 @@ export function useGetArtifact<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get an artifact by pointer
  */
@@ -407,9 +395,7 @@ export function useGetArtifact<
 export function useGetArtifact<
   TData = Awaited<ReturnType<typeof getArtifact>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   ptr: string,
   options?: {
@@ -418,13 +404,15 @@ export function useGetArtifact<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetArtifactQueryOptions(ptr, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 

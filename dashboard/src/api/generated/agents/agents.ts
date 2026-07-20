@@ -69,9 +69,7 @@ export const getListAgentsQueryKey = (params?: ListAgentsParams) => {
 export const getListAgentsQueryOptions = <
   TData = Awaited<ReturnType<typeof listAgents>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
 >(
   params?: ListAgentsParams,
   options?: {
@@ -92,23 +90,19 @@ export const getListAgentsQueryOptions = <
     Awaited<ReturnType<typeof listAgents>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListAgentsQueryResult = NonNullable<
   Awaited<ReturnType<typeof listAgents>>
 >;
 export type ListAgentsQueryError =
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | ServiceUnavailableResponse;
+  UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse;
 
 export function useListAgents<
   TData = Awaited<ReturnType<typeof listAgents>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
 >(
   params: undefined | ListAgentsParams,
   options: {
@@ -126,14 +120,12 @@ export function useListAgents<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListAgents<
   TData = Awaited<ReturnType<typeof listAgents>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
 >(
   params?: ListAgentsParams,
   options?: {
@@ -150,13 +142,13 @@ export function useListAgents<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListAgents<
   TData = Awaited<ReturnType<typeof listAgents>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
 >(
   params?: ListAgentsParams,
   options?: {
@@ -165,7 +157,9 @@ export function useListAgents<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List agent identities
  */
@@ -173,9 +167,7 @@ export function useListAgents<
 export function useListAgents<
   TData = Awaited<ReturnType<typeof listAgents>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
+    UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
 >(
   params?: ListAgentsParams,
   options?: {
@@ -184,13 +176,15 @@ export function useListAgents<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListAgentsQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -341,7 +335,7 @@ export const getGetAgentQueryOptions = <
     enabled: !!id,
     ...queryOptions,
   } as UseQueryOptions<Awaited<ReturnType<typeof getAgent>>, TError, TData> & {
-    queryKey: DataTag<QueryKey, TData>;
+    queryKey: DataTag<QueryKey, TData, TError>;
   };
 };
 
@@ -378,7 +372,7 @@ export function useGetAgent<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetAgent<
   TData = Awaited<ReturnType<typeof getAgent>>,
@@ -403,7 +397,9 @@ export function useGetAgent<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetAgent<
   TData = Awaited<ReturnType<typeof getAgent>>,
   TError =
@@ -419,7 +415,9 @@ export function useGetAgent<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get one agent identity
  */
@@ -439,13 +437,15 @@ export function useGetAgent<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetAgentQueryOptions(id, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -683,7 +683,7 @@ export const getGetAgentStatsQueryOptions = <
     Awaited<ReturnType<typeof getAgentStats>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetAgentStatsQueryResult = NonNullable<
@@ -719,7 +719,7 @@ export function useGetAgentStats<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetAgentStats<
   TData = Awaited<ReturnType<typeof getAgentStats>>,
@@ -744,7 +744,9 @@ export function useGetAgentStats<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetAgentStats<
   TData = Awaited<ReturnType<typeof getAgentStats>>,
   TError =
@@ -760,7 +762,9 @@ export function useGetAgentStats<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get per-agent runtime statistics
  */
@@ -780,13 +784,15 @@ export function useGetAgentStats<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetAgentStatsQueryOptions(id, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -952,9 +958,7 @@ export type VerifyDelegationTokenMutationResult = NonNullable<
 >;
 export type VerifyDelegationTokenMutationBody = VerifyDelegationTokenBody;
 export type VerifyDelegationTokenMutationError =
-  | Error
-  | UnauthorizedResponse
-  | ServiceUnavailableResponse;
+  Error | UnauthorizedResponse | ServiceUnavailableResponse;
 
 /**
  * @summary Verify a delegation token for an expected audience
@@ -1045,10 +1049,7 @@ export type RevokeDelegationTokenMutationResult = NonNullable<
 >;
 export type RevokeDelegationTokenMutationBody = RevokeDelegationTokenBody;
 export type RevokeDelegationTokenMutationError =
-  | Error
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | ServiceUnavailableResponse;
+  Error | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse;
 
 /**
  * @summary Revoke a delegation token by JTI
@@ -1144,17 +1145,14 @@ export const getListDelegationsForAgentQueryOptions = <
     Awaited<ReturnType<typeof listDelegationsForAgent>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListDelegationsForAgentQueryResult = NonNullable<
   Awaited<ReturnType<typeof listDelegationsForAgent>>
 >;
 export type ListDelegationsForAgentQueryError =
-  | Error
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | ServiceUnavailableResponse;
+  Error | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse;
 
 export function useListDelegationsForAgent<
   TData = Awaited<ReturnType<typeof listDelegationsForAgent>>,
@@ -1185,7 +1183,7 @@ export function useListDelegationsForAgent<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListDelegationsForAgent<
   TData = Awaited<ReturnType<typeof listDelegationsForAgent>>,
@@ -1215,7 +1213,9 @@ export function useListDelegationsForAgent<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListDelegationsForAgent<
   TData = Awaited<ReturnType<typeof listDelegationsForAgent>>,
   TError =
@@ -1236,7 +1236,9 @@ export function useListDelegationsForAgent<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List delegation tokens issued by a specific agent
  */
@@ -1261,7 +1263,9 @@ export function useListDelegationsForAgent<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListDelegationsForAgentQueryOptions(
     id,
     params,
@@ -1271,7 +1275,7 @@ export function useListDelegationsForAgent<
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -1328,17 +1332,14 @@ export const getListDelegationsQueryOptions = <
     Awaited<ReturnType<typeof listDelegations>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListDelegationsQueryResult = NonNullable<
   Awaited<ReturnType<typeof listDelegations>>
 >;
 export type ListDelegationsQueryError =
-  | Error
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | ServiceUnavailableResponse;
+  Error | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse;
 
 export function useListDelegations<
   TData = Awaited<ReturnType<typeof listDelegations>>,
@@ -1368,7 +1369,7 @@ export function useListDelegations<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListDelegations<
   TData = Awaited<ReturnType<typeof listDelegations>>,
@@ -1397,7 +1398,9 @@ export function useListDelegations<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListDelegations<
   TData = Awaited<ReturnType<typeof listDelegations>>,
   TError =
@@ -1417,7 +1420,9 @@ export function useListDelegations<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List delegation tokens for the current tenant
  */
@@ -1441,13 +1446,15 @@ export function useListDelegations<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListDelegationsQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 

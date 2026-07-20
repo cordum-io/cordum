@@ -1,11 +1,11 @@
 module github.com/cordum/cordum
 
-go 1.25.10
+go 1.25.12
 
 require (
 	github.com/ProtonMail/go-crypto v1.4.1
 	github.com/alicebob/miniredis/v2 v2.36.1
-	github.com/cordum-io/cap/v2 v2.13.3
+	github.com/cordum-io/cap/v2 v2.14.1-0.20260720175350-2a8983f57629
 	github.com/cordum/cordum/sdk v0.0.0
 	github.com/coreos/go-oidc/v3 v3.18.0
 	github.com/crewjam/saml v0.5.1
@@ -118,7 +118,7 @@ require (
 	github.com/prometheus/procfs v0.19.2 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
-	golang.org/x/crypto v0.51.0
+	golang.org/x/crypto v0.52.0
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sys v0.45.0
 	golang.org/x/text v0.37.0 // indirect

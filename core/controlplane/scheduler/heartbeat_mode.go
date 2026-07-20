@@ -25,6 +25,7 @@ package scheduler
 // counter, then flip to telemetry once they're comfortable.
 
 import (
+	"fmt"
 	"log/slog"
 	"strings"
 )
@@ -59,6 +60,22 @@ func ParseHeartbeatMode(raw string) HeartbeatMode {
 		return HeartbeatModeTelemetry
 	}
 	return HeartbeatModeAuthority
+}
+
+// ParseHeartbeatModeStrict is the scheduler boot parser. The documented empty
+// default remains authority, but non-empty typos are rejected rather than
+// silently degrading a session-authority deployment to heartbeat authority.
+func ParseHeartbeatModeStrict(raw string) (HeartbeatMode, error) {
+	normalized := strings.ToLower(strings.TrimSpace(raw))
+	if normalized == "" {
+		return HeartbeatModeAuthority, nil
+	}
+	switch HeartbeatMode(normalized) {
+	case HeartbeatModeAuthority, HeartbeatModeWarn, HeartbeatModeTelemetry:
+		return HeartbeatMode(normalized), nil
+	default:
+		return "", fmt.Errorf("%s must be authority, warn, or telemetry", EnvHeartbeatMode)
+	}
 }
 
 // EnforcesSession reports whether session-token state is the authority

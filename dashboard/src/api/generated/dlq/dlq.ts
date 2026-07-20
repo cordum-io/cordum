@@ -54,9 +54,7 @@ export const getListDLQQueryKey = (params?: ListDLQParams) => {
 export const getListDLQQueryOptions = <
   TData = Awaited<ReturnType<typeof listDLQ>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   params?: ListDLQParams,
   options?: {
@@ -77,23 +75,19 @@ export const getListDLQQueryOptions = <
     Awaited<ReturnType<typeof listDLQ>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListDLQQueryResult = NonNullable<
   Awaited<ReturnType<typeof listDLQ>>
 >;
 export type ListDLQQueryError =
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse;
 
 export function useListDLQ<
   TData = Awaited<ReturnType<typeof listDLQ>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   params: undefined | ListDLQParams,
   options: {
@@ -111,14 +105,12 @@ export function useListDLQ<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListDLQ<
   TData = Awaited<ReturnType<typeof listDLQ>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   params?: ListDLQParams,
   options?: {
@@ -135,13 +127,13 @@ export function useListDLQ<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListDLQ<
   TData = Awaited<ReturnType<typeof listDLQ>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   params?: ListDLQParams,
   options?: {
@@ -150,7 +142,9 @@ export function useListDLQ<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List dead-letter queue entries
  */
@@ -158,9 +152,7 @@ export function useListDLQ<
 export function useListDLQ<
   TData = Awaited<ReturnType<typeof listDLQ>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   params?: ListDLQParams,
   options?: {
@@ -169,13 +161,15 @@ export function useListDLQ<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListDLQQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -206,9 +200,7 @@ export const getListDLQPaginatedQueryKey = (
 export const getListDLQPaginatedQueryOptions = <
   TData = Awaited<ReturnType<typeof listDLQPaginated>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   params?: ListDLQPaginatedParams,
   options?: {
@@ -234,23 +226,19 @@ export const getListDLQPaginatedQueryOptions = <
     Awaited<ReturnType<typeof listDLQPaginated>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListDLQPaginatedQueryResult = NonNullable<
   Awaited<ReturnType<typeof listDLQPaginated>>
 >;
 export type ListDLQPaginatedQueryError =
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse;
 
 export function useListDLQPaginated<
   TData = Awaited<ReturnType<typeof listDLQPaginated>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   params: undefined | ListDLQPaginatedParams,
   options: {
@@ -272,14 +260,12 @@ export function useListDLQPaginated<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListDLQPaginated<
   TData = Awaited<ReturnType<typeof listDLQPaginated>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   params?: ListDLQPaginatedParams,
   options?: {
@@ -300,13 +286,13 @@ export function useListDLQPaginated<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListDLQPaginated<
   TData = Awaited<ReturnType<typeof listDLQPaginated>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   params?: ListDLQPaginatedParams,
   options?: {
@@ -319,7 +305,9 @@ export function useListDLQPaginated<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List DLQ entries (paginated)
  */
@@ -327,9 +315,7 @@ export function useListDLQPaginated<
 export function useListDLQPaginated<
   TData = Awaited<ReturnType<typeof listDLQPaginated>>,
   TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
 >(
   params?: ListDLQPaginatedParams,
   options?: {
@@ -342,13 +328,15 @@ export function useListDLQPaginated<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListDLQPaginatedQueryOptions(params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 

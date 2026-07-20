@@ -75,15 +75,14 @@ export const getListWorkflowsQueryOptions = <
     Awaited<ReturnType<typeof listWorkflows>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListWorkflowsQueryResult = NonNullable<
   Awaited<ReturnType<typeof listWorkflows>>
 >;
 export type ListWorkflowsQueryError =
-  | UnauthorizedResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | InternalServerErrorResponse;
 
 export function useListWorkflows<
   TData = Awaited<ReturnType<typeof listWorkflows>>,
@@ -104,7 +103,7 @@ export function useListWorkflows<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListWorkflows<
   TData = Awaited<ReturnType<typeof listWorkflows>>,
@@ -124,7 +123,9 @@ export function useListWorkflows<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListWorkflows<
   TData = Awaited<ReturnType<typeof listWorkflows>>,
   TError = UnauthorizedResponse | InternalServerErrorResponse,
@@ -135,7 +136,9 @@ export function useListWorkflows<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List workflow definitions
  */
@@ -150,13 +153,15 @@ export function useListWorkflows<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListWorkflowsQueryOptions(options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -281,9 +286,7 @@ export const getGetWorkflowQueryKey = (id?: string) => {
 export const getGetWorkflowQueryOptions = <
   TData = Awaited<ReturnType<typeof getWorkflow>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -309,23 +312,19 @@ export const getGetWorkflowQueryOptions = <
     Awaited<ReturnType<typeof getWorkflow>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type GetWorkflowQueryResult = NonNullable<
   Awaited<ReturnType<typeof getWorkflow>>
 >;
 export type GetWorkflowQueryError =
-  | UnauthorizedResponse
-  | NotFoundResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse;
 
 export function useGetWorkflow<
   TData = Awaited<ReturnType<typeof getWorkflow>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options: {
@@ -343,14 +342,12 @@ export function useGetWorkflow<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useGetWorkflow<
   TData = Awaited<ReturnType<typeof getWorkflow>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -367,13 +364,13 @@ export function useGetWorkflow<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useGetWorkflow<
   TData = Awaited<ReturnType<typeof getWorkflow>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -382,7 +379,9 @@ export function useGetWorkflow<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary Get a workflow definition
  */
@@ -390,9 +389,7 @@ export function useGetWorkflow<
 export function useGetWorkflow<
   TData = Awaited<ReturnType<typeof getWorkflow>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -401,13 +398,15 @@ export function useGetWorkflow<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getGetWorkflowQueryOptions(id, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 
@@ -624,9 +623,7 @@ export const getListWorkflowRunsQueryKey = (id?: string) => {
 export const getListWorkflowRunsQueryOptions = <
   TData = Awaited<ReturnType<typeof listWorkflowRuns>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -656,23 +653,19 @@ export const getListWorkflowRunsQueryOptions = <
     Awaited<ReturnType<typeof listWorkflowRuns>>,
     TError,
     TData
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 };
 
 export type ListWorkflowRunsQueryResult = NonNullable<
   Awaited<ReturnType<typeof listWorkflowRuns>>
 >;
 export type ListWorkflowRunsQueryError =
-  | UnauthorizedResponse
-  | NotFoundResponse
-  | InternalServerErrorResponse;
+  UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse;
 
 export function useListWorkflowRuns<
   TData = Awaited<ReturnType<typeof listWorkflowRuns>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options: {
@@ -694,14 +687,12 @@ export function useListWorkflowRuns<
   },
   queryClient?: QueryClient,
 ): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
+  queryKey: DataTag<QueryKey, TData, TError>;
 };
 export function useListWorkflowRuns<
   TData = Awaited<ReturnType<typeof listWorkflowRuns>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -722,13 +713,13 @@ export function useListWorkflowRuns<
       >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 export function useListWorkflowRuns<
   TData = Awaited<ReturnType<typeof listWorkflowRuns>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -741,7 +732,9 @@ export function useListWorkflowRuns<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
 /**
  * @summary List runs for a workflow
  */
@@ -749,9 +742,7 @@ export function useListWorkflowRuns<
 export function useListWorkflowRuns<
   TData = Awaited<ReturnType<typeof listWorkflowRuns>>,
   TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
+    UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
 >(
   id: string,
   options?: {
@@ -764,13 +755,15 @@ export function useListWorkflowRuns<
     >;
   },
   queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
   const queryOptions = getListWorkflowRunsQueryOptions(id, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<
     TData,
     TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
 
   query.queryKey = queryOptions.queryKey;
 

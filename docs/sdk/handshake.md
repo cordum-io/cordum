@@ -1,126 +1,260 @@
-# SDK Worker Handshake
+# Authenticated worker handshake and session trust
 
-> Phase-2 boundary hardening. Related: heartbeat demotion (`docs/architecture/heartbeat-demotion.md`), audit chain (task-2497391e), topic registry (task-436f67e1).
+This document is the operator and SDK contract for worker identity. The trust
+boundary is the CAP protobuf challenge/authenticate protocol backed by enrolled
+P-256 proof keys and Redis session state. A NATS connection, a self-reported
+worker ID, a heartbeat, or the legacy capability `Handshake` is not identity
+proof.
 
-## 1. Why this exists
+## Trust model
 
-Before Phase-2 the scheduler had no cryptographic trust anchor for workers. Every packet a worker published was accepted on the strength of its NATS-subject alone — if the bus would deliver it, the scheduler would process it. Memory-surfaced audit of the live fleet found that **zero workers** were sending the legacy cap `Handshake` packet; the dispatch pipeline had been running without authoritative worker identity for as long as production has existed.
+The authenticated flow binds all of the following before Cordum mints a
+session:
 
-That is not a theoretical risk. Without handshake + session tokens:
+- tenant, worker ID, and agent identity;
+- the enrolled worker proof-key ID and its ECDSA P-256 public key;
+- protocol version, request/trace IDs, client and server nonces, and timestamps;
+- the fixed audience `cordum-scheduler`;
+- the expected scheduler ID and its pinned ECDSA P-256 signing key;
+- the worker's capability `Handshake`, SDK version, and ready topics.
 
-- A compromised NATS account could impersonate any worker.
-- Revoking a worker required tearing down the whole identity — there was no per-session kill switch.
-- Audit events could not reliably tie a `JobResult` to a specific worker boot session.
+Cordum uses two deliberately separate key families:
 
-The Phase-2 handshake closes this gap. On `Agent.Start()` the worker asserts its identity, the scheduler mints a short-lived Ed25519-signed session token, and every subsequent outbound packet carries that token. The scheduler's middleware verifies the signature + expiry + revocation state on every packet.
+| Authority | Algorithm | Private key holder | Purpose |
+|---|---|---|---|
+| Worker proof | ECDSA P-256/SHA-256 | worker | Proves possession of the key enrolled on the worker credential. |
+| Scheduler proof | ECDSA P-256/SHA-256 | scheduler | Lets the worker authenticate the challenge before signing it. |
+| Session/control-plane signing | Ed25519 | scheduler, gateway, workflow engine | Signs short-lived worker sessions and internal service tokens. |
 
-## 2. What changes from the worker's point of view
+Do not reuse a private key across these roles. The worker never sends its
+private key. Cordum never returns a session token until both signatures and all
+bindings verify.
 
-**Nothing, if the SDK is upgraded.** The handshake is implicit in `Agent.Start()`. Workers set a few agent config fields and the runtime does the rest:
+## One protobuf contract
+
+The only session-minting protocol is CAP `BusPacket` request/reply on core NATS:
+
+1. `WorkerHandshakeChallengeRequest` ->
+   `sys.worker.handshake.challenge`.
+2. Scheduler returns a signed `WorkerHandshakeChallenge` containing a fresh,
+   single-use server nonce.
+3. Worker verifies the scheduler signature and every echoed field, then sends
+   `WorkerHandshakeAuthenticate` ->
+   `sys.worker.handshake.authenticate`. The authenticate packet signs the
+   complete challenge and the nested capability `Handshake`.
+4. Scheduler atomically consumes the Redis challenge, verifies the enrolled
+   worker proof key and authoritative agent/tenant/worker link, then returns a
+   signed `WorkerHandshakeResult`.
+
+Renewal uses the same two subjects and protobuf messages with purpose `RENEW`.
+It also requires the current active bound session token. There is no separate
+JSON handshake, renew subject, or unsigned compatibility mint path.
+
+The generic CAP capability `Handshake` remains useful for version,
+capabilities, and ready-topic telemetry. On its legacy standalone subject it is
+self-asserted and cannot create trust. Inside `WorkerHandshakeAuthenticate` it
+is trusted only because it is covered by the worker proof and bound to the
+accepted session. Cordum registers no responder for `sys.worker.handshake`,
+`sys.worker.handshake.renew`, or the old generic handshake subject; those
+packets receive no session and grant no dispatch eligibility.
+
+## Enroll a worker
+
+1. Create the agent identity in the same tenant.
+2. Generate a P-256 worker proof key on the worker host:
+
+   ```bash
+   umask 077
+   openssl ecparam -name prime256v1 -genkey -noout -out worker-proof.pem
+   openssl pkey -in worker-proof.pem -pubout -out worker-proof-public.pem
+   ```
+
+3. Issue or rotate the worker credential and link it to the agent. Send the
+   public SPKI PEM, never the private key:
+
+   ```json
+   {
+     "worker_id": "worker-01",
+     "agent_id": "agt_01...",
+     "proof_key_id": "worker-01-proof-v1",
+     "proof_algorithm": "ECDSA_P256_SHA256",
+     "proof_public_key_pem": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----",
+     "allowed_pools": ["default"],
+     "allowed_topics": ["job.example.run"]
+   }
+   ```
+
+   Submit this body to `POST /api/v1/workers/credentials` with an authorized
+   tenant-scoped admin identity. The response intentionally omits the public
+   PEM from list/read views. The one-time legacy bearer credential returned by
+   this endpoint is not the proof private key and cannot replace the
+   authenticated handshake.
+
+4. Configure the SDK with the exact worker/agent/tenant/key IDs, the worker
+   private key, audience `cordum-scheduler`, expected scheduler ID, and the
+   pinned scheduler public-key map. Enable the SDK trust mode only after the
+   values are complete.
+
+Current stable Go, Python, and Node artifacts expose the same contract:
+
+| SDK | Runtime configuration |
+|---|---|
+| Go | `runtime.Agent.HandshakeMode` plus `capsdk.WorkerTrustConfig` |
+| Python | `Agent(worker_trust_mode=..., worker_trust=WorkerTrustConfig(...))` |
+| Node | `new Agent({ workerTrust: { mode, config } })` with `createWorkerTrustConfig` |
+
+All three reject unknown modes, partial identity, a non-P-256 key, an unpinned
+scheduler, wrong audience, malformed/oversize packets, and altered correlation.
+Use each installed package's exported constants rather than spelling subjects,
+limits, or protocol values in application code.
+
+## Control-plane keys
+
+Active scheduler mode (`warn` or `enforce`) requires all four P-256 settings:
+
+```text
+CORDUM_HANDSHAKE_SCHEDULER_ID=cordum-scheduler
+CORDUM_HANDSHAKE_SCHEDULER_KEY_ID=scheduler-proof-v1
+CORDUM_HANDSHAKE_PRIVATE_KEY_FILE=/run/secrets/scheduler-proof-private.pem
+CORDUM_HANDSHAKE_PUBLIC_KEY_FILE=/etc/cordum/trust/scheduler-proof-public.pem
+```
+
+The scheduler verifies at boot that the public SPKI file matches the private
+key. Workers must pin that public key under the same key ID.
+
+The scheduler and gateway need a matching Ed25519 signing key and trust entry
+whenever worker trust is active. In `enforce`, the workflow engine also needs
+the same authority so its internal cancels carry a verifiable service token:
+
+```text
+CORDUM_POLICY_SIGNING_KEY_ID=session_v1
+CORDUM_POLICY_SIGNING_KEY_PATH=/run/secrets/session-signing-private.pem
+CORDUM_POLICY_PUBLIC_KEY_SESSION_V1=<matching Ed25519 public PEM or base64>
+```
+
+`CORDUM_POLICY_DEV_SIGNING_SEED` is for local development only. Never use it as
+a production key source. The Helm chart's `workerTrust` values accept only
+secret references and refuse to render an active mode with an incomplete
+P-256 or Ed25519 authority bundle.
+
+## Safe rollout and rollback
+
+`CORDUM_SDK_HANDSHAKE` and `CORDUM_HEARTBEAT_MODE` are one rollout unit on both
+scheduler and gateway. The table is the recommended progression:
+
+| Phase | Handshake | Heartbeat | Effect |
+|---|---|---|---|
+| Compatibility | `off` | `authority` | No authenticated responder/session authority; legacy heartbeat TTL governs dispatch. Shipped default. |
+| Observe migration | `warn` | `warn` | Authenticated sessions govern dispatch; heartbeat is compared and disagreement is emitted. Tokenless heartbeat/capability advertisements are retained only as telemetry: they never refresh liveness, readiness, or the dispatch snapshot. Invalid tokens are rejected. |
+| Enforce | `enforce` | `telemetry` | Bound session required for worker traffic and dispatch; heartbeat is telemetry only. Target after the fleet is clean. |
+
+The boot validation accepts two classes: `off` only with `authority`, or either
+active handshake mode (`warn`/`enforce`) with either session-authority heartbeat
+mode (`warn`/`telemetry`). Therefore `enforce`+`warn` and
+`warn`+`telemetry` are valid deliberate configurations even though they are not
+the recommended three-phase sequence.
+
+Before the first active phase:
+
+1. Enroll every worker proof key and distribute the scheduler public proof key.
+2. Deploy the Ed25519 session key/trust entry to scheduler and gateway; deploy
+   it to workflow engine before `enforce`.
+3. Set `WORKER_ATTESTATION=off`. The legacy bearer-attestation gate and active
+   handshake cannot run together because both interpret `BusPacket.auth_token`
+   differently; scheduler boot rejects the combination.
+4. Upgrade workers and verify authenticated sessions in a non-production pool.
+5. Flip both mode variables together. A contradictory pair or unknown value
+   refuses to boot.
+
+Rollback the pair together to `off` + `authority`. An `off` scheduler rejects
+configured P-256 handshake settings, so remove those four environment variables
+from the process when rolling back. Retain key material in the secret manager;
+do not copy it into logs or manifests.
+
+### Unsigned workers must opt in explicitly
+
+Even in the `off` compatibility phase, the CAP Go runtime fails closed at
+startup: `agent.Start()` returns `cap-runtime: signing keys required; set
+AllowUnsigned for explicit unsigned legacy mode` when the `Agent` carries
+neither `PublicKeys`/`PrivateKey` nor `AllowUnsigned: true`. Running unsigned
+is a decision the worker has to state in source rather than inherit silently.
 
 ```go
 agent := &runtime.Agent{
-    SenderID:      "my-worker",
-    Tenant:        "my-tenant",
-    SDKVersion:    "cap-go/v2.9.1",
-    HandshakeMode: runtime.HandshakeModeEnforce,
-}
-// Register handlers...
-if err := agent.Start(); err != nil {
-    log.Fatal(err) // handshake rejection, network partition, etc.
+    NATSURL:       natsURL,
+    RedisURL:      redisURL,
+    SenderID:      workerID,
+    AllowUnsigned: true, // no trust identity; local development only
 }
 ```
 
-Workers that do not upgrade keep working under the operator's rollout mode (see §3). Only `enforce` mode refuses pre-handshake packets.
+`AllowUnsigned` only relaxes the `off` phase. In `warn` and `enforce` the
+runtime validates the worker trust config instead and never consults the flag,
+so a worker with no trust identity cannot advance past `off` regardless of how
+it is set. Prefer provisioning worker trust keys (see *Enroll a worker*) for
+anything that leaves a developer machine.
 
-## 3. Operator rollout
+Note that `off` rejects a *configured* trust identity outright — the same
+startup check fails with `handshake mode off conflicts with worker trust
+configuration` if any worker trust field is populated while the mode is `off`.
+Unsigned and enrolled are mutually exclusive postures, not a spectrum.
 
-The scheduler-side enforcement is controlled by `CORDUM_SDK_HANDSHAKE`. Three phases:
+## Session lifecycle
 
-| Mode | Scheduler behaviour | When to use |
-|---|---|---|
-| `off` | Middleware is a no-op. Every packet passes regardless of token state. | Initial release — validates the dashboards + Prometheus gauges are working without touching traffic. |
-| `warn` (default) | Tokens are verified when present. Handshakeless packets log a single ERROR per worker per hour and pass through. | Main migration phase. Watch the `handshake missing` error rate drop to zero as the fleet upgrades. |
-| `enforce` | Every inbound packet must carry a valid + non-revoked session token. | Target state once the fleet has upgraded. |
+- The accepted session is Ed25519-signed, audience-bound to
+  `cordum-scheduler`, and stored as the single active worker/agent/tenant/key
+  binding in Redis. Default lifetime is one hour.
+- SDKs renew before expiry through a fresh challenge/proof exchange. Renewal
+  must present the current active token. Missing, expired, revoked,
+  superseded, wrong-audience, or differently bound tokens cannot renew.
+- Successful issue or renewal installs a new JTI and supersedes/revokes the old
+  token, so an in-flight old token cannot be replayed as a second live session.
+- `POST /api/v1/workers/{id}/revoke-session` revokes the active session.
+- Revoking or replacing a proof credential removes its future proof and
+  dispatch authority; do not treat credential rotation alone as active-session
+  revocation. Explicitly revoke the active session (or wait for its expiry)
+  while rotating the key, then re-authenticate with the new key ID/public key
+  and corresponding private key.
 
-The Agent-side `HandshakeMode` field is a parallel control on the worker side: `off` = skip handshake entirely; `warn` = attempt but tolerate failure; `enforce` = fail `Start()` on persistent handshake failure.
+Challenge state and active/revoked/superseded session state are shared in
+Redis, so HA replicas preserve the same single-use and single-active-session
+rules.
 
-### Suggested rollout timeline
+## NATS and logging hardening
 
-| Week | Scheduler mode | Worker SDK mode | Expected outcome |
-|---|---|---|---|
-| 0 | `off` | `off` | Observe metrics + dashboards; no behaviour change. |
-| 1–2 | `warn` | `off` | Handshakeless pass-through; scheduler-side rate-limited logs appear. |
-| 3–4 | `warn` | `warn` | Adapters upgrade; handshake attempts flow; failures visible. |
-| 5+ | `enforce` | `enforce` | Full trust enforcement; any misconfig is a boot-time error. |
+Use TLS plus authenticated NATS accounts. At minimum:
 
-## 4. Session-token lifecycle
+- workers may publish only the two handshake request subjects and their job
+  result/progress subjects, and may subscribe only to authorized job subjects
+  plus their request inboxes;
+- schedulers may subscribe to both handshake subjects and publish replies to
+  request inboxes; use NATS response permissions/`_INBOX` ACLs rather than a
+  broad `>` permission;
+- challenge/authenticate use core NATS request/reply, not JetStream. Do not
+  persist or replay them.
 
-### Issue
+Never log or export a session token, private key, raw signature/proof, raw
+challenge nonce, authorization header, or complete handshake packet. Safe
+diagnostics are tenant/worker/agent IDs, bounded request/trace IDs, public key
+ID/fingerprint, protocol version, mode, and the stable rejection category.
 
-On `Agent.Start()` the worker builds a `HandshakeRequest` and sends it via NATS request/reply on `sys.worker.handshake`. The scheduler:
+## Remediation
 
-1. Validates the request shape (all fields present, nonce ≥ 16 bytes).
-2. Verifies the clock skew is within `WorkerHandshakeMaxSkew` (60s).
-3. Claims the nonce in Redis (`session:nonce:<tenant>:<nonce>` SETNX with TTL ≥ 2 × skew) to prevent replay.
-4. Looks up the agent in `AgentIdentityStore`.
-5. Confirms the request tenant matches the identity record.
-6. Mints an Ed25519-signed session token via `SessionTokenIssuer.Issue`.
-7. Returns a `HandshakeResponse` with `SessionToken` + `TokenExp`.
+| Symptom/category | Action |
+|---|---|
+| Boot rejects mode pair | Use `off` only with `authority`, or `warn`/`enforce` with `warn`/`telemetry`, consistently on scheduler and gateway. |
+| Boot reports incomplete P-256 bundle | Supply all scheduler ID/key ID/private-file/public-file settings and confirm the files contain one matching P-256 pair. |
+| Session issuer/trust store unavailable | Supply matching Ed25519 private/public material under one key ID and verify Redis connectivity. |
+| `unknown_agent` / binding failure | Verify the agent exists in the tenant and the worker credential links that exact agent and worker. |
+| Unknown/revoked proof key | Re-enroll the worker with a fresh P-256 public key/key ID; do not restore a revoked key. |
+| Wrong audience/scheduler/key ID | Use audience `cordum-scheduler` and the exact pinned scheduler identity/key ID. |
+| Replay, expired challenge, or clock skew | Discard the exchange, correct clocks, and start a fresh challenge. Never retry the same authenticate bytes. |
+| Missing/altered trace, identity, nonce, version, capability, or signature | Treat as tampering or a mixed-version client; replace the whole exchange and inspect NATS boundaries. |
+| Session expired/revoked/superseded | Stop admitting work, obtain a fresh authenticated session, and investigate rotation/revocation audit events. |
+| Legacy handshake receives no reply | Expected: legacy subjects cannot mint. Upgrade/configure the authenticated SDK flow. |
 
-The worker stores the token on its `Agent.session` state and attaches it to every outbound packet via unknown field 18 on `BusPacket`.
-
-### Renew
-
-A background goroutine on the Agent calls `performRenew` at `exp - lifetime/2` (~30 min for the default 1h token). The renew subject is `sys.worker.handshake.renew`; the payload is a fresh `HandshakeRequest`. On success the Agent rotates its stored token + exp; on rejection it falls back to a fresh handshake.
-
-### Revoke
-
-An admin calls `POST /api/v1/workers/<id>/revoke-session`. The gateway handler:
-
-1. Enforces the `admin` role via `s.auth.RequireRole`.
-2. Resolves the tenant from the auth context + `X-Tenant-ID`.
-3. Invokes `SessionTokenIssuer.RevokeByAgent` which writes `session:revoked:<tenant>:<jti>` in Redis with TTL matching exp.
-4. Emits two SIEMEvents: `worker_handshake{outcome=revoked}` + `worker_trust_change{reason=session_revoked}`.
-
-Subsequent packets from that worker fail `SessionTokenMiddleware.Verify` with `RejectInvalid`. In `enforce` mode the packet is dropped.
-
-## 5. Debugging a rejected handshake
-
-The scheduler emits a structured log + SIEMEvent on every rejection. The `reason` field is one of the `HandshakeReject*` constants from `cap/sdk/go/handshake.go`:
-
-| Reason | Cause | Remediation |
-|---|---|---|
-| `unknown_agent` | `agent_id` not in `AgentIdentityStore` | Register the agent via the dashboard or `POST /api/v1/agents`. |
-| `tenant_mismatch` | Request `tenant` does not match the identity's `Owner` field. | Fix the worker config so `Tenant` matches the registered owner. |
-| `replay_detected` | Nonce already claimed in the Redis nonce store. | Confirm the worker is not replaying a cached request (clock moved backwards, cached outbound packet). |
-| `clock_skew` | Request timestamp is > `WorkerHandshakeMaxSkew` (60s) from scheduler clock. | Check NTP on the worker host. |
-| `capability_denied` | Identity status is `suspended` or `revoked`. | Re-activate the identity via the dashboard. |
-| `sdk_too_old` | Scheduler refuses a deprecated SDK version. | Upgrade the adapter / SDK to the minimum version below. |
-| `malformed_request` | Parse error or missing required field. | Upgrade the SDK — this indicates a version-mismatch bug. |
-| `invalid_signature` | Token signature failed verification. | Rotate signing keys; check trust store config. |
-| `internal_error` | Identity lookup / nonce store transient failure. | Check scheduler logs; usually a Redis hiccup. |
-
-The dashboard's Agent Registry page surfaces the reason on the agent row so operators can diagnose without grepping logs.
-
-## 6. Minimum SDK versions
-
-| SDK | Minimum version | Handshake field default |
-|---|---|---|
-| `cap-go` (Go) | v2.9.1 | `HandshakeMode = off` |
-| `cap-py` (Python) | v2.9.1 | `handshake_mode = "off"` |
-| `cap-node` (TypeScript) | v2.9.1 | `handshakeMode: "off"` |
-| `cordum-adapters` (Python framework) | v0.3.0 | Inherits cap-py default |
-
-Operators flipping to `enforce` on the scheduler side should verify the fleet's min version meets these thresholds first. The `/api/v1/workers` response carries `session_state` per worker — any row with `session_state == "trust_store_unready"` means the gateway isn't wired to verify tokens; a row with `session_state == "no_session"` means the worker hasn't upgraded yet.
-
-## 7. Further reading
-
-- `cap/sdk/go/handshake.go` — wire-format types.
-- `cap/sdk/go/runtime/handshake.go` — Agent-side handshake driver.
-- `cap/sdk/go/runtime/renew.go` — auto-renew loop.
-- `core/controlplane/scheduler/handshake_handler.go` — scheduler-side handler.
-- `core/controlplane/scheduler/session_token.go` — JWS-like token issuer.
-- `core/controlplane/scheduler/token_middleware.go` — inbound-packet verifier.
-- `core/controlplane/gateway/handlers_workers.go` — revoke endpoint.
-- `docs/architecture/heartbeat-demotion.md` — the sibling rollout that pairs with this.
+For fleet triage, see
+[Worker health runbook](../operations/runbook-worker-health.md). For deployment
+variables, see [Configuration reference](../configuration-reference.md). The
+protocol source of truth is CAP `proto/cordum/agent/v1/handshake.proto` and its
+worker-trust specification; this guide does not create a second wire contract.

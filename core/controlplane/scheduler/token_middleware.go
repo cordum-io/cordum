@@ -31,6 +31,8 @@ import (
 	"google.golang.org/protobuf/encoding/protowire"
 )
 
+var errSessionTokenModeInvalid = errors.New("scheduler: session token middleware mode invalid")
+
 // TokenVerdict is the decision the middleware returns for an inbound
 // packet. Callers pattern-match on the verdict to decide whether to
 // admit, log-and-admit, or reject the packet.
@@ -81,18 +83,16 @@ type TokenVerificationResult struct {
 }
 
 // SessionTokenMiddleware wires the issuer + mode + rate-limit tracker
-// into a single verify call. All fields are required in production;
-// nil issuer degrades the middleware to a no-op (Off mode semantics)
-// so unit tests don't need Redis.
+// into a single verify call. An active mode without an issuer fails closed;
+// only explicit Off mode is a no-op.
 type SessionTokenMiddleware struct {
 	issuer  *SessionTokenIssuer
 	mode    HandshakeMode
 	missing *HandshakeMissingTracker
 }
 
-// NewSessionTokenMiddleware builds a middleware. A nil issuer makes
-// every call return TokenVerdictPass (the middleware is effectively
-// disabled); pass a real *SessionTokenIssuer in production.
+// NewSessionTokenMiddleware builds a middleware. Pass a real issuer whenever
+// mode is Warn or Enforce; a nil issuer in either active mode rejects traffic.
 func NewSessionTokenMiddleware(issuer *SessionTokenIssuer, mode HandshakeMode, missing *HandshakeMissingTracker) *SessionTokenMiddleware {
 	return &SessionTokenMiddleware{issuer: issuer, mode: mode, missing: missing}
 }
@@ -113,8 +113,17 @@ func (m *SessionTokenMiddleware) Mode() HandshakeMode {
 // The workerID argument scopes the rate-limit tracker in warn mode so
 // a noisy worker doesn't flood the logs.
 func (m *SessionTokenMiddleware) Verify(ctx context.Context, workerID string, packet *pb.BusPacket) TokenVerificationResult {
-	if m == nil || m.issuer == nil || m.mode == HandshakeModeOff {
+	if m == nil || m.mode == HandshakeModeOff {
 		return TokenVerificationResult{Verdict: TokenVerdictPass}
+	}
+	if m.mode != HandshakeModeWarn && m.mode != HandshakeModeEnforce {
+		return TokenVerificationResult{Verdict: TokenVerdictRejectInvalid, Err: errSessionTokenModeInvalid}
+	}
+	if m.issuer == nil {
+		return TokenVerificationResult{
+			Verdict: TokenVerdictRejectInvalid,
+			Err:     ErrSessionTokenStoreUnready,
+		}
 	}
 	token := strings.TrimSpace(extractSessionToken(packet))
 	if token == "" {
@@ -132,7 +141,7 @@ func (m *SessionTokenMiddleware) Verify(ctx context.Context, workerID string, pa
 	if servicetoken.PeekTyp(token) == servicetoken.TypService {
 		claims, err = m.issuer.VerifyService(token)
 	} else {
-		claims, err = m.issuer.Verify(ctx, token, true)
+		claims, err = m.issuer.VerifyBound(ctx, token, true)
 	}
 	if err != nil {
 		return TokenVerificationResult{
@@ -148,14 +157,19 @@ func (m *SessionTokenMiddleware) Verify(ctx context.Context, workerID string, pa
 
 // MintServiceToken mints a control-plane service token for the given reserved
 // identity using the underlying issuer's signing key. It returns ("", nil)
-// when the middleware is nil, has no issuer, or is in Off mode, so producers
-// attach no token in disabled/back-compat deployments (a peer with the gate
-// disabled admits token-less internal broadcasts anyway). A non-nil error is
-// returned for genuine mint failures so callers can log and fail SAFE (a peer
-// rejects a token-less packet under enforce).
+// when the middleware is nil or in Off mode, so producers attach no token in
+// disabled/back-compat deployments. Active modes fail closed when the issuer
+// is missing or the mode is unknown. A non-nil error is returned for genuine
+// mint failures so callers can log and fail safe.
 func (m *SessionTokenMiddleware) MintServiceToken(subject string) (string, error) {
-	if m == nil || m.issuer == nil || m.mode == HandshakeModeOff {
+	if m == nil || m.mode == HandshakeModeOff {
 		return "", nil
+	}
+	if m.mode != HandshakeModeWarn && m.mode != HandshakeModeEnforce {
+		return "", errSessionTokenModeInvalid
+	}
+	if m.issuer == nil {
+		return "", ErrSessionTokenStoreUnready
 	}
 	return m.issuer.MintServiceToken(subject)
 }

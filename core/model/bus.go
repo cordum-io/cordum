@@ -28,3 +28,25 @@ type ContextPublisher interface {
 type ContextSubscriber interface {
 	SubscribeWithContext(subject, queue string, handler func(context.Context, *pb.BusPacket) error) error
 }
+
+// RawRequest contains the exact protobuf bytes received from a request/reply
+// transport. Decoding and semantic validation remain the handler's concern.
+type RawRequest []byte
+
+// RawResponse contains the exact protobuf bytes returned to the requester.
+type RawResponse []byte
+
+// RawRequestHandler handles one bounded request with a transport-owned deadline.
+type RawRequestHandler func(context.Context, RawRequest) (RawResponse, error)
+
+// BusSubscription is the transport-neutral cleanup surface returned by raw
+// request/reply subscribers.
+type BusSubscription interface {
+	Unsubscribe() error
+}
+
+// RawRequestResponder is an optional core request/reply capability. It is kept
+// separate from Bus so existing packet-only bus implementations remain valid.
+type RawRequestResponder interface {
+	QueueRespond(subject, queue string, handler RawRequestHandler) (BusSubscription, error)
+}

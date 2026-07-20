@@ -80,6 +80,7 @@ type WorkerRegistry interface {
 // WorkerReadiness captures the latest readiness state advertised by a worker.
 type WorkerReadiness struct {
 	Ready       bool
+	Trusted     bool
 	ReadyTopics []string
 }
 
