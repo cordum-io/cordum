@@ -11,7 +11,9 @@ func TestRedisResolverConcurrentResolve(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	registry, server := newRedisRegistry(t, &now, []string{"application/octet-stream"}, 1024)
 	body := []byte("immutable-content")
-	server.Set("blob:tenant-a:job-a:item", string(body))
+	if err := server.Set("blob:tenant-a:job-a:item", string(body)); err != nil {
+		t.Fatalf("seed miniredis: %v", err)
+	}
 	ref := redisRef(now, "redis://resources/blob:tenant-a:job-a:item", "application/octet-stream", body)
 	trusted := TrustedContext{TenantID: "tenant-a", JobID: "job-a"}
 	var wait sync.WaitGroup

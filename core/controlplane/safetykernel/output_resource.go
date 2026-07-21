@@ -9,7 +9,6 @@ import (
 
 	"github.com/cordum/cordum/core/infra/resource"
 	"github.com/cordum/cordum/core/infra/resourceio"
-	infraStore "github.com/cordum/cordum/core/infra/store"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -146,8 +145,4 @@ func (s *server) loadLegacyOutputResource(
 	rctx, cancel := context.WithTimeout(ctx, outputReadTimeout)
 	defer cancel()
 	return s.resultClient.Get(rctx, key).Bytes()
-}
-
-func resultKeyFromPointer(pointer string) (string, error) {
-	return infraStore.KeyFromPointer(pointer)
 }

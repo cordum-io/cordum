@@ -99,8 +99,12 @@ func TestLegacyResourcesCannotCrossJobScope(t *testing.T) {
 	t.Cleanup(mr.Close)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
-	mr.Set("ctx:job-b", `{"other":true}`)
-	mr.Set("res:job-b", "other result")
+	if err := mr.Set("ctx:job-b", `{"other":true}`); err != nil {
+		t.Fatalf("seed miniredis: %v", err)
+	}
+	if err := mr.Set("res:job-b", "other result"); err != nil {
+		t.Fatalf("seed miniredis: %v", err)
+	}
 
 	safety := (&SafetyClient{
 		client: &resourceSafetyClient{}, cb: newResourceTestCB("input-cross-job"), contextClient: rdb,

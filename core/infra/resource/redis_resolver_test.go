@@ -46,7 +46,9 @@ func TestRedisResolverReturnsOnlyIntegrityCheckedContent(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	registry, server := newRedisRegistry(t, &now, []string{"application/json"}, 1024)
 	body := []byte(`{"safe":true}`)
-	server.Set("blob:tenant-a:job-a:item", string(body))
+	if err := server.Set("blob:tenant-a:job-a:item", string(body)); err != nil {
+		t.Fatalf("seed miniredis: %v", err)
+	}
 	ref := redisRef(now, "redis://resources/blob:tenant-a:job-a:item", "application/json", body)
 	resolved, err := registry.Resolve(context.Background(), ref,
 		TrustedContext{TenantID: "tenant-a", JobID: "job-a"})
@@ -62,7 +64,9 @@ func TestRedisResolverRejectsURIAndScopeAttacks(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	registry, server := newRedisRegistry(t, &now, []string{"application/json"}, 1024)
 	body := []byte("safe")
-	server.Set("blob:tenant-a:job-a:item", string(body))
+	if err := server.Set("blob:tenant-a:job-a:item", string(body)); err != nil {
+		t.Fatalf("seed miniredis: %v", err)
+	}
 	tests := map[string]string{
 		"wrong scheme":      "https://resources/blob:tenant-a:job-a:item",
 		"wrong authority":   "redis://other/blob:tenant-a:job-a:item",
@@ -96,7 +100,9 @@ func TestRedisResolverRejectsURIAndScopeAttacks(t *testing.T) {
 func TestRedisResolverRejectsPolicyAndContentConflicts(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	registry, server := newRedisRegistry(t, &now, []string{"application/json"}, 8)
-	server.Set("blob:t:j:item", "123456789")
+	if err := server.Set("blob:t:j:item", "123456789"); err != nil {
+		t.Fatalf("seed miniredis: %v", err)
+	}
 	tests := map[string]struct {
 		media string
 		size  uint64
@@ -117,7 +123,9 @@ func TestRedisResolverRejectsPolicyAndContentConflicts(t *testing.T) {
 			}
 		})
 	}
-	server.Set("blob:t:j:item", "short")
+	if err := server.Set("blob:t:j:item", "short"); err != nil {
+		t.Fatalf("seed miniredis: %v", err)
+	}
 	ref := redisRef(now, "redis://resources/blob:t:j:item", "application/json", []byte("12345678"))
 	if _, err := registry.Resolve(context.Background(), ref, TrustedContext{TenantID: "t", JobID: "j"}); !errors.Is(err, ErrSizeMismatch) {
 		t.Fatalf("short content error = %v, want ErrSizeMismatch", err)
@@ -177,7 +185,9 @@ func TestRedisResolverSnapshotsOperatorPolicy(t *testing.T) {
 	registry, server := newRedisRegistry(t, &now, media, 64)
 	media[0] = "text/plain"
 	body := []byte("trusted")
-	server.Set("blob:t:j:item", string(body))
+	if err := server.Set("blob:t:j:item", string(body)); err != nil {
+		t.Fatalf("seed miniredis: %v", err)
+	}
 	ref := redisRef(now, "redis://resources/blob:t:j:item", "application/json", body)
 	if _, err := registry.Resolve(context.Background(), ref, TrustedContext{TenantID: "t", JobID: "j"}); err != nil {
 		t.Fatalf("Resolve after config mutation: %v", err)

@@ -76,7 +76,9 @@ func assertProductionResourceRegistryResolves(
 	body := []byte(`{"safe":true}`)
 	digest := sha256.Sum256(body)
 	key := schedulerResourceKeyPrefix + "tenant-a:job-a:input"
-	srv.Set(key, string(body))
+	if err := srv.Set(key, string(body)); err != nil {
+		t.Fatalf("seed redis resource: %v", err)
+	}
 	ref := &agentv1.ResourceRef{
 		ResolverId: schedulerResourceResolverID,
 		Uri:        "redis://" + schedulerResourceAuthority + "/" + key,

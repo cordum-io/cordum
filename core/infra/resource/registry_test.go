@@ -197,7 +197,7 @@ func TestRegistryFailsClosedForNilRuntimeInputs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}
-	if _, err = registry.Resolve(nil, ref, trusted); !errors.Is(err, ErrInvalidReference) {
+	if _, err = registry.Resolve(nil, ref, trusted); !errors.Is(err, ErrInvalidReference) { //nolint:staticcheck // SA1012: nil context is the case under test (Registry.Resolve's explicit nil-guard)
 		t.Fatalf("nil context error = %v, want ErrInvalidReference", err)
 	}
 }

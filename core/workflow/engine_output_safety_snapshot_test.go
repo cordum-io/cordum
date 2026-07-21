@@ -58,7 +58,7 @@ func (s *mutatingWorkflowSafety) CheckOutputContent(
 func TestProcessStepOutputScansValidatedLegacySnapshot(t *testing.T) {
 	mem, mini := newMemoryStore(t)
 	defer mini.Close()
-	defer mem.Close()
+	defer func() { _ = mem.Close() }()
 	const jobID = "run-a:step-1@1"
 	initial := []byte(`{"version":"validated"}`)
 	replacement := []byte(`{"attacker":true}`)
