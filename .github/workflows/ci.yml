@@ -127,6 +127,7 @@ jobs:
         repository: cordum-io/cap
         ref: ${{ env.CAP_REV }}
         path: cap
+        fetch-tags: true
 
     - name: Set up Go
       uses: actions/setup-go@v6
