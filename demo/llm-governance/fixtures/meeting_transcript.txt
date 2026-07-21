@@ -1,0 +1,22 @@
+Weekly Leadership Sync — Acme Robotics — (fictional sample for the demo)
+
+Attendees: John Smith (VP Eng), Sarah Lee (Head of People)
+
+John Smith: Let's start with Project Aurora. We're two weeks behind on the
+launch. I need to bump the lead engineer's comp to retain them — proposing we
+raise their salary to $185,000 effective next quarter.
+
+Sarah Lee: Noted. For the offer letter, send it to the candidate at
+jordan.rivera@example.com and cc me at sarah.lee@acme.example. Their mobile is
++1 (415) 555-0142 if you need to reach them today.
+
+John Smith: Also — finance flagged a corporate card charge. The card on file is
+4242 4242 4242 4242; we should rotate it.
+
+Sarah Lee: One more thing, the staging deploy script still has a hard-coded key
+in it: OPENAI_API_KEY=sk-demo1234567890ABCDEFitsnotreal . Please get that out of
+the repo.
+
+John Smith: Action items: (1) I'll finalize the Project Aurora timeline, (2)
+Sarah sends the Acme Robotics offer to Jordan, (3) we rotate the card and pull
+the key from the deploy script.
