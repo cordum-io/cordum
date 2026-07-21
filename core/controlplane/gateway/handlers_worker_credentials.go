@@ -128,6 +128,15 @@ func (s *server) handleCreateWorkerCredential(w http.ResponseWriter, r *http.Req
 		return
 	}
 	req.AgentID = strings.TrimSpace(req.AgentID)
+	// NOTE: the audit fix here (tenant-scoped agent_id validation, rejecting
+	// cross-tenant matches with the same "nonexistent" error used for a
+	// genuinely missing agent_id so the response can't be used as an
+	// existence oracle) is superseded by resolveWorkerCredentialAgent below,
+	// which the authenticated-handshake work (#389) introduced. It performs
+	// a tenant-scoped s.agentIdentityStore.Get(ctx, tenant, agentID) — never
+	// the empty-tenant bypass lookup — and validateWorkerCredentialAgent
+	// additionally checks agent.TenantID == tenant and agent.Status ==
+	// "active" before accepting the id. See handlers_worker_credentials_proof.go.
 	if err := s.validateWorkerCredentialAccess(r, req.AllowedPools, req.AllowedTopics); err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, ErrPoolNotFound) || errors.Is(err, ErrTopicNotFound) {

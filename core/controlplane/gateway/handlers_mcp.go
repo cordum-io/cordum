@@ -529,8 +529,18 @@ func (s *server) resolveMCPIdentity(r *http.Request) *mcp.AgentIdentity {
 		return nil
 	}
 	ctx := r.Context()
+	// Both lookup paths must be scoped to the request's tenant (authenticated
+	// and validated by mcpAuth). The store's empty-tenant lookup is a
+	// system-level bypass that skips the tenant check, so resolving an
+	// identity from another tenant — by a guessed X-Agent-Id OR via a worker
+	// credential mapped to another tenant's agent — would apply the wrong
+	// AllowedTools / AllowedServers / RiskTier. Fail closed if tenant absent.
+	tenant := tenantFromRequest(r)
+	if tenant == "" {
+		return nil
+	}
 	if id := strings.TrimSpace(r.Header.Get(mcpAgentIDHeader)); id != "" {
-		identity, err := s.agentIdentityStore.Get(ctx, "", id)
+		identity, err := s.agentIdentityStore.Get(ctx, tenant, id)
 		if err != nil || identity == nil {
 			return nil
 		}
@@ -546,6 +556,13 @@ func (s *server) resolveMCPIdentity(r *http.Request) *mcp.AgentIdentity {
 	}
 	identity, err := s.agentIdentityStore.GetByWorkerID(ctx, principal)
 	if err != nil || identity == nil {
+		return nil
+	}
+	// GetByWorkerID resolves by the authenticated principal but uses an
+	// empty-tenant store lookup internally; enforce tenant isolation here too
+	// so a worker credential bound to another tenant's agent cannot apply that
+	// agent's scope to this request.
+	if strings.TrimSpace(identity.TenantID) != tenant {
 		return nil
 	}
 	return mcpIdentityFromStore(identity)

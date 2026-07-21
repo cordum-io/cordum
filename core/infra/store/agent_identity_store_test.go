@@ -29,6 +29,7 @@ func TestAgentIdentityCreateAndGet(t *testing.T) {
 	ctx := context.Background()
 
 	input := AgentIdentity{
+		TenantID:            "tenant-a",
 		Name:                "test-agent",
 		Owner:               "admin@test.com",
 		RiskTier:            "high",
@@ -87,28 +88,33 @@ func TestAgentIdentityCreateValidation(t *testing.T) {
 	}{
 		{
 			name:  "missing name",
-			input: AgentIdentity{Owner: "admin", RiskTier: "low"},
+			input: AgentIdentity{TenantID: "tenant-a", Owner: "admin", RiskTier: "low"},
 			err:   "name required",
 		},
 		{
 			name:  "missing owner",
-			input: AgentIdentity{Name: "agent", RiskTier: "low"},
+			input: AgentIdentity{TenantID: "tenant-a", Name: "agent", RiskTier: "low"},
 			err:   "owner required",
 		},
 		{
 			name:  "missing risk_tier",
-			input: AgentIdentity{Name: "agent", Owner: "admin"},
+			input: AgentIdentity{TenantID: "tenant-a", Name: "agent", Owner: "admin"},
 			err:   "risk_tier must be one of",
 		},
 		{
 			name:  "invalid risk_tier",
-			input: AgentIdentity{Name: "agent", Owner: "admin", RiskTier: "extreme"},
+			input: AgentIdentity{TenantID: "tenant-a", Name: "agent", Owner: "admin", RiskTier: "extreme"},
 			err:   "risk_tier must be one of",
 		},
 		{
 			name:  "invalid status",
-			input: AgentIdentity{Name: "agent", Owner: "admin", RiskTier: "low", Status: "unknown"},
+			input: AgentIdentity{TenantID: "tenant-a", Name: "agent", Owner: "admin", RiskTier: "low", Status: "unknown"},
 			err:   "status must be one of",
+		},
+		{
+			name:  "missing tenant_id",
+			input: AgentIdentity{Name: "agent", Owner: "admin", RiskTier: "low"},
+			err:   "tenant_id required",
 		},
 	}
 
@@ -232,6 +238,7 @@ func TestAgentIdentityUpdate(t *testing.T) {
 	ctx := context.Background()
 
 	created, err := s.Create(ctx, AgentIdentity{
+		TenantID: "tenant-a",
 		Name:     "original-name",
 		Owner:    "admin",
 		RiskTier: "low",
@@ -289,6 +296,7 @@ func TestAgentIdentityMCPAllowlistsCreateAndUpdate(t *testing.T) {
 	ctx := context.Background()
 
 	created, err := s.Create(ctx, AgentIdentity{
+		TenantID:         "tenant-a",
 		Name:             "mcp-agent",
 		Owner:            "admin",
 		RiskTier:         "high",
@@ -347,6 +355,7 @@ func TestAgentIdentityDelete(t *testing.T) {
 	ctx := context.Background()
 
 	created, err := s.Create(ctx, AgentIdentity{
+		TenantID: "tenant-a",
 		Name:     "delete-me",
 		Owner:    "admin",
 		RiskTier: "low",
@@ -382,6 +391,7 @@ func TestAgentIdentityGetByWorkerID(t *testing.T) {
 	ctx := context.Background()
 
 	created, err := s.Create(ctx, AgentIdentity{
+		TenantID: "tenant-a",
 		Name:     "linked-agent",
 		Owner:    "admin",
 		RiskTier: "medium",
