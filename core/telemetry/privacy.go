@@ -17,6 +17,15 @@ import (
 const (
 	EnvTelemetryMode = "CORDUM_TELEMETRY_MODE"
 	installIDKey     = "cordum:telemetry:install_id"
+
+	// installPingedKey is set (SetNX) after the one-time install ping succeeds.
+	installPingedKey = "cordum:telemetry:install_pinged"
+	// firstUsePingedKey is set (SetNX) after the one-time first-use ping succeeds.
+	firstUsePingedKey = "cordum:telemetry:firstuse_pinged"
+	// UsedMarkerKey is set (SetNX) by the job/workflow pipeline the first time a
+	// job or workflow completes, independent of telemetry mode. Exported so the
+	// scheduler can set it without depending on a string literal.
+	UsedMarkerKey = "cordum:telemetry:used"
 )
 
 // Mode controls whether telemetry collection and reporting are enabled.
@@ -35,9 +44,13 @@ var (
 )
 
 // NormalizeMode converts an arbitrary string into a supported telemetry mode.
-// Unknown or empty values default to local_only (collect to Redis, no remote
-// reporting). Operators must explicitly set CORDUM_TELEMETRY_MODE=anonymous
-// to enable remote reporting.
+// Unknown or empty values default to local_only: metrics are collected to
+// Redis only (no periodic remote reporting), but two one-time anonymous
+// HTTPS pings (install + first-use) are still sent to telemetry.cordum.io
+// regardless of mode, UNLESS mode is "off". Operators must explicitly set
+// CORDUM_TELEMETRY_MODE=off to fully disable all outbound telemetry, or
+// CORDUM_TELEMETRY_MODE=anonymous to additionally enable periodic remote
+// reporting of collected metrics.
 func NormalizeMode(raw string) Mode {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case string(ModeOff), "disabled", "false", "0", "no":
@@ -61,7 +74,10 @@ func (m Mode) Enabled() bool {
 	return NormalizeMode(string(m)) != ModeOff
 }
 
-// ReportingEnabled reports whether remote reporting is enabled.
+// ReportingEnabled reports whether periodic remote reporting of collected
+// metrics is enabled (true only for ModeAnonymous). This does NOT govern the
+// one-time install/first-use pings, which are sent in any mode except off —
+// see maybeSendInstallPing / maybeSendFirstUsePing in collector.go.
 func (m Mode) ReportingEnabled() bool {
 	return NormalizeMode(string(m)) == ModeAnonymous
 }
@@ -116,6 +132,55 @@ func GenerateInstallID(ctx context.Context, client redis.UniversalClient) (strin
 		return "", fmt.Errorf("reload telemetry install id: %w", err)
 	}
 	return strings.TrimSpace(existing), nil
+}
+
+// MarkUsed records (idempotently, via SetNX) that a job or workflow has
+// completed at least once on this install. Safe to call concurrently and on
+// every completion; only the first call sets the marker.
+func MarkUsed(ctx context.Context, client redis.UniversalClient) error {
+	if client == nil {
+		return nil
+	}
+	return client.SetNX(ctx, UsedMarkerKey, "1", 0).Err()
+}
+
+// keyExists reports whether the given Redis key is currently set.
+func keyExists(ctx context.Context, client redis.UniversalClient, key string) (bool, error) {
+	if client == nil {
+		return false, nil
+	}
+	n, err := client.Exists(ctx, key).Result()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// pingClaimTTL bounds how long a claimed-but-not-yet-confirmed one-time ping
+// flag lives. Winning the SetNX claim reserves the send so concurrent
+// collectors/replicas converge to one sender; persistPinged then makes the flag
+// permanent on a confirmed send. If the process dies after claiming but before
+// the send is confirmed, the claim expires after this TTL and the ping retries
+// (at-least-once on crash) instead of being lost forever.
+const pingClaimTTL = 15 * time.Minute
+
+// markPinged claims a one-time ping via SetNX with a bounded TTL. It reports
+// whether this caller won the race (true) so concurrent collectors converge and
+// never double-send within the claim window.
+func markPinged(ctx context.Context, client redis.UniversalClient, key string) (bool, error) {
+	if client == nil {
+		return false, nil
+	}
+	return client.SetNX(ctx, key, "1", pingClaimTTL).Result()
+}
+
+// persistPinged promotes a claimed ping flag to permanent (no expiry) after a
+// confirmed successful send, so the ping never fires again. Best-effort.
+func persistPinged(ctx context.Context, client redis.UniversalClient, key string) error {
+	if client == nil {
+		return nil
+	}
+	return client.Set(ctx, key, "1", 0).Err()
 }
 
 func newInstallID() (string, error) {
