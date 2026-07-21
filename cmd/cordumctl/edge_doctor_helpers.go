@@ -193,14 +193,39 @@ func edgeIsLoopbackHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-func edgeModeImplication(mode string) string {
+// edgeModeImplication describes what the configured mode means for actions
+// taken while local agentd itself is unreachable (this is only ever rendered
+// from edgeCheckAgentdStatus's "local agentd not reachable" detail). The
+// enforce wording must not claim CORDUM_AGENTD_FAIL_CLOSED gates enforce's
+// core protection: enforce already denies risky/unknown PreToolUse actions
+// regardless of that env var (core/edge/claude/runner.go's enforceMode
+// check in handleAgentdError); the flag only changes the outcome for
+// non-PreToolUse hook events when agentd itself cannot be reached at all.
+func edgeModeImplication(env *edgeDoctorEnv) string {
+	mode := ""
+	raw := ""
+	if env != nil {
+		mode = env.policyMode
+		raw = env.failClosed
+	}
 	switch edgePolicyModeOrDefault(mode) {
 	case "observe":
 		return "observe mode degrades open"
+	case "enforce":
+		switch edgeFailClosedStateOf(raw) {
+		case edgeFailClosedTrue:
+			return "enforce mode denies every hook event when agentd is unreachable (CORDUM_AGENTD_FAIL_CLOSED=true)"
+		case edgeFailClosedFalse:
+			return "enforce mode still denies risky/unknown PreToolUse actions when agentd is unreachable regardless of CORDUM_AGENTD_FAIL_CLOSED=false; only non-PreToolUse hook events are allowed through"
+		case edgeFailClosedUnparseable:
+			return fmt.Sprintf("enforce mode still denies risky/unknown PreToolUse actions when agentd is unreachable; CORDUM_AGENTD_FAIL_CLOSED=%q is not a recognized boolean and would fall back to agentd's default for non-PreToolUse hook events", strings.TrimSpace(raw))
+		default:
+			return "enforce mode denies risky/unknown PreToolUse actions when agentd is unreachable regardless of CORDUM_AGENTD_FAIL_CLOSED; that flag only changes non-PreToolUse hook events"
+		}
 	case "enterprise-strict":
 		return "enterprise-strict fails closed"
 	default:
-		return "enforce mode denies risky/unknown degraded actions"
+		return fmt.Sprintf("unknown policy mode %q; degraded-action behavior cannot be determined", strings.TrimSpace(mode))
 	}
 }
 
