@@ -144,7 +144,7 @@ func TestCredentialHandshakeTrustResolverUsesOneCredentialSnapshot(t *testing.T)
 	if err != nil || identity == nil {
 		t.Fatalf("resolve snapshot: identity=%+v err=%v", identity, err)
 	}
-	if credentials.getCalls != 1 || identity.PublicKey.X.Cmp(originalKey.X) != 0 || identity.TenantID != "tenant-victim" {
+	if credentials.getCalls != 1 || !identity.PublicKey.Equal(originalKey) || identity.TenantID != "tenant-victim" {
 		t.Fatalf("mixed credential snapshots: calls=%d identity=%+v", credentials.getCalls, identity)
 	}
 }

@@ -112,7 +112,10 @@ func parseProofPublicKey(publicPEM string) (*ecdsa.PublicKey, error) {
 	if !ok {
 		return nil, fmt.Errorf("proof public key must be ECDSA")
 	}
-	if publicKey.Curve != elliptic.P256() || publicKey.X == nil || publicKey.Y == nil {
+	// publicKey.X/Y are read-only here: a nil guard before ECDH(), which
+	// panics (rather than erroring) on zero-value coordinates. Bytes()/ECDH()
+	// give no nil-safe alternative to guard with.
+	if publicKey.Curve != elliptic.P256() || publicKey.X == nil || publicKey.Y == nil { //nolint:staticcheck // SA1019: nil guard, see comment above
 		return nil, fmt.Errorf("proof public key must use P-256")
 	}
 	if _, err := publicKey.ECDH(); err != nil {

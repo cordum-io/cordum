@@ -120,7 +120,10 @@ func parseHandshakePublicKey(data []byte) (*ecdsa.PublicKey, []byte, error) {
 }
 
 func validP256PrivateKey(key *ecdsa.PrivateKey) bool {
-	if key == nil || key.D == nil || !validP256PublicKey(&key.PublicKey) {
+	// key.D is read-only here: a nil guard before ECDH(), which panics
+	// (rather than erroring) on a zero-value scalar. Bytes()/ECDH() give no
+	// nil-safe alternative to guard with.
+	if key == nil || key.D == nil || !validP256PublicKey(&key.PublicKey) { //nolint:staticcheck // SA1019: nil guard, see comment above
 		return false
 	}
 	privateKey, err := key.ECDH()
@@ -132,7 +135,10 @@ func validP256PrivateKey(key *ecdsa.PrivateKey) bool {
 }
 
 func validP256PublicKey(key *ecdsa.PublicKey) bool {
-	if key == nil || key.Curve != elliptic.P256() || key.X == nil || key.Y == nil {
+	// key.X/key.Y are read-only here: a nil guard before ECDH(), which
+	// panics (rather than erroring) on zero-value coordinates. Bytes()/ECDH()
+	// give no nil-safe alternative to guard with.
+	if key == nil || key.Curve != elliptic.P256() || key.X == nil || key.Y == nil { //nolint:staticcheck // SA1019: nil guard, see comment above
 		return false
 	}
 	_, err := key.ECDH()

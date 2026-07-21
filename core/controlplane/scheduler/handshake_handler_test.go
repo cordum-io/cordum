@@ -72,10 +72,13 @@ func TestNewHandshakeServiceRejectsMismatchedPrivateScalar(t *testing.T) {
 	fixture := newProtocolHandshakeFixture(t)
 	defer fixture.cleanup()
 	options := protocolServiceOptions(fixture)
+	// Deliberately mismatch the private scalar against the (copied) public
+	// key to exercise the private/public correspondence check below; there's
+	// no non-deprecated constructor for "wrong D, same public point".
 	bad := *fixture.schedulerKey
-	bad.D = new(big.Int).Sub(fixture.schedulerKey.D, big.NewInt(1))
-	if bad.D.Sign() <= 0 {
-		bad.D = big.NewInt(2)
+	bad.D = new(big.Int).Sub(fixture.schedulerKey.D, big.NewInt(1)) //nolint:staticcheck // SA1019: see comment above
+	if bad.D.Sign() <= 0 {                                          //nolint:staticcheck // SA1019
+		bad.D = big.NewInt(2) //nolint:staticcheck // SA1019
 	}
 	options.SchedulerPrivateKey = &bad
 	_, err := NewHandshakeService(fixture.issuer, &protocolTrustResolver{}, fixture.service.challenges, fixture.sink, options)
