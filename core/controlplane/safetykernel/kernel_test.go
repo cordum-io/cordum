@@ -2619,6 +2619,7 @@ func TestEnrichAgentContext_WithStore(t *testing.T) {
 	agentStore := store.NewAgentIdentityStoreFromClient(client)
 	_, err = agentStore.Create(context.Background(), store.AgentIdentity{
 		ID:                  "agent-test-123",
+		TenantID:            "default",
 		Name:                "test-enrichment-agent",
 		Owner:               "admin",
 		RiskTier:            "critical",
@@ -2641,7 +2642,7 @@ func TestEnrichAgentContext_WithStore(t *testing.T) {
 	}
 
 	labels := map[string]string{"agent_id": "agent-test-123"}
-	srv.enrichAgentContext(context.Background(), labels, &input)
+	srv.enrichAgentContext(context.Background(), "default", labels, &input)
 
 	if input.Meta.AgentID != "agent-test-123" {
 		t.Fatalf("expected AgentID agent-test-123, got %q", input.Meta.AgentID)
@@ -2661,19 +2662,103 @@ func TestEnrichAgentContext_WithStore(t *testing.T) {
 
 	// Test with missing agent_id label — should not enrich.
 	input2 := config.PolicyInput{Meta: config.PolicyMeta{}}
-	srv.enrichAgentContext(context.Background(), map[string]string{}, &input2)
+	srv.enrichAgentContext(context.Background(), "default", map[string]string{}, &input2)
 	if input2.Meta.AgentID != "" {
 		t.Fatalf("expected empty AgentID for missing label, got %q", input2.Meta.AgentID)
 	}
 
 	// Test with nonexistent agent — should set AgentID but not enrich.
 	input3 := config.PolicyInput{Meta: config.PolicyMeta{}}
-	srv.enrichAgentContext(context.Background(), map[string]string{"agent_id": "nonexistent"}, &input3)
+	srv.enrichAgentContext(context.Background(), "default", map[string]string{"agent_id": "nonexistent"}, &input3)
 	if input3.Meta.AgentID != "nonexistent" {
 		t.Fatalf("expected AgentID nonexistent, got %q", input3.Meta.AgentID)
 	}
 	if input3.Meta.AgentRiskTier != "" {
 		t.Fatalf("expected empty AgentRiskTier for nonexistent agent, got %q", input3.Meta.AgentRiskTier)
+	}
+}
+
+// TestEnrichAgentContext_RejectsCrossTenantAgent locks the cross-tenant
+// finding: enrichAgentContext looked up the agent identity with an empty
+// tenant (s.agentStore.Get(ctx, "", agentID)) and never checked the
+// resolved agent's TenantID, and cached the result keyed only by agentID.
+// That let a cross-tenant-linked agent identity's risk_tier /
+// data_classifications influence Safety Kernel policy decisions for jobs
+// submitted by a different tenant, and let a cross-tenant lookup poison the
+// cache for the legitimate tenant. The fix must ignore an agent identity
+// whose TenantID does not match the calling request's tenant, and must not
+// let a subsequent same-tenant lookup for a different agentID collide with
+// a poisoned cache entry.
+func TestEnrichAgentContext_RejectsCrossTenantAgent(t *testing.T) {
+	mini, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(mini.Close)
+
+	client := redis.NewClient(&redis.Options{Addr: mini.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+
+	agentStore := store.NewAgentIdentityStoreFromClient(client)
+	_, err = agentStore.Create(context.Background(), store.AgentIdentity{
+		ID:                  "agent-victim",
+		TenantID:            "tenant-a",
+		Name:                "tenant-a-critical-agent",
+		Owner:               "alice",
+		RiskTier:            "critical",
+		DataClassifications: []string{"pii"},
+	})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+
+	srv := &server{
+		agentStore:    agentStore,
+		agentCacheTTL: defaultAgentCacheTTL,
+	}
+
+	// tenant-b's job references tenant-a's agent identity.
+	input := config.PolicyInput{
+		Tenant: "tenant-b",
+		Topic:  "job.process",
+		Meta:   config.PolicyMeta{},
+	}
+	labels := map[string]string{"agent_id": "agent-victim"}
+	srv.enrichAgentContext(context.Background(), "tenant-b", labels, &input)
+
+	if input.Meta.AgentID != "agent-victim" {
+		t.Fatalf("expected AgentID agent-victim to be recorded, got %q", input.Meta.AgentID)
+	}
+	if input.Meta.AgentRiskTier != "" {
+		t.Fatalf("cross-tenant agent leaked AgentRiskTier: %q", input.Meta.AgentRiskTier)
+	}
+	if len(input.Meta.AgentDataClassifications) != 0 {
+		t.Fatalf("cross-tenant agent leaked AgentDataClassifications: %v", input.Meta.AgentDataClassifications)
+	}
+
+	// The legitimate tenant-a request for the same agent must still enrich
+	// normally — confirms the reject path didn't poison the cache under a
+	// shared (agentID-only) key.
+	inputOK := config.PolicyInput{
+		Tenant: "tenant-a",
+		Topic:  "job.process",
+		Meta:   config.PolicyMeta{},
+	}
+	srv.enrichAgentContext(context.Background(), "tenant-a", labels, &inputOK)
+	if inputOK.Meta.AgentRiskTier != "critical" {
+		t.Fatalf("expected same-tenant lookup to enrich AgentRiskTier=critical, got %q", inputOK.Meta.AgentRiskTier)
+	}
+
+	// A second tenant-b attempt must also stay rejected (verifies the
+	// cross-tenant result was not itself cached under a tenant-scoped key).
+	inputRepeat := config.PolicyInput{
+		Tenant: "tenant-b",
+		Topic:  "job.process",
+		Meta:   config.PolicyMeta{},
+	}
+	srv.enrichAgentContext(context.Background(), "tenant-b", labels, &inputRepeat)
+	if inputRepeat.Meta.AgentRiskTier != "" {
+		t.Fatalf("repeat cross-tenant lookup leaked AgentRiskTier: %q", inputRepeat.Meta.AgentRiskTier)
 	}
 }
 

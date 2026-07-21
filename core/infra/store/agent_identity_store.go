@@ -114,6 +114,15 @@ func (s *AgentIdentityStore) Create(ctx context.Context, identity AgentIdentity)
 		identity.Status = "active"
 	}
 
+	// Required only at creation (not in the shared validateAgentIdentity used
+	// by Update too): closes the gap going forward without newly blocking
+	// Update on pre-existing legacy identities that predate tenant tagging
+	// and still carry a blank TenantID (those are already surfaced via the
+	// "cross-tenant agent identity ignored" warning in enrichAgentContext).
+	if identity.TenantID == "" {
+		return nil, fmt.Errorf("agent identity tenant_id required")
+	}
+
 	if err := validateAgentIdentity(identity); err != nil {
 		return nil, err
 	}

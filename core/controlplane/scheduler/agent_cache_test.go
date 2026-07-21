@@ -35,6 +35,7 @@ func TestAgentResolver_LinkedWorker(t *testing.T) {
 	ctx := context.Background()
 
 	agent, err := agentStore.Create(ctx, store.AgentIdentity{
+		TenantID: "tenant-a",
 		Name:     "test-agent",
 		Owner:    "admin",
 		RiskTier: "high",
@@ -92,6 +93,7 @@ func TestAgentResolver_CAPNameFallbackAndSpoofProtection(t *testing.T) {
 	// (2) Authenticated identity must win over a spoofed CAP label for the same
 	// worker.
 	agent, err := agentStore.Create(ctx, store.AgentIdentity{
+		TenantID: "tenant-a",
 		Name:     "Authentic Agent",
 		Owner:    "admin",
 		RiskTier: "high",
@@ -166,6 +168,7 @@ func TestAgentResolver_CacheHit(t *testing.T) {
 	ctx := context.Background()
 
 	agent, err := agentStore.Create(ctx, store.AgentIdentity{
+		TenantID: "tenant-a",
 		Name:     "cached-agent",
 		Owner:    "admin",
 		RiskTier: "low",
@@ -210,7 +213,8 @@ func TestAgentResolver_CacheTTLExpiry(t *testing.T) {
 	ctx := context.Background()
 
 	agent, err := agentStore.Create(ctx, store.AgentIdentity{
-		Name: "ttl-agent", Owner: "admin", RiskTier: "high",
+		TenantID: "tenant-a",
+		Name:     "ttl-agent", Owner: "admin", RiskTier: "high",
 	})
 	if err != nil {
 		t.Fatalf("create agent: %v", err)
