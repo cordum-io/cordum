@@ -1014,7 +1014,7 @@ worker protocol is documented in [SDK handshake](sdk/handshake.md).
 |----------|---------|------|---------|-------------|
 | `SCHEMA_ENFORCEMENT` | `warn` | string (`off`, `warn`, `enforce`) | gateway + scheduler | Controls how registered topic schemas are enforced. The gateway uses it at submit time for `POST /api/v1/jobs`; the scheduler uses the same mode before dispatch. `warn` logs violations and continues, `enforce` rejects/failed-jobs on schema mismatch, `off` skips schema validation. |
 | `WORKER_ATTESTATION` | `off` | string (`off`, `warn`, `enforce`) | scheduler | Controls whether scheduler heartbeat processing requires a valid worker credential token. `warn` accepts the heartbeat but logs attestation failures; `enforce` rejects unattested heartbeats; `off` skips attestation checks. |
-| `CORDUM_SDK_HANDSHAKE` | `off` in shipped manifests; explicit value required at boot | string (`off`, `warn`, `enforce`) | gateway + scheduler | Enables the authenticated CAP protobuf challenge/proof/session contract. In `warn`, tokenless heartbeat/capability advertisements are telemetry only and never refresh liveness, readiness, or dispatch state; invalid tokens are rejected. `enforce` requires a bound session. Unknown or empty runtime values fail boot. |
+| `CORDUM_SDK_HANDSHAKE` | `off` in shipped manifests; explicit value required at boot | string (`off`, `warn`, `enforce`) | gateway + scheduler + workflow engine | Enables the authenticated CAP protobuf challenge/proof/session contract. In `warn`, tokenless heartbeat/capability advertisements are telemetry only and never refresh liveness, readiness, or dispatch state; invalid tokens are rejected. `enforce` requires bound authority on worker reports, capability/readiness updates, session ISSUE/RENEW, and every `JobRequest`; gateway, scheduler, and workflow publishers attach control-plane service credentials. Unknown or empty runtime values fail boot. |
 | `CORDUM_HEARTBEAT_MODE` | `authority` | string (`authority`, `warn`, `telemetry`) | gateway + scheduler | Selects dispatch authority. `authority` uses legacy heartbeat TTL; `warn` enforces bound session state while comparing heartbeat and emitting disagreements; `telemetry` removes heartbeat from authority decisions. Must transition with `CORDUM_SDK_HANDSHAKE`. |
 | `CORDUM_HANDSHAKE_SCHEDULER_ID` | — | string | scheduler | Scheduler proof identity. Required in handshake `warn`/`enforce`; workers pin the exact value. |
 | `CORDUM_HANDSHAKE_SCHEDULER_KEY_ID` | — | string | scheduler | ID of the ECDSA P-256 scheduler proof key. Required in handshake `warn`/`enforce`. |
@@ -1045,6 +1045,14 @@ rejects a mixed configuration. The worker-session audience is fixed to
 `cordum-scheduler` and is not configurable. A legacy capability handshake is
 telemetry unless it is nested inside and signed by the authenticated proof
 exchange; it cannot mint a session by itself.
+
+Before selecting `enforce`, provision the Ed25519 signing/trust authority on
+the gateway, scheduler, and workflow engine and upgrade every external job
+producer to route through the authenticated gateway. The nine in-tree
+JobRequest publishers are contract-tested to attach service authority. A
+custom direct-NATS producer needs an explicitly provisioned Cordum
+control-plane service identity; an ordinary CAP packet signature alone is not
+that authority. Tokenless JobRequest traffic is rejected in enforce mode.
 
 ### Workflow Engine
 

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/cordum/cordum/core/auth/servicetoken"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/infra/store"
@@ -201,13 +202,14 @@ func (s *server) handleRetryDLQ(w http.ResponseWriter, r *http.Request) {
 
 	packet := &pb.BusPacket{
 		TraceId:         traceID,
-		SenderId:        "api-gateway",
+		SenderId:        servicetoken.IdentityGateway,
 		ProtocolVersion: capsdk.DefaultProtocolVersion,
 		CreatedAt:       timestamppb.Now(),
 		Payload: &pb.BusPacket_JobRequest{
 			JobRequest: jobReq,
 		},
 	}
+	s.attachServiceToken(packet)
 
 	if err := s.jobStore.SetJobMeta(r.Context(), jobReq); err != nil {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "failed to persist job metadata")

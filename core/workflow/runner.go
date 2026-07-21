@@ -16,6 +16,7 @@ import (
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/infra/handshakemode"
 	"github.com/cordum/cordum/core/infra/health"
 	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	"github.com/cordum/cordum/core/licensing"
@@ -48,6 +49,10 @@ func Run(cfg *config.Config) error {
 func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementResolver) error {
 	if cfg == nil {
 		cfg = config.Load()
+	}
+	handshakeMode, err := handshakemode.Parse(os.Getenv(handshakemode.EnvName))
+	if err != nil {
+		return err
 	}
 
 	if _, err := cordumotel.InitTracer("cordum-workflow-engine"); err != nil {
@@ -149,12 +154,7 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 		// every internal cancel would publish token-less and be rejected by
 		// enforce-mode schedulers, leaving cancelled/timed-out runs with
 		// still-running jobs. Fail fast instead of degrading silently.
-		// NOTE: the env value is compared locally instead of reusing
-		// scheduler.ParseHandshakeModeStrict — importing the scheduler
-		// package here creates a test-only import cycle (core/audit tests
-		// import core/workflow; scheduler imports core/audit). The scheduler
-		// remains the authority for strict mode validation at its own boot.
-		if mode := strings.ToLower(strings.TrimSpace(os.Getenv("CORDUM_SDK_HANDSHAKE"))); mode == "enforce" {
+		if handshakeMode == handshakemode.Enforce {
 			return fmt.Errorf("workflow-engine requires a control-plane service-token signing key when CORDUM_SDK_HANDSHAKE=enforce (internal cancel broadcasts would be rejected by enforce-mode schedulers): %w", kerr)
 		}
 		slog.Info("workflow-engine service-token minting disabled (no signing key configured); internal cancels are unauthenticated and dropped by peer schedulers only under CORDUM_SDK_HANDSHAKE=enforce", "reason", kerr)

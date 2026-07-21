@@ -1039,6 +1039,8 @@ spec:
               value: {{ include "cordum.natsUrl" . | quote }}
             - name: NATS_USE_JETSTREAM
               value: "1"
+            - name: CORDUM_SDK_HANDSHAKE
+              value: {{ .Values.workerTrust.mode | quote }}
             {{- include "cordum.workerSessionSigningEnv" . | nindent 12 }}
             {{- if .Values.redis.auth.enabled }}
             - name: REDIS_PASSWORD

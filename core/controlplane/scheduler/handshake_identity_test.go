@@ -66,7 +66,7 @@ func TestCredentialHandshakeTrustResolverResolvesAgreedAuthority(t *testing.T) {
 	}
 }
 
-func TestCredentialHandshakeTrustResolverAllowsMissingLegacyAgentID(t *testing.T) {
+func TestCredentialHandshakeTrustResolverDoesNotInventMissingCredentialAgentID(t *testing.T) {
 	credentials, agents := validHandshakeAuthority(t)
 	credentials.credential.AgentID = ""
 	resolver, err := NewCredentialHandshakeTrustResolver(credentials, agents)
@@ -76,10 +76,10 @@ func TestCredentialHandshakeTrustResolverAllowsMissingLegacyAgentID(t *testing.T
 
 	identity, err := resolver.Resolve(context.Background(), "worker-victim", "worker-key-v1")
 	if err != nil {
-		t.Fatalf("resolve canonical agent linkage: %v", err)
+		t.Fatalf("resolve legacy credential: %v", err)
 	}
-	if identity == nil || identity.AgentID != agents.identity.ID {
-		t.Fatalf("resolved identity = %+v, want canonical agent %q", identity, agents.identity.ID)
+	if identity == nil || identity.AgentID != "" {
+		t.Fatalf("resolved identity = %+v, want no unasserted agent authority", identity)
 	}
 }
 

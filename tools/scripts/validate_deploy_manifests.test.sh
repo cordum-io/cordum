@@ -60,10 +60,10 @@ YAML
 test_default_chart_is_explicitly_legacy_safe() {
   local rendered
   rendered="$(render_default_chart)"
-  [[ "$(grep -c 'name: CORDUM_SDK_HANDSHAKE' <<<"$rendered")" -eq 2 ]] || \
-    fail "scheduler and gateway must both render CORDUM_SDK_HANDSHAKE"
-  [[ "$(grep -c 'value: \"off\"' <<<"$rendered")" -ge 2 ]] || \
-    fail "default handshake mode must render off twice"
+  [[ "$(grep -c 'name: CORDUM_SDK_HANDSHAKE' <<<"$rendered")" -eq 3 ]] || \
+    fail "scheduler, gateway, and workflow engine must render CORDUM_SDK_HANDSHAKE"
+  [[ "$(grep -c 'value: \"off\"' <<<"$rendered")" -ge 3 ]] || \
+    fail "default handshake mode must render off three times"
   [[ "$(grep -c 'name: CORDUM_HEARTBEAT_MODE' <<<"$rendered")" -eq 2 ]] || \
     fail "scheduler and gateway must both render CORDUM_HEARTBEAT_MODE"
   [[ "$(grep -c 'value: \"authority\"' <<<"$rendered")" -ge 2 ]] || \
@@ -171,6 +171,27 @@ PY
   assert_contains "$output" "worker trust manifest checker failed"
 }
 
+test_strict_validator_rejects_missing_workflow_handshake_default() {
+  local tmp output
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' RETURN
+  copy_validation_fixture "$tmp"
+  python - "$tmp/docker-compose.release.yml" <<'PY'
+from pathlib import Path
+import sys
+import yaml
+
+path = Path(sys.argv[1])
+data = yaml.safe_load(path.read_text())
+data["services"]["workflow-engine"]["environment"].pop("CORDUM_SDK_HANDSHAKE")
+path.write_text(yaml.safe_dump(data, sort_keys=False))
+PY
+  if output="$(python "$TRUST_VALIDATOR" "$tmp" 2>&1)"; then
+    fail "worker-trust checker accepted workflow engine without handshake default"
+  fi
+  assert_contains "$output" "docker-compose.release.yml workflow-engine"
+}
+
 test_strict_validator_rejects_checker_crash() {
   local tmp output
   tmp="$(mktemp -d)"
@@ -226,6 +247,7 @@ test_default_chart_is_explicitly_legacy_safe
 test_active_chart_requires_and_renders_all_authorities
 test_chart_enforces_mode_classes
 test_strict_validator_rejects_trust_default_drift
+test_strict_validator_rejects_missing_workflow_handshake_default
 test_strict_validator_rejects_checker_crash
 test_manifest_checker_rejects_env_on_wrong_container
 echo "PASS: deployment trust defaults and Helm authority refs"

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/auth/servicetoken"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
@@ -799,13 +800,14 @@ func (s *server) publishApprovalRepair(ctx context.Context, repaired *store.Appr
 	case model.ApprovalPublishTargetSubmit:
 		packet := &pb.BusPacket{
 			TraceId:         repaired.TraceID,
-			SenderId:        "api-gateway",
+			SenderId:        servicetoken.IdentityGateway,
 			CreatedAt:       timestamppb.Now(),
 			ProtocolVersion: capsdk.DefaultProtocolVersion,
 			Payload: &pb.BusPacket_JobRequest{
 				JobRequest: repaired.Request,
 			},
 		}
+		s.attachServiceToken(packet)
 		if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
 			return err
 		}
@@ -816,7 +818,7 @@ func (s *server) publishApprovalRepair(ctx context.Context, repaired *store.Appr
 		}
 		packet := &pb.BusPacket{
 			TraceId:         repaired.TraceID,
-			SenderId:        "api-gateway",
+			SenderId:        servicetoken.IdentityGateway,
 			CreatedAt:       timestamppb.Now(),
 			ProtocolVersion: capsdk.DefaultProtocolVersion,
 			Payload: &pb.BusPacket_JobResult{
@@ -1387,6 +1389,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 				JobRequest: resolved.Request,
 			},
 		}
+		s.attachServiceToken(packet)
 		if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
 			result = handlerResult{http.StatusBadGateway, "publish approval failed"}
 			return nil

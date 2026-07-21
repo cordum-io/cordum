@@ -19,10 +19,11 @@ func activeKeyForClaims(claims SessionTokenClaims) string {
 }
 
 func boundWorkerKey(tenant, workerID string) string {
-	encode := func(value string) string {
-		return base64.RawURLEncoding.EncodeToString([]byte(strings.TrimSpace(value)))
-	}
-	return sessionWorkerKeyPrefix + "v2:" + encode(tenant) + ":" + encode(workerID)
+	return sessionWorkerKeyPrefix + "v2:" + encodeSessionKeyPart(tenant) + ":" + encodeSessionKeyPart(workerID)
+}
+
+func encodeSessionKeyPart(value string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(strings.TrimSpace(value)))
 }
 
 func (i *SessionTokenIssuer) loadActiveForClaims(ctx context.Context, claims SessionTokenClaims) (*activeRecord, error) {
