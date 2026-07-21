@@ -72,3 +72,9 @@ production_gate_results.json
 certs/
 tools/dev-keys/
 docker-compose.local.yml
+
+# Internal design spec — kept local, not committed
+docs/specs/telemetry-install-firstuse-pings.md
+
+# Accidental Windows env-var dir from a mis-expanded %SystemDrive% path (not repo content)
+%SystemDrive%/

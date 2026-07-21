@@ -39,14 +39,15 @@ func TestEdgePolicySimulationFixturesDeclareRequiredCases(t *testing.T) {
 	fixture := loadEdgePolicySimulationFixture(t)
 
 	required := map[string]struct{}{
-		"bash_npm_test":      {},
-		"bash_npm_run_build": {},
-		"bash_rm_rf":         {},
-		"read_dotenv":        {},
-		"edit_source":        {},
-		"git_push":           {},
-		"curl_network":       {},
-		"unknown_high_risk":  {},
+		"bash_npm_test":       {},
+		"bash_npm_run_build":  {},
+		"bash_rm_rf":          {},
+		"bash_cat_env_secret": {},
+		"read_dotenv":         {},
+		"edit_source":         {},
+		"git_push":            {},
+		"curl_network":        {},
+		"unknown_high_risk":   {},
 	}
 	seen := make(map[string]struct{}, len(fixture.Cases))
 	for _, tc := range fixture.Cases {
