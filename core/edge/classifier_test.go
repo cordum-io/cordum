@@ -1343,6 +1343,53 @@ func TestClassifierAcceptsRenamedRedactedKeys_EditSourceCode(t *testing.T) {
 	}
 }
 
+func TestClassifyFileEdit_MultiPathAccumulatesRiskTagsAcrossClasses(t *testing.T) {
+	event := AgentActionEvent{
+		Layer:    LayerHook,
+		Kind:     EventKindHookPreToolUse,
+		ToolName: "MultiEdit",
+		InputRedacted: map[string]any{
+			"file_path_redacted": "/tmp/fixture/src/protected.go",
+			"replacements": []any{
+				map[string]any{"filePath": "/tmp/fixture/.env"},
+			},
+		},
+	}
+	cls, err := ClassifyEvent(event)
+	if err != nil {
+		t.Fatalf("ClassifyEvent: %v", err)
+	}
+	for _, want := range []string{"source_code", "secrets"} {
+		if !containsString(cls.RiskTags, want) {
+			t.Fatalf("RiskTags = %v, missing %q (a multi-file edit spanning source_code and secret paths must not drop either signal)", cls.RiskTags, want)
+		}
+	}
+}
+
+func TestClassifyFileSearch_PreservesSourceCodeTagWhenPatternReferencesSecret(t *testing.T) {
+	event := AgentActionEvent{
+		Layer:    LayerHook,
+		Kind:     EventKindHookPreToolUse,
+		ToolName: "Glob",
+		InputRedacted: map[string]any{
+			"path_redacted":    "/tmp/fixture/src/auth",
+			"pattern_redacted": "**/.env",
+		},
+	}
+	cls, err := ClassifyEvent(event)
+	if err != nil {
+		t.Fatalf("ClassifyEvent: %v", err)
+	}
+	if cls.Labels["path.class"] != "secret" {
+		t.Fatalf("Labels[path.class] = %q, want %q (full labels=%v)", cls.Labels["path.class"], "secret", cls.Labels)
+	}
+	for _, want := range []string{"source_code", "secrets"} {
+		if !containsString(cls.RiskTags, want) {
+			t.Fatalf("RiskTags = %v, missing %q (a source_code base path searched with a secret-referencing pattern must not drop either signal)", cls.RiskTags, want)
+		}
+	}
+}
+
 func TestClassifierAcceptsRenamedRedactedKeys_BashDestructive(t *testing.T) {
 	event := AgentActionEvent{
 		Layer:    LayerHook,

@@ -411,13 +411,14 @@ func classifyFileEdit(input map[string]any, out *ActionClassification) {
 	}
 	classifyFilePath(primary, true, out)
 	for _, p := range paths[min(1, len(paths)):] {
-		mergePathLabels(out.Labels, classifyPathLabels(p))
-	}
-	switch out.Labels["path.class"] {
-	case "secret":
-		addRiskTagOnce(out, "secrets")
-	case "source_code":
-		addRiskTagOnce(out, "source_code")
+		labels := classifyPathLabels(p)
+		mergePathLabels(out.Labels, labels)
+		switch labels["path.class"] {
+		case "secret":
+			addRiskTagOnce(out, "secrets")
+		case "source_code":
+			addRiskTagOnce(out, "source_code")
+		}
 	}
 }
 
@@ -885,13 +886,19 @@ func classifyFileSearch(pathArg, patternArg string, out *ActionClassification) {
 	out.Capability = capabilityFileRead
 	out.RiskTags = []string{"filesystem", "read"}
 	addPathLabels(pathArg, out)
+	priorClass := out.Labels["path.class"]
 	// A benign base path can still target secret files through the glob/regex
 	// pattern (e.g. base="." pattern="**/.env"); scan the pattern with the same
 	// path-like-gated secret check used for shell arguments.
-	if out.Labels["path.class"] != "secret" && referencesSecretPath(patternArg) {
+	if priorClass != "secret" && referencesSecretPath(patternArg) {
 		out.Labels["path.class"] = "secret"
+		out.RiskTags = append(out.RiskTags, "secrets")
+		if priorClass == "source_code" {
+			out.RiskTags = append(out.RiskTags, "source_code")
+		}
+		return
 	}
-	switch out.Labels["path.class"] {
+	switch priorClass {
 	case "secret":
 		out.RiskTags = append(out.RiskTags, "secrets")
 	case "source_code":
