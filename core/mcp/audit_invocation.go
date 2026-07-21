@@ -45,11 +45,12 @@ type InvocationHandle struct {
 	serverID       string // outbound only
 	approvalID     string
 	approvalStatus string // "" (default → "none"), "required", "consumed"
-	argsRaw        json.RawMessage
-	decision       string
-	reason         string
-	subReason      string
-	policyExtra    map[string]string
+	argsRaw          json.RawMessage
+	decision         string
+	reason           string
+	subReason        string
+	policyExtra      map[string]string
+	copilotSessionID string
 }
 
 // MarkApprovalConsumed is called by the approval gate after a successful
@@ -226,13 +227,14 @@ func (a *auditor) StartInbound(ctx context.Context, agentID, tenantID, toolName 
 	// the chain sender's slog.Warn. task-3fad45d3.
 	tenantID = model.ResolveTenantForAudit(tenantID, "")
 	h := &InvocationHandle{
-		startedAt:  a.now(),
-		direction:  "inbound",
-		agentID:    agentID,
-		tenantID:   tenantID,
-		toolName:   toolName,
-		argsRaw:    append(json.RawMessage(nil), args...),
-		approvalID: ApprovalIDFromContext(ctx),
+		startedAt:        a.now(),
+		direction:        "inbound",
+		agentID:          agentID,
+		tenantID:         tenantID,
+		toolName:         toolName,
+		argsRaw:          append(json.RawMessage(nil), args...),
+		approvalID:       ApprovalIDFromContext(ctx),
+		copilotSessionID: CopilotSessionIDFromContext(ctx),
 	}
 	// If the caller already consumed an approval (e.g. a sync
 	// test harness pre-populates approval_id on ctx), propagate
@@ -378,6 +380,9 @@ func (a *auditor) emit(h *InvocationHandle, eventType string, result *ToolCallRe
 	}
 	if h.serverID != "" {
 		extra["server_id"] = h.serverID
+	}
+	if h.copilotSessionID != "" {
+		extra["copilot_session_id"] = h.copilotSessionID
 	}
 	if h.approvalID != "" {
 		extra["approval_id"] = h.approvalID
