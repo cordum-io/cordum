@@ -83,7 +83,7 @@ redacted summaries, hashes, and artifact pointers.
 | Mode | Intent | Governance-unavailable behavior |
 | --- | --- | --- |
 | `observe` | Development visibility and low-friction evidence. | Allow degraded actions while recording evidence where possible. |
-| `enforce` / `local-dev-enforce` | Local enforcement for risky or unknown actions. | Known-safe actions may proceed; risky or unclassified actions deny/fail closed. |
+| `enforce` / `local-dev-enforce` | Local enforcement for risky or unknown actions. | Known-safe actions may proceed; risky or unclassified actions deny/fail closed **only when `CORDUM_AGENTD_FAIL_CLOSED` is enabled**. That variable defaults to `false`, so an `enforce` session without it fails **open** on agentd error/timeout. `cordumctl edge doctor` warns when a session is fail-open. |
 | `enterprise-strict` | Managed enterprise enforcement. | Fail closed when Cordum governance is unavailable. |
 | `requires-edge-governance` tag | Production workflow action that must be governed. | Fail closed on Gateway miss regardless of session mode. |
 
