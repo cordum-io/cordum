@@ -20,6 +20,29 @@ type MemoryRegistry struct {
 	readyTTL  time.Duration
 	stopCh    chan struct{}
 	closeOnce sync.Once
+	// ageObserver, when set, is invoked once per live worker on every
+	// expiry sweep with (workerID, lastSeen, now). It lets the scheduler
+	// surface a heartbeat-age gauge that actually grows as a worker goes
+	// silent — recording it only at receive time pins every worker to age≈0.
+	ageObserver func(workerID string, lastSeen, now time.Time)
+	// forgetObserver, when set, is invoked when a worker expires out of the
+	// registry so its gauges can be cleared. Without it the heartbeat-age
+	// series for a dead worker would freeze at its last value forever.
+	forgetObserver func(workerID string)
+}
+
+// SetHeartbeatObservers wires optional telemetry callbacks: age is invoked for
+// each live worker on every expiry sweep; forget is invoked when a worker
+// expires so stale gauge series can be removed. Safe to call once during
+// setup; both nil-safe.
+func (r *MemoryRegistry) SetHeartbeatObservers(age func(workerID string, lastSeen, now time.Time), forget func(workerID string)) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.ageObserver = age
+	r.forgetObserver = forget
+	r.mu.Unlock()
 }
 
 type workerEntry struct {
@@ -288,16 +311,39 @@ func (r *MemoryRegistry) expireLoop() {
 
 func (r *MemoryRegistry) expire() {
 	now := time.Now()
+	type ageSample struct {
+		id       string
+		lastSeen time.Time
+	}
+	var samples []ageSample
+	var expired []string
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	obs := r.ageObserver
+	forget := r.forgetObserver
 	for id, entry := range r.workers {
 		if entry.expired(now, r.ttl) {
 			delete(r.workers, id)
+			if forget != nil {
+				expired = append(expired, id)
+			}
 			continue
 		}
 		if entry.readinessExpired(now, r.readyTTL) {
 			entry.clearReadiness()
 		}
+		if obs != nil {
+			samples = append(samples, ageSample{id: id, lastSeen: entry.lastSeen})
+		}
+	}
+	r.mu.Unlock()
+	// Invoke observers outside the lock so a slow/blocking metrics sink cannot
+	// stall heartbeat processing or re-enter the registry. Forget expired
+	// workers' gauges so their heartbeat-age series do not freeze forever.
+	for _, s := range samples {
+		obs(s.id, s.lastSeen, now)
+	}
+	for _, id := range expired {
+		forget(id)
 	}
 }
 

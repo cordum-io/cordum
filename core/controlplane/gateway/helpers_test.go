@@ -803,7 +803,7 @@ func TestSubmitJobHTTP_AgentLinkedCredential_AuditContainsAgentID(t *testing.T) 
 
 	// Create agent identity.
 	agent, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
-		Name: "audit-test-agent", Owner: "admin", RiskTier: "high", Status: "active",
+		TenantID: "default", Name: "audit-test-agent", Owner: "admin", RiskTier: "high", Status: "active",
 	})
 	if err != nil {
 		t.Fatalf("create agent: %v", err)
