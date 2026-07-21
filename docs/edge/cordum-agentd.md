@@ -117,7 +117,10 @@ Gateway outage behavior follows the PRD modes:
 
 - `observe`: allow degraded and write evidence.
 - `enforce`: allow only locally known-safe actions during a degraded miss; risky
-  or unknown actions deny/fail closed.
+  or unknown actions deny/fail closed **only when `CORDUM_AGENTD_FAIL_CLOSED` is
+  enabled**. `CORDUM_AGENTD_FAIL_CLOSED` defaults to `false`, so an `enforce`
+  session that does not set it fails **open** on a degraded miss (agentd error or
+  timeout).
 - `enterprise-strict`: deny/fail closed when Cordum governance is unavailable.
 - Workflow actions tagged `requires-edge-governance` fail closed on a Gateway
   miss even if the session policy mode is observe.

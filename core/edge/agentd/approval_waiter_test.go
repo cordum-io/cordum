@@ -261,3 +261,54 @@ func (w *fakeApprovalWaiter) lastDeadline() (time.Time, bool) {
 	}
 	return w.ctx.Deadline()
 }
+
+// blockingApprovalWaiter never resolves on its own — it blocks until the
+// context it is given is done, then reports that as an error. This models a
+// human reviewer who has not responded yet.
+type blockingApprovalWaiter struct{}
+
+func (blockingApprovalWaiter) WaitForApproval(ctx context.Context, _ ApprovalWaitRequest) (ApprovalWaitResult, error) {
+	<-ctx.Done()
+	return ApprovalWaitResult{}, ctx.Err()
+}
+
+// TestApprovalRequiredDecisionClampedByParentContextNotNominalTimeout is the
+// regression test for the EDGE-4 doctor finding: "CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT
+// defaults to 30s, which exceeds Claude Code's 5s hook deadline — does an
+// unresolved inline wait fail OPEN when Claude kills the hook first?"
+//
+// It doesn't. approvalRequiredDecision derives its wait context from the
+// PARENT context via context.WithTimeout(ctx, timeout) — Go's context package
+// always honors the EARLIER of the two deadlines. In production the parent is
+// ultimately the incoming hook HTTP request's context, which is already
+// bounded well under Claude's 5s deadline (agentd's own per-request
+// evaluationContext, and cordum-hook's own CORDUM_AGENTD_HOOK_TIMEOUT client
+// budget, are both configured/validated to stay under 5s independent of
+// CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT). So a 30s nominal wait timeout
+// can never actually run anywhere near 30s here: this test proves the call
+// returns promptly once the (short) parent deadline elapses, not the (long)
+// nominal one, and that an unresolved wait denies rather than allowing the
+// action through.
+func TestApprovalRequiredDecisionClampedByParentContextNotNominalTimeout(t *testing.T) {
+	t.Parallel()
+
+	parentCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	cfg := ApprovalDecisionConfig{
+		InlineWaitEnabled: true,
+		InlineWaitTimeout: 30 * time.Second, // the doctor-flagged default
+		PolicyMode:        edgecore.PolicyModeEnforce,
+	}
+
+	started := time.Now()
+	decision := AgentdDecisionFromEvaluateResponse(parentCtx, approvalRequiredResponse(), cfg, blockingApprovalWaiter{}, nil)
+	elapsed := time.Since(started)
+
+	if elapsed > 2*time.Second {
+		t.Fatalf("approval wait ran for %s, want it clamped to the ~50ms parent deadline (not the 30s nominal InlineWaitTimeout)", elapsed)
+	}
+	if decision.Decision != claude.DecisionDeny {
+		t.Fatalf("decision = %q, want deny — an unresolved wait must fail closed, not allow the action through", decision.Decision)
+	}
+}
