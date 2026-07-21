@@ -9,7 +9,7 @@ evidence, not a certification or an external interoperability claim.
 - Redis must be a reachable real server supplied through
   `CAP_HANDSHAKE_REDIS_URL`; absence or connection failure is fatal, never a skip.
 - NATS is an embedded loopback server from the pinned Go dependency
-  `github.com/nats-io/nats-server/v2 v2.12.6`; the gate does not connect to a
+  `github.com/nats-io/nats-server/v2 v2.14.3`; the gate does not connect to a
   default or external broker.
 - Identity enrollment uses `configsvc.Service`, `workercredentials.Service`,
   `AgentIdentityStore`, and `NewCredentialHandshakeTrustResolver` over Redis.

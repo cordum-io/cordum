@@ -148,7 +148,7 @@ func TestEvaluationSpanRecordsRequiredAttributesWhenProviderInstalled(t *testing
 	}
 	got := map[string]string{}
 	for _, kv := range spans[0].Attributes() {
-		got[string(kv.Key)] = kv.Value.Emit()
+		got[string(kv.Key)] = kv.Value.String()
 	}
 	for _, want := range []string{"agent.id", "job.topic", "tenant", "policy.kind", "policy.decision", "policy.rule_count", "policy.duration_ms"} {
 		if _, ok := got[want]; !ok {
