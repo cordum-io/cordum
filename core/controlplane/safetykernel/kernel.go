@@ -30,11 +30,13 @@ import (
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/governance/evaluator"
 	"github.com/cordum/cordum/core/infra/bus"
+	"github.com/cordum/cordum/core/infra/capprofile"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
 	infraHealth "github.com/cordum/cordum/core/infra/health"
 	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	"github.com/cordum/cordum/core/infra/redisutil"
+	"github.com/cordum/cordum/core/infra/resource"
 	"github.com/cordum/cordum/core/infra/resourceio"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/tlsreload"
@@ -401,6 +403,38 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 		agentStore:         agentStore,
 		agentCacheTTL:      defaultAgentCacheTTL,
 		tagDeriverRegistry: tagRegistry,
+	}
+
+	// Resolve the explicit CAP profile before wiring resource resolution so
+	// an unrecognised value fails startup instead of silently downgrading
+	// (capprofile.FromEnv's own contract -- shared with the scheduler and
+	// workflow-engine binaries).
+	capProfile, profileErr := capprofile.FromEnv()
+	if profileErr != nil {
+		return fmt.Errorf("CAP profile configuration invalid: %w", profileErr)
+	}
+	if resultClient != nil {
+		// Same resolver identity/keyspace as the scheduler's production
+		// resource registry (cmd/cordum-scheduler/cap_profile.go) -- the
+		// safety kernel reads the same operator-controlled resource store
+		// the scheduler/workflow engine write ResourceRefs against.
+		resolver, err := resource.NewRedisResolver(resource.RedisResolverConfig{
+			ID: "cordum-redis", Client: resultClient, Scheme: "redis",
+			Authority: "resources", KeyPrefix: "cap:resource:",
+			AllowedMediaTypes: []string{"application/json", "application/octet-stream", "text/plain"},
+			MaxBytes:          2 << 20,
+		})
+		if err != nil {
+			return fmt.Errorf("safety-kernel: configure resource resolver: %w", err)
+		}
+		registry, err := resource.NewRegistry(nil, resolver)
+		if err != nil {
+			return fmt.Errorf("safety-kernel: configure resource registry: %w", err)
+		}
+		srv = srv.withResourceRegistry(registry)
+	}
+	if !capProfile.IsProduction() {
+		srv = srv.withLegacyResourceCompatibility(nil)
 	}
 
 	// Production wiring for the action-layer gate pipeline. Fail-closed

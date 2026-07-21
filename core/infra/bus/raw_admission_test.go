@@ -23,7 +23,7 @@ func TestRawAdmissionPrecedesUnmarshalAndUsesActualSubject(t *testing.T) {
 	accepted := &pb.BusPacket{TraceId: "admitted"}
 	seen := make(chan struct{}, 1)
 
-	b.SetRawPacketAdmission(func(_ context.Context, subject string, data []byte) RawAdmissionResult {
+	if err := b.SetRawPacketAdmission(func(_ context.Context, subject string, data []byte) RawAdmissionResult {
 		if subject != actualSubject {
 			t.Errorf("subject = %q, want %q", subject, actualSubject)
 		}
@@ -31,7 +31,9 @@ func TestRawAdmissionPrecedesUnmarshalAndUsesActualSubject(t *testing.T) {
 			t.Errorf("raw bytes = %q, want %q", data, raw)
 		}
 		return RawAdmissionResult{Disposition: RawAdmissionAccepted, Packet: accepted}
-	})
+	}); err != nil {
+		t.Fatalf("SetRawPacketAdmission: %v", err)
+	}
 	if err := b.Subscribe("worker.*.jobs", "", func(packet *pb.BusPacket) error {
 		if packet != accepted {
 			t.Errorf("handler packet = %p, want admitted packet %p", packet, accepted)
@@ -74,9 +76,11 @@ func TestRawAdmissionDispositionMapsToDeliveryAction(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			called := false
 			b := &NatsBus{}
-			b.SetRawPacketAdmission(func(context.Context, string, []byte) RawAdmissionResult {
+			if err := b.SetRawPacketAdmission(func(context.Context, string, []byte) RawAdmissionResult {
 				return tc.result
-			})
+			}); err != nil {
+				t.Fatalf("SetRawPacketAdmission: %v", err)
+			}
 			action, delay := b.processInboundMsgCtx(context.Background(), "job.actual", []byte("raw"), func(context.Context, *pb.BusPacket) error {
 				called = true
 				return nil
@@ -94,9 +98,11 @@ func TestRawAdmissionDispositionMapsToDeliveryAction(t *testing.T) {
 func TestRawAdmissionAcceptedInvokesHandler(t *testing.T) {
 	packet := &pb.BusPacket{TraceId: "accepted"}
 	b := &NatsBus{}
-	b.SetRawPacketAdmission(func(context.Context, string, []byte) RawAdmissionResult {
+	if err := b.SetRawPacketAdmission(func(context.Context, string, []byte) RawAdmissionResult {
 		return RawAdmissionResult{Disposition: RawAdmissionAccepted, Packet: packet}
-	})
+	}); err != nil {
+		t.Fatalf("SetRawPacketAdmission: %v", err)
+	}
 	called := false
 	action, delay := b.processInboundMsgCtx(context.Background(), "job.actual", []byte("raw"), func(_ context.Context, got *pb.BusPacket) error {
 		called = got == packet
@@ -117,13 +123,15 @@ func TestRawAdmissionAuthorityReachesHandlerUnchanged(t *testing.T) {
 		MessageID: []byte("0123456789abcdef"), UnsignedDigest: []byte("digest-a"),
 	}
 	b := &NatsBus{}
-	b.SetRawPacketAdmission(func(context.Context, string, []byte) RawAdmissionResult {
+	if err := b.SetRawPacketAdmission(func(context.Context, string, []byte) RawAdmissionResult {
 		return RawAdmissionResult{
 			Disposition: RawAdmissionAccepted,
 			Packet:      &pb.BusPacket{TraceId: "accepted"},
 			Authority:   authority,
 		}
-	})
+	}); err != nil {
+		t.Fatalf("SetRawPacketAdmission: %v", err)
+	}
 
 	action, _ := b.processInboundMsgCtx(
 		context.Background(), authority.ActualSubject, []byte("raw"),
@@ -174,9 +182,11 @@ func TestRawAdmissionAuthorityIsAbsentInCompatibilityMode(t *testing.T) {
 
 func TestRawAdmissionFailsClosedOnInvalidAcceptedResult(t *testing.T) {
 	b := &NatsBus{}
-	b.SetRawPacketAdmission(func(context.Context, string, []byte) RawAdmissionResult {
+	if err := b.SetRawPacketAdmission(func(context.Context, string, []byte) RawAdmissionResult {
 		return RawAdmissionResult{Disposition: RawAdmissionAccepted}
-	})
+	}); err != nil {
+		t.Fatalf("SetRawPacketAdmission: %v", err)
+	}
 	action, _ := b.processInboundMsgCtx(context.Background(), "job.actual", []byte("raw"), func(context.Context, *pb.BusPacket) error {
 		t.Fatal("handler called with nil admitted packet")
 		return nil

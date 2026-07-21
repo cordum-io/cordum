@@ -62,7 +62,7 @@ func TestResolveStepOutputUsesStructuredReferenceAndTrustedRun(t *testing.T) {
 func TestResolveStepOutputLegacyRequiresExplicitCompatibility(t *testing.T) {
 	mem, mini := newMemoryStore(t)
 	defer mini.Close()
-	defer mem.Close()
+	defer func() { _ = mem.Close() }()
 	if err := mem.PutResult(context.Background(), store.MakeResultKey("job-1"), []byte(`{"ok":true}`)); err != nil {
 		t.Fatalf("PutResult() error = %v", err)
 	}
@@ -91,7 +91,7 @@ func TestResolveStepOutputLegacyRequiresExplicitCompatibility(t *testing.T) {
 func TestResolveStepOutputRejectsCrossJobLegacyPointer(t *testing.T) {
 	mem, mini := newMemoryStore(t)
 	defer mini.Close()
-	defer mem.Close()
+	defer func() { _ = mem.Close() }()
 	engine := NewEngine(nil, nil).WithMemory(mem).WithLegacyResourceCompatibility(nil)
 	res := &pb.JobResult{JobId: "job-1", ResultPtr: store.PointerForKey(store.MakeResultKey("job-2"))}
 
@@ -104,7 +104,7 @@ func TestResolveStepOutputRejectsCrossJobLegacyPointer(t *testing.T) {
 func TestResolveStepOutputRejectsDualContentMismatch(t *testing.T) {
 	mem, mini := newMemoryStore(t)
 	defer mini.Close()
-	defer mem.Close()
+	defer func() { _ = mem.Close() }()
 	if err := mem.PutResult(context.Background(), store.MakeResultKey("job-1"), []byte(`{"source":"legacy"}`)); err != nil {
 		t.Fatalf("PutResult() error = %v", err)
 	}
@@ -223,7 +223,7 @@ func TestDecodeWorkflowResultHonorsDeclaredMediaType(t *testing.T) {
 func TestValidateResolvedStepOutputHonorsCallerCancellation(t *testing.T) {
 	mem, mini := newMemoryStore(t)
 	defer mini.Close()
-	defer mem.Close()
+	defer func() { _ = mem.Close() }()
 	registry := schema.NewRegistryFromClient(mem.Client())
 	if err := registry.Register(context.Background(), "output", []byte(`{"type":"object"}`)); err != nil {
 		t.Fatalf("Register() error = %v", err)

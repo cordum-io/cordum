@@ -1730,7 +1730,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			// (s.resolveTenant/s.resolvePrincipal), never from client input —
 			// this is the authoritative identity every downstream mirror is
 			// validated against (DoD "authoritative identity binding").
-			Identity: &pb.IdentityBinding{TenantId: orgID, PrincipalId: principalID},
+			Identity: &pb.IdentityBinding{TenantId: orgID, PrincipalId: principalID, ActorId: actorID},
 			ContextHints: &pb.ContextHints{
 				MaxInputTokens: req.MaxInputTokens, AllowSummarization: req.AllowSummarization,
 				AllowRetrieval: req.AllowRetrieval, Tags: req.Tags,
@@ -1939,7 +1939,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		Meta:        meta,
 		// Authoritative identity: authenticated tenant/principal, never
 		// client input (DoD "authoritative identity binding").
-		Identity: &pb.IdentityBinding{TenantId: orgID, PrincipalId: principalID},
+		Identity: &pb.IdentityBinding{TenantId: orgID, PrincipalId: principalID, ActorId: actorID},
 		ContextHints: &pb.ContextHints{
 			MaxInputTokens:     req.MaxInputTokens,
 			AllowSummarization: req.AllowSummarization,
@@ -2111,7 +2111,7 @@ func (s *server) persistSubmitDeniedJob(
 		ContextPtr: ctxPtr, AdapterId: req.AdapterId, Env: envVars,
 		MemoryId: memoryID, TenantId: orgID, PrincipalId: principalID,
 		Labels: req.Labels, Meta: meta,
-		Identity: &pb.IdentityBinding{TenantId: orgID, PrincipalId: principalID},
+		Identity: &pb.IdentityBinding{TenantId: orgID, PrincipalId: principalID, ActorId: meta.GetActorId()},
 		ContextHints: &pb.ContextHints{
 			MaxInputTokens: req.MaxInputTokens, AllowSummarization: req.AllowSummarization,
 			AllowRetrieval: req.AllowRetrieval, Tags: req.Tags,

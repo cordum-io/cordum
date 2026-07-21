@@ -83,7 +83,9 @@ func TestEvaluateOutputRejectsRawPointerByDefault(t *testing.T) {
 	t.Cleanup(mr.Close)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
-	mr.Set("res:job-a", "content that must not bypass structured mode")
+	if err := mr.Set("res:job-a", "content that must not bypass structured mode"); err != nil {
+		t.Fatalf("seed miniredis: %v", err)
+	}
 	srv := &server{resultClient: client}
 	resp, err := srv.EvaluateOutput(context.Background(), &OutputEvaluateRequest{
 		JobID: "job-a", Tenant: "tenant-a", ResultPtr: "redis://res:job-a",
@@ -141,8 +143,12 @@ func TestContentForScanCompatibilityUsesHardenedPointerParser(t *testing.T) {
 	t.Cleanup(mr.Close)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
-	mr.Set("res:job-a", "legacy output")
-	mr.Set("res:job-b", "cross-job output")
+	if err := mr.Set("res:job-a", "legacy output"); err != nil {
+		t.Fatalf("seed miniredis: %v", err)
+	}
+	if err := mr.Set("res:job-b", "cross-job output"); err != nil {
+		t.Fatalf("seed miniredis: %v", err)
+	}
 	srv := (&server{resultClient: client}).withLegacyResourceCompatibility(nil)
 	content, _, err := srv.contentForScan(context.Background(), &pb.OutputCheckRequest{
 		JobId: "job-a", Tenant: "tenant-a", ResultPtr: "redis://res:job-a",

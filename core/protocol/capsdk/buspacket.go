@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/cordum/cordum/core/auth/servicetoken"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -59,7 +60,15 @@ func validatePayloadIdentity(pkt *pb.BusPacket) error {
 			return errors.New("buspacket: heartbeat.worker_id must equal sender_id")
 		}
 	case *pb.BusPacket_JobResult:
-		if payload.JobResult == nil || payload.JobResult.GetWorkerId() != sender {
+		if payload.JobResult == nil {
+			return errors.New("buspacket: job_result.worker_id must equal sender_id")
+		}
+		// A reserved control-plane identity (scheduler/gateway/workflow-engine)
+		// relays an already-accepted result on the original worker's behalf,
+		// e.g. scheduler.publishSchedulerAcceptedPacket on
+		// sys.internal.job.result.accepted -- so worker_id legitimately names
+		// the source worker while sender_id names the relaying service.
+		if payload.JobResult.GetWorkerId() != sender && !servicetoken.IsReservedIdentity(sender) {
 			return errors.New("buspacket: job_result.worker_id must equal sender_id")
 		}
 	case *pb.BusPacket_Handshake:
