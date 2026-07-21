@@ -255,13 +255,27 @@ func envString(env map[string]string, key string) string {
 	return env[key]
 }
 
-func parseBool(value string) bool {
+// ParseBool parses the boolean spellings agentd's env-driven config accepts:
+// 1/0, true/false, yes/no, y/n, on/off (case-insensitive, surrounding
+// whitespace ignored). ok is false when the trimmed value is empty or does
+// not match any recognized spelling, so callers that must distinguish
+// "explicitly set to a recognized value" from "unset" or "garbage" (e.g.
+// cordumctl's `edge doctor`) don't have to duplicate this list — and can't
+// drift from what agentd itself actually honors.
+func ParseBool(value string) (result, ok bool) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "1", "true", "yes", "y", "on":
-		return true
+		return true, true
+	case "0", "false", "no", "n", "off":
+		return false, true
 	default:
-		return false
+		return false, false
 	}
+}
+
+func parseBool(value string) bool {
+	result, _ := ParseBool(value)
+	return result
 }
 
 func defaultStateDir() string {

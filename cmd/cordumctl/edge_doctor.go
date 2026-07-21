@@ -21,6 +21,7 @@ const (
 type edgeDoctorEnv struct {
 	base                *doctorEnv
 	policyMode          string
+	failClosed          string
 	claudePath          string
 	hookCommand         string
 	agentdPath          string
@@ -36,6 +37,7 @@ type edgeDoctorEnv struct {
 
 type edgeDoctorOptions struct {
 	policyMode          string
+	failClosed          string
 	claudePath          string
 	hookCommand         string
 	agentdPath          string
@@ -64,6 +66,7 @@ func runEdgeDoctorCmd(args []string, stdout, stderr io.Writer) int {
 	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON diagnostics")
 	timeoutSec := fs.Int("timeout", int(defaultEdgeDoctorDeadline/time.Second), "overall deadline in seconds")
 	policyMode := fs.String("policy-mode", firstEnvDefault("enforce", "CORDUM_EDGE_POLICY_MODE"), "policy mode: observe, enforce, or enterprise-strict")
+	failClosed := fs.String("fail-closed", firstEnv("CORDUM_AGENTD_FAIL_CLOSED"), "effective fail-closed posture (true/false); empty = not explicitly configured")
 	claudePath := fs.String("claude-path", firstEnv("CLAUDE_PATH"), "Claude Code binary path")
 	hookCommand := fs.String("hook-command", firstEnvDefault("cordum-hook", "CORDUM_HOOK_COMMAND"), "cordum-hook command/path from generated settings")
 	agentdPath := fs.String("agentd-path", firstEnv("CORDUM_AGENTD_PATH"), "cordum-agentd binary path")
@@ -80,6 +83,7 @@ func runEdgeDoctorCmd(args []string, stdout, stderr io.Writer) int {
 
 	env, err := buildEdgeDoctorEnv(fs, edgeDoctorOptions{
 		policyMode:          *policyMode,
+		failClosed:          *failClosed,
 		claudePath:          *claudePath,
 		hookCommand:         *hookCommand,
 		agentdPath:          *agentdPath,
@@ -152,6 +156,7 @@ func buildEdgeDoctorEnv(fs *flagSet, opts edgeDoctorOptions) (*edgeDoctorEnv, er
 	return &edgeDoctorEnv{
 		base:                base,
 		policyMode:          strings.TrimSpace(opts.policyMode),
+		failClosed:          strings.TrimSpace(opts.failClosed),
 		claudePath:          strings.TrimSpace(opts.claudePath),
 		hookCommand:         strings.TrimSpace(opts.hookCommand),
 		agentdPath:          strings.TrimSpace(opts.agentdPath),
