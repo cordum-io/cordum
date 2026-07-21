@@ -2,7 +2,7 @@
 # Dockerfile for building cordum services with local cap repo.
 # Build context must be the parent directory (D:\Cordum).
 # Usage: docker build -f cordum/Dockerfile.localcap --build-arg SERVICE=cordum-safety-kernel -t cordum-safety-kernel ..
-ARG GO_VERSION=1.24
+ARG GO_VERSION=1.26.3
 
 FROM golang:${GO_VERSION}-alpine AS builder
 WORKDIR /src

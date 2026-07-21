@@ -164,11 +164,11 @@ func TestCredentialResolveProofKeyUsesFetchedSnapshot(t *testing.T) {
 	}
 	createProofCredential(t, svc, "shared-key", testPublicKeyPEM(t, elliptic.P256()))
 	publicFromSnapshot, _, err := issuedA.Credential.ResolveProofKey("shared-key")
-	if err != nil || publicFromSnapshot == nil || publicFromSnapshot.X.Cmp(publicA.X) != 0 {
+	if err != nil || publicFromSnapshot == nil || !publicFromSnapshot.Equal(publicA) {
 		t.Fatalf("fetched snapshot changed after rotation: pub=%+v err=%v", publicFromSnapshot, err)
 	}
 	publicCurrent, _, err := svc.ResolveProofKey(ctx, "worker-a", "shared-key")
-	if err != nil || publicCurrent == nil || publicCurrent.X.Cmp(publicA.X) == 0 {
+	if err != nil || publicCurrent == nil || publicCurrent.Equal(publicA) {
 		t.Fatalf("service did not resolve rotated key: pub=%+v err=%v", publicCurrent, err)
 	}
 }
