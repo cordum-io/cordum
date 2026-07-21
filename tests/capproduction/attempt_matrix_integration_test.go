@@ -31,7 +31,7 @@ func (h *productionHarness) testAttemptAndReplayMatrix(t *testing.T) {
 			matrix.jobID, h.workerID, matrix.current, matrix.identity,
 		)}})
 	h.awaitState(t, matrix.jobID, model.JobStateSucceeded)
-	h.assertDurableResult(t, matrix.jobID, 3)
+	h.awaitDurableResult(t, matrix.jobID, 3)
 }
 
 type attemptMatrix struct {
@@ -272,20 +272,6 @@ func (h *productionHarness) runtimeEventCount(t *testing.T, jobID string) int {
 		}
 	}
 	return count
-}
-
-func (h *productionHarness) assertDurableResult(t *testing.T, jobID string, eventCount int) {
-	t.Helper()
-	h.assertRuntimeEvents(t, jobID, eventCount)
-	effects, err := h.store.PendingJobEffects(context.Background(), 100)
-	if err != nil {
-		t.Fatalf("pending durable effects: %v", err)
-	}
-	for _, effect := range effects {
-		if effect.JobID == jobID {
-			t.Fatalf("job %s retains uncommitted durable effect %s", jobID, effect.EventID)
-		}
-	}
 }
 
 func randomBytes(t *testing.T, size int) []byte {

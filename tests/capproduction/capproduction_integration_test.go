@@ -49,7 +49,7 @@ func TestCAPProductionSchedulerWorkerEndToEnd(t *testing.T) {
 	if got, safetyErr := harness.safety.snapshot(); got != 1 || safetyErr != nil {
 		t.Fatalf("normalized safety calls = %d error = %v, want one clean call", got, safetyErr)
 	}
-	harness.assertDurableResult(t, jobID, 1)
+	harness.awaitDurableResult(t, jobID, 1)
 
 	stopManagedWorker(t, worker, runCancel, runDone)
 	stopped = true

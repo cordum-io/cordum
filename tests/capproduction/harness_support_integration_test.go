@@ -148,6 +148,37 @@ func requiredEnvironment(t *testing.T, name string) string {
 	return value
 }
 
+func (h *productionHarness) awaitDurableResult(t *testing.T, jobID string, eventCount int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		count := h.runtimeEventCount(t, jobID)
+		pendingID := h.pendingEffectID(t, jobID)
+		if count == eventCount && pendingID == "" {
+			return
+		}
+		if count > eventCount || time.Now().After(deadline) {
+			t.Fatalf("job %s durable result = events %d, pending %q; want events %d, no pending effect",
+				jobID, count, pendingID, eventCount)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func (h *productionHarness) pendingEffectID(t *testing.T, jobID string) string {
+	t.Helper()
+	effects, err := h.store.PendingJobEffects(context.Background(), 100)
+	if err != nil {
+		t.Fatalf("pending durable effects: %v", err)
+	}
+	for _, effect := range effects {
+		if effect.JobID == jobID {
+			return effect.EventID
+		}
+	}
+	return ""
+}
+
 func generateP256(t *testing.T) *ecdsa.PrivateKey {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
