@@ -61,6 +61,25 @@ func TestNormalizeGRPCJobRequestProductionUsesAuthenticatedAuthority(t *testing.
 	}
 }
 
+func TestNormalizeGRPCJobRequestProductionRejectsTenantMismatch(t *testing.T) {
+	s := &server{capProfile: capprofile.Production}
+	ctx := context.WithValue(context.Background(), auth.ContextKey{}, &auth.AuthContext{
+		Tenant: "tenant-authenticated", PrincipalID: "principal-a", Role: "user",
+	})
+	job := &pb.JobRequest{
+		JobId: "job-1", Topic: "job.test", TenantId: "tenant-attacker",
+		PrincipalId: "principal-a",
+	}
+
+	got, err := s.normalizeGRPCJobRequest(ctx, job)
+	if !errors.Is(err, jobidentity.ErrProductionIdentityMismatch) {
+		t.Fatalf("normalizeGRPCJobRequest() error = %v, want tenant mismatch", err)
+	}
+	if got != nil {
+		t.Fatalf("normalizeGRPCJobRequest() = %#v, want nil", got)
+	}
+}
+
 func TestNormalizeJobRequestCompatPreservesLegacyShape(t *testing.T) {
 	s := &server{capProfile: capprofile.Compat}
 	job := &pb.JobRequest{JobId: "job-1", Topic: "job.test", TenantId: "legacy"}

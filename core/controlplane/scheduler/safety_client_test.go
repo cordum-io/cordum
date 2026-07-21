@@ -127,10 +127,48 @@ func TestSafetyClientDeny(t *testing.T) {
 	}
 }
 
-func TestSafetyClientRejectsIdentityMismatchBeforeRPC(t *testing.T) {
+func TestSafetyClientDefaultProfileAllowsCompatIdentityWithoutActor(t *testing.T) {
 	conn, handler, cleanup := startInstrumentedTestSafetyServer(t, pb.DecisionType_DECISION_TYPE_ALLOW, "")
 	defer cleanup()
 	client := &SafetyClient{client: pb.NewSafetyKernelClient(conn), conn: conn, cb: newTestCB()}
+	req := &pb.JobRequest{
+		JobId: "job-compat", Topic: "job.test", TenantId: "tenant-a", PrincipalId: "principal-a",
+		Identity: &pb.IdentityBinding{TenantId: "tenant-a", PrincipalId: "principal-a"},
+	}
+
+	record, err := client.Check(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Check() error = %v, want compatibility request admitted", err)
+	}
+	if record.Decision != SafetyAllow || handler.lastReq == nil {
+		t.Fatalf("Check() = (%v, %#v), want allow delivered to Safety Kernel", record.Decision, handler.lastReq)
+	}
+}
+
+func TestSafetyClientProductionRejectsIncompleteIdentityBeforeRPC(t *testing.T) {
+	conn, handler, cleanup := startInstrumentedTestSafetyServer(t, pb.DecisionType_DECISION_TYPE_ALLOW, "")
+	defer cleanup()
+	client := (&SafetyClient{client: pb.NewSafetyKernelClient(conn), conn: conn, cb: newTestCB()}).
+		WithProductionIdentityEnforcement(true)
+	req := &pb.JobRequest{
+		JobId: "job-production", Topic: "job.test", TenantId: "tenant-a", PrincipalId: "principal-a",
+		Identity: &pb.IdentityBinding{TenantId: "tenant-a", PrincipalId: "principal-a"},
+	}
+
+	_, err := client.Check(context.Background(), req)
+	if !errors.Is(err, jobidentity.ErrIncompleteProductionIdentity) {
+		t.Fatalf("Check() error = %v, want incomplete production identity", err)
+	}
+	if handler.lastReq != nil {
+		t.Fatalf("incomplete production identity reached Safety Kernel: %#v", handler.lastReq)
+	}
+}
+
+func TestSafetyClientRejectsIdentityMismatchBeforeRPC(t *testing.T) {
+	conn, handler, cleanup := startInstrumentedTestSafetyServer(t, pb.DecisionType_DECISION_TYPE_ALLOW, "")
+	defer cleanup()
+	client := (&SafetyClient{client: pb.NewSafetyKernelClient(conn), conn: conn, cb: newTestCB()}).
+		WithProductionIdentityEnforcement(true)
 	req := &pb.JobRequest{
 		JobId: "job-1", Topic: "job.test", TenantId: "tenant-attacker",
 		Identity: &pb.IdentityBinding{TenantId: "tenant-a", PrincipalId: "principal-a", ActorId: "principal-a"},
@@ -148,7 +186,8 @@ func TestSafetyClientRejectsIdentityMismatchBeforeRPC(t *testing.T) {
 func TestSafetyClientCarriesCanonicalIdentityToRPC(t *testing.T) {
 	conn, handler, cleanup := startInstrumentedTestSafetyServer(t, pb.DecisionType_DECISION_TYPE_ALLOW, "")
 	defer cleanup()
-	client := &SafetyClient{client: pb.NewSafetyKernelClient(conn), conn: conn, cb: newTestCB()}
+	client := (&SafetyClient{client: pb.NewSafetyKernelClient(conn), conn: conn, cb: newTestCB()}).
+		WithProductionIdentityEnforcement(true)
 	auth := &pb.IdentityBinding{TenantId: "tenant-a", PrincipalId: "principal-a", ActorId: "actor-a"}
 	req, err := jobidentity.NormalizeProductionJobRequest(
 		&pb.JobRequest{JobId: "job-1", Topic: "job.test"}, auth,

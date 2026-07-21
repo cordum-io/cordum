@@ -82,6 +82,14 @@ func TestProductionResourceRegistryWiredBeforeReadiness(t *testing.T) {
 	}
 }
 
+func TestSafetyClientUsesExplicitProductionIdentityMode(t *testing.T) {
+	src := readMainSource(t)
+	const marker = "WithProductionIdentityEnforcement(capProfile.IsProduction())"
+	if got := strings.Count(src, marker); got != 2 {
+		t.Fatalf("explicit production identity gates = %d, want SafetyClient and Engine", got)
+	}
+}
+
 func TestCompatibilityResourceReadersRequireExplicitOptIn(t *testing.T) {
 	src := readMainSource(t)
 	if got := strings.Count(src, "WithLegacyResourceCompatibility(nil)"); got != 3 {

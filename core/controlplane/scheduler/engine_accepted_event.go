@@ -6,6 +6,7 @@ import (
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func (e *Engine) handleCompatJobResult(packet *pb.BusPacket, result *pb.JobResult) error {
@@ -24,6 +25,10 @@ func (e *Engine) publishSchedulerAcceptedPacket(subject string, packet *pb.BusPa
 	}
 	trusted := proto.Clone(packet).(*pb.BusPacket)
 	trusted.SenderId, trusted.AuthToken = defaultSenderID, ""
+	trusted.CreatedAt, trusted.ProtocolVersion = timestamppb.Now(), protocolVersionV1
+	if result := trusted.GetJobResult(); result != nil {
+		result.WorkerId = defaultSenderID
+	}
 	trusted.Signature, trusted.SignatureMetadata = nil, nil
 	e.attachServiceToken(trusted)
 	if err := e.bus.Publish(subject, trusted); err != nil {

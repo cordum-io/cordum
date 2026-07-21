@@ -42,15 +42,12 @@ func normalizeAuthenticatedJobRequest(
 	authCtx *auth.AuthContext,
 ) (*pb.JobRequest, error) {
 	authority := &pb.IdentityBinding{}
-	if req != nil {
-		authority.TenantId = strings.TrimSpace(req.GetTenantId())
-	}
 	if authCtx != nil {
-		if authority.TenantId == "" {
-			authority.TenantId = strings.TrimSpace(authCtx.Tenant)
-		}
+		authority.TenantId = strings.TrimSpace(authCtx.Tenant)
 		authority.PrincipalId = strings.TrimSpace(authCtx.PrincipalID)
 		authority.ActorId = authority.PrincipalId
+	} else if req != nil {
+		authority.TenantId = strings.TrimSpace(req.GetTenantId())
 	}
 	return jobidentity.NormalizeProductionJobRequest(req, authority)
 }

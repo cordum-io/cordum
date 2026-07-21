@@ -12,8 +12,10 @@ import (
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
+	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func TestTrustedEventEvidenceUsesExactVerifiedRawMetadata(t *testing.T) {
@@ -87,6 +89,38 @@ func TestCompatResultStillPublishesSchedulerAcceptedEvent(t *testing.T) {
 	}
 }
 
+func TestPublishSchedulerAcceptedPacketProducesValidSchedulerAuthoredResult(t *testing.T) {
+	bus := &fakeBus{}
+	engine := &Engine{ctx: context.Background(), bus: bus}
+	result := &pb.JobResult{
+		JobId: "job-accepted", WorkerId: "worker-1",
+		Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
+	}
+	packet := &pb.BusPacket{
+		TraceId: "trace-accepted", SenderId: "worker-1", CreatedAt: timestamppb.Now(),
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
+		Payload:         &pb.BusPacket_JobResult{JobResult: result},
+	}
+
+	if err := engine.publishSchedulerAcceptedPacket(capsdk.SubjectAcceptedResult, packet); err != nil {
+		t.Fatalf("publishSchedulerAcceptedPacket() error = %v", err)
+	}
+	published := bus.snapshotPublished()
+	if len(published) != 1 {
+		t.Fatalf("published packets = %d, want 1", len(published))
+	}
+	accepted := published[0].packet
+	if err := capsdk.ValidateBusPacket(accepted); err != nil {
+		t.Fatalf("scheduler-authored accepted packet is invalid: %v", err)
+	}
+	if accepted.GetSenderId() != defaultSenderID || accepted.GetJobResult().GetWorkerId() != defaultSenderID {
+		t.Fatalf("accepted authority = envelope:%q result:%q, want %q", accepted.GetSenderId(), accepted.GetJobResult().GetWorkerId(), defaultSenderID)
+	}
+	if result.GetWorkerId() != "worker-1" {
+		t.Fatalf("original result worker = %q, want unchanged", result.GetWorkerId())
+	}
+}
+
 func TestDurableResultOutboxReplaysAfterPublishFailure(t *testing.T) {
 	engine, jobStore, bus, result, packet, claims := productionResultFixture(t)
 	bus.publishErr = errors.New("broker unavailable")
@@ -133,10 +167,14 @@ func TestHandleProductionJobResultUsesAuthenticatedFenceAndAppliesOnce(t *testin
 	if len(bus.published) != 1 || bus.published[0].subject != "sys.internal.job.result.accepted" {
 		t.Fatalf("accepted publishes = %+v, want exactly one trusted result", bus.published)
 	}
-	accepted := bus.published[0].packet.GetJobResult()
-	if accepted.GetWorkerId() != claims.Subject || accepted.GetDispatch().GetAssignedWorkerId() != claims.Subject {
-		t.Fatalf("accepted worker binding = %q/%q, want authenticated %q",
-			accepted.GetWorkerId(), accepted.GetDispatch().GetAssignedWorkerId(), claims.Subject)
+	acceptedPacket := bus.published[0].packet
+	if err := capsdk.ValidateBusPacket(acceptedPacket); err != nil {
+		t.Fatalf("durable accepted packet is invalid: %v", err)
+	}
+	accepted := acceptedPacket.GetJobResult()
+	if accepted.GetWorkerId() != defaultSenderID || accepted.GetDispatch().GetAssignedWorkerId() != claims.Subject {
+		t.Fatalf("accepted authority = scheduler:%q worker:%q, want %q/%q",
+			accepted.GetWorkerId(), accepted.GetDispatch().GetAssignedWorkerId(), defaultSenderID, claims.Subject)
 	}
 }
 

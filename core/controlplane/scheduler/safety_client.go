@@ -25,11 +25,12 @@ import (
 
 // SafetyClient implements SafetyChecker by calling the SafetyKernel gRPC service.
 type SafetyClient struct {
-	client         pb.SafetyKernelClient
-	conn           *grpc.ClientConn
-	cb             *RedisCircuitBreaker
-	contextClient  redis.UniversalClient // for dereferencing context_ptr (input content scanning)
-	resourceReader resourceio.Reader
+	client                        pb.SafetyKernelClient
+	conn                          *grpc.ClientConn
+	cb                            *RedisCircuitBreaker
+	contextClient                 redis.UniversalClient // for dereferencing context_ptr (input content scanning)
+	resourceReader                resourceio.Reader
+	productionIdentityEnforcement bool
 }
 
 const (
@@ -109,6 +110,14 @@ func (c *SafetyClient) WithContextClient(rdb redis.UniversalClient) *SafetyClien
 	return c
 }
 
+// WithProductionIdentityEnforcement makes authenticated IdentityBinding
+// mandatory at the Safety Kernel boundary. Compatibility mode leaves additive,
+// potentially partial identity mirrors untouched.
+func (c *SafetyClient) WithProductionIdentityEnforcement(enabled bool) *SafetyClient {
+	c.productionIdentityEnforcement = enabled
+	return c
+}
+
 // CurrentPolicySnapshot returns the latest policy snapshot hash from the
 // safety kernel. Returns empty string on error or if the kernel is unreachable.
 // Implements SnapshotProvider for the reconciler's stale-approval detection.
@@ -138,7 +147,7 @@ func (c *SafetyClient) Close() error {
 
 // Check forwards the request to the safety kernel; denies on error/timeout.
 func (c *SafetyClient) Check(ctx context.Context, req *pb.JobRequest) (SafetyDecisionRecord, error) {
-	normalized, err := normalizeSafetyJobRequest(req)
+	normalized, err := normalizeSafetyJobRequest(req, c.productionIdentityEnforcement)
 	if err != nil {
 		return SafetyDecisionRecord{Decision: SafetyUnavailable, Reason: "job identity rejected"}, err
 	}
@@ -160,7 +169,7 @@ func (c *SafetyClient) Check(ctx context.Context, req *pb.JobRequest) (SafetyDec
 		Labels:      req.GetLabels(),
 		MemoryId:    req.GetMemoryId(),
 		Meta:        req.GetMeta(),
-	})
+	}, c.productionIdentityEnforcement)
 	if err != nil {
 		return SafetyDecisionRecord{Decision: SafetyUnavailable, Reason: "policy identity rejected"}, err
 	}
@@ -199,8 +208,8 @@ func (c *SafetyClient) Check(ctx context.Context, req *pb.JobRequest) (SafetyDec
 	return record, nil
 }
 
-func normalizeSafetyJobRequest(req *pb.JobRequest) (*pb.JobRequest, error) {
-	if req.GetIdentity() == nil {
+func normalizeSafetyJobRequest(req *pb.JobRequest, enforce bool) (*pb.JobRequest, error) {
+	if !enforce {
 		return req, nil
 	}
 	normalized, err := jobidentity.NormalizeProductionJobRequest(req, req.GetIdentity())
@@ -213,8 +222,9 @@ func normalizeSafetyJobRequest(req *pb.JobRequest) (*pb.JobRequest, error) {
 func normalizeSafetyPolicyRequest(
 	job *pb.JobRequest,
 	check *pb.PolicyCheckRequest,
+	enforce bool,
 ) (*pb.PolicyCheckRequest, error) {
-	if job.GetIdentity() == nil {
+	if !enforce {
 		return check, nil
 	}
 	normalized, err := jobidentity.NormalizeProductionPolicyCheckRequest(check, job.GetIdentity())
