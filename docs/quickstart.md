@@ -148,7 +148,7 @@ To start over completely, also delete `.env` and `./certs/` — the next
 | `missing dependency: docker` | Install Docker Desktop / Engine and make sure it's on `PATH`. |
 | `cannot connect to the Docker daemon` | Start Docker Desktop, or `sudo systemctl start docker` on Linux. |
 | `warning: port 8081 (api-gateway http) is already in use` | Stop the conflicting service (`lsof -i :8081` / `ss -ltnp \| grep 8081`) or change the host port in `docker-compose.yml`. |
-| `Go 1.24+ required` | Upgrade Go (https://go.dev/dl/) — only needed for the first-run cert generation. |
+| `Go 1.26.3+ required` | Upgrade Go (https://go.dev/dl/) — only needed for the first-run cert generation. |
 | `health check timed out` | Re-run with `--health-timeout 300`; inspect `docker compose logs api-gateway` for the real error. |
 | TLS / certificate errors in the browser | Accept the self-signed cert for local dev, or delete `./certs/` and re-run to regenerate. |
 | Dashboard empty | Normal on a fresh install — run the smoke test (step 8 above) or create a workflow from the dashboard UI. |

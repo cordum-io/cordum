@@ -80,7 +80,7 @@ func TestMCPKeygen_WritesPrivatePEMAndPrintsBase64Public(t *testing.T) {
 	if keyID != "default" {
 		t.Errorf("keyID = %q, want default", keyID)
 	}
-	if loaded.X.Cmp(pub.X) != 0 || loaded.Y.Cmp(pub.Y) != 0 {
+	if !loaded.PublicKey.Equal(pub) {
 		t.Error("loaded private key's public half does NOT match printed base64 SPKI — keygen round-trip is broken")
 	}
 

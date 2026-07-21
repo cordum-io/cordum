@@ -38,7 +38,7 @@ If you want the architecture story before commands, read
 | --- | --- | --- |
 | Docker | Compose v2 plugin | Docker Desktop on macOS/Windows; native engine on Linux. |
 | GNU Make | any | Drives `make dev-up`/`make build`. macOS/Linux ship it; on Windows/MSYS install via `pacman -S make` or substitute the raw `docker compose ...` and `go build ...` commands shown below. |
-| Go | 1.24+ | For local binary builds. |
+| Go | 1.26.3+ | For local binary builds. |
 | Node.js | 18+ | For dashboard build/test. |
 | `openssl` | any recent | Used to mint a local API key. |
 | `curl`, `jq`, `bash` | any | The fake-hook script needs these. On Windows/MSYS, the repo ships `tools/scripts/jq.exe` as a fallback. |
