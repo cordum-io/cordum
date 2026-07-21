@@ -487,6 +487,7 @@ func agentdRequest(input HookInput, args []string, env map[string]string) Agentd
 	}
 	req.Layer = string(mapped.Layer)
 	req.Kind = string(mapped.Kind)
+	req.AgentProduct = mapped.AgentProduct
 	req.TenantID = mapped.TenantID
 	req.PrincipalID = mapped.PrincipalID
 	req.Capability = mapped.Capability

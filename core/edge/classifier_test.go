@@ -1343,6 +1343,53 @@ func TestClassifierAcceptsRenamedRedactedKeys_EditSourceCode(t *testing.T) {
 	}
 }
 
+func TestClassifyFileEdit_MultiPathAccumulatesRiskTagsAcrossClasses(t *testing.T) {
+	event := AgentActionEvent{
+		Layer:    LayerHook,
+		Kind:     EventKindHookPreToolUse,
+		ToolName: "MultiEdit",
+		InputRedacted: map[string]any{
+			"file_path_redacted": "/tmp/fixture/src/protected.go",
+			"replacements": []any{
+				map[string]any{"filePath": "/tmp/fixture/.env"},
+			},
+		},
+	}
+	cls, err := ClassifyEvent(event)
+	if err != nil {
+		t.Fatalf("ClassifyEvent: %v", err)
+	}
+	for _, want := range []string{"source_code", "secrets"} {
+		if !containsString(cls.RiskTags, want) {
+			t.Fatalf("RiskTags = %v, missing %q (a multi-file edit spanning source_code and secret paths must not drop either signal)", cls.RiskTags, want)
+		}
+	}
+}
+
+func TestClassifyFileSearch_PreservesSourceCodeTagWhenPatternReferencesSecret(t *testing.T) {
+	event := AgentActionEvent{
+		Layer:    LayerHook,
+		Kind:     EventKindHookPreToolUse,
+		ToolName: "Glob",
+		InputRedacted: map[string]any{
+			"path_redacted":    "/tmp/fixture/src/auth",
+			"pattern_redacted": "**/.env",
+		},
+	}
+	cls, err := ClassifyEvent(event)
+	if err != nil {
+		t.Fatalf("ClassifyEvent: %v", err)
+	}
+	if cls.Labels["path.class"] != "secret" {
+		t.Fatalf("Labels[path.class] = %q, want %q (full labels=%v)", cls.Labels["path.class"], "secret", cls.Labels)
+	}
+	for _, want := range []string{"source_code", "secrets"} {
+		if !containsString(cls.RiskTags, want) {
+			t.Fatalf("RiskTags = %v, missing %q (a source_code base path searched with a secret-referencing pattern must not drop either signal)", cls.RiskTags, want)
+		}
+	}
+}
+
 func TestClassifierAcceptsRenamedRedactedKeys_BashDestructive(t *testing.T) {
 	event := AgentActionEvent{
 		Layer:    LayerHook,
@@ -1387,6 +1434,64 @@ func TestClassifierAcceptsRenamedRedactedKeys_BashSafeBuild(t *testing.T) {
 	}
 	if cls.Labels["command.family"] != "build" {
 		t.Fatalf("Labels[command.family] = %q, want %q", cls.Labels["command.family"], "build")
+	}
+}
+
+func TestClassifierCopilotApplyPatchExtractsEmbeddedPath(t *testing.T) {
+	// apply_patch carries no file_path field — the target is embedded in the
+	// V4A patch body. The classifier must parse it so secrets/source_code
+	// tagging still fires for a Copilot apply_patch edit.
+	event := AgentActionEvent{
+		Layer:        LayerHook,
+		Kind:         EventKindHookPreToolUse,
+		ToolName:     "apply_patch",
+		AgentProduct: "github-copilot",
+		InputRedacted: map[string]any{
+			"input": "*** Begin Patch\n*** Update File: src/protected.go\n@@\n-old\n+new\n*** End Patch\n",
+		},
+	}
+	cls, err := ClassifyEvent(event)
+	if err != nil {
+		t.Fatalf("ClassifyEvent: %v", err)
+	}
+	if cls.Capability != "file.write" {
+		t.Fatalf("Capability = %q, want file.write", cls.Capability)
+	}
+	if cls.Labels["path.class"] != "source_code" {
+		t.Fatalf("Labels[path.class] = %q, want source_code (labels=%v)", cls.Labels["path.class"], cls.Labels)
+	}
+	if !containsString(cls.RiskTags, "source_code") {
+		t.Fatalf("RiskTags = %v, missing source_code", cls.RiskTags)
+	}
+}
+
+func TestClassifierCopilotMultiReplaceExtractsReplacementPaths(t *testing.T) {
+	// multi_replace_string_in_file carries its targets under
+	// replacements[].filePath; the most sensitive path class must win.
+	event := AgentActionEvent{
+		Layer:        LayerHook,
+		Kind:         EventKindHookPreToolUse,
+		ToolName:     "multi_replace_string_in_file",
+		AgentProduct: "github-copilot",
+		InputRedacted: map[string]any{
+			"replacements": []any{
+				map[string]any{"filePath": "/repo/README.md"},
+				map[string]any{"filePath": "/repo/config/.env"},
+			},
+		},
+	}
+	cls, err := ClassifyEvent(event)
+	if err != nil {
+		t.Fatalf("ClassifyEvent: %v", err)
+	}
+	if cls.Capability != "file.write" {
+		t.Fatalf("Capability = %q, want file.write", cls.Capability)
+	}
+	if cls.Labels["path.class"] != "secret" {
+		t.Fatalf("Labels[path.class] = %q, want secret (labels=%v)", cls.Labels["path.class"], cls.Labels)
+	}
+	if !containsString(cls.RiskTags, "secrets") {
+		t.Fatalf("RiskTags = %v, missing secrets", cls.RiskTags)
 	}
 }
 

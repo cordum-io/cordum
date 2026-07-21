@@ -285,7 +285,7 @@ func (s *LocalServer) hookEventAt(req claude.AgentdRequest, receivedAt time.Time
 		Timestamp:      receivedAt.UTC(),
 		Layer:          edgecore.LayerHook,
 		Kind:           hookEventKind(req.EventName),
-		AgentProduct:   "claude-code",
+		AgentProduct:   nonEmpty(req.AgentProduct, "claude-code"),
 		ToolName:       boundMetadataString(req.ToolName),
 		ToolUseID:      boundMetadataString(req.ToolUseID),
 		ActionName:     "claude." + strings.ToLower(strings.TrimSpace(req.EventName)),

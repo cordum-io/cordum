@@ -329,7 +329,7 @@ func validateExecutionMode(value ExecutionMode) error {
 
 func validateAgentAdapter(value AgentAdapter) error {
 	switch value {
-	case AdapterClaudeCodeHook, AdapterMCPGateway, AdapterLLMProxy, AdapterRuntimeSidecar, AdapterSDKRunner:
+	case AdapterClaudeCodeHook, AdapterCopilotHook, AdapterMCPGateway, AdapterLLMProxy, AdapterRuntimeSidecar, AdapterSDKRunner:
 		return nil
 	default:
 		return fmt.Errorf("adapter has unsafe value %q", value)
