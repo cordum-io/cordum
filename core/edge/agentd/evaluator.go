@@ -226,7 +226,7 @@ func (e *Evaluator) evaluateRequest(req claude.AgentdRequest) EvaluateRequest {
 	if strings.TrimSpace(layer) == "" {
 		layer = string(edgecore.LayerHook)
 	}
-	agentProduct := "claude-code"
+	agentProduct := nonEmpty(req.AgentProduct, "claude-code")
 	return boundedEvaluateRequest(EvaluateRequest{
 		TenantID:      nonEmpty(req.TenantID, e.state.TenantID),
 		PrincipalID:   nonEmpty(req.PrincipalID, e.state.PrincipalID),
