@@ -8,7 +8,7 @@ is local/CI evidence, not an external certification claim.
 
 - `CAP_PRODUCTION_REDIS_URL` must name a reachable external Redis server.
   Absence or connection failure is fatal; the suite contains no `t.Skip` path.
-- NATS uses the pinned `github.com/nats-io/nats-server/v2 v2.12.6` dependency
+- NATS uses the pinned `github.com/nats-io/nats-server/v2 v2.14.3` dependency
   on loopback. The broker requires and verifies dynamically generated client
   certificates, so scheduler and worker traffic crosses real mutual TLS.
 - The scheduler runs its production raw-admission, replay, session, safety,

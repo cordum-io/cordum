@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	pinnedNATSServerVersion = "2.12.6"
+	pinnedNATSServerVersion = "2.14.3"
 	productionStream        = "CAP_PRODUCTION"
 	productionTopic         = "job.production.echo"
 )
