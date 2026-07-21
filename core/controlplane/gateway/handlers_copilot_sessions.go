@@ -96,7 +96,7 @@ func (s *server) handleGetCopilotSession(w http.ResponseWriter, r *http.Request)
 	if store == nil {
 		store = copilot.NotImplementedStore{}
 	}
-	sess, err := store.GetSession(r.Context(), sessionID, userID)
+	sess, err := store.GetSession(r.Context(), tenant, sessionID, userID)
 	if err != nil {
 		s.handleCopilotSessionStoreError(w, r, sessionID, userID, tenant, started, err)
 		return
