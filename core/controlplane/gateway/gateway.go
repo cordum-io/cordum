@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/auth/servicetoken"
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/copilot"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
@@ -52,6 +53,7 @@ import (
 	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/policy/actiongates"
 	"github.com/cordum/cordum/core/policyshadow"
+	"github.com/cordum/cordum/core/policysign"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/cordum/cordum/core/telemetry"
 	"github.com/gorilla/websocket"
@@ -629,6 +631,25 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	}
 	defer func() { _ = schemaRegistry.Close() }()
 	workflowEng = workflowEng.WithMemory(memStore).WithConfig(configSvc).WithSchemaRegistry(schemaRegistry)
+	// Wire control-plane service-token minting for the gateway's embedded
+	// workflow engine, mirroring the standalone cordum-workflow-engine binary
+	// (core/workflow/runner.go). Without this, every workflow step started
+	// through the gateway's HTTP API publishes an unauthenticated JobRequest,
+	// and under CORDUM_SDK_HANDSHAKE=enforce the scheduler's
+	// verifyJobSubmissionAuthority rejects it as an unauthenticated
+	// reserved-service submission.
+	if gatewayHandshake.mode != scheduler.HandshakeModeOff {
+		if priv, kid, kerr := policysign.LoadPrivateKeyFromEnv(); kerr == nil {
+			workflowEng = workflowEng.WithServiceTokenMinter(func() (string, error) {
+				return servicetoken.MintService(priv, kid, servicetoken.IdentityWorkflow, time.Now())
+			})
+			slog.Info("gateway embedded workflow-engine service-token minting enabled", "kid", kid)
+		} else if gatewayHandshake.mode == scheduler.HandshakeModeEnforce {
+			return fmt.Errorf("gateway requires a control-plane service-token signing key when CORDUM_SDK_HANDSHAKE=enforce (embedded workflow-engine step dispatch would be rejected by enforce-mode schedulers): %w", kerr)
+		} else {
+			slog.Info("gateway embedded workflow-engine service-token minting disabled (no signing key configured); workflow steps are unauthenticated and dropped by peer schedulers only under CORDUM_SDK_HANDSHAKE=enforce", "reason", kerr)
+		}
+	}
 	if raw := strings.TrimSpace(os.Getenv("WORKFLOW_FOREACH_MAX_ITEMS")); raw != "" {
 		if limit, err := strconv.Atoi(raw); err == nil && limit > 0 {
 			workflowEng = workflowEng.WithMaxForEachItems(limit)

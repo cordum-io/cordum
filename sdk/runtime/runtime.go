@@ -31,10 +31,10 @@ type (
 	AlertSeverity = agentv1.AlertSeverity
 
 	// CAP v2.5.3 — observability, testing, middleware
-	MetricsHook  = capsdk.MetricsHook
-	Middleware   = capruntime.Middleware
-	HandlerFunc  = capruntime.HandlerFunc
-	InMemoryBus  = captesting.InMemoryBus
+	MetricsHook = capsdk.MetricsHook
+	Middleware  = capruntime.Middleware
+	HandlerFunc = capruntime.HandlerFunc
+	InMemoryBus = captesting.InMemoryBus
 )
 
 // NoopMetrics is a zero-overhead MetricsHook that discards all events.
@@ -53,6 +53,24 @@ func NewInMemoryBus() *InMemoryBus {
 // Register wires a typed handler to a topic using the CAP runtime.
 func Register[TIn any, TOut any](agent *Agent, topic string, handler Handler[TIn, TOut], opts ...JobOption) {
 	capruntime.Register(agent, topic, handler, opts...)
+}
+
+// NewLegacyUnsignedAgent creates an agent for a deliberately unsigned demo or
+// compatibility worker. Production workers should configure signing keys on
+// Agent directly instead of calling this helper.
+func NewLegacyUnsignedAgent(
+	natsURL, redisURL, senderID string,
+	nc NATSConn,
+	store BlobStore,
+) *Agent {
+	return &Agent{
+		NATSURL:       natsURL,
+		RedisURL:      redisURL,
+		NATS:          nc,
+		Store:         store,
+		SenderID:      senderID,
+		AllowUnsigned: true,
+	}
 }
 
 // WithRetries overrides the default retry count for a handler.

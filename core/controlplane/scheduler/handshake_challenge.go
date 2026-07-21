@@ -165,6 +165,9 @@ func (s *HandshakeService) newSignedChallenge(request *agentv1.WorkerHandshakeCh
 	if err := capsdk.SignTrustHandshake(packet, s.schedulerKey); err != nil {
 		return nil, nil, failHandshake(internalErrorReason(), "challenge_signing_failed")
 	}
+	if err := capsdk.ValidateWorkerTrustPacket(packet); err != nil {
+		return nil, nil, failHandshake(internalErrorReason(), "challenge_packet_invalid")
+	}
 	return packet, challenge, nil
 }
 

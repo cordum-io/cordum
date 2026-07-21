@@ -191,8 +191,8 @@ func seedOwnedHandshakeState(t *testing.T, client redis.UniversalClient, identit
 		handshakeScopedTestKey("request", identity.workerID, "request"): []byte("challenge-id"),
 		handshakeScopedTestKey("nonce", identity.workerID, "nonce"):     []byte("challenge-id"),
 		activeSessionKey(identity):                                      []byte(`{"jti":"fresh"}`),
-		"session:worker:" + identity.workerID:                           []byte(`{"jti":"legacy"}`),
-		"session:revoked:" + identity.tenantID + ":old":                 []byte("1"),
+		legacySessionKey(identity):                                      []byte(`{"jti":"legacy"}`),
+		revokedSessionPrefix(identity) + "old":                          []byte("1"),
 	}
 	for key, value := range keys {
 		if err := client.Set(ctx, key, value, 0).Err(); err != nil {

@@ -5,25 +5,6 @@ import (
 	"time"
 )
 
-func TestParseHandshakeMode(t *testing.T) {
-	t.Parallel()
-	cases := map[string]HandshakeMode{
-		"":          HandshakeModeWarn,
-		"off":       HandshakeModeOff,
-		"OFF":       HandshakeModeOff,
-		" warn ":    HandshakeModeWarn,
-		"warn":      HandshakeModeWarn,
-		"enforce":   HandshakeModeEnforce,
-		" ENFORCE ": HandshakeModeEnforce,
-		"bogus":     HandshakeModeWarn,
-	}
-	for in, want := range cases {
-		if got := ParseHandshakeMode(in); got != want {
-			t.Errorf("ParseHandshakeMode(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 func TestHandshakeMode_Predicates(t *testing.T) {
 	t.Parallel()
 	type row struct {

@@ -1125,6 +1125,8 @@ spec:
           value: 5s
         - name: WORKFLOW_ENGINE_RUN_SCAN_LIMIT
           value: "200"
+        - name: CORDUM_SDK_HANDSHAKE
+          value: "off"
         # --- Control-plane service-token signing (CORDUM_SDK_HANDSHAKE=enforce) ---
         # When the scheduler's session-token gate runs in enforce mode, the
         # workflow-engine must mint a control-plane service token on its internal

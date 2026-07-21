@@ -39,14 +39,14 @@ func TestInstalledSessionTransitionRequiresExactBoundState(t *testing.T) {
 	}
 	before := redisState{"session:worker:foreign": []byte("foreign")}
 	after := redisState{
-		"session:worker:foreign":                                  []byte("foreign"),
-		activeSessionKey(identity):                                active,
-		"session:revoked:" + identity.tenantID + ":prior-session": []byte("1"),
+		"session:worker:foreign":                         []byte("foreign"),
+		activeSessionKey(identity):                       active,
+		revokedSessionPrefix(identity) + "prior-session": []byte("1"),
 	}
 	if err := validateInstalledSessionTransition(identity, before, after, time.Now()); err != nil {
 		t.Fatalf("valid transition rejected: %v", err)
 	}
-	delete(after, "session:revoked:"+identity.tenantID+":prior-session")
+	delete(after, revokedSessionPrefix(identity)+"prior-session")
 	if err := validateInstalledSessionTransition(identity, before, after, time.Now()); err == nil {
 		t.Fatal("transition without prior-token revocation accepted")
 	}
@@ -69,7 +69,7 @@ func validateInstalledSessionTransition(identity *interopIdentity, before, after
 	if err := validateStoredIdentity(record, identity, now); err != nil {
 		return err
 	}
-	revocationPrefix := "session:revoked:" + identity.tenantID + ":"
+	revocationPrefix := revokedSessionPrefix(identity)
 	revocations := 0
 	for key, value := range after {
 		if _, existed := before[key]; existed || key == activeKey {

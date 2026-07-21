@@ -1193,7 +1193,8 @@ func (s *server) handleGetArtifact(w http.ResponseWriter, r *http.Request) {
 // wired (back-compat / gate disabled) it attaches nothing, and a genuine mint
 // failure logs at ERROR and proceeds token-less (a peer under enforce rejects a
 // token-less packet rather than admitting an unauthenticated one). Callers MUST
-// set the JobResult.WorkerId / JobCancel.RequestedBy and the BusPacket SenderId
+// set JobRequest submitter identity, JobResult.WorkerId / JobCancel.RequestedBy,
+// and the BusPacket SenderId
 // to "api-gateway" so the scheduler's subject-binding accepts the token. Attach
 // AFTER enqueueBusPacket so the token never reaches the SSE/WS stream.
 func (s *server) attachServiceToken(pkt *pb.BusPacket) {
@@ -1248,7 +1249,7 @@ func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 	// Broadcast a synthetic cancellation event for listeners.
 	cancelPacket := &pb.BusPacket{
 		TraceId:         id,
-		SenderId:        "api-gateway",
+		SenderId:        servicetoken.IdentityGateway,
 		CreatedAt:       timestamppb.Now(),
 		ProtocolVersion: capsdk.DefaultProtocolVersion,
 		Payload: &pb.BusPacket_JobResult{
@@ -1460,6 +1461,7 @@ func (s *server) handleRemediateJob(w http.ResponseWriter, r *http.Request) {
 			JobRequest: newReq,
 		},
 	}
+	s.attachServiceToken(packet)
 	if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
 		writeErrorJSON(w, http.StatusBadGateway, "failed to enqueue job")
 		return
@@ -2172,13 +2174,14 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 
 	packet := &pb.BusPacket{
 		TraceId:         traceID,
-		SenderId:        "api-gateway-http",
+		SenderId:        servicetoken.IdentityGateway,
 		CreatedAt:       timestamppb.Now(),
 		ProtocolVersion: capsdk.DefaultProtocolVersion,
 		Payload: &pb.BusPacket_JobRequest{
 			JobRequest: jobReq,
 		},
 	}
+	s.attachServiceToken(packet)
 
 	if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
 		slog.Error("job publish failed", "job_id", jobID, "error", err)

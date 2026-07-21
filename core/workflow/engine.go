@@ -1014,7 +1014,7 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 						continue
 					}
 
-					packet := makeJobPacket(run.ID, req)
+					packet := e.makeJobPacket(run.ID, req)
 					if err := e.publishWithTrace(ctx, capsdk.SubjectSubmit, packet); err != nil {
 						slog.Error("approval gate dispatch failed", "run_id", run.ID, "step_id", stepID, "error", err)
 						parentSR.Status = StepStatusPending
@@ -1857,7 +1857,7 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 					} else if ptr != "" {
 						req.ContextPtr = ptr
 					}
-					packet := makeJobPacket(run.ID, req)
+					packet := e.makeJobPacket(run.ID, req)
 					if err := e.publishWithTrace(ctx, capsdk.SubjectSubmit, packet); err != nil {
 						slog.Error("publish loop step", "run_id", run.ID, "step_id", childID, "error", err)
 						child.Status = StepStatusFailed
@@ -2074,7 +2074,7 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 					} else if ptr != "" {
 						req.ContextPtr = ptr
 					}
-					packet := makeJobPacket(run.ID, req)
+					packet := e.makeJobPacket(run.ID, req)
 					if err := e.publishWithTrace(ctx, capsdk.SubjectSubmit, packet); err != nil {
 						slog.Error("publish parallel child step", "run_id", run.ID, "step_id", childStepID, "error", err)
 						child.Status = StepStatusFailed
@@ -2239,7 +2239,7 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 					child.JobID = jobID
 					child.Input = payload
 					child.Item = item
-					packet := makeJobPacket(run.ID, req)
+					packet := e.makeJobPacket(run.ID, req)
 					if err := e.publishWithTrace(ctx, capsdk.SubjectSubmit, packet); err != nil {
 						slog.Error("publish foreach step", "run_id", run.ID, "step_id", childID, "error", err)
 						// Revert to Pending so a later scheduleReady retries; do NOT
@@ -2486,7 +2486,7 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 
 			// Dispatch to NATS — state is already persisted so a crash here is safe.
 			slog.Debug("step dispatching", "component", "workflow", "runId", run.ID, "traceId", run.ID, "stepId", stepID, "jobId", jobID, "stepType", string(step.Type))
-			packet := makeJobPacket(run.ID, req)
+			packet := e.makeJobPacket(run.ID, req)
 			if err := e.publishWithTrace(ctx, capsdk.SubjectSubmit, packet); err != nil {
 				slog.Error("publish step", "run_id", run.ID, "step_id", stepID, "error", err)
 				// Revert to pending for retry on next scheduleReady; idempotency key
