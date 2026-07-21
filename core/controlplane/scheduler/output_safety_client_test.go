@@ -163,11 +163,11 @@ func TestOutputClientContentModeLoadsResultFromRedis(t *testing.T) {
 	}
 
 	fake := &fakeOutputPolicyClient{}
-	client := &OutputSafetyClient{
+	client := (&OutputSafetyClient{
 		client:       fake,
 		resultClient: resultClient,
 		cb:           newOutputTestCB(),
-	}
+	}).WithLegacyResourceCompatibility(nil)
 
 	_, err = client.CheckOutputContent(
 		context.Background(),
@@ -182,8 +182,8 @@ func TestOutputClientContentModeLoadsResultFromRedis(t *testing.T) {
 	if got == nil {
 		t.Fatalf("expected output check request")
 	}
-	if got.GetResultPtr() != "redis://res:job-content" {
-		t.Fatalf("expected result_ptr in content mode, got %q", got.GetResultPtr())
+	if got.GetResultPtr() != "" {
+		t.Fatalf("resolved result pointer crossed policy RPC: %q", got.GetResultPtr())
 	}
 	if len(got.GetOutputContent()) == 0 {
 		t.Fatalf("expected output_content to be populated")
@@ -216,11 +216,11 @@ func TestOutputClientContentModeRetriesMissingResultFromRedis(t *testing.T) {
 	}()
 
 	fake := &fakeOutputPolicyClient{}
-	client := &OutputSafetyClient{
+	client := (&OutputSafetyClient{
 		client:       fake,
 		resultClient: resultClient,
 		cb:           newOutputTestCB(),
-	}
+	}).WithLegacyResourceCompatibility(nil)
 
 	_, err = client.CheckOutputContent(
 		context.Background(),
@@ -375,11 +375,11 @@ func TestOutputClientContentModeStoresRedactedOutput(t *testing.T) {
 			}, nil
 		},
 	}
-	client := &OutputSafetyClient{
+	client := (&OutputSafetyClient{
 		client:       fake,
 		resultClient: resultClient,
 		cb:           newOutputTestCB(),
-	}
+	}).WithLegacyResourceCompatibility(nil)
 
 	record, err := client.CheckOutputContent(
 		context.Background(),

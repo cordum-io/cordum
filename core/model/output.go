@@ -23,6 +23,7 @@ type OutputEvaluateRequest struct {
 	Tenant          string
 	Labels          map[string]string
 	ResultPtr       string
+	ResultRef       *pb.ResourceRef
 	ArtifactPtrs    []string
 	ErrorMessage    string
 	ErrorCode       string

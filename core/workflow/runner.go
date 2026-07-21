@@ -15,6 +15,7 @@ import (
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
+	"github.com/cordum/cordum/core/infra/capprofile"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/handshakemode"
 	"github.com/cordum/cordum/core/infra/health"
@@ -52,6 +53,17 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 	}
 	handshakeMode, err := handshakemode.Parse(os.Getenv(handshakemode.EnvName))
 	if err != nil {
+		return err
+	}
+
+	// Resolve the explicit CAP profile before any dependency work so an
+	// unrecognised value fails startup instead of silently downgrading.
+	capProfile, profileErr := capprofile.FromEnv()
+	if profileErr != nil {
+		return fmt.Errorf("CAP profile configuration invalid: %w", profileErr)
+	}
+	capReadiness := workflowProductionReadiness()
+	if err := enforceWorkflowProductionReadiness(capProfile, capReadiness); err != nil {
 		return err
 	}
 
@@ -123,20 +135,29 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 	}
 	defer natsBus.Close()
 
-	if err := bus.PublishHandshake(natsBus, "workflow-engine", pb.ComponentRole_COMPONENT_ROLE_ORCHESTRATOR, map[string]bool{
-		"workflows": true, "approvals": true,
-	}); err != nil {
-		slog.Warn("handshake publish failed", "error", err)
-	}
+	// The capability advertisement is published after the engine and its
+	// service-token minting are wired (see below), so the workflow engine never
+	// announces capabilities it cannot yet honour.
 
 	engine := NewEngine(workflowStore, natsBus).
 		WithMemory(memStore).
+		WithProductionIdentityEnforcement(capProfile.IsProduction()).
 		WithConfig(configSvc).
 		WithSchemaRegistry(schemaRegistry).
 		WithEntitlements(resolver).
 		WithRunLocker(jobStore)
 	if maxForEachItems > 0 {
 		engine = engine.WithMaxForEachItems(maxForEachItems)
+	}
+	// Legacy Redis result_ptr compatibility is an explicit, profile-gated
+	// opt-in (see core/infra/resourceio.Reader): CAP-PRODUCTION requires
+	// structured ResultRefs end-to-end, but the default/compat profile must
+	// keep accepting legacy pointers from not-yet-migrated workers, exactly
+	// like cmd/cordum-scheduler/main.go wires its readers. Without this, every
+	// successful step whose worker still reports a bare ResultPtr would be
+	// rejected by resolveStepOutput() and marked failed.
+	if !capProfile.IsProduction() {
+		engine = engine.WithLegacyResourceCompatibility(nil)
 	}
 
 	// Wire control-plane service-token minting for internal cancel broadcasts.
@@ -181,7 +202,10 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 	go rec.Start(ctx)
 
 	// Use context-aware subscription for trace propagation from NATS headers.
-	if err := natsBus.SubscribeWithContext(capsdk.SubjectResult, workflowEngineQueue, func(traceCtx context.Context, p *pb.BusPacket) error {
+	if err := natsBus.SubscribeWithContext(capsdk.SubjectAcceptedResult, workflowEngineQueue, func(traceCtx context.Context, p *pb.BusPacket) error {
+		if p == nil || strings.TrimSpace(p.GetSenderId()) != servicetoken.IdentityScheduler {
+			return nil
+		}
 		if jr := p.GetJobResult(); jr != nil {
 			handlerCtx, handlerCancel := context.WithTimeout(traceCtx, 30*time.Second)
 			defer handlerCancel()
@@ -189,7 +213,20 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 		}
 		return nil
 	}); err != nil {
-		return fmt.Errorf("subscribe %s: %w", capsdk.SubjectResult, err)
+		return fmt.Errorf("subscribe %s: %w", capsdk.SubjectAcceptedResult, err)
+	}
+
+	// The production gate passed before any listener, subscription, or
+	// background goroutine was started. Advertise only after the compatible
+	// runtime surfaces are live.
+	logWorkflowProfileActivation(capProfile, capReadiness)
+	if err := bus.PublishHandshake(
+		natsBus, "workflow-engine", pb.ComponentRole_COMPONENT_ROLE_ORCHESTRATOR,
+		capProfile.Capabilities(map[string]bool{
+			"workflows": true, "approvals": true,
+		}, capReadiness),
+	); err != nil {
+		slog.Warn("handshake publish failed", "error", err)
 	}
 
 	wfProbes := health.New()

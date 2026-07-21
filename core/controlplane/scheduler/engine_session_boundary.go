@@ -2,11 +2,24 @@ package scheduler
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 
+	"github.com/cordum/cordum/core/auth/servicetoken"
+	jobidentity "github.com/cordum/cordum/core/protocol/identity"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
+
+var (
+	ErrProductionResultIdentityMismatch    = errors.New("scheduler: production result identity mismatch")
+	ErrProductionResultIdentityUnavailable = errors.New("scheduler: production result identity unavailable")
+)
+
+type jobRequestGetter interface {
+	GetJobRequest(context.Context, string) (*pb.JobRequest, error)
+}
 
 func (e *Engine) verifySessionTokenResult(packet *pb.BusPacket, workerID, packetType string) (TokenVerificationResult, bool) {
 	if e == nil || e.sessionMiddleware == nil {
@@ -70,4 +83,73 @@ func (e *Engine) logTokenRejection(workerID, packetType string, result TokenVeri
 		fields = append(fields, "error", result.Err)
 	}
 	slog.Error("session token rejected inbound packet", fields...)
+}
+
+func (e *Engine) validateProductionJobResultIdentity(
+	ctx context.Context,
+	packet *pb.BusPacket,
+	result *pb.JobResult,
+	claims *SessionTokenClaims,
+) error {
+	if result == nil || claims == nil || claims.Subject != result.GetWorkerId() {
+		return ErrProductionResultIdentityMismatch
+	}
+	return e.validateProductionJobEventIdentity(
+		ctx, packet, result.GetJobId(), result.GetIdentity(), claims,
+	)
+}
+
+func (e *Engine) validateProductionJobEventIdentity(
+	ctx context.Context,
+	packet *pb.BusPacket,
+	jobID string,
+	payloadIdentity *pb.IdentityBinding,
+	claims *SessionTokenClaims,
+) error {
+	if packet == nil || !completeProductionIdentity(payloadIdentity) ||
+		!sameProductionIdentity(packet.GetIdentity(), payloadIdentity) {
+		return ErrProductionResultIdentityMismatch
+	}
+	if claims == nil {
+		return ErrProductionResultIdentityMismatch
+	}
+	if claims.Tenant != "" && claims.Tenant != payloadIdentity.GetTenantId() &&
+		!servicetoken.IsReservedIdentity(claims.Subject) {
+		return ErrProductionResultIdentityMismatch
+	}
+	jobIdentity, err := e.loadProductionJobIdentity(ctx, jobID)
+	if err != nil {
+		return err
+	}
+	if !sameProductionIdentity(jobIdentity, payloadIdentity) {
+		return ErrProductionResultIdentityMismatch
+	}
+	return nil
+}
+
+func (e *Engine) loadProductionJobIdentity(
+	ctx context.Context,
+	jobID string,
+) (*pb.IdentityBinding, error) {
+	getter, ok := e.jobStore.(jobRequestGetter)
+	if !ok || jobID == "" {
+		return nil, ErrProductionResultIdentityUnavailable
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, storeOpTimeout)
+	defer cancel()
+	req, err := getter.GetJobRequest(lookupCtx, jobID)
+	if err != nil || req == nil {
+		return nil, fmt.Errorf("%w: job request lookup", ErrProductionResultIdentityUnavailable)
+	}
+	if req.GetJobId() != jobID {
+		return nil, fmt.Errorf("%w: stored job id", ErrProductionResultIdentityMismatch)
+	}
+	normalized, err := jobidentity.NormalizeProductionJobRequest(req, req.GetIdentity())
+	if err != nil {
+		return nil, fmt.Errorf("%w: stored job identity", ErrProductionResultIdentityMismatch)
+	}
+	return normalized.GetIdentity(), nil
 }

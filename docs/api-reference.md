@@ -3184,6 +3184,7 @@ _Generated from `core/controlplane/gateway/gateway.go`, `core/controlplane/gatew
 | POST | `/api/v1/edge/runtime/events` |
 | POST | `/api/v1/edge/llm/events` |
 | GET | `/api/v1/memory` |
+| POST | `/api/v1/memory/resolve` |
 | POST | `/api/v1/artifacts` |
 | GET | `/api/v1/artifacts/{ptr}` |
 | POST | `/api/v1/jobs` |

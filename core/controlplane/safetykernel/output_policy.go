@@ -2,7 +2,6 @@ package safetykernel
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -14,7 +13,6 @@ import (
 	"github.com/cordum/cordum/core/infra/config"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/redis/go-redis/v9"
 	"gopkg.in/yaml.v3"
 )
 
@@ -23,7 +21,6 @@ const (
 	defaultOutputScannersPath = "config/output_scanners.yaml"
 	maxOutputScanBytes        = 2 * 1024 * 1024
 	outputReadTimeout         = 2 * time.Second
-	redisPointerPrefix        = "redis://"
 	maxRegexLen               = 256
 	maxAlternations           = 5
 )
@@ -95,6 +92,7 @@ type OutputEvaluateRequest struct {
 	Tenant          string
 	Labels          map[string]string
 	ResultPtr       string
+	ResultRef       *pb.ResourceRef
 	ArtifactPtrs    []string
 	ErrorMessage    string
 	ErrorCode       string
@@ -148,43 +146,13 @@ func (s *server) EvaluateOutput(ctx context.Context, req *OutputEvaluateRequest)
 	s.mu.RUnlock()
 
 	resp.PolicySnapshot = snapshot
-	if !outputPolicyEnabled(policy, rules) {
+	contentTruncated, contentErr := s.resolveEvaluateOutputResource(ctx, req)
+	if contentErr != nil {
+		rejectEvaluateOutputResource(resp)
 		return resp, nil
 	}
-
-	// Dereference ResultPtr if no content provided.
-	var contentTruncated bool
-	if len(req.OutputContent) == 0 && req.ResultPtr != "" && s.resultClient != nil {
-		key, err := resultKeyFromPointer(req.ResultPtr)
-		if err == nil {
-			rctx, cancel := context.WithTimeout(ctx, outputReadTimeout)
-			defer cancel()
-			data, err := s.resultClient.Get(rctx, key).Bytes()
-			if err != nil {
-				if errors.Is(err, redis.Nil) {
-					req.OutputContent = nil
-				} else {
-					slog.Warn("output policy: result pointer unreadable",
-						"result_ptr", req.ResultPtr,
-						"key", key,
-						"err", err,
-					)
-					resp.Decision = "quarantine"
-					resp.Reason = "result pointer unreadable"
-					resp.Findings = []outputFinding{{
-						Type:     "pointer_unreadable",
-						Severity: "critical",
-						Detail:   err.Error(),
-						Scanner:  "result_pointer",
-					}}
-					return resp, nil
-				}
-			} else {
-				req.OutputContent, contentTruncated = truncateOutputContent(data)
-			}
-		}
-	} else if len(req.OutputContent) > maxOutputScanBytes {
-		req.OutputContent, contentTruncated = truncateOutputContent(req.OutputContent)
+	if !outputPolicyEnabled(policy, rules) {
+		return resp, nil
 	}
 
 	hasSensitiveScanners := outputRulesUseSensitiveScanners(rules)
@@ -280,21 +248,19 @@ func (s *server) CheckOutput(ctx context.Context, req *pb.OutputCheckRequest) (*
 	s.mu.RUnlock()
 
 	resp.PolicySnapshot = snapshot
-	if !outputPolicyEnabled(policy, rules) {
-		return resp, nil
-	}
-
 	content, contentTruncated, contentErr := s.contentForScan(ctx, req)
 	if contentErr != nil {
-		// Fail closed like EvaluateOutput, but return nil gRPC error so callers persist a quarantine decision.
 		resp.Decision = pb.OutputDecision_OUTPUT_DECISION_QUARANTINE
-		resp.Reason = "result pointer unreadable"
+		resp.Reason = "output resource rejected"
 		resp.Findings = toProtoOutputFindings([]outputFinding{{
-			Type:     "pointer_unreadable",
+			Type:     "resource_rejected",
 			Severity: "critical",
-			Detail:   contentErr.Error(),
-			Scanner:  "result_pointer",
+			Detail:   "output resource rejected",
+			Scanner:  "resource_resolver",
 		}})
+		return resp, nil
+	}
+	if !outputPolicyEnabled(policy, rules) {
 		return resp, nil
 	}
 	evalReq := outputEvaluateRequestFromProto(req, content)
@@ -520,65 +486,11 @@ func outputEvaluateRequestFromProto(req *pb.OutputCheckRequest, content []byte) 
 	return out
 }
 
-func (s *server) contentForScan(ctx context.Context, req *pb.OutputCheckRequest) (content []byte, truncated bool, err error) {
-	content = req.GetOutputContent()
-	if len(content) > 0 {
-		content, truncated := truncateOutputContent(content)
-		return content, truncated, nil
-	}
-	ptr := strings.TrimSpace(req.GetResultPtr())
-	if ptr != "" && s.resultClient == nil {
-		slog.Warn("output-safety: resultClient nil, cannot dereference pointer, falling back to error message",
-			"result_ptr", ptr)
-	}
-	if ptr != "" && s.resultClient != nil {
-		key, err := resultKeyFromPointer(ptr)
-		if err == nil {
-			if ctx == nil {
-				ctx = context.Background()
-			}
-			rctx, cancel := context.WithTimeout(ctx, outputReadTimeout)
-			defer cancel()
-			data, err := s.resultClient.Get(rctx, key).Bytes()
-			if err == nil {
-				content, truncated := truncateOutputContent(data)
-				return content, truncated, nil
-			}
-			if !errors.Is(err, redis.Nil) {
-				slog.Warn("safety-kernel: output pointer fetch failed", "err", err)
-				return nil, false, err
-			}
-		} else {
-			slog.Warn("safety-kernel: invalid output pointer", "err", err)
-		}
-	}
-	msg := strings.TrimSpace(req.GetErrorMessage())
-	if msg == "" {
-		return nil, false, nil
-	}
-	content, truncated = truncateOutputContent([]byte(msg))
-	return content, truncated, nil
-}
-
 func truncateOutputContent(content []byte) ([]byte, bool) {
 	if len(content) <= maxOutputScanBytes {
 		return content, false
 	}
 	return content[:maxOutputScanBytes], true
-}
-
-func resultKeyFromPointer(ptr string) (string, error) {
-	if ptr == "" {
-		return "", fmt.Errorf("empty pointer")
-	}
-	if !strings.HasPrefix(ptr, redisPointerPrefix) {
-		return "", fmt.Errorf("invalid pointer prefix: %s", ptr)
-	}
-	key := strings.TrimPrefix(ptr, redisPointerPrefix)
-	if key == "" {
-		return "", fmt.Errorf("missing pointer key")
-	}
-	return key, nil
 }
 
 const regexEvalTimeout = 100 * time.Millisecond

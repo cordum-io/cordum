@@ -401,6 +401,14 @@ func (s *fakeReconcileStore) SetWorkerID(_ context.Context, _, _ string) error {
 	return nil
 }
 
+func (s *fakeReconcileStore) BeginDispatch(_ context.Context, jobID, _, _ string) (string, int, error) {
+	return "fake-dispatch-" + jobID, 1, nil
+}
+
+func (s *fakeReconcileStore) AcceptJobEvent(context.Context, string, string, int, string, string, string) (bool, error) {
+	return true, nil
+}
+
 func (s *fakeReconcileStore) CancelJob(_ context.Context, jobID string) (JobState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

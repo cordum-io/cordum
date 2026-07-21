@@ -9,6 +9,7 @@ import (
 	"github.com/cordum/cordum/core/infra/store"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestRerunFromCopiesDependencies(t *testing.T) {
@@ -43,6 +44,7 @@ func TestRerunFromCopiesDependencies(t *testing.T) {
 			},
 		},
 		Status:    RunStatusSucceeded,
+		Identity:  &pb.IdentityBinding{TenantId: "org", PrincipalId: "principal-a", ActorId: "actor-a"},
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
 	}
@@ -63,6 +65,9 @@ func TestRerunFromCopiesDependencies(t *testing.T) {
 	}
 	if newRun.Labels["dry_run"] != "true" || newRun.Metadata["dry_run"] != "true" {
 		t.Fatalf("expected dry run flags")
+	}
+	if !proto.Equal(newRun.Identity, run.Identity) {
+		t.Fatalf("rerun identity = %v, want %v", newRun.Identity, run.Identity)
 	}
 	steps, _ := newRun.Context["steps"].(map[string]any)
 	if _, ok := steps["step1"]; !ok || len(steps) != 1 {

@@ -395,6 +395,11 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 	if orgID == "" && wfDef != nil {
 		orgID = wfDef.OrgID
 	}
+	runIdentity, err := s.productionHTTPIdentity(r, orgID)
+	if err != nil {
+		writeErrorJSON(w, http.StatusForbidden, "authenticated workflow identity unavailable")
+		return
+	}
 	teamID := r.URL.Query().Get("team_id")
 	if raw, ok := payload["memory_id"]; ok {
 		memStr, ok := raw.(string)
@@ -519,11 +524,15 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		Input:          payload,
 		Status:         wf.RunStatusPending,
 		Steps:          map[string]*wf.StepRun{},
+		Identity:       runIdentity,
 		DryRun:         dryRun,
 		CreatedAt:      time.Now().UTC(),
 		UpdatedAt:      time.Now().UTC(),
 		IdempotencyKey: idempotencyKey,
 		Metadata:       map[string]string{},
+	}
+	if runIdentity != nil {
+		run.TriggeredBy = runIdentity.GetActorId()
 	}
 	if reqID != "" {
 		run.Metadata["request_id"] = reqID

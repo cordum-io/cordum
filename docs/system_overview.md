@@ -151,11 +151,19 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
   - `CordumApi` (submit job, get status) in `core/protocol/proto/v1/api.proto` (gRPC service name).
   - `ContextEngine` in `core/protocol/proto/v1/context.proto`
 - Generated Go types live in `core/protocol/pb/v1`.
+- The scheduler implements the opt-in CAP-PRODUCTION exact-wire, replay,
+  identity/fence, durable-effect and structured-resource boundary. The gateway
+  and workflow engine intentionally refuse that profile today; see
+  [CAP-PRODUCTION operator guide](cap_production_profile.md) for the exact
+  component matrix and migration procedure.
 
 ## Bus subjects and delivery
 
 Subjects:
 - `sys.job.submit`, `sys.job.result`, `sys.job.progress`, `sys.job.dlq`, `sys.job.cancel`, `sys.heartbeat`, `sys.workflow.event`
+- `sys.internal.job.result.accepted` is scheduler-authenticated output after
+  raw result verification and dispatch fencing; workflow does not consume raw
+  worker results.
 - `job.*` pool subjects
 - `worker.<id>.jobs` direct worker subjects
 
@@ -172,6 +180,8 @@ JetStream (optional):
   - `res:<job_id>` -> result payload
   - `art:<id>` -> artifact payload
 - Job store:
+  - `job:{<base64url(job_id)>}:runtime` (authoritative production dispatch,
+    attempt, signed-event dedupe, state, result pointer, and durable outbox)
   - `job:meta:<job_id>` (state + metadata)
   - `job:state:<job_id>` (state)
   - `job:recent` (sorted set)

@@ -12,6 +12,8 @@ import (
 
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
+	"github.com/cordum/cordum/core/infra/resourceio"
+	jobidentity "github.com/cordum/cordum/core/protocol/identity"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
@@ -23,16 +25,16 @@ import (
 
 // SafetyClient implements SafetyChecker by calling the SafetyKernel gRPC service.
 type SafetyClient struct {
-	client        pb.SafetyKernelClient
-	conn          *grpc.ClientConn
-	cb            *RedisCircuitBreaker
-	contextClient redis.UniversalClient // for dereferencing context_ptr (input content scanning)
+	client         pb.SafetyKernelClient
+	conn           *grpc.ClientConn
+	cb             *RedisCircuitBreaker
+	contextClient  redis.UniversalClient // for dereferencing context_ptr (input content scanning)
+	resourceReader resourceio.Reader
 }
 
 const (
 	safetyTimeout                     = 2 * time.Second
 	inputContentMaxBytes              = 2 * 1024 * 1024 // 2 MiB, same as output
-	inputPointerPrefix                = "redis://"
 	safetyCircuitOpenFor              = 30 * time.Second
 	safetyCircuitFailBudget           = 3
 	safetyCircuitHalfOpenMax          = 3
@@ -107,28 +109,6 @@ func (c *SafetyClient) WithContextClient(rdb redis.UniversalClient) *SafetyClien
 	return c
 }
 
-// loadInputContent dereferences context_ptr from Redis.
-// Returns nil content on failure — metadata-only check proceeds.
-func (c *SafetyClient) loadInputContent(ctx context.Context, contextPtr string) ([]byte, int64, error) {
-	contextPtr = strings.TrimSpace(contextPtr)
-	if contextPtr == "" || c.contextClient == nil {
-		return nil, 0, nil
-	}
-	key := strings.TrimPrefix(contextPtr, inputPointerPrefix)
-	if key == "" {
-		return nil, 0, nil
-	}
-	raw, err := c.contextClient.Get(ctx, key).Bytes()
-	if err != nil {
-		return nil, 0, err
-	}
-	originalSize := int64(len(raw))
-	if len(raw) > inputContentMaxBytes {
-		raw = raw[:inputContentMaxBytes]
-	}
-	return raw, originalSize, nil
-}
-
 // CurrentPolicySnapshot returns the latest policy snapshot hash from the
 // safety kernel. Returns empty string on error or if the kernel is unreachable.
 // Implements SnapshotProvider for the reconciler's stale-approval detection.
@@ -158,6 +138,11 @@ func (c *SafetyClient) Close() error {
 
 // Check forwards the request to the safety kernel; denies on error/timeout.
 func (c *SafetyClient) Check(ctx context.Context, req *pb.JobRequest) (SafetyDecisionRecord, error) {
+	normalized, err := normalizeSafetyJobRequest(req)
+	if err != nil {
+		return SafetyDecisionRecord{Decision: SafetyUnavailable, Reason: "job identity rejected"}, err
+	}
+	req = normalized
 	if c.cb.IsOpen(ctx) {
 		return SafetyDecisionRecord{Decision: SafetyUnavailable, Reason: "safety kernel circuit open"}, nil
 	}
@@ -165,7 +150,7 @@ func (c *SafetyClient) Check(ctx context.Context, req *pb.JobRequest) (SafetyDec
 	ctx, cancel := context.WithTimeout(ctx, safetyTimeout)
 	defer cancel()
 
-	checkReq := &pb.PolicyCheckRequest{
+	checkReq, err := normalizeSafetyPolicyRequest(req, &pb.PolicyCheckRequest{
 		JobId:       req.GetJobId(),
 		Topic:       req.GetTopic(),
 		Tenant:      ExtractTenant(req),
@@ -175,6 +160,9 @@ func (c *SafetyClient) Check(ctx context.Context, req *pb.JobRequest) (SafetyDec
 		Labels:      req.GetLabels(),
 		MemoryId:    req.GetMemoryId(),
 		Meta:        req.GetMeta(),
+	})
+	if err != nil {
+		return SafetyDecisionRecord{Decision: SafetyUnavailable, Reason: "policy identity rejected"}, err
 	}
 	if env := req.GetEnv(); env != nil {
 		if eff := env[config.EffectiveConfigEnvVar]; eff != "" {
@@ -182,33 +170,12 @@ func (c *SafetyClient) Check(ctx context.Context, req *pb.JobRequest) (SafetyDec
 		}
 	}
 
-	// Dereference context_ptr and attach input content for content-level policy scanning.
-	// Failure is non-fatal for metadata-only rules. For scope rules that require
-	// structured content, the kernel will enforce on_missing_input behavior.
-	if ptr := req.GetContextPtr(); ptr != "" {
-		content, originalSize, loadErr := c.loadInputContent(ctx, ptr)
-		if loadErr != nil {
-			slog.Warn("scheduler: input content load failed — scope rules may deny if content required",
+	if req.GetContextRef() != nil || strings.TrimSpace(req.GetContextPtr()) != "" {
+		if err := c.attachInputContent(ctx, req, checkReq); err != nil {
+			slog.Warn("scheduler: input resource rejected",
 				"component", "scheduler", "job_id", req.GetJobId(), "topic", req.GetTopic(),
-				"context_ptr", ptr, "error", loadErr)
-		} else if len(content) > 0 {
-			checkReq.InputContent = content
-			checkReq.InputSizeBytes = originalSize
-			if ct := req.GetLabels()["content_type"]; ct != "" {
-				checkReq.InputContentType = ct
-			}
-			// Inject _content.payload_json label so the tag deriver can
-			// extract payload fields (e.g., amount) for risk tag derivation.
-			// The gateway HTTP path does this via injectContentLabels(); the
-			// scheduler path must do the same for consistency.
-			if len(content) <= 64*1024 {
-				if checkReq.Labels == nil {
-					checkReq.Labels = make(map[string]string)
-				}
-				if _, ok := checkReq.Labels["_content.payload_json"]; !ok {
-					checkReq.Labels["_content.payload_json"] = string(content)
-				}
-			}
+				"error", err)
+			return SafetyDecisionRecord{Decision: SafetyUnavailable, Reason: "input resource rejected"}, nil
 		}
 	}
 
@@ -230,6 +197,31 @@ func (c *SafetyClient) Check(ctx context.Context, req *pb.JobRequest) (SafetyDec
 		Remediations:     resp.GetRemediations(),
 	}
 	return record, nil
+}
+
+func normalizeSafetyJobRequest(req *pb.JobRequest) (*pb.JobRequest, error) {
+	if req.GetIdentity() == nil {
+		return req, nil
+	}
+	normalized, err := jobidentity.NormalizeProductionJobRequest(req, req.GetIdentity())
+	if err != nil {
+		return nil, fmt.Errorf("normalize safety job identity: %w", err)
+	}
+	return normalized, nil
+}
+
+func normalizeSafetyPolicyRequest(
+	job *pb.JobRequest,
+	check *pb.PolicyCheckRequest,
+) (*pb.PolicyCheckRequest, error) {
+	if job.GetIdentity() == nil {
+		return check, nil
+	}
+	normalized, err := jobidentity.NormalizeProductionPolicyCheckRequest(check, job.GetIdentity())
+	if err != nil {
+		return nil, fmt.Errorf("normalize safety policy identity: %w", err)
+	}
+	return normalized, nil
 }
 
 func decisionFromProto(dec pb.DecisionType) SafetyDecision {

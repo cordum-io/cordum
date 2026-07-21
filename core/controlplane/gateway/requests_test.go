@@ -3,8 +3,10 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
+	jobidentity "github.com/cordum/cordum/core/protocol/identity"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -97,6 +99,20 @@ func TestBuildPolicyCheckRequest(t *testing.T) {
 	_, err = buildPolicyCheckRequest(context.Background(), nil, nil, "default")
 	if err == nil {
 		t.Fatalf("expected error for nil request")
+	}
+}
+
+func TestBuildPolicyCheckRequestRejectsCanonicalIdentityMismatch(t *testing.T) {
+	authority := &pb.IdentityBinding{
+		TenantId: "tenant-a", PrincipalId: "principal-a", ActorId: "actor-a",
+	}
+	_, err := buildPolicyCheckRequest(context.Background(), &policyCheckRequest{
+		Topic: "job.test", Tenant: "tenant-a", PrincipalId: "principal-a",
+		Meta:     &policyMetaRequest{TenantId: "tenant-a", ActorId: "actor-attacker"},
+		Identity: authority,
+	}, nil, "default")
+	if !errors.Is(err, jobidentity.ErrProductionIdentityMismatch) {
+		t.Fatalf("buildPolicyCheckRequest() error = %v, want identity mismatch", err)
 	}
 }
 

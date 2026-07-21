@@ -78,7 +78,7 @@ func TestReconcilerReconcileRun(t *testing.T) {
 	defer func() { _ = jobStore.Close() }()
 
 	bus := &stubBus{}
-	engine := NewEngine(workflowStore, bus)
+	engine := NewEngine(workflowStore, bus).WithLegacyResourceCompatibility(nil)
 
 	wfDef := &Workflow{
 		ID:    "wf-test",
@@ -116,7 +116,7 @@ func TestReconcilerReconcileRun(t *testing.T) {
 	if err := jobStore.SetState(context.Background(), jobID, model.JobStateSucceeded); err != nil {
 		t.Fatalf("set job state succeeded: %v", err)
 	}
-	if err := jobStore.SetResultPtr(context.Background(), jobID, "mem://result-1"); err != nil {
+	if err := jobStore.SetResultPtr(context.Background(), jobID, legacyResultPointer(jobID)); err != nil {
 		t.Fatalf("set result ptr: %v", err)
 	}
 
@@ -214,7 +214,7 @@ func TestReconcilerDefersStepOnGetResultPtrError(t *testing.T) {
 	defer func() { _ = realJobStore.Close() }()
 
 	bus := &stubBus{}
-	engine := NewEngine(workflowStore, bus)
+	engine := NewEngine(workflowStore, bus).WithLegacyResourceCompatibility(nil)
 
 	wfDef := &Workflow{
 		ID:    "wf-resultptr",
@@ -249,7 +249,7 @@ func TestReconcilerDefersStepOnGetResultPtrError(t *testing.T) {
 			t.Fatalf("set state %s: %v", s, err)
 		}
 	}
-	if err := realJobStore.SetResultPtr(context.Background(), jobID, "mem://result-key"); err != nil {
+	if err := realJobStore.SetResultPtr(context.Background(), jobID, legacyResultPointer(jobID)); err != nil {
 		t.Fatalf("set result ptr: %v", err)
 	}
 

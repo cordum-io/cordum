@@ -20,10 +20,11 @@ func TestParallelAllSucceed(t *testing.T) {
 	}
 
 	for _, childID := range childIDs {
+		jobID := fmt.Sprintf("%s:%s@1", runID, childID)
 		if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
-			JobId:     fmt.Sprintf("%s:%s@1", runID, childID),
+			JobId:     jobID,
 			Status:    pb.JobStatus_JOB_STATUS_SUCCEEDED,
-			ResultPtr: "redis://res:" + childID,
+			ResultPtr: legacyResultPointer(jobID),
 		}); err != nil {
 			t.Fatalf("handle job result: %v", err)
 		}
@@ -56,7 +57,7 @@ func TestParallelOneFailsStrategyAll(t *testing.T) {
 	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
 		JobId:     fmt.Sprintf("%s:%s@1", runID, "check_a"),
 		Status:    pb.JobStatus_JOB_STATUS_SUCCEEDED,
-		ResultPtr: "redis://res:check_a",
+		ResultPtr: legacyResultPointer(fmt.Sprintf("%s:%s@1", runID, "check_a")),
 	}); err != nil {
 		t.Fatalf("handle job result: %v", err)
 	}
@@ -91,7 +92,7 @@ func TestParallelAnyStrategy(t *testing.T) {
 	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
 		JobId:     fmt.Sprintf("%s:%s@1", runID, "check_a"),
 		Status:    pb.JobStatus_JOB_STATUS_SUCCEEDED,
-		ResultPtr: "redis://res:check_a",
+		ResultPtr: legacyResultPointer(fmt.Sprintf("%s:%s@1", runID, "check_a")),
 	}); err != nil {
 		t.Fatalf("handle job result: %v", err)
 	}
@@ -121,10 +122,11 @@ func TestParallelNOfM(t *testing.T) {
 	defer func() { _ = store.Close() }()
 
 	for _, childID := range []string{"check_1", "check_2", "check_3"} {
+		jobID := fmt.Sprintf("%s:%s@1", runID, childID)
 		if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
-			JobId:     fmt.Sprintf("%s:%s@1", runID, childID),
+			JobId:     jobID,
 			Status:    pb.JobStatus_JOB_STATUS_SUCCEEDED,
-			ResultPtr: "redis://res:" + childID,
+			ResultPtr: legacyResultPointer(jobID),
 		}); err != nil {
 			t.Fatalf("handle job result: %v", err)
 		}
@@ -161,7 +163,7 @@ func TestParallelMaxParallel(t *testing.T) {
 	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
 		JobId:     fmt.Sprintf("%s:%s@1", runID, "check_a"),
 		Status:    pb.JobStatus_JOB_STATUS_SUCCEEDED,
-		ResultPtr: "redis://res:check_a",
+		ResultPtr: legacyResultPointer(fmt.Sprintf("%s:%s@1", runID, "check_a")),
 	}); err != nil {
 		t.Fatalf("handle job result: %v", err)
 	}
@@ -172,7 +174,7 @@ func TestParallelMaxParallel(t *testing.T) {
 	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
 		JobId:     fmt.Sprintf("%s:%s@1", runID, "check_b"),
 		Status:    pb.JobStatus_JOB_STATUS_SUCCEEDED,
-		ResultPtr: "redis://res:check_b",
+		ResultPtr: legacyResultPointer(fmt.Sprintf("%s:%s@1", runID, "check_b")),
 	}); err != nil {
 		t.Fatalf("handle job result: %v", err)
 	}
@@ -183,7 +185,7 @@ func TestParallelMaxParallel(t *testing.T) {
 	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
 		JobId:     fmt.Sprintf("%s:%s@1", runID, "check_c"),
 		Status:    pb.JobStatus_JOB_STATUS_SUCCEEDED,
-		ResultPtr: "redis://res:check_c",
+		ResultPtr: legacyResultPointer(fmt.Sprintf("%s:%s@1", runID, "check_c")),
 	}); err != nil {
 		t.Fatalf("handle job result: %v", err)
 	}
@@ -205,14 +207,14 @@ func TestParallelOutputAggregation(t *testing.T) {
 	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
 		JobId:     fmt.Sprintf("%s:%s@1", runID, "alpha"),
 		Status:    pb.JobStatus_JOB_STATUS_SUCCEEDED,
-		ResultPtr: "redis://res:alpha",
+		ResultPtr: legacyResultPointer(fmt.Sprintf("%s:%s@1", runID, "alpha")),
 	}); err != nil {
 		t.Fatalf("handle job result: %v", err)
 	}
 	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
 		JobId:     fmt.Sprintf("%s:%s@1", runID, "beta"),
 		Status:    pb.JobStatus_JOB_STATUS_SUCCEEDED,
-		ResultPtr: "redis://res:beta",
+		ResultPtr: legacyResultPointer(fmt.Sprintf("%s:%s@1", runID, "beta")),
 	}); err != nil {
 		t.Fatalf("handle job result: %v", err)
 	}
@@ -237,10 +239,10 @@ func TestParallelOutputAggregation(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected beta aggregation entry, got %#v", aggregated["beta"])
 	}
-	if alphaEntry["result_ptr"] != "redis://res:alpha" {
+	if alphaEntry["result_ptr"] != legacyResultPointer(fmt.Sprintf("%s:%s@1", runID, "alpha")) {
 		t.Fatalf("expected alpha result_ptr, got %#v", alphaEntry["result_ptr"])
 	}
-	if betaEntry["result_ptr"] != "redis://res:beta" {
+	if betaEntry["result_ptr"] != legacyResultPointer(fmt.Sprintf("%s:%s@1", runID, "beta")) {
 		t.Fatalf("expected beta result_ptr, got %#v", betaEntry["result_ptr"])
 	}
 }
@@ -258,7 +260,7 @@ func setupParallelRun(
 
 	store := newWorkflowStore(t)
 	bus := &recordingBus{}
-	engine := NewEngine(store, bus)
+	engine := NewEngine(store, bus).WithLegacyResourceCompatibility(nil)
 
 	steps := map[string]*Step{
 		"parallel": {

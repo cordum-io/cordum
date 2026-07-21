@@ -46,7 +46,7 @@ func newReconcilerTopology(t *testing.T, withLocker bool) *standaloneTopology {
 	if err != nil {
 		t.Fatalf("job store: %v", err)
 	}
-	engine := NewEngine(workflowStore, &stubBus{})
+	engine := NewEngine(workflowStore, &stubBus{}).WithLegacyResourceCompatibility(nil)
 	if withLocker {
 		// Mirror runner.go:125-130 + 152 exactly: engine has the distributed
 		// locker and the reconciler shares the identical jobStore key namespace.
@@ -114,7 +114,7 @@ func TestReconciler_StandaloneTopology_HandleJobResultAdvancesRun(t *testing.T) 
 	jr := &pb.JobResult{
 		JobId:     jobID,
 		Status:    pb.JobStatus_JOB_STATUS_SUCCEEDED,
-		ResultPtr: "mem://result-rl",
+		ResultPtr: legacyResultPointer(jobID),
 	}
 	if err := tp.rec.HandleJobResult(ctx, jr); err != nil {
 		t.Fatalf("HandleJobResult returned error: %v", err)
@@ -149,7 +149,7 @@ func TestReconciler_StandaloneTopology_ReconcileRunRecoversStuckRun(t *testing.T
 			t.Fatalf("set state %s: %v", s, err)
 		}
 	}
-	if err := tp.jobStore.SetResultPtr(ctx, jobID, "mem://result-stuck"); err != nil {
+	if err := tp.jobStore.SetResultPtr(ctx, jobID, legacyResultPointer(jobID)); err != nil {
 		t.Fatalf("set result ptr: %v", err)
 	}
 
@@ -183,7 +183,7 @@ func TestReconciler_StandaloneTopology_ConcurrentDeliveryNoDoubleAdvance(t *test
 	}
 	jobID := tp.seedSingleStepRun(t, "wf-rl-conc", "run-rl-conc")
 
-	jr := &pb.JobResult{JobId: jobID, Status: pb.JobStatus_JOB_STATUS_SUCCEEDED, ResultPtr: "mem://result-conc"}
+	jr := &pb.JobResult{JobId: jobID, Status: pb.JobStatus_JOB_STATUS_SUCCEEDED, ResultPtr: legacyResultPointer(jobID)}
 	const deliveries = 8
 	var wg sync.WaitGroup
 	wg.Add(deliveries)
@@ -234,7 +234,7 @@ func TestReconciler_GatewayTopology_NoLocker_StillAdvances(t *testing.T) {
 	ctx := context.Background()
 	jobID := tp.seedSingleStepRun(t, "wf-gw", "run-gw")
 
-	jr := &pb.JobResult{JobId: jobID, Status: pb.JobStatus_JOB_STATUS_SUCCEEDED, ResultPtr: "mem://result-gw"}
+	jr := &pb.JobResult{JobId: jobID, Status: pb.JobStatus_JOB_STATUS_SUCCEEDED, ResultPtr: legacyResultPointer(jobID)}
 	if err := tp.rec.HandleJobResult(ctx, jr); err != nil {
 		t.Fatalf("HandleJobResult returned error: %v", err)
 	}

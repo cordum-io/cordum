@@ -25,6 +25,10 @@ type (
 	ContextHints                    = agentv1.ContextHints
 	Budget                          = agentv1.Budget
 	JobMetadata                     = agentv1.JobMetadata
+	ResourceRef                     = agentv1.ResourceRef
+	IdentityBinding                 = agentv1.IdentityBinding
+	DispatchIdentity                = agentv1.DispatchIdentity
+	SignatureMetadata               = agentv1.SignatureMetadata
 	JobPriority                     = agentv1.JobPriority
 	JobStatus                       = agentv1.JobStatus
 	Compensation                    = agentv1.Compensation
@@ -78,10 +82,10 @@ const (
 	ActorType_ACTOR_TYPE_SERVICE     = agentv1.ActorType_ACTOR_TYPE_SERVICE
 
 	// ErrorCode enum values — protocol errors (100-199)
-	ErrorCode_ERROR_CODE_UNSPECIFIED              = agentv1.ErrorCode_ERROR_CODE_UNSPECIFIED
-	ErrorCode_ERROR_CODE_PROTOCOL_VERSION_MISMATCH = agentv1.ErrorCode_ERROR_CODE_PROTOCOL_VERSION_MISMATCH
-	ErrorCode_ERROR_CODE_PROTOCOL_MALFORMED_PACKET = agentv1.ErrorCode_ERROR_CODE_PROTOCOL_MALFORMED_PACKET
-	ErrorCode_ERROR_CODE_PROTOCOL_UNKNOWN_PAYLOAD  = agentv1.ErrorCode_ERROR_CODE_PROTOCOL_UNKNOWN_PAYLOAD
+	ErrorCode_ERROR_CODE_UNSPECIFIED                = agentv1.ErrorCode_ERROR_CODE_UNSPECIFIED
+	ErrorCode_ERROR_CODE_PROTOCOL_VERSION_MISMATCH  = agentv1.ErrorCode_ERROR_CODE_PROTOCOL_VERSION_MISMATCH
+	ErrorCode_ERROR_CODE_PROTOCOL_MALFORMED_PACKET  = agentv1.ErrorCode_ERROR_CODE_PROTOCOL_MALFORMED_PACKET
+	ErrorCode_ERROR_CODE_PROTOCOL_UNKNOWN_PAYLOAD   = agentv1.ErrorCode_ERROR_CODE_PROTOCOL_UNKNOWN_PAYLOAD
 	ErrorCode_ERROR_CODE_PROTOCOL_SIGNATURE_INVALID = agentv1.ErrorCode_ERROR_CODE_PROTOCOL_SIGNATURE_INVALID
 	ErrorCode_ERROR_CODE_PROTOCOL_SIGNATURE_MISSING = agentv1.ErrorCode_ERROR_CODE_PROTOCOL_SIGNATURE_MISSING
 	// ErrorCode — job errors (200-299)

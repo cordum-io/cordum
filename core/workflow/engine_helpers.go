@@ -10,7 +10,34 @@ import (
 
 	"github.com/cordum/cordum/core/infra/maputil"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"google.golang.org/protobuf/proto"
 )
+
+func cloneIdentityBinding(binding *pb.IdentityBinding) *pb.IdentityBinding {
+	if binding == nil {
+		return nil
+	}
+	cloned, ok := proto.Clone(binding).(*pb.IdentityBinding)
+	if !ok {
+		return nil
+	}
+	return cloned
+}
+
+func workflowRunIdentity(run *WorkflowRun) *pb.IdentityBinding {
+	if run == nil {
+		return nil
+	}
+	return run.Identity
+}
+
+func sameWorkflowIdentity(left, right *pb.IdentityBinding) bool {
+	return completeWorkflowIdentity(left) && completeWorkflowIdentity(right) &&
+		left.GetTenantId() == right.GetTenantId() &&
+		left.GetPrincipalId() == right.GetPrincipalId() &&
+		left.GetActorId() == right.GetActorId() &&
+		left.GetDelegationId() == right.GetDelegationId()
+}
 
 // collectDependencies recursively gathers all transitive dependencies for a step.
 func collectDependencies(wfDef *Workflow, stepID string, deps map[string]struct{}) {

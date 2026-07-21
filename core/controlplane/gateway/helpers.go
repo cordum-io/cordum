@@ -27,6 +27,7 @@ import (
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/model"
+	jobidentity "github.com/cordum/cordum/core/protocol/identity"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
@@ -81,21 +82,22 @@ type policyMetaRequest struct {
 }
 
 type policyCheckRequest struct {
-	JobId           string             `json:"job_id"`
-	Topic           string             `json:"topic"`
-	Tenant          string             `json:"tenant"`
-	OrgId           string             `json:"org_id"`
-	TeamId          string             `json:"team_id"`
-	WorkflowId      string             `json:"workflow_id"`
-	StepId          string             `json:"step_id"`
-	PrincipalId     string             `json:"principal_id"`
-	Priority        string             `json:"priority"`
-	EstimatedCost   float64            `json:"estimated_cost"`
-	Budget          *pb.Budget         `json:"budget"`
-	Labels          map[string]string  `json:"labels"`
-	MemoryId        string             `json:"memory_id"`
-	EffectiveConfig any                `json:"effective_config"`
-	Meta            *policyMetaRequest `json:"meta"`
+	JobId           string              `json:"job_id"`
+	Topic           string              `json:"topic"`
+	Tenant          string              `json:"tenant"`
+	OrgId           string              `json:"org_id"`
+	TeamId          string              `json:"team_id"`
+	WorkflowId      string              `json:"workflow_id"`
+	StepId          string              `json:"step_id"`
+	PrincipalId     string              `json:"principal_id"`
+	Priority        string              `json:"priority"`
+	EstimatedCost   float64             `json:"estimated_cost"`
+	Budget          *pb.Budget          `json:"budget"`
+	Labels          map[string]string   `json:"labels"`
+	MemoryId        string              `json:"memory_id"`
+	EffectiveConfig any                 `json:"effective_config"`
+	Meta            *policyMetaRequest  `json:"meta"`
+	Identity        *pb.IdentityBinding `json:"-"`
 	// Action carries structured request metadata for deterministic
 	// pre-rule action-layer gates (file/url/tenant/mutation/mcp/
 	// provenance). When non-nil and the gateway is wired with a
@@ -255,6 +257,14 @@ func (s *server) evaluateSubmitPolicy(ctx context.Context, jobID, topic, tenant,
 	// Build the policy check request through the shared builder so HTTP/gRPC
 	// submit requests and explicit /policy/check calls use the same shape.
 	policyMeta := policyMetaFromJobMetadata(meta)
+	var identity *pb.IdentityBinding
+	if s.capProfile.IsProduction() {
+		identity = &pb.IdentityBinding{
+			TenantId:    strings.TrimSpace(tenant),
+			PrincipalId: strings.TrimSpace(principalID),
+			ActorId:     strings.TrimSpace(meta.GetActorId()),
+		}
+	}
 	checkReq, err := buildPolicyCheckRequest(ctx, &policyCheckRequest{
 		JobId:       jobID,
 		Topic:       topic,
@@ -266,6 +276,7 @@ func (s *server) evaluateSubmitPolicy(ctx context.Context, jobID, topic, tenant,
 		MemoryId:    memoryID,
 		Budget:      budget,
 		Meta:        policyMeta,
+		Identity:    identity,
 	}, s.configSvc, s.tenant)
 	if err != nil {
 		slog.Error("submit-time policy request build failed", "job_id", jobID, "topic", topic, "error", err)
@@ -466,6 +477,13 @@ func buildPolicyCheckRequest(ctx context.Context, req *policyCheckRequest, cfgSv
 		Labels:        labels,
 		MemoryId:      strings.TrimSpace(req.MemoryId),
 		Meta:          meta,
+	}
+	if req.Identity != nil {
+		var err error
+		checkReq, err = jobidentity.NormalizeProductionPolicyCheckRequest(checkReq, req.Identity)
+		if err != nil {
+			return nil, fmt.Errorf("normalize policy identity: %w", err)
+		}
 	}
 
 	if req.EffectiveConfig != nil {

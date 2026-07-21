@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
 )
@@ -19,6 +20,9 @@ func TestHandleGetMemoryRedisTypes(t *testing.T) {
 	}
 	client := store.Client()
 	ctx := context.Background()
+	if err := s.jobStore.SetTenant(ctx, "val", "default"); err != nil {
+		t.Fatalf("set memory owner: %v", err)
+	}
 
 	stringKey := "mem:val:string"
 	if err := client.Set(ctx, stringKey, `{"k":"v"}`, 0).Err(); err != nil {
@@ -38,8 +42,10 @@ func TestHandleGetMemoryRedisTypes(t *testing.T) {
 	}
 
 	assertMemory := func(key string, expectedType string) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/memory?key="+key, nil)
-		req.Header.Set("X-Tenant-ID", "default")
+		req := withAuth(
+			httptest.NewRequest(http.MethodGet, "/api/v1/memory?key="+key, nil),
+			&auth.AuthContext{Tenant: "default", Role: "admin"},
+		)
 		rec := httptest.NewRecorder()
 		s.handleGetMemory(rec, req)
 		if rec.Code != http.StatusOK {
