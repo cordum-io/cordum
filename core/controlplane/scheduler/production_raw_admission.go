@@ -241,9 +241,13 @@ func (b *ProductionRawBoundary) trust(actualSubject string, session Authenticate
 	if clockSkew <= 0 {
 		clockSkew = defaultProductionClockSkew
 	}
+	packetTenant := session.Tenant
+	if servicetoken.IsReservedIdentity(session.Subject) && session.Identity != nil {
+		packetTenant = session.Identity.GetTenantId()
+	}
 	return capsdk.ProductionTrustStore{
 		Audience: actualSubject,
-		Tenant:   session.Tenant,
+		Tenant:   packetTenant,
 		Sender:   session.Subject,
 		ResolveKey: func(_, _, keyID string) (*ecdsa.PublicKey, error) {
 			return b.ResolveKey(session.Tenant, session.Subject, keyID)

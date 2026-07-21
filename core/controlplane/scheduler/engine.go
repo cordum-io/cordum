@@ -1991,14 +1991,19 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 		}
 	}
 
+	outboundRequest := req
+	if e.productionIdentity.Load() {
+		outboundRequest = proto.Clone(req).(*pb.JobRequest)
+		outboundRequest.Topic = subject
+	}
 	packet := &pb.BusPacket{
 		TraceId:         traceID,
 		SenderId:        defaultSenderID,
-		Identity:        req.GetIdentity(),
+		Identity:        outboundRequest.GetIdentity(),
 		CreatedAt:       timestamppb.Now(),
 		ProtocolVersion: protocolVersionV1,
 		Payload: &pb.BusPacket_JobRequest{
-			JobRequest: req,
+			JobRequest: outboundRequest,
 		},
 	}
 

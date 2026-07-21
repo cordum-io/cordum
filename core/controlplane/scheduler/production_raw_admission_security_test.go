@@ -2,12 +2,14 @@ package scheduler
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"errors"
 	"testing"
 	"time"
 
 	agentv1 "github.com/cordum-io/cap/v2/cordum/agent/v1"
 	capsdk "github.com/cordum-io/cap/v2/sdk/go"
+	"github.com/cordum/cordum/core/auth/servicetoken"
 )
 
 func TestProductionRawBoundaryRejectsNegativeLimits(t *testing.T) {
@@ -39,6 +41,34 @@ func TestProductionRawBoundaryBindsTrustTenantToSession(t *testing.T) {
 	trust := boundary.trust(productionTestSubject, session)
 	if trust.Tenant != session.Identity.GetTenantId() {
 		t.Fatalf("trust tenant=%q, want authenticated %q", trust.Tenant, session.Identity.GetTenantId())
+	}
+}
+
+func TestProductionRawBoundaryVerifiesServicePacketForSignedJobTenant(t *testing.T) {
+	key := newProductionTestKey(t)
+	identity := productionTestSession().Identity
+	session := AuthenticatedProductionSession{
+		Subject: servicetoken.IdentityGateway, Tenant: servicetoken.ReservedTenant,
+		Identity: identity,
+	}
+	packet := productionTestPacket(identity, productionTestMessageID(31))
+	packet.SenderId = servicetoken.IdentityGateway
+	packet.GetJobResult().WorkerId = servicetoken.IdentityGateway
+	raw := signProductionTestPacket(t, key, packet)
+	boundary := productionTestBoundary(key, capsdk.NewInMemoryReplayStore())
+	boundary.ResolveKey = func(tenant, sender, keyID string) (*ecdsa.PublicKey, error) {
+		if tenant != servicetoken.ReservedTenant || sender != servicetoken.IdentityGateway || keyID != "local-key" {
+			return nil, nil
+		}
+		return &key.PublicKey, nil
+	}
+
+	outcome, err := boundary.Handle(
+		context.Background(), productionTestSubject, session, raw,
+		func(context.Context, *agentv1.BusPacket) error { return nil },
+	)
+	if err != nil || outcome != capsdk.ReplayOutcomeFirst {
+		t.Fatalf("service packet admission = (%v, %v), want first", outcome, err)
 	}
 }
 
