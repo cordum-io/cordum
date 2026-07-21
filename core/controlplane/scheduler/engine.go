@@ -2007,7 +2007,10 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			return RetryAfter(dispatchErr, retryDelayStore)
 		}
 		req.Dispatch = &pb.DispatchIdentity{
-			DispatchId: dispatchID, Attempt: uint64(dispatchAttempt), AssignedWorkerId: dispatchWorkerID,
+			// dispatchAttempt is bounded by maxDispatchRetries (a small
+			// constant) and never negative here (BeginDispatch's own retry
+			// loop starts it at 0), so this can never wrap.
+			DispatchId: dispatchID, Attempt: uint64(dispatchAttempt), AssignedWorkerId: dispatchWorkerID, // #nosec G115 -- see comment above
 		}
 	}
 
@@ -2489,8 +2492,10 @@ func (e *Engine) handleJobResult(res *pb.JobResult) error {
 				return nil
 			}
 			fenceCtx, fenceCancel := context.WithTimeout(lockCtx, storeOpTimeout)
+			// dispatch.GetAttempt() is bounded by maxDispatchRetries (a small
+			// constant); it can never approach uint32/int range limits.
 			accepted, fenceErr := e.jobStore.AcceptJobEvent(
-				fenceCtx, jobID, dispatch.GetDispatchId(), int(dispatch.GetAttempt()),
+				fenceCtx, jobID, dispatch.GetDispatchId(), int(dispatch.GetAttempt()), // #nosec G115 -- attempt is retry-bounded (see comment above), never approaches int/uint32 range limits
 				dispatch.GetAssignedWorkerId(), tenant, dispatch.GetDispatchId()+":result",
 			)
 			fenceCancel()

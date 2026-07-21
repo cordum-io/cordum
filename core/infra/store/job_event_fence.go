@@ -66,7 +66,10 @@ func (s *RedisJobStore) AcceptSignedJobEvent(
 	if result < 0 {
 		return model.JobEventRejected, ErrJobEventDigestConflict
 	}
-	return model.JobEventApplyDisposition(result), nil
+	// result is one of this script's own small return codes
+	// (JobEventApplyDisposition only has 3 members: 0/1/2), already
+	// checked non-negative above -- never wraps.
+	return model.JobEventApplyDisposition(result), nil // #nosec G115 -- see comment above
 }
 
 // CancelAllJobAttempts is the privileged control-plane operation. It does not

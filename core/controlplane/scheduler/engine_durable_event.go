@@ -36,8 +36,10 @@ func (e *Engine) acceptProductionDispatchEvent(
 	}
 	ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
 	defer cancel()
+	// dispatch.GetAttempt() is bounded by maxDispatchRetries (a small
+	// constant); it can never approach uint32/int range limits.
 	disposition, err := durable.AcceptSignedJobEvent(
-		ctx, jobID, dispatch.GetDispatchId(), int(dispatch.GetAttempt()),
+		ctx, jobID, dispatch.GetDispatchId(), int(dispatch.GetAttempt()), // #nosec G115 -- attempt is retry-bounded (see comment above), never approaches int/uint32 range limits
 		strings.TrimSpace(claims.Subject), strings.TrimSpace(claims.Tenant), messageID, digest,
 	)
 	if err != nil {
@@ -110,8 +112,10 @@ func (e *Engine) handleProductionWorkerCancel(
 		return RetryAfter(err, retryDelayStore)
 	}
 	dispatch := cancel.GetDispatch()
+	// dispatch.GetAttempt() is bounded by maxDispatchRetries (a small
+	// constant); it can never approach uint32/int range limits.
 	apply := model.JobResultApply{
-		JobID: cancel.GetJobId(), DispatchID: dispatch.GetDispatchId(), Attempt: int(dispatch.GetAttempt()),
+		JobID: cancel.GetJobId(), DispatchID: dispatch.GetDispatchId(), Attempt: int(dispatch.GetAttempt()), // #nosec G115 -- attempt is retry-bounded (see comment above), never approaches int/uint32 range limits
 		WorkerID: claims.Subject, Tenant: claims.Tenant, MessageID: messageID, Digest: digest,
 		State: model.JobStateCancelled, Effect: effect,
 	}

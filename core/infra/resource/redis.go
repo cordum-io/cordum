@@ -75,7 +75,10 @@ func (r *redisResolver) resolve(
 	if err != nil {
 		return nil, err
 	}
-	content, err := r.client.GetRange(ctx, key, 0, int64(declaredSize)).Bytes()
+	// declaredSize is already bounded above by r.maxBytes, which is itself
+	// capped at construction time to absoluteRedisMaxBytes (64 MiB) -- never
+	// approaches int64's range.
+	content, err := r.client.GetRange(ctx, key, 0, int64(declaredSize)).Bytes() // #nosec G115 -- see comment above
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, ctxErr
 	}

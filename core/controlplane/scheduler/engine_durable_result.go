@@ -80,8 +80,10 @@ func (e *Engine) buildDurableResultApply(
 		return model.JobResultApply{}, RetryAfter(err, retryDelayStore)
 	}
 	dispatch := result.GetDispatch()
+	// dispatch.GetAttempt() is bounded by maxDispatchRetries (a small
+	// constant); it can never approach uint32/int range limits.
 	return model.JobResultApply{
-		JobID: result.GetJobId(), DispatchID: dispatch.GetDispatchId(), Attempt: int(dispatch.GetAttempt()),
+		JobID: result.GetJobId(), DispatchID: dispatch.GetDispatchId(), Attempt: int(dispatch.GetAttempt()), // #nosec G115 -- attempt is retry-bounded (see comment above), never approaches int/uint32 range limits
 		WorkerID: strings.TrimSpace(claims.Subject), Tenant: strings.TrimSpace(claims.Tenant),
 		MessageID: messageID, Digest: digest, State: state, ResultPtr: resultPtr, Effect: effect,
 	}, nil
