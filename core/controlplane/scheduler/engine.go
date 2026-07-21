@@ -28,6 +28,7 @@ import (
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/cordum/cordum/core/protocol/protoutil"
+	"github.com/cordum/cordum/core/telemetry"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
 	otelcodes "go.opentelemetry.io/otel/codes"
@@ -2412,6 +2413,15 @@ func (e *Engine) handleJobResult(res *pb.JobResult) error {
 		e.setAgentInfoFromWorker(lockCtx, jobID, strings.TrimSpace(res.GetWorkerId()))
 		if err := e.setJobState(lockCtx, jobID, state); err != nil {
 			return RetryAfter(err, retryDelayStore)
+		}
+		// Best-effort telemetry "used" marker: records that at least one job has
+		// completed on this install so the first-use ping can fire if the
+		// operator has telemetry enabled. Idempotent (SetNX), never blocks or
+		// fails job finalization, and runs independent of telemetry mode.
+		if e.contextClient != nil {
+			sctx, scancel := context.WithTimeout(context.Background(), storeOpTimeout)
+			_ = telemetry.MarkUsed(sctx, e.contextClient)
+			scancel()
 		}
 		if succeeded && e.outputSafetyEnabled.Load() && e.outputSafety != nil && jobReq != nil {
 			e.startAsyncOutputCheck(jobID, topic, res, jobReq)
