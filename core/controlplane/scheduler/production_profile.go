@@ -2,13 +2,10 @@ package scheduler
 
 // CAP-PRODUCTION scheduler-side primitives (task-a13f83fa). Freezes the
 // threat-model contract in production_profile_red_test.go: authoritative
-// identity binding (step-9), a scheduler-local resource resolver boundary
-// that defaults legacy pointers OFF (step-8 boundary reused by scheduler,
-// step-11 rounds it out), atomic dispatch/attempt fencing (step-10), and
+// identity binding (step-9), atomic dispatch/attempt fencing (step-10), and
 // compensation fail-closed-on-safety-unavailable (step-11).
 
 import (
-	"context"
 	"errors"
 
 	agentv1 "github.com/cordum-io/cap/v2/cordum/agent/v1"
@@ -17,7 +14,6 @@ import (
 
 var (
 	ErrProductionIdentityMismatch    = errors.New("scheduler: authoritative identity mismatch")
-	ErrLegacyResourceRefDisabled     = errors.New("scheduler: legacy resource reference disabled")
 	ErrStaleDispatchEvent            = errors.New("scheduler: stale or unauthorized dispatch event")
 	ErrSafetyUnavailable             = errors.New("scheduler: safety decision unavailable")
 	ErrProductionMissingSafety       = errors.New("scheduler: CAP-PRODUCTION requires a configured Safety Kernel")
@@ -83,39 +79,6 @@ func ValidateProductionIdentity(packet *agentv1.BusPacket, session ProductionSes
 		}
 	}
 	return nil
-}
-
-// ResourceResolveRequest is the scheduler-local resolve boundary used ahead
-// of safety-input scanning. LegacyPointer alone is rejected by default
-// (ErrLegacyResourceRefDisabled) — only an operator-installed resolver via
-// ResolverID may serve content, matching the CAP-PRODUCTION ResourceRef
-// resolver allowlist requirement.
-type ResourceResolveRequest struct {
-	TenantID      string
-	ResolverID    string
-	LegacyPointer string
-}
-
-// ResourceResolverRegistry is a minimal scheduler-side gate in front of the
-// shared core/infra/resource registry: it exists so scheduler call sites
-// have a single, explicit place that defaults legacy pointers OFF, matching
-// DoD #6 (structured ResourceRef, no ambient legacy trust).
-type ResourceResolverRegistry struct {
-	allowLegacy bool
-}
-
-func NewResourceResolverRegistry() *ResourceResolverRegistry {
-	return &ResourceResolverRegistry{}
-}
-
-func (r *ResourceResolverRegistry) Resolve(_ context.Context, req ResourceResolveRequest) ([]byte, error) {
-	if req.ResolverID != "" {
-		return nil, errors.New("scheduler: resolver not installed")
-	}
-	if req.LegacyPointer != "" && !r.allowLegacy {
-		return nil, ErrLegacyResourceRefDisabled
-	}
-	return nil, errors.New("scheduler: no resource reference provided")
 }
 
 // DispatchFence identifies one physical dispatch attempt. An event (Result/

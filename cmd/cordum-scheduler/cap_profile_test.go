@@ -5,15 +5,20 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
+	agentv1 "github.com/cordum-io/cap/v2/cordum/agent/v1"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/capprofile"
+	"github.com/cordum/cordum/core/infra/resource"
 	"github.com/redis/go-redis/v9"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type productionTrustResolverStub struct{ key *ecdsa.PublicKey }
@@ -39,21 +44,50 @@ func TestInstallSchedulerProductionRuntimeFreezesLandedBoundaries(t *testing.T) 
 		rawTrustResolver: productionTrustResolverStub{key: &key.PublicKey},
 	}
 	target := &bus.NatsBus{}
+	resourceRegistry, err := newSchedulerProductionResourceRegistry(client)
+	if err != nil {
+		t.Fatalf("newSchedulerProductionResourceRegistry: %v", err)
+	}
 	deps, err := installSchedulerProductionRuntime(target, bundle, handshakeSecurityConfig{
 		schedulerPrivateKey: key, schedulerKeyID: "scheduler-key-1",
-	}, client)
+	}, client, resourceRegistry)
 	if err != nil {
 		t.Fatalf("installSchedulerProductionRuntime: %v", err)
 	}
 	if !deps.rawAdmissionInstalled || !deps.trustStoreConfigured ||
-		!deps.sessionResolverReady || !deps.outboundSignerReady || deps.resourceAllowlistted {
-		t.Fatalf("runtime deps = %+v, want only landed boundaries ready", deps)
+		!deps.sessionResolverReady || !deps.outboundSignerReady || !deps.resourceAllowlistted {
+		t.Fatalf("runtime deps = %+v, want all installed boundaries ready", deps)
 	}
 	if err := target.SetRawPacketAdmission(nil); !errors.Is(err, bus.ErrRawAdmissionFrozen) {
 		t.Fatalf("raw admission after install = %v, want frozen", err)
 	}
 	if err := target.SetPacketEncoder(nil); !errors.Is(err, bus.ErrPacketEncoderFrozen) {
 		t.Fatalf("packet encoder after install = %v, want frozen", err)
+	}
+	assertProductionResourceRegistryResolves(t, deps.resourceRegistry, srv)
+}
+
+func assertProductionResourceRegistryResolves(
+	t *testing.T,
+	registry *resource.Registry,
+	srv *miniredis.Miniredis,
+) {
+	t.Helper()
+	body := []byte(`{"safe":true}`)
+	digest := sha256.Sum256(body)
+	key := schedulerResourceKeyPrefix + "tenant-a:job-a:input"
+	srv.Set(key, string(body))
+	ref := &agentv1.ResourceRef{
+		ResolverId: schedulerResourceResolverID,
+		Uri:        "redis://" + schedulerResourceAuthority + "/" + key,
+		Sha256:     digest[:], MediaType: "application/json", SizeBytes: uint64(len(body)),
+		ExpiresAt: timestamppb.New(time.Now().Add(time.Minute)), Purpose: "job.input",
+	}
+	resolved, err := registry.Resolve(context.Background(), ref, resource.TrustedContext{
+		TenantID: "tenant-a", JobID: "job-a",
+	})
+	if err != nil || string(resolved.Content) != string(body) {
+		t.Fatalf("production resource resolve = %q, %v", resolved.Content, err)
 	}
 }
 

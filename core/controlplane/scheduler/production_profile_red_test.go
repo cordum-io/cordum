@@ -5,7 +5,6 @@ package scheduler
 // contract before implementation.
 
 import (
-	"context"
 	"errors"
 	"testing"
 
@@ -21,17 +20,6 @@ func TestProductionAdmissionRejectsPayloadSessionTenantMismatch(t *testing.T) {
 	err := ValidateProductionIdentity(packet, session)
 	if !errors.Is(err, ErrProductionIdentityMismatch) {
 		t.Fatalf("ValidateProductionIdentity error = %v, want identity mismatch", err)
-	}
-}
-
-func TestProductionAdmissionRejectsArbitraryOpaquePointer(t *testing.T) {
-	registry := NewResourceResolverRegistry()
-	_, err := registry.Resolve(context.Background(), ResourceResolveRequest{
-		TenantID:      "tenant-a",
-		LegacyPointer: "attacker-controlled-redis-key",
-	})
-	if !errors.Is(err, ErrLegacyResourceRefDisabled) {
-		t.Fatalf("Resolve error = %v, want legacy reference rejection", err)
 	}
 }
 

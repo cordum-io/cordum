@@ -102,6 +102,27 @@ func TestRegistryRejectsUnknownAndDuplicateResolvers(t *testing.T) {
 	}
 }
 
+func TestRegistryHasNoNetworkOrFileFallback(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	backend := &stubResolver{id: "cache", content: []byte("trusted")}
+	registry, err := NewRegistry(func() time.Time { return now }, backend)
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+	for _, resolverID := range []string{"http", "https", "file"} {
+		ref := validRef(now, []byte("trusted"))
+		ref.ResolverId = resolverID
+		ref.Uri = resolverID + "://attacker.invalid/resource"
+		_, err = registry.Resolve(context.Background(), ref, TrustedContext{TenantID: "t", JobID: "j"})
+		if !errors.Is(err, ErrUnknownResolver) {
+			t.Fatalf("resolver %q error = %v, want ErrUnknownResolver", resolverID, err)
+		}
+	}
+	if got := backend.calls.Load(); got != 0 {
+		t.Fatalf("installed backend calls = %d, want 0 for unsupported DNS/file paths", got)
+	}
+}
+
 func TestRegistryValidatesExpirySizeAndDigestAfterFetch(t *testing.T) {
 	start := time.Unix(1_800_000_000, 0)
 	body := []byte("trusted")

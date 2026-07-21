@@ -73,6 +73,22 @@ func TestProductionRuntimeInstallsBeforeSchedulerSubscriptions(t *testing.T) {
 	}
 }
 
+func TestProductionResourceRegistryWiredBeforeReadiness(t *testing.T) {
+	src := readMainSource(t)
+	wired := strings.Index(src, "WithResourceRegistry(runtimeResourceRegistry)")
+	gate := strings.Index(src, "enforceProductionReadiness(capProfile, capReadiness)")
+	if wired < 0 || gate < 0 || wired > gate || strings.Count(src, "WithResourceRegistry(runtimeResourceRegistry)") != 3 {
+		t.Fatal("structured resource registry must reach all readers before readiness in every profile")
+	}
+}
+
+func TestCompatibilityResourceReadersRequireExplicitOptIn(t *testing.T) {
+	src := readMainSource(t)
+	if got := strings.Count(src, "WithLegacyResourceCompatibility(nil)"); got != 3 {
+		t.Fatalf("explicit compatibility resource opt-ins = %d, want scheduler input/output/schema readers", got)
+	}
+}
+
 func TestProductionReadinessGateRunsBeforeRuntimeActivation(t *testing.T) {
 	src := readMainSource(t)
 	mainStart := strings.Index(src, "func main()")

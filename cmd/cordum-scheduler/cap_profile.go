@@ -11,7 +11,15 @@ import (
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/capprofile"
 	"github.com/cordum/cordum/core/infra/replay"
+	"github.com/cordum/cordum/core/infra/resource"
 	"github.com/redis/go-redis/v9"
+)
+
+const (
+	schedulerResourceResolverID        = "cordum-redis"
+	schedulerResourceAuthority         = "resources"
+	schedulerResourceKeyPrefix         = "cap:resource:"
+	schedulerResourceMaxBytes   uint64 = 2 << 20
 )
 
 // schedulerProductionDeps carries the concrete dependency handles the
@@ -33,14 +41,14 @@ type schedulerProductionDeps struct {
 	// merely a constructed handle.
 	replayStoreReachable bool
 
-	// The following boundaries are not yet wired into this binary. They are
-	// reported as not-ready so that selecting CAP-PRODUCTION refuses to start
-	// with a precise list, rather than running with partial enforcement.
+	// These flags are set only after their concrete boundary is installed.
+	// A zero value therefore remains an honest fail-closed readiness report.
 	rawAdmissionInstalled bool
 	trustStoreConfigured  bool
 	sessionResolverReady  bool
 	outboundSignerReady   bool
 	resourceAllowlistted  bool
+	resourceRegistry      *resource.Registry
 }
 
 // readiness projects the concrete handles onto the shared readiness contract.
@@ -83,8 +91,10 @@ func installSchedulerProductionRuntime(
 	bundle *handshakeSecurityBundle,
 	config handshakeSecurityConfig,
 	client redis.UniversalClient,
+	resourceRegistry *resource.Registry,
 ) (schedulerProductionDeps, error) {
-	if target == nil || bundle == nil || bundle.rawTrustResolver == nil || client == nil {
+	if target == nil || bundle == nil || bundle.rawTrustResolver == nil ||
+		client == nil || resourceRegistry == nil {
 		return schedulerProductionDeps{}, scheduler.ErrProductionAdmissionUnavailable
 	}
 	resolveSession, err := scheduler.NewProductionSessionResolver(bundle.middleware)
@@ -111,7 +121,21 @@ func installSchedulerProductionRuntime(
 	return schedulerProductionDeps{
 		rawAdmissionInstalled: true, trustStoreConfigured: true,
 		sessionResolverReady: true, outboundSignerReady: true,
+		resourceAllowlistted: true, resourceRegistry: resourceRegistry,
 	}, nil
+}
+
+func newSchedulerProductionResourceRegistry(client redis.UniversalClient) (*resource.Registry, error) {
+	resolver, err := resource.NewRedisResolver(resource.RedisResolverConfig{
+		ID: schedulerResourceResolverID, Client: client, Scheme: "redis",
+		Authority: schedulerResourceAuthority, KeyPrefix: schedulerResourceKeyPrefix,
+		AllowedMediaTypes: []string{"application/json", "application/octet-stream", "text/plain"},
+		MaxBytes:          schedulerResourceMaxBytes,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resource.NewRegistry(nil, resolver)
 }
 
 func schedulerProductionKeyResolver(

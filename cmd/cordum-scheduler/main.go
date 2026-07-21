@@ -382,14 +382,28 @@ func main() {
 		slog.Error("dispatch trust authority unavailable; refusing to start", "error", err)
 		os.Exit(1)
 	}
+	runtimeResourceRegistry, err := newSchedulerProductionResourceRegistry(sagaRedis)
+	if err != nil {
+		slog.Error("resource resolver allowlist invalid; refusing to start", "error", err)
+		os.Exit(1)
+	}
+	safetyClient.WithResourceRegistry(runtimeResourceRegistry)
+	if outputSafetyClient != nil {
+		outputSafetyClient.WithResourceRegistry(runtimeResourceRegistry)
+	}
 	var productionRuntime schedulerProductionDeps
 	if capProfile.IsProduction() {
 		productionRuntime, err = installSchedulerProductionRuntime(
-			natsBus, handshakeBundle, handshakeConfig, sagaRedis,
+			natsBus, handshakeBundle, handshakeConfig, sagaRedis, runtimeResourceRegistry,
 		)
 		if err != nil {
 			slog.Error("CAP-PRODUCTION transport boundary unavailable; refusing to start", "error", err)
 			os.Exit(1)
+		}
+	} else {
+		safetyClient.WithLegacyResourceCompatibility(nil)
+		if outputSafetyClient != nil {
+			outputSafetyClient.WithLegacyResourceCompatibility(nil)
 		}
 	}
 
@@ -462,6 +476,10 @@ func main() {
 		WithEntitlements(entitlementResolver).
 		WithContextClient(jobStore.Client()).
 		WithSaga(sagaManager)
+	engine.WithResourceRegistry(runtimeResourceRegistry)
+	if !capProfile.IsProduction() {
+		engine.WithLegacyResourceCompatibility(nil)
+	}
 	if dlqStore != nil {
 		engine.WithDLQSink(&redisDLQSink{
 			store:    dlqStore,
