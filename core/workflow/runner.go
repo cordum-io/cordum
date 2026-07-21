@@ -21,6 +21,7 @@ import (
 	"github.com/cordum/cordum/core/infra/health"
 	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	"github.com/cordum/cordum/core/licensing"
+	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/policysign"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	"log/slog"
@@ -42,12 +43,18 @@ const (
 
 // Run starts the workflow engine control-plane component.
 func Run(cfg *config.Config) error {
-	return RunWithEntitlements(cfg, nil)
+	return RunWithEntitlements(cfg, nil, nil)
 }
 
 // RunWithEntitlements starts the workflow engine with an optional shared
-// entitlement resolver. Nil falls back to community defaults.
-func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementResolver) error {
+// entitlement resolver (nil falls back to community defaults) and an
+// optional output-safety checker. outputSafety is nil-checked by the
+// engine's WithOutputSafety, in which case step output policy enforcement
+// fails closed (see checkStepOutputPolicy) -- callers that want output
+// safety must construct a checker (e.g. scheduler.NewOutputSafetyClientWithRedis)
+// themselves, since core/workflow cannot import core/controlplane/scheduler
+// without an import cycle through core/telemetry.
+func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementResolver, outputSafety model.OutputSafetyChecker) error {
 	if cfg == nil {
 		cfg = config.Load()
 	}
@@ -158,6 +165,14 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 	// rejected by resolveStepOutput() and marked failed.
 	if !capProfile.IsProduction() {
 		engine = engine.WithLegacyResourceCompatibility(nil)
+	}
+
+	// Output safety enforcement is a hard fail-closed boundary in the engine
+	// (see checkStepOutputPolicy): every step result carrying an output is
+	// rejected unless a real checker is wired. The caller constructs it
+	// (see RunWithEntitlements doc comment for why it isn't built here).
+	if outputSafety != nil {
+		engine = engine.WithOutputSafety(outputSafety)
 	}
 
 	// Wire control-plane service-token minting for internal cancel broadcasts.

@@ -267,6 +267,7 @@ services:
       - REDIS_TLS_SERVER_NAME=redis
       - SAFETY_KERNEL_ADDR=safety-kernel:50051
       - SAFETY_KERNEL_TLS_CA=/etc/cordum/tls/ca/ca.crt
+      - OUTPUT_POLICY_ENABLED=${OUTPUT_POLICY_ENABLED:-true}
       - CONTEXT_ENGINE_TLS_CA=/etc/cordum/tls/ca/ca.crt
       - GATEWAY_HTTP_TLS_CERT=/etc/cordum/tls/server/tls.crt
       - GATEWAY_HTTP_TLS_KEY=/etc/cordum/tls/server/tls.key
@@ -380,6 +381,8 @@ services:
         condition: service_healthy
       scheduler:
         condition: service_healthy
+      safety-kernel:
+        condition: service_healthy
     environment:
       - NATS_URL=tls://nats:4222
       - NATS_USE_JETSTREAM=1
@@ -393,6 +396,9 @@ services:
       - REDIS_TLS_CERT=/etc/cordum/tls/client/tls.crt
       - REDIS_TLS_KEY=/etc/cordum/tls/client/tls.key
       - REDIS_TLS_SERVER_NAME=redis
+      - SAFETY_KERNEL_ADDR=safety-kernel:50051
+      - SAFETY_KERNEL_TLS_CA=/etc/cordum/tls/ca/ca.crt
+      - OUTPUT_POLICY_ENABLED=${OUTPUT_POLICY_ENABLED:-true}
       # CAP runtime profile (see scheduler service for semantics).
       - CORDUM_CAP_PROFILE=${CORDUM_CAP_PROFILE:-compat}
       - WORKFLOW_ENGINE_HTTP_ADDR=:9093

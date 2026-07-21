@@ -626,7 +626,19 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	defer wfCancel()
 	workflowEng := wf.NewEngine(workflowStore, natsBus).
 		WithContext(wfCtx).
-		WithProductionIdentityEnforcement(capProfile.IsProduction())
+		WithProductionIdentityEnforcement(capProfile.IsProduction()).
+		// Output-safety's per-step policy check reads the persisted
+		// JobRequest through this reader and fails closed
+		// (checkStepOutputPolicy) without it, mirroring the standalone
+		// cordum-workflow-engine binary (core/workflow/runner.go). Uses
+		// WithJobRequests, NOT WithRunLocker: the gateway's HTTP handlers
+		// (handleStartRun, handleRerunRun) already hold their own Redis
+		// lock on the same run key before calling StartRun, so wiring a
+		// distributed RunLocker here would make the engine's internal
+		// lock acquisition contend with that already-held lock and
+		// silently no-op the run, deferring it to the next reconciler
+		// poll tick instead of executing synchronously.
+		WithJobRequests(jobStore)
 
 	configSvc, err := configsvc.New(cfg.RedisURL)
 	if err != nil {
@@ -649,6 +661,31 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	}
 	defer func() { _ = schemaRegistry.Close() }()
 	workflowEng = workflowEng.WithMemory(memStore).WithConfig(configSvc).WithSchemaRegistry(schemaRegistry)
+	// Legacy Redis result_ptr compatibility is an explicit, profile-gated
+	// opt-in (see core/infra/resourceio.Reader), mirroring the standalone
+	// cordum-workflow-engine binary (core/workflow/runner.go): CAP-PRODUCTION
+	// requires structured ResultRefs end-to-end, but the default/compat
+	// profile must keep accepting legacy pointers from not-yet-migrated
+	// workers. Without this, every successful step whose worker still
+	// reports a bare ResultPtr is rejected by resolveStepOutput() and
+	// marked failed -- including when the gateway's embedded engine (not
+	// the standalone binary) wins the accepted-result delivery race.
+	if !capProfile.IsProduction() {
+		workflowEng = workflowEng.WithLegacyResourceCompatibility(nil)
+	}
+	// Output safety enforcement is a hard fail-closed boundary in the
+	// embedded engine (see workflow.checkStepOutputPolicy): every step
+	// result carrying an output is rejected unless a real checker is
+	// wired. Connect to the same OutputPolicyService the scheduler uses,
+	// under the same config gate.
+	if cfg.OutputPolicyEnabled {
+		outputSafetyClient, err := scheduler.NewOutputSafetyClientWithRedis(cfg.SafetyKernelAddr, cfg.RedisURL)
+		if err != nil {
+			return fmt.Errorf("connect output policy client: %w", err)
+		}
+		defer func() { _ = outputSafetyClient.Close() }()
+		workflowEng = workflowEng.WithOutputSafety(outputSafetyClient)
+	}
 	// Wire control-plane service-token minting for the gateway's embedded
 	// workflow engine, mirroring the standalone cordum-workflow-engine binary
 	// (core/workflow/runner.go). Without this, every workflow step started

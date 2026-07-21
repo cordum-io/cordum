@@ -374,6 +374,22 @@ func (e *Engine) WithRunLocker(locker RunLocker) *Engine {
 	return e
 }
 
+// WithJobRequests wires the authoritative job-request reader used by
+// output-safety's per-step policy check (see checkStepOutputPolicy),
+// independent of distributed run locking. Callers that already manage their
+// own run-level locking (e.g. the gateway's HTTP handlers, which hold a
+// Redis lock on the same key before calling StartRun) should use this
+// instead of WithRunLocker: wiring the same store as a RunLocker there
+// would make the engine's own internal lock acquisition contend with the
+// caller's already-held lock and silently no-op the run.
+func (e *Engine) WithJobRequests(reader jobRequestReader) *Engine {
+	if isNilJobRequestReader(reader) {
+		reader = nil
+	}
+	e.jobRequests = reader
+	return e
+}
+
 // WithMaxForEachItems sets the maximum number of items allowed in for_each fan-out.
 // Values <= 0 are ignored and the default remains in effect.
 func (e *Engine) WithMaxForEachItems(limit int) *Engine {
