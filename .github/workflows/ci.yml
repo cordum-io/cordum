@@ -136,7 +136,7 @@ jobs:
         cache: false
 
     - name: Set up Python
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v7
       with:
         python-version: '3.11'
 
@@ -191,7 +191,7 @@ jobs:
       run: bash tools/scripts/lint_no_secret_log.test.sh
 
     - name: Set up Python for deployment manifest validation
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v7
       with:
         python-version: '3.11'
 
