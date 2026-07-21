@@ -10,6 +10,13 @@ var (
 	ErrNotFound       = errors.New("copilot session not found")
 	ErrNotImplemented = errors.New("copilot session store not implemented")
 	ErrCrossTenant    = errors.New("copilot session tenant access denied")
+	// ErrOwnerMismatch is returned by AppendMessage when the calling
+	// principal differs from the principal that originally created the
+	// session. Without this, any authenticated principal within a tenant
+	// could set an arbitrary/guessed session id and have AppendMessage
+	// insert fabricated transcript entries into another principal's
+	// session.
+	ErrOwnerMismatch = errors.New("copilot session owned by a different principal")
 )
 
 // CopilotMessage is one persisted chat transcript entry in a Copilot session.
@@ -35,8 +42,11 @@ type CopilotSession struct {
 }
 
 // Store resolves Copilot session transcript details for the requesting user.
+// tenant is the caller's resolved tenant and is the authorization boundary:
+// implementations must scope reads to it and never return another tenant's
+// session.
 type Store interface {
-	GetSession(ctx context.Context, sessionID, userID string) (*CopilotSession, error)
+	GetSession(ctx context.Context, tenant, sessionID, userID string) (*CopilotSession, error)
 }
 
 // NotImplementedStore is the default gateway dependency until the Context
@@ -44,6 +54,6 @@ type Store interface {
 // can show a graceful backend-wiring-pending state.
 type NotImplementedStore struct{}
 
-func (NotImplementedStore) GetSession(context.Context, string, string) (*CopilotSession, error) {
+func (NotImplementedStore) GetSession(context.Context, string, string, string) (*CopilotSession, error) {
 	return nil, ErrNotImplemented
 }

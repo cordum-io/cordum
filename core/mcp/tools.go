@@ -328,13 +328,27 @@ func submitJobHandler(bridge ServiceBridge) ToolHandler {
 			args.Priority = "normal"
 		}
 
+		// Auto-label the job with the Copilot session id (when present) so the
+		// copilot-session read handler can join this job to the session via job
+		// metadata without the client having to pass a label. An explicit
+		// client-provided session_id label is never overridden.
+		labels := cloneStringMap(args.Labels)
+		if sid := CopilotSessionIDFromContext(ctx); sid != "" {
+			if labels == nil {
+				labels = map[string]string{}
+			}
+			if strings.TrimSpace(labels["session_id"]) == "" {
+				labels["session_id"] = sid
+			}
+		}
+
 		out, err := bridge.SubmitJob(ctx, SubmitJobInput{
 			Prompt:     args.Prompt,
 			Topic:      args.Topic,
 			Priority:   args.Priority,
 			Capability: strings.TrimSpace(args.Capability),
 			RiskTags:   append([]string{}, args.RiskTags...),
-			Labels:     cloneStringMap(args.Labels),
+			Labels:     labels,
 			MemoryID:   strings.TrimSpace(args.MemoryID),
 			PackID:     strings.TrimSpace(args.PackID),
 		})
