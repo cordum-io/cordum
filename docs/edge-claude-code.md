@@ -83,11 +83,23 @@ persisted as audit evidence.
 | Mode | Behavior |
 | --- | --- |
 | `observe` | Allow degraded actions and record evidence where possible. |
-| `enforce` | Allow known-safe degraded actions only; deny risky/unknown actions. |
+| `enforce` | Allow known-safe degraded actions only; deny risky/unknown actions — **only when `CORDUM_AGENTD_FAIL_CLOSED` is enabled**. |
 | `enterprise-strict` | Fail closed when Cordum governance is unavailable. |
+
+`CORDUM_AGENTD_FAIL_CLOSED` defaults to `false`. An `enforce` session that does
+not enable it fails **open**: if agentd errors or times out, the action is
+allowed. Run `cordumctl edge doctor` to see the effective posture — it warns
+when an enforce session is fail-open.
 
 Malformed hook input fails closed with redacted stderr. Hook timeout must stay
 below Claude Code's 5s command-hook deadline.
+
+The same 5s deadline bounds the inline approval wait.
+`CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` defaults to `30s`, which exceeds
+it: when the wait outlives the deadline Claude Code times out the hook and
+**fails open**, with no user-visible warning. Set the inline-wait timeout
+strictly below `5s`, disable inline wait, or use deny-and-retry instead of
+block-and-wait. See [edge/configuration.md](edge/configuration.md) for details.
 
 ## Token tradeoffs
 
