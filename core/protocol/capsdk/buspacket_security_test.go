@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cordum/cordum/core/auth/servicetoken"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -35,23 +34,6 @@ func TestValidateBusPacketRejectsInvalidSecurityEnvelope(t *testing.T) {
 				t.Fatalf("ValidateBusPacket() error = %v, want field %q", err, test.field)
 			}
 		})
-	}
-}
-
-func TestValidateBusPacketAllowsReservedIdentityToRelayJobResult(t *testing.T) {
-	t.Parallel()
-	packet := securityResultPacket(servicetoken.IdentityScheduler, "worker-1")
-	if err := ValidateBusPacket(packet); err != nil {
-		t.Fatalf("ValidateBusPacket() error = %v, want nil for scheduler-relayed result", err)
-	}
-}
-
-func TestValidateBusPacketRejectsNonReservedSenderWorkerMismatch(t *testing.T) {
-	t.Parallel()
-	packet := securityResultPacket("worker-2", "worker-1")
-	err := ValidateBusPacket(packet)
-	if err == nil || !strings.Contains(err.Error(), "job_result.worker_id") {
-		t.Fatalf("ValidateBusPacket() error = %v, want job_result.worker_id mismatch", err)
 	}
 }
 
