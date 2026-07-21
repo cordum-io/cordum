@@ -6,7 +6,7 @@
 # .github/workflows/docker.yml can build it with the same SERVICE
 # convention. The image is intentionally small — alpine + a single static
 # Go binary — because it is pulled by every quickstart user.
-ARG GO_VERSION=1.25
+ARG GO_VERSION=1.26.3
 
 FROM golang:${GO_VERSION}-alpine AS builder
 WORKDIR /src

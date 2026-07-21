@@ -1,6 +1,6 @@
 module github.com/cordum/cordum
 
-go 1.25.12
+go 1.26.3
 
 require (
 	github.com/ProtonMail/go-crypto v1.4.1
