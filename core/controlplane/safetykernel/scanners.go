@@ -176,9 +176,9 @@ func (s *piiScanner) Scan(content []byte) []outputFinding {
 
 func defaultOutputScanners() map[string]OutputScanner {
 	return map[string]OutputScanner{
-		"secret_leak":      newSecretScanner(),
-		"secret":           newSecretScanner(),
-		"pii":              newPIIScanner(),
+		"secret_leak":      sharedSecretScanner(),
+		"secret":           sharedSecretScanner(),
+		"pii":              sharedPIIScanner(),
 		"code_injection":   newInjectionScanner(),
 		"injection":        newInjectionScanner(),
 		"prompt_injection": newPromptInjectionScanner(),
@@ -221,6 +221,24 @@ func newSecretScanner() *regexScanner {
 			Pattern:    `gh[pousr]_[A-Za-z0-9]{20,}`,
 			Expression: regexp.MustCompile(`gh[pousr]_[A-Za-z0-9]{20,}`),
 			Confidence: 0.98,
+		},
+		{
+			// LLM provider API keys (OpenAI sk-/sk-proj-, Anthropic sk-ant-).
+			// Critical for an LLM-proxy: an unquoted `sk-...` in a prompt would
+			// otherwise slip past the quoted-credential-assignment rule above.
+			Label:      "llm provider api key",
+			Severity:   "critical",
+			Pattern:    `\bsk-[A-Za-z0-9_-]{16,}`,
+			Expression: regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{16,}`),
+			Confidence: 0.95,
+		},
+		{
+			// Stripe-style live/test secret keys.
+			Label:      "stripe secret key",
+			Severity:   "critical",
+			Pattern:    `\bsk_(?:live|test)_[A-Za-z0-9]{16,}`,
+			Expression: regexp.MustCompile(`\bsk_(?:live|test)_[A-Za-z0-9]{16,}`),
+			Confidence: 0.97,
 		},
 	})
 }

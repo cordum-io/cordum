@@ -1458,6 +1458,9 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 	s.registerRoute(mux, "GET /api/v1/edge/executions/{execution_id}/events", s.instrumented("/api/v1/edge/executions/{execution_id}/events", s.handleListEdgeExecutionEvents))
 	s.registerRoute(mux, "POST /api/v1/edge/sessions/{session_id}/export", s.instrumented("/api/v1/edge/sessions/{session_id}/export", s.handleExportEdgeSession))
 	s.registerRoute(mux, "POST /api/v1/edge/runtime/events", s.instrumented("/api/v1/edge/runtime/events", s.handleEdgeRuntimeIngest))
+	// Phase 2 — LLM-proxy event ingestion: every intercepted chat turn
+	// (prompt/response) is redacted, classified, and recorded for audit.
+	s.registerRoute(mux, "POST /api/v1/edge/llm/events", s.instrumented("/api/v1/edge/llm/events", s.handleEdgeLLMIngest))
 
 	// 4.5 Memory pointers (debug)
 	s.registerRoute(mux, "GET /api/v1/memory", s.instrumented("/api/v1/memory", s.handleGetMemory))
