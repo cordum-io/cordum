@@ -147,7 +147,7 @@ func (c *Collector) Start(parent context.Context) {
 		return
 	}
 	telemetryStartupNotice.Do(func() {
-		c.logger.Info("Cordum telemetry is active. Set CORDUM_TELEMETRY_MODE=anonymous to enable remote reporting, or =off to disable.", "mode", c.currentMode())
+		c.logger.Info("Cordum telemetry: unless CORDUM_TELEMETRY_MODE=off, Cordum sends two one-time anonymous pings ever — an install ping on first startup (install_id, schema_version, version, tier, mode, os, arch) and a first-use ping after the first job/workflow completes (the same fields plus worker counts, jobs_24h, workflows_24h, packs_installed). Set CORDUM_TELEMETRY_MODE=anonymous to also enable ongoing 24h reporting, or =off to disable all telemetry including the one-time pings.", "mode", c.currentMode())
 	})
 	if !c.currentMode().Enabled() || c.store == nil {
 		return
@@ -314,7 +314,12 @@ func (c *Collector) ReportNow(ctx context.Context) error {
 func (c *Collector) loop(ctx context.Context) {
 	defer c.wg.Done()
 
+	// One-time install ping fires on collector start in any mode != off.
+	c.maybeSendInstallPing(ctx)
+
 	_, _ = c.CollectNow(ctx)
+	// One-time first-use ping is checked after each collect tick.
+	c.maybeSendFirstUsePing(ctx)
 	if c.currentMode().ReportingEnabled() {
 		_ = c.ReportNow(ctx)
 	}
@@ -332,12 +337,172 @@ func (c *Collector) loop(ctx context.Context) {
 			if _, err := c.CollectNow(ctx); err != nil && !errors.Is(err, redis.Nil) && !errors.Is(err, errCollectorLockNotAcquired) {
 				c.logger.Debug("telemetry collect failed", "error", err)
 			}
+			c.maybeSendFirstUsePing(ctx)
 		case <-reportTicker.C:
 			if err := c.ReportNow(ctx); err != nil && !errors.Is(err, redis.Nil) && !errors.Is(err, errCollectorLockNotAcquired) {
 				c.logger.Debug("telemetry report loop failed", "error", err)
 			}
 		}
 	}
+}
+
+// maybeSendInstallPing sends the one-time minimal install beacon if telemetry
+// is not off and the install ping has not already fired. The pinged flag is
+// only set after a successful send (via SetNX), so a failed send retries on
+// the next collector start. Concurrent collectors/replicas converge via SetNX.
+func (c *Collector) maybeSendInstallPing(ctx context.Context) {
+	if c == nil || c.reporter == nil {
+		return
+	}
+	if c.currentMode() == ModeOff {
+		return
+	}
+	client := c.redisClient()
+	if client == nil {
+		return
+	}
+	// Claim the ping with SetNX BEFORE sending so concurrent collectors/replicas
+	// converge to exactly one send. If the send fails, release the claim so it
+	// retries on the next start.
+	won, err := markPinged(ctx, client, installPingedKey)
+	if err != nil {
+		c.logger.Debug("telemetry install ping flag claim failed", "error", err)
+		return
+	}
+	if !won {
+		return
+	}
+
+	installID, err := GetInstallID(ctx, client)
+	if err != nil {
+		c.logger.Debug("telemetry install ping install id failed", "error", err)
+		c.releasePingFlag(ctx, client, installPingedKey)
+		return
+	}
+	payload := NewInstallBeacon(installID, c.currentMode(), buildinfo.Version, c.currentTier())
+	if err := c.reporter.Report(ctx, payload); err != nil {
+		c.logger.Debug("telemetry install ping failed", "error", err)
+		c.releasePingFlag(ctx, client, installPingedKey)
+		return
+	}
+	c.persistPingFlag(ctx, client, installPingedKey)
+}
+
+// releasePingFlag clears a one-time ping flag after a failed send so the ping
+// retries on the next opportunity. Best-effort.
+func (c *Collector) releasePingFlag(ctx context.Context, client redis.UniversalClient, key string) {
+	if client == nil {
+		return
+	}
+	relCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := client.Del(relCtx, key).Err(); err != nil {
+		c.logger.Debug("telemetry ping flag release failed", "key", key, "error", err)
+	}
+}
+
+// persistPingFlag promotes a claimed (TTL'd) ping flag to permanent after a
+// confirmed send, so the ping never fires again. Best-effort.
+func (c *Collector) persistPingFlag(ctx context.Context, client redis.UniversalClient, key string) {
+	if client == nil {
+		return
+	}
+	pCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := persistPinged(pCtx, client, key); err != nil {
+		c.logger.Debug("telemetry ping flag persist failed", "key", key, "error", err)
+	}
+}
+
+// maybeSendFirstUsePing sends the one-time fuller first-use beacon if telemetry
+// is not off, the used marker is set (a job or workflow has completed), and the
+// first-use ping has not already fired. The pinged flag is only set after a
+// successful send (via SetNX), so a failed send retries on the next collect
+// tick. Concurrent collectors/replicas converge via SetNX.
+func (c *Collector) maybeSendFirstUsePing(ctx context.Context) {
+	if c == nil || c.reporter == nil {
+		return
+	}
+	if c.currentMode() == ModeOff {
+		return
+	}
+	client := c.redisClient()
+	if client == nil {
+		return
+	}
+	alreadyPinged, err := keyExists(ctx, client, firstUsePingedKey)
+	if err != nil {
+		c.logger.Debug("telemetry first-use ping flag check failed", "error", err)
+		return
+	}
+	if alreadyPinged {
+		return
+	}
+	used, err := keyExists(ctx, client, UsedMarkerKey)
+	if err != nil {
+		c.logger.Debug("telemetry first-use used marker check failed", "error", err)
+		return
+	}
+	if !used {
+		return
+	}
+
+	// Claim the ping with SetNX BEFORE sending so concurrent collectors/replicas
+	// converge to exactly one send. Release the claim if the send fails.
+	won, err := markPinged(ctx, client, firstUsePingedKey)
+	if err != nil {
+		c.logger.Debug("telemetry first-use ping flag claim failed", "error", err)
+		return
+	}
+	if !won {
+		return
+	}
+
+	installID, err := GetInstallID(ctx, client)
+	if err != nil {
+		c.logger.Debug("telemetry first-use ping install id failed", "error", err)
+		c.releasePingFlag(ctx, client, firstUsePingedKey)
+		return
+	}
+	registeredWorkers, err := c.registeredWorkerCount(ctx)
+	if err != nil {
+		c.logger.Debug("telemetry first-use worker count failed", "error", err)
+		c.releasePingFlag(ctx, client, firstUsePingedKey)
+		return
+	}
+	connectedWorkers, err := c.connectedWorkerCount(ctx)
+	if err != nil {
+		c.logger.Debug("telemetry first-use connected worker count failed", "error", err)
+		c.releasePingFlag(ctx, client, firstUsePingedKey)
+		return
+	}
+	jobsLast24h, err := c.jobsLast24h(ctx)
+	if err != nil {
+		c.logger.Debug("telemetry first-use jobs count failed", "error", err)
+		c.releasePingFlag(ctx, client, firstUsePingedKey)
+		return
+	}
+	workflowRunsLast24h, err := c.workflowRunsLast24h(ctx)
+	if err != nil {
+		c.logger.Debug("telemetry first-use workflow count failed", "error", err)
+		c.releasePingFlag(ctx, client, firstUsePingedKey)
+		return
+	}
+	packsInstalled, err := c.packCount(ctx)
+	if err != nil {
+		c.logger.Debug("telemetry first-use pack count failed", "error", err)
+		c.releasePingFlag(ctx, client, firstUsePingedKey)
+		return
+	}
+
+	payload := NewFirstUseBeacon(installID, c.currentMode(), buildinfo.Version, c.currentTier(),
+		registeredWorkers, connectedWorkers, jobsLast24h, workflowRunsLast24h, packsInstalled)
+	if err := c.reporter.Report(ctx, payload); err != nil {
+		c.logger.Debug("telemetry first-use ping failed", "error", err)
+		c.releasePingFlag(ctx, client, firstUsePingedKey)
+		return
+	}
+	c.persistPingFlag(ctx, client, firstUsePingedKey)
 }
 
 func (c *Collector) buildPayload(ctx context.Context) (TelemetryPayload, error) {

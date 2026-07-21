@@ -47,6 +47,53 @@
       "expected_approval_required": false
     },
     {
+      "name": "bash_cat_env_secret",
+      "event": {
+        "event_id": "evt-edge-sim-bash-cat-env",
+        "session_id": "sess-edge-sim-demo",
+        "execution_id": "exec-edge-sim-demo",
+        "tenant_id": "tenant-edge-demo",
+        "principal_id": "principal-edge-demo",
+        "seq": 9,
+        "ts": "2026-05-01T00:00:08Z",
+        "layer": "hook",
+        "kind": "hook.pre_tool_use",
+        "agent_product": "claude-code",
+        "tool_name": "Bash",
+        "input_redacted": {
+          "command": "cat .env"
+        },
+        "decision": "RECORDED",
+        "status": "ok",
+        "labels": {
+          "fixture.synthetic": "true"
+        }
+      },
+      "expected_policy_input": {
+        "topic": "job.edge.action",
+        "capability": "exec.shell",
+        "risk_tags": ["exec", "review_required", "secrets", "unknown"],
+        "labels": {
+          "agent.product": "claude-code",
+          "command.class": "unknown",
+          "command.family": "unknown",
+          "edge.action_name": "bash.exec",
+          "edge.event_id": "evt-edge-sim-bash-cat-env",
+          "edge.execution_id": "exec-edge-sim-demo",
+          "edge.kind": "hook.pre_tool_use",
+          "edge.layer": "hook",
+          "edge.session_id": "sess-edge-sim-demo",
+          "hook.event": "hook.pre_tool_use",
+          "hook.tool_name": "Bash",
+          "path.class": "secret"
+        },
+        "input_content_type": "application/json"
+      },
+      "expected_decision": "DENY",
+      "expected_rule_id": "claude-code.deny-secret-reads",
+      "expected_approval_required": false
+    },
+    {
       "name": "bash_npm_run_build",
       "event": {
         "event_id": "evt-edge-sim-bash-npm-run-build",
