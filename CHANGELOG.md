@@ -7,6 +7,35 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+#### CAP-PRODUCTION — fail-closed exact-wire trust, attempt fencing, durable effects, and structured resources (2026-07-21, task-a13f83fa)
+
+- Added the explicit `CORDUM_CAP_PROFILE` switch. The scheduler advertises
+  `cap_production` only after authenticated handshake enforcement, exact-wire
+  raw admission, replay, local key/session authority, outbound subject-bound
+  signing, the sealed resource allowlist, input/output safety, and closed fail
+  modes are live. Unknown profile values or missing dependencies refuse boot;
+  the shipped default remains `compat`.
+- Bound signed messages to versioned canonical bytes carrying a random message
+  ID, actual subject audience, expiry and key ID. Exact redelivery is
+  idempotent; message-ID/digest conflict, unknown/retired key, unavailable
+  replay authority, tamper and identity/session mismatch fail closed.
+- Added atomic Redis Cluster-safe dispatch/attempt fencing and durable result
+  application under `job:{<base64url(job_id)>}:runtime`. Late result,
+  progress, or worker-cancel events cannot affect another attempt; a durable
+  outbox resumes interrupted projection without reapplying logical state.
+- Safety cache ALLOW entries now bind the active policy snapshot, full
+  deterministic request/identity and verified referenced content. Omitted,
+  expired, size/type/digest-mismatched or otherwise unverified content cannot
+  serve or populate a cached ALLOW.
+- Installed a sealed `cordum-redis` ResourceRef resolver with authenticated
+  tenant/job namespace binding, a 2 MiB cap, three exact media types, expiry,
+  size and SHA-256 verification. Resource-provided credentials, generic URI
+  fallback, HTTP/file resolution, traversal and unknown resolvers are denied.
+- The API gateway and workflow engine still report incomplete production
+  readiness and intentionally refuse `CORDUM_CAP_PROFILE=production`; this is
+  not yet a full-stack activation claim. The operator guide documents that
+  boundary, key rotation, compatibility telemetry, and migration.
+
 #### CAP + scheduler/gateway — authenticated P-256 worker proof and bound session authority replace self-asserted handshake trust (2026-07-19, task-a4b71af7)
 
 - Added one protobuf challenge/authenticate/result contract on

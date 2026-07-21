@@ -3060,7 +3060,7 @@ The following routes are registered in the gateway (`registerRoute` calls). Gene
 
 <!-- BEGIN:rest-routes -->
 
-_Generated from `core/controlplane/gateway/gateway.go`, `core/controlplane/gateway/handlers_mcp.go` (registration order) — do not edit by hand; run `make docs-tables`. 226 routes._
+_Generated from `core/controlplane/gateway/gateway.go`, `core/controlplane/gateway/handlers_mcp.go` (registration order) — do not edit by hand; run `make docs-tables`. 227 routes._
 
 | Method | Path |
 |--------|------|
@@ -3182,6 +3182,7 @@ _Generated from `core/controlplane/gateway/gateway.go`, `core/controlplane/gatew
 | POST | `/api/v1/edge/sessions/{session_id}/export` |
 | POST | `/api/v1/edge/runtime/events` |
 | GET | `/api/v1/memory` |
+| POST | `/api/v1/memory/resolve` |
 | POST | `/api/v1/artifacts` |
 | GET | `/api/v1/artifacts/{ptr}` |
 | POST | `/api/v1/jobs` |

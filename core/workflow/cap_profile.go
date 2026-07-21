@@ -20,13 +20,11 @@ func enforceWorkflowProductionReadiness(profile capprofile.Profile, r capprofile
 // workflowProductionReadiness reports which CAP-PRODUCTION dependencies the
 // workflow engine has initialized.
 //
-// None of them: the workflow engine subscribes to raw sys.job.result directly,
-// which bypasses the scheduler's fencing and admission boundary entirely, and
-// it installs no exact-wire admission, replay store, trust store, session
-// resolver, outbound signer, or resource resolver allowlist. Reporting an
-// honest all-false readiness means CORDUM_CAP_PROFILE=production refuses to
-// start here with a precise list, rather than the engine advertising a profile
-// it cannot enforce.
+// The workflow engine consumes only scheduler-accepted results, but it still
+// installs none of the shared exact-wire, replay, trust, session, signing,
+// resource, or safety dependencies. Reporting an honest all-false readiness
+// means CORDUM_CAP_PROFILE=production refuses to start rather than advertising
+// a profile this binary cannot enforce independently.
 func workflowProductionReadiness() capprofile.Readiness {
 	return capprofile.Readiness{}
 }
