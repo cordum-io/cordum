@@ -25,6 +25,13 @@ func TestProductionRawBoundaryRejectsBeforeHandler(t *testing.T) {
 	raw := signProductionTestPacket(t, key, productionTestPacket(session.Identity, productionTestMessageID(1)))
 
 	tests := map[string]func([]byte, *AuthenticatedProductionSession, *ProductionRawBoundary){
+		"nil session identity": func(_ []byte, session *AuthenticatedProductionSession, _ *ProductionRawBoundary) {
+			session.Identity = nil
+		},
+		"empty session actor": func(_ []byte, session *AuthenticatedProductionSession, _ *ProductionRawBoundary) {
+			session.Identity = cloneProductionIdentity(session.Identity)
+			session.Identity.ActorId = ""
+		},
 		"tampered exact wire": func(raw []byte, _ *AuthenticatedProductionSession, _ *ProductionRawBoundary) {
 			raw[len(raw)-1] ^= 0x01
 		},

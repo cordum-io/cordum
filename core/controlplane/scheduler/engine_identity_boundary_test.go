@@ -319,6 +319,9 @@ func TestReplayApprovalPublishProductionEchoesRequestIdentity(t *testing.T) {
 	if len(published) != 2 {
 		t.Fatalf("published packets = %d, want 2", len(published))
 	}
+	if published[1].subject != capsdk.SubjectAcceptedResult {
+		t.Fatalf("result subject = %q, want %q", published[1].subject, capsdk.SubjectAcceptedResult)
+	}
 	result := published[1].packet
 	if !proto.Equal(result.GetIdentity(), identity) || !proto.Equal(result.GetJobResult().GetIdentity(), identity) {
 		t.Fatalf("result identities = envelope:%v payload:%v", result.GetIdentity(), result.GetJobResult().GetIdentity())
@@ -357,11 +360,22 @@ func TestProcessApprovalGateProductionEchoesRequestIdentity(t *testing.T) {
 		t.Fatalf("processJob() error = %v", err)
 	}
 	published := bus.snapshotPublished()
-	if len(published) != 1 || published[0].subject != capsdk.SubjectResult {
-		t.Fatalf("published = %#v, want one result", published)
+	if len(published) != 1 || published[0].subject != capsdk.SubjectAcceptedResult {
+		t.Fatalf("published = %#v, want one scheduler-accepted result", published)
 	}
 	packet := published[0].packet
 	if !proto.Equal(packet.GetIdentity(), identity) || !proto.Equal(packet.GetJobResult().GetIdentity(), identity) {
 		t.Fatalf("result identities = envelope:%v payload:%v", packet.GetIdentity(), packet.GetJobResult().GetIdentity())
+	}
+}
+
+func TestPublishSchedulerResultProductionRejectsMissingBus(t *testing.T) {
+	engine := &Engine{}
+	engine.productionIdentity.Store(true)
+	err := engine.publishSchedulerResult(&pb.BusPacket{
+		Payload: &pb.BusPacket_JobResult{JobResult: &pb.JobResult{JobId: "job-no-bus"}},
+	})
+	if err == nil {
+		t.Fatal("production scheduler result with nil bus succeeded")
 	}
 }

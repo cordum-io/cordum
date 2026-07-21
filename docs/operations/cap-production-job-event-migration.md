@@ -39,4 +39,7 @@ NATS delivery remains at-least-once: a process can stop after publishing and
 before acknowledging the outbox. The accepted result retains the canonical job
 and dispatch identity; workflow terminal-state handling and saga per-job
 dedupe make replay one logical effect rather than promising impossible
-exactly-once broker delivery.
+exactly-once broker delivery. `sys.internal.job.result.accepted` is a durable
+JetStream subject. Its broker message ID includes job, dispatch ID and attempt,
+so distinct retry attempts remain distinct while the application fence remains
+authoritative.

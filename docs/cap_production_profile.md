@@ -130,7 +130,10 @@ The hash contains the current fence, state, signed message ID/digest and a
 durable outbox effect. State commits before external projection; the outbox is
 acknowledged only after legacy projection, saga handling and the trusted
 `sys.internal.job.result.accepted` publish complete. A crash may redeliver NATS
-traffic, but the logical state/effect is applied once. See the
+traffic, but the logical state/effect is applied once. The accepted-result
+subject is JetStream-durable, and its broker de-duplication identity includes
+the job plus dispatch ID and attempt so a newer retry cannot be collapsed into
+an older attempt. See the
 [job-event migration note](operations/cap-production-job-event-migration.md)
 for rolling-upgrade and legacy-key behavior.
 

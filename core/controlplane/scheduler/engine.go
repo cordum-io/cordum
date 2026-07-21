@@ -1685,11 +1685,8 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 					},
 				},
 			}
-			if e.bus != nil {
-				e.attachServiceToken(pkt)
-				if err := e.bus.Publish(capsdk.SubjectResult, pkt); err != nil {
-					return RetryAfter(err, retryDelayPublish)
-				}
+			if err := e.publishSchedulerResult(pkt); err != nil {
+				return err
 			}
 			if err := e.setJobState(lockCtx, jobID, JobStateSucceeded); err != nil {
 				return RetryAfter(err, retryDelayStore)
@@ -3396,8 +3393,7 @@ func (e *Engine) replayApprovalPublish(traceID string, req *pb.JobRequest, appro
 			return fmt.Errorf("replay approval dlq publish: %w", err)
 		}
 		if approval.PublishTarget == ApprovalPublishTargetDLQAndResult {
-			e.attachServiceToken(packet)
-			if err := e.bus.Publish(capsdk.SubjectResult, packet); err != nil {
+			if err := e.publishSchedulerResult(packet); err != nil {
 				return fmt.Errorf("replay approval result publish: %w", err)
 			}
 		}

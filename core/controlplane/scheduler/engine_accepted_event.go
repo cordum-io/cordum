@@ -16,6 +16,27 @@ func (e *Engine) handleCompatJobResult(packet *pb.BusPacket, result *pb.JobResul
 	return e.publishSchedulerAcceptedPacket(capsdk.SubjectAcceptedResult, packet)
 }
 
+// publishSchedulerResult routes scheduler-originated outcomes directly to the
+// trusted accepted stream in production. Sending them through the worker
+// result subject would incorrectly require a dispatch fence that these local
+// control-plane outcomes do not have.
+func (e *Engine) publishSchedulerResult(packet *pb.BusPacket) error {
+	if e == nil {
+		return errors.New("scheduler result engine unavailable")
+	}
+	if e.productionIdentity.Load() {
+		return e.publishSchedulerAcceptedPacket(capsdk.SubjectAcceptedResult, packet)
+	}
+	if e.bus == nil {
+		return nil
+	}
+	e.attachServiceToken(packet)
+	if err := e.bus.Publish(capsdk.SubjectResult, packet); err != nil {
+		return RetryAfter(err, retryDelayPublish)
+	}
+	return nil
+}
+
 func (e *Engine) publishSchedulerAcceptedPacket(subject string, packet *pb.BusPacket) error {
 	if e.bus == nil {
 		return RetryAfter(errors.New("scheduler accepted-event bus unavailable"), retryDelayPublish)

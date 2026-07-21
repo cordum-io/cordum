@@ -26,6 +26,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   application under `job:{<base64url(job_id)>}:runtime`. Late result,
   progress, or worker-cancel events cannot affect another attempt; a durable
   outbox resumes interrupted projection without reapplying logical state.
+  Scheduler-authored terminal outcomes route directly to the trusted accepted
+  stream; that stream is JetStream-durable, and broker message IDs include the
+  dispatch/attempt so retries of one job are not collapsed together.
 - Safety cache ALLOW entries now bind the active policy snapshot, full
   deterministic request/identity and verified referenced content. Omitted,
   expired, size/type/digest-mismatched or otherwise unverified content cannot

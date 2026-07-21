@@ -1178,14 +1178,19 @@ func (b *NatsBus) initJetStreamFromEnv() {
 //   - sys.heartbeat: workers re-heartbeat every 5-10s, so a missed message self-heals.
 //   - sys.config.changed: 30s poll fallback in config_overlay.go catches missed notifications.
 //   - sys.handshake: workers re-register on the next heartbeat cycle.
-//   - sys.alert, sys.job.progress, sys.workflow.event: informational, no state dependency.
+//   - sys.alert, sys.job.progress, sys.internal.job.progress.accepted,
+//     sys.workflow.event: informational, no state dependency.
+//
+// sys.internal.job.result.accepted is durable because it is the scheduler's
+// fenced authority event and workflow state depends on receiving it.
 //
 // If a new JetStream broadcast subject is added, consider ephemeral consumer behavior
 // during rolling restarts: ephemeral consumers are deleted when disconnected, so messages
 // published between disconnect and reconnect are lost.
 func isDurableSubject(subject string) bool {
 	switch subject {
-	case capsdk.SubjectSubmit, capsdk.SubjectResult, capsdk.SubjectDLQ, capsdk.SubjectAuditExport:
+	case capsdk.SubjectSubmit, capsdk.SubjectResult, capsdk.SubjectAcceptedResult,
+		capsdk.SubjectDLQ, capsdk.SubjectAuditExport:
 		return true
 	}
 	if strings.HasPrefix(subject, "job.") {
@@ -1240,7 +1245,13 @@ func computeMsgID(subject string, packet *pb.BusPacket) string {
 		}
 	case *pb.BusPacket_JobResult:
 		if payload.JobResult != nil {
-			id = payload.JobResult.JobId
+			id = strings.TrimSpace(payload.JobResult.JobId)
+			dispatch := payload.JobResult.GetDispatch()
+			dispatchID := strings.TrimSpace(dispatch.GetDispatchId())
+			if id != "" && dispatchID != "" && dispatch.GetAttempt() > 0 {
+				return "jobresult:" + subject + ":" + id + ":" + dispatchID + ":" +
+					strconv.FormatUint(dispatch.GetAttempt(), 10)
+			}
 		}
 	case *pb.BusPacket_Heartbeat:
 		if payload.Heartbeat != nil {

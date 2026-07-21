@@ -1668,6 +1668,10 @@ func TestApprovalGateTopicStillAutoCompletes(t *testing.T) {
 		if got := jobStore.states[jobID]; got != JobStateSucceeded {
 			t.Fatalf("approval gate %s not auto-completed; got state %s", topic, got)
 		}
+		published := bus.snapshotPublished()
+		if len(published) != 1 || published[0].subject != capsdk.SubjectResult {
+			t.Fatalf("compat approval gate %s published %#v, want one raw result", topic, published)
+		}
 	}
 }
 
