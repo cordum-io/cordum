@@ -100,7 +100,7 @@ func (h *productionHarness) startNATS() {
 func (h *productionHarness) configureCordumTLS() {
 	h.t.Setenv("CORDUM_ENV", "production")
 	h.t.Setenv("CORDUM_PRODUCTION", "true")
-	h.t.Setenv("CORDUM_NATS_ALLOW_NOAUTH", "true")
+	h.t.Setenv("CORDUM_NATS_ALLOW_NOAUTH", "")
 	h.t.Setenv("NATS_USE_JETSTREAM", "false")
 	h.t.Setenv("NATS_TLS_CA", h.tls.caPath)
 	h.t.Setenv("NATS_TLS_CERT", h.tls.clientCert)
@@ -177,6 +177,9 @@ func (h *productionHarness) installTransportBoundary() *scheduler.SessionTokenMi
 	target, err := bus.NewNatsBus(h.natsURL())
 	if err != nil {
 		h.t.Fatalf("new scheduler NATS bus: %v", err)
+	}
+	if !target.ProductionTransportReady() {
+		h.t.Fatal("mutual-TLS NATS did not satisfy authenticated transport readiness")
 	}
 	h.bus = target
 	middleware := scheduler.NewSessionTokenMiddleware(

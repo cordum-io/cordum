@@ -86,16 +86,17 @@ func TestCompatProfileIsNotProduction(t *testing.T) {
 
 func fullReadiness() Readiness {
 	return Readiness{
-		HandshakeEnforced:      true,
-		RawAdmissionInstalled:  true,
-		ReplayStoreReady:       true,
-		TrustStoreReady:        true,
-		SessionResolverReady:   true,
-		OutboundSignerReady:    true,
-		ResourceAllowlistReady: true,
-		SafetyKernelReady:      true,
-		OutputSafetyEnabled:    true,
-		FailClosedModes:        true,
+		AuthenticatedTransportReady: true,
+		HandshakeEnforced:           true,
+		RawAdmissionInstalled:       true,
+		ReplayStoreReady:            true,
+		TrustStoreReady:             true,
+		SessionResolverReady:        true,
+		OutboundSignerReady:         true,
+		ResourceAllowlistReady:      true,
+		SafetyKernelReady:           true,
+		OutputSafetyEnabled:         true,
+		FailClosedModes:             true,
 	}
 }
 
@@ -109,6 +110,7 @@ func TestReadinessValidateAcceptsFullyInitializedDependencies(t *testing.T) {
 // zero-value Readiness must never be treated as ready.
 func TestReadinessValidateRejectsEachMissingDependency(t *testing.T) {
 	clear := map[string]func(*Readiness){
+		"authenticated_transport": func(r *Readiness) { r.AuthenticatedTransportReady = false },
 		"handshake_enforced":      func(r *Readiness) { r.HandshakeEnforced = false },
 		"raw_admission_installed": func(r *Readiness) { r.RawAdmissionInstalled = false },
 		"replay_store":            func(r *Readiness) { r.ReplayStoreReady = false },

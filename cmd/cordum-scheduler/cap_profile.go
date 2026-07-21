@@ -27,6 +27,9 @@ const (
 // capprofile.Readiness; nothing here is inferred from a packet or from
 // operator intent alone.
 type schedulerProductionDeps struct {
+	// transportAuthenticated reflects the actual NATS connection posture:
+	// verified TLS plus broker credentials or a client certificate.
+	transportAuthenticated bool
 	// handshakeEnforcing is true only in enforce mode. warn/off cannot
 	// authenticate a worker, so they cannot support CAP-PRODUCTION.
 	handshakeEnforcing bool
@@ -54,16 +57,17 @@ type schedulerProductionDeps struct {
 // readiness projects the concrete handles onto the shared readiness contract.
 func (d schedulerProductionDeps) readiness() capprofile.Readiness {
 	return capprofile.Readiness{
-		HandshakeEnforced:      d.handshakeEnforcing,
-		RawAdmissionInstalled:  d.rawAdmissionInstalled,
-		ReplayStoreReady:       d.replayStoreReachable,
-		TrustStoreReady:        d.trustStoreConfigured,
-		SessionResolverReady:   d.sessionResolverReady,
-		OutboundSignerReady:    d.outboundSignerReady,
-		ResourceAllowlistReady: d.resourceAllowlistted,
-		SafetyKernelReady:      d.safetyConfigured,
-		OutputSafetyEnabled:    d.outputSafetyConfigured,
-		FailClosedModes:        d.failClosed,
+		AuthenticatedTransportReady: d.transportAuthenticated,
+		HandshakeEnforced:           d.handshakeEnforcing,
+		RawAdmissionInstalled:       d.rawAdmissionInstalled,
+		ReplayStoreReady:            d.replayStoreReachable,
+		TrustStoreReady:             d.trustStoreConfigured,
+		SessionResolverReady:        d.sessionResolverReady,
+		OutboundSignerReady:         d.outboundSignerReady,
+		ResourceAllowlistReady:      d.resourceAllowlistted,
+		SafetyKernelReady:           d.safetyConfigured,
+		OutputSafetyEnabled:         d.outputSafetyConfigured,
+		FailClosedModes:             d.failClosed,
 	}
 }
 

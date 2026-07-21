@@ -111,6 +111,7 @@ func TestResolveSchedulerProfileDefaultsToCompat(t *testing.T) {
 
 func fullySatisfiedDeps() schedulerProductionDeps {
 	return schedulerProductionDeps{
+		transportAuthenticated: true,
 		handshakeEnforcing:     true,
 		safetyConfigured:       true,
 		outputSafetyConfigured: true,
@@ -149,6 +150,14 @@ func TestSchedulerCapabilitiesAdvertiseProductionOnlyWhenFullyReady(t *testing.T
 	notReady := schedulerCapabilities(capprofile.Production, partial.readiness())
 	if notReady[capprofile.CapabilityProduction] {
 		t.Fatalf("scheduler advertised %s without a reachable replay store", capprofile.CapabilityProduction)
+	}
+}
+
+func TestUnauthenticatedTransportBlocksProduction(t *testing.T) {
+	deps := fullySatisfiedDeps()
+	deps.transportAuthenticated = false
+	if capprofile.Production.AdvertiseProduction(deps.readiness()) {
+		t.Fatal("production advertised without authenticated transport")
 	}
 }
 
@@ -238,7 +247,7 @@ func TestReadinessProjectionIsTotal(t *testing.T) {
 	}
 	err := r.Validate()
 	for _, want := range []string{
-		"handshake_enforced", "raw_admission_installed", "replay_store", "trust_store",
+		"authenticated_transport", "handshake_enforced", "raw_admission_installed", "replay_store", "trust_store",
 		"session_resolver", "outbound_signer", "resource_allowlist", "safety_kernel",
 		"output_safety", "fail_closed_modes",
 	} {

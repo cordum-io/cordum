@@ -13,7 +13,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `cap_production` only after authenticated handshake enforcement, exact-wire
   raw admission, replay, local key/session authority, outbound subject-bound
   signing, the sealed resource allowlist, input/output safety, and closed fail
-  modes are live. Unknown profile values or missing dependencies refuse boot;
+  modes are live. Readiness derives authenticated NATS transport from the
+  established connection configuration (verified TLS plus credentials or
+  mutual TLS), so setting only the CAP profile cannot bypass transport checks.
+  Unknown profile values or missing dependencies refuse boot;
   the shipped default remains `compat`.
 - Bound signed messages to versioned canonical bytes carrying a random message
   ID, actual subject audience, expiry and key ID. Exact redelivery is

@@ -229,13 +229,10 @@ func (s *SagaManager) Rollback(ctx context.Context, workflowID string) error {
 
 		var req pb.JobRequest
 		if err := proto.Unmarshal(data, &req); err != nil {
-			rawHex := hex.EncodeToString(data)
-			if len(rawHex) > 128 {
-				rawHex = rawHex[:128] + "..."
-			}
+			rawDigest := sha256.Sum256(data)
 			slog.Error("unmarshal compensation failed",
 				"workflow_id", workflowID, "error", err,
-				"raw_bytes_len", len(data), "raw_hex", rawHex)
+				"raw_bytes_len", len(data), "raw_sha256", hex.EncodeToString(rawDigest[:]))
 			if s.metrics != nil {
 				s.metrics.IncSagaUnmarshalError()
 			}

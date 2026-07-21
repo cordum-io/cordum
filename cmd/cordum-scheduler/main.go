@@ -509,6 +509,7 @@ func main() {
 	// or background goroutine. Dependency construction and live probes above are
 	// side-effect bounded; runtime activation happens only after this gate.
 	capDeps := schedulerProductionDeps{
+		transportAuthenticated: natsBus.ProductionTransportReady(),
 		handshakeEnforcing:     handshakeConfig.mode.EnforcesHandshake(),
 		safetyConfigured:       safetyClient != nil,
 		outputSafetyConfigured: outputSafetyClient != nil,

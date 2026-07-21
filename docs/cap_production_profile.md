@@ -45,8 +45,11 @@ OUTPUT_POLICY_FAIL_MODE=closed
 ```
 
 `CORDUM_ENV=production` makes the NATS constructor reject plaintext and missing
-broker authentication. Use `tls://`, `NATS_TLS_CA`, `NATS_TLS_CERT`,
-`NATS_TLS_KEY`, and one of username/password, token or NKey authentication.
+authentication early. CAP-PRODUCTION independently checks the connection's
+actual posture before advertising or subscribing: it requires a `tls://` URL,
+server-certificate verification, and either a client certificate or NATS
+username/password, token, or NKey authentication. Configure `NATS_TLS_CA` and,
+for mutual TLS, `NATS_TLS_CERT` plus `NATS_TLS_KEY`.
 Do not use `CORDUM_NATS_ALLOW_PLAINTEXT`, `CORDUM_NATS_ALLOW_NOAUTH`, or
 `NATS_TLS_INSECURE` in this profile.
 
@@ -75,6 +78,7 @@ The final error lists every missing dependency in this stable order:
 
 | Readiness name | Meaning and remediation |
 |---|---|
+| `authenticated_transport` | The established NATS configuration lacks verified TLS, broker credentials, or a client certificate. Plaintext, `NATS_TLS_INSECURE`, and anonymous TLS cannot activate this profile. |
 | `handshake_enforced` | `CORDUM_SDK_HANDSHAKE` is not `enforce`, or its authority bundle is incomplete. |
 | `raw_admission_installed` | The exact received-wire verifier was not installed and frozen on the NATS bus. Inspect the earlier `CAP-PRODUCTION transport boundary unavailable` error. |
 | `replay_store` | The two-second Redis replay-store probe failed. Restore Redis rather than bypassing replay defense. |

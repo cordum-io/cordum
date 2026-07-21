@@ -30,6 +30,10 @@ type NatsBus struct {
 	js        nats.JetStreamContext
 	jsEnabled bool
 	ackWait   time.Duration
+	// productionTransportReady records the immutable connection posture
+	// established at dial time. CAP-PRODUCTION startup reads it instead of
+	// inferring transport security from deployment intent.
+	productionTransportReady bool
 
 	subsMu sync.Mutex
 	subs   []*nats.Subscription
@@ -118,15 +122,16 @@ var (
 //
 // In production mode (CORDUM_ENV=production or CORDUM_PRODUCTION=true),
 // non-TLS URLs are rejected unless CORDUM_NATS_ALLOW_PLAINTEXT=true.
-// Authentication is configured via NATS_USERNAME/NATS_PASSWORD, NATS_TOKEN,
-// or NATS_NKEY env vars. In production, NewNatsBus refuses to start when no
-// auth mechanism is configured unless CORDUM_NATS_ALLOW_NOAUTH=true is set as
-// an explicit override (which still logs a warning).
+// Authentication is configured via a TLS client certificate,
+// NATS_USERNAME/NATS_PASSWORD, NATS_TOKEN, or NATS_NKEY. In production,
+// NewNatsBus refuses to start when none is configured unless
+// CORDUM_NATS_ALLOW_NOAUTH=true is set as an explicit override (which still
+// logs a warning and cannot satisfy CAP-PRODUCTION readiness).
 func NewNatsBus(url string) (*NatsBus, error) {
 	production := env.IsProduction()
 
 	// Enforce TLS in production: reject nats:// unless explicitly allowed.
-	if production && !strings.HasPrefix(url, "tls://") {
+	if production && !allNATSURLsUseTLS(url) {
 		if !parseBoolEnv(envNATSAllowPlain) {
 			return nil, fmt.Errorf("nats TLS required in production: use tls:// scheme or set %s=true", envNATSAllowPlain)
 		}
@@ -151,8 +156,10 @@ func NewNatsBus(url string) (*NatsBus, error) {
 			slog.Info("bus: connection closed")
 		}),
 	}
-	if strings.HasPrefix(url, "tls://") {
-		if tlsConfig, err := natsTLSConfigFromEnv(); err != nil {
+	var tlsConfig *tls.Config
+	if allNATSURLsUseTLS(url) {
+		var err error
+		if tlsConfig, err = natsTLSConfigFromEnv(); err != nil {
 			return nil, fmt.Errorf("nats tls config: %w", err)
 		} else if tlsConfig != nil {
 			opts = append(opts, nats.Secure(tlsConfig))
@@ -161,12 +168,14 @@ func NewNatsBus(url string) (*NatsBus, error) {
 
 	// Authentication: try username/password, then token, then NKey.
 	authConfigured := natsApplyAuth(&opts)
-	if production && !authConfigured {
+	transportAuthConfigured := authConfigured || hasClientCertificate(tlsConfig)
+	if production && !transportAuthConfigured {
 		if !parseBoolEnv(envNATSAllowNoAuth) {
-			return nil, fmt.Errorf("nats authentication required in production: set NATS_USERNAME+NATS_PASSWORD, NATS_TOKEN, or NATS_NKEY — or set %s=true to override", envNATSAllowNoAuth)
+			return nil, fmt.Errorf("nats authentication required in production: set NATS_TLS_CERT+NATS_TLS_KEY, NATS_USERNAME+NATS_PASSWORD, NATS_TOKEN, or NATS_NKEY — or set %s=true to override", envNATSAllowNoAuth)
 		}
 		slog.Warn("bus: NATS authentication not configured in production — override active", "override", envNATSAllowNoAuth)
 	}
+	b.productionTransportReady = productionTransportReady(url, tlsConfig, authConfigured)
 
 	nc, err := nats.Connect(url, opts...)
 	if err != nil {
@@ -175,6 +184,35 @@ func NewNatsBus(url string) (*NatsBus, error) {
 	b.nc = nc
 	b.initJetStreamFromEnv()
 	return b, nil
+}
+
+func hasClientCertificate(cfg *tls.Config) bool {
+	return cfg != nil && len(cfg.Certificates) > 0
+}
+
+func allNATSURLsUseTLS(raw string) bool {
+	servers := strings.Split(raw, ",")
+	if len(servers) == 0 {
+		return false
+	}
+	for _, server := range servers {
+		if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(server)), "tls://") {
+			return false
+		}
+	}
+	return true
+}
+
+func productionTransportReady(url string, cfg *tls.Config, authConfigured bool) bool {
+	verifiedTLS := cfg == nil || !cfg.InsecureSkipVerify
+	return allNATSURLsUseTLS(url) && verifiedTLS && (authConfigured || hasClientCertificate(cfg))
+}
+
+// ProductionTransportReady reports whether the established connection was
+// configured with verified TLS plus broker credentials or a client
+// certificate. Its zero value and a nil receiver both fail closed.
+func (b *NatsBus) ProductionTransportReady() bool {
+	return b != nil && b.productionTransportReady
 }
 
 // natsApplyAuth reads auth env vars and appends the appropriate NATS option.

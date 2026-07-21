@@ -85,6 +85,9 @@ func FromEnv() (Profile, error) { return Parse(os.Getenv(EnvVar)) }
 // initialized. Its zero value is "nothing ready", so a caller that forgets to
 // populate it can never accidentally advertise production.
 type Readiness struct {
+	// AuthenticatedTransportReady: the established broker connection uses
+	// verified TLS plus broker credentials or a client certificate.
+	AuthenticatedTransportReady bool
 	// HandshakeEnforced: the authenticated worker handshake is in enforcing
 	// mode (not observe/permissive).
 	HandshakeEnforced bool
@@ -121,6 +124,7 @@ func (r Readiness) missing() []string {
 		name  string
 		ready bool
 	}{
+		{"authenticated_transport", r.AuthenticatedTransportReady},
 		{"handshake_enforced", r.HandshakeEnforced},
 		{"raw_admission_installed", r.RawAdmissionInstalled},
 		{"replay_store", r.ReplayStoreReady},
