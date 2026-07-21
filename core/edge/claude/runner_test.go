@@ -426,6 +426,43 @@ func TestRunStrictModeDeniesWhenAgentdTimesOut(t *testing.T) {
 	}
 }
 
+// TestRunEnforceModeDeniesPreToolUseOnAgentdTimeoutWithoutFailClosed is the
+// regression test backing the cordumctl `edge doctor` fix: enforce mode
+// denies risky/unclassified PreToolUse actions on an agentd timeout via its
+// own enforceMode(opts) check in handleAgentdError, independent of
+// CORDUM_AGENTD_FAIL_CLOSED. Unlike TestRunStrictModeDeniesWhenAgentdTimesOut
+// (which sets CORDUM_AGENTD_FAIL_CLOSED=true), this pins the plain "enforce"
+// policy-mode path with that env var left unset — the doctor must not warn
+// operators that this configuration is fail-open, because it isn't.
+func TestRunEnforceModeDeniesPreToolUseOnAgentdTimeoutWithoutFailClosed(t *testing.T) {
+	agentd := &fakeAgentdClient{fn: func(ctx context.Context, req AgentdRequest) (AgentdDecision, error) {
+		<-ctx.Done()
+		return AgentdDecision{}, ctx.Err()
+	}}
+
+	code, stdout, stderr := runHook(t, RunOptions{
+		Args:   []string{"claude", "pre-tool-use"},
+		Stdin:  hookInput(`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"npm test"}}`),
+		Agentd: agentd,
+		Env: map[string]string{
+			"CORDUM_EDGE_MODE": "enforce",
+			// CORDUM_AGENTD_FAIL_CLOSED is intentionally left unset/empty:
+			// enforce's PreToolUse protection must not depend on it.
+		},
+		Timeout: 50 * time.Millisecond,
+	})
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, `"permissionDecision":"deny"`) {
+		t.Fatalf("stdout = %q, want a deny decision — enforce must deny PreToolUse on agentd timeout regardless of CORDUM_AGENTD_FAIL_CLOSED", stdout)
+	}
+	if !strings.Contains(stderr, "agentd_timeout") {
+		t.Fatalf("stderr missing timeout code: %q", stderr)
+	}
+}
+
 func TestRunRejectsHookTimeoutAtClaudeDeadline(t *testing.T) {
 	agentd := &fakeAgentdClient{}
 	code, stdout, stderr := runHook(t, RunOptions{

@@ -134,7 +134,7 @@ func edgeCheckAgentdStatus(ctx context.Context, env *edgeDoctorEnv) checkResult 
 		return checkResult{State: stateFail, Detail: err.Error(), Fix: "use a loopback HTTP CORDUM_AGENTD_URL"}
 	}
 	if err := env.dialTCP(ctx, host); err != nil {
-		return checkResult{State: stateFail, Detail: "local agentd not reachable at " + host + "; " + edgeModeImplication(env.policyMode), Fix: "start cordumctl edge claude or cordum-agentd"}
+		return checkResult{State: stateFail, Detail: "local agentd not reachable at " + host + "; " + edgeModeImplication(env), Fix: "start cordumctl edge claude or cordum-agentd"}
 	}
 	return checkResult{State: stateOK, Detail: "loopback listener reachable at " + host}
 }
@@ -182,7 +182,7 @@ func edgeCheckPolicyMode(_ context.Context, env *edgeDoctorEnv) checkResult {
 	case "observe":
 		return checkResult{State: stateOK, Detail: "observe degrades open: actions may continue with degraded evidence"}
 	case "enforce":
-		return checkResult{State: stateOK, Detail: "enforce degrades closed for risky/unknown actions; fix failures before demos"}
+		return edgeEnforcePostureResult(env)
 	case "enterprise-strict":
 		return checkResult{State: stateWarn, Detail: "enterprise-strict fails closed if Gateway, Safety Kernel, agentd, hook, or settings are unavailable", Fix: "deploy managed settings and supervised agentd bootstrap"}
 	default:
