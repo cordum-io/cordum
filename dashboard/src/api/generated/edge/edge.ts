@@ -49,6 +49,8 @@ import type {
   EdgeForbiddenResponse,
   EdgeHeartbeatResponse,
   EdgeInternalServerErrorResponse,
+  EdgeLLMIngestRequest,
+  EdgeLLMIngestResponse,
   EdgeMaxExecutionsExceededResponse,
   EdgeNotFoundResponse,
   EdgePayloadTooLargeResponse,
@@ -3549,6 +3551,116 @@ export const useIngestEdgeRuntimeEvents = <
   TContext
 > => {
   const mutationOptions = getIngestEdgeRuntimeEventsMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+/**
+ * Disabled by default. When `CORDUM_EDGE_LLM_INGEST_ENABLED` is unset (or non-truthy) the route returns 503 `service_unavailable` and persists nothing. When enabled, an authenticated LLM proxy holding `edge.llm.ingest` submits a bounded batch of intercepted model interactions (prompt/response/cost). The gateway redacts prompt and response content via the Edge redactor, classifies and records each turn as an `AgentActionEvent` with `layer=llm` and `decision=RECORDED`, and returns a per-event advisory decision (`record` | `redact`) plus the redacted content and detected secret finding types. The ALLOW/DENY policy decision is NOT made here — a proxy that must block a prompt pairs this call with `POST /api/v1/edge/evaluate` (layer-agnostic, already classifies `layer=llm`). The `source.source_id` must match the authenticated proxy principal and the referenced session/execution must exist in the tenant under the `llm-proxy` execution adapter. An optional bounded `nonce` is deduplicated against a Redis replay window scoped to `(tenant, llm-proxy)`. Raw provider keys, headers, cookies, and authorization values are rejected at the strict-schema decode boundary. All-or-nothing batch acceptance. See `docs/edge/llm-proxy-governance.md`.
+ * @summary Ingest intercepted LLM chat turns from a trusted proxy
+ */
+export const ingestEdgeLLMEvents = (
+  edgeLLMIngestRequest: EdgeLLMIngestRequest,
+  signal?: AbortSignal,
+) => {
+  return apiClient<EdgeLLMIngestResponse | EdgeLLMIngestResponse>({
+    url: `/api/v1/edge/llm/events`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: edgeLLMIngestRequest,
+    signal,
+  });
+};
+
+export const getIngestEdgeLLMEventsMutationOptions = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgePayloadTooLargeResponse
+    | EdgeError
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof ingestEdgeLLMEvents>>,
+    TError,
+    { data: EdgeLLMIngestRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof ingestEdgeLLMEvents>>,
+  TError,
+  { data: EdgeLLMIngestRequest },
+  TContext
+> => {
+  const mutationKey = ["ingestEdgeLLMEvents"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof ingestEdgeLLMEvents>>,
+    { data: EdgeLLMIngestRequest }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return ingestEdgeLLMEvents(data);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type IngestEdgeLLMEventsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof ingestEdgeLLMEvents>>
+>;
+export type IngestEdgeLLMEventsMutationBody = EdgeLLMIngestRequest;
+export type IngestEdgeLLMEventsMutationError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeNotFoundResponse
+  | EdgePayloadTooLargeResponse
+  | EdgeError
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
+
+/**
+ * @summary Ingest intercepted LLM chat turns from a trusted proxy
+ */
+export const useIngestEdgeLLMEvents = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgePayloadTooLargeResponse
+    | EdgeError
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof ingestEdgeLLMEvents>>,
+      TError,
+      { data: EdgeLLMIngestRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof ingestEdgeLLMEvents>>,
+  TError,
+  { data: EdgeLLMIngestRequest },
+  TContext
+> => {
+  const mutationOptions = getIngestEdgeLLMEventsMutationOptions(options);
 
   return useMutation(mutationOptions, queryClient);
 };

@@ -1,6 +1,6 @@
 # Cordum Roadmap
 
-> **Last Updated:** February 20, 2026
+> **Last Updated:** June 24, 2026
 
 This roadmap outlines our vision for Cordum's evolution. Priorities may shift based on community feedback and production learnings.
 
@@ -37,6 +37,39 @@ The path to v1.0.0 focuses on **production hardening** and **API stability**. Ba
 - [ ] Audit export (JSON, CSV, SIEM)
 - [ ] Air-gapped deployment guide
 - [ ] FIPS 140-2 compliance mode
+
+---
+
+## Agent Governance: GitHub Copilot (Total Copilot Governance)
+
+> **Goal:** govern **every Copilot chat turn and every action** (code edits, terminal,
+> tool calls) with real enforcement — secrets never reach the model provider, every
+> interaction is audited, and dangerous actions are blocked or routed to human
+> approval. Built as a defense-in-depth stack on Cordum Edge (the same
+> `cordum-hook → cordum-agentd → safety kernel` path used for Claude Code).
+>
+> **Enforcement model:** *cooperative* layers (hooks) govern everything an honest
+> client routes through them and give a full audit trail; the *mandatory* layers
+> (LLM proxy, OS sandbox) hold even against active bypass. A demo / trusted-team
+> deployment needs only the cooperative + proxy layers; the sandbox and fleet
+> rollout are production hardening.
+
+### Shipped
+- [x] **Phase 0 — Hook contract validation** — confirmed VS Code Copilot Agent Hooks (`UserPromptSubmit` / `PreToolUse` / `PostToolUse`) match Claude Code's contract, so Cordum's Edge stack is directly reusable with near-zero new surface.
+- [x] **Phase 1 — Copilot Edge hook adapter** (PR #371) — `cordum-hook copilot <event>` governs **every chat** (`UserPromptSubmit`) and **every tool action** (`PreToolUse`, blockable) through agentd → safety kernel; `AdapterCopilotHook` attribution; managed hook-settings generator. Reuses classifier / redaction / approval / fail-closed unchanged.
+- [x] **Phase 2 — LLM-proxy ingest** (PR #372) — `core/edge/llmingest` + `POST /api/v1/edge/llm/events`: an enterprise LLM proxy routes every model request/response through Cordum for **mandatory redaction + audit** (secrets never reach the provider, even if a hook is bypassed). Records each turn as a `layer=llm` event and returns a per-event `record` / `redact` advisory plus secret finding *types*. Block/deny reuses the layer-agnostic `POST /api/v1/edge/evaluate`. Disabled by default (`CORDUM_EDGE_LLM_INGEST_ENABLED`). See `docs/edge/llm-proxy-governance.md`.
+- [x] **Copilot MCP integration** (PR #370) — `copilot.Store` (Redis) + ingestion tap + session-id threading so Copilot's use of Cordum's own MCP tools is recorded into Copilot sessions.
+
+### In progress / needed
+- [ ] **Phase 3 — MCP broker hardening** — govern Copilot's *external* tool calls (GitHub/Jira/AWS): scope-filter fronted-upstream `tools/list`, make per-identity authz on upstream `tools/call` mandatory (independent of `policy_gate_enabled`), per-request multi-tenant/multi-upstream selection, add `AllowedUpstreams` to `AgentIdentity`. _Needed only if Copilot uses Cordum-brokered MCP servers._
+- [ ] **Phase 4 — CAP governed execution** — effectful work Copilot delegates runs as a CAP job/workflow under safety-before-dispatch + output policy/quarantine + audit. Mostly reuse; land PR #370 and document the pattern. _Needed only if Copilot triggers server-side jobs/deploys._
+- [ ] **Phase 5 — OS / devcontainer sandbox** — kernel-level block of native file/terminal that hooks can only observe (agentd / eBPF / Tetragon via the `runtime-sidecar` adapter + `core/edge/runtimeingest`). The no-escape backstop. _Needed only to defend against active bypass or for strict compliance._
+- [ ] **Phase 6 — Per-developer identity + fleet rollout** — per-dev SSO identity (OIDC → auto-provisioned agent identity, no shared key), MDM-managed distribution of the hook + LLM-proxy CA + MCP config (extended `cordumctl edge managed-settings`), hosted HA gateway + SIEM export. _Needed for org-wide / fleet scale._
+
+### Deployment guidance
+- **Demo / trusted internal team:** Phases 1 + 2 are the complete story (every chat + action governed, audited, secrets redacted). Add 3/4 only if MCP / CAP are in the scenario; the sandbox and fleet rollout are roadmap, not required.
+- **Production at scale / adversarial threat model:** add Phase 5 (mandatory exec/FS enforcement) and Phase 6 (per-dev identity + MDM rollout).
+- Reference docs: `docs/edge/llm-proxy-governance.md`, `docs/edge/managed-settings-deploy.md`, `docs/edge/environment-variables.md`.
 
 ---
 
@@ -376,5 +409,5 @@ We track these metrics to measure progress:
 
 ---
 
-**Last updated:** February 20, 2026
-**Next review:** April 2026
+**Last updated:** June 24, 2026
+**Next review:** July 2026
