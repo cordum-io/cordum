@@ -174,8 +174,91 @@ func computeClassificationCompleteness(c ActionClassification) (bool, []string) 
 	return false, missing
 }
 
-func classifyHookEvent(event AgentActionEvent, out *ActionClassification) {
+// agentProductGitHubCopilot is the CORDUM_AGENT_PRODUCT value cordum-hook's
+// copilot adapter stamps on every GitHub Copilot (VS Code agent mode) hook
+// event when the caller hasn't already set one — see copilotEnv in
+// cmd/cordum-hook/main.go and the hard-coded "github-copilot" env value
+// GenerateHookSettings writes in core/edge/copilot/hooksettings.go. Matched
+// case-insensitively below because AgentProduct is caller-suppliable
+// (CORDUM_AGENT_PRODUCT) and is not itself a trusted/normalized enum.
+const agentProductGitHubCopilot = "github-copilot"
+
+// copilotToolNameAliases maps GitHub Copilot's VS Code agent-mode tool names
+// to the Claude Code tool-name buckets classifyHookEvent's switch already
+// understands. dispatchCopilot (cmd/cordum-hook/main.go) reuses claude.Run
+// unchanged for Copilot hook events because the hook JSON *envelope* (
+// hook_event_name/tool_name/tool_input) matches Claude Code's — but the
+// *tool_name values inside that envelope* are Copilot's own vocabulary
+// (run_in_terminal, read_file, ...), not Claude's (bash, read, ...). Without
+// this alias table every Copilot tool call falls into classifyHookEvent's
+// default branch (capability=edge.unknown) and none of the capability-keyed
+// policy rules (claude-code.deny-destructive-shell on exec.shell,
+// claude-code.require-approval-for-edits on file.write, deny-secret-reads on
+// the `secrets` risk tag) ever fire for Copilot, no matter how dangerous the
+// underlying command is.
+//
+// Tool names sourced from the task spec / VS Code Copilot Chat agent-mode
+// built-in tools; this repo has no other authoritative list (verified via
+// repo-wide search) as of this fix. Extend this table if Copilot ships
+// additional built-in tools that map cleanly onto an existing bucket.
+var copilotToolNameAliases = map[string]string{
+	// Shell execution — the destructive-shell / network / install detectors
+	// in classifyBashCommand all operate on the free-form command string
+	// (read via inputStringAny's command_redacted/command fallback, which
+	// matches Copilot's run_in_terminal `command` field), so aliasing the
+	// tool name alone is sufficient to route destructive commands like
+	// `rm -rf` through the same detection Claude Code's Bash tool gets.
+	"run_in_terminal": "bash",
+
+	// Reads.
+	"read_file": "read",
+
+	// Edits to an existing file.
+	"insert_edit_into_file":        "edit",
+	"replace_string_in_file":       "edit",
+	"multi_replace_string_in_file": "multiedit",
+	"apply_patch":                  "edit",
+
+	// New file / directory creation — routed through the same "write"
+	// bucket as Claude's Write tool (capability=file.write).
+	"create_file":      "write",
+	"create_directory": "write",
+
+	// Deletion.
+	"delete_file": "delete",
+
+	// Directory/content search. classifyHookEvent's switch does not
+	// currently special-case "glob"/"grep" (Claude Code tool calls with
+	// those names also fall to the default branch today), so these still
+	// land on the same review_required default as everything else — listed
+	// here so the alias table stays forward-compatible if glob/grep
+	// handling is added later, and so the mapping intent is explicit.
+	"list_dir":        "glob",
+	"file_search":     "glob",
+	"grep_search":     "grep",
+	"semantic_search": "grep",
+}
+
+// normalizeHookToolName folds event.ToolName into the lowercase bucket
+// classifyHookEvent's switch understands. Claude Code events are returned
+// unchanged (byte-for-byte identical behavior to before this function
+// existed). Copilot-sourced events (event.AgentProduct == "github-copilot")
+// are first looked up in copilotToolNameAliases; a Copilot tool name with no
+// known alias falls through unchanged, same as an unrecognized Claude Code
+// tool name, and lands on the fail-closed default branch below.
+func normalizeHookToolName(event AgentActionEvent) string {
 	toolFold := strings.ToLower(strings.TrimSpace(event.ToolName))
+	if !strings.EqualFold(strings.TrimSpace(event.AgentProduct), agentProductGitHubCopilot) {
+		return toolFold
+	}
+	if alias, ok := copilotToolNameAliases[toolFold]; ok {
+		return alias
+	}
+	return toolFold
+}
+
+func classifyHookEvent(event AgentActionEvent, out *ActionClassification) {
+	toolFold := normalizeHookToolName(event)
 	// EDGE-041: cordum-hook's mapper renames Claude tool_input fields with a
 	// `_redacted` suffix so the dashboard sanitizer renders them. Classifier
 	// reads accept BOTH the renamed and bare keys so historical events stored
@@ -187,7 +270,7 @@ func classifyHookEvent(event AgentActionEvent, out *ActionClassification) {
 	case "read":
 		classifyFilePath(inputStringAny(event.InputRedacted, "file_path_redacted", "file_path", "path_redacted", "path"), false, out)
 	case "edit", "write", "multiedit":
-		classifyFilePath(inputStringAny(event.InputRedacted, "file_path_redacted", "file_path", "path_redacted", "path"), true, out)
+		classifyFileEdit(event.InputRedacted, out)
 	case "grep", "glob":
 		// EDGE-073: Grep/Glob read the filesystem but previously fell through to
 		// the unknown/default branch, so a `Grep path=.env` / `Glob **/.env`
@@ -310,6 +393,97 @@ func classifyFilePath(path string, write bool, out *ActionClassification) {
 	if out.Labels["path.class"] == "source_code" {
 		out.RiskTags = append(out.RiskTags, "source_code")
 	}
+}
+
+// classifyFileEdit classifies an edit/write/multiedit action across every file
+// the tool targets. Beyond the standard file_path/path fields it also covers
+// Copilot tool payloads that carry their targets elsewhere:
+// multi_replace_string_in_file lists them under replacements[].filePath, and
+// apply_patch embeds them in the patch body's file headers. Without this the
+// classifier would read an empty path for those tools and skip secrets/
+// source_code tagging. When several files are edited at once the most sensitive
+// path class wins.
+func classifyFileEdit(input map[string]any, out *ActionClassification) {
+	paths := editFilePaths(input)
+	var primary string
+	if len(paths) > 0 {
+		primary = paths[0]
+	}
+	classifyFilePath(primary, true, out)
+	for _, p := range paths[min(1, len(paths)):] {
+		labels := classifyPathLabels(p)
+		mergePathLabels(out.Labels, labels)
+		switch labels["path.class"] {
+		case "secret":
+			addRiskTagOnce(out, "secrets")
+		case "source_code":
+			addRiskTagOnce(out, "source_code")
+		}
+	}
+}
+
+// editFilePaths returns every file path an edit/write tool targets. The standard
+// file_path/path field comes first (preserving single-file behavior); it then
+// appends multi_replace_string_in_file's replacements[].filePath entries and any
+// file headers parsed from an apply_patch patch body.
+func editFilePaths(input map[string]any) []string {
+	var paths []string
+	if p := inputStringAny(input, "file_path_redacted", "file_path", "path_redacted", "path"); p != "" {
+		paths = append(paths, p)
+	}
+	paths = append(paths, replacementFilePaths(input)...)
+	if patch := inputStringAny(input, "patch_redacted", "patch", "input_redacted", "input"); patch != "" {
+		paths = append(paths, applyPatchFilePaths(patch)...)
+	}
+	return paths
+}
+
+// replacementFilePaths pulls filePath values out of a
+// multi_replace_string_in_file replacements array.
+func replacementFilePaths(input map[string]any) []string {
+	list, ok := input["replacements"].([]any)
+	if !ok {
+		return nil
+	}
+	var paths []string
+	for _, item := range list {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if p := inputStringAny(m, "filePath_redacted", "filePath", "file_path_redacted", "file_path", "path"); p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths
+}
+
+// applyPatchFilePaths extracts the file paths from an apply_patch (V4A) patch
+// body, whose file headers look like `*** Update File: path`, `*** Add File:
+// path`, `*** Delete File: path`, or `*** Move to: path`.
+func applyPatchFilePaths(patch string) []string {
+	var paths []string
+	for _, line := range strings.Split(patch, "\n") {
+		trimmed := strings.TrimLeft(strings.TrimSpace(line), "* ")
+		for _, prefix := range []string{"Update File:", "Add File:", "Delete File:", "Move to:"} {
+			if rest, ok := strings.CutPrefix(trimmed, prefix); ok {
+				if p := strings.TrimSpace(rest); p != "" {
+					paths = append(paths, p)
+				}
+				break
+			}
+		}
+	}
+	return paths
+}
+
+func addRiskTagOnce(out *ActionClassification, tag string) {
+	for _, existing := range out.RiskTags {
+		if existing == tag {
+			return
+		}
+	}
+	out.RiskTags = append(out.RiskTags, tag)
 }
 
 func classifyFileDelete(path string, out *ActionClassification) {
@@ -712,13 +886,19 @@ func classifyFileSearch(pathArg, patternArg string, out *ActionClassification) {
 	out.Capability = capabilityFileRead
 	out.RiskTags = []string{"filesystem", "read"}
 	addPathLabels(pathArg, out)
+	priorClass := out.Labels["path.class"]
 	// A benign base path can still target secret files through the glob/regex
 	// pattern (e.g. base="." pattern="**/.env"); scan the pattern with the same
 	// path-like-gated secret check used for shell arguments.
-	if out.Labels["path.class"] != "secret" && referencesSecretPath(patternArg) {
+	if priorClass != "secret" && referencesSecretPath(patternArg) {
 		out.Labels["path.class"] = "secret"
+		out.RiskTags = append(out.RiskTags, "secrets")
+		if priorClass == "source_code" {
+			out.RiskTags = append(out.RiskTags, "source_code")
+		}
+		return
 	}
-	switch out.Labels["path.class"] {
+	switch priorClass {
 	case "secret":
 		out.RiskTags = append(out.RiskTags, "secrets")
 	case "source_code":
