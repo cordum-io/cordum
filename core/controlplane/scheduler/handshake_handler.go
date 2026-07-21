@@ -169,7 +169,10 @@ func validateHandshakeOptions(opts HandshakeServiceOptions) error {
 }
 
 func validHandshakePrivateKey(key *ecdsa.PrivateKey) bool {
-	if key == nil || key.D == nil || key.Curve != elliptic.P256() || key.X == nil || key.Y == nil {
+	// key.D/key.X/key.Y are read-only here: a nil guard before ECDH(), which
+	// panics (rather than erroring) on zero-value coordinates/scalar.
+	// Bytes()/ECDH() give no nil-safe alternative to guard with.
+	if key == nil || key.D == nil || key.Curve != elliptic.P256() || key.X == nil || key.Y == nil { //nolint:staticcheck // SA1019: nil guard, see comment above
 		return false
 	}
 	privateKey, err := key.ECDH()
