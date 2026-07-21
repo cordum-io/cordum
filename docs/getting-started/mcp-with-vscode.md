@@ -10,6 +10,12 @@ every call land on the governance audit trail.
 > quickstart with stdio vs HTTP, workspace-vs-user settings, and CA
 > trust details lives at
 > [docs/mcp/quickstart-vscode.md](../mcp/quickstart-vscode.md).
+>
+> **Using GitHub Copilot agent mode?** Copilot connects over MCP HTTP and is
+> governed by Cordum's policy gate (allow/deny/approve), with each interaction
+> recorded as a Copilot audit session. Follow the dedicated guide:
+> [docs/mcp/quickstart-vscode-copilot.md](../mcp/quickstart-vscode-copilot.md)
+> (`cordumctl mcp attach --client vscode`).
 
 ## 1. Prereqs
 

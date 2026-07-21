@@ -21,11 +21,13 @@ import (
 type stubCopilotSessionStore struct {
 	session       *copilot.CopilotSession
 	err           error
+	lastTenant    string
 	lastSessionID string
 	lastUserID    string
 }
 
-func (s *stubCopilotSessionStore) GetSession(_ context.Context, sessionID, userID string) (*copilot.CopilotSession, error) {
+func (s *stubCopilotSessionStore) GetSession(_ context.Context, tenant, sessionID, userID string) (*copilot.CopilotSession, error) {
+	s.lastTenant = tenant
 	s.lastSessionID = sessionID
 	s.lastUserID = userID
 	return s.session, s.err

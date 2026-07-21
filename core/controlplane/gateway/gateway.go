@@ -143,6 +143,9 @@ type server struct {
 	mcpUpstreamRegistryMu sync.Mutex
 	decisionLogStore      model.DecisionLogStore
 	copilotStore          copilot.Store
+	// copilotSessionStore is the concrete Redis store (nil when Redis is
+	// unavailable) used by the MCP ingestion tap to append session messages.
+	copilotSessionStore   *copilot.RedisStore
 	governanceHealthCache *governance.Cache
 	governanceEvalMu      sync.RWMutex
 	governanceEvaluator   governanceRunner
@@ -733,6 +736,14 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	if err != nil {
 		return fmt.Errorf("shadow finding store: %w", err)
 	}
+	// Copilot session store: Redis-backed when a client is available, else the
+	// NotImplementedStore so the GET endpoint keeps its graceful 501 path.
+	copilotSessionStore := copilot.NewRedisStore(jobStore.Client())
+	var copilotStoreImpl copilot.Store = copilot.NotImplementedStore{}
+	if copilotSessionStore != nil {
+		copilotStoreImpl = copilotSessionStore
+	}
+
 	s := &server{
 		memStore:               memStore,
 		jobStore:               jobStore,
@@ -741,7 +752,8 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		shadowFindingStore:     shadowFindingStore,
 		mcpUpstreamRegistry:    edgecore.NewRedisMCPUpstreamRegistryFromClient(jobStore.Client()),
 		decisionLogStore:       decisionLogStore,
-		copilotStore:           copilot.NotImplementedStore{},
+		copilotStore:           copilotStoreImpl,
+		copilotSessionStore:    copilotSessionStore,
 		governanceHealthCache:  governance.NewCache(60 * time.Second),
 		approvalAnalyticsCache: newApprovalAnalyticsCache(),
 		bus:                    natsBus,
