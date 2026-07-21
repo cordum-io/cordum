@@ -31,3 +31,19 @@ func TestCacheKeyForRequest_BindsActivePolicySnapshot(t *testing.T) {
 		t.Fatalf("cacheKeyForRequest did not change across policy snapshot rotation: both = %q", keyOld)
 	}
 }
+
+func TestCacheKeyForRequestBindsCanonicalIdentityAndContent(t *testing.T) {
+	req := &pb.PolicyCheckRequest{
+		JobId: "job-A", Topic: "job.chat.simple", Tenant: "tenant-1",
+		PrincipalId: "principal-a", InputContent: []byte("content-a"),
+	}
+	base := cacheKeyForRequest(req, "snapshot-1")
+	req.PrincipalId = "principal-b"
+	identityChanged := cacheKeyForRequest(req, "snapshot-1")
+	req.PrincipalId = "principal-a"
+	req.InputContent = []byte("content-b")
+	contentChanged := cacheKeyForRequest(req, "snapshot-1")
+	if base == identityChanged || base == contentChanged || identityChanged == contentChanged {
+		t.Fatalf("canonical key collision: base=%q identity=%q content=%q", base, identityChanged, contentChanged)
+	}
+}

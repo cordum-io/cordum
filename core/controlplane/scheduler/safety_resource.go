@@ -8,6 +8,7 @@ import (
 	"github.com/cordum/cordum/core/infra/resource"
 	"github.com/cordum/cordum/core/infra/resourceio"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 // WithResourceRegistry installs the operator-controlled structured resolver.
@@ -63,6 +64,7 @@ func (c *SafetyClient) attachInputContent(ctx context.Context, req *pb.JobReques
 	checkReq.InputContent = content
 	checkReq.InputSizeBytes = originalSize
 	checkReq.InputContentType = mediaType
+	checkReq.InputRef = clonePolicyInputRef(req.GetContextRef())
 	if checkReq.InputContentType == "" {
 		checkReq.InputContentType = strings.TrimSpace(req.GetLabels()["content_type"])
 	}
@@ -70,6 +72,13 @@ func (c *SafetyClient) attachInputContent(ctx context.Context, req *pb.JobReques
 		attachInputContentLabel(checkReq, content)
 	}
 	return nil
+}
+
+func clonePolicyInputRef(ref *pb.ResourceRef) *pb.ResourceRef {
+	if ref == nil {
+		return nil
+	}
+	return proto.Clone(ref).(*pb.ResourceRef)
 }
 
 func attachInputContentLabel(checkReq *pb.PolicyCheckRequest, content []byte) {

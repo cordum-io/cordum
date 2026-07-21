@@ -698,8 +698,10 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	// an agent escalation. Only when an agent store is wired — otherwise the
 	// agent_id label is inert and caching stays safe (preserving hit-rate).
 	requestHasEnrichedAgent := s.agentStore != nil && requestHasAgentID(req)
+	cacheContentVerified := decisionCacheContentVerified(req, len(inputRules) > 0)
 	cacheKey := ""
-	if s.cacheTTL > 0 && !policyHasVelocity && !requestHasActionDescriptor && !requestHasEnrichedAgent {
+	if s.cacheTTL > 0 && !policyHasVelocity && !requestHasActionDescriptor &&
+		!requestHasEnrichedAgent && cacheContentVerified {
 		cacheKey = cacheKeyForRequest(req, snapshot)
 		if cacheKey != "" {
 			if cached := s.getCachedDecision(cacheKey); cached != nil {

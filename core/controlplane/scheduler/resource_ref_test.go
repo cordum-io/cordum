@@ -13,6 +13,7 @@ import (
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 )
 
 type schedulerResourceResolver struct {
@@ -138,9 +139,10 @@ func TestSafetyClientResolvesStructuredContextBeforePolicyRPC(t *testing.T) {
 		client: handler, cb: newResourceTestCB("input-structured"),
 		resourceReader: resourceio.Reader{Resolver: resolver},
 	}
+	ref := &agentv1.ResourceRef{ResolverId: "cache", Uri: "blob:job-a"}
 	record, err := client.Check(context.Background(), &pb.JobRequest{
 		JobId: "job-a", TenantId: "tenant-a", Topic: "job.demo",
-		ContextRef: &agentv1.ResourceRef{ResolverId: "cache"},
+		ContextRef: ref,
 	})
 	if err != nil || record.Decision != SafetyAllow {
 		t.Fatalf("Check = %#v, %v", record, err)
@@ -150,6 +152,9 @@ func TestSafetyClientResolvesStructuredContextBeforePolicyRPC(t *testing.T) {
 	}
 	if got := handler.lastReq.GetInputContentType(); got != "application/json" {
 		t.Fatalf("input content type = %q", got)
+	}
+	if got := handler.lastReq.GetInputRef(); !proto.Equal(got, ref) || got == ref {
+		t.Fatalf("input ref = %#v, want isolated verified reference", got)
 	}
 	if resolver.trusted.TenantID != "tenant-a" || resolver.trusted.JobID != "job-a" {
 		t.Fatalf("trusted context = %s/%s", resolver.trusted.TenantID, resolver.trusted.JobID)
