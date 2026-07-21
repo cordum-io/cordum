@@ -42,6 +42,7 @@ cordumctl edge doctor \
 | `--api-key` | `CORDUM_API_KEY` | Gateway API key. The value is never printed. |
 | `--tenant` | `CORDUM_TENANT_ID` or `default` | Tenant sent as `X-Tenant-ID`. |
 | `--policy-mode` | `CORDUM_EDGE_POLICY_MODE` or `enforce` | Reports degraded/fail-closed implications. |
+| `--fail-closed` | `CORDUM_AGENTD_FAIL_CLOSED` (unset = not explicitly configured) | Effective posture used to judge an `enforce` session. The doctor accepts the same spellings agentd itself does (`1`/`0`, `true`/`false`, `yes`/`no`, `y`/`n`, `on`/`off`, case-insensitive) and reports `ok` either way. An unset value is also `ok` (posture undetermined from outside the session). A non-empty value that does not match any of those spellings is reported as `warn` — it is likely a typo, and agentd would silently fail to parse it too. |
 | `--claude-path` | `CLAUDE_PATH` or PATH lookup | Claude Code executable to verify. |
 | `--hook-command` | `CORDUM_HOOK_COMMAND` or `cordum-hook` | Hook command embedded in generated settings. |
 | `--agentd-path` | `CORDUM_AGENTD_PATH` or PATH lookup | `cordum-agentd` executable to verify. |
@@ -112,7 +113,10 @@ The `fix` field is present only when a concise remediation exists. Do not parse
 | Mode | Doctor copy means |
 | --- | --- |
 | `observe` | Cordum may degrade open: actions can continue while evidence is marked degraded. Fix warnings before relying on the audit trail. |
-| `enforce` | Risky or unknown degraded actions should fail closed while known-safe actions may proceed. Fix failures before demos. |
+| `enforce` + `CORDUM_AGENTD_FAIL_CLOSED=true` | Every hook event fails closed, including if the local agentd process itself becomes unreachable. Reported as `ok`. Fix failures before demos. |
+| `enforce` + `CORDUM_AGENTD_FAIL_CLOSED=false` | Enforce's core protection does not depend on this flag: risky/unknown `PreToolUse` actions and any Gateway-degraded action still deny (`core/edge/agentd/fail_modes.go`'s `ApplyFailMode`, and `handleAgentdError`'s `enforceMode` check never read this env var). With it disabled, only non-`PreToolUse` hook events (`UserPromptSubmit`/`PostToolUse`/`PostToolUseFailure`/`ConfigChange`) are allowed through if the local agentd **process itself** becomes unreachable. Reported as `ok` — the doctor does not send you to flip a flag enforce's core protection does not need. |
+| `enforce` with no explicit `CORDUM_AGENTD_FAIL_CLOSED` | Same core protection as above applies regardless. Reported as `ok`; run the doctor inside the session, or pass `--fail-closed`, if you also want the narrower non-`PreToolUse`/agentd-process-down gap covered. |
+| `enforce` with an unparseable `CORDUM_AGENTD_FAIL_CLOSED` (e.g. a typo) | The value doesn't match any spelling agentd recognizes either, so agentd would silently fall back to its own default instead of honoring what you likely intended. Reported as `warn` (exit code `2`) — set it to one of the accepted spellings. |
 | `enterprise-strict` | Warnings are expected until managed settings and supervised agentd bootstrap are deployed. Any missing Gateway, Safety Kernel, agentd, hook, or settings path can block governed Claude actions. |
 
 `enterprise-strict` in the developer wrapper is still not a fleet enforcement
