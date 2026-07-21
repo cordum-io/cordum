@@ -28,11 +28,19 @@ const (
 
 // SagaManager records and replays compensation jobs for durable rollback.
 type SagaManager struct {
-	bus     Bus
-	redis   redis.UniversalClient
-	lockTTL time.Duration
-	metrics SagaMetrics
-	safety  SafetyChecker
+	bus               Bus
+	redis             redis.UniversalClient
+	lockTTL           time.Duration
+	metrics           SagaMetrics
+	safety            SafetyChecker
+	sessionMiddleware *SessionTokenMiddleware
+}
+
+func (s *SagaManager) WithSessionMiddleware(mw *SessionTokenMiddleware) *SagaManager {
+	if s != nil {
+		s.sessionMiddleware = mw
+	}
+	return s
 }
 
 func NewSagaManager(bus Bus, rdb redis.UniversalClient) *SagaManager {
@@ -297,6 +305,14 @@ func (s *SagaManager) dispatchCompensation(req *pb.JobRequest, workflowID string
 		Payload: &pb.BusPacket_JobRequest{
 			JobRequest: req,
 		},
+	}
+	if s.sessionMiddleware != nil {
+		if token, err := s.sessionMiddleware.MintServiceToken(defaultSenderID); err != nil {
+			slog.Error("saga service-token mint failed; peer rejects under enforce", "error", err)
+		} else if token != "" {
+			packet.SenderId = defaultSenderID
+			packet.AuthToken = token
+		}
 	}
 	if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
 		if s.metrics != nil {

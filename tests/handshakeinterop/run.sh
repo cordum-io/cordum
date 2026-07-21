@@ -15,11 +15,18 @@ assert_cap_revision() {
   cap_sha="$(git -C "$cap_root" rev-parse HEAD)"
   cap_version="$(cd "$cordum_root" && go list -m -f '{{.Version}}' github.com/cordum-io/cap/v2)"
   suffix="${cap_version##*-}"
-  [[ "$suffix" =~ ^[0-9a-f]{12}$ ]] || {
-    echo "Cordum CAP version lacks a 12-hex revision suffix: $cap_version" >&2
-    return 1
-  }
-  pinned_sha="$(git -C "$cap_root" rev-parse "${suffix}^{commit}")"
+  if [[ "$suffix" =~ ^[0-9a-f]{12}$ ]]; then
+    # Pseudo-version: the commit hash is embedded in the version string.
+    pinned_sha="$(git -C "$cap_root" rev-parse "${suffix}^{commit}")"
+  else
+    # Clean release tag (e.g. v2.15.1): resolve the tag itself in the
+    # checked-out CAP source (requires the checkout step to have fetched
+    # tags) instead of parsing a hash out of the version string.
+    pinned_sha="$(git -C "$cap_root" rev-parse "refs/tags/${cap_version}^{commit}" 2>/dev/null)" || {
+      echo "Cordum CAP version $cap_version has no matching tag in the checked-out CAP source" >&2
+      return 1
+    }
+  fi
   [[ "$cap_sha" == "$pinned_sha" ]] || {
     echo "CAP source $cap_sha does not match Cordum pin $pinned_sha" >&2
     return 1

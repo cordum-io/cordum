@@ -187,16 +187,7 @@ func main() {
 	}
 	defer nc.Drain() //nolint:errcheck
 
-	agent := &runtime.Agent{
-		NATSURL:  natsURL,
-		RedisURL: redisURL,
-		NATS:     nc,
-		Store:    store,
-		SenderID: workerID,
-		// Example worker: no trust identity, handshake off. CAP fails
-		// closed at startup without this explicit unsigned-legacy opt-in.
-		AllowUnsigned: true,
-	}
+	agent := runtime.NewLegacyUnsignedAgent(natsURL, redisURL, workerID, nc, store)
 
 	// ---- the canonical pattern: one dispatcher, registered everywhere ----
 	dispatcher := makeDispatcher()

@@ -83,10 +83,10 @@ func scanRedisKeys(ctx context.Context, client redis.UniversalClient, pattern st
 
 func (s *interopServer) ownsHandshakeKey(key string, value []byte) bool {
 	for _, identity := range s.identities {
-		if key == activeSessionKey(identity) || key == "session:worker:"+identity.workerID {
+		if key == activeSessionKey(identity) || key == legacySessionKey(identity) {
 			return true
 		}
-		if strings.HasPrefix(key, "session:revoked:"+identity.tenantID+":") {
+		if strings.HasPrefix(key, revokedSessionPrefix(identity)) {
 			return true
 		}
 		if strings.HasPrefix(key, handshakeStatePrefix("request", identity.workerID)) ||

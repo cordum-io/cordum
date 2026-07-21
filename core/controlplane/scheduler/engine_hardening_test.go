@@ -206,6 +206,23 @@ func TestDLQEmitPersistsToSinkWhenBusUnavailable(t *testing.T) {
 	}
 }
 
+func TestDLQEnvelopeBindsResultWorkerToSchedulerSender(t *testing.T) {
+	bus := &fakeBus{}
+	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), newFakeJobStore(), nil)
+
+	if err := engine.emitDLQ("job-denied", "job.test", pb.JobStatus_JOB_STATUS_DENIED, "blocked", "safety_denied"); err != nil {
+		t.Fatal(err)
+	}
+	published := bus.snapshotPublished()
+	if len(published) != 1 {
+		t.Fatalf("published packets = %d, want 1", len(published))
+	}
+	packet := published[0].packet
+	if packet.GetJobResult().GetWorkerId() != packet.GetSenderId() {
+		t.Fatalf("job result worker %q != sender %q", packet.GetJobResult().GetWorkerId(), packet.GetSenderId())
+	}
+}
+
 func TestSafetyCheckDefenseTimeout(t *testing.T) {
 	store := newFakeJobStore()
 	slow := &slowSafety{delay: 5 * time.Second}

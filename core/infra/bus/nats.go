@@ -31,8 +31,9 @@ type NatsBus struct {
 	jsEnabled bool
 	ackWait   time.Duration
 
-	subsMu sync.Mutex
-	subs   []*nats.Subscription
+	subsMu   sync.Mutex
+	subs     []*nats.Subscription
+	draining bool
 
 	hooksMu            sync.RWMutex
 	reconnectHandlers  []func(*nats.Conn)
@@ -310,6 +311,7 @@ func inflightKey(stream string, seq uint64) string {
 // to complete. Call before Close() to avoid orphaned JetStream consumers.
 func (b *NatsBus) Drain() {
 	b.subsMu.Lock()
+	b.draining = true
 	subs := b.subs
 	b.subs = nil
 	b.subsMu.Unlock()
@@ -320,7 +322,9 @@ func (b *NatsBus) Drain() {
 		}
 		if err := sub.Drain(); err != nil {
 			slog.Warn("bus: drain subscription failed", "subject", sub.Subject, "err", err)
+			continue
 		}
+		waitForSubscriptionDrain(sub, rawRequestHandlerTimeout+time.Second)
 	}
 }
 
@@ -459,7 +463,10 @@ func (b *NatsBus) SubscribeWithContext(subject, queue string, handler func(conte
 		if err != nil {
 			return fmt.Errorf("subscribe %s: %w", subject, err)
 		}
-		b.trackSub(sub)
+		if !b.trackSub(sub) {
+			_ = sub.Drain()
+			return errors.New("bus is draining")
+		}
 		return nil
 	}
 
@@ -482,7 +489,10 @@ func (b *NatsBus) SubscribeWithContext(subject, queue string, handler func(conte
 	if err != nil {
 		return fmt.Errorf("subscribe %s: %w", subject, err)
 	}
-	b.trackSub(sub)
+	if !b.trackSub(sub) {
+		_ = sub.Drain()
+		return errors.New("bus is draining")
+	}
 	return nil
 }
 
@@ -760,7 +770,10 @@ func (b *NatsBus) subscribe(subject, queue string, handler func(*pb.BusPacket) e
 		if err != nil {
 			return nil, fmt.Errorf("subscribe %s: %w", subject, err)
 		}
-		b.trackSub(sub)
+		if !b.trackSub(sub) {
+			_ = sub.Drain()
+			return nil, errors.New("bus is draining")
+		}
 		return sub, nil
 	}
 
@@ -785,25 +798,42 @@ func (b *NatsBus) subscribe(subject, queue string, handler func(*pb.BusPacket) e
 		if err != nil {
 			return nil, fmt.Errorf("subscribe %s: %w", subject, err)
 		}
-		b.trackSub(sub)
+		if !b.trackSub(sub) {
+			_ = sub.Drain()
+			return nil, errors.New("bus is draining")
+		}
 		return sub, nil
 	}
 	sub, err := b.nc.QueueSubscribe(subject, queue, cb)
 	if err != nil {
 		return nil, fmt.Errorf("subscribe %s: %w", subject, err)
 	}
-	b.trackSub(sub)
+	if !b.trackSub(sub) {
+		_ = sub.Drain()
+		return nil, errors.New("bus is draining")
+	}
 	return sub, nil
 }
 
-// trackSub appends a subscription to the tracked list.
-func (b *NatsBus) trackSub(sub *nats.Subscription) {
+// trackSub appends a subscription unless shutdown has started.
+func (b *NatsBus) trackSub(sub *nats.Subscription) bool {
 	if sub == nil {
-		return
+		return false
 	}
 	b.subsMu.Lock()
+	defer b.subsMu.Unlock()
+	if b.draining {
+		return false
+	}
 	b.subs = append(b.subs, sub)
-	b.subsMu.Unlock()
+	return true
+}
+
+func waitForSubscriptionDrain(sub *nats.Subscription, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for sub.IsValid() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
 }
 
 // msgAction represents the action to take after processing a NATS message.

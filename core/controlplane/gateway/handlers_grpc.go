@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/auth/servicetoken"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
@@ -485,13 +486,14 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 
 	packet := &pb.BusPacket{
 		TraceId:         traceID,
-		SenderId:        "api-gateway",
+		SenderId:        servicetoken.IdentityGateway,
 		CreatedAt:       timestamppb.Now(),
 		ProtocolVersion: capsdk.DefaultProtocolVersion,
 		Payload: &pb.BusPacket_JobRequest{
 			JobRequest: jobReq,
 		},
 	}
+	s.attachServiceToken(packet)
 
 	if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
 		_ = s.jobStore.SetState(ctx, jobID, model.JobStateFailed)

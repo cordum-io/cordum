@@ -3,6 +3,8 @@ package bus
 import (
 	"context"
 	"errors"
+	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -13,6 +15,29 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 )
+
+func TestQueueRespondFlushesInterestBeforeReportingReady(t *testing.T) {
+	source, err := os.ReadFile("raw_request.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(source)
+	flush := strings.Index(body, "b.nc.Flush()")
+	track := strings.Index(body, "b.trackSub(sub)")
+	if flush < 0 || track < 0 || flush > track {
+		t.Fatalf("QueueRespond must Flush interest before tracking/reporting readiness: flush=%d track=%d", flush, track)
+	}
+}
+
+func TestQueueRespondTracksThroughClosedGate(t *testing.T) {
+	source, err := os.ReadFile("raw_request.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(source), "if !b.trackSub(sub)") {
+		t.Fatal("QueueRespond must reject and drain a subscription when the bus closed concurrently")
+	}
+}
 
 var _ model.RawRequestResponder = (*NatsBus)(nil)
 var _ model.BusSubscription = (*nats.Subscription)(nil)
@@ -42,10 +67,6 @@ func TestQueueRespondUsesCoreNATSAndPreservesTrace(t *testing.T) {
 	if sub == nil {
 		t.Fatal("QueueRespond returned nil subscription")
 	}
-	if err := bus.nc.Flush(); err != nil {
-		t.Fatalf("flush subscription: %v", err)
-	}
-
 	request := nats.NewMsg(subject)
 	request.Data = []byte("hello")
 	request.Header.Set("traceparent", traceparent)
@@ -63,6 +84,48 @@ func TestQueueRespondUsesCoreNATSAndPreservesTrace(t *testing.T) {
 		t.Fatalf("response traceparent = %q, want %q", got, traceparent)
 	}
 	assertTrackedSubscriptionCount(t, bus, 1)
+}
+
+func TestQueueRespondRejectsRegistrationAfterDrain(t *testing.T) {
+	ns := startTestNATSServer(t, false)
+	bus := newTestNatsBus(t, ns, false)
+	bus.Drain()
+	_, err := bus.QueueRespond("rpc.closed", "raw-responders", func(context.Context, model.RawRequest) (model.RawResponse, error) {
+		return model.RawResponse("unexpected"), nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "draining") {
+		t.Fatalf("QueueRespond error = %v, want draining gate", err)
+	}
+	assertTrackedSubscriptionCount(t, bus, 0)
+}
+
+func TestDrainWaitsForActiveRawHandler(t *testing.T) {
+	ns := startTestNATSServer(t, false)
+	bus := newTestNatsBus(t, ns, false)
+	started, release := make(chan struct{}), make(chan struct{})
+	_, err := bus.QueueRespond("rpc.drain-active", "raw-responders", func(context.Context, model.RawRequest) (model.RawResponse, error) {
+		close(started)
+		<-release
+		return model.RawResponse("done"), nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _, _ = bus.nc.Request("rpc.drain-active", []byte("work"), time.Second) }()
+	<-started
+	drained := make(chan struct{})
+	go func() { bus.Drain(); close(drained) }()
+	select {
+	case <-drained:
+		t.Fatal("Drain returned while raw handler was active")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-drained:
+	case <-time.After(time.Second):
+		t.Fatal("Drain did not finish after raw handler completed")
+	}
 }
 
 func TestQueueRespondValidatesArguments(t *testing.T) {
@@ -137,8 +200,12 @@ func TestExecuteRawHandlerEnforcesDeadline(t *testing.T) {
 		if _, ok := ctx.Deadline(); !ok {
 			t.Error("handler context has no deadline")
 		}
-		<-release
-		return model.RawResponse("late"), nil
+		select {
+		case <-release:
+			return model.RawResponse("late"), nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	})
 	close(release)
 	if !errors.Is(err, errRawHandlerTimeout) {
@@ -146,6 +213,29 @@ func TestExecuteRawHandlerEnforcesDeadline(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed > 250*time.Millisecond {
 		t.Fatalf("handler timeout took %v", elapsed)
+	}
+}
+
+func TestExecuteRawHandlerCannotCompleteSideEffectAfterTimeout(t *testing.T) {
+	release := make(chan struct{})
+	var sideEffects atomic.Int32
+	config := rawRequestConfig{maxPayloadBytes: 32, handlerTimeout: 10 * time.Millisecond}
+	_, err := executeRawHandler(context.Background(), []byte("request"), config, func(ctx context.Context, _ model.RawRequest) (model.RawResponse, error) {
+		select {
+		case <-release:
+			sideEffects.Add(1)
+			return model.RawResponse("late"), nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	})
+	if !errors.Is(err, errRawHandlerTimeout) {
+		t.Fatalf("error = %v, want %v", err, errRawHandlerTimeout)
+	}
+	close(release)
+	time.Sleep(25 * time.Millisecond)
+	if got := sideEffects.Load(); got != 0 {
+		t.Fatalf("post-timeout side effects = %d, want 0", got)
 	}
 }
 

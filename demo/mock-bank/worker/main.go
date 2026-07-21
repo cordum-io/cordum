@@ -192,18 +192,7 @@ func main() {
 	for _, w := range bankWorkers {
 		worker := w
 
-		agent := &runtime.Agent{
-			NATS:     nc,
-			NATSURL:  natsURL,
-			RedisURL: redisURL,
-			Store:    blobStore,
-			SenderID: worker.ID,
-			// The demo profile runs CORDUM_SDK_HANDSHAKE=off and mints no
-			// worker trust identity, so CAP's fail-closed startup gate
-			// requires this explicit unsigned-legacy opt-in. Real
-			// deployments provision signing keys and drop this instead.
-			AllowUnsigned: true,
-		}
+		agent := runtime.NewLegacyUnsignedAgent(natsURL, redisURL, worker.ID, nc, blobStore)
 
 		// Per-workerDef in-flight counter. The heartbeat callback reads
 		// it on each tick so /api/v1/workers reflects actual load, not

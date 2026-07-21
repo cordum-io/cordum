@@ -55,16 +55,7 @@ func main() {
 		log.Fatalf("nats connect: %v", err)
 	}
 
-	agent := &runtime.Agent{
-		NATS:     nc,
-		NATSURL:  natsURL,
-		RedisURL: redisURL,
-		Store:    store,
-		SenderID: workerID,
-		// Example worker: no trust identity, handshake off. CAP fails
-		// closed at startup without this explicit unsigned-legacy opt-in.
-		AllowUnsigned: true,
-	}
+	agent := runtime.NewLegacyUnsignedAgent(natsURL, redisURL, workerID, nc, store)
 
 	handler := func(ctx runtime.Context, input demoInput) (demoOutput, error) {
 		message := strings.TrimSpace(input.Message)

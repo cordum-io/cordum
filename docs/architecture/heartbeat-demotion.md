@@ -136,13 +136,21 @@ CORDUM_SDK_HANDSHAKE=enforce
 ```
 
 - Session token is the only authority. Heartbeat recency is not consulted on the decision path at all.
+- The same inbound authority gate covers worker reports, trusted
+  capability/readiness updates, session ISSUE/RENEW, and JobRequest submission.
+  Enforce is not achieved if any job producer remains tokenless.
 - `heartbeat_disagreement` events no longer fire — the mode doesn't compute both signals.
 - Heartbeat age is still exposed everywhere (metrics, `/api/v1/workers`, dashboard) as a freshness indicator.
 
 Before Phase B, enroll worker P-256 proof keys, pin the scheduler P-256 public
 key on every worker, and deploy the Ed25519 session signing/trust authority to
 scheduler and gateway. Before Phase C, deploy the same Ed25519 authority to the
-workflow engine for authenticated internal cancels. `WORKER_ATTESTATION` must
+workflow engine for authenticated internal cancels and JobRequests. Confirm
+the gateway, scheduler retry/saga paths, and workflow engine all attach
+control-plane service credentials, and upgrade external publishers to an
+authenticated gateway path (or explicitly provisioned control-plane service
+identity) before Phase C. An ordinary CAP packet signature alone is not a
+JobRequest service credential. `WORKER_ATTESTATION` must
 remain `off` in both active phases: legacy bearer attestation and bound sessions
 assign incompatible meanings to `BusPacket.auth_token`, so scheduler boot
 rejects `warn`/`enforce` attestation with active handshake.

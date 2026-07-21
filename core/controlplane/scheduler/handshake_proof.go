@@ -15,7 +15,7 @@ import (
 func (s *HandshakeService) authenticate(ctx context.Context, packet *agentv1.BusPacket) (*agentv1.BusPacket, *HandshakeTrustIdentity, *handshakeFailure) {
 	authenticate, failure := s.validateAuthenticatePacket(packet)
 	if failure != nil {
-		return nil, nil, failure
+		return nil, s.resolveSafeRejectionIdentity(ctx, packet), failure
 	}
 	challenge := authenticate.GetChallenge()
 	identity, err := s.resolver.Resolve(ctx, challenge.GetWorkerId(), challenge.GetProofKeyId())
@@ -45,6 +45,15 @@ func (s *HandshakeService) authenticate(ctx context.Context, packet *agentv1.Bus
 		return nil, identity, failHandshake(internalErrorReason(), "result_signing_failed")
 	}
 	return response, identity, nil
+}
+
+func (s *HandshakeService) resolveSafeRejectionIdentity(ctx context.Context, packet *agentv1.BusPacket) *HandshakeTrustIdentity {
+	if !structurallySafeRejectionPacket(packet) {
+		return nil
+	}
+	challenge := packet.GetWorkerHandshakeAuthenticate().GetChallenge()
+	identity, _ := s.resolver.Resolve(ctx, challenge.GetWorkerId(), challenge.GetProofKeyId())
+	return identity
 }
 
 func validateAuthenticateAuthority(authenticate *agentv1.WorkerHandshakeAuthenticate, identity *HandshakeTrustIdentity) *handshakeFailure {
@@ -142,19 +151,19 @@ func (s *HandshakeService) buildHandshakeResult(challenge *agentv1.WorkerHandsha
 	if err := capsdk.SignTrustHandshake(packet, s.schedulerKey); err != nil {
 		return nil, err
 	}
+	if err := capsdk.ValidateWorkerTrustPacket(packet); err != nil {
+		return nil, err
+	}
 	return packet, nil
 }
 
-func (s *HandshakeService) challengeForSafeRejection(ctx context.Context, packet *agentv1.BusPacket, identity *HandshakeTrustIdentity) *agentv1.WorkerHandshakeChallenge {
+func (s *HandshakeService) challengeForSafeRejection(packet *agentv1.BusPacket, identity *HandshakeTrustIdentity) *agentv1.WorkerHandshakeChallenge {
 	if !structurallySafeRejectionPacket(packet) {
 		return nil
 	}
 	challenge := packet.GetWorkerHandshakeAuthenticate().GetChallenge()
 	if challenge == nil || challenge.GetProofAlgorithm() != p256ProofAlgorithm() || challenge.GetServerKeyId() != s.schedulerKeyID {
 		return nil
-	}
-	if identity == nil {
-		identity, _ = s.resolver.Resolve(ctx, challenge.GetWorkerId(), challenge.GetProofKeyId())
 	}
 	if !safeRejectionIdentityMatches(identity, challenge) {
 		return nil

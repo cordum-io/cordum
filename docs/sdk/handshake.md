@@ -139,6 +139,16 @@ P-256 or Ed25519 authority bundle.
 
 ## Safe rollout and rollback
 
+Enforce covers the complete governed bus boundary, not only worker sessions:
+worker results/progress/heartbeats, authenticated capability/readiness,
+session ISSUE/RENEW, and every JobRequest submission. Cordum's gateway,
+scheduler retry/saga paths, and workflow engine publishers attach an
+audience-bound control-plane service token. External producers must use an
+authenticated gateway path, or an explicitly provisioned Cordum control-plane
+service identity, before the cluster moves to enforce. An ordinary CAP packet
+signature alone is not a JobRequest service credential; tokenless requests are
+rejected and are never treated as migration telemetry.
+
 `CORDUM_SDK_HANDSHAKE` and `CORDUM_HEARTBEAT_MODE` are one rollout unit on both
 scheduler and gateway. The table is the recommended progression:
 
@@ -158,7 +168,9 @@ Before the first active phase:
 
 1. Enroll every worker proof key and distribute the scheduler public proof key.
 2. Deploy the Ed25519 session key/trust entry to scheduler and gateway; deploy
-   it to workflow engine before `enforce`.
+   it to workflow engine before `enforce`. Confirm in-tree publishers attach
+   service authority and external publishers route through the gateway or an
+   explicitly provisioned service identity.
 3. Set `WORKER_ATTESTATION=off`. The legacy bearer-attestation gate and active
    handshake cannot run together because both interpret `BusPacket.auth_token`
    differently; scheduler boot rejects the combination.
