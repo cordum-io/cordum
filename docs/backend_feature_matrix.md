@@ -22,7 +22,7 @@ This table tracks key backend features, their implementation status, and test co
 | CLI (cordumctl) | Yes | None | `cmd/cordumctl` + smoke script; ships as `cordumctl`. |
 | Topic Registry | Yes | Unit + integration | `GET/POST/DELETE /api/v1/topics`; submit-time topic validation at gateway and scheduler boundaries; pack manifest `inputSchema`/`outputSchema` registered at install. |
 | Worker Credentials | Yes | Unit + integration | `GET/POST/DELETE /api/v1/workers/credentials`; argon2id-hashed tokens; `WORKER_ATTESTATION=enforce\|warn\|off`. |
-| Worker readiness handshake | Yes | Unit (CAP v2.9.0 SDK + scheduler filter) | `Agent.Start()` auto-publishes `Handshake{ready_topics, auth_token}`; scheduler filters on `ready=true` when `WORKER_READINESS_REQUIRED=true`. |
+| Worker readiness handshake | Yes | Unit (pinned CAP SDK + scheduler filter) | `Agent.Start()` auto-publishes `Handshake{ready_topics, auth_token}`; scheduler filters on `ready=true` when `WORKER_READINESS_REQUIRED=true`. |
 | Output Policy (two-phase) | Yes | Unit + integration (`core/controlplane/safetykernel/scanners.go`, `core/protocol/proto/v1/output_policy.proto`) | Sync metadata fast-path + async content checks; decisions `ALLOW`/`QUARANTINE`/`REDACT`; `OUTPUT_QUARANTINED` job state. |
 | Approvals + Delegations | Yes | Unit + integration (`handlers_approvals.go`, `handlers_delegation*.go`) | A2A delegation tokens, cascade revocation, scheduler dispatch-time re-verify, nonce/replay protection, `auth.PermDelegationImpersonate`. |
 | Audit verification pipeline | Yes | Unit + integration (`core/audit/`, `core/audit/exporter*`) | Chain verification + consumer + legal-hold + multi-backend exporter (webhook HMAC-SHA256, syslog RFC 5424, Datadog v2, CloudWatch Logs SigV4). |

@@ -5,6 +5,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+
+#### CAP dependency promoted to the published v2.17.0 release (2026-07-22, task-a24b53c5)
+
+- Root and nested `sdk` modules pin the released `github.com/cordum-io/cap/v2 v2.17.0`
+  (tag commit `e580c670d54a7563c749835c7dd09d81f116c823`), completed as a full
+  release: GitHub Release published, `cap-sdk-node`/`cap-sdk-python`/`cordum-guard`
+  2.17.0 live on npm/PyPI, Go module verified against the public proxy with a
+  clean module cache, and the CAP release manifest promoted to declare 2.17.0.
+- Added `tools/scripts/cap_version_consistency_test.go`: root, nested SDK, and CI
+  `CAP_REV`/`CAP_HANDSHAKE_CAP_SHA` must agree on one exact published CAP
+  tag/commit pair, with pseudo-versions and CAP `replace` directives rejected.
+- Documentation current-support claims were corrected to introduction-provenance
+  phrasing (for example "introduced in CAP v2.13.1") so they stay truthful across
+  future dependency bumps; explicitly historical sections are unchanged.
+- Not included in this promotion: the interop surfaces tracked by task-674
+  (TraceContext, WorkflowEvent, A2A bridge, governed MCP demo) — none of these
+  are part of CAP v2.17.0.
+
 ### Security
 
 #### CAP-PRODUCTION — fail-closed exact-wire trust, attempt fencing, durable effects, and structured resources (2026-07-21, task-a13f83fa)
