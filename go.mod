@@ -15,7 +15,7 @@ toolchain go1.26.5
 require (
 	github.com/ProtonMail/go-crypto v1.4.1
 	github.com/alicebob/miniredis/v2 v2.38.0
-	github.com/cordum-io/cap/v2 v2.15.2-0.20260721195051-7c3cec3236c1
+	github.com/cordum-io/cap/v2 v2.16.1
 	github.com/cordum/cordum/sdk v0.0.0
 	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/crewjam/saml v0.5.1
