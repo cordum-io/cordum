@@ -71,6 +71,19 @@ forks and dev-branch builds are rejected.
 `:main` and `:sha-*` tags are **not** signed because they are dev-grade
 floating tags. Do not deploy them to production.
 
+Verifying one image does not attest the rest — to check every Cordum
+service for a given release, loop over the full set:
+
+```bash
+TAG=1.2.3
+for SERVICE in api-gateway scheduler safety-kernel workflow-engine context-engine mcp dashboard; do
+  cosign verify "ghcr.io/cordum-io/cordum/${SERVICE}:${TAG}" \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+    --certificate-identity-regexp 'https://github\.com/cordum-io/cordum/\.github/workflows/docker\.yml@refs/tags/v.*' \
+    || { echo "FAILED: ${SERVICE}"; exit 1; }
+done
+```
+
 ## Approximate image sizes
 
 | Image | Compressed | Notes |

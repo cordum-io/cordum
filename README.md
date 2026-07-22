@@ -74,16 +74,18 @@ Full walkthrough, platform notes, and troubleshooting:
 ### Option B: Run the published images
 
 **Prerequisites:** Docker Desktop v4+ or Docker Engine v20.10+ with the
-Compose v2 plugin (≥ 4 GB RAM allocated), and `jq` (recommended, for
-parsing API responses).
+Compose v2 plugin (≥ 4 GB RAM allocated), `jq` (recommended, for parsing
+API responses), and Go 1.26.3+ (for one-time local cert generation —
+`docker compose` mounts `./certs` but does not create it).
 
 ```bash
 git clone https://github.com/cordum-io/cordum.git
 cd cordum
+go run ./cmd/cordumctl generate-certs   # writes ./certs/{ca,server,client}
 export CORDUM_API_KEY=$(openssl rand -hex 32)
 export REDIS_PASSWORD=$(openssl rand -hex 16)
 docker compose pull         # pulls every Cordum service from ghcr.io
-docker compose up -d        # starts the stack — no source build needed
+docker compose up -d        # starts the stack — no image build needed
 ```
 
 **Dashboard:** http://localhost:8082
@@ -102,8 +104,10 @@ release tags (pre-release suffixes such as `-rc.1` never promote
 <details>
 <summary>Verifying image signatures</summary>
 
-Every release-tag image is signed with [cosign] keyless OIDC. Verify
-before deploying to production:
+Every release-tag image is signed with [cosign] keyless OIDC. The example
+below verifies `api-gateway`; repeat the same command (swapping the image
+name) for each of the seven Cordum images before deploying to production —
+verifying one image does not attest the rest:
 
 ```bash
 cosign verify ghcr.io/cordum-io/cordum/api-gateway:1.2.3 \
@@ -112,7 +116,8 @@ cosign verify ghcr.io/cordum-io/cordum/api-gateway:1.2.3 \
 ```
 
 See [docs/deployment/images.md](docs/deployment/images.md) for the full
-image catalogue, multi-arch pull instructions, and tag policy.
+image catalogue, a verify-all-images snippet, multi-arch pull instructions,
+and tag policy.
 
 [cosign]: https://docs.sigstore.dev/cosign/overview/
 </details>
@@ -143,7 +148,15 @@ helm install cordum oci://ghcr.io/cordum-io/cordum/charts/cordum \
   --set ingress.dashboard.host=cordum.example.com
 ```
 
-See [cordum-helm/](cordum-helm/) for the full Helm chart reference. Chart also available on [Artifact Hub](https://artifacthub.io/packages/helm/cordum/cordum).
+`--set` values land in the Helm release's stored values (and your shell
+history) — fine for a quick eval, but for production prefer
+`redis.auth.existingSecret` (see `cordum-helm/values.yaml`) over
+`redis.auth.password`, and patch `secrets.apiKey` into the rendered
+Secret out-of-band rather than passing it on the command line; that
+chart doesn't yet have an `existingSecret` equivalent for the API key.
+
+See [cordum-helm/](cordum-helm/) for the full Helm chart reference. The
+chart is also available on [Artifact Hub](https://artifacthub.io/packages/helm/cordum/cordum).
 </details>
 
 **Container images** (multi-arch: linux/amd64 + linux/arm64):
@@ -184,6 +197,9 @@ notes: [docs/deployment/images.md](docs/deployment/images.md).
 ### After Setup
 
 ```bash
+# Load the generated API key into this shell (skip if already exported)
+export CORDUM_API_KEY=$(grep CORDUM_API_KEY .env | cut -d= -f2)
+
 # Submit a test job
 curl -sS --cacert ./certs/ca/ca.crt \
   -X POST https://localhost:8081/api/v1/jobs \
