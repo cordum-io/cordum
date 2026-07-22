@@ -84,7 +84,7 @@ fetch_page() {
     if gh api "${endpoint}" \
       >"${response}" 2>"${error_log}"; then
       if ! jq -e \
-        'type == "array" and all(.[]; (.user.login? | type == "string" and length > 0))' \
+        'type == "array" and all(.[]; ((.user.login? // .login?) | type == "string" and length > 0))' \
         "${response}" >/dev/null 2>&1; then
         echo "invalid stargazer response for page ${page}: expected an array of user logins" >&2
         return 1
@@ -116,7 +116,7 @@ while [[ "${page}" -le "${max_pages}" ]]; do
     break
   fi
 
-  jq -r '.[].user.login' "${page_json}" >>"${raw_usernames}"
+  jq -r '.[] | (.user.login? // .login)' "${page_json}" >>"${raw_usernames}"
   if [[ "${count}" -lt "${page_size}" ]]; then
     break
   fi
