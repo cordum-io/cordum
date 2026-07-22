@@ -126,15 +126,30 @@ jobs:
         run: |
           MODE="${{ steps.fetch_stargazers.outputs.mode }}"
 
+          # A previous total is derivable from either snapshot shape (line
+          # count of the username list, or the stored count itself), so a
+          # mode change between runs (e.g. a STARGAZER_PAT was just added
+          # or removed) still gets a real count comparison instead of being
+          # silently treated as a first run.
+          PREV_TOTAL=""
+          if [ -f /tmp/previous/stargazers.txt ]; then
+            PREV_TOTAL=$(wc -l < /tmp/previous/stargazers.txt | tr -d ' ')
+          elif [ -f /tmp/previous/count.txt ]; then
+            PREV_TOTAL=$(cat /tmp/previous/count.txt)
+          fi
+
+          if [ -z "$PREV_TOTAL" ]; then
+            echo "📝 No previous snapshot — this is the first run. Saving baseline."
+            exit 0
+          fi
+
           if [ "$MODE" = "usernames" ] && [ -f /tmp/previous/stargazers.txt ]; then
-            # Find users in previous but NOT in current = unstars
+            # Both sides have a username list: full per-user diff.
             comm -23 /tmp/previous/stargazers.txt /tmp/current_usernames.txt > /tmp/unstars.txt
-            # Find users in current but NOT in previous = new stars (caught by watch event too)
             comm -13 /tmp/previous/stargazers.txt /tmp/current_usernames.txt > /tmp/new_stars.txt
 
             UNSTAR_COUNT=$(wc -l < /tmp/unstars.txt | tr -d ' ')
             NEW_COUNT=$(wc -l < /tmp/new_stars.txt | tr -d ' ')
-            PREV_TOTAL=$(wc -l < /tmp/previous/stargazers.txt | tr -d ' ')
             CURR_TOTAL=$(wc -l < /tmp/current_usernames.txt | tr -d ' ')
 
             echo "📊 Previous: ${PREV_TOTAL} → Current: ${CURR_TOTAL} (${NEW_COUNT} new, ${UNSTAR_COUNT} removed)"
@@ -154,9 +169,14 @@ jobs:
             SUBJECT="⚠️ ${UNSTAR_COUNT} user(s) unstarred ${REPO_FULL_NAME}"
             BODY_EXTRA="<h3>Who left:</h3><ul>${UNSTAR_LIST}</ul>"
 
-          elif [ "$MODE" = "count" ] && [ -f /tmp/previous/count.txt ]; then
-            PREV_TOTAL=$(cat /tmp/previous/count.txt)
-            CURR_TOTAL=$(cat /tmp/current_count.txt)
+          else
+            # Either side is count-only (same-mode count comparison, or a
+            # mode transition): total-only comparison, no usernames.
+            if [ "$MODE" = "usernames" ]; then
+              CURR_TOTAL=$(wc -l < /tmp/current_usernames.txt | tr -d ' ')
+            else
+              CURR_TOTAL=$(cat /tmp/current_count.txt)
+            fi
             DELTA=$((PREV_TOTAL - CURR_TOTAL))
 
             echo "📊 Previous: ${PREV_TOTAL} → Current: ${CURR_TOTAL}"
@@ -166,14 +186,10 @@ jobs:
               exit 0
             fi
 
-            echo "⚠️ Net star count dropped by ${DELTA} (count-only mode — individual usernames unavailable; add a STARGAZER_PAT secret to restore those)"
+            echo "⚠️ Net star count dropped by ${DELTA} (count-only comparison — individual usernames unavailable; add a STARGAZER_PAT secret to restore those)"
             UNSTAR_COUNT="${DELTA}"
             SUBJECT="⚠️ Star count dropped by ${DELTA} on ${REPO_FULL_NAME}"
-            BODY_EXTRA="<p><em>Running in count-only mode — add a STARGAZER_PAT repo secret to see who unstarred.</em></p>"
-
-          else
-            echo "📝 No comparable previous snapshot (first run, or mode changed since last run) — saving baseline."
-            exit 0
+            BODY_EXTRA="<p><em>Count-only comparison — add a STARGAZER_PAT repo secret to see who unstarred.</em></p>"
           fi
 
           TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
