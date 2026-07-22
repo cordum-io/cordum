@@ -2864,13 +2864,12 @@ func TestTimerConcurrentFireAndRemove(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Output validation — ResultPtr preserved on failure
+// Output validation — untrusted ResultPtr dropped on failure
 // ---------------------------------------------------------------------------
 
-// TestOutputValidationFailure_PreservesResultPtr verifies that when output
-// validation fails, the step record still has the ResultPtr (via Output field)
-// and the result is recorded for quarantine inspection.
-func TestOutputValidationFailure_PreservesResultPtr(t *testing.T) {
+// TestOutputValidationFailure_DropsUntrustedResultPtr verifies that an opaque
+// pointer rejected by structured-only mode is not retained as step output.
+func TestOutputValidationFailure_DropsUntrustedResultPtr(t *testing.T) {
 	store, srv := newTestStoreWithServer(t)
 	defer srv.Close()
 	defer func() { _ = store.Close() }()
@@ -2935,9 +2934,8 @@ func TestOutputValidationFailure_PreservesResultPtr(t *testing.T) {
 	if step.Status != StepStatusFailed {
 		t.Fatalf("expected step Failed (output validation), got %s", step.Status)
 	}
-	// The Output field should still contain the ResultPtr for inspection.
-	if step.Output != "mem://result-quarantined" {
-		t.Fatalf("expected Output to preserve ResultPtr, got %v", step.Output)
+	if step.Output != nil {
+		t.Fatalf("expected rejected ResultPtr to be cleared, got %v", step.Output)
 	}
 }
 

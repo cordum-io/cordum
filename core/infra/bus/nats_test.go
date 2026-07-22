@@ -81,13 +81,15 @@ func TestInitJetStreamEnabled(t *testing.T) {
 
 func TestIsDurableSubject(t *testing.T) {
 	cases := map[string]bool{
-		capsdk.SubjectSubmit:  true,
-		capsdk.SubjectResult:  true,
-		capsdk.SubjectDLQ:     true,
-		"job.sre.collect":     true,
-		"worker.abc.jobs":     true,
-		"worker.abc.commands": false,
-		"sys.ping":            false,
+		capsdk.SubjectSubmit:           true,
+		capsdk.SubjectResult:           true,
+		capsdk.SubjectAcceptedResult:   true,
+		capsdk.SubjectAcceptedProgress: false,
+		capsdk.SubjectDLQ:              true,
+		"job.sre.collect":              true,
+		"worker.abc.jobs":              true,
+		"worker.abc.commands":          false,
+		"sys.ping":                     false,
 	}
 	for subject, expect := range cases {
 		if got := isDurableSubject(subject); got != expect {
@@ -126,6 +128,15 @@ func TestComputeMsgID(t *testing.T) {
 	packet = &pb.BusPacket{Payload: &pb.BusPacket_JobResult{JobResult: &pb.JobResult{JobId: "job-2"}}}
 	if got := computeMsgID(subject, packet); got != "job.test:job-2" {
 		t.Fatalf("unexpected jobresult msg id: %s", got)
+	}
+	firstAttempt := &pb.BusPacket{Payload: &pb.BusPacket_JobResult{JobResult: &pb.JobResult{
+		JobId: "job-2", Dispatch: &pb.DispatchIdentity{DispatchId: "dispatch-a", Attempt: 1},
+	}}}
+	secondAttempt := proto.Clone(firstAttempt).(*pb.BusPacket)
+	secondAttempt.GetJobResult().Dispatch = &pb.DispatchIdentity{DispatchId: "dispatch-b", Attempt: 2}
+	firstID, secondID := computeMsgID(capsdk.SubjectResult, firstAttempt), computeMsgID(capsdk.SubjectResult, secondAttempt)
+	if firstID == secondID {
+		t.Fatalf("distinct dispatch attempts share NATS message id %q", firstID)
 	}
 
 	packet = &pb.BusPacket{Payload: &pb.BusPacket_Heartbeat{Heartbeat: &pb.Heartbeat{WorkerId: "worker-1"}}}
@@ -894,6 +905,45 @@ func TestBroadcastWithJetStream(t *testing.T) {
 	}
 	if count2.Load() < 1 {
 		t.Fatal("bus2 did not receive JetStream broadcast DLQ message")
+	}
+}
+
+func TestAcceptedResultPersistsUntilWorkflowConsumerStarts(t *testing.T) {
+	ns := startTestNATSServer(t, true)
+	target := newTestNatsBus(t, ns, true)
+	if _, err := target.js.AddStream(&nats.StreamConfig{
+		Name: "TEST_ACCEPTED_RESULTS", Subjects: []string{"sys.internal.job.result.>"},
+	}); err != nil {
+		t.Fatalf("add accepted-result stream: %v", err)
+	}
+	for attempt, dispatchID := range []string{"dispatch-a", "dispatch-b"} {
+		packet := validNATSTestPacket(&pb.BusPacket{
+			TraceId: "trace-accepted", SenderId: "scheduler",
+			Payload: &pb.BusPacket_JobResult{JobResult: &pb.JobResult{
+				JobId: "job-accepted", Dispatch: &pb.DispatchIdentity{
+					DispatchId: dispatchID, Attempt: uint64(attempt + 1),
+				},
+			}},
+		})
+		if err := target.Publish(capsdk.SubjectAcceptedResult, packet); err != nil {
+			t.Fatalf("publish attempt %d before consumer starts: %v", attempt+1, err)
+		}
+	}
+	received := make(chan string, 1)
+	if err := target.Subscribe(capsdk.SubjectAcceptedResult, "workflow-test", func(got *pb.BusPacket) error {
+		received <- got.GetJobResult().GetDispatch().GetDispatchId()
+		return nil
+	}); err != nil {
+		t.Fatalf("subscribe accepted result: %v", err)
+	}
+	seen := map[string]bool{}
+	for len(seen) < 2 {
+		select {
+		case dispatchID := <-received:
+			seen[dispatchID] = true
+		case <-time.After(3 * time.Second):
+			t.Fatalf("late workflow consumer received dispatches %v, want both attempts", seen)
+		}
 	}
 }
 

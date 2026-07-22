@@ -177,6 +177,12 @@ services:
       - NATS_TLS_KEY=/etc/cordum/tls/client/tls.key
       - NATS_TLS_SERVER_NAME=nats
       - NATS_TOKEN=${NATS_TOKEN:-cordum-dev-token}
+      # CAP runtime profile. Default "compat" keeps legacy unsigned packets,
+      # string resource pointers, and configured fail-open modes reachable.
+      # "production" selects CAP-PRODUCTION enforcement and refuses to start
+      # unless every mandatory dependency is initialized. An unrecognised
+      # value fails startup rather than downgrading silently.
+      - CORDUM_CAP_PROFILE=${CORDUM_CAP_PROFILE:-compat}
       - CORDUM_SDK_HANDSHAKE=${CORDUM_SDK_HANDSHAKE:-off}
       - CORDUM_HEARTBEAT_MODE=${CORDUM_HEARTBEAT_MODE:-authority}
       - REDIS_URL=rediss://:${REDIS_PASSWORD:?REDIS_PASSWORD_not_set}@redis:6379
@@ -246,6 +252,12 @@ services:
       - NATS_TLS_KEY=/etc/cordum/tls/client/tls.key
       - NATS_TLS_SERVER_NAME=nats
       - NATS_TOKEN=${NATS_TOKEN:-cordum-dev-token}
+      # CAP runtime profile. Default "compat" keeps legacy unsigned packets,
+      # string resource pointers, and configured fail-open modes reachable.
+      # "production" selects CAP-PRODUCTION enforcement and refuses to start
+      # unless every mandatory dependency is initialized. An unrecognised
+      # value fails startup rather than downgrading silently.
+      - CORDUM_CAP_PROFILE=${CORDUM_CAP_PROFILE:-compat}
       - CORDUM_SDK_HANDSHAKE=${CORDUM_SDK_HANDSHAKE:-off}
       - CORDUM_HEARTBEAT_MODE=${CORDUM_HEARTBEAT_MODE:-authority}
       - REDIS_URL=rediss://:${REDIS_PASSWORD:?REDIS_PASSWORD_not_set}@redis:6379
@@ -255,6 +267,7 @@ services:
       - REDIS_TLS_SERVER_NAME=redis
       - SAFETY_KERNEL_ADDR=safety-kernel:50051
       - SAFETY_KERNEL_TLS_CA=/etc/cordum/tls/ca/ca.crt
+      - OUTPUT_POLICY_ENABLED=${OUTPUT_POLICY_ENABLED:-true}
       - CONTEXT_ENGINE_TLS_CA=/etc/cordum/tls/ca/ca.crt
       - GATEWAY_HTTP_TLS_CERT=/etc/cordum/tls/server/tls.crt
       - GATEWAY_HTTP_TLS_KEY=/etc/cordum/tls/server/tls.key
@@ -368,6 +381,8 @@ services:
         condition: service_healthy
       scheduler:
         condition: service_healthy
+      safety-kernel:
+        condition: service_healthy
     environment:
       - NATS_URL=tls://nats:4222
       - NATS_USE_JETSTREAM=1
@@ -381,6 +396,11 @@ services:
       - REDIS_TLS_CERT=/etc/cordum/tls/client/tls.crt
       - REDIS_TLS_KEY=/etc/cordum/tls/client/tls.key
       - REDIS_TLS_SERVER_NAME=redis
+      - SAFETY_KERNEL_ADDR=safety-kernel:50051
+      - SAFETY_KERNEL_TLS_CA=/etc/cordum/tls/ca/ca.crt
+      - OUTPUT_POLICY_ENABLED=${OUTPUT_POLICY_ENABLED:-true}
+      # CAP runtime profile (see scheduler service for semantics).
+      - CORDUM_CAP_PROFILE=${CORDUM_CAP_PROFILE:-compat}
       - WORKFLOW_ENGINE_HTTP_ADDR=:9093
       - WORKFLOW_ENGINE_SCAN_INTERVAL=5s
       - WORKFLOW_ENGINE_RUN_SCAN_LIMIT=200

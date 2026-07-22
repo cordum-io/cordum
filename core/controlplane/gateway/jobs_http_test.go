@@ -14,6 +14,7 @@ import (
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
+	"github.com/cordum/cordum/core/infra/resourceio"
 	infraSchema "github.com/cordum/cordum/core/infra/schema"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
@@ -66,6 +67,47 @@ func TestHandleSubmitJobHTTP(t *testing.T) {
 	}
 	if bus.published[0].subject != capsdk.SubjectSubmit {
 		t.Fatalf("unexpected publish subject: %s", bus.published[0].subject)
+	}
+}
+
+// TestHandleSubmitJobHTTPStampsAuthoritativeIdentity proves the gateway
+// stamps IdentityBinding from the authenticated tenant (never from
+// unauthenticated client-suppliable fields) on every submitted JobRequest,
+// so downstream scheduler/safety identity validation has an authoritative
+// mirror to check every other mirror against (task-a13f83fa step-9).
+func TestHandleSubmitJobHTTPStampsAuthoritativeIdentity(t *testing.T) {
+	s, bus, _ := newTestGateway(t)
+	s.tenant = "default"
+
+	payload := map[string]any{"prompt": "hello", "topic": "job.test"}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+
+	s.handleSubmitJobHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	bus.mu.Lock()
+	defer bus.mu.Unlock()
+	if len(bus.published) != 1 {
+		t.Fatalf("expected one bus publish, got %d", len(bus.published))
+	}
+	jobReq := bus.published[0].packet.GetJobRequest()
+	if jobReq == nil {
+		t.Fatalf("expected a JobRequest payload")
+	}
+	identity := jobReq.GetIdentity()
+	if identity == nil {
+		t.Fatalf("JobRequest.Identity was not stamped")
+	}
+	if identity.GetTenantId() != "default" {
+		t.Fatalf("Identity.TenantId = %q, want %q", identity.GetTenantId(), "default")
+	}
+	if identity.GetTenantId() != jobReq.GetTenantId() {
+		t.Fatalf("Identity.TenantId (%q) disagrees with top-level TenantId (%q)", identity.GetTenantId(), jobReq.GetTenantId())
 	}
 }
 
@@ -642,6 +684,10 @@ func TestHandleSubmitJobHTTPRespectsConcurrentJobsLimit(t *testing.T) {
 
 func TestHandleListJobsAndGetJob(t *testing.T) {
 	s, _, _ := newTestGateway(t)
+	// This test exercises legacy Redis pointer resolution explicitly; strict
+	// mode hides/rejects legacy pointers by default (see
+	// TestHandleGetJobDoesNotDereferenceLegacyInStrictMode).
+	s.memoryResourceReader.Compatibility = resourceio.LegacyCompatibility{Enabled: true}
 	ctx := context.Background()
 	jobID := "job-1"
 
@@ -655,6 +701,12 @@ func TestHandleListJobsAndGetJob(t *testing.T) {
 	if err := s.memStore.PutContext(ctx, ctxKey, []byte(`{"prompt":"hello"}`)); err != nil {
 		t.Fatalf("put context: %v", err)
 	}
+	if err := s.jobStore.SetJobRequest(ctx, &pb.JobRequest{
+		JobId: jobID, TenantId: "tenant", Topic: "job.test",
+		ContextPtr: store.PointerForKey(ctxKey),
+	}); err != nil {
+		t.Fatalf("set job request: %v", err)
+	}
 	resKey := store.MakeResultKey(jobID)
 	if err := s.memStore.PutResult(ctx, resKey, []byte(`{"result":"ok"}`)); err != nil {
 		t.Fatalf("put result: %v", err)
@@ -662,6 +714,12 @@ func TestHandleListJobsAndGetJob(t *testing.T) {
 	resPtr := store.PointerForKey(resKey)
 	if err := s.jobStore.SetResultPtr(ctx, jobID, resPtr); err != nil {
 		t.Fatalf("set result ptr: %v", err)
+	}
+	if err := s.jobStore.SetJobRequest(ctx, &pb.JobRequest{
+		JobId: jobID, Topic: "job.test", TenantId: "tenant",
+		ContextPtr: store.PointerForKey(ctxKey),
+	}); err != nil {
+		t.Fatalf("set job request: %v", err)
 	}
 
 	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/jobs?state=PENDING&topic=job.test", nil)

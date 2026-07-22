@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/infra/store"
+	jobidentity "github.com/cordum/cordum/core/protocol/identity"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -123,6 +124,83 @@ func TestSafetyClientDeny(t *testing.T) {
 	}
 	if record.Decision != SafetyDeny || record.Reason != "blocked" {
 		t.Fatalf("expected deny, got %v reason=%s", record.Decision, record.Reason)
+	}
+}
+
+func TestSafetyClientDefaultProfileAllowsCompatIdentityWithoutActor(t *testing.T) {
+	conn, handler, cleanup := startInstrumentedTestSafetyServer(t, pb.DecisionType_DECISION_TYPE_ALLOW, "")
+	defer cleanup()
+	client := &SafetyClient{client: pb.NewSafetyKernelClient(conn), conn: conn, cb: newTestCB()}
+	req := &pb.JobRequest{
+		JobId: "job-compat", Topic: "job.test", TenantId: "tenant-a", PrincipalId: "principal-a",
+		Identity: &pb.IdentityBinding{TenantId: "tenant-a", PrincipalId: "principal-a"},
+	}
+
+	record, err := client.Check(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Check() error = %v, want compatibility request admitted", err)
+	}
+	if record.Decision != SafetyAllow || handler.lastReq == nil {
+		t.Fatalf("Check() = (%v, %#v), want allow delivered to Safety Kernel", record.Decision, handler.lastReq)
+	}
+}
+
+func TestSafetyClientProductionRejectsIncompleteIdentityBeforeRPC(t *testing.T) {
+	conn, handler, cleanup := startInstrumentedTestSafetyServer(t, pb.DecisionType_DECISION_TYPE_ALLOW, "")
+	defer cleanup()
+	client := (&SafetyClient{client: pb.NewSafetyKernelClient(conn), conn: conn, cb: newTestCB()}).
+		WithProductionIdentityEnforcement(true)
+	req := &pb.JobRequest{
+		JobId: "job-production", Topic: "job.test", TenantId: "tenant-a", PrincipalId: "principal-a",
+		Identity: &pb.IdentityBinding{TenantId: "tenant-a", PrincipalId: "principal-a"},
+	}
+
+	_, err := client.Check(context.Background(), req)
+	if !errors.Is(err, jobidentity.ErrIncompleteProductionIdentity) {
+		t.Fatalf("Check() error = %v, want incomplete production identity", err)
+	}
+	if handler.lastReq != nil {
+		t.Fatalf("incomplete production identity reached Safety Kernel: %#v", handler.lastReq)
+	}
+}
+
+func TestSafetyClientRejectsIdentityMismatchBeforeRPC(t *testing.T) {
+	conn, handler, cleanup := startInstrumentedTestSafetyServer(t, pb.DecisionType_DECISION_TYPE_ALLOW, "")
+	defer cleanup()
+	client := (&SafetyClient{client: pb.NewSafetyKernelClient(conn), conn: conn, cb: newTestCB()}).
+		WithProductionIdentityEnforcement(true)
+	req := &pb.JobRequest{
+		JobId: "job-1", Topic: "job.test", TenantId: "tenant-attacker",
+		Identity: &pb.IdentityBinding{TenantId: "tenant-a", PrincipalId: "principal-a", ActorId: "principal-a"},
+	}
+
+	_, err := client.Check(context.Background(), req)
+	if !errors.Is(err, jobidentity.ErrProductionIdentityMismatch) {
+		t.Fatalf("Check() error = %v, want identity mismatch", err)
+	}
+	if handler.lastReq != nil {
+		t.Fatalf("identity mismatch reached Safety Kernel: %#v", handler.lastReq)
+	}
+}
+
+func TestSafetyClientCarriesCanonicalIdentityToRPC(t *testing.T) {
+	conn, handler, cleanup := startInstrumentedTestSafetyServer(t, pb.DecisionType_DECISION_TYPE_ALLOW, "")
+	defer cleanup()
+	client := (&SafetyClient{client: pb.NewSafetyKernelClient(conn), conn: conn, cb: newTestCB()}).
+		WithProductionIdentityEnforcement(true)
+	auth := &pb.IdentityBinding{TenantId: "tenant-a", PrincipalId: "principal-a", ActorId: "actor-a"}
+	req, err := jobidentity.NormalizeProductionJobRequest(
+		&pb.JobRequest{JobId: "job-1", Topic: "job.test"}, auth,
+	)
+	if err != nil {
+		t.Fatalf("NormalizeProductionJobRequest() error = %v", err)
+	}
+
+	if _, err := client.Check(context.Background(), req); err != nil {
+		t.Fatalf("Check() error = %v", err)
+	}
+	if handler.lastReq == nil || handler.lastReq.GetIdentity().GetActorId() != auth.GetActorId() {
+		t.Fatalf("Safety Kernel identity = %#v, want %#v", handler.lastReq.GetIdentity(), auth)
 	}
 }
 
@@ -286,15 +364,16 @@ func TestSafetyClientAttachesInputContentFromContextPtr(t *testing.T) {
 		t.Fatalf("seed redis context: %v", err)
 	}
 
-	client := &SafetyClient{
+	client := (&SafetyClient{
 		client:        pb.NewSafetyKernelClient(conn),
 		conn:          conn,
 		cb:            newTestCB(),
 		contextClient: rdb,
-	}
+	}).WithLegacyResourceCompatibility(nil)
 
 	record, err := client.Check(ctx, &pb.JobRequest{
 		JobId:      "job-ctx",
+		TenantId:   "tenant-a",
 		Topic:      "job.visa-governance.evaluate",
 		ContextPtr: store.PointerForKey(store.MakeContextKey("job-ctx")),
 	})

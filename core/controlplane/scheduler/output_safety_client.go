@@ -14,6 +14,9 @@ import (
 
 	"github.com/cordum/cordum/core/infra/maputil"
 	"github.com/cordum/cordum/core/infra/redisutil"
+	"github.com/cordum/cordum/core/infra/resource"
+	"github.com/cordum/cordum/core/infra/resourceio"
+	infraStore "github.com/cordum/cordum/core/infra/store"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
@@ -59,10 +62,11 @@ func outputMetaTimeout() time.Duration {
 
 // OutputSafetyClient implements OutputSafetyChecker over OutputPolicyService gRPC.
 type OutputSafetyClient struct {
-	client       pb.OutputPolicyServiceClient
-	conn         *grpc.ClientConn
-	resultClient redis.UniversalClient
-	cb           *RedisCircuitBreaker
+	client         pb.OutputPolicyServiceClient
+	conn           *grpc.ClientConn
+	resultClient   redis.UniversalClient
+	resourceReader resourceio.Reader
+	cb             *RedisCircuitBreaker
 }
 
 var _ OutputSafetyChecker = (*OutputSafetyClient)(nil)
@@ -201,13 +205,9 @@ func (c *OutputSafetyClient) EvaluateOutput(ctx context.Context, req *OutputEval
 	}
 
 	checkReq := outputCheckRequestFromEvaluateRequest(req)
-	if len(checkReq.GetOutputContent()) == 0 && strings.TrimSpace(checkReq.GetResultPtr()) != "" {
-		content, err := c.loadOutputContent(ctx, checkReq.ResultPtr)
-		if err != nil {
-			c.cb.RecordFailure(ctx)
-			return OutputSafetyRecord{}, fmt.Errorf("load output content: %w", err)
-		}
-		checkReq.OutputContent = content
+	if err := c.attachResolvedOutput(ctx, req, checkReq); err != nil {
+		c.cb.RecordFailure(ctx)
+		return OutputSafetyRecord{}, fmt.Errorf("load output content: %w", err)
 	}
 	if len(checkReq.GetOutputContent()) > outputContentMaxBytes {
 		checkReq.OutputContent = checkReq.OutputContent[:outputContentMaxBytes]
@@ -254,6 +254,7 @@ func outputEvaluateRequestFromJob(res *pb.JobResult, req *pb.JobRequest, include
 	}
 	if includeContent {
 		out.ResultPtr = strings.TrimSpace(res.GetResultPtr())
+		out.ResultRef = res.GetResultRef()
 	}
 	if out.StepID == "" {
 		out.StepID = strings.TrimSpace(req.GetEnv()["step_id"])
@@ -306,7 +307,11 @@ func outputCheckRequestFromEvaluateRequest(req *OutputEvaluateRequest) *pb.Outpu
 	}
 }
 
-func (c *OutputSafetyClient) loadOutputContent(ctx context.Context, resultPtr string) ([]byte, error) {
+func (c *OutputSafetyClient) loadOutputContent(
+	ctx context.Context,
+	resultPtr string,
+	trusted resource.TrustedContext,
+) ([]byte, error) {
 	resultPtr = strings.TrimSpace(resultPtr)
 	if resultPtr == "" {
 		return nil, nil
@@ -314,7 +319,7 @@ func (c *OutputSafetyClient) loadOutputContent(ctx context.Context, resultPtr st
 	if c.resultClient == nil {
 		return nil, fmt.Errorf("output content store unavailable")
 	}
-	key, err := outputResultKeyFromPointer(resultPtr)
+	key, err := resourceio.BoundLegacyKey(resultPtr, resourceio.LegacyResult, trusted)
 	if err != nil {
 		return nil, err
 	}
@@ -328,7 +333,7 @@ func (c *OutputSafetyClient) loadOutputContent(ctx context.Context, resultPtr st
 			return nil, err
 		}
 		if attempt == outputContentFetchRetries-1 {
-			return nil, nil
+			return nil, redis.Nil
 		}
 		timer := time.NewTimer(outputContentFetchBackoff)
 		select {
@@ -345,17 +350,7 @@ func (c *OutputSafetyClient) loadOutputContent(ctx context.Context, resultPtr st
 }
 
 func outputResultKeyFromPointer(ptr string) (string, error) {
-	if ptr == "" {
-		return "", fmt.Errorf("empty pointer")
-	}
-	if !strings.HasPrefix(ptr, outputPointerPrefix) {
-		return "", fmt.Errorf("invalid pointer prefix: %s", ptr)
-	}
-	key := strings.TrimPrefix(ptr, outputPointerPrefix)
-	if key == "" {
-		return "", fmt.Errorf("missing pointer key")
-	}
-	return key, nil
+	return infraStore.KeyFromPointer(ptr)
 }
 
 func outputContentHash(content []byte) string {

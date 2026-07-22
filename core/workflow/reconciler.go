@@ -214,6 +214,7 @@ func (r *reconciler) reconcileRun(ctx context.Context, runID string) {
 			ErrorMessage: failureReason,
 			WorkerId:     "",
 			ExecutionMs:  0,
+			Identity:     cloneIdentityBinding(run.Identity),
 		}
 		if status != pb.JobStatus_JOB_STATUS_SUCCEEDED && jr.ErrorMessage == "" {
 			jr.ErrorMessage = fmt.Sprintf("job %s terminated with state %s (no error details available)", sr.JobID, state)
@@ -298,7 +299,7 @@ func (r *reconciler) reconcileOrphanedJobs(ctx context.Context, runID string) {
 			"job_id", jobID,
 			"run_status", run.Status,
 		)
-		if err := r.engine.publishJobCancel(jobID, reason); err != nil {
+		if err := r.engine.publishJobCancel(jobID, reason, run.Identity); err != nil {
 			slog.Error("reconciler: orphan cancel still failing",
 				"run_id", runID,
 				"job_id", jobID,
@@ -402,7 +403,7 @@ func (r *reconciler) reconcileStuckWaitingSteps(ctx context.Context, run *Workfl
 			sr.Status = StepStatusFailed
 			sr.CompletedAt = &now
 			sr.Error = map[string]any{
-				"message":             "approval dispatch failed after reconciler recovery attempts",
+				"message":            "approval dispatch failed after reconciler recovery attempts",
 				"_reconcile_retries": retries,
 			}
 			run.Steps[stepID] = sr

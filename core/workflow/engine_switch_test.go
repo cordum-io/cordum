@@ -60,7 +60,7 @@ func TestSwitchMatchesCase(t *testing.T) {
 	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
 		JobId:     runID + ":beta@1",
 		Status:    pb.JobStatus_JOB_STATUS_SUCCEEDED,
-		ResultPtr: "redis://res:beta",
+		ResultPtr: legacyResultPointer(runID + ":beta@1"),
 	}); err != nil {
 		t.Fatalf("handle job result: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestSwitchDefaultBranch(t *testing.T) {
 	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
 		JobId:     runID + ":fallback@1",
 		Status:    pb.JobStatus_JOB_STATUS_SUCCEEDED,
-		ResultPtr: "redis://res:fallback",
+		ResultPtr: legacyResultPointer(runID + ":fallback@1"),
 	}); err != nil {
 		t.Fatalf("handle job result: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestSwitchOutputPath(t *testing.T) {
 	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
 		JobId:     runID + ":alpha@1",
 		Status:    pb.JobStatus_JOB_STATUS_SUCCEEDED,
-		ResultPtr: "redis://res:alpha",
+		ResultPtr: legacyResultPointer(runID + ":alpha@1"),
 	}); err != nil {
 		t.Fatalf("handle job result: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestSwitchUnmatchedBranchesSkipped(t *testing.T) {
 	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
 		JobId:     runID + ":alpha@1",
 		Status:    pb.JobStatus_JOB_STATUS_SUCCEEDED,
-		ResultPtr: "redis://res:alpha",
+		ResultPtr: legacyResultPointer(runID + ":alpha@1"),
 	}); err != nil {
 		t.Fatalf("handle job result: %v", err)
 	}
@@ -252,7 +252,7 @@ func setupSwitchRun(
 
 	store := newWorkflowStore(t)
 	bus := &recordingBus{}
-	engine := NewEngine(store, bus)
+	engine := NewEngine(store, bus).WithLegacyResourceCompatibility(nil)
 
 	switchInput := map[string]any{
 		"cases": toAnySlice(cases),
@@ -358,7 +358,7 @@ func ensureSwitchBranchDispatched(t *testing.T, store *RedisStore, engine *Engin
 func TestSwitchMapFormatCases(t *testing.T) {
 	store := newWorkflowStore(t)
 	bus := &recordingBus{}
-	engine := NewEngine(store, bus)
+	engine := NewEngine(store, bus).WithLegacyResourceCompatibility(nil)
 
 	// Cases as map[string]any: match value → target step ID
 	switchInput := map[string]any{
@@ -440,7 +440,7 @@ func TestSwitchMapFormatCases(t *testing.T) {
 	if err := engine.HandleJobResult(context.Background(), &pb.JobResult{
 		JobId:     "run-map-cases:step_beta@1",
 		Status:    pb.JobStatus_JOB_STATUS_SUCCEEDED,
-		ResultPtr: "redis://res:beta",
+		ResultPtr: legacyResultPointer("run-map-cases:step_beta@1"),
 	}); err != nil {
 		t.Fatalf("handle job result: %v", err)
 	}

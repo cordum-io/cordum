@@ -151,6 +151,52 @@ func TestHandleJobResultOutputQuarantined(t *testing.T) {
 	}
 }
 
+// TestHandleJobResultOutputQuarantineCorrectsResultStatusInPlace guards
+// against an output-policy bypass in the workflow layer: handleJobResult
+// only ever tracked the quarantine/deny disposition in a local JobState
+// variable and the job store, never on the *pb.JobResult itself. Any caller
+// that republishes that same JobResult pointer verbatim — e.g.
+// handleCompatJobResult's clone onto SubjectAcceptedResult
+// (engine_accepted_event.go) — would still carry the worker's original
+// JOB_STATUS_SUCCEEDED, and the workflow engine's applyResult()
+// (core/workflow/engine_state.go) treats JOB_STATUS_SUCCEEDED as step
+// success and records res.ResultPtr as the step output — using the
+// quarantined/unsafe pointer despite the scheduler having denied it.
+func TestHandleJobResultOutputQuarantineCorrectsResultStatusInPlace(t *testing.T) {
+	checker := &stubOutputChecker{metaRecord: OutputSafetyRecord{Decision: OutputQuarantine, Reason: "secret leak"}}
+	bus := &fakeBus{}
+	store := newSagaJobStore()
+	store.states["job-out-quarantine-status"] = JobStateRunning
+	store.topics["job-out-quarantine-status"] = "job.default"
+	store.reqs["job-out-quarantine-status"] = &pb.JobRequest{JobId: "job-out-quarantine-status", Topic: "job.default", TenantId: "tenant-a"}
+
+	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil).
+		WithOutputChecker(checker).
+		WithOutputSafetyEnabled(true)
+
+	res := &pb.JobResult{
+		JobId: "job-out-quarantine-status", Status: pb.JobStatus_JOB_STATUS_SUCCEEDED,
+		ResultPtr: "redis://res:job-out-quarantine-status",
+	}
+	if err := engine.handleJobResult(res); err != nil {
+		t.Fatalf("handle result: %v", err)
+	}
+
+	if res.Status != pb.JobStatus_JOB_STATUS_DENIED {
+		t.Fatalf("res.Status = %s, want %s (a republished JobResult must not still claim success)",
+			res.Status, pb.JobStatus_JOB_STATUS_DENIED)
+	}
+	if res.ErrorCode != outputPolicyReason {
+		t.Fatalf("res.ErrorCode = %q, want %q", res.ErrorCode, outputPolicyReason)
+	}
+	if res.ErrorCodeEnum != pb.ErrorCode_ERROR_CODE_SAFETY_DENIED {
+		t.Fatalf("res.ErrorCodeEnum = %s, want %s", res.ErrorCodeEnum, pb.ErrorCode_ERROR_CODE_SAFETY_DENIED)
+	}
+	if res.ErrorMessage != "secret leak" {
+		t.Fatalf("res.ErrorMessage = %q, want %q", res.ErrorMessage, "secret leak")
+	}
+}
+
 func TestHandleJobResultOutputCheckDisabled(t *testing.T) {
 	checker := &stubOutputChecker{metaRecord: OutputSafetyRecord{Decision: OutputQuarantine, Reason: "secret"}}
 	bus := &fakeBus{}
@@ -340,14 +386,14 @@ func TestHandleJobResultSecretContentEventuallyQuarantined(t *testing.T) {
 			}, nil
 		},
 	}
-	checker := &OutputSafetyClient{
+	checker := (&OutputSafetyClient{
 		client:       fakePolicy,
 		resultClient: resultClient,
 		cb: NewRedisCircuitBreaker(nil, "cordum:cb:safety:output:test", CircuitBreakerOpts{
 			FailThreshold: outputCircuitFailBudget,
 			OpenDuration:  outputCircuitOpenFor,
 		}),
-	}
+	}).WithLegacyResourceCompatibility(nil)
 
 	jobID := "job-real-secret"
 	store := newSagaJobStore()
@@ -412,14 +458,14 @@ func TestHandleJobResultCleanContentRemainsAllowed(t *testing.T) {
 			}, nil
 		},
 	}
-	checker := &OutputSafetyClient{
+	checker := (&OutputSafetyClient{
 		client:       fakePolicy,
 		resultClient: resultClient,
 		cb: NewRedisCircuitBreaker(nil, "cordum:cb:safety:output:test", CircuitBreakerOpts{
 			FailThreshold: outputCircuitFailBudget,
 			OpenDuration:  outputCircuitOpenFor,
 		}),
-	}
+	}).WithLegacyResourceCompatibility(nil)
 
 	jobID := "job-real-clean"
 	store := newSagaJobStore()

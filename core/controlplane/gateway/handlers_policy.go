@@ -79,6 +79,11 @@ func (s *server) handlePolicyCheck(w http.ResponseWriter, r *http.Request, mode 
 	if req.Meta != nil {
 		req.Meta.TenantId = tenant
 	}
+	if s.capProfile.IsProduction() {
+		req.Identity = &pb.IdentityBinding{
+			TenantId: tenant, PrincipalId: principalID, ActorId: principalID,
+		}
+	}
 	checkReq, err := buildPolicyCheckRequest(r.Context(), &req, s.configSvc, s.tenant)
 	if err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())

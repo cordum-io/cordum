@@ -7,6 +7,7 @@ import (
 
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/infra/capprofile"
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/grpc/codes"
@@ -71,6 +72,26 @@ func TestSubmitJobGRPCViewerDenied(t *testing.T) {
 	})
 	if status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("expected PermissionDenied for viewer, got %v", err)
+	}
+}
+
+func TestSubmitJobGRPCProductionRejectsActorSpoofBeforePublish(t *testing.T) {
+	s, bus, _ := newTestGateway(t)
+	s.auth = &publicPathAuth{}
+	s.capProfile = capprofile.Production
+	ctx := context.WithValue(context.Background(), auth.ContextKey{}, &auth.AuthContext{
+		Role: "user", Tenant: "org-1", PrincipalID: "principal-1",
+	})
+
+	_, err := s.SubmitJob(ctx, &pb.SubmitJobRequest{
+		Prompt: "hello", Topic: "job.default", OrgId: "org-1",
+		PrincipalId: "principal-1", ActorId: "actor-attacker",
+	})
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("SubmitJob() error = %v, want PermissionDenied", err)
+	}
+	if len(bus.published) != 0 {
+		t.Fatalf("spoofed request published %d packets", len(bus.published))
 	}
 }
 

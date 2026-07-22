@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/cordum/cordum/core/auth/servicetoken"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/infra/store"
@@ -13,7 +12,6 @@ import (
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/google/uuid"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // DLQ handlers
@@ -138,6 +136,10 @@ func (s *server) handleRetryDLQ(w http.ResponseWriter, r *http.Request) {
 	origReq, origReqErr := s.jobStore.GetJobRequest(r.Context(), jobID)
 	if origReqErr != nil {
 		slog.Warn("dlq retry missing original job request", "job_id", jobID, "error", origReqErr) // #nosec -- job id is validated and used for diagnostics.
+		if s.capProfile.IsProduction() {
+			writeErrorJSON(w, http.StatusServiceUnavailable, "original job identity unavailable")
+			return
+		}
 		origReq = nil
 	}
 	entry, err := s.dlqStore.Get(r.Context(), jobID)
@@ -169,6 +171,16 @@ func (s *server) handleRetryDLQ(w http.ResponseWriter, r *http.Request) {
 	tenant, _ := s.jobStore.GetTenant(r.Context(), jobID)
 	team, _ := s.jobStore.GetTeam(r.Context(), jobID)
 	principal, _ := s.jobStore.GetPrincipal(r.Context(), jobID)
+	if s.capProfile.IsProduction() {
+		canonical, normalizeErr := s.normalizeStoredJobRequest(origReq)
+		if normalizeErr != nil {
+			writeErrorJSON(w, http.StatusConflict, "stored job identity is invalid")
+			return
+		}
+		origReq = canonical
+		tenant = canonical.GetIdentity().GetTenantId()
+		principal = canonical.GetIdentity().GetPrincipalId()
+	}
 
 	envOverrides := map[string]string{
 		"tenant_id":    tenant,
@@ -195,24 +207,27 @@ func (s *server) handleRetryDLQ(w http.ResponseWriter, r *http.Request) {
 		PrincipalId: principal,
 		Env:         mergeStringMap(baseEnv, envOverrides),
 		Labels:      mergeStringMap(baseLabels, labelOverrides),
+		Identity:    nil,
 	}
 	if origReq != nil {
 		jobReq.Meta = origReq.GetMeta()
+		jobReq.Identity = origReq.GetIdentity()
+	}
+	jobReq, err = s.normalizeStoredJobRequest(jobReq)
+	if err != nil {
+		writeErrorJSON(w, http.StatusConflict, "stored job identity is invalid")
+		return
 	}
 
-	packet := &pb.BusPacket{
-		TraceId:         traceID,
-		SenderId:        servicetoken.IdentityGateway,
-		ProtocolVersion: capsdk.DefaultProtocolVersion,
-		CreatedAt:       timestamppb.Now(),
-		Payload: &pb.BusPacket_JobRequest{
-			JobRequest: jobReq,
-		},
-	}
+	packet := jobRequestPacket(traceID, "api-gateway", jobReq)
 	s.attachServiceToken(packet)
 
 	if err := s.jobStore.SetJobMeta(r.Context(), jobReq); err != nil {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "failed to persist job metadata")
+		return
+	}
+	if err := s.jobStore.SetJobRequest(r.Context(), jobReq); err != nil {
+		writeErrorJSON(w, http.StatusServiceUnavailable, "failed to persist job request")
 		return
 	}
 	if err := s.jobStore.AddJobToTrace(r.Context(), traceID, newJobID); err != nil {

@@ -194,3 +194,28 @@ func TestEngineWorkflowStepResultIgnoredLogsMismatch(t *testing.T) {
 		t.Fatalf("unexpected ignored job ids: %#v", ignored)
 	}
 }
+
+func TestPrepareJobResultDoesNotLogResourceLocation(t *testing.T) {
+	const pointer = "redis://res:tenant-secret"
+	records := captureWorkflowLogs(t, slog.LevelInfo, func() {
+		prepareJobResult(&pb.JobResult{
+			JobId: "run-log:step@1", ResultPtr: pointer,
+			ResultRef: &pb.ResourceRef{Uri: "redis://operator/tenant-secret"},
+		})
+	})
+
+	received := findWorkflowLog(records, "workflow step result received", nil)
+	if received == nil {
+		t.Fatal("expected workflow step result received log")
+	}
+	encoded, err := json.Marshal(received)
+	if err != nil {
+		t.Fatalf("marshal log record: %v", err)
+	}
+	if strings.Contains(string(encoded), "tenant-secret") || received["result_ptr"] != nil {
+		t.Fatalf("resource location leaked in log: %s", encoded)
+	}
+	if received["has_result_ref"] != true || received["has_legacy_result"] != true {
+		t.Fatalf("safe resource presence fields missing: %#v", received)
+	}
+}

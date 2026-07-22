@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordum/cordum/core/auth/servicetoken"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
@@ -24,7 +23,6 @@ import (
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // grpcAuditActor resolves the audit actor for a gRPC governance event from the
@@ -201,6 +199,17 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 			meta.Labels["agent_id"] = agent.ID
 		}
 	}
+	if s.capProfile.IsProduction() {
+		probe := &pb.JobRequest{
+			TenantId: orgID, PrincipalId: principalID, Meta: meta,
+			Env: map[string]string{"tenant_id": orgID},
+		}
+		normalized, normalizeErr := s.normalizeGRPCJobRequest(ctx, probe)
+		if normalizeErr != nil {
+			return nil, status.Error(codes.PermissionDenied, "authenticated job identity mismatch")
+		}
+		meta = normalized.GetMeta()
+	}
 
 	maxInput := int64(8000)
 	maxOutput := int64(1024)
@@ -307,6 +316,10 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 			Budget: &pb.Budget{
 				MaxInputTokens: maxInput, MaxOutputTokens: maxOutput,
 			},
+		}
+		jobReq, err = s.normalizeGRPCJobRequest(ctx, jobReq)
+		if err != nil {
+			return nil, status.Error(codes.PermissionDenied, "authenticated job identity mismatch")
 		}
 
 		if s.jobStore != nil {
@@ -463,6 +476,10 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 			DeadlineMs:      0,
 		},
 	}
+	jobReq, err = s.normalizeGRPCJobRequest(ctx, jobReq)
+	if err != nil {
+		return nil, status.Error(codes.PermissionDenied, "authenticated job identity mismatch")
+	}
 
 	if s.jobStore != nil {
 		if err := s.jobStore.SetJobMeta(ctx, jobReq); err != nil {
@@ -484,15 +501,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		}
 	}
 
-	packet := &pb.BusPacket{
-		TraceId:         traceID,
-		SenderId:        servicetoken.IdentityGateway,
-		CreatedAt:       timestamppb.Now(),
-		ProtocolVersion: capsdk.DefaultProtocolVersion,
-		Payload: &pb.BusPacket_JobRequest{
-			JobRequest: jobReq,
-		},
-	}
+	packet := jobRequestPacket(traceID, "api-gateway", jobReq)
 	s.attachServiceToken(packet)
 
 	if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {

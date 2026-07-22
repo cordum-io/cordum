@@ -12,6 +12,7 @@ import (
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/infra/config"
+	jobidentity "github.com/cordum/cordum/core/protocol/identity"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -321,10 +322,27 @@ func (s *server) handlePolicyReplay(w http.ResponseWriter, r *http.Request) {
 					evalErrs = append(evalErrs, fmt.Sprintf("job %s: unmarshal request: %s", jobID, unmarshalErr.Error()))
 					continue
 				}
-				checkReq = jobRequestToPolicyCheckRequest(&jobReq)
+				normalized, normalizeErr := s.normalizeStoredJobRequest(&jobReq)
+				if normalizeErr != nil {
+					summary.Errored++
+					evalErrs = append(evalErrs, fmt.Sprintf("job %s: stored identity invalid", jobID))
+					continue
+				}
+				checkReq = jobRequestToPolicyCheckRequest(normalized)
 			} else {
 				// Reconstruct a minimal check request from metadata.
 				checkReq = metaToPolicyCheckRequest(jobID, meta)
+			}
+			if s.capProfile.IsProduction() {
+				normalized, normalizeErr := jobidentity.NormalizeProductionPolicyCheckRequest(
+					checkReq, checkReq.GetIdentity(),
+				)
+				if normalizeErr != nil {
+					summary.Errored++
+					evalErrs = append(evalErrs, fmt.Sprintf("job %s: policy identity invalid", jobID))
+					continue
+				}
+				checkReq = normalized
 			}
 
 			// Evaluate the candidate policy.
@@ -442,6 +460,7 @@ func jobRequestToPolicyCheckRequest(req *pb.JobRequest) *pb.PolicyCheckRequest {
 		Labels:      labels,
 		MemoryId:    req.GetMemoryId(),
 		Meta:        meta,
+		Identity:    req.GetIdentity(),
 	}
 	if envMap := req.GetEnv(); envMap != nil {
 		if eff, ok := envMap["CORDUM_EFFECTIVE_CONFIG"]; ok && eff != "" {
@@ -484,6 +503,12 @@ func metaToPolicyCheckRequest(jobID string, meta map[string]string) *pb.PolicyCh
 		}
 	}
 	checkReq.Meta = jobMeta
+	if checkReq.GetTenant() != "" && checkReq.GetPrincipalId() != "" && jobMeta.GetActorId() != "" {
+		checkReq.Identity = &pb.IdentityBinding{
+			TenantId: checkReq.GetTenant(), PrincipalId: checkReq.GetPrincipalId(),
+			ActorId: jobMeta.GetActorId(),
+		}
+	}
 	return checkReq
 }
 
