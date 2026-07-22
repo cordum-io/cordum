@@ -23,11 +23,20 @@ function Assert-CapRevision {
     Assert-NativeSuccess 'read full CAP revision'
     $CapVersion = (& go -C $CordumRoot list -m -f '{{.Version}}' github.com/cordum-io/cap/v2).Trim()
     Assert-NativeSuccess 'read Cordum CAP pin'
-    if ($CapVersion -notmatch '-([0-9a-f]{12})$') {
-        throw "Cordum CAP version lacks a 12-hex revision suffix: $CapVersion"
+    if ($CapVersion -match '-([0-9a-f]{12})$') {
+        # Pseudo-version: the commit hash is embedded in the version string.
+        $PinnedSha = (& git -C $CapRoot rev-parse "$($Matches[1])^{commit}").Trim()
+        Assert-NativeSuccess 'resolve Cordum CAP revision in source repository'
     }
-    $PinnedSha = (& git -C $CapRoot rev-parse "$($Matches[1])^{commit}").Trim()
-    Assert-NativeSuccess 'resolve Cordum CAP revision in source repository'
+    else {
+        # Clean release tag (e.g. v2.16.1): resolve the tag itself in the
+        # checked-out CAP source (requires the checkout step to have fetched
+        # tags) instead of parsing a hash out of the version string.
+        $PinnedSha = (& git -C $CapRoot rev-parse "refs/tags/$CapVersion^{commit}" 2>$null).Trim()
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($PinnedSha)) {
+            throw "Cordum CAP version $CapVersion has no matching tag in the checked-out CAP source"
+        }
+    }
     if ($CapSha -ne $PinnedSha) {
         throw "CAP source $CapSha does not match Cordum pin $PinnedSha"
     }
