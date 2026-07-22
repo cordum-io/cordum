@@ -57,6 +57,11 @@ for bin in docker cosign jq; do
 done
 
 # Packages: full list + dashboard marker for arm64 exception.
+#
+# cordumctl is intentionally excluded: it's only published as an
+# unsigned :main/:sha-* dev image by docker-main.yml, never as a
+# cosign-signed, version-tagged release image by docker.yml (this
+# script's release matrix), so it would never pull/verify here.
 PACKAGES=(
   api-gateway
   scheduler
@@ -64,7 +69,6 @@ PACKAGES=(
   workflow-engine
   context-engine
   mcp
-  cordumctl
   dashboard
 )
 

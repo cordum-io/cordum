@@ -32,6 +32,16 @@
 
 ## Quickstart
 
+### First Time?
+
+| Goal | Path |
+|------|------|
+| **Just want to try it?** | `./tools/scripts/quickstart.sh` — one-command install from source (Option A below) |
+| **Run the full stack from pre-built images?** | `docker compose pull && docker compose up -d` (Option B below) |
+| **Developing Cordum?** | See [Development](#development) |
+
+### Option A: Install from source
+
 One command stands up the full stack — API gateway, scheduler, safety
 kernel, workflow engine, context engine, dashboard, NATS, and
 TLS-secured Redis — with auto-generated secrets, auto-provisioned
@@ -60,6 +70,163 @@ cd cordum
 
 Full walkthrough, platform notes, and troubleshooting:
 [docs/quickstart.md](docs/quickstart.md).
+
+### Option B: Run the published images
+
+**Prerequisites:** Docker Desktop v4+ or Docker Engine v20.10+ with the
+Compose v2 plugin (≥ 4 GB RAM allocated), `jq` (recommended, for parsing
+API responses), and Go 1.26.3+ (for one-time local cert generation —
+`docker compose` mounts `./certs` but does not create it).
+
+```bash
+git clone https://github.com/cordum-io/cordum.git
+cd cordum
+go run ./cmd/cordumctl generate-certs   # writes ./certs/{ca,server,client}
+export CORDUM_API_KEY=$(openssl rand -hex 32)
+export REDIS_PASSWORD=$(openssl rand -hex 16)
+docker compose pull         # pulls every Cordum service from ghcr.io
+docker compose up -d        # starts the stack — no image build needed
+```
+
+**Dashboard:** http://localhost:8082
+**Login:** this path leaves user auth off by default — sign in on the dashboard
+with your `CORDUM_API_KEY`. To enable `admin` password login instead, set
+`CORDUM_USER_AUTH_ENABLED=true` and a policy-compliant `CORDUM_ADMIN_PASSWORD`
+(≥ 12 chars, with an uppercase letter, a digit, and a special character) in
+`.env`, then `docker compose up -d`. (The quickstart script in Option A does
+this for you.)
+
+Pin a specific release by exporting `CORDUM_VERSION=1.2.3` before
+`docker compose pull`. Defaults to `:latest`, which only moves on stable
+release tags (pre-release suffixes such as `-rc.1` never promote
+`:latest`).
+
+<details>
+<summary>Verifying image signatures</summary>
+
+Every release-tag image is signed with [cosign] keyless OIDC. The example
+below verifies `api-gateway`; repeat the same command (swapping the image
+name) for each of the seven Cordum images before deploying to production —
+verifying one image does not attest the rest:
+
+```bash
+cosign verify ghcr.io/cordum-io/cordum/api-gateway:1.2.3 \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp 'https://github\.com/cordum-io/cordum/\.github/workflows/docker\.yml@refs/tags/v.*'
+```
+
+See [docs/deployment/images.md](docs/deployment/images.md) for the full
+image catalogue, a verify-all-images snippet, multi-arch pull instructions,
+and tag policy.
+
+[cosign]: https://docs.sigstore.dev/cosign/overview/
+</details>
+
+<details>
+<summary>Manual setup (without docker compose)</summary>
+
+```bash
+cp .env.example .env
+# Edit .env: set CORDUM_API_KEY (or generate: openssl rand -hex 32)
+export CORDUM_API_KEY="your-key-here"
+go run ./cmd/cordumctl up
+open http://localhost:8082
+```
+</details>
+
+<details>
+<summary>Deploy to Kubernetes</summary>
+
+```bash
+helm install cordum oci://ghcr.io/cordum-io/cordum/charts/cordum \
+  --namespace cordum --create-namespace \
+  --set secrets.apiKey=$(openssl rand -hex 32) \
+  --set redis.auth.password=$(openssl rand -hex 32) \
+  --set ingress.enabled=true \
+  --set ingress.className=nginx \
+  --set ingress.api.host=api.cordum.example.com \
+  --set ingress.dashboard.host=cordum.example.com
+```
+
+`--set` values land in the Helm release's stored values (and your shell
+history) — fine for a quick eval, but for production prefer
+`redis.auth.existingSecret` (see `cordum-helm/values.yaml`) over
+`redis.auth.password`, and patch `secrets.apiKey` into the rendered
+Secret out-of-band rather than passing it on the command line; that
+chart doesn't yet have an `existingSecret` equivalent for the API key.
+
+See [cordum-helm/](cordum-helm/) for the full Helm chart reference. The
+chart is also available on [Artifact Hub](https://artifacthub.io/packages/helm/cordum/cordum).
+</details>
+
+**Container images** (multi-arch: linux/amd64 + linux/arm64):
+
+| Image | GHCR | Docker Hub |
+|-------|------|------------|
+| `api-gateway` | [`ghcr.io/cordum-io/cordum/api-gateway`](https://github.com/cordum-io/cordum/pkgs/container/cordum%2Fapi-gateway) | [`cordum/api-gateway`](https://hub.docker.com/r/cordum/api-gateway) |
+| `scheduler` | `ghcr.io/cordum-io/cordum/scheduler` | [`cordum/scheduler`](https://hub.docker.com/r/cordum/scheduler) |
+| `safety-kernel` | `ghcr.io/cordum-io/cordum/safety-kernel` | [`cordum/safety-kernel`](https://hub.docker.com/r/cordum/safety-kernel) |
+| `workflow-engine` | `ghcr.io/cordum-io/cordum/workflow-engine` | [`cordum/workflow-engine`](https://hub.docker.com/r/cordum/workflow-engine) |
+| `context-engine` | `ghcr.io/cordum-io/cordum/context-engine` | [`cordum/context-engine`](https://hub.docker.com/r/cordum/context-engine) |
+| `mcp` | `ghcr.io/cordum-io/cordum/mcp` | `cordum/mcp` |
+| `dashboard` | `ghcr.io/cordum-io/cordum/dashboard` | [`cordum/dashboard`](https://hub.docker.com/r/cordum/dashboard) |
+
+![latest release](https://img.shields.io/github/v/release/cordum-io/cordum?sort=semver&label=release)
+![api-gateway image size](https://img.shields.io/docker/image-size/cordum/api-gateway/latest?label=api-gateway%20image)
+![dashboard image size](https://img.shields.io/docker/image-size/cordum/dashboard/latest?label=dashboard%20image)
+
+Full catalogue, tag policy, cosign verification recipe, and multi-arch
+notes: [docs/deployment/images.md](docs/deployment/images.md).
+
+### Ports
+
+| Port | Service |
+|------|---------|
+| 8082 | Dashboard |
+| 8081 | API Gateway (HTTPS) |
+| 9080 | gRPC Gateway |
+| 4222 | NATS |
+| 6379 | Redis |
+| 9092 | Gateway Metrics |
+| 9093 | Workflow Engine Health |
+| 50051 | Safety Kernel (gRPC) |
+| 50400 | Context Engine (gRPC) |
+
+> **Port conflicts?** If any port is already in use, either stop the conflicting service or override ports in your `.env` file before starting the stack.
+
+### After Setup
+
+```bash
+# Load the generated API key into this shell (skip if already exported)
+export CORDUM_API_KEY=$(grep CORDUM_API_KEY .env | cut -d= -f2)
+
+# Submit a test job
+curl -sS --cacert ./certs/ca/ca.crt \
+  -X POST https://localhost:8081/api/v1/jobs \
+  -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  -H "Content-Type: application/json" \
+  -d '{"topic":"job.default","prompt":"hello"}'
+
+# Stop the stack
+docker compose down
+
+# View logs
+docker compose logs -f api-gateway
+```
+
+### Troubleshooting
+
+| Issue | Fix |
+|-------|-----|
+| Port already in use | `docker compose down` then retry, or check `lsof -i :8082` |
+| Docker out of memory | Allocate at least 4 GB RAM to Docker Desktop |
+| Can't login to dashboard | Default is `admin` / `ChangeMe123!` (in `.env` as `CORDUM_ADMIN_PASSWORD`); ensure `CORDUM_USER_AUTH_ENABLED=true`. Custom passwords must be ≥12 chars + uppercase + digit + special |
+| TLS/SSL cert errors | Remove `./certs/` and re-run — certs auto-regenerate |
+| `openssl` not found | Not needed — quickstart.sh auto-generates keys without it |
+| Go build fails | Requires Go 1.26.3+ — check with `go version` |
+| Stale config after changes | `redis-cli DEL cfg:system:default` then restart |
+
+For detailed troubleshooting, see [docs/troubleshooting.md](docs/troubleshooting.md).
 
 ### See a 3-verdict demo
 
@@ -155,10 +322,7 @@ graph TB
     AGENTS -->|Audit Trail| CP
 ```
 
-<!-- Replace with a high-impact GIF showing a risky agent action being caught by Cordum -->
-![nWwQVRVqwlZKeRbBZvkSof-img-2_1771930624000_na1fn_ZGFzaGJvYXJkLXByZXZpZXctZGFyaw](https://github.com/user-attachments/assets/6d8d4781-dff4-4d62-8e26-7ff0366b2a5d)
-
-
+![Cordum dashboard showing a risky agent action intercepted for approval](https://github.com/user-attachments/assets/6d8d4781-dff4-4d62-8e26-7ff0366b2a5d)
 
 ### Governance Across the Lifecycle
 
@@ -208,153 +372,6 @@ that the action was approved.
 Start here: [Edge overview](docs/edge.md), [Claude Code guide](docs/edge-claude-code.md),
 [manual demo](docs/demo-edge-claude.md), and [Edge API](docs/edge/api.md).
 
-## Quickstart
-
-### First Time?
-
-| Goal | Path |
-|------|------|
-| **Just want to try it?** | `./tools/scripts/quickstart.sh` — one-command install from source ([guide](docs/quickstart.md)) |
-| **Run the full stack from pre-built images?** | `docker compose pull && docker compose up -d` (below) — once release images ship to ghcr.io |
-| **Developing Cordum?** | See [Development](#development) |
-
-### Prerequisites
-
-- **Docker Desktop v4+** or **Docker Engine v20.10+** with the **Compose v2** plugin (≥ 4 GB RAM allocated to Docker).
-- **jq** (recommended, for parsing API responses).
-
-### Run the published images
-
-```bash
-git clone https://github.com/cordum-io/cordum.git
-cd cordum
-export CORDUM_API_KEY=$(openssl rand -hex 32)
-export REDIS_PASSWORD=$(openssl rand -hex 16)
-docker compose pull         # pulls every Cordum service from ghcr.io
-docker compose up -d        # starts the stack — no source build needed
-```
-
-**Dashboard:** http://localhost:8082
-**Login:** this path leaves user auth off by default — sign in on the dashboard
-with your `CORDUM_API_KEY`. To enable `admin` password login instead, set
-`CORDUM_USER_AUTH_ENABLED=true` and a policy-compliant `CORDUM_ADMIN_PASSWORD`
-(≥ 12 chars, with an uppercase letter, a digit, and a special character) in
-`.env`, then `docker compose up -d`. (The quickstart script does this for you.)
-
-Pin a specific release by exporting `CORDUM_VERSION=1.2.3` before
-`docker compose pull`. Defaults to `:latest`, which only moves on stable
-release tags (pre-release suffixes such as `-rc.1` never promote
-`:latest`).
-
-### Verifying image signatures
-
-Every release-tag image is signed with [cosign] keyless OIDC. Verify
-before deploying to production:
-
-```bash
-cosign verify ghcr.io/cordum-io/cordum/api-gateway:1.2.3 \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp 'https://github\.com/cordum-io/cordum/\.github/workflows/docker\.yml@refs/tags/v.*'
-```
-
-See [docs/deployment/images.md](docs/deployment/images.md) for the full
-image catalogue, multi-arch pull instructions, and tag policy.
-
-[cosign]: https://docs.sigstore.dev/cosign/overview/
-
-<details>
-<summary>Manual setup (without docker compose)</summary>
-
-```bash
-cp .env.example .env
-# Edit .env: set CORDUM_API_KEY (or generate: openssl rand -hex 32)
-export CORDUM_API_KEY="your-key-here"
-go run ./cmd/cordumctl up
-open http://localhost:8082
-```
-</details>
-
-### Deploy to Kubernetes
-
-```bash
-helm install cordum oci://ghcr.io/cordum-io/cordum/charts/cordum \
-  --namespace cordum --create-namespace \
-  --set secrets.apiKey=$(openssl rand -hex 32) \
-  --set redis.auth.password=$(openssl rand -hex 32) \
-  --set ingress.enabled=true \
-  --set ingress.className=nginx \
-  --set ingress.api.host=api.cordum.example.com \
-  --set ingress.dashboard.host=cordum.example.com
-```
-
-See [cordum-helm/](cordum-helm/) for the full Helm chart reference. Chart also available on [Artifact Hub](https://artifacthub.io/packages/helm/cordum/cordum).
-
-**Container images** (multi-arch: linux/amd64 + linux/arm64):
-
-| Image | GHCR | Docker Hub |
-|-------|------|------------|
-| `api-gateway` | [`ghcr.io/cordum-io/cordum/api-gateway`](https://github.com/cordum-io/cordum/pkgs/container/cordum%2Fapi-gateway) | [`cordum/api-gateway`](https://hub.docker.com/r/cordum/api-gateway) |
-| `scheduler` | `ghcr.io/cordum-io/cordum/scheduler` | [`cordum/scheduler`](https://hub.docker.com/r/cordum/scheduler) |
-| `safety-kernel` | `ghcr.io/cordum-io/cordum/safety-kernel` | [`cordum/safety-kernel`](https://hub.docker.com/r/cordum/safety-kernel) |
-| `workflow-engine` | `ghcr.io/cordum-io/cordum/workflow-engine` | [`cordum/workflow-engine`](https://hub.docker.com/r/cordum/workflow-engine) |
-| `context-engine` | `ghcr.io/cordum-io/cordum/context-engine` | [`cordum/context-engine`](https://hub.docker.com/r/cordum/context-engine) |
-| `mcp` | `ghcr.io/cordum-io/cordum/mcp` | `cordum/mcp` |
-| `dashboard` | `ghcr.io/cordum-io/cordum/dashboard` | [`cordum/dashboard`](https://hub.docker.com/r/cordum/dashboard) |
-
-![latest release](https://img.shields.io/github/v/release/cordum-io/cordum?sort=semver&label=release)
-![api-gateway image size](https://img.shields.io/docker/image-size/cordum/api-gateway/latest?label=api-gateway%20image)
-![dashboard image size](https://img.shields.io/docker/image-size/cordum/dashboard/latest?label=dashboard%20image)
-
-Full catalogue, tag policy, cosign verification recipe, and multi-arch
-notes: [docs/deployment/images.md](docs/deployment/images.md).
-
-### Ports
-
-| Port | Service |
-|------|---------|
-| 8082 | Dashboard |
-| 8081 | API Gateway (HTTPS) |
-| 9080 | gRPC Gateway |
-| 4222 | NATS |
-| 6379 | Redis |
-| 9092 | Gateway Metrics |
-| 9093 | Workflow Engine Health |
-| 50051 | Safety Kernel (gRPC) |
-| 50400 | Context Engine (gRPC) |
-
-> **Port conflicts?** If any port is already in use, either stop the conflicting service or override ports in your `.env` file before starting the stack.
-
-### After Setup
-
-```bash
-# Submit a test job
-curl -sS --cacert ./certs/ca/ca.crt \
-  -X POST https://localhost:8081/api/v1/jobs \
-  -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  -H "Content-Type: application/json" \
-  -d '{"topic":"job.default","prompt":"hello"}'
-
-# Stop the stack
-docker compose down
-
-# View logs
-docker compose logs -f api-gateway
-```
-
-### Troubleshooting
-
-| Issue | Fix |
-|-------|-----|
-| Port already in use | `docker compose down` then retry, or check `lsof -i :8082` |
-| Docker out of memory | Allocate at least 4 GB RAM to Docker Desktop |
-| Can't login to dashboard | Default is `admin` / `ChangeMe123!` (in `.env` as `CORDUM_ADMIN_PASSWORD`); ensure `CORDUM_USER_AUTH_ENABLED=true`. Custom passwords must be ≥12 chars + uppercase + digit + special |
-| TLS/SSL cert errors | Remove `./certs/` and re-run — certs auto-regenerate |
-| `openssl` not found | Not needed — quickstart.sh auto-generates keys without it |
-| Go build fails | Requires Go 1.26.3+ — check with `go version` |
-| Stale config after changes | `redis-cli DEL cfg:system:default` then restart |
-
-For detailed troubleshooting, see [docs/troubleshooting.md](docs/troubleshooting.md).
-
 ## Development
 
 The published-images path above pulls Cordum binaries from `ghcr.io`.
@@ -384,7 +401,7 @@ Other useful contributor commands:
 
 ## Key Features
 
-![nWwQVRVqwlZKeRbBZvkSof-img-4_1771930611000_na1fn_d29ya2Zsb3ctdmlzdWFsaXphdGlvbg](https://github.com/user-attachments/assets/ee44853d-1e89-463b-bf3c-0ba0481eee68)
+![Cordum workflow visualization](https://github.com/user-attachments/assets/ee44853d-1e89-463b-bf3c-0ba0481eee68)
 
 | Governance Feature | Why It Matters for Enterprise |
 |--------------------|--------------------------------|
@@ -503,7 +520,7 @@ func main() {
 }
 ```
 
-SDKs: **Go** (stable) | [**Python**](https://github.com/cordum-io/cap) | [**Node**](https://github.com/cordum-io/cap)
+SDKs: **Go** (stable, this repo) | [**Python**](https://pypi.org/project/cap-sdk-python/) (`pip install cap-sdk-python`) | [**Node**](https://www.npmjs.com/package/cap-sdk-node) (`npm install cap-sdk-node`)
 
 Stable CAP Go, Python, and Node runtimes implement the same authenticated
 protobuf worker-trust contract. A legacy capability handshake or heartbeat is
@@ -577,8 +594,6 @@ See [CHANGELOG.md](CHANGELOG.md) for a detailed log of all changes by version.
 | Framework agnostic | ✅ Any via CAP | ❌ Python only | ❌ NVIDIA stack | ❌ |
 | MCP governance | ✅ Bridge + Gateway | ❌ | ❌ | ❌ |
 | Local agent-action firewall | ✅ Cordum Edge (Claude Code hook today) | ❌ | ❌ | ⚠️ DIY |
-
-[See detailed comparisons →](docs/comparison.md)
 
 ## Contributing
 
