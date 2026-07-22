@@ -77,7 +77,11 @@ fetch_page() {
   while [[ "${attempt}" -le "${max_attempts}" ]]; do
     : >"${response}"
     : >"${error_log}"
-    if gh api "${endpoint}" -H "Accept: application/vnd.github.v3.star+json" \
+    # Plain listing only (no vnd.github.v3.star+json): this script only
+    # ever diffs usernames, never starred_at, and the timestamped variant
+    # gets rejected for the workflow's ephemeral GITHUB_TOKEN (403) even
+    # though the same call succeeds with a user PAT.
+    if gh api "${endpoint}" \
       >"${response}" 2>"${error_log}"; then
       if ! jq -e \
         'type == "array" and all(.[]; (.user.login? | type == "string" and length > 0))' \
