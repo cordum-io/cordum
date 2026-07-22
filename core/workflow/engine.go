@@ -13,6 +13,7 @@ import (
 	"log/slog"
 
 	cordumotel "github.com/cordum/cordum/core/infra/otel"
+	"github.com/cordum/cordum/core/infra/resourceio"
 	schemas "github.com/cordum/cordum/core/infra/schema"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/licensing"
@@ -69,7 +70,9 @@ type Engine struct {
 	OnStepFinished   func(runID, stepID string, status StepStatus)
 	config           ConfigProvider
 	schemaRegistry   *schemas.Registry
+	resourceReader   resourceio.Reader
 	outputSafety     model.OutputSafetyChecker // optional output policy enforcement on step results
+	jobRequests      jobRequestReader          // authoritative persisted request context for output policy
 	entitlements     *licensing.EntitlementResolver
 	// serviceTokenMinter, when set, mints a short-TTL control-plane service
 	// token (subject "workflow-engine") attached to internal JobCancel
@@ -77,6 +80,7 @@ type Engine struct {
 	// CORDUM_SDK_HANDSHAKE=enforce. Nil = no minting (back-compat; a peer with
 	// the gate off/warn admits token-less cancels).
 	serviceTokenMinter func() (string, error)
+	productionIdentity bool
 
 	// timerMu guards pendingTimers. pendingTimers tracks cancellable delay
 	// timers so they can be stopped on engine shutdown without leaking goroutines.
@@ -313,6 +317,13 @@ func (e *Engine) WithServiceTokenMinter(m func() (string, error)) *Engine {
 	return e
 }
 
+// WithProductionIdentityEnforcement requires every workflow-dispatched job to
+// bind to the initiating authenticated identity persisted on WorkflowRun.
+func (e *Engine) WithProductionIdentityEnforcement(enabled bool) *Engine {
+	e.productionIdentity = enabled
+	return e
+}
+
 // WithConfig sets an optional config provider.
 func (e *Engine) WithConfig(cfg ConfigProvider) *Engine {
 	e.config = cfg
@@ -327,6 +338,9 @@ func (e *Engine) WithSchemaRegistry(registry *schemas.Registry) *Engine {
 
 // WithOutputSafety sets an optional output safety checker for inter-step policy enforcement.
 func (e *Engine) WithOutputSafety(c model.OutputSafetyChecker) *Engine {
+	if isNilOutputSafety(c) {
+		c = nil
+	}
 	e.outputSafety = c
 	return e
 }
@@ -349,7 +363,30 @@ func (e *Engine) WithContext(ctx context.Context) *Engine {
 // WithRunLocker sets a distributed lock provider for cross-replica run locking.
 // When set, the engine acquires a Redis-backed lock in addition to the local mutex.
 func (e *Engine) WithRunLocker(locker RunLocker) *Engine {
+	if isNilRunLocker(locker) {
+		locker = nil
+	}
 	e.lockMgr.locker = locker
+	e.jobRequests = nil
+	if reader, ok := locker.(jobRequestReader); ok && !isNilJobRequestReader(reader) {
+		e.jobRequests = reader
+	}
+	return e
+}
+
+// WithJobRequests wires the authoritative job-request reader used by
+// output-safety's per-step policy check (see checkStepOutputPolicy),
+// independent of distributed run locking. Callers that already manage their
+// own run-level locking (e.g. the gateway's HTTP handlers, which hold a
+// Redis lock on the same key before calling StartRun) should use this
+// instead of WithRunLocker: wiring the same store as a RunLocker there
+// would make the engine's own internal lock acquisition contend with the
+// caller's already-held lock and silently no-op the run.
+func (e *Engine) WithJobRequests(reader jobRequestReader) *Engine {
+	if isNilJobRequestReader(reader) {
+		reader = nil
+	}
+	e.jobRequests = reader
 	return e
 }
 
@@ -490,7 +527,8 @@ func prepareJobResult(res *pb.JobResult) (runID, stepID string, ok bool) {
 		"job_id", res.JobId,
 		"worker_id", strings.TrimSpace(res.GetWorkerId()),
 		"status", res.GetStatus().String(),
-		"result_ptr", strings.TrimSpace(res.GetResultPtr()),
+		"has_result_ref", res.GetResultRef() != nil,
+		"has_legacy_result", res.GetResultPtr() != "",
 	)
 	return runID, stepID, true
 }
@@ -511,6 +549,11 @@ func (e *Engine) handleJobResultLocked(ctx context.Context, res *pb.JobResult, r
 		}
 		slog.Error("get run failed (transient)", "run_id", runID, "error", err)
 		return fmt.Errorf("get run %s: %w", runID, err)
+	}
+	if e.productionIdentity && !sameWorkflowIdentity(run.Identity, res.GetIdentity()) {
+		slog.Error("workflow job result identity rejected",
+			"run_id", runID, "step_id", stepID, "job_id", res.GetJobId())
+		return nil
 	}
 	switch run.Status {
 	case RunStatusSucceeded, RunStatusFailed, RunStatusDenied, RunStatusCancelled, RunStatusTimedOut:
@@ -571,23 +614,11 @@ func (e *Engine) handleJobResultLocked(ctx context.Context, res *pb.JobResult, r
 			return nil
 		}
 		retry, delay := applyResult(child, res, stepDef)
-		if !retry && child.Status == StepStatusSucceeded && res.ResultPtr != "" {
-			if err := e.validateStepOutput(stepDef, res.ResultPtr); err != nil {
-				child.Status = StepStatusFailed
-				child.CompletedAt = &now
-				child.Error = map[string]any{"message": err.Error()}
-				e.appendTimeline(ctx, run, "step_output_invalid", stepID, res.JobId, string(child.Status), res.ResultPtr, err.Error(), nil)
-				// Preserve ResultPtr for quarantined output inspection.
-				recordStepOutput(ctx, e.mem, run, stepID, stepDef, res.ResultPtr, false)
-			}
+		if !retry && child.Status == StepStatusSucceeded && hasJobResultResource(res) {
+			e.processStepOutput(ctx, run, stepID, stepDef, child, res, false)
 		}
 		if !retry && (child.Status == StepStatusSucceeded || child.Status == StepStatusFailed || child.Status == StepStatusDenied || child.Status == StepStatusCancelled || child.Status == StepStatusTimedOut) {
-			e.appendTimeline(ctx, run, "step_completed", stepID, res.JobId, string(child.Status), res.ResultPtr, res.ErrorMessage, nil)
-		}
-		if !retry && child.Status == StepStatusSucceeded && res.ResultPtr != "" {
-			if !e.checkStepOutputPolicy(ctx, run, stepID, child, res) {
-				recordStepOutput(ctx, e.mem, run, stepID, stepDef, res.ResultPtr, false)
-			}
+			e.appendTimeline(ctx, run, "step_completed", stepID, res.JobId, string(child.Status), "", res.ErrorMessage, nil)
 		}
 		parent.Children[stepID] = child
 		run.Steps[stepID] = child
@@ -640,23 +671,11 @@ func (e *Engine) handleJobResultLocked(ctx context.Context, res *pb.JobResult, r
 			return nil
 		}
 		retry, delay := applyResult(stepRun, res, stepDef)
-		if !retry && stepRun.Status == StepStatusSucceeded && res.ResultPtr != "" {
-			if err := e.validateStepOutput(stepDef, res.ResultPtr); err != nil {
-				stepRun.Status = StepStatusFailed
-				stepRun.CompletedAt = &now
-				stepRun.Error = map[string]any{"message": err.Error()}
-				e.appendTimeline(ctx, run, "step_output_invalid", stepID, res.JobId, string(stepRun.Status), res.ResultPtr, err.Error(), nil)
-				// Preserve ResultPtr for quarantined output inspection.
-				recordStepOutput(ctx, e.mem, run, stepID, stepDef, res.ResultPtr, true)
-			}
+		if !retry && stepRun.Status == StepStatusSucceeded && hasJobResultResource(res) {
+			e.processStepOutput(ctx, run, stepID, stepDef, stepRun, res, true)
 		}
 		if !retry && (stepRun.Status == StepStatusSucceeded || stepRun.Status == StepStatusFailed || stepRun.Status == StepStatusDenied || stepRun.Status == StepStatusCancelled || stepRun.Status == StepStatusTimedOut) {
-			e.appendTimeline(ctx, run, "step_completed", stepID, res.JobId, string(stepRun.Status), res.ResultPtr, res.ErrorMessage, nil)
-		}
-		if !retry && stepRun.Status == StepStatusSucceeded && res.ResultPtr != "" {
-			if !e.checkStepOutputPolicy(ctx, run, stepID, stepRun, res) {
-				recordStepOutput(ctx, e.mem, run, stepID, stepDef, res.ResultPtr, true)
-			}
+			e.appendTimeline(ctx, run, "step_completed", stepID, res.JobId, string(stepRun.Status), "", res.ErrorMessage, nil)
 		}
 		run.Steps[stepID] = stepRun
 		if !retry && (stepRun.Status == StepStatusFailed || stepRun.Status == StepStatusDenied || stepRun.Status == StepStatusTimedOut) {
@@ -721,7 +740,7 @@ func (e *Engine) cancelForEachSiblings(ctx context.Context, run *WorkflowRun, pa
 			continue
 		}
 		if child.JobID != "" {
-			if err := e.publishJobCancel(child.JobID, "forEach sibling failed"); err != nil {
+			if err := e.publishJobCancel(child.JobID, "forEach sibling failed", workflowRunIdentity(run)); err != nil {
 				slog.Error("cancel forEach orphan publish failed",
 					"job_id", child.JobID, "step_id", childID, "error", err)
 			}
@@ -1014,9 +1033,12 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 						continue
 					}
 
-					packet := e.makeJobPacket(run.ID, req)
-					if err := e.publishWithTrace(ctx, capsdk.SubjectSubmit, packet); err != nil {
-						slog.Error("approval gate dispatch failed", "run_id", run.ID, "step_id", stepID, "error", err)
+					packet, dispatchErr := e.makeJobPacket(run.ID, run, req)
+					if dispatchErr == nil {
+						dispatchErr = e.publishWithTrace(ctx, capsdk.SubjectSubmit, packet)
+					}
+					if dispatchErr != nil {
+						slog.Error("approval gate dispatch failed", "run_id", run.ID, "step_id", stepID, "error", dispatchErr)
 						parentSR.Status = StepStatusPending
 						parentSR.JobID = ""
 						parentSR.Attempts = 0
@@ -1466,6 +1488,7 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 						Status:      RunStatusPending,
 						Steps:       map[string]*StepRun{},
 						TriggeredBy: run.TriggeredBy,
+						Identity:    cloneIdentityBinding(run.Identity),
 						CreatedAt:   now,
 						UpdatedAt:   now,
 						Labels:      childLabels,
@@ -1857,11 +1880,14 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 					} else if ptr != "" {
 						req.ContextPtr = ptr
 					}
-					packet := e.makeJobPacket(run.ID, req)
-					if err := e.publishWithTrace(ctx, capsdk.SubjectSubmit, packet); err != nil {
-						slog.Error("publish loop step", "run_id", run.ID, "step_id", childID, "error", err)
+					packet, dispatchErr := e.makeJobPacket(run.ID, run, req)
+					if dispatchErr == nil {
+						dispatchErr = e.publishWithTrace(ctx, capsdk.SubjectSubmit, packet)
+					}
+					if dispatchErr != nil {
+						slog.Error("publish loop step", "run_id", run.ID, "step_id", childID, "error", dispatchErr)
 						child.Status = StepStatusFailed
-						child.Error = map[string]any{"message": err.Error()}
+						child.Error = map[string]any{"message": dispatchErr.Error()}
 					} else {
 						child.Status = StepStatusRunning
 						child.StartedAt = &now
@@ -2074,11 +2100,14 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 					} else if ptr != "" {
 						req.ContextPtr = ptr
 					}
-					packet := e.makeJobPacket(run.ID, req)
-					if err := e.publishWithTrace(ctx, capsdk.SubjectSubmit, packet); err != nil {
-						slog.Error("publish parallel child step", "run_id", run.ID, "step_id", childStepID, "error", err)
+					packet, dispatchErr := e.makeJobPacket(run.ID, run, req)
+					if dispatchErr == nil {
+						dispatchErr = e.publishWithTrace(ctx, capsdk.SubjectSubmit, packet)
+					}
+					if dispatchErr != nil {
+						slog.Error("publish parallel child step", "run_id", run.ID, "step_id", childStepID, "error", dispatchErr)
 						child.Status = StepStatusFailed
-						child.Error = map[string]any{"message": err.Error()}
+						child.Error = map[string]any{"message": dispatchErr.Error()}
 					} else {
 						child.Status = StepStatusRunning
 						child.StartedAt = &now
@@ -2239,9 +2268,12 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 					child.JobID = jobID
 					child.Input = payload
 					child.Item = item
-					packet := e.makeJobPacket(run.ID, req)
-					if err := e.publishWithTrace(ctx, capsdk.SubjectSubmit, packet); err != nil {
-						slog.Error("publish foreach step", "run_id", run.ID, "step_id", childID, "error", err)
+					packet, dispatchErr := e.makeJobPacket(run.ID, run, req)
+					if dispatchErr == nil {
+						dispatchErr = e.publishWithTrace(ctx, capsdk.SubjectSubmit, packet)
+					}
+					if dispatchErr != nil {
+						slog.Error("publish foreach step", "run_id", run.ID, "step_id", childID, "error", dispatchErr)
 						// Revert to Pending so a later scheduleReady retries; do NOT
 						// consume an attempt for a transient publish failure (matches
 						// the main path's revert at engine.go where parentSR.Attempts-- runs
@@ -2486,9 +2518,12 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 
 			// Dispatch to NATS — state is already persisted so a crash here is safe.
 			slog.Debug("step dispatching", "component", "workflow", "runId", run.ID, "traceId", run.ID, "stepId", stepID, "jobId", jobID, "stepType", string(step.Type))
-			packet := e.makeJobPacket(run.ID, req)
-			if err := e.publishWithTrace(ctx, capsdk.SubjectSubmit, packet); err != nil {
-				slog.Error("publish step", "run_id", run.ID, "step_id", stepID, "error", err)
+			packet, dispatchErr := e.makeJobPacket(run.ID, run, req)
+			if dispatchErr == nil {
+				dispatchErr = e.publishWithTrace(ctx, capsdk.SubjectSubmit, packet)
+			}
+			if dispatchErr != nil {
+				slog.Error("publish step", "run_id", run.ID, "step_id", stepID, "error", dispatchErr)
 				// Revert to pending for retry on next scheduleReady; idempotency key
 				// prevents duplicate execution if the message was actually delivered.
 				parentSR.Status = StepStatusPending

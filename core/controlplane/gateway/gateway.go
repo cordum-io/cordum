@@ -37,6 +37,7 @@ import (
 	"github.com/cordum/cordum/core/infra/artifacts"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
+	"github.com/cordum/cordum/core/infra/capprofile"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/health"
@@ -45,6 +46,7 @@ import (
 	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/cordum/cordum/core/infra/registry"
+	"github.com/cordum/cordum/core/infra/resourceio"
 	"github.com/cordum/cordum/core/infra/schema"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/tlsreload"
@@ -131,12 +133,14 @@ const (
 
 type server struct {
 	pb.UnimplementedCordumApiServer
-	memStore            store.Store
-	jobStore            *store.RedisJobStore // Typed for ListRecentJobs
-	edgeStore           edgecore.Store
-	runtimeReplayWindow *runtimeingest.ReplayWindow
-	shadowFindingStore  shadow.Store
-	mcpUpstreamRegistry edgecore.MCPUpstreamRegistry
+	capProfile           capprofile.Profile
+	memStore             store.Store
+	jobStore             *store.RedisJobStore // Typed for ListRecentJobs
+	memoryResourceReader resourceio.Reader
+	edgeStore            edgecore.Store
+	runtimeReplayWindow  *runtimeingest.ReplayWindow
+	shadowFindingStore   shadow.Store
+	mcpUpstreamRegistry  edgecore.MCPUpstreamRegistry
 	// mcpUpstreamRegistryMu guards lazy fallback initialization for
 	// test/minimal server instances that do not set mcpUpstreamRegistry
 	// during construction.
@@ -392,6 +396,19 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	if cfg == nil {
 		cfg = config.Load()
 	}
+	// Resolve the explicit CAP profile before any dependency work so an
+	// unrecognised value fails startup instead of silently downgrading.
+	capProfile, profileErr := capprofile.FromEnv()
+	if profileErr != nil {
+		return fmt.Errorf("CAP profile configuration invalid: %w", profileErr)
+	}
+	// Production dependencies are intentionally incomplete on this branch.
+	// Reject that unsupported selection before auth/telemetry constructors can
+	// start watchers or any transport listener can become reachable.
+	bootstrapReadiness := gatewayProductionReadiness(gatewayHandshakeSecurity{})
+	if err := enforceGatewayProductionReadiness(capProfile, bootstrapReadiness); err != nil {
+		return err
+	}
 	entitlementResolver := resolveEntitlementResolver(entitlementResolvers...)
 
 	if _, err := cordumotel.InitTracer("cordum-api-gateway"); err != nil {
@@ -582,6 +599,7 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	if err != nil {
 		return fmt.Errorf("gateway worker handshake security configuration invalid: %w", err)
 	}
+	capReadiness := gatewayProductionReadiness(gatewayHandshake)
 
 	decisionLogStore, err := store.NewRedisDecisionLogStore(cfg.RedisURL)
 	if err != nil {
@@ -595,11 +613,9 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	}
 	defer natsBus.Close()
 
-	if err := bus.PublishHandshake(natsBus, "api-gateway", pb.ComponentRole_COMPONENT_ROLE_GATEWAY, map[string]bool{
-		"http": true, "grpc": true, "websocket": true, "mcp": true,
-	}); err != nil {
-		slog.Warn("handshake publish failed", "error", err)
-	}
+	// The capability advertisement is published after all dependencies are
+	// initialized (see below, just before the HTTP server starts), so the
+	// gateway never announces capabilities it cannot yet honour.
 
 	workflowStore, err := wf.NewRedisWorkflowStore(cfg.RedisURL)
 	if err != nil {
@@ -608,7 +624,21 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	defer func() { _ = workflowStore.Close() }()
 	wfCtx, wfCancel := context.WithCancel(context.Background())
 	defer wfCancel()
-	workflowEng := wf.NewEngine(workflowStore, natsBus).WithContext(wfCtx)
+	workflowEng := wf.NewEngine(workflowStore, natsBus).
+		WithContext(wfCtx).
+		WithProductionIdentityEnforcement(capProfile.IsProduction()).
+		// Output-safety's per-step policy check reads the persisted
+		// JobRequest through this reader and fails closed
+		// (checkStepOutputPolicy) without it, mirroring the standalone
+		// cordum-workflow-engine binary (core/workflow/runner.go). Uses
+		// WithJobRequests, NOT WithRunLocker: the gateway's HTTP handlers
+		// (handleStartRun, handleRerunRun) already hold their own Redis
+		// lock on the same run key before calling StartRun, so wiring a
+		// distributed RunLocker here would make the engine's internal
+		// lock acquisition contend with that already-held lock and
+		// silently no-op the run, deferring it to the next reconciler
+		// poll tick instead of executing synchronously.
+		WithJobRequests(jobStore)
 
 	configSvc, err := configsvc.New(cfg.RedisURL)
 	if err != nil {
@@ -631,6 +661,31 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	}
 	defer func() { _ = schemaRegistry.Close() }()
 	workflowEng = workflowEng.WithMemory(memStore).WithConfig(configSvc).WithSchemaRegistry(schemaRegistry)
+	// Legacy Redis result_ptr compatibility is an explicit, profile-gated
+	// opt-in (see core/infra/resourceio.Reader), mirroring the standalone
+	// cordum-workflow-engine binary (core/workflow/runner.go): CAP-PRODUCTION
+	// requires structured ResultRefs end-to-end, but the default/compat
+	// profile must keep accepting legacy pointers from not-yet-migrated
+	// workers. Without this, every successful step whose worker still
+	// reports a bare ResultPtr is rejected by resolveStepOutput() and
+	// marked failed -- including when the gateway's embedded engine (not
+	// the standalone binary) wins the accepted-result delivery race.
+	if !capProfile.IsProduction() {
+		workflowEng = workflowEng.WithLegacyResourceCompatibility(nil)
+	}
+	// Output safety enforcement is a hard fail-closed boundary in the
+	// embedded engine (see workflow.checkStepOutputPolicy): every step
+	// result carrying an output is rejected unless a real checker is
+	// wired. Connect to the same OutputPolicyService the scheduler uses,
+	// under the same config gate.
+	if cfg.OutputPolicyEnabled {
+		outputSafetyClient, err := scheduler.NewOutputSafetyClientWithRedis(cfg.SafetyKernelAddr, cfg.RedisURL)
+		if err != nil {
+			return fmt.Errorf("connect output policy client: %w", err)
+		}
+		defer func() { _ = outputSafetyClient.Close() }()
+		workflowEng = workflowEng.WithOutputSafety(outputSafetyClient)
+	}
 	// Wire control-plane service-token minting for the gateway's embedded
 	// workflow engine, mirroring the standalone cordum-workflow-engine binary
 	// (core/workflow/runner.go). Without this, every workflow step started
@@ -745,6 +800,7 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	}
 
 	s := &server{
+		capProfile:             capProfile,
 		memStore:               memStore,
 		jobStore:               jobStore,
 		edgeStore:              edgeStore,
@@ -973,6 +1029,19 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	s.edgeSweeperCancel = edgeSweepCancel
 	go edgeSweeper.Run(edgeSweepCtx)
 	go edgeApprovalSweeper.Run(edgeSweepCtx)
+
+	// The production gate passed before any listener, subscription, or
+	// background goroutine was started. Advertise only after those compatible
+	// runtime surfaces are live.
+	logGatewayProfileActivation(capProfile, capReadiness)
+	if err := bus.PublishHandshake(
+		natsBus, "api-gateway", pb.ComponentRole_COMPONENT_ROLE_GATEWAY,
+		capProfile.Capabilities(map[string]bool{
+			"http": true, "grpc": true, "websocket": true, "mcp": true,
+		}, capReadiness),
+	); err != nil {
+		slog.Warn("handshake publish failed", "error", err)
+	}
 
 	return startHTTPServer(s, httpAddr, metricsAddr, grpcServer)
 }
@@ -1485,6 +1554,7 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 
 	// 4.5 Memory pointers (debug)
 	s.registerRoute(mux, "GET /api/v1/memory", s.instrumented("/api/v1/memory", s.handleGetMemory))
+	s.registerRoute(mux, "POST /api/v1/memory/resolve", s.instrumented("/api/v1/memory/resolve", s.handleResolveMemory))
 	// 4.6 Artifact store
 	s.registerRoute(mux, "POST /api/v1/artifacts", s.instrumented("/api/v1/artifacts", s.handlePutArtifact))
 	s.registerRoute(mux, "GET /api/v1/artifacts/{ptr}", s.instrumented("/api/v1/artifacts/{ptr}", s.handleGetArtifact))

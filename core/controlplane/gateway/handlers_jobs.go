@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/cordum/cordum/core/auth/servicetoken"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
@@ -25,6 +24,7 @@ import (
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/registry"
+	"github.com/cordum/cordum/core/infra/resourceio"
 	"github.com/cordum/cordum/core/infra/secrets"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/licensing"
@@ -605,24 +605,34 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	// Output safety uses a dedicated key — separate call.
 	outputSafety, _ := s.jobStore.GetOutputSafety(r.Context(), id)
 
-	ctxPtr := store.PointerForKey(store.MakeContextKey(id))
-	resPtr := meta["result_ptr"]
-
-	var resultData any
-	if resPtr != "" {
-		// Attempt to fetch result payload
-		if key, err := store.KeyFromPointer(resPtr); err == nil {
-			if bytes, err := s.memStore.GetResult(r.Context(), key); err == nil {
-				safeUnmarshal(bytes, &resultData, "result_data", id)
-			}
+	var jobRequest *pb.JobRequest
+	if request, requestErr := s.jobStore.GetJobRequest(r.Context(), id); requestErr == nil {
+		jobRequest = request
+	}
+	storedResultPointer := strings.TrimSpace(meta["result_ptr"])
+	ctxPtr, resPtr := "", ""
+	if s.memoryResourceReader.Compatibility.Enabled {
+		resPtr = storedResultPointer
+		if jobRequest != nil {
+			ctxPtr = strings.TrimSpace(jobRequest.GetContextPtr())
 		}
 	}
 
+	var resultData any
+	if storedResultPointer != "" {
+		_ = s.readGatewayJSONResource(r.Context(), gatewayJobResourceRequest{
+			JobID: id, TenantID: tenant, LegacyPointer: storedResultPointer,
+			LegacyKind: resourceio.LegacyResult, Component: "gateway.job.result",
+		}, &resultData)
+	}
+
 	var contextData any
-	if s.memStore != nil {
-		if bytes, err := s.memStore.GetContext(r.Context(), store.MakeContextKey(id)); err == nil {
-			safeUnmarshal(bytes, &contextData, "context_data", id)
-		}
+	if jobRequest != nil && (jobRequest.GetContextRef() != nil || strings.TrimSpace(jobRequest.GetContextPtr()) != "") {
+		_ = s.readGatewayJSONResource(r.Context(), gatewayJobResourceRequest{
+			JobID: id, TenantID: tenant, Reference: jobRequest.GetContextRef(),
+			LegacyPointer: jobRequest.GetContextPtr(), LegacyKind: resourceio.LegacyContext,
+			Component: "gateway.job.context",
+		}, &contextData)
 	}
 
 	traceID := meta["trace_id"]
@@ -632,19 +642,19 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	stepID := ""
 	var delegationLineage model.DelegationLineage
 	if s.jobStore != nil {
-		if req, err := s.jobStore.GetJobRequest(r.Context(), id); err == nil && req != nil {
-			if req.WorkflowId != "" {
-				workflowID = req.WorkflowId
+		if jobRequest != nil {
+			if jobRequest.WorkflowId != "" {
+				workflowID = jobRequest.WorkflowId
 			}
-			if len(req.Labels) > 0 {
-				for k, v := range req.Labels {
+			if len(jobRequest.Labels) > 0 {
+				for k, v := range jobRequest.Labels {
 					labels[k] = v
 				}
 				if workflowID == "" {
-					workflowID = req.Labels["workflow_id"]
+					workflowID = jobRequest.Labels["workflow_id"]
 				}
-				runID = req.Labels["run_id"]
-				stepID = req.Labels["step_id"]
+				runID = jobRequest.Labels["run_id"]
+				stepID = jobRequest.Labels["step_id"]
 			}
 		}
 		if lineage, err := s.jobStore.GetDelegationLineage(r.Context(), id); err == nil {
@@ -794,253 +804,6 @@ func (s *server) handleListJobDecisions(w http.ResponseWriter, r *http.Request) 
 	}
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, decisions)
-}
-
-func (s *server) handleGetMemory(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermMemoryRead, []string{"admin"}, s.memStore) {
-		return
-	}
-
-	ptr := strings.TrimSpace(r.URL.Query().Get("ptr"))
-	key := strings.TrimSpace(r.URL.Query().Get("key"))
-
-	if ptr == "" && key == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "missing ptr or key")
-		return
-	}
-
-	if ptr != "" {
-		ptr = strings.Trim(ptr, "\"'")
-	}
-
-	if key != "" {
-		key = strings.Trim(key, "\"'")
-		if strings.HasPrefix(key, "redis://") {
-			ptr = key
-			parsedKey, err := store.KeyFromPointer(key)
-			if err != nil {
-				writeErrorJSON(w, http.StatusBadRequest, "invalid key pointer")
-				return
-			}
-			key = parsedKey
-		}
-	}
-
-	if key == "" {
-		parsedKey, err := store.KeyFromPointer(ptr)
-		if err != nil {
-			writeErrorJSON(w, http.StatusBadRequest, "invalid pointer")
-			return
-		}
-		key = parsedKey
-	}
-	if ptr == "" {
-		ptr = store.PointerForKey(key)
-	}
-
-	if auth := auth.FromRequest(r); auth != nil {
-		slog.Info("memory read", "tenant", auth.Tenant, "principal", auth.PrincipalID, "key", key, "ptr", ptr)
-	} else {
-		slog.Info("memory read", "tenant", "", "principal", "", "key", key, "ptr", ptr)
-	}
-
-	// Tenant isolation: for ctx:{id} and res:{id} keys, extract the job ID
-	// and verify the requesting user has access to the job's tenant.
-	if (strings.HasPrefix(key, "ctx:") || strings.HasPrefix(key, "res:")) && s.jobStore != nil {
-		var jobID string
-		if strings.HasPrefix(key, "ctx:") {
-			jobID = strings.TrimPrefix(key, "ctx:")
-		} else {
-			jobID = strings.TrimPrefix(key, "res:")
-		}
-		if jobID != "" {
-			jobTenant, _ := s.jobStore.GetTenant(r.Context(), jobID)
-			if jobTenant != "" {
-				if err := s.requireTenantAccess(r, jobTenant); err != nil {
-					writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
-					return
-				}
-			}
-		}
-	}
-	// Tenant isolation for mem: keys — derive owner from run or job ID
-	// embedded in the key structure (mem:run:{runID}:* or mem:{jobID}:*).
-	if strings.HasPrefix(key, "mem:") {
-		memSuffix := strings.TrimPrefix(key, "mem:")
-		if strings.HasPrefix(memSuffix, "run:") {
-			// Pattern: mem:run:{runID}:events or mem:run:{runID}
-			parts := strings.SplitN(strings.TrimPrefix(memSuffix, "run:"), ":", 2)
-			runID := parts[0]
-			if runID != "" && s.workflowStore != nil {
-				if memRun, rerr := s.workflowStore.GetRun(r.Context(), runID); rerr == nil && memRun != nil {
-					if err := s.requireTenantAccess(r, memRun.OrgID); err != nil {
-						writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
-						return
-					}
-				}
-			}
-		} else {
-			// Pattern: mem:{jobID}:* — try job tenant lookup.
-			parts := strings.SplitN(memSuffix, ":", 2)
-			potentialID := parts[0]
-			if potentialID != "" && s.jobStore != nil {
-				if memTenant, jerr := s.jobStore.GetTenant(r.Context(), potentialID); jerr == nil && memTenant != "" {
-					if err := s.requireTenantAccess(r, memTenant); err != nil {
-						writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
-						return
-					}
-				}
-			}
-		}
-	}
-
-	var (
-		data []byte
-		err  error
-		kind string
-	)
-	switch {
-	case strings.HasPrefix(key, "ctx:"):
-		kind = "context"
-		data, err = s.memStore.GetContext(r.Context(), key)
-	case strings.HasPrefix(key, "res:"):
-		kind = "result"
-		data, err = s.memStore.GetResult(r.Context(), key)
-	case strings.HasPrefix(key, "mem:"):
-		kind = "memory"
-
-		rs, ok := s.memStore.(*store.RedisStore)
-		if !ok || rs.Client() == nil {
-			writeErrorJSON(w, http.StatusServiceUnavailable, "memory inspection unavailable: Redis store not configured")
-			return
-		}
-		client := rs.Client()
-		redisType, typeErr := client.Type(r.Context(), key).Result()
-		if typeErr != nil {
-			err = typeErr
-			break
-		}
-		if redisType == "none" {
-			writeErrorJSON(w, http.StatusNotFound, "not found")
-			return
-		}
-
-		decodeMaybeJSON := func(v string) any {
-			if strings.TrimSpace(v) == "" {
-				return v
-			}
-			var parsed any
-			if json.Unmarshal([]byte(v), &parsed) == nil {
-				return parsed
-			}
-			return v
-		}
-
-		var payload any
-		switch redisType {
-		case "string":
-			raw, getErr := client.Get(r.Context(), key).Bytes()
-			if getErr != nil {
-				err = getErr
-				break
-			}
-			if utf8.Valid(raw) {
-				payload = map[string]any{
-					"redis_type": redisType,
-					"value":      decodeMaybeJSON(string(raw)),
-				}
-			} else {
-				payload = map[string]any{
-					"redis_type": redisType,
-					"base64":     base64.StdEncoding.EncodeToString(raw),
-				}
-			}
-		case "list":
-			items, lErr := client.LRange(r.Context(), key, 0, -1).Result()
-			if lErr != nil {
-				err = lErr
-				break
-			}
-			decoded := make([]any, 0, len(items))
-			for _, item := range items {
-				decoded = append(decoded, decodeMaybeJSON(item))
-			}
-			payload = map[string]any{
-				"redis_type": redisType,
-				"length":     len(decoded),
-				"items":      decoded,
-			}
-		case "set":
-			items, sErr := client.SMembers(r.Context(), key).Result()
-			if sErr != nil {
-				err = sErr
-				break
-			}
-			decoded := make([]any, 0, len(items))
-			for _, item := range items {
-				decoded = append(decoded, decodeMaybeJSON(item))
-			}
-			payload = map[string]any{
-				"redis_type": redisType,
-				"length":     len(decoded),
-				"items":      decoded,
-			}
-		case "hash":
-			items, hErr := client.HGetAll(r.Context(), key).Result()
-			if hErr != nil {
-				err = hErr
-				break
-			}
-			decoded := make(map[string]any, len(items))
-			for k, v := range items {
-				decoded[k] = decodeMaybeJSON(v)
-			}
-			payload = map[string]any{
-				"redis_type": redisType,
-				"length":     len(decoded),
-				"items":      decoded,
-			}
-		default:
-			writeErrorJSON(w, http.StatusBadRequest, fmt.Sprintf("unsupported redis key type: %s", redisType))
-			return
-		}
-		if err != nil {
-			break
-		}
-		data, err = json.Marshal(payload)
-	default:
-		writeErrorJSON(w, http.StatusBadRequest, "unsupported pointer key (only ctx:*, res:*, or mem:*)")
-		return
-	}
-	if err != nil {
-		if errors.Is(err, redis.Nil) {
-			writeErrorJSON(w, http.StatusNotFound, "not found")
-			return
-		}
-		slog.Error("memory read failed", "error", err, "key", key)
-		writeErrorJSON(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-
-	resp := map[string]any{
-		"pointer":    ptr,
-		"key":        key,
-		"kind":       kind,
-		"size_bytes": len(data),
-		"base64":     base64.StdEncoding.EncodeToString(data),
-	}
-
-	if utf8.Valid(data) {
-		resp["text"] = string(data)
-	}
-
-	var jsonVal any
-	if json.Unmarshal(data, &jsonVal) == nil {
-		resp["json"] = jsonVal
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, resp)
 }
 
 type artifactPutRequest struct {
@@ -1222,6 +985,11 @@ func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 	if !s.requireJobTenantAccess(w, r, id) {
 		return
 	}
+	canonicalIdentity, err := s.loadCanonicalJobIdentity(r.Context(), id)
+	if err != nil {
+		writeErrorJSON(w, http.StatusConflict, "stored job identity is invalid")
+		return
+	}
 
 	state, err := s.jobStore.CancelJob(r.Context(), id)
 	if err != nil {
@@ -1252,6 +1020,7 @@ func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 		SenderId:        servicetoken.IdentityGateway,
 		CreatedAt:       timestamppb.Now(),
 		ProtocolVersion: capsdk.DefaultProtocolVersion,
+		Identity:        canonicalIdentity,
 		Payload: &pb.BusPacket_JobResult{
 			JobResult: &pb.JobResult{
 				JobId: id,
@@ -1261,6 +1030,7 @@ func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 				// token under enforce (it is otherwise empty -> binding rejects).
 				WorkerId: servicetoken.IdentityGateway,
 				Status:   pb.JobStatus_JOB_STATUS_CANCELLED,
+				Identity: canonicalIdentity,
 			},
 		},
 	}
@@ -1282,10 +1052,12 @@ func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 		JobId:       id,
 		Reason:      "cancelled via api",
 		RequestedBy: "api-gateway",
+		Identity:    canonicalIdentity,
 	}
 	cancelBusPacket := &pb.BusPacket{
 		TraceId:         id,
 		SenderId:        "api-gateway",
+		Identity:        canonicalIdentity,
 		CreatedAt:       timestamppb.Now(),
 		ProtocolVersion: capsdk.DefaultProtocolVersion,
 		Payload:         &pb.BusPacket_JobCancel{JobCancel: cancelReq},
@@ -1330,11 +1102,19 @@ func (s *server) handleRemediateJob(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusNotFound, "job not found")
 		return
 	}
-	if tenant := strings.TrimSpace(origReq.GetTenantId()); tenant != "" {
-		if err := s.requireTenantAccess(r, tenant); err != nil {
-			writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
-			return
-		}
+	origTenant, tenantErr := s.jobStore.GetTenant(r.Context(), jobID)
+	origTenant = strings.TrimSpace(origTenant)
+	if tenantErr != nil || origTenant == "" {
+		writeErrorJSON(w, http.StatusServiceUnavailable, "tenant lookup unavailable")
+		return
+	}
+	if payloadTenant := strings.TrimSpace(origReq.GetTenantId()); payloadTenant != "" && payloadTenant != origTenant {
+		writeErrorJSON(w, http.StatusForbidden, "tenant identity mismatch")
+		return
+	}
+	if err := s.requireTenantAccess(r, origTenant); err != nil {
+		writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
+		return
 	}
 	safetyRecord, err := s.jobStore.GetSafetyDecision(r.Context(), jobID)
 	if err != nil || len(safetyRecord.Remediations) == 0 {
@@ -1366,16 +1146,19 @@ func (s *server) handleRemediateJob(w http.ResponseWriter, r *http.Request) {
 		traceID = uuid.NewString()
 	}
 
-	ctxPtr := origReq.GetContextPtr()
-	if ctxPtr != "" {
-		if key, err := store.KeyFromPointer(ctxPtr); err == nil {
-			if data, err := s.memStore.GetContext(r.Context(), key); err == nil {
-				newKey := store.MakeContextKey(newJobID)
-				if err := s.memStore.PutContext(r.Context(), newKey, data); err == nil {
-					ctxPtr = store.PointerForKey(newKey)
-				}
-			}
+	ctxPtr, contextErr := s.cloneRemediationContext(r.Context(), origReq, newJobID, origTenant)
+	if contextErr != nil {
+		switch {
+		case errors.Is(contextErr, errStructuredRemediation):
+			writeErrorJSON(w, http.StatusConflict, "structured remediation context cannot be rebound")
+		case errors.Is(contextErr, resourceio.ErrStructuredRequired),
+			errors.Is(contextErr, resourceio.ErrLegacyScopeMismatch),
+			errors.Is(contextErr, resourceio.ErrInvalidTrustedContext):
+			writeErrorJSON(w, http.StatusBadRequest, "invalid remediation context")
+		default:
+			writeErrorJSON(w, http.StatusServiceUnavailable, "remediation context unavailable")
 		}
+		return
 	}
 
 	newReq, err := protoutil.CloneJobRequest(origReq)
@@ -1385,15 +1168,16 @@ func (s *server) handleRemediateJob(w http.ResponseWriter, r *http.Request) {
 	}
 	newReq.JobId = newJobID
 	newReq.ParentJobId = origReq.GetJobId()
-	if ctxPtr != "" {
-		newReq.ContextPtr = ctxPtr
-	}
+	newReq.ContextPtr = ctxPtr
+	newReq.ContextRef = nil
+	newReq.TenantId = origTenant
 	if remediation.GetReplacementTopic() != "" {
 		newReq.Topic = remediation.GetReplacementTopic()
 	}
 	if newReq.Meta == nil {
 		newReq.Meta = &pb.JobMetadata{}
 	}
+	newReq.Meta.TenantId = origTenant
 	if remediation.GetReplacementCapability() != "" {
 		newReq.Meta.Capability = remediation.GetReplacementCapability()
 	}
@@ -1426,6 +1210,11 @@ func (s *server) handleRemediateJob(w http.ResponseWriter, r *http.Request) {
 		newReq.Labels = nil
 		newReq.Meta.Labels = nil
 	}
+	newReq, err = s.normalizeStoredJobRequest(newReq)
+	if err != nil {
+		writeErrorJSON(w, http.StatusConflict, "stored job identity is invalid")
+		return
+	}
 
 	if err := s.jobStore.SetState(r.Context(), newJobID, model.JobStatePending); err != nil {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "failed to initialize job state")
@@ -1452,15 +1241,7 @@ func (s *server) handleRemediateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	packet := &pb.BusPacket{
-		TraceId:         traceID,
-		SenderId:        "api-gateway",
-		CreatedAt:       timestamppb.Now(),
-		ProtocolVersion: capsdk.DefaultProtocolVersion,
-		Payload: &pb.BusPacket_JobRequest{
-			JobRequest: newReq,
-		},
-	}
+	packet := jobRequestPacket(traceID, "api-gateway", newReq)
 	s.attachServiceToken(packet)
 	if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
 		writeErrorJSON(w, http.StatusBadGateway, "failed to enqueue job")
@@ -1759,6 +1540,18 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	delegationExpectedAudience := submitDelegationExpectedAudience(req.Labels["agent_id"], req.DelegationAudienceAgentID)
+	if s.capProfile.IsProduction() {
+		probe := &pb.JobRequest{
+			TenantId: orgID, PrincipalId: principalID, Meta: meta,
+			Env: map[string]string{"tenant_id": orgID},
+		}
+		normalized, normalizeErr := s.normalizeHTTPJobRequest(r, probe)
+		if normalizeErr != nil {
+			writeErrorJSON(w, http.StatusForbidden, "authenticated job identity mismatch")
+			return
+		}
+		meta = normalized.GetMeta()
+	}
 
 	// Inject job content into labels so the safety kernel's tag deriver can
 	// inspect the payload for server-side risk tag derivation.
@@ -1933,6 +1726,11 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			ContextPtr: ctxPtr, AdapterId: req.AdapterId, Env: envVars,
 			MemoryId: memoryID, TenantId: orgID, PrincipalId: principalID,
 			Labels: req.Labels, Meta: meta,
+			// Stamped from the authenticated tenant/principal resolved above
+			// (s.resolveTenant/s.resolvePrincipal), never from client input —
+			// this is the authoritative identity every downstream mirror is
+			// validated against (DoD "authoritative identity binding").
+			Identity: &pb.IdentityBinding{TenantId: orgID, PrincipalId: principalID, ActorId: actorID},
 			ContextHints: &pb.ContextHints{
 				MaxInputTokens: req.MaxInputTokens, AllowSummarization: req.AllowSummarization,
 				AllowRetrieval: req.AllowRetrieval, Tags: req.Tags,
@@ -1941,6 +1739,11 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 				MaxInputTokens: int64(req.MaxInputTokens), MaxOutputTokens: req.MaxOutputTokens,
 				MaxTotalTokens: req.MaxTotalTokens, DeadlineMs: req.DeadlineMs,
 			},
+		}
+		jobReq, err = s.normalizeHTTPJobRequest(r, jobReq)
+		if err != nil {
+			writeErrorJSON(w, http.StatusForbidden, "authenticated job identity mismatch")
+			return
 		}
 
 		if s.jobStore != nil {
@@ -2134,6 +1937,9 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		PrincipalId: principalID, // Populated from new field
 		Labels:      req.Labels,
 		Meta:        meta,
+		// Authoritative identity: authenticated tenant/principal, never
+		// client input (DoD "authoritative identity binding").
+		Identity: &pb.IdentityBinding{TenantId: orgID, PrincipalId: principalID, ActorId: actorID},
 		ContextHints: &pb.ContextHints{
 			MaxInputTokens:     req.MaxInputTokens,
 			AllowSummarization: req.AllowSummarization,
@@ -2146,6 +1952,11 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			MaxTotalTokens:  req.MaxTotalTokens,
 			DeadlineMs:      req.DeadlineMs,
 		},
+	}
+	jobReq, err = s.normalizeHTTPJobRequest(r, jobReq)
+	if err != nil {
+		writeErrorJSON(w, http.StatusForbidden, "authenticated job identity mismatch")
+		return
 	}
 
 	if s.jobStore != nil {
@@ -2172,15 +1983,11 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	packet := &pb.BusPacket{
-		TraceId:         traceID,
-		SenderId:        servicetoken.IdentityGateway,
-		CreatedAt:       timestamppb.Now(),
-		ProtocolVersion: capsdk.DefaultProtocolVersion,
-		Payload: &pb.BusPacket_JobRequest{
-			JobRequest: jobReq,
-		},
-	}
+	// SenderId must be servicetoken.IdentityGateway (not the historical
+	// "api-gateway-http" literal): attachServiceToken mints a token whose
+	// subject is IdentityGateway, and the scheduler's subject-binding check
+	// under CORDUM_SDK_HANDSHAKE=enforce requires SenderId == token subject.
+	packet := jobRequestPacket(traceID, servicetoken.IdentityGateway, jobReq)
 	s.attachServiceToken(packet)
 
 	if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
@@ -2304,6 +2111,7 @@ func (s *server) persistSubmitDeniedJob(
 		ContextPtr: ctxPtr, AdapterId: req.AdapterId, Env: envVars,
 		MemoryId: memoryID, TenantId: orgID, PrincipalId: principalID,
 		Labels: req.Labels, Meta: meta,
+		Identity: &pb.IdentityBinding{TenantId: orgID, PrincipalId: principalID, ActorId: meta.GetActorId()},
 		ContextHints: &pb.ContextHints{
 			MaxInputTokens: req.MaxInputTokens, AllowSummarization: req.AllowSummarization,
 			AllowRetrieval: req.AllowRetrieval, Tags: req.Tags,
@@ -2312,6 +2120,10 @@ func (s *server) persistSubmitDeniedJob(
 			MaxInputTokens: int64(req.MaxInputTokens), MaxOutputTokens: req.MaxOutputTokens,
 			MaxTotalTokens: req.MaxTotalTokens, DeadlineMs: req.DeadlineMs,
 		},
+	}
+	jobReq, err = s.normalizeHTTPJobRequest(r, jobReq)
+	if err != nil {
+		return fmt.Errorf("normalize denied job identity: %w", err)
 	}
 
 	if err := s.jobStore.SetState(ctx, jobID, model.JobStatePending); err != nil {
@@ -2366,15 +2178,18 @@ func (s *server) persistSubmitDeniedJob(
 	packet := &pb.BusPacket{
 		TraceId:         traceID,
 		SenderId:        "api-gateway",
+		Identity:        jobReq.GetIdentity(),
 		CreatedAt:       timestamppb.Now(),
 		ProtocolVersion: capsdk.DefaultProtocolVersion,
 		Payload: &pb.BusPacket_JobResult{
 			JobResult: &pb.JobResult{
 				JobId:         jobID,
+				WorkerId:      servicetoken.IdentityGateway,
 				Status:        pb.JobStatus_JOB_STATUS_DENIED,
 				ErrorCode:     "policy_denied",
 				ErrorCodeEnum: pb.ErrorCode_ERROR_CODE_SAFETY_DENIED,
 				ErrorMessage:  reason,
+				Identity:      jobReq.GetIdentity(),
 			},
 		},
 	}

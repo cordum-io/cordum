@@ -30,16 +30,20 @@ import (
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/governance/evaluator"
 	"github.com/cordum/cordum/core/infra/bus"
+	"github.com/cordum/cordum/core/infra/capprofile"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
 	infraHealth "github.com/cordum/cordum/core/infra/health"
 	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	"github.com/cordum/cordum/core/infra/redisutil"
+	"github.com/cordum/cordum/core/infra/resource"
+	"github.com/cordum/cordum/core/infra/resourceio"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/tlsreload"
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/policy/actiongates"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
+	jobidentity "github.com/cordum/cordum/core/protocol/identity"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/nats-io/nats.go"
 	"github.com/prometheus/client_golang/prometheus"
@@ -91,6 +95,7 @@ type server struct {
 	snapshot              string
 	snapshots             []string
 	resultClient          redis.UniversalClient
+	resourceReader        resourceio.Reader
 	velocityChecker       *velocityChecker
 	policyVersion         atomic.Uint64
 	cacheMu               sync.Mutex
@@ -400,6 +405,38 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 		tagDeriverRegistry: tagRegistry,
 	}
 
+	// Resolve the explicit CAP profile before wiring resource resolution so
+	// an unrecognised value fails startup instead of silently downgrading
+	// (capprofile.FromEnv's own contract -- shared with the scheduler and
+	// workflow-engine binaries).
+	capProfile, profileErr := capprofile.FromEnv()
+	if profileErr != nil {
+		return fmt.Errorf("CAP profile configuration invalid: %w", profileErr)
+	}
+	if resultClient != nil {
+		// Same resolver identity/keyspace as the scheduler's production
+		// resource registry (cmd/cordum-scheduler/cap_profile.go) -- the
+		// safety kernel reads the same operator-controlled resource store
+		// the scheduler/workflow engine write ResourceRefs against.
+		resolver, err := resource.NewRedisResolver(resource.RedisResolverConfig{
+			ID: "cordum-redis", Client: resultClient, Scheme: "redis",
+			Authority: "resources", KeyPrefix: "cap:resource:",
+			AllowedMediaTypes: []string{"application/json", "application/octet-stream", "text/plain"},
+			MaxBytes:          2 << 20,
+		})
+		if err != nil {
+			return fmt.Errorf("safety-kernel: configure resource resolver: %w", err)
+		}
+		registry, err := resource.NewRegistry(nil, resolver)
+		if err != nil {
+			return fmt.Errorf("safety-kernel: configure resource registry: %w", err)
+		}
+		srv = srv.withResourceRegistry(registry)
+	}
+	if !capProfile.IsProduction() {
+		srv = srv.withLegacyResourceCompatibility(nil)
+	}
+
 	// Production wiring for the action-layer gate pipeline. Fail-closed
 	// on construction error so a kernel never serves traffic with the
 	// pipeline silently disabled. The kernel's pipeline runs defensive
@@ -642,6 +679,15 @@ func (s *server) ListSnapshots(ctx context.Context, _ *pb.ListSnapshotsRequest) 
 }
 
 func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, method string) (*pb.PolicyCheckResponse, error) {
+	normalized, err := normalizePolicyRequestIdentity(req)
+	if err != nil {
+		slog.Warn("safety-kernel: policy identity rejected", "component", "safety", "category", "identity_mismatch")
+		return &pb.PolicyCheckResponse{
+			Decision: pb.DecisionType_DECISION_TYPE_DENY,
+			Reason:   "identity validation failed",
+		}, nil
+	}
+	req = normalized
 	var decision pb.DecisionType
 	reason := ""
 
@@ -686,8 +732,10 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	// an agent escalation. Only when an agent store is wired — otherwise the
 	// agent_id label is inert and caching stays safe (preserving hit-rate).
 	requestHasEnrichedAgent := s.agentStore != nil && requestHasAgentID(req)
+	cacheContentVerified := decisionCacheContentVerified(req, len(inputRules) > 0)
 	cacheKey := ""
-	if s.cacheTTL > 0 && !policyHasVelocity && !requestHasActionDescriptor && !requestHasEnrichedAgent {
+	if s.cacheTTL > 0 && !policyHasVelocity && !requestHasActionDescriptor &&
+		!requestHasEnrichedAgent && cacheContentVerified {
 		cacheKey = cacheKeyForRequest(req, snapshot)
 		if cacheKey != "" {
 			if cached := s.getCachedDecision(cacheKey); cached != nil {
@@ -1017,6 +1065,17 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	return resp, nil
 }
 
+func normalizePolicyRequestIdentity(req *pb.PolicyCheckRequest) (*pb.PolicyCheckRequest, error) {
+	if req.GetIdentity() == nil {
+		return req, nil
+	}
+	normalized, err := jobidentity.NormalizeProductionPolicyCheckRequest(req, req.GetIdentity())
+	if err != nil {
+		return nil, fmt.Errorf("normalize policy identity: %w", err)
+	}
+	return normalized, nil
+}
+
 func shadowDecisionName(decision pb.DecisionType, approvalRequired bool) string {
 	switch decision {
 	case pb.DecisionType_DECISION_TYPE_DENY:
@@ -1040,16 +1099,18 @@ func shadowDecisionName(decision pb.DecisionType, approvalRequired bool) string 
 	}
 }
 
+// cacheKeyForRequest binds the FULL canonical request (including JobId) plus
+// the active policy snapshot. JobId is deliberately NOT stripped: job-scoped
+// policies (see resolvePolicyScope/scopedPolicyForRequest) select a
+// job-specific variant, so omitting JobId let a cached decision for one job
+// leak to a structurally-identical request from a different job. See
+// mem:task-task-a13f83fab9f84c8292cc01e424a5494c-handoff and
+// TestCacheKeyForRequest_DoesNotCollideAcrossJobs.
 func cacheKeyForRequest(req *pb.PolicyCheckRequest, snapshot string) string {
 	if req == nil {
 		return ""
 	}
-	clone, ok := proto.Clone(req).(*pb.PolicyCheckRequest)
-	if !ok || clone == nil {
-		return ""
-	}
-	clone.JobId = ""
-	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(clone)
+	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(req)
 	if err != nil {
 		return ""
 	}
@@ -1306,7 +1367,9 @@ func policyMetaFromRequest(req *pb.PolicyCheckRequest) config.PolicyMeta {
 	meta := req.GetMeta()
 	out := config.PolicyMeta{}
 	if meta == nil {
-		if req.GetPrincipalId() != "" {
+		if req.GetIdentity() != nil {
+			out.ActorID = req.GetIdentity().GetActorId()
+		} else if req.GetPrincipalId() != "" {
 			out.ActorID = req.GetPrincipalId()
 		}
 		return out
@@ -1318,7 +1381,9 @@ func policyMetaFromRequest(req *pb.PolicyCheckRequest) config.PolicyMeta {
 	out.RiskTags = append(out.RiskTags, meta.GetRiskTags()...)
 	out.Requires = append(out.Requires, meta.GetRequires()...)
 	out.PackID = meta.GetPackId()
-	if out.ActorID == "" {
+	if req.GetIdentity() != nil {
+		out.ActorID = req.GetIdentity().GetActorId()
+	} else if out.ActorID == "" {
 		out.ActorID = req.GetPrincipalId()
 	}
 	return out

@@ -162,6 +162,7 @@ func (e *Engine) RerunFrom(ctx context.Context, runID, stepID string, dryRun boo
 		Status:      RunStatusPending,
 		Steps:       map[string]*StepRun{},
 		TriggeredBy: run.TriggeredBy,
+		Identity:    cloneIdentityBinding(run.Identity),
 		CreatedAt:   now,
 		UpdatedAt:   now,
 		RerunOf:     run.ID,
@@ -348,7 +349,7 @@ func (e *Engine) CancelRun(ctx context.Context, runID string) error {
 			continue
 		}
 		seen[jobID] = struct{}{}
-		if err := e.publishJobCancel(jobID, "workflow run cancelled"); err != nil {
+		if err := e.publishJobCancel(jobID, "workflow run cancelled", run.Identity); err != nil {
 			failedJobIDs = append(failedJobIDs, jobID)
 		}
 	}
@@ -439,7 +440,7 @@ func (e *Engine) timeoutRun(ctx context.Context, wfDef *Workflow, run *WorkflowR
 			continue
 		}
 		seen[jobID] = struct{}{}
-		if err := e.publishJobCancel(jobID, "workflow run timed out"); err != nil {
+		if err := e.publishJobCancel(jobID, "workflow run timed out", run.Identity); err != nil {
 			failedJobIDs = append(failedJobIDs, jobID)
 		}
 	}
@@ -508,18 +509,24 @@ func collectCancelableJobs(sr *StepRun) []string {
 	return out
 }
 
-func (e *Engine) publishJobCancel(jobID, reason string) error {
+func (e *Engine) publishJobCancel(jobID, reason string, runIdentity *pb.IdentityBinding) error {
 	if e == nil || e.bus == nil || jobID == "" {
 		return nil
+	}
+	identity := cloneIdentityBinding(runIdentity)
+	if e.productionIdentity && !completeWorkflowIdentity(identity) {
+		return fmt.Errorf("publish job cancel %s: production identity required", jobID)
 	}
 	cancelReq := &pb.JobCancel{
 		JobId:       jobID,
 		Reason:      reason,
 		RequestedBy: "workflow-engine",
+		Identity:    identity,
 	}
 	packet := &pb.BusPacket{
 		TraceId:         jobID,
 		SenderId:        "workflow-engine",
+		Identity:        identity,
 		CreatedAt:       timestamppb.Now(),
 		ProtocolVersion: capsdk.DefaultProtocolVersion,
 		Payload:         &pb.BusPacket_JobCancel{JobCancel: cancelReq},
@@ -557,6 +564,13 @@ func (e *Engine) publishJobCancel(jobID, reason string) error {
 		}
 	}
 	return fmt.Errorf("publish job cancel %s after 3 attempts: %w", jobID, lastErr)
+}
+
+func completeWorkflowIdentity(identity *pb.IdentityBinding) bool {
+	return identity != nil &&
+		strings.TrimSpace(identity.GetTenantId()) != "" &&
+		strings.TrimSpace(identity.GetPrincipalId()) != "" &&
+		strings.TrimSpace(identity.GetActorId()) != ""
 }
 
 func applyResult(sr *StepRun, res *pb.JobResult, step *Step) (retry bool, delay time.Duration) {

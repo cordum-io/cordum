@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/infra/resourceio"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
@@ -124,6 +125,9 @@ func TestListApprovalsEmptySafetyDecision(t *testing.T) {
 
 func TestListApprovalsIncludesWorkflowApprovalJobInput(t *testing.T) {
 	s, _, _ := newTestGateway(t)
+	// This test exercises legacy Redis pointer exposure explicitly; strict
+	// mode hides it by default (see TestListApprovalsUsesStructuredContextAndRejectsLegacyByDefault).
+	s.memoryResourceReader.Compatibility = resourceio.LegacyCompatibility{Enabled: true}
 	ctx := context.Background()
 
 	jobID := "job-workflow-context"
@@ -354,6 +358,7 @@ func TestListApprovalsDecisionSummaryMarksPartialAvailableContext(t *testing.T) 
 
 func TestListApprovalsDecisionSummaryMarksMissingContext(t *testing.T) {
 	s, _, _ := newTestGateway(t)
+	s.memoryResourceReader.Compatibility = resourceio.LegacyCompatibility{Enabled: true}
 	ctx := context.Background()
 
 	jobID := "job-workflow-missing-context"
@@ -410,6 +415,7 @@ func TestListApprovalsDecisionSummaryMarksMissingContext(t *testing.T) {
 
 func TestListApprovalsDecisionSummaryMarksUnavailableWhenMemoryStoreMissing(t *testing.T) {
 	s, _, _ := newTestGateway(t)
+	s.memoryResourceReader.Compatibility = resourceio.LegacyCompatibility{Enabled: true}
 	ctx := context.Background()
 	s.memStore = nil
 
@@ -1096,13 +1102,15 @@ func TestApprovalContextRollbackHintEmpty(t *testing.T) {
 
 	jobID := "job-no-rollback"
 	req := &pb.JobRequest{
-		JobId:  jobID,
-		Topic:  "test.topic",
-		Labels: map[string]string{},
+		JobId:    jobID,
+		TenantId: "default",
+		Topic:    "test.topic",
+		Labels:   map[string]string{},
 	}
 	require.NoError(t, s.jobStore.SetJobMeta(ctx, req))
 	require.NoError(t, s.jobStore.SetJobRequest(ctx, req))
 	require.NoError(t, s.jobStore.SetState(ctx, jobID, model.JobStateApproval))
+	require.NoError(t, s.jobStore.SetTenant(ctx, jobID, "default"))
 	require.NoError(t, s.jobStore.SetSafetyDecision(ctx, jobID, model.SafetyDecisionRecord{
 		Decision:         model.SafetyRequireApproval,
 		ApprovalRequired: true,
@@ -1127,13 +1135,15 @@ func TestApprovalContextPolicySnapshotSummaryNoRule(t *testing.T) {
 
 	jobID := "job-no-rule"
 	req := &pb.JobRequest{
-		JobId:  jobID,
-		Topic:  "test.topic",
-		Labels: map[string]string{},
+		JobId:    jobID,
+		TenantId: "default",
+		Topic:    "test.topic",
+		Labels:   map[string]string{},
 	}
 	require.NoError(t, s.jobStore.SetJobMeta(ctx, req))
 	require.NoError(t, s.jobStore.SetJobRequest(ctx, req))
 	require.NoError(t, s.jobStore.SetState(ctx, jobID, model.JobStateApproval))
+	require.NoError(t, s.jobStore.SetTenant(ctx, jobID, "default"))
 	require.NoError(t, s.jobStore.SetSafetyDecision(ctx, jobID, model.SafetyDecisionRecord{
 		Decision:         model.SafetyRequireApproval,
 		ApprovalRequired: true,

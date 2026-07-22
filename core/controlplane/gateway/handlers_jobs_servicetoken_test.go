@@ -16,10 +16,13 @@ import (
 	"github.com/cordum/cordum/core/auth/servicetoken"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
+	"github.com/cordum/cordum/core/infra/capprofile"
 	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/policysign"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
+	jobidentity "github.com/cordum/cordum/core/protocol/identity"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 func gatewayTestIssuer(t *testing.T, s *server) *scheduler.SessionTokenIssuer {
@@ -112,5 +115,53 @@ func TestServerAttachServiceToken_NoIssuerNoToken(t *testing.T) {
 	s.attachServiceToken(pkt)
 	if pkt.GetAuthToken() != "" {
 		t.Fatalf("no issuer must attach no token; got %q", pkt.GetAuthToken())
+	}
+}
+
+func TestHandleCancelJobProductionEchoesStoredIdentity(t *testing.T) {
+	s, bus, _ := newTestGateway(t)
+	s.capProfile = capprofile.Production
+	identity := &pb.IdentityBinding{
+		TenantId: "tenant-a", PrincipalId: "principal-a", ActorId: "principal-a",
+	}
+	req, err := jobidentity.NormalizeProductionJobRequest(
+		&pb.JobRequest{JobId: "job-cxl-production", Topic: "job.test"}, identity,
+	)
+	if err != nil {
+		t.Fatalf("NormalizeProductionJobRequest() error = %v", err)
+	}
+	ctx := context.Background()
+	if err := s.jobStore.SetJobRequest(ctx, req); err != nil {
+		t.Fatalf("SetJobRequest() error = %v", err)
+	}
+	if err := s.jobStore.SetState(ctx, req.GetJobId(), model.JobStateRunning); err != nil {
+		t.Fatalf("SetState() error = %v", err)
+	}
+
+	r := httptest.NewRequest(http.MethodDelete, "/api/v1/jobs/"+req.GetJobId(), nil)
+	r.SetPathValue("id", req.GetJobId())
+	r = withAuth(r, &auth.AuthContext{Tenant: "tenant-a", Role: "admin", PrincipalID: "operator-a"})
+	w := httptest.NewRecorder()
+	s.handleCancelJob(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("cancel status = %d, body=%s", w.Code, w.Body.String())
+	}
+
+	for _, published := range bus.published {
+		if published.subject != capsdk.SubjectResult && published.subject != capsdk.SubjectCancel {
+			continue
+		}
+		if !proto.Equal(published.packet.GetIdentity(), identity) {
+			t.Fatalf("%s envelope identity = %v", published.subject, published.packet.GetIdentity())
+		}
+		var payloadIdentity *pb.IdentityBinding
+		if published.subject == capsdk.SubjectResult {
+			payloadIdentity = published.packet.GetJobResult().GetIdentity()
+		} else {
+			payloadIdentity = published.packet.GetJobCancel().GetIdentity()
+		}
+		if !proto.Equal(payloadIdentity, identity) {
+			t.Fatalf("%s payload identity = %v", published.subject, payloadIdentity)
+		}
 	}
 }

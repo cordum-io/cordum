@@ -201,7 +201,7 @@ func (e *Engine) cancelParallelChildren(parent *StepRun, run *WorkflowRun, child
 			continue
 		}
 		if child.JobID != "" {
-			if err := e.publishJobCancel(child.JobID, "parallel strategy satisfied"); err != nil {
+			if err := e.publishJobCancel(child.JobID, "parallel strategy satisfied", workflowRunIdentity(run)); err != nil {
 				slog.Error("cancel parallel child publish failed",
 					"job_id", child.JobID,
 					"step_id", childStepID,

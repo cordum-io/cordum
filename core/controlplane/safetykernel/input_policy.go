@@ -182,124 +182,185 @@ func inputRuleAppliesToScope(rule compiledInputRule, workflowID, jobID string) b
 // evaluateInputRule checks if a single input rule matches the request.
 // Returns (matched, findings). Mirrors evaluateOutputRule logic.
 func evaluateInputRule(rule compiledInputRule, req inputEvaluateRequest, scanners map[string]OutputScanner) (bool, []outputFinding) {
-	// Metadata matching.
-	if len(rule.tenants) > 0 && !containsAnyFold([]string{req.tenant}, rule.tenants) {
+	if !inputMetadataMatches(rule, req) {
 		return false, nil
+	}
+	if inputRuleContentSensitive(rule) && inputContentIncomplete(req) {
+		return true, []outputFinding{inputTruncatedFailClosedFinding()}
+	}
+	if rule.maxBytes > 0 {
+		return evaluateInputSizeRule(rule, req)
+	}
+	if len(req.content) == 0 {
+		return evaluateMissingInputRule(rule, req)
+	}
+	return evaluateInputContentRule(rule, req.content, scanners)
+}
+
+func inputMetadataMatches(rule compiledInputRule, req inputEvaluateRequest) bool {
+	if len(rule.tenants) > 0 && !containsAnyFold([]string{req.tenant}, rule.tenants) {
+		return false
 	}
 	if len(rule.topics) > 0 && !matchAny(rule.topics, req.topic) {
-		return false, nil
+		return false
 	}
 	if len(rule.capabilities) > 0 && !containsAnyFold(req.capabilities, rule.capabilities) {
-		return false, nil
+		return false
 	}
 	if len(rule.riskTags) > 0 && !containsAnyFold(req.riskTags, rule.riskTags) {
-		return false, nil
+		return false
 	}
-	if len(rule.contentTypes) > 0 && !containsAnyFold([]string{req.contentType}, rule.contentTypes) {
-		return false, nil
-	}
+	return len(rule.contentTypes) == 0 || containsAnyFold([]string{req.contentType}, rule.contentTypes)
+}
 
-	// Size check.
-	if rule.maxBytes > 0 {
-		size := req.inputSize
-		if size <= 0 {
-			size = int64(len(req.content))
-		}
-		if size <= rule.maxBytes {
-			return false, nil
-		}
+func inputRuleContentSensitive(rule compiledInputRule) bool {
+	return len(rule.scanners) > 0 || len(rule.patterns) > 0 ||
+		len(rule.keywords) > 0 || rule.scope != nil
+}
+
+func inputRuleUsesContentMatchers(rule compiledInputRule) bool {
+	return len(rule.scanners) > 0 || len(rule.patterns) > 0 || len(rule.keywords) > 0
+}
+
+func inputContentIncomplete(req inputEvaluateRequest) bool {
+	return req.inputSize > int64(len(req.content))
+}
+
+func inputTruncatedFailClosedFinding() outputFinding {
+	return outputFinding{
+		Type:     "content_truncated",
+		Severity: "high",
+		Detail:   "declared input size exceeds received content; unscanned tail may violate policy - failing closed",
+		Scanner:  "size_check",
+	}
+}
+
+func evaluateInputSizeRule(rule compiledInputRule, req inputEvaluateRequest) (bool, []outputFinding) {
+	size := req.inputSize
+	if size <= 0 {
+		size = int64(len(req.content))
+	}
+	if size <= rule.maxBytes {
+		return false, nil
+	}
+	return true, []outputFinding{{
+		Type:     "input_size_exceeded",
+		Severity: rule.severity,
+		Detail:   "input size exceeds policy limit",
+		Scanner:  "size_check",
+	}}
+}
+
+func evaluateMissingInputRule(rule compiledInputRule, req inputEvaluateRequest) (bool, []outputFinding) {
+	if rule.scope != nil && rule.scope.OnMissingInput != "allow" {
+		slog.Warn("scope rule matched by metadata but content unavailable - denying",
+			"component", "safety", "rule", rule.id, "topic", req.topic)
 		return true, []outputFinding{{
-			Type:     "input_size_exceeded",
+			Type:     "content_required_but_missing",
 			Severity: rule.severity,
-			Detail:   "input size exceeds policy limit",
-			Scanner:  "size_check",
+			Detail:   "scope rule requires structured input content but none was provided",
+			Scanner:  "scope_evaluator",
 		}}
 	}
-
-	// Content scanning — only if content is available.
-	hasContentCriteria := len(rule.scanners) > 0 || len(rule.patterns) > 0 || len(rule.keywords) > 0 || rule.scope != nil
-	if len(req.content) == 0 {
-		// Scope rules that require content should not be silently bypassed.
-		// When content is unavailable and the scope's on_missing_input is "deny"
-		// (the default), the rule matches with a content_required finding.
-		if rule.scope != nil && rule.scope.OnMissingInput != "allow" {
-			slog.Warn("scope rule matched by metadata but content unavailable — denying",
-				"component", "safety", "rule", rule.id, "topic", req.topic)
-			return true, []outputFinding{{
-				Type:     "content_required_but_missing",
-				Severity: rule.severity,
-				Detail:   "scope rule requires structured input content but none was provided",
-				Scanner:  "scope_evaluator",
-			}}
-		}
-		if hasContentCriteria {
-			return false, nil
-		}
-		// Pure metadata rule matched.
-		return true, nil
-	}
-
-	findings := make([]outputFinding, 0, 8)
-
-	// Structured scope evaluation (instruction-vs-cart comparison).
-	if rule.scope != nil {
-		violated, scopeFindings := evaluateScope(rule.scope, req.content)
-		for _, sf := range scopeFindings {
-			findings = append(findings, outputFinding{
-				Type:     sf.Type,
-				Severity: rule.severity,
-				Detail:   sf.Detail,
-				Scanner:  "scope_evaluator",
-			})
-		}
-		if !violated && len(findings) == 0 {
-			return false, nil
-		}
-	}
-
-	// Run regex patterns (reuses output_policy scanWithContentPatterns infrastructure).
-	if len(rule.patterns) > 0 {
-		for _, pat := range rule.patterns {
-			if pat.re.Match(req.content) {
-				findings = append(findings, outputFinding{
-					Type:           "content_pattern_match",
-					Severity:       rule.severity,
-					Detail:         "input content matched pattern",
-					Scanner:        "regex",
-					MatchedPattern: pat.raw,
-				})
-			}
-		}
-		if len(findings) == 0 {
-			return false, nil
-		}
-	}
-
-	// Run keyword matching.
-	if len(rule.keywords) > 0 {
-		kwScanner := newKeywordScanner(rule.keywords)
-		kwFindings := kwScanner.Scan(req.content)
-		if len(kwFindings) == 0 && len(findings) == 0 {
-			return false, nil
-		}
-		findings = append(findings, kwFindings...)
-	}
-
-	// Run named scanners (PII, secrets, injection — same instances as output policy).
-	if len(rule.scanners) > 0 {
-		scannerFindings := scanWithScanners(req.content, rule.scanners, scanners)
-		if len(scannerFindings) == 0 && len(findings) == 0 {
-			return false, nil
-		}
-		findings = append(findings, scannerFindings...)
-	}
-
-	// If rule specifies content criteria and no findings, no match.
-	if (len(rule.patterns) > 0 || len(rule.keywords) > 0 || len(rule.scanners) > 0) && len(findings) == 0 {
+	if inputRuleContentSensitive(rule) {
 		return false, nil
 	}
+	return true, nil
+}
 
+func evaluateInputContentRule(
+	rule compiledInputRule,
+	content []byte,
+	scanners map[string]OutputScanner,
+) (bool, []outputFinding) {
+	findings, ok := scanInputScope(rule, content)
+	if !ok {
+		return false, nil
+	}
+	if findings, ok = scanInputPatterns(rule, content, findings); !ok {
+		return false, nil
+	}
+	if findings, ok = scanInputKeywords(rule, content, findings); !ok {
+		return false, nil
+	}
+	if findings, ok = scanInputNamedScanners(rule, content, scanners, findings); !ok {
+		return false, nil
+	}
+	if inputRuleUsesContentMatchers(rule) && len(findings) == 0 {
+		return false, nil
+	}
 	return true, findings
+}
+
+func scanInputScope(rule compiledInputRule, content []byte) ([]outputFinding, bool) {
+	if rule.scope == nil {
+		return nil, true
+	}
+	violated, scopeFindings := evaluateScope(rule.scope, content)
+	findings := make([]outputFinding, 0, len(scopeFindings))
+	for _, finding := range scopeFindings {
+		findings = append(findings, outputFinding{
+			Type:     finding.Type,
+			Severity: rule.severity,
+			Detail:   finding.Detail,
+			Scanner:  "scope_evaluator",
+		})
+	}
+	if !violated && len(findings) == 0 {
+		return nil, false
+	}
+	return findings, true
+}
+
+func scanInputPatterns(
+	rule compiledInputRule,
+	content []byte,
+	findings []outputFinding,
+) ([]outputFinding, bool) {
+	if len(rule.patterns) == 0 {
+		return findings, true
+	}
+	for _, pattern := range rule.patterns {
+		if pattern.re.Match(content) {
+			findings = append(findings, outputFinding{
+				Type: "content_pattern_match", Severity: rule.severity,
+				Detail: "input content matched pattern", Scanner: "regex",
+				MatchedPattern: pattern.raw,
+			})
+		}
+	}
+	return findings, len(findings) > 0
+}
+
+func scanInputKeywords(
+	rule compiledInputRule,
+	content []byte,
+	findings []outputFinding,
+) ([]outputFinding, bool) {
+	if len(rule.keywords) == 0 {
+		return findings, true
+	}
+	matches := newKeywordScanner(rule.keywords).Scan(content)
+	if len(matches) == 0 && len(findings) == 0 {
+		return nil, false
+	}
+	return append(findings, matches...), true
+}
+
+func scanInputNamedScanners(
+	rule compiledInputRule,
+	content []byte,
+	scanners map[string]OutputScanner,
+	findings []outputFinding,
+) ([]outputFinding, bool) {
+	if len(rule.scanners) == 0 {
+		return findings, true
+	}
+	matches := scanWithScanners(content, rule.scanners, scanners)
+	if len(matches) == 0 && len(findings) == 0 {
+		return nil, false
+	}
+	return append(findings, matches...), true
 }
 
 // severityRank maps the severity string vocabulary to an ordinal so

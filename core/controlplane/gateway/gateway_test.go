@@ -64,23 +64,22 @@ func (s *stubMemStore) GetResult(ctx context.Context, key string) ([]byte, error
 func (s *stubMemStore) Close() error { return nil }
 
 func TestHandleGetMemoryFetchesContextByPointer(t *testing.T) {
-	s := &server{
-		memStore: &stubMemStore{
-			context: map[string][]byte{
-				"ctx:job-1": []byte(`{"prompt":"hi"}`),
-			},
-		},
+	s, _, _ := newTestGateway(t)
+	if err := s.jobStore.SetTenant(context.Background(), "job-1", "default"); err != nil {
+		t.Fatalf("set tenant: %v", err)
 	}
-
-	req := httptest.NewRequest("GET", "/api/v1/memory?ptr="+url.QueryEscape("redis://ctx:job-1"), nil)
-	req.Header.Set("X-Tenant-ID", "default")
+	if err := s.memStore.PutContext(context.Background(), "ctx:job-1", []byte(`{"prompt":"hi"}`)); err != nil {
+		t.Fatalf("put context: %v", err)
+	}
+	req := withAuth(
+		httptest.NewRequest(http.MethodGet, "/api/v1/memory?ptr="+url.QueryEscape("redis://ctx:job-1"), nil),
+		&auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: "user-test"},
+	)
 	rr := httptest.NewRecorder()
 	s.handleGetMemory(rr, req)
-
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200 got=%d body=%s", rr.Code, rr.Body.String())
 	}
-
 	var resp map[string]any
 	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode json: %v", err)
@@ -88,15 +87,12 @@ func TestHandleGetMemoryFetchesContextByPointer(t *testing.T) {
 	if resp["kind"] != "context" {
 		t.Fatalf("expected kind=context got=%v", resp["kind"])
 	}
-	if resp["key"] != "ctx:job-1" {
-		t.Fatalf("expected key=ctx:job-1 got=%v", resp["key"])
+	if _, exposed := resp["key"]; exposed {
+		t.Fatalf("response exposed raw key: %#v", resp)
 	}
 	jsonVal, ok := resp["json"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected json object got=%T", resp["json"])
-	}
-	if jsonVal["prompt"] != "hi" {
-		t.Fatalf("expected json.prompt=hi got=%v", jsonVal["prompt"])
+	if !ok || jsonVal["prompt"] != "hi" {
+		t.Fatalf("unexpected json payload: %#v", resp["json"])
 	}
 }
 
@@ -150,13 +146,16 @@ func TestApiKeyUnaryInterceptor(t *testing.T) {
 }
 
 func TestHandleGetMemoryReturnsNotFoundForMissingKey(t *testing.T) {
-	s := &server{memStore: &stubMemStore{}}
-
-	req := httptest.NewRequest("GET", "/api/v1/memory?ptr="+url.QueryEscape("redis://res:missing"), nil)
-	req.Header.Set("X-Tenant-ID", "default")
+	s, _, _ := newTestGateway(t)
+	if err := s.jobStore.SetTenant(context.Background(), "missing", "default"); err != nil {
+		t.Fatalf("set tenant: %v", err)
+	}
+	req := withAuth(
+		httptest.NewRequest(http.MethodGet, "/api/v1/memory?ptr="+url.QueryEscape("redis://res:missing"), nil),
+		&auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: "user-test"},
+	)
 	rr := httptest.NewRecorder()
 	s.handleGetMemory(rr, req)
-
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 got=%d body=%s", rr.Code, rr.Body.String())
 	}

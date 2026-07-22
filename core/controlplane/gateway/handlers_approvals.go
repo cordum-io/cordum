@@ -18,6 +18,7 @@ import (
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	edgecore "github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/infra/bus"
+	"github.com/cordum/cordum/core/infra/resourceio"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
@@ -520,29 +521,27 @@ func (s *server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 					item["gate_type"] = v
 				}
 			}
-			// Dereference context_ptr to include the actual job input payload
-			// (e.g. transfer amount, customer, reason) so approvers see what
-			// they are approving.
-			if ptr := strings.TrimSpace(req.GetContextPtr()); ptr != "" {
+			if ptr := strings.TrimSpace(req.GetContextPtr()); ptr != "" && s.memoryResourceReader.Compatibility.Enabled {
+				// Display-only location reference, gated the same as legacy
+				// dereference itself: strict/production mode never surfaces
+				// a raw legacy pointer, even just as a string.
 				item["context_ptr"] = ptr
+			}
+			if req.GetContextRef() != nil || strings.TrimSpace(req.GetContextPtr()) != "" {
 				contextStatus = "unavailable"
-				if s.memStore != nil {
-					if key, err := store.KeyFromPointer(ptr); err == nil {
-						if raw, err := s.memStore.GetContext(r.Context(), key); err == nil {
-							if len(raw) == 0 {
-								contextStatus = "missing"
-							} else if err := json.Unmarshal(raw, &payload); err == nil {
-								contextStatus = "available"
-								item["job_input"] = payload
-							} else {
-								contextStatus = "malformed"
-							}
-						} else if errors.Is(err, redis.Nil) {
-							contextStatus = "missing"
-						}
-					} else {
-						contextStatus = "malformed"
-					}
+				err := s.readGatewayJSONResource(r.Context(), gatewayJobResourceRequest{
+					JobID: job.ID, TenantID: job.Tenant, Reference: req.GetContextRef(),
+					LegacyPointer: req.GetContextPtr(), LegacyKind: resourceio.LegacyContext,
+					Component: "gateway.approval.context",
+				}, &payload)
+				switch {
+				case err == nil:
+					contextStatus = "available"
+					item["job_input"] = payload
+				case errors.Is(err, redis.Nil):
+					contextStatus = "missing"
+				case errors.Is(err, errGatewayResourceMalformed):
+					contextStatus = "malformed"
 				}
 			}
 			if workflowMeta := approvalWorkflowMetadata(payload); workflowMeta != nil {
@@ -792,21 +791,39 @@ func (s *server) approvalRepairPlan(ctx context.Context, jobID string) (*store.A
 	return snapshot, plan, nil
 }
 
+func approvalRejectionPacket(
+	traceID, jobID, errorMessage string,
+	identity *pb.IdentityBinding,
+) *pb.BusPacket {
+	return &pb.BusPacket{
+		TraceId:         traceID,
+		SenderId:        servicetoken.IdentityGateway,
+		Identity:        identity,
+		CreatedAt:       timestamppb.Now(),
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
+		Payload: &pb.BusPacket_JobResult{JobResult: &pb.JobResult{
+			JobId:         jobID,
+			WorkerId:      servicetoken.IdentityGateway,
+			Status:        pb.JobStatus_JOB_STATUS_DENIED,
+			ErrorCode:     "approval_rejected",
+			ErrorCodeEnum: pb.ErrorCode_ERROR_CODE_SAFETY_DENIED,
+			ErrorMessage:  errorMessage,
+			Identity:      identity,
+		}},
+	}
+}
+
 func (s *server) publishApprovalRepair(ctx context.Context, repaired *store.ApprovalRepairResult) error {
 	if repaired == nil || repaired.Request == nil || repaired.ApprovalRecord.PublishTarget == "" {
 		return nil
 	}
+	request, err := s.normalizeStoredJobRequest(repaired.Request)
+	if err != nil {
+		return fmt.Errorf("approval repair stored identity: %w", err)
+	}
 	switch repaired.ApprovalRecord.PublishTarget {
 	case model.ApprovalPublishTargetSubmit:
-		packet := &pb.BusPacket{
-			TraceId:         repaired.TraceID,
-			SenderId:        servicetoken.IdentityGateway,
-			CreatedAt:       timestamppb.Now(),
-			ProtocolVersion: capsdk.DefaultProtocolVersion,
-			Payload: &pb.BusPacket_JobRequest{
-				JobRequest: repaired.Request,
-			},
-		}
+		packet := jobRequestPacket(repaired.TraceID, "api-gateway", request)
 		s.attachServiceToken(packet)
 		if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
 			return err
@@ -816,25 +833,14 @@ func (s *server) publishApprovalRepair(ctx context.Context, repaired *store.Appr
 		if msg := strings.TrimSpace(repaired.ApprovalRecord.Reason); msg != "" {
 			errorMessage = msg
 		}
-		packet := &pb.BusPacket{
-			TraceId:         repaired.TraceID,
-			SenderId:        servicetoken.IdentityGateway,
-			CreatedAt:       timestamppb.Now(),
-			ProtocolVersion: capsdk.DefaultProtocolVersion,
-			Payload: &pb.BusPacket_JobResult{
-				JobResult: &pb.JobResult{
-					JobId:         repaired.JobID,
-					Status:        pb.JobStatus_JOB_STATUS_DENIED,
-					ErrorCode:     "approval_rejected",
-					ErrorCodeEnum: pb.ErrorCode_ERROR_CODE_SAFETY_DENIED,
-					ErrorMessage:  errorMessage,
-				},
-			},
-		}
+		packet := approvalRejectionPacket(
+			repaired.TraceID, repaired.JobID, errorMessage, request.GetIdentity(),
+		)
 		if err := s.bus.Publish(capsdk.SubjectDLQ, packet); err != nil {
 			return err
 		}
 		if repaired.ApprovalRecord.PublishTarget == model.ApprovalPublishTargetDLQAndResult {
+			s.attachServiceToken(packet)
 			if err := s.bus.Publish(capsdk.SubjectResult, packet); err != nil {
 				return err
 			}
@@ -1091,6 +1097,11 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 			result = handlerResult{http.StatusNotFound, "job request not found"}
 			return nil
 		}
+		req, err = s.normalizeStoredJobRequest(req)
+		if err != nil {
+			result = handlerResult{http.StatusConflict, "stored job identity is invalid"}
+			return nil
+		}
 
 		// Self-approval prevention: reject if the approver is the same entity
 		// that submitted the job. Enforces separation of duties.
@@ -1251,6 +1262,10 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 					}
 					return nil
 				}
+				var policyIdentity *pb.IdentityBinding
+				if s.capProfile.IsProduction() {
+					policyIdentity = req.GetIdentity()
+				}
 				freshCheck, freshErr := buildPolicyCheckRequest(ctx, &policyCheckRequest{
 					JobId:       jobID,
 					Topic:       req.GetTopic(),
@@ -1262,6 +1277,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 					Budget:      req.Budget,
 					MemoryId:    strings.TrimSpace(req.MemoryId),
 					Meta:        freshMeta,
+					Identity:    policyIdentity,
 				}, s.configSvc, defaultTenant)
 				if freshErr != nil {
 					s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policybundles.PolicyActorID(r), policybundles.PolicyRole(r),
@@ -1385,17 +1401,14 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 			result = handlerResult{http.StatusInternalServerError, "failed to persist approval resolution"}
 			return nil
 		}
+		resolved.Request, err = s.normalizeStoredJobRequest(resolved.Request)
+		if err != nil {
+			result = handlerResult{http.StatusConflict, "stored job identity is invalid"}
+			return nil
+		}
 		s.observeApprovalResolutionMetrics(req, safetyRecord, resolved.ApprovalRecord.ApprovedAt, "approved")
 		s.syncApprovalQueueDepth(ctx)
-		packet := &pb.BusPacket{
-			TraceId:         resolved.TraceID,
-			SenderId:        "api-gateway",
-			CreatedAt:       timestamppb.Now(),
-			ProtocolVersion: capsdk.DefaultProtocolVersion,
-			Payload: &pb.BusPacket_JobRequest{
-				JobRequest: resolved.Request,
-			},
-		}
+		packet := jobRequestPacket(resolved.TraceID, "api-gateway", resolved.Request)
 		s.attachServiceToken(packet)
 		if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
 			result = handlerResult{http.StatusBadGateway, "publish approval failed"}
@@ -1506,6 +1519,11 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 			result = handlerResult{http.StatusNotFound, "job request not found"}
 			return nil
 		}
+		req, reqErr = s.normalizeStoredJobRequest(req)
+		if reqErr != nil {
+			result = handlerResult{http.StatusConflict, "stored job identity is invalid"}
+			return nil
+		}
 
 		// Self-rejection prevention: the submitter cannot resolve their own
 		// approval request (neither approve nor reject). Enforces separation
@@ -1586,27 +1604,14 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 		if reason != "" {
 			errorMessage = reason
 		}
-		packet := &pb.BusPacket{
-			TraceId:         resolved.TraceID,
-			SenderId:        "api-gateway",
-			CreatedAt:       timestamppb.Now(),
-			ProtocolVersion: capsdk.DefaultProtocolVersion,
-			Payload: &pb.BusPacket_JobResult{
-				JobResult: &pb.JobResult{
-					JobId:         jobID,
-					Status:        pb.JobStatus_JOB_STATUS_DENIED,
-					ErrorCode:     "approval_rejected",
-					ErrorCodeEnum: pb.ErrorCode_ERROR_CODE_SAFETY_DENIED,
-					ErrorMessage:  errorMessage,
-				},
-			},
-		}
+		packet := approvalRejectionPacket(resolved.TraceID, jobID, errorMessage, req.GetIdentity())
 		if err := s.bus.Publish(capsdk.SubjectDLQ, packet); err != nil {
 			slog.Error("publish dlq on approval reject failed", "job_id", jobID, "error", err)
 		} else {
 			rejectTopic := strings.TrimSpace(resolved.Request.GetTopic())
 			publishComplete := true
 			if rejectTopic == capsdk.SubjectWorkflowApprovalGate {
+				s.attachServiceToken(packet)
 				if err := s.bus.Publish(capsdk.SubjectResult, packet); err != nil {
 					slog.Error("publish result on workflow gate reject failed", "job_id", jobID, "error", err)
 					publishComplete = false
@@ -1674,11 +1679,14 @@ func (s *server) handleApprovalContext(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "tenant lookup unavailable")
 		return
 	}
-	if tenant != "" {
-		if err := s.requireTenantAccess(r, tenant); err != nil {
-			writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
-			return
-		}
+	tenant = strings.TrimSpace(tenant)
+	if tenant == "" {
+		writeErrorJSON(w, http.StatusServiceUnavailable, "tenant lookup unavailable")
+		return
+	}
+	if err := s.requireTenantAccess(r, tenant); err != nil {
+		writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
+		return
 	}
 
 	// Load safety decision.
@@ -1724,15 +1732,11 @@ func (s *server) handleApprovalContext(w http.ResponseWriter, r *http.Request) {
 		blastRadius     map[string]any
 		rollbackHint    string
 		jobTopic        string
-		jobTenant       string
+		jobTenant       = tenant
 	)
 	if req, reqErr := s.jobStore.GetJobRequest(ctx, jobID); reqErr == nil && req != nil {
 		labels := req.GetLabels()
 		jobTopic = strings.TrimSpace(req.GetTopic())
-		jobTenant = strings.TrimSpace(req.GetTenantId())
-		if jobTenant == "" && labels != nil {
-			jobTenant = strings.TrimSpace(labels["tenant_id"])
-		}
 		blastRadius = buildBlastRadius(req, labels)
 		rollbackHint = strings.TrimSpace(labels["rollback_hint"])
 
@@ -1741,21 +1745,21 @@ func (s *server) handleApprovalContext(w http.ResponseWriter, r *http.Request) {
 			payload       map[string]any
 			contextStatus = "absent"
 		)
-		if ptr := strings.TrimSpace(req.GetContextPtr()); ptr != "" {
+		if req.GetContextRef() != nil || strings.TrimSpace(req.GetContextPtr()) != "" {
 			contextStatus = "unavailable"
-			if s.memStore != nil {
-				if key, keyErr := store.KeyFromPointer(ptr); keyErr == nil {
-					if raw, getErr := s.memStore.GetContext(ctx, key); getErr == nil {
-						if len(raw) == 0 {
-							contextStatus = "missing"
-						} else if jsonErr := json.Unmarshal(raw, &payload); jsonErr == nil {
-							contextStatus = "available"
-							approvalItem["job_input"] = payload
-						} else {
-							contextStatus = "malformed"
-						}
-					}
-				}
+			err := s.readGatewayJSONResource(ctx, gatewayJobResourceRequest{
+				JobID: jobID, TenantID: tenant, Reference: req.GetContextRef(),
+				LegacyPointer: req.GetContextPtr(), LegacyKind: resourceio.LegacyContext,
+				Component: "gateway.approval.detail",
+			}, &payload)
+			switch {
+			case err == nil:
+				contextStatus = "available"
+				approvalItem["job_input"] = payload
+			case errors.Is(err, redis.Nil):
+				contextStatus = "missing"
+			case errors.Is(err, errGatewayResourceMalformed):
+				contextStatus = "malformed"
 			}
 		}
 		summary := buildApprovalDecisionSummary(req, safetyRecord.Reason, payload, contextStatus)

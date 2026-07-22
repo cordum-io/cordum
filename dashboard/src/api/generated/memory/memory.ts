@@ -26,11 +26,15 @@ import type {
   BadRequestResponse,
   CreateArtifactRequest,
   CreateArtifactResponse,
+  ForbiddenResponse,
   GetMemory200,
   GetMemoryParams,
   InternalServerErrorResponse,
   NotFoundResponse,
   PayloadTooLargeResponse,
+  ResolveMemoryResource200,
+  ResolveMemoryResourceBody,
+  ServiceUnavailableResponse,
   UnauthorizedResponse,
 } from ".././model";
 
@@ -177,6 +181,106 @@ export function useGetMemory<
   return query;
 }
 
+/**
+ * @summary Resolve a structured resource in an authenticated job scope
+ */
+export const resolveMemoryResource = (
+  resolveMemoryResourceBody: ResolveMemoryResourceBody,
+  signal?: AbortSignal,
+) => {
+  return apiClient<ResolveMemoryResource200>({
+    url: `/api/v1/memory/resolve`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: resolveMemoryResourceBody,
+    signal,
+  });
+};
+
+export const getResolveMemoryResourceMutationOptions = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | PayloadTooLargeResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof resolveMemoryResource>>,
+    TError,
+    { data: ResolveMemoryResourceBody },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof resolveMemoryResource>>,
+  TError,
+  { data: ResolveMemoryResourceBody },
+  TContext
+> => {
+  const mutationKey = ["resolveMemoryResource"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof resolveMemoryResource>>,
+    { data: ResolveMemoryResourceBody }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return resolveMemoryResource(data);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ResolveMemoryResourceMutationResult = NonNullable<
+  Awaited<ReturnType<typeof resolveMemoryResource>>
+>;
+export type ResolveMemoryResourceMutationBody = ResolveMemoryResourceBody;
+export type ResolveMemoryResourceMutationError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | PayloadTooLargeResponse
+  | ServiceUnavailableResponse;
+
+/**
+ * @summary Resolve a structured resource in an authenticated job scope
+ */
+export const useResolveMemoryResource = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | PayloadTooLargeResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof resolveMemoryResource>>,
+      TError,
+      { data: ResolveMemoryResourceBody },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof resolveMemoryResource>>,
+  TError,
+  { data: ResolveMemoryResourceBody },
+  TContext
+> => {
+  const mutationOptions = getResolveMemoryResourceMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
 /**
  * @summary Upload an artifact
  */

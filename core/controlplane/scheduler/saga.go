@@ -3,13 +3,16 @@ package scheduler
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
+	jobidentity "github.com/cordum/cordum/core/protocol/identity"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/cordum/cordum/core/protocol/protoutil"
 	"github.com/google/uuid"
@@ -19,12 +22,19 @@ import (
 )
 
 const (
-	sagaStackKeyFmt   = "saga:%s:stack"
-	sagaLockKeyFmt    = "saga:%s:lock"
+	sagaStackKeyFmt   = "saga:{%s}:stack"
+	sagaLockKeyFmt    = "saga:{%s}:lock"
+	sagaDedupeKeyFmt  = "saga:{%s}:recorded"
 	sagaSenderID      = "cordum-scheduler-saga"
 	sagaCompLabel     = "saga_compensation"
 	sagaWorkflowLabel = "saga_workflow_id"
 )
+
+var recordCompensationScript = redis.NewScript(`
+if redis.call('SADD', KEYS[2], ARGV[1]) == 0 then return 0 end
+redis.call('LPUSH', KEYS[1], ARGV[2])
+return 1
+`)
 
 // SagaManager records and replays compensation jobs for durable rollback.
 type SagaManager struct {
@@ -70,19 +80,39 @@ func (s *SagaManager) WithSafety(sc SafetyChecker) *SagaManager {
 }
 
 func sagaStackKey(workflowID string) string {
-	workflowID = strings.TrimSpace(workflowID)
-	if workflowID == "" {
+	tag := sagaWorkflowTag(workflowID)
+	if tag == "" {
 		return ""
 	}
-	return fmt.Sprintf(sagaStackKeyFmt, workflowID)
+	return fmt.Sprintf(sagaStackKeyFmt, tag)
 }
 
 func sagaLockKey(workflowID string) string {
+	tag := sagaWorkflowTag(workflowID)
+	if tag == "" {
+		return ""
+	}
+	return fmt.Sprintf(sagaLockKeyFmt, tag)
+}
+
+func sagaDedupeKey(workflowID string) string {
+	tag := sagaWorkflowTag(workflowID)
+	if tag == "" {
+		return ""
+	}
+	return fmt.Sprintf(sagaDedupeKeyFmt, tag)
+}
+
+func sagaWorkflowTag(workflowID string) string {
 	workflowID = strings.TrimSpace(workflowID)
 	if workflowID == "" {
 		return ""
 	}
-	return fmt.Sprintf(sagaLockKeyFmt, workflowID)
+	return base64.RawURLEncoding.EncodeToString([]byte(workflowID))
+}
+
+func legacySagaStackKey(workflowID string) string {
+	return "saga:" + strings.TrimSpace(workflowID) + ":stack"
 }
 
 func isCompensationJob(req *pb.JobRequest) bool {
@@ -135,10 +165,18 @@ func (s *SagaManager) RecordCompensation(ctx context.Context, req *pb.JobRequest
 	}
 	cctx, cancel := context.WithTimeout(ctx, storeOpTimeout)
 	defer cancel()
-	if err := s.redis.LPush(cctx, key, data).Err(); err != nil {
+	dedupeID := strings.TrimSpace(req.GetJobId())
+	if dedupeID == "" {
+		digest := sha256.Sum256(data)
+		dedupeID = hex.EncodeToString(digest[:])
+	}
+	recorded, err := recordCompensationScript.Run(
+		cctx, s.redis, []string{key, sagaDedupeKey(workflowID)}, dedupeID, data,
+	).Int()
+	if err != nil {
 		return err
 	}
-	if s.metrics != nil {
+	if recorded == 1 && s.metrics != nil {
 		s.metrics.IncSagaRecorded()
 	}
 	return nil
@@ -188,7 +226,7 @@ func (s *SagaManager) Rollback(ctx context.Context, workflowID string) error {
 
 	for {
 		popCtx, cancel := context.WithTimeout(ctx, storeOpTimeout)
-		data, err := s.redis.LPop(popCtx, key).Bytes()
+		data, err := s.popCompensation(popCtx, key, workflowID)
 		cancel()
 		if err == redis.Nil {
 			break
@@ -199,13 +237,10 @@ func (s *SagaManager) Rollback(ctx context.Context, workflowID string) error {
 
 		var req pb.JobRequest
 		if err := proto.Unmarshal(data, &req); err != nil {
-			rawHex := hex.EncodeToString(data)
-			if len(rawHex) > 128 {
-				rawHex = rawHex[:128] + "..."
-			}
+			rawDigest := sha256.Sum256(data)
 			slog.Error("unmarshal compensation failed",
 				"workflow_id", workflowID, "error", err,
-				"raw_bytes_len", len(data), "raw_hex", rawHex)
+				"raw_bytes_len", len(data), "raw_sha256", hex.EncodeToString(rawDigest[:]))
 			if s.metrics != nil {
 				s.metrics.IncSagaUnmarshalError()
 			}
@@ -219,6 +254,18 @@ func (s *SagaManager) Rollback(ctx context.Context, workflowID string) error {
 	}
 
 	return nil
+}
+
+func (s *SagaManager) popCompensation(ctx context.Context, key, workflowID string) ([]byte, error) {
+	data, err := s.redis.LPop(ctx, key).Bytes()
+	if err != redis.Nil {
+		return data, err
+	}
+	legacy := legacySagaStackKey(workflowID)
+	if legacy == key {
+		return nil, redis.Nil
+	}
+	return s.redis.LPop(ctx, legacy).Bytes()
 }
 
 // sendBrokenCompensationToDLQ publishes a DLQ entry for data that could not
@@ -247,9 +294,47 @@ func (s *SagaManager) sendBrokenCompensationToDLQ(workflowID string, raw []byte,
 	}
 }
 
+// sendCompensationSafetyFailureToDLQ preserves a compensation request that
+// could not be safety-checked (error or explicit unavailability) so it is
+// never silently lost nor dispatched unvalidated. Best-effort: publish
+// failures are logged but not propagated.
+func (s *SagaManager) sendCompensationSafetyFailureToDLQ(workflowID string, req *pb.JobRequest, reason error) {
+	if s == nil || s.bus == nil {
+		return
+	}
+	packet := &pb.BusPacket{
+		TraceId:         "saga-safety-unavailable-" + uuid.NewString(),
+		SenderId:        sagaSenderID,
+		Identity:        req.GetIdentity(),
+		CreatedAt:       timestamppb.Now(),
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
+		Payload: &pb.BusPacket_JobResult{
+			JobResult: &pb.JobResult{
+				JobId:        req.GetJobId(),
+				WorkerId:     sagaSenderID,
+				Status:       pb.JobStatus_JOB_STATUS_FAILED_FATAL,
+				ErrorCode:    "compensation_safety_unavailable",
+				ErrorMessage: fmt.Sprintf("workflow %s: compensation safety check failed closed: %v", workflowID, reason),
+				Identity:     req.GetIdentity(),
+			},
+		},
+	}
+	if err := s.bus.Publish(capsdk.SubjectDLQ, packet); err != nil {
+		slog.Error("failed to send safety-unavailable compensation to DLQ",
+			"workflow_id", workflowID, "job_id", req.GetJobId(), "error", err)
+	}
+}
+
 func (s *SagaManager) dispatchCompensation(req *pb.JobRequest, workflowID string) error {
 	if req == nil || s == nil || s.bus == nil {
 		return nil
+	}
+	if req.GetIdentity() != nil {
+		normalized, err := jobidentity.NormalizeProductionJobRequest(req, req.GetIdentity())
+		if err != nil {
+			return fmt.Errorf("compensation identity: %w", err)
+		}
+		req = normalized
 	}
 	topic := strings.TrimSpace(req.Topic)
 	if topic == "" {
@@ -260,7 +345,6 @@ func (s *SagaManager) dispatchCompensation(req *pb.JobRequest, workflowID string
 	}
 
 	req.JobId = "comp-" + uuid.NewString()
-	req.Priority = pb.JobPriority_JOB_PRIORITY_CRITICAL
 	if req.Labels == nil {
 		req.Labels = map[string]string{}
 	}
@@ -278,28 +362,35 @@ func (s *SagaManager) dispatchCompensation(req *pb.JobRequest, workflowID string
 		req.Env[sagaWorkflowLabel] = workflowID
 	}
 
-	// Soft safety check: deny → skip compensation, unavailable → proceed.
+	// Safety check: deny -> skip compensation; error/unavailable -> fail
+	// closed (DLQ, never proceed unvalidated). See
+	// ValidateCompensationSafety / TestSagaCompensationSafetyUnavailable_MustNotDispatch.
 	if s.safety != nil {
 		safetyCtx, safetyCancel := context.WithTimeout(context.Background(), storeOpTimeout)
 		record, err := s.safety.Check(safetyCtx, req)
 		safetyCancel()
-		if err != nil {
-			slog.Warn("safety check error for compensation, proceeding",
-				"job_id", req.JobId, "workflow_id", workflowID, "error", err)
-		} else if record.Decision == SafetyDeny {
+		unavailable := err == nil && record.Decision == SafetyUnavailable
+		if safetyErr := ValidateCompensationSafety(&record, err, unavailable); safetyErr != nil {
+			if errors.Is(safetyErr, ErrSafetyUnavailable) {
+				slog.Error("safety unavailable for compensation, failing closed to DLQ",
+					"job_id", req.JobId, "workflow_id", workflowID, "check_error", err)
+				if s.metrics != nil {
+					s.metrics.IncSagaCompensationFailed()
+				}
+				s.sendCompensationSafetyFailureToDLQ(workflowID, req, safetyErr)
+				return nil
+			}
 			slog.Warn("compensation denied by safety, skipping",
 				"job_id", req.JobId, "workflow_id", workflowID,
 				"reason", record.Reason, "rule_id", record.RuleID)
 			return nil
-		} else if record.Decision == SafetyUnavailable {
-			slog.Warn("safety unavailable for compensation, proceeding",
-				"job_id", req.JobId, "workflow_id", workflowID)
 		}
 	}
 
 	packet := &pb.BusPacket{
 		TraceId:         req.JobId,
 		SenderId:        sagaSenderID,
+		Identity:        req.GetIdentity(),
 		CreatedAt:       timestamppb.Now(),
 		ProtocolVersion: capsdk.DefaultProtocolVersion,
 		Payload: &pb.BusPacket_JobRequest{
@@ -329,6 +420,13 @@ func (s *SagaManager) dispatchCompensation(req *pb.JobRequest, workflowID string
 func buildCompensationRequest(base *pb.JobRequest) (*pb.JobRequest, error) {
 	if base == nil || base.Compensation == nil {
 		return nil, nil
+	}
+	if base.GetIdentity() != nil {
+		normalized, err := jobidentity.NormalizeProductionJobRequest(base, base.GetIdentity())
+		if err != nil {
+			return nil, fmt.Errorf("compensation identity: %w", err)
+		}
+		base = normalized
 	}
 	comp := base.Compensation
 	topic := strings.TrimSpace(comp.Topic)
@@ -369,11 +467,19 @@ func buildCompensationRequest(base *pb.JobRequest) (*pb.JobRequest, error) {
 	if comp.Budget != nil {
 		req.Budget = comp.Budget
 	}
-	if comp.TenantId != "" {
-		req.TenantId = comp.TenantId
+	// Tenant/principal are privilege-bearing: a compensation override is
+	// only honored when it exactly repeats the parent's own identity, never
+	// when it would widen it (DoD "prevents compensation escalation"). A
+	// diverging override is silently ignored (parent's value is kept)
+	// rather than erroring, matching this function's existing "override
+	// wins if present, else inherit" contract for non-privilege fields.
+	if comp.TenantId != "" && comp.TenantId != req.TenantId {
+		slog.Warn("compensation tenant override ignored: would escalate beyond parent",
+			"job_id", req.JobId, "parent_tenant", req.TenantId, "compensation_tenant", comp.TenantId)
 	}
-	if comp.PrincipalId != "" {
-		req.PrincipalId = comp.PrincipalId
+	if comp.PrincipalId != "" && comp.PrincipalId != req.PrincipalId {
+		slog.Warn("compensation principal override ignored: would escalate beyond parent",
+			"job_id", req.JobId, "parent_principal", req.PrincipalId, "compensation_principal", comp.PrincipalId)
 	}
 	if comp.Meta != nil {
 		req.Meta = mergeJobMetadata(req.Meta, comp.Meta)
@@ -396,7 +502,6 @@ func buildCompensationRequest(base *pb.JobRequest) (*pb.JobRequest, error) {
 		}
 	}
 
-	req.Priority = pb.JobPriority_JOB_PRIORITY_CRITICAL
 	return req, nil
 }
 
@@ -448,17 +553,37 @@ func mergeStringMap(base, override map[string]string) map[string]string {
 	return out
 }
 
+// isSubsetOfRiskTags reports whether every tag in candidate already appears
+// in allowed. An empty/nil allowed set makes any non-empty candidate NOT a
+// subset (a base with no risk tags cannot be escalated to one that has any).
+func isSubsetOfRiskTags(candidate, allowed []string) bool {
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, tag := range allowed {
+		allowedSet[tag] = struct{}{}
+	}
+	for _, tag := range candidate {
+		if _, ok := allowedSet[tag]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 func mergeJobMetadata(base, override *pb.JobMetadata) *pb.JobMetadata {
 	if base == nil && override == nil {
 		return nil
 	}
-	if base == nil {
-		return proto.Clone(override).(*pb.JobMetadata)
-	}
 	if override == nil {
 		return base
 	}
-	out := proto.Clone(base).(*pb.JobMetadata)
+	// A nil base has no capability/risk tags to inherit from, which is the
+	// most restrictive starting point — the escalation guards below then
+	// apply uniformly instead of an unchecked full clone of override.
+	baseOrEmpty := base
+	if baseOrEmpty == nil {
+		baseOrEmpty = &pb.JobMetadata{}
+	}
+	out := proto.Clone(baseOrEmpty).(*pb.JobMetadata)
 	if override.TenantId != "" {
 		out.TenantId = override.TenantId
 	}
@@ -471,10 +596,14 @@ func mergeJobMetadata(base, override *pb.JobMetadata) *pb.JobMetadata {
 	if override.IdempotencyKey != "" {
 		out.IdempotencyKey = override.IdempotencyKey
 	}
-	if override.Capability != "" {
+	// Capability/risk tags are privilege-bearing: an override MAY only
+	// repeat the base's own capability and MAY only subset the base's own
+	// risk tags, never introduce a new/different one (compensation must
+	// never escalate beyond its parent's authority).
+	if override.Capability != "" && override.Capability == out.Capability {
 		out.Capability = override.Capability
 	}
-	if len(override.RiskTags) > 0 {
+	if len(override.RiskTags) > 0 && isSubsetOfRiskTags(override.RiskTags, baseOrEmpty.RiskTags) {
 		out.RiskTags = append([]string{}, override.RiskTags...)
 	}
 	if len(override.Requires) > 0 {

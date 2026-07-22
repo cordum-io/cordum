@@ -11,8 +11,6 @@ import (
 
 	schemas "github.com/cordum/cordum/core/infra/schema"
 	"github.com/cordum/cordum/core/infra/store"
-	"github.com/cordum/cordum/core/model"
-	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
 // validationTimeout bounds Redis calls during step input/output schema
@@ -84,9 +82,9 @@ func recordStepInlineOutput(run *WorkflowRun, stepID string, stepDef *Step, outp
 	if stepDef != nil {
 		if path := strings.TrimSpace(stepDef.OutputPath); path != "" {
 			if pathErr := setContextPath(run.Context, path, output); pathErr != nil {
-			slog.Warn("workflow: setContextPath failed for inline output",
-				"path", path, "error", pathErr)
-		}
+				slog.Warn("workflow: setContextPath failed for inline output",
+					"path", path, "error", pathErr)
+			}
 		}
 	}
 	steps[stepID] = entry
@@ -214,39 +212,6 @@ func extractDataPath(value any, path string) (any, bool) {
 		}
 	}
 	return cur, true
-}
-
-// checkStepOutputPolicy runs a fast sync output policy check on step results.
-// Returns true if the step was quarantined/denied (caller should skip recording output).
-func (e *Engine) checkStepOutputPolicy(ctx context.Context, run *WorkflowRun, stepID string, stepRun *StepRun, res *pb.JobResult) bool {
-	if e.outputSafety == nil || res == nil || res.ResultPtr == "" {
-		return false
-	}
-	record, err := e.outputSafety.CheckOutputMeta(res, nil)
-	if err != nil {
-		slog.Error("step output policy check failed", "run_id", run.ID, "step_id", stepID, "error", err)
-		return false // fail-open on error to preserve backward compat
-	}
-	now := time.Now().UTC()
-	switch record.Decision {
-	case model.OutputQuarantine, model.OutputDeny:
-		stepRun.Status = StepStatusFailed
-		stepRun.CompletedAt = &now
-		stepRun.Error = map[string]any{
-			"code":    "output_quarantined",
-			"message": record.Reason,
-		}
-		e.appendTimeline(ctx, run, "step_output_quarantined", stepID, res.JobId, string(stepRun.Status), res.ResultPtr, record.Reason, nil)
-		return true
-	case model.OutputRedact:
-		if record.RedactedPtr != "" {
-			res.ResultPtr = record.RedactedPtr
-		}
-		e.appendTimeline(ctx, run, "step_output_redacted", stepID, res.JobId, string(stepRun.Status), res.ResultPtr, record.Reason, nil)
-		return false
-	default:
-		return false
-	}
 }
 
 func (e *Engine) validateInlineOutput(step *Step, value any) error {

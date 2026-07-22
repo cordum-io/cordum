@@ -54,22 +54,41 @@ func TestRedisStoreContextAndResult(t *testing.T) {
 }
 
 func TestKeyPointerHelpers(t *testing.T) {
-	key := "ctx:123"
-	ptr := PointerForKey(key)
-	if ptr != "redis://ctx:123" {
-		t.Fatalf("unexpected pointer: %s", ptr)
-	}
-
-	gotKey, err := KeyFromPointer(ptr)
-	if err != nil {
-		t.Fatalf("key from pointer: %v", err)
-	}
-	if gotKey != key {
-		t.Fatalf("unexpected key: %s", gotKey)
+	for _, key := range []string{"ctx:123", "ctx:run:step@1"} {
+		ptr := PointerForKey(key)
+		gotKey, err := KeyFromPointer(ptr)
+		if err != nil {
+			t.Fatalf("key from pointer %q: %v", ptr, err)
+		}
+		if gotKey != key {
+			t.Fatalf("key from pointer = %q, want %q", gotKey, key)
+		}
 	}
 
 	if _, err := KeyFromPointer("invalid"); err == nil {
 		t.Fatalf("expected error for invalid pointer")
+	}
+}
+
+func TestKeyFromPointerRejectsNonCanonicalRedisPointers(t *testing.T) {
+	tests := []string{
+		" redis://ctx:123",
+		"redis://ctx:123 ",
+		"redis://user@ctx:123",
+		"redis://ctx:123?token=secret",
+		"redis://ctx:123#fragment",
+		"redis://ctx%3A123",
+		"redis://ctx:../other",
+		"redis://ctx:\x00other",
+		"redis://ctx:123/other",
+		"redis://ctx:123\\other",
+	}
+	for _, ptr := range tests {
+		t.Run(ptr, func(t *testing.T) {
+			if key, err := KeyFromPointer(ptr); err == nil {
+				t.Fatalf("expected rejection, got key %q", key)
+			}
+		})
 	}
 }
 

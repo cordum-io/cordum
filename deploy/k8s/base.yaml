@@ -743,6 +743,13 @@ spec:
           value: nats://nats:4222
         - name: NATS_USE_JETSTREAM
           value: "1"
+        # CAP runtime profile. "compat" (default) keeps legacy unsigned
+        # packets, string resource pointers, and configured fail-open modes
+        # reachable. "production" selects CAP-PRODUCTION enforcement and
+        # refuses to start unless every mandatory dependency is initialized.
+        # An unrecognised value fails startup rather than downgrading.
+        - name: CORDUM_CAP_PROFILE
+          value: "compat"
         - name: CORDUM_SDK_HANDSHAKE
           value: "off"
         - name: CORDUM_HEARTBEAT_MODE
@@ -918,6 +925,13 @@ spec:
           value: nats://nats:4222
         - name: NATS_USE_JETSTREAM
           value: "1"
+        # CAP runtime profile. "compat" (default) keeps legacy unsigned
+        # packets, string resource pointers, and configured fail-open modes
+        # reachable. "production" selects CAP-PRODUCTION enforcement and
+        # refuses to start unless every mandatory dependency is initialized.
+        # An unrecognised value fails startup rather than downgrading.
+        - name: CORDUM_CAP_PROFILE
+          value: "compat"
         - name: CORDUM_SDK_HANDSHAKE
           value: "off"
         - name: CORDUM_HEARTBEAT_MODE
@@ -1119,6 +1133,9 @@ spec:
               key: REDIS_PASSWORD
         - name: REDIS_URL
           value: redis://:$(REDIS_PASSWORD)@redis:6379
+        # CAP runtime profile (see scheduler deployment for semantics).
+        - name: CORDUM_CAP_PROFILE
+          value: "compat"
         - name: WORKFLOW_ENGINE_HTTP_ADDR
           value: :9093
         - name: WORKFLOW_ENGINE_SCAN_INTERVAL

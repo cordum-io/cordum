@@ -30,6 +30,10 @@ type NatsBus struct {
 	js        nats.JetStreamContext
 	jsEnabled bool
 	ackWait   time.Duration
+	// productionTransportReady records the immutable connection posture
+	// established at dial time. CAP-PRODUCTION startup reads it instead of
+	// inferring transport security from deployment intent.
+	productionTransportReady bool
 
 	subsMu   sync.Mutex
 	subs     []*nats.Subscription
@@ -38,6 +42,9 @@ type NatsBus struct {
 	hooksMu            sync.RWMutex
 	reconnectHandlers  []func(*nats.Conn)
 	disconnectHandlers []func(*nats.Conn, error)
+	rawPacketAdmission RawPacketAdmission
+	packetEncoder      PacketEncoder
+	rawAdmissionFrozen bool
 
 	// redis is an optional Redis client for crash-safe message processing.
 	// When set, durable JetStream subscriptions use Redis for idempotency
@@ -116,15 +123,16 @@ var (
 //
 // In production mode (CORDUM_ENV=production or CORDUM_PRODUCTION=true),
 // non-TLS URLs are rejected unless CORDUM_NATS_ALLOW_PLAINTEXT=true.
-// Authentication is configured via NATS_USERNAME/NATS_PASSWORD, NATS_TOKEN,
-// or NATS_NKEY env vars. In production, NewNatsBus refuses to start when no
-// auth mechanism is configured unless CORDUM_NATS_ALLOW_NOAUTH=true is set as
-// an explicit override (which still logs a warning).
+// Authentication is configured via a TLS client certificate,
+// NATS_USERNAME/NATS_PASSWORD, NATS_TOKEN, or NATS_NKEY. In production,
+// NewNatsBus refuses to start when none is configured unless
+// CORDUM_NATS_ALLOW_NOAUTH=true is set as an explicit override (which still
+// logs a warning and cannot satisfy CAP-PRODUCTION readiness).
 func NewNatsBus(url string) (*NatsBus, error) {
 	production := env.IsProduction()
 
 	// Enforce TLS in production: reject nats:// unless explicitly allowed.
-	if production && !strings.HasPrefix(url, "tls://") {
+	if production && !allNATSURLsUseTLS(url) {
 		if !parseBoolEnv(envNATSAllowPlain) {
 			return nil, fmt.Errorf("nats TLS required in production: use tls:// scheme or set %s=true", envNATSAllowPlain)
 		}
@@ -149,8 +157,10 @@ func NewNatsBus(url string) (*NatsBus, error) {
 			slog.Info("bus: connection closed")
 		}),
 	}
-	if strings.HasPrefix(url, "tls://") {
-		if tlsConfig, err := natsTLSConfigFromEnv(); err != nil {
+	var tlsConfig *tls.Config
+	if allNATSURLsUseTLS(url) {
+		var err error
+		if tlsConfig, err = natsTLSConfigFromEnv(); err != nil {
 			return nil, fmt.Errorf("nats tls config: %w", err)
 		} else if tlsConfig != nil {
 			opts = append(opts, nats.Secure(tlsConfig))
@@ -159,12 +169,14 @@ func NewNatsBus(url string) (*NatsBus, error) {
 
 	// Authentication: try username/password, then token, then NKey.
 	authConfigured := natsApplyAuth(&opts)
-	if production && !authConfigured {
+	transportAuthConfigured := authConfigured || hasClientCertificate(tlsConfig)
+	if production && !transportAuthConfigured {
 		if !parseBoolEnv(envNATSAllowNoAuth) {
-			return nil, fmt.Errorf("nats authentication required in production: set NATS_USERNAME+NATS_PASSWORD, NATS_TOKEN, or NATS_NKEY — or set %s=true to override", envNATSAllowNoAuth)
+			return nil, fmt.Errorf("nats authentication required in production: set NATS_TLS_CERT+NATS_TLS_KEY, NATS_USERNAME+NATS_PASSWORD, NATS_TOKEN, or NATS_NKEY — or set %s=true to override", envNATSAllowNoAuth)
 		}
 		slog.Warn("bus: NATS authentication not configured in production — override active", "override", envNATSAllowNoAuth)
 	}
+	b.productionTransportReady = productionTransportReady(url, tlsConfig, authConfigured)
 
 	nc, err := nats.Connect(url, opts...)
 	if err != nil {
@@ -173,6 +185,35 @@ func NewNatsBus(url string) (*NatsBus, error) {
 	b.nc = nc
 	b.initJetStreamFromEnv()
 	return b, nil
+}
+
+func hasClientCertificate(cfg *tls.Config) bool {
+	return cfg != nil && len(cfg.Certificates) > 0
+}
+
+func allNATSURLsUseTLS(raw string) bool {
+	servers := strings.Split(raw, ",")
+	if len(servers) == 0 {
+		return false
+	}
+	for _, server := range servers {
+		if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(server)), "tls://") {
+			return false
+		}
+	}
+	return true
+}
+
+func productionTransportReady(url string, cfg *tls.Config, authConfigured bool) bool {
+	verifiedTLS := cfg == nil || !cfg.InsecureSkipVerify
+	return allNATSURLsUseTLS(url) && verifiedTLS && (authConfigured || hasClientCertificate(cfg))
+}
+
+// ProductionTransportReady reports whether the established connection was
+// configured with verified TLS plus broker credentials or a client
+// certificate. Its zero value and a nil receiver both fail closed.
+func (b *NatsBus) ProductionTransportReady() bool {
+	return b != nil && b.productionTransportReady
 }
 
 // natsApplyAuth reads auth env vars and appends the appropriate NATS option.
@@ -357,7 +398,7 @@ func (b *NatsBus) PublishWithContext(ctx context.Context, subject string, packet
 	if packet == nil {
 		return errNilPacket
 	}
-	data, err := proto.Marshal(packet)
+	data, err := b.encodePacket(ctx, subject, packet)
 	if err != nil {
 		return fmt.Errorf("marshal bus packet: %w", err)
 	}
@@ -396,7 +437,7 @@ func (b *NatsBus) Publish(subject string, packet *pb.BusPacket) error {
 	if packet == nil {
 		return errNilPacket
 	}
-	data, err := proto.Marshal(packet)
+	data, err := b.encodePacket(context.Background(), subject, packet)
 	if err != nil {
 		return fmt.Errorf("marshal bus packet: %w", err)
 	}
@@ -438,6 +479,7 @@ func (b *NatsBus) SubscribeWithContext(subject, queue string, handler func(conte
 	if handler == nil {
 		return errors.New("nil handler")
 	}
+	admit := b.freezeRawPacketAdmission()
 	if b.jsEnabled && isDurableSubject(subject) {
 		opts := []nats.SubOpt{
 			nats.ManualAck(),
@@ -454,7 +496,7 @@ func (b *NatsBus) SubscribeWithContext(subject, queue string, handler func(conte
 			sub *nats.Subscription
 			err error
 		)
-		cb := b.jsCallbackCtx(subject, handler)
+		cb := b.jsCallbackCtx(subject, handler, admit)
 		if queue == "" {
 			sub, err = b.js.Subscribe(subject, cb, opts...)
 		} else {
@@ -472,7 +514,7 @@ func (b *NatsBus) SubscribeWithContext(subject, queue string, handler func(conte
 
 	cb := func(msg *nats.Msg) {
 		ctx := cordumotel.ExtractTraceContext(context.Background(), msg.Header)
-		action, _ := processBusMsgCtx(ctx, subject, msg.Data, handler, 0)
+		action, _ := processInboundWithAdmission(ctx, admit, msg.Subject, msg.Data, handler, 0)
 		if action != msgActionAck {
 			slog.Error("bus: handler error", "subject", subject)
 		}
@@ -498,7 +540,11 @@ func (b *NatsBus) SubscribeWithContext(subject, queue string, handler func(conte
 
 // jsCallbackCtx builds a JetStream message callback that extracts trace
 // context from NATS headers before decoding and invoking the handler.
-func (b *NatsBus) jsCallbackCtx(subject string, handler func(context.Context, *pb.BusPacket) error) func(*nats.Msg) {
+func (b *NatsBus) jsCallbackCtx(
+	subject string,
+	handler func(context.Context, *pb.BusPacket) error,
+	admit RawPacketAdmission,
+) func(*nats.Msg) {
 	return func(msg *nats.Msg) {
 		var numDelivered uint64
 		var streamName string
@@ -507,19 +553,15 @@ func (b *NatsBus) jsCallbackCtx(subject string, handler func(context.Context, *p
 			numDelivered = meta.NumDelivered
 			streamName = meta.Stream
 			streamSeq = meta.Sequence.Stream
-			if numDelivered >= uint64(maxJSRedeliveries) {
-				slog.Warn("bus: terminating poison message (ctx)", "subject", subject, "deliveries", numDelivered)
-				if b.OnMessageTerminated != nil {
-					if dlqErr := b.OnMessageTerminated(subject, msg.Data, numDelivered); dlqErr != nil {
-						_ = msg.NakWithDelay(5 * time.Second)
-						return
-					}
-				}
-				if termErr := msg.Term(); termErr != nil {
-					slog.Error("bus: term failed (ctx)", "subject", subject, "err", termErr)
-				}
-				return
-			}
+		}
+		ctx := cordumotel.ExtractTraceContext(context.Background(), msg.Header)
+		packet, authority, action, delay, proceed := preAdmitRawPacket(ctx, admit, msg.Subject, msg.Data)
+		if !proceed {
+			b.settleRawAdmission(msg, subject, action, delay)
+			return
+		}
+		if b.terminateMaxDelivery(msg, subject, numDelivered) {
+			return
 		}
 
 		// Idempotency guard (same as standard subscribe path).
@@ -543,9 +585,9 @@ func (b *NatsBus) jsCallbackCtx(subject string, handler func(context.Context, *p
 			rCancel()
 		}
 
-		// Extract trace context from NATS headers.
-		ctx := cordumotel.ExtractTraceContext(context.Background(), msg.Header)
-		action, delay := processBusMsgCtx(ctx, subject, msg.Data, handler, numDelivered)
+		action, delay = processAfterRawAdmission(
+			ctx, admit != nil, packet, authority, msg.Subject, msg.Data, handler, numDelivered,
+		)
 
 		if b.redis != nil && streamSeq > 0 {
 			iKey := inflightKey(streamName, streamSeq)
@@ -583,6 +625,45 @@ func (b *NatsBus) jsCallbackCtx(subject string, handler func(context.Context, *p
 	}
 }
 
+func (b *NatsBus) settleRawAdmission(
+	msg *nats.Msg,
+	subject string,
+	action msgAction,
+	delay time.Duration,
+) {
+	switch action {
+	case msgActionTerm:
+		if err := msg.Term(); err != nil {
+			slog.Error("bus: term raw admission failed", "subject", subject, "err", err)
+		}
+	case msgActionNak:
+		_ = msg.Nak()
+	case msgActionNakDelay:
+		_ = msg.NakWithDelay(delay)
+	case msgActionAck:
+		_ = msg.Ack()
+	default:
+		_ = msg.Term()
+	}
+}
+
+func (b *NatsBus) terminateMaxDelivery(msg *nats.Msg, subject string, numDelivered uint64) bool {
+	if numDelivered < uint64(maxJSRedeliveries) {
+		return false
+	}
+	slog.Warn("bus: terminating admitted poison message", "subject", subject, "deliveries", numDelivered)
+	if b.OnMessageTerminated != nil {
+		if err := b.OnMessageTerminated(subject, msg.Data, numDelivered); err != nil {
+			_ = msg.NakWithDelay(5 * time.Second)
+			return true
+		}
+	}
+	if err := msg.Term(); err != nil {
+		slog.Error("bus: term admitted message failed", "subject", subject, "err", err)
+	}
+	return true
+}
+
 // processBusMsgCtx is like processBusMsg but passes a context to the handler.
 func processBusMsgCtx(ctx context.Context, subject string, data []byte, handler func(context.Context, *pb.BusPacket) error, numDelivered uint64) (msgAction, time.Duration) {
 	var packet pb.BusPacket
@@ -602,6 +683,7 @@ func processBusMsgCtx(ctx context.Context, subject string, data []byte, handler 
 		}
 		return msgActionNakDelay, 5 * time.Second
 	}
+	observeCompatibilityPacket(&packet)
 	if err := handler(ctx, &packet); err != nil {
 		if delay, ok := RetryDelay(err); ok {
 			if delay > 0 {
@@ -636,6 +718,7 @@ func (b *NatsBus) subscribe(subject, queue string, handler func(*pb.BusPacket) e
 	if handler == nil {
 		return nil, errors.New("nil handler")
 	}
+	admit := b.freezeRawPacketAdmission()
 	if b != nil && b.jsEnabled && isDurableSubject(subject) {
 		cb := func(msg *nats.Msg) {
 			var numDelivered uint64
@@ -645,26 +728,19 @@ func (b *NatsBus) subscribe(subject, queue string, handler func(*pb.BusPacket) e
 				numDelivered = meta.NumDelivered
 				streamName = meta.Stream
 				streamSeq = meta.Sequence.Stream
-				// Terminate messages that have reached max delivery — they are poison pills
-				// blocking the queue for all messages behind them.
-				if numDelivered >= uint64(maxJSRedeliveries) {
-					slog.Warn("bus: terminating poison message", "subject", subject, "deliveries", numDelivered, "stream_seq", meta.Sequence.Stream, "consumer_seq", meta.Sequence.Consumer)
-					// DLQ write BEFORE Term — prevents data loss if we crash between Term and DLQ write.
-					if b.OnMessageTerminated != nil {
-						if dlqErr := b.OnMessageTerminated(subject, msg.Data, numDelivered); dlqErr != nil {
-							slog.Error("bus: dlq write failed, nak-ing for retry", "subject", subject, "err", dlqErr)
-							_ = msg.NakWithDelay(5 * time.Second)
-							return
-						}
-					}
-					if termErr := msg.Term(); termErr != nil {
-						slog.Error("bus: term failed", "subject", subject, "err", termErr)
-					}
-					return
-				}
-				if numDelivered > 50 {
-					slog.Warn("bus: message redelivered many times", "subject", subject, "deliveries", numDelivered, "max", maxJSRedeliveries)
-				}
+			}
+			ctx := context.Background()
+			packet, authority, action, delay, proceed := preAdmitRawPacket(ctx, admit, msg.Subject, msg.Data)
+			if !proceed {
+				b.settleRawAdmission(msg, subject, action, delay)
+				return
+			}
+			if b.terminateMaxDelivery(msg, subject, numDelivered) {
+				return
+			}
+			if numDelivered > 50 {
+				slog.Warn("bus: admitted message redelivered many times", "subject", subject,
+					"deliveries", numDelivered, "max", maxJSRedeliveries)
 			}
 
 			// Idempotency guard: skip processing if already handled by another replica.
@@ -695,7 +771,9 @@ func (b *NatsBus) subscribe(subject, queue string, handler func(*pb.BusPacket) e
 				rCancel()
 			}
 
-			action, delay := processBusMsg(subject, msg.Data, handler, numDelivered)
+			action, delay = processAfterRawAdmission(
+				ctx, admit != nil, packet, authority, msg.Subject, msg.Data, contextualHandler(handler), numDelivered,
+			)
 
 			// Clear in-flight tracking after processing.
 			if b.redis != nil && streamSeq > 0 {
@@ -778,19 +856,11 @@ func (b *NatsBus) subscribe(subject, queue string, handler func(*pb.BusPacket) e
 	}
 
 	cb := func(msg *nats.Msg) {
-		var packet pb.BusPacket
-		if err := proto.Unmarshal(msg.Data, &packet); err != nil {
-			busUnmarshalFailureTotal.WithLabelValues(subject, "unmarshal").Inc()
-			slog.Error("bus: packet unmarshal failed", "audit_event", "bus_packet_unmarshal_failed", "subject", subject, "err", err)
-			return
-		}
-		if err := capsdk.ValidateBusPacket(&packet); err != nil {
-			busUnmarshalFailureTotal.WithLabelValues(subject, "invalid").Inc()
-			slog.Error("bus: packet invalid", "audit_event", "bus_packet_invalid", "subject", subject, "err", err)
-			return
-		}
-		if err := handler(&packet); err != nil {
-			slog.Error("bus: handler error", "subject", subject, "err", err)
+		action, _ := processInboundWithAdmission(
+			context.Background(), admit, msg.Subject, msg.Data, contextualHandler(handler), 0,
+		)
+		if action != msgActionAck {
+			slog.Error("bus: inbound message rejected", "subject", msg.Subject)
 		}
 	}
 	if queue == "" {
@@ -1108,14 +1178,19 @@ func (b *NatsBus) initJetStreamFromEnv() {
 //   - sys.heartbeat: workers re-heartbeat every 5-10s, so a missed message self-heals.
 //   - sys.config.changed: 30s poll fallback in config_overlay.go catches missed notifications.
 //   - sys.handshake: workers re-register on the next heartbeat cycle.
-//   - sys.alert, sys.job.progress, sys.workflow.event: informational, no state dependency.
+//   - sys.alert, sys.job.progress, sys.internal.job.progress.accepted,
+//     sys.workflow.event: informational, no state dependency.
+//
+// sys.internal.job.result.accepted is durable because it is the scheduler's
+// fenced authority event and workflow state depends on receiving it.
 //
 // If a new JetStream broadcast subject is added, consider ephemeral consumer behavior
 // during rolling restarts: ephemeral consumers are deleted when disconnected, so messages
 // published between disconnect and reconnect are lost.
 func isDurableSubject(subject string) bool {
 	switch subject {
-	case capsdk.SubjectSubmit, capsdk.SubjectResult, capsdk.SubjectDLQ, capsdk.SubjectAuditExport:
+	case capsdk.SubjectSubmit, capsdk.SubjectResult, capsdk.SubjectAcceptedResult,
+		capsdk.SubjectDLQ, capsdk.SubjectAuditExport:
 		return true
 	}
 	if strings.HasPrefix(subject, "job.") {
@@ -1170,7 +1245,13 @@ func computeMsgID(subject string, packet *pb.BusPacket) string {
 		}
 	case *pb.BusPacket_JobResult:
 		if payload.JobResult != nil {
-			id = payload.JobResult.JobId
+			id = strings.TrimSpace(payload.JobResult.JobId)
+			dispatch := payload.JobResult.GetDispatch()
+			dispatchID := strings.TrimSpace(dispatch.GetDispatchId())
+			if id != "" && dispatchID != "" && dispatch.GetAttempt() > 0 {
+				return "jobresult:" + subject + ":" + id + ":" + dispatchID + ":" +
+					strconv.FormatUint(dispatch.GetAttempt(), 10)
+			}
 		}
 	case *pb.BusPacket_Heartbeat:
 		if payload.Heartbeat != nil {

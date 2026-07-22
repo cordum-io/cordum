@@ -9,9 +9,9 @@ import (
 	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
-	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
+	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -80,7 +80,7 @@ func TestPublishJobCancel_RetriesAndSucceeds(t *testing.T) {
 	bus := &failNBus{failCount: 1} // fail first, succeed second
 	engine := NewEngine(ws, bus)
 
-	err := engine.publishJobCancel("job-123", "test cancel")
+	err := engine.publishJobCancel("job-123", "test cancel", nil)
 	if err != nil {
 		t.Fatalf("expected success after retry, got: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestPublishJobCancel_ExhaustsRetries(t *testing.T) {
 	bus := &alwaysFailBus{}
 	engine := NewEngine(ws, bus)
 
-	err := engine.publishJobCancel("job-456", "test cancel")
+	err := engine.publishJobCancel("job-456", "test cancel", nil)
 	if err == nil {
 		t.Fatal("expected error after all retries exhausted")
 	}
@@ -115,13 +115,13 @@ func TestPublishJobCancel_NilGuards(t *testing.T) {
 	engine := NewEngine(ws, &recordingBus{})
 
 	// Empty job ID should be a no-op.
-	if err := engine.publishJobCancel("", "reason"); err != nil {
+	if err := engine.publishJobCancel("", "reason", nil); err != nil {
 		t.Fatalf("expected nil for empty jobID, got: %v", err)
 	}
 
 	// Nil bus should be a no-op.
 	engine2 := NewEngine(ws, nil)
-	if err := engine2.publishJobCancel("job-1", "reason"); err != nil {
+	if err := engine2.publishJobCancel("job-1", "reason", nil); err != nil {
 		t.Fatalf("expected nil for nil bus, got: %v", err)
 	}
 }

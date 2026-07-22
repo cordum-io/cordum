@@ -40,6 +40,7 @@ type handshakeSecurityBundle struct {
 	middleware       *scheduler.SessionTokenMiddleware
 	service          *scheduler.HandshakeService
 	dispatchResolver *scheduler.TrustResolver
+	rawTrustResolver scheduler.HandshakeTrustResolver
 	publicKeySHA256  string
 }
 
@@ -116,6 +117,7 @@ func newHandshakeSecurityBundle(cfg handshakeSecurityConfig, deps handshakeSecur
 	bundle.middleware = scheduler.NewSessionTokenMiddleware(issuer, cfg.mode, scheduler.NewHandshakeMissingTracker())
 	bundle.service = service
 	bundle.dispatchResolver = dispatchResolver
+	bundle.rawTrustResolver = resolver
 	return bundle, nil
 }
 
