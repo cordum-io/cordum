@@ -577,56 +577,57 @@ export interface Job {
 }
 
 // ---------------------------------------------------------------------------
-// ErrorCode enum (matches CAP v2.5.2 protobuf ErrorCode)
+// ErrorCode enum (matches the CAP protocol ErrorCode in
+// proto/cordum/agent/v1/job.proto; pinned by src/api/errorCodeContract.test.ts)
 // ---------------------------------------------------------------------------
 
 export enum ErrorCode {
   UNSPECIFIED = 0,
   // Protocol (100-104)
   PROTOCOL_VERSION_MISMATCH = 100,
-  PROTOCOL_INVALID_PACKET = 101,
-  PROTOCOL_SIGNATURE_INVALID = 102,
-  PROTOCOL_TIMEOUT = 103,
-  PROTOCOL_RATE_LIMITED = 104,
+  PROTOCOL_MALFORMED_PACKET = 101,
+  PROTOCOL_UNKNOWN_PAYLOAD = 102,
+  PROTOCOL_SIGNATURE_INVALID = 103,
+  PROTOCOL_SIGNATURE_MISSING = 104,
   // Job (200-206)
-  JOB_NOT_FOUND = 200,
-  JOB_ALREADY_COMPLETED = 201,
-  JOB_TIMEOUT = 202,
-  JOB_CANCELLED = 203,
-  JOB_PERMISSION_DENIED = 204,
-  JOB_RESOURCE_EXHAUSTED = 205,
-  JOB_INVALID_INPUT = 206,
+  JOB_TIMEOUT = 200,
+  JOB_RESOURCE_EXHAUSTED = 201,
+  JOB_PERMISSION_DENIED = 202,
+  JOB_INVALID_INPUT = 203,
+  JOB_NOT_FOUND = 204,
+  JOB_DUPLICATE = 205,
+  JOB_WORKER_UNAVAILABLE = 206,
   // Safety (300-302)
   SAFETY_DENIED = 300,
   SAFETY_POLICY_VIOLATION = 301,
-  SAFETY_OUTPUT_QUARANTINED = 302,
+  SAFETY_RISK_TAG_BLOCKED = 302,
   // Transport (400-402)
-  TRANSPORT_UNAVAILABLE = 400,
-  TRANSPORT_POOL_EXHAUSTED = 401,
-  TRANSPORT_DELIVERY_FAILED = 402,
+  TRANSPORT_PUBLISH_FAILED = 400,
+  TRANSPORT_SUBSCRIBE_FAILED = 401,
+  TRANSPORT_CONNECTION_LOST = 402,
 }
 
 /** Human-readable label for an ErrorCode value. */
 export function errorCodeLabel(code: number): string {
   switch (code) {
     case ErrorCode.PROTOCOL_VERSION_MISMATCH: return "Protocol: Version Mismatch";
-    case ErrorCode.PROTOCOL_INVALID_PACKET: return "Protocol: Invalid Packet";
+    case ErrorCode.PROTOCOL_MALFORMED_PACKET: return "Protocol: Malformed Packet";
+    case ErrorCode.PROTOCOL_UNKNOWN_PAYLOAD: return "Protocol: Unknown Payload";
     case ErrorCode.PROTOCOL_SIGNATURE_INVALID: return "Protocol: Signature Invalid";
-    case ErrorCode.PROTOCOL_TIMEOUT: return "Protocol: Timeout";
-    case ErrorCode.PROTOCOL_RATE_LIMITED: return "Protocol: Rate Limited";
-    case ErrorCode.JOB_NOT_FOUND: return "Job: Not Found";
-    case ErrorCode.JOB_ALREADY_COMPLETED: return "Job: Already Completed";
+    case ErrorCode.PROTOCOL_SIGNATURE_MISSING: return "Protocol: Signature Missing";
     case ErrorCode.JOB_TIMEOUT: return "Job: Timeout";
-    case ErrorCode.JOB_CANCELLED: return "Job: Cancelled";
-    case ErrorCode.JOB_PERMISSION_DENIED: return "Job: Permission Denied";
     case ErrorCode.JOB_RESOURCE_EXHAUSTED: return "Job: Resource Exhausted";
+    case ErrorCode.JOB_PERMISSION_DENIED: return "Job: Permission Denied";
     case ErrorCode.JOB_INVALID_INPUT: return "Job: Invalid Input";
+    case ErrorCode.JOB_NOT_FOUND: return "Job: Not Found";
+    case ErrorCode.JOB_DUPLICATE: return "Job: Duplicate";
+    case ErrorCode.JOB_WORKER_UNAVAILABLE: return "Job: Worker Unavailable";
     case ErrorCode.SAFETY_DENIED: return "Safety: Denied";
     case ErrorCode.SAFETY_POLICY_VIOLATION: return "Safety: Policy Violation";
-    case ErrorCode.SAFETY_OUTPUT_QUARANTINED: return "Safety: Output Quarantined";
-    case ErrorCode.TRANSPORT_UNAVAILABLE: return "Transport: Unavailable";
-    case ErrorCode.TRANSPORT_POOL_EXHAUSTED: return "Transport: Pool Exhausted";
-    case ErrorCode.TRANSPORT_DELIVERY_FAILED: return "Transport: Delivery Failed";
+    case ErrorCode.SAFETY_RISK_TAG_BLOCKED: return "Safety: Risk Tag Blocked";
+    case ErrorCode.TRANSPORT_PUBLISH_FAILED: return "Transport: Publish Failed";
+    case ErrorCode.TRANSPORT_SUBSCRIBE_FAILED: return "Transport: Subscribe Failed";
+    case ErrorCode.TRANSPORT_CONNECTION_LOST: return "Transport: Connection Lost";
     default: return `Error ${code}`;
   }
 }
@@ -641,7 +642,8 @@ export function errorCodeCategory(code: number): "safety" | "job" | "protocol" |
 }
 
 // ---------------------------------------------------------------------------
-// AlertSeverity enum (matches CAP v2.5.2 protobuf AlertSeverity)
+// AlertSeverity enum (matches the CAP protocol AlertSeverity in
+// proto/cordum/agent/v1/alert.proto; pinned by src/api/errorCodeContract.test.ts)
 // ---------------------------------------------------------------------------
 
 export enum AlertSeverity {
