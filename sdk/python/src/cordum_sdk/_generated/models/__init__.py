@@ -168,6 +168,18 @@ from .edge_execution_metrics import EdgeExecutionMetrics
 from .edge_execution_page_response import EdgeExecutionPageResponse
 from .edge_heartbeat_response import EdgeHeartbeatResponse
 from .edge_labels import EdgeLabels
+from .edge_llm_event_decision import EdgeLLMEventDecision
+from .edge_llm_event_decision_decision import EdgeLLMEventDecisionDecision
+from .edge_llm_event_envelope import EdgeLLMEventEnvelope
+from .edge_llm_event_envelope_direction import EdgeLLMEventEnvelopeDirection
+from .edge_llm_event_envelope_kind import EdgeLLMEventEnvelopeKind
+from .edge_llm_event_envelope_labels import EdgeLLMEventEnvelopeLabels
+from .edge_llm_event_envelope_outcome_status import EdgeLLMEventEnvelopeOutcomeStatus
+from .edge_llm_ingest_request import EdgeLLMIngestRequest
+from .edge_llm_ingest_response import EdgeLLMIngestResponse
+from .edge_llm_ingest_source import EdgeLLMIngestSource
+from .edge_llm_message import EdgeLLMMessage
+from .edge_llm_tokens import EdgeLLMTokens
 from .edge_risk_summary import EdgeRiskSummary
 from .edge_risk_summary_max_risk import EdgeRiskSummaryMaxRisk
 from .edge_runtime_dns_summary import EdgeRuntimeDNSSummary
@@ -420,6 +432,9 @@ from .repair_approval_body import RepairApprovalBody
 from .rerun_workflow_body import RerunWorkflowBody
 from .rerun_workflow_response_200 import RerunWorkflowResponse200
 from .reset_user_password_body import ResetUserPasswordBody
+from .resolve_memory_resource_body import ResolveMemoryResourceBody
+from .resolve_memory_resource_body_reference import ResolveMemoryResourceBodyReference
+from .resolve_memory_resource_response_200 import ResolveMemoryResourceResponse200
 from .resolve_shadow_agent_finding_request import ResolveShadowAgentFindingRequest
 from .retry_dlq_entry_response_200 import RetryDLQEntryResponse200
 from .revoke_delegation_token_body import RevokeDelegationTokenBody
@@ -675,6 +690,18 @@ __all__ = (
     "EdgeExecutionPageResponse",
     "EdgeHeartbeatResponse",
     "EdgeLabels",
+    "EdgeLLMEventDecision",
+    "EdgeLLMEventDecisionDecision",
+    "EdgeLLMEventEnvelope",
+    "EdgeLLMEventEnvelopeDirection",
+    "EdgeLLMEventEnvelopeKind",
+    "EdgeLLMEventEnvelopeLabels",
+    "EdgeLLMEventEnvelopeOutcomeStatus",
+    "EdgeLLMIngestRequest",
+    "EdgeLLMIngestResponse",
+    "EdgeLLMIngestSource",
+    "EdgeLLMMessage",
+    "EdgeLLMTokens",
     "EdgeRiskSummary",
     "EdgeRiskSummaryMaxRisk",
     "EdgeRuntimeDNSSummary",
@@ -905,6 +932,9 @@ __all__ = (
     "RerunWorkflowBody",
     "RerunWorkflowResponse200",
     "ResetUserPasswordBody",
+    "ResolveMemoryResourceBody",
+    "ResolveMemoryResourceBodyReference",
+    "ResolveMemoryResourceResponse200",
     "ResolveShadowAgentFindingRequest",
     "RetryDLQEntryResponse200",
     "RevokeDelegationTokenBody",
