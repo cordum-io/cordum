@@ -161,7 +161,7 @@ import re, sys, yaml
 SENSITIVE = {
     "CORDUM_API_KEY", "CORDUM_APPROVER_API_KEY", "CORDUM_API_KEYS", "REDIS_PASSWORD",
     "CORDUM_ADMIN_PASSWORD", "CORDUM_LICENSE_TOKEN", "CORDUM_LICENSE_PUBLIC_KEY",
-}
+}; CREDENTIAL_NAME = r"[A-Z0-9_]*(?:API_KEYS?|REDIS_PASSWORD|ADMIN_PASSWORD|LICENSE_(?:TOKEN|PUBLIC_KEY))"; CREDENTIAL = re.compile(rf"\b{CREDENTIAL_NAME}\b")
 EXPECTED = {
     ("integration-nightly.yml", "integration"): ["CORDUM_API_KEY", "REDIS_PASSWORD", "CORDUM_ADMIN_PASSWORD", "CORDUM_LICENSE_TOKEN", "CORDUM_LICENSE_PUBLIC_KEY"],
     ("nightly.yml", "full-production-gate"): ["CORDUM_API_KEY", "REDIS_PASSWORD", "CORDUM_ADMIN_PASSWORD", "CORDUM_LICENSE_TOKEN", "CORDUM_LICENSE_PUBLIC_KEY"],
@@ -175,15 +175,15 @@ EXPECTED = {
 OUTPUT = re.compile(r"^\s*(?:echo|printf|cat|tee)\b")
 SOURCE = "tools/scripts/github_actions_mask_env.sh"
 def names_in(text):
-    return {name for name in SENSITIVE if re.search(rf"\b{re.escape(name)}\b", text)}
+    return set(CREDENTIAL.findall(text))
 def helper_calls(run):
     found = Counter(re.findall(r"\bgha_mask_env\s+([A-Z][A-Z0-9_]*)\b", run))
     for args in re.findall(r"\bgha_mask_env_from_command\s+(.+?)\s+--", run, re.S):
-        found.update(name for name in re.findall(r"\b[A-Z][A-Z0-9_]*\b", args) if name in SENSITIVE)
+        found.update(name for name in re.findall(r"\b[A-Z][A-Z0-9_]*\b", args) if CREDENTIAL.fullmatch(name))
     return found
 def redact_names(run):
     matches = re.findall(r"\bgha_redact_paths\s+(.+?)\s+--", run, re.S)
-    return {name for args in matches for name in re.findall(r"\b[A-Z][A-Z0-9_]*\b", args) if name in SENSITIVE}
+    return {name for args in matches for name in re.findall(r"\b[A-Z][A-Z0-9_]*\b", args) if CREDENTIAL.fullmatch(name)}
 def check_job(path, job_id, steps, wanted):
     issues, setup, credential_job = [], Counter(), False
     for index, step in enumerate(steps):
@@ -198,13 +198,13 @@ def check_job(path, job_id, steps, wanted):
             credential_job = True
             if not calls: issues.append("DIRECT_ENV_WRITE")
         for line in run.splitlines():
-            if re.match(r"^\s*(?:export\s+)?(?:" + "|".join(SENSITIVE) + r")=", line) and re.search(r"\$\(|openssl|uuidgen|/dev/urandom|\bRANDOM\b", line) and "gha_mask_env" not in line:
+            if re.match(r"^\s*(?:export\s+)?" + CREDENTIAL_NAME + r"=", line) and re.search(r"\$\(|openssl|uuidgen|/dev/urandom|\bRANDOM\b", line) and "gha_mask_env" not in line:
                 credential_job = True; issues.append("DIRECT_GENERATION")
         if "cilicense" in run:
             credential_job = True
             if "gha_mask_env_from_command" not in run: issues.append("BARE_CILICENSE_REDIRECT")
         for line in run.splitlines():
-            if names_in(line) and (OUTPUT.search(line) or "sha256sum" in line): issues.append("UNSAFE_OUTPUT")
+            if names_in(line) and (credential_job or (path, job_id) in EXPECTED) and (OUTPUT.search(line) or "sha256sum" in line): issues.append("UNSAFE_OUTPUT")
         if uses.lower().startswith("actions/upload-artifact@") and credential_job:
             prior = str(steps[index - 1].get("run") or "") if index and isinstance(steps[index - 1], dict) else ""
             if "gha_redact_paths" not in prior: issues.append("UPLOAD_WITHOUT_REDACTION")
@@ -245,7 +245,7 @@ def self_test():
         {"uses": "actions/upload-artifact@v4"},
     ]
     mutations = []
-    direct = deepcopy(safe); direct.insert(1, {"run": 'echo "CORDUM_API_KEY=${generated}" >> "$GITHUB_ENV"'}); mutations.append(direct)
+    direct = deepcopy(safe); direct.insert(1, {"run": 'echo "FUTURE_API_KEY=${generated}" >> "$GITHUB_ENV"'}); mutations.append(direct)
     bare = deepcopy(safe); bare[0] = {"run": 'go run ./tools/cilicense >> "$GITHUB_ENV"'}; mutations.append(bare)
     echoed = deepcopy(safe); echoed.insert(1, {"run": 'echo "$CORDUM_API_KEY"'}); mutations.append(echoed)
     upload = deepcopy(safe); del upload[1]; mutations.append(upload)
