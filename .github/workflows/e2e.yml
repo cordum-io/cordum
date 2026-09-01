@@ -45,19 +45,21 @@ jobs:
 
       - name: Generate credentials
         run: |
-          api_key="$(openssl rand -hex 32)"
-          redis_password="$(openssl rand -hex 32)"
+          source tools/scripts/github_actions_mask_env.sh
+          api_key="$(openssl rand -hex 32)" || exit 1
+          gha_mask_env CORDUM_API_KEY "${api_key}"
+          redis_password="$(openssl rand -hex 32)" || exit 1
+          gha_mask_env REDIS_PASSWORD "${redis_password}"
           # RedisUserStore validates the seeded admin password for length,
           # uppercase, digit, and special-character classes.
+          admin_random="$(openssl rand -hex 24)" || exit 1
+          if [[ -z "${admin_random}" ]]; then
+            echo "::error::admin credential generation returned empty output" >&2
+            exit 1
+          fi
+          gha_mask_env CORDUM_ADMIN_PASSWORD "CordumE2E-${admin_random}!1"
           echo "CORDUM_USER_AUTH_ENABLED=true" >> "$GITHUB_ENV"
           echo "CORDUM_ADMIN_USERNAME=admin" >> "$GITHUB_ENV"
-          admin_password="CordumE2E-$(openssl rand -hex 24)!1"
-          echo "::add-mask::${api_key}"
-          echo "::add-mask::${redis_password}"
-          echo "::add-mask::${admin_password}"
-          echo "CORDUM_API_KEY=${api_key}" >> "$GITHUB_ENV"
-          echo "REDIS_PASSWORD=${redis_password}" >> "$GITHUB_ENV"
-          echo "CORDUM_ADMIN_PASSWORD=${admin_password}" >> "$GITHUB_ENV"
 
       - name: Generate dev TLS certificates
         run: |
@@ -105,8 +107,19 @@ jobs:
         if: failure()
         run: docker compose logs --no-color > docker-compose-e2e.log 2>&1 || true
 
-      - name: Upload compose logs
+      - name: Redact compose logs
+        id: redact_compose_logs
         if: failure()
+        env:
+          CORDUM_API_KEY: ${{ env.CORDUM_API_KEY || 'credential-unavailable-for-redaction' }}
+          REDIS_PASSWORD: ${{ env.REDIS_PASSWORD || 'credential-unavailable-for-redaction' }}
+          CORDUM_ADMIN_PASSWORD: ${{ env.CORDUM_ADMIN_PASSWORD || 'credential-unavailable-for-redaction' }}
+        run: |
+          source tools/scripts/github_actions_mask_env.sh
+          gha_redact_paths CORDUM_API_KEY REDIS_PASSWORD CORDUM_ADMIN_PASSWORD -- docker-compose-e2e.log
+
+      - name: Upload compose logs
+        if: failure() && steps.redact_compose_logs.outcome == 'success'
         uses: actions/upload-artifact@v7
         with:
           name: e2e-tls-compose-logs
