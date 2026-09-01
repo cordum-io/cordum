@@ -50,7 +50,12 @@ jobs:
           gha_mask_env REDIS_PASSWORD "$(openssl rand -hex 32)"
           # RedisUserStore validates the seeded admin password for length,
           # uppercase, digit, and special-character classes.
-          gha_mask_env CORDUM_ADMIN_PASSWORD "CordumE2E-$(openssl rand -hex 24)!1"
+          admin_random="$(openssl rand -hex 24)" || exit 1
+          if [[ -z "${admin_random}" ]]; then
+            echo "::error::admin credential generation returned empty output" >&2
+            exit 1
+          fi
+          gha_mask_env CORDUM_ADMIN_PASSWORD "CordumE2E-${admin_random}!1"
           echo "CORDUM_USER_AUTH_ENABLED=true" >> "$GITHUB_ENV"
           echo "CORDUM_ADMIN_USERNAME=admin" >> "$GITHUB_ENV"
 

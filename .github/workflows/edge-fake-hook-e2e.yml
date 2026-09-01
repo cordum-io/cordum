@@ -74,8 +74,8 @@ jobs:
         # CORDUM_API_KEY single-env path is preserved by docker-compose.yml
         # line 259, so both keys end up in the merged keys map.
         run: |
-          payload=$(printf '[{"key":"%s","role":"admin","tenant":"default","principal_id":"edge-fake-hook-e2e-approver"}]' "${CORDUM_APPROVER_API_KEY}")
           source tools/scripts/github_actions_mask_env.sh
+          payload=$(printf '[{"key":"%s","role":"admin","tenant":"default","principal_id":"edge-fake-hook-e2e-approver"}]' "${CORDUM_APPROVER_API_KEY}")
           gha_mask_env CORDUM_API_KEYS "${payload}"
 
       - name: Generate Redis password
