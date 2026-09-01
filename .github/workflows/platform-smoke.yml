@@ -23,8 +23,10 @@ jobs:
       - name: Configure masked CI credentials
         run: |
           source tools/scripts/github_actions_mask_env.sh
-          gha_mask_env CORDUM_API_KEY "$(openssl rand -hex 32)"
-          gha_mask_env REDIS_PASSWORD "$(openssl rand -hex 32)"
+          api_key="$(openssl rand -hex 32)" || exit 1
+          gha_mask_env CORDUM_API_KEY "${api_key}"
+          redis_password="$(openssl rand -hex 32)" || exit 1
+          gha_mask_env REDIS_PASSWORD "${redis_password}"
 
       - name: Generate TLS certificates
         run: |

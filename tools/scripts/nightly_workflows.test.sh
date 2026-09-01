@@ -189,7 +189,7 @@ def check_job(path, job_id, steps, wanted):
             if not commands or not commands[0].startswith("source ") or SOURCE not in commands[0]: issues.append("HELPER_ORDER")
             for call in re.finditer(r"(?m)^gha_mask_env\s+" + CREDENTIAL_NAME + r"\s+(.+)$", run):
                 argument = call.group(1).strip(); aliases = re.findall(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)", argument)
-                if "$(" in argument and not re.fullmatch(r'["\']?\$\([^()\n]*\)["\']?', argument): issues.append("COMPOSITE_COMMAND_SUBSTITUTION")
+                if "$(" in argument: issues.append("COMMAND_SUBSTITUTION_ARGUMENT")
                 if any(re.search(rf"\$\{{?{re.escape(alias)}\b", line) and not re.match(r"^\s*(?:if\s+)?\[\[", line) for alias in aliases for line in run[:call.start()].splitlines()): issues.append("PREMASK_ALIAS_USE")
         if "GITHUB_ENV" in run and refs:
             credential_job = True

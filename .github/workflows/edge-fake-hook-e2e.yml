@@ -51,8 +51,10 @@ jobs:
         # treat the requester and approver as distinct principals.
         run: |
           source tools/scripts/github_actions_mask_env.sh
-          gha_mask_env CORDUM_API_KEY "$(openssl rand -hex 32)"
-          gha_mask_env CORDUM_APPROVER_API_KEY "$(openssl rand -hex 32)"
+          requester_key="$(openssl rand -hex 32)" || exit 1
+          gha_mask_env CORDUM_API_KEY "${requester_key}"
+          approver_key="$(openssl rand -hex 32)" || exit 1
+          gha_mask_env CORDUM_APPROVER_API_KEY "${approver_key}"
 
       - name: Assert key-prefix distinctness
         # Defence-in-depth: refuse to boot if openssl(1) somehow produced two
@@ -81,7 +83,8 @@ jobs:
       - name: Generate Redis password
         run: |
           source tools/scripts/github_actions_mask_env.sh
-          gha_mask_env REDIS_PASSWORD "$(openssl rand -hex 32)"
+          redis_password="$(openssl rand -hex 32)" || exit 1
+          gha_mask_env REDIS_PASSWORD "${redis_password}"
 
       - name: Generate TLS certificates
         run: |
