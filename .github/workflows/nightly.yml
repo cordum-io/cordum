@@ -211,7 +211,7 @@ jobs:
       if: always()
       run: |
         source tools/scripts/github_actions_mask_env.sh
-        gha_redact_paths CORDUM_API_KEY REDIS_PASSWORD CORDUM_ADMIN_PASSWORD CORDUM_LICENSE_TOKEN CORDUM_LICENSE_PUBLIC_KEY -- *_gate_results.json
+        gha_redact_paths CORDUM_API_KEY REDIS_PASSWORD CORDUM_ADMIN_PASSWORD CORDUM_LICENSE_TOKEN CORDUM_LICENSE_PUBLIC_KEY -- production_gate_results.json performance_gate_results.json
 
     - name: Upload strict gate results
       if: always() && steps.redact_release_gate_results.outcome == 'success'
@@ -310,7 +310,9 @@ jobs:
         REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
 
     - name: Run soak test
-      run: bash tools/scripts/soak_test.sh
+      run: |
+        touch soak_results.json soak_metrics.log soak_http.log
+        bash tools/scripts/soak_test.sh
       env:
         CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
         REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}

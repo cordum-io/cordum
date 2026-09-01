@@ -1,33 +1,28 @@
 #!/usr/bin/env bash
 # Source-only helpers for masking generated GitHub Actions credentials.
-
 gha__error() {
   printf 'github-actions-mask-env: %s\n' "$1" >&2
 }
-
 gha__valid_name() {
   [[ "${1-}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]
 }
-
 gha__valid_value() {
   local value="${1-}"
   [[ -n "${value}" && "${value}" != *$'\r'* && "${value}" != *$'\n'* ]]
 }
-
 gha__resolve_python() {
   local candidate
   for candidate in /usr/bin/python3 /usr/bin/python; do
     [[ -x "${candidate}" && ! -L "${candidate}" ]] && { printf '%s\n' "${candidate}"; return 0; }
   done
+  [[ "${GITHUB_ACTIONS:-}" == "true" ]] && return 1
   for candidate in "$(command -v python3 2>/dev/null || true)" "$(command -v python 2>/dev/null || true)"; do
     [[ "${candidate}" == /* && -x "${candidate}" && ! -L "${candidate}" ]] && { printf '%s\n' "${candidate}"; return 0; }
   done
   return 1
 }
-
 GHA__PYTHON="$(gha__resolve_python 2>/dev/null || true)"
 readonly GHA__PYTHON
-
 gha__require_github_env() {
   if [[ -z "${GITHUB_ENV-}" ]]; then
     gha__error 'GITHUB_ENV is unavailable'
@@ -38,7 +33,6 @@ gha__require_github_env() {
     return 1
   fi
 }
-
 gha__github_env_identity() {
   local resolved lexical identity
   gha__require_github_env || return 1
@@ -55,7 +49,6 @@ gha__github_env_identity() {
   identity="$(stat -Lc '%d:%i:%f:%s' -- "${GITHUB_ENV}" 2>/dev/null)" || return 1
   printf '%s\n' "${identity}"
 }
-
 gha_mask_value() {
   local value="${1-}" escaped
   if [[ "$#" -ne 1 ]]; then
@@ -72,7 +65,6 @@ gha_mask_value() {
     return 1
   fi
 }
-
 gha_mask_env() {
   local name="${1-}" value="${2-}"
   if [[ "$#" -ne 2 ]]; then
@@ -98,7 +90,6 @@ gha_mask_env() {
     return 1
   fi
 }
-
 gha__parse_import_args() {
   local -n result_names="$1"
   local -n result_command="$2"
@@ -126,7 +117,6 @@ gha__parse_import_args() {
   fi
   result_command=("$@")
 }
-
 gha__capture_assignments() {
   local names_ref="$1" command_ref="$2" values_ref="$3"
   local -n imported_names="${names_ref}" imported_command="${command_ref}" imported_values="${values_ref}"
@@ -152,7 +142,6 @@ gha__capture_assignments() {
     if [[ -z "${seen[${name}]+x}" ]]; then gha__error "missing assignment for ${name}"; return 1; fi
   done
 }
-
 gha_mask_env_from_command() {
   local -a names=() command=()
   local name payload='' initial_identity current_identity
@@ -185,7 +174,6 @@ gha_mask_env_from_command() {
     fi
   done
 }
-
 gha__parse_redact_args() {
   local -n result_names="$1" result_paths="$2"
   shift 2
@@ -212,7 +200,6 @@ gha__parse_redact_args() {
   if [[ "$#" -eq 0 ]]; then gha__error 'redaction path is missing'; return 1; fi
   result_paths=("$@")
 }
-
 gha__validate_redact_paths() {
   local path
   for path in "$@"; do
@@ -222,11 +209,7 @@ gha__validate_redact_paths() {
     fi
   done
 }
-
-gha__python_redact() {
-  (
-  unset PYTHONHOME PYTHONPATH PYTHONSTARTUP PYTHONINSPECT PYTHONWARNINGS
-  "${GHA__PYTHON}" -I -S - "$@" <<'PY'
+IFS= read -r -d '' GHA__REDACTOR_PY <<'PY' || true
 import os, stat, sys, tempfile
 MAX_BYTES = 128 * 1024 * 1024
 def reject_link_components(raw):
@@ -251,8 +234,7 @@ def files(paths):
 def read_regular(path):
     before = os.lstat(path)
     if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size > MAX_BYTES: raise OSError("unsafe")
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(path, flags)
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     with os.fdopen(fd, "rb") as source:
         opened = os.fstat(source.fileno())
         if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino) or opened.st_nlink != 1: raise OSError("changed")
@@ -295,9 +277,13 @@ def main():
 try: main()
 except Exception: raise SystemExit(1)
 PY
+readonly GHA__REDACTOR_PY
+gha__python_redact() {
+  (
+  unset PYTHONHOME PYTHONPATH PYTHONSTARTUP PYTHONINSPECT PYTHONWARNINGS
+  printf '%s\n' "${GHA__REDACTOR_PY}" | "${GHA__PYTHON}" -I -S - "$@"
   )
 }
-
 gha_redact_paths() {
   local -a names=() paths=()
   gha__parse_redact_args names paths "$@" || return 1
