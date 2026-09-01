@@ -8,8 +8,7 @@ SOAK="${ROOT}/tools/scripts/soak_test.sh"
 CI="${ROOT}/.github/workflows/ci.yml"
 HELPER="${ROOT}/tools/scripts/github_actions_mask_env.sh"
 TEST_TMP="$(mktemp -d)"
-PASS=0
-FAIL=0
+PASS=0; FAIL=0
 trap 'rm -rf "${TEST_TMP}"' EXIT
 record() {
   local name="$1" status="$2"
@@ -33,8 +32,8 @@ new_value() {
   printf '%s\n' "${VALUE}" >> "${CASE_SENTINELS}"
 }
 mask_count() {
-  local value="$1"
-  grep -Fxc -- "::add-mask::${value}" "${HELPER_LOG}" 2>/dev/null || true
+  local value="$1" escaped; escaped="${value//%/%25}"
+  grep -Fxc -- "::add-mask::${escaped}" "${HELPER_LOG}" 2>/dev/null || true
 }
 call_ok() {
   "$@" >> "${HELPER_LOG}" 2>&1
@@ -52,12 +51,12 @@ setup_env_file() {
   : > "${GITHUB_ENV}"
 }
 valid_helper_case() {
-  local -a names=(CORDUM_API_KEY CORDUM_APPROVER_API_KEY REDIS_PASSWORD CORDUM_ADMIN_PASSWORD CORDUM_API_KEYS)
-  local -a values=()
-  local name value mask_only artifact="${CASE_DIR}/artifact.txt"
+  local -a names=(CORDUM_API_KEY CORDUM_APPROVER_API_KEY REDIS_PASSWORD CORDUM_ADMIN_PASSWORD CORDUM_API_KEYS) values=()
+  local name value mask_only mode artifact_dir="${CASE_DIR}/artifacts" artifact="${CASE_DIR}/artifacts/nested/log.txt"
+  mkdir -p "${artifact_dir}/nested"
   setup_env_file
   for name in "${names[@]}"; do new_value "${name}"; values+=("${VALUE}"); done
-  new_value mask_only; mask_only="${VALUE}"
+  new_value mask_only '%pct'; mask_only="${VALUE}"
   new_value license_token '=='; export TEST_LICENSE_TOKEN="${VALUE}"; names+=(CORDUM_LICENSE_TOKEN); values+=("${VALUE}")
   new_value license_public; export TEST_LICENSE_PUBLIC="${VALUE}"; names+=(CORDUM_LICENSE_PUBLIC_KEY); values+=("${VALUE}")
   call_ok gha_mask_value "${mask_only}" || return 1
@@ -65,7 +64,10 @@ valid_helper_case() {
   call_ok gha_mask_env_from_command CORDUM_LICENSE_TOKEN CORDUM_LICENSE_PUBLIC_KEY -- \
     bash -c 'printf "CORDUM_LICENSE_TOKEN=%s\nCORDUM_LICENSE_PUBLIC_KEY=%s\n" "$TEST_LICENSE_TOKEN" "$TEST_LICENSE_PUBLIC"' || return 1
   for value in "${values[@]}"; do printf '%s\n' "${value}" >> "${artifact}"; done
-  call_ok gha_redact_paths "${names[@]}" -- "${artifact}" || return 1
+  mode="$(stat -c '%a' "${artifact}")"
+  call_ok gha_redact_paths "${names[@]}" -- "${artifact_dir}" || return 1
+  call_ok gha_redact_paths "${names[@]}" -- "${artifact_dir}" || return 1
+  [[ "$(stat -c '%a' "${artifact}")" == "${mode}" ]] || return 1
   [[ "$(wc -l < "${GITHUB_ENV}")" -eq 7 ]] || return 1
   for ((i=0; i<7; i++)); do
     name="${names[i]}"; value="${values[i]}"
@@ -102,6 +104,8 @@ helper_case() {
     cr_name) setup_env_file; new_value cr_name; call_fails gha_mask_env $'BAD\rNAME' "${VALUE}" ;;
     lf_name) setup_env_file; new_value lf_name; call_fails gha_mask_env $'BAD\nNAME' "${VALUE}" ;;
     empty_value) setup_env_file; call_fails gha_mask_env CORDUM_API_KEY '' ;;
+    extra_value) new_value extra_value; call_fails gha_mask_value "${VALUE}" unexpected ;;
+    extra_env) setup_env_file; new_value extra_env; call_fails gha_mask_env CORDUM_API_KEY "${VALUE}" unexpected ;;
     cr_value) setup_env_file; new_value cr_value; bad="${VALUE}"$'\rtail'; call_fails gha_mask_env CORDUM_API_KEY "${bad}" ;;
     lf_value) setup_env_file; new_value lf_value; bad="${VALUE}"$'\ntail'; call_fails gha_mask_env CORDUM_API_KEY "${bad}" ;;
     unset_env) unset GITHUB_ENV; new_value unset_env; call_fails gha_mask_env CORDUM_API_KEY "${VALUE}" ;;
@@ -120,6 +124,11 @@ helper_case() {
     redact_bad_name)
       new_value redact_bad_name; export CORDUM_API_KEY="${VALUE}"; path="${CASE_DIR}/artifact"; : > "${path}"
       call_fails gha_redact_paths 'BAD-NAME' -- "${path}"
+      ;;
+    redact_binary) new_value redact_binary; export CORDUM_API_KEY="${VALUE}"; path="${CASE_DIR}/binary"; printf '\0%s' "${VALUE}" > "${path}"; call_fails gha_redact_paths CORDUM_API_KEY -- "${path}" ;;
+    redact_symlink)
+      new_value redact_symlink; export CORDUM_API_KEY="${VALUE}"; mkdir -p "${CASE_DIR}/artifacts"; printf '%s\n' "${VALUE}" > "${CASE_DIR}/external"
+      if ln -s "${CASE_DIR}/external" "${CASE_DIR}/artifacts/link" 2>/dev/null && [[ -L "${CASE_DIR}/artifacts/link" ]]; then call_fails gha_redact_paths CORDUM_API_KEY -- "${CASE_DIR}/artifacts"; else true; fi
       ;;
   esac
 }
@@ -202,7 +211,6 @@ def check_job(path, job_id, steps, wanted):
             elif redact_names(prior) != set(wanted): issues.append("REDACTION_SET_MISMATCH")
     if credential_job and setup != Counter(wanted): issues.append("INVENTORY_MISMATCH")
     return issues, credential_job
-
 def check_quickstart(root):
     path = root / "tools/scripts/quickstart_env_sharing_test.sh"
     if not path.is_file(): return ["QUICKSTART_MISSING"]
@@ -214,7 +222,6 @@ def check_quickstart(root):
     log_print = text.find('cat "${quickstart_log}"')
     ok = SOURCE in text and "GITHUB_ACTIONS" in text and generated >= 0 and all(generated < pos < dotenv for pos in masks)
     return [] if ok and 0 <= leak_check < log_print else ["QUICKSTART_MASK_OR_LOG_ORDER"]
-
 def scan(root):
     issues, seen = [], set()
     paths = sorted((root / ".github/workflows").glob("*.y*ml"))
@@ -231,7 +238,6 @@ def scan(root):
     for key in seen - set(EXPECTED): issues.append((*key, "INVENTORY_EXTRA"))
     issues.extend(("quickstart_env_sharing_test.sh", "ci-transitive", issue) for issue in check_quickstart(root))
     return issues
-
 def self_test():
     safe = [
         {"run": 'source tools/scripts/github_actions_mask_env.sh\ngha_mask_env CORDUM_API_KEY "$generated"'},
@@ -250,7 +256,6 @@ def self_test():
             return yaml.safe_load(path.read_text(encoding="utf-8"))["jobs"]["fixture"]["steps"]
         if check_job(path.name, "safe", parsed(safe), ["CORDUM_API_KEY"])[0]: return 1
         return 0 if all(check_job(path.name, "mutated", parsed(item), ["CORDUM_API_KEY"])[0] for item in mutations) else 1
-
 if __name__ == "__main__":
     if len(sys.argv) == 2 and sys.argv[1] == "--self-test": raise SystemExit(self_test())
     found = scan(Path(sys.argv[1]))
@@ -258,14 +263,12 @@ if __name__ == "__main__":
     raise SystemExit(bool(found))
 PY
 }
-
 run_quiet() {
   local name="$1"; shift
   local output="${TEST_TMP}/quiet-${PASS}-${FAIL}.log" status=0
   "$@" > "${output}" 2>&1 || status=1
   record "${name}" "${status}"
 }
-
 assert_count "integration enables managed-key storage" "${INTEGRATION}" 'CORDUM_USER_AUTH_ENABLED=true' 1
 assert_count "all nightly service jobs enable managed-key storage" "${NIGHTLY}" 'CORDUM_USER_AUTH_ENABLED=true' 3
 assert_count "nightly labels the complete 21-gate suite accurately" "${NIGHTLY}" 'Full Production Gate (21 gates)' 1
@@ -282,19 +285,16 @@ assert_count "nightly keeps gate 6 as a visible advisory probe" "${NIGHTLY}" 'RE
 assert_count "shared-runner performance probe is explicitly nonblocking" "${NIGHTLY}" 'continue-on-error: true' 1
 assert_count "nightly does not launder the production p95 threshold" "${NIGHTLY}" 'PERF_P95_MS:' 0
 assert_count "release artifacts retain the advisory performance result" "${NIGHTLY}" 'performance_gate_results.json' 2
-
 if [[ ! -f "${HELPER}" ]]; then
   record "masking helper API exists" 1
 else
   run_helper_case "helper masks, exports, imports, and redacts every credential class" valid
-  for kind in empty_name invalid_name cr_name lf_name empty_value cr_value lf_value unset_env bad_env write_failure command malformed missing extra duplicate redact_missing redact_bad_name; do
+  for kind in empty_name invalid_name cr_name lf_name empty_value extra_value extra_env cr_value lf_value unset_env bad_env write_failure command malformed missing extra duplicate redact_missing redact_bad_name redact_binary redact_symlink; do
     run_helper_case "helper rejects ${kind//_/ } without leaking" "${kind}"
   done
 fi
-
 write_workflow_guard
 run_quiet "workflow guard detects all four unsafe mutations" python "${GUARD}" --self-test
 run_quiet "all active workflows satisfy masking and redaction contract" python "${GUARD}" "${ROOT}"
-
 echo "SUMMARY: ${PASS} pass, ${FAIL} fail"
 [[ "${FAIL}" -eq 0 ]]
