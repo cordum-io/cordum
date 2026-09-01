@@ -14,6 +14,20 @@ gha__valid_value() {
   [[ -n "${value}" && "${value}" != *$'\r'* && "${value}" != *$'\n'* ]]
 }
 
+gha__resolve_python() {
+  local candidate
+  for candidate in /usr/bin/python3 /usr/bin/python; do
+    [[ -x "${candidate}" && ! -L "${candidate}" ]] && { printf '%s\n' "${candidate}"; return 0; }
+  done
+  for candidate in "$(command -v python3 2>/dev/null || true)" "$(command -v python 2>/dev/null || true)"; do
+    [[ "${candidate}" == /* && -x "${candidate}" && ! -L "${candidate}" ]] && { printf '%s\n' "${candidate}"; return 0; }
+  done
+  return 1
+}
+
+GHA__PYTHON="$(gha__resolve_python 2>/dev/null || true)"
+readonly GHA__PYTHON
+
 gha__require_github_env() {
   if [[ -z "${GITHUB_ENV-}" ]]; then
     gha__error 'GITHUB_ENV is unavailable'
@@ -23,6 +37,23 @@ gha__require_github_env() {
     gha__error 'GITHUB_ENV must not be a symlink'
     return 1
   fi
+}
+
+gha__github_env_identity() {
+  local resolved lexical identity
+  gha__require_github_env || return 1
+  if [[ "${GITHUB_ENV}" != /* || ! -f "${GITHUB_ENV}" || ! -w "${GITHUB_ENV}" ]]; then
+    gha__error 'GITHUB_ENV must be an existing writable regular file'
+    return 1
+  fi
+  resolved="$(realpath -e -- "${GITHUB_ENV}" 2>/dev/null)" || return 1
+  lexical="$(realpath -s -- "${GITHUB_ENV}" 2>/dev/null)" || return 1
+  if [[ "${resolved}" != "${lexical}" ]]; then
+    gha__error 'GITHUB_ENV path must not contain symlinks'
+    return 1
+  fi
+  identity="$(stat -Lc '%d:%i:%f:%s' -- "${GITHUB_ENV}" 2>/dev/null)" || return 1
+  printf '%s\n' "${identity}"
 }
 
 gha_mask_value() {
@@ -102,7 +133,7 @@ gha__capture_assignments() {
   local output status line name value
   declare -A wanted=() seen=()
   for name in "${imported_names[@]}"; do wanted["${name}"]=1; done
-  if output="$("${imported_command[@]}" 2>&1)"; then status=0; else status=$?; fi
+  if output="$(unset GITHUB_ENV; "${imported_command[@]}" 2>&1)"; then status=0; else status=$?; fi
   if [[ "${status}" -ne 0 ]]; then
     gha__error "import command failed with status ${status}"
     return 1
@@ -124,15 +155,25 @@ gha__capture_assignments() {
 
 gha_mask_env_from_command() {
   local -a names=() command=()
-  local name payload=''
+  local name payload='' initial_identity current_identity
   declare -A values=()
   gha__parse_import_args names command "$@" || return 1
-  gha__require_github_env || return 1
+  initial_identity="$(gha__github_env_identity)" || return 1
   gha__capture_assignments names command values || return 1
+  current_identity="$(gha__github_env_identity)" || return 1
+  if [[ "${current_identity}" != "${initial_identity}" ]]; then
+    gha__error 'GITHUB_ENV changed while importing assignments'
+    return 1
+  fi
   for name in "${names[@]}"; do gha_mask_value "${values[${name}]}" || return 1; done
   for name in "${names[@]}"; do
     printf -v payload '%s%s=%s\n' "${payload}" "${name}" "${values[${name}]}"
   done
+  current_identity="$(gha__github_env_identity)" || return 1
+  if [[ "${current_identity}" != "${initial_identity}" ]]; then
+    gha__error 'GITHUB_ENV changed before assignment write'
+    return 1
+  fi
   if ! printf '%s' "${payload}" 2>/dev/null >> "${GITHUB_ENV}"; then
     gha__error 'batch environment write failed'
     return 1
@@ -183,8 +224,11 @@ gha__validate_redact_paths() {
 }
 
 gha__python_redact() {
-  python - "$@" <<'PY'
+  (
+  unset PYTHONHOME PYTHONPATH PYTHONSTARTUP PYTHONINSPECT PYTHONWARNINGS
+  "${GHA__PYTHON}" -I -S - "$@" <<'PY'
 import os, stat, sys, tempfile
+MAX_BYTES = 128 * 1024 * 1024
 def reject_link_components(raw):
     path = os.path.abspath(raw); drive, tail = os.path.splitdrive(path)
     current = drive + os.sep if tail.startswith(os.sep) else drive
@@ -204,13 +248,31 @@ def files(paths):
                 mode = os.lstat(path).st_mode
                 if stat.S_ISLNK(mode) or not stat.S_ISREG(mode): raise OSError("unsafe")
                 yield path
+def read_regular(path):
+    before = os.lstat(path)
+    if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size > MAX_BYTES: raise OSError("unsafe")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags)
+    with os.fdopen(fd, "rb") as source:
+        opened = os.fstat(source.fileno())
+        if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino) or opened.st_nlink != 1: raise OSError("changed")
+        data = source.read(MAX_BYTES + 1)
+    if len(data) > MAX_BYTES or b"\0" in data: raise OSError("binary")
+    return data, before
+def marker_for(data, values):
+    for index in range(256):
+        marker = f"[CORDUM-REDACTED-{index}]".encode("ascii")
+        if marker not in data and all(marker not in value and value not in marker for value in values): return marker
+    raise OSError("marker")
 def replace(path, values):
-    with open(path, "rb") as source: data = source.read()
-    if b"\0" in data: raise OSError("binary")
+    data, before = read_regular(path)
+    marker = marker_for(data, values)
     redacted = data
-    for value in values: redacted = redacted.replace(value, b"[REDACTED]")
+    for value in values: redacted = redacted.replace(value, marker)
     if redacted == data: return
-    mode = stat.S_IMODE(os.stat(path, follow_symlinks=False).st_mode)
+    current = os.lstat(path)
+    if (current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns, current.st_nlink) != (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, 1): raise OSError("changed")
+    mode = stat.S_IMODE(before.st_mode)
     fd, temporary = tempfile.mkstemp(prefix=".gha-redact-", dir=os.path.dirname(path) or ".")
     try:
         with os.fdopen(fd, "wb") as target:
@@ -218,6 +280,8 @@ def replace(path, values):
         os.chmod(temporary, mode); os.replace(temporary, path)
     finally:
         if os.path.exists(temporary): os.unlink(temporary)
+    final, _ = read_regular(path)
+    if any(value in final for value in values): raise OSError("residual")
 def main():
     split = sys.argv.index("--")
     names, paths = sys.argv[1:split], sys.argv[split + 1:]
@@ -231,13 +295,14 @@ def main():
 try: main()
 except Exception: raise SystemExit(1)
 PY
+  )
 }
 
 gha_redact_paths() {
   local -a names=() paths=()
   gha__parse_redact_args names paths "$@" || return 1
   gha__validate_redact_paths "${paths[@]}" || return 1
-  if ! command -v python >/dev/null 2>&1; then
+  if [[ -z "${GHA__PYTHON}" ]]; then
     gha__error 'python is required for artifact redaction'
     return 1
   fi

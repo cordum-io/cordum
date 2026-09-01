@@ -113,6 +113,21 @@ helper_case() {
       [[ "$(mask_count "${VALUE}")" -eq 1 && -z "${CORDUM_API_KEY+x}" ]]
       ;;
     command|malformed|missing|extra|duplicate) batch_failure_case "${kind}" ;;
+    import_side_effect)
+      setup_env_file
+      call_fails gha_mask_env_from_command CORDUM_LICENSE_TOKEN CORDUM_LICENSE_PUBLIC_KEY -- \
+        bash -c 'printf "UNSAFE_SIDE_EFFECT=1\n" >> "${GITHUB_ENV}"; exit 23' || return 1
+      [[ ! -s "${GITHUB_ENV}" ]]
+      ;;
+    import_swap)
+      setup_env_file; local external="${CASE_DIR}/external"
+      : > "${external}"; new_value import_swap_one; export TEST_IMPORT_ONE="${VALUE}"
+      new_value import_swap_two; export TEST_IMPORT_TWO="${VALUE}"
+      export TEST_IMPORT_ENV="${GITHUB_ENV}" TEST_IMPORT_EXTERNAL="${external}"
+      call_fails gha_mask_env_from_command CORDUM_LICENSE_TOKEN CORDUM_LICENSE_PUBLIC_KEY -- bash -c \
+        'rm -f "${TEST_IMPORT_ENV}"; ln -s "${TEST_IMPORT_EXTERNAL}" "${TEST_IMPORT_ENV}"; printf "CORDUM_LICENSE_TOKEN=%s\nCORDUM_LICENSE_PUBLIC_KEY=%s\n" "${TEST_IMPORT_ONE}" "${TEST_IMPORT_TWO}"' || return 1
+      [[ ! -s "${external}" ]]
+      ;;
     redact_missing)
       new_value redact_missing; export CORDUM_API_KEY="${VALUE}"; path="${CASE_DIR}/absent"
       call_fails gha_redact_paths CORDUM_API_KEY -- "${path}"
@@ -125,6 +140,26 @@ helper_case() {
     redact_symlink)
       new_value redact_symlink; export CORDUM_API_KEY="${VALUE}"; mkdir -p "${CASE_DIR}/artifacts"; printf '%s\n' "${VALUE}" > "${CASE_DIR}/external"
       if ln -s "${CASE_DIR}/external" "${CASE_DIR}/artifacts/link" 2>/dev/null && [[ -L "${CASE_DIR}/artifacts/link" ]]; then call_fails gha_redact_paths CORDUM_API_KEY -- "${CASE_DIR}/artifacts"; else true; fi
+      ;;
+    redact_path_hijack)
+      setup_env_file; new_value redact_path_hijack; export CORDUM_API_KEY="${VALUE}"; path="${CASE_DIR}/artifact"; printf '%s\n' "${VALUE}" > "${path}"
+      mkdir -p "${CASE_DIR}/fake-bin"; printf '#!/usr/bin/env bash\nexit 0\n' > "${CASE_DIR}/fake-bin/python"; cp "${CASE_DIR}/fake-bin/python" "${CASE_DIR}/fake-bin/python3"; chmod +x "${CASE_DIR}/fake-bin/python" "${CASE_DIR}/fake-bin/python3"
+      local old_path="${PATH}"; PATH="${CASE_DIR}/fake-bin:${PATH}"; call_ok gha_redact_paths CORDUM_API_KEY -- "${path}"; PATH="${old_path}"
+      ! grep -Fq -- "${VALUE}" "${path}" 2>/dev/null
+      ;;
+    redact_pythonpath_hijack)
+      setup_env_file; new_value redact_pythonpath_hijack; export CORDUM_API_KEY="${VALUE}"; path="${CASE_DIR}/artifact"; printf '%s\n' "${VALUE}" > "${path}"
+      mkdir -p "${CASE_DIR}/python-startup"; printf 'import os\nos._exit(0)\n' > "${CASE_DIR}/python-startup/sitecustomize.py"
+      PYTHONPATH="${CASE_DIR}/python-startup" call_ok gha_redact_paths CORDUM_API_KEY -- "${path}" || return 1
+      ! grep -Fq -- "${VALUE}" "${path}" 2>/dev/null
+      ;;
+    redact_marker_collision)
+      setup_env_file; VALUE='[REDACTED]'; printf '%s\n' "${VALUE}" >> "${CASE_SENTINELS}"; export CORDUM_API_KEY="${VALUE}"; path="${CASE_DIR}/artifact"; printf '%s\n' "${VALUE}" > "${path}"
+      call_ok gha_redact_paths CORDUM_API_KEY -- "${path}" && ! grep -Fq -- "${VALUE}" "${path}" 2>/dev/null
+      ;;
+    redact_hardlink)
+      setup_env_file; new_value redact_hardlink; export CORDUM_API_KEY="${VALUE}"; path="${CASE_DIR}/artifact"; local alias="${CASE_DIR}/alias"; printf '%s\n' "${VALUE}" > "${path}"
+      if ln "${path}" "${alias}" 2>/dev/null && [[ "$(stat -c '%h' "${path}" 2>/dev/null || echo 1)" -gt 1 ]]; then call_fails gha_redact_paths CORDUM_API_KEY -- "${path}"; else true; fi
       ;;
   esac
 }
@@ -290,7 +325,7 @@ if [[ ! -f "${HELPER}" ]]; then
   record "masking helper API exists" 1
 else
   run_helper_case "helper masks, exports, imports, and redacts every credential class" valid
-  for kind in empty_name invalid_name cr_name lf_name empty_value extra_value extra_env cr_value lf_value unset_env bad_env write_failure command malformed missing extra duplicate redact_missing redact_bad_name redact_binary redact_symlink; do
+  for kind in empty_name invalid_name cr_name lf_name empty_value extra_value extra_env cr_value lf_value unset_env bad_env write_failure command malformed missing extra duplicate import_side_effect import_swap redact_missing redact_bad_name redact_binary redact_symlink redact_path_hijack redact_pythonpath_hijack redact_marker_collision redact_hardlink; do
     run_helper_case "helper rejects ${kind//_/ } without leaking" "${kind}"
   done
 fi
