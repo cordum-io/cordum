@@ -61,11 +61,16 @@ jobs:
 
       - name: Capture docker compose logs
         if: always()
-        run: docker compose logs > docker-compose-platform-smoke.log 2>&1 || true
+        run: |
+          touch platform-smoke.log platform-smoke-health.json
+          docker compose logs > docker-compose-platform-smoke.log 2>&1 || true
 
       - name: Redact platform smoke artifacts
         id: redact_platform_smoke_artifacts
         if: always()
+        env:
+          CORDUM_API_KEY: ${{ env.CORDUM_API_KEY || 'credential-unavailable-for-redaction' }}
+          REDIS_PASSWORD: ${{ env.REDIS_PASSWORD || 'credential-unavailable-for-redaction' }}
         run: |
           source tools/scripts/github_actions_mask_env.sh
           gha_redact_paths CORDUM_API_KEY REDIS_PASSWORD -- platform-smoke.log platform-smoke-health.json docker-compose-platform-smoke.log

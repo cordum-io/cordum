@@ -204,11 +204,18 @@ jobs:
 
       - name: Capture docker compose logs
         if: always()
-        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml logs > docker-compose-edge-fake-hook-e2e.log 2>&1 || true
+        run: |
+          touch edge-fake-hook-e2e.log edge-fake-hook-e2e-health.json
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml logs > docker-compose-edge-fake-hook-e2e.log 2>&1 || true
 
       - name: Redact artifacts
         id: redact_edge_artifacts
         if: always()
+        env:
+          CORDUM_API_KEY: ${{ env.CORDUM_API_KEY || 'credential-unavailable-for-redaction' }}
+          CORDUM_APPROVER_API_KEY: ${{ env.CORDUM_APPROVER_API_KEY || 'credential-unavailable-for-redaction' }}
+          CORDUM_API_KEYS: ${{ env.CORDUM_API_KEYS || 'credential-unavailable-for-redaction' }}
+          REDIS_PASSWORD: ${{ env.REDIS_PASSWORD || 'credential-unavailable-for-redaction' }}
         run: |
           source tools/scripts/github_actions_mask_env.sh
           gha_redact_paths CORDUM_API_KEY CORDUM_APPROVER_API_KEY CORDUM_API_KEYS REDIS_PASSWORD -- edge-fake-hook-e2e.log edge-fake-hook-e2e-health.json docker-compose-edge-fake-hook-e2e.log

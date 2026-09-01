@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 INTEGRATION="${ROOT}/.github/workflows/integration-nightly.yml"
 NIGHTLY="${ROOT}/.github/workflows/nightly.yml"
@@ -183,7 +182,7 @@ def check_job(path, job_id, steps, wanted):
         if not isinstance(step, dict): continue
         raw_run, uses = str(step.get("run") or ""), str(step.get("uses") or "")
         run = "\n".join(line for line in raw_run.splitlines() if not line.lstrip().startswith("#")); commands = [line.strip() for line in run.splitlines() if line.strip()]
-        refs, calls = names_in(run), helper_calls(run)
+        refs, calls = names_in(run), helper_calls(run); output_aliases = set(re.findall(r'(?m)^\s*([a-z_][A-Za-z0-9_]*)\s*=\s*["\']?\$\{?' + CREDENTIAL_NAME + r'\b', run))
         if calls:
             credential_job = True; setup.update(calls)
             if not commands or not commands[0].startswith("source ") or SOURCE not in commands[0]: issues.append("HELPER_ORDER")
@@ -201,7 +200,8 @@ def check_job(path, job_id, steps, wanted):
             credential_job = True
             if "gha_mask_env_from_command" not in run: issues.append("BARE_CILICENSE_REDIRECT")
         for line in run.splitlines():
-            if names_in(line) and (credential_job or (path, job_id) in EXPECTED) and (OUTPUT.search(line) or "sha256sum" in line): issues.append("UNSAFE_OUTPUT")
+            direct, alias_ref = names_in(line), any(re.search(rf"\$\{{?{re.escape(alias)}\b", line) for alias in output_aliases); output = OUTPUT.search(line)
+            if (credential_job or (path, job_id) in EXPECTED) and ((output and (direct or alias_ref)) or ("sha256sum" in line and direct)): issues.append("UNSAFE_OUTPUT")
         if uses.lower().startswith("actions/upload-artifact@") and credential_job:
             prior_step = steps[index - 1] if index and isinstance(steps[index - 1], dict) else {}; prior = str(prior_step.get("run") or ""); prior_commands = [line.strip() for line in prior.splitlines() if line.strip() and not line.lstrip().startswith("#")]
             if len(prior_commands) != 2 or not prior_commands[0].startswith("source ") or SOURCE not in prior_commands[0] or not prior_commands[1].startswith("gha_redact_paths "): issues.append("UPLOAD_WITHOUT_REDACTION")
@@ -249,6 +249,7 @@ def self_test():
     commented = deepcopy(safe); commented[0]["run"] = '# source tools/scripts/github_actions_mask_env.sh\n# gha_mask_env CORDUM_API_KEY "$generated"\necho "CORDUM_API_KEY=${generated}" >> "$GITHUB_ENV"'; mutations.append(commented)
     unreachable = deepcopy(safe); unreachable[0]["run"] = 'if false; then\nsource tools/scripts/github_actions_mask_env.sh\ngha_mask_env CORDUM_API_KEY "$generated"\nfi'; mutations.append(unreachable)
     late = deepcopy(safe); late[0]["run"] = 'generated="$(openssl rand -hex 32)"\necho "$generated"\nsource tools/scripts/github_actions_mask_env.sh\ngha_mask_env CORDUM_API_KEY "$generated"'; mutations.append(late); composite = deepcopy(safe); composite[0]["run"] = 'source tools/scripts/github_actions_mask_env.sh\ngha_mask_env CORDUM_API_KEY "prefix-$(false)-suffix"'; mutations.append(composite)
+    alias = deepcopy(safe); alias.insert(1, {"run": 'lower_alias="$CORDUM_API_KEY"\necho "$lower_alias"'}); mutations.append(alias)
     with TemporaryDirectory() as tmp:
         path = Path(tmp) / "fixture.yml"
         def parsed(steps):
@@ -296,5 +297,4 @@ fi
 write_workflow_guard
 run_quiet "workflow guard detects all unsafe mutations" python "${GUARD}" --self-test
 run_quiet "all active workflows satisfy masking and redaction contract" python "${GUARD}" "${ROOT}"
-echo "SUMMARY: ${PASS} pass, ${FAIL} fail"
-[[ "${FAIL}" -eq 0 ]]
+echo "SUMMARY: ${PASS} pass, ${FAIL} fail"; [[ "${FAIL}" -eq 0 ]]

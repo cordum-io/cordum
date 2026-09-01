@@ -124,6 +124,11 @@ jobs:
       - name: Redact failure artifacts
         id: redact_failure_artifacts
         if: failure()
+        env:
+          CORDUM_API_KEY: ${{ env.CORDUM_API_KEY || 'credential-unavailable-for-redaction' }}
+          REDIS_PASSWORD: ${{ env.REDIS_PASSWORD || 'credential-unavailable-for-redaction' }}
+          CORDUM_LICENSE_TOKEN: ${{ env.CORDUM_LICENSE_TOKEN || 'credential-unavailable-for-redaction' }}
+          CORDUM_LICENSE_PUBLIC_KEY: ${{ env.CORDUM_LICENSE_PUBLIC_KEY || 'credential-unavailable-for-redaction' }}
         run: |
           source tools/scripts/github_actions_mask_env.sh
           gha_redact_paths CORDUM_API_KEY REDIS_PASSWORD CORDUM_LICENSE_TOKEN CORDUM_LICENSE_PUBLIC_KEY -- /tmp/mock-bank-logs

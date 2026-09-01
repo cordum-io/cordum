@@ -110,6 +110,10 @@ jobs:
       - name: Redact compose logs
         id: redact_compose_logs
         if: failure()
+        env:
+          CORDUM_API_KEY: ${{ env.CORDUM_API_KEY || 'credential-unavailable-for-redaction' }}
+          REDIS_PASSWORD: ${{ env.REDIS_PASSWORD || 'credential-unavailable-for-redaction' }}
+          CORDUM_ADMIN_PASSWORD: ${{ env.CORDUM_ADMIN_PASSWORD || 'credential-unavailable-for-redaction' }}
         run: |
           source tools/scripts/github_actions_mask_env.sh
           gha_redact_paths CORDUM_API_KEY REDIS_PASSWORD CORDUM_ADMIN_PASSWORD -- docker-compose-e2e.log
