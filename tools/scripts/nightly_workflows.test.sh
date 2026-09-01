@@ -206,9 +206,11 @@ def check_job(path, job_id, steps, wanted):
         for line in run.splitlines():
             if names_in(line) and (credential_job or (path, job_id) in EXPECTED) and (OUTPUT.search(line) or "sha256sum" in line): issues.append("UNSAFE_OUTPUT")
         if uses.lower().startswith("actions/upload-artifact@") and credential_job:
-            prior = str(steps[index - 1].get("run") or "") if index and isinstance(steps[index - 1], dict) else ""
+            prior_step = steps[index - 1] if index and isinstance(steps[index - 1], dict) else {}; prior = str(prior_step.get("run") or "")
             if "gha_redact_paths" not in prior: issues.append("UPLOAD_WITHOUT_REDACTION")
             elif redact_names(prior) != set(wanted): issues.append("REDACTION_SET_MISMATCH")
+            prior_id, condition = str(prior_step.get("id") or ""), str(step.get("if") or "")
+            if not prior_id or f"steps.{prior_id}.outcome == 'success'" not in condition: issues.append("UPLOAD_NOT_REDACTION_GATED")
     if credential_job and setup != Counter(wanted): issues.append("INVENTORY_MISMATCH")
     return issues, credential_job
 def check_quickstart(root):
@@ -239,16 +241,14 @@ def scan(root):
     issues.extend(("quickstart_env_sharing_test.sh", "ci-transitive", issue) for issue in check_quickstart(root))
     return issues
 def self_test():
-    safe = [
-        {"run": 'source tools/scripts/github_actions_mask_env.sh\ngha_mask_env CORDUM_API_KEY "$generated"'},
-        {"run": "source tools/scripts/github_actions_mask_env.sh\ngha_redact_paths CORDUM_API_KEY -- logs"},
-        {"uses": "actions/upload-artifact@v4"},
-    ]
+    safe = [{"run": 'source tools/scripts/github_actions_mask_env.sh\ngha_mask_env CORDUM_API_KEY "$generated"'},
+        {"id": "redact_artifacts", "run": "source tools/scripts/github_actions_mask_env.sh\ngha_redact_paths CORDUM_API_KEY -- logs"},
+        {"if": "always() && steps.redact_artifacts.outcome == 'success'", "uses": "actions/upload-artifact@v4"}]
     mutations = []
     direct = deepcopy(safe); direct.insert(1, {"run": 'echo "FUTURE_API_KEY=${generated}" >> "$GITHUB_ENV"'}); mutations.append(direct)
     bare = deepcopy(safe); bare[0] = {"run": 'go run ./tools/cilicense >> "$GITHUB_ENV"'}; mutations.append(bare)
     echoed = deepcopy(safe); echoed.insert(1, {"run": 'echo "$CORDUM_API_KEY" # no-secret-lint'}); mutations.append(echoed)
-    upload = deepcopy(safe); del upload[1]; mutations.append(upload)
+    upload = deepcopy(safe); upload[2]["if"] = "always()"; mutations.append(upload)
     with TemporaryDirectory() as tmp:
         path = Path(tmp) / "fixture.yml"
         def parsed(steps):
