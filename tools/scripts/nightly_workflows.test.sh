@@ -247,7 +247,7 @@ def self_test():
     mutations = []
     direct = deepcopy(safe); direct.insert(1, {"run": 'echo "FUTURE_API_KEY=${generated}" >> "$GITHUB_ENV"'}); mutations.append(direct)
     bare = deepcopy(safe); bare[0] = {"run": 'go run ./tools/cilicense >> "$GITHUB_ENV"'}; mutations.append(bare)
-    echoed = deepcopy(safe); echoed.insert(1, {"run": 'echo "$CORDUM_API_KEY"'}); mutations.append(echoed)
+    echoed = deepcopy(safe); echoed.insert(1, {"run": 'echo "$CORDUM_API_KEY" # no-secret-lint'}); mutations.append(echoed)
     upload = deepcopy(safe); del upload[1]; mutations.append(upload)
     with TemporaryDirectory() as tmp:
         path = Path(tmp) / "fixture.yml"
