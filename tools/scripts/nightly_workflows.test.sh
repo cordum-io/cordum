@@ -184,7 +184,7 @@ def check_job(path, job_id, steps, wanted):
             if not prepared_commands or prepared_commands[0] != PREPARED[key]: issues.append("OPTIONAL_ARTIFACT_PREP")
         if calls:
             credential_job = True; setup.update(calls)
-            if not commands or not commands[0].startswith("source ") or SOURCE not in commands[0]: issues.append("HELPER_ORDER")
+            admin = ('if [[ -z "${admin_random}" ]]; then', 'echo "::error::admin credential generation returned empty output" >&2', 'exit 1', 'fi'); control = [command for command in commands if command in admin]; allowed = (re.escape(f"source {SOURCE}"), r'[a-z_][A-Za-z0-9_]*="\$\(openssl rand -hex [0-9]+\)" \|\| exit 1', r'gha_mask_env [A-Z][A-Z0-9_]* "(?:\$\{[a-z_][A-Za-z0-9_]*\}|CordumE2E-\$\{admin_random\}!1)"', r'gha_mask_env_from_command(?: [A-Z][A-Z0-9_]*)+ -- go run \./tools/cilicense', re.escape("payload=$(printf '[{\"key\":\"%s\",\"role\":\"admin\",\"tenant\":\"default\",\"principal_id\":\"edge-fake-hook-e2e-approver\"}]' \"${CORDUM_APPROVER_API_KEY}\")"), *(re.escape(command) for command in admin), r'echo "CORDUM_USER_AUTH_ENABLED=true" >> "\$GITHUB_ENV"', r'echo "CORDUM_ADMIN_USERNAME=admin" >> "\$GITHUB_ENV"'); issues.append("HELPER_ORDER") if not commands or commands[0] != f"source {SOURCE}" or commands.count(f"source {SOURCE}") != 1 or any(not any(re.fullmatch(pattern, command) for pattern in allowed) for command in commands) or (control and (control != list(admin) or "\n".join(admin) not in "\n".join(commands))) else None
             for call in re.finditer(r"(?m)^gha_mask_env\s+" + CREDENTIAL_NAME + r"\s+(.+)$", run):
                 argument = call.group(1).strip(); aliases = re.findall(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)", argument)
                 if "$(" in argument: issues.append("COMMAND_SUBSTITUTION_ARGUMENT")
@@ -202,18 +202,18 @@ def check_job(path, job_id, steps, wanted):
             if (credential_job or (path, job_id) in EXPECTED) and ((output and (direct or alias_ref)) or ("sha256sum" in line and direct)): issues.append("UNSAFE_OUTPUT")
         if uses.lower().startswith("actions/upload-artifact@") and credential_job:
             prior_step = steps[index - 1] if index and isinstance(steps[index - 1], dict) else {}; prior = str(prior_step.get("run") or ""); prior_commands = [line.strip() for line in prior.splitlines() if line.strip() and not line.lstrip().startswith("#")]
-            if len(prior_commands) != 2 or not prior_commands[0].startswith("source ") or SOURCE not in prior_commands[0] or not prior_commands[1].startswith("gha_redact_paths "): issues.append("UPLOAD_WITHOUT_REDACTION")
+            if len(prior_commands) != 2 or prior_commands[0] != f"source {SOURCE}" or not re.fullmatch(r"gha_redact_paths(?: [A-Z][A-Z0-9_]*)+ --(?: [-A-Za-z0-9_./*]+)+", prior_commands[1]): issues.append("UPLOAD_WITHOUT_REDACTION")
             elif redact_names(prior) != set(wanted): issues.append("REDACTION_SET_MISMATCH")
             prior_id, condition = str(prior_step.get("id") or ""), str(step.get("if") or "")
-            if not prior_id or f"steps.{prior_id}.outcome == 'success'" not in condition: issues.append("UPLOAD_NOT_REDACTION_GATED")
+            if not prior_id or not re.fullmatch(rf"(?:always|failure)\(\) && steps\.{re.escape(prior_id)}\.outcome == 'success'", condition.strip()): issues.append("UPLOAD_NOT_REDACTION_GATED")
     if credential_job and setup != Counter(wanted): issues.append("INVENTORY_MISMATCH")
     if key in FALLBACKS and fallback_steps != 1: issues.append("FALLBACK_MISMATCH")
     return issues, credential_job
 def check_quickstart_text(text):
-    text = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
-    variables = ("seeded_key", "seeded_redis"); dotenv, log_print = text.find("cat > .env"), text.find('cat "${quickstart_log}"')
-    triples = [(text.find(f"{name}="), text.find(f'gha_mask_value "${{{name}}}"'), text.find(f'grep -Fq "${{{name}}}"')) for name in variables]
-    return [] if SOURCE in text and "GITHUB_ACTIONS" in text and all(0 <= generated < mask < dotenv < leak < log_print for generated, mask, leak in triples) else ["QUICKSTART_MASK_OR_LOG_ORDER"]
+    text = "\n".join(line.strip() for line in text.splitlines() if not line.lstrip().startswith("#"))
+    variables = ("seeded_key", "seeded_redis"); protected = 'if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then\nsource "${REPO_ROOT}/tools/scripts/github_actions_mask_env.sh"\ngha_mask_value "${seeded_key}"\ngha_mask_value "${seeded_redis}"\nfi'; exact = lambda command: [match.start() for match in re.finditer(rf"(?m)^{re.escape(command)}$", text)]; dotenv, log_print = text.find("cat > .env"), text.find('cat "${quickstart_log}"')
+    triples = [(text.find(f"{name}="), positions[0] if len(positions := exact(f'gha_mask_value "${{{name}}}"')) == 1 else -1, text.find(f'grep -Fq "${{{name}}}"')) for name in variables]
+    return [] if protected in text and all(0 <= generated < mask < dotenv < leak < log_print for generated, mask, leak in triples) else ["QUICKSTART_MASK_OR_LOG_ORDER"]
 def check_quickstart(root):
     path = root / "tools/scripts/quickstart_env_sharing_test.sh"; return ["QUICKSTART_MISSING"] if not path.is_file() else check_quickstart_text(path.read_text(encoding="utf-8"))
 def scan(root):
@@ -233,7 +233,7 @@ def scan(root):
     issues.extend(("quickstart_env_sharing_test.sh", "ci-transitive", issue) for issue in check_quickstart(root))
     return issues
 def self_test():
-    safe = [{"run": 'source tools/scripts/github_actions_mask_env.sh\ngha_mask_env CORDUM_API_KEY "$generated"'},
+    safe = [{"run": 'source tools/scripts/github_actions_mask_env.sh\ngha_mask_env CORDUM_API_KEY "${generated}"'},
         {"run": "touch optional.log"}, {"id": "redact_artifacts", "env": {"CORDUM_API_KEY": "${{ env.CORDUM_API_KEY || 'credential-unavailable-for-redaction' }}"}, "run": "source tools/scripts/github_actions_mask_env.sh\ngha_redact_paths CORDUM_API_KEY -- optional.log"},
         {"if": "always() && steps.redact_artifacts.outcome == 'success'", "uses": "actions/upload-artifact@v4"}]
     mutations = []
@@ -246,14 +246,15 @@ def self_test():
     late = deepcopy(safe); late[0]["run"] = 'generated="$(openssl rand -hex 32)"\necho "$generated"\nsource tools/scripts/github_actions_mask_env.sh\ngha_mask_env CORDUM_API_KEY "$generated"'; mutations.append((late, "PREMASK_ALIAS_USE")); simple = deepcopy(safe); simple[0]["run"] = 'source tools/scripts/github_actions_mask_env.sh\ngha_mask_env CORDUM_API_KEY "$(false)"'; mutations.append((simple, "COMMAND_SUBSTITUTION_ARGUMENT"))
     alias = deepcopy(safe); alias.insert(1, {"run": 'lower_alias="$CORDUM_API_KEY"\necho "$lower_alias"'}); mutations.append((alias, "UNSAFE_OUTPUT")); upper = deepcopy(safe); upper.insert(1, {"run": 'UPPER_ALIAS="$CORDUM_API_KEY"\necho "$UPPER_ALIAS" # no-secret-lint'}); mutations.append((upper, "UNSAFE_OUTPUT")); fallback = deepcopy(safe); fallback[2]["env"] = {}; mutations.append((fallback, "FALLBACK_MISMATCH")); prep = deepcopy(safe); prep[1]["run"] = "true"; mutations.append((prep, "OPTIONAL_ARTIFACT_PREP"))
     mixed = deepcopy(safe); mixed[0]["run"] += '\necho "CORDUM_API_KEY=${generated}" >> "$GITHUB_ENV"'; mutations.append((mixed, "DIRECT_ENV_WRITE"))
+    redirected = deepcopy(safe); redirected[0]["run"] += " >/dev/null"; mutations.append((redirected, "HELPER_ORDER")); scrubbed = deepcopy(safe); scrubbed[2]["run"] += " || true"; mutations.append((scrubbed, "UPLOAD_WITHOUT_REDACTION")); permissive = deepcopy(safe); permissive[-1]["if"] += " || failure()"; mutations.append((permissive, "UPLOAD_NOT_REDACTION_GATED")); heredoc = deepcopy(safe); heredoc[0]["run"] = 'source tools/scripts/github_actions_mask_env.sh\ncat <<EOF\ngha_mask_env CORDUM_API_KEY "$generated"\nEOF'; mutations.append((heredoc, "HELPER_ORDER")); wrapped = deepcopy(safe); wrapped[0]["run"] = 'source tools/scripts/github_actions_mask_env.sh\nif false; then\ngha_mask_env CORDUM_API_KEY "$generated"\nfi\necho "$generated" # no-secret-lint'; mutations.append((wrapped, "HELPER_ORDER")); shadowed = deepcopy(safe); shadowed[0]["run"] = 'source tools/scripts/github_actions_mask_env.sh\ngha_mask_env(){ printf "CORDUM_API_KEY=%s\\n" "$2" >> "$GITHUB_ENV"; export "$1=$2"; }\ngha_mask_env CORDUM_API_KEY "$generated"'; mutations.append((shadowed, "HELPER_ORDER")); admin_wrapped = deepcopy(safe); admin_wrapped[0]["run"] = 'source tools/scripts/github_actions_mask_env.sh\nif [[ -z "${admin_random}" ]]; then\ngha_mask_env CORDUM_API_KEY "$generated"\nfi'; mutations.append((admin_wrapped, "HELPER_ORDER"))  # no-secret-lint
     with TemporaryDirectory() as tmp:
         path = Path(tmp) / "fixture.yml"
         def parsed(steps):
             path.write_text(yaml.safe_dump({"jobs": {"fixture": {"steps": steps}}}), encoding="utf-8")
             return yaml.safe_load(path.read_text(encoding="utf-8"))["jobs"]["fixture"]["steps"]
         if check_job(path.name, "safe", parsed(safe), ["CORDUM_API_KEY"])[0]: return 1
-        quick = 'GITHUB_ACTIONS\nsource tools/scripts/github_actions_mask_env.sh\nseeded_key=x\nseeded_redis=x\ngha_mask_value "${seeded_key}"\ngha_mask_value "${seeded_redis}"\ncat > .env\ngrep -Fq "${seeded_key}"\ngrep -Fq "${seeded_redis}"\ncat "${quickstart_log}"'
-        quick_red = all(check_quickstart_text(item) for item in (quick.replace('gha_mask_value "${seeded_redis}"', ""), quick.replace('grep -Fq "${seeded_redis}"', ""), quick.replace("seeded_redis=x\n", 'seeded_redis=x\ngrep -Fq "${seeded_redis}"\n'), *(quick.replace(command, f"# {command}") for command in ('gha_mask_value "${seeded_key}"', 'gha_mask_value "${seeded_redis}"', 'grep -Fq "${seeded_key}"', 'grep -Fq "${seeded_redis}"'))))
+        quick = 'seeded_key=x\nseeded_redis=x\nif [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then\nsource "${REPO_ROOT}/tools/scripts/github_actions_mask_env.sh"\ngha_mask_value "${seeded_key}"\ngha_mask_value "${seeded_redis}"\nfi\ncat > .env\ngrep -Fq "${seeded_key}"\ngrep -Fq "${seeded_redis}"\ncat "${quickstart_log}"'
+        quick_red = all(check_quickstart_text(item) for item in (quick.replace('gha_mask_value "${seeded_redis}"', ""), quick.replace('grep -Fq "${seeded_redis}"', ""), quick.replace("seeded_redis=x\n", 'seeded_redis=x\ngrep -Fq "${seeded_redis}"\n'), quick.replace('gha_mask_value "${seeded_key}"', 'gha_mask_value "${seeded_key}" >/dev/null').replace('gha_mask_value "${seeded_redis}"', 'gha_mask_value "${seeded_redis}" >/dev/null'), quick.replace('source "${REPO_ROOT}/tools/scripts/github_actions_mask_env.sh"\n', 'source "${REPO_ROOT}/tools/scripts/github_actions_mask_env.sh"\ngha_mask_value(){ :; }\n'), *(quick.replace(command, f"# {command}") for command in ('gha_mask_value "${seeded_key}"', 'gha_mask_value "${seeded_redis}"', 'grep -Fq "${seeded_key}"', 'grep -Fq "${seeded_redis}"'))))
         return 0 if not check_quickstart_text(quick) and quick_red and all(code in check_job(path.name, "safe", parsed(item), ["CORDUM_API_KEY"])[0] for item, code in mutations) else 1
 if __name__ == "__main__":
     if len(sys.argv) == 2 and sys.argv[1] == "--self-test": raise SystemExit(self_test())
