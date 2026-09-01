@@ -50,6 +50,9 @@ valid_helper_case() {
   local name value mask_only mode artifact_dir="${CASE_DIR}/artifacts" artifact="${CASE_DIR}/artifacts/nested/log.txt"
   mkdir -p "${artifact_dir}/nested"
   setup_env_file
+  if [[ "${GITHUB_ACTIONS:-}" == "true" && -x /usr/bin/python3 ]]; then
+    [[ "${GHA__PYTHON}" == /usr/bin/python* && ! -L "${GHA__PYTHON}" ]] || return 1
+  fi
   for name in "${names[@]}"; do new_value "${name}"; values+=("${VALUE}"); done
   new_value mask_only '%pct'; mask_only="${VALUE}"
   new_value license_token '=='; export TEST_LICENSE_TOKEN="${VALUE}"; names+=(CORDUM_LICENSE_TOKEN); values+=("${VALUE}")

@@ -11,9 +11,11 @@ gha__valid_value() {
   [[ -n "${value}" && "${value}" != *$'\r'* && "${value}" != *$'\n'* ]]
 }
 gha__resolve_python() {
-  local candidate
+  local candidate resolved
   for candidate in /usr/bin/python3 /usr/bin/python; do
-    [[ -x "${candidate}" && ! -L "${candidate}" ]] && { printf '%s\n' "${candidate}"; return 0; }
+    [[ -x "${candidate}" ]] || continue
+    resolved="$(realpath -e -- "${candidate}" 2>/dev/null)" || continue
+    [[ "${resolved}" == /usr/bin/python* && -x "${resolved}" && ! -L "${resolved}" ]] && { printf '%s\n' "${resolved}"; return 0; }
   done
   [[ "${GITHUB_ACTIONS:-}" == "true" ]] && return 1
   for candidate in "$(command -v python3 2>/dev/null || true)" "$(command -v python 2>/dev/null || true)"; do
@@ -243,8 +245,7 @@ def read_regular(path):
     return data, before
 def marker_for(data, values):
     for index in range(256):
-        marker = f"[CORDUM-REDACTED-{index}]".encode("ascii")
-        if marker not in data and all(marker not in value and value not in marker for value in values): return marker
+        if (marker := f"[CORDUM-REDACTED-{index}]".encode("ascii")) not in data and all(marker not in value and value not in marker for value in values): return marker
     raise OSError("marker")
 def replace(path, values):
     data, before = read_regular(path)
@@ -252,8 +253,7 @@ def replace(path, values):
     redacted = data
     for value in values: redacted = redacted.replace(value, marker)
     if redacted == data: return
-    current = os.lstat(path)
-    if (current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns, current.st_nlink) != (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, 1): raise OSError("changed")
+    if ((current := os.lstat(path)).st_dev, current.st_ino, current.st_size, current.st_mtime_ns, current.st_nlink) != (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, 1): raise OSError("changed")
     mode = stat.S_IMODE(before.st_mode)
     fd, temporary = tempfile.mkstemp(prefix=".gha-redact-", dir=os.path.dirname(path) or ".")
     try:
