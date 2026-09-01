@@ -212,7 +212,7 @@ def check_job(path, job_id, steps, wanted):
 def check_quickstart_text(text):
     variables = ("seeded_key", "seeded_redis"); dotenv, log_print = text.find("cat > .env"), text.find('cat "${quickstart_log}"')
     triples = [(text.find(f"{name}="), text.find(f'gha_mask_value "${{{name}}}"'), text.find(f'grep -Fq "${{{name}}}"')) for name in variables]
-    return [] if SOURCE in text and "GITHUB_ACTIONS" in text and all(0 <= generated < mask < dotenv and 0 <= leak < log_print for generated, mask, leak in triples) else ["QUICKSTART_MASK_OR_LOG_ORDER"]
+    return [] if SOURCE in text and "GITHUB_ACTIONS" in text and all(0 <= generated < mask < dotenv < leak < log_print for generated, mask, leak in triples) else ["QUICKSTART_MASK_OR_LOG_ORDER"]
 def check_quickstart(root):
     path = root / "tools/scripts/quickstart_env_sharing_test.sh"; return ["QUICKSTART_MISSING"] if not path.is_file() else check_quickstart_text(path.read_text(encoding="utf-8"))
 def scan(root):
@@ -252,7 +252,7 @@ def self_test():
             return yaml.safe_load(path.read_text(encoding="utf-8"))["jobs"]["fixture"]["steps"]
         if check_job(path.name, "safe", parsed(safe), ["CORDUM_API_KEY"])[0]: return 1
         quick = 'GITHUB_ACTIONS\nsource tools/scripts/github_actions_mask_env.sh\nseeded_key=x\nseeded_redis=x\ngha_mask_value "${seeded_key}"\ngha_mask_value "${seeded_redis}"\ncat > .env\nif grep -Fq "${seeded_key}" || grep -Fq "${seeded_redis}"; then :; fi\ncat "${quickstart_log}"'
-        quick_red = all(check_quickstart_text(quick.replace(part, "")) for part in ('gha_mask_value "${seeded_redis}"', 'grep -Fq "${seeded_redis}"'))
+        quick_red = all(check_quickstart_text(item) for item in (quick.replace('gha_mask_value "${seeded_redis}"', ""), quick.replace('grep -Fq "${seeded_redis}"', ""), quick.replace("seeded_redis=x\n", 'seeded_redis=x\ngrep -Fq "${seeded_redis}"\n')))
         return 0 if not check_quickstart_text(quick) and quick_red and all(code in check_job(path.name, "safe", parsed(item), ["CORDUM_API_KEY"])[0] for item, code in mutations) else 1
 if __name__ == "__main__":
     if len(sys.argv) == 2 and sys.argv[1] == "--self-test": raise SystemExit(self_test())
