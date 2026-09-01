@@ -234,6 +234,7 @@ def files(paths):
                 if stat.S_ISLNK(mode) or not stat.S_ISREG(mode): raise OSError("unsafe")
                 yield path
 def read_regular(path):
+    reject_link_components(path)
     before = os.lstat(path)
     if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size > MAX_BYTES: raise OSError("unsafe")
     fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))

@@ -91,12 +91,8 @@ batch_failure_case() {
   call_fails gha_mask_env_from_command CORDUM_LICENSE_TOKEN CORDUM_LICENSE_PUBLIC_KEY -- bash -c "${command}" || return 1
   [[ ! -s "${GITHUB_ENV}" && "$(mask_count "${VALUE}")" -eq 0 ]]
 }
-helper_case() {
+basic_helper_case() {
   local kind="$1" bad path
-  source "${HELPER}" >> "${HELPER_LOG}" 2>&1 || return 1
-  for fn in gha_mask_value gha_mask_env gha_mask_env_from_command gha_redact_paths; do
-    declare -F "${fn}" >/dev/null || return 1
-  done
   case "${kind}" in
     valid) valid_helper_case ;;
     empty_name) setup_env_file; new_value empty_name; call_fails gha_mask_env '' "${VALUE}" ;;
@@ -132,6 +128,11 @@ helper_case() {
         'rm -f "${TEST_IMPORT_ENV}"; ln -s "${TEST_IMPORT_EXTERNAL}" "${TEST_IMPORT_ENV}"; printf "CORDUM_LICENSE_TOKEN=%s\nCORDUM_LICENSE_PUBLIC_KEY=%s\n" "${TEST_IMPORT_ONE}" "${TEST_IMPORT_TWO}"' || return 1
       [[ ! -s "${external}" ]]
       ;;
+  esac
+}
+redact_helper_case() {
+  local kind="$1" path
+  case "${kind}" in
     redact_missing)
       new_value redact_missing; export CORDUM_API_KEY="${VALUE}"; path="${CASE_DIR}/absent"
       call_fails gha_redact_paths CORDUM_API_KEY -- "${path}"
@@ -158,13 +159,24 @@ helper_case() {
       ! grep -Fq -- "${VALUE}" "${path}" 2>/dev/null
       ;;
     redact_marker_collision)
-      setup_env_file; VALUE='[REDACTED]'; printf '%s\n' "${VALUE}" >> "${CASE_SENTINELS}"; export CORDUM_API_KEY="${VALUE}"; path="${CASE_DIR}/artifact"; printf '%s\n' "${VALUE}" > "${path}"
+      setup_env_file; VALUE='[CORDUM-REDACTED-0]'; printf '%s\n' "${VALUE}" >> "${CASE_SENTINELS}"; export CORDUM_API_KEY="${VALUE}"; path="${CASE_DIR}/artifact"; printf '%s\n' "${VALUE}" > "${path}"
       call_ok gha_redact_paths CORDUM_API_KEY -- "${path}" && ! grep -Fq -- "${VALUE}" "${path}" 2>/dev/null
       ;;
     redact_hardlink)
       setup_env_file; new_value redact_hardlink; export CORDUM_API_KEY="${VALUE}"; path="${CASE_DIR}/artifact"; local alias="${CASE_DIR}/alias"; printf '%s\n' "${VALUE}" > "${path}"
       if ln "${path}" "${alias}" 2>/dev/null && [[ "$(stat -c '%h' "${path}" 2>/dev/null || echo 1)" -gt 1 ]]; then call_fails gha_redact_paths CORDUM_API_KEY -- "${path}"; else true; fi
       ;;
+  esac
+}
+helper_case() {
+  local kind="$1" fn
+  source "${HELPER}" >> "${HELPER_LOG}" 2>&1 || return 1
+  for fn in gha_mask_value gha_mask_env gha_mask_env_from_command gha_redact_paths; do
+    declare -F "${fn}" >/dev/null || return 1
+  done
+  case "${kind}" in
+    redact_*) redact_helper_case "${kind}" ;;
+    *) basic_helper_case "${kind}" ;;
   esac
 }
 logs_are_safe() {

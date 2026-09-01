@@ -49,7 +49,7 @@ def prior_context_is_unsafe(steps: list[object], stop: int) -> bool:
     names = "|".join(sorted(UNSAFE_ENV))
     for step in steps[:stop]:
         run = str(step.get("run") or "") if isinstance(step, dict) else ""
-        if re.search(rf"\b(?:{names})\s*=.*GITHUB_(?:ENV|PATH)|GITHUB_(?:ENV|PATH).*\b(?:{names})\s*=", run):
+        if "GITHUB_PATH" in run or re.search(rf"\b(?:{names})\s*=.*GITHUB_ENV|GITHUB_ENV.*\b(?:{names})\s*=", run):
             return True
     return False
 def setup_issues(run: str) -> tuple[list[str], Counter[str]]:
@@ -219,12 +219,12 @@ def check_quickstart_text(text: str) -> list[str]:
     if shell_depth(lines, marked, mask) != 1 or shell_depth(lines, marked, guard) != 1:
         return ["QUICKSTART_EXECUTION_SHAPE"]
     before = "\n".join(lines[:mask])
-    if re.search(r"(?m)^\s*(?:(?:function\s+)?(?:source|gha_mask_value)\s*\(\)|function\s+(?:source|gha_mask_value))\s*\{|^\s*alias\s+(?:source|gha_mask_value)=|^\s*GITHUB_ACTIONS=", before):
+    if re.search(r"(?m)^\s*(?:(?:function\s+)?(?:source|gha_mask_value)\s*\(\)|function\s+(?:source|gha_mask_value))\s*\{|^\s*alias\s+(?:source|gha_mask_value)=|^\s*(?:(?:export|readonly|declare|typeset|local)\s+)?GITHUB_ACTIONS=|^\s*unset\s+GITHUB_ACTIONS\b", before):
         return ["QUICKSTART_EXECUTION_SHAPE"]
-    generated = [next((i for i, line in enumerate(lines) if line.lstrip().startswith(f"{name}=")), -1) for name in ("seeded_key", "seeded_redis")]
+    generated = [[i for i, line in enumerate(lines) if line.lstrip().startswith(f"{name}=")] for name in ("seeded_key", "seeded_redis")]
     dotenv = next((i for i, line in enumerate(lines) if line.lstrip().startswith("cat > .env")), -1)
     log = [i for i, line in enumerate(lines) if line.strip() == 'cat "${quickstart_log}"']
-    if mask == 0 or lines[mask - 1].strip().endswith(("|", "&&", "||")) or not all(0 <= item < mask < dotenv < guard for item in generated) or len(log) != 1 or guard >= log[0]:
+    if mask == 0 or lines[mask - 1].strip().endswith(("|", "&&", "||")) or not all(len(items) == 1 and items[0] < mask < dotenv < guard for items in generated) or len(log) != 1 or log[0] != guard + len(leak):
         return ["QUICKSTART_MASK_OR_LOG_ORDER"]
     return []
 def inventory_issues(names: set[str]) -> list[tuple[str, str, str]]:
@@ -275,16 +275,17 @@ def self_test() -> int:
         context = deepcopy(safe); context[0].update(setting)
         if "UNSAFE_SHELL_CONTEXT" not in check_job("fixture.yml", "safe", context, ("CORDUM_API_KEY",))[0]: return 1
     prior = deepcopy(safe); prior.insert(0, {"run": 'echo "BASH_ENV=/tmp/unsafe" >> "$GITHUB_ENV"'})
+    prior_path = deepcopy(safe); prior_path.insert(0, {"run": 'echo "/tmp/unsafe" >> "$GITHUB_PATH"'})
     mismatch = deepcopy(safe); mismatch[-1]["with"]["path"] = "unredacted.log"
     permissive = deepcopy(safe); permissive[-1]["if"] = "always()"
     parents = (({"defaults": {"run": {"working-directory": "unsafe"}}},), ({"env": {"BASH_ENV": "/tmp/unsafe"}},))
     caller = [{"run": "GITHUB_ACTIONS=false bash tools/scripts/quickstart_env_sharing_test.sh"}]
-    if any(code not in check_job("fixture.yml", "safe", item, ("CORDUM_API_KEY",), context)[0] for item, code, context in ((prior, "UNSAFE_SHELL_CONTEXT", ()), (mismatch, "UPLOAD_PATH_MISMATCH", ()), (permissive, "UPLOAD_NOT_REDACTION_GATED", ()), *((safe, "UNSAFE_SHELL_CONTEXT", parent) for parent in parents), (caller, "QUICKSTART_CALLER_SHAPE", ()))):
+    if any(code not in check_job("fixture.yml", "safe", item, ("CORDUM_API_KEY",), context)[0] for item, code, context in ((prior, "UNSAFE_SHELL_CONTEXT", ()), (prior_path, "UNSAFE_SHELL_CONTEXT", ()), (mismatch, "UPLOAD_PATH_MISMATCH", ()), (permissive, "UPLOAD_NOT_REDACTION_GATED", ()), *((safe, "UNSAFE_SHELL_CONTEXT", parent) for parent in parents), (caller, "QUICKSTART_CALLER_SHAPE", ()))):
         return 1
     unprepared = [{"run": "bash tools/scripts/soak_test.sh"}, {"run": f"source {SOURCE}\ngha_redact_paths CORDUM_API_KEY -- soak_results.json"}]
     if "OPTIONAL_ARTIFACT_PREP" not in check_job("nightly.yml", "soak-test", unprepared, ("CORDUM_API_KEY",))[0]: return 1
     good = 'test_case() {\nseeded_key=x\nseeded_redis=x\nif [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then\nsource "${REPO_ROOT}/tools/scripts/github_actions_mask_env.sh"\ngha_mask_value "${seeded_key}"\ngha_mask_value "${seeded_redis}"\nfi\ncat > .env\nif grep -Fq "${seeded_key}" "${quickstart_log}" || grep -Fq "${seeded_redis}" "${quickstart_log}"; then\nfail "quickstart output leaked a full seeded secret value"\nfi\ncat "${quickstart_log}"\n}'
-    bad = (good.replace('gha_mask_value "${seeded_redis}"', ''), "cat <<BLOCK\n" + good.replace("cat > .env", "BLOCK\ncat > .env"), good.replace('"${quickstart_log}" || grep', '/dev/null || grep'), good.replace("test_case() {", "test_case() {\nif false; then") + "\nfi", good.replace("seeded_key=x", "seeded_key=x\ngha_mask_value(){ :; }"), good.replace("seeded_key=x", "seeded_key=x\nfunction source { :; }"), good.replace('gha_mask_value "${seeded_key}"', 'gha_mask_value "${seeded_key}" >/dev/null'), good.replace('; then\nfail', ' || true; then\nfail'))
+    bad = (good.replace('gha_mask_value "${seeded_redis}"', ''), "cat <<BLOCK\n" + good.replace("cat > .env", "BLOCK\ncat > .env"), good.replace('"${quickstart_log}" || grep', '/dev/null || grep'), good.replace("test_case() {", "test_case() {\nif false; then") + "\nfi", good.replace("seeded_key=x", "seeded_key=x\ngha_mask_value(){ :; }"), good.replace("seeded_key=x", "seeded_key=x\nfunction source { :; }"), good.replace("seeded_key=x", "seeded_key=x\nexport GITHUB_ACTIONS=false"), good.replace("cat > .env", "seeded_key=changed\ncat > .env"), good.replace('gha_mask_value "${seeded_key}"', 'gha_mask_value "${seeded_key}" >/dev/null'), good.replace('; then\nfail', ' || true; then\nfail'), good.replace('cat "${quickstart_log}"', 'quickstart_log=other\ncat "${quickstart_log}"'))
     return int(bool(check_quickstart_text(good)) or not all(check_quickstart_text(item) for item in bad) or paths_match(["a*"], ["a?"]) or not inventory_issues({"unexpected.yml"}))
 def main(argv: list[str]) -> int:
     if argv == ["--self-test"]:
