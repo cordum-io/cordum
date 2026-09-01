@@ -198,7 +198,7 @@ def check_job(path, job_id, steps, wanted):
             credential_job = True
             if not calls: issues.append("DIRECT_ENV_WRITE")
         for line in run.splitlines():
-            if re.match(r"^\s*(?:export\s+)?(?:" + "|".join(SENSITIVE) + r")=", line) and "gha_mask_env" not in line:
+            if re.match(r"^\s*(?:export\s+)?(?:" + "|".join(SENSITIVE) + r")=", line) and re.search(r"\$\(|openssl|uuidgen|/dev/urandom|\bRANDOM\b", line) and "gha_mask_env" not in line:
                 credential_job = True; issues.append("DIRECT_GENERATION")
         if "cilicense" in run:
             credential_job = True
