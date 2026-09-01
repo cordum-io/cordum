@@ -1,11 +1,7 @@
 #!/usr/bin/env bash
 # Source-only helpers for masking generated GitHub Actions credentials.
-gha__error() {
-  printf 'github-actions-mask-env: %s\n' "$1" >&2
-}
-gha__valid_name() {
-  [[ "${1-}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]
-}
+gha__error() { printf 'github-actions-mask-env: %s\n' "$1" >&2; }
+gha__valid_name() { [[ "${1-}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; }
 gha__valid_value() {
   local value="${1-}"
   [[ -n "${value}" && "${value}" != *$'\r'* && "${value}" != *$'\n'* ]]
@@ -23,52 +19,49 @@ gha__resolve_python() {
   done
   return 1
 }
-GHA__PYTHON="$(gha__resolve_python 2>/dev/null || true)"
-readonly GHA__PYTHON
+gha__python_candidate="$(gha__resolve_python 2>/dev/null || true)"
+if [[ -n "${GHA__PYTHON+x}" ]]; then [[ "${GHA__PYTHON}" == "${gha__python_candidate}" ]] || { unset gha__python_candidate; return 1; }
+else GHA__PYTHON="${gha__python_candidate}"; readonly GHA__PYTHON; fi
+unset gha__python_candidate
 gha__require_github_env() {
-  if [[ -z "${GITHUB_ENV-}" ]]; then
-    gha__error 'GITHUB_ENV is unavailable'
-    return 1
-  fi
-  if [[ -L "${GITHUB_ENV}" ]]; then
-    gha__error 'GITHUB_ENV must not be a symlink'
-    return 1
-  fi
+  if [[ -z "${GITHUB_ENV-}" ]]; then gha__error 'GITHUB_ENV is unavailable'; return 1; fi
+  if [[ -L "${GITHUB_ENV}" ]]; then gha__error 'GITHUB_ENV must not be a symlink'; return 1; fi
 }
 gha__github_env_identity() {
   local resolved lexical identity
   gha__require_github_env || return 1
-  if [[ "${GITHUB_ENV}" != /* || ! -f "${GITHUB_ENV}" || ! -w "${GITHUB_ENV}" ]]; then
-    gha__error 'GITHUB_ENV must be an existing writable regular file'
-    return 1
-  fi
+  if [[ "${GITHUB_ENV}" != /* || ! -f "${GITHUB_ENV}" || ! -w "${GITHUB_ENV}" ]]; then gha__error 'GITHUB_ENV must be an existing writable regular file'; return 1; fi
   resolved="$(realpath -e -- "${GITHUB_ENV}" 2>/dev/null)" || return 1
   lexical="$(realpath -s -- "${GITHUB_ENV}" 2>/dev/null)" || return 1
-  if [[ "${resolved}" != "${lexical}" ]]; then
-    gha__error 'GITHUB_ENV path must not contain symlinks'
-    return 1
-  fi
+  if [[ "${resolved}" != "${lexical}" ]]; then gha__error 'GITHUB_ENV path must not contain symlinks'; return 1; fi
   identity="$(stat -Lc '%d:%i:%f:%s' -- "${GITHUB_ENV}" 2>/dev/null)" || return 1
   printf '%s\n' "${identity}"
 }
+gha__github_env_fd_identity() {
+  stat -Lc '%d:%i:%f:%s' -- "/proc/${BASHPID}/fd/$1" 2>/dev/null
+}
+gha__open_github_env() {
+  local -n result_fd="$1" result_identity="$2"
+  result_identity="$(gha__github_env_identity)" || return 1
+  exec {result_fd}>> "${GITHUB_ENV}" || return 1
+  if [[ "$(gha__github_env_fd_identity "${result_fd}")" != "${result_identity}" ]]; then exec {result_fd}>&-; return 1; fi
+}
+gha__write_github_env() {
+  local fd="$1" initial="$2" payload="$3" current
+  [[ "$(gha__github_env_identity)" == "${initial}" ]] || return 1
+  printf '%s' "${payload}" 2>/dev/null >&${fd} || return 1
+  current="$(gha__github_env_identity)" || return 1
+  [[ "${current%:*}" == "${initial%:*}" && "$(gha__github_env_fd_identity "${fd}")" == "${current}" ]]
+}
 gha_mask_value() {
   local value="${1-}" escaped
-  if [[ "$#" -ne 1 ]]; then
-    gha__error 'mask registration requires one value'
-    return 1
-  fi
-  if ! gha__valid_value "${value}"; then
-    gha__error 'refusing an empty or multiline value'
-    return 1
-  fi
+  if [[ "$#" -ne 1 ]]; then gha__error 'mask registration requires one value'; return 1; fi
+  if ! gha__valid_value "${value}"; then gha__error 'refusing an empty or multiline value'; return 1; fi
   escaped="${value//%/%25}"
-  if ! printf '%s\n' "::add-mask::${escaped}"; then
-    gha__error 'mask registration failed'
-    return 1
-  fi
+  if ! printf '%s\n' "::add-mask::${escaped}"; then gha__error 'mask registration failed'; return 1; fi
 }
 gha_mask_env() {
-  local name="${1-}" value="${2-}"
+  local name="${1-}" value="${2-}" env_fd env_identity
   if [[ "$#" -ne 2 ]]; then
     gha__error 'environment masking requires one name and value'
     return 1
@@ -83,10 +76,12 @@ gha_mask_env() {
   fi
   gha__require_github_env || return 1
   gha_mask_value "${value}" || return 1
-  if ! printf '%s=%s\n' "${name}" "${value}" 2>/dev/null >> "${GITHUB_ENV}"; then
+  if ! gha__open_github_env env_fd env_identity || ! gha__write_github_env "${env_fd}" "${env_identity}" "${name}=${value}"$'\n'; then
+    [[ -n "${env_fd-}" ]] && exec {env_fd}>&-
     gha__error "environment write failed for ${name}"
     return 1
   fi
+  exec {env_fd}>&-
   if ! export "${name}=${value}"; then
     gha__error "same-step export failed for ${name}"
     return 1
@@ -146,7 +141,7 @@ gha__capture_assignments() {
 }
 gha_mask_env_from_command() {
   local -a names=() command=()
-  local name payload='' initial_identity current_identity
+  local name payload='' initial_identity current_identity env_fd write_identity
   declare -A values=()
   gha__parse_import_args names command "$@" || return 1
   initial_identity="$(gha__github_env_identity)" || return 1
@@ -160,15 +155,17 @@ gha_mask_env_from_command() {
   for name in "${names[@]}"; do
     printf -v payload '%s%s=%s\n' "${payload}" "${name}" "${values[${name}]}"
   done
-  current_identity="$(gha__github_env_identity)" || return 1
-  if [[ "${current_identity}" != "${initial_identity}" ]]; then
+  if ! gha__open_github_env env_fd write_identity || [[ "${write_identity}" != "${initial_identity}" ]]; then
+    [[ -n "${env_fd-}" ]] && exec {env_fd}>&-
     gha__error 'GITHUB_ENV changed before assignment write'
     return 1
   fi
-  if ! printf '%s' "${payload}" 2>/dev/null >> "${GITHUB_ENV}"; then
+  if ! gha__write_github_env "${env_fd}" "${initial_identity}" "${payload}"; then
+    exec {env_fd}>&-
     gha__error 'batch environment write failed'
     return 1
   fi
+  exec {env_fd}>&-
   for name in "${names[@]}"; do
     if ! export "${name}=${values[${name}]}"; then
       gha__error "same-step export failed for ${name}"
@@ -278,7 +275,6 @@ def main():
 try: main()
 except Exception: raise SystemExit(1)
 PY
-readonly GHA__REDACTOR_PY
 gha__python_redact() {
   (
   unset PYTHONHOME PYTHONPATH PYTHONSTARTUP PYTHONINSPECT PYTHONWARNINGS

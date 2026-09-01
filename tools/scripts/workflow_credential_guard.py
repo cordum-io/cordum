@@ -141,7 +141,7 @@ def check_job(path: str, job_id: str, steps: list[object], wanted: tuple[str, ..
         protected = bool(calls or redaction or "quickstart_env_sharing_test.sh" in run)
         if protected and (context_is_unsafe(*parents, raw_step) or prior_context_is_unsafe(steps, index)):
             issues.append("UNSAFE_SHELL_CONTEXT")
-        if "quickstart_env_sharing_test.sh" in run and commands(run) != ["bash tools/scripts/quickstart_env_sharing_test.sh"]:
+        if "quickstart_env_sharing_test.sh" in run and (commands(run) != ["bash tools/scripts/quickstart_env_sharing_test.sh"] or raw_step.get("env") != {"CORDUM_INTEGRATION": "1", "CORDUM_QUICKSTART_ENV_SHARING_MODE": "live"}):
             issues.append("QUICKSTART_CALLER_SHAPE")
         if calls:
             credential_job = True
@@ -279,8 +279,8 @@ def self_test() -> int:
     mismatch = deepcopy(safe); mismatch[-1]["with"]["path"] = "unredacted.log"
     permissive = deepcopy(safe); permissive[-1]["if"] = "always()"
     parents = (({"defaults": {"run": {"working-directory": "unsafe"}}},), ({"env": {"BASH_ENV": "/tmp/unsafe"}},))
-    caller = [{"run": "GITHUB_ACTIONS=false bash tools/scripts/quickstart_env_sharing_test.sh"}]
-    if any(code not in check_job("fixture.yml", "safe", item, ("CORDUM_API_KEY",), context)[0] for item, code, context in ((prior, "UNSAFE_SHELL_CONTEXT", ()), (prior_path, "UNSAFE_SHELL_CONTEXT", ()), (mismatch, "UPLOAD_PATH_MISMATCH", ()), (permissive, "UPLOAD_NOT_REDACTION_GATED", ()), *((safe, "UNSAFE_SHELL_CONTEXT", parent) for parent in parents), (caller, "QUICKSTART_CALLER_SHAPE", ()))):
+    caller = [{"run": "GITHUB_ACTIONS=false bash tools/scripts/quickstart_env_sharing_test.sh"}]; caller_env = [{"run": "bash tools/scripts/quickstart_env_sharing_test.sh", "env": {"CORDUM_INTEGRATION": "1", "CORDUM_QUICKSTART_ENV_SHARING_MODE": "disabled"}}]
+    if any(code not in check_job("fixture.yml", "safe", item, ("CORDUM_API_KEY",), context)[0] for item, code, context in ((prior, "UNSAFE_SHELL_CONTEXT", ()), (prior_path, "UNSAFE_SHELL_CONTEXT", ()), (mismatch, "UPLOAD_PATH_MISMATCH", ()), (permissive, "UPLOAD_NOT_REDACTION_GATED", ()), *((safe, "UNSAFE_SHELL_CONTEXT", parent) for parent in parents), (caller, "QUICKSTART_CALLER_SHAPE", ()), (caller_env, "QUICKSTART_CALLER_SHAPE", ()))):
         return 1
     unprepared = [{"run": "bash tools/scripts/soak_test.sh"}, {"run": f"source {SOURCE}\ngha_redact_paths CORDUM_API_KEY -- soak_results.json"}]
     if "OPTIONAL_ARTIFACT_PREP" not in check_job("nightly.yml", "soak-test", unprepared, ("CORDUM_API_KEY",))[0]: return 1

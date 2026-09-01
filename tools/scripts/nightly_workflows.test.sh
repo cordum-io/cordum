@@ -94,6 +94,10 @@ batch_failure_case() {
 basic_helper_case() {
   local kind="$1" bad path
   case "${kind}" in
+    resource_twice)
+      source "${HELPER}" >> "${HELPER_LOG}" 2>&1 || return 1
+      ! grep -Fq 'readonly variable' "${HELPER_LOG}"
+      ;;
     valid) valid_helper_case ;;
     empty_name) setup_env_file; new_value empty_name; call_fails gha_mask_env '' "${VALUE}" ;;
     invalid_name) setup_env_file; new_value invalid_name; call_fails gha_mask_env 'BAD-NAME' "${VALUE}" ;;
@@ -128,7 +132,27 @@ basic_helper_case() {
         'rm -f "${TEST_IMPORT_ENV}"; ln -s "${TEST_IMPORT_EXTERNAL}" "${TEST_IMPORT_ENV}"; printf "CORDUM_LICENSE_TOKEN=%s\nCORDUM_LICENSE_PUBLIC_KEY=%s\n" "${TEST_IMPORT_ONE}" "${TEST_IMPORT_TWO}"' || return 1
       [[ ! -s "${external}" ]]
       ;;
+    direct_write_swap|batch_write_swap) env_write_swap_case "${kind}" ;;
   esac
+}
+env_swap_on_write() {
+  if [[ "${BASH_COMMAND}" == printf*'>> "${GITHUB_ENV}"'* || "${BASH_COMMAND}" == printf*'>&${fd}'* ]]; then
+    trap - DEBUG
+    mv -- "${GITHUB_ENV}" "${TEST_ORIGINAL_ENV}" && : > "${GITHUB_ENV}"
+  fi
+}
+env_write_swap_case() {
+  local kind="$1" original
+  setup_env_file; original="${CASE_DIR}/original-env"; new_value "${kind}"
+  export TEST_ORIGINAL_ENV="${original}" TEST_IMPORT_VALUE="${VALUE}"
+  set -T; trap env_swap_on_write DEBUG
+  if [[ "${kind}" == direct_write_swap ]]; then
+    call_fails gha_mask_env CORDUM_API_KEY "${VALUE}" || return 1
+  else
+    call_fails gha_mask_env_from_command CORDUM_API_KEY -- bash -c 'printf "CORDUM_API_KEY=%s\n" "$TEST_IMPORT_VALUE"' || return 1
+  fi
+  trap - DEBUG; set +T
+  [[ -f "${original}" ]] && grep -Fq -- "${VALUE}" "${original}" && ! grep -Fq -- "${VALUE}" "${GITHUB_ENV}"
 }
 redact_helper_case() {
   local kind="$1" path
@@ -170,6 +194,11 @@ redact_helper_case() {
 }
 helper_case() {
   local kind="$1" fn
+  if [[ "${kind}" == preloaded_python ]]; then
+    readonly GHA__PYTHON="${CASE_DIR}/untrusted-python"
+    ! source "${HELPER}" >> "${HELPER_LOG}" 2>&1
+    return
+  fi
   source "${HELPER}" >> "${HELPER_LOG}" 2>&1 || return 1
   for fn in gha_mask_value gha_mask_env gha_mask_env_from_command gha_redact_paths; do
     declare -F "${fn}" >/dev/null || return 1
@@ -223,7 +252,7 @@ if [[ ! -f "${HELPER}" ]]; then
   record "masking helper API exists" 1
 else
   run_helper_case "helper masks, exports, imports, and redacts every credential class" valid
-  for kind in empty_name invalid_name cr_name lf_name empty_value extra_value extra_env cr_value lf_value unset_env bad_env write_failure command malformed missing extra duplicate import_side_effect import_swap redact_missing redact_bad_name redact_binary redact_symlink redact_path_hijack redact_pythonpath_hijack redact_marker_collision redact_hardlink; do
+  for kind in preloaded_python resource_twice empty_name invalid_name cr_name lf_name empty_value extra_value extra_env cr_value lf_value unset_env bad_env write_failure command malformed missing extra duplicate import_side_effect import_swap direct_write_swap batch_write_swap redact_missing redact_bad_name redact_binary redact_symlink redact_path_hijack redact_pythonpath_hijack redact_marker_collision redact_hardlink; do
     run_helper_case "helper rejects ${kind//_/ } without leaking" "${kind}"
   done
 fi
