@@ -70,7 +70,9 @@ valid_helper_case() {
     [[ "$(mask_count "${value}")" -eq 1 ]] || return 1
     ! grep -Fq -- "${value}" "${artifact}" 2>/dev/null || return 1
   done
-  [[ "$(mask_count "${mask_only}")" -eq 1 ]]
+  [[ "$(mask_count "${mask_only}")" -eq 1 ]] || return 1
+  new_value fallback_redaction; unset CORDUM_API_KEY; export CORDUM_API_KEY="${VALUE}"; printf '%s\n' "${VALUE}" > "${artifact}"
+  call_ok gha_redact_paths CORDUM_API_KEY -- "${artifact}" && ! grep -Fq -- "${VALUE}" "${artifact}" 2>/dev/null
 }
 batch_failure_case() {
   local kind="$1" command
@@ -147,26 +149,16 @@ run_helper_case() {
 write_workflow_guard() {
   GUARD="${TEST_TMP}/workflow_guard.py"
   cat > "${GUARD}" <<'PY'
-from collections import Counter
-from copy import deepcopy
-from pathlib import Path
-from tempfile import TemporaryDirectory
+from collections import Counter; from copy import deepcopy
+from pathlib import Path; from tempfile import TemporaryDirectory
 import re, sys, yaml
-SENSITIVE = {
-    "CORDUM_API_KEY", "CORDUM_APPROVER_API_KEY", "CORDUM_API_KEYS", "REDIS_PASSWORD",
-    "CORDUM_ADMIN_PASSWORD", "CORDUM_LICENSE_TOKEN", "CORDUM_LICENSE_PUBLIC_KEY",
-}; CREDENTIAL_NAME = r"[A-Z0-9_]*(?:API_KEYS?|REDIS_PASSWORD|ADMIN_PASSWORD|LICENSE_(?:TOKEN|PUBLIC_KEY))"; CREDENTIAL = re.compile(rf"\b{CREDENTIAL_NAME}\b")
-EXPECTED = {
-    ("integration-nightly.yml", "integration"): ["CORDUM_API_KEY", "REDIS_PASSWORD", "CORDUM_ADMIN_PASSWORD", "CORDUM_LICENSE_TOKEN", "CORDUM_LICENSE_PUBLIC_KEY"],
-    ("nightly.yml", "full-production-gate"): ["CORDUM_API_KEY", "REDIS_PASSWORD", "CORDUM_ADMIN_PASSWORD", "CORDUM_LICENSE_TOKEN", "CORDUM_LICENSE_PUBLIC_KEY"],
-    ("nightly.yml", "release-gate"): ["CORDUM_API_KEY", "REDIS_PASSWORD", "CORDUM_ADMIN_PASSWORD", "CORDUM_LICENSE_TOKEN", "CORDUM_LICENSE_PUBLIC_KEY"],
-    ("nightly.yml", "soak-test"): ["CORDUM_API_KEY", "REDIS_PASSWORD", "CORDUM_ADMIN_PASSWORD", "CORDUM_LICENSE_TOKEN", "CORDUM_LICENSE_PUBLIC_KEY"],
-    ("demo-mock-bank-e2e.yml", "demo-mock-bank-e2e"): ["CORDUM_API_KEY", "REDIS_PASSWORD", "CORDUM_LICENSE_TOKEN", "CORDUM_LICENSE_PUBLIC_KEY"],
-    ("platform-smoke.yml", "platform-smoke"): ["CORDUM_API_KEY", "REDIS_PASSWORD"],
-    ("edge-fake-hook-e2e.yml", "edge-fake-hook-e2e"): ["CORDUM_API_KEY", "CORDUM_APPROVER_API_KEY", "CORDUM_API_KEYS", "REDIS_PASSWORD"],
-    ("e2e.yml", "e2e-tls"): ["CORDUM_API_KEY", "REDIS_PASSWORD", "CORDUM_ADMIN_PASSWORD"],
-}
-OUTPUT = re.compile(r"^\s*(?:echo|printf|cat|tee)\b"); SOURCE = "tools/scripts/github_actions_mask_env.sh"
+CREDENTIAL_NAME = r"[A-Z0-9_]*(?:API_KEYS?|REDIS_PASSWORD|ADMIN_PASSWORD|LICENSE_(?:TOKEN|PUBLIC_KEY))"; CREDENTIAL = re.compile(rf"\b{CREDENTIAL_NAME}\b")
+LICENSED = ["CORDUM_API_KEY", "REDIS_PASSWORD", "CORDUM_ADMIN_PASSWORD", "CORDUM_LICENSE_TOKEN", "CORDUM_LICENSE_PUBLIC_KEY"]
+EXPECTED = {("integration-nightly.yml", "integration"): LICENSED, ("nightly.yml", "full-production-gate"): LICENSED, ("nightly.yml", "release-gate"): LICENSED, ("nightly.yml", "soak-test"): LICENSED,
+    ("demo-mock-bank-e2e.yml", "demo-mock-bank-e2e"): ["CORDUM_API_KEY", "REDIS_PASSWORD", "CORDUM_LICENSE_TOKEN", "CORDUM_LICENSE_PUBLIC_KEY"], ("platform-smoke.yml", "platform-smoke"): ["CORDUM_API_KEY", "REDIS_PASSWORD"], ("edge-fake-hook-e2e.yml", "edge-fake-hook-e2e"): ["CORDUM_API_KEY", "CORDUM_APPROVER_API_KEY", "CORDUM_API_KEYS", "REDIS_PASSWORD"], ("e2e.yml", "e2e-tls"): ["CORDUM_API_KEY", "REDIS_PASSWORD", "CORDUM_ADMIN_PASSWORD"]}
+FALLBACKS = {key: EXPECTED[key] for key in (("demo-mock-bank-e2e.yml", "demo-mock-bank-e2e"), ("e2e.yml", "e2e-tls"), ("edge-fake-hook-e2e.yml", "edge-fake-hook-e2e"), ("platform-smoke.yml", "platform-smoke"))}; FALLBACKS[("fixture.yml", "safe")] = ["CORDUM_API_KEY"]
+PREPARED = {("edge-fake-hook-e2e.yml", "edge-fake-hook-e2e"): "touch edge-fake-hook-e2e.log edge-fake-hook-e2e-health.json", ("platform-smoke.yml", "platform-smoke"): "touch platform-smoke.log platform-smoke-health.json", ("fixture.yml", "safe"): "touch optional.log"}
+OUTPUT = re.compile(r"^\s*(?:echo|printf|cat|tee)\b"); SOURCE = "tools/scripts/github_actions_mask_env.sh"; PLACEHOLDER = "credential-unavailable-for-redaction"
 def names_in(text): return set(CREDENTIAL.findall(text))
 def helper_calls(run):
     found = Counter(re.findall(r"(?m)^gha_mask_env\s+([A-Z][A-Z0-9_]*)\b", run))
@@ -177,12 +169,19 @@ def redact_names(run):
     matches = re.findall(r"(?ms)^gha_redact_paths\s+(.+?)\s+--", run)
     return {name for args in matches for name in re.findall(r"\b[A-Z][A-Z0-9_]*\b", args) if CREDENTIAL.fullmatch(name)}
 def check_job(path, job_id, steps, wanted):
-    issues, setup, credential_job = [], Counter(), False
+    issues, setup, credential_job, fallback_steps, key = [], Counter(), False, 0, (path, job_id)
     for index, step in enumerate(steps):
         if not isinstance(step, dict): continue
-        raw_run, uses = str(step.get("run") or ""), str(step.get("uses") or "")
+        raw_run, uses, env = str(step.get("run") or ""), str(step.get("uses") or ""), step.get("env") or {}
         run = "\n".join(line for line in raw_run.splitlines() if not line.lstrip().startswith("#")); commands = [line.strip() for line in run.splitlines() if line.strip()]
         refs, calls = names_in(run), helper_calls(run); output_aliases = set(re.findall(r'(?m)^\s*([a-z_][A-Za-z0-9_]*)\s*=\s*["\']?\$\{?' + CREDENTIAL_NAME + r'\b', run))
+        fallback_names = {name for name, value in env.items() if PLACEHOLDER in str(value)} if isinstance(env, dict) else set(); redacted = redact_names(run)
+        if fallback_names:
+            if fallback_names != set(FALLBACKS.get(key, [])) or redacted != fallback_names: issues.append("FALLBACK_SCOPE")
+            else: fallback_steps += 1
+        if redacted and key in PREPARED:
+            prior_raw = str(steps[index - 1].get("run") or "") if index and isinstance(steps[index - 1], dict) else ""; prepared_commands = [line.strip() for line in prior_raw.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+            if not prepared_commands or prepared_commands[0] != PREPARED[key]: issues.append("OPTIONAL_ARTIFACT_PREP")
         if calls:
             credential_job = True; setup.update(calls)
             if not commands or not commands[0].startswith("source ") or SOURCE not in commands[0]: issues.append("HELPER_ORDER")
@@ -209,6 +208,7 @@ def check_job(path, job_id, steps, wanted):
             prior_id, condition = str(prior_step.get("id") or ""), str(step.get("if") or "")
             if not prior_id or f"steps.{prior_id}.outcome == 'success'" not in condition: issues.append("UPLOAD_NOT_REDACTION_GATED")
     if credential_job and setup != Counter(wanted): issues.append("INVENTORY_MISMATCH")
+    if key in FALLBACKS and fallback_steps != 1: issues.append("FALLBACK_MISMATCH")
     return issues, credential_job
 def check_quickstart(root):
     path = root / "tools/scripts/quickstart_env_sharing_test.sh"
@@ -239,24 +239,24 @@ def scan(root):
     return issues
 def self_test():
     safe = [{"run": 'source tools/scripts/github_actions_mask_env.sh\ngha_mask_env CORDUM_API_KEY "$generated"'},
-        {"id": "redact_artifacts", "run": "source tools/scripts/github_actions_mask_env.sh\ngha_redact_paths CORDUM_API_KEY -- logs"},
+        {"run": "touch optional.log"}, {"id": "redact_artifacts", "env": {"CORDUM_API_KEY": "${{ env.CORDUM_API_KEY || 'credential-unavailable-for-redaction' }}"}, "run": "source tools/scripts/github_actions_mask_env.sh\ngha_redact_paths CORDUM_API_KEY -- optional.log"},
         {"if": "always() && steps.redact_artifacts.outcome == 'success'", "uses": "actions/upload-artifact@v4"}]
     mutations = []
-    direct = deepcopy(safe); direct.insert(1, {"run": 'echo "FUTURE_API_KEY=${generated}" >> "$GITHUB_ENV"'}); mutations.append(direct)
-    bare = deepcopy(safe); bare[0] = {"run": 'go run ./tools/cilicense >> "$GITHUB_ENV"'}; mutations.append(bare)
-    echoed = deepcopy(safe); echoed.insert(1, {"run": 'echo "$CORDUM_API_KEY" # no-secret-lint'}); mutations.append(echoed)
-    upload = deepcopy(safe); upload[2]["if"] = "always()"; mutations.append(upload)
-    commented = deepcopy(safe); commented[0]["run"] = '# source tools/scripts/github_actions_mask_env.sh\n# gha_mask_env CORDUM_API_KEY "$generated"\necho "CORDUM_API_KEY=${generated}" >> "$GITHUB_ENV"'; mutations.append(commented)
-    unreachable = deepcopy(safe); unreachable[0]["run"] = 'if false; then\nsource tools/scripts/github_actions_mask_env.sh\ngha_mask_env CORDUM_API_KEY "$generated"\nfi'; mutations.append(unreachable)
-    late = deepcopy(safe); late[0]["run"] = 'generated="$(openssl rand -hex 32)"\necho "$generated"\nsource tools/scripts/github_actions_mask_env.sh\ngha_mask_env CORDUM_API_KEY "$generated"'; mutations.append(late); composite = deepcopy(safe); composite[0]["run"] = 'source tools/scripts/github_actions_mask_env.sh\ngha_mask_env CORDUM_API_KEY "prefix-$(false)-suffix"'; mutations.append(composite)
-    alias = deepcopy(safe); alias.insert(1, {"run": 'lower_alias="$CORDUM_API_KEY"\necho "$lower_alias"'}); mutations.append(alias)
+    direct = deepcopy(safe); direct.insert(1, {"run": 'echo "FUTURE_API_KEY=${generated}" >> "$GITHUB_ENV"'}); mutations.append((direct, "DIRECT_ENV_WRITE"))
+    bare = deepcopy(safe); bare[0] = {"run": 'go run ./tools/cilicense >> "$GITHUB_ENV"'}; mutations.append((bare, "BARE_CILICENSE_REDIRECT"))
+    echoed = deepcopy(safe); echoed.insert(1, {"run": 'echo "$CORDUM_API_KEY" # no-secret-lint'}); mutations.append((echoed, "UNSAFE_OUTPUT"))
+    upload = deepcopy(safe); upload[-1]["if"] = "always()"; mutations.append((upload, "UPLOAD_NOT_REDACTION_GATED"))
+    commented = deepcopy(safe); commented[0]["run"] = '# source tools/scripts/github_actions_mask_env.sh\n# gha_mask_env CORDUM_API_KEY "$generated"\necho "CORDUM_API_KEY=${generated}" >> "$GITHUB_ENV"'; mutations.append((commented, "DIRECT_ENV_WRITE"))
+    unreachable = deepcopy(safe); unreachable[0]["run"] = 'if false; then\nsource tools/scripts/github_actions_mask_env.sh\ngha_mask_env CORDUM_API_KEY "$generated"\nfi'; mutations.append((unreachable, "HELPER_ORDER"))
+    late = deepcopy(safe); late[0]["run"] = 'generated="$(openssl rand -hex 32)"\necho "$generated"\nsource tools/scripts/github_actions_mask_env.sh\ngha_mask_env CORDUM_API_KEY "$generated"'; mutations.append((late, "PREMASK_ALIAS_USE")); simple = deepcopy(safe); simple[0]["run"] = 'source tools/scripts/github_actions_mask_env.sh\ngha_mask_env CORDUM_API_KEY "$(false)"'; mutations.append((simple, "COMMAND_SUBSTITUTION_ARGUMENT"))
+    alias = deepcopy(safe); alias.insert(1, {"run": 'lower_alias="$CORDUM_API_KEY"\necho "$lower_alias"'}); mutations.append((alias, "UNSAFE_OUTPUT")); fallback = deepcopy(safe); fallback[2]["env"] = {}; mutations.append((fallback, "FALLBACK_MISMATCH")); prep = deepcopy(safe); prep[1]["run"] = "true"; mutations.append((prep, "OPTIONAL_ARTIFACT_PREP"))
     with TemporaryDirectory() as tmp:
         path = Path(tmp) / "fixture.yml"
         def parsed(steps):
             path.write_text(yaml.safe_dump({"jobs": {"fixture": {"steps": steps}}}), encoding="utf-8")
             return yaml.safe_load(path.read_text(encoding="utf-8"))["jobs"]["fixture"]["steps"]
         if check_job(path.name, "safe", parsed(safe), ["CORDUM_API_KEY"])[0]: return 1
-        return 0 if all(check_job(path.name, "mutated", parsed(item), ["CORDUM_API_KEY"])[0] for item in mutations) else 1
+        return 0 if all(code in check_job(path.name, "safe", parsed(item), ["CORDUM_API_KEY"])[0] for item, code in mutations) else 1
 if __name__ == "__main__":
     if len(sys.argv) == 2 and sys.argv[1] == "--self-test": raise SystemExit(self_test())
     found = scan(Path(sys.argv[1]))
