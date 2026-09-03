@@ -24,7 +24,7 @@ type (
 	NATSConn                   = capruntime.NATSConn
 	RedisBlobStore             = capruntime.RedisBlobStore
 
-	// types introduced with CAP v2.5.2
+	// types introduced with CAP v2.5.1
 	Handshake     = agentv1.Handshake
 	ComponentRole = agentv1.ComponentRole
 	ErrorCode     = agentv1.ErrorCode

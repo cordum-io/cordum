@@ -686,7 +686,7 @@ func TestFullPipeline(t *testing.T) {
 
 ## 8. CAP Re-exported Types
 
-The `sdk/runtime` package re-exports several types from the pinned CAP SDK for convenience (first introduced in CAP v2.13.1). These are available under the `runtime` package without importing CAP directly.
+The `sdk/runtime` package re-exports several types from the pinned CAP SDK for convenience (introduced in CAP v2.5.3). These are available under the `runtime` package without importing CAP directly.
 
 ### MetricsHook
 
@@ -756,7 +756,7 @@ func TestMyHandler(t *testing.T) {
 
 ### Updated Worker Config Fields
 
-The `Config` struct accepts two additional fields introduced in CAP v2.13.1:
+The `Config` struct accepts two additional fields introduced in CAP v2.5.3:
 
 ```go
 type Config struct {
