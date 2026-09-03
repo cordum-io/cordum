@@ -1138,6 +1138,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/edge/llm/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ingest intercepted LLM chat turns from a trusted proxy
+         * @description Disabled by default. When `CORDUM_EDGE_LLM_INGEST_ENABLED` is unset (or non-truthy) the route returns 503 `service_unavailable` and persists nothing. When enabled, an authenticated LLM proxy holding `edge.llm.ingest` submits a bounded batch of intercepted model interactions (prompt/response/cost). The gateway redacts prompt and response content via the Edge redactor, classifies and records each turn as an `AgentActionEvent` with `layer=llm` and `decision=RECORDED`, and returns a per-event advisory decision (`record` | `redact`) plus the redacted content and detected secret finding types. The ALLOW/DENY policy decision is NOT made here — a proxy that must block a prompt pairs this call with `POST /api/v1/edge/evaluate` (layer-agnostic, already classifies `layer=llm`). The `source.source_id` must match the authenticated proxy principal and the referenced session/execution must exist in the tenant under the `llm-proxy` execution adapter. An optional bounded `nonce` is deduplicated against a Redis replay window scoped to `(tenant, llm-proxy)`. Raw provider keys, headers, cookies, and authorization values are rejected at the strict-schema decode boundary. All-or-nothing batch acceptance. See `docs/edge/llm-proxy-governance.md`.
+         */
+        post: operations["ingestEdgeLLMEvents"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/edge/mcp/upstreams": {
         parameters: {
             query?: never;
@@ -2342,6 +2362,23 @@ export interface paths {
         get: operations["getMemory"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/memory/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve a structured resource in an authenticated job scope */
+        post: operations["resolveMemoryResource"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4255,6 +4292,19 @@ export interface components {
             tenant?: string;
             username: string;
         };
+        /** @description Creates or rotates a worker credential. Proof-key fields are optional for legacy credentials, but when any proof-key field is supplied all three and agent_id must be supplied together. Rotating an active proof credential without proof-key fields preserves its enrolled key and authoritative agent link after revalidation; changing agent_id for a proof-bearing credential requires a full proof-key replacement bundle. */
+        CreateWorkerCredentialRequest: {
+            /** @description Active agent identity in the same tenant; required for proof-key enrollment. */
+            agent_id?: string;
+            allowed_pools?: string[];
+            allowed_topics?: string[];
+            /** @enum {string} */
+            proof_algorithm?: "ECDSA_P256_SHA256";
+            proof_key_id?: string;
+            /** @description ECDSA P-256 public key encoded as SubjectPublicKeyInfo PEM. */
+            proof_public_key_pem?: string;
+            worker_id: string;
+        };
         DelegationChainLink: {
             agent_id: string;
             /** Format: date-time */
@@ -4687,6 +4737,105 @@ export interface components {
         };
         EdgeLabels: {
             [key: string]: string;
+        };
+        /** @description Per-event advisory outcome. `decision=redact` means a secret was detected and the proxy should forward `redacted_content` (subject to `truncated`) instead of the original. This is NOT a policy allow/deny decision. */
+        EdgeLLMEventDecision: {
+            /** @enum {string} */
+            decision: "record" | "redact";
+            /** @description Detected secret finding TYPES (never values), e.g. aws_credential, bearer_token, private_key. */
+            findings?: string[];
+            kind: string;
+            redacted: boolean;
+            redacted_content?: string;
+            /** @description Role-preserving redacted chat messages when the submitted event used `messages`. Absent for content-only (single-string) envelopes. */
+            redacted_messages?: components["schemas"]["EdgeLLMMessage"][];
+            /**
+             * @description Whether this decision reflects a scan of the FULL turn content.
+             *     Always true except for kind=llm.stream.chunk, where it is true
+             *     ONLY when the chunk was submitted with final=true (which requires
+             *     the full aggregated content). A non-final chunk is scanned in
+             *     isolation and can miss a secret split across a chunk boundary —
+             *     proxies MUST NOT treat redaction_complete=false as a governance
+             *     verdict for forwarding purposes.
+             */
+            redaction_complete: boolean;
+            source_event_id: string;
+            truncated?: boolean;
+        };
+        /** @description One intercepted LLM interaction. Smuggled keys (authorization, headers, cookies, api_key, provider keys) are rejected at the strict-schema decode boundary; content and messages are redacted by the gateway before persistence. */
+        EdgeLLMEventEnvelope: {
+            agent_product?: string;
+            artifact_ptrs?: components["schemas"]["EdgeArtifactPointer"][];
+            /** @description Prompt or completion text; bounded by the 1 MiB raw-envelope cap and redacted by the gateway before persistence. */
+            content?: string;
+            cost_usd?: number;
+            /** @enum {string} */
+            direction?: "" | "prompt" | "response";
+            execution_id: string;
+            /** @description Marks the last chunk of a stream. When true, content (or messages) MUST carry the full aggregated response text, not just the last delta — required for the mandatory redaction scan to be complete. A final=true chunk with no content or messages is rejected. */
+            final?: boolean;
+            /**
+             * @description llm.stream.chunk carries one delta of a streamed response and is
+             *     scanned in isolation — a secret split across a chunk boundary can
+             *     evade per-chunk redaction. A chunk is redaction-complete (see
+             *     EdgeLLMEventDecision.redaction_complete) ONLY when submitted with
+             *     final=true and the full aggregated content/messages for the
+             *     stream. See docs/edge/llm-proxy-governance.md "Streaming chunk
+             *     redaction limits".
+             * @enum {string}
+             */
+            kind: "llm.request.pre" | "llm.request.post" | "llm.stream.chunk" | "llm.cost.recorded";
+            labels?: {
+                [key: string]: string;
+            };
+            messages?: components["schemas"]["EdgeLLMMessage"][];
+            model?: string;
+            /** Format: date-time */
+            observed_at: string;
+            /** @enum {string} */
+            outcome_status?: "" | "ok" | "failed" | "degraded";
+            provider?: string;
+            /** @description 0-based chunk position within stream_id. Only meaningful for kind=llm.stream.chunk. */
+            sequence?: number;
+            session_id: string;
+            source_event_id: string;
+            /** @description Groups the chunks of one streamed response. Only meaningful for kind=llm.stream.chunk; reserved as the key for a future server-side reassembly pass. */
+            stream_id?: string;
+            tenant_id: string;
+            tokens?: components["schemas"]["EdgeLLMTokens"];
+        };
+        EdgeLLMIngestRequest: {
+            /** @description Operator correlation identifier only; not used for replay protection. */
+            batch_id?: string;
+            events: components["schemas"]["EdgeLLMEventEnvelope"][];
+            /** @description Optional replay-protection nonce. When present it is deduplicated against a Redis replay window scoped to `(tenant, llm-proxy)`. Set `CORDUM_EDGE_LLM_REPLAY_REQUIRED=true` to mandate it. */
+            nonce?: string;
+            source: components["schemas"]["EdgeLLMIngestSource"];
+        };
+        EdgeLLMIngestResponse: {
+            accepted_count: number;
+            decisions?: components["schemas"]["EdgeLLMEventDecision"][];
+            /**
+             * @description True when a duplicate nonce was suppressed and no events were appended.
+             * @default false
+             */
+            replayed: boolean;
+        };
+        EdgeLLMIngestSource: {
+            /** @description Stable identifier of the trusted LLM proxy; must match the authenticated proxy principal. */
+            source_id: string;
+        };
+        /** @description One role-tagged chat message; content is redacted before persistence. */
+        EdgeLLMMessage: {
+            /** @description Message text; bounded by the 1 MiB raw-envelope cap (MaxLLMRawEnvelopeBytes in core/edge/llmingest) and redacted by the gateway before persistence. */
+            content: string;
+            role: string;
+        };
+        /** @description Optional token accounting for usage/cost evidence. */
+        EdgeLLMTokens: {
+            input_tokens?: number;
+            output_tokens?: number;
+            total_tokens?: number;
         };
         EdgeRiskSummary: {
             approval_count?: number;
@@ -6252,12 +6401,16 @@ export interface components {
             last_triggered?: string;
         };
         WorkerCredential: {
+            agent_id?: string;
             allowed_pools?: string[];
             allowed_topics?: string[];
             /** Format: date-time */
             created_at: string;
             created_by: string;
             pack_id?: string;
+            /** @enum {string} */
+            proof_algorithm?: "ECDSA_P256_SHA256";
+            proof_key_id?: string;
             /** Format: date-time */
             revoked_at?: string;
             tenant_id: string;
@@ -9124,6 +9277,58 @@ export interface operations {
             503: components["responses"]["EdgeServiceUnavailable"];
         };
     };
+    ingestEdgeLLMEvents: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EdgeLLMIngestRequest"];
+            };
+        };
+        responses: {
+            /** @description Duplicate nonce detected; replay suppressed idempotently */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeLLMIngestResponse"];
+                };
+            };
+            /** @description LLM events redacted and appended */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeLLMIngestResponse"];
+                };
+            };
+            400: components["responses"]["EdgeBadRequest"];
+            401: components["responses"]["EdgeUnauthorized"];
+            403: components["responses"]["EdgeForbidden"];
+            404: components["responses"]["EdgeNotFound"];
+            413: components["responses"]["EdgePayloadTooLarge"];
+            /** @description Per-execution event cap exceeded (`event_cap_exceeded`), or replay window cardinality exceeded (`replay_window_full`) */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeError"];
+                };
+            };
+            500: components["responses"]["EdgeInternalServerError"];
+            503: components["responses"]["EdgeServiceUnavailable"];
+        };
+    };
     listEdgeMCPUpstreams: {
         parameters: {
             query?: {
@@ -11811,6 +12016,54 @@ export interface operations {
             500: components["responses"]["InternalServerError"];
         };
     };
+    resolveMemoryResource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    job_id: string;
+                    reference: {
+                        /** Format: date-time */
+                        expiresAt: string;
+                        mediaType: string;
+                        purpose: string;
+                        resolverId: string;
+                        /** Format: byte */
+                        sha256: string;
+                        /** Format: uint64 */
+                        sizeBytes: number;
+                        uri: string;
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Integrity-verified resource content and safe metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: byte */
+                        base64: string;
+                        media_type: string;
+                        size_bytes: number;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            413: components["responses"]["PayloadTooLarge"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
     listPacks: {
         parameters: {
             query?: never;
@@ -14382,11 +14635,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    allowed_pools?: string[];
-                    allowed_topics?: string[];
-                    worker_id: string;
-                };
+                "application/json": components["schemas"]["CreateWorkerCredentialRequest"];
             };
         };
         responses: {
@@ -15132,6 +15381,7 @@ export enum ApiPaths {
     createEdgeEvent = "/api/v1/edge/events",
     createEdgeEventsBatch = "/api/v1/edge/events/batch",
     ingestEdgeRuntimeEvents = "/api/v1/edge/runtime/events",
+    ingestEdgeLLMEvents = "/api/v1/edge/llm/events",
     listEdgeSessionEvents = "/api/v1/edge/sessions/{session_id}/events",
     exportEdgeSession = "/api/v1/edge/sessions/{session_id}/export",
     listEdgeExecutionEvents = "/api/v1/edge/executions/{execution_id}/events",
@@ -15228,6 +15478,7 @@ export enum ApiPaths {
     getStatus = "/api/v1/status",
     listWorkers = "/api/v1/workers",
     getMemory = "/api/v1/memory",
+    resolveMemoryResource = "/api/v1/memory/resolve",
     createArtifact = "/api/v1/artifacts",
     getArtifact = "/api/v1/artifacts/{ptr}",
     mcpSSE = "/mcp/sse",
