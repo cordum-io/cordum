@@ -13,7 +13,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   (tag commit `e580c670d54a7563c749835c7dd09d81f116c823`), completed as a full
   release: GitHub Release published, `cap-sdk-node`/`cap-sdk-python`/`cordum-guard`
   2.17.0 live on npm/PyPI, Go module verified against the public proxy with a
-  clean module cache, and the CAP release manifest promoted to declare 2.17.0.
+  clean module cache. The CAP `release/manifest.json` promotion (release block
+  2.16.1 -> 2.17.0 on cap `main`) lands separately via cap PR #90.
 - Added `tools/scripts/cap_version_consistency_test.go`: root, nested SDK, and CI
   `CAP_REV`/`CAP_HANDSHAKE_CAP_SHA` must agree on one exact published CAP
   tag/commit pair, with pseudo-versions and CAP `replace` directives rejected.
