@@ -610,6 +610,7 @@ export enum ErrorCode {
 /** Human-readable label for an ErrorCode value. */
 export function errorCodeLabel(code: number): string {
   switch (code) {
+    case ErrorCode.UNSPECIFIED: return "Unspecified";
     case ErrorCode.PROTOCOL_VERSION_MISMATCH: return "Protocol: Version Mismatch";
     case ErrorCode.PROTOCOL_MALFORMED_PACKET: return "Protocol: Malformed Packet";
     case ErrorCode.PROTOCOL_UNKNOWN_PAYLOAD: return "Protocol: Unknown Payload";

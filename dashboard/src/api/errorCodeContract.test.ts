@@ -37,6 +37,9 @@ describe("ErrorCode wire contract", () => {
   });
 
   it("labels wire values with the matching category and name", () => {
+    // The defined zero value is a valid protocol value, not an unknown code.
+    expect(errorCodeLabel(0)).toBe("Unspecified");
+    expect(errorCodeLabel(ErrorCode.UNSPECIFIED)).toBe("Unspecified");
     expect(errorCodeLabel(200)).toBe("Job: Timeout");
     expect(errorCodeLabel(204)).toBe("Job: Not Found");
     expect(errorCodeLabel(102)).toBe("Protocol: Unknown Payload");
