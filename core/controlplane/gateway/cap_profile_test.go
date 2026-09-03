@@ -132,3 +132,37 @@ func TestGatewayReadinessGatePrecedesListenersAndGoroutines(t *testing.T) {
 		}
 	}
 }
+
+// The gateway's legacy Redis pointer bridge (GET /api/v1/memory?key=|?ptr=,
+// raw context_ptr/result_ptr echoes) is fail-closed unless explicitly opted
+// in. The compat profile must opt in exactly once, and only when the profile
+// is not CAP-PRODUCTION, mirroring the embedded workflow engine wiring.
+func TestGatewayLegacyMemoryCompatibilityIsProfileGated(t *testing.T) {
+	src, err := os.ReadFile("gateway.go")
+	if err != nil {
+		t.Fatalf("read gateway.go: %v", err)
+	}
+	text := string(src)
+
+	const optIn = "s.WithLegacyMemoryCompatibility(nil)"
+	if got := strings.Count(text, optIn); got != 1 {
+		t.Fatalf("legacy memory compatibility opt-ins = %d, want exactly 1", got)
+	}
+	guarded := "if !capProfile.IsProduction() {\n\t\t" + optIn + "\n\t}"
+	if !strings.Contains(text, guarded) {
+		t.Fatal("legacy memory compatibility opt-in is not guarded by !capProfile.IsProduction()")
+	}
+
+	construct := strings.Index(text, "s := &server{")
+	optInAt := strings.Index(text, optIn)
+	serve := strings.Index(text, "startHTTPServer(")
+	if construct < 0 || serve < 0 {
+		t.Fatal("gateway.go structure changed; update this ordering guard")
+	}
+	if optInAt < construct {
+		t.Fatal("legacy memory compatibility is enabled before the server is constructed")
+	}
+	if optInAt > serve {
+		t.Fatal("legacy memory compatibility is enabled after the HTTP server starts")
+	}
+}

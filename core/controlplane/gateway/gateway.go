@@ -858,6 +858,17 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	s.WithGatewayHandshakeSecurity(
 		gatewayHandshake.mode, gatewayHandshake.heartbeatMode, gatewayHandshake.issuer,
 	)
+	// Legacy Redis pointer inspection (GET /api/v1/memory?key=|?ptr=, plus the
+	// raw context_ptr/result_ptr echoed by the job and approval views) is the
+	// same profile-gated opt-in as the embedded workflow engine above: the
+	// gateway's resource reader is fail-closed by default (structured
+	// ResourceRefs only), and only the default/compat profile re-enables the
+	// migration-only pointer bridge. Without this the compat-profile gateway
+	// answers every legacy memory read with 400 "structured resource
+	// reference required" (production gate 16, dashboard memory inspector).
+	if !capProfile.IsProduction() {
+		s.WithLegacyMemoryCompatibility(nil)
+	}
 	// Production action-gate pipeline wiring. Must be called after the
 	// server struct is populated (edgeStore + agentIdentityStore must be
 	// non-nil for the gate dependencies to bind) and before any HTTP

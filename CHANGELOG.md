@@ -123,6 +123,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+#### core/controlplane/gateway — compat profile re-enables the legacy memory pointer reader (2026-09-03, integration-nightly gate 16)
+
+- `GET /api/v1/memory?key=|?ptr=` answered every request with 400
+  "structured resource reference required" since the CAP-PRODUCTION
+  landing (#394): the gateway's resource reader is fail-closed by default
+  and `RunWithAuth` never called `WithLegacyMemoryCompatibility` for the
+  default/compat profile, unlike the embedded workflow engine right above
+  it. The gateway now opts the legacy Redis pointer bridge in under the same
+  `!capProfile.IsProduction()` guard, which also restores the raw
+  `context_ptr`/`result_ptr` echoes on job and approval views. CAP-PRODUCTION
+  stays fail-closed. Fixes production gate 16 (Degradation) in the
+  "Integration (Nightly)" workflow, red since 2026-07-23, and the dashboard
+  memory inspector.
+
 #### cmd/cordum-scheduler — /health handler deps are now race-free during startup (2026-06-02, task-db950d76)
 
 - The scheduler metrics/health HTTP server is started in a goroutine (`ListenAndServe`) with `healthDep` already registered as the `/health` handler, but its backing pointer fields (`jobStore`/`bus`/`safetyClient`) were assigned later on the main goroutine after multi-second blocking dependency init (Redis/NATS/safety-kernel construction). `healthDeps.ServeHTTP` reads exactly those three fields, and the struct had no synchronization — so a `/health` request landing in the startup window was an unsynchronized concurrent read/write (a genuine data race under the Go memory model and a `go test -race` failure, the canonical CI gate). Functional impact was benign (nil-checked fields read as `degraded`/503, the correct mid-startup answer); the real cost was UB / torn-pointer read + a flaky `-race` CI signal. **Fix:** `healthDeps` now carries a `sync.RWMutex`; a new `setDeps` publishes the three fields under the write lock and `ServeHTTP` snapshots them under the read lock before doing its (slower) Ping I/O outside the lock. The mutex (rather than reordering the server start to after dep wiring) is deliberate so `/health` keeps serving a correct `degraded`/503 liveness answer throughout dep init instead of refusing connections — avoiding a liveness probe killing the pod during slow startup. Readiness probes (which close over already-assigned locals) were never affected. A focused reproduction (`health_race_test.go`: 8 concurrent `/health` readers vs. a `setDeps` writer) is clean (`-race` verified in Linux/WSL CI per `CLAUDE.md`; this box is CGO-off, so `-count=3` is the local substitute). Confined to `cmd/cordum-scheduler/main.go` (+ `health_race_test.go`). General-purpose platform fix (demo-neutral).
