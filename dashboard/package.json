@@ -85,7 +85,7 @@
     "jsdom": "^29.1.1",
     "knip": "^6.27.0",
     "msw": "^2.15.0",
-    "orval": "^7",
+    "orval": "^8",
     "postcss": "^8.5.21",
     "prettier": "^3.9.6",
     "rollup-plugin-visualizer": "^7.0.1",

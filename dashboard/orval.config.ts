@@ -27,7 +27,12 @@ export default defineConfig({
       target: "./src/api/generated/cordum.ts",
       schemas: "./src/api/generated/model",
       client: "react-query",
-      prettier: true,
+      // orval 8 defaults httpClient to "fetch", which changes the mutator call
+      // shape to (url, RequestInit). Keep "axios" so apiClient keeps receiving
+      // the single { url, method, headers, data, signal } config object.
+      httpClient: "axios",
+      // orval 8 replaced `prettier: true` with `formatter`.
+      formatter: "prettier",
       clean: true,
       override: {
         mutator: {
