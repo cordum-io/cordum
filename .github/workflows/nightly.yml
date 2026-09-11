@@ -37,17 +37,17 @@ jobs:
     - name: Verify required-secret guards
       run: bash tools/scripts/test_required_secrets.sh
 
-    - name: Generate API key
-      run: echo "CORDUM_API_KEY=$(openssl rand -hex 32)" >> $GITHUB_ENV
-
-    - name: Generate Redis password
-      run: echo "REDIS_PASSWORD=$(openssl rand -hex 32)" >> $GITHUB_ENV
-
-    - name: Configure licensed CI runtime
+    - name: Configure masked CI credentials
       run: |
-        go run ./tools/cilicense >> "$GITHUB_ENV"
+        source tools/scripts/github_actions_mask_env.sh
+        api_key="$(openssl rand -hex 32)" || exit 1
+        gha_mask_env CORDUM_API_KEY "${api_key}"
+        redis_password="$(openssl rand -hex 32)" || exit 1
+        gha_mask_env REDIS_PASSWORD "${redis_password}"
+        admin_password="$(openssl rand -hex 32)" || exit 1
+        gha_mask_env CORDUM_ADMIN_PASSWORD "${admin_password}"
+        gha_mask_env_from_command CORDUM_LICENSE_TOKEN CORDUM_LICENSE_PUBLIC_KEY -- go run ./tools/cilicense
         echo "CORDUM_USER_AUTH_ENABLED=true" >> "$GITHUB_ENV"
-        echo "CORDUM_ADMIN_PASSWORD=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
 
     - name: Generate TLS certificates
       # Relax permissions so non-root containers in docker-compose can
@@ -85,8 +85,15 @@ jobs:
         CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
         REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
 
-    - name: Upload gate results
+    - name: Redact gate results
+      id: redact_full_gate_results
       if: always()
+      run: |
+        source tools/scripts/github_actions_mask_env.sh
+        gha_redact_paths CORDUM_API_KEY REDIS_PASSWORD CORDUM_ADMIN_PASSWORD CORDUM_LICENSE_TOKEN CORDUM_LICENSE_PUBLIC_KEY -- production_gate_results.json
+
+    - name: Upload gate results
+      if: always() && steps.redact_full_gate_results.outcome == 'success'
       uses: actions/upload-artifact@v7
       with:
         name: nightly-gate-results
@@ -97,8 +104,15 @@ jobs:
       run: |
         docker compose logs > docker-compose-logs.txt 2>&1
 
-    - name: Upload logs on failure
+    - name: Redact logs on failure
+      id: redact_full_gate_logs
       if: failure()
+      run: |
+        source tools/scripts/github_actions_mask_env.sh
+        gha_redact_paths CORDUM_API_KEY REDIS_PASSWORD CORDUM_ADMIN_PASSWORD CORDUM_LICENSE_TOKEN CORDUM_LICENSE_PUBLIC_KEY -- docker-compose-logs.txt
+
+    - name: Upload logs on failure
+      if: failure() && steps.redact_full_gate_logs.outcome == 'success'
       uses: actions/upload-artifact@v7
       with:
         name: docker-compose-logs
@@ -132,17 +146,17 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-go-
 
-    - name: Generate API key
-      run: echo "CORDUM_API_KEY=$(openssl rand -hex 32)" >> $GITHUB_ENV
-
-    - name: Generate Redis password
-      run: echo "REDIS_PASSWORD=$(openssl rand -hex 32)" >> $GITHUB_ENV
-
-    - name: Configure licensed CI runtime
+    - name: Configure masked CI credentials
       run: |
-        go run ./tools/cilicense >> "$GITHUB_ENV"
+        source tools/scripts/github_actions_mask_env.sh
+        api_key="$(openssl rand -hex 32)" || exit 1
+        gha_mask_env CORDUM_API_KEY "${api_key}"
+        redis_password="$(openssl rand -hex 32)" || exit 1
+        gha_mask_env REDIS_PASSWORD "${redis_password}"
+        admin_password="$(openssl rand -hex 32)" || exit 1
+        gha_mask_env CORDUM_ADMIN_PASSWORD "${admin_password}"
+        gha_mask_env_from_command CORDUM_LICENSE_TOKEN CORDUM_LICENSE_PUBLIC_KEY -- go run ./tools/cilicense
         echo "CORDUM_USER_AUTH_ENABLED=true" >> "$GITHUB_ENV"
-        echo "CORDUM_ADMIN_PASSWORD=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
 
     - name: Generate TLS certificates
       # Relax permissions so non-root containers in docker-compose can
@@ -192,8 +206,15 @@ jobs:
         CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
         REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
 
-    - name: Upload strict gate results
+    - name: Redact strict gate results
+      id: redact_release_gate_results
       if: always()
+      run: |
+        source tools/scripts/github_actions_mask_env.sh
+        gha_redact_paths CORDUM_API_KEY REDIS_PASSWORD CORDUM_ADMIN_PASSWORD CORDUM_LICENSE_TOKEN CORDUM_LICENSE_PUBLIC_KEY -- production_gate_results.json performance_gate_results.json
+
+    - name: Upload strict gate results
+      if: always() && steps.redact_release_gate_results.outcome == 'success'
       uses: actions/upload-artifact@v7
       with:
         name: release-gate-results
@@ -205,8 +226,15 @@ jobs:
       if: failure()
       run: docker compose logs > release-gate-logs.txt 2>&1
 
-    - name: Upload logs on failure
+    - name: Redact logs on failure
+      id: redact_release_gate_logs
       if: failure()
+      run: |
+        source tools/scripts/github_actions_mask_env.sh
+        gha_redact_paths CORDUM_API_KEY REDIS_PASSWORD CORDUM_ADMIN_PASSWORD CORDUM_LICENSE_TOKEN CORDUM_LICENSE_PUBLIC_KEY -- release-gate-logs.txt
+
+    - name: Upload logs on failure
+      if: failure() && steps.redact_release_gate_logs.outcome == 'success'
       uses: actions/upload-artifact@v7
       with:
         name: release-gate-logs
@@ -239,17 +267,17 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-go-
 
-    - name: Generate API key
-      run: echo "CORDUM_API_KEY=$(openssl rand -hex 32)" >> $GITHUB_ENV
-
-    - name: Generate Redis password
-      run: echo "REDIS_PASSWORD=$(openssl rand -hex 32)" >> $GITHUB_ENV
-
-    - name: Configure licensed CI runtime
+    - name: Configure masked CI credentials
       run: |
-        go run ./tools/cilicense >> "$GITHUB_ENV"
+        source tools/scripts/github_actions_mask_env.sh
+        api_key="$(openssl rand -hex 32)" || exit 1
+        gha_mask_env CORDUM_API_KEY "${api_key}"
+        redis_password="$(openssl rand -hex 32)" || exit 1
+        gha_mask_env REDIS_PASSWORD "${redis_password}"
+        admin_password="$(openssl rand -hex 32)" || exit 1
+        gha_mask_env CORDUM_ADMIN_PASSWORD "${admin_password}"
+        gha_mask_env_from_command CORDUM_LICENSE_TOKEN CORDUM_LICENSE_PUBLIC_KEY -- go run ./tools/cilicense
         echo "CORDUM_USER_AUTH_ENABLED=true" >> "$GITHUB_ENV"
-        echo "CORDUM_ADMIN_PASSWORD=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
 
     - name: Generate TLS certificates
       # Relax permissions so non-root containers in docker-compose can
@@ -282,7 +310,9 @@ jobs:
         REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
 
     - name: Run soak test
-      run: bash tools/scripts/soak_test.sh
+      run: |
+        touch soak_results.json soak_metrics.log soak_http.log
+        bash tools/scripts/soak_test.sh
       env:
         CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
         REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
@@ -290,8 +320,15 @@ jobs:
         CORDUM_TLS_CA: certs/ca/ca.crt
         SOAK_DURATION_MINUTES: ${{ inputs.soak_duration || '60' }}
 
-    - name: Upload soak results
+    - name: Redact soak results
+      id: redact_soak_results
       if: always()
+      run: |
+        source tools/scripts/github_actions_mask_env.sh
+        gha_redact_paths CORDUM_API_KEY REDIS_PASSWORD CORDUM_ADMIN_PASSWORD CORDUM_LICENSE_TOKEN CORDUM_LICENSE_PUBLIC_KEY -- soak_results.json soak_metrics.log soak_http.log
+
+    - name: Upload soak results
+      if: always() && steps.redact_soak_results.outcome == 'success'
       uses: actions/upload-artifact@v7
       with:
         name: soak-test-results
@@ -304,8 +341,15 @@ jobs:
       if: failure()
       run: docker compose logs > soak-docker-logs.txt 2>&1
 
-    - name: Upload logs on failure
+    - name: Redact logs on failure
+      id: redact_soak_logs
       if: failure()
+      run: |
+        source tools/scripts/github_actions_mask_env.sh
+        gha_redact_paths CORDUM_API_KEY REDIS_PASSWORD CORDUM_ADMIN_PASSWORD CORDUM_LICENSE_TOKEN CORDUM_LICENSE_PUBLIC_KEY -- soak-docker-logs.txt
+
+    - name: Upload logs on failure
+      if: failure() && steps.redact_soak_logs.outcome == 'success'
       uses: actions/upload-artifact@v7
       with:
         name: soak-docker-logs
