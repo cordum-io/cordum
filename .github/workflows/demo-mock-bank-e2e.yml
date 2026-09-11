@@ -47,13 +47,14 @@ jobs:
           mkdir -p ./bin
           go build -o ./bin/cordumctl ./cmd/cordumctl
 
-      - name: Generate API key + Redis password
+      - name: Configure masked CI credentials
         run: |
-          echo "CORDUM_API_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
-          echo "REDIS_PASSWORD=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
-
-      - name: Configure licensed CI runtime
-        run: go run ./tools/cilicense >> "$GITHUB_ENV"
+          source tools/scripts/github_actions_mask_env.sh
+          api_key="$(openssl rand -hex 32)" || exit 1
+          gha_mask_env CORDUM_API_KEY "${api_key}"
+          redis_password="$(openssl rand -hex 32)" || exit 1
+          gha_mask_env REDIS_PASSWORD "${redis_password}"
+          gha_mask_env_from_command CORDUM_LICENSE_TOKEN CORDUM_LICENSE_PUBLIC_KEY -- go run ./tools/cilicense
 
       - name: Generate TLS certificates
         run: |
@@ -109,8 +110,9 @@ jobs:
       - name: Capture logs on failure
         if: failure()
         run: |
-          export CORDUM_API_KEY="${CORDUM_API_KEY:-teardown-placeholder-api-key}"
-          export REDIS_PASSWORD="${REDIS_PASSWORD:-teardown-placeholder-redis-password}"
+          : "${CORDUM_API_KEY:=teardown-placeholder-api-key}"
+          : "${REDIS_PASSWORD:=teardown-placeholder-redis-password}"
+          export CORDUM_API_KEY REDIS_PASSWORD
           mkdir -p /tmp/mock-bank-logs
           docker compose logs --no-color mock-bank-worker > /tmp/mock-bank-logs/mock-bank-worker.log 2>&1 || true
           docker compose logs --no-color scheduler > /tmp/mock-bank-logs/scheduler.log 2>&1 || true
@@ -119,8 +121,20 @@ jobs:
           docker compose logs --no-color safety-kernel > /tmp/mock-bank-logs/safety-kernel.log 2>&1 || true
           docker compose ps > /tmp/mock-bank-logs/compose-ps.txt || true
 
-      - name: Upload failure artifacts
+      - name: Redact failure artifacts
+        id: redact_failure_artifacts
         if: failure()
+        env:
+          CORDUM_API_KEY: ${{ env.CORDUM_API_KEY || 'credential-unavailable-for-redaction' }}
+          REDIS_PASSWORD: ${{ env.REDIS_PASSWORD || 'credential-unavailable-for-redaction' }}
+          CORDUM_LICENSE_TOKEN: ${{ env.CORDUM_LICENSE_TOKEN || 'credential-unavailable-for-redaction' }}
+          CORDUM_LICENSE_PUBLIC_KEY: ${{ env.CORDUM_LICENSE_PUBLIC_KEY || 'credential-unavailable-for-redaction' }}
+        run: |
+          source tools/scripts/github_actions_mask_env.sh
+          gha_redact_paths CORDUM_API_KEY REDIS_PASSWORD CORDUM_LICENSE_TOKEN CORDUM_LICENSE_PUBLIC_KEY -- /tmp/mock-bank-logs
+
+      - name: Upload failure artifacts
+        if: failure() && steps.redact_failure_artifacts.outcome == 'success'
         uses: actions/upload-artifact@v7
         with:
           name: demo-mock-bank-e2e-failure
@@ -130,6 +144,7 @@ jobs:
       - name: Tear down compose stack
         if: always()
         run: |
-          export CORDUM_API_KEY="${CORDUM_API_KEY:-teardown-placeholder-api-key}"
-          export REDIS_PASSWORD="${REDIS_PASSWORD:-teardown-placeholder-redis-password}"
+          : "${CORDUM_API_KEY:=teardown-placeholder-api-key}"
+          : "${REDIS_PASSWORD:=teardown-placeholder-redis-password}"
+          export CORDUM_API_KEY REDIS_PASSWORD
           docker compose --profile demo down -v
