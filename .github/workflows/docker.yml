@@ -132,7 +132,7 @@ jobs:
 
       - name: Upload Trivy SARIF
         if: always() && hashFiles(format('trivy-{0}.sarif', matrix.name)) != ''
-        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v3
+        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v3
         with:
           sarif_file: trivy-${{ matrix.name }}.sarif
           category: trivy-${{ matrix.name }}
@@ -240,7 +240,7 @@ jobs:
 
       - name: Upload Trivy SARIF (dashboard)
         if: always() && hashFiles('trivy-dashboard.sarif') != ''
-        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v3
+        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v3
         with:
           sarif_file: trivy-dashboard.sarif
           category: trivy-dashboard
@@ -353,7 +353,7 @@ jobs:
 
       - name: Upload Trivy SARIF (demo-quickstart-worker)
         if: always() && hashFiles('trivy-demo-quickstart-worker.sarif') != ''
-        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v3
+        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v3
         with:
           sarif_file: trivy-demo-quickstart-worker.sarif
           category: trivy-demo-quickstart-worker
