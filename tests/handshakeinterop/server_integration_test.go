@@ -26,7 +26,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const pinnedNATSServerVersion = "2.14.3"
+const pinnedNATSServerVersion = "2.14.6"
 
 type interopIdentity struct {
 	workerID, agentID, tenantID, keyID, sdkVersion string
