@@ -33,11 +33,11 @@ export default defineConfig({
       // wraps the require in a dynamic helper that Rollup cannot analyse.
       "@dagrejs/dagre": path.resolve(
         __dirname,
-        "node_modules/@dagrejs/dagre/dist/dagre.cjs.js",
+        "node_modules/@dagrejs/dagre/dist/dagre.cjs",
       ),
       "@dagrejs/graphlib": path.resolve(
         __dirname,
-        "node_modules/@dagrejs/graphlib/dist/graphlib.cjs.js",
+        "node_modules/@dagrejs/graphlib/dist/graphlib.cjs",
       ),
     },
   },
