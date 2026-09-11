@@ -24,13 +24,13 @@ type (
 	NATSConn                   = capruntime.NATSConn
 	RedisBlobStore             = capruntime.RedisBlobStore
 
-	// CAP v2.5.2 types
+	// types introduced with CAP v2.5.2
 	Handshake     = agentv1.Handshake
 	ComponentRole = agentv1.ComponentRole
 	ErrorCode     = agentv1.ErrorCode
 	AlertSeverity = agentv1.AlertSeverity
 
-	// CAP v2.5.3 — observability, testing, middleware
+	// introduced with CAP v2.5.3 — observability, testing, middleware
 	MetricsHook = capsdk.MetricsHook
 	Middleware  = capruntime.Middleware
 	HandlerFunc = capruntime.HandlerFunc
