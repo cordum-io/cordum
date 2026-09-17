@@ -246,6 +246,11 @@ run_live_contract_test() {
   local seeded_key seeded_redis api_base status_json quickstart_log rc
   seeded_key="test-key-$(date +%s)-$(openssl rand -hex 16)"
   seeded_redis="test-redis-$(openssl rand -hex 16)"
+  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    source "${REPO_ROOT}/tools/scripts/github_actions_mask_env.sh"
+    gha_mask_value "${seeded_key}"
+    gha_mask_value "${seeded_redis}"
+  fi
   cat > .env <<ENV
 CORDUM_API_KEY=${seeded_key}
 REDIS_PASSWORD=${seeded_redis}
@@ -258,12 +263,12 @@ ENV
   ./tools/scripts/quickstart.sh --skip-build --skip-smoke --skip-doctor --health-timeout 30 >"${quickstart_log}" 2>&1
   rc=$?
   set -e
+  if grep -Fq "${seeded_key}" "${quickstart_log}" || grep -Fq "${seeded_redis}" "${quickstart_log}"; then
+    fail "quickstart output leaked a full seeded secret value"
+  fi
   cat "${quickstart_log}"
   if [[ "${rc}" -ne 0 ]]; then
     fail "quickstart exited ${rc}"
-  fi
-  if grep -Fq "${seeded_key}" "${quickstart_log}" || grep -Fq "${seeded_redis}" "${quickstart_log}"; then
-    fail "quickstart output leaked a full seeded secret value"
   fi
 
   local curl_tls=()
