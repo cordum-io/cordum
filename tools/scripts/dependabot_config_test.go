@@ -41,6 +41,7 @@ func TestDependabotDefersKnownIncompatibleMigrations(t *testing.T) {
 		entry := findIgnore(t, dashboard, dependency)
 		assertContains(t, entry.UpdateTypes, "version-update:semver-major")
 	}
+	assertContains(t, findIgnore(t, dashboard, "orval").UpdateTypes, "version-update:semver-minor")
 }
 
 func loadDependabotConfig(t *testing.T) dependabotConfig {
