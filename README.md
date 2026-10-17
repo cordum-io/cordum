@@ -606,17 +606,20 @@ See [ROADMAP.md](ROADMAP.md) for the full feature roadmap, completed milestones,
 
 See [CHANGELOG.md](CHANGELOG.md) for a detailed log of all changes by version.
 
-## Compared To
+## Where Cordum Fits in the Agent Stack
 
-| Feature | Cordum | Guardrails AI | NeMo Guardrails | Custom Middleware |
-|---------|--------|--------------|-----------------|-------------------|
-| Pre-execution policy engine | ✅ Safety Kernel | ❌ Post-generation | ⚠️ Dialog rails only | ⚠️ Manual |
-| Human-in-the-loop approvals | ✅ Built-in | ❌ | ❌ | ⚠️ DIY |
-| Multi-agent fleet governance | ✅ | ❌ Single model | ❌ Single model | ❌ |
-| Deterministic audit trail | ✅ | ❌ | ❌ | ⚠️ Manual |
-| Framework agnostic | ✅ Any via CAP | ❌ Python only | ❌ NVIDIA stack | ❌ |
-| MCP governance | ✅ Bridge + Gateway | ❌ | ❌ | ❌ |
-| Local agent-action firewall | ✅ Cordum Edge (Claude Code hook today) | ❌ | ❌ | ⚠️ DIY |
+Each layer below enforces at a different boundary, and they can be combined.
+Cordum is the action control plane layer; it is meant to run alongside the
+others, not to replace them. Descriptions of other projects paraphrase their
+own documentation.
+
+| Layer | Enforcement boundary | Examples |
+|-------|----------------------|----------|
+| Model and prompt guardrails | Inputs to and outputs from an LLM | [Guardrails AI](https://github.com/guardrails-ai/guardrails) runs Input/Output Guards in your application. [NeMo Guardrails](https://github.com/NVIDIA-NeMo/Guardrails) adds programmable guardrails to LLM-based conversational applications. [Llama Guard](https://github.com/meta-llama/PurpleLlama) is a family of input and output moderation models. |
+| Traffic and MCP gateways | The network path between clients, models, tools and APIs | [IBM ContextForge](https://github.com/IBM/mcp-context-forge) is a registry and proxy that federates MCP, A2A and REST/gRPC APIs. [LiteLLM](https://github.com/BerriAI/litellm) is an AI gateway with a single interface to many LLM providers. |
+| In-process hooks | Checks inside the agent's own process, such as framework callbacks or function wrappers | — |
+| Action control plane (Cordum) | The point where an action is submitted or dispatched | Gateway submit-time policy checks, scheduler pre-dispatch safety checks, the [MCP server](#mcp-server) policy pipeline, and the [Cordum Edge](#cordum-edge-compliance-firewall-for-ai-agents) hook. |
+| Runtime sandboxes | The process, OS or VM the action runs in | [Docker](https://docs.docker.com/get-started/docker-overview/) runs applications in a loosely isolated environment called a container. [gVisor](https://github.com/google/gvisor) is an application kernel that isolates applications from the host OS. [Firecracker](https://github.com/firecracker-microvm/firecracker) runs workloads in lightweight virtual machines called microVMs. [E2B](https://github.com/e2b-dev/E2B) runs AI-generated code in isolated cloud sandboxes. |
 
 ## Contributing
 
