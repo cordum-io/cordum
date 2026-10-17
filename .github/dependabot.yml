@@ -5,6 +5,12 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # CodeQL refuses to run when init/autobuild/analyze differ in version
+    # ("All steps ... must use the same version"), so bump them together.
+    groups:
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
 
   # Keep Go module dependencies current.
   - package-ecosystem: "gomod"
@@ -37,8 +43,11 @@ updates:
     # These majors require source migrations; do not bundle them into routine
     # dependency refreshes where their generated/type changes obscure the diff.
     ignore:
+      # orval minors also: 8.42 calls Map.groupBy (Node 21+) and crashes the
+      # check-api-codegen gate on the Node 20 in dashboard/.nvmrc; generated
+      # output also shifts between minors. Re-allow with the .nvmrc bump.
       - dependency-name: "orval"
-        update-types: ["version-update:semver-major"]
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: "zod"
         update-types: ["version-update:semver-major"]
       - dependency-name: "recharts"
