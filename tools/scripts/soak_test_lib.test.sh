@@ -57,6 +57,28 @@ assert_eq "log storm analysis returns at most five lines" "5" \
 assert_eq "log storm analysis ranks the most repeated line first" "repeated-01" \
   "$(printf '%s\n' "${top_lines}" | sed -n '1p' | awk '{$1=""; sub(/^ /, ""); print}')"
 
+assert_eq "docker sizes convert to MiB" "18.55 1536.00 0.49" \
+  "$(docker_size_to_mib '18.55MiB') $(docker_size_to_mib '1.5GiB') $(docker_size_to_mib '512kB')"
+assert_eq "unparseable docker sizes print nothing" "" "$(docker_size_to_mib 'n/a')"
+assert_eq "memory growth keeps decimals (1.95% -> 2.07% is 6.2%, not 100%)" "6.2" \
+  "$(memory_growth_pct 1.95 2.07)"
+
+load_memory_baseline '# drift-baseline
+{"container":"warmup","mem_usage":"15MiB / 7.6GiB","mem_pct":"0.20%"}
+{"container":"leak","mem_usage":"100MiB / 7.6GiB","mem_pct":"1.30%"}
+{"container":"steady","mem_usage":"50MiB / 7.6GiB","mem_pct":"0.65%"}
+{"container":"opaque","mem_usage":"-- / --","mem_pct":"1.00%"}'
+findings="$(memory_drift_findings '{"container":"warmup","mem_usage":"30MiB / 7.6GiB","mem_pct":"0.40%"}
+{"container":"leak","mem_usage":"200MiB / 7.6GiB","mem_pct":"2.60%"}
+{"container":"steady","mem_usage":"52MiB / 7.6GiB","mem_pct":"0.68%"}
+{"container":"opaque","mem_usage":"-- / --","mem_pct":"2.00%"}' 50 32 post-warm-up)"
+assert_eq "drift past both limits fails, under the MiB floor only warns" "FAIL:leak FAIL:opaque WARN:warmup" \
+  "$(printf '%s\n' "${findings}" |
+    awk -F'\t' '{ n = $2; sub(/^Memory (drift|growth) on /, "", n); sub(/[: ].*$/, "", n); print $1 ":" n }' |
+    sort | tr '\n' ' ' | sed 's/ $//')"
+assert_eq "an unmeasurable size fails closed as a measurement problem, not as drift" "1" \
+  "$(printf '%s\n' "${findings}" | grep -c '^FAIL.*opaque could not be measured in MiB' || true)"
+
 assert_eq "soak script loads analysis helpers" "1" \
   "$(grep -cF 'source "${SCRIPT_DIR}/soak_test_lib.sh"' "${SOAK}" || true)"
 assert_eq "soak script records the intentional 400 expectation" "1" \
@@ -65,6 +87,10 @@ assert_eq "soak error rate uses semantic response classification" "1" \
   "$(grep -cF 'count_unexpected_http_responses "${HTTP_LOG}"' "${SOAK}" || true)"
 assert_eq "soak log ranking avoids an early-closing head pipeline" "1" \
   "$(grep -cF 'top_repeated_log_lines' "${SOAK}" || true)"
+assert_eq "soak drift check uses the decimal-safe helper" "1" \
+  "$(grep -cF 'memory_drift_findings "${final_metrics}"' "${SOAK}" || true)"
+assert_eq "soak warm-up is normalised to base 10 (0300 is not octal 192)" "1" \
+  "$(grep -cF 'WARMUP_SECONDS=$((10#${WARMUP_SECONDS}))' "${SOAK}" || true)"
 
 echo "SUMMARY: ${PASS} pass, ${FAIL} fail"
 [[ "${FAIL}" -eq 0 ]]

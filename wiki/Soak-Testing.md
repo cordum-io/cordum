@@ -50,6 +50,8 @@ All settings are controlled via environment variables:
 | `SOAK_DURATION_MINUTES` | `60` | Test duration |
 | `SOAK_INTERVAL_SECONDS` | `5` | Seconds between request batches |
 | `SOAK_MEMORY_DRIFT_PCT` | `50` | Max allowed memory growth % |
+| `SOAK_MEMORY_DRIFT_MIN_MIB` | `32` | Absolute growth floor in MiB; growth past the % limit but under this floor only warns |
+| `SOAK_WARMUP_SECONDS` | `300` | Load time before the memory-drift baseline is captured (capped at half the run) |
 | `SOAK_LOG_STORM_THRESHOLD` | `100` | Max identical log lines per window |
 | `SOAK_ERROR_RATE_PCT` | `1` | Max allowed 4xx/5xx rate % |
 | `SOAK_RESULTS_FILE` | `soak_results.json` | Output JSON results file |
