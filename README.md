@@ -316,8 +316,8 @@ Cordum puts a policy decision at that dispatch boundary:
   match on tenant, topic, capability, risk tags, actor and labels; the shipped
   policy denies anything no rule matches (`default_decision: deny`).
 - **Risk tags and agent risk tiers.** Rules can match `risk_tags` on any plan.
-  Agent identities, and the `agent_risk_tiers` rules match against, require an
-  Enterprise license.
+  Agent identities, which carry the risk tier that `agent_risk_tiers` rules
+  match, require an Enterprise license.
 - **Cordum Edge.** A local hook evaluates coding-agent tool calls (Claude Code
   today) against the gateway before they run. See
   [Edge Quickstart](#edge-quickstart-compliance-firewall-for-claude-code).
@@ -645,15 +645,15 @@ The BUSL-1.1 parameters in [LICENSE](LICENSE):
 
 - **Change Date:** 2029-01-01, or the fourth anniversary of a version's first
   public distribution under the license, whichever comes first.
-- **Change License:** Apache License, Version 2.0 (Apache-2.0). From the Change
-  Date, that version is available under Apache-2.0.
+- **Change License:** Apache License, Version 2.0 (Apache-2.0). On the earlier
+  of those two dates, rights under Apache-2.0 replace the BUSL-1.1 grant for
+  that version.
 - **Other use:** "If your use of the Licensed Work does not comply with the
   requirements currently in effect as described in this License, you must
   purchase a commercial license from the Licensor, its affiliated entities, or
   authorized resellers, or you must refrain from using the Licensed Work."
 
-See [LICENSE](LICENSE) for the full terms, including the meaning of
-"Competitive Offering".
+See [LICENSE](LICENSE) for the full terms.
 
 **Runtime entitlements are separate from the license.** The control plane
 enforces plan limits in code. Without a valid Cordum license it runs on the
