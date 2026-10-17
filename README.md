@@ -627,14 +627,63 @@ We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## License
 
-Licensed under [Business Source License 1.1 (BUSL-1.1)](LICENSE).
+Cordum ships from three repositories under two licenses. The table follows each
+repository's LICENSE file and package metadata; the LICENSE files are the
+authoritative terms.
 
-- **Self-host and use internally**: Permitted
-- **Modify and contribute back**: Permitted
-- **Offer as a competing hosted service**: Not permitted
-- **Change Date**: January 1, 2029 — automatically converts to Apache License 2.0
+| Component | Repository | License |
+|-----------|------------|---------|
+| Control plane services, dashboard, Cordum Edge, and Cordum's own SDKs (the Go `sdk/` module and `cordum-sdk` on PyPI) | [cordum-io/cordum](LICENSE) | BUSL-1.1 |
+| Integration packs | [cordum-io/cordum-packs](https://github.com/cordum-io/cordum-packs) | BUSL-1.1, with the same Additional Use Grant. A pack directory with its own LICENSE is governed by that file; for example, `packs/incident-enricher` is Apache-2.0. |
+| CAP protocol and its published SDKs (Go module `github.com/cordum-io/cap/v2`, `cap-sdk-python` and `cordum-guard` on PyPI, `cap-sdk-node` on npm) | [cordum-io/cap](https://github.com/cordum-io/cap) | Apache-2.0 |
 
-See [LICENSE](LICENSE) for full terms.
+The BUSL-1.1 parameters in [LICENSE](LICENSE):
+
+> **Additional Use Grant:** You may make use of the Licensed Work for any purpose,
+> including production use and self-hosted deployments, provided that you do not
+> use the Licensed Work to provide a Competitive Offering.
+
+- **Change Date:** 2029-01-01, or the fourth anniversary of a version's first
+  public distribution under the license, whichever comes first.
+- **Change License:** Apache License, Version 2.0 (Apache-2.0). From the Change
+  Date, that version is available under Apache-2.0.
+- **Other use:** "If your use of the Licensed Work does not comply with the
+  requirements currently in effect as described in this License, you must
+  purchase a commercial license from the Licensor, its affiliated entities, or
+  authorized resellers, or you must refrain from using the Licensed Work."
+
+See [LICENSE](LICENSE) for the full terms, including the meaning of
+"Competitive Offering".
+
+**Runtime entitlements are separate from the license.** The control plane
+enforces plan limits in code. Without a valid Cordum license it runs on the
+Community defaults in [`core/licensing/tiers.go`](core/licensing/tiers.go):
+3 workers, 3 concurrent jobs, 500 requests per second, 7-day audit retention,
+single approval mode and no custom policy bundles. It also falls back to these
+defaults when a license cannot be loaded or fails verification
+([`core/licensing/resolver.go`](core/licensing/resolver.go)). These are product
+limits, not BUSL-1.1 terms; see [Enterprise](#enterprise).
+
+### Versioning
+
+Cordum core and CAP release independently, each with its own tags
+([VERSIONING.md](VERSIONING.md)):
+
+- **Cordum core (`v1.x` tags).** A `v*` tag builds and signs the container
+  images for api-gateway, scheduler, safety-kernel, workflow-engine,
+  context-engine, mcp, dashboard and the demo quickstart worker, and publishes
+  the Helm chart ([docker.yml](.github/workflows/docker.yml)). It also publishes
+  signed `cordum-hook`, `cordum-agentd` and `cordum-claude` binaries
+  ([release.yml](.github/workflows/release.yml)). `cordumctl` is built from
+  source (`make build`). The default `docker compose` stack runs api-gateway,
+  scheduler, safety-kernel, workflow-engine, context-engine and dashboard with
+  NATS and Redis. Cordum's own Python and TypeScript SDKs use separate
+  `sdk-python-v*` and `sdk-ts-v*` tags.
+- **CAP (`v2.x` tags).** The protocol and its SDKs release from
+  [cordum-io/cap](https://github.com/cordum-io/cap). Cordum consumes a pinned
+  CAP release through `go.mod` (`github.com/cordum-io/cap/v2 v2.17.0` at the
+  time of writing), so a CAP SDK release does not require a core release, and a
+  core release does not require a CAP release.
 
 ---
 
