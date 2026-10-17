@@ -180,6 +180,8 @@ expect "(a) full script registers the key once on the runner stdout" registered_
 expect "(a) full script stderr and results JSON hold zero sentinel bytes" sealed "${SANDBOX}"/full-ok.{err,json}
 expect "(a) full script uses the key only after registration" used_after_registration "${K16}"
 expect "(a) full script removes its registration state on exit" [ -z "$(ls -A "${SANDBOX}/full-ok.tmp")" ]
+expect "(a) the long-lived mock-bank worker is launched without the mask FD" awk \
+  '/^ *\($/ {s=1} s && /exec \{PG_MASK_FD\}>&-/ {c=1} /nohup / {n=1; exit !c} END {if (!n) exit 1}' <<<"$(extract_function "${PG}" ensure_mock_bank_worker)"
 
 # (b) Every failure path; injected error bodies echo the request and all sentinels.
 B_CASES=(
