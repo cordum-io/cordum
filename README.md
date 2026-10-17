@@ -285,19 +285,42 @@ Reference: [docs/edge/README.md](docs/edge/README.md).
 
 ---
 
-## The Problem: The Agent Risk Gap
+## Why Pre-Dispatch Action Governance?
 
-Enterprises are rushing to deploy **Autonomous AI Agents**, but they're hitting a wall of risk. According to Gartner, **74% of enterprises see AI agents as a new attack vector**, and over 40% of agentic AI projects will be canceled due to inadequate risk controls.
+Agents act with real authority: cloud credentials, database connections,
+authenticated MCP sessions. Common controls each sit at a different boundary,
+and none of them is the point where a specific action is dispatched:
 
-The current landscape leaves teams with a choice:
-1. **Restrict agents** to simple, low-value read-only tasks.
-2. **Accept the risk** of autonomous agents taking destructive, unmonitored actions.
+- **Runtime sandboxes isolate the host, not the authority.** A container or
+  microVM limits what a process can do to the machine it runs on. It does not
+  limit what an agent can do with credentials or sessions it legitimately holds.
+- **Observability records an action after it runs.** Logs and traces explain an
+  incident; they do not hold the call that caused it.
+- **Model and prompt guardrails sit at the LLM boundary.** They check what goes
+  into and comes out of a model. Executing the resulting tool call or job
+  happens in the code that dispatches it.
 
-Without a dedicated governance layer, you're flying blind:
-- **No visibility**: You don't know what your agents are doing until *after* they do it.
-- **No safety rails**: There's no way to intercept dangerous operations before they execute.
-- **No human-in-the-loop**: Sensitive actions happen without manual oversight.
-- **No audit trail**: When things go wrong, you can't reconstruct the chain of thought.
+Cordum puts a policy decision at that dispatch boundary:
+
+- **Normalized, hashed actions.** Approval-gated CAP jobs, action descriptors,
+  MCP tool calls (tenant, server, tool, target path) and Cordum Edge evaluate
+  requests are each reduced to a canonical form and hashed with SHA-256.
+- **Explicit verdicts.** Policy evaluation yields `ALLOW`, `DENY`,
+  `REQUIRE_APPROVAL`, `THROTTLE` or `ALLOW_WITH_CONSTRAINTS`. The gateway,
+  scheduler and Edge evaluate path treat an unknown verdict as `DENY`.
+- **Hash-bound approvals.** A gated action's approval is looked up by tenant and
+  `approval_ref` and must carry the same SHA-256 `action_hash` as the action
+  being run; a changed payload is rejected as `approval_mismatch`. Self-approval,
+  expired and already-consumed approvals are rejected too.
+- **Declarative YAML policies.** Rules in [`config/safety.yaml`](config/safety.yaml)
+  match on tenant, topic, capability, risk tags, actor and labels; the shipped
+  policy denies anything no rule matches (`default_decision: deny`).
+- **Risk tags and agent risk tiers.** Rules can match `risk_tags` on any plan.
+  Agent identities, and the `agent_risk_tiers` rules match against, require an
+  Enterprise license.
+- **Cordum Edge.** A local hook evaluates coding-agent tool calls (Claude Code
+  today) against the gateway before they run. See
+  [Edge Quickstart](#edge-quickstart-compliance-firewall-for-claude-code).
 
 ## The Solution: Cordum Agent Control Plane
 
@@ -533,7 +556,7 @@ proof keys and control-plane signing authorities are provisioned. Follow the
 
 ## Integration Packs
 
-Extend Cordum with [30+ integration packs](https://github.com/cordum-io/cordum-packs) for Slack, GitHub, AWS, Jira, Terraform, Datadog, PagerDuty, and more. Each pack is a CAP-native worker with policy-gated workflows.
+Extend Cordum with [integration packs](https://github.com/cordum-io/cordum-packs) for Slack, GitHub, AWS, Jira, Terraform, Datadog, PagerDuty, and more. Each pack is a CAP-native worker with policy-gated workflows.
 
 | Pack | Category | Description |
 |------|----------|-------------|
