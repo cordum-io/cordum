@@ -5,6 +5,7 @@ package handshakeinterop
 import (
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"runtime/debug"
 	"strings"
@@ -163,4 +164,22 @@ func TestEmbeddedNATSVersionMatchesBuiltDependency(t *testing.T) {
 		t.Fatalf("gnats.VERSION=%q built=%q", gnats.VERSION, built)
 	}
 	t.Logf("embedded NATS server version %s is bound to the built dependency", built)
+}
+
+var readmeNATSVersionClaim = regexp.MustCompile(`nats-server/v2[^\n]*\d+\.\d+\.\d+`)
+
+func TestHandshakeInteropREADMEBindsNATSVersion(t *testing.T) {
+	raw, err := os.ReadFile("README.md")
+	if err != nil {
+		t.Fatalf("read README.md: %v", err)
+	}
+	readme := strings.ReplaceAll(string(raw), "\r\n", "\n")
+	if claim := readmeNATSVersionClaim.FindString(readme); claim != "" {
+		t.Fatalf("README hard-codes a NATS version: %q", claim)
+	}
+	for _, want := range []string{"debug.ReadBuildInfo", "gnats.VERSION"} {
+		if !strings.Contains(readme, want) {
+			t.Fatalf("README does not describe the dependency-bound assertion: missing %q", want)
+		}
+	}
 }
