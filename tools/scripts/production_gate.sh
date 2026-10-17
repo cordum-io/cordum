@@ -636,6 +636,8 @@ ensure_mock_bank_worker() {
     # the launching subshell instead, then read it back in this shell.
     (
       cd "${ROOT_DIR}"
+      # The long-lived worker must not hold the runner stdout open via PG_MASK_FD.
+      if [[ -n "${PG_MASK_FD:-}" ]]; then exec {PG_MASK_FD}>&-; fi
       nohup env NATS_URL="${NATS_URL}" NATS_TOKEN="${NATS_TOKEN:-}" REDIS_URL="${REDIS_URL}" \
         NATS_TLS_CA="${NATS_TLS_CA:-}" NATS_TLS_CERT="${NATS_TLS_CERT:-}" NATS_TLS_KEY="${NATS_TLS_KEY:-}" NATS_TLS_SERVER_NAME="${NATS_TLS_SERVER_NAME:-}" \
         REDIS_TLS_CA="${REDIS_TLS_CA:-}" REDIS_TLS_CERT="${REDIS_TLS_CERT:-}" REDIS_TLS_KEY="${REDIS_TLS_KEY:-}" REDIS_TLS_SERVER_NAME="${REDIS_TLS_SERVER_NAME:-}" \
@@ -4046,5 +4048,7 @@ done
 write_results_json
 summary_rc=0
 print_summary || summary_rc=$?
-pg_assert_secret_registration || exit 1
-exit "${summary_rc}"
+pg_assert_secret_registration || summary_rc=1
+# Conditional, not a bare exit: shellcheck 0.9 marks every function unreachable
+# when a script always ends in exit.
+[[ "${summary_rc}" -eq 0 ]] || exit "${summary_rc}"
