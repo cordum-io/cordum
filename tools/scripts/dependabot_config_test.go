@@ -34,7 +34,10 @@ func TestDependabotDefersKnownIncompatibleMigrations(t *testing.T) {
 	}
 
 	dashboard := findUpdate(t, config, "npm", "/dashboard")
-	for _, dependency := range []string{"orval", "zod", "recharts", "typescript"} {
+	for _, dependency := range []string{
+		"orval", "zod", "recharts", "typescript",
+		"@tanstack/react-table", "vitest", "jsdom", "msw",
+	} {
 		entry := findIgnore(t, dashboard, dependency)
 		assertContains(t, entry.UpdateTypes, "version-update:semver-major")
 	}
