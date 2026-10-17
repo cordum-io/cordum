@@ -45,3 +45,15 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
+      # @tanstack/react-table v9 changes the ColumnDef generics (tsc breaks in
+      # DataTable, JobsPage, AuditLogPage and RecentActivityList).
+      - dependency-name: "@tanstack/react-table"
+        update-types: ["version-update:semver-major"]
+      # vitest 5, jsdom 30 and msw 3 require Node >= 22.12 while dashboard CI
+      # runs the Node 20 in dashboard/.nvmrc. Drop these with the .nvmrc bump.
+      - dependency-name: "vitest"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "jsdom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "msw"
+        update-types: ["version-update:semver-major"]

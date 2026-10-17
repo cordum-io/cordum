@@ -123,6 +123,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+#### tools/scripts/soak_test.sh — memory-drift gate stops failing the nightly soak on integer truncation and warm-up heap growth (2026-10-17)
+
+- The nightly **Soak Test (stability)** job failed every night on its memory-drift gate. Example from the 2026-10-17 run: `cordum-api-gateway-1: 3.52% -> 8.71% (166% growth)` and `cordum-safety-kernel-1: 2.59% -> 4.05% (100% growth)`. The check truncated docker stats percentages to integers before dividing, so 2.59 → 4.05 was computed as 2 → 4 = 100%. It also compared against an idle pre-load sample, where the Go services sit at 13–18MiB inside 512MiB limits and legitimately grow once load starts. **Fix:** growth is computed in floating point by `memory_drift_findings` in `soak_test_lib.sh`, which uses only POSIX awk features so mawk and gawk agree. The baseline is re-captured after `SOAK_WARMUP_SECONDS` of load (default 300, capped at half the run). A container fails only when its growth exceeds both `SOAK_MEMORY_DRIFT_PCT` and the new absolute floor `SOAK_MEMORY_DRIFT_MIN_MIB` (default 32); growth past only the relative limit is reported as a warning. Replaying the 2026-10-17 metrics artifact through the new logic gives zero failures and two warnings (api-gateway +17MiB and redis +12MiB after warm-up). New cases in `soak_test_lib.test.sh`, which runs in CI, pin the decimal math, the MiB conversion and the FAIL/WARN split.
+
+#### core/controlplane/gateway — compat profile re-enables the legacy memory pointer reader (2026-09-03, integration-nightly gate 16)
+
+- `GET /api/v1/memory?key=|?ptr=` answered every request with 400
+  "structured resource reference required" since the CAP-PRODUCTION
+  landing (#394): the gateway's resource reader is fail-closed by default
+  and `RunWithAuth` never called `WithLegacyMemoryCompatibility` for the
+  default/compat profile, unlike the embedded workflow engine right above
+  it. The gateway now opts the legacy Redis pointer bridge in under the same
+  `!capProfile.IsProduction()` guard, which also restores the raw
+  `context_ptr`/`result_ptr` echoes on job and approval views. CAP-PRODUCTION
+  stays fail-closed. Fixes production gate 16 (Degradation) in the
+  "Integration (Nightly)" workflow, red since 2026-07-23, and the dashboard
+  memory inspector.
+
 #### cmd/cordum-scheduler — /health handler deps are now race-free during startup (2026-06-02, task-db950d76)
 
 - The scheduler metrics/health HTTP server is started in a goroutine (`ListenAndServe`) with `healthDep` already registered as the `/health` handler, but its backing pointer fields (`jobStore`/`bus`/`safetyClient`) were assigned later on the main goroutine after multi-second blocking dependency init (Redis/NATS/safety-kernel construction). `healthDeps.ServeHTTP` reads exactly those three fields, and the struct had no synchronization — so a `/health` request landing in the startup window was an unsynchronized concurrent read/write (a genuine data race under the Go memory model and a `go test -race` failure, the canonical CI gate). Functional impact was benign (nil-checked fields read as `degraded`/503, the correct mid-startup answer); the real cost was UB / torn-pointer read + a flaky `-race` CI signal. **Fix:** `healthDeps` now carries a `sync.RWMutex`; a new `setDeps` publishes the three fields under the write lock and `ServeHTTP` snapshots them under the read lock before doing its (slower) Ping I/O outside the lock. The mutex (rather than reordering the server start to after dep wiring) is deliberate so `/health` keeps serving a correct `degraded`/503 liveness answer throughout dep init instead of refusing connections — avoiding a liveness probe killing the pod during slow startup. Readiness probes (which close over already-assigned locals) were never affected. A focused reproduction (`health_race_test.go`: 8 concurrent `/health` readers vs. a `setDeps` writer) is clean (`-race` verified in Linux/WSL CI per `CLAUDE.md`; this box is CGO-off, so `-count=3` is the local substitute). Confined to `cmd/cordum-scheduler/main.go` (+ `health_race_test.go`). General-purpose platform fix (demo-neutral).
