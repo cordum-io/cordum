@@ -204,7 +204,8 @@ expect "(b) ordinary gate failures are not registration failures" rc_is 0 pg_ass
 
 # (c) Registration failures fail the gate before first use and fail the whole run.
 init_masks "${SANDBOX}/c1.mask"
-if [[ -n "${PG_MASK_FD:-}" ]]; then exec {PG_MASK_FD}>&-; fi
+# bash reuses freed descriptors >= 10 for its own saved fds, so point at a high closed one.
+if [[ -n "${PG_MASK_FD:-}" ]]; then exec {PG_MASK_FD}>&-; PG_MASK_FD=200; fi
 run_case 9 "${SANDBOX}/c1.out"
 expect "(c) closed mask FD: gate 9 fails before its first password is used" refused_before_use 9 "${TAG}d2" "${SANDBOX}/c1.out"
 init_masks "${SANDBOX}/c2.mask"
