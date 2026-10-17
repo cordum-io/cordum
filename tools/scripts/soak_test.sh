@@ -14,6 +14,10 @@
 #   SOAK_DURATION_MINUTES     Test duration in minutes (default: 60)
 #   SOAK_INTERVAL_SECONDS     Seconds between request batches (default: 5)
 #   SOAK_MEMORY_DRIFT_PCT     Max allowed memory growth % (default: 50)
+#   SOAK_MEMORY_DRIFT_MIN_MIB Absolute growth floor in MiB; growth below it only
+#                             warns even when the % limit is exceeded (default: 32)
+#   SOAK_WARMUP_SECONDS       Load time before the memory-drift baseline is
+#                             captured; capped at half the run (default: 300)
 #   SOAK_LOG_STORM_THRESHOLD  Max identical log lines per 60s window (default: 100)
 #   SOAK_ERROR_RATE_PCT       Max allowed 4xx/5xx rate % (default: 1)
 #   SOAK_RESULTS_FILE         Output JSON file (default: soak_results.json)
@@ -35,6 +39,8 @@ TENANT_ID="${CORDUM_TENANT_ID:-default}"
 DURATION_MINUTES="${SOAK_DURATION_MINUTES:-60}"
 INTERVAL_SECONDS="${SOAK_INTERVAL_SECONDS:-5}"
 MEMORY_DRIFT_PCT="${SOAK_MEMORY_DRIFT_PCT:-50}"
+MEMORY_DRIFT_MIN_MIB="${SOAK_MEMORY_DRIFT_MIN_MIB:-32}"
+WARMUP_SECONDS="${SOAK_WARMUP_SECONDS:-300}"
 LOG_STORM_THRESHOLD="${SOAK_LOG_STORM_THRESHOLD:-100}"
 ERROR_RATE_PCT="${SOAK_ERROR_RATE_PCT:-1}"
 RESULTS_FILE="${SOAK_RESULTS_FILE:-soak_results.json}"
@@ -115,9 +121,19 @@ fi
 : > "${HTTP_LOG}"
 : > "${METRICS_FILE}"
 
+if [[ ! "${WARMUP_SECONDS}" =~ ^[0-9]+$ ]]; then
+  die "SOAK_WARMUP_SECONDS must be a non-negative integer (got '${WARMUP_SECONDS}')"
+fi
+# Never spend more than half the run warming up, so short dispatch runs
+# (e.g. SOAK_DURATION_MINUTES=1) still measure drift over real load.
+MAX_WARMUP_SECONDS=$(( DURATION_MINUTES * 30 ))
+if [[ ${WARMUP_SECONDS} -gt ${MAX_WARMUP_SECONDS} ]]; then
+  WARMUP_SECONDS=${MAX_WARMUP_SECONDS}
+fi
+
 log "Soak test ${SOAK_ID} starting"
 log "Duration: ${DURATION_MINUTES}m | Interval: ${INTERVAL_SECONDS}s"
-log "Memory drift limit: ${MEMORY_DRIFT_PCT}% | Log storm limit: ${LOG_STORM_THRESHOLD}"
+log "Memory drift limit: ${MEMORY_DRIFT_PCT}% and ${MEMORY_DRIFT_MIN_MIB}MiB (baseline after ${WARMUP_SECONDS}s warm-up) | Log storm limit: ${LOG_STORM_THRESHOLD}"
 log "Error rate limit: ${ERROR_RATE_PCT}%"
 
 # ---------------------------------------------------------------------------
@@ -157,16 +173,11 @@ if [[ -n "${baseline_metrics}" ]]; then
   echo "${baseline_metrics}" >> "${METRICS_FILE}"
 fi
 
-# Extract baseline memory percentages for drift comparison.
-declare -A BASELINE_MEM
-while IFS= read -r line; do
-  if [[ -z "${line}" || "${line}" == "#"* ]]; then continue; fi
-  container=$(echo "${line}" | grep -o '"container":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
-  mem_pct=$(echo "${line}" | grep -o '"mem_pct":"[^"]*"' | head -1 | cut -d'"' -f4 | tr -d '%' || true)
-  if [[ -n "${container}" && -n "${mem_pct}" ]]; then
-    BASELINE_MEM["${container}"]="${mem_pct}"
-  fi
-done <<< "${baseline_metrics}"
+# The pre-load sample is only a fallback for the drift comparison: idle Go
+# services sit at ~15MiB and legitimately double under load, so the real
+# baseline is re-captured after the warm-up window inside the load loop.
+load_memory_baseline "${baseline_metrics}"
+DRIFT_BASELINE_SOURCE="pre-load"
 
 # ---------------------------------------------------------------------------
 # Check for container restarts (baseline)
@@ -198,7 +209,8 @@ trap cleanup EXIT
 # ---------------------------------------------------------------------------
 # Load phase
 # ---------------------------------------------------------------------------
-END_TIME=$(( $(date +%s) + DURATION_MINUTES * 60 ))
+LOAD_START=$(date +%s)
+END_TIME=$(( LOAD_START + DURATION_MINUTES * 60 ))
 BATCH=0
 LAST_METRICS_TS=0
 LAST_LOG_CHECK_TS=0
@@ -239,13 +251,26 @@ while [[ $(date +%s) -lt ${END_TIME} ]]; do
     record_status "POST:/approvals/approve" "${status}"
   done
 
+  # --- Re-baseline memory once the warm-up window has elapsed ---
+  if [[ "${DRIFT_BASELINE_SOURCE}" == "pre-load" && ${WARMUP_SECONDS} -gt 0 \
+        && $((NOW - LOAD_START)) -ge ${WARMUP_SECONDS} ]]; then
+    warm_metrics=$(collect_docker_metrics)
+    if [[ -n "${warm_metrics}" ]]; then
+      load_memory_baseline "${warm_metrics}"
+      DRIFT_BASELINE_SOURCE="post-warm-up (${WARMUP_SECONDS}s)"
+      echo "# drift-baseline ${NOW}" >> "${METRICS_FILE}"
+      echo "${warm_metrics}" >> "${METRICS_FILE}"
+      log "Memory drift baseline captured after ${WARMUP_SECONDS}s of load"
+    fi
+  fi
+
   # --- Collect metrics every 60 seconds ---
   if [[ $((NOW - LAST_METRICS_TS)) -ge 60 ]]; then
     LAST_METRICS_TS=${NOW}
     echo "# snapshot ${NOW}" >> "${METRICS_FILE}"
     collect_docker_metrics >> "${METRICS_FILE}"
 
-    elapsed=$(( (NOW - (END_TIME - DURATION_MINUTES * 60)) / 60 ))
+    elapsed=$(( (NOW - LOAD_START) / 60 ))
     remaining=$(( (END_TIME - NOW) / 60 ))
     log "Batch ${BATCH} | ${elapsed}m elapsed, ${remaining}m remaining"
   fi
@@ -302,27 +327,17 @@ while IFS= read -r line; do
 done <<< "${STORM_ENDPOINTS}"
 
 # --- 3. Memory drift ---
+# Floating-point growth against the post-warm-up baseline; fails only when
+# both the relative limit and the absolute MiB floor are exceeded (see
+# memory_drift_findings in soak_test_lib.sh).
 if command -v docker >/dev/null 2>&1; then
   final_metrics=$(collect_docker_metrics)
-  while IFS= read -r line; do
-    if [[ -z "${line}" || "${line}" == "#"* ]]; then continue; fi
-    container=$(echo "${line}" | grep -o '"container":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
-    mem_pct=$(echo "${line}" | grep -o '"mem_pct":"[^"]*"' | head -1 | cut -d'"' -f4 | tr -d '%' || true)
-    if [[ -n "${container}" && -n "${mem_pct}" ]]; then
-      baseline="${BASELINE_MEM[${container}]:-0}"
-      if [[ "${baseline}" != "0" ]]; then
-        # Integer comparison: drift = ((final - baseline) * 100) / baseline
-        baseline_int=$(echo "${baseline}" | cut -d'.' -f1)
-        final_int=$(echo "${mem_pct}" | cut -d'.' -f1)
-        if [[ ${baseline_int} -gt 0 ]]; then
-          drift=$(( (final_int - baseline_int) * 100 / baseline_int ))
-          if [[ ${drift} -gt ${MEMORY_DRIFT_PCT} ]]; then
-            FAILURES+=("Memory drift on ${container}: ${baseline}% -> ${mem_pct}% (${drift}% growth, limit ${MEMORY_DRIFT_PCT}%)")
-          fi
-        fi
-      fi
-    fi
-  done <<< "${final_metrics}"
+  while IFS=$'\t' read -r kind msg; do
+    case "${kind}" in
+      FAIL) FAILURES+=("${msg}") ;;
+      WARN) WARNINGS+=("${msg}") ;;
+    esac
+  done < <(memory_drift_findings "${final_metrics}" "${MEMORY_DRIFT_PCT}" "${MEMORY_DRIFT_MIN_MIB}" "${DRIFT_BASELINE_SOURCE}")
 fi
 
 # --- 4. Log storm detection ---
