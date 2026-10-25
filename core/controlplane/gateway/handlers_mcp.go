@@ -1120,6 +1120,9 @@ func (s *server) newMCPServiceBridge() mcp.ServiceBridge {
 		return mcp.NewDirectServiceBridge(mcp.DirectServiceBridgeConfig{})
 	}
 	return mcp.NewDirectServiceBridge(mcp.DirectServiceBridgeConfig{
+		// Only create_workflow is wired among the 7 mutating hooks; the
+		// others stay nil and return mcp.ErrBridgeUnavailable.
+		CreateWorkflowFunc: s.mcpCreateWorkflow,
 		SubmitJobFunc: func(ctx context.Context, req mcp.SubmitJobInput) (*mcp.SubmitJobOutput, error) {
 			body := map[string]any{
 				"prompt":   req.Prompt,
@@ -1312,6 +1315,48 @@ func (s *server) newMCPServiceBridge() mcp.ServiceBridge {
 			return out, nil
 		},
 	})
+}
+
+// mcpCreateWorkflow backs cordum_create_workflow. It runs the real
+// POST /api/v1/workflows handler under the caller's ctx, so permission
+// (workflows-write or admin), tenant resolution and validation are
+// identical to the REST endpoint. The registry's approval gate has
+// already admitted the call before this runs. Idempotency-Key is not
+// forwarded: handleCreateWorkflow does not honor it.
+func (s *server) mcpCreateWorkflow(ctx context.Context, req mcp.CreateWorkflowInput) (*mcp.CreateWorkflowOutput, error) {
+	body := map[string]any{"steps": req.Steps}
+	for key, value := range map[string]string{
+		"id": req.ID, "name": req.Name, "description": req.Description,
+		"org_id": req.OrgID, "team_id": req.TeamID, "version": req.Version,
+	} {
+		if strings.TrimSpace(value) != "" {
+			body[key] = strings.TrimSpace(value)
+		}
+	}
+	if req.TimeoutSec != 0 {
+		body["timeout_sec"] = req.TimeoutSec
+	}
+	if req.Config != nil {
+		body["config"] = req.Config
+	}
+	if req.Parameters != nil {
+		body["parameters"] = req.Parameters
+	}
+	if req.InputSchema != nil {
+		body["input_schema"] = req.InputSchema
+	}
+	status, payload, raw, err := s.invokeMCPJSONHandler(ctx, http.MethodPost, "/api/v1/workflows", nil, nil, body, s.handleCreateWorkflow)
+	if err != nil {
+		return nil, err
+	}
+	if status < 200 || status >= 300 {
+		return nil, mcp.NewBridgeErrorFromHTTP(status, raw)
+	}
+	id := strings.TrimSpace(mcpBridgeString(payload["id"]))
+	if id == "" {
+		return nil, mcp.NewBridgeError(http.StatusBadGateway, "invalid_response", "missing id in create-workflow response", payload)
+	}
+	return &mcp.CreateWorkflowOutput{WorkflowID: id, Version: strings.TrimSpace(req.Version)}, nil
 }
 
 func (s *server) invokeMCPJSONHandler(
