@@ -287,7 +287,7 @@ Reference: [docs/edge/README.md](docs/edge/README.md).
 
 ## The Problem: The Agent Risk Gap
 
-Enterprises are rushing to deploy **Autonomous AI Agents**, but they're hitting a wall of risk. According to Gartner, **74% of enterprises see AI agents as a new attack vector**, and over 40% of agentic AI projects will be canceled due to inadequate risk controls.
+Enterprises are rushing to deploy **Autonomous AI Agents**, but they're hitting a wall of risk. Gartner predicts that over 40% of agentic AI projects will be canceled by the end of 2027 due to escalating costs, unclear business value, or inadequate risk controls ([Gartner, June 2025](https://www.gartner.com/en/newsroom/press-releases/2025-06-25-gartner-predicts-over-40-percent-of-agentic-ai-projects-will-be-canceled-by-end-of-2027)).
 
 The current landscape leaves teams with a choice:
 1. **Restrict agents** to simple, low-value read-only tasks.
