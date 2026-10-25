@@ -127,9 +127,10 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 	resourceRegistry.SetConfig(cfg.Raw)
 
 	// Per-tool approval gate. Requires a working Redis client — on dev
-	// deploys without one we skip wiring and the registry falls back to
-	// permissive behaviour. Production refuses to start without Redis
-	// elsewhere, so reaching this path in prod means degraded mode.
+	// deploys without one the gate is not wired and the registry fails
+	// closed: every RequiresApproval tool returns ErrApprovalGateUnavailable
+	// (-32097). Production refuses to start without Redis elsewhere, so
+	// reaching this path in prod means degraded mode.
 	var approvalStore *MCPApprovalStore
 	var approvalHandler *mcpApprovalHandler
 	// approvalGate is hoisted to function scope so the EDGE-102 boot
@@ -178,7 +179,7 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 			slog.Warn("mcp approval gate enabled but preapproval+invariant lookup unavailable: unexpected concrete type")
 		}
 	} else {
-		slog.Warn("mcp approval gate disabled: redis client unavailable — RequiresApproval tools will not be gated")
+		slog.Warn("mcp approval gate unavailable: redis client unavailable — RequiresApproval tools are DISABLED (fail closed)")
 	}
 
 	serviceBridge := s.newMCPServiceBridge()

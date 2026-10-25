@@ -20,6 +20,12 @@ var (
 	ErrToolDisabled     = errors.New("mcp tool disabled")
 	ErrResourceNotFound = errors.New("mcp resource not found")
 	ErrResourceDisabled = errors.New("mcp resource disabled")
+	// ErrApprovalGateUnavailable is returned by Call when a tool requires
+	// approval but no ApprovalGate is wired (e.g. the gateway has no
+	// Redis). It wraps ErrApprovalGateMisconfigured so the JSON-RPC layer
+	// maps it to -32097: approval-required tools fail closed, never run
+	// ungated.
+	ErrApprovalGateUnavailable = fmt.Errorf("%w: approval gate not wired; approval-required tools are disabled", ErrApprovalGateMisconfigured)
 )
 
 type toolEntry struct {
@@ -110,7 +116,8 @@ func (a *ApprovalRequired) Error() string {
 	return fmt.Sprintf("mcp: approval required for %s (approval_id=%s)", a.Tool, a.ApprovalID)
 }
 
-// SetApprovalGate wires the gate. Passing nil disables the approval check.
+// SetApprovalGate wires the gate. Passing nil leaves approval-required
+// tools disabled: Call refuses them with ErrApprovalGateUnavailable.
 func (r *ToolRegistry) SetApprovalGate(gate ApprovalGate) {
 	if r == nil {
 		return
@@ -330,15 +337,22 @@ func (r *ToolRegistry) Call(ctx context.Context, name string, params json.RawMes
 		if effectiveScope != "" {
 			gatedTool.ApprovalScope = effectiveScope
 		}
-		if gate := r.approvalGate(); gate != nil {
-			gated, err := gate.Check(ctx, gatedTool, params)
-			if err != nil {
-				return nil, err
+		gate := r.approvalGate()
+		if gate == nil {
+			// Fail closed: without a gate nothing can hold the call for
+			// approval, so the tool must not run.
+			if h := InvocationHandleFromContext(ctx); h != nil {
+				h.MarkPolicyDenied(ErrApprovalGateUnavailable.Error(), "approval_gate_unavailable")
 			}
-			if gated != nil {
-				gated.Tool = entry.tool.Name
-				return nil, gated
-			}
+			return nil, ErrApprovalGateUnavailable
+		}
+		gated, err := gate.Check(ctx, gatedTool, params)
+		if err != nil {
+			return nil, err
+		}
+		if gated != nil {
+			gated.Tool = entry.tool.Name
+			return nil, gated
 		}
 	}
 	if len(entry.tool.InputSchema) > 0 {
