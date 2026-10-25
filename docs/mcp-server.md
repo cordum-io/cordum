@@ -1005,12 +1005,24 @@ Create the link in either of two ways:
 |---|---|---|
 | Linked to an identity in the request tenant | absent or blank | The bound identity |
 | Linked to an identity in the request tenant | equal to the bound identity `id` | The bound identity |
-| Linked to an identity in the request tenant | any other value | No identity: `tools/list` is empty, `tools/call` fails with `-32098` `no_identity`, and the gateway logs `mcp X-Agent-Id does not match the principal's bound agent identity` |
+| Linked to an identity in the request tenant | any other value | No identity, and the gateway logs `mcp X-Agent-Id does not match the principal's bound agent identity` |
 | Not linked, or linked to another tenant's identity | any | No identity |
 
 The header is compared exactly after trimming surrounding whitespace, so IDs
 are case-sensitive. A suspended or revoked bound identity also resolves to no
 identity.
+
+With no identity, the built-in tool registry lists no tools and refuses every
+`tools/call`:
+
+- With `mcp.policy_gate_enabled` off, the call fails with `-32098`
+  `no_identity`.
+- With `mcp.policy_gate_enabled` on, the policy gate refuses the call first
+  because it carries no agent ID. Today that surfaces as a `-32603` error whose
+  `error.data` starts with `missing_mcp_metadata`.
+
+When `/mcp` fronts a registered upstream (EDGE-101), the upstream catalog is
+not scope-filtered, and the bound ID only feeds the policy gate.
 
 Approval records, preapproval checks (`preapproved_mutating_tools`),
 policy-gate call metadata and Edge trace labels carry the bound identity `id`,
@@ -1121,7 +1133,8 @@ See [Dashboard Guide](dashboard-guide.md#how-to-configure-mcp-server) for the fu
 - `tools/list` or `resources/list` empty: entries are disabled by config
   (`mcp.tools.<tool_id>.enabled=false`,
   `mcp.resources.<resource_name>.enabled=false`).
-- `tools/list` empty, or `tools/call` fails with `-32098` `no_identity`, while
+- `tools/list` empty, or `tools/call` fails with `-32098` `no_identity` (or
+  `-32603` `missing_mcp_metadata` with the policy gate on), while
   `X-Agent-Id` is set: the header does not match the identity bound to the
   authenticated principal, or the principal is not linked to an identity in
   the request tenant. Look for `mcp X-Agent-Id does not match the principal's

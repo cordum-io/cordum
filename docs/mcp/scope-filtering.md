@@ -145,8 +145,8 @@ and invalidates every cached slice at once.
 the authenticated principal, and only when it belongs to the request tenant.
 It attaches the resulting `*mcp.AgentIdentity` to the request context. The
 optional `X-Agent-Id` header may confirm that identity but never selects one:
-a header naming any other ID leaves the request with no identity (zero tools,
-`-32098` `no_identity`). See
+a header naming any other ID leaves the request with no identity, so it sees
+zero tools and every call is refused. See
 [Agent identity binding](../mcp-server.md#agent-identity-binding-x-agent-id).
 
 The HTTP transport stamps the resolved identity onto `JSONRPCMessage`

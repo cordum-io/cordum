@@ -34,7 +34,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   to the authenticated principal in the request tenant. No header, or a header
   equal to that identity's `id`, resolves to it. Any other header value, an
   unlinked principal, or a link to another tenant resolves to no identity:
-  `tools/list` is empty and `tools/call` fails with `-32098` `no_identity`.
+  `tools/list` is empty and `tools/call` is refused (`-32098` `no_identity`,
+  or `-32603` `missing_mcp_metadata` when `mcp.policy_gate_enabled` is on).
 - Approval records, preapproval checks, policy-gate call metadata and Edge
   trace labels now carry the bound identity `id` (empty when there is none),
   never the header value. The principal no longer stands in for a missing
