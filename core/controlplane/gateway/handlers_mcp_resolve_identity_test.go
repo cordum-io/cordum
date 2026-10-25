@@ -299,11 +299,11 @@ func postMCPBindingRPC(t *testing.T, baseURL, agentHeader, method, params string
 	return resp.StatusCode, out
 }
 
-// TestMCPIdentityBinding_EndToEnd drives the HTTP MCP transport (ruling Q4):
-// X-Agent-Id may confirm the identity bound to the authenticated principal,
-// never select another same-tenant identity, and approvals record the bound
-// ID rather than the raw header.
-func TestMCPIdentityBinding_EndToEnd(t *testing.T) {
+// newMCPBindingServer serves the HTTP MCP routes for tenant "default" as
+// principal "tester", which is bound to agent-bound; agent-other is an
+// active, unbound identity in the same tenant with the same scope.
+func newMCPBindingServer(t *testing.T) (*server, *httptest.Server) {
+	t.Helper()
 	s, _, _ := newTestGateway(t)
 	s.auth = mcpTestAuth{apiKey: "test-key", tenant: "default"}
 	s.shutdownCh = make(chan struct{})
@@ -326,6 +326,15 @@ func TestMCPIdentityBinding_EndToEnd(t *testing.T) {
 	}
 	httpSrv := httptest.NewServer(mux)
 	t.Cleanup(httpSrv.Close)
+	return s, httpSrv
+}
+
+// TestMCPIdentityBinding_EndToEnd drives the HTTP MCP transport (ruling Q4):
+// X-Agent-Id may confirm the identity bound to the authenticated principal,
+// never select another same-tenant identity, and approvals record the bound
+// ID rather than the raw header.
+func TestMCPIdentityBinding_EndToEnd(t *testing.T) {
+	s, httpSrv := newMCPBindingServer(t)
 	approvals := s.getMCPRuntime().approvalStore
 	statusCall := `{"name":"` + mcp.ToolStatus + `","arguments":{}}`
 	createCall := `{"name":"` + mcp.ToolCreateWorkflow + `","arguments":{"name":"bind-check"}}`
