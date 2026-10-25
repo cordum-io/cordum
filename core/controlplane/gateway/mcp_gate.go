@@ -20,10 +20,11 @@ import (
 // Principal is the authenticated subject (API-key principal, SSO subject,
 // etc.) — it is the identity used by the self-approval guard to decide
 // whether the approver and the requester are the same person.
-// AgentID is the display-facing MCP agent identifier resolved from the
-// X-Agent-Id header; it may differ from Principal (e.g. a human operator
-// invoking tools-call on behalf of an agent). Auditing records both so
-// the dashboard can show "agent-alpha called by alice@corp".
+// AgentID is the agent identity ID bound to Principal (agent:by-worker
+// link, same tenant), empty when there is none; it is never the raw
+// X-Agent-Id header, which may only confirm the binding (ruling Q4).
+// Auditing records both so the dashboard can show "agent-alpha called
+// by alice@corp".
 type MCPCallMetadata struct {
 	Tenant            string
 	AgentID           string

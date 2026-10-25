@@ -63,9 +63,9 @@ type MCPApprovalRequest struct {
 	// Tenant is the org/tenant the calling agent belongs to. Drives both
 	// the storage namespace and the audit-chain partition.
 	Tenant string
-	// AgentID is the display-facing MCP agent identifier (X-Agent-Id).
-	// Persisted for audit clarity; the self-approval guard uses
-	// Principal, not AgentID.
+	// AgentID is the agent identity ID bound to the authenticated
+	// principal, never the raw X-Agent-Id header. Persisted for audit
+	// clarity; the self-approval guard uses Principal, not AgentID.
 	AgentID string
 	// Principal is the authenticated subject that initiated the call
 	// (API-key principal, SSO subject). The self-approval guard

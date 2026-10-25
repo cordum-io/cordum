@@ -681,7 +681,9 @@ func TestMCPAuthStashesCoreCallMetadataForHTTPTransport(t *testing.T) {
 		if !ok {
 			t.Fatal("mcp.CallMetadata missing from request context")
 		}
-		if meta.Tenant != "default" || meta.Principal != "tester" || meta.AgentID != "agent-alpha" {
+		// No identity store, so nothing is bound: the raw X-Agent-Id must
+		// not be recorded (ruling Q4).
+		if meta.Tenant != "default" || meta.Principal != "tester" || meta.AgentID != "" {
 			t.Fatalf("unexpected call metadata: %+v", meta)
 		}
 		if meta.SessionID != "sess-alpha" || meta.ExecutionID != "mcp-sess-alpha" {

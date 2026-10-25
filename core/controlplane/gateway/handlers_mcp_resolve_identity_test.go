@@ -16,15 +16,34 @@ import (
 	"github.com/cordum/cordum/core/model"
 )
 
+// newMCPIdentityRequest builds an MCP request for tenant, authenticated as
+// principal when principal is non-empty.
+func newMCPIdentityRequest(tenant, principal string) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	if tenant != "" {
+		req.Header.Set("X-Tenant-ID", tenant)
+	}
+	if principal != "" {
+		req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, &auth.AuthContext{
+			PrincipalID: principal,
+			Tenant:      tenant,
+		}))
+	}
+	return req
+}
+
+// assertNoMCPIdentity fails unless resolveMCPIdentity returned ("", nil).
+func assertNoMCPIdentity(t *testing.T, agentID string, identity *mcp.AgentIdentity) {
+	t.Helper()
+	if agentID != "" || identity != nil {
+		t.Fatalf("resolveMCPIdentity = (%q, %+v), want (\"\", nil)", agentID, identity)
+	}
+}
+
 // TestResolveMCPIdentity_CrossTenantHeaderReturnsNil locks the HIGH
-// cross-tenant finding: resolveMCPIdentity looked up the agent identity
-// with an empty tenant (s.agentIdentityStore.Get(ctx, "", id)), which hits
-// the store's documented system-lookup bypass and skips the tenant check.
-// A caller authenticated to tenant-b could therefore assume tenant-a's
-// agent identity — and its AllowedTools / AllowedServers / RiskTier — by
-// passing the (non-secret) X-Agent-Id of a tenant-a agent. The fix scopes
-// the lookup to tenantFromRequest(r); a mismatching tenant must resolve to
-// nil (fail-closed: zero tools visible).
+// cross-tenant finding: a caller authenticated to tenant-b must not assume
+// tenant-a's agent identity — and its AllowedTools / AllowedServers /
+// RiskTier — by passing the (non-secret) X-Agent-Id of a tenant-a agent.
 func TestResolveMCPIdentity_CrossTenantHeaderReturnsNil(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 
@@ -40,45 +59,12 @@ func TestResolveMCPIdentity_CrossTenantHeaderReturnsNil(t *testing.T) {
 		t.Fatalf("Create agent identity: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
 	// Caller is in tenant-b but points X-Agent-Id at tenant-a's agent.
-	req.Header.Set("X-Tenant-ID", "tenant-b")
+	req := newMCPIdentityRequest("tenant-b", "")
 	req.Header.Set(mcpAgentIDHeader, "agent-secret")
 
-	if got := s.resolveMCPIdentity(req); got != nil {
-		t.Fatalf("resolveMCPIdentity across tenants = %+v, want nil (cross-tenant identity must not resolve)", got)
-	}
-}
-
-// TestResolveMCPIdentity_SameTenantReturnsIdentity is the positive control:
-// a caller in the agent's own tenant still resolves the identity with its
-// AllowedTools — the fix must not regress legitimate same-tenant access.
-func TestResolveMCPIdentity_SameTenantReturnsIdentity(t *testing.T) {
-	s, _, _ := newTestGateway(t)
-
-	if _, err := s.agentIdentityStore.Create(context.Background(), store.AgentIdentity{
-		ID:           "agent-ok",
-		TenantID:     "tenant-a",
-		Name:         "Tenant-A Agent",
-		Owner:        "alice@example.com",
-		RiskTier:     "low",
-		AllowedTools: []string{"safe_tool"},
-		Status:       "active",
-	}); err != nil {
-		t.Fatalf("Create agent identity: %v", err)
-	}
-
-	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
-	req.Header.Set("X-Tenant-ID", "tenant-a")
-	req.Header.Set(mcpAgentIDHeader, "agent-ok")
-
-	got := s.resolveMCPIdentity(req)
-	if got == nil {
-		t.Fatalf("resolveMCPIdentity same-tenant = nil, want identity with AllowedTools")
-	}
-	if len(got.AllowedTools) != 1 || got.AllowedTools[0] != "safe_tool" {
-		t.Fatalf("AllowedTools = %v, want [safe_tool]", got.AllowedTools)
-	}
+	agentID, identity := s.resolveMCPIdentity(req)
+	assertNoMCPIdentity(t, agentID, identity)
 }
 
 // TestResolveMCPIdentity_NoTenantReturnsNil confirms the fail-closed guard:
@@ -99,21 +85,18 @@ func TestResolveMCPIdentity_NoTenantReturnsNil(t *testing.T) {
 		t.Fatalf("Create agent identity: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
 	// No X-Tenant-ID, no auth context tenant.
+	req := newMCPIdentityRequest("", "")
 	req.Header.Set(mcpAgentIDHeader, "agent-secret")
 
-	if got := s.resolveMCPIdentity(req); got != nil {
-		t.Fatalf("resolveMCPIdentity with no tenant = %+v, want nil (fail-closed)", got)
-	}
+	agentID, identity := s.resolveMCPIdentity(req)
+	assertNoMCPIdentity(t, agentID, identity)
 }
 
-// TestResolveMCPIdentity_WorkerIDPathRejectsCrossTenant covers the SECOND
-// resolution path (no X-Agent-Id header → GetByWorkerID by authenticated
-// principal). GetByWorkerID looks the agent up with an empty tenant, so the
-// resolved identity's tenant must be checked against the request tenant —
-// a worker credential bound to another tenant's agent must not apply that
-// agent's scope.
+// TestResolveMCPIdentity_WorkerIDPathRejectsCrossTenant: GetByWorkerID
+// looks the agent up with an empty tenant, so the resolved identity's
+// tenant must be checked against the request tenant — a worker credential
+// bound to another tenant's agent must not apply that agent's scope.
 func TestResolveMCPIdentity_WorkerIDPathRejectsCrossTenant(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	ctx := context.Background()
@@ -133,16 +116,8 @@ func TestResolveMCPIdentity_WorkerIDPathRejectsCrossTenant(t *testing.T) {
 		t.Fatalf("LinkWorker: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
-	req.Header.Set("X-Tenant-ID", "tenant-b") // cross-tenant request
-	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, &auth.AuthContext{
-		PrincipalID: "worker-x",
-		Tenant:      "tenant-b",
-	}))
-
-	if got := s.resolveMCPIdentity(req); got != nil {
-		t.Fatalf("worker-ID path resolved a cross-tenant identity: %+v", got)
-	}
+	agentID, identity := s.resolveMCPIdentity(newMCPIdentityRequest("tenant-b", "worker-x"))
+	assertNoMCPIdentity(t, agentID, identity)
 }
 
 // TestResolveMCPIdentity_WorkerIDPathSameTenant is the positive control for
@@ -166,19 +141,72 @@ func TestResolveMCPIdentity_WorkerIDPathSameTenant(t *testing.T) {
 		t.Fatalf("LinkWorker: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
-	req.Header.Set("X-Tenant-ID", "tenant-a")
-	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, &auth.AuthContext{
-		PrincipalID: "worker-y",
-		Tenant:      "tenant-a",
-	}))
-
-	got := s.resolveMCPIdentity(req)
-	if got == nil {
-		t.Fatal("same-tenant worker-ID path = nil, want identity")
+	agentID, identity := s.resolveMCPIdentity(newMCPIdentityRequest("tenant-a", "worker-y"))
+	if agentID != created.ID || identity == nil || identity.ID != created.ID {
+		t.Fatalf("same-tenant worker-ID path = (%q, %+v), want %s", agentID, identity, created.ID)
 	}
-	if len(got.AllowedTools) != 1 || got.AllowedTools[0] != "safe_tool" {
-		t.Fatalf("AllowedTools = %v, want [safe_tool]", got.AllowedTools)
+	if len(identity.AllowedTools) != 1 || identity.AllowedTools[0] != "safe_tool" {
+		t.Fatalf("AllowedTools = %v, want [safe_tool]", identity.AllowedTools)
+	}
+}
+
+// TestResolveMCPIdentity_HeaderRule locks ruling Q4: X-Agent-Id may confirm
+// the identity bound to the authenticated principal, never select another
+// same-tenant identity. worker-z is bound to agent-bound; worker-u is not.
+func TestResolveMCPIdentity_HeaderRule(t *testing.T) {
+	cases := []struct {
+		name, principal, header, status, wantAgent string
+		wantTools                                  []string
+	}{
+		{name: "bound no header", principal: "worker-z", wantAgent: "agent-bound", wantTools: []string{"safe_tool"}},
+		{name: "bound matching header", principal: "worker-z", header: "agent-bound", wantAgent: "agent-bound", wantTools: []string{"safe_tool"}},
+		{name: "bound padded header", principal: "worker-z", header: " agent-bound ", wantAgent: "agent-bound", wantTools: []string{"safe_tool"}},
+		{name: "bound whitespace-only header", principal: "worker-z", header: "   ", wantAgent: "agent-bound", wantTools: []string{"safe_tool"}},
+		{name: "bound mismatched header", principal: "worker-z", header: "agent-other"},
+		{name: "bound case-mismatched header", principal: "worker-z", header: "AGENT-BOUND"},
+		{name: "unbound with header", principal: "worker-u", header: "agent-other"},
+		{name: "unbound no header", principal: "worker-u"},
+		{name: "bound but suspended", principal: "worker-z", status: "suspended", wantAgent: "agent-bound"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _, _ := newTestGateway(t)
+			ctx := context.Background()
+			boundStatus := tc.status
+			if boundStatus == "" {
+				boundStatus = "active"
+			}
+			for _, a := range []store.AgentIdentity{
+				{ID: "agent-bound", AllowedTools: []string{"safe_tool"}, Status: boundStatus},
+				{ID: "agent-other", AllowedTools: []string{"other_tool"}, Status: "active"},
+			} {
+				a.TenantID, a.Name, a.Owner, a.RiskTier = "tenant-a", a.ID, "alice@example.com", "high"
+				if _, err := s.agentIdentityStore.Create(ctx, a); err != nil {
+					t.Fatalf("Create %s: %v", a.ID, err)
+				}
+			}
+			if err := s.agentIdentityStore.LinkWorker(ctx, "agent-bound", "worker-z"); err != nil {
+				t.Fatalf("LinkWorker: %v", err)
+			}
+			req := newMCPIdentityRequest("tenant-a", tc.principal)
+			if tc.header != "" {
+				req.Header.Set(mcpAgentIDHeader, tc.header)
+			}
+
+			agentID, identity := s.resolveMCPIdentity(req)
+			if agentID != tc.wantAgent {
+				t.Fatalf("agentID = %q, want %q", agentID, tc.wantAgent)
+			}
+			if tc.wantTools == nil {
+				if identity != nil {
+					t.Fatalf("identity = %+v, want nil", identity)
+				}
+				return
+			}
+			if identity == nil || identity.ID != tc.wantAgent || len(identity.AllowedTools) != 1 || identity.AllowedTools[0] != tc.wantTools[0] {
+				t.Fatalf("identity = %+v, want %s with %v", identity, tc.wantAgent, tc.wantTools)
+			}
+		})
 	}
 }
 
