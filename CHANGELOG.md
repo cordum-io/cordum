@@ -27,6 +27,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+#### MCP `X-Agent-Id` can only confirm the principal-bound agent identity (2026-10-26, task-eb2d6f28)
+
+- **Behavior change** for MCP clients that select an agent identity with the
+  `X-Agent-Id` header. HTTP MCP requests now run as the agent identity linked
+  to the authenticated principal in the request tenant. No header, or a header
+  equal to that identity's `id`, resolves to it. Any other header value, an
+  unlinked principal, or a link to another tenant resolves to no identity:
+  `tools/list` is empty and `tools/call` fails with `-32098` `no_identity`.
+- Approval records, preapproval checks, policy-gate call metadata and Edge
+  trace labels now carry the bound identity `id` (empty when there is none),
+  never the header value. The principal no longer stands in for a missing
+  agent ID, and the header no longer stands in for a missing principal.
+- Why: any caller in a tenant could previously act as any agent identity in
+  that tenant, including its `allowed_tools` and `preapproved_mutating_tools`,
+  by naming it in the header.
+- Migration: link each MCP client's principal to its identity
+  (`POST /api/v1/agents` with `"agent_id": "<principal id>"`, or a worker
+  credential with `agent_id`), then send the bound `id` in `X-Agent-Id` or drop
+  the header. See "Agent identity binding" in `docs/mcp-server.md`.
+
 #### CAP-PRODUCTION — fail-closed exact-wire trust, attempt fencing, durable effects, and structured resources (2026-07-21, task-a13f83fa)
 
 - Added the explicit `CORDUM_CAP_PROFILE` switch. The scheduler advertises
