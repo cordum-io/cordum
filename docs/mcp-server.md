@@ -245,7 +245,10 @@ the smaller of the event cap and 500, and to a new Edge session
 session holds its last execution. Earlier sessions and executions stay
 running, so an approval minted before a rotation is still claimed
 through `_approval_ref`, and the session's prompt-injection taint is
-kept for the MCP session, not its current Edge session.
+kept for the MCP session, not its current Edge session. A POST that names
+no MCP session keeps its taint per caller and agent, the same key as its
+Copilot session, so a client cannot shed a taint by not keeping a
+session.
 
 #### Retry dedupe
 

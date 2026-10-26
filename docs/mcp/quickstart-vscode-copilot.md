@@ -115,7 +115,8 @@ agent id are non-secret literals.
 > `"X-Copilot-Session-Id": "<some-id>"` to `headers` to group a workspace's
 > calls under one Copilot session and label spawned jobs with it. If omitted,
 > the MCP transport session id is used; a `"type": "http"` server, which opens
-> no session, gets one Copilot session per API key and agent id.
+> no session, gets one Copilot session per API key and agent id. Its
+> prompt-injection taint is kept per API key and agent id too.
 
 ## 4. Use it
 

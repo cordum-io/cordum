@@ -483,8 +483,14 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		// earlier one-shot session. An SSE session rotates its Edge session
 		// and execution before those caps bite (mcpEdgeTrace).
 		sessionless := transportSessionID == "" && r.Method == http.MethodPost
+		// mcpSessionID is the MCP session the call's Copilot session and
+		// prompt-injection taint are kept for. A session-less caller gets one
+		// per caller and agent, so not keeping a session neither splits its
+		// transcript nor sheds its taint.
+		mcpSessionID := transportSessionID
 		if sessionless {
 			transportSessionID = mcpDirectSessionPrefix + uuid.NewString()
+			mcpSessionID = mcpSessionlessCopilotSessionID(r, agentID, transportSessionID)
 		}
 		if transportSessionID != "" {
 			sessionID, executionID, err := s.mcpEdgeTrace(r.Context(), tenantID, agentID, principalID, transportSessionID)
@@ -498,7 +504,7 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 				AgentID:      agentID,
 				SessionID:    sessionID,
 				ExecutionID:  executionID,
-				MCPSessionID: transportSessionID,
+				MCPSessionID: mcpSessionID,
 			})
 		}
 		// Also stash tenant for the mcp.tool_called audit hook, which
@@ -512,10 +518,7 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		// labelled with it.
 		copilotSessionID := strings.TrimSpace(r.Header.Get(mcpCopilotSessionIDHeader))
 		if copilotSessionID == "" {
-			copilotSessionID = transportSessionID
-			if sessionless {
-				copilotSessionID = mcpSessionlessCopilotSessionID(r, agentID, transportSessionID)
-			}
+			copilotSessionID = mcpSessionID
 		}
 		if copilotSessionID != "" {
 			mcpCtx = mcp.WithCopilotSessionID(mcpCtx, copilotSessionID)
@@ -538,10 +541,10 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 const mcpDirectSessionPrefix = "direct-"
 
 // mcpSessionlessCopilotSessionID groups a session-less caller's tool calls
-// into one Copilot session per caller and agent instead of one per POST. It
-// derives from the session owner key, so two callers never share one; callers
-// the auth layer cannot tell apart (no credential, no principal) keep the
-// per-POST fallback.
+// into one Copilot session and one session taint per caller and agent instead
+// of one per POST. It derives from the session owner key, so two callers never
+// share one; callers the auth layer cannot tell apart (no credential, no
+// principal) keep the per-POST fallback.
 func mcpSessionlessCopilotSessionID(r *http.Request, agentID, fallback string) string {
 	if submitterIdentity(r) == "" {
 		return fallback
