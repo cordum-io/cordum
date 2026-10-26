@@ -55,7 +55,10 @@ Note the returned agent `id`. `agent_id` links the key to the identity: the
 gateway accepts `X-Agent-Id: <copilot-agent-id>` only from a caller whose
 principal or API key ID is linked to that identity (or an admin), and answers
 `403 agent identity not bound to caller` otherwise. A static key with a
-`principal_id` binds the same way, with `"agent_id": "<principal_id>"`. Keep
+`principal_id` binds the same way, with `"agent_id": "<principal_id>"`. In dev
+mode (non-production, or `CORDUM_ALLOW_HEADER_PRINCIPAL=true`) the gateway also
+takes the principal from an `X-Principal-Id` header, so a principal binding can
+be spoofed there; binding the API key ID is the safe choice. Keep
 `preapproved_mutating_tools` empty so `cordum_submit_job` and other mutations
 hit human approval.
 

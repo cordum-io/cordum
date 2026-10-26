@@ -157,9 +157,12 @@ answers `403 agent identity not bound to caller`, the same answer as for
 an identity that does not exist. For identities not linked yet,
 `CORDUM_MCP_ALLOW_UNBOUND_AGENT_ID=true` restores the old header trust
 (still tenant-scoped); the gateway logs a warning at MCP start while it
-is set. The binding is only as strong as the principal: where
-`X-Principal-Id` is honoured (non-production, or
-`CORDUM_ALLOW_HEADER_PRINCIPAL`), link API key IDs instead.
+is set. The binding is only as strong as the principal. Dev mode (any
+non-production `CORDUM_ENV`, or `CORDUM_ALLOW_HEADER_PRINCIPAL=true`)
+takes the principal from the `X-Principal-Id` header for keys without a
+`principal_id`, so there any such caller can claim a linked principal
+and act as its identity. Binding API key IDs is the safe choice: a
+caller cannot claim another key's ID.
 
 The HTTP transport stamps the resolved identity onto `JSONRPCMessage`
 before enqueuing it for the MCP dispatcher.
@@ -171,8 +174,9 @@ After upgrading, a client that names an identity not linked to it gets
 `403 agent identity not bound to caller`. Link each identity to the API
 key ID its client authenticates with (a managed key's `id`, or
 `static:<fingerprint>` for a static key, as the [audit log](../audit.md)
-shows it), or to its principal. An existing identity is linked with
-`agent_id` on update, without re-creating it:
+shows it), or to its principal where the header principal is off (see
+above). An existing identity is linked with `agent_id` on update,
+without re-creating it:
 
 ```bash
 curl -X PUT "$CORDUM_GATEWAY/api/v1/agents/<identity-id>" \
