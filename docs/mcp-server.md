@@ -91,6 +91,24 @@ principal, plus the API key or login session used), so a `/mcp/message` naming
 an unknown session or another caller's session gets HTTP `404` with JSON-RPC
 error `-32001` (`session not found`); reconnect to `/mcp/sse` for a new id.
 
+### 3) `cordum-mcp` over HTTP + SSE
+
+`MCP_TRANSPORT=http` serves the stdio tool set on `/sse` and `/message`,
+calling the gateway with this process's `--api-key`. Anyone who can reach the
+listener acts with that key, so:
+
+- `MCP_HTTP_ADDR` defaults to `127.0.0.1:8090` (loopback only).
+- `--http-auth-token` (or `CORDUM_MCP_HTTP_AUTH_TOKEN`, which keeps the token
+  out of process listings) makes every request send
+  `Authorization: Bearer <token>`; anything else gets HTTP `401`.
+- A non-loopback `MCP_HTTP_ADDR` without a token refuses to start unless
+  `--allow-unauthenticated-http` is passed, which logs a loud warning.
+
+```bash
+MCP_TRANSPORT=http MCP_HTTP_ADDR=:8090 CORDUM_MCP_HTTP_AUTH_TOKEN="$(openssl rand -hex 32)" \
+  cordum-mcp --addr https://gateway.example.com --api-key "$CORDUM_API_KEY"
+```
+
 ### Policy Gate + Approval Hold (EDGE-102 / EDGE-103)
 
 `tools/call` requests can run through the production action-gate pipeline

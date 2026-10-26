@@ -1127,12 +1127,16 @@ that authority. Tokenless JobRequest traffic is rejected in enforce mode.
 | `CORDUM_API_KEY` | — | API key for gateway-backed MCP handlers |
 | `CORDUM_TENANT_ID` | — | Tenant ID for MCP bridge/resource operations |
 | `MCP_TRANSPORT` | `stdio` | Transport mode: `stdio` (default) or `http` |
-| `MCP_HTTP_ADDR` | `:8090` | HTTP listen address (only used when `MCP_TRANSPORT=http`) |
+| `MCP_HTTP_ADDR` | `127.0.0.1:8090` | HTTP listen address (only used when `MCP_TRANSPORT=http`) |
+| `CORDUM_MCP_HTTP_AUTH_TOKEN` | — | Bearer token every `/sse` and `/message` request must send (`--http-auth-token`). Required for a non-loopback `MCP_HTTP_ADDR` unless `--allow-unauthenticated-http` is passed |
 
 **HA note — HTTP transport**: Set `MCP_TRANSPORT=http` to enable HTTP mode, which exposes
 `/sse` (SSE stream) and `/message` (POST JSON-RPC) endpoints. This allows running multiple
 MCP server replicas behind a load balancer. The default `stdio` mode supports only a single
-instance and is intended for local CLI integrations.
+instance and is intended for local CLI integrations. HTTP mode calls the gateway with this
+server's `CORDUM_API_KEY`, so it listens on loopback by default; to serve a load balancer,
+set `MCP_HTTP_ADDR` (for example `:8090`) and `CORDUM_MCP_HTTP_AUTH_TOKEN`, or the process
+refuses to start.
 
 ### Audit Export
 
