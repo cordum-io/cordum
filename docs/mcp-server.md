@@ -64,6 +64,10 @@ Routes:
 
 `/mcp/sse` returns `X-MCP-Session-ID`. Clients can send `X-MCP-Session-ID` on
 `/mcp/message` to correlate session responses.
+Each session is bound to the authenticated caller that opened it (tenant and
+principal, plus the API key or login session used), so a `/mcp/message` naming
+an unknown session or another caller's session gets HTTP `404` with JSON-RPC
+error `-32001` (`session not found`); reconnect to `/mcp/sse` for a new id.
 
 ### Policy Gate + Approval Hold (EDGE-102 / EDGE-103)
 

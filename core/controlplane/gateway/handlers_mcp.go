@@ -120,7 +120,8 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 		return nil
 	}
 
-	transport := mcp.NewHTTPTransport(mcp.DefaultMaxMessageBytes, mcp.DefaultHTTPResponseTimeout)
+	transport := mcp.NewHTTPTransport(mcp.DefaultMaxMessageBytes, mcp.DefaultHTTPResponseTimeout).
+		WithSessionOwner(mcpSessionOwner)
 	toolRegistry := mcp.NewToolRegistry()
 	resourceRegistry := mcp.NewResourceRegistry()
 	toolRegistry.SetConfig(cfg.Raw)
@@ -427,17 +428,17 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 			transportSessionID = strings.TrimSpace(r.URL.Query().Get("session_id"))
 		}
 		// VS Code's type:"http" config POSTs neither X-MCP-Session-ID nor
-		// X-Copilot-Session-Id. The HTTP transport would otherwise mint a
-		// "direct-<uuid>" session id only *after* this middleware builds
-		// mcpCtx, leaving copilot_session_id empty — so the transcript is
-		// dropped and cordum_submit_job misses its session_id label. Mint the
-		// id here in the transport's own format and write it back onto the
-		// request so the transport reuses the same id, keeping the audit
-		// session, trace parents, and spawned-job label consistent. Scoped to
-		// POST so the SSE GET keeps its server-assigned session id.
+		// X-Copilot-Session-Id, which would leave copilot_session_id empty —
+		// so the transcript is dropped and cordum_submit_job misses its
+		// session_id label. Mint the id here in the transport's own format so
+		// the audit session, trace parents, and spawned-job label agree. It is
+		// deliberately NOT written back onto the request: the transport only
+		// accepts session ids it issued to this caller over SSE (anything else
+		// is "session not found") and routes a session-less POST under its own
+		// one-shot id. Scoped to POST so the SSE GET keeps its server-assigned
+		// session id.
 		if transportSessionID == "" && r.Method == http.MethodPost {
 			transportSessionID = "direct-" + uuid.NewString()
-			r.Header.Set("X-MCP-Session-ID", transportSessionID)
 		}
 		if transportSessionID != "" {
 			executionID := "mcp-" + transportSessionID
@@ -479,6 +480,20 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	}
+}
+
+// mcpSessionOwner is the owner key MCP HTTP/SSE sessions are bound to: the
+// request's tenant, auth source, and submitterIdentity (credential hash +
+// principal, the caller identity the self-approval guard compares). The auth
+// source keeps a header-asserted principal on an anonymous request from
+// matching the same verified principal. Requests without an auth context (no
+// auth provider configured) all share the anonymous owner "".
+func mcpSessionOwner(r *http.Request) string {
+	ac := auth.FromRequest(r)
+	if ac == nil {
+		return ""
+	}
+	return fmt.Sprintf("%q %q %q", tenantFromRequest(r), ac.AuthSource, submitterIdentity(r))
 }
 
 func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentID, principalID, sessionID, executionID string) error {
