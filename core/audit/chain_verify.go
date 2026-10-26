@@ -126,7 +126,8 @@ type VerifyOptions struct {
 	// event must be anchor+1 and link to the anchor's hash, or be the
 	// genesis event when there is no anchor. Leaving it empty therefore
 	// makes a trimmed chain verify as compromised. With HMACKey set the
-	// anchor must carry a valid MAC.
+	// anchor must carry a valid MAC. A pending anchor (a Redis Cluster trim
+	// not yet confirmed) counts as the anchor it replaces.
 	RetentionAnchorKey string
 	// HMACKey (optional) enables HMAC-SHA256 verification. When non-nil,
 	// every event that carries an HMAC tag is verified against this key.
@@ -198,6 +199,9 @@ func VerifyChain(ctx context.Context, client redis.UniversalClient, streamKey st
 	if err != nil {
 		return nil, fmt.Errorf("parse retention anchor: %w", err)
 	}
+	// link is what the oldest retained event links to: the anchor itself,
+	// or for a pending (unconfirmed) cluster trim the anchor it replaces.
+	link := anchor.linked()
 
 	result := &VerifyResult{
 		Status:               VerifyStatusOK,
@@ -205,8 +209,8 @@ func VerifyChain(ctx context.Context, client redis.UniversalClient, streamKey st
 		RetentionBoundarySeq: opts.RetentionBoundarySeq,
 		HMACSeen:             anchor.MAC != "",
 	}
-	if anchor.Seq > 0 {
-		result.RetentionBoundarySeq = anchor.Seq + 1
+	if link.Seq > 0 {
+		result.RetentionBoundarySeq = link.Seq + 1
 	}
 
 	if len(entries) == 0 {
@@ -217,7 +221,7 @@ func VerifyChain(ctx context.Context, client redis.UniversalClient, streamKey st
 		// stream itself was deleted.
 		if anchor.Seq > 0 && opts.SinceMs == 0 && opts.UntilMs == 0 {
 			result.Status = VerifyStatusCompromised
-			result.Gaps = append(result.Gaps, VerifyGap{AtSeq: anchor.Seq + 1, Type: GapTypeMissing})
+			result.Gaps = append(result.Gaps, VerifyGap{AtSeq: link.Seq + 1, Type: GapTypeMissing})
 		}
 		return result, nil
 	}
@@ -268,19 +272,19 @@ func VerifyChain(ctx context.Context, client redis.UniversalClient, streamKey st
 			result.Status = VerifyStatusCompromised
 			result.Gaps = append(result.Gaps, VerifyGap{AtSeq: anchor.Seq, Type: GapTypeHMACMismatch})
 			result.RetentionBoundarySeq = opts.RetentionBoundarySeq
-			anchor = retentionAnchor{}
+			anchor, link = retentionAnchor{}, retentionAnchor{}
 		}
 		// Link the oldest retained event to the newest trimmed one, or to
 		// genesis (seq 0, empty PrevHash) when there is no anchor: only the
-		// sweeper deletes chain events and it moves the anchor in the same
-		// script, so a prefix absent without an anchor was deleted. A seq
-		// other than anchor+1, or a PrevHash other than the anchor hash, is
+		// sweeper deletes chain events and it records each trim in the
+		// anchor, so a prefix absent without an anchor was deleted. A seq
+		// other than link+1, or a PrevHash other than the link hash, is
 		// reported by the ordinary gap/linkage checks below.
-		prevSeq, prevHash, hasPrev = anchor.Seq, anchor.Hash, true
+		prevSeq, prevHash, hasPrev = link.Seq, link.Hash, true
 		// A window that starts at or before the newest trimmed event lost
 		// events to retention.
-		if opts.SinceMs > 0 && anchor.Seq > 0 && anchor.streamMs() >= opts.SinceMs {
-			result.Gaps = append(result.Gaps, VerifyGap{AtSeq: anchor.Seq, Type: GapTypeRetentionTrimmed})
+		if opts.SinceMs > 0 && link.Seq > 0 && link.streamMs() >= opts.SinceMs {
+			result.Gaps = append(result.Gaps, VerifyGap{AtSeq: link.Seq, Type: GapTypeRetentionTrimmed})
 		}
 	}
 	for i, entry := range entries {
@@ -306,7 +310,7 @@ func VerifyChain(ctx context.Context, client redis.UniversalClient, streamKey st
 			// payloads; absent seqs above the anchor are reported missing
 			// by the linkage check.
 			if opts.SinceMs == 0 {
-				for trimmed := int64(1); trimmed <= min(ev.Seq-1, anchor.Seq, maxGapRun); trimmed++ {
+				for trimmed := int64(1); trimmed <= min(ev.Seq-1, link.Seq, maxGapRun); trimmed++ {
 					result.Gaps = append(result.Gaps, VerifyGap{AtSeq: trimmed, Type: GapTypeRetentionTrimmed})
 				}
 			}
@@ -331,9 +335,10 @@ func VerifyChain(ctx context.Context, client redis.UniversalClient, streamKey st
 			}
 		}
 
-		// Hash recomputation.
+		// Hash recomputation. A pending anchor also names the event its
+		// unconfirmed trim ends at; the stream's event at that seq must be it.
 		ok, err := VerifyEventHash(&ev)
-		if err != nil || !ok {
+		if err != nil || !ok || (anchor.Pending && ev.Seq == anchor.Seq && ev.EventHash != anchor.Hash) {
 			result.Status = VerifyStatusCompromised
 			result.Gaps = append(result.Gaps, VerifyGap{AtSeq: ev.Seq, Type: GapTypeHashMismatch})
 		} else if hasPrev && ev.PrevHash != prevHash {

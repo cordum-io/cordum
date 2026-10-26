@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cordum/cordum/core/internal/testredis"
 	"github.com/google/uuid"
@@ -50,15 +51,21 @@ func deleteClusterKeys(t *testing.T, client *redis.ClusterClient, match string) 
 	}
 }
 
-// The single-node append script touches the head key and the stream, which
-// hash to different slots: a real cluster refuses it.
-func TestClusterIntegration_SingleNodeAppendScriptIsCrossSlot(t *testing.T) {
+// The single-node scripts touch a tenant's stream together with its head or
+// anchor key, which hash to different slots: a real cluster refuses them.
+func TestClusterIntegration_SingleNodeScriptsAreCrossSlot(t *testing.T) {
 	client, chainer := newIntegrationChainer(t)
-	err := chainAppendScript.Run(context.Background(), client,
-		[]string{chainer.HeadKey("acme"), chainer.StreamKey("acme")},
-		"", "1", strings.Repeat("a", 64), "{}").Err()
-	if err == nil || !strings.Contains(err.Error(), "CROSSSLOT") {
-		t.Fatalf("two-key append script on a cluster = %v, want CROSSSLOT", err)
+	ctx := context.Background()
+	for name, err := range map[string]error{
+		"append": chainAppendScript.Run(ctx, client,
+			[]string{chainer.HeadKey("acme"), chainer.StreamKey("acme")},
+			"", "1", strings.Repeat("a", 64), "{}").Err(),
+		"trim": retentionTrimScript.Run(ctx, client,
+			[]string{chainer.StreamKey("acme"), chainer.AnchorKey("acme")}, "1-0", "").Err(),
+	} {
+		if err == nil || !strings.Contains(err.Error(), "CROSSSLOT") {
+			t.Errorf("single-node %s script on a cluster = %v, want CROSSSLOT", name, err)
+		}
 	}
 }
 
@@ -114,6 +121,93 @@ func newIntegrationTenant(t *testing.T, client *redis.ClusterClient) string {
 		client.Del(ctx, legalHoldSetPrefix+tenant)
 	})
 	return tenant
+}
+
+// newIntegrationSweeper enforces a 1.8-second retention window, so events
+// appended before a 2.5-second pause are past it.
+func newIntegrationSweeper(t *testing.T, client *redis.ClusterClient, chainer *Chainer) (*RetentionSweeper, *LegalHoldStore) {
+	t.Helper()
+	t.Setenv(EnvRetentionEnforce, "true")
+	t.Setenv(EnvRetentionHours, "0.0005")
+	holds := NewLegalHoldStoreFromClient(client)
+	return NewRetentionSweeper(client, chainer, holds, nil), holds
+}
+
+func appendAndAge(t *testing.T, chainer *Chainer, tenant string) {
+	t.Helper()
+	ctx := context.Background()
+	for i := 0; i < 6; i++ {
+		if i == 3 {
+			time.Sleep(2500 * time.Millisecond)
+		}
+		if err := chainer.Append(ctx, baseEvent(tenant, "act-"+strconv.Itoa(i))); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+	}
+}
+
+func clusterAnchor(t *testing.T, client *redis.ClusterClient, chainer *Chainer, tenant string) retentionAnchor {
+	t.Helper()
+	raw, err := client.Get(context.Background(), chainer.AnchorKey(tenant)).Result()
+	if err != nil {
+		t.Fatalf("get anchor: %v", err)
+	}
+	a, err := parseRetentionAnchor(raw)
+	if err != nil {
+		t.Fatalf("parse anchor: %v", err)
+	}
+	return a
+}
+
+func TestClusterIntegration_RetentionTrim(t *testing.T) {
+	client, chainer := newIntegrationChainer(t, WithHMACKey(testHMACKey()))
+	tenant := newIntegrationTenant(t, client)
+	sweeper, _ := newIntegrationSweeper(t, client, chainer)
+	appendAndAge(t, chainer, tenant)
+
+	if n, err := sweeper.SweepOnce(context.Background()); err != nil || n != 3 {
+		t.Fatalf("sweep = %d, %v; want 3 trimmed", n, err)
+	}
+	if a := clusterAnchor(t, client, chainer, tenant); a.Pending || a.Seq != 3 || !a.validMAC(chainer.AnchorKey(tenant), testHMACKey()) {
+		t.Fatalf("anchor = %+v, want confirmed and signed at seq 3", a)
+	}
+	if n, err := client.XLen(context.Background(), chainer.StreamKey(tenant)).Result(); err != nil || n != 3 {
+		t.Fatalf("stream len = %d, %v; want 3", n, err)
+	}
+}
+
+func TestClusterIntegration_HoldAfterPendingAnchor(t *testing.T) {
+	client, chainer := newIntegrationChainer(t, WithHMACKey(testHMACKey()))
+	tenant := newIntegrationTenant(t, client)
+	sweeper, holds := newIntegrationSweeper(t, client, chainer)
+	ctx := context.Background()
+	appendAndAge(t, chainer, tenant)
+	var hold *LegalHold
+	client.AddHook(&afterScriptHook{script: anchorSwapScript, fn: func() {
+		var err error
+		if hold, err = holds.CreateHold(ctx, tenant, "litigation", "test"); err != nil {
+			t.Errorf("create hold: %v", err)
+		}
+	}})
+
+	if n, err := sweeper.SweepOnce(ctx); err != nil || n != 0 {
+		t.Fatalf("sweep with a hold placed mid-trim = %d, %v; want 0", n, err)
+	}
+	if a := clusterAnchor(t, client, chainer, tenant); !a.Pending || a.Seq != 3 {
+		t.Fatalf("anchor = %+v, want pending at seq 3", a)
+	}
+	if n, _ := client.XLen(ctx, chainer.StreamKey(tenant)).Result(); n != 6 {
+		t.Fatalf("stream len = %d, want 6", n)
+	}
+	if err := holds.ReleaseHold(ctx, hold.ID, "test"); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	if n, err := sweeper.SweepOnce(ctx); err != nil || n != 3 {
+		t.Fatalf("sweep after release = %d, %v; want 3", n, err)
+	}
+	if a := clusterAnchor(t, client, chainer, tenant); a.Pending || a.Seq != 3 {
+		t.Fatalf("anchor = %+v, want confirmed at seq 3", a)
+	}
 }
 
 func TestClusterIntegration_LegalHolds(t *testing.T) {

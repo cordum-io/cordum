@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/infra/env"
+	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -105,22 +106,55 @@ func RetentionEnforced() bool {
 // (Chainer.AnchorKey): the newest chain event the sweeper deleted, stored as
 // "<seq>:<event_hash>:<stream_id>", plus ":<mac>" when the chain has an HMAC
 // key. Verify links the oldest retained event to it.
+//
+// On Redis Cluster the anchor is written before the stream trim it records
+// (see trimBatchCluster), as a pending anchor that also carries the anchor
+// it replaces, signed together:
+//
+//	<seq>:<event_hash>:<stream_id>:<prev_seq>:<prev_event_hash>:<prev_stream_id>[:<mac>]
+//
+// prev_seq 0, with an empty hash and ID, means no earlier trim. Until the
+// trim is confirmed, verify links the stream to the previous anchor (linked).
 type retentionAnchor struct {
 	Seq      int64
 	Hash     string
 	StreamID string
-	MAC      string
+
+	Pending      bool
+	PrevSeq      int64
+	PrevHash     string
+	PrevStreamID string
+
+	MAC string
 }
 
 // retentionAnchorMACDomain keeps anchor MACs apart from event MACs.
 const retentionAnchorMACDomain = "cordum.audit.retention_anchor.v1"
 
-func (a retentionAnchor) String() string {
+// value is the anchor without its MAC: what the MAC signs.
+func (a retentionAnchor) value() string {
 	v := strconv.FormatInt(a.Seq, 10) + ":" + a.Hash + ":" + a.StreamID
-	if a.MAC != "" {
-		v += ":" + a.MAC
+	if a.Pending {
+		v += ":" + strconv.FormatInt(a.PrevSeq, 10) + ":" + a.PrevHash + ":" + a.PrevStreamID
 	}
 	return v
+}
+
+func (a retentionAnchor) String() string {
+	if a.MAC != "" {
+		return a.value() + ":" + a.MAC
+	}
+	return a.value()
+}
+
+// linked is the anchor the oldest retained event links to: a pending
+// anchor's trim is unconfirmed, so the stream still answers to the anchor it
+// replaces.
+func (a retentionAnchor) linked() retentionAnchor {
+	if !a.Pending {
+		return a
+	}
+	return retentionAnchor{Seq: a.PrevSeq, Hash: a.PrevHash, StreamID: a.PrevStreamID}
 }
 
 // mac is the HMAC-SHA256 (hex) of the anchor bound to its Redis key, so an
@@ -128,8 +162,7 @@ func (a retentionAnchor) String() string {
 // HMAC key.
 func (a retentionAnchor) mac(anchorKey string, key []byte) string {
 	m := hmac.New(sha256.New, key)
-	m.Write([]byte(retentionAnchorMACDomain + "\n" + anchorKey + "\n" +
-		strconv.FormatInt(a.Seq, 10) + ":" + a.Hash + ":" + a.StreamID))
+	m.Write([]byte(retentionAnchorMACDomain + "\n" + anchorKey + "\n" + a.value()))
 	return hex.EncodeToString(m.Sum(nil))
 }
 
@@ -151,25 +184,50 @@ func parseRetentionAnchor(raw string) (retentionAnchor, error) {
 	if raw == "" {
 		return retentionAnchor{}, nil
 	}
+	malformed := fmt.Errorf("malformed retention anchor %q", raw)
 	parts := strings.Split(raw, ":")
-	if len(parts) != 3 && len(parts) != 4 {
-		return retentionAnchor{}, fmt.Errorf("malformed retention anchor %q", raw)
-	}
-	seq, err := strconv.ParseInt(parts[0], 10, 64)
-	ms, idSeq, _ := strings.Cut(parts[2], "-")
-	_, msErr := strconv.ParseUint(ms, 10, 64)
-	_, idErr := strconv.ParseUint(idSeq, 10, 64)
-	if err != nil || seq <= 0 || !isHexHash(parts[1]) || msErr != nil || idErr != nil {
-		return retentionAnchor{}, fmt.Errorf("malformed retention anchor %q", raw)
-	}
-	a := retentionAnchor{Seq: seq, Hash: parts[1], StreamID: parts[2]}
-	if len(parts) == 4 {
-		if !isHexHash(parts[3]) {
-			return retentionAnchor{}, fmt.Errorf("malformed retention anchor %q", raw)
+	var a retentionAnchor
+	if n := len(parts); n == 4 || n == 7 {
+		a.MAC, parts = parts[n-1], parts[:n-1]
+		if !isHexHash(a.MAC) {
+			return retentionAnchor{}, malformed
 		}
-		a.MAC = parts[3]
+	}
+	if len(parts) != 3 && len(parts) != 6 {
+		return retentionAnchor{}, malformed
+	}
+	pos, ok := parseAnchorPosition(parts[:3])
+	if !ok || pos.Seq == 0 {
+		return retentionAnchor{}, malformed
+	}
+	a.Seq, a.Hash, a.StreamID = pos.Seq, pos.Hash, pos.StreamID
+	if len(parts) == 6 {
+		prev, ok := parseAnchorPosition(parts[3:])
+		if !ok || prev.Seq >= a.Seq {
+			return retentionAnchor{}, malformed
+		}
+		a.Pending, a.PrevSeq, a.PrevHash, a.PrevStreamID = true, prev.Seq, prev.Hash, prev.StreamID
 	}
 	return a, nil
+}
+
+// parseAnchorPosition decodes "<seq>:<event_hash>:<stream_id>". Seq 0 is the
+// position before the first event and comes with an empty hash and ID.
+func parseAnchorPosition(f []string) (retentionAnchor, bool) {
+	seq, err := strconv.ParseInt(f[0], 10, 64)
+	if err != nil || seq < 0 {
+		return retentionAnchor{}, false
+	}
+	if seq == 0 {
+		return retentionAnchor{}, f[1] == "" && f[2] == ""
+	}
+	ms, idSeq, _ := strings.Cut(f[2], "-")
+	_, msErr := strconv.ParseUint(ms, 10, 64)
+	_, idErr := strconv.ParseUint(idSeq, 10, 64)
+	if !isHexHash(f[1]) || msErr != nil || idErr != nil {
+		return retentionAnchor{}, false
+	}
+	return retentionAnchor{Seq: seq, Hash: f[1], StreamID: f[2]}, true
 }
 
 func isHexHash(s string) bool {
@@ -213,6 +271,29 @@ if #nxt == 0 then return 0 end
 redis.call('SET', KEYS[2], ARGV[2])
 return redis.call('XTRIM', KEYS[1], 'MINID', nxt[1][1])
 `)
+
+// clusterTrimScript is retentionTrimScript without the anchor write, for
+// Redis Cluster, where the anchor key hashes to another slot than the stream:
+// the anchor moves in separate steps around it (see trimBatchCluster).
+//
+// KEYS[1] = chain stream   ARGV[1] = stream ID of the newest entry to delete
+var clusterTrimScript = redis.NewScript(`
+if #redis.call('XRANGE', KEYS[1], ARGV[1], ARGV[1]) == 0 then return 0 end
+local nxt = redis.call('XRANGE', KEYS[1], '(' .. ARGV[1], '+', 'COUNT', 1)
+if #nxt == 0 then return 0 end
+return redis.call('XTRIM', KEYS[1], 'MINID', nxt[1][1])
+`)
+
+// anchorSwapScript replaces a retention anchor (KEYS[1]) with ARGV[2] only
+// while it still holds ARGV[1], the value the caller read (empty when none).
+var anchorSwapScript = redis.NewScript(`
+if (redis.call('GET', KEYS[1]) or '') ~= ARGV[1] then return 0 end
+redis.call('SET', KEYS[1], ARGV[2])
+return 1
+`)
+
+// errAnchorMoved is a retention anchor that changed between read and write.
+var errAnchorMoved = errors.New("retention anchor changed concurrently")
 
 // RetentionSweeper trims every tenant's audit chain stream to the effective
 // retention window (RetentionWindow). It deletes nothing unless
@@ -341,19 +422,14 @@ func (s *RetentionSweeper) sweepTenant(ctx context.Context, tenant string, cutof
 		if err := ctx.Err(); err != nil {
 			return total, err
 		}
-		held, err := s.holds.IsUnderHold(ctx, tenant)
-		if err != nil {
-			auditRetentionSkipped.WithLabelValues("hold_check_error").Inc()
-			return total, fmt.Errorf("legal hold check: %w", err)
-		}
-		if held {
-			auditRetentionSkipped.WithLabelValues("legal_hold").Inc()
-			slog.Info("audit retention: tenant under legal hold, not trimmed", "tenant", tenant)
-			return total, nil
+		if blocked, err := s.holdBlocks(ctx, tenant); blocked {
+			return total, err
 		}
 		n, err := s.trimBatch(ctx, tenant, newestOld)
 		if err != nil {
-			auditRetentionSkipped.WithLabelValues("trim_error").Inc()
+			if !errors.As(err, new(holdCheckError)) {
+				auditRetentionSkipped.WithLabelValues("trim_error").Inc()
+			}
 			return total, fmt.Errorf("trim: %w", err)
 		}
 		total += n
@@ -367,10 +443,36 @@ func (s *RetentionSweeper) sweepTenant(ctx context.Context, tenant string, cutof
 	}
 }
 
+// holdBlocks reports whether tenant must not be trimmed now: it is under an
+// active legal hold, or the hold check failed (fail safe: keep the data, and
+// return the failure).
+func (s *RetentionSweeper) holdBlocks(ctx context.Context, tenant string) (bool, error) {
+	held, err := s.holds.IsUnderHold(ctx, tenant)
+	if err != nil {
+		auditRetentionSkipped.WithLabelValues("hold_check_error").Inc()
+		return true, holdCheckError{err}
+	}
+	if held {
+		auditRetentionSkipped.WithLabelValues("legal_hold").Inc()
+		slog.Info("audit retention: tenant under legal hold, not trimmed", "tenant", tenant)
+	}
+	return held, nil
+}
+
+// holdCheckError is a failed legal hold check, counted as hold_check_error
+// rather than trim_error.
+type holdCheckError struct{ err error }
+
+func (e holdCheckError) Error() string { return "legal hold check: " + e.err.Error() }
+func (e holdCheckError) Unwrap() error { return e.err }
+
 // trimBatch deletes up to retentionTrimBatch of the tenant's oldest entries
 // with stream IDs up to newestOld, never the chain head, and moves the
 // anchor to the newest one deleted (signed when the chain has an HMAC key).
 func (s *RetentionSweeper) trimBatch(ctx context.Context, tenant, newestOld string) (int64, error) {
+	if redisutil.IsCluster(s.client) {
+		return s.trimBatchCluster(ctx, tenant, newestOld)
+	}
 	streamKey := s.chainer.StreamKey(tenant)
 	pipe := s.client.Pipeline()
 	oldCmd := pipe.XRangeN(ctx, streamKey, "-", newestOld, retentionTrimBatch)
@@ -395,6 +497,127 @@ func (s *RetentionSweeper) trimBatch(ctx context.Context, tenant, newestOld stri
 		anchor.MAC = anchor.mac(anchorKey, s.chainer.hmacKey)
 	}
 	return retentionTrimScript.Run(ctx, s.client, []string{streamKey, anchorKey}, newest.ID, anchor.String()).Int64()
+}
+
+// trimBatchCluster is trimBatch on Redis Cluster, where the anchor key and
+// the stream hash to different slots and no script can update both. The
+// anchor moves in three single-key steps around the trim:
+//
+//  1. write a pending anchor: the newest entry to delete plus the anchor it
+//     replaces, signed together;
+//  2. re-check the legal hold, then trim the stream (clusterTrimScript);
+//  3. confirm: rewrite the anchor without the one it replaced.
+//
+// Until step 3, verify links the stream to the replaced anchor, so the events
+// a crash or a new legal hold leaves in place still verify end to end, and
+// deleting any of them is reported. A trim whose confirmation is lost reads
+// as missing events until the next sweep confirms it: an unconfirmed trim
+// looks the same as someone else deleting those events. A sweep finishes a
+// pending trim before starting a new one.
+func (s *RetentionSweeper) trimBatchCluster(ctx context.Context, tenant, newestOld string) (int64, error) {
+	streamKey, anchorKey := s.chainer.StreamKey(tenant), s.chainer.AnchorKey(tenant)
+	pipe := s.client.Pipeline()
+	anchorCmd := pipe.Get(ctx, anchorKey)
+	oldestCmd := pipe.XRangeN(ctx, streamKey, "-", "+", 1)
+	oldCmd := pipe.XRangeN(ctx, streamKey, "-", newestOld, retentionTrimBatch)
+	headCmd := pipe.XRevRangeN(ctx, streamKey, "+", "-", 1)
+	_, _ = pipe.Exec(ctx) // per-command errors are checked below
+	raw, err := anchorCmd.Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return 0, err
+	}
+	for _, cmd := range []*redis.XMessageSliceCmd{oldestCmd, oldCmd, headCmd} {
+		if err := cmd.Err(); err != nil {
+			return 0, err
+		}
+	}
+	cur, err := parseRetentionAnchor(raw)
+	if err != nil {
+		return 0, err
+	}
+	if cur.Pending {
+		return s.finishPendingTrim(ctx, tenant, raw, cur, oldestCmd.Val())
+	}
+	old := oldCmd.Val()
+	if head := headCmd.Val(); len(old) > 0 && len(head) > 0 && old[len(old)-1].ID == head[0].ID {
+		old = old[:len(old)-1]
+	}
+	if len(old) == 0 {
+		return 0, nil
+	}
+	pending, err := anchorForEntry(old[len(old)-1])
+	if err != nil {
+		return 0, err
+	}
+	if pending.Seq <= cur.Seq {
+		return 0, fmt.Errorf("retention anchor seq %d is not behind the stream", cur.Seq)
+	}
+	pending.Pending, pending.PrevSeq, pending.PrevHash, pending.PrevStreamID = true, cur.Seq, cur.Hash, cur.StreamID
+	pendingRaw := s.signAnchor(anchorKey, pending)
+	if err := s.swapAnchor(ctx, anchorKey, raw, pendingRaw); err != nil {
+		return 0, err
+	}
+	return s.trimToPending(ctx, tenant, pendingRaw, pending)
+}
+
+// finishPendingTrim completes a cluster trim that a crash or a legal hold
+// interrupted after its pending anchor was written.
+func (s *RetentionSweeper) finishPendingTrim(ctx context.Context, tenant, pendingRaw string, pending retentionAnchor, oldest []redis.XMessage) (int64, error) {
+	if len(oldest) == 0 {
+		// The sweeper never trims the last entry: the stream was deleted.
+		return 0, errors.New("chain stream is empty under a pending retention anchor")
+	}
+	first, err := anchorForEntry(oldest[0])
+	if err != nil {
+		return 0, err
+	}
+	if first.Seq > pending.Seq {
+		// Trimmed, then the confirmation was lost. The tenant is not under
+		// hold now, and those events were past retention when the anchor
+		// was written.
+		return 0, s.confirmAnchor(ctx, tenant, pendingRaw, pending)
+	}
+	return s.trimToPending(ctx, tenant, pendingRaw, pending)
+}
+
+// trimToPending re-checks the legal hold, trims the stream through the
+// pending anchor and confirms the anchor.
+func (s *RetentionSweeper) trimToPending(ctx context.Context, tenant, pendingRaw string, pending retentionAnchor) (int64, error) {
+	if blocked, err := s.holdBlocks(ctx, tenant); blocked {
+		return 0, err
+	}
+	n, err := clusterTrimScript.Run(ctx, s.client, []string{s.chainer.StreamKey(tenant)}, pending.StreamID).Int64()
+	if err != nil || n == 0 {
+		return n, err
+	}
+	return n, s.confirmAnchor(ctx, tenant, pendingRaw, pending)
+}
+
+func (s *RetentionSweeper) confirmAnchor(ctx context.Context, tenant, pendingRaw string, pending retentionAnchor) error {
+	anchorKey := s.chainer.AnchorKey(tenant)
+	done := retentionAnchor{Seq: pending.Seq, Hash: pending.Hash, StreamID: pending.StreamID}
+	return s.swapAnchor(ctx, anchorKey, pendingRaw, s.signAnchor(anchorKey, done))
+}
+
+// swapAnchor replaces the anchor with next only while it still holds want.
+func (s *RetentionSweeper) swapAnchor(ctx context.Context, anchorKey, want, next string) error {
+	swapped, err := anchorSwapScript.Run(ctx, s.client, []string{anchorKey}, want, next).Int()
+	if err != nil {
+		return err
+	}
+	if swapped != 1 {
+		return errAnchorMoved
+	}
+	return nil
+}
+
+// signAnchor renders the anchor, signed when the chain has an HMAC key.
+func (s *RetentionSweeper) signAnchor(anchorKey string, a retentionAnchor) string {
+	a.MAC = ""
+	if len(s.chainer.hmacKey) > 0 {
+		a.MAC = a.mac(anchorKey, s.chainer.hmacKey)
+	}
+	return a.String()
 }
 
 // tenants lists every tenant with a chain head.
