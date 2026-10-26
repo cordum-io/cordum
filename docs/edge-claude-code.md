@@ -112,11 +112,12 @@ below the command-hook `"timeout": 5` that Cordum generates (Claude Code's own
 default is 600 seconds).
 
 The same budget bounds the inline approval wait.
-`CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` defaults to `30s`, but the wait
-runs inside the hook's `4.5s` budget: an approval that is not resolved within a
-few seconds ends the wait, and fail-closed sessions deny the action before
-Claude Code's timeout fires. Disable inline wait or use deny-and-retry instead
-of block-and-wait. See [edge/configuration.md](edge/configuration.md) for
+`CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` defaults to `30s`, but agentd ends
+the wait 1s before the hook's `4s` agentd budget runs out, so an approval has
+about 3 seconds to arrive. One still pending then gets the usual deny with
+`approval_ref` and retry guidance, well before Claude Code's timeout fires.
+Disable inline wait or use deny-and-retry instead of block-and-wait. See
+[edge/configuration.md](edge/configuration.md) for
 details.
 
 ## Token tradeoffs
