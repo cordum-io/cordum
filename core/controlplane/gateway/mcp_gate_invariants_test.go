@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
@@ -300,7 +301,48 @@ rules:
 	if rules[0].ID != "inv-deny-mcp-fs-read" {
 		t.Fatalf("expected inv-deny-mcp-fs-read, got %q", rules[0].ID)
 	}
-	if !listContainsFold(rules[0].Match.MCP.DenyTools, "fs.read") {
+	if !slices.Contains(rules[0].Match.MCP.DenyTools, "fs.read") {
 		t.Fatalf("expected fs.read in DenyTools, got %+v", rules[0].Match.MCP.DenyTools)
+	}
+}
+
+// TestMCPGateMatchesKernelRuleSemantics pins that the gate and the Safety
+// Kernel's rule matcher (config.MatchRule) read a deny invariant's match.mcp
+// lists the same way. Same table as safetykernel
+// TestKernelInvariants_MCPListsMatchGate. Plain (non-MCP) jobs never reach
+// the gate, so for them only the kernel side is checked: it must not match.
+func TestMCPGateMatchesKernelRuleSemantics(t *testing.T) {
+	const plain = "-"
+	for _, tc := range []struct {
+		name         string
+		lists        config.MCPPolicy
+		server, tool string
+		wantDeny     bool
+	}{
+		{"deny_tools listed tool", config.MCPPolicy{DenyTools: []string{"fs.read"}}, "fs", "fs.read", true},
+		{"deny_tools other tool", config.MCPPolicy{DenyTools: []string{"fs.read"}}, "fs", "fs.write", false},
+		{"deny_tools plain job", config.MCPPolicy{DenyTools: []string{"fs.read"}}, plain, plain, false},
+		{"allow_tools listed tool", config.MCPPolicy{AllowTools: []string{"calculator"}}, "tools", "calculator", false},
+		{"allow_tools other tool", config.MCPPolicy{AllowTools: []string{"calculator"}}, "tools", "shell.exec", true},
+		{"allow_tools plain job", config.MCPPolicy{AllowTools: []string{"calculator"}}, plain, plain, false},
+		{"deny_servers listed server", config.MCPPolicy{DenyServers: []string{"internal"}}, "internal", "x", true},
+		{"deny_servers other server", config.MCPPolicy{DenyServers: []string{"internal"}}, "github", "x", false},
+		{"allow_servers listed server", config.MCPPolicy{AllowServers: []string{"github"}}, "github", "x", false},
+		{"allow_servers other server", config.MCPPolicy{AllowServers: []string{"github"}}, "jira", "x", true},
+		{"allow_servers plain job", config.MCPPolicy{AllowServers: []string{"github"}}, plain, plain, false},
+	} {
+		rule := config.PolicyRule{ID: "inv-mcp", Decision: "deny", Match: config.PolicyMatch{MCP: tc.lists}}
+		input := config.PolicyInput{Tenant: "default", Topic: "job.default"}
+		if tc.tool != plain {
+			input.MCP = config.MCPRequest{Server: tc.server, Tool: tc.tool}
+			_, gateDeny := matchMCPInvariantDeny([]config.PolicyRule{rule},
+				mcp.Tool{Name: tc.tool, ApprovalScope: tc.server}, MCPCallMetadata{Tenant: "default"})
+			if gateDeny != tc.wantDeny {
+				t.Errorf("%s: gate deny = %v; want %v", tc.name, gateDeny, tc.wantDeny)
+			}
+		}
+		if kernelDeny := config.MatchRule(rule, input); kernelDeny != tc.wantDeny {
+			t.Errorf("%s: kernel rule match = %v; want %v", tc.name, kernelDeny, tc.wantDeny)
+		}
 	}
 }

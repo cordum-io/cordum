@@ -77,17 +77,8 @@ rules:
         path.class: secret
     decision: deny
     reason: Secret-path access is uniformly forbidden across all surfaces
-  # Deny MCP tool fs.read: one rule per evaluator (see the note below).
-  - id: inv-deny-mcp-fs-read          # Safety Kernel: Cordum job + Edge evaluators
+  - id: inv-deny-mcp-fs-read
     match:
-      labels:
-        mcp.tool: fs.read
-    decision: deny
-    reason: MCP tool fs.read is forbidden
-  - id: inv-deny-mcp-fs-read-gate     # gateway MCP gate
-    match:
-      labels:
-        mcp.tool: fs.read             # keeps this rule inert in the kernel
       mcp:
         deny_tools: [fs.read]
     decision: deny
@@ -102,20 +93,21 @@ output_rules:
         - 'AKIA[A-Z0-9]{16}'
 ```
 
-The two evaluators read `match.mcp` differently. The Safety Kernel sees an
-MCP call as `mcp.server` / `mcp.tool` labels and treats `match.mcp` lists as
-conditions on the rule: a `deny_tools` entry makes the rule skip that tool,
-and a request with no MCP fields passes the `mcp` check. On deny-class
-invariants, the gateway MCP gate reads only `match.tenants` and `match.mcp`:
-`deny_tools` lists tools to block, and a non-empty `allow_tools` blocks every
-tool not in it. So never author an MCP invariant with only `match.mcp`. In the
-kernel, `deny_tools: [fs.read]` alone matches every request except `fs.read`,
-including every non-MCP job.
+The Safety Kernel and the gateway MCP gate read `match.mcp` the same way
+(`config.MCPRuleMatch`). The lists apply only to MCP tool calls: the kernel
+sees one as `mcp.server` / `mcp.tool` labels, and a rule with `match.mcp`
+lists never matches a job without them. On a deny-class rule (`deny`,
+`require_approval`, `throttle`), `deny_tools` and `deny_servers` list what the
+rule blocks, and a non-empty `allow_tools` or `allow_servers` blocks every
+value not in it. So `inv-deny-mcp-fs-read` above denies `fs.read` and nothing
+else, in both evaluators. On an `allow` or `allow_with_constraints` rule the
+lists select the calls they permit. The MCP gate reads only `match.tenants` and `match.mcp`, and uses
+`tool.ApprovalScope` as the server (see Known limitations).
 
 The cross-evaluator integration test
 (`core/controlplane/safetykernel/global_invariants_integration_test.go`,
-build-tagged `//go:build integration`) pins this guarantee with four
-subtests sharing ONE SnapshotHash.
+build-tagged `//go:build integration`) pins this guarantee with subtests
+sharing ONE SnapshotHash.
 
 ## Bundle layout
 
@@ -232,10 +224,16 @@ that bundle entry; the unified GET projects it as part of the
   one bucket only. Authoring a rule with multiple topic intents is
   uncommon; if needed, duplicate the rule per intended bucket.
 - **MCP server-scope matching uses `tool.ApprovalScope`.** `mcp.Tool`
-  has no `Server` field, so invariant `Match.MCP.DenyServers` matches
-  against `tool.ApprovalScope` (a tag the tool advertises). For
+  has no `Server` field, so invariant `deny_servers` / `allow_servers`
+  match against `tool.ApprovalScope` (a tag the tool advertises). For
   fine-grained server-scope invariants, ensure tools advertise a
-  consistent ApprovalScope per logical server.
+  consistent ApprovalScope per logical server. The gate has no resource
+  or action either, so a non-empty `allow_resources` or `allow_actions`
+  list blocks every gated call.
+- **The MCP gate checks invariants only on approval-gated calls.**
+  `gatewayApprovalGate.Check` runs only for tools the MCP registry gates
+  for approval (`core/mcp/registry.go`). A tool call that needs no
+  approval never reaches the gate's invariant check.
 - **Decision string typos silently no-op.** Invariant rules with
   unknown `decision` values (e.g. `dney` instead of `deny`) skip the
   DENY-uncrossable enforcement — they fall into the ALLOW bucket per

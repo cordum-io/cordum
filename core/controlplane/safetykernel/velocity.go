@@ -239,7 +239,7 @@ func (s *server) evaluateRulesWithVelocity(ctx context.Context, policy *config.S
 				continue
 			}
 		}
-		if !config.MatchRule(rule.Match, input) {
+		if !config.MatchRule(rule, input) {
 			continue
 		}
 		// Rule matches on metadata. Check velocity if configured.
