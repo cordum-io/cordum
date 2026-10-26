@@ -97,6 +97,43 @@ func edgeCheckClaudeBinary(_ context.Context, env *edgeDoctorEnv) checkResult {
 	return edgeCheckExecutable(env, "claude", env.claudePath, "claude", "install Claude Code or pass --claude-path")
 }
 
+// edgeCheckClaudeCodeVersion reads `claude --version`. Every mode except
+// observe puts "onFailure": "block" on the blocking hooks, and Claude Code
+// honors that field only from claude.MinHookOnFailureVersion; older versions
+// let a failed hook through, which enterprise-strict cannot accept.
+func edgeCheckClaudeCodeVersion(ctx context.Context, env *edgeDoctorEnv) checkResult {
+	mode := edgePolicyModeOrDefault(env.policyMode)
+	if mode == "observe" {
+		return checkResult{State: stateSkip, Detail: "observe mode does not set onFailure; Claude Code version not checked"}
+	}
+	command := strings.TrimSpace(env.claudePath)
+	if command == "" {
+		command = "claude"
+	}
+	path, err := edgeResolveExecutable(env, command)
+	if err != nil {
+		return checkResult{State: stateSkip, Detail: "claude binary not resolved; see claude_binary"}
+	}
+	upgrade := "upgrade Claude Code to " + claude.MinHookOnFailureVersion + " or later"
+	version, err := claude.ClaudeCodeVersion(ctx, path, nil)
+	if err != nil {
+		return checkResult{
+			State: stateWarn,
+			Detail: "could not determine the Claude Code version (" + edgeDoctorRedact(err.Error(), env.base.apiKey) + "); Claude Code older than " +
+				claude.MinHookOnFailureVersion + " ignores \"onFailure\": \"block\", so hook failures would fail open",
+			Fix: "run claude --version; " + upgrade,
+		}
+	}
+	if claude.SupportsHookOnFailure(version) {
+		return checkResult{State: stateOK, Detail: "Claude Code " + version + " honors \"onFailure\": \"block\""}
+	}
+	state := stateWarn
+	if mode == "enterprise-strict" {
+		state = stateFail
+	}
+	return checkResult{State: state, Detail: claude.HookOnFailureUnsupportedMessage(version), Fix: upgrade}
+}
+
 func edgeCheckHookBinary(_ context.Context, env *edgeDoctorEnv) checkResult {
 	hook := edgeDoctorCommandExecutable(env.hookCommand)
 	return edgeCheckExecutable(env, "cordum-hook", hook, "cordum-hook", "build/install cordum-hook or pass --hook-command")

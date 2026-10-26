@@ -178,6 +178,7 @@ func defaultEdgeDoctorChecks() []edgeDoctorCheck {
 		{id: "safety_kernel_gateway", label: "Safety Kernel via Gateway", run: edgeCheckSafetyKernelViaGateway},
 		{id: "edge_sessions_api", label: "Edge sessions API", run: edgeCheckSessionsAPI},
 		{id: "claude_binary", label: "Claude binary", run: edgeCheckClaudeBinary},
+		{id: "claude_code_version", label: "Claude Code version", run: edgeCheckClaudeCodeVersion},
 		{id: "cordum_hook_binary", label: "cordum-hook binary", run: edgeCheckHookBinary},
 		{id: "cordum_agentd_binary", label: "cordum-agentd binary", run: edgeCheckAgentdBinary},
 		{id: "generated_settings", label: "Generated settings", run: edgeCheckGeneratedSettings},

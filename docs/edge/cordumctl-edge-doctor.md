@@ -43,7 +43,7 @@ cordumctl edge doctor \
 | `--tenant` | `CORDUM_TENANT_ID` or `default` | Tenant sent as `X-Tenant-ID`. |
 | `--policy-mode` | `CORDUM_EDGE_POLICY_MODE` or `enforce` | Reports degraded/fail-closed implications. |
 | `--fail-closed` | `CORDUM_AGENTD_FAIL_CLOSED` (unset = not explicitly configured) | Effective posture used to judge an `enforce` session. The doctor accepts the same spellings agentd itself does (`1`/`0`, `true`/`false`, `yes`/`no`, `y`/`n`, `on`/`off`, case-insensitive) and reports `ok` either way. An unset value is also `ok` (posture undetermined from outside the session). A non-empty value that does not match any of those spellings is reported as `warn` — it is likely a typo, and agentd would silently fail to parse it too. |
-| `--claude-path` | `CLAUDE_PATH` or PATH lookup | Claude Code executable to verify. |
+| `--claude-path` | `CLAUDE_PATH` or PATH lookup | Claude Code executable to verify and to run with `--version`. |
 | `--hook-command` | `CORDUM_HOOK_COMMAND` or `cordum-hook` | Hook command embedded in generated settings. |
 | `--agentd-path` | `CORDUM_AGENTD_PATH` or PATH lookup | `cordum-agentd` executable to verify. |
 | `--agentd-url` | `CORDUM_AGENTD_URL`, `CORDUM_AGENTD_SOCKET`, or local default | Local loopback hook URL to dial. |
@@ -62,6 +62,13 @@ The doctor reports `ok`, `warn`, `fail`, or `skip` for each check:
 - Safety Kernel reachability through Gateway via `GET /api/v1/policy/snapshots`.
 - Edge sessions API ping via `GET /api/v1/edge/sessions?limit=1`.
 - `claude`, `cordum-hook`, and `cordum-agentd` executable discovery.
+- Claude Code version (`claude_code_version`): runs `claude --version`.
+  Every mode except `observe` generates `"onFailure": "block"` on the
+  `PreToolUse`, `UserPromptSubmit`, and `ConfigChange` hooks, and Claude Code
+  honors it only from v2.1.295. On an older version a hook that cannot start,
+  times out, or prints invalid JSON fails open, so the check reports `warn`
+  (`fail` in `enterprise-strict`). If the version cannot be read, the check
+  reports `warn` with the reason. `observe` skips the check.
 - Generated Claude settings shape: required Cordum command hooks, session and
   execution metadata, bare `CORDUM_AGENTD_URL`/socket, and no persisted API key
   or nonce fields.

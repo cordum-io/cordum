@@ -2,11 +2,13 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -64,7 +66,46 @@ func TestEdgeDoctorMissingClaudeFailsWithoutRealClaude(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit=%d stdout=%s", code, stdout)
 	}
-	assertEdgeDoctorCheck(t, decodeEdgeDoctorJSON(t, stdout), "claude_binary", stateFail)
+	payload := decodeEdgeDoctorJSON(t, stdout)
+	assertEdgeDoctorCheck(t, payload, "claude_binary", stateFail)
+	assertEdgeDoctorCheck(t, payload, "claude_code_version", stateSkip)
+}
+
+func TestEdgeCheckClaudeCodeVersion(t *testing.T) {
+	cases := []struct {
+		mode, version string
+		want          checkState
+		detail        string
+	}{
+		{"observe", "2.1.200 (Claude Code)", stateSkip, "observe mode does not set onFailure"},
+		{"enforce", "2.1.295 (Claude Code)", stateOK, "Claude Code 2.1.295 honors"},
+		{"enterprise-strict", "v2.1.300 (Claude Code)", stateOK, "Claude Code 2.1.300 honors"},
+		{"enforce", "2.1.200 (Claude Code)", stateWarn, "fails open on this version"},
+		{"local-dev-enforce", "2.1.200 (Claude Code)", stateWarn, "fails open on this version"},
+		{"enterprise-strict", "2.1.200 (Claude Code)", stateFail, "Claude Code 2.1.200 is older than 2.1.295"},
+		{"enforce", "Claude Code nightly", stateWarn, "could not determine the Claude Code version"},
+		{"enterprise-strict", "Claude Code nightly", stateWarn, "could not determine the Claude Code version"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.mode+"/"+tc.version, func(t *testing.T) {
+			t.Setenv("CORDUM_TEST_CLAUDE_VERSION", tc.version)
+			env := &edgeDoctorEnv{base: &doctorEnv{}, policyMode: tc.mode, claudePath: os.Args[0], lookPath: exec.LookPath, statFile: os.Stat}
+			res := edgeCheckClaudeCodeVersion(context.Background(), env)
+			if res.State != tc.want || !strings.Contains(res.Detail, tc.detail) {
+				t.Fatalf("got %s %q, want %s containing %q", res.State, res.Detail, tc.want, tc.detail)
+			}
+		})
+	}
+}
+
+func TestEdgeDoctorEnterpriseStrictFailsOnOldClaudeCode(t *testing.T) {
+	fx := newEdgeDoctorFixture(t)
+	t.Setenv("CORDUM_TEST_CLAUDE_VERSION", "2.1.200 (Claude Code)")
+	code, stdout, _ := runEdgeDoctorForTest(t, replaceFlag(fx.args("--json"), "--policy-mode", "enterprise-strict")...)
+	if code != 1 {
+		t.Fatalf("exit=%d stdout=%s", code, stdout)
+	}
+	assertEdgeDoctorCheck(t, decodeEdgeDoctorJSON(t, stdout), "claude_code_version", stateFail)
 }
 
 func TestEdgeDoctorMissingHookFails(t *testing.T) {
@@ -117,6 +158,8 @@ type edgeDoctorFixture struct {
 func newEdgeDoctorFixture(t *testing.T) edgeDoctorFixture {
 	t.Helper()
 	apiKey := "edge-doctor-secret-token"
+	// --claude-path is this test binary; TestMain answers its --version probe.
+	t.Setenv("CORDUM_TEST_CLAUDE_VERSION", claude.MinHookOnFailureVersion+" (Claude Code)")
 	agentdURL := newEdgeDoctorAgentdURL(t)
 	settings := writeEdgeDoctorSettings(t, agentdURL)
 	return edgeDoctorFixture{
