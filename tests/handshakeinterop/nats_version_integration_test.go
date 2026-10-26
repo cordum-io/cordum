@@ -91,6 +91,18 @@ func buildInfoWith(deps ...*debug.Module) *debug.BuildInfo {
 	return &debug.BuildInfo{Deps: deps}
 }
 
+func buildInfoGo(goVersion string, deps ...*debug.Module) *debug.BuildInfo {
+	return &debug.BuildInfo{GoVersion: goVersion, Deps: deps}
+}
+
+// forbidGoList is the go list source for cases where the fallback must not run.
+func forbidGoList(t *testing.T) func() (*debug.Module, error) {
+	return func() (*debug.Module, error) {
+		t.Fatal("go list fallback invoked")
+		return nil, nil
+	}
+}
+
 func TestEmbeddedNATSVersionFence(t *testing.T) {
 	other := &debug.Module{Path: "example.com/other", Version: "v9.9.9"}
 	tests := []struct {
@@ -137,7 +149,7 @@ func TestEmbeddedNATSVersionFence(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := checkEmbeddedNATSVersion(tc.info, tc.ok, tc.runtime)
+			err := checkEmbeddedNATSVersion(tc.info, tc.ok, tc.runtime, forbidGoList(t))
 			if tc.wantErr == nil {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
@@ -154,16 +166,102 @@ func TestEmbeddedNATSVersionFence(t *testing.T) {
 	}
 }
 
+func TestEmbeddedNATSVersionGoListFallback(t *testing.T) {
+	errBoom := errors.New("exit status 1: boom")
+	other := &debug.Module{Path: "example.com/other", Version: "v2.0.1"}
+	pseudo := "v2.0.2-0.20240102030405-0123456789ab"
+	tests := []struct {
+		name     string
+		info     *debug.BuildInfo
+		ok       bool
+		listMod  *debug.Module
+		listErr  error
+		runtime  string
+		wantList bool
+		wantErr  error
+		wantMsg  string
+	}{
+		{"taken: match", buildInfoGo("go1.26.5"), true, natsDep("v2.0.1", nil), nil, "2.0.1", true, nil, ""},
+		{"taken: mismatch", buildInfoGo("go1.26.5"), true, natsDep("v2.0.1", nil), nil, "2.0.2", true,
+			errNATSVersionMismatch, `gnats.VERSION="2.0.2" built="2.0.1"`},
+		{"taken: go list failure", buildInfoGo("go1.26.5"), true, nil, errBoom, "2.0.1", true, errNATSModuleResolve, "boom"},
+		{"taken: nil module", buildInfoGo("go1.26.5"), true, nil, nil, "2.0.1", true, errNATSModuleResolve, "no module"},
+		{"taken: wrong module path", buildInfoGo("go1.26.5"), true, other, nil, "2.0.1", true,
+			errNATSModuleMissing, "example.com/other"},
+		{"taken: directory replace", buildInfoGo("go1.26.5"), true, natsDep("v2.0.1", &debug.Module{Path: "../nats-server"}),
+			nil, "2.0.1", true, errNATSModuleReplaced, "../nats-server"},
+		{"taken: fork replace", buildInfoGo("go1.26.5"), true,
+			natsDep("v2.0.1", &debug.Module{Path: "example.com/fork/nats-server/v2", Version: "v2.0.1"}), nil, "2.0.1", true,
+			errNATSModuleReplaced, "example.com/fork/nats-server/v2"},
+		{"taken: same-path replace honored", buildInfoGo("go1.26.5"), true,
+			natsDep("v2.0.1", &debug.Module{Path: natsServerModulePath, Version: "v2.0.2"}), nil, "2.0.2", true, nil, ""},
+		{"taken: pseudo-version", buildInfoGo("go1.26.5"), true, natsDep(pseudo, nil), nil, "2.0.2", true,
+			errNATSVersionMalformed, "pseudo-version"},
+		{"taken: malformed", buildInfoGo("go1.25.12"), true, natsDep("2.0.1", nil), nil, "2.0.1", true,
+			errNATSVersionMalformed, `"2.0.1"`},
+		{"refused: not ok", buildInfoGo("go1.26.5"), false, nil, nil, "2.0.1", false, errNATSBuildInfoMissing, "unavailable"},
+		{"refused: go1.27.0", buildInfoGo("go1.27.0"), true, nil, nil, "2.0.1", false, errNATSDepsMissing, `"go1.27.0"`},
+		{"refused: go1.27.2", buildInfoGo("go1.27.2"), true, nil, nil, "2.0.1", false, errNATSDepsMissing, `"go1.27.2"`},
+		{"refused: devel", buildInfoGo("devel go1.28-abc"), true, nil, nil, "2.0.1", false,
+			errNATSDepsMissing, `"devel go1.28-abc"`},
+		{"refused: empty GoVersion", buildInfoGo(""), true, nil, nil, "2.0.1", false, errNATSDepsMissing, `GoVersion ""`},
+		{"refused: deps without nats on go1.26.5", buildInfoGo("go1.26.5", other), true, nil, nil, "2.0.1", false,
+			errNATSModuleMissing, natsServerModulePath},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			called := false
+			goList := func() (*debug.Module, error) {
+				called = true
+				return tc.listMod, tc.listErr
+			}
+			err := checkEmbeddedNATSVersion(tc.info, tc.ok, tc.runtime, goList)
+			if called != tc.wantList {
+				t.Fatalf("go list called = %v, want %v", called, tc.wantList)
+			}
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) || (tc.listErr != nil && !errors.Is(err, tc.listErr)) {
+				t.Fatalf("error = %v, want %v wrapping %v", err, tc.wantErr, tc.listErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantMsg) {
+				t.Fatalf("error %q lacks %q", err, tc.wantMsg)
+			}
+		})
+	}
+}
+
+func TestGoVersionOmitsTestDeps(t *testing.T) {
+	for v, want := range map[string]bool{
+		"go1.26.5": true, "go1.26.0": true, "go1.26rc1": true, "go1.25.12": true, "go1.21.0": true,
+		"go1.27.0": false, "go1.27.2": false, "go1.30.1": false, "go2.0.0": false, "devel go1.28-abc": false,
+		"": false, "go1": false, "go1.x": false, " go1.26.5": false,
+	} {
+		if got := goVersionOmitsTestDeps(v); got != want {
+			t.Errorf("goVersionOmitsTestDeps(%q) = %v, want %v", v, got, want)
+		}
+	}
+}
+
 func TestEmbeddedNATSVersionMatchesBuiltDependency(t *testing.T) {
 	info, ok := debug.ReadBuildInfo()
-	built, err := builtNATSServerVersion(info, ok)
+	source := "build information"
+	goList := func() (*debug.Module, error) {
+		source = "go list -m (Go <1.27 test binary embeds no Deps)"
+		return goListNATSModule()
+	}
+	built, err := builtNATSServerVersion(info, ok, goList)
 	if err != nil {
 		t.Fatalf("built NATS version: %v", err)
 	}
 	if built != gnats.VERSION {
 		t.Fatalf("gnats.VERSION=%q built=%q", gnats.VERSION, built)
 	}
-	t.Logf("embedded NATS server version %s is bound to the built dependency", built)
+	t.Logf("embedded NATS server version %s is bound to the built dependency via %s", built, source)
 }
 
 var readmeNATSVersionClaim = regexp.MustCompile(`nats-server/v2[^\n]*\d+\.\d+\.\d+`)
@@ -177,7 +275,7 @@ func TestHandshakeInteropREADMEBindsNATSVersion(t *testing.T) {
 	if claim := readmeNATSVersionClaim.FindString(readme); claim != "" {
 		t.Fatalf("README hard-codes a NATS version: %q", claim)
 	}
-	for _, want := range []string{"debug.ReadBuildInfo", "gnats.VERSION"} {
+	for _, want := range []string{"debug.ReadBuildInfo", "gnats.VERSION", "go list -m"} {
 		if !strings.Contains(readme, want) {
 			t.Fatalf("README does not describe the dependency-bound assertion: missing %q", want)
 		}
