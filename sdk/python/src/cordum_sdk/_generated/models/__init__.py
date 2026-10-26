@@ -1,6 +1,9 @@
 """Contains all the data models used in inputs/outputs"""
 
 from .admin_lock import AdminLock
+from .adopt_retention_anchor_request import AdoptRetentionAnchorRequest
+from .adopt_retention_anchor_result import AdoptRetentionAnchorResult
+from .adopt_retention_anchor_result_previous_anchor_state import AdoptRetentionAnchorResultPreviousAnchorState
 from .api_key_info import APIKeyInfo
 from .approval_analytics_group import ApprovalAnalyticsGroup
 from .approval_analytics_response import ApprovalAnalyticsResponse
@@ -545,6 +548,9 @@ from .workflow_step_retry import WorkflowStepRetry
 
 __all__ = (
     "AdminLock",
+    "AdoptRetentionAnchorRequest",
+    "AdoptRetentionAnchorResult",
+    "AdoptRetentionAnchorResultPreviousAnchorState",
     "APIKeyInfo",
     "ApprovalAnalyticsGroup",
     "ApprovalAnalyticsResponse",

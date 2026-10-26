@@ -13,11 +13,13 @@ import (
 // runAuditCmd dispatches `cordumctl audit <subcommand>`.
 func runAuditCmd(args []string) {
 	if len(args) < 1 {
-		fail("usage: cordumctl audit <verify> [options]")
+		fail("usage: cordumctl audit <verify|adopt-anchor> [options]")
 	}
 	switch args[0] {
 	case "verify":
 		runAuditVerify(args[1:])
+	case "adopt-anchor":
+		runAuditAdoptAnchor(args[1:])
 	default:
 		fail(fmt.Sprintf("unknown audit subcommand %q", args[0]))
 	}
@@ -71,6 +73,49 @@ func runAuditVerify(args []string) {
 		// don't understand.
 		os.Exit(1)
 	}
+}
+
+// runAuditAdoptAnchor implements `cordumctl audit adopt-anchor [tenant]
+// --expected-oldest-seq N [--replace-invalid]`: it adopts a retention anchor
+// for a chain trimmed outside the retention sweeper (by hand, or by stream
+// max-length eviction), so verify reads the missing prefix as
+// retention_trimmed. N is the first seq `cordumctl audit verify` observes;
+// the gateway refuses when the chain starts anywhere else.
+func runAuditAdoptAnchor(args []string) {
+	fs := newFlagSet("audit adopt-anchor")
+	expected := fs.Int64("expected-oldest-seq", 0, "seq of the oldest retained event, as `cordumctl audit verify` reports it (required)")
+	replace := fs.Bool("replace-invalid", false, "replace an existing anchor that does not anchor the chain")
+	jsonOut := fs.Bool("json", false, "emit the raw JSON response")
+	fs.ParseArgs(args)
+	if *expected < 2 {
+		fail("usage: cordumctl audit adopt-anchor [tenant] --expected-oldest-seq N [--replace-invalid] [--json]")
+	}
+
+	client := newClientFromFlags(fs)
+	result, err := client.AdoptRetentionAnchor(context.Background(), sdk.AdoptRetentionAnchorRequest{
+		TenantID:          strings.TrimSpace(fs.Arg(0)),
+		ExpectedOldestSeq: *expected,
+		ReplaceInvalid:    *replace,
+	})
+	check(err)
+	if *jsonOut {
+		printJSON(result)
+		return
+	}
+	renderAdoptAnchor(os.Stdout, result)
+}
+
+// renderAdoptAnchor prints an adopted anchor. ASCII-only.
+func renderAdoptAnchor(out io.Writer, r *sdk.AdoptRetentionAnchorResult) {
+	previous := r.PreviousAnchorState
+	if r.PreviousAnchor != "" {
+		previous += "  " + r.PreviousAnchor
+	}
+	_, _ = fmt.Fprintf(out, "Retention anchor adopted - tenant %s\n", r.Tenant)
+	_, _ = fmt.Fprintf(out, "  anchor:                 seq %d, stream id %s\n", r.AdoptedSeq, r.AdoptedStreamID)
+	_, _ = fmt.Fprintf(out, "  previous anchor:        %s\n", previous)
+	_, _ = fmt.Fprintf(out, "  recorded at chain seq:  %d\n", r.EventSeq)
+	_, _ = fmt.Fprintf(out, "Run `cordumctl audit verify %s` to check the chain.\n", r.Tenant)
 }
 
 // renderAuditVerifyTable prints a compact human-readable summary of a

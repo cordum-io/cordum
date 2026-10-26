@@ -552,7 +552,8 @@ func (s *RetentionSweeper) trimBatchCluster(ctx context.Context, tenant, newestO
 	// Never finish, or sign over, an anchor the chain's HMAC key did not
 	// sign: confirming a forged pending anchor would sign the deletion it
 	// names. The tenant is skipped, its data kept, and verify reports the
-	// anchor as hmac_mismatch.
+	// anchor as hmac_mismatch until an operator adopts a new one
+	// (Chainer.AdoptRetentionAnchor).
 	if raw != "" && len(s.chainer.hmacKey) > 0 && !cur.validMAC(anchorKey, s.chainer.hmacKey) {
 		return 0, errors.New("retention anchor MAC does not verify; not trimming over it")
 	}
@@ -574,8 +575,8 @@ func (s *RetentionSweeper) trimBatchCluster(ctx context.Context, tenant, newestO
 		return 0, fmt.Errorf("retention anchor seq %d is not behind the stream", cur.Seq)
 	}
 	pending.Pending, pending.PrevSeq, pending.PrevHash, pending.PrevStreamID = true, cur.Seq, cur.Hash, cur.StreamID
-	pendingRaw := s.signAnchor(anchorKey, pending)
-	if err := s.swapAnchor(ctx, anchorKey, raw, pendingRaw); err != nil {
+	pendingRaw := s.chainer.signAnchor(anchorKey, pending)
+	if err := swapAnchor(ctx, s.client, anchorKey, raw, pendingRaw); err != nil {
 		return 0, err
 	}
 	return s.trimToPending(ctx, tenant, pendingRaw, pending)
@@ -617,12 +618,12 @@ func (s *RetentionSweeper) trimToPending(ctx context.Context, tenant, pendingRaw
 func (s *RetentionSweeper) confirmAnchor(ctx context.Context, tenant, pendingRaw string, pending retentionAnchor) error {
 	anchorKey := s.chainer.AnchorKey(tenant)
 	done := retentionAnchor{Seq: pending.Seq, Hash: pending.Hash, StreamID: pending.StreamID}
-	return s.swapAnchor(ctx, anchorKey, pendingRaw, s.signAnchor(anchorKey, done))
+	return swapAnchor(ctx, s.client, anchorKey, pendingRaw, s.chainer.signAnchor(anchorKey, done))
 }
 
 // swapAnchor replaces the anchor with next only while it still holds want.
-func (s *RetentionSweeper) swapAnchor(ctx context.Context, anchorKey, want, next string) error {
-	swapped, err := anchorSwapScript.Run(ctx, s.client, []string{anchorKey}, want, next).Int()
+func swapAnchor(ctx context.Context, client redis.UniversalClient, anchorKey, want, next string) error {
+	swapped, err := anchorSwapScript.Run(ctx, client, []string{anchorKey}, want, next).Int()
 	if err != nil {
 		return err
 	}
@@ -633,10 +634,10 @@ func (s *RetentionSweeper) swapAnchor(ctx context.Context, anchorKey, want, next
 }
 
 // signAnchor renders the anchor, signed when the chain has an HMAC key.
-func (s *RetentionSweeper) signAnchor(anchorKey string, a retentionAnchor) string {
+func (c *Chainer) signAnchor(anchorKey string, a retentionAnchor) string {
 	a.MAC = ""
-	if len(s.chainer.hmacKey) > 0 {
-		a.MAC = a.mac(anchorKey, s.chainer.hmacKey)
+	if len(c.hmacKey) > 0 {
+		a.MAC = a.mac(anchorKey, c.hmacKey)
 	}
 	return a.String()
 }

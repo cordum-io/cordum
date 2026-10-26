@@ -100,3 +100,28 @@ func TestFormatGapSeqs_TruncatesLongLists(t *testing.T) {
 		t.Errorf("truncation tail missing: %q", got)
 	}
 }
+
+func TestRenderAdoptAnchor(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	renderAdoptAnchor(&buf, &sdk.AdoptRetentionAnchorResult{
+		Tenant:              "acme",
+		AdoptedSeq:          41,
+		AdoptedStreamID:     "1700000000000-4",
+		PreviousAnchor:      "12:abc:1-0",
+		PreviousAnchorState: "unlinked",
+		EventSeq:            90,
+	})
+	out := buf.String()
+	for _, want := range []string{
+		"tenant acme",
+		"seq 41, stream id 1700000000000-4",
+		"previous anchor:        unlinked  12:abc:1-0",
+		"recorded at chain seq:  90",
+		"cordumctl audit verify acme",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+}

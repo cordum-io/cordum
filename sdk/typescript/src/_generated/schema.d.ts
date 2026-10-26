@@ -313,6 +313,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/audit/chain/retention-anchor": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Adopt a retention anchor for a chain trimmed outside the sweeper
+         * @description Writes the retention anchor that a tenant chain trimmed outside the retention sweeper (by
+         *     hand, or by stream max-length eviction) lacks, so verify reports the missing prefix as
+         *     `retention_trimmed` instead of `missing`. The anchor is the oldest retained event's
+         *     predecessor: seq `expected_oldest_seq - 1`, the oldest event's `prev_hash`, and the stream
+         *     ID just below its entry, HMAC-signed when `CORDUM_AUDIT_HMAC_KEY` is set. Admin-only.
+         *
+         *     Refused with 409, changing nothing, when the oldest retained event is not
+         *     `expected_oldest_seq`, when the current anchor already links the chain, when a Redis
+         *     Cluster retention trim is in progress, or when the current anchor is invalid and
+         *     `replace_invalid` is not set. The adoption is appended to the tenant's audit chain
+         *     (`audit.retention_anchor_adopted`, naming the actor and the replaced anchor) before the
+         *     anchor is written. If a retention sweep moves the anchor in between, the call returns
+         *     409 and that event stays in the chain.
+         */
+        post: operations["adoptRetentionAnchor"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/audit/events": {
         parameters: {
             query?: never;
@@ -3783,6 +3815,41 @@ export interface components {
             /** Format: int64 */
             ttl_remaining_ms: number;
             type: string;
+        };
+        AdoptRetentionAnchorRequest: {
+            /**
+             * Format: int64
+             * @description Seq of the oldest retained event, as verify reports it (`first_seq`). Adoption is refused when the chain starts anywhere else.
+             */
+            expected_oldest_seq: number;
+            /**
+             * @description Replace an existing anchor that does not anchor the chain (malformed, `hmac_mismatch`, or not linked to the oldest retained event). A valid anchor is never replaced.
+             * @default false
+             */
+            replace_invalid: boolean;
+            /** @description Tenant whose chain to anchor; must match caller scope and defaults to the authenticated/request tenant. */
+            tenant_id?: string;
+        };
+        AdoptRetentionAnchorResult: {
+            /** @description Event hash the oldest retained event links to (its `prev_hash`). */
+            adopted_hash: string;
+            /**
+             * Format: int64
+             * @description Seq of the adopted anchor, one below the oldest retained event.
+             */
+            adopted_seq: number;
+            /** @description Redis Stream ID just below the oldest retained entry. */
+            adopted_stream_id: string;
+            /**
+             * Format: int64
+             * @description Seq of the chain event that records the adoption.
+             */
+            event_seq: number;
+            /** @description The replaced anchor value; empty when there was none. */
+            previous_anchor: string;
+            /** @enum {string} */
+            previous_anchor_state: "none" | "malformed" | "hmac_mismatch" | "unlinked";
+            tenant: string;
         };
         APIKeyInfo: {
             /** Format: date-time */
@@ -7671,6 +7738,39 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
             500: components["responses"]["InternalServerError"];
+        };
+    };
+    adoptRetentionAnchor: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdoptRetentionAnchorRequest"];
+            };
+        };
+        responses: {
+            /** @description Retention anchor adopted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdoptRetentionAnchorResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalServerError"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     getAuditEvents: {
@@ -15591,6 +15691,7 @@ export enum ApiPaths {
     setTelemetryConsent = "/api/v1/telemetry/consent",
     listAdminLocks = "/api/v1/admin/locks",
     verifyAuditChain = "/api/v1/audit/verify",
+    adoptRetentionAnchor = "/api/v1/audit/chain/retention-anchor",
     getAuditEvents = "/api/v1/audit/events",
     exportAuditCompliance = "/api/v1/audit/export",
     getAuditExportHealth = "/api/v1/audit/export/health",

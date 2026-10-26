@@ -1494,6 +1494,9 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 	// that had /api/v1/audit/verify 404ing on fresh deploys despite the
 	// handler being fully implemented and unit-tested.
 	s.registerRoute(mux, "GET /api/v1/audit/verify", s.instrumented("/api/v1/audit/verify", s.handleAuditVerify))
+	// Retention anchor adoption (admin only) for chains trimmed outside the
+	// retention sweeper; handler in handlers_audit_anchor.go.
+	s.registerRoute(mux, "POST /api/v1/audit/chain/retention-anchor", s.instrumented("/api/v1/audit/chain/retention-anchor", s.handleAdoptRetentionAnchor))
 
 	// 2.7.2 Audit chain list (audit.read) — SIEM-feed read endpoint for the
 	// dashboard's Audit Log page. Distinct from /audit/verify (integrity

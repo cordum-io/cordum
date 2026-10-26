@@ -156,6 +156,27 @@ func TestCreateTopic(t *testing.T) {
 	}
 }
 
+func TestAdoptRetentionAnchor(t *testing.T) {
+	client := newTestClient(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodPost || req.URL.EscapedPath() != "/api/v1/audit/chain/retention-anchor" {
+			t.Fatalf("request = %s %s", req.Method, req.URL.EscapedPath())
+		}
+		body, _ := io.ReadAll(req.Body)
+		if got := strings.TrimSpace(string(body)); got != `{"tenant_id":"acme","expected_oldest_seq":4,"replace_invalid":true}` {
+			t.Fatalf("body = %s", got)
+		}
+		return jsonResponse(http.StatusOK, `{"tenant":"acme","adopted_seq":3,"previous_anchor_state":"unlinked","event_seq":9}`), nil
+	}))
+
+	res, err := client.AdoptRetentionAnchor(context.Background(), AdoptRetentionAnchorRequest{TenantID: "acme", ExpectedOldestSeq: 4, ReplaceInvalid: true})
+	if err != nil {
+		t.Fatalf("AdoptRetentionAnchor: %v", err)
+	}
+	if res.Tenant != "acme" || res.AdoptedSeq != 3 || res.PreviousAnchorState != "unlinked" || res.EventSeq != 9 {
+		t.Fatalf("result = %+v", res)
+	}
+}
+
 func TestDeleteTopicEncodesName(t *testing.T) {
 	name := "job/topic:alpha"
 	expectedPath := "/api/v1/topics/" + url.PathEscape(name)

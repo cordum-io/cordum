@@ -435,6 +435,7 @@ Usage:
   cordumctl policy sign --in <path> [--out <path>.sig] [--key-env NAME] [--key-id ID]
   cordumctl policy verify --in <path> [--sig <path>] [--public-key-env NAME]
   cordumctl audit verify [tenant] [--since ms] [--until ms] [--limit N] [--json]
+  cordumctl audit adopt-anchor [tenant] --expected-oldest-seq N [--replace-invalid] [--json]
   cordumctl evals extract --name <dataset> [--dry-run]
   cordumctl evals run --dataset <id> [--use-current] [--wait]
   cordumctl auth <subcommand> [...]

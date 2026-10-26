@@ -107,6 +107,13 @@ const (
 	// role_name and tenant. Identity carries the actor. SIEM rules can
 	// detect cleanup-after-attack patterns (delete role to remove evidence).
 	EventAuthRoleDeleted = "auth.role_deleted"
+	// EventRetentionAnchorAdopted is appended to a tenant's audit chain
+	// when an operator adopts a retention anchor for a chain trimmed
+	// outside the retention sweeper (POST
+	// /api/v1/audit/chain/retention-anchor). Identity carries the actor;
+	// Extra carries adopted_seq, adopted_stream_id, previous_anchor and
+	// previous_anchor_state.
+	EventRetentionAnchorAdopted = "audit.retention_anchor_adopted"
 
 	// EDGE-014 audit event constants. These cover the Edge action
 	// lifecycle (sessions, executions, decisions, approvals, degraded /

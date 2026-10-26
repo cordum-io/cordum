@@ -7,6 +7,9 @@
  */
 
 export * from "./adminLock.ts";
+export * from "./adoptRetentionAnchorRequest.ts";
+export * from "./adoptRetentionAnchorResult.ts";
+export * from "./adoptRetentionAnchorResultPreviousAnchorState.ts";
 export * from "./aPIKeyInfo.ts";
 export * from "./approvalAnalyticsGroup.ts";
 export * from "./approvalAnalyticsResponse.ts";
