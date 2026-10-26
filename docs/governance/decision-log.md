@@ -117,8 +117,9 @@ Redis-backed index store:
   agent/topic/verdict indexes when new writes land
 
 The log is an operator-facing governance index, not the canonical audit
-archive. Long-lived compliance retention should still rely on the audit
-export + legal-hold surfaces.
+archive, and it is not covered by legal hold: records keep expiring while a
+tenant is under hold. Long-lived compliance retention should still rely on the
+audit export + legal-hold surfaces.
 
 ## RBAC notes
 

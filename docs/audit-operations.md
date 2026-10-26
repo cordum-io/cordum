@@ -311,6 +311,18 @@ any active hold, the retention sweeper never trims its chain:
 
 The retention sweeper is the only code path that deletes audit chain events.
 
+Holds also cover Edge sessions: the Edge session sweeper keeps every expired
+session (with its executions and events) of a tenant under hold, checking
+before each deletion, and keeps a tenant's sessions when its hold check fails.
+Without a legal hold store it deletes no sessions at all.
+
+**Not covered by legal hold:** the policy decision log (`gov:dec:<tenant>:*`,
+the Governance Timeline). Its records expire on their own Redis TTL
+(`CORDUM_DECISION_LOG_TTL_SECONDS`, default 30 days) and its indexes are
+pruned on every write, whether or not the tenant is under hold. If decision
+records must be preserved for a hold, page them out through
+`GET /api/v1/governance/decisions` before they age out.
+
 ```bash
 # Create a legal hold
 curl -X POST -H "Authorization: Bearer $API_KEY" \

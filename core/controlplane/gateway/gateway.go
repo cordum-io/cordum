@@ -1026,6 +1026,7 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	edgeSweeper, err := edgecore.NewSessionSweeper(edgeStore, edgecore.SessionSweeperOptions{
 		RetentionTTL: edgeRetentionTTL,
 		Interval:     edgeSweepInterval,
+		LegalHolds:   s.legalHoldStore,
 	})
 	if err != nil {
 		return fmt.Errorf("init edge session sweeper: %w", err)

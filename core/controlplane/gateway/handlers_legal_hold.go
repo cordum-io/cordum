@@ -20,7 +20,7 @@ func initLegalHoldStore(redisURL string) *audit.LegalHoldStore {
 	}
 	store, err := audit.NewLegalHoldStore(redisURL)
 	if err != nil {
-		slog.Warn("legal hold store init failed", "error", err)
+		slog.Warn("legal hold store init failed; audit chain and Edge session retention delete nothing until restart", "error", err)
 		return nil
 	}
 	return store
