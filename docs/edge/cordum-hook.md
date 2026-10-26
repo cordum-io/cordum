@@ -26,7 +26,7 @@ The hook reads exactly one JSON object from stdin.
 | `CORDUM_HOOK_MAX_INPUT_BYTES` | `1048576` | Maximum stdin payload size. Values above 8 MiB are ignored. |
 | `CORDUM_AGENTD_HOOK_TIMEOUT` | `4.5s` | Total hook wall-clock budget for stdin read, local agentd decision, and response write. Duration strings such as `500ms`, `2s`, or numeric seconds are accepted; values `>=5s` are rejected. |
 
-Hook timeout MUST stay strictly below Claude Code's 5s hook deadline (PRD §7.4) or Claude treats the hook as unresponsive and may proceed without Cordum's governance decision for that tool call. The default `4.5s` budget is split into a `4s` local agentd POST budget plus a `500ms` response-write reserve. Custom `CORDUM_AGENTD_HOOK_TIMEOUT` values below `5s` shrink the agentd budget proportionally so response serialization still has reserved time.
+Hook timeout MUST stay strictly below the `"timeout": 5` Cordum generates on each command hook (PRD §7.4; Claude Code's own default is 600 seconds) or Claude Code kills the hook first. With `"onFailure": "block"` (generated for fail-closed sessions; Claude Code v2.1.295 or later) the killed hook blocks the tool call; without it, Claude proceeds without Cordum's governance decision for that tool call. The default `4.5s` budget is split into a `4s` local agentd POST budget plus a `500ms` response-write reserve. Custom `CORDUM_AGENTD_HOOK_TIMEOUT` values below `5s` shrink the agentd budget proportionally so response serialization still has reserved time.
 
 Migration note: if you previously customized this value to `8s` or relied on the old `10s` default, lower it below `5s` (prefer the new `4.5s` default) before rollout.
 
@@ -208,5 +208,7 @@ Use command hooks. HTTP hooks are permitted only for the EDGE-000 spike.
   }
 }
 ```
+
+This example runs in `observe` mode, which is fail-open by design. For `enforce` or `enterprise-strict`, also set `CORDUM_AGENTD_FAIL_CLOSED=true` and add `"onFailure": "block"` to the `PreToolUse`, `UserPromptSubmit`, and `ConfigChange` hooks (Claude Code v2.1.295 or later); otherwise a hook that cannot start, crashes, or times out lets the action through. `cordumctl edge claude` and `cordumctl edge managed-settings export` render both for you.
 
 Use `/hooks` in Claude Code to confirm the command hooks are active and `/status` to confirm which settings source (local project/user or enterprise managed settings) provided them. HTTP hooks are forbidden for production enforcement because Claude Code treats HTTP connection failures, timeouts, and non-2xx responses as non-blocking. For Claude Code hook JSON semantics, see the official Claude Code hooks documentation: <https://docs.anthropic.com/en/docs/claude-code/hooks>.

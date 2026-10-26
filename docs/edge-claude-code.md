@@ -83,23 +83,35 @@ persisted as audit evidence.
 | Mode | Behavior |
 | --- | --- |
 | `observe` | Allow degraded actions and record evidence where possible. |
-| `enforce` | Allow known-safe degraded actions only; deny risky/unknown actions — **only when `CORDUM_AGENTD_FAIL_CLOSED` is enabled**. |
+| `enforce` | Allow known-safe degraded actions only; deny risky/unknown actions. |
 | `enterprise-strict` | Fail closed when Cordum governance is unavailable. |
 
-`CORDUM_AGENTD_FAIL_CLOSED` defaults to `false`. An `enforce` session that does
-not enable it fails **open**: if agentd errors or times out, the action is
-allowed. Run `cordumctl edge doctor` to see the effective posture — it warns
-when an enforce session is fail-open.
+The wrapper renders every mode except `observe` fail-closed: the generated
+settings set `CORDUM_AGENTD_FAIL_CLOSED=true`, and the `PreToolUse`,
+`UserPromptSubmit`, and `ConfigChange` command hooks carry
+`"onFailure": "block"`, so a `cordum-hook` that cannot start, crashes, or times
+out blocks the action instead of letting it through. `onFailure` requires
+Claude Code v2.1.295 or later; older versions do not honor it. `observe` stays
+fail-open by design.
+
+`CORDUM_AGENTD_FAIL_CLOSED` defaults to `false`, so fail-open is only possible
+for hook settings you wire by hand without `CORDUM_AGENTD_FAIL_CLOSED=true` and
+`"onFailure": "block"`: an `enforce` hook wired that way still denies
+`PreToolUse` when agentd errors or times out, but lets prompts and config
+changes through, and lets any action through when the hook process itself
+fails. Run `cordumctl edge doctor` to see the effective posture.
 
 Malformed hook input fails closed with redacted stderr. Hook timeout must stay
-below Claude Code's 5s command-hook deadline.
+below the command-hook `"timeout": 5` that Cordum generates (Claude Code's own
+default is 600 seconds).
 
-The same 5s deadline bounds the inline approval wait.
-`CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` defaults to `30s`, which exceeds
-it: when the wait outlives the deadline Claude Code times out the hook and
-**fails open**, with no user-visible warning. Set the inline-wait timeout
-strictly below `5s`, disable inline wait, or use deny-and-retry instead of
-block-and-wait. See [edge/configuration.md](edge/configuration.md) for details.
+The same budget bounds the inline approval wait.
+`CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` defaults to `30s`, but the wait
+runs inside the hook's `4.5s` budget: an approval that is not resolved within a
+few seconds ends the wait, and fail-closed sessions deny the action before
+Claude Code's timeout fires. Disable inline wait or use deny-and-retry instead
+of block-and-wait. See [edge/configuration.md](edge/configuration.md) for
+details.
 
 ## Token tradeoffs
 

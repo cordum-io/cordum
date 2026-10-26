@@ -51,7 +51,7 @@ supported P0 delivery path; URL query-string nonces are refused.
 
 | Variable | Default | Bounds | Notes |
 | --- | --- | --- | --- |
-| `CORDUM_AGENTD_HOOK_TIMEOUT` | generated Claude settings use `4.5s`; raw agentd internal default is `5s` | hook values must be `<5s`; agentd durations must be `>0` and `<=5m` | Controls the Claude hook wall-clock budget and agentd evaluator budget. Keep generated hook values below Claude Code's 5s command-hook deadline. |
+| `CORDUM_AGENTD_HOOK_TIMEOUT` | generated Claude settings use `4.5s`; raw agentd internal default is `5s` | hook values must be `<5s`; agentd durations must be `>0` and `<=5m` | Controls the Claude hook wall-clock budget and agentd evaluator budget. Keep hook values below the `"timeout": 5` Cordum generates on each command hook (Claude Code's own default is 600s). |
 | `CORDUM_AGENTD_GATEWAY_TIMEOUT` | `10s` | `>0` and `<=5m` | Per-call Gateway lifecycle/evaluate/approval/evidence timeout. |
 | `CORDUM_EDGE_HEARTBEAT_TTL` | `30s` | `>0` and `<=5m` | Gateway heartbeat TTL for active Edge sessions. |
 | `CORDUM_EDGE_HEARTBEAT_INTERVAL` | `TTL/2` | `>0`, `<=5m`, and `<= TTL/2` | Agentd heartbeat cadence. |
@@ -59,7 +59,7 @@ supported P0 delivery path; URL query-string nonces are refused.
 
 Do not copy Claude's command-hook `"timeout": 5` value into
 `CORDUM_AGENTD_HOOK_TIMEOUT`; the environment value must leave response-write
-reserve below Claude's 5s deadline.
+reserve below that 5s timeout.
 
 ## Policy and fail modes
 
@@ -67,16 +67,16 @@ reserve below Claude's 5s deadline.
 | --- | --- | --- |
 | `CORDUM_EDGE_POLICY_MODE` | raw agentd `observe`; `cordumctl edge claude` defaults to `enforce` unless overridden by `--policy-mode`/env | Values: `observe`, `enforce`, `enterprise-strict`. Drives Gateway evaluate fail-mode behavior. |
 | `CORDUM_EDGE_MODE` | generated settings mirror the selected policy mode | Hook-side mode for local/dev settings. Enterprise templates set `enterprise-strict`. |
-| `CORDUM_AGENTD_FAIL_CLOSED` | `false` | When true, hook/agentd fail closed if local governance cannot start or respond safely. |
+| `CORDUM_AGENTD_FAIL_CLOSED` | `false`; `cordumctl edge claude` sets `true` for every mode except `observe` | When true, hook/agentd fail closed if local governance cannot start or respond safely. Generated settings then also put `"onFailure": "block"` on the `PreToolUse`, `UserPromptSubmit`, and `ConfigChange` hooks (Claude Code v2.1.295+), so a hook that cannot start or times out blocks too. |
 | `CORDUM_AGENTD_INLINE_APPROVAL_WAIT` | `false`; wrapper enables it for local/demo sessions | Local/demo-only inline wait for `REQUIRE_APPROVAL`; enterprise UX should not rely on interactive defer semantics. |
-| `CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` | `30s` | Nominal wait budget. Rejection, timeout, pending, or wait errors deny and require retry. In practice it is always clamped well below this by the surrounding hook budget — see the note below — so it never actually gets close to Claude Code's 5s hook deadline. |
+| `CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` | `30s` | Nominal wait budget. Rejection, timeout, pending, or wait errors deny and require retry. In practice it is always clamped well below this by the surrounding hook budget — see the note below — so it never actually gets close to the generated 5s hook timeout. |
 
-> **The 30s default looks unsafe next to Claude's 5s hook deadline, but it is
+> **The 30s default looks unsafe next to the generated 5s hook timeout, but it is
 > not: the wait is already clamped by the same budget that bounds the whole
 > hook call, and the result denies either way.**
 >
 > `CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` is **not** independently
-> validated against the 5s deadline (it is only checked for `>0` and `<=5m`),
+> validated against the 5s timeout (it is only checked for `>0` and `<=5m`),
 > which reads like an unsafe combination at face value. It isn't, for two
 > layered reasons:
 >
@@ -92,7 +92,7 @@ reserve below Claude's 5s deadline.
 >    (or any) `INLINE_APPROVAL_WAIT_TIMEOUT` is silently capped to whatever is
 >    left of that budget — typically ~4s — regardless of its configured
 >    value. `cordum-hook` itself is validated to always finish strictly below
->    Claude's 5s deadline (`validateHookTimeout`,
+>    the generated 5s hook timeout (`validateHookTimeout`,
 >    `core/edge/claude/hook_input.go`), so Claude's own hook-process timeout
 >    is not expected to fire at all in this path.
 > 2. **Even if it did, enforce mode denies anyway.** An unresolved wait

@@ -112,7 +112,11 @@ Expected:
 - `CORDUM_AGENTD_URL` is a bare loopback URL without `?nonce=`;
 - the hook nonce is **not** written to settings; it is supplied at launch via
   `CORDUM_AGENTD_HOOK_NONCE` and sent as `X-Cordum-Agentd-Nonce`;
-- `CORDUM_AGENTD_HOOK_TIMEOUT` is below Claude's 5 second hook deadline;
+- `CORDUM_AGENTD_HOOK_TIMEOUT` is below the 5 second command-hook `timeout`
+  the settings set;
+- `CORDUM_AGENTD_FAIL_CLOSED` is `true` and the `PreToolUse`,
+  `UserPromptSubmit`, and `ConfigChange` hooks carry `"onFailure": "block"`
+  (every mode except `observe`);
 - no API key, provider token, raw prompt, transcript, or artifact body appears.
 
 Dashboard checkpoint: no session is required yet; this command only renders
