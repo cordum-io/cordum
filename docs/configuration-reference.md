@@ -1146,6 +1146,7 @@ instance and is intended for local CLI integrations.
 | `AUDIT_TRANSPORT` | `buffer` | Audit transport: `buffer` (in-memory) or `nats` (NATS-backed, recommended for multi-replica) |
 | `CORDUM_AUDIT_BUFFER_SIZE` | `1000` | In-memory audit buffer size (events) |
 | `CORDUM_AUDIT_EXPORT_MAX_RETRIES` | `3` | Max retries before dropping a batch |
+| `CORDUM_AUDIT_RETENTION_ENFORCE` | `false` | `true` lets the gateway delete audit chain events older than the effective retention window (plan entitlement, narrowed by `CORDUM_AUDIT_RETENTION_HOURS`); tenants under legal hold are never trimmed. Off: nothing is trimmed. See [audit-operations.md](audit-operations.md#retention) |
 
 #### NATS-Backed Audit Pipeline
 
