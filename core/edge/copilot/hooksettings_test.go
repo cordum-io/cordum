@@ -135,3 +135,13 @@ func TestGenerateHookSettings_Defaults(t *testing.T) {
 		t.Fatalf("default policy mode should be enforce: %s", s)
 	}
 }
+
+// Copilot times a hook out fail-open, so the generated timeout must stay above
+// cordum-hook's 4.5s budget: a shorter request is raised to 5s.
+func TestTimeoutSecondsNeverBelowHookDeadline(t *testing.T) {
+	for ms, want := range map[int]int{0: 5, 3000: 5, 4500: 5, 5000: 5, 5001: 6, 10000: 10} {
+		if got := timeoutSeconds(ms); got != want {
+			t.Errorf("timeoutSeconds(%d) = %d, want %d", ms, got, want)
+		}
+	}
+}

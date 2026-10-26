@@ -1,12 +1,12 @@
 // Package copilot generates the GitHub Copilot (VS Code agent mode) hook
 // configuration that routes Copilot's governance events through Cordum.
 //
-// Copilot's Agent Hooks contract matches Claude Code's (same stdin payload and
-// the same hookSpecificOutput.permissionDecision / exit-code response), so the
-// generated config simply points Copilot's hook commands at `cordum-hook
-// copilot <event>`, which reuses the existing Edge runner + agentd + safety
-// kernel path. The produced JSON is written to a Copilot hooks config location
-// (e.g. .github/hooks/cordum.json or ~/.copilot/hooks/cordum.json).
+// PascalCase Copilot hook events send Claude Code's stdin payload, so the
+// generated config points Copilot's hook commands at `cordum-hook copilot
+// <event>`, which reuses the existing Edge runner + agentd + safety kernel path
+// and re-encodes its answer for Copilot. The produced JSON is written to a
+// Copilot hooks config location (e.g. .github/hooks/cordum.json or
+// ~/.copilot/hooks/cordum.json).
 //
 // Unlike Claude Code, Copilot has no "onFailure": "block" for the hook process
 // itself: a hook timeout is always fail-open, and the Local harness also lets
@@ -19,6 +19,9 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
+
+	"github.com/cordum/cordum/core/edge/claude"
 )
 
 // HookSettingsOptions configures the generated Copilot agent-hooks document.
@@ -33,7 +36,8 @@ type HookSettingsOptions struct {
 	// Copilot has no onFailure equivalent, so a hook that itself times out or
 	// crashes is still handled by Copilot's own (mostly fail-open) rules.
 	FailClosed bool
-	// TimeoutMS bounds each hook; kept under Copilot's per-hook budget. Default 4500.
+	// TimeoutMS is Copilot's per-hook timeout, rounded up to whole seconds and
+	// never below claude.ClaudeHookDeadline (5s). Default 5s.
 	TimeoutMS int
 }
 
@@ -118,18 +122,13 @@ func GenerateHookSettings(opts HookSettingsOptions) ([]byte, error) {
 
 // timeoutSeconds converts the caller's millisecond hook budget into the SECONDS
 // unit the GitHub/Copilot hook `timeout` field expects. Emitting TimeoutMS
-// verbatim would turn the 4500 default into a 4500-second (75 minute) window
-// during which a stuck hook could block the agent. Defaults to 4500ms (5s) and
-// never rounds below 1s.
+// verbatim would turn a 4500 value into a 4500-second (75 minute) window
+// during which a stuck hook could block the agent. Copilot times a hook out
+// fail-open, so the result never drops below claude.ClaudeHookDeadline: the
+// deadline cordum-hook's own 4.5s budget is built to finish under, which lets
+// the hook decide (and deny, when fail-closed) before Copilot gives up.
 func timeoutSeconds(ms int) int {
-	if ms <= 0 {
-		ms = 4500
-	}
-	sec := (ms + 999) / 1000
-	if sec < 1 {
-		sec = 1
-	}
-	return sec
+	return max((ms+999)/1000, int(claude.ClaudeHookDeadline/time.Second))
 }
 
 // stripAgentdURLNonce removes the loopback auth nonce query param from an agentd
