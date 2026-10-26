@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -775,6 +776,23 @@ func normalizeDecision(raw string) string {
 		slog.Warn("normalizeDecision: unrecognized decision value, defaulting to deny (fail-closed)", "raw", raw)
 		return "deny"
 	}
+}
+
+// TenantsSettingReservedMCPGatewayFields lists the tenants whose mcp block
+// sets gateway_enabled, upstream_servers or allowed_upstreams. Those fields
+// are reserved: nothing reads them at runtime until EDGE-101.
+func (p *SafetyPolicy) TenantsSettingReservedMCPGatewayFields() []string {
+	if p == nil {
+		return nil
+	}
+	var out []string
+	for name, tenant := range p.Tenants {
+		if tenant.MCP.setsGatewayFields() {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // legacyRules turns tenant topic lists into rules. The tenant's MCP lists are

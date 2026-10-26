@@ -145,6 +145,13 @@ rules:
 	if !mcp.GatewayEnabled || len(mcp.AllowedUpstreams) != 1 || len(mcp.UpstreamServers) != 1 || mcp.UpstreamServers[0].Endpoint != "https://mcp.example.com/sse" {
 		t.Errorf("tenant MCP gateway fields not parsed: %+v", mcp)
 	}
+	// They are reserved (not enforced); the kernel warns about them on load.
+	if got := policy.TenantsSettingReservedMCPGatewayFields(); len(got) != 1 || got[0] != "default" {
+		t.Errorf("TenantsSettingReservedMCPGatewayFields = %v; want [default]", got)
+	}
+	if got := (&SafetyPolicy{Tenants: map[string]TenantPolicy{"t": {}}}).TenantsSettingReservedMCPGatewayFields(); got != nil {
+		t.Errorf("TenantsSettingReservedMCPGatewayFields without the fields = %v; want nil", got)
+	}
 	if req := policy.Rules[0].Match.Delegation.DelegationRequired; req == nil || *req {
 		t.Errorf("Delegation.DelegationRequired = %v; want explicit false", req)
 	}

@@ -1165,17 +1165,23 @@ The canonical client attach / upstream-forwarding endpoint is
 | --- | --- | --- |
 | `GET` | `/api/v1/mcp/gateway/health` | Always 200; body `{status, gateway_enabled, component}`. Never touches the store — safe operator probe even when disabled. |
 | `GET` | `/api/v1/mcp/gateway/config` | Returns redacted per-tenant config `{gateway_enabled, upstream_count, upstream_forwarding}`. Never echoes upstream credentials or tokens. |
-| `POST` | `/api/v1/mcp/gateway/upstream/*` | 503 always in P1: `gateway_disabled` when `MCPPolicy.GatewayEnabled` is false (default, zero Edge records); `no_upstream_configured` when true but registry empty (EDGE-101 populates), with `session_id` + `execution_id` correlation IDs and a persisted `mcp.server.failed` event. |
+| `POST` | `/api/v1/mcp/gateway/upstream/*` | 503 always in P1: `gateway_disabled` on every tenant, with zero Edge records, because the per-tenant flag is not read yet (see below). The `no_upstream_configured` branch (flag on but registry empty, with `session_id` + `execution_id` correlation IDs and a persisted `mcp.server.failed` event) is unreachable until EDGE-101. |
 | `POST` | `/api/v1/mcp/gateway/clients/connect` | Creates EdgeSession + AgentExecution attributed to the **resolved** tenant + principal — NEVER body claims. Emits `mcp.server.connected` only after the event is durably appended. Storage failures before or during evidence creation return 500 and are logged structurally. |
 
 ### Per-tenant enable flag
 
-`MCPPolicy.GatewayEnabled` (defined in `core/infra/config/mcp.go`)
-controls the upstream-forwarding family per tenant. Default `false` ships
-fail-closed per DoD #1 — the upstream route family returns 503 on every
-tenant until EDGE-101 wires the per-tenant config lookup. Health and
-config routes remain reachable regardless so operators can probe a
-disabled deployment.
+`MCPPolicy.GatewayEnabled` (`tenants.<tenant>.mcp.gateway_enabled`, defined
+in `core/infra/config/mcp.go`) is meant to control the upstream-forwarding
+family per tenant. It is reserved and not enforced yet: the gateway
+hard-codes the lookup to `false` (TODO EDGE-101 in
+`core/controlplane/gateway/gateway.go`), so the upstream route family returns
+503 on every tenant whatever the policy says. The same holds for
+`tenants.<tenant>.mcp.upstream_servers` and `allowed_upstreams`: the policy
+schema accepts them, nothing reads them, and the Safety Kernel logs a warning
+when a loaded policy sets any of them. Upstreams are registered through
+`/api/v1/edge/mcp/upstreams` and governed by the config-service
+`safety.mcp.*` settings described above. Health and config routes remain
+reachable regardless so operators can probe a disabled deployment.
 
 ### Tenant/principal attribution contract
 

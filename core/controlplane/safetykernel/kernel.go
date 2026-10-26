@@ -1611,6 +1611,9 @@ func (s *server) setPolicyWithInvariants(ctx context.Context, policy *config.Saf
 	// retained for the GlobalPolicy view so its section buckets do not
 	// double-count invariants.
 	combined := applyKernelInvariants(policy, invariants)
+	if tenants := combined.TenantsSettingReservedMCPGatewayFields(); len(tenants) > 0 {
+		slog.Warn("safety-kernel: tenants.<tenant>.mcp gateway_enabled, upstream_servers and allowed_upstreams are reserved and not enforced yet (EDGE-101)", "tenants", tenants)
+	}
 	var invariantRules []config.PolicyRule
 	var invariantOutputRules []config.OutputPolicyRule
 	if invariants != nil {
