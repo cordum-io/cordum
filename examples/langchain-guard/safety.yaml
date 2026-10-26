@@ -4,7 +4,8 @@
 # start with "secops/", and the URL path writes "/" as "~". The request body
 # is {"content": "<this YAML>", "enabled": true}; jq builds it from the file:
 #   jq -n --rawfile content safety.yaml '{content: $content, enabled: true}' |
-#     curl -X PUT http://localhost:8081/api/v1/policy/bundles/secops~financial_ops \
+#     curl -X PUT https://localhost:8081/api/v1/policy/bundles/secops~financial_ops \
+#       --cacert ../../certs/ca/ca.crt \
 #       -H "X-API-Key: $CORDUM_API_KEY" \
 #       -H "X-Tenant-ID: default" \
 #       -H "Content-Type: application/json" \

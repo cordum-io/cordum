@@ -39,12 +39,19 @@ Primary code paths:
 Run:
 
 ```bash
-go run ./cmd/cordum-mcp --addr http://localhost:8081 --api-key "$CORDUM_API_KEY" --allow-private-gateway
+go run ./cmd/cordum-mcp --addr https://localhost:8081 --api-key "$CORDUM_API_KEY" --allow-private-gateway
 ```
+
+The default compose stack serves the gateway over HTTPS with a development
+CA (`./certs/ca/ca.crt`). `cordum-mcp` has no CA option: it checks the
+gateway certificate against the system trust store, so add that CA to the
+operating system's trust store. On Linux, setting
+`SSL_CERT_FILE=./certs/ca/ca.crt` for the `cordum-mcp` process also works.
 
 Flags:
 
-- `--addr` (default `http://localhost:8081`)
+- `--addr` (default `http://localhost:8081`; the compose stack needs
+  `https://localhost:8081`)
 - `--api-key` (or `CORDUM_API_KEY`)
 - `--allow-private-gateway` (or `CORDUM_MCP_ALLOW_PRIVATE_GATEWAY=true`;
   default `false`): allow a gateway on `localhost` or a private or loopback
@@ -298,8 +305,8 @@ when one is set. Unless `--allow-private-gateway`
 to `0.0.0.0/8`, `10.0.0.0/8`, `100.64.0.0/10`, `127.0.0.0/8`,
 `169.254.0.0/16`, `172.16.0.0/12`, `192.168.0.0/16`, `::1`, `fe80::/10`,
 `fc00::/7` or a multicast address. The connection is then pinned to the
-checked addresses. A local gateway such as the default
-`http://localhost:8081` therefore needs `--allow-private-gateway`.
+checked addresses. A local gateway such as
+`https://localhost:8081` therefore needs `--allow-private-gateway`.
 
 ### `cordumctl mcp upstream`
 
@@ -1046,7 +1053,7 @@ Response example:
 Quick status check:
 
 ```bash
-curl -sS http://localhost:8081/mcp/status \
+curl -sS --cacert ./certs/ca/ca.crt https://localhost:8081/mcp/status \
   -H "X-API-Key: $CORDUM_API_KEY" \
   -H "X-Tenant-ID: default"
 ```
@@ -1060,7 +1067,7 @@ curl -sS http://localhost:8081/mcp/status \
   "mcpServers": {
     "cordum": {
       "command": "cordum-mcp",
-      "args": ["--addr", "http://localhost:8081", "--allow-private-gateway"],
+      "args": ["--addr", "https://localhost:8081", "--allow-private-gateway"],
       "env": {
         "CORDUM_API_KEY": "replace-with-api-key"
       }
@@ -1072,13 +1079,13 @@ curl -sS http://localhost:8081/mcp/status \
 ### Claude Code CLI
 
 ```bash
-claude mcp add cordum -- cordum-mcp --addr http://localhost:8081 --allow-private-gateway
+claude mcp add cordum -- cordum-mcp --addr https://localhost:8081 --allow-private-gateway
 ```
 
 ### HTTP/SSE test call
 
 ```bash
-curl -sS -X POST http://localhost:8081/mcp/message \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/mcp/message \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $CORDUM_API_KEY" \
   -H "X-Tenant-ID: default" \
@@ -1088,7 +1095,8 @@ curl -sS -X POST http://localhost:8081/mcp/message \
 ### TypeScript custom client (HTTP mode)
 
 ```ts
-const res = await fetch("http://localhost:8081/mcp/message", {
+// Node: start with NODE_EXTRA_CA_CERTS=./certs/ca/ca.crt to trust the dev CA.
+const res = await fetch("https://localhost:8081/mcp/message", {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
@@ -1120,12 +1128,13 @@ console.log(payload);
 - **Copy URL** copies `<mcp.transport>://<dashboard host>:<mcp.port>`, and the
   page shows port 3001 when `mcp.port` is unset. `mcp.port` is metadata only:
   the gateway serves `/mcp/sse` and `/mcp/message` on its own port
-  (`http://localhost:8081` in the default stack).
+  (`https://localhost:8081` in the default stack).
 
 The page has no client config snippets. Create an API key under
 **Settings > API Keys** (`/settings/keys`), then configure the client as in
 [Integration Examples](#integration-examples), which point `cordum-mcp` at the
-gateway with `--addr http://localhost:8081 --allow-private-gateway`.
+gateway with `--addr https://localhost:8081 --allow-private-gateway`
+(and the CA trust described under [Transport Modes](#transport-modes)).
 
 ### API-based Configuration
 

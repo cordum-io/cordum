@@ -30,20 +30,20 @@ BEFORE                              AFTER
 ```bash
 git clone https://github.com/cordum-io/cordum.git
 cd cordum
-
-# Generate an API key
-export CORDUM_API_KEY="$(openssl rand -hex 32)"
-echo "CORDUM_API_KEY=$CORDUM_API_KEY" > .env
-
-# Start the stack
-docker compose up -d
+./tools/scripts/quickstart.sh
+source .env && export CORDUM_API_KEY
 ```
+
+`quickstart.sh` writes `.env` with a generated `CORDUM_API_KEY`, creates the
+TLS certificates under `./certs/` and starts the stack (see
+[quickstart.md](../quickstart.md)). The gateway serves HTTPS with a
+development CA, so clients pass it with `--cacert`.
 
 Verify it's running:
 
 ```bash
-curl -s http://localhost:8081/healthz
-# {"status":"ok"}
+curl -sS --cacert ./certs/ca/ca.crt https://localhost:8081/healthz
+# {"status":"ok","checks":{"goroutines":"ok"}}
 ```
 
 The dashboard is available at [http://localhost:8082](http://localhost:8082).
@@ -108,7 +108,8 @@ true}`, and `jq` builds it from the file:
 
 ```bash
 jq -n --rawfile content safety.yaml '{content: $content, enabled: true}' |
-  curl -X PUT http://localhost:8081/api/v1/policy/bundles/secops~financial_ops \
+  curl -X PUT https://localhost:8081/api/v1/policy/bundles/secops~financial_ops \
+    --cacert ../../certs/ca/ca.crt \
     -H "X-API-Key: $CORDUM_API_KEY" \
     -H "X-Tenant-ID: default" \
     -H "Content-Type: application/json" \
@@ -149,16 +150,20 @@ The agent happily transfers $15k and deletes an account. No questions asked.
 
 ## Step 5: Run the Guarded Agent
 
-Now run the same agent with Cordum:
+Now run the same agent with Cordum. The guard and the OpenAI client both use
+httpx, which reads a single CA bundle from `SSL_CERT_FILE`, so append the
+stack's development CA to certifi's bundle and point both at it:
 
 ```bash
+cat "$(python -m certifi)" ../../certs/ca/ca.crt > cordum-ca-bundle.pem
+export SSL_CERT_FILE="$PWD/cordum-ca-bundle.pem"
 python agent_guarded.py
 ```
 
 Expected output:
 
 ```
-[CORDUM] Connected to http://localhost:8081
+[CORDUM] Connected to https://localhost:8081
 [CORDUM] Guarded 3 tools: ['lookup_balance', 'transfer_funds', 'delete_account']
 
 ============================================================
@@ -203,7 +208,7 @@ The only difference between the unguarded and guarded agent:
 from cordum_guard import CordumClient
 from cordum_guard.langchain import CordumToolGuard
 
-client = CordumClient("http://localhost:8081", api_key=os.getenv("CORDUM_API_KEY"))
+client = CordumClient("https://localhost:8081", api_key=os.getenv("CORDUM_API_KEY"))
 guard = CordumToolGuard(client, policy="financial_ops", risk_tags=["financial"])
 
 # Wrap your existing tools
@@ -245,7 +250,7 @@ For non-LangChain code, use the `@guard` decorator directly:
 ```python
 from cordum_guard import CordumClient, guard
 
-client = CordumClient("http://localhost:8081", api_key="your-key")
+client = CordumClient("https://localhost:8081", api_key="your-key")
 
 @guard(client, policy="financial_ops", risk_tags=["financial", "write"])
 def execute_transfer(amount: float, to_account: str):

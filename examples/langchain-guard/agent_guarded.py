@@ -7,10 +7,12 @@ Cordum's Safety Kernel evaluates each tool call before execution:
                       not run; the guard raises CordumApprovalRequiredError)
   - delete_account  → DENY   (destructive operations blocked)
 
-Prerequisites:
-  1. Cordum stack running:  docker compose up -d
-  2. API key set:           export CORDUM_API_KEY=<your-key>
-  3. Safety policy loaded:  see safety.yaml in this directory
+Prerequisites (README.md has the commands):
+  1. Cordum stack running:  ./tools/scripts/quickstart.sh in the repo root
+  2. API key set:           source ../../.env && export CORDUM_API_KEY
+  3. Dev CA trusted:        SSL_CERT_FILE names a bundle that includes
+                            ../../certs/ca/ca.crt
+  4. Safety policy loaded:  see safety.yaml in this directory
 
 Run:  python agent_guarded.py
 """
@@ -84,7 +86,7 @@ def build_guarded_tools() -> list:
         print("ERROR: Set CORDUM_API_KEY environment variable.")
         sys.exit(1)
 
-    gateway_url = os.getenv("CORDUM_GATEWAY_URL", "http://localhost:8081")
+    gateway_url = os.getenv("CORDUM_GATEWAY_URL", "https://localhost:8081")
 
     client = CordumClient(gateway_url, api_key=api_key)
     guard = CordumToolGuard(
