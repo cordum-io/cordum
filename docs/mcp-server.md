@@ -1119,7 +1119,7 @@ console.log(payload);
 **Settings > MCP Server** (`/settings/mcp`) shows the MCP server's state:
 
 - **Status**: running or not, connected clients, uptime, and the configured
-  transport, port and whether an API key is required. A warning card appears
+  transport and whether an API key is required. A warning card appears
   while MCP is disabled.
 - **Tools and Resources**: the registered MCP tools (e.g. `cordum_submit_job`)
   and resources (e.g. `cordum://jobs/{id}`), each marked enabled or disabled.
@@ -1137,7 +1137,8 @@ console.log(payload);
   path to the gateway, but `dashboard.env.apiBaseUrl` defaults to the
   in-cluster gateway service URL, which a browser cannot reach: set it to
   `/api/v1`, or to the public API URL.
-  `mcp.port`, shown as Port (3001 when unset), is metadata only.
+  `mcp.port` is metadata only: nothing listens on it, so the page does not
+  show it.
 
 The page has no client config snippets. Create an API key under
 **Settings > API Keys** (`/settings/keys`), then configure the client as in

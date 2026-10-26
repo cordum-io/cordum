@@ -204,6 +204,14 @@ describe("SettingsMcpPage", () => {
     expect(container.textContent).toContain("List jobs");
   });
 
+  it("does not show mcp.port, which nothing listens on", () => {
+    renderPage();
+    const labels = Array.from(container.querySelectorAll("p")).map((p) => p.textContent);
+    expect(labels).toContain("Transport");
+    expect(labels).not.toContain("Port");
+    expect(container.textContent).not.toContain("8787");
+  });
+
   it("copies the gateway MCP SSE URL on the API origin, not mcp.port", async () => {
     renderPage();
     clickByText("Copy URL");
