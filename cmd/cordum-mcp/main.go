@@ -271,7 +271,7 @@ func resolveTransportConfig() (mode string, httpAddr string, err error) {
 // SIEM terminus for inbound audit — but outbound MCP calls originate
 // HERE and need a terminal event. Writing structured JSON to stderr
 // lets operators pipe this through journald / Fluent Bit / Vector to
-// the same aggregation target as the gateway's Merkle chain without
+// the same aggregation target as the gateway's audit hash chain without
 // needing a second audit transport in this process.
 type stderrAuditSender struct{}
 

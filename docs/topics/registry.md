@@ -151,7 +151,7 @@ gateway's audit exporter:
 | `topic_registered` | After a successful `SetMany` during pack install | `INFO` | `pack_id`, `topic_name`, `actor_id` |
 | `topic_unregistered` | After a successful `DeleteMany` during pack uninstall | `MEDIUM` | `pack_id`, `topic_name`, `actor_id` |
 
-Events land in the tenant audit chain via the Merkle chainer (see
+Events land in the tenant audit hash chain via the chainer (see
 `docs/deployment/audit-chain.md`) — so a compliance reviewer can
 reconstruct the full lifecycle of a topic, including which admin
 added or removed it. Uninstall is `MEDIUM` severity because the

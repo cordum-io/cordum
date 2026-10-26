@@ -26,7 +26,7 @@ import { useIsAdmin } from "../hooks/usePermission";
 // ChainIntegrityWidget
 //
 // A large governance-surface card that renders the current state of the
-// tenant's audit-chain Merkle verification. Five resting states map to the
+// tenant's audit hash-chain verification. Five resting states map to the
 // gateway's VerifyResult.status with an additional NOT_CHECKED state for
 // the first-load-before-any-data edge case (and for graceful degradation
 // when the hook is disabled / errored out before producing a result).
@@ -901,8 +901,8 @@ function StateFootnote({
   if (state === "ok") {
     return (
       <p className="mt-3 text-xs text-muted-foreground">
-        All events within the retention window are linked to a valid Merkle
-        predecessor.
+        All events within the retention window are linked to a valid
+        predecessor hash.
       </p>
     );
   }

@@ -40,7 +40,7 @@ export default function GovernanceVerificationPage() {
         <PageHeader
           label="Govern"
           title="Chain Verification"
-          subtitle="Audit-chain integrity monitoring. Confirms the Merkle chain of audit events is unbroken end-to-end and surfaces any retention or tamper gaps."
+          subtitle="Audit-chain integrity monitoring. Confirms the hash chain of audit events is unbroken end-to-end and surfaces any retention or tamper gaps."
         />
 
         <GapAlertBanner tenant={tenantId} />

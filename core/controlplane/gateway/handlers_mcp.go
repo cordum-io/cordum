@@ -200,7 +200,7 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 	}
 	// mcp.tool_called audit hook. Every successful tools/call emits a
 	// SIEMEvent through the gateway's audit exporter so it lands in the
-	// Merkle chain. Without this wire-up the epic rail "Audit every
+	// audit hash chain. Without this wire-up the epic rail "Audit every
 	// tool call via SIEMEvent mcp_tool_called" is violated — another
 	// QA reopen fix.
 	if hook := s.mcpToolCallAuditHook(); hook != nil {
@@ -233,7 +233,7 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 		// Tap the invocation audit stream into Copilot session transcripts when
 		// the Redis store is wired. The decorator only acts on inbound
 		// invocation events that carry a copilot_session_id; it always forwards
-		// to the inner sender so the audit Merkle chain is unaffected.
+		// to the inner sender so the audit hash chain is unaffected.
 		auditSender := s.auditExporter
 		if s.copilotSessionStore != nil {
 			auditSender = newCopilotIngestSender(s.auditExporter, s.copilotSessionStore)

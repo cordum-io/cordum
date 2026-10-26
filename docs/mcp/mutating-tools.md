@@ -284,7 +284,7 @@ appropriate and how to audit it.
 
 ## Audit trail fields
 
-Every mutating call produces two SIEMEvents that land on the Merkle audit chain:
+Every mutating call produces two SIEMEvents that land on the audit hash chain:
 
 1. `mcp.tool_approval(outcome=enqueued)` — emitted by the gate when it enqueues.
    Extra carries `tool_name`, `args_hash`, `approval_id`, `requester`,

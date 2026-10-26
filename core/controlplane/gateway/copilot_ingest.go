@@ -16,7 +16,7 @@ import (
 // tool-invocation events that carry a copilot_session_id and appends a
 // transcript message to the Copilot session store, then always forwards the
 // event to the inner sender. Ingestion is best-effort — a store failure is
-// logged and never affects the audit Merkle chain or the tool call.
+// logged and never affects the audit hash chain or the tool call.
 type copilotIngestSender struct {
 	inner audit.AuditSender
 	store *copilot.RedisStore

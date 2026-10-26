@@ -524,7 +524,7 @@ func (s *MCPServer) handleToolsCall(ctx context.Context, params json.RawMessage)
 	}
 	// Bracket every terminal tools/call with the invocation auditor so
 	// success + handler-error + approval-required + scope-deny all
-	// land on the Merkle audit chain. Start happens BEFORE the call so
+	// land on the audit hash chain. Start happens BEFORE the call so
 	// latency_ms measures everything downstream including the filter
 	// + approval gate.
 	var handle *InvocationHandle

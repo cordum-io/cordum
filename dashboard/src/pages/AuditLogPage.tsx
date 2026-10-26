@@ -1114,7 +1114,7 @@ function ChainSignatureVerdict({
         <StatusBadge variant="muted">Pending</StatusBadge>
         <p className="text-xs text-muted-foreground">
           This entry has no chain seq — policy-only audit entries are not
-          included in the Merkle chain.
+          included in the hash chain.
         </p>
       </div>
     );
@@ -1189,7 +1189,7 @@ function ChainSignatureVerdict({
         Verified
       </StatusBadge>
       <p className="text-xs text-muted-foreground">
-        Chain seq #{event.seq} is signed and present in the verified Merkle
+        Chain seq #{event.seq} is signed and present in the verified chain
         window ({chain.verified_events} of {chain.total_events} events).
       </p>
     </div>
