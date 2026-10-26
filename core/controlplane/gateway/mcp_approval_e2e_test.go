@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +20,7 @@ import (
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/mcp"
 	"github.com/cordum/cordum/core/model"
+	"github.com/redis/go-redis/v9"
 )
 
 // mcpApprovalE2E is a production-mode gateway serving the real /mcp/message
@@ -383,6 +385,53 @@ func TestMCPApprovalApproveOnEitherPageRunsOnce(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestMCPApprovalWorksWithoutPolicyConfig: a fresh install has no policy
+// config document, so the policy snapshot was empty and every MCP Edge
+// approval mint failed with approval_store_unavailable. Approvals now bind to
+// the empty-policy snapshot and run once approved, and creating the first
+// policy document still invalidates an approval minted before it.
+func TestMCPApprovalWorksWithoutPolicyConfig(t *testing.T) {
+	h := newMCPApprovalE2E(t)
+	ctx := context.Background()
+	key := fmt.Sprintf("cfg:%s:%s", packs.PolicyConfigScope, packs.PolicyConfigID)
+	if err := h.s.jobStore.Client().Del(ctx, key).Err(); err != nil {
+		t.Fatalf("delete policy config: %v", err)
+	}
+	if _, err := h.s.configSvc.Get(ctx, configsvc.Scope(packs.PolicyConfigScope), packs.PolicyConfigID); !errors.Is(err, redis.Nil) {
+		t.Fatalf("policy config still present after deleting %s: %v", key, err)
+	}
+	held := h.call(t, "key-alice", "agent-a", map[string]any{"note": "first"})
+	var data struct {
+		PolicySnapshot string `json:"policy_snapshot"`
+	}
+	if ref := held.approvalRef(t); json.Unmarshal(held.Error.Data, &data) != nil || data.PolicySnapshot != mcpEmptyPolicySnapshot {
+		t.Fatalf("approval %s policy_snapshot = %q, want %q", ref, data.PolicySnapshot, mcpEmptyPolicySnapshot)
+	}
+	h.approve(t, held.approvalRef(t))
+	if got := h.call(t, "key-alice", "agent-a", map[string]any{"note": "first", "_approval_ref": held.approvalRef(t)}); got.Error != nil || got.Result == nil {
+		t.Fatalf("approved retry without a policy = error %s, want the tool's result", got.errorText())
+	}
+
+	stale := h.call(t, "key-alice", "agent-a", map[string]any{"note": "second"})
+	h.approve(t, stale.approvalRef(t))
+	if err := h.s.configSvc.Set(ctx, &configsvc.Document{
+		Scope: configsvc.Scope(packs.PolicyConfigScope), ScopeID: packs.PolicyConfigID,
+		Data: map[string]any{packs.PolicyConfigKey: map[string]any{}},
+	}); err != nil {
+		t.Fatalf("set policy config: %v", err)
+	}
+	got := h.call(t, "key-alice", "agent-a", map[string]any{"note": "second", "_approval_ref": stale.approvalRef(t)})
+	var conflict struct {
+		Kind string `json:"kind"`
+	}
+	if got.Error == nil || got.Error.Code != -32096 || json.Unmarshal(got.Error.Data, &conflict) != nil || conflict.Kind != string(edge.ApprovalConflictKindPolicyMismatch) {
+		t.Fatalf("retry after the first policy = %+v (error %s), want -32096 policy_mismatch", got.Result, got.errorText())
+	}
+	if n := h.calls.Load(); n != 1 {
+		t.Fatalf("tool ran %d times, want once", n)
 	}
 }
 

@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 	"github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/infra/artifacts"
 	"github.com/cordum/cordum/core/mcp"
@@ -142,13 +144,21 @@ func (s *server) mcpApprovalHoldDeps(serverName string) mcp.ApprovalHoldDeps {
 	}
 }
 
+// mcpEmptyPolicySnapshot is the PolicySnapshot MCP approvals bind to while
+// no policy config document exists, as on a fresh install. A policy
+// document's snapshot is its updated-at timestamp, which never equals it,
+// and configsvc never deletes a document: creating the first policy
+// invalidates those approvals like any later policy change.
+const mcpEmptyPolicySnapshot = "empty-policy"
+
 // mcpPolicySnapshotFunc returns a closure the WithApprovalHold consume
 // path calls to compute the current PolicySnapshot used in the
 // ApprovalClaimRequest. The snapshot is the bundle-updated-at timestamp
 // returned by loadPolicyBundles — it changes monotonically when the
 // active policy bundle rotates, so a consume against a stale snapshot
-// surfaces as `policy_mismatch` from the Edge approval store. Empty
-// string on a config-load error fails closed at the validation layer
+// surfaces as `policy_mismatch` from the Edge approval store. Without a
+// policy config document it is mcpEmptyPolicySnapshot. Empty string on a
+// config-load error fails closed at the validation layer
 // (ApprovalClaimRequest rejects empty snapshots).
 func (s *server) mcpPolicySnapshotFunc() func(ctx context.Context) string {
 	return func(ctx context.Context) string {
@@ -156,6 +166,12 @@ func (s *server) mcpPolicySnapshotFunc() func(ctx context.Context) string {
 		if err != nil {
 			return ""
 		}
-		return snapshot
+		if snapshot != "" {
+			return snapshot
+		}
+		if _, err := s.configSvc.Get(ctx, configsvc.Scope(packs.PolicyConfigScope), packs.PolicyConfigID); errors.Is(err, redis.Nil) {
+			return mcpEmptyPolicySnapshot
+		}
+		return ""
 	}
 }

@@ -196,7 +196,10 @@ an `_approval_ref` field referencing a previously-minted Edge
 approval. The server-reserved field is stripped before the upstream
 handler sees the args, and the approval is consumed atomically through
 `edge.RedisStore.ClaimApproval` with the bundle-updated-at timestamp
-as the consume-time `PolicySnapshot`. Lifecycle conflicts (rejected /
+as the consume-time `PolicySnapshot`. While no policy config document
+exists (a fresh install), approvals bind to the snapshot `empty-policy`
+instead, so creating the first policy invalidates them like any later
+policy change. Lifecycle conflicts (rejected /
 expired / consumed / args_mismatch / policy_mismatch / self_approval /
 cross_tenant / not_found) surface as JSON-RPC `-32096` with
 `error.data.kind` carrying the typed conflict family. A consumed claim
