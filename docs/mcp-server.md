@@ -1126,8 +1126,9 @@ console.log(payload);
 **Settings > MCP Server** (`/settings/mcp`) shows the MCP server's state:
 
 - **Status**: running or not, connected clients, uptime, and the configured
-  transport and whether an API key is required. A warning card appears
-  while MCP is disabled.
+  transport. A warning card appears while MCP is disabled. `/mcp/*` always
+  requires authentication (see [HTTP/SSE mode](#httpsse-mode)); the gateway
+  does not read `mcp.require_auth`, so the page does not show it.
 - **Tools and Resources**: the registered MCP tools (e.g. `cordum_submit_job`)
   and resources (e.g. `cordum://jobs/{id}`), each marked enabled or disabled.
   The lists are read-only; change them with the config API below.
