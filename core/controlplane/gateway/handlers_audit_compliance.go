@@ -124,7 +124,14 @@ func (s *server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 		observeAuditExport(string(opts.Format), "unavailable", 0)
 		return
 	}
-	opts.StreamKey = audit.NewChainer(client, "").StreamKey(tenant)
+	chainer := audit.NewChainer(client, "")
+	opts.StreamKey = chainer.StreamKey(tenant)
+	// Verify like /api/v1/audit/verify: link to the retention anchor and
+	// check HMAC tags (the key only ever comes from the server's chainer).
+	opts.RetentionAnchorKey = chainer.AnchorKey(tenant)
+	if s.auditChainer != nil && s.auditChainer.HMACEnabled() {
+		opts.HMACKey = s.auditChainer.HMACKeyForVerify()
+	}
 	opts.BundleLookup = func(ctx context.Context, _ string, from, to time.Time) ([]audit.SignedBundleSnapshot, error) {
 		return s.listSignedBundleSnapshots(ctx, from, to)
 	}
