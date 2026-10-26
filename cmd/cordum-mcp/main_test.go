@@ -1,8 +1,12 @@
 package main
 
 import (
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -180,5 +184,57 @@ func TestRequireBearer(t *testing.T) {
 	}
 	if got := status(requireBearer("", next), ""); got != http.StatusNoContent {
 		t.Errorf("no token configured: status %d, want passthrough", got)
+	}
+}
+
+// TestGatewayHTTPClientTrustsCACert: a gateway whose certificate comes from a
+// private CA verifies with --cacert naming that CA, and fails verification
+// without it.
+func TestGatewayHTTPClientTrustsCACert(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	caPath := filepath.Join(t.TempDir(), "ca.crt")
+	if err := os.WriteFile(caPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}), 0o600); err != nil {
+		t.Fatalf("write CA: %v", err)
+	}
+
+	withCA, err := gatewayHTTPClient(caPath)
+	if err != nil {
+		t.Fatalf("gatewayHTTPClient(%s): %v", caPath, err)
+	}
+	resp, err := withCA.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("GET with --cacert: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	without, err := gatewayHTTPClient("")
+	if err != nil {
+		t.Fatalf("gatewayHTTPClient without CA: %v", err)
+	}
+	if resp, err := without.Get(srv.URL); err == nil {
+		_ = resp.Body.Close()
+		t.Fatal("GET without --cacert verified a certificate from an untrusted CA")
+	} else if !strings.Contains(err.Error(), "certificate") {
+		t.Fatalf("GET without --cacert failed for another reason: %v", err)
+	}
+}
+
+// TestGatewayHTTPClientRejectsUnusableCACert: an unreadable CA file, or one
+// with no certificates, refuses to start instead of falling back.
+func TestGatewayHTTPClientRejectsUnusableCACert(t *testing.T) {
+	empty := filepath.Join(t.TempDir(), "empty.crt")
+	if err := os.WriteFile(empty, []byte("not a certificate\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	for path, want := range map[string]string{
+		filepath.Join(t.TempDir(), "missing.crt"): "read CA certificate",
+		empty: "no PEM certificates found",
+	} {
+		if _, err := gatewayHTTPClient(path); err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("gatewayHTTPClient(%s) error = %v, want %q", path, err, want)
+		}
 	}
 }

@@ -2,8 +2,12 @@ package mcp
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"reflect"
 	"sync/atomic"
@@ -227,4 +231,27 @@ func TestPinnedDialer_EmptyIPs_FallsBackToDefault(t *testing.T) {
 		_ = conn.Close()
 	}
 	_ = err // Connection failure expected (port 0)
+}
+
+// TestPinnedClientKeepsCallerTLSRoots: a bridge call to a resolved public host
+// swaps in a transport that dials only the pinned IPs. That transport used to
+// drop the caller's TLS settings, so a gateway CA trusted via cordum-mcp
+// --cacert failed verification on the pinned path.
+func TestPinnedClientKeepsCallerTLSRoots(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	roots := x509.NewCertPool()
+	roots.AddCert(srv.Certificate())
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}}}
+	_, port, _ := net.SplitHostPort(srv.Listener.Addr().String())
+
+	// example.com is in the test certificate; the pinned dial goes to the
+	// test server instead of resolving it.
+	resp, err := pinnedClient(client, []net.IP{net.ParseIP("127.0.0.1")}).Get("https://example.com:" + port + "/")
+	if err != nil {
+		t.Fatalf("pinned GET with the caller's CA: %v", err)
+	}
+	_ = resp.Body.Close()
 }

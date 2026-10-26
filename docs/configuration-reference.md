@@ -1129,6 +1129,7 @@ that authority. Tokenless JobRequest traffic is rejected in enforce mode.
 | `MCP_TRANSPORT` | `stdio` | Transport mode: `stdio` (default) or `http` |
 | `MCP_HTTP_ADDR` | `127.0.0.1:8090` | HTTP listen address (only used when `MCP_TRANSPORT=http`) |
 | `CORDUM_MCP_HTTP_AUTH_TOKEN` | — | Bearer token every `/sse` and `/message` request must send (`--http-auth-token`). Required for a non-loopback `MCP_HTTP_ADDR` unless `--allow-unauthenticated-http` is passed |
+| `CORDUM_TLS_CA` | — | PEM CA certificate(s) to trust for the gateway's TLS in addition to the system roots (`--cacert`), for example the compose stack's `./certs/ca/ca.crt`. Startup fails if the file cannot be read or holds no certificate |
 
 **HA note — HTTP transport**: Set `MCP_TRANSPORT=http` to enable HTTP mode, which exposes
 `/sse` (SSE stream) and `/message` (POST JSON-RPC) endpoints. This allows running multiple

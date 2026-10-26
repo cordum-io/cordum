@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -45,6 +47,7 @@ func main() {
 	agentID := flag.String("agent-id", strings.TrimSpace(os.Getenv("CORDUM_MCP_AGENT_ID")), "Agent identity ID to scope this MCP session (resolved at boot)")
 	httpAuthToken := flag.String("http-auth-token", strings.TrimSpace(os.Getenv("CORDUM_MCP_HTTP_AUTH_TOKEN")), "HTTP mode: bearer token every /sse and /message request must send (prefer the CORDUM_MCP_HTTP_AUTH_TOKEN env)")
 	allowUnauthenticatedHTTP := flag.Bool("allow-unauthenticated-http", false, "HTTP mode: serve a non-loopback MCP_HTTP_ADDR without --http-auth-token (anyone who can reach it acts with this server's API key)")
+	caCert := flag.String("cacert", strings.TrimSpace(os.Getenv("CORDUM_TLS_CA")), "PEM CA certificate(s) to trust for the gateway's TLS, in addition to the system roots (also: CORDUM_TLS_CA)")
 	flag.Parse()
 
 	transportMode, httpAddr, cfgErr := resolveTransportConfig()
@@ -72,7 +75,11 @@ func main() {
 	toolRegistry := mcp.NewToolRegistry()
 	resourceRegistry := mcp.NewResourceRegistry()
 
-	httpClient := &http.Client{Timeout: 10 * time.Second}
+	httpClient, err := gatewayHTTPClient(strings.TrimSpace(*caCert))
+	if err != nil {
+		slog.Error("cordum-mcp: gateway CA certificate unusable, refusing to start", "error", err)
+		os.Exit(1)
+	}
 	allowedHosts := splitCSV(*gatewayAllowlist)
 
 	// Outbound-signing wiring per epic rail "Every MCP tool call signed,
@@ -276,6 +283,32 @@ func resolveTransportConfig() (mode string, httpAddr string, err error) {
 	default:
 		return "", "", fmt.Errorf("unsupported MCP_TRANSPORT=%q (valid: stdio, http)", mode)
 	}
+}
+
+// gatewayHTTPClient returns the client for gateway calls. caCertPath, when set,
+// names PEM CA certificates added to the system roots, so a gateway with a
+// certificate from a private CA (the compose stack's certs/ca/ca.crt)
+// verifies. Verification is never disabled.
+func gatewayHTTPClient(caCertPath string) (*http.Client, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	if caCertPath == "" {
+		return client, nil
+	}
+	pemBytes, err := os.ReadFile(caCertPath) // #nosec G304 -- operator-supplied CA path.
+	if err != nil {
+		return nil, fmt.Errorf("read CA certificate %s: %w", caCertPath, err)
+	}
+	roots, err := x509.SystemCertPool()
+	if err != nil {
+		roots = x509.NewCertPool()
+	}
+	if !roots.AppendCertsFromPEM(pemBytes) {
+		return nil, fmt.Errorf("CA certificate %s: no PEM certificates found", caCertPath)
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}
+	client.Transport = transport
+	return client, nil
 }
 
 // checkHTTPExposure refuses HTTP mode on a non-loopback address without an

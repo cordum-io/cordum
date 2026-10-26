@@ -43,16 +43,21 @@ go run ./cmd/cordum-mcp --addr https://localhost:8081 --api-key "$CORDUM_API_KEY
 ```
 
 The default compose stack serves the gateway over HTTPS with a development
-CA (`./certs/ca/ca.crt`). `cordum-mcp` has no CA option: it checks the
-gateway certificate against the system trust store, so add that CA to the
-operating system's trust store. On Linux, setting
-`SSL_CERT_FILE=./certs/ca/ca.crt` for the `cordum-mcp` process also works.
+CA (`./certs/ca/ca.crt`). Point `cordum-mcp` at it with
+`--addr https://localhost:8081 --cacert ./certs/ca/ca.crt` (or
+`CORDUM_TLS_CA=./certs/ca/ca.crt`); the CA is trusted in addition to the
+system roots, and certificate verification stays on.
 
 Flags:
 
 - `--addr` (default `http://localhost:8081`; the compose stack needs
   `https://localhost:8081`)
 - `--api-key` (or `CORDUM_API_KEY`)
+- `--cacert` (or `CORDUM_TLS_CA`, the name `cordumctl` and `cordum-agentd`
+  use): PEM CA certificate(s) the gateway's TLS certificate may chain to,
+  added to the system roots. `cordum-mcp` refuses to start if the file
+  cannot be read or holds no certificate. There is no option to skip
+  verification.
 - `--allow-private-gateway` (or `CORDUM_MCP_ALLOW_PRIVATE_GATEWAY=true`;
   default `false`): allow a gateway on `localhost` or a private or loopback
   address. Without it, every gateway call to such an `--addr`, the default
