@@ -80,6 +80,28 @@ server {
     proxy_read_timeout 86400s;
   }
 
+  # MCP HTTP+SSE transport (/mcp/sse, /mcp/message, /mcp/status) on the API
+  # gateway, so the URL the dashboard copies works on this origin. Upstream,
+  # TLS and headers match /api/; SSE needs no buffering and a long read timeout.
+  location /mcp/ {
+    resolver ${CORDUM_DNS_RESOLVER} valid=5s ipv6=off;
+    set $mcp_upstream ${CORDUM_UPSTREAM_SCHEME}://${CORDUM_API_UPSTREAM_HOST}:8081;
+    proxy_pass $mcp_upstream;
+    proxy_http_version 1.1;
+    proxy_ssl_server_name on;
+    proxy_ssl_verify ${CORDUM_PROXY_SSL_VERIFY};
+    ${CORDUM_PROXY_SSL_TRUSTED_CA}
+    proxy_set_header Host $host;
+    proxy_set_header Connection "";
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_read_timeout 3600s;
+    proxy_connect_timeout 75s;
+  }
+
   location / {
     try_files $uri /index.html;
     add_header Content-Security-Policy "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; font-src 'self' data: https://fonts.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self'; worker-src 'self' blob:; connect-src 'self';" always;

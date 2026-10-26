@@ -1128,9 +1128,15 @@ console.log(payload);
 - **Copy URL** copies the gateway's MCP SSE endpoint, `/mcp/sse`, on the
   origin of the dashboard's API base URL: `CORDUM_API_BASE_URL` when it is an
   absolute URL, else the dashboard's own origin. The bundled dashboard nginx
-  proxies only `/api/`, so with the default relative base the copied URL
-  works only where `/mcp/` is also proxied to the gateway; otherwise use the
-  gateway address (`https://localhost:8081/mcp/sse` in the default stack).
+  proxies `/mcp/` to the gateway the same way as `/api/`, unbuffered for SSE,
+  so in the default compose stack the copied URL is
+  `http://localhost:8082/mcp/sse` (plain HTTP, like the dashboard). Send the
+  same `X-API-Key` and `X-Tenant-ID` headers as on the gateway. The K8s
+  ingress manifests route `/mcp` to the gateway. With the Helm chart the
+  dashboard host proxies `/mcp/` the same way and the API host routes every
+  path to the gateway, but `dashboard.env.apiBaseUrl` defaults to the
+  in-cluster gateway service URL, which a browser cannot reach: set it to
+  `/api/v1`, or to the public API URL.
   `mcp.port`, shown as Port (3001 when unset), is metadata only.
 
 The page has no client config snippets. Create an API key under

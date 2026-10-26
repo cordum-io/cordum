@@ -520,7 +520,8 @@ The production overlay defines strict ingress and egress rules per service.
 kubectl apply -f deploy/k8s/ingress.yaml
 ```
 
-Routes `/api/v1/*` and `/health` to the gateway, `/` to the dashboard. No TLS.
+Routes `/api/v1/*`, `/health` and `/mcp/*` (the MCP HTTP+SSE transport) to the
+gateway, `/` to the dashboard. No TLS.
 
 ### Production Ingress (TLS)
 
