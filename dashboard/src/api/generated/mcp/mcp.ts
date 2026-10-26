@@ -47,6 +47,7 @@ import type {
   McpStatus,
   NotFoundResponse,
   PostMcpGatewayClientsConnect200,
+  RateLimitedResponse,
   RejectMcpApproval200,
   ServiceUnavailableResponse,
   UnauthorizedResponse,
@@ -202,7 +203,7 @@ export const mcpMessage = (
   jsonRpcRequest: JsonRpcRequest,
   signal?: AbortSignal,
 ) => {
-  return apiClient<JsonRpcResponse>({
+  return apiClient<JsonRpcResponse | void>({
     url: `/mcp/message`,
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -215,7 +216,11 @@ export const getMcpMessageMutationKey = () => ["mcpMessage"] as const;
 
 export const getMcpMessageMutationOptions = <
   TError =
-    BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | Error
+    | JsonRpcResponse
+    | RateLimitedResponse,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -256,7 +261,11 @@ export type McpMessageMutationResult = NonNullable<
 >;
 export type McpMessageMutationBody = JsonRpcRequest;
 export type McpMessageMutationError =
-  BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error;
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | Error
+  | JsonRpcResponse
+  | RateLimitedResponse;
 export type McpMessageMutationVariables = { data: JsonRpcRequest };
 
 /**
@@ -264,7 +273,11 @@ export type McpMessageMutationVariables = { data: JsonRpcRequest };
  */
 export const useMcpMessage = <
   TError =
-    BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | Error,
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | Error
+    | JsonRpcResponse
+    | RateLimitedResponse,
   TContext = unknown,
 >(
   options?: {

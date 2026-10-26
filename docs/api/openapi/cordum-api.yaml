@@ -5626,13 +5626,59 @@ paths:
               $ref: '#/components/schemas/JsonRpcRequest'
       responses:
         '200':
-          description: JSON-RPC response
+          description: >
+            JSON-RPC response to a request that carries an `id`. Tool and
+            approval failures are JSON-RPC errors inside this 200 (for
+            example `-32099` approval required, `-32096` approval
+            lifecycle error).
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/JsonRpcResponse'
+        '202':
+          description: A notification (no `id`) was accepted. No body.
         '400':
           $ref: '#/components/responses/BadRequest'
+        '404':
+          description: >
+            The `X-MCP-Session-ID` header or `session_id` query names a
+            session that does not exist or that another caller opened (the
+            two look the same). JSON-RPC error `-32001`; open `/mcp/sse`
+            for a new session id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonRpcResponse'
+              example:
+                jsonrpc: '2.0'
+                id: 1
+                error:
+                  code: -32001
+                  message: session not found
+        '408':
+          description: >
+            The client went away before the reply. JSON-RPC error `-32603`
+            (`request canceled`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonRpcResponse'
+        '413':
+          description: >
+            The message exceeds the transport size limit. JSON-RPC error
+            `-32600` (`request too large`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonRpcResponse'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          description: The Edge session for the call could not be recorded (`mcp trace unavailable`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '503':
           description: >
             MCP HTTP transport is unavailable. Stable error `code`:
@@ -5641,10 +5687,25 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '504':
+          description: >
+            No reply within the transport response timeout. JSON-RPC error
+            `-32603` (`request timeout`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonRpcResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          description: >
+            Tenant missing or not allowed, upstream fronting not configured
+            for the tenant, or `X-Agent-Id` names an agent identity this
+            caller is not bound to (`agent identity not bound to caller`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
       parameters:
       - $ref: '#/components/parameters/TenantID'
   /mcp/status:
