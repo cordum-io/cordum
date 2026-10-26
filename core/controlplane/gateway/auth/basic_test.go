@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -384,4 +386,52 @@ func TestKeyIDAndName_PopulatedInAuthContext(t *testing.T) {
 			t.Fatalf("static KeyName = %q, want empty (apiKeyMeta carries no name field)", ac.KeyName)
 		}
 	})
+}
+
+// A managed key record carries no principal, so X-Principal-Id must follow the
+// static-key rule for a key without principal_id: ignored in production unless
+// CORDUM_ALLOW_HEADER_PRINCIPAL is set, honoured in development.
+func TestManagedKeyHeaderPrincipalFollowsStaticKeyRules(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		mode, allowParam string
+		want             string
+	}{
+		{"production ignores the header", "production", "", ""},
+		{"production with CORDUM_ALLOW_HEADER_PRINCIPAL", "production", "true", "alice"},
+		{"development honours the header", "development", "", "alice"},
+		{"development with CORDUM_ALLOW_HEADER_PRINCIPAL=false", "development", "false", "alice"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, key := range []string{"CORDUM_API_KEY", "CORDUM_API_KEYS_PATH", "CORDUM_PRODUCTION",
+				"CORDUM_ALLOW_INSECURE_NO_AUTH", "CORDUM_JWT_HMAC_SECRET", "CORDUM_JWT_PUBLIC_KEY",
+				"CORDUM_JWT_PUBLIC_KEY_PATH", "CORDUM_JWT_REQUIRED"} {
+				t.Setenv(key, "")
+			}
+			t.Setenv("CORDUM_API_KEYS", "static-key") // production refuses to start keyless
+			t.Setenv("CORDUM_ENV", tc.mode)
+			t.Setenv("CORDUM_ALLOW_HEADER_PRINCIPAL", tc.allowParam)
+			b, err := NewBasicAuthProvider("default")
+			if err != nil {
+				t.Fatalf("NewBasicAuthProvider: %v", err)
+			}
+			b.SetKeyStore(&fakeKeyStore{
+				validateFn: func(context.Context, string) (*ManagedKey, error) {
+					return &ManagedKey{ID: "mk-1", Name: "ci", Tenant: "default"}, nil
+				},
+				recordFn: func(context.Context, string) error { return nil },
+			})
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+			req.Header.Set("X-API-Key", "managed-key")
+			req.Header.Set("X-Principal-Id", "alice")
+			ac, err := b.AuthenticateHTTP(req)
+			b.DrainUsage()
+			if err != nil {
+				t.Fatalf("AuthenticateHTTP: %v", err)
+			}
+			if ac.PrincipalID != tc.want || ac.KeyID != "mk-1" {
+				t.Fatalf("PrincipalID=%q KeyID=%q, want PrincipalID=%q KeyID=%q", ac.PrincipalID, ac.KeyID, tc.want, "mk-1")
+			}
+		})
+	}
 }

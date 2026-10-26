@@ -844,7 +844,7 @@ Invalid values (non-numeric, zero, negative) are silently replaced with defaults
 | `CORDUM_API_KEYS` | — | Multiple keys: comma-separated or JSON array |
 | `CORDUM_API_KEYS_PATH` | — | Path to keys file (reloads on change) |
 | `CORDUM_ALLOW_INSECURE_NO_AUTH` | — | Set to `1` for no-auth mode (dev only) |
-| `CORDUM_ALLOW_HEADER_PRINCIPAL` | — | Set to `true` for header-based principal (disabled in production) |
+| `CORDUM_ALLOW_HEADER_PRINCIPAL` | — | Set to `true` to honour `X-Principal-Id` for static keys without `principal_id` and for managed keys (on by default outside production, off in production) |
 
 ### Gateway — Rate Limiting
 
