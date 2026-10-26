@@ -362,12 +362,19 @@
         "deny_resources": {"type": "array", "items": {"type": "string"}},
         "allow_actions": {"type": "array", "items": {"type": "string"}},
         "deny_actions": {"type": "array", "items": {"type": "string"}},
-        "gateway_enabled": {"type": "boolean"},
+        "gateway_enabled": {
+          "type": "boolean",
+          "description": "Reserved; not enforced yet (EDGE-101). The gateway does not read it at runtime."
+        },
         "upstream_servers": {
           "type": "array",
-          "items": {"$ref": "#/definitions/upstreamServerConfig"}
+          "items": {"$ref": "#/definitions/upstreamServerConfig"},
+          "description": "Reserved; not enforced yet (EDGE-101). The gateway does not read it at runtime."
         },
-        "allowed_upstreams": {"type": "array", "items": {"type": "string"}}
+        "allowed_upstreams": {
+          "type": "array", "items": {"type": "string"},
+          "description": "Reserved; not enforced yet (EDGE-101). The gateway does not read it at runtime."
+        }
       }
     },
     "upstreamServerConfig": {
