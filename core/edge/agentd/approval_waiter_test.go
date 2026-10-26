@@ -273,15 +273,17 @@ func (blockingApprovalWaiter) WaitForApproval(ctx context.Context, _ ApprovalWai
 }
 
 // TestApprovalRequiredDecisionClampedByParentContextNotNominalTimeout is the
-// regression test for the EDGE-4 doctor finding: "CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT
-// defaults to 30s, which exceeds Claude Code's 5s hook deadline — does an
-// unresolved inline wait fail OPEN when Claude kills the hook first?"
+// regression test for the EDGE-4 doctor finding that
+// CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT defaults to 30s, which exceeds
+// the `"timeout": 5` Cordum generates on each Claude Code command hook
+// (Claude Code's own default is 600s): does an unresolved inline wait fail
+// OPEN when Claude Code kills the hook first?
 //
 // It doesn't. approvalRequiredDecision derives its wait context from the
 // PARENT context via context.WithTimeout(ctx, timeout) — Go's context package
 // always honors the EARLIER of the two deadlines. In production the parent is
 // ultimately the incoming hook HTTP request's context, which is already
-// bounded well under Claude's 5s deadline (agentd's own per-request
+// bounded well under that generated 5s timeout (agentd's own per-request
 // evaluationContext, and cordum-hook's own CORDUM_AGENTD_HOOK_TIMEOUT client
 // budget, are both configured/validated to stay under 5s independent of
 // CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT). So a 30s nominal wait timeout
