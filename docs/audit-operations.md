@@ -279,8 +279,10 @@ the restarted chain verify as `compromised`.
 ## Legal Hold Integration
 
 Legal holds require the Enterprise `legal_hold` entitlement to create, list
-or release. While a tenant has any active hold, the retention sweeper never
-trims its chain:
+or release. Holds are tenant-scoped: a caller can only create, list or release
+holds in tenants it can access (all tenants for a cross-tenant principal);
+releasing another tenant's hold answers like an unknown ID. While a tenant has
+any active hold, the retention sweeper never trims its chain:
 
 - The hold is checked before every trim batch, so a hold placed during a
   sweep stops deletion at the next batch.

@@ -379,7 +379,7 @@ export default function SettingsAuditExportPage() {
         <div className="space-y-4">
           <LabeledField
             label="Tenant (optional)"
-            description="Leave empty to place the hold on the default tenant."
+            description="Leave empty to place the hold on your current tenant."
           >
             <Input
               type="text"
