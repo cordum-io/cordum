@@ -1408,6 +1408,36 @@ func (s *server) requirePermissionOrRole(w http.ResponseWriter, r *http.Request,
 	return s.requireLicensePermission(w, r, permission)
 }
 
+// permissionGrant is one permission plus the legacy roles that must come with
+// it, as requirePermissionOrRole checks them.
+type permissionGrant struct {
+	permission string
+	roles      []string
+}
+
+// requireAnyPermissionOrRole passes when the caller satisfies any one grant
+// the way requirePermissionOrRole checks a single one (the named permission
+// when advanced RBAC is entitled, plus the legacy roles), then applies that
+// grant's license check. When none matches it writes the denial for the first.
+func (s *server) requireAnyPermissionOrRole(w http.ResponseWriter, r *http.Request, grants ...permissionGrant) bool {
+	for _, g := range grants {
+		if s.permissionOrRoleAllowed(r, g.permission, g.roles...) {
+			return s.requirePermissionOrRole(w, r, g.permission, g.roles...)
+		}
+	}
+	return s.requirePermissionOrRole(w, r, grants[0].permission, grants[0].roles...)
+}
+
+// permissionOrRoleAllowed is requirePermissionOrRole's check without the
+// license step and without writing a response.
+func (s *server) permissionOrRoleAllowed(r *http.Request, permission string, roles ...string) bool {
+	if s != nil && s.auth != nil && s.permChecker != nil && auth.RBACEntitled(s.currentEntitlements()) &&
+		s.permChecker.RequirePermission(r, permission) != nil {
+		return false
+	}
+	return len(roles) == 0 || s.requireRole(r, roles...) == nil
+}
+
 func (s *server) requireFeatureEntitlement(w http.ResponseWriter, feature, message string) bool {
 	if s == nil {
 		return true

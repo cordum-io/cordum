@@ -50,8 +50,26 @@ func (s *server) handlePolicySnapshots(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data)
 }
 
+// policyEvaluateGrants may call /api/v1/policy/evaluate, a read-only "would
+// this be allowed" check that the guard SDKs make with agent keys. Anyone who
+// can submit a job (POST /api/v1/jobs: jobs.write with the admin or user role)
+// learns the same decision by submitting, so evaluate is open to them, to
+// policy readers and to policy writers. simulate and explain stay
+// policy.write + admin.
+var policyEvaluateGrants = []permissionGrant{
+	{permission: auth.PermPolicyWrite, roles: []string{"admin"}},
+	{permission: auth.PermPolicyRead, roles: []string{"admin"}},
+	{permission: auth.PermJobsWrite, roles: []string{"admin", "user"}},
+}
+
 func (s *server) handlePolicyCheck(w http.ResponseWriter, r *http.Request, mode string) {
-	if !s.requirePermissionOrRole(w, r, auth.PermPolicyWrite, "admin") {
+	allowed := false
+	if mode == "evaluate" {
+		allowed = s.requireAnyPermissionOrRole(w, r, policyEvaluateGrants...)
+	} else {
+		allowed = s.requirePermissionOrRole(w, r, auth.PermPolicyWrite, "admin")
+	}
+	if !allowed {
 		return
 	}
 	if s.safetyClient == nil {

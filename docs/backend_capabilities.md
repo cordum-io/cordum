@@ -29,7 +29,7 @@ This document tracks the current backend features, their status, and where they 
 - Workflows: create/upsert (`/api/v1/workflows`), list/get, runs start/get/list, approve step, cancel run, rerun, timeline.
 - Approvals: job approvals (`/api/v1/approvals/...`) and step approvals (`/api/v1/workflows/.../steps/.../approve`).
 - Config: Redis-backed config service (set/get via `/api/v1/config`, effective via `/api/v1/config/effective`).
-- Policy: evaluate/simulate/explain + snapshots, bundle list/detail/update, bundle snapshots, publish/rollback, audit (admin role enforced when enterprise RBAC is enabled).
+- Policy: evaluate/simulate/explain + snapshots, bundle list/detail/update, bundle snapshots, publish/rollback, audit (admin role enforced when enterprise RBAC is enabled; evaluate is also open to job submitters).
 - Schemas: register/get/list/delete JSON schemas.
 - Locks: acquire/release/renew/get shared/exclusive locks.
 - Artifacts: put/get with retention class metadata.

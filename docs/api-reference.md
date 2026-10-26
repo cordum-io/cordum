@@ -1510,6 +1510,16 @@ Notes:
 ### POST `/api/v1/policy/explain`
 
 - Auth: required
+- Access:
+  - `evaluate`: any caller who can submit jobs (`jobs.write` with the
+    `admin` or `user` role, as `POST /api/v1/jobs` requires), or `policy.read`
+    or `policy.write` with the `admin` role. It is a read-only check, and a
+    job submitter learns the same decision by submitting. The guard SDKs call
+    it with agent keys. Every call is audited (`policy.evaluate`).
+  - `simulate` and `explain`: `policy.write` with the `admin` role.
+
+  With advanced RBAC the named permission is required as well as the role;
+  without it the role alone decides.
 - Request schema (`policyCheckRequest`):
 
 ```json
