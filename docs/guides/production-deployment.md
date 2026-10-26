@@ -14,7 +14,10 @@ production-only hardening across all services:
 - **Client TLS enforced** for NATS and Redis connections (insecure rejected)
 - **gRPC reflection disabled** by default
 - **Anonymous auth blocked** (`CORDUM_ALLOW_INSECURE_NO_AUTH` ignored)
-- **Header principal override disabled** (`CORDUM_ALLOW_HEADER_PRINCIPAL` ignored)
+- **Header principal override off by default**: `X-Principal-Id` is ignored
+  unless `CORDUM_ALLOW_HEADER_PRINCIPAL=true`, which turns it back on for static
+  API keys without a `principal_id` and for managed keys (outside production it
+  is always on)
 
 ## Environment Variables Reference
 
