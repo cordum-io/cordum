@@ -212,3 +212,47 @@ Use command hooks. HTTP hooks are permitted only for the EDGE-000 spike.
 This example runs in `observe` mode, which is fail-open by design. For `enforce` or `enterprise-strict`, also set `CORDUM_AGENTD_FAIL_CLOSED=true` and add `"onFailure": "block"` to the `PreToolUse`, `UserPromptSubmit`, and `ConfigChange` hooks (Claude Code v2.1.295 or later); otherwise a hook that cannot start, crashes, or times out lets the action through. `cordumctl edge claude` and `cordumctl edge managed-settings export` render both for you.
 
 Use `/hooks` in Claude Code to confirm the command hooks are active and `/status` to confirm which settings source (local project/user or enterprise managed settings) provided them. HTTP hooks are forbidden for production enforcement because Claude Code treats HTTP connection failures, timeouts, and non-2xx responses as non-blocking. For Claude Code hook JSON semantics, see the official Claude Code hooks documentation: <https://docs.anthropic.com/en/docs/claude-code/hooks>.
+
+## GitHub Copilot
+
+`cordum-hook copilot user-prompt-submit`, `pre-tool-use`, and `post-tool-use`
+run the same runner for GitHub Copilot agent hooks and tag events with
+`CORDUM_AGENT_PRODUCT=github-copilot`. Copilot lifecycle events
+(`session-start`, `stop`, `pre-compact`, `subagent-start`, `subagent-stop`) are
+no-ops that exit `0`. `core/edge/copilot.GenerateHookSettings` renders the hooks
+file (for example `.github/hooks/cordum.json` or `~/.copilot/hooks/cordum.json`)
+with `timeout` in seconds and `CORDUM_AGENTD_FAIL_CLOSED` in each entry's `env`.
+
+### Hook failures fail open in Copilot
+
+Copilot has no equivalent of Claude Code's `"onFailure": "block"`. Cordum's
+fail-closed modes therefore cover only what `cordum-hook` handles itself:
+agentd errors, agentd timeouts within the hook's own `4.5s` budget, and
+malformed input. When the hook process itself fails, Copilot's fixed rules
+apply, and no setting changes them:
+
+| Failure of the hook process | Copilot harness (VS Code "Copilot" session target, Copilot CLI) | Local harness (older VS Code hooks) |
+| --- | --- | --- |
+| Times out | Fail-open for every event, including `preToolUse`: the tool call goes through the normal permission flow. | Not documented. Treat it as fail-open. |
+| Cannot start, crashes, or exits non-zero | `preToolUse`: the tool call is denied. Other events: logged and skipped. | Exit `2` blocks. Any other exit code is a non-blocking warning, and the action continues. |
+| Prints empty or invalid JSON | Treated as no output: the normal permission flow decides. | Not documented. |
+
+Sources, checked 2026-10-26:
+[GitHub Copilot hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference#exit-codes-for-command-hooks),
+[VS Code agent hooks](https://code.visualstudio.com/docs/copilot/customization/hooks),
+and the [VS Code Local hooks reference](https://code.visualstudio.com/docs/agents/reference/hooks-reference).
+
+`cordumctl edge doctor --copilot-hooks-path <file>` reports this limitation as
+the `copilot_hooks` check: `warn` in every mode except `observe`. For a control
+that holds when a hook fails, add a mandatory layer such as the
+[LLM proxy](llm-proxy-governance.md).
+
+The generated file uses the Local hook format (PascalCase events, `timeout`, no
+`version`), and `cordum-hook` answers in Claude Code's format
+(`hookSpecificOutput.permissionDecision` plus a top-level `decision: "block"`).
+The Copilot harness accepts PascalCase event names, but it documents hook files
+with `"version": 1` and a top-level `permissionDecision` for `preToolUse`, and
+it drops command-hook output for `userPromptSubmitted`, so prompts are recorded
+but never blocked there. Until a Copilot-harness session has been checked to
+block a denied tool call, treat Cordum's Copilot hooks as audit-only in that
+harness.

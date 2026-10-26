@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/edge/claude"
+	"github.com/cordum/cordum/core/edge/copilot"
 )
 
 func TestEdgeDoctorSuccessJSON(t *testing.T) {
@@ -98,6 +99,61 @@ func TestEdgeCheckClaudeCodeVersion(t *testing.T) {
 	}
 }
 
+// Copilot has no onFailure equivalent, so the doctor must say that Cordum's
+// fail-closed modes do not cover failures of the Copilot hook process itself.
+func TestEdgeCheckCopilotHooks(t *testing.T) {
+	dir := t.TempDir()
+	generated, err := copilot.GenerateHookSettings(copilot.HookSettingsOptions{HookCommand: "cordum-hook", PolicyMode: "enforce", FailClosed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hooksFile := filepath.Join(dir, "cordum.json")
+	otherFile := filepath.Join(dir, "other.json")
+	for path, data := range map[string][]byte{hooksFile: generated, otherFile: []byte(`{"hooks":{"PreToolUse":[{"type":"command","command":"./lint.sh"}]}}`)} {
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cases := []struct {
+		name, path, mode string
+		want             checkState
+		detail           string
+	}{
+		{"not configured", "", "enforce", stateSkip, "copilot-hooks-path not configured"},
+		{"missing file", filepath.Join(dir, "missing.json"), "enforce", stateWarn, "read Copilot hooks file failed"},
+		{"no cordum hook", otherFile, "enforce", stateWarn, "no cordum-hook copilot command hook"},
+		{"observe", hooksFile, "observe", stateOK, "observe fails open by design"},
+		{"enforce", hooksFile, "enforce", stateWarn, "Copilot has no onFailure setting"},
+		{"enterprise-strict", hooksFile, "enterprise-strict", stateWarn, "a timed-out hook lets the tool call through"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := &edgeDoctorEnv{base: &doctorEnv{}, policyMode: tc.mode, copilotHooksPath: tc.path, readFile: os.ReadFile}
+			res := edgeCheckCopilotHooks(context.Background(), env)
+			if res.State != tc.want || !strings.Contains(res.Detail, tc.detail) {
+				t.Fatalf("got %s %q, want %s containing %q", res.State, res.Detail, tc.want, tc.detail)
+			}
+		})
+	}
+}
+
+func TestEdgeDoctorCopilotHooksFlagWarns(t *testing.T) {
+	fx := newEdgeDoctorFixture(t)
+	generated, err := copilot.GenerateHookSettings(copilot.HookSettingsOptions{PolicyMode: "enforce", FailClosed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "cordum.json")
+	if err := os.WriteFile(path, generated, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, _ := runEdgeDoctorForTest(t, fx.args("--json", "--copilot-hooks-path", path)...)
+	if code != 2 {
+		t.Fatalf("exit=%d stdout=%s", code, stdout)
+	}
+	assertEdgeDoctorCheck(t, decodeEdgeDoctorJSON(t, stdout), "copilot_hooks", stateWarn)
+}
+
 func TestEdgeDoctorEnterpriseStrictFailsOnOldClaudeCode(t *testing.T) {
 	fx := newEdgeDoctorFixture(t)
 	t.Setenv("CORDUM_TEST_CLAUDE_VERSION", "2.1.200 (Claude Code)")
@@ -160,6 +216,8 @@ func newEdgeDoctorFixture(t *testing.T) edgeDoctorFixture {
 	apiKey := "edge-doctor-secret-token"
 	// --claude-path is this test binary; TestMain answers its --version probe.
 	t.Setenv("CORDUM_TEST_CLAUDE_VERSION", claude.MinHookOnFailureVersion+" (Claude Code)")
+	// An inherited value would turn on the copilot_hooks check (warn, exit 2).
+	t.Setenv("CORDUM_EDGE_COPILOT_HOOKS_PATH", "")
 	agentdURL := newEdgeDoctorAgentdURL(t)
 	settings := writeEdgeDoctorSettings(t, agentdURL)
 	return edgeDoctorFixture{

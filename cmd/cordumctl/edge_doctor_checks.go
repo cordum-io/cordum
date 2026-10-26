@@ -305,6 +305,58 @@ func edgeCheckManagedSettings(_ context.Context, env *edgeDoctorEnv) checkResult
 	}
 }
 
+// edgeCheckCopilotHooks reports what fail-closed modes cannot cover for GitHub
+// Copilot agent hooks. Copilot has no equivalent of Claude Code's
+// "onFailure": "block", so failures of the hook process itself are handled by
+// Copilot's fixed rules, and a timed-out hook always lets the tool call
+// through. Runs only when --copilot-hooks-path names the hooks file.
+func edgeCheckCopilotHooks(_ context.Context, env *edgeDoctorEnv) checkResult {
+	path := strings.TrimSpace(env.copilotHooksPath)
+	if path == "" {
+		return checkResult{State: stateSkip, Detail: "copilot-hooks-path not configured; skip unless Copilot runs cordum-hook"}
+	}
+	data, err := env.readFile(path)
+	if err != nil {
+		return checkResult{
+			State:  stateWarn,
+			Detail: "read Copilot hooks file failed: " + edgeDoctorRedact(err.Error(), env.base.apiKey),
+			Fix:    "pass the hooks file Copilot loads, for example .github/hooks/cordum.json",
+		}
+	}
+	if !copilotHooksRunCordumHook(data) {
+		return checkResult{State: stateWarn, Detail: "no cordum-hook copilot command hook in " + path, Fix: "regenerate the Copilot hooks file"}
+	}
+	if edgePolicyModeOrDefault(env.policyMode) == "observe" {
+		return checkResult{State: stateOK, Detail: "Copilot hooks run cordum-hook; observe fails open by design"}
+	}
+	return checkResult{
+		State: stateWarn,
+		Detail: "Copilot has no onFailure setting, so failures of cordum-hook itself fail open: a timed-out hook lets the tool call through, " +
+			"the older Local harness also lets a hook that cannot start or exits non-zero (other than 2) through, and the Copilot harness " +
+			"drops userPromptSubmitted hook output, so prompts are recorded but never blocked",
+		Fix: "add a mandatory layer such as the LLM proxy; see docs/edge/cordum-hook.md#github-copilot",
+	}
+}
+
+func copilotHooksRunCordumHook(data []byte) bool {
+	var doc struct {
+		Hooks map[string][]struct {
+			Command string `json:"command"`
+		} `json:"hooks"`
+	}
+	if json.Unmarshal(data, &doc) != nil {
+		return false
+	}
+	for _, entries := range doc.Hooks {
+		for _, entry := range entries {
+			if strings.Contains(entry.Command, " copilot ") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // summariseManagedSettingsDrifts emits a deterministic, low-cardinality
 // drift summary for human + JSON doctor output. The cap protects the
 // summary from blowing past doctor's per-line width when many invariants

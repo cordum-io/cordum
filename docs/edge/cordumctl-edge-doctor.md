@@ -49,6 +49,7 @@ cordumctl edge doctor \
 | `--agentd-url` | `CORDUM_AGENTD_URL`, `CORDUM_AGENTD_SOCKET`, or local default | Local loopback hook URL to dial. |
 | `--settings-path` | `CORDUM_EDGE_SETTINGS_PATH`, `CLAUDE_SETTINGS_PATH`, or `~/.claude/settings.json` | Claude settings JSON to validate. |
 | `--managed-settings-path` | `CORDUM_EDGE_MANAGED_SETTINGS_PATH` | Managed-settings JSON to validate via the `managed_settings_compliance` check. Empty = skip (non-enterprise hosts). |
+| `--copilot-hooks-path` | `CORDUM_EDGE_COPILOT_HOOKS_PATH` | GitHub Copilot hooks file (for example `.github/hooks/cordum.json`) for the `copilot_hooks` check. Empty = skip. |
 | `--dashboard-url` | `CORDUM_EDGE_DASHBOARD_URL`, `CORDUM_DASHBOARD_URL` | Optional dashboard reachability probe. |
 | `--timeout` | `30` | Overall deadline in seconds. Each check is still individually bounded. |
 | `--json` | false | Emit JSON envelope instead of the human table. |
@@ -82,6 +83,13 @@ The doctor reports `ok`, `warn`, `fail`, or `skip` for each check:
   `managed-settings.json` against the 17 enterprise invariants documented
   in [managed-settings-deploy.md § 6](managed-settings-deploy.md#6-verification-reference).
   Empty path → `skip` so non-enterprise hosts do not see a spurious failure.
+- Copilot hooks (`copilot_hooks`): when `--copilot-hooks-path` (or
+  `CORDUM_EDGE_COPILOT_HOOKS_PATH`) is set, confirms the file runs
+  `cordum-hook copilot` and reports `warn` in every mode except `observe`:
+  Copilot has no `onFailure` setting, so a timed-out hook lets the tool call
+  through, and the Copilot harness never blocks prompts. See
+  [cordum-hook.md § GitHub Copilot](cordum-hook.md#github-copilot). Empty
+  path → `skip`.
 
 ## Exit codes
 
