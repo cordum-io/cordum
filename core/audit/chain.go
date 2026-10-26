@@ -9,12 +9,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/rand/v2"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -26,7 +28,9 @@ import (
 //	audit:chain:head:<tenant>   — Plain key holding "seq:event_hash" for
 //	                              the tenant's current chain head. Empty
 //	                              or missing means the tenant has no
-//	                              events yet (next append is genesis).
+//	                              events yet (next append is genesis). On
+//	                              Redis Cluster it is a hint written after
+//	                              each append (see appendCluster).
 //	audit:chain:anchor:<tenant> — "seq:event_hash:stream_id[:hmac]" of the
 //	                              newest event the retention sweeper trimmed
 //	                              (retentionAnchor). Missing means the chain
@@ -96,6 +100,7 @@ var (
 // forge a valid SHA-256 chain by recomputing hashes from an arbitrary point.
 type Chainer struct {
 	client          redis.UniversalClient
+	cluster         bool // client is a Redis Cluster client: see appendCluster
 	keyPrefix       string
 	hmacKey         []byte // nil = HMAC disabled
 	headCacheMu     sync.Mutex
@@ -142,7 +147,7 @@ func NewChainer(client redis.UniversalClient, keyPrefix string, opts ...ChainerO
 	if keyPrefix == "" {
 		keyPrefix = ChainKeyPrefix
 	}
-	c := &Chainer{client: client, keyPrefix: keyPrefix}
+	c := &Chainer{client: client, cluster: redisutil.IsCluster(client), keyPrefix: keyPrefix}
 	for _, o := range opts {
 		o(c)
 	}
@@ -283,6 +288,9 @@ func (c *Chainer) Append(ctx context.Context, event *SIEMEvent) error {
 	}
 	unlockTenant := c.lockTenant(event.TenantID)
 	defer unlockTenant()
+	if c.cluster {
+		return c.appendCluster(ctx, event)
+	}
 
 	headKey := c.HeadKey(event.TenantID)
 	streamKey := c.StreamKey(event.TenantID)
@@ -311,33 +319,18 @@ func (c *Chainer) Append(ctx context.Context, event *SIEMEvent) error {
 
 		event.PrevHash = headHash
 		event.Seq = headSeq + 1
-		eventHash, err := computeEventHash(event)
+		payload, err := c.seal(event)
 		if err != nil {
-			return fmt.Errorf("audit chain: compute hash: %w", err)
+			return err
 		}
-		event.EventHash = eventHash
-
-		// Compute HMAC after the event hash so the HMAC covers the full
-		// canonical payload including PrevHash (forward tamper propagation).
-		if len(c.hmacKey) > 0 {
-			macTag, macErr := computeEventHMAC(event, c.hmacKey)
-			if macErr != nil {
-				return fmt.Errorf("audit chain: compute hmac: %w", macErr)
-			}
-			event.HMAC = macTag
-		}
-
-		payload, err := json.Marshal(event)
-		if err != nil {
-			return fmt.Errorf("audit chain: marshal event: %w", err)
-		}
+		eventHash := event.EventHash
 
 		res, err := chainAppendScript.Run(ctx, c.client,
 			[]string{headKey, streamKey},
 			rawHead,
 			strconv.FormatInt(event.Seq, 10),
 			eventHash,
-			string(payload),
+			payload,
 		).Int()
 		if err != nil {
 			return fmt.Errorf("audit chain: script run: %w", err)
@@ -361,6 +354,139 @@ func (c *Chainer) Append(ctx context.Context, event *SIEMEvent) error {
 	}
 
 	return ErrCASExhausted
+}
+
+// seal sets the event's EventHash and, with an HMAC key, its HMAC for the Seq
+// and PrevHash already on it, and returns the payload to store. The HMAC is
+// computed after the hash so it covers the full canonical payload including
+// PrevHash (forward tamper propagation).
+func (c *Chainer) seal(event *SIEMEvent) (string, error) {
+	eventHash, err := computeEventHash(event)
+	if err != nil {
+		return "", fmt.Errorf("audit chain: compute hash: %w", err)
+	}
+	event.EventHash = eventHash
+	if len(c.hmacKey) > 0 {
+		macTag, macErr := computeEventHMAC(event, c.hmacKey)
+		if macErr != nil {
+			return "", fmt.Errorf("audit chain: compute hmac: %w", macErr)
+		}
+		event.HMAC = macTag
+	}
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return "", fmt.Errorf("audit chain: marshal event: %w", err)
+	}
+	return string(payload), nil
+}
+
+// clusterAppendScript is chainAppendScript for Redis Cluster, where a
+// tenant's head key and stream hash to different slots and one script cannot
+// touch both. It appends only while the stream's last entry is still the one
+// the caller linked to, so concurrent producers serialize on the stream.
+//
+// KEYS[1] = stream key   ARGV[1] = expected last entry ID, empty for an empty stream
+//
+//	ARGV[2] = new_seq
+//	ARGV[3] = event JSON payload
+//
+// Returns 1 on commit, 0 when the tail moved (caller re-reads and retries).
+var clusterAppendScript = redis.NewScript(`
+local last = redis.call('XREVRANGE', KEYS[1], '+', '-', 'COUNT', 1)
+local tail = ''
+if #last > 0 then tail = last[1][1] end
+if tail ~= ARGV[1] then return 0 end
+redis.call('XADD', KEYS[1], '*', 'seq', ARGV[2], 'event', ARGV[3])
+return 1
+`)
+
+// clusterHeadScript records "seq:event_hash" (ARGV[2]) as the head hint
+// (KEYS[1]) unless the hint already holds seq ARGV[1] or later: a slow
+// producer must not move it back, which would let a later tail deletion
+// reuse seqs unnoticed.
+var clusterHeadScript = redis.NewScript(`
+local cur = redis.call('GET', KEYS[1])
+if cur then
+  local seq = tonumber(string.match(cur, '^(%d+):'))
+  if seq and seq >= tonumber(ARGV[1]) then return 0 end
+end
+redis.call('SET', KEYS[1], ARGV[2])
+return 1
+`)
+
+// appendCluster is Append on Redis Cluster. The stream is the source of
+// truth: the event links to the stream's last entry and commits with a
+// single-key compare-and-append (clusterAppendScript). The head key is then
+// moved forward as a hint for tenant discovery; a crash before that leaves it
+// behind the stream, which is harmless. It is never used for linkage, only
+// as a floor for the next seq: a head ahead of the stream means entries were
+// deleted from the tail, and numbering past it keeps that deletion visible as
+// missing seqs, as chainAppendScript does on a single node.
+func (c *Chainer) appendCluster(ctx context.Context, event *SIEMEvent) error {
+	headKey := c.HeadKey(event.TenantID)
+	streamKey := c.StreamKey(event.TenantID)
+	for attempt := 0; attempt < chainMaxCASRetries; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		headSeq, tail, err := c.readClusterTail(ctx, headKey, streamKey)
+		if err != nil {
+			return err
+		}
+		event.PrevHash = tail.Hash
+		event.Seq = max(tail.Seq, headSeq) + 1
+		payload, err := c.seal(event)
+		if err != nil {
+			return err
+		}
+		seq := strconv.FormatInt(event.Seq, 10)
+		res, err := clusterAppendScript.Run(ctx, c.client, []string{streamKey}, tail.StreamID, seq, payload).Int()
+		if err != nil {
+			return fmt.Errorf("audit chain: script run: %w", err)
+		}
+		if res == 1 {
+			if err := clusterHeadScript.Run(ctx, c.client, []string{headKey}, seq, seq+":"+event.EventHash).Err(); err != nil {
+				// The event is committed; the next append moves the hint.
+				slog.Warn("audit chain: head hint not updated", "tenant", event.TenantID, "seq", event.Seq, "error", err)
+			}
+			return nil
+		}
+		event.Seq, event.PrevHash, event.EventHash, event.HMAC = 0, "", "", ""
+		if err := sleepCASBackoff(ctx, attempt); err != nil {
+			return err
+		}
+	}
+	return ErrCASExhausted
+}
+
+// readClusterTail returns the head hint's seq and the stream's last entry
+// (zero for an empty stream), read in one round trip: the keys live on
+// different nodes.
+func (c *Chainer) readClusterTail(ctx context.Context, headKey, streamKey string) (int64, retentionAnchor, error) {
+	pipe := c.client.Pipeline()
+	headCmd := pipe.Get(ctx, headKey)
+	tailCmd := pipe.XRevRangeN(ctx, streamKey, "+", "-", 1)
+	_, _ = pipe.Exec(ctx) // per-command errors are checked below
+	rawHead, err := headCmd.Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return 0, retentionAnchor{}, fmt.Errorf("audit chain: read head: %w", err)
+	}
+	headSeq, _, err := parseChainHead(rawHead)
+	if err != nil {
+		return 0, retentionAnchor{}, fmt.Errorf("audit chain: parse head: %w", err)
+	}
+	entries, err := tailCmd.Result()
+	if err != nil {
+		return 0, retentionAnchor{}, fmt.Errorf("audit chain: read tail: %w", err)
+	}
+	if len(entries) == 0 {
+		return headSeq, retentionAnchor{}, nil
+	}
+	tail, err := anchorForEntry(entries[0])
+	if err != nil {
+		return 0, retentionAnchor{}, fmt.Errorf("audit chain: read tail: %w", err)
+	}
+	return headSeq, tail, nil
 }
 
 // sleepCASBackoff pauses for a jittered duration that grows with
