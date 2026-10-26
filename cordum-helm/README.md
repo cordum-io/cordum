@@ -234,6 +234,22 @@ To use an existing Kubernetes secret instead:
 --set redis.auth.existingSecretKey=REDIS_PASSWORD
 ```
 
+### NATS Token Authentication
+
+`nats.auth.token` makes the bundled NATS server require a token and gives it,
+as `NATS_TOKEN` from the chart's `<fullname>-nats-token` secret, to every
+service that connects to NATS: gateway, scheduler, safety kernel, and workflow
+engine.
+
+```bash
+--set nats.auth.token=$(openssl rand -hex 32)
+```
+
+`nats.auth.existingTokenSecret` (key `nats.auth.existingTokenSecretKey`,
+default `NATS_TOKEN`) passes a token from your own secret to the same services
+instead. Use it for an external NATS (`nats.enabled=false`) that requires the
+token: the bundled server only enforces `nats.auth.token`.
+
 ### Pod and Container Security Contexts
 
 Security contexts are applied by default to all pods and containers:
@@ -355,7 +371,9 @@ When upgrading from a chart version that did not include these security features
 
 ## Notes
 
-- Gateway HTTP is exposed on the `api-gateway` service (port 8081).
+- Gateway HTTP is exposed on the `api-gateway` service on
+  `gateway.service.httpPort` (default 8081); the gateway listens on that port
+  and the dashboard nginx proxies to it.
 - Dashboard is exposed on the `dashboard` service (port 8080).
 - Update `config.safety`, `config.pools`, and `config.timeouts` in values.yaml
   to control policy and routing defaults.

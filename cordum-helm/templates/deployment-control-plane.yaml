@@ -231,6 +231,7 @@ spec:
               value: /etc/cordum/safety.yaml
             - name: NATS_URL
               value: {{ include "cordum.natsUrl" . | quote }}
+            {{- include "cordum.natsTokenEnv" . | nindent 12 }}
             {{- if .Values.redis.auth.enabled }}
             - name: REDIS_PASSWORD
               valueFrom:
@@ -415,6 +416,7 @@ spec:
             {{- end }}
             - name: NATS_URL
               value: {{ include "cordum.natsUrl" . | quote }}
+            {{- include "cordum.natsTokenEnv" . | nindent 12 }}
             - name: NATS_USE_JETSTREAM
               value: "1"
             {{- include "cordum.workerTrustModeEnv" . | nindent 12 }}
@@ -628,6 +630,7 @@ spec:
             {{- end }}
             - name: NATS_URL
               value: {{ include "cordum.natsUrl" . | quote }}
+            {{- include "cordum.natsTokenEnv" . | nindent 12 }}
             - name: NATS_USE_JETSTREAM
               value: "1"
             {{- include "cordum.workerTrustModeEnv" . | nindent 12 }}
@@ -643,6 +646,11 @@ spec:
               value: {{ include "cordum.redisUrl" . | quote }}
             - name: SAFETY_KERNEL_ADDR
               value: {{ include "cordum.safetyKernelAddr" . | quote }}
+            # Listen on the ports the Service, probes and ingress target.
+            - name: GATEWAY_HTTP_ADDR
+              value: {{ printf ":%d" (int .Values.gateway.service.httpPort) | quote }}
+            - name: GATEWAY_GRPC_ADDR
+              value: {{ printf ":%d" (int .Values.gateway.service.grpcPort) | quote }}
             - name: CORDUM_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -1037,6 +1045,7 @@ spec:
             {{- end }}
             - name: NATS_URL
               value: {{ include "cordum.natsUrl" . | quote }}
+            {{- include "cordum.natsTokenEnv" . | nindent 12 }}
             - name: NATS_USE_JETSTREAM
               value: "1"
             - name: CORDUM_SDK_HANDSHAKE

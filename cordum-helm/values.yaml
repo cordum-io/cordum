@@ -182,7 +182,12 @@ nats:
   enabled: true
   image: nats:2.10-alpine
   auth:
+    # Bundled NATS requires this token, and every service that connects to NATS
+    # (gateway, scheduler, safety kernel, workflow engine) gets it as NATS_TOKEN
+    # from a chart-managed secret.
     token: "" # NATS_TOKEN
+    # Or read NATS_TOKEN from an existing secret, for an external NATS that
+    # already requires the token: the bundled server enforces only `token`.
     existingTokenSecret: "" # NATS_TOKEN
     existingTokenSecretKey: "NATS_TOKEN" # NATS_TOKEN
     username: "" # NATS_USERNAME
@@ -317,6 +322,8 @@ gateway:
     repository: api-gateway
   service:
     type: ClusterIP
+    # The gateway listens on httpPort and grpcPort (GATEWAY_HTTP_ADDR,
+    # GATEWAY_GRPC_ADDR); the dashboard nginx proxies to httpPort.
     httpPort: 8081
     grpcPort: 8080
     metricsPort: 9092
