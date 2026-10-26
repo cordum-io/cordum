@@ -2,6 +2,11 @@ package audit
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -96,42 +101,117 @@ func RetentionEnforced() bool {
 	return env.Bool(EnvRetentionEnforce)
 }
 
-// retentionTrimScript atomically deletes up to ARGV[3] chain entries older
-// than the cutoff and records the newest deleted entry as the tenant's
-// retention anchor, so verify can still link the oldest retained event and
-// tell retention apart from deletion. It never deletes the newest entry (the
-// chain head), which keeps chainAppendScript's genesis guard (XLEN == 0)
-// meaningful. A malformed anchor candidate aborts the batch: evidence of
-// tampering is kept, not trimmed.
+// retentionAnchor is the value of a tenant's retention anchor key
+// (Chainer.AnchorKey): the newest chain event the sweeper deleted, stored as
+// "<seq>:<event_hash>:<stream_id>", plus ":<mac>" when the chain has an HMAC
+// key. Verify links the oldest retained event to it.
+type retentionAnchor struct {
+	Seq      int64
+	Hash     string
+	StreamID string
+	MAC      string
+}
+
+// retentionAnchorMACDomain keeps anchor MACs apart from event MACs.
+const retentionAnchorMACDomain = "cordum.audit.retention_anchor.v1"
+
+func (a retentionAnchor) String() string {
+	v := strconv.FormatInt(a.Seq, 10) + ":" + a.Hash + ":" + a.StreamID
+	if a.MAC != "" {
+		v += ":" + a.MAC
+	}
+	return v
+}
+
+// mac is the HMAC-SHA256 (hex) of the anchor bound to its Redis key, so an
+// anchor cannot be forged, or copied from another tenant, without the chain
+// HMAC key.
+func (a retentionAnchor) mac(anchorKey string, key []byte) string {
+	m := hmac.New(sha256.New, key)
+	m.Write([]byte(retentionAnchorMACDomain + "\n" + anchorKey + "\n" +
+		strconv.FormatInt(a.Seq, 10) + ":" + a.Hash + ":" + a.StreamID))
+	return hex.EncodeToString(m.Sum(nil))
+}
+
+// validMAC reports whether the anchor carries the MAC key would give it.
+func (a retentionAnchor) validMAC(anchorKey string, key []byte) bool {
+	return subtle.ConstantTimeCompare([]byte(a.MAC), []byte(a.mac(anchorKey, key))) == 1
+}
+
+// streamMs is the millisecond part of the anchor's stream ID.
+func (a retentionAnchor) streamMs() int64 {
+	ms, _, _ := strings.Cut(a.StreamID, "-")
+	v, _ := strconv.ParseInt(ms, 10, 64)
+	return v
+}
+
+// parseRetentionAnchor decodes an anchor value; "" (never trimmed) is the
+// zero anchor.
+func parseRetentionAnchor(raw string) (retentionAnchor, error) {
+	if raw == "" {
+		return retentionAnchor{}, nil
+	}
+	parts := strings.Split(raw, ":")
+	if len(parts) != 3 && len(parts) != 4 {
+		return retentionAnchor{}, fmt.Errorf("malformed retention anchor %q", raw)
+	}
+	seq, err := strconv.ParseInt(parts[0], 10, 64)
+	ms, idSeq, _ := strings.Cut(parts[2], "-")
+	_, msErr := strconv.ParseUint(ms, 10, 64)
+	_, idErr := strconv.ParseUint(idSeq, 10, 64)
+	if err != nil || seq <= 0 || !isHexHash(parts[1]) || msErr != nil || idErr != nil {
+		return retentionAnchor{}, fmt.Errorf("malformed retention anchor %q", raw)
+	}
+	a := retentionAnchor{Seq: seq, Hash: parts[1], StreamID: parts[2]}
+	if len(parts) == 4 {
+		if !isHexHash(parts[3]) {
+			return retentionAnchor{}, fmt.Errorf("malformed retention anchor %q", raw)
+		}
+		a.MAC = parts[3]
+	}
+	return a, nil
+}
+
+func isHexHash(s string) bool {
+	if len(s) != chainHashHexLen {
+		return false
+	}
+	_, err := hex.DecodeString(s)
+	return err == nil
+}
+
+// anchorForEntry builds the anchor for a chain entry about to be trimmed. A
+// malformed entry is an error: evidence of tampering is kept, not trimmed.
+func anchorForEntry(entry redis.XMessage) (retentionAnchor, error) {
+	rawSeq, _ := entry.Values["seq"].(string)
+	payload, _ := entry.Values[chainStreamFieldEvent].(string)
+	var ev struct {
+		EventHash string `json:"event_hash"`
+	}
+	seq, err := strconv.ParseInt(rawSeq, 10, 64)
+	if err != nil || seq <= 0 || json.Unmarshal([]byte(payload), &ev) != nil || !isHexHash(ev.EventHash) {
+		return retentionAnchor{}, fmt.Errorf("malformed chain entry %s", entry.ID)
+	}
+	return retentionAnchor{Seq: seq, Hash: ev.EventHash, StreamID: entry.ID}, nil
+}
+
+// retentionTrimScript deletes every chain entry up to and including ARGV[1]
+// and records ARGV[2] as the tenant's retention anchor, atomically, so
+// verify always sees the anchor that matches the trimmed stream. It deletes
+// nothing when ARGV[1] is already gone (another sweep got there first) or is
+// the chain head, which is never trimmed so chainAppendScript's genesis
+// guard (XLEN == 0) stays meaningful.
 //
-// KEYS[1] = chain stream   ARGV[1] = newest stream ID older than the cutoff
-// KEYS[2] = anchor key     ARGV[2] = cutoff as an XTRIM MINID
+// KEYS[1] = chain stream   ARGV[1] = stream ID of the newest entry to delete
+// KEYS[2] = anchor key     ARGV[2] = anchor value (retentionAnchor.String)
 //
-//	ARGV[3] = max entries to delete
-//
-// Returns the number of entries deleted; fewer than ARGV[3] means done.
+// Returns the number of entries deleted.
 var retentionTrimScript = redis.NewScript(`
-local batch = tonumber(ARGV[3])
-local old = redis.call('XRANGE', KEYS[1], '-', ARGV[1], 'COUNT', batch + 1)
-local n = math.min(#old, batch)
-if n == 0 then return 0 end
-local head = redis.call('XREVRANGE', KEYS[1], '+', '-', 'COUNT', 1)
-if old[n][1] == head[1][1] then n = n - 1 end
-if n == 0 then return 0 end
-local seq, payload
-local fields = old[n][2]
-for i = 1, #fields, 2 do
-  if fields[i] == 'seq' then seq = fields[i + 1] elseif fields[i] == 'event' then payload = fields[i + 1] end
-end
-local ok, ev = pcall(cjson.decode, payload or '')
-local hash = ok and type(ev) == 'table' and ev['event_hash'] or nil
-if type(seq) ~= 'string' or not string.match(seq, '^%d+$') or type(hash) ~= 'string' or #hash ~= 64 or not string.match(hash, '^%x+$') then
-  return redis.error_reply('malformed chain entry ' .. old[n][1])
-end
-redis.call('SET', KEYS[2], seq .. ':' .. hash)
-local minid = ARGV[2]
-if #old > n then minid = old[n + 1][1] end
-return redis.call('XTRIM', KEYS[1], 'MINID', minid)
+if #redis.call('XRANGE', KEYS[1], ARGV[1], ARGV[1]) == 0 then return 0 end
+local nxt = redis.call('XRANGE', KEYS[1], '(' .. ARGV[1], '+', 'COUNT', 1)
+if #nxt == 0 then return 0 end
+redis.call('SET', KEYS[2], ARGV[2])
+return redis.call('XTRIM', KEYS[1], 'MINID', nxt[1][1])
 `)
 
 // RetentionSweeper trims every tenant's audit chain stream to the effective
@@ -255,9 +335,7 @@ func (s *RetentionSweeper) SweepOnce(ctx context.Context) (int64, error) {
 // sweepTenant trims one tenant's chain in batches, re-checking the legal
 // hold before every batch so a hold placed mid-sweep stops deletion.
 func (s *RetentionSweeper) sweepTenant(ctx context.Context, tenant string, cutoffMs int64) (int64, error) {
-	keys := []string{s.chainer.StreamKey(tenant), s.chainer.AnchorKey(tenant)}
 	newestOld := strconv.FormatInt(cutoffMs-1, 10) + "-18446744073709551615"
-	minID := strconv.FormatInt(cutoffMs, 10) + "-0"
 	var total int64
 	for {
 		if err := ctx.Err(); err != nil {
@@ -273,7 +351,7 @@ func (s *RetentionSweeper) sweepTenant(ctx context.Context, tenant string, cutof
 			slog.Info("audit retention: tenant under legal hold, not trimmed", "tenant", tenant)
 			return total, nil
 		}
-		n, err := retentionTrimScript.Run(ctx, s.client, keys, newestOld, minID, retentionTrimBatch).Int64()
+		n, err := s.trimBatch(ctx, tenant, newestOld)
 		if err != nil {
 			auditRetentionSkipped.WithLabelValues("trim_error").Inc()
 			return total, fmt.Errorf("trim: %w", err)
@@ -287,6 +365,36 @@ func (s *RetentionSweeper) sweepTenant(ctx context.Context, tenant string, cutof
 			return total, nil
 		}
 	}
+}
+
+// trimBatch deletes up to retentionTrimBatch of the tenant's oldest entries
+// with stream IDs up to newestOld, never the chain head, and moves the
+// anchor to the newest one deleted (signed when the chain has an HMAC key).
+func (s *RetentionSweeper) trimBatch(ctx context.Context, tenant, newestOld string) (int64, error) {
+	streamKey := s.chainer.StreamKey(tenant)
+	pipe := s.client.Pipeline()
+	oldCmd := pipe.XRangeN(ctx, streamKey, "-", newestOld, retentionTrimBatch)
+	headCmd := pipe.XRevRangeN(ctx, streamKey, "+", "-", 1)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return 0, err
+	}
+	old := oldCmd.Val()
+	if head := headCmd.Val(); len(old) > 0 && len(head) > 0 && old[len(old)-1].ID == head[0].ID {
+		old = old[:len(old)-1]
+	}
+	if len(old) == 0 {
+		return 0, nil
+	}
+	newest := old[len(old)-1]
+	anchor, err := anchorForEntry(newest)
+	if err != nil {
+		return 0, err
+	}
+	anchorKey := s.chainer.AnchorKey(tenant)
+	if len(s.chainer.hmacKey) > 0 {
+		anchor.MAC = anchor.mac(anchorKey, s.chainer.hmacKey)
+	}
+	return retentionTrimScript.Run(ctx, s.client, []string{streamKey, anchorKey}, newest.ID, anchor.String()).Int64()
 }
 
 // tenants lists every tenant with a chain head.

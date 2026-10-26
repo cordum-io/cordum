@@ -754,11 +754,11 @@ func TestHandleAuditVerify_SinceUntilRangeValidation(t *testing.T) {
 	}
 }
 
-// TestHandleAuditVerify_RetentionTrimmedPrefix seeds 8 events, manually
-// removes seqs 1-3 from the stream (simulating retention expiry), and
-// asserts the result reports retention_boundary_seq=4 with the gap at
-// 1-3 classified as retention_trimmed (not tampering).
-func TestHandleAuditVerify_RetentionTrimmedPrefix(t *testing.T) {
+// TestHandleAuditVerify_PrefixDeletedWithoutAnchorIsCompromised seeds 8
+// events and deletes seqs 1-3 without a retention anchor. Only the retention
+// sweeper deletes chain events and it always moves the anchor, so the absent
+// prefix is deletion (tampering), not retention.
+func TestHandleAuditVerify_PrefixDeletedWithoutAnchorIsCompromised(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	seedChain(t, s, "default", 8)
 
@@ -768,7 +768,6 @@ func TestHandleAuditVerify_RetentionTrimmedPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("xrange: %v", err)
 	}
-	// Delete stream entries backing seqs 1..3.
 	for i := 0; i < 3; i++ {
 		if err := s.redisClient().XDel(ctx, streamKey, entries[i].ID).Err(); err != nil {
 			t.Fatalf("xdel[%d]: %v", i, err)
@@ -786,30 +785,22 @@ func TestHandleAuditVerify_RetentionTrimmedPrefix(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&res); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if res.RetentionBoundarySeq != 4 {
-		t.Errorf("RetentionBoundarySeq = %d, want 4", res.RetentionBoundarySeq)
+	if res.Status != audit.VerifyStatusCompromised || res.FirstSeq != 4 || res.LastSeq != 8 {
+		t.Fatalf("result = %+v, want compromised over seqs 4-8", res)
 	}
-	if res.FirstSeq != 4 || res.LastSeq != 8 {
-		t.Errorf("FirstSeq=%d LastSeq=%d, want 4/8", res.FirstSeq, res.LastSeq)
-	}
-	// Prefix gaps at 1, 2, 3 must be classified retention_trimmed.
-	trimmed := make(map[int64]bool)
+	missing := map[int64]bool{}
 	for _, g := range res.Gaps {
 		if g.Type == audit.GapTypeRetentionTrimmed {
-			trimmed[g.AtSeq] = true
+			t.Errorf("unexpected retention_trimmed gap at seq=%d without an anchor", g.AtSeq)
 		}
 		if g.Type == audit.GapTypeMissing {
-			t.Errorf("unexpected missing gap at seq=%d; prefix should be retention_trimmed", g.AtSeq)
+			missing[g.AtSeq] = true
 		}
 	}
 	for _, want := range []int64{1, 2, 3} {
-		if !trimmed[want] {
-			t.Errorf("expected retention_trimmed gap at seq=%d, got %+v", want, res.Gaps)
+		if !missing[want] {
+			t.Errorf("expected missing gap at seq=%d, got %+v", want, res.Gaps)
 		}
-	}
-	// Trimmed prefix alone must not flip status to compromised.
-	if res.Status == audit.VerifyStatusCompromised {
-		t.Errorf("retention-only trimming must not be compromised: %+v", res)
 	}
 }
 
@@ -818,23 +809,15 @@ func TestHandleAuditVerify_RetentionTrimmedPrefix(t *testing.T) {
 // but an event deleted beyond the anchor is missing (tampering).
 func TestHandleAuditVerify_UsesRetentionAnchor(t *testing.T) {
 	s, _, _ := newTestGateway(t)
-	events := seedChain(t, s, "default", 8)
+	seedChain(t, s, "default", 8)
 
 	ctx := context.Background()
 	chainer := audit.NewChainer(s.redisClient(), "")
 	streamKey := chainer.StreamKey("default")
+	trimChainPrefix(t, s.redisClient(), chainer, "default", 3)
 	entries, err := s.redisClient().XRange(ctx, streamKey, "-", "+").Result()
 	if err != nil {
 		t.Fatalf("xrange: %v", err)
-	}
-	// What the sweeper leaves after trimming seqs 1-3.
-	for i := 0; i < 3; i++ {
-		if err := s.redisClient().XDel(ctx, streamKey, entries[i].ID).Err(); err != nil {
-			t.Fatalf("xdel[%d]: %v", i, err)
-		}
-	}
-	if err := s.redisClient().Set(ctx, chainer.AnchorKey("default"), "3:"+events[2].EventHash, 0).Err(); err != nil {
-		t.Fatalf("set anchor: %v", err)
 	}
 	verify := func() audit.VerifyResult {
 		t.Helper()
@@ -856,7 +839,7 @@ func TestHandleAuditVerify_UsesRetentionAnchor(t *testing.T) {
 	}
 
 	// Deleting the oldest retained event is no longer mistaken for retention.
-	if err := s.redisClient().XDel(ctx, streamKey, entries[3].ID).Err(); err != nil {
+	if err := s.redisClient().XDel(ctx, streamKey, entries[0].ID).Err(); err != nil {
 		t.Fatalf("xdel seq 4: %v", err)
 	}
 	res = verify()

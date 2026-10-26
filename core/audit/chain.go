@@ -27,9 +27,10 @@ import (
 //	                              the tenant's current chain head. Empty
 //	                              or missing means the tenant has no
 //	                              events yet (next append is genesis).
-//	audit:chain:anchor:<tenant> — "seq:event_hash" of the newest event the
-//	                              retention sweeper trimmed (retention.go).
-//	                              Missing means the chain was never trimmed.
+//	audit:chain:anchor:<tenant> — "seq:event_hash:stream_id[:hmac]" of the
+//	                              newest event the retention sweeper trimmed
+//	                              (retentionAnchor). Missing means the chain
+//	                              was never trimmed.
 const (
 	// ChainKeyPrefix is the default namespace for chain Redis keys.
 	ChainKeyPrefix = "audit:chain:"
@@ -178,9 +179,9 @@ func (c *Chainer) HeadKey(tenant string) string {
 	return c.keyPrefix + chainHeadInfix + tenant
 }
 
-// AnchorKey returns the Redis key holding "seq:hash" of the newest event the
-// retention sweeper trimmed from the tenant's chain. Verify callers pass it
-// as VerifyOptions.RetentionAnchorKey.
+// AnchorKey returns the Redis key holding the retention anchor: the newest
+// event the retention sweeper trimmed from the tenant's chain. Verify callers
+// pass it as VerifyOptions.RetentionAnchorKey.
 func (c *Chainer) AnchorKey(tenant string) string {
 	return c.keyPrefix + chainAnchorInfix + tenant
 }

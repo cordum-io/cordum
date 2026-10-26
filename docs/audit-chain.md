@@ -26,7 +26,7 @@ and CC7.3 (detection of security incidents) trust criteria documented in
 |---|---|---|
 | `audit:chain:<tenant>` | Stream | Ordered event log, one entry per event |
 | `audit:chain:head:<tenant>` | String | `"<seq>:<event_hash>"` — current chain tip |
-| `audit:chain:anchor:<tenant>` | String | `"<seq>:<event_hash>"` of the newest event the retention sweeper deleted; absent until the first trim |
+| `audit:chain:anchor:<tenant>` | String | `"<seq>:<event_hash>:<stream_id>"` of the newest event the retention sweeper deleted, plus `":<hmac>"` when `CORDUM_AUDIT_HMAC_KEY` is set; absent until the first trim |
 
 ### Event Schema (`SIEMEvent`)
 
@@ -171,9 +171,10 @@ Optional parameters:
 ```
 
 `retention_boundary_seq` is the lowest seq that should still be present: the
-retention anchor's seq + 1 once the chain has been trimmed, otherwise the
-lowest seq in the stream. `retention_window_hours` is the effective retention
-window (omitted when unlimited).
+retention anchor's seq + 1 once the chain has been trimmed. On a chain that was
+never trimmed it reports the lowest seq in the stream, and every absent seq is
+`missing`. `retention_window_hours` is the effective retention window (omitted
+when unlimited).
 
 ### Status Values
 
@@ -191,7 +192,10 @@ window (omitted when unlimited).
 | `out_of_order` | Seq appeared before its predecessor |
 | `hash_mismatch` | Event hash or prev_hash linkage failed (including the oldest retained event's link to the retention anchor) |
 | `hmac_mismatch` | HMAC-SHA256 tag verification failed |
-| `retention_trimmed` | Seq below `retention_boundary_seq`: deleted by the retention sweeper (or, on a chain without a retention anchor, any absent prefix) |
+| `retention_trimmed` | Seq at or below the retention anchor: deleted by the retention sweeper |
+
+A run of absent seqs lists at most its first 1,000 gaps, so the response stays
+bounded however many events are gone.
 
 ### Edge approval provenance
 
@@ -255,8 +259,10 @@ opt-in: nothing is deleted unless `CORDUM_AUDIT_RETENTION_ENFORCE=true`.
 When enabled, the gateway's retention sweeper deletes events older than the
 window (never a tenant's newest event, never a tenant under legal hold) and
 records the newest deleted event as the retention anchor in the same atomic
-step. Verify then reports the trimmed prefix as `retention_trimmed`, checks
-that the oldest retained event links to the anchor, and reports anything else
-absent as `missing` — events deleted outside retention are not mistaken for
-it. See [audit-operations.md](audit-operations.md#retention) for the full
-rules.
+step, HMAC-signed when `CORDUM_AUDIT_HMAC_KEY` is set. Verify then reports the
+trimmed prefix as `retention_trimmed`, checks that the oldest retained event
+links to the anchor, and reports anything else absent as `missing` — events
+deleted outside retention are not mistaken for it. Nothing else deletes chain
+events, so a missing prefix with no anchor (for example, the anchor key was
+deleted) or with an anchor whose HMAC does not verify is `compromised`. See
+[audit-operations.md](audit-operations.md#retention) for the full rules.

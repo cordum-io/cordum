@@ -182,7 +182,8 @@ for verification, OR events were forged by a process without the key.
    streams, but verify `maxmemory-policy`)
 3. Retention never produces `missing` gaps: the sweeper records the last seq
    it trimmed (the retention anchor), so only seqs below
-   `retention_boundary_seq` are reported `retention_trimmed`
+   `retention_boundary_seq` are reported `retention_trimmed`. A missing
+   prefix with no anchor means the anchor key was deleted along with events
 
 ### CAS Retry Budget Exhausted
 
@@ -256,7 +257,9 @@ is ever trimmed. The same window is reported as `retention_window_hours` by
   it deletes entries of `audit:chain:<tenant>` whose stream ID is older than
   now minus the window, in atomic batches of 1,000.
 - In the same atomic step, it records the newest deleted event as the
-  tenant's retention anchor, `audit:chain:anchor:<tenant>` = `seq:event_hash`.
+  tenant's retention anchor, `audit:chain:anchor:<tenant>` =
+  `seq:event_hash:stream_id`. When `CORDUM_AUDIT_HMAC_KEY` is set the anchor
+  also carries an HMAC (`:hmac`) bound to the tenant's anchor key.
 - Never deletes a tenant's newest event (the chain head), so an idle tenant
   keeps one event older than the window.
 - Skips tenants under legal hold (see below). If the event that would become
@@ -268,7 +271,20 @@ is ever trimmed. The same window is reported as `retention_window_hours` by
 listed) and `retention_boundary_seq` = anchor + 1. The oldest retained event
 must be anchor + 1 and link to the anchor's hash; any event deleted beyond
 that is reported `missing` and the chain is `compromised`. Hash, linkage and
-HMAC checks on the retained events are unchanged.
+HMAC checks on the retained events are unchanged. A windowed verify (`since`)
+whose window starts after the newest trimmed event is `ok`; one that reaches
+back past it is `partial`.
+
+The sweeper is the only thing that deletes chain events, so verify treats a
+missing prefix as tampering unless the anchor explains it:
+
+- No anchor (never trimmed, or the anchor key was deleted): the oldest
+  retained event must be seq 1, otherwise the absent seqs are `missing` and
+  the chain is `compromised`.
+- With `CORDUM_AUDIT_HMAC_KEY` set, an anchor without a valid HMAC is an
+  `hmac_mismatch` gap and the chain is `compromised`; the forged anchor
+  explains nothing. Rotating the key has the same effect on the existing
+  anchor as on old events until the next trim re-signs it.
 
 **Turning it on.** Set `CORDUM_AUDIT_RETENTION_ENFORCE=true` on every gateway
 replica. The first sweep can delete a large backlog, so take a compliance

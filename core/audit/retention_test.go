@@ -34,7 +34,7 @@ type retentionFixture struct {
 
 // newRetentionFixture builds an enforcing sweeper; a nil resolver means the
 // Community plan (7-day retention).
-func newRetentionFixture(t *testing.T, resolver *licensing.EntitlementResolver) *retentionFixture {
+func newRetentionFixture(t *testing.T, resolver *licensing.EntitlementResolver, opts ...ChainerOption) *retentionFixture {
 	t.Helper()
 	t.Setenv(EnvRetentionEnforce, "true")
 	t.Setenv(EnvRetentionHours, "")
@@ -44,7 +44,7 @@ func newRetentionFixture(t *testing.T, resolver *licensing.EntitlementResolver) 
 	}
 	t.Cleanup(mr.Close)
 	client := testredis.NewClient(t, mr.Addr())
-	chainer := NewChainer(client, "")
+	chainer := NewChainer(client, "", opts...)
 	holds := NewLegalHoldStoreFromClient(client)
 	return &retentionFixture{
 		t: t, mr: mr, client: client, chainer: chainer, holds: holds,
@@ -87,10 +87,11 @@ func (f *retentionFixture) streamLen(tenant string) int64 {
 }
 
 // verify walks the chain the way /api/v1/audit/verify does: with the
-// persisted retention anchor.
+// persisted retention anchor and the chain's HMAC key.
 func (f *retentionFixture) verify(tenant string, opts VerifyOptions) *VerifyResult {
 	f.t.Helper()
 	opts.RetentionAnchorKey = f.chainer.AnchorKey(tenant)
+	opts.HMACKey = f.chainer.HMACKeyForVerify()
 	res, err := VerifyChain(context.Background(), f.client, f.chainer.StreamKey(tenant), opts)
 	if err != nil {
 		f.t.Fatalf("verify: %v", err)
@@ -101,15 +102,28 @@ func (f *retentionFixture) verify(tenant string, opts VerifyOptions) *VerifyResu
 // anchor returns the tenant's retention anchor (0, "" when never trimmed).
 func (f *retentionFixture) anchor(tenant string) (int64, string) {
 	f.t.Helper()
+	a := f.anchorValue(tenant)
+	return a.Seq, a.Hash
+}
+
+func (f *retentionFixture) anchorValue(tenant string) retentionAnchor {
+	f.t.Helper()
 	raw, err := f.client.Get(context.Background(), f.chainer.AnchorKey(tenant)).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
 		f.t.Fatalf("get anchor: %v", err)
 	}
-	seq, hash, err := parseChainHead(raw)
+	a, err := parseRetentionAnchor(raw)
 	if err != nil {
 		f.t.Fatalf("parse anchor: %v", err)
 	}
-	return seq, hash
+	return a
+}
+
+func (f *retentionFixture) setAnchor(tenant string, a retentionAnchor) {
+	f.t.Helper()
+	if err := f.client.Set(context.Background(), f.chainer.AnchorKey(tenant), a.String(), 0).Err(); err != nil {
+		f.t.Fatalf("set anchor: %v", err)
+	}
 }
 
 func gapsOfType(res *VerifyResult, typ VerifyGapType) []int64 {
@@ -124,9 +138,9 @@ func gapsOfType(res *VerifyResult, typ VerifyGapType) []int64 {
 
 // trimmedChain chains seq 1-3 at T0 and seq 4-6 six days later, then sweeps
 // one hour past the 7-day window: 1-3 are trimmed, the anchor is seq 3.
-func trimmedChain(t *testing.T) (*retentionFixture, []*SIEMEvent) {
+func trimmedChain(t *testing.T, opts ...ChainerOption) (*retentionFixture, []*SIEMEvent) {
 	t.Helper()
-	f := newRetentionFixture(t, nil)
+	f := newRetentionFixture(t, nil, opts...)
 	events := f.appendAt("acme", retentionT0, 3)
 	events = append(events, f.appendAt("acme", retentionT0.Add(6*day), 3)...)
 	if n := f.sweepAt(retentionT0.Add(7*day + time.Hour)); n != 3 {
@@ -481,15 +495,20 @@ func TestVerifyChain_AfterRetentionTrim(t *testing.T) {
 		if res := f.verify("acme", opts); res.Status != VerifyStatusOK || res.VerifiedEvents != 3 {
 			t.Fatalf("with anchor: %+v, want ok/3", res)
 		}
-		// Without the anchor the oldest retained event cannot be linked.
+		// Without the anchor the absent prefix is unexplained.
 		res, err := VerifyChain(ctx, f.client, f.chainer.StreamKey("acme"), opts)
-		if err != nil || res.Status != VerifyStatusPartial {
-			t.Fatalf("without anchor: %+v (err %v), want partial", res, err)
+		if err != nil || res.Status != VerifyStatusCompromised {
+			t.Fatalf("without anchor: %+v (err %v), want compromised", res, err)
+		}
+		// A window reaching back past the newest trimmed event lost events.
+		if res := f.verify("acme", VerifyOptions{SinceMs: retentionT0.UnixMilli()}); res.Status != VerifyStatusPartial ||
+			len(gapsOfType(res, GapTypeRetentionTrimmed)) != 1 || len(res.Gaps) != 1 {
+			t.Fatalf("window from T0: %+v, want partial with one retention_trimmed gap", res)
 		}
 		// The link is really checked: a forged anchor breaks it.
-		if err := f.client.Set(ctx, f.chainer.AnchorKey("acme"), fmt.Sprintf("3:%064x", 7), 0).Err(); err != nil {
-			t.Fatalf("set anchor: %v", err)
-		}
+		forged := f.anchorValue("acme")
+		forged.Hash = fmt.Sprintf("%064x", 7)
+		f.setAnchor("acme", forged)
 		if res := f.verify("acme", opts); res.Status != VerifyStatusCompromised {
 			t.Fatalf("forged anchor: %+v, want compromised", res)
 		}
@@ -553,4 +572,105 @@ func TestVerifyChain_AfterRetentionTrim(t *testing.T) {
 			t.Fatalf("result = %+v, want compromised with one missing gap", res)
 		}
 	})
+}
+
+// A truncated prefix is only ever explained by the anchor the sweeper writes
+// in the same script: without it the chain reads as deleted, not trimmed.
+func TestVerifyChain_DeletedAnchorIsCompromised(t *testing.T) {
+	f, _ := trimmedChain(t)
+	f.mr.Del(f.chainer.AnchorKey("acme"))
+
+	res := f.verify("acme", VerifyOptions{})
+	if res.Status != VerifyStatusCompromised {
+		t.Fatalf("status = %q, want compromised: %+v", res.Status, res)
+	}
+	if missing := gapsOfType(res, GapTypeMissing); len(missing) != 3 || missing[0] != 1 || missing[2] != 3 {
+		t.Fatalf("missing gaps = %v, want 1-3", missing)
+	}
+	if trimmed := gapsOfType(res, GapTypeRetentionTrimmed); len(trimmed) != 0 {
+		t.Fatalf("retention_trimmed gaps = %v, want none", trimmed)
+	}
+}
+
+func TestVerifyChain_HMACSignedRetentionAnchor(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("legitimate trim is partial", func(t *testing.T) {
+		f, events := trimmedChain(t, WithHMACKey(testHMACKey()))
+		a := f.anchorValue("acme")
+		if a.Seq != 3 || a.Hash != events[2].EventHash || a.MAC == "" {
+			t.Fatalf("anchor = %+v, want seq 3 with a MAC", a)
+		}
+		res := f.verify("acme", VerifyOptions{})
+		if res.Status != VerifyStatusPartial || res.RetentionBoundarySeq != 4 || len(gapsOfType(res, GapTypeRetentionTrimmed)) != len(res.Gaps) {
+			t.Fatalf("result = %+v, want partial with only retention_trimmed gaps", res)
+		}
+		// Without the key the MAC cannot be checked; verify says so.
+		res, err := VerifyChain(ctx, f.client, f.chainer.StreamKey("acme"), VerifyOptions{RetentionAnchorKey: f.chainer.AnchorKey("acme")})
+		if err != nil || res.Status != VerifyStatusPartial || !res.HMACSeen {
+			t.Fatalf("no key: %+v (err %v), want partial with hmac_seen", res, err)
+		}
+	})
+
+	forgeries := map[string]func(f *retentionFixture, a retentionAnchor) retentionAnchor{
+		"mac stripped": func(_ *retentionFixture, a retentionAnchor) retentionAnchor {
+			a.MAC = ""
+			return a
+		},
+		"wrong mac": func(_ *retentionFixture, a retentionAnchor) retentionAnchor {
+			a.MAC = fmt.Sprintf("%064x", 9)
+			return a
+		},
+		"mac signed for another tenant": func(f *retentionFixture, a retentionAnchor) retentionAnchor {
+			a.MAC = a.mac(f.chainer.AnchorKey("other"), testHMACKey())
+			return a
+		},
+		"oldest retained event deleted, anchor moved over it": func(f *retentionFixture, _ retentionAnchor) retentionAnchor {
+			entries, err := f.client.XRangeN(ctx, f.chainer.StreamKey("acme"), "-", "+", 1).Result()
+			if err != nil {
+				f.t.Fatalf("xrange: %v", err)
+			}
+			if err := f.client.XDel(ctx, f.chainer.StreamKey("acme"), entries[0].ID).Err(); err != nil {
+				f.t.Fatalf("xdel: %v", err)
+			}
+			moved, err := anchorForEntry(entries[0])
+			if err != nil {
+				f.t.Fatalf("anchor for seq 4: %v", err)
+			}
+			moved.MAC = fmt.Sprintf("%064x", 9)
+			return moved
+		},
+	}
+	for name, forge := range forgeries {
+		t.Run(name, func(t *testing.T) {
+			f, _ := trimmedChain(t, WithHMACKey(testHMACKey()))
+			f.setAnchor("acme", forge(f, f.anchorValue("acme")))
+			res := f.verify("acme", VerifyOptions{})
+			if res.Status != VerifyStatusCompromised || len(gapsOfType(res, GapTypeHMACMismatch)) != 1 {
+				t.Fatalf("result = %+v, want compromised with an hmac_mismatch gap", res)
+			}
+			if trimmed := gapsOfType(res, GapTypeRetentionTrimmed); len(trimmed) != 0 {
+				t.Fatalf("retention_trimmed gaps = %v, want none from an untrusted anchor", trimmed)
+			}
+		})
+	}
+}
+
+// However many events are gone, a run of absent seqs lists at most maxGapRun
+// gaps, so verify's payload stays bounded.
+func TestVerifyChain_CapsMissingRun(t *testing.T) {
+	f := newRetentionFixture(t, nil)
+	// A head with no stream behind it: the next append is seq 5001.
+	if err := f.client.Set(context.Background(), f.chainer.HeadKey("gone"), fmt.Sprintf("5000:%064x", 1), 0).Err(); err != nil {
+		t.Fatalf("set head: %v", err)
+	}
+	f.appendAt("gone", retentionT0, 1)
+
+	res := f.verify("gone", VerifyOptions{})
+	if res.Status != VerifyStatusCompromised || res.FirstSeq != 5001 {
+		t.Fatalf("result status %q first seq %d, want compromised from 5001", res.Status, res.FirstSeq)
+	}
+	if missing := gapsOfType(res, GapTypeMissing); len(missing) != maxGapRun || missing[0] != 1 {
+		t.Fatalf("missing gaps = %d starting at %v, want %d starting at 1", len(missing), missing[:1], maxGapRun)
+	}
 }

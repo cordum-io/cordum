@@ -58,8 +58,8 @@ its chain:
 ```
 audit:chain:<tenant>        — Redis Stream (XADD *), one entry per event
 audit:chain:head:<tenant>   — "seq:event_hash" of the tenant's chain head
-audit:chain:anchor:<tenant> — "seq:event_hash" of the newest event the
-                              retention sweeper deleted
+audit:chain:anchor:<tenant> — "seq:event_hash:stream_id[:hmac]" of the
+                              newest event the retention sweeper deleted
 ```
 
 The stream entry has two fields:
@@ -228,9 +228,10 @@ shared the same leader walk.
 | Any `missing`, `hash_mismatch`, or `out_of_order` gap.                                  | `compromised`   |
 
 `retention_boundary_seq` is the lowest seq that should still be present:
-the retention anchor's seq + 1 once the chain has been trimmed, otherwise
-the lowest seq currently in the stream. Gaps strictly below it are
-retention-trimmed (expected); gaps at or above are real integrity failures.
+the retention anchor's seq + 1 once the chain has been trimmed. Gaps
+strictly below it are retention-trimmed (expected); gaps at or above are
+real integrity failures. On a chain that was never trimmed it reports the
+lowest seq currently in the stream, and every absent seq is `missing`.
 
 `retention_window_hours` is the effective retention window (plan
 entitlement narrowed by `CORDUM_AUDIT_RETENTION_HOURS`; omitted when
@@ -249,13 +250,16 @@ chain distinguishes them by construction:
 
 1. **The retention anchor.** The retention sweeper is the only code path
    that deletes chain events. In the same atomic step as each trim it
-   records the newest deleted event as `audit:chain:anchor:<tenant>`, and
-   verify requires the oldest retained event to be anchor + 1 and to link
-   to the anchor's hash.
+   records the newest deleted event as `audit:chain:anchor:<tenant>`
+   (HMAC-signed when `CORDUM_AUDIT_HMAC_KEY` is set), and verify requires
+   the oldest retained event to be anchor + 1 and to link to the anchor's
+   hash.
 2. **Gaps below `retention_boundary_seq`** (anchor + 1) were deleted by the
    sweeper. They are reported as `retention_trimmed` and do **not** flip
-   status to compromised. On a chain with no anchor (never trimmed), any
-   absent prefix is still reported this way.
+   status to compromised. Without an anchor (never trimmed, or the anchor
+   key deleted) the oldest event must be seq 1, and an anchor whose HMAC
+   does not verify explains nothing: either way an absent prefix is
+   `missing` and the chain is `compromised`.
 3. **Gaps at or above the boundary** happen inside the "should still
    exist" window. They are reported as `missing` and **do** flip status
    to compromised.

@@ -42,7 +42,7 @@ func TestAuditChainApprovalVerifier_OKAndPartial(t *testing.T) {
 		approval := approvalWindow("tenant-partial")
 		appendVerifierTestEvents(t, chainer, "tenant-partial", 3)
 		appendApprovalEvidenceEvent(t, chainer, approval, nil)
-		deleteStreamEntry(t, client, chainer.StreamKey("tenant-partial"), 0)
+		trimChainPrefix(t, client, chainer, "tenant-partial", 1)
 
 		outcome := verifyApprovalForTest(t, client, chainer, approval)
 		if outcome.Status != actiongates.ChainStatusPartial {
@@ -535,17 +535,29 @@ func approvalWindow(tenant string) *edgecore.EdgeApproval {
 	}
 }
 
-func deleteStreamEntry(t *testing.T, client redis.UniversalClient, streamKey string, index int) {
+// trimChainPrefix leaves what the retention sweeper leaves after trimming
+// the tenant's first n events: they are gone and the retention anchor (no
+// MAC: these chains have no HMAC key) records the newest of them.
+func trimChainPrefix(t *testing.T, client redis.UniversalClient, chainer *audit.Chainer, tenant string, n int) {
 	t.Helper()
-	entries, err := client.XRange(context.Background(), streamKey, "-", "+").Result()
-	if err != nil {
-		t.Fatalf("xrange: %v", err)
+	ctx := context.Background()
+	streamKey := chainer.StreamKey(tenant)
+	entries, err := client.XRangeN(ctx, streamKey, "-", "+", int64(n)).Result()
+	if err != nil || len(entries) != n {
+		t.Fatalf("xrange: %d entries (err %v), want %d", len(entries), err, n)
 	}
-	if index < 0 || index >= len(entries) {
-		t.Fatalf("delete index %d outside stream length %d", index, len(entries))
+	var newest audit.SIEMEvent
+	if err := json.Unmarshal([]byte(entries[n-1].Values["event"].(string)), &newest); err != nil {
+		t.Fatalf("decode entry: %v", err)
 	}
-	if err := client.XDel(context.Background(), streamKey, entries[index].ID).Err(); err != nil {
-		t.Fatalf("xdel: %v", err)
+	for _, entry := range entries {
+		if err := client.XDel(ctx, streamKey, entry.ID).Err(); err != nil {
+			t.Fatalf("xdel: %v", err)
+		}
+	}
+	anchor := strconv.FormatInt(newest.Seq, 10) + ":" + newest.EventHash + ":" + entries[n-1].ID
+	if err := client.Set(ctx, chainer.AnchorKey(tenant), anchor, 0).Err(); err != nil {
+		t.Fatalf("set anchor: %v", err)
 	}
 }
 
