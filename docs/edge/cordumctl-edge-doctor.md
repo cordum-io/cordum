@@ -85,7 +85,7 @@ The doctor reports `ok`, `warn`, `fail`, or `skip` for each check:
   Empty path → `skip` so non-enterprise hosts do not see a spurious failure.
 - Copilot hooks (`copilot_hooks`): when `--copilot-hooks-path` (or
   `CORDUM_EDGE_COPILOT_HOOKS_PATH`) is set, reports `warn` only when a
-  regenerated file would fix the problem: the file is missing or not JSON,
+  corrected file would fix the problem: the file is missing or not JSON,
   `version` is not `1`, an event has no `cordum-hook copilot <event>`
   command, or a `timeout` or `timeoutSec` is under `5`. Otherwise `ok` in
   every policy mode, with the Copilot harness limits in the detail (a

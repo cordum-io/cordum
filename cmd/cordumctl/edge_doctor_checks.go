@@ -307,7 +307,7 @@ func edgeCheckManagedSettings(_ context.Context, env *edgeDoctorEnv) checkResult
 }
 
 // edgeCheckCopilotHooks checks the GitHub Copilot hooks file named by
-// --copilot-hooks-path. It warns only on problems a regenerated file fixes
+// --copilot-hooks-path. It warns only on problems a corrected file fixes
 // (see copilot.VerifyHookSettings). The Copilot harness limits that no file or
 // setting fixes are reported in the ok detail instead, in every policy mode,
 // so they do not hold edge doctor at exit 2 on every run.
@@ -328,7 +328,7 @@ func edgeCheckCopilotHooks(_ context.Context, env *edgeDoctorEnv) checkResult {
 		return checkResult{
 			State:  stateWarn,
 			Detail: path + ": " + edgeDoctorRedact(err.Error(), env.base.apiKey),
-			Fix:    "regenerate the Copilot hooks file; see docs/edge/cordum-hook.md#github-copilot",
+			Fix:    "rewrite the Copilot hooks file from docs/edge/cordum-hook.md#write-the-hooks-file",
 		}
 	}
 	return checkResult{
