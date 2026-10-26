@@ -261,9 +261,9 @@ every policy mode:
 
 - The URL needs a scheme and a host, and the scheme must be `https`. Plain
   `http` is rejected unless trusted tenant config sets
-  `safety.mcp.allow_plain_http: true`. Today only `?validate_only=true`
-  honors that opt-in: the Redis-backed registry validates again on create and
-  update without it, so `http` entries are still rejected there.
+  `safety.mcp.allow_plain_http: true`. The opt-in covers `?validate_only=true`,
+  create and update. The Redis-backed registry validates again on create and
+  update, and the gateway passes it the same opt-in.
 - Cloud-metadata hostnames are rejected before any DNS lookup:
   `metadata.google.internal`, `metadata.azure.com` and
   `instance-data.ec2.internal` (case-insensitive, trailing dot ignored).

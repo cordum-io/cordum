@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 	"testing"
@@ -231,5 +232,38 @@ func assertScanHookCount(t *testing.T, scanned map[string][]int64, scope string,
 		if count <= 0 || count > max {
 			t.Fatalf("scope %q scan count = %d, want 1..%d; scanned=%v", scope, count, max, scanned)
 		}
+	}
+}
+
+// TestRedisMCPUpstreamPlainHTTPFollowsTrustedOption: the registry's own
+// re-validation rejects plain http unless the caller's context carries the
+// trusted AllowPlainHTTP option (set by the gateway from tenant config).
+func TestRedisMCPUpstreamPlainHTTPFollowsTrustedOption(t *testing.T) {
+	prevLookup := MCPHostLookup
+	t.Cleanup(func() { MCPHostLookup = prevLookup })
+	MCPHostLookup = func(context.Context, string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("203.0.113.10")}, nil
+	}
+	ctx, registry, _ := newConcreteMCPUpstreamRegistryForTest(t, 1)
+	optIn := WithMCPUpstreamValidationOptions(ctx, MCPUpstreamValidationOptions{AllowPlainHTTP: true})
+
+	upstream := validMCPUpstream("tenant-http", "plain")
+	upstream.Endpoint = "http://mcp.example.com/plain"
+	if err := registry.Create(ctx, &upstream); !errors.Is(err, ErrUnsafeEndpoint) {
+		t.Fatalf("Create without opt-in error = %v, want ErrUnsafeEndpoint", err)
+	}
+	if err := registry.Create(optIn, &upstream); err != nil {
+		t.Fatalf("Create with opt-in: %v", err)
+	}
+	upstream.Endpoint = "http://mcp.example.com/plain/v2"
+	if err := registry.Update(ctx, &upstream); !errors.Is(err, ErrUnsafeEndpoint) {
+		t.Fatalf("Update without opt-in error = %v, want ErrUnsafeEndpoint", err)
+	}
+	if err := registry.Update(optIn, &upstream); err != nil {
+		t.Fatalf("Update with opt-in: %v", err)
+	}
+	got, ok, err := registry.Get(ctx, "tenant-http", "plain")
+	if err != nil || !ok || got.Endpoint != "http://mcp.example.com/plain/v2" {
+		t.Fatalf("Get = %+v, %v, %v; want the updated plain-http endpoint", got, ok, err)
 	}
 }
