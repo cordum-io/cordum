@@ -524,6 +524,7 @@ tenants:
 | `rules[].match.capabilities` | string[] | Capability patterns to match (supports `*` wildcard) |
 | `rules[].match.risk_tags` | string[] | Risk tag patterns to match |
 | `rules[].match.metadata` | map | Key-value metadata conditions |
+| `rules[].match.label_threshold` | map | Label key to number. Matches when any listed label is a number above its threshold. A missing label is skipped. A value that does not parse as a number (`15,000`, `$15000`, `NaN`) makes a `deny`, `require_approval` or `throttle` rule match and an `allow` or `allow_with_constraints` rule not match |
 | `rules[].decision` | string | `allow`, `deny`, `require_approval`, `throttle` |
 | `rules[].reason` | string | Human-readable reason |
 | `rules[].throttle_duration` | duration | Required if decision is `throttle` |
