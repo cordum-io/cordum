@@ -307,6 +307,14 @@ TLS env vars for gateway (gRPC + HTTP), safety kernel, and context engine.
 See [Production Deployment Guide](../docs/guides/production-deployment.md) for
 full details.
 
+The dashboard's nginx then proxies to the gateway over HTTPS, by the Service's
+cluster DNS name: `<fullname>-api-gateway.<namespace>.svc.cluster.local`
+(`cordum-api-gateway.cordum.svc.cluster.local` for release `cordum` in
+namespace `cordum`). With `global.tls.clientCertSecret` set, it verifies the
+gateway certificate against that secret's `ca.crt`, so the server certificate
+must list that name or every dashboard API call returns 502. Without it, the
+connection is encrypted but not verified.
+
 ## Migration Notes
 
 When upgrading from a chart version that did not include these security features:
@@ -321,6 +329,12 @@ When upgrading from a chart version that did not include these security features
   no breaking change on upgrade.
 - **Production mode**: New `global.production` (default `false`) and
   `global.tls` settings have no effect unless explicitly enabled.
+- **Dashboard API base**: `dashboard.env.apiBaseUrl` used to default to the
+  in-cluster gateway URL, which a browser cannot reach. It now defaults to
+  `/api/v1` on the dashboard's origin, which its nginx proxies to the gateway;
+  the dashboard's CSP blocks API calls to other origins. With
+  `global.tls.enabled` that proxy now uses HTTPS (see
+  [Production Install with TLS](#production-install-with-tls)).
 
 ## Notes
 

@@ -1200,11 +1200,11 @@ console.log(payload);
   so in the default compose stack the copied URL is
   `http://localhost:8082/mcp/sse` (plain HTTP, like the dashboard). Send the
   same `X-API-Key` and `X-Tenant-ID` headers as on the gateway. The K8s
-  ingress manifests route `/mcp` to the gateway. With the Helm chart the
-  dashboard host proxies `/mcp/` the same way and the API host routes every
-  path to the gateway, but `dashboard.env.apiBaseUrl` defaults to the
-  in-cluster gateway service URL, which a browser cannot reach: set it to
-  `/api/v1`, or to the public API URL.
+  ingress manifests route `/mcp` to the gateway. The Helm chart defaults
+  `dashboard.env.apiBaseUrl` to `/api/v1`, so the URL is on the dashboard
+  host, whose nginx proxies `/mcp/` the same way. Keep the API base on the
+  dashboard's origin: its CSP (`connect-src 'self'`) blocks API calls to any
+  other origin.
   `mcp.port` is metadata only: nothing listens on it, so the page does not
   show it.
 

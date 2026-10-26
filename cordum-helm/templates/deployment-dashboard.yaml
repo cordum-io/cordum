@@ -32,8 +32,16 @@ spec:
           image: {{ printf "%s/%s:%s" .Values.global.image.registry .Values.dashboard.image.repository (.Values.dashboard.image.tag | default .Values.global.image.tag) | quote }}
           imagePullPolicy: {{ .Values.dashboard.image.pullPolicy }}
           env:
+            # The browser calls this base; its CSP allows only the dashboard's own
+            # origin, so the default is a path the dashboard nginx proxies to the gateway.
             - name: CORDUM_API_BASE_URL
-              value: {{ default (printf "http://%s-api-gateway:%d" (include "cordum.fullname" .) (int .Values.gateway.service.httpPort)) .Values.dashboard.env.apiBaseUrl | quote }}
+              value: {{ .Values.dashboard.env.apiBaseUrl | default "/api/v1" | quote }}
+            # nginx upstream for /api/ and /mcp/: the gateway Service. nginx's
+            # resolver needs the FQDN, and the service name follows the release.
+            - name: CORDUM_API_UPSTREAM_HOST
+              value: {{ printf "%s-api-gateway.%s.svc.cluster.local" (include "cordum.fullname" .) .Release.Namespace | quote }}
+            - name: CORDUM_API_UPSTREAM_SCHEME
+              value: {{ .Values.dashboard.env.apiUpstreamScheme | default (ternary "https" "http" .Values.global.tls.enabled) | quote }}
             - name: CORDUM_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -52,10 +60,6 @@ spec:
             {{- if .Values.dashboard.env.traceUrlTemplate }}
             - name: CORDUM_TRACE_URL_TEMPLATE
               value: {{ .Values.dashboard.env.traceUrlTemplate | quote }}
-            {{- end }}
-            {{- if .Values.dashboard.env.apiUpstreamScheme }}
-            - name: CORDUM_API_UPSTREAM_SCHEME
-              value: {{ .Values.dashboard.env.apiUpstreamScheme | quote }}
             {{- end }}
           ports:
             - name: http
@@ -81,6 +85,12 @@ spec:
               mountPath: /var/cache/nginx
             - name: nginx-run
               mountPath: /var/run
+            {{- if and .Values.global.tls.enabled .Values.global.tls.clientCertSecret }}
+            # The entrypoint verifies the gateway's certificate against this CA.
+            - name: gateway-ca
+              mountPath: /etc/cordum/tls/ca
+              readOnly: true
+            {{- end }}
           {{- with .Values.containerSecurityContext }}
           securityContext:
             {{- toYaml . | nindent 12 }}
@@ -96,4 +106,12 @@ spec:
           emptyDir: {}
         - name: nginx-run
           emptyDir: {}
+        {{- if and .Values.global.tls.enabled .Values.global.tls.clientCertSecret }}
+        - name: gateway-ca
+          secret:
+            secretName: {{ .Values.global.tls.clientCertSecret }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}
 {{- end }}
