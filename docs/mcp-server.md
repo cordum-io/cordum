@@ -63,6 +63,13 @@ Flags:
   [Endpoint validation](#endpoint-validation).
 - `--request-timeout` (default `30s`)
 
+`cordum-mcp` has no approval gating and no `match.mcp` invariant floor: it
+never holds a tool call for approval or checks it against SecOps invariants,
+in stdio mode or with `MCP_TRANSPORT=http`. Its tools call the gateway's REST
+API, so they rely on the gateway's RBAC for each call and on the Safety Kernel
+for the jobs they create. Connect clients to the gateway's own transport
+(below) to get both.
+
 ### 2) Gateway HTTP + SSE (remote clients)
 
 Enable MCP in config:
