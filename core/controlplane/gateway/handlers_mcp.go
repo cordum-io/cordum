@@ -20,6 +20,8 @@ import (
 	"github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/infra/env"
+	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/mcp"
 	mcpresources "github.com/cordum/cordum/core/mcp/resources"
 	mcptools "github.com/cordum/cordum/core/mcp/tools"
@@ -30,7 +32,14 @@ import (
 // mcpAgentIDHeader is the request header that identifies the calling
 // MCP agent. The gateway uses it (with a principal-ID fallback) to
 // populate MCPCallMetadata so the approval gate can log who is asking.
+// It is a claim, not a credential: mcpAuth honours it only for a caller
+// allowed to act as that identity (see mayActAsMCPAgent).
 const mcpAgentIDHeader = "X-Agent-Id"
+
+// mcpAllowUnboundAgentIDEnv restores the pre-binding behaviour in which any
+// authenticated caller could act as any same-tenant agent identity by naming
+// it in X-Agent-Id. Off by default; the MCP runtime logs a warning when on.
+const mcpAllowUnboundAgentIDEnv = "CORDUM_MCP_ALLOW_UNBOUND_AGENT_ID"
 
 // mcpCopilotSessionIDHeader optionally groups a client's tool calls into a
 // Copilot audit session. Clients (e.g. VS Code Copilot agent mode) set it so
@@ -118,6 +127,10 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 		}
 		runtime.server.ReloadConfig(cfg.Raw)
 		return nil
+	}
+	if env.Bool(mcpAllowUnboundAgentIDEnv) {
+		slog.Warn("mcp: X-Agent-Id is trusted without a caller binding; any authenticated caller can act as any agent identity in its tenant",
+			"env", mcpAllowUnboundAgentIDEnv)
 	}
 
 	transport := mcp.NewHTTPTransport(mcp.DefaultMaxMessageBytes, mcp.DefaultHTTPResponseTimeout).
@@ -407,8 +420,15 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		// knowing about gateway identity types. Tenant + principal come
 		// from the auth context; agent_id prefers the X-Agent-Id header
 		// and falls back to the principal so the self-approval guard
-		// has something to compare against.
+		// has something to compare against. The header is checked here,
+		// once, so everything below (scope filter, action gate,
+		// preapprovals, approvals, trace parents, Copilot transcript owner)
+		// only ever sees an agent id this caller may act as.
 		agentID := strings.TrimSpace(r.Header.Get(mcpAgentIDHeader))
+		if agentID != "" && !s.mayActAsMCPAgent(r, tenantID, agentID) {
+			writeErrorJSON(w, http.StatusForbidden, "agent identity not bound to caller")
+			return
+		}
 		if agentID == "" {
 			agentID = strings.TrimSpace(authCtx.PrincipalID)
 		}
@@ -544,10 +564,64 @@ func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentI
 	return nil
 }
 
+// mayActAsMCPAgent reports whether the caller may act as the agent identity
+// it named in X-Agent-Id: the identity is linked to the caller's principal or
+// API key id (the agent worker link job submit and delegation also bind on),
+// or the caller passes the agents.write/admin gate of the agent identity
+// routes (it could relink the identity anyway), or the legacy
+// CORDUM_MCP_ALLOW_UNBOUND_AGENT_ID switch is on. A missing identity and an
+// unbound one look the same to the caller.
+func (s *server) mayActAsMCPAgent(r *http.Request, tenant, agentID string) bool {
+	if env.Bool(mcpAllowUnboundAgentIDEnv) || s.canManageAgentIdentities(r) {
+		return true
+	}
+	return s.linkedAgentIdentity(r.Context(), auth.FromRequest(r), tenant, agentID) != nil
+}
+
+// canManageAgentIdentities mirrors requirePermissionOrRole(PermAgentsWrite,
+// "admin"), the gate on agent identity create/update/delete, without writing
+// a response.
+func (s *server) canManageAgentIdentities(r *http.Request) bool {
+	if s.requireRole(r, "admin") != nil {
+		return false
+	}
+	if s.auth != nil && s.permChecker != nil && auth.RBACEntitled(s.currentEntitlements()) {
+		return s.permChecker.RequirePermission(r, auth.PermAgentsWrite) == nil
+	}
+	return true
+}
+
+// linkedAgentIdentity returns the same-tenant agent identity linked to the
+// caller's principal or, failing that, its API key id (store.LinkWorker, set
+// by agent create's agent_id or a worker credential's agent_id). With want
+// set, only that identity counts. GetByWorkerID uses the store's empty-tenant
+// lookup, so the tenant is enforced here: a link to another tenant's agent
+// never applies that agent's scope.
+func (s *server) linkedAgentIdentity(ctx context.Context, ac *auth.AuthContext, tenant, want string) *store.AgentIdentity {
+	if s == nil || s.agentIdentityStore == nil || ac == nil || tenant == "" {
+		return nil
+	}
+	for _, workerID := range []string{ac.PrincipalID, ac.KeyID} {
+		workerID = strings.TrimSpace(workerID)
+		if workerID == "" {
+			continue
+		}
+		identity, err := s.agentIdentityStore.GetByWorkerID(ctx, workerID)
+		if err != nil || identity == nil || strings.TrimSpace(identity.TenantID) != tenant {
+			continue
+		}
+		if want == "" || identity.ID == want {
+			return identity
+		}
+	}
+	return nil
+}
+
 // resolveMCPIdentity looks up the agent identity for this MCP request.
 // Resolution order:
 //  1. X-Agent-Id header (explicit — matches the documented contract).
-//  2. auth-principal fallback via agent_by_worker reverse index, so
+//     mcpAuth has already refused a header this caller may not act as.
+//  2. the identity linked to the caller's principal or API key id, so
 //     credentialled workers inherit their linked identity without
 //     needing to send the header explicitly.
 //
@@ -576,26 +650,7 @@ func (s *server) resolveMCPIdentity(r *http.Request) *mcp.AgentIdentity {
 		}
 		return mcpIdentityFromStore(identity)
 	}
-	authCtx := auth.FromContext(ctx)
-	if authCtx == nil {
-		return nil
-	}
-	principal := strings.TrimSpace(authCtx.PrincipalID)
-	if principal == "" {
-		return nil
-	}
-	identity, err := s.agentIdentityStore.GetByWorkerID(ctx, principal)
-	if err != nil || identity == nil {
-		return nil
-	}
-	// GetByWorkerID resolves by the authenticated principal but uses an
-	// empty-tenant store lookup internally; enforce tenant isolation here too
-	// so a worker credential bound to another tenant's agent cannot apply that
-	// agent's scope to this request.
-	if strings.TrimSpace(identity.TenantID) != tenant {
-		return nil
-	}
-	return mcpIdentityFromStore(identity)
+	return mcpIdentityFromStore(s.linkedAgentIdentity(ctx, auth.FromContext(ctx), tenant, ""))
 }
 
 // runMCPApprovalSweeper expires PENDING MCP approvals whose TTL has

@@ -144,9 +144,22 @@ and invalidates every cached slice at once.
 `mcpAuth` middleware on `/mcp/message` reads the
 `X-Agent-Id` header. If present, it resolves via the agent identity store
 and attaches the resulting `*mcp.AgentIdentity` to the request context.
-If absent, it falls back to the auth-principal's linked worker identity
-(useful for workers that already authenticate with a credentialed
-`PrincipalID`).
+If absent, it falls back to the identity linked to the caller's principal
+or API key ID (useful for workers that already authenticate with a
+credentialed `PrincipalID`).
+
+`X-Agent-Id` is a claim, not a credential. The gateway honours it only
+when the named identity is linked to the caller's principal or API key ID
+(the agent worker link: `agent_id` on `POST /api/v1/agents`, or a worker
+credential's `agent_id`), or when the caller passes the `agents.write` /
+admin gate of the agent identity routes. Otherwise every `/mcp/*` route
+answers `403 agent identity not bound to caller`, the same answer as for
+an identity that does not exist. For identities not linked yet,
+`CORDUM_MCP_ALLOW_UNBOUND_AGENT_ID=true` restores the old header trust
+(still tenant-scoped); the gateway logs a warning at MCP start while it
+is set. The binding is only as strong as the principal: where
+`X-Principal-Id` is honoured (non-production, or
+`CORDUM_ALLOW_HEADER_PRINCIPAL`), link API key IDs instead.
 
 The HTTP transport stamps the resolved identity onto `JSONRPCMessage`
 before enqueuing it for the MCP dispatcher.
