@@ -9,8 +9,8 @@ import (
 // ApplyInvariants overlays rules from the secops/invariants bundle on top
 // of a merged base policy with security-floor precedence:
 //
-//   - Invariant DENY rules (decision deny / require_approval / require_human)
-//     are prepended to merged.Rules so a first-match evaluator hits them
+//   - Invariant DENY rules (every decision that is not allow-class: deny,
+//     block, require_approval, throttle) are prepended to merged.Rules so a first-match evaluator hits them
 //     before any pack/studio ALLOW that targets the same topic+match.
 //   - Invariant ALLOW rules are appended to merged.Rules as a default
 //     fallback — any explicit DENY (pack, studio-global, file loader)
@@ -75,31 +75,19 @@ func ApplyInvariants(base, inv *config.SafetyPolicy) *config.SafetyPolicy {
 }
 
 // splitInvariantRulesByDecision partitions invariant rules into two slices:
-// "denies" (decisions that block or escalate execution) and "allows"
-// (decisions that permit or constrain). The boundary matches the
-// SafetyPolicy decision vocabulary — see config/safety_policy.go PolicyRule
-// + safetykernel/input_policy.go for the canonical decision string list.
+// "denies" (decisions that block or escalate execution: deny and its
+// aliases such as block, require_approval, throttle) and "allows" (allow
+// and allow_with_constraints). config.IsAllowClassDecision draws the line,
+// so the kernel and the MCP gate split the same way.
 func splitInvariantRulesByDecision(rules []config.PolicyRule) (denies, allows []config.PolicyRule) {
 	for _, r := range rules {
-		if isInvariantDeny(r.Decision) {
-			denies = append(denies, r)
-		} else {
+		if config.IsAllowClassDecision(r.Decision) {
 			allows = append(allows, r)
+		} else {
+			denies = append(denies, r)
 		}
 	}
 	return denies, allows
-}
-
-// isInvariantDeny reports whether a rule decision should be treated as a
-// DENY-uncrossable decision for invariants precedence. The list mirrors
-// the decisions that block or escalate execution in the kernel evaluator.
-func isInvariantDeny(decision string) bool {
-	switch strings.ToLower(strings.TrimSpace(decision)) {
-	case "deny", "require_approval", "require-approval", "require_human", "throttle":
-		return true
-	default:
-		return false
-	}
 }
 
 // SplitInvariantsFromBundles extracts the parsed invariant rule slices

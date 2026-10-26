@@ -131,7 +131,7 @@ func (g *GlobalPolicy) RulesForJobWorkflow(workflowID, jobID string) []config.Po
 	}
 	workflowID = strings.TrimSpace(workflowID)
 	jobID = strings.TrimSpace(jobID)
-	invariantDenies, invariantAllows := splitGlobalInvariantRules(g.Invariants)
+	invariantDenies, invariantAllows := splitKernelInvariantRulesByDecision(g.Invariants)
 	rules := make([]config.PolicyRule, 0, len(g.Invariants)+len(g.InputRules))
 	rules = append(rules, invariantDenies...)
 	if jobID != "" {
@@ -204,7 +204,7 @@ func (g *GlobalPolicy) rulesForScopedSection(
 ) []config.PolicyRule {
 	workflowID = strings.TrimSpace(workflowID)
 	jobID = strings.TrimSpace(jobID)
-	invariantDenies, invariantAllows := splitGlobalInvariantRules(g.Invariants)
+	invariantDenies, invariantAllows := splitKernelInvariantRulesByDecision(g.Invariants)
 	rules := make([]config.PolicyRule, 0, len(g.Invariants)+len(globalRules))
 	rules = append(rules, invariantDenies...)
 	if jobID != "" {

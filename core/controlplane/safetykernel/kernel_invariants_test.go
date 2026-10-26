@@ -243,3 +243,40 @@ func TestKernelInvariants_MCPListsMatchGate(t *testing.T) {
 		}
 	}
 }
+
+// TestKernelInvariants_BlockBeatsTenantAllow pins that block, which
+// normalizeDecision maps to deny, is deny-class for invariant precedence:
+// the invariant is prepended in the evaluation policy and in the
+// GlobalPolicy view, so it beats a tenant allow rule.
+func TestKernelInvariants_BlockBeatsTenantAllow(t *testing.T) {
+	srv := &server{}
+	base := &config.SafetyPolicy{
+		DefaultDecision: "deny",
+		Rules: []config.PolicyRule{{
+			ID:       "tenant-allow-payments",
+			Match:    config.PolicyMatch{Tenants: []string{"acme"}, Topics: []string{"job.payments.*"}},
+			Decision: "allow",
+		}},
+	}
+	invariants := &config.SafetyPolicy{Rules: []config.PolicyRule{{
+		ID:       "inv-block-payments",
+		Match:    config.PolicyMatch{Topics: []string{"job.payments.*"}},
+		Decision: "block",
+	}}}
+	if err := srv.setPolicyWithInvariants(context.Background(), base, invariants, "cfg:block", 0); err != nil {
+		t.Fatalf("setPolicyWithInvariants: %v", err)
+	}
+	resp, err := srv.Evaluate(context.Background(), &pb.PolicyCheckRequest{
+		JobId: "job-block", Topic: "job.payments.wire", Tenant: "acme",
+	})
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY || resp.GetRuleId() != "inv-block-payments" {
+		t.Fatalf("decision %v rule %q; want DENY by inv-block-payments", resp.GetDecision(), resp.GetRuleId())
+	}
+	rules := srv.currentGlobalPolicy().RulesForJobWorkflow("", "")
+	if len(rules) == 0 || rules[0].ID != "inv-block-payments" {
+		t.Fatalf("GlobalPolicy view must put the block invariant first; got %+v", rules)
+	}
+}

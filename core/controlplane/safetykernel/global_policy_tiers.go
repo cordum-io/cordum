@@ -76,7 +76,7 @@ func (g *GlobalPolicy) addTierDefault(def config.PolicyTierDefault) {
 }
 
 func concatRules(invariants, section []config.PolicyRule) []config.PolicyRule {
-	denies, allows := splitGlobalInvariantRules(invariants)
+	denies, allows := splitKernelInvariantRulesByDecision(invariants)
 	if len(denies) == 0 && len(allows) == 0 {
 		return append([]config.PolicyRule{}, section...)
 	}
@@ -85,26 +85,6 @@ func concatRules(invariants, section []config.PolicyRule) []config.PolicyRule {
 	out = append(out, section...)
 	out = append(out, allows...)
 	return out
-}
-
-func splitGlobalInvariantRules(rules []config.PolicyRule) (denies, allows []config.PolicyRule) {
-	for _, rule := range rules {
-		if isGlobalInvariantDeny(rule.Decision) {
-			denies = append(denies, rule)
-			continue
-		}
-		allows = append(allows, rule)
-	}
-	return denies, allows
-}
-
-func isGlobalInvariantDeny(decision string) bool {
-	switch strings.ToLower(strings.TrimSpace(decision)) {
-	case "deny", "require_approval", "require-approval", "require_human", "throttle":
-		return true
-	default:
-		return false
-	}
 }
 
 func appendScopedRule(

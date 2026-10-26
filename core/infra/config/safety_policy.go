@@ -923,7 +923,7 @@ func labelThresholdMatch(thresholds map[string]float64, labels map[string]string
 		}
 		parsed, err := strconv.ParseFloat(strings.TrimSpace(actual), 64)
 		if err != nil || math.IsNaN(parsed) {
-			return !allowClassDecision(decision)
+			return !IsAllowClassDecision(decision)
 		}
 		if parsed > maxVal {
 			exceeded = true
@@ -1018,18 +1018,21 @@ func MCPRuleMatch(lists MCPPolicy, decision string, req MCPRequest) bool {
 		return false
 	}
 	permitted, _ := MCPAllowed(lists, req)
-	if allowClassDecision(decision) {
+	if IsAllowClassDecision(decision) {
 		return permitted
 	}
 	return !permitted
 }
 
-// allowClassDecision reports whether a rule decision lets the request run:
-// allow, allow_with_constraints and their aliases. Every other value is
-// restrictive, as normalizeDecision maps unknown decisions to deny.
-func allowClassDecision(decision string) bool {
-	switch strings.ToLower(strings.TrimSpace(decision)) {
-	case "allow", "permit", "allow_with_constraints", "allow-with-constraints":
+// IsAllowClassDecision reports whether a rule decision lets the request
+// run: allow or allow_with_constraints once normalizeDecision has resolved
+// its aliases. Every other decision is restrictive, including values
+// normalizeDecision does not know (it maps them to deny). Rule matching and
+// every invariant-precedence split read decisions through this, so an alias
+// such as block cannot be classified differently in two places.
+func IsAllowClassDecision(decision string) bool {
+	switch normalizeDecision(decision) {
+	case "allow", "allow_with_constraints":
 		return true
 	}
 	return false

@@ -166,6 +166,20 @@ func TestMatchRuleMCPLists(t *testing.T) {
 	}
 }
 
+func TestIsAllowClassDecision(t *testing.T) {
+	for decision, want := range map[string]bool{
+		"allow": true, "permit": true, " ALLOW ": true,
+		"allow_with_constraints": true, "allow-with-constraints": true,
+		"deny": false, "block": false, "Block": false,
+		"require_approval": false, "require-approval": false, "require_human": false,
+		"throttle": false, "": false, "maybe": false,
+	} {
+		if got := IsAllowClassDecision(decision); got != want {
+			t.Errorf("IsAllowClassDecision(%q) = %v; want %v", decision, got, want)
+		}
+	}
+}
+
 func TestMatchRuleLabelThreshold(t *testing.T) {
 	amount := func(v string) map[string]string { return map[string]string{"arg.amount": v} }
 	for _, tc := range []struct {

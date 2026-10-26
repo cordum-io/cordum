@@ -54,11 +54,17 @@ Invariants are rules authored ONCE in the dedicated
 `secops/invariants` bundle and applied to ALL FOUR evaluators with
 SECURITY-FLOOR precedence:
 
-1. **Invariant DENY rules are uncrossable.** They are prepended to
+1. **Invariant DENY rules are uncrossable.** Every invariant whose
+   decision is not allow-class (`deny` and its alias `block`,
+   `require_approval` and its aliases, `throttle`) is prepended to
    `merged.Rules` so a first-match evaluator returns DENY before
    reaching any pack-contributed ALLOW that targets the same input.
-2. **Invariant ALLOW rules are a default fallback.** They are
-   appended to `merged.Rules` so any explicit DENY (pack, studio
+   `config.IsAllowClassDecision`, which reads decisions through the
+   same normalizer as rule evaluation, draws this line for the kernel,
+   the policy-bundle merger and the MCP gate.
+2. **Invariant ALLOW rules are a default fallback.** Invariants with
+   `allow` (or `permit`) and `allow_with_constraints` are appended to
+   `merged.Rules` so any explicit DENY (pack, studio
    global, file-loader) earlier in the slice still wins. Without this
    rule, pack-contributed safety DENYs authored before an invariant
    ALLOW default would become unenforceable.
@@ -96,8 +102,8 @@ output_rules:
 The Safety Kernel and the gateway MCP gate read `match.mcp` the same way
 (`config.MCPRuleMatch`). The lists apply only to MCP tool calls: the kernel
 sees one as `mcp.server` / `mcp.tool` labels, and a rule with `match.mcp`
-lists never matches a job without them. On a deny-class rule (`deny`,
-`require_approval`, `throttle`), `deny_tools` and `deny_servers` list what the
+lists never matches a job without them. On a deny-class rule (`deny` or
+`block`, `require_approval`, `throttle`), `deny_tools` and `deny_servers` list what the
 rule blocks, and a non-empty `allow_tools` or `allow_servers` blocks every
 value not in it. So `inv-deny-mcp-fs-read` above denies `fs.read` and nothing
 else, in both evaluators. On an `allow` or `allow_with_constraints` rule the
@@ -234,11 +240,12 @@ that bundle entry; the unified GET projects it as part of the
   `gatewayApprovalGate.Check` runs only for tools the MCP registry gates
   for approval (`core/mcp/registry.go`). A tool call that needs no
   approval never reaches the gate's invariant check.
-- **Decision string typos silently no-op.** Invariant rules with
-  unknown `decision` values (e.g. `dney` instead of `deny`) skip the
-  DENY-uncrossable enforcement — they fall into the ALLOW bucket per
-  `isInvariantDeny` semantics. Authors should validate via
-  `config.ParseSafetyPolicy` errors at upload time.
+- **Decision values are checked at upload.** The policy schema accepts
+  only known decisions, so `config.ParseSafetyPolicy` rejects a typo
+  such as `dney`. A rule with no `decision` is evaluated as deny, and as
+  an invariant it is prepended like one: `config.IsAllowClassDecision`
+  treats every decision that does not normalize to `allow` or
+  `allow_with_constraints` as deny-class.
 
 ## Cross-references
 
