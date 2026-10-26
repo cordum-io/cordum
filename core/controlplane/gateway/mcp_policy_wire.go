@@ -103,7 +103,7 @@ func (a policyDispatcherAdapter) Dispatch(ctx context.Context, in *config.Policy
 // ("", nil) so the caller treats the call as immediately allowed.
 func (g *gatewayApprovalGate) ConsumeActionGateDecision(ctx context.Context, _ mcp.PolicyDecision, ctxData mcp.ToolCallApprovalContext) (string, error) {
 	if g == nil || g.store == nil {
-		return "", fmt.Errorf("mcp gate: approval store unavailable")
+		return "", fmt.Errorf("%w: mcp gate: approval store unavailable", mcp.ErrInternal)
 	}
 	// Invariant DENY first — fail closed regardless of the actiongate
 	// decision so a pack-contributed actiongate ALLOW cannot override
@@ -158,7 +158,7 @@ func (g *gatewayApprovalGate) ConsumeActionGateDecision(ctx context.Context, _ m
 	// SIEM correlation column always carries a stable 64-char shape.
 	argsHash := legacyMCPApprovalArgsHash(ctxData.ActionHash)
 	if rec, err := g.store.ClaimPreApproved(ctx, ctxData.Tenant, ctxData.AgentID, ctxData.Tool, argsHash); err != nil {
-		return "", fmt.Errorf("mcp gate: pre-approval claim: %w", err)
+		return "", fmt.Errorf("%w: mcp gate: pre-approval claim: %w", mcp.ErrInternal, err)
 	} else if rec != nil {
 		return rec.ID, nil
 	}
@@ -174,7 +174,7 @@ func (g *gatewayApprovalGate) ConsumeActionGateDecision(ctx context.Context, _ m
 	}
 	rec, err := g.store.EnqueueMCPApproval(ctx, req)
 	if err != nil {
-		return "", fmt.Errorf("mcp gate: enqueue approval: %w", err)
+		return "", fmt.Errorf("%w: mcp gate: enqueue approval: %w", mcp.ErrInternal, err)
 	}
 	return rec.ID, nil
 }

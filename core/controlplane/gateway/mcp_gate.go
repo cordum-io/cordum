@@ -212,7 +212,7 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 	}
 
 	if rec, err := g.store.ClaimPreApproved(ctx, meta.Tenant, meta.AgentID, tool.Name, argsHash); err != nil {
-		return nil, fmt.Errorf("mcp gate: pre-approval claim: %w", err)
+		return nil, fmt.Errorf("%w: mcp gate: pre-approval claim: %w", mcp.ErrInternal, err)
 	} else if rec != nil {
 		// Stamp the consumed approval onto the in-flight invocation
 		// handle so the eventual mcp.tool_invocation event carries
@@ -247,7 +247,7 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 			return nil, fmt.Errorf("%w: edge approval mint failed: %w", mcp.ErrApprovalStoreUnavailable, err)
 		}
 		if approvalID, err := g.claimApprovedTwin(ctx, meta, edgeMeta, binding, tool.Name, argsHash); err != nil {
-			return nil, fmt.Errorf("mcp gate: pre-approval claim: %w", err)
+			return nil, fmt.Errorf("%w: mcp gate: pre-approval claim: %w", mcp.ErrInternal, err)
 		} else if approvalID != "" {
 			if h := mcp.InvocationHandleFromContext(ctx); h != nil {
 				h.MarkApprovalConsumed(approvalID)
@@ -286,7 +286,7 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 	var approval *edge.EdgeApproval
 	if edgeMint {
 		if req.ID, err = mcpApprovalID(); err != nil {
-			return nil, fmt.Errorf("mcp gate: approval id: %w", err)
+			return nil, fmt.Errorf("%w: mcp gate: approval id: %w", mcp.ErrInternal, err)
 		}
 		if approval, err = g.mintMCPEdgeApproval(ctx, edgeMeta, binding, tool.Name, req.Reason, tool.ApprovalScope, req.ID); err != nil {
 			return nil, fmt.Errorf("%w: edge approval mint failed: %w", mcp.ErrApprovalStoreUnavailable, err)
@@ -295,7 +295,7 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 	}
 	rec, err := g.store.EnqueueMCPApproval(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("mcp gate: enqueue: %w", err)
+		return nil, fmt.Errorf("%w: mcp gate: enqueue: %w", mcp.ErrInternal, err)
 	}
 	// Mark the handle so the invocation event records
 	// approval_status=required + approval_id=<rec.ID> — lets SIEM

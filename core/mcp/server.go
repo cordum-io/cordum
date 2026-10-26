@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"time"
 )
@@ -54,6 +55,11 @@ var (
 	// gatewayApprovalGate.Check + ConsumeActionGateDecision when Edge
 	// mint fails after metadata was present (the fail-closed branch).
 	ErrApprovalStoreUnavailable = errors.New("approval_store_unavailable: approval store unavailable")
+	// ErrInternal marks a failure of the MCP machinery itself (Edge event
+	// store, approval store, artifact store) rather than of the tool. Its
+	// text can name internal ids such as Edge execution ids, so the
+	// JSON-RPC reply carries a generic message and the detail is logged.
+	ErrInternal = errors.New("mcp: internal error")
 )
 
 // ToolService provides tool listing and execution for MCP server handlers.
@@ -510,6 +516,9 @@ func (s *MCPServer) handleToolsCall(ctx context.Context, params json.RawMessage)
 			if errors.Is(err, errMissingPolicySnapshot) {
 				return nil, s.rpcError(jsonRPCGatewayMisconfiguredCode, "approval gate misconfigured", "missing_policy_snapshot")
 			}
+			if errors.Is(err, ErrInternal) {
+				return nil, s.mapHandlerError(err)
+			}
 			return nil, s.rpcError(jsonRPCInvalidParamsCode, "invalid approval ref", err.Error())
 		}
 		if outcome.ConflictErr != nil {
@@ -673,7 +682,8 @@ func (s *MCPServer) mapHandlerError(err error) *JSONRPCError {
 	// Checked before the generic internal-error bucket so operators
 	// page on a specific code instead of chasing "internal error".
 	if errors.Is(err, ErrApprovalGateMisconfigured) {
-		return s.rpcError(jsonRPCGatewayMisconfiguredCode, "gateway misconfigured", err.Error())
+		slog.Warn("mcp: approval gate misconfigured", "error", err)
+		return s.rpcError(jsonRPCGatewayMisconfiguredCode, "gateway misconfigured", "approval_gate_misconfigured")
 	}
 	// Approval-store outage signal — surfaces when Edge mint was
 	// attempted (transport metadata present + edgeStore wired) but
@@ -683,10 +693,15 @@ func (s *MCPServer) mapHandlerError(err error) *JSONRPCError {
 	// the JSON-RPC envelope matches the snake_case enum used by the
 	// other -32096 lifecycle paths (args_mismatch, etc.).
 	if errors.Is(err, ErrApprovalStoreUnavailable) {
+		slog.Warn("mcp: approval store unavailable", "error", err)
 		return s.rpcError(jsonRPCApprovalLifecycleErrorCode, "approval lifecycle error", map[string]any{
 			"kind":   "approval_store_unavailable",
-			"reason": err.Error(),
+			"reason": "approval store unavailable",
 		})
+	}
+	if errors.Is(err, ErrInternal) {
+		slog.Warn("mcp: internal error", "error", err)
+		return s.rpcError(jsonRPCInternalErrorCode, "internal error", nil)
 	}
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):

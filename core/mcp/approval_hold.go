@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -249,9 +250,11 @@ func ProcessApprovalClaim(ctx context.Context, deps ApprovalHoldDeps, params Too
 			}, nil
 		}
 		if errors.Is(claimErr, edge.ErrApprovalConflict) {
+			// The store's text names internal ids (session, execution, event).
+			slog.WarnContext(ctx, "mcp: approval claim conflict", "approval_ref", approvalRef, "error", claimErr)
 			return ApprovalClaimOutcome{
 				ClaimRef:    approvalRef,
-				ConflictErr: &edge.ApprovalConflictError{Kind: edge.ApprovalConflictKindUnknown, Reason: claimErr.Error()},
+				ConflictErr: &edge.ApprovalConflictError{Kind: edge.ApprovalConflictKindUnknown, Reason: "approval not claimable"},
 			}, nil
 		}
 		if errors.Is(claimErr, edge.ErrNotFound) {
@@ -260,7 +263,7 @@ func ProcessApprovalClaim(ctx context.Context, deps ApprovalHoldDeps, params Too
 				ConflictErr: &edge.ApprovalConflictError{Kind: edge.ApprovalConflictKindNotFound, Reason: "approval not found"},
 			}, nil
 		}
-		return ApprovalClaimOutcome{}, claimErr
+		return ApprovalClaimOutcome{}, fmt.Errorf("%w: claim approval: %w", ErrInternal, claimErr)
 	}
 	if !consumed || approval == nil {
 		return ApprovalClaimOutcome{

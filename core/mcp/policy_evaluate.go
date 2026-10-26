@@ -17,6 +17,8 @@ import (
 	"github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/infra/config"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
 // upstreamErrorRedactPatterns defines URL/token regex rules applied to
@@ -620,7 +622,7 @@ func EvaluateToolCall(ctx context.Context, deps ToolCallDeps, params ToolCallPar
 		return EvaluateToolCallResult{}, errors.New("deps.EventEmitter is required")
 	}
 	if err := deps.EventEmitter.Emit(ctx, event); err != nil {
-		return EvaluateToolCallResult{}, fmt.Errorf("emit pre event: %w", err)
+		return EvaluateToolCallResult{}, fmt.Errorf("%w: emit pre event: %w", ErrInternal, err)
 	}
 	logToolCallDecision(ctx, event, descriptor, decision)
 
@@ -966,22 +968,24 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 		return nil, finalErr
 	}
 	upstreamResult, upstreamErr := deps.Upstream.Invoke(ctx, params)
+	kind := edge.EventKindMCPToolPost
 	if upstreamErr != nil {
-		failed := newPostEvent(evalResult.PreEvent, deps.Clock, edge.EventKindMCPToolFailed, dec)
-		if !markPolicyDenied(failed, upstreamErr) {
-			failed.ErrorMessage = sanitizeUpstreamError(upstreamErr)
-		}
-		if emitErr := deps.EventEmitter.Emit(ctx, failed); emitErr != nil {
-			finalErr = fmt.Errorf("emit failed event: %w", emitErr)
-			return nil, finalErr
-		}
+		kind = edge.EventKindMCPToolFailed
+	}
+	terminal := newPostEvent(evalResult.PreEvent, deps.Clock, kind, dec)
+	if upstreamErr != nil && !markPolicyDenied(terminal, upstreamErr) {
+		terminal.ErrorMessage = sanitizeUpstreamError(upstreamErr)
+	}
+	// The call already ran upstream: reporting a failed append as its outcome
+	// would invite a retry that runs it again. Like the Edge hook path when
+	// its decision evidence fails to write, keep the outcome and surface the
+	// gap instead.
+	if err := deps.EventEmitter.Emit(ctx, terminal); err != nil {
+		recordEvidenceWriteFailure(ctx, terminal, err)
+	}
+	if upstreamErr != nil {
 		finalErr = upstreamErr
 		return nil, upstreamErr
-	}
-	post := newPostEvent(evalResult.PreEvent, deps.Clock, edge.EventKindMCPToolPost, dec)
-	if err := deps.EventEmitter.Emit(ctx, post); err != nil {
-		finalErr = fmt.Errorf("emit post event: %w", err)
-		return nil, finalErr
 	}
 	// Best-effort content session-taint (DoD#1): scan the read RESULT for a
 	// prompt injection and, on a hit, persist a taint keyed by (tenant, session)
@@ -994,6 +998,30 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 	scanResultForSessionTaint(ctx, deps, params.Name, upstreamResult, stableEventID)
 	finalResult = upstreamResult
 	return upstreamResult, nil
+}
+
+// mcpEvidenceWriteFailures counts terminal Edge events (mcp.tool.post or
+// mcp.tool.failed) that failed to append for a call that already ran
+// upstream: each is a call missing from the Edge timeline.
+var mcpEvidenceWriteFailures = promauto.NewCounterVec(prometheus.CounterOpts{
+	Namespace: "cordum",
+	Subsystem: "mcp",
+	Name:      "evidence_write_failures_total",
+	Help:      "MCP tool calls that ran upstream but whose terminal Edge event failed to append, by event kind.",
+}, []string{"kind"})
+
+// recordEvidenceWriteFailure makes a failed terminal-event append visible: a
+// log line with the detail, the evidence-write metric, and a mark on the
+// call's invocation audit event.
+func recordEvidenceWriteFailure(ctx context.Context, event *edge.AgentActionEvent, err error) {
+	mcpEvidenceWriteFailures.WithLabelValues(string(event.Kind)).Inc()
+	slog.WarnContext(ctx, "mcp.tool.evidence_write_failed",
+		"kind", event.Kind, "tool", event.ToolName, "tenant", event.TenantID,
+		"session_id", event.SessionID, "execution_id", event.ExecutionID,
+		"event_id", event.EventID, "error", err)
+	if h := InvocationHandleFromContext(ctx); h != nil {
+		h.MarkEvidenceWriteFailed(string(event.Kind))
+	}
 }
 
 // maxResultScanBytes bounds a single scanned window. Each Content[].Text and each

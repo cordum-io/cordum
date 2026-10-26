@@ -281,6 +281,22 @@ tracked as a follow-up Moe task (PR #276 Sub-B deferred) — when
 adopted, the in-process backend stays the default and the Redis
 backend is gated by `CORDUM_MCP_DEDUPE_BACKEND=redis`.
 
+#### Evidence write failures
+
+If the Edge store fails to append a call's `mcp.tool.post` or
+`mcp.tool.failed` event after the call ran upstream, the client still
+gets the call's own result or tool error: reporting the call as failed
+would invite a retry that runs it again. As on the Edge hook path, the
+gap is surfaced instead. The gateway logs `mcp.tool.evidence_write_failed`
+with the detail, counts it in
+`cordum_mcp_evidence_write_failures_total{kind}`, and marks the call's
+`mcp.tool_invocation` audit event with `evidence_write_failed=<kind>`.
+
+JSON-RPC errors caused by Cordum's own stores (Edge events, approvals,
+artifacts) carry a fixed message, such as `internal error` or
+`approval store unavailable`. The detail, which can name internal ids
+such as Edge execution ids, is in the gateway log.
+
 
 ## Upstream Server Registry (EDGE-101)
 

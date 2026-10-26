@@ -51,6 +51,9 @@ type InvocationHandle struct {
 	subReason        string
 	policyExtra      map[string]string
 	copilotSessionID string
+	// evidenceWriteFailed is the kind of the call's terminal Edge event
+	// that failed to append (MarkEvidenceWriteFailed).
+	evidenceWriteFailed string
 }
 
 // MarkApprovalConsumed is called by the approval gate after a successful
@@ -109,6 +112,16 @@ func (h *InvocationHandle) MarkPolicyDenied(reason, subReason string, extra ...m
 			h.policyExtra[k] = v
 		}
 	}
+}
+
+// MarkEvidenceWriteFailed records that the call's terminal Edge event of
+// kind failed to append after the call ran upstream, so the invocation
+// audit event shows the call is missing from the Edge timeline.
+func (h *InvocationHandle) MarkEvidenceWriteFailed(kind string) {
+	if h == nil {
+		return
+	}
+	h.evidenceWriteFailed = kind
 }
 
 // invocationHandleCtxKey is the unexported ctx key used to propagate an
@@ -395,6 +408,9 @@ func (a *auditor) emit(h *InvocationHandle, eventType string, result *ToolCallRe
 	}
 	if h.agentID == "unknown" {
 		extra["identity_missing"] = "true"
+	}
+	if h.evidenceWriteFailed != "" {
+		extra["evidence_write_failed"] = h.evidenceWriteFailed
 	}
 	for k, v := range h.policyExtra {
 		if k == "" || v == "" {
