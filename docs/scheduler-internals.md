@@ -80,7 +80,10 @@ Every job progresses through a well-defined set of states. Terminal states are
   decision and an approver, the request must still hash to the job hash
   pinned when approval was requested, and (outside workflow gates) the
   `approval_snapshot` label must match the stored policy snapshot. The
-  gateway drops client-supplied `approval_*` labels at submit.
+  gateway drops client-supplied `approval_*` labels at submit. A failed
+  dispatch (no workers, a publish error) keeps the approval: while those
+  checks hold, each retry skips the policy check again instead of going back
+  to `APPROVAL_REQUIRED`.
 
 ---
 
