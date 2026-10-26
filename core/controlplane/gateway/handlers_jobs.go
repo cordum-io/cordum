@@ -1370,6 +1370,12 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	teamID := req.TeamId
 	projectID := req.ProjectId
 
+	// The body idempotency_key wins. Without it, take the Idempotency-Key
+	// header that HTTP clients (Python SDK, curl) send, like other write
+	// endpoints do.
+	if strings.TrimSpace(req.IdempotencyKey) == "" {
+		req.IdempotencyKey = idempotencyKeyFromRequest(r)
+	}
 	key := strings.TrimSpace(req.IdempotencyKey)
 	if key != "" && s.jobStore != nil {
 		existingID, err := s.jobStore.GetJobByIdempotencyKeyScoped(r.Context(), orgID, key)
