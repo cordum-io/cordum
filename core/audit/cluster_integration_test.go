@@ -182,6 +182,35 @@ func TestClusterIntegration_RetentionTrim(t *testing.T) {
 	}
 }
 
+// Adopting an anchor for a hand-trimmed chain works on a real cluster: every
+// command it sends touches one key.
+func TestClusterIntegration_AdoptRetentionAnchor(t *testing.T) {
+	client, chainer := newIntegrationChainer(t, WithHMACKey(testHMACKey()))
+	ctx := context.Background()
+	for i := 0; i < 6; i++ {
+		if err := chainer.Append(ctx, baseEvent("acme", "act-"+strconv.Itoa(i))); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+	}
+	if err := client.XTrimMaxLen(ctx, chainer.StreamKey("acme"), 3).Err(); err != nil {
+		t.Fatalf("xtrim: %v", err)
+	}
+	if res := verifyOnCluster(t, client, chainer, "acme"); res.Status != VerifyStatusCompromised {
+		t.Fatalf("hand-trimmed chain = %+v, want compromised", res)
+	}
+
+	res, err := chainer.AdoptRetentionAnchor(ctx, "acme", AdoptAnchorRequest{ExpectedOldestSeq: 4, Actor: "it"})
+	if err != nil || res.AdoptedSeq != 3 || res.EventSeq != 7 {
+		t.Fatalf("adopt = %+v, %v; want seq 3, recorded as seq 7", res, err)
+	}
+	if a := clusterAnchor(t, client, chainer, "acme"); a.Seq != 3 || !a.validMAC(chainer.AnchorKey("acme"), testHMACKey()) {
+		t.Fatalf("anchor = %+v, want signed at seq 3", a)
+	}
+	if res := verifyOnCluster(t, client, chainer, "acme"); res.Status != VerifyStatusPartial || res.FirstSeq != 4 || res.LastSeq != 7 {
+		t.Fatalf("verify after adopting = %+v, want partial from seq 4", res)
+	}
+}
+
 func verifyOnCluster(t *testing.T, client *redis.ClusterClient, chainer *Chainer, tenant string) *VerifyResult {
 	t.Helper()
 	res, err := VerifyChain(context.Background(), client, chainer.StreamKey(tenant), VerifyOptions{
