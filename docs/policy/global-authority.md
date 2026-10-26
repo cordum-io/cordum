@@ -77,11 +77,21 @@ rules:
         path.class: secret
     decision: deny
     reason: Secret-path access is uniformly forbidden across all surfaces
-  - id: inv-deny-mcp-fs-read
+  # Deny MCP tool fs.read: one rule per evaluator (see the note below).
+  - id: inv-deny-mcp-fs-read          # Safety Kernel: Cordum job + Edge evaluators
     match:
+      labels:
+        mcp.tool: fs.read
+    decision: deny
+    reason: MCP tool fs.read is forbidden
+  - id: inv-deny-mcp-fs-read-gate     # gateway MCP gate
+    match:
+      labels:
+        mcp.tool: fs.read             # keeps this rule inert in the kernel
       mcp:
         deny_tools: [fs.read]
     decision: deny
+    reason: MCP tool fs.read is forbidden
 output_rules:
   - id: inv-quarantine-secret-output
     severity: critical
@@ -91,6 +101,16 @@ output_rules:
         - 'OPENAI_API_KEY=[A-Za-z0-9]+'
         - 'AKIA[A-Z0-9]{16}'
 ```
+
+The two evaluators read `match.mcp` differently. The Safety Kernel sees an
+MCP call as `mcp.server` / `mcp.tool` labels and treats `match.mcp` lists as
+conditions on the rule: a `deny_tools` entry makes the rule skip that tool,
+and a request with no MCP fields passes the `mcp` check. On deny-class
+invariants, the gateway MCP gate reads only `match.tenants` and `match.mcp`:
+`deny_tools` lists tools to block, and a non-empty `allow_tools` blocks every
+tool not in it. So never author an MCP invariant with only `match.mcp`. In the
+kernel, `deny_tools: [fs.read]` alone matches every request except `fs.read`,
+including every non-MCP job.
 
 The cross-evaluator integration test
 (`core/controlplane/safetykernel/global_invariants_integration_test.go`,
