@@ -489,8 +489,7 @@ rules:
     reason: "Read-only validation is always safe"
 
 output_policy:
-  enabled: false
-  fail_mode: open          # open = allow on scanner error, closed = deny
+  enabled: true            # runs the output_rules below; see Output Policy Section
 
 output_rules:
   - id: secret_leak
@@ -573,8 +572,8 @@ default_decision: deny
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `output_policy.enabled` | bool | `false` | Enable output scanning |
-| `output_policy.fail_mode` | string | `"closed"` | `open` = allow on scanner error, `closed` = quarantine on scanner error (recommended for production) |
+| `output_policy.enabled` | bool | `false` | Set `true` to run `output_rules`. When it is `false` or omitted, the rules run only if `fail_mode` is unset too (legacy policies without an `output_policy` block), so `enabled: false` with any `fail_mode` turns output rules off. The scheduler checks output only when `OUTPUT_POLICY_ENABLED=true`. |
+| `output_policy.fail_mode` | string | unset | `open` or `closed`. It does not change what happens when an output check fails; the scheduler handles that (see [Output Policy](output-policy.md#32-fail-mode)). Its only effect is on `enabled`, above. |
 
 ### Output Rules Section
 
