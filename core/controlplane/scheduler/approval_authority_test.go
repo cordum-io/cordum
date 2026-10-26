@@ -26,10 +26,11 @@ const approvalTestSnapshot = "snap-1"
 // approvalHarness is a scheduler on a real Redis job store with a kernel that
 // keeps answering REQUIRE_HUMAN and one live worker serving job.default.
 type approvalHarness struct {
-	t      *testing.T
-	store  *infraStore.RedisJobStore
-	bus    *fakeBus
-	engine *Engine
+	t        *testing.T
+	store    *infraStore.RedisJobStore
+	bus      *fakeBus
+	registry *MemoryRegistry
+	engine   *Engine
 }
 
 func newApprovalHarness(t *testing.T, routing PoolRouting) *approvalHarness {
@@ -52,7 +53,7 @@ func newApprovalHarness(t *testing.T, routing PoolRouting) *approvalHarness {
 	}}
 	bus := &fakeBus{}
 	engine := NewEngine(bus, kernel, registry, NewLeastLoadedStrategy(routing), js, nil)
-	return &approvalHarness{t: t, store: js, bus: bus, engine: engine}
+	return &approvalHarness{t: t, store: js, bus: bus, registry: registry, engine: engine}
 }
 
 func defaultRouting() PoolRouting {
@@ -202,6 +203,10 @@ func TestApprovalBinding(t *testing.T) {
 	}
 	gatePinned := SafetyDecisionRecord{Decision: SafetyRequireApproval, ApprovalRequired: true, JobHash: gateHash}
 	approved := ApprovalRecord{Decision: ApprovalDecisionApprove, ApprovedBy: "alice"}
+	// The record the fast path stores before dispatching; a retry sees this.
+	allowed := SafetyDecisionRecord{Decision: SafetyAllow, Reason: "approval granted", PolicySnapshot: pinned.PolicySnapshot, JobHash: hash}
+	allowedDrifted := allowed
+	allowedDrifted.PolicySnapshot = "snap-2"
 
 	for _, tc := range []struct {
 		name     string
@@ -218,6 +223,11 @@ func TestApprovalBinding(t *testing.T) {
 		{"snapshot drifted", req, drifted, approved, errApprovalSnapshotMismatch},
 		{"workflow gate skips snapshot", gate, gatePinned, approved, nil},
 		{"workflow gate still needs a human", gate, gatePinned, ApprovalRecord{}, errNoRecordedApproval},
+		{"retry after the fast path", req, allowed, approved, nil},
+		{"retry with a changed request", changed, allowed, approved, errApprovalHashMismatch},
+		{"retry after the snapshot drifted", req, allowedDrifted, approved, errApprovalSnapshotMismatch},
+		{"retry without a recorded approval", req, allowed, ApprovalRecord{}, errNoRecordedApproval},
+		{"no pinned job hash", req, SafetyDecisionRecord{Decision: SafetyAllow, PolicySnapshot: pinned.PolicySnapshot}, approved, errNoRecordedApproval},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := approvalBinding(tc.req, tc.prev, tc.approval); !errors.Is(got, tc.want) {

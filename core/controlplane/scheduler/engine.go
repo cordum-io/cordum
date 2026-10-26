@@ -2270,8 +2270,12 @@ var (
 // path stamped must match the stored PolicySnapshot (base only, ignoring
 // config-overlay churn). ResolveApproval rotates that snapshot to the one the
 // human approved under, so a mismatch means the safety record drifted since.
+//
+// The stored safety record need not still say REQUIRE_APPROVAL: the fast path
+// overwrites it with its own ALLOW (same JobHash and snapshot), and an approved
+// job whose dispatch failed must not be re-gated when it is retried.
 func approvalBinding(req *pb.JobRequest, prev SafetyDecisionRecord, approval ApprovalRecord) error {
-	if !(prev.ApprovalRequired || prev.Decision == SafetyRequireApproval) || prev.JobHash == "" {
+	if prev.JobHash == "" {
 		return errNoRecordedApproval
 	}
 	if hash, err := HashJobRequest(req); err != nil || hash != prev.JobHash {
