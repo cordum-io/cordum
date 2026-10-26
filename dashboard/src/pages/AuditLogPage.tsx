@@ -1189,7 +1189,7 @@ function ChainSignatureVerdict({
         Verified
       </StatusBadge>
       <p className="text-xs text-muted-foreground">
-        Chain seq #{event.seq} is signed and present in the verified chain
+        Chain seq #{event.seq} is hash-linked and present in the verified chain
         window ({chain.verified_events} of {chain.total_events} events).
       </p>
     </div>

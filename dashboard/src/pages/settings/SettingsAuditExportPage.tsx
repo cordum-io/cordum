@@ -414,7 +414,7 @@ export default function SettingsAuditExportPage() {
         onClose={() => setReleaseTarget(null)}
         onConfirm={() => releaseTarget && releaseHoldMutation.mutate(releaseTarget.id)}
         title="Release Legal Hold"
-        description={`Release the legal hold on tenant "${releaseTarget?.tenant_id}"? Audit data will resume normal retention policy. Previously retained data will NOT be deleted.`}
+        description={`Release the legal hold on tenant "${releaseTarget?.tenant_id}"? Audit data will resume normal retention policy: if retention enforcement is on, events older than the retention window are trimmed at the next sweep.`}
         confirmLabel="Release Hold"
         variant="destructive"
       />
