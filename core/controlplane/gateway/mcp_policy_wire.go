@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/cordum/cordum/core/controlplane/safetykernel"
-	"github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/mcp"
 	"github.com/cordum/cordum/core/policy/actiongates"
@@ -202,37 +201,9 @@ func (g *gatewayApprovalGate) mintEdgeApprovalForActionGate(ctx context.Context,
 	if !ok || meta.SessionID == "" || meta.ExecutionID == "" {
 		return "", nil, false
 	}
-	policySnapshot := ""
-	if g.policySnapshot != nil {
-		policySnapshot = g.policySnapshot(ctx)
-	}
-	actionHash, inputHash := mcp.BuildMCPApprovalBinding(
-		meta.Tenant,
-		g.serverName,
-		mcp.ToolCallParams{Name: ctxData.Tool, Arguments: ctxData.Args},
-		policySnapshot,
-	)
-	requester := strings.TrimSpace(meta.Principal)
-	if gatewayMeta, ok := MCPCallMetadataFromContext(ctx); ok {
-		requester = mcpRequesterIdentity(gatewayMeta)
-	}
-	approval, err := g.edgeStore.EnqueueApproval(ctx, edge.EdgeApprovalRequest{
-		TenantID:       meta.Tenant,
-		SessionID:      meta.SessionID,
-		ExecutionID:    meta.ExecutionID,
-		EventID:        meta.AgentID,
-		PrincipalID:    meta.Principal,
-		Requester:      requester,
-		Reason:         "policy gate REQUIRE_HUMAN",
-		ActionHash:     actionHash,
-		InputHash:      inputHash,
-		PolicySnapshot: policySnapshot,
-	})
+	approval, _, err := g.mintMCPEdgeApproval(ctx, meta, ctxData.Tool, ctxData.Args, "policy gate REQUIRE_HUMAN", "")
 	if err != nil {
 		return "", err, true
-	}
-	if approval == nil {
-		return "", fmt.Errorf("edge store returned nil approval without error"), true
 	}
 	return approval.ApprovalRef, nil, true
 }

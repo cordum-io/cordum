@@ -136,7 +136,7 @@ func (s *server) attachMCPPolicyDepsNamed(mcpServer *mcp.MCPServer, gate *gatewa
 // mcpApprovalHoldDeps is the `_approval_ref` consume wiring for serverName.
 func (s *server) mcpApprovalHoldDeps(serverName string) mcp.ApprovalHoldDeps {
 	return mcp.ApprovalHoldDeps{
-		Store:          mcpSessionlessClaims{store: s.edgeStore},
+		Store:          mcpApprovalClaims{store: s.edgeStore},
 		PolicySnapshot: s.mcpPolicySnapshotFunc(),
 		ServerName:     serverName,
 	}

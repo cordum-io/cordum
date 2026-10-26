@@ -19,8 +19,16 @@ import (
 type captureEdgeStore struct {
 	edge.Store
 	lastReq    edge.EdgeApprovalRequest
+	lastEvent  edge.AgentActionEvent
 	enqueueErr error
 	approvalID string
+}
+
+// AppendEvent records the approval.requested parent event the mint writes
+// before EnqueueApproval.
+func (c *captureEdgeStore) AppendEvent(_ context.Context, event edge.AgentActionEvent) (edge.AgentActionEvent, error) {
+	c.lastEvent = event
+	return event, nil
 }
 
 func (c *captureEdgeStore) EnqueueApproval(_ context.Context, req edge.EdgeApprovalRequest) (*edge.EdgeApproval, error) {
@@ -122,6 +130,19 @@ func TestMintEdgeApproval_InputHashMatchesConsumeBinding(t *testing.T) {
 	}
 	if store.lastReq.Requester != principalID {
 		t.Errorf("Requester = %q; want %q (self-approval defense binds to Principal)", store.lastReq.Requester, principalID)
+	}
+	// The approval references the approval.requested event the mint
+	// recorded in the same execution, carrying the same binding.
+	ev := store.lastEvent
+	if ev.EventID == "" || store.lastReq.EventID != ev.EventID {
+		t.Errorf("EnqueueApproval EventID = %q; want the recorded parent event %q", store.lastReq.EventID, ev.EventID)
+	}
+	if ev.Kind != edge.EventKindApprovalRequested || ev.SessionID != sessionID || ev.ExecutionID != executionID ||
+		ev.InputHash != wantInput || ev.PolicySnapshot != policySnap {
+		t.Errorf("parent event = %+v; want approval.requested in %s/%s with the approval's input hash and snapshot", ev, sessionID, executionID)
+	}
+	if store.lastReq.Labels[mcpApprovalAgentLabel] != agentID {
+		t.Errorf("approval labels = %v; want %s=%s", store.lastReq.Labels, mcpApprovalAgentLabel, agentID)
 	}
 }
 

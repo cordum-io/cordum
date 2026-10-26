@@ -35,7 +35,9 @@ scopes see [`scope-preapproval.md`](scope-preapproval.md).
                                        │
                               mintEdgeApprovalForActionGate
                                        │
-                              edge.Store.EnqueueApproval
+                              edge.Store.AppendEvent (approval.requested)
+                                       │
+                              edge.Store.EnqueueApproval (bound to that event)
                                        │
                               return approval_ref to client
                                        │

@@ -474,7 +474,7 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		// found") and routes a session-less POST under its own one-shot id.
 		// Scoped to POST so the SSE GET keeps its server-assigned session id.
 		// The Edge session stays one-shot because the Edge store caps events
-		// per execution and executions per session; mcpSessionlessClaims lets
+		// per execution and executions per session; mcpApprovalClaims lets
 		// the caller's `_approval_ref` retry claim an approval minted under an
 		// earlier one-shot session.
 		sessionless := transportSessionID == "" && r.Method == http.MethodPost
@@ -544,23 +544,19 @@ func mcpSessionlessCopilotSessionID(r *http.Request, agentID, fallback string) s
 	return mcpDirectSessionPrefix + hex.EncodeToString(sum[:16])
 }
 
-// mcpSessionlessClaims lets a session-less caller claim an approval minted
-// under an earlier session-less POST of its own. Each such POST runs in its
-// own one-shot Edge session, so an `_approval_ref` retry can never match the
-// minting POST's session/execution. The claim is rebound to the approval's
-// one-shot session only when the approval's requester is this caller (same
-// credential and principal); the store still checks agent (EventID), args,
-// policy snapshot, status, expiry and self-approval.
-type mcpSessionlessClaims struct{ store edge.Store }
+// mcpApprovalClaims binds an `_approval_ref` claim to the Edge session,
+// execution and parent event of the approval it names, when that approval was
+// minted for this caller acting as the same agent (mcpApprovalIsCallers). The
+// mint records its own parent event, and the retry usually arrives in another
+// Edge session: a session-less POST runs in a one-shot session. A claim for
+// anyone else's approval keeps the caller's own tuple, which the store refuses
+// (tuple_mismatch); the store still checks args, policy snapshot, status,
+// expiry and self-approval.
+type mcpApprovalClaims struct{ store edge.Store }
 
-func (c mcpSessionlessClaims) ClaimApproval(ctx context.Context, req edge.ApprovalClaimRequest) (*edge.EdgeApproval, bool, error) {
-	if meta, ok := MCPCallMetadataFromContext(ctx); ok && strings.HasPrefix(req.SessionID, mcpDirectSessionPrefix) {
-		requester := strings.TrimSpace(meta.RequesterIdentity)
-		approval, found, err := c.store.GetApproval(ctx, req.TenantID, req.ApprovalRef)
-		if err == nil && found && approval != nil && requester != "" && approval.Requester == requester &&
-			strings.HasPrefix(approval.SessionID, mcpDirectSessionPrefix) {
-			req.SessionID, req.ExecutionID = approval.SessionID, approval.ExecutionID
-		}
+func (c mcpApprovalClaims) ClaimApproval(ctx context.Context, req edge.ApprovalClaimRequest) (*edge.EdgeApproval, bool, error) {
+	if approval, found, err := c.store.GetApproval(ctx, req.TenantID, req.ApprovalRef); err == nil && found && mcpApprovalIsCallers(ctx, approval) {
+		req.SessionID, req.ExecutionID, req.EventID = approval.SessionID, approval.ExecutionID, approval.EventID
 	}
 	return c.store.ClaimApproval(ctx, req)
 }

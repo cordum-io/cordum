@@ -225,12 +225,12 @@ func ProcessApprovalClaim(ctx context.Context, deps ApprovalHoldDeps, params Too
 		ApprovalRef: approvalRef,
 		SessionID:   meta.SessionID,
 		ExecutionID: meta.ExecutionID,
-		// EventID binds the claim to the AgentActionEvent the mint
-		// side recorded. For the policy-gate handoff path the mint
-		// side stamps PreEvent.EventID; for transports without a
-		// pre-event (legacy registry-gate path), AgentID is the
-		// closest available stable identity. The same source MUST be
-		// used on both sides — see ConsumeActionGateDecision.
+		// EventID must name the approval.requested event the mint side
+		// recorded, which only the approval knows: the gateway's claim
+		// store rebinds SessionID, ExecutionID and EventID to the
+		// approval's own when the approval was minted for this caller
+		// and agent. Without that rebinding this placeholder never
+		// matches and the store refuses the claim (tuple_mismatch).
 		EventID:        meta.AgentID,
 		ActionHash:     actionHash,
 		InputHash:      inputHash,
