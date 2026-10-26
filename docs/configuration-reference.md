@@ -484,7 +484,7 @@ rules:
 
   - id: auto-allow-validators
     match:
-      capabilities: ["validate.*"]
+      topics: ["job.validate.*"]   # topics take globs; capabilities match exact names only
     decision: allow
     reason: "Read-only validation is always safe"
 
@@ -508,34 +508,33 @@ output_rules:
 tenants:
   acme-corp:
     mcp:
-      allow: ["github", "slack"]
-      deny: ["*"]
-  default:
-    mcp:
-      allow: ["*"]
-      deny: []
+      allow_servers: ["github", "slack"]   # a non-empty allow list denies every other server
+  default: {}                              # empty lists: no MCP restriction
 ```
 
-### Rules Section (Input Policy)
+### Rules Section (Dispatch Rules)
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `rules[].id` | string | Unique rule identifier |
-| `rules[].match.capabilities` | string[] | Capability patterns to match (supports `*` wildcard) |
-| `rules[].match.risk_tags` | string[] | Risk tag patterns to match |
-| `rules[].match.metadata` | map | Key-value metadata conditions |
-| `rules[].decision` | string | `allow`, `deny`, `require_approval`, `throttle` |
+| `rules[].match.topics` | string[] | Topic globs (`path.Match` syntax, e.g. `job.validate.*`) |
+| `rules[].match.capabilities` | string[] | Exact capability names (case-insensitive, no wildcards) |
+| `rules[].match.risk_tags` | string[] | Matches when the job carries any of these risk tags |
+| `rules[].match.labels` | map | Exact label key/value pairs; all must match |
+| `rules[].decision` | string | `allow`, `deny`, `require_approval`, `throttle`, `allow_with_constraints` |
 | `rules[].reason` | string | Human-readable reason |
-| `rules[].throttle_duration` | duration | Required if decision is `throttle` |
+| `rules[].constraints` | object | Returned with `allow_with_constraints` (see [safetykernel-constraints.md](operations/safetykernel-constraints.md)) |
 
-Rules are evaluated top-to-bottom; first match wins.
+Other `match` keys: `tenants`, `requires`, `pack_ids`, `actor_ids`, `actor_types`, `agent_risk_tiers`, `agent_data_classifications`, `label_allowlist`, `label_threshold`, `secrets_present`, `predicate`, `delegation`, `mcp`. All keys in one `match` must hold for the rule to match.
+
+Rules are evaluated top-to-bottom; first match wins. A job that matches no rule gets `default_decision` (deny when unset). `throttle` has no per-rule duration: the scheduler requeues a throttled job after a fixed 5s delay. Use a `velocity` block (below) for rate-based rules.
 
 ### Velocity Rule Fragments
 
 Velocity rules are regular `rules[]` entries stored as dedicated policy bundle
 fragments at `cfg:system:policy -> bundles -> velocity/{id}`. They do **not**
 change the safety-kernel evaluator; they only add managed rule fragments that
-use the existing `velocity` block on input rules.
+use the existing `velocity` block on `rules[]` entries.
 
 Example fragment:
 
@@ -593,12 +592,19 @@ default_decision: deny
 
 ### Tenants Section
 
-Per-tenant MCP tool access control.
+Per-tenant MCP access control. The Safety Kernel applies it after rule
+evaluation and turns the decision into `deny` when the request's MCP server,
+tool, resource or action is not allowed. Values are exact names
+(case-insensitive, no wildcards). A deny entry always blocks; a non-empty
+allow list blocks every value not in it.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `tenants.*.mcp.allow` | string[] | Allowed MCP tool/resource patterns |
-| `tenants.*.mcp.deny` | string[] | Denied MCP tool/resource patterns |
+| `tenants.*.mcp.allow_servers` / `deny_servers` | string[] | MCP server names |
+| `tenants.*.mcp.allow_tools` / `deny_tools` | string[] | MCP tool names |
+| `tenants.*.mcp.allow_resources` / `deny_resources` | string[] | MCP resource names |
+| `tenants.*.mcp.allow_actions` / `deny_actions` | string[] | MCP action names |
+| `tenants.*.allow_topics` / `deny_topics` | string[] | Legacy topic globs; used only when `rules` is empty |
 
 ### Schema
 
