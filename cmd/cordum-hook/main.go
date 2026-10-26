@@ -87,7 +87,9 @@ func dispatchClaude(ctx context.Context, opts cliOptions) int {
 // the same hookSpecificOutput.permissionDecision / exit-code response), so the
 // governance events reuse claude.Run unchanged — only the product attribution
 // differs (CORDUM_AGENT_PRODUCT=github-copilot, set below if not already in env
-// so audit/sessions attribute the event to Copilot). Lifecycle-only events
+// so audit/sessions attribute the event to Copilot). Copilot's exit-code and
+// timeout handling is NOT Claude's, and it has no onFailure: see
+// docs/edge/cordum-hook.md#github-copilot. Lifecycle-only events
 // (SessionStart/Stop/PreCompact/Subagent*) are not gateable actions; they are
 // recognized as no-ops (exit 0) so fail-closed never blocks a session from
 // starting or ending.

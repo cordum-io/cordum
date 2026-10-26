@@ -7,6 +7,11 @@
 // copilot <event>`, which reuses the existing Edge runner + agentd + safety
 // kernel path. The produced JSON is written to a Copilot hooks config location
 // (e.g. .github/hooks/cordum.json or ~/.copilot/hooks/cordum.json).
+//
+// Unlike Claude Code, Copilot has no "onFailure": "block" for the hook process
+// itself: a hook timeout is always fail-open, and the Local harness also lets
+// exits other than 2 through. FailClosed covers only failures cordum-hook
+// handles itself. See docs/edge/cordum-hook.md#github-copilot.
 package copilot
 
 import (
@@ -25,6 +30,8 @@ type HookSettingsOptions struct {
 	// PolicyMode is observe | enforce | enterprise-strict. Default "enforce".
 	PolicyMode string
 	// FailClosed denies the action when agentd errors/times out (enforce posture).
+	// Copilot has no onFailure equivalent, so a hook that itself times out or
+	// crashes is still handled by Copilot's own (mostly fail-open) rules.
 	FailClosed bool
 	// TimeoutMS bounds each hook; kept under Copilot's per-hook budget. Default 4500.
 	TimeoutMS int
