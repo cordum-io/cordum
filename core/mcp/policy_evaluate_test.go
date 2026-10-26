@@ -1018,3 +1018,43 @@ func (f *capturingApprovalHandoff) ConsumeActionGateDecision(_ context.Context, 
 	f.lastCtx = ctxData
 	return f.ref, f.err
 }
+
+// TestInvokeToolWithPolicy_ConsumedClaimSatisfiesRequireHuman: a consumed
+// `_approval_ref` claim for exactly this call is the approval REQUIRE_HUMAN
+// asks for, so the call runs instead of minting another approval. A claim
+// for other args, or none, still hands off to the approval store.
+func TestInvokeToolWithPolicy_ConsumedClaimSatisfiesRequireHuman(t *testing.T) {
+	t.Parallel()
+	args := json.RawMessage(`{"path":"/var/data/x.db"}`)
+	for _, tc := range []struct {
+		name        string
+		claimedArgs json.RawMessage
+		wantRun     bool
+	}{
+		{"claim for this call", json.RawMessage(`{ "path": "/var/data/x.db" }`), true},
+		{"claim for other args", json.RawMessage(`{"path":"/etc/passwd"}`), false},
+		{"no claim", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pipeline := &fakePolicyDispatcher{
+				decision: PolicyDecision{Decision: pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN, GateID: "actiongate.mcp"},
+				fired:    true,
+			}
+			upstream := &fakeUpstreamToolCaller{result: &ToolCallResult{Content: []ContentItem{{Type: "text", Text: "ran"}}}}
+			handoff := &capturingApprovalHandoff{ref: "edge_appr_new"}
+			deps := newToolCallDepsFixture(pipeline, &fakeEventEmitter{}, &fakeArtifactStore{})
+			deps.Upstream = upstream
+			deps.ApprovalHandoff = handoff
+			ctx := newAuthedToolCallCtx()
+			if tc.claimedArgs != nil {
+				ctx = withClaimedCall(ctx, "fs.delete", tc.claimedArgs)
+			}
+			if _, err := InvokeToolWithPolicy(ctx, deps, ToolCallParams{Name: "fs.delete", Arguments: args}, "cordum.builtin"); err != nil {
+				t.Fatalf("InvokeToolWithPolicy: %v", err)
+			}
+			if ran := upstream.calls == 1 && handoff.calls == 0; ran != tc.wantRun {
+				t.Fatalf("upstream calls = %d, handoffs = %d; want ran=%t", upstream.calls, handoff.calls, tc.wantRun)
+			}
+		})
+	}
+}

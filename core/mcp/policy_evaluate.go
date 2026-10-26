@@ -871,7 +871,11 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 		return nil, err
 	}
 	dec := evalResult.Decision
+	// A consumed `_approval_ref` claim for exactly this call is the human
+	// approval REQUIRE_HUMAN asks for; DENY and THROTTLE still win.
+	claimed := dec.requiresHuman() && claimCoversCall(ctx, params.Name, params.Arguments)
 	switch {
+	case claimed:
 	case dec.requiresHuman():
 		// Require deps.ApprovalHandoff: without it we cannot mint an
 		// approval reference, so returning "approval pending: " with an

@@ -194,7 +194,11 @@ handler sees the args, and the approval is consumed atomically through
 as the consume-time `PolicySnapshot`. Lifecycle conflicts (rejected /
 expired / consumed / args_mismatch / policy_mismatch / self_approval /
 cross_tenant / not_found) surface as JSON-RPC `-32096` with
-`error.data.kind` carrying the typed conflict family.
+`error.data.kind` carrying the typed conflict family. A consumed claim
+is that call's approval: the registry's `RequiresApproval` gate and a
+policy-gate `REQUIRE_HUMAN` let the call run instead of asking again
+(a `DENY` still wins). The claim is single-use, so a second retry with
+the same `_approval_ref` is refused.
 
 Both mint paths (the registry's `RequiresApproval` gate and the
 policy gate's `REQUIRE_HUMAN` handoff) first record an

@@ -181,3 +181,25 @@ func TestMCPApprovalMintRecordsParentEvent(t *testing.T) {
 		t.Fatalf("approval %s not consumed by the same caller's retry", ref)
 	}
 }
+
+// TestMCPApprovalClaimRunsCallOnce: once a human approves, the caller's
+// `_approval_ref` retry runs the RequiresApproval tool exactly once. The
+// registry gate used to hold the retry again and mint a new approval. The
+// claim is single-use: a second retry with the same ref is refused.
+func TestMCPApprovalClaimRunsCallOnce(t *testing.T) {
+	h := newMCPApprovalE2E(t)
+	ref := h.call(t, "key-alice", "agent-a", map[string]any{"note": "hi"}).approvalRef(t)
+	h.approve(t, ref)
+	retry := map[string]any{"note": "hi", "_approval_ref": ref}
+	got := h.call(t, "key-alice", "agent-a", retry)
+	if got.Error != nil || got.Result == nil || len(got.Result.Content) == 0 || got.Result.Content[0].Text != "written" {
+		t.Fatalf("approved retry = %+v (error %s), want the tool's result", got.Result, got.errorText())
+	}
+	again := h.call(t, "key-alice", "agent-a", retry)
+	if again.Error == nil || again.Error.Code != -32096 {
+		t.Fatalf("second retry with the same ref = %+v (error %s), want -32096", again.Result, again.errorText())
+	}
+	if n := h.calls.Load(); n != 1 {
+		t.Fatalf("tool ran %d times, want exactly once", n)
+	}
+}

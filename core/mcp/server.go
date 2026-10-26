@@ -500,6 +500,7 @@ func (s *MCPServer) handleToolsCall(ctx context.Context, params json.RawMessage)
 	// error.data.kind; on a successful consume we replace req.Arguments
 	// with the `_approval_ref`-stripped form so the upstream tool handler
 	// and the policy gate both see the originally-authorized payload.
+	claimRef := ""
 	if s.approvalHoldDeps != nil {
 		outcome, err := ProcessApprovalClaim(ctx, *s.approvalHoldDeps, req)
 		if err != nil {
@@ -518,8 +519,14 @@ func (s *MCPServer) handleToolsCall(ctx context.Context, params json.RawMessage)
 				"reason":       outcome.ConflictErr.Reason,
 			})
 		}
-		if outcome.Consumed && len(outcome.StrippedArgs) > 0 {
-			req.Arguments = outcome.StrippedArgs
+		if outcome.Consumed {
+			if len(outcome.StrippedArgs) > 0 {
+				req.Arguments = outcome.StrippedArgs
+			}
+			// The consumed claim is this call's approval: the gates must
+			// not hold it again (claimCoversCall).
+			ctx = withClaimedCall(ctx, req.Name, req.Arguments)
+			claimRef = outcome.ClaimRef
 		}
 	}
 	// Bracket every terminal tools/call with the invocation auditor so
@@ -531,6 +538,9 @@ func (s *MCPServer) handleToolsCall(ctx context.Context, params json.RawMessage)
 	if s.auditor != nil {
 		agentID, tenantID := identityForAudit(ctx)
 		ctx, handle = s.auditor.StartInbound(ctx, agentID, tenantID, req.Name, req.Arguments)
+		if claimRef != "" {
+			handle.MarkApprovalConsumed(claimRef)
+		}
 	}
 	result, err := s.invokeTool(ctx, req)
 	if denied, ok := policyDeniedResult(ctx, err); ok {

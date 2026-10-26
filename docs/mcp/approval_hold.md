@@ -51,6 +51,8 @@ scopes see [`scope-preapproval.md`](scope-preapproval.md).
                               approval audit evidence
                                        │
                               invokeTool with `_approval_ref`-stripped args
+                              (the consumed claim satisfies RequiresApproval
+                              and REQUIRE_HUMAN for this call only)
 ```
 
 The mint and consume paths each compute a `(ActionHash, InputHash)`

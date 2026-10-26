@@ -331,7 +331,10 @@ func (r *ToolRegistry) Call(ctx context.Context, name string, params json.RawMes
 	}
 
 	// Invariant floor, then approval gating. The floor sees every call with
-	// the same tool view (runtime approval scope applied) that Check gets.
+	// the same tool view (runtime approval scope applied) that Check gets,
+	// including calls an approval claim covers. A consumed `_approval_ref`
+	// claim for exactly this call is its approval; asking again would mint
+	// a new one.
 	effectiveGated, effectiveScope := r.effectiveApprovalForTool(entry.tool)
 	callTool := entry.tool
 	if effectiveScope != "" {
@@ -343,7 +346,7 @@ func (r *ToolRegistry) Call(ctx context.Context, name string, params json.RawMes
 			return nil, err
 		}
 	}
-	if effectiveGated {
+	if effectiveGated && !claimCoversCall(ctx, entry.tool.Name, params) {
 		gatedTool := callTool
 		gatedTool.RequiresApproval = true
 		if gate != nil {

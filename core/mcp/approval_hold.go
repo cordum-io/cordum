@@ -276,6 +276,32 @@ func ProcessApprovalClaim(ctx context.Context, deps ApprovalHoldDeps, params Too
 	}, nil
 }
 
+// claimedCallKey marks a tools/call whose `_approval_ref` claim was consumed.
+type claimedCallKey struct{}
+
+// claimedCall is a consumed claim. The Edge store matched it to this tool and
+// these args, so it stands for the human approval the registry's
+// RequiresApproval gate and the policy gate's REQUIRE_HUMAN would ask for. It
+// covers this one call only: the claim is single-use.
+type claimedCall struct{ tool, inputHash string }
+
+// withClaimedCall records on ctx that the claim for tool with args was consumed.
+func withClaimedCall(ctx context.Context, tool string, args json.RawMessage) context.Context {
+	_, inputHash := BuildMCPApprovalBinding("", "", ToolCallParams{Name: tool, Arguments: args}, "")
+	return context.WithValue(ctx, claimedCallKey{}, claimedCall{tool: tool, inputHash: inputHash})
+}
+
+// claimCoversCall reports whether ctx carries a consumed claim for tool with
+// these args.
+func claimCoversCall(ctx context.Context, tool string, args json.RawMessage) bool {
+	claim, ok := ctx.Value(claimedCallKey{}).(claimedCall)
+	if !ok || claim.tool != tool {
+		return false
+	}
+	_, inputHash := BuildMCPApprovalBinding("", "", ToolCallParams{Name: tool, Arguments: args}, "")
+	return inputHash == claim.inputHash
+}
+
 func mcpApprovalClaimConflict(conflict *edge.ApprovalConflictError) *edge.ApprovalConflictError {
 	if conflict == nil || !isStoreTerminalApprovalConflict(conflict) {
 		return conflict
