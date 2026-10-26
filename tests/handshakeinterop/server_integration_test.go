@@ -69,7 +69,7 @@ func registerInteropServerCleanup(registrar cleanupRegistrar, server *interopSer
 func newInteropServer(t *testing.T, redisURL string) *interopServer {
 	t.Helper()
 	info, ok := debug.ReadBuildInfo()
-	if err := checkEmbeddedNATSVersion(info, ok, gnats.VERSION); err != nil {
+	if err := checkEmbeddedNATSVersion(info, ok, gnats.VERSION, goListNATSModule); err != nil {
 		t.Fatalf("embedded NATS version fence: %v", err)
 	}
 	rdb := connectRealRedis(t, redisURL)

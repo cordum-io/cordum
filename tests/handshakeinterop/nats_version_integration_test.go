@@ -3,13 +3,19 @@
 package handshakeinterop
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"regexp"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	gnats "github.com/nats-io/nats-server/v2/server"
 )
@@ -18,6 +24,8 @@ const natsServerModulePath = "github.com/nats-io/nats-server/v2"
 
 var (
 	errNATSBuildInfoMissing = errors.New("Go build information is unavailable")
+	errNATSDepsMissing      = errors.New("Go build information lists no dependencies")
+	errNATSModuleResolve    = errors.New("go list could not resolve the NATS server module")
 	errNATSModuleMissing    = errors.New("NATS server module is not in the build information")
 	errNATSModuleDuplicated = errors.New("NATS server module appears more than once in the build information")
 	errNATSModuleReplaced   = errors.New("NATS server module is replaced by a different module")
@@ -28,29 +36,67 @@ var (
 	// x/mod is deliberately not a dependency of this module.
 	natsPseudoVersion = regexp.MustCompile(`^v[0-9]+\.(0\.0-|[0-9]+\.[0-9]+-([^+]*\.)?0\.)[0-9]{14}-[A-Za-z0-9]+(\+[0-9A-Za-z.-]+)?$`)
 	natsCleanVersion  = regexp.MustCompile(`^v(2\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?)$`)
+	goReleaseVersion  = regexp.MustCompile(`^go1\.(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*)|rc[0-9]+|beta[0-9]+)?$`)
 )
 
 // builtNATSServerVersion returns the NATS server version (without the leading
 // "v") that the Go toolchain linked into this binary. It fails closed unless
 // exactly one clean release of the module, or a same-module versioned replace,
-// is recorded.
-func builtNATSServerVersion(info *debug.BuildInfo, ok bool) (string, error) {
+// is recorded. Test binaries built by Go releases before 1.27 embed no
+// dependency list; only for those does goList resolve the module instead.
+func builtNATSServerVersion(info *debug.BuildInfo, ok bool, goList func() (*debug.Module, error)) (string, error) {
 	if !ok || info == nil {
 		return "", errNATSBuildInfoMissing
 	}
 	var dep *debug.Module
-	for _, candidate := range info.Deps {
+	var err error
+	if len(info.Deps) > 0 {
+		dep, err = natsModuleFromDeps(info.Deps)
+	} else {
+		dep, err = natsModuleFromGoList(info.GoVersion, goList)
+	}
+	if err != nil {
+		return "", err
+	}
+	return natsModuleVersion(dep)
+}
+
+func natsModuleFromDeps(deps []*debug.Module) (*debug.Module, error) {
+	var dep *debug.Module
+	for _, candidate := range deps {
 		if candidate == nil || candidate.Path != natsServerModulePath {
 			continue
 		}
 		if dep != nil {
-			return "", fmt.Errorf("%w: %s", errNATSModuleDuplicated, natsServerModulePath)
+			return nil, fmt.Errorf("%w: %s", errNATSModuleDuplicated, natsServerModulePath)
 		}
 		dep = candidate
 	}
 	if dep == nil {
-		return "", fmt.Errorf("%w: %s", errNATSModuleMissing, natsServerModulePath)
+		return nil, fmt.Errorf("%w: %s", errNATSModuleMissing, natsServerModulePath)
 	}
+	return dep, nil
+}
+
+func natsModuleFromGoList(goVersion string, goList func() (*debug.Module, error)) (*debug.Module, error) {
+	if !goVersionOmitsTestDeps(goVersion) {
+		return nil, fmt.Errorf("%w: GoVersion %q is not a Go release before 1.27", errNATSDepsMissing, goVersion)
+	}
+	dep, err := goList()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errNATSModuleResolve, err)
+	}
+	if dep == nil {
+		return nil, fmt.Errorf("%w: go list returned no module", errNATSModuleResolve)
+	}
+	if dep.Path != natsServerModulePath {
+		return nil, fmt.Errorf("%w: go list returned %q, want %s", errNATSModuleMissing, dep.Path, natsServerModulePath)
+	}
+	return dep, nil
+}
+
+// natsModuleVersion validates the selected module, whichever source found it.
+func natsModuleVersion(dep *debug.Module) (string, error) {
 	version := dep.Version
 	if dep.Replace != nil {
 		if dep.Replace.Path != natsServerModulePath {
@@ -70,10 +116,53 @@ func builtNATSServerVersion(info *debug.BuildInfo, ok bool) (string, error) {
 	return match[1], nil
 }
 
+// goVersionOmitsTestDeps reports whether goVersion names a Go release before
+// 1.27, whose test binaries record no dependencies. Anything unparsable,
+// including devel toolchains, reports false.
+func goVersionOmitsTestDeps(goVersion string) bool {
+	match := goReleaseVersion.FindStringSubmatch(goVersion)
+	if match == nil {
+		return false
+	}
+	minor, err := strconv.Atoi(match[1])
+	return err == nil && minor < 27
+}
+
+// goListNATSModule asks the go command which NATS server module it selects.
+// go test runs this binary in the package directory with GOROOT/bin first on
+// PATH and the build's environment (GOFLAGS, GOWORK), so the answer matches
+// the build that produced it.
+func goListNATSModule() (*debug.Module, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	var stdout, stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, "go", "list", "-m", "-json", natsServerModulePath)
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("go list -m -json %s: %w: %s", natsServerModulePath, err, strings.TrimSpace(stderr.String()))
+	}
+	var listed struct {
+		Path, Version string
+		Replace       *struct{ Path, Version string }
+	}
+	dec := json.NewDecoder(&stdout)
+	if err := dec.Decode(&listed); err != nil {
+		return nil, fmt.Errorf("decode go list output: %w", err)
+	}
+	if dec.More() {
+		return nil, errors.New("go list returned more than one module")
+	}
+	dep := &debug.Module{Path: listed.Path, Version: listed.Version}
+	if listed.Replace != nil {
+		dep.Replace = &debug.Module{Path: listed.Replace.Path, Version: listed.Replace.Version}
+	}
+	return dep, nil
+}
+
 // checkEmbeddedNATSVersion verifies the embedded server's runtime version
 // (gnats.VERSION) equals the module version built into the test binary.
-func checkEmbeddedNATSVersion(info *debug.BuildInfo, ok bool, runtime string) error {
-	built, err := builtNATSServerVersion(info, ok)
+func checkEmbeddedNATSVersion(info *debug.BuildInfo, ok bool, runtime string, goList func() (*debug.Module, error)) error {
+	built, err := builtNATSServerVersion(info, ok, goList)
 	if err != nil {
 		return err
 	}
