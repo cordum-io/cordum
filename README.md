@@ -556,7 +556,7 @@ proof keys and control-plane signing authorities are provisioned. Follow the
 
 ## Integration Packs
 
-Extend Cordum with [integration packs](https://github.com/cordum-io/cordum-packs) for Slack, GitHub, AWS, Jira, Terraform, Datadog, PagerDuty, and more. Each pack is a CAP-native worker with policy-gated workflows.
+Extend Cordum with [integration packs](https://github.com/cordum-io/cordum-packs) for Slack, GitHub, AWS, Jira, Terraform, Datadog, PagerDuty, and more. Each pack is an installable overlay of workflows, schemas and config/policy fragments ([docs/pack.md](docs/pack.md)); Core does not deploy pack workers, which run as separate deployments.
 
 | Pack | Category | Description |
 |------|----------|-------------|
@@ -633,7 +633,7 @@ authoritative terms.
 
 | Component | Repository | License |
 |-----------|------------|---------|
-| Control plane services, dashboard, Cordum Edge, and Cordum's own SDKs (the Go `sdk/` module and `cordum-sdk` on PyPI) | [cordum-io/cordum](LICENSE) | BUSL-1.1 |
+| Control plane services, dashboard, Cordum Edge, and Cordum's own SDKs (the Go `sdk/` module, `cordum-sdk` on PyPI, and the TypeScript `@cordum/sdk` package in `sdk/typescript/`) | [cordum-io/cordum](LICENSE) | BUSL-1.1 |
 | Integration packs | [cordum-io/cordum-packs](https://github.com/cordum-io/cordum-packs) | BUSL-1.1, with the same Additional Use Grant. A pack directory with its own LICENSE is governed by that file; for example, `packs/incident-enricher` is Apache-2.0. |
 | CAP protocol and its published SDKs (Go module `github.com/cordum-io/cap/v2`, `cap-sdk-python` and `cordum-guard` on PyPI, `cap-sdk-node` on npm) | [cordum-io/cap](https://github.com/cordum-io/cap) | Apache-2.0 |
 
@@ -669,7 +669,7 @@ limits, not BUSL-1.1 terms; see [Enterprise](#enterprise).
 Cordum core and CAP release independently, each with its own tags
 ([VERSIONING.md](VERSIONING.md)):
 
-- **Cordum core (`v1.x` tags).** A `v*` tag builds and signs the container
+- **Cordum core (`v<major>.<minor>.<patch>` tags, currently 1.x).** A `v*` tag builds and signs the container
   images for api-gateway, scheduler, safety-kernel, workflow-engine,
   context-engine, mcp, dashboard and the demo quickstart worker, and publishes
   the Helm chart ([docker.yml](.github/workflows/docker.yml)). It also publishes
