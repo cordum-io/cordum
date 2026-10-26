@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/cordum/cordum/core/edge/claude"
+	"github.com/cordum/cordum/core/edge/copilot"
 )
 
 var edgeDemoPolicyRequiredRules = []string{
@@ -305,11 +306,11 @@ func edgeCheckManagedSettings(_ context.Context, env *edgeDoctorEnv) checkResult
 	}
 }
 
-// edgeCheckCopilotHooks reports what fail-closed modes cannot cover for GitHub
-// Copilot agent hooks. Copilot has no equivalent of Claude Code's
-// "onFailure": "block", so failures of the hook process itself are handled by
-// Copilot's fixed rules, and a timed-out hook always lets the tool call
-// through. Runs only when --copilot-hooks-path names the hooks file.
+// edgeCheckCopilotHooks checks the GitHub Copilot hooks file named by
+// --copilot-hooks-path. It warns only on problems a regenerated file fixes
+// (see copilot.VerifyHookSettings). The Copilot harness limits that no file or
+// setting fixes are reported in the ok detail instead, in every policy mode,
+// so they do not hold edge doctor at exit 2 on every run.
 func edgeCheckCopilotHooks(_ context.Context, env *edgeDoctorEnv) checkResult {
 	path := strings.TrimSpace(env.copilotHooksPath)
 	if path == "" {
@@ -323,38 +324,19 @@ func edgeCheckCopilotHooks(_ context.Context, env *edgeDoctorEnv) checkResult {
 			Fix:    "pass the hooks file Copilot loads, for example .github/hooks/cordum.json",
 		}
 	}
-	if !copilotHooksRunCordumHook(data) {
-		return checkResult{State: stateWarn, Detail: "no cordum-hook copilot command hook in " + path, Fix: "regenerate the Copilot hooks file"}
-	}
-	if edgePolicyModeOrDefault(env.policyMode) == "observe" {
-		return checkResult{State: stateOK, Detail: "Copilot hooks run cordum-hook; observe fails open by design"}
-	}
-	return checkResult{
-		State: stateWarn,
-		Detail: "Copilot has no onFailure setting, so failures of cordum-hook itself fail open: a timed-out hook lets the tool call through, " +
-			"the older Local harness also lets a hook that cannot start or exits non-zero (other than 2) through, and the Copilot harness " +
-			"drops userPromptSubmitted hook output, so prompts are recorded but never blocked",
-		Fix: "add a mandatory layer such as the LLM proxy; see docs/edge/cordum-hook.md#github-copilot",
-	}
-}
-
-func copilotHooksRunCordumHook(data []byte) bool {
-	var doc struct {
-		Hooks map[string][]struct {
-			Command string `json:"command"`
-		} `json:"hooks"`
-	}
-	if json.Unmarshal(data, &doc) != nil {
-		return false
-	}
-	for _, entries := range doc.Hooks {
-		for _, entry := range entries {
-			if strings.Contains(entry.Command, " copilot ") {
-				return true
-			}
+	if err := copilot.VerifyHookSettings(data); err != nil {
+		return checkResult{
+			State:  stateWarn,
+			Detail: path + ": " + edgeDoctorRedact(err.Error(), env.base.apiKey),
+			Fix:    "regenerate the Copilot hooks file; see docs/edge/cordum-hook.md#github-copilot",
 		}
 	}
-	return false
+	return checkResult{
+		State: stateOK,
+		Detail: "Copilot hooks run cordum-hook copilot for prompts and tool calls. Harness limits that no setting fixes: " +
+			"a timed-out hook lets the action through, the Copilot harness records prompts but never blocks them, " +
+			"and other events log a failed hook and continue; see docs/edge/cordum-hook.md#github-copilot",
+	}
 }
 
 // summariseManagedSettingsDrifts emits a deterministic, low-cardinality

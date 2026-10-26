@@ -16,6 +16,7 @@ package copilot
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -118,6 +119,62 @@ func GenerateHookSettings(opts HookSettingsOptions) ([]byte, error) {
 		}}
 	}
 	return json.MarshalIndent(doc, "", "  ")
+}
+
+// VerifyHookSettings returns the first problem that stops a Copilot hooks file
+// from sending every governance event through cordum-hook: unparsable JSON, a
+// version other than 1, a governance event with no hook that runs
+// `cordum-hook copilot <event>`, or a timeout below claude.ClaudeHookDeadline,
+// which lets Copilot time the hook out (fail-open) before it decides. These
+// are the problems a regenerated file fixes; the harness limits it cannot fix
+// are documented in docs/edge/cordum-hook.md#github-copilot.
+func VerifyHookSettings(data []byte) error {
+	var doc struct {
+		Version any                         `json:"version"`
+		Hooks   map[string][]map[string]any `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return fmt.Errorf("cannot parse hooks file: %w", err)
+	}
+	if v, _ := doc.Version.(float64); v != 1 {
+		return errors.New(`"version" is not 1, so the Copilot harness rejects the whole file`)
+	}
+	floor := claude.ClaudeHookDeadline.Seconds()
+	for _, e := range copilotGovernanceEvents {
+		found := false
+		for _, entry := range doc.Hooks[e.event] {
+			if !runsCordumHook(entry, e.sub) {
+				continue
+			}
+			// Copilot reads timeoutSec first and Local reads timeout first,
+			// so each one present is the timeout in one of the harnesses.
+			for _, key := range []string{"timeoutSec", "timeout"} {
+				if t, ok := entry[key].(float64); ok && t < floor {
+					return fmt.Errorf("%s %s is %gs, below cordum-hook's %gs deadline, so Copilot can time the hook out and let the action through", e.event, key, t, floor)
+				}
+			}
+			found = true
+		}
+		if !found {
+			return fmt.Errorf("%s has no hook that runs cordum-hook copilot %s", e.event, e.sub)
+		}
+	}
+	return nil
+}
+
+// runsCordumHook reports whether a hook entry runs `cordum-hook copilot <sub>`.
+// Each harness picks one command field per platform, so every one present must.
+func runsCordumHook(entry map[string]any, sub string) bool {
+	found := false
+	for _, key := range []string{"command", "bash", "powershell", "windows", "linux", "osx"} {
+		if cmd, ok := entry[key].(string); ok {
+			if !strings.HasSuffix(strings.TrimSpace(cmd), " copilot "+sub) {
+				return false
+			}
+			found = true
+		}
+	}
+	return found
 }
 
 // timeoutSeconds converts the caller's millisecond hook budget into the SECONDS

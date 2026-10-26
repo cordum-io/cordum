@@ -84,10 +84,13 @@ The doctor reports `ok`, `warn`, `fail`, or `skip` for each check:
   in [managed-settings-deploy.md § 6](managed-settings-deploy.md#6-verification-reference).
   Empty path → `skip` so non-enterprise hosts do not see a spurious failure.
 - Copilot hooks (`copilot_hooks`): when `--copilot-hooks-path` (or
-  `CORDUM_EDGE_COPILOT_HOOKS_PATH`) is set, confirms the file runs
-  `cordum-hook copilot` and reports `warn` in every mode except `observe`:
-  Copilot has no `onFailure` setting, so a timed-out hook lets the tool call
-  through, and the Copilot harness never blocks prompts. See
+  `CORDUM_EDGE_COPILOT_HOOKS_PATH`) is set, reports `warn` only when a
+  regenerated file would fix the problem: the file is missing or not JSON,
+  `version` is not `1`, an event has no `cordum-hook copilot <event>`
+  command, or a `timeout` or `timeoutSec` is under `5`. Otherwise `ok` in
+  every policy mode, with the Copilot harness limits in the detail (a
+  timed-out hook lets the action through, prompts are never blocked in the
+  Copilot harness, other events log a failed hook and continue). See
   [cordum-hook.md § GitHub Copilot](cordum-hook.md#github-copilot). Empty
   path → `skip`.
 

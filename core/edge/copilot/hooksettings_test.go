@@ -145,3 +145,33 @@ func TestTimeoutSecondsNeverBelowHookDeadline(t *testing.T) {
 		}
 	}
 }
+
+func TestVerifyHookSettings(t *testing.T) {
+	generated, err := GenerateHookSettings(HookSettingsOptions{HookCommand: "/Applications/Cordum Edge/cordum-hook", FailClosed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := string(generated)
+	cases := []struct{ name, file, wantErr string }{
+		{"generated", g, ""},
+		{"sibling hook", strings.Replace(g, `"PreToolUse": [`, `"PreToolUse": [{"type": "command", "command": "./lint.sh"},`, 1), ""},
+		{"not JSON", "{", "cannot parse"},
+		{"no version", strings.Replace(g, `"version": 1,`, "", 1), `"version" is not 1`},
+		{"version 2", strings.Replace(g, `"version": 1`, `"version": 2`, 1), `"version" is not 1`},
+		// camelCase selects Copilot's camelCase payload, which cordum-hook cannot read.
+		{"camelCase event", strings.Replace(g, `"PreToolUse"`, `"preToolUse"`, 1), "PreToolUse has no hook"},
+		{"wrong subcommand", strings.Replace(g, "copilot pre-tool-use", "copilot post-tool-use", 1), "PreToolUse has no hook"},
+		{"platform override", strings.ReplaceAll(g, `"type": "command",`, `"type": "command", "powershell": "echo hi",`), "has no hook"},
+		{"short timeout", strings.ReplaceAll(g, `"timeout": 5`, `"timeout": 2`), "timeout is 2s"},
+		{"short timeoutSec", strings.ReplaceAll(g, `"timeout": 5`, `"timeout": 5, "timeoutSec": 3`), "timeoutSec is 3s"},
+	}
+	for _, tc := range cases {
+		if tc.name != "generated" && tc.name != "not JSON" && tc.file == g {
+			t.Fatalf("%s: replacement did not apply", tc.name)
+		}
+		err := VerifyHookSettings([]byte(tc.file))
+		if (tc.wantErr == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), tc.wantErr)) {
+			t.Errorf("%s: err = %v, want %q", tc.name, err, tc.wantErr)
+		}
+	}
+}

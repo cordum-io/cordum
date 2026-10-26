@@ -1,7 +1,7 @@
 # LLM-proxy governance — every chat turn redacted + audited
 
 > Total Copilot governance, **Phase 2**. Phase 1 ([Copilot agent
-> hooks](cordum-hook.md#github-copilot)) governs every chat + tool action cooperatively. This phase adds the
+> hooks](cordum-hook.md#github-copilot)) records every chat and governs tool actions cooperatively, within the limits listed there. This phase adds the
 > **mandatory network-layer backstop**: an enterprise LLM proxy intercepts every
 > model request/response and routes it through Cordum for redaction + audit, so
 > secrets cannot reach a provider and every chat turn lands in the Edge audit

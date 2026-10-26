@@ -99,8 +99,9 @@ func TestEdgeCheckClaudeCodeVersion(t *testing.T) {
 	}
 }
 
-// Copilot has no onFailure equivalent, so the doctor must say that Cordum's
-// fail-closed modes do not cover failures of the Copilot hook process itself.
+// The copilot_hooks check warns only on what a regenerated file fixes. The
+// harness limits no file fixes are ok detail in every policy mode, so they do
+// not hold edge doctor at exit 2.
 func TestEdgeCheckCopilotHooks(t *testing.T) {
 	dir := t.TempDir()
 	generated, err := copilot.GenerateHookSettings(copilot.HookSettingsOptions{HookCommand: "cordum-hook", PolicyMode: "enforce", FailClosed: true})
@@ -109,8 +110,14 @@ func TestEdgeCheckCopilotHooks(t *testing.T) {
 	}
 	hooksFile := filepath.Join(dir, "cordum.json")
 	otherFile := filepath.Join(dir, "other.json")
-	for path, data := range map[string][]byte{hooksFile: generated, otherFile: []byte(`{"hooks":{"PreToolUse":[{"type":"command","command":"./lint.sh"}]}}`)} {
-		if err := os.WriteFile(path, data, 0o600); err != nil {
+	oldFile := filepath.Join(dir, "old.json")
+	for path, data := range map[string]string{
+		hooksFile: string(generated),
+		otherFile: `{"version":1,"hooks":{"PreToolUse":[{"type":"command","command":"./lint.sh"}]}}`,
+		// Files generated before the version field was added.
+		oldFile: strings.Replace(string(generated), `"version": 1,`, "", 1),
+	} {
+		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -121,10 +128,11 @@ func TestEdgeCheckCopilotHooks(t *testing.T) {
 	}{
 		{"not configured", "", "enforce", stateSkip, "copilot-hooks-path not configured"},
 		{"missing file", filepath.Join(dir, "missing.json"), "enforce", stateWarn, "read Copilot hooks file failed"},
-		{"no cordum hook", otherFile, "enforce", stateWarn, "no cordum-hook copilot command hook"},
-		{"observe", hooksFile, "observe", stateOK, "observe fails open by design"},
-		{"enforce", hooksFile, "enforce", stateWarn, "Copilot has no onFailure setting"},
-		{"enterprise-strict", hooksFile, "enterprise-strict", stateWarn, "a timed-out hook lets the tool call through"},
+		{"no cordum hook", otherFile, "enforce", stateWarn, "has no hook that runs cordum-hook copilot"},
+		{"no version", oldFile, "enforce", stateWarn, `"version" is not 1`},
+		{"observe", hooksFile, "observe", stateOK, "a timed-out hook lets the action through"},
+		{"enforce", hooksFile, "enforce", stateOK, "never blocks them"},
+		{"enterprise-strict", hooksFile, "enterprise-strict", stateOK, "other events log a failed hook"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -137,7 +145,7 @@ func TestEdgeCheckCopilotHooks(t *testing.T) {
 	}
 }
 
-func TestEdgeDoctorCopilotHooksFlagWarns(t *testing.T) {
+func TestEdgeDoctorCopilotHooksFlagPassesGeneratedFile(t *testing.T) {
 	fx := newEdgeDoctorFixture(t)
 	generated, err := copilot.GenerateHookSettings(copilot.HookSettingsOptions{PolicyMode: "enforce", FailClosed: true})
 	if err != nil {
@@ -148,10 +156,10 @@ func TestEdgeDoctorCopilotHooksFlagWarns(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, stdout, _ := runEdgeDoctorForTest(t, fx.args("--json", "--copilot-hooks-path", path)...)
-	if code != 2 {
+	if code != 0 {
 		t.Fatalf("exit=%d stdout=%s", code, stdout)
 	}
-	assertEdgeDoctorCheck(t, decodeEdgeDoctorJSON(t, stdout), "copilot_hooks", stateWarn)
+	assertEdgeDoctorCheck(t, decodeEdgeDoctorJSON(t, stdout), "copilot_hooks", stateOK)
 }
 
 func TestEdgeDoctorEnterpriseStrictFailsOnOldClaudeCode(t *testing.T) {
@@ -216,7 +224,8 @@ func newEdgeDoctorFixture(t *testing.T) edgeDoctorFixture {
 	apiKey := "edge-doctor-secret-token"
 	// --claude-path is this test binary; TestMain answers its --version probe.
 	t.Setenv("CORDUM_TEST_CLAUDE_VERSION", claude.MinHookOnFailureVersion+" (Claude Code)")
-	// An inherited value would turn on the copilot_hooks check (warn, exit 2).
+	// An inherited value would turn on the copilot_hooks check, which warns
+	// (exit 2) when the file it names is missing or out of date.
 	t.Setenv("CORDUM_EDGE_COPILOT_HOOKS_PATH", "")
 	agentdURL := newEdgeDoctorAgentdURL(t)
 	settings := writeEdgeDoctorSettings(t, agentdURL)
