@@ -1006,7 +1006,8 @@ RBAC roles are stored in Redis (key prefix `rbac:role:`). Default roles (admin, 
 | `JOB_META_TTL_SECONDS` | — | Job metadata TTL in seconds (takes precedence) |
 | `WORKER_SNAPSHOT_INTERVAL` | — | Worker state snapshot interval |
 | `OUTPUT_POLICY_ENABLED` | `false` | Enable output policy: `true`, `1` |
-| `POLICY_CHECK_FAIL_MODE` | `closed` | Behavior when safety kernel is unreachable during pre-dispatch input policy checks. `closed` (default): requeue with backoff. `open`: allow through with warning log and metric. See [safety-kernel.md](safety-kernel.md) for risk implications. |
+| `POLICY_CHECK_FAIL_MODE` | `closed` | Behavior when safety kernel is unreachable during pre-dispatch input policy checks. `closed` (default): requeue with backoff. `open`: allow through with warning log and metric. A `scheduler.input_fail_mode` value in the config service (tenant, then system scope) overrides it. See [safety-kernel.md](safety-kernel.md) for risk implications. |
+| `OUTPUT_POLICY_FAIL_MODE` | `closed` | Behavior when the async output content check fails or times out. `closed` (default): quarantine the result. `open`: allow it and count it as skipped. A `scheduler.output_fail_mode` value in the config service (tenant, then system scope) overrides it. See [output-safety.md](output-safety.md). |
 
 ### Gateway + Scheduler — Boundary Hardening
 

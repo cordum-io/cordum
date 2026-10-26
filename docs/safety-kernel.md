@@ -327,9 +327,18 @@ When the safety kernel is unreachable during pre-dispatch policy checks, the sch
 
 **Risk implications of fail-open**: In `open` mode, jobs that would normally be denied or require approval are allowed through without evaluation. This should only be used in environments where safety violations are tolerable (e.g., staging) or where compensating controls exist downstream. Production deployments should use the default `closed` mode.
 
-**Configuration**:
-- Environment variable: `POLICY_CHECK_FAIL_MODE` (values: `closed`, `open`)
-- Config file: `config/safety.yaml` under `input_policy.fail_mode`
+**Configuration**, first match wins:
+
+1. The tenant's `scheduler.input_fail_mode` in the config service.
+2. The system-scope `scheduler.input_fail_mode` in the config service
+   (reloaded every `SCHEDULER_CONFIG_RELOAD_INTERVAL`).
+3. The scheduler's `POLICY_CHECK_FAIL_MODE` environment variable (`closed` or
+   `open`).
+4. `closed`.
+
+Under the production CAP profile the scheduler always fails closed.
+`input_policy.fail_mode` in `config/safety.yaml` is parsed, but the scheduler
+does not read it.
 
 **Prometheus metric**: `cordum_scheduler_input_fail_open_total` (counter, labels: `topic`) — incremented each time a job is allowed through under fail-open mode. Alert on this metric to detect safety kernel outages that are silently bypassing policy checks.
 

@@ -415,11 +415,14 @@ gRPC timeout) is controlled by the `POLICY_CHECK_FAIL_MODE` setting:
   `cordum_scheduler_input_fail_open_total` Prometheus counter is incremented
   (labeled by `topic`). This trades safety guarantees for availability.
 
-Configuration:
-- **Env var**: `POLICY_CHECK_FAIL_MODE` — values: `closed` (default), `open`
-- **Config file**: `config/safety.yaml` under `input_policy.fail_mode`
-
-The env var takes precedence over the config file value.
+Configuration, first match wins: the tenant's `scheduler.input_fail_mode` in
+the config service, then the system-scope `scheduler.input_fail_mode`, then
+the `POLICY_CHECK_FAIL_MODE` env var (`closed` or `open`), then `closed`.
+`FailModeResolver` (`core/controlplane/scheduler/failmode.go`) applies this
+order. The async output check uses the same order with
+`scheduler.output_fail_mode` and `OUTPUT_POLICY_FAIL_MODE`. Under the
+production CAP profile both always fail closed. `input_policy.fail_mode` in
+`config/safety.yaml` is not read by the scheduler.
 
 ---
 

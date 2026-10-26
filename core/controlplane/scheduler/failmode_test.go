@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -240,4 +241,67 @@ func TestFailModeResolver_SystemModeUpdatesAffectCachedTenants(t *testing.T) {
 	// Update system default — tenant with empty override should follow.
 	resolver.SetSystemInputMode("open")
 	assert.True(t, resolver.InputFailOpen("org-inherit"), "inherit system open after update")
+}
+
+// TestFailModeEnvFallbackWithResolver wires the engine the way
+// cmd/cordum-scheduler does: the env fail modes first, then the per-tenant
+// resolver, which is always present because the config service always is.
+// With no scheduler.*_fail_mode in the config service, the env values must
+// still apply.
+func TestFailModeEnvFallbackWithResolver(t *testing.T) {
+	t.Setenv("POLICY_CHECK_FAIL_MODE", "open")
+	t.Setenv("OUTPUT_POLICY_FAIL_MODE", "open")
+	e := NewEngine(&fakeBus{}, nil, newTestRegistry(t), NewNaiveStrategy(), newFakeJobStore(), nil)
+	e.WithAsyncFailMode(os.Getenv("OUTPUT_POLICY_FAIL_MODE"))
+	e.WithInputFailMode(os.Getenv("POLICY_CHECK_FAIL_MODE"))
+	e.WithFailModeResolver(NewFailModeResolver(newMockFailModeProvider(), time.Hour))
+	for _, org := range []string{"default", "org-a"} {
+		e.FailModeResolver().RefreshTenant(context.Background(), org)
+		if !e.isInputFailOpenForTenant(org) {
+			t.Errorf("%s: input fail mode closed; want open from POLICY_CHECK_FAIL_MODE", org)
+		}
+		if !e.isAsyncFailOpenForTenant(org) {
+			t.Errorf("%s: output fail mode closed; want open from OUTPUT_POLICY_FAIL_MODE", org)
+		}
+	}
+}
+
+// TestFailModeResolver_Precedence: tenant config > system config > env >
+// built-in default (closed).
+func TestFailModeResolver_Precedence(t *testing.T) {
+	for _, tc := range []struct {
+		name, env, system, tenant string
+		want                      bool
+	}{
+		{"built-in default is closed", "", "", "", false},
+		{"env applies without config", "open", "", "", true},
+		{"system config beats env", "open", "closed", "", false},
+		{"system config without env", "", "open", "", true},
+		{"tenant config beats env", "open", "", "closed", false},
+		{"tenant config beats system config", "closed", "closed", "open", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("POLICY_CHECK_FAIL_MODE", tc.env)
+			t.Setenv("OUTPUT_POLICY_FAIL_MODE", tc.env)
+			provider := newMockFailModeProvider()
+			provider.setTenantConfig("org-a", tc.tenant, tc.tenant)
+			r := NewFailModeResolver(provider, time.Hour)
+			if tc.system != "" {
+				r.SetSystemInputMode(tc.system)
+				r.SetSystemAsyncMode(tc.system)
+			}
+			r.RefreshTenant(context.Background(), "org-a")
+			if got := r.InputFailOpen("org-a"); got != tc.want {
+				t.Errorf("InputFailOpen = %v; want %v", got, tc.want)
+			}
+			if got := r.AsyncFailOpen("org-a"); got != tc.want {
+				t.Errorf("AsyncFailOpen = %v; want %v", got, tc.want)
+			}
+			if tc.tenant == "" {
+				if got := r.InputFailOpen("default"); got != tc.want {
+					t.Errorf("default tenant InputFailOpen = %v; want %v", got, tc.want)
+				}
+			}
+		})
+	}
 }
