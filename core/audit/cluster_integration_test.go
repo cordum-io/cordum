@@ -6,10 +6,15 @@ package audit
 // CORDUM_TEST_REDIS_CLUSTER_ADDRESSES and skip without it. A one-node cluster
 // is enough to enforce CROSSSLOT:
 //
-//	docker run -d --name cordum-redis-cluster -p 7000:7000 -p 17000:17000 redis:7.4.2-alpine \
+//	docker run -d --name cordum-redis-cluster -p 7000:7000 redis:7.4.2-alpine \
 //	  redis-server --port 7000 --cluster-enabled yes --cluster-announce-ip 127.0.0.1
 //	docker exec cordum-redis-cluster redis-cli -p 7000 CLUSTER ADDSLOTSRANGE 0 16383
-//	CORDUM_TEST_REDIS_CLUSTER_ADDRESSES=127.0.0.1:7000 go test -tags=integration -run Cluster ./core/audit/
+//	CORDUM_TEST_REDIS_CLUSTER_ADDRESSES=127.0.0.1:7000 go test -tags=integration -run Cluster \
+//	  ./core/audit/ ./core/edge/ ./core/infra/redisutil/
+//
+// The scan tests need keys spread over several masters: for example three
+// redis-server processes in one container on ports 7101-7103, slots split
+// with CLUSTER ADDSLOTSRANGE and joined with CLUSTER MEET 127.0.0.1 <port>.
 
 import (
 	"context"
@@ -247,5 +252,48 @@ func TestClusterIntegration_LegalHolds(t *testing.T) {
 	}
 	if held, err := store.IsUnderHold(ctx, tenant); err != nil || held {
 		t.Fatalf("IsUnderHold after release = %v, %v; want false", held, err)
+	}
+}
+
+// Tenant discovery and the all-tenant hold listing scan keys, which on a
+// cluster with several masters only a per-master scan finds.
+func TestClusterIntegration_ScansReachEveryMaster(t *testing.T) {
+	client, chainer := newIntegrationChainer(t)
+	holds := NewLegalHoldStoreFromClient(client)
+	sweeper := NewRetentionSweeper(client, chainer, holds, nil)
+	ctx := context.Background()
+	want := map[string]bool{}
+	for i := 0; i < 12; i++ {
+		tenant := newIntegrationTenant(t, client)
+		if err := chainer.Append(ctx, baseEvent(tenant, "a")); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+		if _, err := holds.CreateHold(ctx, tenant, "litigation", "it"); err != nil {
+			t.Fatalf("create hold: %v", err)
+		}
+		want[tenant] = true
+	}
+
+	tenants, err := sweeper.tenants(ctx)
+	if err != nil || len(tenants) != len(want) {
+		t.Fatalf("tenants = %v, %v; want the %d chain tenants", tenants, err, len(want))
+	}
+	for _, tenant := range tenants {
+		if !want[tenant] {
+			t.Fatalf("unexpected tenant %q", tenant)
+		}
+	}
+	listed, err := holds.ListHolds(ctx, "")
+	if err != nil {
+		t.Fatalf("ListHolds: %v", err)
+	}
+	held := map[string]bool{}
+	for _, h := range listed {
+		held[h.TenantID] = true
+	}
+	for tenant := range want {
+		if !held[tenant] {
+			t.Fatalf("ListHolds(\"\") missed tenant %s", tenant)
+		}
 	}
 }

@@ -666,6 +666,9 @@ func (s *RedisStore) removeSessionSecondaryIndexes(ctx context.Context, session 
 }
 
 func (s *RedisStore) deleteRedisKeysInBatches(ctx context.Context, keys []string) (int64, error) {
+	if redisutil.IsCluster(s.client) {
+		return s.deleteRedisKeysPerKey(ctx, keys)
+	}
 	var deleted int64
 	for start := 0; start < len(keys); start += sessionCleanupDeleteBatchSize {
 		end := start + sessionCleanupDeleteBatchSize
@@ -679,6 +682,24 @@ func (s *RedisStore) deleteRedisKeysInBatches(ctx context.Context, keys []string
 		deleted += count
 	}
 	return deleted, nil
+}
+
+// deleteRedisKeysPerKey deletes keys one DEL each, pipelined: on Redis
+// Cluster a multi-key DEL must keep all its keys in one hash slot.
+func (s *RedisStore) deleteRedisKeysPerKey(ctx context.Context, keys []string) (int64, error) {
+	cmds, err := s.client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		for _, key := range keys {
+			pipe.Del(ctx, key)
+		}
+		return nil
+	})
+	var deleted int64
+	for _, cmd := range cmds {
+		if del, ok := cmd.(*redis.IntCmd); ok {
+			deleted += del.Val()
+		}
+	}
+	return deleted, err
 }
 
 func (s *RedisStore) continueDeleteSessionInBackground(tenantID, sessionID string, cursor uint64) {

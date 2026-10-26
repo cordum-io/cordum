@@ -624,13 +624,15 @@ func (s *RetentionSweeper) signAnchor(anchorKey string, a retentionAnchor) strin
 func (s *RetentionSweeper) tenants(ctx context.Context) ([]string, error) {
 	prefix := s.chainer.HeadKey("")
 	var tenants []string
-	iter := s.client.Scan(ctx, 0, prefix+"*", 100).Iterator()
-	for iter.Next(ctx) {
-		if tenant := strings.TrimPrefix(iter.Val(), prefix); tenant != "" {
-			tenants = append(tenants, tenant)
+	err := redisutil.ScanEach(ctx, s.client, prefix+"*", 100, func(keys []string) error {
+		for _, key := range keys {
+			if tenant := strings.TrimPrefix(key, prefix); tenant != "" {
+				tenants = append(tenants, tenant)
+			}
 		}
-	}
-	if err := iter.Err(); err != nil {
+		return nil
+	})
+	if err != nil {
 		return nil, fmt.Errorf("audit retention: scan chain heads: %w", err)
 	}
 	return tenants, nil

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -172,26 +173,24 @@ func (s *SessionSweeper) SweepOnce(ctx context.Context) (int, error) {
 		return 0, errSessionSweepNoLegalHolds
 	}
 	var swept int
-	var cursor uint64
+	var sweepErr error
 	logged := map[string]bool{}
-	for {
-		if err := ctx.Err(); err != nil {
-			return swept, err
+	err := redisutil.ScanEach(ctx, s.store.client, "edge:session:*", sessionSweepScanCount, func(keys []string) error {
+		if sweepErr = ctx.Err(); sweepErr != nil {
+			return sweepErr
 		}
-		keys, nextCursor, err := s.store.client.Scan(ctx, cursor, "edge:session:*", sessionSweepScanCount).Result()
-		if err != nil {
-			return swept, fmt.Errorf("scan edge sessions for retention: %w", err)
-		}
-		count, err := s.sweepSessionKeys(ctx, keys, logged)
-		if err != nil {
-			return swept, err
-		}
+		var count int
+		count, sweepErr = s.sweepSessionKeys(ctx, keys, logged)
 		swept += count
-		cursor = nextCursor
-		if cursor == 0 {
-			return swept, nil
-		}
+		return sweepErr
+	})
+	if sweepErr != nil {
+		return swept, sweepErr
 	}
+	if err != nil {
+		return swept, fmt.Errorf("scan edge sessions for retention: %w", err)
+	}
+	return swept, nil
 }
 
 // SweepOnce scans pending-approval status indexes, expires stale approvals per
