@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+#### Product-findings fixes: behavior changes to note for the release (2026-10-26)
+
+- **MCP HTTP:** a `POST /mcp/message` that names an unknown session, or a session another caller opened, now gets HTTP 404 with JSON-RPC error `-32001` (`session not found`) instead of being served. Reconnect to `/mcp/sse` for a new id. The SSE stream and its POSTs must use the same tenant, credential and principal, so rotating an API key or logging in again invalidates open sessions.
+- **Cordum Edge managed settings:** `cordumctl edge managed-settings verify` and the doctor's compliance check report a critical drift when a blocking hook (`PreToolUse`, `UserPromptSubmit`, `ConfigChange`) lacks `"onFailure": "block"` or when `allowedMcpServers` uses `serverName`. Managed files exported before this release show 4 critical drifts until they are re-exported.
+- **Audit compliance export:** the `from` lower bound follows the plan's retention window (Team 90 days, Enterprise unlimited) instead of a hard-coded 168 hours.
+- **Legal holds:** `POST /api/v1/audit/legal-hold` without `tenant_id` now targets the caller's tenant, not the server default tenant.
+- **Deprecated:** `rules[].constraints.max_output_bytes`, `allowed_destinations` and `redact_patterns` (added in task-e4e9489c) are still accepted by the policy schema, but the Safety Kernel never enforced them. They are now documented as deprecated no-ops; use `budgets` or `output_rules` instead.
+
 #### CAP dependency promoted to the published v2.17.0 release (2026-07-22, task-a24b53c5)
 
 - Root and nested `sdk` modules pin the released `github.com/cordum-io/cap/v2 v2.17.0`
@@ -26,6 +34,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   are part of CAP v2.17.0.
 
 ### Security
+
+#### MCP HTTP/SSE sessions are bound to the authenticated caller (2026-10-26)
+
+- `core/mcp/transport_http.go` accepted any `X-MCP-Session-ID` header or `session_id` query value on `POST /mcp/message`. A caller who learned another client's session id could route replies and notifications into that client's SSE stream and collide with its pending replies. The gateway also fed the unverified id into Edge trace parents, approval tuples and the Copilot session id. Sessions are now bound to an owner key (tenant, auth source, credential hash and principal) when the SSE stream opens. `HandleMessage` rejects unknown and foreign ids with one identical 404, so session existence is not revealed, and `mcpAuth` uses a client session id only after `HTTPTransport.OwnsSession` vouches for it.
+
+#### Cordum Edge: a broken cordum-hook blocks instead of failing open (2026-10-26)
+
+- Generated Claude Code settings never set `onFailure`, so a `cordum-hook` that could not start, crashed or timed out let the action through even in enforce and enterprise-strict. Fail-closed sessions (every mode except observe) and the managed template now set `"onFailure": "block"` on `PreToolUse`, `UserPromptSubmit` and `ConfigChange` (requires Claude Code v2.1.295 or later). The managed template allowlists the Cordum MCP server by `serverUrl` instead of `serverName`, which Anthropic documents as not a security control. ConfigChange denies no longer emit an invalid `hookSpecificOutput`.
+
+#### Legal-hold endpoints enforce tenant access (2026-10-26)
+
+- `POST /api/v1/audit/legal-hold` took `tenant_id` from the body, `DELETE /api/v1/audit/legal-hold/{id}` released any hold by id, and `GET /api/v1/audit/legal-holds` listed every tenant's holds, all without a tenant-access check. Now that holds gate retention deletion, a tenant-scoped admin could otherwise release another tenant's hold. All three go through `requireTenantAccess`, and a release without access returns the unknown-id 404. `activeHoldForTenant` no longer treats an unreadable hold record as "not held".
 
 #### CAP-PRODUCTION — fail-closed exact-wire trust, attempt fencing, durable effects, and structured resources (2026-07-21, task-a13f83fa)
 
@@ -105,6 +125,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+#### Audit chain retention enforcement, opt-in (2026-10-26)
+
+- Retention and legal hold were documented, but nothing trimmed `audit:chain:<tenant>`. A retention sweeper (`core/audit/retention.go`, started by the gateway) now trims each tenant's chain to the effective window: the plan's `AuditRetentionDays` (Community 7, Team 90, Enterprise unlimited), shortened by `CORDUM_AUDIT_RETENTION_HOURS` if set.
+- **Off by default.** Set `CORDUM_AUDIT_RETENTION_ENFORCE=true` to enable deletion; the default is the single constant `audit.DefaultRetentionEnforce`. Existing deployments were never trimmed, so turning it on deletes history older than the window at the first sweep.
+- Tenants under an active legal hold are never trimmed, and a failed hold check skips the tenant. One replica sweeps per hour (`audit:retention:lock`). Each batch is one atomic Lua script that records `audit:chain:anchor:<tenant>`, and a tenant's newest event is never deleted.
+- `/api/v1/audit/verify` links the oldest retained event to the anchor, reports a trimmed prefix as `partial` with `retention_trimmed` gaps, and still reports tampering or deletion inside the retained range. New metrics: `cordum_audit_retention_trimmed_total` and `cordum_audit_retention_skipped_total{reason}`.
+
 #### tools/scripts — landing vet gate catches a committed *_test.go with dropped impl before squash-merge (2026-06-02, task-fd1c736c)
 
 - New `tools/scripts/landing_vet_gate.sh` runs `go vet ./...` over the root module **and** the separate `sdk/` module (root `go vet ./...` does not descend into nested modules) and exits non-zero on any vet error. The governor runs it before squash-merging the shared consolidation branch into `main` (mandatory whenever the batch touches any `*_test.go`) and refuses to merge on failure. It catches the "cascade-drop" class — a checkpoint that COMMITS a `*_test.go` while DROPPING the production impl it references (which left the `cmd/cordum-scheduler` + `core/controlplane/scheduler` test packages uncompilable during the task-5c18f890 landing) — in seconds at landing instead of ~10 min later in the CI `test` (`-race`) / `lint` (`vet`) jobs, where it blocks unrelated tasks. `go build ./...` does NOT catch this (it ignores `_test.go`). Documented in `docs/processes/per-task-checklist.md`. Demo-neutral landing-process hardening.
@@ -122,6 +149,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - `core/mcp/dedupe_store.go` (new) introduces the `DedupeStore` interface (`LoadOrStore`/`Store`/`Delete`) plus `NewInProcessDedupeStore()` (sync.Map-backed default) and public constants `MCPDedupeKeyPrefix = "mcp:dedupe:"` + `MCPDedupeTTL = 10m`. `core/mcp/dedupe_redis.go` (new) adds `RedisDedupeStore` (SET NX EX MCPDedupeTTL winner-selection, GET decode on NX-miss, in-process fail-soft on any Redis error per taskRail #3) and `SelectDedupeStore(hint, client)` honoring `CORDUM_MCP_DEDUPE_BACKEND={redis,memory}` (defaults to Redis when client wired, in-process otherwise; unknown values fall back to in-process without panic). `ToolCallDeps.DedupeState` type changed from `*sync.Map` to `DedupeStore`; `dedupeBegin`/`dedupeFinish` now handle both backends with a 50ms poll + MCPDedupeTTL deadline-breaker on the Redis loser path. `core/controlplane/gateway/mcp_policy_wire.go` passes `s.jobStore.Client()` into `BuildMCPPolicyDeps` so multi-instance HA gateway deployments collapse identical retries across instances; today's single-instance gateway keeps in-process semantics. Test coverage: `core/mcp/dedupe_redis_test.go` (6 tests including TestRedisDedupeStore_CrossProcessCollapses), `core/mcp/policy_evaluate_dedupe_inprocess_test.go` (4 tests including error-delete + ctx-cancel waiter contracts), `core/controlplane/gateway/mcp_policy_wire_dedupe_backend_test.go` (5 backend-selection tests).
 
 ### Fixed
+
+#### Safety policy schema, job idempotency keys and docs drift (2026-10-26)
+
+- `core/infra/config/schema/safety_policy.schema.json` rejected struct fields the kernel reads (top-level `require_human`, `match.delegation.delegation_required`, the MCP gateway fields), so no policy could set them. The schema now matches the struct, and `TestSafetyPolicySchemaMatchesStruct` fails on any future drift in either direction.
+- `POST /api/v1/jobs` ignored the `Idempotency-Key` header that the OpenAPI spec advertises, so retries from the Python SDK and curl could create duplicate jobs. The handler now uses the header when the body `idempotency_key` is empty (the body wins when both are set). The TypeScript SDK's `idempotencyKey` option now sends the body field as well as the header.
+- Docs now match the code:
+  - policy samples in `configuration-reference.md` (invalid `match` keys, `output_policy` `enabled`/`fail_mode`);
+  - the inverted `inv-deny-mcp-fs-read` example in `policy/global-authority.md`;
+  - job state `APPROVAL_REQUIRED` in `api-reference.md`;
+  - upstream endpoint validation and the stdio guard flags in `mcp-server.md`;
+  - the legal-hold routes and plan retention in the audit docs, and "hash chain" instead of "Merkle";
+  - Claude Code managed-settings paths (`C:\Program Files\ClaudeCode\`) and the `com.anthropic.claudecode` MDM domain;
+  - Cordum's own 5 s hook timeout versus Claude Code's 600 s default, and the Edge fail-closed default.
+- `examples/langchain-guard/safety.yaml` now parses.
 
 #### tools/scripts/soak_test.sh — memory-drift gate stops failing the nightly soak on integer truncation and warm-up heap growth (2026-10-17)
 
