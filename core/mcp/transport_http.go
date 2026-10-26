@@ -263,7 +263,7 @@ func (t *HTTPTransport) HandleMessage(w http.ResponseWriter, r *http.Request) {
 	sessionID := sessionIDFromRequest(r)
 	if sessionID == "" {
 		sessionID = "direct-" + uuid.NewString()
-	} else if !t.ownsSession(sessionID, t.ownerKey(r)) {
+	} else if !t.OwnsSession(r, sessionID) {
 		// One answer for unknown and foreign sessions, so it never reveals
 		// whether another caller's session exists. A caller can therefore
 		// never route replies into a stream it did not open, nor collide with
@@ -365,8 +365,14 @@ func (t *HTTPTransport) ownerKey(r *http.Request) string {
 	return t.sessionOwner(r)
 }
 
-// ownsSession reports whether sessionID is a live SSE session opened by owner.
-func (t *HTTPTransport) ownsSession(sessionID, owner string) bool {
+// OwnsSession reports whether sessionID is a live SSE session opened by the
+// same owner as r, i.e. whether HandleMessage would accept it from r. Callers
+// in front of the transport use it before acting on a client-supplied id.
+func (t *HTTPTransport) OwnsSession(r *http.Request, sessionID string) bool {
+	if t == nil {
+		return false
+	}
+	owner := t.ownerKey(r)
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	session, ok := t.sessions[sessionID]
