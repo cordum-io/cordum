@@ -807,6 +807,9 @@ Per-tenant immutable retention holds on audit data. All endpoints require admin 
 ```
 
 - Errors: `400`, `403`, `409`, `429`, `503`
+- Labels Cordum sets itself are dropped from `labels` (and logged): keys
+  starting with `_`, any `approval_*` key, `gate_type`, `cordum.bus_msg_id`
+  and `policy.attachment_id`. The gRPC `SubmitJob` call does the same.
 
 ### GET `/api/v1/jobs`
 

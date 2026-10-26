@@ -334,6 +334,27 @@ func TestBuildJobRequestMetadata(t *testing.T) {
 	}
 }
 
+func TestBuildJobRequestDropsServerOwnedRouteLabels(t *testing.T) {
+	// Route labels come from the workflow author; approval state, the gate
+	// marker and the policy scope must stay the engine's own.
+	step := &Step{ID: "s", Type: StepTypeWorker, Topic: "job.test", RouteLabels: map[string]string{
+		"pool": "default", "approval_granted": "true", "approval_snapshot": "snap-1",
+		"gate_type": "workflow_approval", edgecore.LabelPolicyAttachmentID: "job/other-job/policy",
+	}}
+	req := (&Engine{}).buildJobRequest(context.Background(), &Workflow{ID: "wf"}, &WorkflowRun{ID: "run"}, step, "s", "job-1")
+	if req.Labels["pool"] != "default" {
+		t.Fatalf("routing label lost: %#v", req.Labels)
+	}
+	if got := req.Labels[edgecore.LabelPolicyAttachmentID]; got != edgecore.JobPolicyAttachmentID("job-1") {
+		t.Fatalf("policy attachment = %q, want the job's own", got)
+	}
+	for _, k := range []string{"approval_granted", "approval_snapshot", "gate_type"} {
+		if _, ok := req.Labels[k]; ok {
+			t.Fatalf("route label %q reached the job: %#v", k, req.Labels)
+		}
+	}
+}
+
 func TestJobAttachmentPropagatesToLabels(t *testing.T) {
 	engine := &Engine{}
 	wf := &Workflow{ID: "wf-policy"}

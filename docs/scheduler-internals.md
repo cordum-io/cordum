@@ -74,8 +74,13 @@ Every job progresses through a well-defined set of states. Terminal states are
 - **Max scheduling retries**: After 50 failed dispatch attempts (exponential
   backoff 1s–30s), the job moves to `FAILED` and is emitted to the DLQ.
 - **Approval flow**: `REQUIRE_APPROVAL` → job waits in `APPROVAL_REQUIRED`.
-  When approved (`approval_granted=true` label + matching job hash), the job
-  re-enters the normal dispatch flow.
+  When a human approves it, the job re-enters the normal dispatch flow and
+  skips the policy check. The `approval_granted` label only tells the
+  scheduler to look: the stored approval record must hold an `approve`
+  decision and an approver, the request must still hash to the job hash
+  pinned when approval was requested, and (outside workflow gates) the
+  `approval_snapshot` label must match the stored policy snapshot. The
+  gateway drops client-supplied `approval_*` labels at submit.
 
 ---
 
@@ -189,8 +194,8 @@ recover orphaned jobs:
 
 - **Pending jobs**: Jobs stuck in `PENDING` longer than `pendingAge` (default
   2 minutes) are re-submitted through `handleJobRequest`.
-- **Approved jobs**: Jobs in `APPROVAL_REQUIRED` with `approval_granted=true`
-  label are replayed to resume dispatch.
+- **Approved jobs**: Jobs in `APPROVAL_REQUIRED` that a human approved (same
+  checks as the approval flow above) are replayed to resume dispatch.
 - **Distributed lock**: `cordum:replayer:pending` (TTL = 2× poll interval).
 - **Metrics**: Orphan replays are counted via `IncOrphanReplayed(topic)`.
 
@@ -201,7 +206,7 @@ PendingReplayer tick (every 30s)
     │   └─ For each: load JobRequest → handleJobRequest(req, traceID)
     │
     └─ Scan APPROVAL_REQUIRED jobs older than 2 minutes
-        └─ For each with approval_granted=true: handleJobRequest(req, traceID)
+        └─ For each with a recorded, still-binding approval: handleJobRequest(req, traceID)
 ```
 
 ---

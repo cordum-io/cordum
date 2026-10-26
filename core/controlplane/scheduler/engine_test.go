@@ -110,6 +110,7 @@ type fakeJobStore struct {
 	tenants        map[string]string
 	teams          map[string]string
 	safety         map[string]SafetyDecisionRecord
+	approvals      map[string]ApprovalRecord
 	lineage        map[string]model.DelegationLineage
 	dispatchTokens map[string]model.DelegationDispatchToken
 	output         map[string]OutputSafetyRecord
@@ -184,6 +185,7 @@ func newFakeJobStore() *fakeJobStore {
 		tenants:        make(map[string]string),
 		teams:          make(map[string]string),
 		safety:         make(map[string]SafetyDecisionRecord),
+		approvals:      make(map[string]ApprovalRecord),
 		lineage:        make(map[string]model.DelegationLineage),
 		dispatchTokens: make(map[string]model.DelegationDispatchToken),
 		output:         make(map[string]OutputSafetyRecord),
@@ -385,6 +387,20 @@ func (s *fakeJobStore) GetSafetyDecision(_ context.Context, jobID string) (Safet
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.safety[jobID], nil
+}
+
+func (s *fakeJobStore) GetApprovalRecord(_ context.Context, jobID string) (ApprovalRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.approvals[jobID], nil
+}
+
+// approve records a human approve decision for jobID, as the gateway's
+// approve handler does via ResolveApproval.
+func (s *fakeJobStore) approve(jobID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.approvals[jobID] = ApprovalRecord{Decision: ApprovalDecisionApprove, ApprovedBy: "alice"}
 }
 
 func (s *fakeJobStore) SetDelegationLineage(_ context.Context, jobID string, lineage model.DelegationLineage) error {
@@ -1481,6 +1497,7 @@ func TestProcessJobApprovalGateApprovedAutoCompletes(t *testing.T) {
 		PolicySnapshot:   workflowGateSnapshot,
 		JobHash:          jobHash,
 	}
+	jobStore.approve(req.JobId)
 
 	if err := engine.processJob(testCtx(t), req, "trace-gate-2"); err != nil {
 		t.Fatalf("process job: %v", err)
@@ -1557,6 +1574,7 @@ func TestProcessJobApprovalGatePublishFailureReturnsRetryableError(t *testing.T)
 		PolicySnapshot:   workflowGateSnapshot,
 		JobHash:          jobHash,
 	}
+	jobStore.approve(req.JobId)
 
 	err = engine.processJob(testCtx(t), req, "trace-gate-4")
 	retryErr, ok := err.(*retryableError)
@@ -1659,6 +1677,7 @@ func TestApprovalGateTopicStillAutoCompletes(t *testing.T) {
 			PolicySnapshot:   workflowGateSnapshot,
 			JobHash:          jobHash,
 		}
+		jobStore.approve(jobID)
 		bus.published = nil
 		jobStore.states = map[string]JobState{}
 
@@ -2969,6 +2988,7 @@ func TestCheckSafetyDecisionApprovalGrantedAppendsDecisionLog(t *testing.T) {
 		JobHash:          jobHash,
 		CheckedAt:        time.Date(2026, time.April, 20, 10, 0, 0, 0, time.UTC).UnixNano() / int64(time.Microsecond),
 	}
+	store.approve(req.JobId)
 
 	record, err := engine.checkSafetyDecision(context.Background(), req)
 	if err != nil {

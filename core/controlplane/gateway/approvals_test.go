@@ -909,6 +909,10 @@ func TestRepairApprovalApplyApprovedResolutionPublishesAndAudits(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("set safety decision: %v", err)
 	}
+	// Legacy approvals persisted only the approver plus the label.
+	if err := s.jobStore.SetApprovalRecord(ctx, jobID, model.ApprovalRecord{ApprovedBy: "bob"}); err != nil {
+		t.Fatalf("set approval record: %v", err)
+	}
 
 	body := `{"apply":true,"note":"operator fix"}`
 	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/repair", strings.NewReader(body))
