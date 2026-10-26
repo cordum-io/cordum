@@ -187,17 +187,10 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 	// Invariants consultation (EDGE-052). Invariant DENY rules are the
 	// SECURITY FLOOR — they fire before any approval flow so a pack
 	// rule that allows a tool cannot override a SecOps invariant DENY.
-	// Lookup is optional; nil lookup proceeds to existing flow.
-	if g.invariants != nil {
-		rules := g.invariants.InvariantsForMCPTool(ctx)
-		if rule, denied := matchMCPInvariantDeny(rules, tool, meta); denied {
-			reason := strings.TrimSpace(rule.Reason)
-			if reason == "" {
-				reason = "denied by SecOps invariant"
-			}
-			return nil, fmt.Errorf("%w: tool %q denied by invariant %q: %s",
-				ErrMCPInvariantDeny, tool.Name, rule.ID, reason)
-		}
+	// ToolRegistry.Call already ran CheckInvariants; repeating it keeps
+	// the floor for direct Check callers. Nil lookup proceeds.
+	if err := g.CheckInvariants(ctx, tool); err != nil {
+		return nil, err
 	}
 
 	// Scope-preapproval bypass (task-2d989055). If the agent
