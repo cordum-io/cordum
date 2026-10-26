@@ -64,20 +64,23 @@ Open `safety.yaml` in this directory. It defines three rules:
 ```yaml
 version: "1"
 rules:
-  # Block destructive operations entirely
+  # Block destructive operations entirely. Match conditions are ANDed, so
+  # this matches on the capability alone: agent_guarded.py tags every tool
+  # "financial", never "destructive".
   - id: no-destructive-ops
     match:
       capabilities: [delete_account]
-      risk_tags: [destructive]
     decision: deny
     reason: "Destructive operations are blocked by policy."
 
-  # Large transfers require human approval
+  # Large transfers require human approval. label_threshold matches when the
+  # request label "amount" is a number above 10000, so the caller must send
+  # the transfer amount as that label.
   - id: financial-approval
     match:
       capabilities: [transfer_funds]
-      metadata:
-        amount_gt: 10000
+      label_threshold:
+        amount: 10000
     decision: require_approval
     reason: "Transfers over $10,000 require human approval."
 
