@@ -53,6 +53,11 @@ type updateAgentRequest struct {
 	Entitlements             []string `json:"entitlements,omitempty"`
 	PreapprovedMutatingTools []string `json:"preapproved_mutating_tools,omitempty"`
 	DataClassifications      []string `json:"data_classifications,omitempty"`
+	// AgentID, when set, links this worker id to the identity, as on create,
+	// so an existing identity can be bound to a principal or API key id
+	// without being re-created. A worker linked to another identity is
+	// refused.
+	AgentID string `json:"agent_id,omitempty"`
 }
 
 type agentResponse struct {
@@ -390,6 +395,16 @@ func (s *server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// As on create: refuse a worker already linked to another identity, since
+	// LinkWorker below would overwrite the global worker->identity mapping.
+	workerID := strings.TrimSpace(req.AgentID)
+	if workerID != "" {
+		if existing, lookupErr := s.agentIdentityStore.GetByWorkerID(r.Context(), workerID); lookupErr == nil && existing != nil && existing.ID != id {
+			writeJSONError(w, http.StatusConflict, errorCodeAgentWorkerConflict, "worker is already linked to an agent identity")
+			return
+		}
+	}
+
 	updates := store.AgentIdentity{
 		Name:                     strings.TrimSpace(req.Name),
 		Description:              strings.TrimSpace(req.Description),
@@ -418,6 +433,13 @@ func (s *server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSONError(w, http.StatusBadRequest, errorCodeAgentRequestInvalid, err.Error())
 		return
+	}
+	// Linked only once Update found the identity in the caller's tenant.
+	if workerID != "" {
+		if linkErr := s.agentIdentityStore.LinkWorker(r.Context(), updated.ID, workerID); linkErr != nil {
+			writeInternalError(w, r, "link worker to agent identity", linkErr)
+			return
+		}
 	}
 
 	slog.Info("agent identity updated",

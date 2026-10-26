@@ -164,6 +164,32 @@ is set. The binding is only as strong as the principal: where
 The HTTP transport stamps the resolved identity onto `JSONRPCMessage`
 before enqueuing it for the MCP dispatcher.
 
+#### Upgrading: bind existing agent identities
+
+Before this binding, the gateway trusted any `X-Agent-Id` in the tenant.
+After upgrading, a client that names an identity not linked to it gets
+`403 agent identity not bound to caller`. Link each identity to the API
+key ID its client authenticates with (a managed key's `id`, or
+`static:<fingerprint>` for a static key, as the [audit log](../audit.md)
+shows it), or to its principal. An existing identity is linked with
+`agent_id` on update, without re-creating it:
+
+```bash
+curl -X PUT "$CORDUM_GATEWAY/api/v1/agents/<identity-id>" \
+  -H "X-API-Key: $CORDUM_ADMIN_KEY" -H "X-Tenant-ID: <tenant>" \
+  -H "Content-Type: application/json" \
+  -d '{"agent_id": "<api-key-id>"}'
+```
+
+The caller needs `agents.write` or admin. A key or principal already
+linked to another identity is refused with `409 AGENT_WORKER_CONFLICT`;
+each one links to a single identity. New identities take the same
+`agent_id` on `POST /api/v1/agents`.
+
+`CORDUM_MCP_ALLOW_UNBOUND_AGENT_ID=true` is a temporary bridge for the
+rollout only: while it is set, any caller in the tenant can act as any
+identity it names. Unset it once every client's identity is linked.
+
 ### stdio transport (cordum-mcp)
 
 Set `--agent-id <X>` or `CORDUM_MCP_AGENT_ID=<X>`. The binary resolves the

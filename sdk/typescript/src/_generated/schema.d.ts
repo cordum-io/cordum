@@ -6916,6 +6916,8 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** @description Worker id (a principal or API key id) to link to this identity, so an existing identity can be bound without being re-created. A worker already linked to another identity is refused with 409 AGENT_WORKER_CONFLICT. */
+                    agent_id?: string;
                     allowed_pools?: string[];
                     /** @description Full replacement cordum:// resource URI glob allowlist. Send [] to clear. */
                     allowed_resources?: string[];
@@ -6953,6 +6955,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };

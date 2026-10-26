@@ -7731,6 +7731,7 @@ paths:
       x-cordum-error-codes:
       - AGENT_REQUEST_INVALID
       - AGENT_NOT_FOUND
+      - AGENT_WORKER_CONFLICT
       summary: Update an agent identity
       tags:
       - Agents
@@ -7741,6 +7742,9 @@ paths:
             schema:
               type: object
               properties:
+                agent_id:
+                  type: string
+                  description: Worker id (a principal or API key id) to link to this identity, so an existing identity can be bound without being re-created. A worker already linked to another identity is refused with 409 AGENT_WORKER_CONFLICT.
                 name: {type: string}
                 description: {type: string}
                 owner: {type: string}
@@ -7791,6 +7795,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
     delete:
