@@ -62,7 +62,6 @@ type BufferedExporter struct {
 	batchSize     int
 	flushInterval time.Duration
 	retryBackoff  time.Duration
-	retentionTTL  time.Duration
 	drainTimeout  time.Duration
 }
 
@@ -82,12 +81,6 @@ func WithFlushInterval(d time.Duration) BufferOption {
 // WithRetryBackoff sets the initial backoff duration between export retries.
 func WithRetryBackoff(d time.Duration) BufferOption {
 	return func(b *BufferedExporter) { b.retryBackoff = d }
-}
-
-// WithRetentionTTL records the configured audit retention TTL associated with
-// this exporter. A zero duration means no expiry / unlimited retention.
-func WithRetentionTTL(d time.Duration) BufferOption {
-	return func(b *BufferedExporter) { b.retentionTTL = d }
 }
 
 // WithDrainTimeout bounds how long Close spends exporting queued events.
@@ -157,15 +150,6 @@ func (b *BufferedExporter) logDroppedEvent(event SIEMEvent, reason string) {
 
 // Backend returns the underlying SIEM exporter wrapped by this buffer.
 func (b *BufferedExporter) Backend() Exporter { return b.exporter }
-
-// RetentionTTL reports the effective audit retention TTL configured for the
-// exporter. A zero duration means no expiry / unlimited retention.
-func (b *BufferedExporter) RetentionTTL() time.Duration {
-	if b == nil {
-		return 0
-	}
-	return b.retentionTTL
-}
 
 // Close drains remaining events and shuts down the exporter.
 func (b *BufferedExporter) Close() error {

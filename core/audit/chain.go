@@ -27,6 +27,9 @@ import (
 //	                              the tenant's current chain head. Empty
 //	                              or missing means the tenant has no
 //	                              events yet (next append is genesis).
+//	audit:chain:anchor:<tenant> — "seq:event_hash" of the newest event the
+//	                              retention sweeper trimmed (retention.go).
+//	                              Missing means the chain was never trimmed.
 const (
 	// ChainKeyPrefix is the default namespace for chain Redis keys.
 	ChainKeyPrefix = "audit:chain:"
@@ -42,7 +45,8 @@ const (
 	// — unsigned chains weaken that defense.
 	EnvHMACOptional = "CORDUM_AUDIT_HMAC_OPTIONAL"
 
-	chainHeadInfix = "head:"
+	chainHeadInfix   = "head:"
+	chainAnchorInfix = "anchor:"
 	// chainMaxCASRetries caps how many times a single Append will retry
 	// on a contended head pointer. Under 100 concurrent writers on one
 	// tenant the total attempt count is ≈ producers² / 2, so budget
@@ -172,6 +176,13 @@ func (c *Chainer) StreamKey(tenant string) string {
 // HeadKey returns the Redis key holding "seq:hash" of the tenant's head.
 func (c *Chainer) HeadKey(tenant string) string {
 	return c.keyPrefix + chainHeadInfix + tenant
+}
+
+// AnchorKey returns the Redis key holding "seq:hash" of the newest event the
+// retention sweeper trimmed from the tenant's chain. Verify callers pass it
+// as VerifyOptions.RetentionAnchorKey.
+func (c *Chainer) AnchorKey(tenant string) string {
+	return c.keyPrefix + chainAnchorInfix + tenant
 }
 
 func (c *Chainer) cachedHead(tenant string) (string, bool) {

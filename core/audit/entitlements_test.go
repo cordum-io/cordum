@@ -100,7 +100,7 @@ func TestNewExporterFromEnvWithEntitlementsDisablesSIEMForCommunity(t *testing.T
 	}
 }
 
-func TestNewExporterFromEnvWithEntitlementsSetsRetentionTTL(t *testing.T) {
+func TestNewExporterFromEnvWithEntitlementsBuildsEntitledExporter(t *testing.T) {
 	t.Setenv("CORDUM_AUDIT_EXPORT_TYPE", "webhook")
 	t.Setenv("CORDUM_AUDIT_EXPORT_WEBHOOK_URL", "https://example.com/hook")
 	t.Setenv("CORDUM_AUDIT_EXPORT_WEBHOOK_SECRET", "12345678901234567890123456789012")
@@ -108,7 +108,6 @@ func TestNewExporterFromEnvWithEntitlementsSetsRetentionTTL(t *testing.T) {
 	exp, err := NewExporterFromEnvWithEntitlements(newAuditEntitlementResolver(t, licensing.PlanCommunity, func(entitlements *licensing.Entitlements) {
 		entitlements.SIEMExport = true
 		entitlements.AuditExport = true
-		entitlements.AuditRetentionDays = 30
 	}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -116,11 +115,7 @@ func TestNewExporterFromEnvWithEntitlementsSetsRetentionTTL(t *testing.T) {
 	if exp == nil {
 		t.Fatal("expected exporter for entitled SIEM export")
 	}
-	defer func() { _ = exp.Close() }()
-
-	if got := exp.RetentionTTL(); got != 30*24*time.Hour {
-		t.Fatalf("RetentionTTL() = %s, want %s", got, 30*24*time.Hour)
-	}
+	_ = exp.Close()
 }
 
 func TestRequireLegalHoldEntitlement(t *testing.T) {

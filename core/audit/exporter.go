@@ -329,9 +329,9 @@ func NewExporterFromEnv() (*BufferedExporter, error) {
 }
 
 // NewExporterFromEnvWithEntitlements reads CORDUM_AUDIT_EXPORT_* environment
-// variables and applies runtime entitlement gates for SIEM export and audit
-// retention. Invalid or missing resolvers gracefully fall back to community
-// defaults.
+// variables and applies the runtime SIEM export entitlement gate. Invalid or
+// missing resolvers gracefully fall back to community defaults. Audit chain
+// retention is enforced separately by RetentionSweeper.
 func NewExporterFromEnvWithEntitlements(resolver *licensing.EntitlementResolver) (*BufferedExporter, error) {
 	typ := strings.ToLower(strings.TrimSpace(os.Getenv("CORDUM_AUDIT_EXPORT_TYPE")))
 	if !isDiscardExportType(typ) && !siemExportEnabled(currentEntitlements(resolver)) {
@@ -347,7 +347,7 @@ func NewExporterFromEnvWithEntitlements(resolver *licensing.EntitlementResolver)
 	if err != nil || exp == nil {
 		return nil, err
 	}
-	return NewBufferedExporter(exp, WithRetentionTTL(RetentionTTLFromEntitlements(currentEntitlements(resolver)))), nil
+	return NewBufferedExporter(exp), nil
 }
 
 // parseSyslogAddr parses "tcp://host:port" or "udp://host:port".
@@ -461,7 +461,7 @@ func isDiscardExportType(typ string) bool {
 }
 
 // DiscardExporter implements Exporter by dropping every batch. Used when
-// CORDUM_AUDIT_EXPORT_TYPE=null|discard|chain-only so the Merkle audit
+// CORDUM_AUDIT_EXPORT_TYPE=null|discard|chain-only so the audit hash
 // chain is still engaged even though no SIEM backend consumes the stream.
 type DiscardExporter struct{}
 

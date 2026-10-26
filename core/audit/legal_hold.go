@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -241,8 +242,13 @@ func (s *LegalHoldStore) activeHoldForTenant(ctx context.Context, tenant string)
 	}
 	for _, id := range ids {
 		hold, err := s.GetHold(ctx, id)
+		if errors.Is(err, ErrHoldNotFound) {
+			continue // dangling index entry
+		}
 		if err != nil {
-			continue
+			// Surface read/decode failures: treating an unreadable hold as
+			// "not held" would let retention delete held data.
+			return nil, err
 		}
 		if hold.IsActive() {
 			return hold, nil

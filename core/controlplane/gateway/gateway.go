@@ -1041,6 +1041,13 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	go edgeSweeper.Run(edgeSweepCtx)
 	go edgeApprovalSweeper.Run(edgeSweepCtx)
 
+	// Audit chain retention. Deleting is opt-in (CORDUM_AUDIT_RETENTION_ENFORCE);
+	// when off, Run logs that once and returns. Tenants under legal hold are
+	// never trimmed.
+	auditRetentionCtx, auditRetentionCancel := context.WithCancel(context.Background())
+	defer auditRetentionCancel()
+	go audit.NewRetentionSweeper(jobStore.Client(), auditChainer, s.legalHoldStore, entitlementResolver).Run(auditRetentionCtx)
+
 	// The production gate passed before any listener, subscription, or
 	// background goroutine was started. Advertise only after those compatible
 	// runtime surfaces are live.

@@ -352,6 +352,34 @@ func TestHandleAuditExport_RejectsBadRange(t *testing.T) {
 	}
 }
 
+// TestHandleAuditExport_RetentionBoundFollowsEffectiveWindow: the export's
+// lower bound is the effective retention window, and unlimited retention
+// (Enterprise) has none.
+func TestHandleAuditExport_RetentionBoundFollowsEffectiveWindow(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	now := time.Now().UTC()
+	path := fmt.Sprintf("/api/v1/audit/export?format=json&from=%s&to=%s",
+		now.Add(-30*24*time.Hour).Format(time.RFC3339), now.Format(time.RFC3339))
+	export := func() int {
+		rec := httptest.NewRecorder()
+		s.handleAuditExport(rec, adminCtx(httptest.NewRequest(http.MethodGet, path, nil)))
+		return rec.Code
+	}
+
+	grantExportEntitlement(t, s)
+	if code := export(); code != http.StatusOK {
+		t.Fatalf("enterprise 30-day window: status = %d, want 200", code)
+	}
+
+	setTestEntitlements(t, s, licensing.PlanCommunity, func(ent *licensing.Entitlements) {
+		ent.SIEMExport = true
+		ent.AuditExport = true
+	})
+	if code := export(); code != http.StatusBadRequest {
+		t.Fatalf("community 7-day retention: status = %d, want 400", code)
+	}
+}
+
 // TestHandleAuditExport_RejectsWithoutEntitlement pins the 403 + tier
 // limit body shape.
 func TestHandleAuditExport_RejectsWithoutEntitlement(t *testing.T) {

@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -61,16 +62,18 @@ type VerifyGap struct {
 // intentionally excludes raw event content — the endpoint is for
 // integrity reporting, not audit retrieval.
 //
-// retention_boundary_seq is the lowest seq currently present in the
-// stream. Gaps at seqs strictly below it are retention_trimmed (expected
-// log expiry); gaps at or above are missing (suspected tampering). The
-// boundary is reported even for intact chains so operators always have
-// a concrete number to reason about.
+// retention_boundary_seq is the lowest seq that should still be present:
+// the retention anchor's seq + 1 once the sweeper has trimmed the chain,
+// otherwise the lowest seq currently in the stream. Gaps strictly below it
+// are retention_trimmed (expected log expiry); gaps at or above are missing
+// (suspected tampering). The boundary is reported even for intact chains so
+// operators always have a concrete number to reason about.
 //
-// retention_window_hours mirrors CORDUM_AUDIT_RETENTION_HOURS so a
-// caller consuming the JSON has everything needed to reason about
-// whether the oldest present entry is within policy. The field is a
-// float64 so fractional-hour windows (test fixtures) render cleanly.
+// retention_window_hours is the effective retention window (see
+// RetentionWindow; omitted when unlimited) so a caller consuming the JSON
+// has everything needed to reason about whether the oldest present entry
+// is within policy. The field is a float64 so fractional-hour windows
+// (test fixtures) render cleanly.
 type VerifyResult struct {
 	Status               VerifyStatus `json:"status"`
 	TotalEvents          int          `json:"total_events"`
@@ -115,6 +118,13 @@ type VerifyOptions struct {
 	// classified as retention_trimmed rather than tampering. Zero means
 	// no boundary known — every gap is potential tampering.
 	RetentionBoundarySeq int64
+	// RetentionAnchorKey (optional) is the tenant's retention anchor key
+	// (Chainer.AnchorKey), read in the same snapshot as the range. Once
+	// the sweeper has trimmed the chain, only seqs up to the anchor count
+	// as retention_trimmed: the oldest retained event must be anchor+1 and
+	// link to the anchor's hash, so events deleted from the front of the
+	// stream beyond what retention removed are reported missing.
+	RetentionAnchorKey string
 	// HMACKey (optional) enables HMAC-SHA256 verification. When non-nil,
 	// every event that carries an HMAC tag is verified against this key.
 	// Events without an HMAC (pre-HMAC era) are counted as HMACSkipped
@@ -158,9 +168,32 @@ func VerifyChain(ctx context.Context, client redis.UniversalClient, streamKey st
 		maxID = strconv.FormatInt(opts.UntilMs, 10) + "-18446744073709551615"
 	}
 
-	entries, err := client.XRangeN(ctx, streamKey, minID, maxID, opts.Limit).Result()
+	// Read the range, the window's predecessor and the retention anchor in
+	// one MULTI/EXEC: a retention trim landing between separate reads would
+	// look like missing or reordered events. The predecessor of the first
+	// in-range entry is the newest entry before minID.
+	pipe := client.TxPipeline()
+	rangeCmd := pipe.XRangeN(ctx, streamKey, minID, maxID, opts.Limit)
+	var predCmd *redis.XMessageSliceCmd
+	if opts.SinceMs > 0 {
+		predCmd = pipe.XRevRangeN(ctx, streamKey, xRevBefore(minID), "-", 1)
+	}
+	var anchorCmd *redis.StringCmd
+	if opts.RetentionAnchorKey != "" {
+		anchorCmd = pipe.Get(ctx, opts.RetentionAnchorKey)
+	}
+	// redis.Nil only means "no anchor yet" (GET of a missing key).
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("read chain %s: %w", streamKey, err)
+	}
+	entries := rangeCmd.Val()
+	rawAnchor := ""
+	if anchorCmd != nil {
+		rawAnchor = anchorCmd.Val()
+	}
+	anchorSeq, anchorHash, err := parseChainHead(rawAnchor)
 	if err != nil {
-		return nil, fmt.Errorf("xrange %s: %w", streamKey, err)
+		return nil, fmt.Errorf("parse retention anchor: %w", err)
 	}
 
 	result := &VerifyResult{
@@ -168,10 +201,20 @@ func VerifyChain(ctx context.Context, client redis.UniversalClient, streamKey st
 		Gaps:                 []VerifyGap{},
 		RetentionBoundarySeq: opts.RetentionBoundarySeq,
 	}
+	if anchorSeq > 0 {
+		result.RetentionBoundarySeq = anchorSeq + 1
+	}
 
 	if len(entries) == 0 {
 		// No events in range. Not compromised — just empty. Status
 		// remains OK. Callers can disambiguate by checking total_events.
+		// Exception: the sweeper never trims the chain head, so an
+		// unbounded walk of a trimmed chain that finds nothing means the
+		// stream itself was deleted.
+		if anchorSeq > 0 && opts.SinceMs == 0 && opts.UntilMs == 0 {
+			result.Status = VerifyStatusCompromised
+			result.Gaps = append(result.Gaps, VerifyGap{AtSeq: anchorSeq + 1, Type: GapTypeMissing})
+		}
 		return result, nil
 	}
 
@@ -180,15 +223,17 @@ func VerifyChain(ctx context.Context, client redis.UniversalClient, streamKey st
 		prevSeq  int64
 		hasPrev  bool
 	)
+	// firstIsOldest: the first walked entry is the oldest one retained in
+	// the stream, so its predecessor (if any) is the retention anchor.
+	firstIsOldest := opts.SinceMs == 0
 	// Cross-window linkage bootstrap: when the caller asked for a
 	// mid-chain slice (SinceMs > 0), read the single entry immediately
 	// preceding the first in-range event so the first linkage check
 	// isn't a free pass. Without this, an attacker mutating the
 	// PrevHash of the first event in the window goes undetected.
-	if opts.SinceMs > 0 && len(entries) > 0 {
-		firstID := entries[0].ID
-		predecessors, perr := client.XRevRangeN(ctx, streamKey, xRevBefore(firstID), "-", 1).Result()
-		if perr == nil && len(predecessors) > 0 {
+	if opts.SinceMs > 0 {
+		predecessors := predCmd.Val()
+		if len(predecessors) > 0 {
 			if payload, ok := predecessors[0].Values[chainStreamFieldEvent].(string); ok {
 				var pred SIEMEvent
 				if err := json.Unmarshal([]byte(payload), &pred); err == nil {
@@ -207,11 +252,21 @@ func VerifyChain(ctx context.Context, client redis.UniversalClient, streamKey st
 					}
 				}
 			}
-		} else if perr == nil && len(predecessors) == 0 {
-			// No predecessor inside retention. Status is Partial because
-			// the first in-range PrevHash cannot be linkage-checked.
-			result.Status = VerifyStatusPartial
+		} else {
+			// No predecessor inside retention. Without a retention anchor
+			// the first in-range PrevHash cannot be linkage-checked, so
+			// the window is only partially attested.
+			firstIsOldest = true
+			if anchorSeq == 0 {
+				result.Status = VerifyStatusPartial
+			}
 		}
+	}
+	if firstIsOldest && anchorSeq > 0 {
+		// Link the oldest retained event to the last trimmed one: a seq
+		// other than anchor+1, or a PrevHash other than the anchor hash,
+		// is reported by the ordinary gap/linkage checks below.
+		prevSeq, prevHash, hasPrev = anchorSeq, anchorHash, true
 	}
 	for i, entry := range entries {
 		payload, ok := entry.Values[chainStreamFieldEvent].(string)
@@ -238,6 +293,11 @@ func VerifyChain(ctx context.Context, client redis.UniversalClient, streamKey st
 			// don't produce unbounded payloads.
 			if opts.SinceMs == 0 && ev.Seq > 1 {
 				emit := ev.Seq - 1
+				// Seqs above the anchor were not removed by retention;
+				// the anchor linkage check reports them as missing.
+				if anchorSeq > 0 && anchorSeq < emit {
+					emit = anchorSeq
+				}
 				if emit > maxRetentionTrimmedGaps {
 					emit = maxRetentionTrimmedGaps
 				}

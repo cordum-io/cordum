@@ -97,16 +97,18 @@ func (s *server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 	opts.TenantID = tenant
 
 	// Retention-aware lower bound: reject windows whose lower edge is
-	// older than the operator-configured retention plus skew. Prevents
-	// a request for a year-old audit window on a tenant with 30-day
-	// retention from silently returning empty.
-	retention := auditChainRetention()
-	oldestAllowed := time.Now().Add(-(retention + defaultComplianceExportClockSkew))
-	if opts.From.Before(oldestAllowed) {
-		writeErrorJSON(w, http.StatusBadRequest,
-			fmt.Sprintf("from %s is older than retention window %s", opts.From.Format(time.RFC3339), retention))
-		observeAuditExport(string(opts.Format), "bad_request", 0)
-		return
+	// older than the effective retention window plus skew. Prevents a
+	// request for a year-old audit window on a tenant with 30-day
+	// retention from silently returning empty. Unlimited retention (0)
+	// has no lower bound.
+	if retention := audit.RetentionWindow(entitlements); retention > 0 {
+		oldestAllowed := time.Now().Add(-(retention + defaultComplianceExportClockSkew))
+		if opts.From.Before(oldestAllowed) {
+			writeErrorJSON(w, http.StatusBadRequest,
+				fmt.Sprintf("from %s is older than retention window %s", opts.From.Format(time.RFC3339), retention))
+			observeAuditExport(string(opts.Format), "bad_request", 0)
+			return
+		}
 	}
 
 	// Tighten MaxEvents to the entitlement ceiling.

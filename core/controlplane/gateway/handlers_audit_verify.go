@@ -7,10 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
@@ -21,20 +19,10 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-const (
-	// envAuditChainRetentionHours configures how far back in time the
-	// verify endpoint treats an absent seq as "trimmed by retention" vs
-	// "tampered / dropped". Default: 168h (7 days). Exposed via
-	// CORDUM_AUDIT_RETENTION_HOURS so operators can tighten/loosen it
-	// without a code change.
-	envAuditChainRetentionHours = "CORDUM_AUDIT_RETENTION_HOURS"
-	defaultAuditChainRetention  = 168 * time.Hour
-
-	// maxVerifySinceUntilSpread caps the range a single call can cover.
-	// Keeps the verify endpoint from scanning months of stream data in
-	// one go — callers paginate by since/until if they need more.
-	maxVerifySinceUntilSpread = 30 * 24 * time.Hour
-)
+// maxVerifySinceUntilSpread caps the range a single call can cover.
+// Keeps the verify endpoint from scanning months of stream data in
+// one go — callers paginate by since/until if they need more.
+const maxVerifySinceUntilSpread = 30 * 24 * time.Hour
 
 var auditVerifyChainFn = audit.VerifyChain
 
@@ -80,10 +68,12 @@ var auditVerifyCoalescedTotal = promauto.NewCounter(prometheus.CounterOpts{
 // event bodies — the endpoint is admin-only and for integrity reporting,
 // not event retrieval.
 //
-// Retention boundary: the lowest seq currently present in the stream.
-// Gaps strictly below it are classified retention_trimmed; at or above
-// are reported as missing (suspected tampering). This is the control
-// that distinguishes routine log-expiry from real integrity failures.
+// Retention boundary: the retention anchor's seq + 1 once the sweeper
+// has trimmed the chain (audit:chain:anchor:<tenant>), else the lowest
+// seq currently present in the stream. Gaps strictly below it are
+// classified retention_trimmed; at or above are reported as missing
+// (suspected tampering). This is the control that distinguishes routine
+// log-expiry from real integrity failures.
 func (s *server) handleAuditVerify(w http.ResponseWriter, r *http.Request) {
 	client := s.redisClient()
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermAuditVerify, []string{"admin"}, client) {
@@ -128,6 +118,7 @@ func (s *server) handleAuditVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	opts.RetentionBoundarySeq = boundary
+	opts.RetentionAnchorKey = chainer.AnchorKey(tenant)
 
 	// Wire the HMAC key from the server's chainer (sourced from
 	// CORDUM_AUDIT_HMAC_KEY at boot) so the verify endpoint checks
@@ -185,10 +176,11 @@ func (s *server) handleAuditVerify(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Surface the operator-configured retention window so the caller
-		// can decide whether the oldest present event's timestamp is
-		// within policy — the boundary seq alone is not enough context.
-		result.RetentionWindowHours = auditChainRetention().Hours()
+		// Surface the effective retention window (0 = unlimited, omitted)
+		// so the caller can decide whether the oldest present event's
+		// timestamp is within policy — the boundary seq alone is not
+		// enough context.
+		result.RetentionWindowHours = audit.RetentionWindow(s.currentEntitlements()).Hours()
 		status = string(result.Status)
 		auditVerifyEventsTotal.WithLabelValues(status).Add(float64(result.TotalEvents))
 		return result, nil
@@ -305,31 +297,4 @@ func readRetentionBoundary(ctx context.Context, client redis.UniversalClient, st
 		return 0, err
 	}
 	return v, nil
-}
-
-// auditChainRetentionParseWarn guards the once-per-process WARN log so
-// a misconfigured CORDUM_AUDIT_RETENTION_HOURS doesn't flood the
-// handler log on every /api/v1/audit/verify request.
-var auditChainRetentionParseWarn sync.Once
-
-// auditChainRetention reads CORDUM_AUDIT_RETENTION_HOURS and returns the
-// duration. Invalid values fall back to the 168h default and emit
-// exactly one WARN log per process so operators notice the misconfig
-// without drowning in repeated messages.
-func auditChainRetention() time.Duration {
-	raw := strings.TrimSpace(os.Getenv(envAuditChainRetentionHours))
-	if raw == "" {
-		return defaultAuditChainRetention
-	}
-	v, err := strconv.ParseFloat(raw, 64)
-	if err != nil || v <= 0 {
-		auditChainRetentionParseWarn.Do(func() {
-			slog.Warn("CORDUM_AUDIT_RETENTION_HOURS unparseable, falling back to default",
-				"value", raw,
-				"default_hours", defaultAuditChainRetention.Hours(),
-			)
-		})
-		return defaultAuditChainRetention
-	}
-	return time.Duration(v * float64(time.Hour))
 }

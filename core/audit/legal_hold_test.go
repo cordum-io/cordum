@@ -229,6 +229,30 @@ func TestCreateHold_ValidationErrors(t *testing.T) {
 	}
 }
 
+// TestIsUnderHold_SurfacesUnreadableHold pins the fail-safe: a hold record
+// that cannot be read is an error, never "not held" — retention would
+// otherwise delete held data.
+func TestIsUnderHold_SurfacesUnreadableHold(t *testing.T) {
+	store, srv := newTestLegalHoldStore(t)
+	ctx := context.Background()
+	if _, err := srv.SAdd(legalHoldSetPrefix+"tenant-x", "h1"); err != nil {
+		t.Fatalf("sadd: %v", err)
+	}
+	if err := srv.Set(legalHoldKeyPrefix+"h1", "{not json"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if _, err := store.IsUnderHold(ctx, "tenant-x"); err == nil {
+		t.Fatal("expected an error for an unreadable hold record")
+	}
+
+	// A dangling index entry (record gone) is still just "not held".
+	srv.Del(legalHoldKeyPrefix + "h1")
+	held, err := store.IsUnderHold(ctx, "tenant-x")
+	if err != nil || held {
+		t.Fatalf("dangling index entry: held=%v err=%v, want false/nil", held, err)
+	}
+}
+
 func TestIsUnderHold_EmptyTenant(t *testing.T) {
 	store, _ := newTestLegalHoldStore(t)
 	held, err := store.IsUnderHold(context.Background(), "")

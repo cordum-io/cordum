@@ -813,6 +813,67 @@ func TestHandleAuditVerify_RetentionTrimmedPrefix(t *testing.T) {
 	}
 }
 
+// TestHandleAuditVerify_UsesRetentionAnchor pins the handler wiring of the
+// retention sweeper's anchor: an anchored trim reads as retention_trimmed,
+// but an event deleted beyond the anchor is missing (tampering).
+func TestHandleAuditVerify_UsesRetentionAnchor(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	events := seedChain(t, s, "default", 8)
+
+	ctx := context.Background()
+	chainer := audit.NewChainer(s.redisClient(), "")
+	streamKey := chainer.StreamKey("default")
+	entries, err := s.redisClient().XRange(ctx, streamKey, "-", "+").Result()
+	if err != nil {
+		t.Fatalf("xrange: %v", err)
+	}
+	// What the sweeper leaves after trimming seqs 1-3.
+	for i := 0; i < 3; i++ {
+		if err := s.redisClient().XDel(ctx, streamKey, entries[i].ID).Err(); err != nil {
+			t.Fatalf("xdel[%d]: %v", i, err)
+		}
+	}
+	if err := s.redisClient().Set(ctx, chainer.AnchorKey("default"), "3:"+events[2].EventHash, 0).Err(); err != nil {
+		t.Fatalf("set anchor: %v", err)
+	}
+	verify := func() audit.VerifyResult {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		s.handleAuditVerify(rec, adminCtx(httptest.NewRequest(http.MethodGet, "/api/v1/audit/verify?tenant=default", nil)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+		}
+		var res audit.VerifyResult
+		if err := json.NewDecoder(rec.Body).Decode(&res); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return res
+	}
+
+	res := verify()
+	if res.Status != audit.VerifyStatusPartial || res.RetentionBoundarySeq != 4 || res.VerifiedEvents != 5 {
+		t.Fatalf("anchored trim: %+v, want partial, boundary 4, 5 verified", res)
+	}
+
+	// Deleting the oldest retained event is no longer mistaken for retention.
+	if err := s.redisClient().XDel(ctx, streamKey, entries[3].ID).Err(); err != nil {
+		t.Fatalf("xdel seq 4: %v", err)
+	}
+	res = verify()
+	if res.Status != audit.VerifyStatusCompromised {
+		t.Fatalf("status = %q, want compromised: %+v", res.Status, res)
+	}
+	sawMissingAt4 := false
+	for _, g := range res.Gaps {
+		if g.AtSeq == 4 && g.Type == audit.GapTypeMissing {
+			sawMissingAt4 = true
+		}
+	}
+	if !sawMissingAt4 {
+		t.Fatalf("expected missing gap at seq=4, got %+v", res.Gaps)
+	}
+}
+
 // TestHandleAuditVerify_WithinWalkGapIsMissing seeds 8 events, deletes
 // a middle entry (seq=5), and asserts the gap is classified missing
 // (tampering) because it sits above the retention boundary.
