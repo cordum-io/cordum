@@ -10,7 +10,7 @@ npm install
 npm run dev
 ```
 
-By default, the dashboard uses `/config.json` from `dashboard/public`. To point at a local gateway, update the API base URL:
+By default, the dashboard uses `/config.json` from `dashboard/public`. To point at a local gateway, update the API base URL (plain HTTP only when the gateway runs without `GATEWAY_HTTP_TLS_CERT`, outside production):
 
 ```json
 {
@@ -101,7 +101,7 @@ Example:
 docker build -t cordum-dashboard -f dashboard/Dockerfile dashboard
 ```
 
-Run the container and point it at the API gateway:
+Run the container and point it at the API gateway (plain HTTP only when the gateway runs without `GATEWAY_HTTP_TLS_CERT`, outside production):
 
 ```bash
 docker run --rm -p 8082:8080 \

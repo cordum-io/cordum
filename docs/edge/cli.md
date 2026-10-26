@@ -18,7 +18,8 @@ cordumctl edge claude [edge flags] -- [claude args...]
 Example with placeholders only:
 
 ```bash
-CORDUM_GATEWAY=http://localhost:8081 \
+CORDUM_GATEWAY=https://localhost:8081 \
+CORDUM_TLS_CA=<cordum-checkout>/certs/ca/ca.crt \
 CORDUM_API_KEY=<cordum-api-key> \
 CORDUM_TENANT_ID=default \
 cordumctl edge claude -- --print "summarize the current repository status"
@@ -33,7 +34,7 @@ accidentally replaced.
 
 | Input | Env fallback | Default | Notes |
 | --- | --- | --- | --- |
-| `--gateway` | `CORDUM_GATEWAY` | `http://localhost:8081` from the global cordumctl flag | Gateway base URL. Use HTTPS outside local dev. |
+| `--gateway` | `CORDUM_GATEWAY` | `http://localhost:8081` from the global cordumctl flag | Gateway base URL. Use HTTPS: the compose stack needs `https://localhost:8081` with `--cacert` (`CORDUM_TLS_CA`). |
 | `--api-key` | `CORDUM_API_KEY` | none | Secret. Redacted from errors and dry-run output. |
 | `--tenant` | `CORDUM_TENANT_ID` | `default` | Tenant used for Gateway auth and evidence. |
 | `--principal` | `CORDUM_PRINCIPAL_ID`, `CORDUM_EDGE_PRINCIPAL_ID` | launcher-detected principal where possible | Audit principal for Edge evidence. |

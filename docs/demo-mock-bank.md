@@ -80,6 +80,6 @@ MOCK_BANK_UI_PORT=13000 ./tools/scripts/demo_mock_bank.sh
 ## Notes
 
 - The dashboard defaults to `http://localhost:8082`.
-- The demo UI uses the Cordum API at `http://localhost:8081` and requires an API key.
-- Open `http://localhost:8099/?tenantId=default` (add `apiBaseUrl=http://localhost:8081` if needed) and paste the API key when prompted.
+- The demo UI defaults to the Cordum API at `http://localhost:8081` and requires an API key. The compose stack serves `https://localhost:8081`, so pass that as `apiBaseUrl`; the browser must trust the stack's development CA, `./certs/ca/ca.crt` (add it to the OS or browser trust store).
+- Open `http://localhost:8099/?tenantId=default&apiBaseUrl=https://localhost:8081` and paste the API key when prompted.
 - Query parameters (`apiBaseUrl`, `tenantId`, `principalId`, `principalRole`, `orgId`) persist to localStorage after the first load (API keys stay in-memory).

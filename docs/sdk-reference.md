@@ -31,10 +31,14 @@ Generated protobuf types live in `core/protocol/pb/v1/`.
 ```go
 import "github.com/cordum/cordum/sdk/client"
 
-c := client.New("http://localhost:8081", os.Getenv("CORDUM_API_KEY"))
+c := client.New("https://localhost:8081", os.Getenv("CORDUM_API_KEY"))
 ```
 
 `New()` reads `CORDUM_TENANT_ID` from the environment (defaults to `"default"`). The client sets `X-API-Key` and `X-Tenant-ID` headers on every request.
+
+`New()` verifies the gateway certificate against the system trust store. To
+trust the default stack's development CA instead, use
+`client.NewWithTLSErr(baseURL, apiKey, client.TLSOptions{CACertPath: "./certs/ca/ca.crt"})`.
 
 You can override the tenant or HTTP client after creation:
 

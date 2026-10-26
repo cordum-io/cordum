@@ -32,7 +32,7 @@ Cordum uses five credential groups that must be rotated periodically or after an
 2. Update `.env` with new `CORDUM_API_KEY`
 3. Restart the gateway
 4. Update all API clients (dashboard, CLI, external integrations) with the new key
-5. Verify: `curl -H 'X-API-Key: <new-key>' http://localhost:8081/api/v1/health`
+5. Verify: `curl --cacert ./certs/ca/ca.crt -H 'X-API-Key: <new-key>' https://localhost:8081/api/v1/health`
 
 **Zero-downtime:** Use `CORDUM_API_KEYS` (JSON array) to support both old and new keys during transition. Remove old key after all clients are updated.
 

@@ -24,7 +24,8 @@ SDK/CLI callers using unscoped API keys should omit `org_id` or set it to the se
 
 ## Base URL and Servers
 
-- Gateway HTTP (default): `http://localhost:8081`
+- Gateway (local compose): `https://localhost:8081`. Its certificate is signed by the
+  development CA in `./certs/ca/ca.crt`; pass that to curl with `--cacert`.
 - Metrics server (default): `http://localhost:9092/metrics`
 
 ## Authentication and Tenant Rules
@@ -360,11 +361,11 @@ Common errors:
 ### Example: login + session check
 
 ```bash
-curl -sS -X POST http://localhost:8081/api/v1/auth/login \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"username":"admin","password":"YOUR_API_KEY","tenant":"default"}'
 
-curl -sS http://localhost:8081/api/v1/auth/session \
+curl -sS --cacert ./certs/ca/ca.crt https://localhost:8081/api/v1/auth/session \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default'
 ```
@@ -458,7 +459,7 @@ All endpoints below require admin role and tenant-scoped access.
 ### Example: create user
 
 ```bash
-curl -sS -X POST http://localhost:8081/api/v1/users \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/users \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default' \
   -H 'Content-Type: application/json' \
@@ -535,7 +536,7 @@ All endpoints require admin role.
 ### Example: create API key
 
 ```bash
-curl -sS -X POST http://localhost:8081/api/v1/auth/keys \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/auth/keys \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default' \
   -H 'Content-Type: application/json' \
@@ -916,14 +917,14 @@ Per-tenant immutable retention holds on audit data. All endpoints require admin 
 ### Example: submit + fetch job
 
 ```bash
-curl -sS -X POST http://localhost:8081/api/v1/jobs \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/jobs \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default' \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: demo-job-001' \
   -d '{"prompt":"hello","topic":"job.default"}'
 
-curl -sS http://localhost:8081/api/v1/jobs/JOB_ID \
+curl -sS --cacert ./certs/ca/ca.crt https://localhost:8081/api/v1/jobs/JOB_ID \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default'
 ```
@@ -987,7 +988,7 @@ All DLQ endpoints require admin role.
 ### Example: retry DLQ entry
 
 ```bash
-curl -sS -X POST http://localhost:8081/api/v1/dlq/JOB_ID/retry \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/dlq/JOB_ID/retry \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default'
 ```
@@ -1223,7 +1224,7 @@ The `timers` array is omitted when no active delay timers exist for the run. Tim
 ### Example: start workflow run
 
 ```bash
-curl -sS -X POST http://localhost:8081/api/v1/workflows/WF_ID/runs \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/workflows/WF_ID/runs \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default' \
   -H 'Content-Type: application/json' \
@@ -1907,7 +1908,7 @@ Notes:
 ### Example: policy evaluate
 
 ```bash
-curl -sS -X POST http://localhost:8081/api/v1/policy/evaluate \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/policy/evaluate \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default' \
   -H 'Content-Type: application/json' \
@@ -2189,7 +2190,7 @@ Rules:
 ### Example: register and list topics
 
 ```bash
-curl -sS -X POST http://localhost:8081/api/v1/topics \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/topics \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default' \
   -H 'Content-Type: application/json' \
@@ -2204,7 +2205,7 @@ curl -sS -X POST http://localhost:8081/api/v1/topics \
     "status":"active"
   }'
 
-curl -sS http://localhost:8081/api/v1/topics \
+curl -sS --cacert ./certs/ca/ca.crt https://localhost:8081/api/v1/topics \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default'
 ```
@@ -2307,7 +2308,7 @@ Important:
 ### Example: issue and revoke a worker credential
 
 ```bash
-curl -sS -X POST http://localhost:8081/api/v1/workers/credentials \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/workers/credentials \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default' \
   -H 'Content-Type: application/json' \
@@ -2321,7 +2322,7 @@ curl -sS -X POST http://localhost:8081/api/v1/workers/credentials \
     "allowed_topics":["job.sre-investigator.collect.k8s"]
   }'
 
-curl -sS -X DELETE http://localhost:8081/api/v1/workers/credentials/external-worker-01 \
+curl -sS --cacert ./certs/ca/ca.crt -X DELETE https://localhost:8081/api/v1/workers/credentials/external-worker-01 \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default'
 ```
@@ -2450,7 +2451,7 @@ All endpoints in this section require admin role.
 ### Example: list marketplace packs
 
 ```bash
-curl -sS http://localhost:8081/api/v1/marketplace/packs \
+curl -sS --cacert ./certs/ca/ca.crt https://localhost:8081/api/v1/marketplace/packs \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default'
 ```
@@ -2894,7 +2895,7 @@ Example request:
 ### Example: MCP message call
 
 ```bash
-curl -sS -X POST http://localhost:8081/mcp/message \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/mcp/message \
   -H 'Content-Type: application/json' \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default' \

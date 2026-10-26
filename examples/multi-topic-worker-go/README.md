@@ -65,19 +65,19 @@ paths under `/etc/cordum/tls`).
 Each topic's input shape matches its typed `In` struct:
 
 ```bash
-curl -X POST http://localhost:8081/api/v1/jobs \
+curl --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/jobs \
   -H "X-API-Key: $KEY" \
   -H "Content-Type: application/json" \
   -d '{"topic":"job.multi-topic.upper","context":{"text":"hello"}}'
 # → {"text":"HELLO"}
 
-curl -X POST http://localhost:8081/api/v1/jobs \
+curl --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/jobs \
   -H "X-API-Key: $KEY" \
   -H "Content-Type: application/json" \
   -d '{"topic":"job.multi-topic.add","context":{"a":2,"b":3}}'
 # → {"sum":5}
 
-curl -X POST http://localhost:8081/api/v1/jobs \
+curl --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/jobs \
   -H "X-API-Key: $KEY" \
   -H "Content-Type: application/json" \
   -d '{"topic":"job.multi-topic.tag","context":{"items":["a","b"],"tag":"x"}}'

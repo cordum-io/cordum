@@ -48,7 +48,8 @@ into prompts, screenshots, docs, or exported evidence.
 6. Export only demo placeholders in your shell:
 
    ```bash
-   export CORDUM_GATEWAY=http://localhost:8081
+   export CORDUM_GATEWAY=https://localhost:8081
+   export CORDUM_TLS_CA=<cordum-checkout>/certs/ca/ca.crt
    export CORDUM_API_KEY=<cordum-api-key>
    export CORDUM_TENANT_ID=default
    export CORDUM_PRINCIPAL_ID=<demo-user-id>

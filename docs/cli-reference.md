@@ -17,7 +17,7 @@ is not provided on the command line.
 
 | Flag | Env Variable | Default | Description |
 |------|-------------|---------|-------------|
-| `--gateway` | `CORDUM_GATEWAY` | `http://localhost:8081` | Gateway base URL |
+| `--gateway` | `CORDUM_GATEWAY` | `http://localhost:8081` | Gateway base URL. The compose stack needs `https://localhost:8081` (CA: `--cacert ./certs/ca/ca.crt`) |
 | `--api-key` | `CORDUM_API_KEY` | *(none)* | API authentication key |
 | `--tenant` | `CORDUM_TENANT_ID` | `default` | Tenant ID |
 | `--cacert` | `CORDUM_TLS_CA` | *(none)* | CA certificate for TLS verification |
@@ -484,7 +484,7 @@ started with `up`/`dev`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CORDUM_GATEWAY` | `http://localhost:8081` | Gateway base URL |
+| `CORDUM_GATEWAY` | `http://localhost:8081` | Gateway base URL. The compose stack needs `https://localhost:8081` (CA: `CORDUM_TLS_CA=./certs/ca/ca.crt`) |
 | `CORDUM_API_KEY` | *(none)* | API authentication key |
 | `CORDUM_TENANT_ID` | `default` | Tenant ID |
 

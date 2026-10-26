@@ -53,28 +53,39 @@ The demo script also installs the pack if it's missing.
 ## 4) Run the demo script
 
 ```bash
+CORDUM_API_BASE=https://localhost:8081 \
 CORDUM_API_KEY=${CORDUM_API_KEY:?set CORDUM_API_KEY} \
 CORDUM_TENANT_ID=${CORDUM_TENANT_ID:-default} \
 CORDUM_ORG_ID=${CORDUM_ORG_ID:-default} \
 ./tools/scripts/demo_guardrails.sh
 ```
 
-If your gateway is not on localhost (for example, running inside a Docker network),
-set the API base and gateway:
+The script defaults to a plain-HTTP gateway URL, which the default stack's TLS
+gateway rejects. With an `https://` base it trusts `CORDUM_TLS_CA`, or else
+`certs/ca/ca.crt` in the checkout, for curl and `cordumctl`.
+
+If your gateway is not on localhost (for example, the script runs in a
+container on the Compose network), set the API base, gateway and CA:
 
 ```bash
-CORDUM_API_BASE=http://cordum-api-gateway:8081 \
-CORDUM_GATEWAY=http://cordum-api-gateway:8081 \
+CORDUM_API_BASE=https://cordum-api-gateway:8081 \
+CORDUM_GATEWAY=https://cordum-api-gateway:8081 \
+CORDUM_TLS_CA=/etc/cordum/tls/ca/ca.crt \
 CORDUM_API_KEY=${CORDUM_API_KEY:?set CORDUM_API_KEY} \
 CORDUM_TENANT_ID=${CORDUM_TENANT_ID:-default} \
 CORDUM_ORG_ID=${CORDUM_ORG_ID:-default} \
 ./tools/scripts/demo_guardrails.sh
 ```
+
+The gateway certificate covers the `cordum-api-gateway` network alias. The
+Compose services read the CA from `./certs` mounted at `/etc/cordum/tls`; a
+container of your own has no CA until you mount it the same way
+(`-v "$PWD/certs:/etc/cordum/tls:ro"`).
 
 One-command runner (starts the worker + demo):
 
 ```bash
-./tools/scripts/demo_guardrails_run.sh
+CORDUM_API_BASE=https://localhost:8081 ./tools/scripts/demo_guardrails_run.sh
 ```
 
 Note: the first run may take a bit while Go downloads modules and the worker

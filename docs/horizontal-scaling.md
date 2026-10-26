@@ -285,8 +285,10 @@ docker compose -f docker-compose.yml -f docker-compose.ha.yaml up -d --build
 # Gateway-2: localhost:8083 (HTTP API)
 
 # Verify both gateways are healthy
-curl http://localhost:8081/api/v1/status
-curl http://localhost:8083/api/v1/status
+curl --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/status
+curl --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8083/api/v1/status
 
 # Run the HA production gate
 ./tools/scripts/production_gate.sh --gate 19

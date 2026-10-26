@@ -86,7 +86,7 @@ bash ./tools/scripts/platform_smoke.sh
 Status endpoint:
 
 ```bash
-curl -sS http://localhost:8081/api/v1/status \
+curl -sS --cacert ./certs/ca/ca.crt https://localhost:8081/api/v1/status \
   -H "X-API-Key: ${CORDUM_API_KEY}" \
   -H "X-Tenant-ID: ${CORDUM_TENANT_ID}" | jq
 ```

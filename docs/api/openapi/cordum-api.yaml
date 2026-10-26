@@ -8,8 +8,8 @@ info:
   license:
     name: Proprietary
 servers:
-- url: http://localhost:8081
-  description: Gateway HTTP (local default)
+- url: https://localhost:8081
+  description: Gateway on the default compose stack (HTTPS; development CA in ./certs/ca/ca.crt)
 - url: /
   description: Relative gateway base
 tags:

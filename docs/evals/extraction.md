@@ -40,7 +40,7 @@ The extractor defaults to the **last 24 hours** and to verdicts
 Set these once:
 
 ```bash
-export BASE=http://localhost:8081
+export BASE=https://localhost:8081   # default stack; curl gets --cacert ./certs/ca/ca.crt
 export TENANT=acme
 export AUTH="X-API-Key: $CORDUM_API_KEY"
 ```
@@ -48,7 +48,7 @@ export AUTH="X-API-Key: $CORDUM_API_KEY"
 ### Preview the last 7 days of denies across all topics
 
 ```bash
-curl -sS -X POST "$BASE/api/v1/evals/datasets/from-incidents?dry_run=true" \
+curl -sS --cacert ./certs/ca/ca.crt -X POST "$BASE/api/v1/evals/datasets/from-incidents?dry_run=true" \
   -H "X-Tenant-ID: $TENANT" \
   -H "$AUTH" \
   -H "Content-Type: application/json" \
@@ -66,7 +66,7 @@ Because `topic` is omitted, this scans **all topics** for the tenant.
 ### Persist the last 7 days of deny + require-approval incidents
 
 ```bash
-curl -sS -X POST "$BASE/api/v1/evals/datasets/from-incidents" \
+curl -sS --cacert ./certs/ca/ca.crt -X POST "$BASE/api/v1/evals/datasets/from-incidents" \
   -H "X-Tenant-ID: $TENANT" \
   -H "$AUTH" \
   -H "Content-Type: application/json" \
@@ -83,7 +83,7 @@ curl -sS -X POST "$BASE/api/v1/evals/datasets/from-incidents" \
 ### Filter by topic pattern or rule id
 
 ```bash
-curl -sS -X POST "$BASE/api/v1/evals/datasets/from-incidents?dry_run=true" \
+curl -sS --cacert ./certs/ca/ca.crt -X POST "$BASE/api/v1/evals/datasets/from-incidents?dry_run=true" \
   -H "X-Tenant-ID: $TENANT" \
   -H "$AUTH" \
   -H "Content-Type: application/json" \

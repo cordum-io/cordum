@@ -935,7 +935,7 @@ If Redis is unavailable, replicas fall back to direct IdP fetches (same behavior
 | `CORDUM_SAML_ENABLED` | `false` | Enable the SAML service-provider endpoints on the gateway |
 | `CORDUM_SAML_IDP_METADATA_URL` | — | Remote IdP metadata URL the gateway should fetch on startup |
 | `CORDUM_SAML_IDP_METADATA` | — | Inline IdP metadata XML (use instead of the URL for air-gapped installs) |
-| `CORDUM_SAML_BASE_URL` | `http://localhost:8081` | External gateway base URL used to publish metadata, ACS, and login endpoints |
+| `CORDUM_SAML_BASE_URL` | `http://localhost:8081` | External gateway base URL used to publish metadata, ACS, and login endpoints. The compose stack needs `https://localhost:8081` (or its external HTTPS URL) |
 | `CORDUM_SAML_CERT_PATH` | — | PEM certificate path for the service-provider signing / TLS cert |
 | `CORDUM_SAML_KEY_PATH` | — | PEM private-key path paired with `CORDUM_SAML_CERT_PATH` |
 | `CORDUM_SAML_ENTITY_ID` | metadata URL | Explicit SAML entity ID override for the service provider |

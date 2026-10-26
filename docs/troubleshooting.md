@@ -185,8 +185,8 @@ cat config/pools.yaml
 # Should have: topics: { "job.default": "default" }
 
 # Check the job's topic
-curl -s -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  http://localhost:8081/api/v1/jobs/JOB_ID | jq .topic
+curl -s --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/jobs/JOB_ID | jq .topic
 ```
 
 **Fix**: Add the topic-to-pool mapping in `config/pools.yaml`:
@@ -210,8 +210,8 @@ redis-cli DEL cfg:system:default
 **Diagnostic**:
 ```bash
 # Check worker heartbeats
-curl -s -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  http://localhost:8081/api/v1/workers | jq '.items[] | {id, pool, last_heartbeat}'
+curl -s --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/workers | jq '.items[] | {id, pool, last_heartbeat}'
 
 # Check scheduler logs for "no workers" errors
 docker compose logs scheduler --tail=100 | grep "no_workers\|no workers"
@@ -226,14 +226,14 @@ docker compose logs scheduler --tail=100 | grep "no_workers\|no workers"
 **Diagnostic**:
 ```bash
 # Check DLQ for failed jobs
-curl -s -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  http://localhost:8081/api/v1/dlq?limit=10 | jq '.[] | {id, error}'
+curl -s --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/dlq?limit=10 | jq '.[] | {id, error}'
 ```
 
 **Fix**: Address the root cause (no workers, no pool mapping, overloaded pool) and retry from DLQ:
 ```bash
-curl -X POST -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  http://localhost:8081/api/v1/dlq/JOB_ID/retry
+curl --cacert ./certs/ca/ca.crt -X POST -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/dlq/JOB_ID/retry
 ```
 
 ---
@@ -258,8 +258,8 @@ created with `cordumctl topic create`, or it was deleted from the registry.
 cordumctl topic list
 
 # Optional: inspect the raw registry API response
-curl -s -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  http://localhost:8081/api/v1/topics | jq .
+curl -s --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/topics | jq .
 ```
 
 **Fix**:
@@ -288,8 +288,8 @@ same mismatch is logged instead of rejected.
 cordumctl topic list
 
 # Fetch the schema document
-curl -s -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  http://localhost:8081/api/v1/schemas/SCHEMA_ID | jq .
+curl -s --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/schemas/SCHEMA_ID | jq .
 ```
 
 **Fix**:
@@ -424,8 +424,8 @@ cat config/safety.yaml | python -c "import yaml, sys; yaml.safe_load(sys.stdin.r
 **Diagnostic**:
 ```bash
 # Check the job's quarantine reason
-curl -s -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  http://localhost:8081/api/v1/jobs/JOB_ID | jq '{status, error_message, failure_reason}'
+curl -s --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/jobs/JOB_ID | jq '{status, error_message, failure_reason}'
 
 # Check output policy metrics
 curl -s http://localhost:9090/metrics | grep output_policy_quarantined
@@ -459,9 +459,9 @@ env | grep CORS
 env | grep ALLOWED_ORIGINS
 
 # Test API from dashboard origin
-curl -H "Origin: http://localhost:5173" \
+curl --cacert ./certs/ca/ca.crt -H "Origin: http://localhost:5173" \
   -H "Access-Control-Request-Method: GET" \
-  -X OPTIONS http://localhost:8081/api/v1/jobs
+  -X OPTIONS https://localhost:8081/api/v1/jobs
 ```
 
 **Fix**: Set allowed origins (checked in order: `CORDUM_ALLOWED_ORIGINS`, `CORDUM_CORS_ALLOW_ORIGINS`, `CORS_ALLOW_ORIGINS`):
@@ -476,12 +476,12 @@ export CORDUM_ALLOWED_ORIGINS="http://localhost:5173,https://dashboard.example.c
 **Diagnostic**:
 ```bash
 # Test API key
-curl -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  http://localhost:8081/api/v1/jobs
+curl --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/jobs
 # Should return 200, not 401
 
 # If user auth is enabled, test login
-curl -X POST http://localhost:8081/api/v1/auth/login \
+curl --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"your-password"}'
 ```
@@ -689,12 +689,12 @@ curl -s http://localhost:9090/metrics | grep active_goroutines
 **Diagnostic**:
 ```bash
 # List DLQ entries
-curl -s -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  http://localhost:8081/api/v1/dlq?limit=20 | jq '.[] | {id, error, created_at}'
+curl -s --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/dlq?limit=20 | jq '.[] | {id, error, created_at}'
 
 # Group by error type
-curl -s -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  http://localhost:8081/api/v1/dlq?limit=100 | jq '[.[].error] | group_by(.) | map({error: .[0], count: length})'
+curl -s --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/dlq?limit=100 | jq '[.[].error] | group_by(.) | map({error: .[0], count: length})'
 ```
 
 **Common DLQ reasons**:
@@ -712,12 +712,12 @@ curl -s -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
 **Retry or delete**:
 ```bash
 # Retry a job
-curl -X POST -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  http://localhost:8081/api/v1/dlq/JOB_ID/retry
+curl --cacert ./certs/ca/ca.crt -X POST -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/dlq/JOB_ID/retry
 
 # Delete a job from DLQ
-curl -X DELETE -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  http://localhost:8081/api/v1/dlq/JOB_ID
+curl --cacert ./certs/ca/ca.crt -X DELETE -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/dlq/JOB_ID
 ```
 
 ### DLQ cleanup leader election
@@ -789,26 +789,26 @@ nats consumer rm CORDUM_JOBS cordum-scheduler --server nats://localhost:4222
 
 ```bash
 # Gateway HTTP health
-curl http://localhost:8081/health
+curl --cacert ./certs/ca/ca.crt https://localhost:8081/health
 
 # Gateway gRPC health
 grpcurl -plaintext localhost:50051 grpc.health.v1.Health/Check
 
 # System health (authenticated)
-curl -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  http://localhost:8081/api/v1/system/health
+curl --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/system/health
 ```
 
 ### Job state inspection
 
 ```bash
 # Get job details
-curl -s -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  http://localhost:8081/api/v1/jobs/JOB_ID | jq '{id, status, topic, error_message}'
+curl -s --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/jobs/JOB_ID | jq '{id, status, topic, error_message}'
 
 # List recent jobs
-curl -s -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  "http://localhost:8081/api/v1/jobs?limit=10&sort=created_at&order=desc" | jq '.items[] | {id, status, topic}'
+curl -s --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  "https://localhost:8081/api/v1/jobs?limit=10&sort=created_at&order=desc" | jq '.items[] | {id, status, topic}'
 ```
 
 ### Redis inspection
@@ -1115,7 +1115,7 @@ missing`, `malformed`, or `unavailable`.
 
 ```bash
 # Inspect the approval record
-curl -sS "http://localhost:8081/api/v1/approvals?include_resolved=false" \
+curl -sS --cacert ./certs/ca/ca.crt "https://localhost:8081/api/v1/approvals?include_resolved=false" \
   -H "X-API-Key: $CORDUM_API_KEY" \
   -H "X-Tenant-ID: $CORDUM_TENANT_ID" \
   | jq --arg job "$JOB_ID" '
@@ -1129,7 +1129,7 @@ curl -sS "http://localhost:8081/api/v1/approvals?include_resolved=false" \
     '
 
 # If this is a workflow approval, inspect the related run
-curl -sS "http://localhost:8081/api/v1/workflow-runs/${RUN_ID}" \
+curl -sS --cacert ./certs/ca/ca.crt "https://localhost:8081/api/v1/workflow-runs/${RUN_ID}" \
   -H "X-API-Key: $CORDUM_API_KEY" \
   -H "X-Tenant-ID: $CORDUM_TENANT_ID" \
   | jq '{id, status, current_step, error}'
@@ -1174,7 +1174,7 @@ Inspect the approval record before deciding whether this is an operator repair c
 normal race:
 
 ```bash
-curl -sS "http://localhost:8081/api/v1/approvals?include_resolved=true" \
+curl -sS --cacert ./certs/ca/ca.crt "https://localhost:8081/api/v1/approvals?include_resolved=true" \
   -H "X-API-Key: $CORDUM_API_KEY" \
   -H "X-Tenant-ID: $CORDUM_TENANT_ID" \
   | jq --arg job "$JOB_ID" '
@@ -1227,7 +1227,7 @@ cordumctl approval repair "$JOB_ID"
 Equivalent API call:
 
 ```bash
-curl -sS -X POST "http://localhost:8081/api/v1/approvals/${JOB_ID}/repair" \
+curl -sS --cacert ./certs/ca/ca.crt -X POST "https://localhost:8081/api/v1/approvals/${JOB_ID}/repair" \
   -H "X-API-Key: $CORDUM_API_KEY" \
   -H "X-Tenant-ID: $CORDUM_TENANT_ID" \
   -H "Content-Type: application/json" \

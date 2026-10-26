@@ -7,7 +7,8 @@ schemas, auth requirements, and error behaviors), see `docs/api-reference.md`.
 
 ## REST API
 
-Base URL (local compose): `http://localhost:8081`
+Base URL (local compose): `https://localhost:8081`. Its certificate is signed
+by the development CA in `./certs/ca/ca.crt`; pass that to curl with `--cacert`.
 
 Authentication:
 - HTTP header: `X-API-Key: <key>` (or JWT via `Authorization: Bearer <token>`)

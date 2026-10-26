@@ -19,8 +19,12 @@ From the repository root:
 
 ```bash
 make build SERVICE=cordum-agentd
-go run ./cmd/cordum-agentd --gateway http://127.0.0.1:8081 --tenant <tenant-id>
+CORDUM_TLS_CA=./certs/ca/ca.crt \
+  go run ./cmd/cordum-agentd --gateway https://127.0.0.1:8081 --tenant <tenant-id>
 ```
+
+The default stack serves the gateway over HTTPS with the development CA in
+`./certs/ca/ca.crt`; `CORDUM_TLS_CA` names that CA for agentd's Gateway calls.
 
 Required Gateway credentials:
 

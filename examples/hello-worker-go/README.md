@@ -57,7 +57,7 @@ Install the hello pack and trigger a run:
 
 ```bash
 ./cmd/cordumctl/cordumctl pack install ./examples/hello-worker-go/pack
-curl -sS -X POST http://localhost:8081/api/v1/jobs \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/jobs \
   -H "X-API-Key: ${CORDUM_API_KEY:?set CORDUM_API_KEY}" \
   -H "X-Tenant-ID: ${CORDUM_TENANT_ID:-default}" \
   -H "Content-Type: application/json" \

@@ -338,7 +338,7 @@ exits cleanly."*
 ```
 
 Claude Code surfaces: *"This tool needs approval. Approve at:
-http://localhost:8081/approvals?mcp=apr-1a2b3c"*
+http://localhost:8082/approvals?mcp=apr-1a2b3c"* (the dashboard's approvals page)
 
 **Step 4.** The operator opens the dashboard, clicks the approval, reviews the
 canonical args in the modal, and clicks **Approve**.
