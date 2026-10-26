@@ -1,17 +1,14 @@
 # Safety policy for the LangChain guard tutorial.
 #
-# Load into Cordum:
-#   curl -X POST http://localhost:8081/api/v1/policies \
-#     -H "X-API-Key: $CORDUM_API_KEY" \
-#     -H "X-Tenant-ID: default" \
-#     -H "Content-Type: application/json" \
-#     -d @- <<'EOF'
-#   {
-#     "id": "financial_ops",
-#     "name": "Financial Operations Policy",
-#     "content": "<paste this YAML>"
-#   }
-#   EOF
+# Load into Cordum as the policy bundle secops/financial_ops. Bundle IDs must
+# start with "secops/", and the URL path writes "/" as "~". The request body
+# is {"content": "<this YAML>", "enabled": true}; jq builds it from the file:
+#   jq -n --rawfile content safety.yaml '{content: $content, enabled: true}' |
+#     curl -X PUT http://localhost:8081/api/v1/policy/bundles/secops~financial_ops \
+#       -H "X-API-Key: $CORDUM_API_KEY" \
+#       -H "X-Tenant-ID: default" \
+#       -H "Content-Type: application/json" \
+#       --data-binary @-
 
 version: "1"
 rules:
@@ -24,14 +21,15 @@ rules:
     decision: deny
     reason: "Destructive operations are blocked by policy."
 
-  # Rule 2: Large transfers require human approval. label_threshold matches
-  # when the request label "amount" is a number above 10000, so the caller
-  # must send the transfer amount as that label.
+  # Rule 2: Large transfers require human approval. CordumToolGuard sends
+  # each scalar tool argument as an arg.<name> label, so the transfer amount
+  # arrives as arg.amount. label_threshold matches when it is a number above
+  # 10000, and also when it is not a plain number (such as "15,000").
   - id: financial-approval
     match:
       capabilities: [transfer_funds]
       label_threshold:
-        amount: 10000
+        arg.amount: 10000
     decision: require_approval
     reason: "Transfers over $10,000 require human approval."
 

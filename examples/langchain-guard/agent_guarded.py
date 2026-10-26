@@ -3,7 +3,8 @@
 Same 3 tools as agent.py, but wrapped through CordumToolGuard.
 Cordum's Safety Kernel evaluates each tool call before execution:
   - lookup_balance  → ALLOW  (safe, read-only)
-  - transfer_funds  → REQUIRE_APPROVAL if amount > $10,000
+  - transfer_funds  → REQUIRE_APPROVAL if amount > $10,000 (the tool does
+                      not run; the guard raises CordumApprovalRequiredError)
   - delete_account  → DENY   (destructive operations blocked)
 
 Prerequisites:
@@ -23,7 +24,7 @@ from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 
-from cordum_guard import CordumClient
+from cordum_guard import CordumApprovalRequiredError, CordumClient
 from cordum_guard.langchain import CordumToolGuard
 
 
@@ -129,7 +130,13 @@ def main() -> None:
 
     for query in queries:
         print(f"\n> {query}")
-        result = agent.invoke({"messages": [("human", query)]})
+        try:
+            result = agent.invoke({"messages": [("human", query)]})
+        except CordumApprovalRequiredError as exc:
+            # LangGraph's default ToolNode re-raises tool exceptions. The tool
+            # did not run, and the evaluation created no approval request.
+            print(f"  [APPROVAL REQUIRED] {exc.reason} (rule {exc.rule_id})")
+            continue
         last_msg = result["messages"][-1]
         print(f"  {last_msg.content}")
 

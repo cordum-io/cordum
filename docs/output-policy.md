@@ -41,7 +41,8 @@ Worker -> sys.job.result -> Scheduler.handleJobResult
 Operational characteristics from current scheduler code:
 
 - sync checks are fail-open on checker error/unavailable (result flow continues)
-- async checks are best-effort and non-blocking
+- async checks run in the background and do not block the result; when the
+  async check itself fails they quarantine by default (see 3.2)
 - output safety record is persisted for API/dashboard retrieval
 
 ## 3. Enabling Output Scanning
@@ -58,11 +59,25 @@ OUTPUT_POLICY_ENABLED=true
 
 ### 3.2 Fail mode
 
-Current scheduler behavior is effectively `fail_mode: open`:
+What happens when an output check itself fails (checker error, unavailable
+Safety Kernel, timeout) depends on the phase:
 
-- if sync check fails, scheduler increments `output_policy_skipped` and does not block result completion
+- **Sync metadata check:** always fail-open. The scheduler increments
+  `output_policy_skipped`, keeps the result, and still runs the async check.
+- **Async content check:** fail-closed by default. The scheduler quarantines
+  the result (`async output check error — fail-closed`). In `open` mode it
+  allows the result, increments `output_policy_skipped`, and logs a warning.
 
-`fail_mode: closed` is not currently implemented as a first-class runtime toggle in the scheduler path.
+The async mode comes from, first match wins: the tenant's
+`scheduler.output_fail_mode` in the config service, the system-scope
+`scheduler.output_fail_mode`, the scheduler's `OUTPUT_POLICY_FAIL_MODE`
+environment variable, then `closed`. Under the production CAP profile it is
+always `closed`. See [output-safety.md](output-safety.md).
+
+`output_policy.fail_mode` in the safety policy does not change any of this.
+Its only effect is on whether `output_rules` run: they run when
+`output_policy.enabled` is `true`, or when `enabled` is `false` or omitted and
+`fail_mode` is unset (legacy policies).
 
 ### 3.3 Per-topic override pattern
 
@@ -86,12 +101,15 @@ output_rules:
 
 ### 3.4 Default rule set in `config/safety.yaml`
 
-Cordum ships a baseline output rule set (disabled by default through `output_policy.enabled: false`):
+Cordum ships a baseline output rule set, turned on in the policy with
+`output_policy.enabled: true` (and `fail_mode: closed`, which has no runtime
+effect, see 3.2). The scheduler sends results to these rules only when
+`OUTPUT_POLICY_ENABLED=true` (section 3.1).
 
 | Rule ID | Default state | Match intent | Decision | Severity |
 | --- | --- | --- | --- | --- |
 | `output-secret-leak` | enabled | Secret scanners on `job.*` output | `quarantine` | `critical` |
-| `output-pii-leak` | disabled | PII scanners on `job.*` output | `quarantine` | `high` |
+| `output-pii-leak` | enabled | PII scanners on outbound topics only (`job.mkt-authority.*`, `job.mkt-pipeline.*`, `job.demo-*`, `job.b2b.vendor-email`, `job.b2b.procurement-pay`) | `quarantine` | `high` |
 | `output-injection-detected` | enabled | Injection scanners on `job.*` output | `quarantine` | `high` |
 | `output-size-limit` | enabled | Outputs larger than 10 MiB (`output_size_gt`) | `quarantine` | `medium` |
 | `output-error-secret-leak` | enabled | Secret scanners when `has_error: true` | `quarantine` | `high` |

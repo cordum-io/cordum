@@ -15,10 +15,16 @@ pip install -r requirements.txt
 export CORDUM_API_KEY="your-api-key"
 export OPENAI_API_KEY="sk-..."
 
-# 4. Run the unguarded agent (everything is allowed)
+# 4. Load safety.yaml as the policy bundle secops/financial_ops
+jq -n --rawfile content safety.yaml '{content: $content, enabled: true}' |
+  curl -X PUT http://localhost:8081/api/v1/policy/bundles/secops~financial_ops \
+    -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+    -H "Content-Type: application/json" --data-binary @-
+
+# 5. Run the unguarded agent (everything is allowed)
 python agent.py
 
-# 5. Run the guarded agent (Cordum enforces safety policies)
+# 6. Run the guarded agent (Cordum enforces safety policies)
 python agent_guarded.py
 ```
 

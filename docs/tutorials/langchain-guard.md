@@ -73,14 +73,15 @@ rules:
     decision: deny
     reason: "Destructive operations are blocked by policy."
 
-  # Large transfers require human approval. label_threshold matches when the
-  # request label "amount" is a number above 10000, so the caller must send
-  # the transfer amount as that label.
+  # Large transfers require human approval. CordumToolGuard sends each
+  # scalar tool argument as an arg.<name> label, so the transfer amount
+  # arrives as arg.amount. label_threshold matches when it is a number above
+  # 10000, and also when it is not a plain number (such as "15,000").
   - id: financial-approval
     match:
       capabilities: [transfer_funds]
       label_threshold:
-        amount: 10000
+        arg.amount: 10000
     decision: require_approval
     reason: "Transfers over $10,000 require human approval."
 
@@ -99,19 +100,24 @@ rules:
 | `transfer_funds("bob", "alice", 15000)` | **REQUIRE_APPROVAL** — needs human sign-off |
 | `delete_account("charlie")` | **DENY** — blocked, no exceptions |
 
-Load the policy into Cordum:
+Load the policy into Cordum as a policy bundle with
+`PUT /api/v1/policy/bundles/{id}`. Bundle IDs must start with `secops/`, and
+the URL path writes `/` as `~`, so `secops/financial_ops` becomes
+`secops~financial_ops`. The body is `{"content": "<policy YAML>", "enabled":
+true}`, and `jq` builds it from the file:
 
 ```bash
-curl -X POST http://localhost:8081/api/v1/policies \
-  -H "X-API-Key: $CORDUM_API_KEY" \
-  -H "X-Tenant-ID: default" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "id": "financial_ops",
-    "name": "Financial Operations Policy",
-    "content_yaml": "'"$(cat safety.yaml)"'"
-  }'
+jq -n --rawfile content safety.yaml '{content: $content, enabled: true}' |
+  curl -X PUT http://localhost:8081/api/v1/policy/bundles/secops~financial_ops \
+    -H "X-API-Key: $CORDUM_API_KEY" \
+    -H "X-Tenant-ID: default" \
+    -H "Content-Type: application/json" \
+    --data-binary @-
 ```
+
+The key needs policy write access (the `admin` role). The gateway rejects
+YAML that fails policy validation, and the Safety Kernel applies the bundle
+on its next policy reload.
 
 ## Step 4: Run the Unguarded Agent
 
@@ -163,8 +169,8 @@ Expected output:
   Account 'alice' balance: $5,200.00                ← ALLOWED
 
 > Transfer $15,000 from Bob to Alice.
-  [BLOCKED] transfer_funds: Transfers over $10,000  ← BLOCKED — needs approval
-  require human approval.
+  [APPROVAL REQUIRED] Transfers over $10,000        ← NOT RUN — needs approval
+  require human approval. (rule financial-approval)
 
 > Delete Charlie's account.
   [BLOCKED] delete_account: Destructive operations  ← DENIED by policy
@@ -173,14 +179,21 @@ Expected output:
 
 The Safety Kernel intervened:
 - **Balance lookup** passed through (safe operation)
-- **$15k transfer** was blocked pending human approval
-- **Account deletion** was denied outright
+- **$15k transfer** did not run. The guard raised `CordumApprovalRequiredError`,
+  LangGraph's default `ToolNode` re-raised it from `agent.invoke`, and
+  `agent_guarded.py` catches it and prints the reason
+- **Account deletion** was denied outright. The model gets
+  `[BLOCKED] delete_account: ...` as the tool result, so its reply wording varies
 
-## Step 6: Approve from the Dashboard
+## Step 6: Send Approvals to the Dashboard
 
-Open [http://localhost:8082](http://localhost:8082) and navigate to **Approvals**.
-
-You'll see the pending transfer waiting for sign-off. Click **Approve** to let it through, or **Reject** to deny it permanently.
+The tool guard stops at the verdict. `/api/v1/policy/evaluate` creates no
+approval, so the $15k transfer does not show up under **Approvals**. To get a
+human decision, submit the action as a job with the same labels: the job waits
+under **Approvals** in the dashboard at
+[http://localhost:8082](http://localhost:8082) until someone clicks
+**Approve** or **Reject**. The `@guard` decorator (below) submits that job on
+`require_approval` and waits for its outcome.
 
 ## The Key Difference: 4 Lines of Code
 
