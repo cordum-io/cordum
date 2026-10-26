@@ -166,6 +166,53 @@ func TestMatchRuleMCPLists(t *testing.T) {
 	}
 }
 
+func TestMatchRuleLabelThreshold(t *testing.T) {
+	amount := func(v string) map[string]string { return map[string]string{"arg.amount": v} }
+	for _, tc := range []struct {
+		name     string
+		decision string
+		labels   map[string]string
+		want     bool
+	}{
+		{"deny above threshold", "deny", amount("15000"), true},
+		{"deny at threshold", "deny", amount("10000"), false},
+		{"deny below threshold", "deny", amount("500"), false},
+		{"deny missing label", "deny", nil, false},
+		{"deny comma value", "deny", amount("15,000"), true},
+		{"block currency value", "block", amount("$15000"), true},
+		{"require_approval comma value", "require_approval", amount("15,000"), true},
+		{"require_approval NaN", "require_approval", amount("NaN"), true},
+		{"require_approval inf", "require_approval", amount("inf"), true},
+		{"require_approval missing label", "require_approval", map[string]string{"amount": "15000"}, false},
+		{"throttle text value", "throttle", amount("lots"), true},
+		{"throttle below threshold", "throttle", amount("9999.99"), false},
+		{"allow above threshold", "allow", amount("15000"), true},
+		{"allow comma value", "allow", amount("15,000"), false},
+		{"allow NaN", "allow", amount("NaN"), false},
+		{"allow missing label", "allow", nil, false},
+		{"allow_with_constraints text value", "allow_with_constraints", amount("lots"), false},
+		{"allow_with_constraints above threshold", "allow_with_constraints", amount("15000"), true},
+	} {
+		rule := PolicyRule{Decision: tc.decision, Match: PolicyMatch{LabelThreshold: map[string]float64{"arg.amount": 10000}}}
+		if got := matchRule(rule, PolicyInput{Topic: "job.x", Labels: tc.labels}); got != tc.want {
+			t.Errorf("%s: matchRule = %v; want %v", tc.name, got, tc.want)
+		}
+	}
+
+	// One unreadable value decides the rule whatever the map order: it never
+	// lets an allow rule match, and always makes a deny rule match.
+	thresholds := map[string]float64{"a": 10, "b": 10, "c": 10}
+	labels := map[string]string{"a": "50", "b": "n/a", "c": "1"}
+	for i := 0; i < 50; i++ {
+		if matchRule(PolicyRule{Decision: "allow", Match: PolicyMatch{LabelThreshold: thresholds}}, PolicyInput{Labels: labels}) {
+			t.Fatal("allow rule matched with an unreadable label value")
+		}
+		if !matchRule(PolicyRule{Decision: "deny", Match: PolicyMatch{LabelThreshold: thresholds}}, PolicyInput{Labels: map[string]string{"a": "1", "b": "n/a"}}) {
+			t.Fatal("deny rule skipped an unreadable label value")
+		}
+	}
+}
+
 func TestMCPAllowed(t *testing.T) {
 	policy := MCPPolicy{
 		AllowServers: []string{"srv"},

@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"math"
 	"path"
 	"sort"
 	"strconv"
@@ -872,7 +873,7 @@ func matchRule(rule PolicyRule, input PolicyInput) bool {
 	if len(match.LabelAllowlist) > 0 && !labelAllowlistMatch(match.LabelAllowlist, input.Labels) {
 		return false
 	}
-	if len(match.LabelThreshold) > 0 && !labelThresholdMatch(match.LabelThreshold, input.Labels) {
+	if len(match.LabelThreshold) > 0 && !labelThresholdMatch(match.LabelThreshold, input.Labels, rule.Decision) {
 		return false
 	}
 	if !delegationPredicateMatch(match.Predicate, input.Delegation) {
@@ -909,22 +910,26 @@ func labelAllowlistMatch(allowlists map[string][]string, labels map[string]strin
 }
 
 // labelThresholdMatch returns true when ANY label value exceeds its threshold.
-// If the label is missing or not a valid number, skip that check (fail-open).
-func labelThresholdMatch(thresholds map[string]float64, labels map[string]string) bool {
+// A missing label is skipped. A present value that is not a number
+// (strconv.ParseFloat, so "15,000" and "$15000" are not) or is NaN cannot be
+// compared, so it resolves to the restrictive outcome: the rule matches unless
+// its decision is allow-class, and an allow-class rule does not match.
+func labelThresholdMatch(thresholds map[string]float64, labels map[string]string, decision string) bool {
+	exceeded := false
 	for key, maxVal := range thresholds {
 		actual, exists := labels[key]
 		if !exists {
 			continue
 		}
 		parsed, err := strconv.ParseFloat(strings.TrimSpace(actual), 64)
-		if err != nil {
-			continue // not a number → skip (fail-open)
+		if err != nil || math.IsNaN(parsed) {
+			return !allowClassDecision(decision)
 		}
 		if parsed > maxVal {
-			return true // exceeds threshold → rule matches (deny)
+			exceeded = true
 		}
 	}
-	return false
+	return exceeded
 }
 
 func containsString(list []string, value string) bool {
@@ -1013,12 +1018,21 @@ func MCPRuleMatch(lists MCPPolicy, decision string, req MCPRequest) bool {
 		return false
 	}
 	permitted, _ := MCPAllowed(lists, req)
+	if allowClassDecision(decision) {
+		return permitted
+	}
+	return !permitted
+}
+
+// allowClassDecision reports whether a rule decision lets the request run:
+// allow, allow_with_constraints and their aliases. Every other value is
+// restrictive, as normalizeDecision maps unknown decisions to deny.
+func allowClassDecision(decision string) bool {
 	switch strings.ToLower(strings.TrimSpace(decision)) {
 	case "allow", "permit", "allow_with_constraints", "allow-with-constraints":
-		return permitted
-	default:
-		return !permitted
+		return true
 	}
+	return false
 }
 
 // MCPAllowed evaluates an MCP request against allow/deny lists, returning false with a reason when blocked.

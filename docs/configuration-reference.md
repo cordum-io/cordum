@@ -520,11 +520,12 @@ tenants:
 | `rules[].match.capabilities` | string[] | Exact capability names (case-insensitive, no wildcards) |
 | `rules[].match.risk_tags` | string[] | Matches when the job carries any of these risk tags |
 | `rules[].match.labels` | map | Exact label key/value pairs; all must match |
+| `rules[].match.label_threshold` | map | Label key to number. Matches when any listed label is a number above its threshold. A missing label is skipped. A value that does not parse as a number (`15,000`, `$15000`, `NaN`) makes a `deny`, `require_approval` or `throttle` rule match and an `allow` or `allow_with_constraints` rule not match |
 | `rules[].decision` | string | `allow`, `deny`, `require_approval`, `throttle`, `allow_with_constraints` |
 | `rules[].reason` | string | Human-readable reason |
 | `rules[].constraints` | object | Returned with `allow_with_constraints` (see [safetykernel-constraints.md](operations/safetykernel-constraints.md)) |
 
-Other `match` keys: `tenants`, `requires`, `pack_ids`, `actor_ids`, `actor_types`, `agent_risk_tiers`, `agent_data_classifications`, `label_allowlist`, `label_threshold`, `secrets_present`, `predicate`, `delegation`, `mcp`. All keys in one `match` must hold for the rule to match.
+Other `match` keys: `tenants`, `requires`, `pack_ids`, `actor_ids`, `actor_types`, `agent_risk_tiers`, `agent_data_classifications`, `label_allowlist`, `secrets_present`, `predicate`, `delegation`, `mcp`. All keys in one `match` must hold for the rule to match.
 
 Rules are evaluated top-to-bottom; first match wins. A job that matches no rule gets `default_decision` (deny when unset). `throttle` has no per-rule duration: the scheduler requeues a throttled job after a fixed 5s delay. Use a `velocity` block (below) for rate-based rules.
 
