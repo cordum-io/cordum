@@ -94,10 +94,7 @@ func TestClusterIntegration_AppendAndVerify(t *testing.T) {
 	for err := range errs {
 		t.Fatalf("append on cluster: %v", err)
 	}
-	res, err := VerifyChain(ctx, client, chainer.StreamKey("acme"), VerifyOptions{HMACKey: testHMACKey()})
-	if err != nil {
-		t.Fatalf("verify: %v", err)
-	}
+	res := verifyOnCluster(t, client, chainer, "acme")
 	if res.Status != VerifyStatusOK || res.TotalEvents != producers*perProducer || res.HMACVerified != producers*perProducer {
 		t.Fatalf("unexpected verify result: %+v", res)
 	}
@@ -174,6 +171,22 @@ func TestClusterIntegration_RetentionTrim(t *testing.T) {
 	if n, err := client.XLen(context.Background(), chainer.StreamKey(tenant)).Result(); err != nil || n != 3 {
 		t.Fatalf("stream len = %d, %v; want 3", n, err)
 	}
+	res := verifyOnCluster(t, client, chainer, tenant)
+	if res.Status != VerifyStatusPartial || res.FirstSeq != 4 || len(gapsOfType(res, GapTypeRetentionTrimmed)) != 3 {
+		t.Fatalf("verify after trim = %+v, want partial from seq 4", res)
+	}
+}
+
+func verifyOnCluster(t *testing.T, client *redis.ClusterClient, chainer *Chainer, tenant string) *VerifyResult {
+	t.Helper()
+	res, err := VerifyChain(context.Background(), client, chainer.StreamKey(tenant), VerifyOptions{
+		RetentionAnchorKey: chainer.AnchorKey(tenant),
+		HMACKey:            chainer.HMACKeyForVerify(),
+	})
+	if err != nil {
+		t.Fatalf("verify on cluster: %v", err)
+	}
+	return res
 }
 
 func TestClusterIntegration_HoldAfterPendingAnchor(t *testing.T) {
@@ -198,6 +211,9 @@ func TestClusterIntegration_HoldAfterPendingAnchor(t *testing.T) {
 	}
 	if n, _ := client.XLen(ctx, chainer.StreamKey(tenant)).Result(); n != 6 {
 		t.Fatalf("stream len = %d, want 6", n)
+	}
+	if res := verifyOnCluster(t, client, chainer, tenant); res.Status != VerifyStatusOK || res.TotalEvents != 6 {
+		t.Fatalf("verify under a pending anchor = %+v, want ok", res)
 	}
 	if err := holds.ReleaseHold(ctx, hold.ID, "test"); err != nil {
 		t.Fatalf("release: %v", err)

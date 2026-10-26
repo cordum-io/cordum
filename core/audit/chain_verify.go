@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -121,7 +123,8 @@ type VerifyOptions struct {
 	// anchor. It does not change how gaps are classified.
 	RetentionBoundarySeq int64
 	// RetentionAnchorKey is the tenant's retention anchor key
-	// (Chainer.AnchorKey), read in the same snapshot as the range. Only
+	// (Chainer.AnchorKey), read in the same snapshot as the range (on Redis
+	// Cluster just before and after it, see verifyChainCluster). Only
 	// seqs up to the anchor count as retention_trimmed: the oldest retained
 	// event must be anchor+1 and link to the anchor's hash, or be the
 	// genesis event when there is no anchor. Leaving it empty therefore
@@ -171,6 +174,9 @@ func VerifyChain(ctx context.Context, client redis.UniversalClient, streamKey st
 		// produced in the final millisecond.
 		maxID = strconv.FormatInt(opts.UntilMs, 10) + "-18446744073709551615"
 	}
+	if redisutil.IsCluster(client) {
+		return verifyChainCluster(ctx, client, streamKey, opts, minID, maxID)
+	}
 
 	// Read the range, the window's predecessor and the retention anchor in
 	// one MULTI/EXEC: a retention trim landing between separate reads would
@@ -190,11 +196,21 @@ func VerifyChain(ctx context.Context, client redis.UniversalClient, streamKey st
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return nil, fmt.Errorf("read chain %s: %w", streamKey, err)
 	}
-	entries := rangeCmd.Val()
 	rawAnchor := ""
 	if anchorCmd != nil {
 		rawAnchor = anchorCmd.Val()
 	}
+	var predecessors []redis.XMessage
+	if predCmd != nil {
+		predecessors = predCmd.Val()
+	}
+	return walkChain(rangeCmd.Val(), predecessors, rawAnchor, opts)
+}
+
+// walkChain verifies the entries read for a window (predecessors holds the
+// newest entry before a SinceMs window, if any) against the retention anchor
+// value read with them.
+func walkChain(entries, predecessors []redis.XMessage, rawAnchor string, opts VerifyOptions) (*VerifyResult, error) {
 	anchor, err := parseRetentionAnchor(rawAnchor)
 	if err != nil {
 		return nil, fmt.Errorf("parse retention anchor: %w", err)
@@ -240,7 +256,6 @@ func VerifyChain(ctx context.Context, client redis.UniversalClient, streamKey st
 	// isn't a free pass. Without this, an attacker mutating the
 	// PrevHash of the first event in the window goes undetected.
 	if opts.SinceMs > 0 {
-		predecessors := predCmd.Val()
 		if len(predecessors) > 0 {
 			if payload, ok := predecessors[0].Values[chainStreamFieldEvent].(string); ok {
 				var pred SIEMEvent
@@ -380,6 +395,88 @@ func VerifyChain(ctx context.Context, client redis.UniversalClient, streamKey st
 		result.Status = VerifyStatusPartial
 	}
 	return result, nil
+}
+
+// verifyClusterAttempts bounds how often a Redis Cluster verify re-reads.
+const verifyClusterAttempts = 5
+
+// errAnchorKeptMoving: retention trims kept moving the anchor while a Redis
+// Cluster verify read the chain.
+var errAnchorKeptMoving = errors.New("retention anchor kept changing while the chain was read; retry the verify")
+
+// verifyChainCluster is VerifyChain on Redis Cluster, where the retention
+// anchor and the stream hash to different slots and cannot be read in one
+// MULTI. It reads the anchor, then the stream (one MULTI on the stream's
+// slot), then the anchor again, and accepts a verdict that holds against
+// either read. A compromised verdict is re-read, with backoff, when the
+// anchor moved in between, or when the stream is already trimmed past a
+// pending anchor, which a sweep confirms moments later in normal operation
+// (see trimBatchCluster). Out of attempts, a verdict that kept failing
+// against a moving anchor is an error rather than a verdict.
+func verifyChainCluster(ctx context.Context, client redis.UniversalClient, streamKey string, opts VerifyOptions, minID, maxID string) (*VerifyResult, error) {
+	var res *VerifyResult
+	for attempt := 0; attempt < verifyClusterAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-time.After(10 * time.Millisecond << (attempt - 1)):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		before, err := getRetentionAnchor(ctx, client, opts.RetentionAnchorKey)
+		if err != nil {
+			return nil, err
+		}
+		pipe := client.TxPipeline()
+		rangeCmd := pipe.XRangeN(ctx, streamKey, minID, maxID, opts.Limit)
+		var predCmd *redis.XMessageSliceCmd
+		if opts.SinceMs > 0 {
+			predCmd = pipe.XRevRangeN(ctx, streamKey, xRevBefore(minID), "-", 1)
+		}
+		if _, err := pipe.Exec(ctx); err != nil {
+			return nil, fmt.Errorf("read chain %s: %w", streamKey, err)
+		}
+		var predecessors []redis.XMessage
+		if predCmd != nil {
+			predecessors = predCmd.Val()
+		}
+		after, err := getRetentionAnchor(ctx, client, opts.RetentionAnchorKey)
+		if err != nil {
+			return nil, err
+		}
+		if res, err = walkChain(rangeCmd.Val(), predecessors, before, opts); err != nil {
+			return nil, err
+		}
+		if res.Status != VerifyStatusCompromised {
+			return res, nil
+		}
+		if after != before {
+			if moved, err := walkChain(rangeCmd.Val(), predecessors, after, opts); err == nil && moved.Status != VerifyStatusCompromised {
+				return moved, nil
+			}
+			res = nil
+			continue
+		}
+		if a, _ := parseRetentionAnchor(before); !a.Pending || res.FirstSeq != a.Seq+1 {
+			return res, nil
+		}
+	}
+	if res == nil {
+		return nil, errAnchorKeptMoving
+	}
+	return res, nil
+}
+
+// getRetentionAnchor reads an anchor value; "" when key is empty or unset.
+func getRetentionAnchor(ctx context.Context, client redis.UniversalClient, key string) (string, error) {
+	if key == "" {
+		return "", nil
+	}
+	raw, err := client.Get(ctx, key).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return "", fmt.Errorf("read retention anchor: %w", err)
+	}
+	return raw, nil
 }
 
 // xRevBefore returns a Redis Stream ID usable as the XREVRANGE start
