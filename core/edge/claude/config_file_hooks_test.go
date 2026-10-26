@@ -27,7 +27,7 @@ func TestRunConfigChangeForwardsToAgentdAndBlocksOnlyInEnterpriseStrict(t *testi
 	if code != 0 {
 		t.Fatalf("exit code=%d stderr=%q", code, stderr)
 	}
-	assertCompactJSON(t, stdout, `{"decision":"block","reason":"configuration change blocked by Cordum policy","hookSpecificOutput":{"hookEventName":"ConfigChange"}}`)
+	assertCompactJSON(t, stdout, `{"decision":"block","reason":"configuration change blocked by Cordum policy"}`)
 	if stderr != "" {
 		t.Fatalf("stderr should be empty for clean ConfigChange decision, got %q", stderr)
 	}

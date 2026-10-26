@@ -9,7 +9,9 @@ import (
 // that the generated Claude settings.json carries CORDUM_AGENTD_FAIL_CLOSED
 // derived from the session policy mode: every mode EXCEPT observe must fail
 // closed (enforce + enterprise-strict + any unknown/future enforce-like mode),
-// while observe stays fail-open by design.
+// while observe stays fail-open by design. Fail-closed sessions also put
+// onFailure:"block" on the blocking hooks so a hook that cannot start or
+// times out does not let the action through.
 //
 // Regression guard for epic-8c29308d: writeLaunchSettings previously omitted
 // FailClosed from the DevSettingsOptions literal, so the flag defaulted false
@@ -46,10 +48,12 @@ func TestWriteLaunchSettingsSetsFailClosedFromPolicyMode(t *testing.T) {
 				t.Fatalf("writeLaunchSettings(policyMode=%q) returned error: %v", tc.policyMode, err)
 			}
 
-			env := jsonObject(t, decodeJSONMap(t, settings)["env"])
+			doc := decodeJSONMap(t, settings)
+			env := jsonObject(t, doc["env"])
 			if got := env["CORDUM_AGENTD_FAIL_CLOSED"]; got != tc.wantFailClosed {
 				t.Fatalf("policyMode=%q: env[CORDUM_AGENTD_FAIL_CLOSED] = %v, want %q", tc.policyMode, got, tc.wantFailClosed)
 			}
+			assertHookOnFailure(t, jsonObject(t, doc["hooks"]), tc.wantFailClosed == "true")
 		})
 	}
 }

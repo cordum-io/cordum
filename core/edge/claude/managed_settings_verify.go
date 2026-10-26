@@ -201,29 +201,32 @@ func allowedHTTPHookURLDrifts(urls []string) []ManagedSettingsDrift {
 	}}
 }
 
+// allowedMCPServerDrifts requires the allowlist to be exactly the Cordum MCP
+// gateway URL. A serverName entry is not a security control (users pick
+// names) and a serverCommand entry admits a local stdio process.
 func allowedMCPServerDrifts(servers []managedMCPAllow) []ManagedSettingsDrift {
 	if len(servers) != 1 {
 		return []ManagedSettingsDrift{{
 			Field:    "allowedMcpServers",
 			Got:      fmt.Sprintf("%d configured", len(servers)),
-			Want:     "exactly cordum-edge",
+			Want:     "exactly one serverUrl entry for the Cordum MCP gateway",
 			Severity: managedSettingsDriftCritical,
 		}}
 	}
 	server := servers[0]
-	if strings.TrimSpace(server.ServerName) != "cordum-edge" {
+	if strings.TrimSpace(server.ServerName) != "" || len(server.ServerCommand) > 0 {
 		return []ManagedSettingsDrift{{
-			Field:    "allowedMcpServers[0].serverName",
-			Got:      redactDiagnostic(server.ServerName),
-			Want:     "cordum-edge",
+			Field:    "allowedMcpServers[0]",
+			Got:      "serverName or serverCommand present",
+			Want:     "serverUrl only",
 			Severity: managedSettingsDriftCritical,
 		}}
 	}
-	if strings.TrimSpace(server.Command) != "" || len(server.Args) > 0 {
+	if u := strings.TrimSpace(server.ServerURL); u == "" || strings.Contains(u, "*") {
 		return []ManagedSettingsDrift{{
-			Field:    "allowedMcpServers[0]",
-			Got:      "runtime command fields present",
-			Want:     "serverName only",
+			Field:    "allowedMcpServers[0].serverUrl",
+			Got:      firstNonEmpty(redactDiagnostic(u), "missing"),
+			Want:     "Cordum MCP gateway URL without wildcards",
 			Severity: managedSettingsDriftCritical,
 		}}
 	}
@@ -243,11 +246,23 @@ func requiredHookEventDrifts(hooks map[string][]claudeHookSet) []ManagedSettings
 			})
 			continue
 		}
-		if !hasCanonicalManagedHookCommand(event, sets) {
+		hook, ok := canonicalManagedHook(event, sets)
+		if !ok {
 			drifts = append(drifts, ManagedSettingsDrift{
 				Field:    "hooks." + event + "[0].command",
 				Got:      "missing or non-canonical command",
 				Want:     "canonical cordum-hook command",
+				Severity: managedSettingsDriftCritical,
+			})
+			continue
+		}
+		// Without onFailure:"block", Claude Code lets the action through when
+		// cordum-hook cannot start, crashes, or times out.
+		if blockingHookEvents[event] && hook.OnFailure != "block" {
+			drifts = append(drifts, ManagedSettingsDrift{
+				Field:    "hooks." + event + "[0].onFailure",
+				Got:      firstNonEmpty(redactDiagnostic(hook.OnFailure), "missing"),
+				Want:     "block",
 				Severity: managedSettingsDriftCritical,
 			})
 		}
@@ -255,16 +270,16 @@ func requiredHookEventDrifts(hooks map[string][]claudeHookSet) []ManagedSettings
 	return drifts
 }
 
-func hasCanonicalManagedHookCommand(event string, sets []claudeHookSet) bool {
+func canonicalManagedHook(event string, sets []claudeHookSet) (claudeCommandHook, bool) {
 	subcommand := requiredManagedHookSubcommands[event]
 	for _, set := range sets {
 		for _, hook := range set.Hooks {
 			if isCanonicalManagedHookCommand(hook.Command, subcommand) {
-				return true
+				return hook, true
 			}
 		}
 	}
-	return false
+	return claudeCommandHook{}, false
 }
 
 func isCanonicalManagedHookCommand(command, subcommand string) bool {

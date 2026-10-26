@@ -27,10 +27,15 @@ type managedSettingsDocument struct {
 	Hooks                      map[string][]claudeHookSet `json:"hooks,omitempty"`
 }
 
+// managedMCPAllow is one allowedMcpServers entry. The template emits serverUrl
+// only: a serverName entry is not a security control (users pick names) and
+// would also admit any stdio server given that name while no serverCommand
+// entry exists. ServerName and ServerCommand are decoded so verify can flag
+// them.
 type managedMCPAllow struct {
-	ServerName string   `json:"serverName"`
-	Command    string   `json:"command,omitempty"`
-	Args       []string `json:"args,omitempty"`
+	ServerURL     string   `json:"serverUrl,omitempty"`
+	ServerName    string   `json:"serverName,omitempty"`
+	ServerCommand []string `json:"serverCommand,omitempty"`
 }
 
 type managedMCPDocument struct {
@@ -53,6 +58,7 @@ func GenerateManagedSettingsTemplate(opts ManagedSettingsOptions) (ManagedSettin
 	}
 	hookCommand := hookCommandOrDefault(opts.HookCommand)
 	timeout := hookTimeoutOrDefault(opts.HookTimeout)
+	mcpURL := strings.TrimSpace(opts.MCPGatewayURL)
 	env := map[string]string{
 		"CORDUM_EDGE_MODE":           "enterprise-strict",
 		managedPolicyModeEnv:         "enterprise-strict",
@@ -75,12 +81,12 @@ func GenerateManagedSettingsTemplate(opts ManagedSettingsOptions) (ManagedSettin
 		AllowManagedHooksOnly:      true,
 		AllowManagedMcpServersOnly: true,
 		AllowedHTTPHookURLs:        []string{},
-		AllowedMcpServers:          []managedMCPAllow{{ServerName: "cordum-edge"}},
+		AllowedMcpServers:          []managedMCPAllow{{ServerURL: mcpURL}},
 		DisableBypassPermissions:   "disable",
 		ForceRemoteRefresh:         forceRefresh,
 		APIKeyHelper:               strings.TrimSpace(opts.APIKeyHelperCommand),
 		Env:                        env,
-		Hooks:                      commandHookSettings(hookCommand, timeout, nil),
+		Hooks:                      commandHookSettings(hookCommand, timeout, nil, true),
 	}
 	settingsJSON, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
@@ -89,7 +95,7 @@ func GenerateManagedSettingsTemplate(opts ManagedSettingsOptions) (ManagedSettin
 	mcp := managedMCPDocument{MCPServers: map[string]managedMCPServer{
 		"cordum-edge": {
 			Type:          "http",
-			URL:           strings.TrimSpace(opts.MCPGatewayURL),
+			URL:           mcpURL,
 			HeadersHelper: managedHeadersHelper(opts),
 		},
 	}}
@@ -159,7 +165,8 @@ func managedHeadersHelper(opts ManagedSettingsOptions) string {
 func managedSettingsNotes() string {
 	return strings.Join([]string{
 		"Cordum Edge managed settings template.",
-		"Deploy managed-settings.json and managed-mcp.json through Jamf/macOS managed preferences, Intune or Windows policy/Program Files managed settings, Linux/WSL /etc/claude-code, or server-managed settings.",
+		"Deploy managed-settings.json through Jamf/macOS managed preferences (com.anthropic.claudecode), Intune or Windows policy (HKLM\\SOFTWARE\\Policies\\ClaudeCode), the system file (macOS /Library/Application Support/ClaudeCode, Windows C:\\Program Files\\ClaudeCode, Linux/WSL /etc/claude-code), or server-managed settings.",
+		"Deploy managed-mcp.json as a file in that same system directory; it is a standalone file with no managed-preferences domain and cannot be delivered via server-managed settings.",
 		"Token tradeoff: dev settings may carry local generated session metadata; enterprise uses agentd memory/keychain/service bootstrap and apiKeyHelper/headersHelper commands.",
 		"Do not store long-lived API keys, raw prompts, raw tool payloads, or bearer tokens in Claude settings or managed MCP files.",
 		"These files are templates only and do not perform end-to-end deployment automation.",
