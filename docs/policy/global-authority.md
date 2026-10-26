@@ -31,7 +31,7 @@ floor, and the wire surface (`/api/v1/policy/global`).
 | `input_rules`      | Cordum job evaluator  | `core/controlplane/safetykernel/kernel.go evaluate()` iterates `s.policy.Rules`   |
 | `output_rules`     | Output scanner        | `core/controlplane/safetykernel/output_policy.go EvaluateOutput / CheckOutput`    |
 | `edge_action_rules`| Edge action evaluator | `core/controlplane/gateway/handlers_edge_evaluate.go evaluateEdgeSafety` → kernel |
-| `mcp_tool_rules`   | MCP tool gate         | `core/controlplane/gateway/mcp_gate_invariants.go gatewayApprovalGate.CheckInvariants` (every registry tools/call) and `mcp_gate.go Check` |
+| `mcp_tool_rules`   | MCP tool gate         | `core/controlplane/gateway/mcp_gate_invariants.go gatewayApprovalGate.CheckInvariants` (every gateway tools/call, built-in or fronted upstream) and `mcp_gate.go Check` |
 | `invariants`       | ALL FOUR              | `applyKernelInvariants` (kernel) + `MCPInvariantLookup` wired via `s.wireMCPApprovalGate` (gateway, see `handlers_mcp.go`) |
 
 Implementation entry points:
@@ -236,14 +236,18 @@ that bundle entry; the unified GET projects it as part of the
   consistent ApprovalScope per logical server. The gate has no resource
   or action either, so a non-empty `allow_resources` or `allow_actions`
   list blocks every tool call.
-- **The MCP invariant floor covers the built-in tool registry.**
+- **The MCP invariant floor covers every gateway tools/call.**
   `ToolRegistry.Call` runs the gate's `CheckInvariants` on every
-  tools/call, approval-gated or not, after the scope filter and before
-  approval gating (`core/mcp/registry.go`). When the gateway fronts a
-  registered remote upstream (EDGE-101 fronting), tools/call goes to
-  that upstream instead of the registry, so the floor does not run
-  there; with `mcp.policy_gate_enabled`, invariants are consulted only
-  when an action gate returns REQUIRE_HUMAN.
+  built-in tools/call, approval-gated or not, after the scope filter
+  and before approval gating (`core/mcp/registry.go`). When the gateway
+  fronts a registered remote upstream (EDGE-101 fronting), tools/call
+  goes to that upstream instead of the registry, and
+  `invariantFlooredTools` runs the same check before each call is
+  forwarded, with or without `mcp.policy_gate_enabled`
+  (`core/controlplane/gateway/mcp_upstream_serving.go`). For fronted
+  calls the server that `deny_servers` / `allow_servers` match is the
+  upstream's name, e.g. `cordum.monday`. With the policy gate on, the
+  action gates run first, and a call they deny never reaches the floor.
 - **Decision values are checked at upload.** The policy schema accepts
   only known decisions, so `config.ParseSafetyPolicy` rejects a typo
   such as `dney`. A rule with no `decision` is evaluated as deny, and as

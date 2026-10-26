@@ -2,9 +2,21 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/packs"
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	edgecore "github.com/cordum/cordum/core/edge"
+	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/mcp"
 )
 
 // These tests cover the gateway's upstream-fronting seam (mcp_upstream_serving.go)
@@ -142,4 +154,124 @@ func TestMCPUpstreamServing_SelectSkipsDisabledPicksEnabled(t *testing.T) {
 	if up.Name != "enabled-second" {
 		t.Fatalf("selected = %q, want enabled-second (disabled-first must be skipped)", up.Name)
 	}
+}
+
+// TestMCPFrontedUpstreamInvariantFloor boots the MCP runtime fronting a
+// registered upstream and sends tools/call over POST /mcp/message: a deny
+// invariant blocks the call before it is forwarded, with
+// mcp.policy_gate_enabled off and on. The upstream is the unreachable TEST-NET
+// address above, so a forwarded call ends in a transport error or the client
+// timeout instead of the invariant deny.
+func TestMCPFrontedUpstreamInvariantFloor(t *testing.T) {
+	for _, policyGate := range []bool{false, true} {
+		t.Run(fmt.Sprintf("policy_gate_enabled=%v", policyGate), func(t *testing.T) {
+			t.Setenv(frontingTestSecretEnv, "dummy-token-never-dialed")
+			s, _, _ := newTestGateway(t)
+			s.auth = mcpTestAuth{apiKey: "test-key", tenant: "default"}
+			s.shutdownCh = make(chan struct{})
+			t.Cleanup(func() { close(s.shutdownCh) })
+			configurePolicyGateBootDeps(t, s)
+			setMCPConfigForBoot(t, s, true, policyGate)
+			s.mcpUpstreamRegistry = &fakeMCPUpstreamRegistry{
+				entries: []edgecore.UpstreamServer{frontingReadyUpstream("default", "cordum.monday")},
+			}
+			if err := s.configSvc.Set(context.Background(), &configsvc.Document{
+				Scope:   configsvc.Scope(packs.PolicyConfigScope),
+				ScopeID: packs.PolicyConfigID,
+				Data: map[string]any{packs.PolicyConfigKey: map[string]any{
+					policybundles.PolicyInvariantsBundleKey: map[string]any{"content": `version: "1"
+rules:
+  - id: inv-no-board-deletes
+    match:
+      mcp:
+        deny_tools: ["delete_board"]
+    decision: deny
+    reason: agents may not delete boards
+`},
+				}},
+			}); err != nil {
+				t.Fatalf("set invariants bundle: %v", err)
+			}
+
+			mux := http.NewServeMux()
+			if err := s.registerMCPRoutes(mux); err != nil {
+				t.Fatalf("register mcp routes: %v", err)
+			}
+			rt := s.getMCPRuntime()
+			if rt == nil || rt.server == nil || rt.frontedUpstream != "cordum.monday" {
+				t.Fatalf("runtime is not fronting cordum.monday: %+v", rt)
+			}
+			if policyGate {
+				if !rt.server.HasPolicyGate() {
+					t.Fatal("policy gate not wired")
+				}
+				// Let the action gates allow the call, so it gets as far as forwarding.
+				rt.server.WithPolicyGate(rt.server.PolicyServerName(), mcp.ToolCallDeps{
+					Pipeline:      passingDispatcher{},
+					EventEmitter:  rt.server.PolicyEventEmitter(),
+					ArtifactStore: rt.server.PolicyArtifactStore(),
+					Redactor:      mcp.DefaultRedactor(),
+				})
+			}
+
+			srv := httptest.NewServer(mux)
+			defer srv.Close()
+			req, _ := http.NewRequest(http.MethodPost, srv.URL+"/mcp/message", strings.NewReader(
+				`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete_board","arguments":{"board_id":"b1"}}}`))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-API-Key", "test-key")
+			req.Header.Set("X-Tenant-ID", "default")
+			resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+			if err != nil {
+				t.Fatalf("tools/call got no answer (forwarded to the upstream?): %v", err)
+			}
+			defer func() { _ = resp.Body.Close() }()
+			var out struct {
+				Error *struct {
+					Data any `json:"data"`
+				} `json:"error"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if out.Error == nil {
+				t.Fatal("tools/call succeeded, want the invariant deny")
+			}
+			if data := fmt.Sprint(out.Error.Data); !strings.Contains(data, "denied by invariant") || !strings.Contains(data, "inv-no-board-deletes") {
+				t.Fatalf("error data = %q, want the inv-no-board-deletes invariant deny", data)
+			}
+		})
+	}
+}
+
+// TestInvariantFlooredToolsMatchesUpstreamName: the fronted floor matches the
+// upstream's name as the MCP server, and forwards calls no invariant covers.
+func TestInvariantFlooredToolsMatchesUpstreamName(t *testing.T) {
+	t.Parallel()
+	lookup := MCPInvariantLookupFunc(func(context.Context) []config.PolicyRule {
+		return []config.PolicyRule{{ID: "inv-no-monday", Decision: "deny",
+			Match: config.PolicyMatch{MCP: config.MCPPolicy{DenyServers: []string{"cordum.monday"}}}}}
+	})
+	_, gate := (&server{}).wireMCPApprovalGate(newTestMCPStore(t), lookup)
+	ctx := WithMCPCallMetadata(context.Background(), MCPCallMetadata{Tenant: "default"})
+	for _, tc := range []struct {
+		server   string
+		wantDeny bool
+	}{{"cordum.monday", true}, {"cordum.jira", false}} {
+		inner := &recordingToolService{}
+		_, err := invariantFlooredTools{ToolService: inner, floor: gate, server: tc.server}.
+			Call(ctx, "list_boards", json.RawMessage(`{}`))
+		if denied := errors.Is(err, ErrMCPInvariantDeny); denied != tc.wantDeny || (inner.calls == 0) != tc.wantDeny {
+			t.Errorf("server %s: err=%v forwarded=%d, want deny=%v", tc.server, err, inner.calls, tc.wantDeny)
+		}
+	}
+}
+
+type recordingToolService struct{ calls int }
+
+func (r *recordingToolService) ListTools(context.Context) []mcp.Tool { return nil }
+
+func (r *recordingToolService) Call(context.Context, string, json.RawMessage) (*mcp.ToolCallResult, error) {
+	r.calls++
+	return &mcp.ToolCallResult{}, nil
 }

@@ -268,11 +268,12 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 	// configured or the secret/endpoint is unresolved. The fronted upstream is
 	// intentionally scoped to the tenant used for resolution below; mcpAuth refuses
 	// other tenants rather than proxying them with default-tenant upstream credentials.
+	// Every forwarded tools/call first passes the invariant floor, policy gate or not.
 	toolService := mcp.ToolService(toolRegistry)
 	upstreamServerName := ""
 	upstreamTenant := ""
 	if frontTS, frontName := s.buildFrontedUpstreamToolService(context.Background(), "default"); frontTS != nil {
-		toolService = frontTS
+		toolService = invariantFlooredTools{ToolService: frontTS, floor: approvalGate, server: frontName}
 		upstreamServerName = frontName
 		upstreamTenant = "default"
 	}
