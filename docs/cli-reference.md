@@ -117,6 +117,7 @@ Generate a full TLS certificate chain: CA certificate, server certificate
 | `--dir` | `./certs` | Output directory |
 | `--force` | `false` | Overwrite existing certificates |
 | `--days` | `365` | Certificate validity in days |
+| `--san` | *(none)* | Extra DNS name or IP for the server certificate, added to the default SANs; repeatable |
 
 Certificates use EC P-256 keys with PKCS8 encoding.
 
@@ -129,6 +130,9 @@ cordumctl generate-certs --dir /path/to/certs
 
 # Regenerate expired certificates
 cordumctl generate-certs --force --days 730
+
+# Also cover a Kubernetes Service name (see cordum-helm/README.md)
+cordumctl generate-certs --san cordum-api-gateway.cordum.svc.cluster.local
 ```
 
 **Output structure:**
