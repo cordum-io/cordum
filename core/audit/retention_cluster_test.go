@@ -366,12 +366,54 @@ func TestVerifyChain_PendingAnchorMustNameTheStreamEvent(t *testing.T) {
 	}
 }
 
+// A legacy anchor (no stream ID) becomes the previous anchor of the next
+// cluster trim, and verify links the stream to it until that trim confirms.
+func TestRetentionCluster_TrimsOverLegacyAnchor(t *testing.T) {
+	nextSweep := retentionT0.Add(13*day + 2*time.Hour) // trims seq 4-5
+	setup := func(t *testing.T) *clusterRetentionFixture {
+		f := newClusterRetentionFixture(t)
+		events := f.oldAndRecentChain("acme")
+		f.sweepAt(retentionSweepTime)
+		f.setLegacyAnchor("acme", 3, events[2].EventHash)
+		return f
+	}
+
+	t.Run("sweep", func(t *testing.T) {
+		f := setup(t)
+		if n := f.sweepAt(nextSweep); n != 2 {
+			t.Fatalf("trimmed %d, want 2", n)
+		}
+		if a := f.anchorValue("acme"); a.Pending || a.Seq != 5 || a.StreamID == "" {
+			t.Fatalf("anchor = %+v, want confirmed at seq 5 with a stream ID", a)
+		}
+	})
+
+	t.Run("crash after pending anchor", func(t *testing.T) {
+		f := setup(t)
+		f.setAnchor("acme", f.pendingAnchor("acme", 5, f.anchorValue("acme")))
+		if a := f.anchorValue("acme"); !a.Pending || a.PrevSeq != 3 || a.PrevStreamID != "" {
+			t.Fatalf("anchor = %+v, want pending over the legacy anchor", a)
+		}
+		if res := f.verify("acme", VerifyOptions{}); res.Status != VerifyStatusPartial || res.FirstSeq != 4 ||
+			!slices.Equal(gapsOfType(res, GapTypeRetentionTrimmed), []int64{1, 2, 3}) {
+			t.Fatalf("verify = %+v, want partial from seq 4", res)
+		}
+		if n := f.sweepAt(nextSweep); n != 2 {
+			t.Fatalf("finishing sweep trimmed %d, want 2", n)
+		}
+		if a := f.anchorValue("acme"); a.Pending || a.Seq != 5 {
+			t.Fatalf("anchor = %+v, want confirmed at seq 5", a)
+		}
+	})
+}
+
 func TestParseRetentionAnchor_Pending(t *testing.T) {
 	h, id := strings.Repeat("a", 64), "1700000000000-0"
 	for _, raw := range []string{
 		"5:" + h + ":" + id + ":0::",
 		"5:" + h + ":" + id + ":2:" + h + ":" + id,
 		"5:" + h + ":" + id + ":2:" + h + ":" + id + ":" + h,
+		"5:" + h + ":" + id + ":2:" + h + ":", // over a legacy anchor
 	} {
 		a, err := parseRetentionAnchor(raw)
 		if err != nil || !a.Pending || a.String() != raw {
@@ -385,6 +427,7 @@ func TestParseRetentionAnchor_Pending(t *testing.T) {
 		"5:" + h + ":" + id + ":2:" + h,            // five fields
 		"0:" + h + ":" + id + ":0::",               // pending anchor at seq 0
 		"5:" + h + ":" + id + ":0:::nomac",         // bad MAC
+		"5:" + h + "::0::",                         // pending anchor without stream ID
 	} {
 		if a, err := parseRetentionAnchor(raw); err == nil {
 			t.Errorf("parse %q = %+v, want malformed", raw, a)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"sync"
 	"testing"
@@ -654,6 +655,75 @@ func TestVerifyChain_HMACSignedRetentionAnchor(t *testing.T) {
 			}
 		})
 	}
+}
+
+// setLegacyAnchor replaces the tenant's anchor with the "<seq>:<event_hash>"
+// form anchors had before they carried a stream ID.
+func (f *retentionFixture) setLegacyAnchor(tenant string, seq int64, hash string) {
+	f.t.Helper()
+	if err := f.client.Set(context.Background(), f.chainer.AnchorKey(tenant), fmt.Sprintf("%d:%s", seq, hash), 0).Err(); err != nil {
+		f.t.Fatalf("set legacy anchor: %v", err)
+	}
+}
+
+func TestParseRetentionAnchor_Legacy(t *testing.T) {
+	h := fmt.Sprintf("%064x", 1)
+	if a, err := parseRetentionAnchor("3:" + h); err != nil || a != (retentionAnchor{Seq: 3, Hash: h}) {
+		t.Fatalf("parse legacy anchor = %+v, %v; want seq 3 with no stream ID or MAC", a, err)
+	}
+	for _, raw := range []string{"0:" + h, "-1:" + h, "x:" + h, "3:", "3:zz", ":"} {
+		if a, err := parseRetentionAnchor(raw); err == nil {
+			t.Errorf("parse %q = %+v, want malformed", raw, a)
+		}
+	}
+}
+
+func TestVerifyChain_LegacyAnchor(t *testing.T) {
+	t.Run("without HMAC it anchors the chain", func(t *testing.T) {
+		f, events := trimmedChain(t)
+		f.setLegacyAnchor("acme", 3, events[2].EventHash)
+		res := f.verify("acme", VerifyOptions{})
+		if res.Status != VerifyStatusPartial || res.FirstSeq != 4 || res.RetentionBoundarySeq != 4 ||
+			len(res.Gaps) != 3 || !slices.Equal(gapsOfType(res, GapTypeRetentionTrimmed), []int64{1, 2, 3}) {
+			t.Fatalf("verify = %+v, want partial with seqs 1-3 trimmed", res)
+		}
+		// With no stream ID, a window that reaches the oldest retained event
+		// cannot tell whether it starts after the trim (ok with an ID).
+		window := VerifyOptions{SinceMs: retentionT0.Add(6 * day).UnixMilli()}
+		if res := f.verify("acme", window); res.Status != VerifyStatusPartial || res.VerifiedEvents != 3 ||
+			len(res.Gaps) != 1 || !slices.Equal(gapsOfType(res, GapTypeRetentionTrimmed), []int64{3}) {
+			t.Fatalf("window = %+v, want partial with seq 3 trimmed", res)
+		}
+		f.setLegacyAnchor("acme", 3, events[1].EventHash)
+		if res := f.verify("acme", VerifyOptions{}); res.Status != VerifyStatusCompromised ||
+			!slices.Equal(gapsOfType(res, GapTypeHashMismatch), []int64{4}) {
+			t.Fatalf("wrong hash = %+v, want compromised at seq 4", res)
+		}
+	})
+
+	t.Run("with HMAC it is unsigned", func(t *testing.T) {
+		f, events := trimmedChain(t, WithHMACKey(testHMACKey()))
+		f.setLegacyAnchor("acme", 3, events[2].EventHash)
+		res := f.verify("acme", VerifyOptions{})
+		if res.Status != VerifyStatusCompromised || !slices.Equal(gapsOfType(res, GapTypeHMACMismatch), []int64{3}) ||
+			len(gapsOfType(res, GapTypeRetentionTrimmed)) != 0 {
+			t.Fatalf("verify = %+v, want compromised with an hmac_mismatch at seq 3", res)
+		}
+	})
+
+	t.Run("the next trim replaces it", func(t *testing.T) {
+		f, events := trimmedChain(t, WithHMACKey(testHMACKey()))
+		f.setLegacyAnchor("acme", 3, events[2].EventHash)
+		if n := f.sweepAt(retentionT0.Add(13*day + 2*time.Hour)); n != 2 {
+			t.Fatalf("trimmed %d, want 2", n)
+		}
+		if a := f.anchorValue("acme"); a.Seq != 5 || a.StreamID == "" || !a.validMAC(f.chainer.AnchorKey("acme"), testHMACKey()) {
+			t.Fatalf("anchor = %+v, want a signed anchor at seq 5", a)
+		}
+		if res := f.verify("acme", VerifyOptions{}); res.Status != VerifyStatusPartial || res.FirstSeq != 6 {
+			t.Fatalf("verify = %+v, want partial from seq 6", res)
+		}
+	})
 }
 
 // However many events are gone, a run of absent seqs lists at most maxGapRun

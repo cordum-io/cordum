@@ -297,8 +297,9 @@ func walkChain(entries, predecessors []redis.XMessage, rawAnchor string, opts Ve
 		// reported by the ordinary gap/linkage checks below.
 		prevSeq, prevHash, hasPrev = link.Seq, link.Hash, true
 		// A window that starts at or before the newest trimmed event lost
-		// events to retention.
-		if opts.SinceMs > 0 && link.Seq > 0 && link.streamMs() >= opts.SinceMs {
+		// events to retention. A legacy anchor has no stream ID to tell, so
+		// such a window may have.
+		if opts.SinceMs > 0 && link.Seq > 0 && (link.StreamID == "" || link.streamMs() >= opts.SinceMs) {
 			result.Gaps = append(result.Gaps, VerifyGap{AtSeq: link.Seq, Type: GapTypeRetentionTrimmed})
 		}
 	}

@@ -115,6 +115,12 @@ func RetentionEnforced() bool {
 //
 // prev_seq 0, with an empty hash and ID, means no earlier trim. Until the
 // trim is confirmed, verify links the stream to the previous anchor (linked).
+//
+// Anchors written before anchors carried a stream ID are "<seq>:<event_hash>"
+// and parse as unsigned anchors with an empty StreamID: an HMAC verify reports
+// them as hmac_mismatch, and without HMAC they still anchor the chain, but a
+// window cannot tell whether it starts after the trim they record (see
+// walkChain). The next trim replaces them.
 type retentionAnchor struct {
 	Seq      int64
 	Hash     string
@@ -186,6 +192,9 @@ func parseRetentionAnchor(raw string) (retentionAnchor, error) {
 	}
 	malformed := fmt.Errorf("malformed retention anchor %q", raw)
 	parts := strings.Split(raw, ":")
+	if len(parts) == 2 {
+		parts = append(parts, "") // legacy "<seq>:<event_hash>"
+	}
 	var a retentionAnchor
 	if n := len(parts); n == 4 || n == 7 {
 		a.MAC, parts = parts[n-1], parts[:n-1]
@@ -197,7 +206,7 @@ func parseRetentionAnchor(raw string) (retentionAnchor, error) {
 		return retentionAnchor{}, malformed
 	}
 	pos, ok := parseAnchorPosition(parts[:3])
-	if !ok || pos.Seq == 0 {
+	if !ok || pos.Seq == 0 || (len(parts) == 6 && pos.StreamID == "") {
 		return retentionAnchor{}, malformed
 	}
 	a.Seq, a.Hash, a.StreamID = pos.Seq, pos.Hash, pos.StreamID
@@ -212,7 +221,9 @@ func parseRetentionAnchor(raw string) (retentionAnchor, error) {
 }
 
 // parseAnchorPosition decodes "<seq>:<event_hash>:<stream_id>". Seq 0 is the
-// position before the first event and comes with an empty hash and ID.
+// position before the first event and comes with an empty hash and ID. An
+// empty ID with seq > 0 is a legacy anchor's position, or one a pending
+// anchor carries over.
 func parseAnchorPosition(f []string) (retentionAnchor, bool) {
 	seq, err := strconv.ParseInt(f[0], 10, 64)
 	if err != nil || seq < 0 {
@@ -220,6 +231,9 @@ func parseAnchorPosition(f []string) (retentionAnchor, bool) {
 	}
 	if seq == 0 {
 		return retentionAnchor{}, f[1] == "" && f[2] == ""
+	}
+	if f[2] == "" {
+		return retentionAnchor{Seq: seq, Hash: f[1]}, isHexHash(f[1])
 	}
 	ms, idSeq, _ := strings.Cut(f[2], "-")
 	_, msErr := strconv.ParseUint(ms, 10, 64)
