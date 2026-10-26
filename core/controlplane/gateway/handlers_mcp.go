@@ -427,6 +427,20 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		if transportSessionID == "" {
 			transportSessionID = strings.TrimSpace(r.URL.Query().Get("session_id"))
 		}
+		// Trust a client-supplied session id only once the transport vouches
+		// that this caller opened it, so an unknown or foreign id never feeds
+		// the trace parents, approval tuple, or Copilot session below. A POST
+		// naming one is handed to the transport untouched, which answers its
+		// usual "session not found" 404; the SSE GET and status routes ignore
+		// client session ids anyway. mcpHTTPTransport is resolved per request
+		// and nil-safe (no transport: not vouched, and the handler answers 503).
+		if transportSessionID != "" && !s.mcpHTTPTransport().OwnsSession(r, transportSessionID) {
+			if r.Method == http.MethodPost {
+				next(w, r)
+				return
+			}
+			transportSessionID = ""
+		}
 		// VS Code's type:"http" config POSTs neither X-MCP-Session-ID nor
 		// X-Copilot-Session-Id, which would leave copilot_session_id empty —
 		// so the transcript is dropped and cordum_submit_job misses its
