@@ -549,6 +549,13 @@ func (s *RetentionSweeper) trimBatchCluster(ctx context.Context, tenant, newestO
 	if err != nil {
 		return 0, err
 	}
+	// Never finish, or sign over, an anchor the chain's HMAC key did not
+	// sign: confirming a forged pending anchor would sign the deletion it
+	// names. The tenant is skipped, its data kept, and verify reports the
+	// anchor as hmac_mismatch.
+	if raw != "" && len(s.chainer.hmacKey) > 0 && !cur.validMAC(anchorKey, s.chainer.hmacKey) {
+		return 0, errors.New("retention anchor MAC does not verify; not trimming over it")
+	}
 	if cur.Pending {
 		return s.finishPendingTrim(ctx, tenant, raw, cur, oldestCmd.Val())
 	}

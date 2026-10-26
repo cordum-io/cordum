@@ -330,6 +330,49 @@ func TestRetentionCluster_HoldCheckErrorAfterPendingAnchorKeepsEvents(t *testing
 	}
 }
 
+// With an HMAC key the sweeper does not act on an anchor it did not sign.
+// Confirming a forged pending anchor would sign the deletion it names, and
+// carrying a forged anchor into a pending one would sign that too.
+func TestRetentionCluster_DoesNotTrimOverUnsignedAnchor(t *testing.T) {
+	forgeries := map[string]func(f *clusterRetentionFixture, events []*SIEMEvent) retentionAnchor{
+		// Someone deleted seq 1-4 and names them as a trim the sweeper
+		// only has to confirm.
+		"pending anchor over a deletion": func(f *clusterRetentionFixture, _ []*SIEMEvent) retentionAnchor {
+			a := f.pendingAnchor("acme", 4, retentionAnchor{})
+			xdelSeqs(f.t, f.client, f.chainer.StreamKey("acme"), 1, 2, 3, 4)
+			a.MAC = fmt.Sprintf("%064x", 9)
+			return a
+		},
+		"unsigned anchor": func(f *clusterRetentionFixture, events []*SIEMEvent) retentionAnchor {
+			xdelSeqs(f.t, f.client, f.chainer.StreamKey("acme"), 1)
+			return retentionAnchor{Seq: 1, Hash: events[0].EventHash, StreamID: "1-0"}
+		},
+	}
+	for name, forge := range forgeries {
+		t.Run(name, func(t *testing.T) {
+			f := newClusterRetentionFixture(t, WithHMACKey(testHMACKey()))
+			events := f.oldAndRecentChain("acme")
+			forged := forge(f, events)
+			f.setAnchor("acme", forged)
+			before := f.streamLen("acme")
+
+			if n := f.sweepAt(retentionSweepTime); n != 0 {
+				t.Fatalf("sweep trimmed %d over a forged anchor, want 0", n)
+			}
+			if got := f.anchorValue("acme"); got != forged {
+				t.Fatalf("anchor = %+v, want the forged anchor left as it was", got)
+			}
+			if got := f.streamLen("acme"); got != before {
+				t.Fatalf("stream len = %d, want %d", got, before)
+			}
+			if res := f.verify("acme", VerifyOptions{}); res.Status != VerifyStatusCompromised ||
+				len(gapsOfType(res, GapTypeHMACMismatch)) != 1 {
+				t.Fatalf("verify = %+v, want compromised with an hmac_mismatch", res)
+			}
+		})
+	}
+}
+
 // The pending anchor's MAC covers the anchor it replaces: dropping or moving
 // that part invalidates it.
 func TestRetentionCluster_PendingAnchorMACCoversPreviousAnchor(t *testing.T) {

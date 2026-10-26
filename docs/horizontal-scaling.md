@@ -367,4 +367,4 @@ The audit chain keeps its single-node key names on a cluster, so a tenant's stre
 - **Legal holds** write the tenant index and the hold record as separate commands, index first, so an interrupted create reads as no hold everywhere.
 - **Cluster-wide scans** run on every master: retention tenant discovery, `GET /api/v1/audit/legal-holds` without a tenant, and the Edge session sweeper.
 
-These guarantees assume `CORDUM_AUDIT_HMAC_KEY` is set: without it, anchors are unsigned and can be forged on a cluster as on a single node.
+These guarantees assume `CORDUM_AUDIT_HMAC_KEY` is set: without it, anchors are unsigned and can be forged on a cluster as on a single node. With it, the cluster sweeper skips a tenant whose anchor does not verify instead of building on it, because confirming a forged pending anchor would sign the deletion it names. Verify reports that anchor as `hmac_mismatch`.
