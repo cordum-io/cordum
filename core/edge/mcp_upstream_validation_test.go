@@ -3,6 +3,7 @@ package edge
 import (
 	"context"
 	"errors"
+	"net"
 	"testing"
 )
 
@@ -109,6 +110,12 @@ func TestMCPUpstream_RejectsInternalHostsAtAllPaths(t *testing.T) {
 		{"unspecified_v4", "http://0.0.0.0/"},
 		{"unspecified_v6", "http://[::]/"},
 		{"ipv4_mapped_metadata", "http://[::ffff:169.254.169.254]/"},
+		// https, so plain-HTTP rejection cannot mask a missed range.
+		{"this_network_v4", "https://0.1.2.3/"},
+		{"cgnat_low", "https://100.64.0.1/"},
+		{"cgnat_tailscale", "https://100.101.102.103/"},
+		{"cgnat_high", "https://100.127.255.254/"},
+		{"ipv4_mapped_cgnat", "https://[::ffff:100.64.0.1]/"},
 	}
 	for _, mode := range []PolicyMode{PolicyModeObserve, PolicyModeEnforce, PolicyModeEnterpriseStrict} {
 		for _, tc := range cases {
@@ -120,6 +127,23 @@ func TestMCPUpstream_RejectsInternalHostsAtAllPaths(t *testing.T) {
 					t.Fatalf("Validate %s error = %v, want ErrUnsafeEndpoint", tc.endpoint, err)
 				}
 			})
+		}
+	}
+}
+
+// The 0.0.0.0/8 and 100.64.0.0/10 checks stop exactly at the range edges.
+func TestMCPIPUnsafe_ThisNetworkAndCGNATEdges(t *testing.T) {
+	for raw, want := range map[string]bool{
+		"0.0.0.0":         true,
+		"0.255.255.255":   true,
+		"1.0.0.0":         false,
+		"100.63.255.255":  false,
+		"100.64.0.0":      true,
+		"100.127.255.255": true,
+		"100.128.0.0":     false,
+	} {
+		if got := mcpIPUnsafe(net.ParseIP(raw)); got != want {
+			t.Errorf("mcpIPUnsafe(%s) = %v; want %v", raw, got, want)
 		}
 	}
 }

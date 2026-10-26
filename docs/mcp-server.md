@@ -268,12 +268,17 @@ every policy mode:
   `metadata.google.internal`, `metadata.azure.com` and
   `instance-data.ec2.internal` (case-insensitive, trailing dot ignored).
 - `localhost` is rejected, and so is any IP literal or resolved address in an
-  internal range: loopback (`127.0.0.0/8`, `::1`), unspecified (`0.0.0.0`,
-  `::`), RFC 1918 (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`),
+  internal range: loopback (`127.0.0.0/8`, `::1`), "this network"
+  (`0.0.0.0/8`) and IPv6 unspecified (`::`), RFC 1918 (`10.0.0.0/8`,
+  `172.16.0.0/12`, `192.168.0.0/16`), carrier-grade NAT (`100.64.0.0/10`),
   link-local (`169.254.0.0/16`, which includes the cloud metadata IP
   `169.254.169.254`, and `fe80::/10`), IPv6 unique-local (`fc00::/7`) and
-  multicast. IPv4-mapped IPv6 addresses are checked as IPv4. One internal
-  address among a host's DNS answers is enough to reject it.
+  multicast. These are the same IPv4 and IPv6 ranges the gateway guard below
+  rejects. IPv4-mapped IPv6 addresses are checked as IPv4. One internal
+  address among a host's DNS answers is enough to reject it. There is no
+  opt-in for private upstreams. Tailscale gives tailnet devices addresses in
+  `100.64.0.0/10`, so an upstream hosted on a tailnet needs a public
+  endpoint.
 - A failed DNS lookup rejects the endpoint only in enterprise-strict mode.
 
 The addresses a host resolves to at registration are stored as
