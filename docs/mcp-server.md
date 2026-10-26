@@ -1060,7 +1060,7 @@ curl -sS http://localhost:8081/mcp/status \
   "mcpServers": {
     "cordum": {
       "command": "cordum-mcp",
-      "args": ["--addr", "http://localhost:8081"],
+      "args": ["--addr", "http://localhost:8081", "--allow-private-gateway"],
       "env": {
         "CORDUM_API_KEY": "replace-with-api-key"
       }
@@ -1072,7 +1072,7 @@ curl -sS http://localhost:8081/mcp/status \
 ### Claude Code CLI
 
 ```bash
-claude mcp add cordum -- cordum-mcp --addr http://localhost:8081
+claude mcp add cordum -- cordum-mcp --addr http://localhost:8081 --allow-private-gateway
 ```
 
 ### HTTP/SSE test call
@@ -1108,22 +1108,24 @@ console.log(payload);
 
 ## Dashboard Configuration
 
-The dashboard provides a full MCP management UI at **Settings > MCP Server** (`/settings/mcp`).
+**Settings > MCP Server** (`/settings/mcp`) shows the MCP server's state:
 
-### Setup Flow
+- **Status**: running or not, connected clients, uptime, and the configured
+  transport, port and whether an API key is required. A warning card appears
+  while MCP is disabled.
+- **Tools and Resources**: the registered MCP tools (e.g. `cordum_submit_job`)
+  and resources (e.g. `cordum://jobs/{id}`), each marked enabled or disabled.
+  The lists are read-only; change them with the config API below.
+- **Enable runtime / Disable runtime** sets `mcp.enabled`.
+- **Copy URL** copies `<mcp.transport>://<dashboard host>:<mcp.port>`, and the
+  page shows port 3001 when `mcp.port` is unset. `mcp.port` is metadata only:
+  the gateway serves `/mcp/sse` and `/mcp/message` on its own port
+  (`http://localhost:8081` in the default stack).
 
-1. **Enable MCP**: Navigate to `/settings/mcp` and toggle **Enable MCP Server** on.
-2. **Configure transport**: Expand the Transport Configuration card and choose a mode:
-   - **HTTP + SSE** (recommended) — for remote Claude Desktop / Claude Code connections
-   - **stdio** — for local process integration
-   - **Both** — enable both simultaneously
-   Set the HTTP port (default 3001) and allowed CORS origins as needed, then click **Save Transport Settings**.
-3. **Set up authentication**: In the Authentication card, ensure **Require API Key** is on, then click **Generate MCP API Key**. Copy the generated secret immediately — it is only shown once.
-4. **Copy config snippet**: The Quick Start card provides ready-to-paste snippets:
-   - **Claude Desktop**: JSON for `claude_desktop_config.json`
-   - **Claude Code**: CLI command `claude mcp add cordum -- cordum-mcp --addr http://localhost:3001`
-5. **Verify connection**: The status indicator in the page header turns green when the MCP server is running. It shows the connected client count and uptime.
-6. **Manage tools and resources**: The Tools and Resources tables let you enable or disable individual MCP tools (e.g., `cordum_submit_job`) and resources (e.g., `cordum://jobs/{id}`) with per-item toggles. Expand any tool row to preview its input schema.
+The page has no client config snippets. Create an API key under
+**Settings > API Keys** (`/settings/keys`), then configure the client as in
+[Integration Examples](#integration-examples), which point `cordum-mcp` at the
+gateway with `--addr http://localhost:8081 --allow-private-gateway`.
 
 ### API-based Configuration
 
