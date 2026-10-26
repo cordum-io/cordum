@@ -1125,10 +1125,13 @@ console.log(payload);
   and resources (e.g. `cordum://jobs/{id}`), each marked enabled or disabled.
   The lists are read-only; change them with the config API below.
 - **Enable runtime / Disable runtime** sets `mcp.enabled`.
-- **Copy URL** copies `<mcp.transport>://<dashboard host>:<mcp.port>`, and the
-  page shows port 3001 when `mcp.port` is unset. `mcp.port` is metadata only:
-  the gateway serves `/mcp/sse` and `/mcp/message` on its own port
-  (`https://localhost:8081` in the default stack).
+- **Copy URL** copies the gateway's MCP SSE endpoint, `/mcp/sse`, on the
+  origin of the dashboard's API base URL: `CORDUM_API_BASE_URL` when it is an
+  absolute URL, else the dashboard's own origin. The bundled dashboard nginx
+  proxies only `/api/`, so with the default relative base the copied URL
+  works only where `/mcp/` is also proxied to the gateway; otherwise use the
+  gateway address (`https://localhost:8081/mcp/sse` in the default stack).
+  `mcp.port`, shown as Port (3001 when unset), is metadata only.
 
 The page has no client config snippets. Create an API key under
 **Settings > API Keys** (`/settings/keys`), then configure the client as in

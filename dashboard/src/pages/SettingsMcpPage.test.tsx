@@ -2,6 +2,7 @@ import React, { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import SettingsMcpPage from "./SettingsMcpPage";
+import { useConfigStore } from "@/state/config";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -94,7 +95,7 @@ beforeEach(() => {
   hookState.setMcpConfig.isPending = false;
   Object.defineProperty(window, "location", {
     configurable: true,
-    value: { hostname: "dashboard.local" },
+    value: { hostname: "dashboard.local", origin: "https://dashboard.local" },
   });
   Object.defineProperty(navigator, "clipboard", {
     configurable: true,
@@ -203,14 +204,31 @@ describe("SettingsMcpPage", () => {
     expect(container.textContent).toContain("List jobs");
   });
 
-  it("copies the MCP URL through the shared action row", async () => {
+  it("copies the gateway MCP SSE URL on the API origin, not mcp.port", async () => {
     renderPage();
     clickByText("Copy URL");
     await act(async () => {
       await Promise.resolve();
     });
 
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith("http://dashboard.local:8787");
+    // Relative API base (/api/v1): the gateway is reached through the
+    // dashboard origin.
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith("https://dashboard.local/mcp/sse");
     expect(toastState.success).toHaveBeenCalledWith("MCP URL copied");
+  });
+
+  it("copies the MCP SSE URL on an absolute API base URL's origin", async () => {
+    const previous = useConfigStore.getState().apiBaseUrl;
+    useConfigStore.setState({ apiBaseUrl: "https://gateway.example.com:8081/api/v1" });
+    try {
+      renderPage();
+      clickByText("Copy URL");
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith("https://gateway.example.com:8081/mcp/sse");
+    } finally {
+      useConfigStore.setState({ apiBaseUrl: previous });
+    }
   });
 });
