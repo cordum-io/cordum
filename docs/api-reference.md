@@ -1242,7 +1242,7 @@ curl -sS -X POST http://localhost:8081/api/v1/workflows/WF_ID/runs \
 {
   "items": [
     {
-      "job": { "id": "job-id", "state": "APPROVAL" },
+      "job": { "id": "job-id", "state": "APPROVAL_REQUIRED" },
       "decision": "REQUIRE_APPROVAL",
       "policy_snapshot": "cfg:...",
       "policy_rule_id": "rule-1",
