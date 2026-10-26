@@ -248,6 +248,10 @@ that bundle entry; the unified GET projects it as part of the
   calls the server that `deny_servers` / `allow_servers` match is the
   upstream's name, e.g. `cordum.monday`. With the policy gate on, the
   action gates run first, and a call they deny never reaches the floor.
+  A floor deny is answered like an action-gate DENY: an `isError` tool
+  result with the invariant's reason and ID, not a JSON-RPC error, and
+  `decision=deny` in the audit records (see
+  [MCP tool policy](../edge/mcp-tool-policy.md#decision-semantics)).
 - **Decision values are checked at upload.** The policy schema accepts
   only known decisions, so `config.ParseSafetyPolicy` rejects a typo
   such as `dney`. A rule with no `decision` is evaluated as deny, and as

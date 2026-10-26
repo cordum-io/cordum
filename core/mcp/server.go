@@ -533,6 +533,9 @@ func (s *MCPServer) handleToolsCall(ctx context.Context, params json.RawMessage)
 		ctx, handle = s.auditor.StartInbound(ctx, agentID, tenantID, req.Name, req.Arguments)
 	}
 	result, err := s.invokeTool(ctx, req)
+	if denied, ok := policyDeniedResult(ctx, err); ok {
+		result, err = denied, nil
+	}
 	if s.auditor != nil {
 		s.auditor.FinishInbound(handle, result, err)
 	}
@@ -557,6 +560,20 @@ func (s *MCPServer) invokeTool(ctx context.Context, req ToolCallParams) (*ToolCa
 		deps.Upstream = toolServiceAdapter{tools: s.tools}
 	}
 	return InvokeToolWithPolicy(ctx, deps, req, s.policyServerName)
+}
+
+// policyDeniedResult answers a PolicyDenied like InvokeToolWithPolicy answers
+// an action-gate DENY: an isError result carrying the reason, stamped as a
+// deny on the invocation audit. ok is false for any other error.
+func policyDeniedResult(ctx context.Context, err error) (*ToolCallResult, bool) {
+	var denied *PolicyDenied
+	if !errors.As(err, &denied) {
+		return nil, false
+	}
+	if h := InvocationHandleFromContext(ctx); h != nil {
+		h.MarkPolicyDenied(denied.Reason, denied.SubReason)
+	}
+	return &ToolCallResult{Content: []ContentItem{{Type: "text", Text: denied.Reason}}, IsError: true}, true
 }
 
 // toolServiceAdapter adapts the existing ToolService.Call signature

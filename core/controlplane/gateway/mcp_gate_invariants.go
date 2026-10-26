@@ -17,12 +17,25 @@ import (
 // not callable until the invariant is changed (which requires SecOps
 // authorship of the secops/invariants bundle, not a pack install).
 //
-// Wraps mcp.ErrToolDisabled so the JSON-RPC layer maps it to "method
-// not found" semantics — from the client's point of view, the tool is
-// unavailable, the same shape it would see for a disabled tool. The
-// rule.Reason and rule.ID land in the wrapped error message so audit
-// consumers can identify which invariant fired.
+// It travels inside an *mcp.PolicyDenied (see invariantDenied), which the
+// MCP server answers like an action-gate DENY: an isError tool result, not
+// a JSON-RPC error, carrying the rule's reason and ID, with decision=deny
+// on the invocation audit and a blocked mcp.tool.failed event when the
+// policy gate is on.
 var ErrMCPInvariantDeny = errors.New("mcp gate: denied by invariant")
+
+// invariantDenied is the error for a tools/call that invariant rule blocks.
+func invariantDenied(tool string, rule config.PolicyRule) error {
+	reason := strings.TrimSpace(rule.Reason)
+	if reason == "" {
+		reason = "denied by SecOps invariant"
+	}
+	return &mcp.PolicyDenied{
+		Reason:    fmt.Sprintf("%s (invariant %s)", reason, rule.ID),
+		SubReason: "secops_invariant",
+		Err:       fmt.Errorf("%w: tool %q denied by invariant %q: %s", ErrMCPInvariantDeny, tool, rule.ID, reason),
+	}
+}
 
 // MCPInvariantLookup returns the invariant rules currently in effect for
 // MCP tool-call evaluation. Implementations MUST be safe for concurrent
@@ -64,12 +77,7 @@ func (g *gatewayApprovalGate) CheckInvariants(ctx context.Context, tool mcp.Tool
 	if !denied {
 		return nil
 	}
-	reason := strings.TrimSpace(rule.Reason)
-	if reason == "" {
-		reason = "denied by SecOps invariant"
-	}
-	return fmt.Errorf("%w: tool %q denied by invariant %q: %s",
-		ErrMCPInvariantDeny, tool.Name, rule.ID, reason)
+	return invariantDenied(tool.Name, rule)
 }
 
 // matchMCPInvariantDeny iterates invariant rules looking for a DENY-class

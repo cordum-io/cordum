@@ -99,8 +99,8 @@ func (a policyDispatcherAdapter) Dispatch(ctx context.Context, in *config.Policy
 //  2. PreapprovalLookup HIT — skip approval store entirely.
 //  3. Fall through to MCPApprovalStore claim/enqueue.
 //
-// On invariant DENY this returns an error so the caller can map it
-// to a -32097 / -32099 JSON-RPC code. On preapproval HIT, returns
+// On invariant DENY this returns invariantDenied's *mcp.PolicyDenied,
+// which the MCP server answers like an action-gate DENY. On preapproval HIT, returns
 // ("", nil) so the caller treats the call as immediately allowed.
 func (g *gatewayApprovalGate) ConsumeActionGateDecision(ctx context.Context, _ mcp.PolicyDecision, ctxData mcp.ToolCallApprovalContext) (string, error) {
 	if g == nil || g.store == nil {
@@ -116,8 +116,7 @@ func (g *gatewayApprovalGate) ConsumeActionGateDecision(ctx context.Context, _ m
 		tool := mcp.Tool{Name: ctxData.Tool}
 		meta := MCPCallMetadata{Tenant: ctxData.Tenant, AgentID: ctxData.AgentID}
 		if rule, denied := matchMCPInvariantDeny(rules, tool, meta); denied {
-			return "", fmt.Errorf("%w: tool %q denied by invariant %q",
-				ErrMCPInvariantDeny, ctxData.Tool, rule.ID)
+			return "", invariantDenied(ctxData.Tool, rule)
 		}
 	}
 	// Preapproval HIT short-circuits the approval store. The bridge's

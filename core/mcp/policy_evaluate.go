@@ -253,6 +253,26 @@ type ToolCallApprovalContext struct {
 	Args       json.RawMessage
 }
 
+// PolicyDenied is a policy DENY raised past the action gates, such as the
+// gateway's SecOps invariant floor. The server answers it the way it answers
+// an action-gate DENY: an isError result carrying Reason, decision=deny on the
+// invocation audit and, with the policy gate wired, a blocked mcp.tool.failed
+// event. Err is the cause errors.Is and errors.As see.
+type PolicyDenied struct {
+	Reason    string
+	SubReason string
+	Err       error
+}
+
+func (e *PolicyDenied) Error() string {
+	if e.Err != nil {
+		return e.Err.Error()
+	}
+	return "mcp: policy denied: " + e.Reason
+}
+
+func (e *PolicyDenied) Unwrap() error { return e.Err }
+
 // ToolCallDeps bundles the production wiring EvaluateToolCall and
 // InvokeToolWithPolicy consume. Every field is interface-typed so
 // tests inject fakes without touching the real Redis/audit stores.
@@ -886,6 +906,12 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 			Args: params.Arguments,
 		})
 		if herr != nil {
+			if blocked := newPostEvent(evalResult.PreEvent, deps.Clock, edge.EventKindMCPToolFailed, dec); markPolicyDenied(blocked, herr) {
+				if emitErr := deps.EventEmitter.Emit(ctx, blocked); emitErr != nil {
+					finalErr = fmt.Errorf("emit failed event: %w", emitErr)
+					return nil, finalErr
+				}
+			}
 			finalErr = fmt.Errorf("approval handoff: %w", herr)
 			return nil, finalErr
 		}
@@ -925,7 +951,9 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 	upstreamResult, upstreamErr := deps.Upstream.Invoke(ctx, params)
 	if upstreamErr != nil {
 		failed := newPostEvent(evalResult.PreEvent, deps.Clock, edge.EventKindMCPToolFailed, dec)
-		failed.ErrorMessage = sanitizeUpstreamError(upstreamErr)
+		if !markPolicyDenied(failed, upstreamErr) {
+			failed.ErrorMessage = sanitizeUpstreamError(upstreamErr)
+		}
 		if emitErr := deps.EventEmitter.Emit(ctx, failed); emitErr != nil {
 			finalErr = fmt.Errorf("emit failed event: %w", emitErr)
 			return nil, finalErr
@@ -1109,6 +1137,21 @@ func walkStructuredStrings(v any, depth int, visit func(string) bool) bool {
 		}
 	}
 	return false
+}
+
+// markPolicyDenied gives a failed event the shape EvaluateToolCall gives an
+// action-gate DENY when err is a PolicyDenied (a deny raised past the action
+// gates, such as the gateway's invariant floor), and reports whether it was.
+func markPolicyDenied(evt *edge.AgentActionEvent, err error) bool {
+	var denied *PolicyDenied
+	if !errors.As(err, &denied) {
+		return false
+	}
+	evt.Decision = edge.DecisionDeny
+	evt.Status = edge.ActionStatusBlocked
+	evt.DecisionReason = denied.Reason
+	evt.Constraints = nil
+	return true
 }
 
 // newPostEvent clones the identity/session fields from the pre event

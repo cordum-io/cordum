@@ -4,11 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"slices"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
+	edgecore "github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/mcp"
 )
 
@@ -400,4 +409,142 @@ func TestMCPInvariantFloorCoversNonGatedTools(t *testing.T) {
 	if !errors.As(err, &required) || ran[mcp.ToolInstallPack] {
 		t.Fatalf("uncovered gated tool must still wait for approval: err=%v ran=%v", err, ran[mcp.ToolInstallPack])
 	}
+}
+
+// TestMCPInvariantDenyAnsweredLikeActionGateDeny boots the MCP runtime and
+// posts tools/call to /mcp/message for a tool a deny invariant covers, on the
+// built-in registry and on a fronted upstream, with mcp.policy_gate_enabled
+// off and on. Every call is answered like an action-gate DENY: an isError
+// result with the invariant's reason, not a JSON-RPC error, and with the
+// policy gate on a blocked mcp.tool.failed event with decision=deny. The
+// fronted upstream is an unreachable TEST-NET address, so a call forwarded to
+// it times out instead.
+func TestMCPInvariantDenyAnsweredLikeActionGateDeny(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		fronted, policyGate bool
+	}{
+		{"builtin", false, false},
+		{"builtin_policy_gate", false, true},
+		{"fronted", true, false},
+		{"fronted_policy_gate", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(frontingTestSecretEnv, "dummy-token-never-dialed")
+			s, _, _ := newTestGateway(t)
+			s.auth = mcpTestAuth{apiKey: "test-key", tenant: "default"}
+			s.shutdownCh = make(chan struct{})
+			t.Cleanup(func() { close(s.shutdownCh) })
+			configurePolicyGateBootDeps(t, s)
+			setMCPConfigForBoot(t, s, true, tc.policyGate)
+			ctx := context.Background()
+			tool := mcp.ToolListJobs
+			if tc.fronted {
+				tool = "delete_board"
+				s.mcpUpstreamRegistry = &fakeMCPUpstreamRegistry{
+					entries: []edgecore.UpstreamServer{frontingReadyUpstream("default", "cordum.monday")},
+				}
+			}
+			// The built-in registry's scope filter needs an identity allowed the tool.
+			if _, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+				ID: "agent-floor", TenantID: "default", Name: "floor agent", Owner: "secops@example.com",
+				RiskTier: "high", AllowedTools: []string{tool}, Status: "active",
+			}); err != nil {
+				t.Fatalf("create agent identity: %v", err)
+			}
+			if err := s.configSvc.Set(ctx, &configsvc.Document{
+				Scope:   configsvc.Scope(packs.PolicyConfigScope),
+				ScopeID: packs.PolicyConfigID,
+				Data: map[string]any{packs.PolicyConfigKey: map[string]any{
+					policybundles.PolicyInvariantsBundleKey: map[string]any{"content": `version: "1"
+rules:
+  - id: inv-floor
+    match:
+      mcp:
+        deny_tools: ["` + tool + `"]
+    decision: deny
+    reason: not for agents
+`},
+				}},
+			}); err != nil {
+				t.Fatalf("set invariants bundle: %v", err)
+			}
+
+			mux := http.NewServeMux()
+			if err := s.registerMCPRoutes(mux); err != nil {
+				t.Fatalf("register mcp routes: %v", err)
+			}
+			rt := s.getMCPRuntime()
+			if rt == nil || rt.server == nil || (rt.frontedUpstream == "cordum.monday") != tc.fronted {
+				t.Fatalf("runtime %+v, want fronted=%v", rt, tc.fronted)
+			}
+			emitter := &recordingEdgeEmitter{}
+			if tc.policyGate {
+				if !rt.server.HasPolicyGate() {
+					t.Fatal("policy gate not wired")
+				}
+				// Let the action gates allow the call, and record its events.
+				rt.server.WithPolicyGate(rt.server.PolicyServerName(), mcp.ToolCallDeps{
+					Pipeline:      passingDispatcher{},
+					EventEmitter:  emitter,
+					ArtifactStore: rt.server.PolicyArtifactStore(),
+					Redactor:      mcp.DefaultRedactor(),
+				})
+			}
+
+			srv := httptest.NewServer(mux)
+			defer srv.Close()
+			req, _ := http.NewRequest(http.MethodPost, srv.URL+"/mcp/message", strings.NewReader(
+				`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"`+tool+`","arguments":{}}}`))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-API-Key", "test-key")
+			req.Header.Set("X-Tenant-ID", "default")
+			req.Header.Set(mcpAgentIDHeader, "agent-floor")
+			resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+			if err != nil {
+				t.Fatalf("tools/call got no answer (forwarded to the upstream?): %v", err)
+			}
+			defer func() { _ = resp.Body.Close() }()
+			var out struct {
+				Result *mcp.ToolCallResult `json:"result"`
+				Error  json.RawMessage     `json:"error"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			const want = "not for agents (invariant inv-floor)"
+			if out.Error != nil || out.Result == nil || !out.Result.IsError ||
+				len(out.Result.Content) != 1 || out.Result.Content[0].Text != want {
+				t.Fatalf("result=%+v error=%s, want an isError result %q", out.Result, out.Error, want)
+			}
+			if !tc.policyGate {
+				return
+			}
+			if last := emitter.last(); last == nil || last.Kind != edgecore.EventKindMCPToolFailed ||
+				last.Status != edgecore.ActionStatusBlocked || last.Decision != edgecore.DecisionDeny || last.DecisionReason != want {
+				t.Fatalf("last event = %+v, want a blocked mcp.tool.failed deny", last)
+			}
+		})
+	}
+}
+
+type recordingEdgeEmitter struct {
+	mu     sync.Mutex
+	events []*edgecore.AgentActionEvent
+}
+
+func (r *recordingEdgeEmitter) Emit(_ context.Context, evt *edgecore.AgentActionEvent) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, evt)
+	return nil
+}
+
+func (r *recordingEdgeEmitter) last() *edgecore.AgentActionEvent {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.events) == 0 {
+		return nil
+	}
+	return r.events[len(r.events)-1]
 }

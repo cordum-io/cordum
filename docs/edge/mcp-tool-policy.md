@@ -127,6 +127,15 @@ universal "no claim text wins" rule.
 | `THROTTLE` | Short-circuit; emit `mcp.tool.failed` with code `throttled`; caller back-pressures. |
 | `REQUIRE_HUMAN` | Bridge calls `ApprovalHandoff.ConsumeActionGateDecision`; upstream is not invoked. |
 
+A SecOps invariant can also deny a call past the action gates: the
+gateway's invariant floor runs before the call reaches the tool or a
+fronted upstream, and `ConsumeActionGateDecision` checks invariants
+before it mints an approval. Such a deny (`mcp.PolicyDenied`) is answered
+like `DENY`: `IsError=true` with the invariant's reason and ID, and a
+`mcp.tool.failed` event with `Decision=deny` and status `blocked`. Without
+the policy gate the client gets the same result, and no edge event is
+written.
+
 Failure-closed is the universal default. Missing metadata, an artifact-
 store outage on an oversized event, a redaction completeness leak, or a
 nil `EventEmitter` all reject with no event emitted (we never write an
