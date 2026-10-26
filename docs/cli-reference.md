@@ -17,10 +17,10 @@ is not provided on the command line.
 
 | Flag | Env Variable | Default | Description |
 |------|-------------|---------|-------------|
-| `--gateway` | `CORDUM_GATEWAY` | `http://localhost:8081` | Gateway base URL. The compose stack needs `https://localhost:8081` (CA: `--cacert ./certs/ca/ca.crt`) |
+| `--gateway` | `CORDUM_GATEWAY` | `https://localhost:8081` | Gateway base URL (`http://...` for a gateway without TLS) |
 | `--api-key` | `CORDUM_API_KEY` | *(none)* | API authentication key |
 | `--tenant` | `CORDUM_TENANT_ID` | `default` | Tenant ID |
-| `--cacert` | `CORDUM_TLS_CA` | *(none)* | CA certificate for TLS verification |
+| `--cacert` | `CORDUM_TLS_CA` | *(none)* | CA certificate for TLS verification; for an `https://localhost` gateway, `./certs/ca/ca.crt` is used when present |
 | `--insecure` | `CORDUM_TLS_INSECURE` | `false` | Skip TLS verification (dev/debug only) |
 
 ```bash
@@ -484,7 +484,7 @@ started with `up`/`dev`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CORDUM_GATEWAY` | `http://localhost:8081` | Gateway base URL. The compose stack needs `https://localhost:8081` (CA: `CORDUM_TLS_CA=./certs/ca/ca.crt`) |
+| `CORDUM_GATEWAY` | `https://localhost:8081` | Gateway base URL |
 | `CORDUM_API_KEY` | *(none)* | API authentication key |
 | `CORDUM_TENANT_ID` | `default` | Tenant ID |
 

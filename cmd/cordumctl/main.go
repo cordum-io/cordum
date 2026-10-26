@@ -12,7 +12,10 @@ import (
 	sdk "github.com/cordum/cordum/sdk/client"
 )
 
-const defaultGateway = "http://localhost:8081"
+// defaultGateway is the gateway the default compose stack serves: HTTPS only,
+// with the dev CA at ./certs/ca/ca.crt (see tlsOptions). A gateway without
+// GATEWAY_HTTP_TLS_CERT is plain HTTP: pass --gateway/CORDUM_GATEWAY http://...
+const defaultGateway = "https://localhost:8081"
 
 func main() {
 	logging.Init("cordumctl")
@@ -261,11 +264,11 @@ type flagSet struct {
 
 func newFlagSet(name string) *flagSet {
 	fs := flag.NewFlagSet(name, flag.ExitOnError)
-	gateway := fs.String("gateway", envOr("CORDUM_GATEWAY", defaultGateway), "gateway base url")
+	gateway := fs.String("gateway", envOr("CORDUM_GATEWAY", defaultGateway), "gateway base URL; use http:// for a gateway without TLS (also: CORDUM_GATEWAY)")
 	apiKey := fs.String("api-key", envOr("CORDUM_API_KEY", ""), "api key")
 	tenant := fs.String("tenant", envOr("CORDUM_TENANT_ID", "default"), "tenant id")
 	insecure := fs.Bool("insecure", false, "skip TLS certificate verification (also: CORDUM_TLS_INSECURE=1|true)")
-	cacert := fs.String("cacert", envOr("CORDUM_TLS_CA", ""), "CA certificate for TLS verification (also: CORDUM_TLS_CA)")
+	cacert := fs.String("cacert", envOr("CORDUM_TLS_CA", ""), "CA certificate for TLS verification; for https://localhost, ./certs/ca/ca.crt is used when present (also: CORDUM_TLS_CA)")
 	return &flagSet{FlagSet: fs, gateway: gateway, apiKey: apiKey, tenant: tenant, insecure: insecure, cacert: cacert}
 }
 
@@ -447,10 +450,12 @@ Usage:
   cordumctl edge doctor [--json] [--policy-mode enforce] [--settings-path path] [--claude-path path]
 
 Global flags:
-  --gateway    Gateway base URL (default from CORDUM_GATEWAY)
+  --gateway    Gateway base URL (default https://localhost:8081, or CORDUM_GATEWAY;
+               use http://... for a gateway without TLS)
   --api-key    API key (default from CORDUM_API_KEY)
   --tenant     Tenant ID (default from CORDUM_TENANT_ID)
-  --cacert     CA certificate for TLS verification (also: CORDUM_TLS_CA)
+  --cacert     CA certificate for TLS verification (also: CORDUM_TLS_CA; for an
+               https://localhost gateway, ./certs/ca/ca.crt is used when present)
   --insecure   Skip TLS certificate verification (also: CORDUM_TLS_INSECURE=1|true)
 `)
 }

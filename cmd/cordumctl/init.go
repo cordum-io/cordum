@@ -319,6 +319,9 @@ CORDUM_VERSION=latest
 # Generate an API key
 export CORDUM_API_KEY="$(openssl rand -hex 32)"
 
+# This stack serves the gateway over plain HTTP; cordumctl defaults to https://localhost:8081
+export CORDUM_GATEWAY=http://localhost:8081
+
 # Start all services
 docker compose up -d
 

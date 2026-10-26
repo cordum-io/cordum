@@ -23,7 +23,7 @@ the hook/agentd contracts in [cordum-hook.md](cordum-hook.md) and
 
 | Variable | Default | Required by | Security notes |
 | --- | --- | --- | --- |
-| `CORDUM_GATEWAY` | `cordumctl` defaults to `http://localhost:8081`; raw `cordum-agentd` requires a value. | `cordumctl edge claude`, `cordum-agentd` | Use HTTPS: the compose stack needs `https://localhost:8081`, with its CA in `CORDUM_TLS_CA`. Do not include credentials in the URL. |
+| `CORDUM_GATEWAY` | `cordumctl` defaults to `https://localhost:8081`; raw `cordum-agentd` requires a value. | `cordumctl edge claude`, `cordum-agentd` | Use HTTPS; the compose stack serves `https://localhost:8081`, with its CA in `CORDUM_TLS_CA`. Do not include credentials in the URL. |
 | `CORDUM_API_KEY` | none | `cordumctl edge claude`, `cordum-agentd` | Secret. Passed to agentd for Gateway calls; never written to generated Claude settings, logs, dashboard evidence, or export bundles. |
 | `CORDUM_TENANT_ID` | `cordumctl` defaults to `default`; raw `cordum-agentd` requires a value. | Gateway auth, agentd, generated hook env | Must match the tenant header used by Edge APIs. |
 | `CORDUM_PRINCIPAL_ID` | launcher-detected principal when available | agentd session metadata | Preferred explicit principal for audit evidence. |
