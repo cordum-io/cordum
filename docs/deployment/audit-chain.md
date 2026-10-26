@@ -277,6 +277,17 @@ the tenant's newest event (never trimmed), or the hourly sweep has not run
 yet. None of these is inherently bad; surface it on the dashboard. See
 [audit-operations.md](../audit-operations.md#retention) for the sweeper rules.
 
+**Upgrading: chains you trimmed by hand.** Earlier versions of this page
+called stream max-length eviction and admin `XDEL` retention. They are not:
+trimming the chain by hand is no longer supported, retention is the sweeper's
+job, and a chain trimmed by hand verifies as `compromised`. Adopt a retention
+anchor for such a chain once, with
+`cordumctl audit adopt-anchor <tenant> --expected-oldest-seq <first_seq>`
+(`POST /api/v1/audit/chain/retention-anchor`), and leave trimming to the
+sweeper from then on. See
+[audit-operations.md](../audit-operations.md#upgrading-chains-you-trimmed-by-hand)
+for the steps, and for anchors written by the first retention sweeper.
+
 ---
 
 ## 7. Runbook — verify reported `compromised`
@@ -301,7 +312,9 @@ yet. None of these is inherently bad; surface it on the dashboard. See
    Redis ACL or network access; assume the credential is compromised.
 7. **Do NOT attempt to repair the chain.** The chain is append-only and
    cannot be retro-fitted. A compromised chain stays compromised from
-   that seq forward — the integrity signal itself is the record.
+   that seq forward — the integrity signal itself is the record. The one
+   exception is a prefix you trimmed by hand yourself before upgrading:
+   that is not tampering, and adopting an anchor for it is covered in §6.
 
 If `GET /api/v1/audit/verify` returns `503 audit chainer not installed`
 on a current build, the gateway failed to construct the chainer at

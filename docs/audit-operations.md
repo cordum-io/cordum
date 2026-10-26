@@ -183,7 +183,9 @@ for verification, OR events were forged by a process without the key.
 3. Retention never produces `missing` gaps: the sweeper records the last seq
    it trimmed (the retention anchor), so only seqs below
    `retention_boundary_seq` are reported `retention_trimmed`. A missing
-   prefix with no anchor means the anchor key was deleted along with events
+   prefix with no anchor means the anchor key was deleted along with events,
+   or the chain was trimmed by hand (see
+   [Upgrading: chains you trimmed by hand](#upgrading-chains-you-trimmed-by-hand))
 
 ### CAS Retry Budget Exhausted
 
@@ -301,6 +303,44 @@ The flip side: deleting all three keys together leaves Redis looking like a
 tenant that never had events, which verify cannot tell apart from Redis alone.
 Compliance exports and the SIEM copy of the audit events are the external
 record that the chain existed.
+
+### Upgrading: chains you trimmed by hand
+
+Earlier docs called stream max-length eviction and admin `XDEL` retention.
+Trimming the chain by hand is no longer supported: retention is the
+sweeper's job, and verify reports any prefix the sweeper did not record as
+`missing`. A chain trimmed by hand before the upgrade therefore verifies as
+`compromised`. So does a chain whose anchor the first retention sweeper wrote
+(`seq:event_hash`, without a stream ID or HMAC) once `CORDUM_AUDIT_HMAC_KEY`
+is set. Without the key such an anchor still anchors the chain, but a
+windowed verify that reaches the oldest retained event is `partial` until the
+next trim replaces it.
+
+To accept a tenant's missing prefix as trimmed, adopt a retention anchor for
+it, once:
+
+1. Run `cordumctl audit verify <tenant> --json`. `first_seq` is the oldest
+   retained event. Check that the gaps below it are the events you trimmed
+   and that nothing above it is `missing` or mismatched.
+2. Run `cordumctl audit adopt-anchor <tenant> --expected-oldest-seq <first_seq>`
+   (`POST /api/v1/audit/chain/retention-anchor`, admin only). It writes the
+   anchor the sweeper would have written for that prefix, signed when
+   `CORDUM_AUDIT_HMAC_KEY` is set, and appends an
+   `audit.retention_anchor_adopted` event to the chain naming you and the
+   anchor it replaced. If the tenant already has an anchor that does not
+   anchor the chain (malformed, `hmac_mismatch`, or not linked to the oldest
+   retained event), add `--replace-invalid`.
+3. Verify again: the chain is `partial`, with `retention_trimmed` gaps up to
+   the adopted anchor.
+
+Adoption changes nothing when the oldest retained event is not the seq you
+named, when the current anchor already anchors the chain, or while a Redis
+Cluster trim is in progress (the next sweep finishes it). Nothing adopts an
+anchor automatically. An adopted anchor accepts whatever is missing below
+it, so adopt only a prefix you trimmed yourself; the adoption event is the
+record that you did. On Redis Cluster the sweeper skips a tenant whose
+anchor does not verify under the HMAC key, so such a tenant is not trimmed
+again until you adopt.
 
 ## Legal Hold Integration
 

@@ -720,13 +720,16 @@ Used in CI as `tools/scripts/doctor_integration_test.sh`.
 
 ### `cordumctl audit`
 
-Audit chain operations — verify, replay, export.
+Audit chain operations — verify, adopt a retention anchor.
 
 ```bash
-cordumctl audit verify --since 24h        # verify chain integrity over a window
-cordumctl audit replay --job <job_id>     # replay a job's audit timeline locally
-cordumctl audit export --backend datadog  # one-shot export to a configured backend
+cordumctl audit verify [tenant] [--since ms] [--until ms] [--limit N] [--json]
+cordumctl audit adopt-anchor [tenant] --expected-oldest-seq N [--replace-invalid] [--json]
 ```
+
+`verify` exits 0 for `ok`, 3 for `partial`, 2 for `compromised`, 1 on errors.
+`adopt-anchor` accepts a prefix trimmed outside the retention sweeper; see
+[Upgrading: chains you trimmed by hand](audit-operations.md#upgrading-chains-you-trimmed-by-hand).
 
 See [audit.md](audit.md) for event types + SIEM exporter
 configuration.
