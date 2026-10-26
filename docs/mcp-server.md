@@ -39,13 +39,21 @@ Primary code paths:
 Run:
 
 ```bash
-go run ./cmd/cordum-mcp --addr http://localhost:8081 --api-key "$CORDUM_API_KEY"
+go run ./cmd/cordum-mcp --addr http://localhost:8081 --api-key "$CORDUM_API_KEY" --allow-private-gateway
 ```
 
 Flags:
 
 - `--addr` (default `http://localhost:8081`)
 - `--api-key` (or `CORDUM_API_KEY`)
+- `--allow-private-gateway` (or `CORDUM_MCP_ALLOW_PRIVATE_GATEWAY=true`;
+  default `false`): allow a gateway on `localhost` or a private or loopback
+  address. Without it, every gateway call to such an `--addr`, the default
+  included, fails with `target host resolves to private address`.
+- `--gateway-allowlist` (or `CORDUM_MCP_GATEWAY_ALLOWLIST`): comma-separated
+  hosts or domains that the `--addr` host must match. A domain also matches
+  its subdomains. It applies even with `--allow-private-gateway`. See
+  [Endpoint validation](#endpoint-validation).
 - `--request-timeout` (default `30s`)
 
 ### 2) Gateway HTTP + SSE (remote clients)
