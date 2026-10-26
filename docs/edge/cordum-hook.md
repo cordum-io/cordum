@@ -247,12 +247,12 @@ the `copilot_hooks` check: `warn` in every mode except `observe`. For a control
 that holds when a hook fails, add a mandatory layer such as the
 [LLM proxy](llm-proxy-governance.md).
 
-The generated file uses the Local hook format (PascalCase events, `timeout`, no
-`version`), and `cordum-hook` answers in Claude Code's format
-(`hookSpecificOutput.permissionDecision` plus a top-level `decision: "block"`).
-The Copilot harness accepts PascalCase event names, but it documents hook files
-with `"version": 1` and a top-level `permissionDecision` for `preToolUse`, and
-it drops command-hook output for `userPromptSubmitted`, so prompts are recorded
-but never blocked there. Until a Copilot-harness session has been checked to
+The generated file carries `"version": 1`, which the Copilot harness requires
+and the Local harness accepts, and PascalCase event names, which both accept.
+`cordum-hook` still answers in Claude Code's format
+(`hookSpecificOutput.permissionDecision` plus a top-level `decision: "block"`),
+while the Copilot harness documents a top-level `permissionDecision` for
+`preToolUse`, and it drops command-hook output for `userPromptSubmitted`, so
+prompts are recorded but never blocked there. Until a Copilot-harness session has been checked to
 block a denied tool call, treat Cordum's Copilot hooks as audit-only in that
 harness.
