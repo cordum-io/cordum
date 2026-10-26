@@ -42,28 +42,31 @@ func (h *LegalHold) IsActive() bool {
 // LegalHoldStore — Redis-backed legal hold storage
 // ---------------------------------------------------------------------------
 
-// LegalHoldStore manages legal holds on audit data in Redis.
+// LegalHoldStore manages legal holds on audit data in Redis. Every write
+// touches one key, so it runs on Redis Cluster too.
 type LegalHoldStore struct {
-	client *redis.Client
+	client redis.UniversalClient
 }
 
-// NewLegalHoldStore creates a new Redis-backed legal hold store.
+// NewLegalHoldStore connects a legal hold store with its own client, built
+// like every Cordum Redis client (REDIS_CLUSTER_ADDRESSES selects a cluster).
 func NewLegalHoldStore(redisURL string) (*LegalHoldStore, error) {
-	opts, err := redisutil.ParseOptions(redisURL)
+	client, err := redisutil.NewClient(redisURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse redis url: %w", err)
 	}
-	client := redis.NewClient(opts)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {
+		_ = client.Close()
 		return nil, fmt.Errorf("redis ping: %w", err)
 	}
 	return &LegalHoldStore{client: client}, nil
 }
 
-// NewLegalHoldStoreFromClient creates a LegalHoldStore from an existing client.
-func NewLegalHoldStoreFromClient(client *redis.Client) *LegalHoldStore {
+// NewLegalHoldStoreFromClient creates a LegalHoldStore on an existing client,
+// such as the gateway's shared one. Do not Close it then.
+func NewLegalHoldStoreFromClient(client redis.UniversalClient) *LegalHoldStore {
 	return &LegalHoldStore{client: client}
 }
 
@@ -102,10 +105,15 @@ func (s *LegalHoldStore) CreateHold(ctx context.Context, tenantID, reason, creat
 		return nil, fmt.Errorf("marshal hold: %w", err)
 	}
 
-	pipe := s.client.TxPipeline()
-	pipe.Set(ctx, legalHoldKeyPrefix+hold.ID, data, 0)
-	pipe.SAdd(ctx, legalHoldSetPrefix+tenantID, hold.ID)
-	if _, err := pipe.Exec(ctx); err != nil {
+	// The tenant index and the hold record hash to different Redis Cluster
+	// slots, so they are written one at a time, index first: a failure in
+	// between leaves an index entry without a record, which every reader
+	// skips (no hold), rather than a record ListHolds("") would show as an
+	// active hold that IsUnderHold never sees.
+	if err := s.client.SAdd(ctx, legalHoldSetPrefix+tenantID, hold.ID).Err(); err != nil {
+		return nil, fmt.Errorf("redis create hold: %w", err)
+	}
+	if err := s.client.Set(ctx, legalHoldKeyPrefix+hold.ID, data, 0).Err(); err != nil {
 		return nil, fmt.Errorf("redis create hold: %w", err)
 	}
 
@@ -257,7 +265,8 @@ func (s *LegalHoldStore) activeHoldForTenant(ctx context.Context, tenant string)
 	return nil, nil
 }
 
-// Close closes the Redis client.
+// Close closes the store's Redis client: only for a store from
+// NewLegalHoldStore.
 func (s *LegalHoldStore) Close() error {
 	if s.client != nil {
 		return s.client.Close()

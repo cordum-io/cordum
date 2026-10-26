@@ -99,3 +99,43 @@ func TestClusterIntegration_AppendAndVerify(t *testing.T) {
 		t.Fatalf("head hint = %q, %v", head, err)
 	}
 }
+
+// newIntegrationTenant returns a tenant name unique to the test whose legal
+// hold keys are deleted afterwards.
+func newIntegrationTenant(t *testing.T, client *redis.ClusterClient) string {
+	t.Helper()
+	tenant := "it-" + uuid.NewString()[:8]
+	t.Cleanup(func() {
+		ctx := context.Background()
+		ids, _ := client.SMembers(ctx, legalHoldSetPrefix+tenant).Result()
+		for _, id := range ids {
+			client.Del(ctx, legalHoldKeyPrefix+id)
+		}
+		client.Del(ctx, legalHoldSetPrefix+tenant)
+	})
+	return tenant
+}
+
+func TestClusterIntegration_LegalHolds(t *testing.T) {
+	client := testredis.NewClusterClient(t)
+	tenant := newIntegrationTenant(t, client)
+	store := NewLegalHoldStoreFromClient(client)
+	ctx := context.Background()
+
+	hold, err := store.CreateHold(ctx, tenant, "litigation", "admin")
+	if err != nil {
+		t.Fatalf("create hold: %v", err)
+	}
+	if held, err := store.IsUnderHold(ctx, tenant); err != nil || !held {
+		t.Fatalf("IsUnderHold = %v, %v; want true", held, err)
+	}
+	if holds, err := store.ListHolds(ctx, tenant); err != nil || len(holds) != 1 || holds[0].ID != hold.ID {
+		t.Fatalf("ListHolds = %+v, %v", holds, err)
+	}
+	if err := store.ReleaseHold(ctx, hold.ID, "admin"); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	if held, err := store.IsUnderHold(ctx, tenant); err != nil || held {
+		t.Fatalf("IsUnderHold after release = %v, %v; want false", held, err)
+	}
+}

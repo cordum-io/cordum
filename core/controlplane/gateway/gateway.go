@@ -847,7 +847,7 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		auditExporter:          auditSender,
 		auditChainer:           auditChainer,
 		edgeRecorder:           edgeRecorder,
-		legalHoldStore:         initLegalHoldStore(cfg.RedisURL),
+		legalHoldStore:         audit.NewLegalHoldStoreFromClient(jobStore.Client()),
 		statusCacheObj:         newStatusCache(2 * time.Second),
 		policyShadowStore:      policyshadow.NewStore(configSvc),
 		mcpDenyRing:            newDenyEventRing(500),

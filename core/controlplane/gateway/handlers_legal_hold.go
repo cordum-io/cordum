@@ -3,7 +3,6 @@ package gateway
 import (
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
 	"strings"
 
@@ -11,20 +10,6 @@ import (
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/licensing"
 )
-
-// initLegalHoldStore creates a legal hold store from a Redis URL.
-// Returns nil on error (non-fatal — legal hold is optional).
-func initLegalHoldStore(redisURL string) *audit.LegalHoldStore {
-	if strings.TrimSpace(redisURL) == "" {
-		return nil
-	}
-	store, err := audit.NewLegalHoldStore(redisURL)
-	if err != nil {
-		slog.Warn("legal hold store init failed; audit chain and Edge session retention delete nothing until restart", "error", err)
-		return nil
-	}
-	return store
-}
 
 // requireLegalHoldEntitlement checks the LegalHold entitlement and writes
 // a 403 response if not entitled. Returns true if the caller should return.
