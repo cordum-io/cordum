@@ -35,6 +35,9 @@
     "output_policy": {
       "$ref": "#/definitions/outputPolicy"
     },
+    "require_human": {
+      "$ref": "#/definitions/requireHumanThreshold"
+    },
     "tenants": {
       "type": "object",
       "additionalProperties": {"$ref": "#/definitions/tenantPolicy"}
@@ -193,6 +196,19 @@
         }
       }
     },
+    "requireHumanThreshold": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Downgrades a matched input-rule deny to REQUIRE_HUMAN. Zero values keep the legacy deny.",
+      "properties": {
+        "min_severity_for_deny": {
+          "type": "string",
+          "enum": ["", "low", "medium", "high", "critical"]
+        },
+        "min_confidence_for_deny": {"type": "number", "minimum": 0, "maximum": 1},
+        "downgrade_when_prompt_only": {"type": "boolean"}
+      }
+    },
     "outputMatch": {
       "type": "object",
       "additionalProperties": false,
@@ -254,7 +270,8 @@
         "issuers": {"type": "array", "items": {"type": "string"}},
         "require_issuer": {"type": "string"},
         "required_scope": {"type": "array", "items": {"type": "string"}},
-        "forbid_delegated": {"type": "boolean"}
+        "forbid_delegated": {"type": "boolean"},
+        "delegation_required": {"type": "boolean"}
       }
     },
     "constraints": {
@@ -266,9 +283,18 @@
         "toolchain": {"$ref": "#/definitions/toolchainConstraints"},
         "diff": {"$ref": "#/definitions/diffConstraints"},
         "redaction_level": {"type": "string"},
-        "max_output_bytes": {"type": "integer", "minimum": 0, "maximum": 16777216},
-        "allowed_destinations": {"type": "array", "items": {"type": "string"}},
-        "redact_patterns": {"type": "array", "items": {"type": "string"}}
+        "max_output_bytes": {
+          "type": "integer", "minimum": 0, "maximum": 16777216,
+          "description": "Deprecated. Accepted for backward compatibility only; the Safety Kernel does not enforce it. Use budgets or output_rules instead."
+        },
+        "allowed_destinations": {
+          "type": "array", "items": {"type": "string"},
+          "description": "Deprecated. Accepted for backward compatibility only; the Safety Kernel does not enforce it. Use budgets or output_rules instead."
+        },
+        "redact_patterns": {
+          "type": "array", "items": {"type": "string"},
+          "description": "Deprecated. Accepted for backward compatibility only; the Safety Kernel does not enforce it. Use budgets or output_rules instead."
+        }
       }
     },
     "budgetConstraints": {
@@ -335,7 +361,30 @@
         "allow_resources": {"type": "array", "items": {"type": "string"}},
         "deny_resources": {"type": "array", "items": {"type": "string"}},
         "allow_actions": {"type": "array", "items": {"type": "string"}},
-        "deny_actions": {"type": "array", "items": {"type": "string"}}
+        "deny_actions": {"type": "array", "items": {"type": "string"}},
+        "gateway_enabled": {"type": "boolean"},
+        "upstream_servers": {
+          "type": "array",
+          "items": {"$ref": "#/definitions/upstreamServerConfig"}
+        },
+        "allowed_upstreams": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "upstreamServerConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string"},
+        "transport": {"type": "string"},
+        "endpoint": {"type": "string"},
+        "command": {"type": "array", "items": {"type": "string"}},
+        "auth_secret_ref": {"type": "string"},
+        "labels": {
+          "type": "object",
+          "additionalProperties": {"type": "string"}
+        },
+        "risk": {"type": "string"},
+        "enabled": {"type": "boolean"}
       }
     },
     "tenantPolicy": {
