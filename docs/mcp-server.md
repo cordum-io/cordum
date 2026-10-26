@@ -213,6 +213,13 @@ principal) acting as the same agent. The args, policy snapshot, status,
 expiry and self-approval checks still apply, and a claim for anyone
 else's approval is refused.
 
+A client that asks again without `_approval_ref` while its approval is
+still pending gets that approval back instead of a new one, when the
+requester identity, agent, tool, args and policy snapshot all match.
+Once a reviewer resolves either half of the pair (the Edge approval or
+its record on the MCP approvals page), the pair is no longer reused.
+Another requester asking for the same call gets their own approval.
+
 #### Retry dedupe
 
 `InvokeToolWithPolicy` collapses idempotent retries of the same MCP

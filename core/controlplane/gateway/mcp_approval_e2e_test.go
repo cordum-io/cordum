@@ -16,6 +16,7 @@ import (
 	"github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/mcp"
+	"github.com/cordum/cordum/core/model"
 )
 
 // mcpApprovalE2E is a production-mode gateway serving the real /mcp/message
@@ -201,5 +202,57 @@ func TestMCPApprovalClaimRunsCallOnce(t *testing.T) {
 	}
 	if n := h.calls.Load(); n != 1 {
 		t.Fatalf("tool ran %d times, want exactly once", n)
+	}
+}
+
+// approvalID returns the legacy approval_id of a -32099 reply.
+func (r e2eRPC) approvalID(t *testing.T) string {
+	t.Helper()
+	var data struct {
+		ApprovalID string `json:"approval_id"`
+	}
+	if r.Error == nil || json.Unmarshal(r.Error.Data, &data) != nil || data.ApprovalID == "" {
+		t.Fatalf("reply without approval_id: error %s", r.errorText())
+	}
+	return data.ApprovalID
+}
+
+// TestMCPApprovalReaskReusesPendingApproval: a client that repeats a held
+// call without `_approval_ref` (VS Code re-asks) used to mint a new approval
+// pair every time. While the caller's approval for the call is pending, the
+// re-ask gets that one back; another requester still gets their own.
+func TestMCPApprovalReaskReusesPendingApproval(t *testing.T) {
+	h := newMCPApprovalE2E(t)
+	ctx := context.Background()
+	args := map[string]any{"note": "hi"}
+	first := h.call(t, "key-alice", "agent-a", args)
+	again := h.call(t, "key-alice", "agent-a", args)
+	if first.approvalRef(t) != again.approvalRef(t) || first.approvalID(t) != again.approvalID(t) {
+		t.Fatalf("re-ask got %s/%s, want the pending %s/%s",
+			again.approvalRef(t), again.approvalID(t), first.approvalRef(t), first.approvalID(t))
+	}
+	if bobs := h.call(t, "key-bob", "agent-b", args).approvalRef(t); bobs == first.approvalRef(t) {
+		t.Fatalf("another requester got alice's approval %s", bobs)
+	}
+	for principal, want := range map[string]int{"alice": 1, "bob": 1} {
+		page, err := h.s.edgeStore.ListApprovals(ctx, edge.ListApprovalsQuery{
+			TenantID: "default", PrincipalID: principal, Status: edge.ApprovalStatusPending,
+		})
+		if err != nil || len(page.Items) != want {
+			t.Fatalf("%s's pending Edge approvals = %d (err %v), want %d", principal, len(page.Items), err, want)
+		}
+	}
+	legacyStore := h.s.getMCPRuntime().approvalStore
+	legacy, _, err := legacyStore.ListByStatus(ctx, "pending", 0, 100)
+	if err != nil || len(legacy) != 2 {
+		t.Fatalf("pending legacy MCP approvals = %d (err %v), want one per requester", len(legacy), err)
+	}
+	// A reviewer rejecting the legacy half on the MCP approvals page leaves
+	// the Edge half pending; the next re-ask gets a fresh pair.
+	if _, err := legacyStore.Resolve(ctx, first.approvalID(t), model.ApprovalDecisionReject, "reviewer", "no"); err != nil {
+		t.Fatalf("reject legacy approval: %v", err)
+	}
+	if fresh := h.call(t, "key-alice", "agent-a", args); fresh.approvalRef(t) == first.approvalRef(t) || fresh.approvalID(t) == first.approvalID(t) {
+		t.Fatalf("re-ask after the legacy rejection reused %s/%s", fresh.approvalRef(t), fresh.approvalID(t))
 	}
 }

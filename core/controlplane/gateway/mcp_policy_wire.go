@@ -193,15 +193,21 @@ func (g *gatewayApprovalGate) ConsumeActionGateDecision(ctx context.Context, _ m
 // (ProcessApprovalClaim) computes. Without this match, edge.RedisStore
 // classifyApprovalClaimMismatch surfaces ApprovalConflictKindArgsMismatch
 // on every legitimate retry — the EDGE-103 reopen #1 core bug QA flagged.
+// While the same caller's approval for this call is still pending, a re-ask
+// gets that ref back instead of a new approval.
 func (g *gatewayApprovalGate) mintEdgeApprovalForActionGate(ctx context.Context, ctxData mcp.ToolCallApprovalContext) (string, error, bool) {
-	if g == nil || g.edgeStore == nil {
+	meta, ok := g.edgeMintMetadata(ctx)
+	if !ok {
 		return "", nil, false
 	}
-	meta, ok := mcp.CallMetadataFromContext(ctx)
-	if !ok || meta.SessionID == "" || meta.ExecutionID == "" {
-		return "", nil, false
+	binding, err := g.bindMCPApproval(ctx, meta, ctxData.Tool, ctxData.Args)
+	if err != nil {
+		return "", err, true
 	}
-	approval, _, err := g.mintMCPEdgeApproval(ctx, meta, ctxData.Tool, ctxData.Args, "policy gate REQUIRE_HUMAN", "")
+	if pending := g.pendingMCPApproval(ctx, meta, binding); pending != nil {
+		return pending.ApprovalRef, nil, true
+	}
+	approval, err := g.mintMCPEdgeApproval(ctx, meta, binding, ctxData.Tool, "policy gate REQUIRE_HUMAN", "", "")
 	if err != nil {
 		return "", err, true
 	}
