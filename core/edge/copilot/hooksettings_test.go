@@ -17,7 +17,8 @@ func TestGenerateHookSettings_ShapeAndGovernanceEvents(t *testing.T) {
 		t.Fatalf("GenerateHookSettings: %v", err)
 	}
 	var doc struct {
-		Hooks map[string][]struct {
+		Version int `json:"version"`
+		Hooks   map[string][]struct {
 			Type    string            `json:"type"`
 			Command string            `json:"command"`
 			Timeout int               `json:"timeout"`
@@ -26,6 +27,10 @@ func TestGenerateHookSettings_ShapeAndGovernanceEvents(t *testing.T) {
 	}
 	if err := json.Unmarshal(out, &doc); err != nil {
 		t.Fatalf("unmarshal: %v\n%s", err, out)
+	}
+	// The GitHub Copilot hooks reference rejects a file without version 1.
+	if doc.Version != 1 {
+		t.Fatalf("version = %d, want 1", doc.Version)
 	}
 	// Every chat + every action must be wired.
 	for _, ev := range []string{"UserPromptSubmit", "PreToolUse", "PostToolUse"} {

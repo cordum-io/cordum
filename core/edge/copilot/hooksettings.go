@@ -44,8 +44,14 @@ type hookCommandEntry struct {
 	Env     map[string]string `json:"env,omitempty"`
 }
 
+// hooksDocument is one hooks file both Copilot harnesses read. The GitHub
+// Copilot hooks reference requires "version": 1 ("Structural errors ... a bad
+// version ... reject the entire file"); VS Code's Local hooks reference says
+// "a numeric version does not select a different Local payload schema", so
+// the field is safe there too.
 type hooksDocument struct {
-	Hooks map[string][]hookCommandEntry `json:"hooks"`
+	Version int                           `json:"version"`
+	Hooks   map[string][]hookCommandEntry `json:"hooks"`
 }
 
 // copilotGovernanceEvents maps Copilot hook event names to the cordum-hook
@@ -93,7 +99,7 @@ func GenerateHookSettings(opts HookSettingsOptions) ([]byte, error) {
 		env["CORDUM_AGENTD_URL"] = agentdURL
 	}
 
-	doc := hooksDocument{Hooks: map[string][]hookCommandEntry{}}
+	doc := hooksDocument{Version: 1, Hooks: map[string][]hookCommandEntry{}}
 	for _, e := range copilotGovernanceEvents {
 		// env is copied per entry so future per-event tweaks don't alias.
 		entryEnv := make(map[string]string, len(env))
