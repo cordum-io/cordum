@@ -111,7 +111,8 @@ agent id are non-secret literals.
 > **Group calls into one audit session (optional):** add
 > `"X-Copilot-Session-Id": "<some-id>"` to `headers` to group a workspace's
 > calls under one Copilot session and label spawned jobs with it. If omitted,
-> the MCP transport session id is used.
+> the MCP transport session id is used; a `"type": "http"` server, which opens
+> no session, gets one Copilot session per API key and agent id.
 
 ## 4. Use it
 

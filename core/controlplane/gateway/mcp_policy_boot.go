@@ -129,12 +129,17 @@ func (s *server) attachMCPPolicyDepsNamed(mcpServer *mcp.MCPServer, gate *gatewa
 	policyDeps := BuildMCPPolicyDeps(s.actionGatePipeline, gate, emitter, artifactStore, redisClient)
 	mcpServer = mcpServer.WithPolicyGate(name, policyDeps)
 
-	mcpServer = mcpServer.WithApprovalHold(mcp.ApprovalHoldDeps{
-		Store:          s.edgeStore,
-		PolicySnapshot: s.mcpPolicySnapshotFunc(),
-		ServerName:     name,
-	})
+	mcpServer = mcpServer.WithApprovalHold(s.mcpApprovalHoldDeps(name))
 	return mcpServer, ""
+}
+
+// mcpApprovalHoldDeps is the `_approval_ref` consume wiring for serverName.
+func (s *server) mcpApprovalHoldDeps(serverName string) mcp.ApprovalHoldDeps {
+	return mcp.ApprovalHoldDeps{
+		Store:          mcpSessionlessClaims{store: s.edgeStore},
+		PolicySnapshot: s.mcpPolicySnapshotFunc(),
+		ServerName:     serverName,
+	}
 }
 
 // mcpPolicySnapshotFunc returns a closure the WithApprovalHold consume

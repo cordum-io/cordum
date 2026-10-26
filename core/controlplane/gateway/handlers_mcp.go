@@ -3,6 +3,8 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
@@ -465,15 +467,19 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		// VS Code's type:"http" config POSTs neither X-MCP-Session-ID nor
 		// X-Copilot-Session-Id, which would leave copilot_session_id empty —
 		// so the transcript is dropped and cordum_submit_job misses its
-		// session_id label. Mint the id here in the transport's own format so
-		// the audit session, trace parents, and spawned-job label agree. It is
-		// deliberately NOT written back onto the request: the transport only
-		// accepts session ids it issued to this caller over SSE (anything else
-		// is "session not found") and routes a session-less POST under its own
-		// one-shot id. Scoped to POST so the SSE GET keeps its server-assigned
-		// session id.
-		if transportSessionID == "" && r.Method == http.MethodPost {
-			transportSessionID = "direct-" + uuid.NewString()
+		// session_id label. Mint a one-shot Edge session id here in the
+		// transport's own format for the trace parents. It is deliberately NOT
+		// written back onto the request: the transport only accepts session
+		// ids it issued to this caller over SSE (anything else is "session not
+		// found") and routes a session-less POST under its own one-shot id.
+		// Scoped to POST so the SSE GET keeps its server-assigned session id.
+		// The Edge session stays one-shot because the Edge store caps events
+		// per execution and executions per session; mcpSessionlessClaims lets
+		// the caller's `_approval_ref` retry claim an approval minted under an
+		// earlier one-shot session.
+		sessionless := transportSessionID == "" && r.Method == http.MethodPost
+		if sessionless {
+			transportSessionID = mcpDirectSessionPrefix + uuid.NewString()
 		}
 		if transportSessionID != "" {
 			executionID := "mcp-" + transportSessionID
@@ -495,11 +501,15 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		// identity types).
 		mcpCtx = mcp.WithTenant(mcpCtx, tenantID)
 		// Thread the Copilot session id (explicit header → transport session
-		// id, now always populated for POSTs) so tool invocations can be
-		// grouped into an audit session and spawned jobs labelled with it.
+		// id, or for a session-less POST one id per caller and agent) so tool
+		// invocations can be grouped into an audit session and spawned jobs
+		// labelled with it.
 		copilotSessionID := strings.TrimSpace(r.Header.Get(mcpCopilotSessionIDHeader))
 		if copilotSessionID == "" {
 			copilotSessionID = transportSessionID
+			if sessionless {
+				copilotSessionID = mcpSessionlessCopilotSessionID(r, agentID, transportSessionID)
+			}
 		}
 		if copilotSessionID != "" {
 			mcpCtx = mcp.WithCopilotSessionID(mcpCtx, copilotSessionID)
@@ -515,6 +525,44 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	}
+}
+
+// mcpDirectSessionPrefix marks the one-shot Edge session mcpAuth gives a POST
+// that names no MCP session; SSE session ids are bare UUIDs.
+const mcpDirectSessionPrefix = "direct-"
+
+// mcpSessionlessCopilotSessionID groups a session-less caller's tool calls
+// into one Copilot session per caller and agent instead of one per POST. It
+// derives from the session owner key, so two callers never share one; callers
+// the auth layer cannot tell apart (no credential, no principal) keep the
+// per-POST fallback.
+func mcpSessionlessCopilotSessionID(r *http.Request, agentID, fallback string) string {
+	if submitterIdentity(r) == "" {
+		return fallback
+	}
+	sum := sha256.Sum256([]byte(mcpSessionOwner(r) + "\x00" + agentID))
+	return mcpDirectSessionPrefix + hex.EncodeToString(sum[:16])
+}
+
+// mcpSessionlessClaims lets a session-less caller claim an approval minted
+// under an earlier session-less POST of its own. Each such POST runs in its
+// own one-shot Edge session, so an `_approval_ref` retry can never match the
+// minting POST's session/execution. The claim is rebound to the approval's
+// one-shot session only when the approval's requester is this caller (same
+// credential and principal); the store still checks agent (EventID), args,
+// policy snapshot, status, expiry and self-approval.
+type mcpSessionlessClaims struct{ store edge.Store }
+
+func (c mcpSessionlessClaims) ClaimApproval(ctx context.Context, req edge.ApprovalClaimRequest) (*edge.EdgeApproval, bool, error) {
+	if meta, ok := MCPCallMetadataFromContext(ctx); ok && strings.HasPrefix(req.SessionID, mcpDirectSessionPrefix) {
+		requester := strings.TrimSpace(meta.RequesterIdentity)
+		approval, found, err := c.store.GetApproval(ctx, req.TenantID, req.ApprovalRef)
+		if err == nil && found && approval != nil && requester != "" && approval.Requester == requester &&
+			strings.HasPrefix(approval.SessionID, mcpDirectSessionPrefix) {
+			req.SessionID, req.ExecutionID = approval.SessionID, approval.ExecutionID
+		}
+	}
+	return c.store.ClaimApproval(ctx, req)
 }
 
 // mcpSessionOwner is the owner key MCP HTTP/SSE sessions are bound to: the

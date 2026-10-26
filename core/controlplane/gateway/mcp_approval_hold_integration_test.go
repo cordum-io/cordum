@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -878,4 +880,98 @@ func TestApprovalHoldIntegration_BypassClaimText(t *testing.T) {
 				outcome.ConflictErr.Kind, edge.ApprovalConflictKindNotFound)
 		}
 	})
+}
+
+// TestApprovalHoldSessionlessRetryClaimsMint: VS Code's type:"http" config
+// POSTs without an MCP session, so mcpAuth gives every POST its own one-shot
+// direct-<uuid> Edge session. An Edge approval minted on one such POST must
+// still be claimable by the same caller's `_approval_ref` retry on the next
+// POST, and by no other caller.
+func TestApprovalHoldSessionlessRetryClaimsMint(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.auth = newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"key-alice","tenant":"default","principal_id":"alice","role":"admin"},` +
+			`{"key":"key-bob","tenant":"default","principal_id":"bob","role":"admin"}]`,
+	})
+	edgeStore := edge.NewRedisStoreFromClient(s.jobStore.Client())
+	s.edgeStore = edgeStore
+	const (
+		agentID    = "agent-a"
+		toolName   = "fs.write"
+		serverName = "cordum.builtin"
+		snapshot   = "policy-v7"
+	)
+	// sessionless runs one session-less POST through mcpAuth as key and
+	// returns the request context the MCP handler would see.
+	sessionless := func(key string) context.Context {
+		t.Helper()
+		var got context.Context
+		h := s.mcpAuth(func(w http.ResponseWriter, r *http.Request) { got = r.Context() })
+		req := httptest.NewRequest(http.MethodPost, "/mcp/message", nil)
+		req.Header.Set("X-API-Key", key)
+		req.Header.Set("X-Tenant-ID", "default")
+		req.Header.Set(mcpAgentIDHeader, agentID)
+		rr := httptest.NewRecorder()
+		h(rr, req)
+		if got == nil {
+			t.Fatalf("mcpAuth as %s: status %d body %s", key, rr.Code, rr.Body.String())
+		}
+		return got
+	}
+	mintCtx, retryCtx, bobCtx := sessionless("key-alice"), sessionless("key-alice"), sessionless("key-bob")
+	mintMeta, _ := mcp.CallMetadataFromContext(mintCtx)
+	if retryMeta, _ := mcp.CallMetadataFromContext(retryCtx); retryMeta.SessionID == mintMeta.SessionID {
+		t.Fatalf("session-less POSTs share Edge session %q; each must get its own", mintMeta.SessionID)
+	}
+
+	args := json.RawMessage(`{"path":"/etc/hostname","contents":"hi"}`)
+	_, inputHash := mcp.BuildMCPApprovalBinding("default", serverName, mcp.ToolCallParams{Name: toolName, Arguments: args}, snapshot)
+	// The approval tuple binds EventID to the agent id; seed that parent event
+	// in the minting POST's execution, as the integration tests above do.
+	if _, err := edgeStore.AppendEvent(context.Background(), edge.AgentActionEvent{
+		EventID: agentID, SessionID: mintMeta.SessionID, ExecutionID: mintMeta.ExecutionID,
+		TenantID: "default", PrincipalID: "alice", Timestamp: time.Now().UTC(),
+		Layer: edge.LayerMCP, Kind: edge.EventKindApprovalRequested, ToolName: toolName,
+		Decision: edge.DecisionRequireApproval, Status: edge.ActionStatusBlocked,
+		InputHash: inputHash, PolicySnapshot: snapshot,
+	}); err != nil {
+		t.Fatalf("AppendEvent parent: %v", err)
+	}
+	gate := &gatewayApprovalGate{
+		store:          &MCPApprovalStore{},
+		edgeStore:      edgeStore,
+		policySnapshot: func(context.Context) string { return snapshot },
+		serverName:     serverName,
+	}
+	ref, err := gate.ConsumeActionGateDecision(mintCtx, mcp.PolicyDecision{}, mcp.ToolCallApprovalContext{
+		Tenant: "default", AgentID: agentID, Server: serverName, Tool: toolName,
+		ActionHash: mcp.ActionTupleHash("default", serverName, toolName, "/etc/hostname"), Args: args,
+	})
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	if _, err := edgeStore.ApproveApproval(context.Background(), edge.ApprovalResolution{
+		TenantID: "default", ApprovalRef: ref, ResolverID: "reviewer", ResolvedBy: "reviewer@example.invalid",
+		Reason: "approve", ResolvedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("ApproveApproval: %v", err)
+	}
+
+	deps := s.mcpApprovalHoldDeps(serverName)
+	deps.PolicySnapshot = func(context.Context) string { return snapshot }
+	retry := mcp.ToolCallParams{Name: toolName, Arguments: json.RawMessage(`{"path":"/etc/hostname","contents":"hi","_approval_ref":"` + ref + `"}`)}
+	if out, err := mcp.ProcessApprovalClaim(bobCtx, deps, retry); err != nil || out.Consumed {
+		t.Fatalf("another caller's retry: consumed=%t err=%v, want refused", out.Consumed, err)
+	}
+	out, err := mcp.ProcessApprovalClaim(retryCtx, deps, retry)
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if !out.Consumed {
+		kind, reason := "", ""
+		if out.ConflictErr != nil {
+			kind, reason = string(out.ConflictErr.Kind), out.ConflictErr.Reason
+		}
+		t.Fatalf("same caller's session-less retry not consumed: kind=%q reason=%q", kind, reason)
+	}
 }

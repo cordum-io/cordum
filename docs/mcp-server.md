@@ -196,6 +196,14 @@ expired / consumed / args_mismatch / policy_mismatch / self_approval /
 cross_tenant / not_found) surface as JSON-RPC `-32096` with
 `error.data.kind` carrying the typed conflict family.
 
+A `/mcp/message` POST that names no MCP session (a `"type": "http"`
+client) runs in its own one-shot Edge session, so its retry can never
+match the minting POST's session and execution. For such a retry the
+claim binds to the approval's one-shot session instead, but only when
+the approval's requester is the same caller (same API key or login and
+the same principal); the agent, args, policy snapshot, status, expiry
+and self-approval checks still apply.
+
 #### Retry dedupe
 
 `InvokeToolWithPolicy` collapses idempotent retries of the same MCP
