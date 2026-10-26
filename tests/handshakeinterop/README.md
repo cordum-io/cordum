@@ -13,9 +13,13 @@ evidence, not a certification or an external interoperability claim.
   connect to a default or external broker. Before any connection the gate reads
   that module's version from the test binary's build information
   (`runtime/debug.ReadBuildInfo`, honoring a same-module `replace`) and fails
-  unless it equals the embedded server's `gnats.VERSION`. Missing, duplicated,
-  pseudo-version, malformed, or directory/foreign-module-replaced metadata is
-  fatal. No NATS version is written in this suite; `go.mod` is the only source.
+  unless it equals the embedded server's `gnats.VERSION`. Test binaries built
+  by Go releases before Go 1.27 record no dependency list, so on those
+  toolchains only the gate resolves the same module with `go list -m -json`
+  and applies identical checks; an empty list from newer or unrecognized Go
+  toolchains is fatal. Missing, duplicated, pseudo-version, malformed, or
+  directory/foreign-module-replaced metadata is fatal from either source. No
+  NATS version is written in this suite; `go.mod` is the only source.
 - Identity enrollment uses `configsvc.Service`, `workercredentials.Service`,
   `AgentIdentityStore`, and `NewCredentialHandshakeTrustResolver` over Redis.
 - Go is installed from a temporary local module proxy with `GOWORK=off`; Python
