@@ -98,7 +98,10 @@ jobs:
   browser:
     name: Browser smoke (Playwright)
     needs: test
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04, where Playwright ^1.59 has no
+    # chromium build ("Playwright does not support chromium on ubuntu26.04-x64").
+    # Move back to ubuntu-latest once the pinned Playwright supports it.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
