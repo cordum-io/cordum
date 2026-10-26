@@ -581,11 +581,18 @@ func (e *Engine) isAsyncFailOpenForTenant(orgID string) bool {
 }
 
 // isApprovalGateTopic returns true if the topic is a synthetic approval gate
-// subject, not an actual worker topic. Only these topics should be auto-completed
-// with synthetic SUCCEEDED results; worker topics must always be dispatched.
+// subject, not an actual worker topic. Only these topics and guardApprovalTopic
+// are auto-completed with synthetic SUCCEEDED results; worker topics must
+// always be dispatched.
 func isApprovalGateTopic(topic string) bool {
 	return topic == capsdk.SubjectApprovalGate || topic == capsdk.SubjectWorkflowApprovalGate
 }
+
+// guardApprovalTopic is the default topic of the Python @guard SDK's approval
+// jobs. No worker serves it (the SDK runs the guarded call itself once the job
+// is approved), so an allowed job is completed instead of dispatched. It is not
+// a gate topic: its approvals keep the policy snapshot binding.
+const guardApprovalTopic = "job.guard"
 
 // Start registers subscriptions for the scheduler.
 func (e *Engine) Start() error {
@@ -1664,12 +1671,12 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 		if record.Constraints != nil {
 			applyConstraints(req, record.Constraints)
 		}
-		// Approval gate auto-complete: when an approval gate job is processed,
-		// publish a synthetic success result instead of dispatching to workers.
-		// IMPORTANT: Only auto-complete actual approval gate topics, NOT regular
+		// Approval-only auto-complete: when an approval gate or @guard job is
+		// processed, publish a synthetic success result instead of dispatching
+		// to workers. IMPORTANT: Only auto-complete these topics, NOT regular
 		// worker jobs that went through the approval flow. Worker jobs with
 		// reason "approval granted" must still be dispatched to their handlers.
-		if isApprovalGateTopic(topic) {
+		if isApprovalGateTopic(topic) || topic == guardApprovalTopic {
 			pkt := &pb.BusPacket{
 				TraceId:         traceID,
 				SenderId:        defaultSenderID,
