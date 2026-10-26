@@ -260,6 +260,11 @@ is ever trimmed. The same window is reported as `retention_window_hours` by
   tenant's retention anchor, `audit:chain:anchor:<tenant>` =
   `seq:event_hash:stream_id`. When `CORDUM_AUDIT_HMAC_KEY` is set the anchor
   also carries an HMAC (`:hmac`) bound to the tenant's anchor key.
+- On Redis Cluster the anchor and the stream hash to different slots, so the
+  anchor moves in three steps around the trim instead: a pending anchor, the
+  trim, then a confirmation. See
+  [Audit chain and legal holds on Redis Cluster](horizontal-scaling.md#audit-chain-and-legal-holds-on-redis-cluster)
+  for what an interrupted trim looks like to verify.
 - Never deletes a tenant's newest event (the chain head), so an idle tenant
   keeps one event older than the window.
 - Skips tenants under legal hold (see below). If the event that would become
@@ -291,6 +296,11 @@ replica. The first sweep can delete a large backlog, so take a compliance
 export or a Redis snapshot first. To reset a tenant's chain on purpose,
 delete its stream, head and anchor keys together; an anchor left behind makes
 the restarted chain verify as `compromised`.
+
+The flip side: deleting all three keys together leaves Redis looking like a
+tenant that never had events, which verify cannot tell apart from Redis alone.
+Compliance exports and the SIEM copy of the audit events are the external
+record that the chain existed.
 
 ## Legal Hold Integration
 

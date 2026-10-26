@@ -26,7 +26,7 @@ and CC7.3 (detection of security incidents) trust criteria documented in
 |---|---|---|
 | `audit:chain:<tenant>` | Stream | Ordered event log, one entry per event |
 | `audit:chain:head:<tenant>` | String | `"<seq>:<event_hash>"` — current chain tip |
-| `audit:chain:anchor:<tenant>` | String | `"<seq>:<event_hash>:<stream_id>"` of the newest event the retention sweeper deleted, plus `":<hmac>"` when `CORDUM_AUDIT_HMAC_KEY` is set; absent until the first trim |
+| `audit:chain:anchor:<tenant>` | String | `"<seq>:<event_hash>:<stream_id>"` of the newest event the retention sweeper deleted, plus `":<hmac>"` when `CORDUM_AUDIT_HMAC_KEY` is set; absent until the first trim. On Redis Cluster a trim in progress also carries the anchor it replaces ([details](horizontal-scaling.md#audit-chain-and-legal-holds-on-redis-cluster)) |
 
 ### Event Schema (`SIEMEvent`)
 
@@ -68,6 +68,10 @@ Appending is protected by a Compare-and-Set Lua script that atomically:
 2. Compares it to the caller's expected value
 3. If they match: `XADD` the event, `SET` the new head
 4. If they don't: returns 0 (CAS miss → Go retries with jitter)
+
+On Redis Cluster the head key and the stream hash to different slots, so the
+append compares against the stream's last entry instead and the head becomes
+a hint ([details](horizontal-scaling.md#audit-chain-and-legal-holds-on-redis-cluster)).
 
 This prevents two concurrent producers from both seeing the same head and
 both committing at the same sequence number.
@@ -259,7 +263,8 @@ opt-in: nothing is deleted unless `CORDUM_AUDIT_RETENTION_ENFORCE=true`.
 When enabled, the gateway's retention sweeper deletes events older than the
 window (never a tenant's newest event, never a tenant under legal hold) and
 records the newest deleted event as the retention anchor in the same atomic
-step, HMAC-signed when `CORDUM_AUDIT_HMAC_KEY` is set. Verify then reports the
+step (in three single-key steps on Redis Cluster, see
+[Redis Cluster](horizontal-scaling.md#audit-chain-and-legal-holds-on-redis-cluster)), HMAC-signed when `CORDUM_AUDIT_HMAC_KEY` is set. Verify then reports the
 trimmed prefix as `retention_trimmed`, checks that the oldest retained event
 links to the anchor, and reports anything else absent as `missing` — events
 deleted outside retention are not mistaken for it. Nothing else deletes chain

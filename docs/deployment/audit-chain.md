@@ -60,6 +60,8 @@ audit:chain:<tenant>        — Redis Stream (XADD *), one entry per event
 audit:chain:head:<tenant>   — "seq:event_hash" of the tenant's chain head
 audit:chain:anchor:<tenant> — "seq:event_hash:stream_id[:hmac]" of the
                               newest event the retention sweeper deleted
+                              (on Redis Cluster a trim in progress also
+                              carries the anchor it replaces)
 ```
 
 The stream entry has two fields:
@@ -87,7 +89,8 @@ genesis.
 
 `NATSAuditConsumer` (in `core/audit/consumer.go`) invokes
 `Chainer.Append` immediately before `exporter.Export`. Chain append is
-atomic via a CAS Lua script on the head key. In direct-transport mode
+atomic via a CAS Lua script on the head key (on Redis Cluster, on the
+stream's last entry: see [Redis Cluster](../horizontal-scaling.md#audit-chain-and-legal-holds-on-redis-cluster)). In direct-transport mode
 (`AUDIT_TRANSPORT` unset), the gateway wraps the write path in an
 `auditChainSender` that appends to the chain before forwarding to the
 configured exporter, so the chain is populated whether or not a NATS
@@ -249,7 +252,8 @@ Both retention expiry and tampering produce absent seq numbers. The
 chain distinguishes them by construction:
 
 1. **The retention anchor.** The retention sweeper is the only code path
-   that deletes chain events. In the same atomic step as each trim it
+   that deletes chain events. In the same atomic step as each trim (in
+   three single-key steps on [Redis Cluster](../horizontal-scaling.md#audit-chain-and-legal-holds-on-redis-cluster)) it
    records the newest deleted event as `audit:chain:anchor:<tenant>`
    (HMAC-signed when `CORDUM_AUDIT_HMAC_KEY` is set), and verify requires
    the oldest retained event to be anchor + 1 and to link to the anchor's

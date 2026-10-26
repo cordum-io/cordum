@@ -336,16 +336,35 @@ During rolling restarts, broadcast subjects may miss messages while a replica is
 
 ## Redis Cluster Limitations
 
-When running Redis in cluster mode, Lua scripts that touch keys in different hash slots will fail with `CROSSSLOT` errors. Cordum has 12 Lua scripts; 9 are single-key (safe for cluster mode). Three scripts touch multiple keys across slots:
+When running Redis in cluster mode, Lua scripts and MULTI transactions that touch keys in different hash slots fail with `CROSSSLOT` errors, and `SCAN` reaches only one node. Among the scripts and transactions that touch multiple slots:
 
 | Script | File | Keys | Risk | Status |
 |--------|------|------|------|--------|
 | `updateRunScript` | `core/workflow/store_redis.go` | 4 KEYS + dynamic index keys | High (every step completion) | Refactored — index updates moved to Go pipeline |
 | `idempotencyScopedScript` | `core/infra/store/job_store.go` | 2 KEYS + dynamic `job:meta:` | Medium (job submit) | Documented; use hash tags or pipeline split for cluster |
 | `createUserLua` | `core/controlplane/gateway/auth/userstore_redis.go` | 2 KEYS + dynamic `user:id:`, `user:tenant:` | Low (admin operation) | Documented; use hash tags or pipeline split for cluster |
+| `chainAppendScript` | `core/audit/chain.go` | `audit:chain:head:<tenant>` + `audit:chain:<tenant>` | High (every audit event) | Cluster path: single-key append on the stream, see below |
+| `retentionTrimScript` | `core/audit/retention.go` | `audit:chain:<tenant>` + `audit:chain:anchor:<tenant>` | Medium (retention sweep) | Cluster path: anchor moved in single-key steps, see below |
+| Chain verify read (MULTI) | `core/audit/chain_verify.go` | stream + anchor | High (verify, compliance export, ProvenanceGate) | Cluster path: anchor read before and after the stream, see below |
+| Legal hold create (MULTI) | `core/audit/legal_hold.go` | `audit:legal_hold:<id>` + `audit:legal_holds:<tenant>` | Low (admin operation) | Two single-key writes, index first |
 
 ### Remediation for Redis Cluster
 
 **`updateRunScript` (refactored):** The hot-path Lua script has been split: the atomic GET+SET of the run document stays in Lua (single key), while ZADD/ZREM index updates are performed in a Go pipeline afterward. Index operations are idempotent (ZADD is upsert, ZREM is no-op if missing), so eventual consistency is safe.
 
 **`idempotencyScopedScript` and `createUserLua`:** These remain as multi-key Lua scripts. For Redis Cluster deployments, use hash tags (e.g., `{tenant}:user:...`) to colocate related keys in the same slot, or refactor to pipeline-based approaches similar to `updateRunScript`.
+
+### Audit chain and legal holds on Redis Cluster
+
+The audit chain keeps its single-node key names on a cluster, so a tenant's stream (`audit:chain:<tenant>`), head (`audit:chain:head:<tenant>`) and retention anchor (`audit:chain:anchor:<tenant>`) sit in different slots. Cordum picks the cluster code path from the client type: `REDIS_CLUSTER_ADDRESSES` with more than one seed builds a cluster client. There is no flag. On a single node nothing changes.
+
+- **The head is a hint.** Each event links to the stream's last entry and commits with a single-key compare-and-append on the stream. The head key is written afterwards and only ever moves forward. A crash in between leaves it behind the stream, which is harmless. The head is used only as a floor for the next seq: if it is ahead of the stream, entries were deleted from the tail, and the next event is numbered past the head so the deletion stays visible as `missing` seqs.
+- **The trim takes three single-key steps.** (1) The sweeper writes a *pending* anchor: the newest entry to delete plus the anchor it replaces, signed together. (2) It checks the legal hold again, then trims the stream. (3) It confirms, rewriting the anchor without the one it replaced. Until step 3, verify links the stream to the replaced anchor.
+- **What verify sees after an interruption:**
+  - *Crash, or a new legal hold, after step 1:* the events are still there and verify end to end from the previous anchor. Deleting any of them, including exactly the range the pending anchor names, is reported as `missing`. The next sweep without a hold finishes the trim.
+  - *Crash after step 2:* the trimmed events read as `missing` (`compromised`) until the next sweep, outside a legal hold, confirms the trim. An unconfirmed trim looks the same as someone else deleting those events.
+- **Verify reads the anchor before and after the stream.** It accepts a verdict that holds against either read, and re-reads (about 150 ms in all) while a sweep moves the anchor or is about to confirm a trim. If the anchor keeps moving it returns an error instead of a verdict.
+- **Legal holds** write the tenant index and the hold record as separate commands, index first, so an interrupted create reads as no hold everywhere.
+- **Cluster-wide scans** run on every master: retention tenant discovery, `GET /api/v1/audit/legal-holds` without a tenant, and the Edge session sweeper.
+
+These guarantees assume `CORDUM_AUDIT_HMAC_KEY` is set: without it, anchors are unsigned and can be forged on a cluster as on a single node.
