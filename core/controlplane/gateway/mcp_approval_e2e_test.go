@@ -20,19 +20,23 @@ import (
 )
 
 // mcpApprovalE2E is a production-mode gateway serving the real /mcp/message
-// route with the policy gate and approval hold on, a real Edge store, and a
-// RequiresApproval tool (e2eGatedTool) whose executions it counts. Nothing is
-// seeded in the Edge store: mcpAuth creates the session and execution, the
-// mint records the approval's parent event.
+// route with the policy gate and approval hold on, a real Edge store (built
+// with opts), a RequiresApproval tool (e2eGatedTool) whose executions it
+// counts, and an ungated e2eReadTool. Nothing is seeded in the Edge store:
+// mcpAuth creates the session and execution, the mint records the approval's
+// parent event.
 type mcpApprovalE2E struct {
 	s     *server
 	url   string
 	calls atomic.Int32
 }
 
-const e2eGatedTool = "e2e_gated_write"
+const (
+	e2eGatedTool = "e2e_gated_write"
+	e2eReadTool  = "e2e_read"
+)
 
-func newMCPApprovalE2E(t *testing.T) *mcpApprovalE2E {
+func newMCPApprovalE2E(t *testing.T, opts ...edge.StoreOption) *mcpApprovalE2E {
 	t.Helper()
 	s, _, _ := newTestGateway(t)
 	s.auth = newBasicAuthForTest(t, map[string]string{
@@ -42,7 +46,8 @@ func newMCPApprovalE2E(t *testing.T) *mcpApprovalE2E {
 	})
 	s.shutdownCh = make(chan struct{})
 	t.Cleanup(func() { close(s.shutdownCh) })
-	configurePolicyGateBootDeps(t, s)
+	s.edgeStore = edge.NewRedisStoreFromClient(s.jobStore.Client(), opts...)
+	s.wireActionGatePipeline()
 	setMCPConfigForBoot(t, s, true, true)
 	ctx := context.Background()
 	// A policy config document gives the approvals a policy snapshot.
@@ -79,6 +84,12 @@ func newMCPApprovalE2E(t *testing.T) *mcpApprovalE2E {
 		}); err != nil {
 		t.Fatalf("register tool: %v", err)
 	}
+	if err := runtime.toolRegistry.Register(mcp.Tool{Name: e2eReadTool, RiskTier: "low"},
+		func(context.Context, json.RawMessage) (*mcp.ToolCallResult, error) {
+			return &mcp.ToolCallResult{Content: []mcp.ContentItem{{Type: "text", Text: "read"}}}, nil
+		}); err != nil {
+		t.Fatalf("register read tool: %v", err)
+	}
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	h.url = srv.URL
@@ -94,19 +105,29 @@ type e2eRPC struct {
 	} `json:"error"`
 }
 
-// call POSTs one session-less tools/call (VS Code's type:"http" shape) as key
-// acting as agent.
+// call POSTs one session-less tools/call of e2eGatedTool (VS Code's
+// type:"http" shape) as key acting as agent.
 func (h *mcpApprovalE2E) call(t *testing.T, key, agent string, args map[string]any) e2eRPC {
+	t.Helper()
+	return h.callTool(t, key, agent, "", e2eGatedTool, args)
+}
+
+// callTool POSTs one tools/call of tool as key acting as agent, naming MCP
+// session sessionID when set.
+func (h *mcpApprovalE2E) callTool(t *testing.T, key, agent, sessionID, tool string, args map[string]any) e2eRPC {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-		"params": map[string]any{"name": e2eGatedTool, "arguments": args},
+		"params": map[string]any{"name": tool, "arguments": args},
 	})
 	req, _ := http.NewRequest(http.MethodPost, h.url+"/mcp/message", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-API-Key", key)
 	req.Header.Set("X-Tenant-ID", "default")
 	req.Header.Set(mcpAgentIDHeader, agent)
+	if sessionID != "" {
+		req.Header.Set("X-MCP-Session-ID", sessionID)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("POST /mcp/message: %v", err)
@@ -254,5 +275,41 @@ func TestMCPApprovalReaskReusesPendingApproval(t *testing.T) {
 	}
 	if fresh := h.call(t, "key-alice", "agent-a", args); fresh.approvalRef(t) == first.approvalRef(t) || fresh.approvalID(t) == first.approvalID(t) {
 		t.Fatalf("re-ask after the legacy rejection reused %s/%s", fresh.approvalRef(t), fresh.approvalID(t))
+	}
+}
+
+// TestMCPApprovalClaimWorksAcrossEdgeRotation: with lowered Edge caps (12
+// events per execution, 2 executions per session) a long-lived SSE session
+// used to fail its calls once its one execution filled. The session now moves
+// to new executions and then to a new Edge session, every call succeeds, and
+// an approval minted before the rotation is still claimed by the caller's
+// `_approval_ref` retry afterwards.
+func TestMCPApprovalClaimWorksAcrossEdgeRotation(t *testing.T) {
+	h := newMCPApprovalE2E(t, edge.WithMaxEventsPerExecution(12), edge.WithMaxExecutionsPerSession(2))
+	ctx := context.Background()
+	sse := openMCPSSE(t, h.url, "key-alice", "")
+	ref := h.callTool(t, "key-alice", "agent-a", sse, e2eGatedTool, map[string]any{"note": "hi"}).approvalRef(t)
+	approval, _, err := h.s.edgeStore.GetApproval(ctx, "default", ref)
+	if err != nil || approval.SessionID != sse {
+		t.Fatalf("approval %s minted in %+v (err %v), want the MCP session's first Edge session %s", ref, approval, err, sse)
+	}
+	for i := 0; i < 12; i++ {
+		got := h.callTool(t, "key-alice", "agent-a", sse, e2eReadTool, map[string]any{"i": i})
+		if got.Error != nil || got.Result == nil {
+			t.Fatalf("read %d in a long-lived SSE session failed: %s", i, got.errorText())
+		}
+	}
+	rotated, ok, err := h.s.edgeStore.GetSession(ctx, "default", sse+".s1")
+	if err != nil || !ok || rotated.Labels[mcpSessionLabel] != sse {
+		t.Fatalf("rotated Edge session = %+v ok=%v err=%v, want %s.s1 linked to the MCP session", rotated, ok, err, sse)
+	}
+
+	h.approve(t, ref)
+	got := h.callTool(t, "key-alice", "agent-a", sse, e2eGatedTool, map[string]any{"note": "hi", "_approval_ref": ref})
+	if got.Error != nil || got.Result == nil || len(got.Result.Content) == 0 || got.Result.Content[0].Text != "written" {
+		t.Fatalf("claim after rotation = %+v (error %s), want the tool's result", got.Result, got.errorText())
+	}
+	if n := h.calls.Load(); n != 1 {
+		t.Fatalf("gated tool ran %d times, want once", n)
 	}
 }

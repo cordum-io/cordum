@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -906,7 +907,7 @@ func TestEnsureMCPHTTPTraceParentsCreatesEdgeParents(t *testing.T) {
 	client := newSharedTestRedisClient(t, backend)
 	s := &server{edgeStore: edge.NewRedisStoreFromClient(client)}
 
-	if err := s.ensureMCPHTTPTraceParents(context.Background(), "default", "agent-alpha", "tester", "sess-alpha", "mcp-sess-alpha"); err != nil {
+	if err := s.ensureMCPHTTPTraceParents(context.Background(), "default", "agent-alpha", "tester", "sess-alpha", "sess-alpha", "mcp-sess-alpha"); err != nil {
 		t.Fatalf("ensureMCPHTTPTraceParents: %v", err)
 	}
 	if _, ok, err := s.edgeStore.GetSession(context.Background(), "default", "sess-alpha"); err != nil || !ok {
@@ -914,6 +915,60 @@ func TestEnsureMCPHTTPTraceParentsCreatesEdgeParents(t *testing.T) {
 	}
 	if got, ok, err := s.edgeStore.GetExecution(context.Background(), "default", "mcp-sess-alpha"); err != nil || !ok || got.SessionID != "sess-alpha" {
 		t.Fatalf("GetExecution got=%+v ok=%v err=%v", got, ok, err)
+	}
+}
+
+// TestMCPEdgeTraceRotatesBeforeCaps: with lowered Edge caps (5 events per
+// execution, 2 executions per session) an MCP session moves to a new
+// execution once the current one holds 4 events, and to a new Edge session,
+// labelled with the MCP session, once its session holds both executions.
+func TestMCPEdgeTraceRotatesBeforeCaps(t *testing.T) {
+	t.Parallel()
+	client := newSharedTestRedisClient(t, newTestRedisBackend(t))
+	s := &server{edgeStore: edge.NewRedisStoreFromClient(client,
+		edge.WithMaxEventsPerExecution(5), edge.WithMaxExecutionsPerSession(2))}
+	ctx := context.Background()
+	trace := func() (string, string) {
+		t.Helper()
+		sessionID, executionID, err := s.mcpEdgeTrace(ctx, "default", "agent-alpha", "tester", "sse-1")
+		if err != nil {
+			t.Fatalf("mcpEdgeTrace: %v", err)
+		}
+		return sessionID, executionID
+	}
+	fill := func(sessionID, executionID string, n int) {
+		t.Helper()
+		for i := 0; i < n; i++ {
+			if _, err := s.edgeStore.AppendEvent(ctx, edge.AgentActionEvent{
+				EventID: fmt.Sprintf("%s-%d", executionID, i), SessionID: sessionID, ExecutionID: executionID,
+				TenantID: "default", PrincipalID: "tester", Timestamp: time.Now().UTC(),
+				Layer: edge.LayerMCP, Kind: edge.EventKindMCPToolPre, ToolName: "t", Decision: edge.DecisionAllow, Status: edge.ActionStatusOK,
+			}); err != nil {
+				t.Fatalf("append event %d to %s: %v", i, executionID, err)
+			}
+		}
+	}
+	for _, step := range []struct{ session, execution string }{
+		{"sse-1", "mcp-sse-1"},
+		{"sse-1", "mcp-sse-1.e1"},
+		{"sse-1.s1", "mcp-sse-1.s1"},
+		{"sse-1.s1", "mcp-sse-1.s1.e1"},
+	} {
+		sessionID, executionID := trace()
+		if sessionID != step.session || executionID != step.execution {
+			t.Fatalf("trace = %s/%s, want %s/%s", sessionID, executionID, step.session, step.execution)
+		}
+		fill(sessionID, executionID, 3)
+		if again, againExec := trace(); again != sessionID || againExec != executionID {
+			t.Fatalf("below the rotation point the trace moved to %s/%s", again, againExec)
+		}
+		fill(sessionID, executionID, 1)
+	}
+	for _, id := range []string{"sse-1", "sse-1.s1"} {
+		got, ok, err := s.edgeStore.GetSession(ctx, "default", id)
+		if err != nil || !ok || got.Labels[mcpSessionLabel] != "sse-1" || got.Status != edge.SessionStatusRunning {
+			t.Fatalf("edge session %s = %+v ok=%v err=%v, want running and labelled with the MCP session", id, got, ok, err)
+		}
 	}
 }
 

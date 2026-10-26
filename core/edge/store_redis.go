@@ -933,6 +933,33 @@ func (s *RedisStore) CountSessionExecutions(ctx context.Context, tenantID, sessi
 	return count, nil
 }
 
+// ExecutionCaps reports how many executions one session may hold, and how
+// many events one execution may hold while approvals bound to its events can
+// still be minted and claimed: the smaller of the event cap and the approval
+// validation cap. Callers that keep a long-lived stream in one session rotate
+// executions and sessions before these bite.
+func (s *RedisStore) ExecutionCaps() (maxExecutions, maxEvents int) {
+	return s.maxExecutionsPerSession, min(s.maxEventsPerExecution, maxEventsPerApprovalValidation)
+}
+
+// CountExecutionEvents returns the number of events recorded for executionID
+// (LLEN, O(1)). As with CountSessionExecutions, the caller resolves the
+// execution against tenantID first.
+func (s *RedisStore) CountExecutionEvents(ctx context.Context, tenantID, executionID string) (int64, error) {
+	if err := s.ensureReady(); err != nil {
+		return 0, err
+	}
+	executionID = strings.TrimSpace(executionID)
+	if strings.TrimSpace(tenantID) == "" || executionID == "" {
+		return 0, fmt.Errorf("%w: tenant_id and execution_id are required", ErrValidation)
+	}
+	count, err := s.client.LLen(ctx, edgeEventsKey(executionID)).Result()
+	if err != nil {
+		return 0, fmt.Errorf("count events for execution %s: %w", executionID, err)
+	}
+	return count, nil
+}
+
 func (s *RedisStore) EndExecution(ctx context.Context, tenantID, executionID string, endedAt time.Time, status ExecutionStatus) (*AgentExecution, error) {
 	if err := s.ensureReady(); err != nil {
 		return nil, err

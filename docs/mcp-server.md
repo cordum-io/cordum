@@ -220,6 +220,19 @@ Once a reviewer resolves either half of the pair (the Edge approval or
 its record on the MCP approvals page), the pair is no longer reused.
 Another requester asking for the same call gets their own approval.
 
+An SSE session records its calls in the Edge session with its own id,
+in execution `mcp-<id>`. The Edge store caps the events of an execution
+and the executions of a session, and an approval can only be minted or
+claimed while its execution holds at most 500 events. So a long-lived
+SSE session moves on before it reaches them: its next call goes to a
+new execution (`mcp-<id>.e1`, ...) once the current one holds 80% of
+the smaller of the event cap and 500, and to a new Edge session
+(`<id>.s1`, ..., labelled `mcp_session_id=<id>`) once the current
+session holds its last execution. Earlier sessions and executions stay
+running, so an approval minted before a rotation is still claimed
+through `_approval_ref`, and the session's prompt-injection taint is
+kept for the MCP session, not its current Edge session.
+
 #### Retry dedupe
 
 `InvokeToolWithPolicy` collapses idempotent retries of the same MCP

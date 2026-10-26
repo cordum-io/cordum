@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"log/slog"
@@ -476,23 +477,25 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		// The Edge session stays one-shot because the Edge store caps events
 		// per execution and executions per session; mcpApprovalClaims lets
 		// the caller's `_approval_ref` retry claim an approval minted under an
-		// earlier one-shot session.
+		// earlier one-shot session. An SSE session rotates its Edge session
+		// and execution before those caps bite (mcpEdgeTrace).
 		sessionless := transportSessionID == "" && r.Method == http.MethodPost
 		if sessionless {
 			transportSessionID = mcpDirectSessionPrefix + uuid.NewString()
 		}
 		if transportSessionID != "" {
-			executionID := "mcp-" + transportSessionID
-			if err := s.ensureMCPHTTPTraceParents(r.Context(), tenantID, agentID, principalID, transportSessionID, executionID); err != nil {
+			sessionID, executionID, err := s.mcpEdgeTrace(r.Context(), tenantID, agentID, principalID, transportSessionID)
+			if err != nil {
 				writeErrorJSON(w, http.StatusInternalServerError, "mcp trace unavailable")
 				return
 			}
 			mcpCtx = mcp.WithCallMetadata(mcpCtx, mcp.CallMetadata{
-				Tenant:      tenantID,
-				Principal:   principalID,
-				AgentID:     agentID,
-				SessionID:   transportSessionID,
-				ExecutionID: executionID,
+				Tenant:       tenantID,
+				Principal:    principalID,
+				AgentID:      agentID,
+				SessionID:    sessionID,
+				ExecutionID:  executionID,
+				MCPSessionID: transportSessionID,
 			})
 		}
 		// Also stash tenant for the mcp.tool_called audit hook, which
@@ -575,7 +578,79 @@ func mcpSessionOwner(r *http.Request) string {
 	return fmt.Sprintf("%q %q %q", tenantFromRequest(r), ac.AuthSource, submitterIdentity(r))
 }
 
-func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentID, principalID, sessionID, executionID string) error {
+// mcpEdgeTraceCaps is what mcpEdgeTrace needs from the Edge store to rotate
+// (edge.RedisStore). Without it an MCP session stays in one execution.
+type mcpEdgeTraceCaps interface {
+	ExecutionCaps() (maxExecutions, maxEvents int)
+	CountExecutionEvents(ctx context.Context, tenantID, executionID string) (int64, error)
+}
+
+// mcpSessionLabel links each Edge session an MCP session is recorded in to it.
+const mcpSessionLabel = "mcp_session_id"
+
+// mcpEdgeTrace returns the Edge session and execution the next call of MCP
+// session mcpSessionID records into, creating them when missing. The Edge
+// store caps executions per session and events per execution, and an
+// execution past the approval validation cap can neither mint nor claim an
+// approval, so a long-lived SSE session moves on before the caps bite: to a
+// new execution once the current one holds 80% of its event budget, and to
+// the next Edge session (<id>.s1, <id>.s2, ..., labelled mcp_session_id) once
+// the current one has no execution left. Earlier sessions and executions stay
+// running, so approvals minted in them stay claimable: mcpApprovalClaims binds
+// a claim to the approval's own session and execution.
+// ponytail: stateless, so each call re-reads the count and size of every full
+// Edge session before the current one (two O(1) reads each, one Edge session
+// per ~10k calls), and executions added to an MCP Edge session through the
+// Edge API make calls open new executions until that session fills. Track the
+// current session and execution per SSE session if either matters.
+func (s *server) mcpEdgeTrace(ctx context.Context, tenantID, agentID, principalID, mcpSessionID string) (sessionID, executionID string, err error) {
+	caps, rotates := s.edgeStore.(mcpEdgeTraceCaps)
+	for gen := 0; ; gen++ {
+		sessionID = mcpSessionID
+		if gen > 0 {
+			sessionID = fmt.Sprintf("%s.s%d", mcpSessionID, gen)
+		}
+		executionID = mcpEdgeExecutionID(sessionID, 0)
+		if rotates {
+			maxExecutions, maxEvents := caps.ExecutionCaps()
+			n, err := s.edgeStore.CountSessionExecutions(ctx, tenantID, sessionID)
+			if err != nil {
+				return "", "", err
+			}
+			if n > 0 {
+				executionID = mcpEdgeExecutionID(sessionID, n-1)
+				events, err := caps.CountExecutionEvents(ctx, tenantID, executionID)
+				if err != nil {
+					return "", "", err
+				}
+				if events >= max(int64(maxEvents)*4/5, 1) {
+					if n >= int64(maxExecutions) {
+						continue
+					}
+					executionID = mcpEdgeExecutionID(sessionID, n)
+				}
+			}
+		}
+		err = s.ensureMCPHTTPTraceParents(ctx, tenantID, agentID, principalID, mcpSessionID, sessionID, executionID)
+		if errors.Is(err, edge.ErrSessionExecutionFanoutExceeded) {
+			continue
+		}
+		return sessionID, executionID, err
+	}
+}
+
+// mcpEdgeExecutionID names execution n of an MCP Edge session.
+func mcpEdgeExecutionID(sessionID string, n int64) string {
+	if n == 0 {
+		return "mcp-" + sessionID
+	}
+	return fmt.Sprintf("mcp-%s.e%d", sessionID, n)
+}
+
+// ensureMCPHTTPTraceParents creates the Edge session and execution an MCP call
+// records into when missing. A concurrent call of the same MCP session may
+// create either first; that counts as created.
+func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentID, principalID, mcpSessionID, sessionID, executionID string) error {
 	if s == nil || s.edgeStore == nil || sessionID == "" || executionID == "" {
 		return nil
 	}
@@ -590,20 +665,26 @@ func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentI
 			PolicyMode: edge.PolicyModeEnforce, Status: edge.SessionStatusRunning,
 			StartedAt: now, EnforcementLayers: edge.EnforcementLayers{"mcp": true},
 			RiskSummary: edge.RiskSummary{MaxRisk: edge.RiskLevelLow},
-			Labels:      edge.Labels{"agent_id": agentID},
+			Labels:      edge.Labels{"agent_id": agentID, mcpSessionLabel: mcpSessionID},
 		}); err != nil {
-			return err
+			if _, ok, _ := s.edgeStore.GetSession(ctx, tenantID, sessionID); !ok {
+				return err
+			}
 		}
 	}
 	if _, ok, err := s.edgeStore.GetExecution(ctx, tenantID, executionID); err != nil {
 		return err
 	} else if !ok {
-		return s.edgeStore.CreateExecution(ctx, edge.AgentExecution{
+		if err := s.edgeStore.CreateExecution(ctx, edge.AgentExecution{
 			ExecutionID: executionID, SessionID: sessionID, TenantID: tenantID,
 			Adapter: edge.AdapterMCPGateway, Mode: edge.ExecutionModeLocalDev,
 			WorkerID: agentID, Status: edge.ExecutionStatusRunning,
 			StartedAt: now, Labels: edge.Labels{"agent_id": agentID},
-		})
+		}); err != nil {
+			if _, ok, _ := s.edgeStore.GetExecution(ctx, tenantID, executionID); !ok {
+				return err
+			}
+		}
 	}
 	return nil
 }
