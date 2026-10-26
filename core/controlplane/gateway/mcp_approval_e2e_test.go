@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 	"github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/infra/store"
@@ -268,13 +270,119 @@ func TestMCPApprovalReaskReusesPendingApproval(t *testing.T) {
 	if err != nil || len(legacy) != 2 {
 		t.Fatalf("pending legacy MCP approvals = %d (err %v), want one per requester", len(legacy), err)
 	}
-	// A reviewer rejecting the legacy half on the MCP approvals page leaves
-	// the Edge half pending; the next re-ask gets a fresh pair.
-	if _, err := legacyStore.Resolve(ctx, first.approvalID(t), model.ApprovalDecisionReject, "reviewer", "no"); err != nil {
-		t.Fatalf("reject legacy approval: %v", err)
+	// Once a reviewer rejects the approval, the next re-ask gets a fresh pair.
+	if code := h.resolve(t, "mcp reject", first); code != http.StatusOK {
+		t.Fatalf("reject on the MCP approvals page = %d, want 200", code)
 	}
 	if fresh := h.call(t, "key-alice", "agent-a", args); fresh.approvalRef(t) == first.approvalRef(t) || fresh.approvalID(t) == first.approvalID(t) {
-		t.Fatalf("re-ask after the legacy rejection reused %s/%s", fresh.approvalRef(t), fresh.approvalID(t))
+		t.Fatalf("re-ask after the rejection reused %s/%s", fresh.approvalRef(t), fresh.approvalID(t))
+	}
+}
+
+// resolve resolves held's approval as a reviewer does, with action "mcp
+// approve" or "mcp reject" on the MCP approvals page (legacy approval id), or
+// "edge approve" or "edge reject" on the Edge approvals page (approval ref).
+// Returns the HTTP status.
+func (h *mcpApprovalE2E) resolve(t *testing.T, action string, held e2eRPC) int {
+	t.Helper()
+	handler := map[string]http.HandlerFunc{
+		"mcp approve": h.s.handleMCPApprovalApprove, "mcp reject": h.s.handleMCPApprovalReject,
+		"edge approve": h.s.handleApproveEdgeApproval, "edge reject": h.s.handleRejectEdgeApproval,
+	}[action]
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	req.SetPathValue("id", held.approvalID(t))
+	req.SetPathValue("approval_ref", held.approvalRef(t))
+	req = withAuth(req, &auth.AuthContext{Tenant: "default", PrincipalID: "reviewer", Role: "admin"})
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+	return rec.Code
+}
+
+// TestMCPApprovalRejectOnEitherPageRejectsBoth: an MCP approval is an Edge
+// approval dual-written with a legacy record, each on its own approvals page.
+// Rejecting one used to leave the other pending, so another reviewer could
+// still approve it there and the call ran on that half's retry. Rejecting on
+// either page now rejects both halves: the other page answers 409, and neither
+// retry style runs the call.
+func TestMCPApprovalRejectOnEitherPageRejectsBoth(t *testing.T) {
+	for _, tc := range []struct{ reject, approve string }{
+		{reject: "mcp reject", approve: "edge approve"},
+		{reject: "edge reject", approve: "mcp approve"},
+	} {
+		t.Run(tc.reject, func(t *testing.T) {
+			h := newMCPApprovalE2E(t)
+			ctx := context.Background()
+			args := map[string]any{"note": "hi"}
+			held := h.call(t, "key-alice", "agent-a", args)
+			ref, id := held.approvalRef(t), held.approvalID(t)
+			if code := h.resolve(t, tc.reject, held); code != http.StatusOK {
+				t.Fatalf("%s = %d, want 200", tc.reject, code)
+			}
+			approval, _, err := h.s.edgeStore.GetApproval(ctx, "default", ref)
+			if err != nil || approval.Status != edge.ApprovalStatusRejected {
+				t.Fatalf("Edge approval after %s = %+v (err %v), want rejected", tc.reject, approval, err)
+			}
+			rec, err := h.s.getMCPRuntime().approvalStore.Get(ctx, id)
+			if err != nil || rec.Status != model.ApprovalStatusRejected {
+				t.Fatalf("legacy record after %s = %+v (err %v), want rejected", tc.reject, rec, err)
+			}
+			if code := h.resolve(t, tc.approve, held); code != http.StatusConflict {
+				t.Fatalf("%s after %s = %d, want 409", tc.approve, tc.reject, code)
+			}
+			if got := h.call(t, "key-alice", "agent-a", map[string]any{"note": "hi", "_approval_ref": ref}); got.Error == nil || got.Error.Code != -32096 {
+				t.Fatalf("`_approval_ref` retry of a rejected approval = %+v (error %s), want -32096", got.Result, got.errorText())
+			}
+			if again := h.call(t, "key-alice", "agent-a", args); again.approvalRef(t) == ref {
+				t.Fatalf("retry with the same args reused the rejected approval %s", ref)
+			}
+			if n := h.calls.Load(); n != 0 {
+				t.Fatalf("tool ran %d times after a rejection, want never", n)
+			}
+		})
+	}
+}
+
+// TestMCPApprovalApproveOnEitherPageRunsOnce: approving on either page
+// approves both halves, and the call runs exactly once whichever retry style
+// claims it first. Each half used to be consumable on its own, so an
+// `_approval_ref` retry and a retry with the same args could each run it; both
+// now claim the Edge approval, the pair's one consume token.
+func TestMCPApprovalApproveOnEitherPageRunsOnce(t *testing.T) {
+	for _, page := range []string{"mcp approve", "edge approve"} {
+		for _, refFirst := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/ref_first=%t", page, refFirst), func(t *testing.T) {
+				h := newMCPApprovalE2E(t)
+				ctx := context.Background()
+				args := map[string]any{"note": "hi"}
+				held := h.call(t, "key-alice", "agent-a", args)
+				ref := held.approvalRef(t)
+				if code := h.resolve(t, page, held); code != http.StatusOK {
+					t.Fatalf("%s = %d, want 200", page, code)
+				}
+				approval, _, err := h.s.edgeStore.GetApproval(ctx, "default", ref)
+				if err != nil || approval.Status != edge.ApprovalStatusApproved {
+					t.Fatalf("Edge approval after %s = %+v (err %v), want approved", page, approval, err)
+				}
+				rec, err := h.s.getMCPRuntime().approvalStore.Get(ctx, held.approvalID(t))
+				if err != nil || rec.Status != model.ApprovalStatusApproved {
+					t.Fatalf("legacy record after %s = %+v (err %v), want approved", page, rec, err)
+				}
+				retries := []map[string]any{{"note": "hi", "_approval_ref": ref}, args}
+				if !refFirst {
+					retries[0], retries[1] = retries[1], retries[0]
+				}
+				if got := h.call(t, "key-alice", "agent-a", retries[0]); got.Error != nil || got.Result == nil {
+					t.Fatalf("first retry %v = error %s, want the tool's result", retries[0], got.errorText())
+				}
+				if got := h.call(t, "key-alice", "agent-a", retries[1]); got.Error == nil || got.Result != nil {
+					t.Fatalf("second retry %v = %+v, want it held or refused", retries[1], got.Result)
+				}
+				if n := h.calls.Load(); n != 1 {
+					t.Fatalf("tool ran %d times on one approval, want once", n)
+				}
+			})
+		}
 	}
 }
 

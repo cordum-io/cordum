@@ -230,22 +230,32 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 	// EDGE-103: when the gate is wired for Edge mint and mcp.CallMetadata
 	// carries SessionID/ExecutionID, the approval is an EdgeApproval whose
 	// ref is the `_approval_ref` resume handle, dual-written with the
-	// legacy MCPApprovalStore record. While the same caller's approval for
-	// this call is still pending, a re-ask gets that one back instead of a
-	// second pair. Without Edge wiring or Edge metadata, ApprovalRef falls
-	// back to the legacy record id and the legacy retry-with-same-args
-	// protocol still works via ClaimPreApproved above. An Edge-store outage
-	// (wired + metadata present but the mint errored) fails closed per
-	// DoD #5: no silent fallback to a non-resumable legacy approval_id.
+	// legacy MCPApprovalStore record. The Edge approval is the pair's single
+	// consume token: a retry with the same args claims it too
+	// (claimApprovedTwin), and either approvals page resolves both halves.
+	// While the same caller's approval for this call is still pending, a
+	// re-ask gets that one back instead of a second pair. Without Edge
+	// wiring or Edge metadata, ApprovalRef falls back to the legacy record
+	// id and the legacy retry-with-same-args protocol still works via
+	// ClaimPreApproved above. An Edge-store outage (wired + metadata present
+	// but the mint errored) fails closed per DoD #5: no silent fallback to a
+	// non-resumable legacy approval_id.
 	edgeMeta, edgeMint := g.edgeMintMetadata(ctx)
 	var binding mcpApprovalBinding
 	if edgeMint {
 		if binding, err = g.bindMCPApproval(ctx, edgeMeta, tool.Name, params); err != nil {
 			return nil, fmt.Errorf("%w: edge approval mint failed: %w", mcp.ErrApprovalStoreUnavailable, err)
 		}
-		// The pair is reused only while its legacy record is pending too: a
-		// reviewer who resolved it on the MCP approvals page leaves the Edge
-		// half pending, and the re-ask then gets a fresh pair.
+		if approvalID, err := g.claimApprovedTwin(ctx, meta, edgeMeta, binding, tool.Name, argsHash); err != nil {
+			return nil, fmt.Errorf("mcp gate: pre-approval claim: %w", err)
+		} else if approvalID != "" {
+			if h := mcp.InvocationHandleFromContext(ctx); h != nil {
+				h.MarkApprovalConsumed(approvalID)
+			}
+			return nil, nil
+		}
+		// The pair is reused only while its legacy record is pending too, so
+		// the reply never names a legacy record that is gone or resolved.
 		if pending := g.pendingMCPApproval(ctx, edgeMeta, binding); pending != nil {
 			if approvalID := pending.Metadata[mcpLegacyApprovalIDKey]; g.legacyApprovalPending(ctx, approvalID) {
 				if h := mcp.InvocationHandleFromContext(ctx); h != nil {
@@ -271,6 +281,18 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 		Requester: requester,
 		Reason:    approvalReasonFor(tool),
 	}
+	// The Edge approval is minted first, naming the legacy record id it is
+	// dual-written with, so the record can name it back (EdgeApprovalRef).
+	var approval *edge.EdgeApproval
+	if edgeMint {
+		if req.ID, err = mcpApprovalID(); err != nil {
+			return nil, fmt.Errorf("mcp gate: approval id: %w", err)
+		}
+		if approval, err = g.mintMCPEdgeApproval(ctx, edgeMeta, binding, tool.Name, req.Reason, tool.ApprovalScope, req.ID); err != nil {
+			return nil, fmt.Errorf("%w: edge approval mint failed: %w", mcp.ErrApprovalStoreUnavailable, err)
+		}
+		req.EdgeApprovalRef = approval.ApprovalRef
+	}
 	rec, err := g.store.EnqueueMCPApproval(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("mcp gate: enqueue: %w", err)
@@ -282,25 +304,50 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 	if h := mcp.InvocationHandleFromContext(ctx); h != nil {
 		h.MarkApprovalRequired(rec.ID)
 	}
-	if !edgeMint {
-		legacy := &mcp.ApprovalRequired{
-			ApprovalID:  rec.ID,
-			ApprovalRef: rec.ID,
-			ArgsHash:    argsHash,
-			RetryHint:   "retry_with_approval_ref",
-			Reason:      rec.Reason,
-			Tool:        tool.Name,
-		}
-		if rec.ExpiresAt > 0 {
-			legacy.ExpiresAt = time.Unix(rec.ExpiresAt, 0).UTC()
-		}
-		return legacy, nil
+	if approval != nil {
+		return mcpApprovalRequired(tool.Name, argsHash, rec.ID, approval), nil
 	}
-	approval, err := g.mintMCPEdgeApproval(ctx, edgeMeta, binding, tool.Name, rec.Reason, tool.ApprovalScope, rec.ID)
+	legacy := &mcp.ApprovalRequired{
+		ApprovalID:  rec.ID,
+		ApprovalRef: rec.ID,
+		ArgsHash:    argsHash,
+		RetryHint:   "retry_with_approval_ref",
+		Reason:      rec.Reason,
+		Tool:        tool.Name,
+	}
+	if rec.ExpiresAt > 0 {
+		legacy.ExpiresAt = time.Unix(rec.ExpiresAt, 0).UTC()
+	}
+	return legacy, nil
+}
+
+// claimApprovedTwin runs a retry without `_approval_ref` on the caller's
+// approved Edge approval for this call, found through the legacy record
+// dual-written with it. Claiming the Edge approval is what consumes the pair,
+// whichever page approved it, so the call runs once across both retry styles.
+// Returns the claimed pair's legacy record id, or "" when there is none.
+func (g *gatewayApprovalGate) claimApprovedTwin(ctx context.Context, meta MCPCallMetadata, edgeMeta mcp.CallMetadata, b mcpApprovalBinding, tool, argsHash string) (string, error) {
+	twins, err := g.store.EdgeTwins(ctx, meta.Tenant, meta.AgentID, tool, argsHash)
 	if err != nil {
-		return nil, fmt.Errorf("%w: edge approval mint failed: %w", mcp.ErrApprovalStoreUnavailable, err)
+		return "", err
 	}
-	return mcpApprovalRequired(tool.Name, argsHash, rec.ID, approval), nil
+	for _, rec := range twins {
+		// mcpApprovalClaims binds the claim to the approval's own session,
+		// execution and parent event when it is this caller's; the store
+		// refuses anything else, and checks status, expiry, args and policy.
+		_, claimed, err := mcpApprovalClaims{store: g.edgeStore}.ClaimApproval(ctx, edge.ApprovalClaimRequest{
+			TenantID: meta.Tenant, ApprovalRef: rec.EdgeApprovalRef,
+			ActionHash: b.actionHash, InputHash: b.inputHash, PolicySnapshot: b.policySnapshot,
+			ConsumedAt: time.Now().UTC(), CallerAgentID: edgeMeta.Principal,
+		})
+		if err == nil && claimed {
+			// The legacy half records the consume for its own audit trail.
+			_ = g.store.MarkConsumed(ctx, rec.ID)
+			g.store.pruneIndexFor(ctx, rec)
+			return rec.ID, nil
+		}
+	}
+	return "", nil
 }
 
 // mcpApprovalRequired is the -32099 payload for an Edge approval.

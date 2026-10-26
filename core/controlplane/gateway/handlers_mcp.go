@@ -157,6 +157,9 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 	if client := s.redisClient(); client != nil {
 		approvalStore = NewMCPApprovalStore(client).WithAuditHook(s.mcpApprovalAuditHook())
 		approvalHandler = newMCPApprovalHandler(approvalStore)
+		if s.edgeStore != nil {
+			approvalHandler.resolveEdgeTwin = s.resolveMCPApprovalEdgeTwin
+		}
 		// Scope-preapproval lookup — gate consults the agent identity
 		// store first so a CI bot with PreapprovedMutatingTools set
 		// can skip the human-approval step. Audit still fires; see
