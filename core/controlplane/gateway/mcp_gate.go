@@ -299,7 +299,8 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 func (g *gatewayApprovalGate) dualWriteEdgeApproval(ctx context.Context, meta MCPCallMetadata, tool mcp.Tool, params json.RawMessage, rec *MCPApprovalRecord) (approvalRef, policySnapshot string, expiresAt time.Time, mintErr error) {
 	approvalRef = rec.ID
 	if rec.ExpiresAt > 0 {
-		expiresAt = time.Unix(rec.ExpiresAt, 0).UTC()
+		// MCPApprovalRecord.ExpiresAt is UnixMicro (mcp_approvals.go).
+		expiresAt = time.UnixMicro(rec.ExpiresAt).UTC()
 	}
 	if g.edgeStore == nil {
 		return approvalRef, "", expiresAt, nil
