@@ -272,13 +272,19 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 	if mintErr != nil {
 		return nil, fmt.Errorf("%w: edge approval mint failed: %w", mcp.ErrApprovalStoreUnavailable, mintErr)
 	}
+	// Advertise `_approval_ref` only for a minted Edge ref; the legacy
+	// record resumes via ClaimPreApproved on byte-identical args.
+	retryHint := mcp.RetryHintSameArgs
+	if approvalRef != rec.ID {
+		retryHint = mcp.RetryHintApprovalRef
+	}
 	return &mcp.ApprovalRequired{
 		ApprovalID:     rec.ID,
 		ApprovalRef:    approvalRef,
 		ArgsHash:       argsHash,
 		ExpiresAt:      expiresAt,
 		PolicySnapshot: policySnapshot,
-		RetryHint:      "retry_with_approval_ref",
+		RetryHint:      retryHint,
 		Reason:         rec.Reason,
 		Tool:           tool.Name,
 	}, nil
