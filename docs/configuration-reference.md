@@ -1140,14 +1140,26 @@ that authority. Tokenless JobRequest traffic is rejected in enforce mode.
 
 ### MCP Server
 
+The standalone `cordum-mcp` bridge. Where a flag is named, the flag wins over
+the variable.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `CORDUM_GATEWAY_ADDR` | `http://localhost:8081` | Gateway the tools call (`--addr`). The compose stack serves `https://localhost:8081`, which also needs `CORDUM_MCP_ALLOW_PRIVATE_GATEWAY` |
 | `CORDUM_API_KEY` | — | API key for gateway-backed MCP handlers |
-| `CORDUM_TENANT_ID` | — | Tenant ID for MCP bridge/resource operations |
+| `CORDUM_TENANT_ID` | `default` | Tenant ID for MCP bridge/resource operations and signed calls. Outbound audit events record the value as set, with no fallback |
+| `CORDUM_MCP_AGENT_ID` | — | Agent identity that scopes a stdio session (`--agent-id`). Resolved once at boot through `GET /api/v1/agents/<id>`; startup fails if it cannot be resolved. Unset, no scope filter applies. See [MCP scope filtering](mcp/scope-filtering.md#stdio-transport-cordum-mcp) |
+| `CORDUM_MCP_GATEWAY_ALLOWLIST` | — | Comma-separated hosts or domains the gateway host must match (`--gateway-allowlist`); a domain also matches its subdomains. Unset, any host passes the allowlist check. See [Endpoint validation](mcp-server.md#endpoint-validation) |
+| `CORDUM_MCP_ALLOW_PRIVATE_GATEWAY` | `false` | Allow a gateway on `localhost` or a private or loopback address (`--allow-private-gateway`). Accepts `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off`; any other value keeps the default |
 | `MCP_TRANSPORT` | `stdio` | Transport mode: `stdio` (default) or `http` |
 | `MCP_HTTP_ADDR` | `127.0.0.1:8090` | HTTP listen address (only used when `MCP_TRANSPORT=http`) |
 | `CORDUM_MCP_HTTP_AUTH_TOKEN` | — | Bearer token every `/sse` and `/message` request must send (`--http-auth-token`). Required for a non-loopback `MCP_HTTP_ADDR` unless `--allow-unauthenticated-http` is passed |
 | `CORDUM_TLS_CA` | — | PEM CA certificate(s) to trust for the gateway's TLS in addition to the system roots (`--cacert`), for example the compose stack's `./certs/ca/ca.crt`. Startup fails if the file cannot be read or holds no certificate |
+| `CORDUM_MCP_OUTBOUND_SIGNING_KEY` | — | ECDSA P-256 private key (PEM, or base64 DER) that signs every gateway call. Unset along with `_PATH`, calls go unsigned and startup logs a warning; a malformed key fails startup. See [MCP outbound signing](mcp/outbound-signing.md) |
+| `CORDUM_MCP_OUTBOUND_SIGNING_KEY_PATH` | — | File holding the signing key, read when `CORDUM_MCP_OUTBOUND_SIGNING_KEY` is unset |
+| `CORDUM_MCP_OUTBOUND_SIGNING_KEY_ID` | `default` | Key ID sent in `X-Cordum-Key-Id`; verifiers look the public key up under it |
+| `CORDUM_MCP_OUTBOUND_AGENT_ID` | `--agent-id` | Agent ID recorded on outbound audit events and sent in `X-Cordum-Agent-Id` on signed calls, where an empty value falls back to the tenant |
+| `CORDUM_NATS_URL` | — | Sends `mcp.tool_outbound_invocation` audit events over NATS to the gateway's audit chain. Unset, or when NATS cannot be reached at startup, they are logged to stderr |
 
 **HA note — HTTP transport**: Set `MCP_TRANSPORT=http` to enable HTTP mode, which exposes
 `/sse` (SSE stream) and `/message` (POST JSON-RPC) endpoints. This allows running multiple
