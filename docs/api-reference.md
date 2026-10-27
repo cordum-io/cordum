@@ -988,6 +988,11 @@ All DLQ endpoints require admin role.
 ```
 
 - Errors: `400`, `403`, `404`, `500`, `503`
+- The retry is a new job built from the original request, workflow link
+  included. The original job's server-owned labels (`approval_*`, `gate_type`,
+  `cordum.bus_msg_id`, `policy.attachment_id`, `run_id`, `step_id` and the
+  workflow scope labels) are not carried over; its own labels and `_` system
+  labels are, plus `retry`, `dlq_entry` and `retry_of_job`.
 
 ### Example: retry DLQ entry
 
