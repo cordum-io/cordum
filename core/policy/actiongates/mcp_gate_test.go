@@ -247,6 +247,7 @@ func TestMCPGate_TaintLookupFailureFailClosedMatrix(t *testing.T) {
 	cases := []struct {
 		name             string
 		flagOn           bool
+		approver         bool
 		tool             string
 		lookupFailed     bool
 		riskTags         []string
@@ -257,14 +258,32 @@ func TestMCPGate_TaintLookupFailureFailClosedMatrix(t *testing.T) {
 		wantRequireHuman bool
 	}{
 		{
-			name:             "flag_on_lookup_failed_destructive_requires_human",
+			name:           "flag_on_lookup_failed_destructive_denies",
+			flagOn:         true,
+			tool:           "delete_item",
+			lookupFailed:   true,
+			wantDecision:   pb.DecisionType_DECISION_TYPE_DENY,
+			wantCode:       CodeServiceUnavailable,
+			wantSubReason:  "taint_lookup_unavailable_failclosed",
+			wantDenySubstr: "taint store unavailable",
+		},
+		{
+			name:             "flag_on_approver_lookup_failed_destructive_requires_human",
 			flagOn:           true,
+			approver:         true,
 			tool:             "delete_item",
 			lookupFailed:     true,
 			wantDecision:     pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN,
 			wantCode:         CodeRequireHuman,
 			wantSubReason:    "taint_lookup_unavailable_failclosed",
 			wantRequireHuman: true,
+		},
+		{
+			name:         "approver_without_flag_lookup_failed_destructive_allows",
+			approver:     true,
+			tool:         "delete_item",
+			lookupFailed: true,
+			wantDecision: pb.DecisionType_DECISION_TYPE_ALLOW,
 		},
 		{
 			name:         "flag_on_lookup_failed_non_destructive_allows",
@@ -315,6 +334,7 @@ func TestMCPGate_TaintLookupFailureFailClosedMatrix(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			gate := newMCPGateWithIdentity(identity, func(opts *MCPGateOptions) {
 				opts.FailClosedDestructiveOnTaintLookupError = tc.flagOn
+				opts.TaintFailClosedApprover = tc.approver
 			})
 			in := withAgentIDLabel(mcpInputAction("vault", tc.tool), mcpAgentA)
 			in.Action.TaintLookupFailed = tc.lookupFailed

@@ -28,11 +28,11 @@ const (
 //   - explicit {0,false,f,no,n,off} => false (an explicit value wins, even in production)
 //   - unrecognized non-empty   => env.IsProduction(), with a warning
 //
-// This is the single source of truth for the default. Every pipeline-construction
-// site (the gateway HTTP path and the safety-kernel gRPC path) calls it so the two
-// enforcement surfaces cannot diverge into a split-brain (one fail-closing while the
-// other allows the same destructive call). os.LookupEnv is used so an explicit
-// "false" in a production profile is distinguishable from unset.
+// This is the single source of truth for the default; the gateway's action-gate
+// pipeline (wireActionGatePipeline) calls it. The safety-kernel pipeline has no
+// MCP identity resolver, so its MCP gate fails closed before the taint check and
+// does not read it. os.LookupEnv is used so an explicit "false" in a production
+// profile is distinguishable from unset.
 func ResolveFailClosedDestructiveOnTaintLookupError() bool {
 	raw, ok := os.LookupEnv(envMCPTaintFailClosedDestructive)
 	if !ok || strings.TrimSpace(raw) == "" {
