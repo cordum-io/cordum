@@ -510,13 +510,10 @@ func (s *MCPServer) handleToolsCall(ctx context.Context, params json.RawMessage)
 	if s.approvalHoldDeps != nil {
 		outcome, err := ProcessApprovalClaim(ctx, *s.approvalHoldDeps, req)
 		if err != nil {
-			if errors.Is(err, errMissingMCPMetadata) {
-				return nil, s.rpcError(jsonRPCGatewayMisconfiguredCode, "approval gate misconfigured", "missing_mcp_metadata")
-			}
 			if errors.Is(err, errMissingPolicySnapshot) {
 				return nil, s.rpcError(jsonRPCGatewayMisconfiguredCode, "approval gate misconfigured", "missing_policy_snapshot")
 			}
-			if errors.Is(err, ErrInternal) {
+			if errors.Is(err, errMissingMCPMetadata) || errors.Is(err, ErrInternal) {
 				return nil, s.mapHandlerError(err)
 			}
 			return nil, s.rpcError(jsonRPCInvalidParamsCode, "invalid approval ref", err.Error())
@@ -684,6 +681,12 @@ func (s *MCPServer) mapHandlerError(err error) *JSONRPCError {
 	if errors.Is(err, ErrApprovalGateMisconfigured) {
 		slog.Warn("mcp: approval gate misconfigured", "error", err)
 		return s.rpcError(jsonRPCGatewayMisconfiguredCode, "gateway misconfigured", "approval_gate_misconfigured")
+	}
+	// The policy gate and the approval hold refuse a call that carries no
+	// CallMetadata (errMissingMCPMetadata): the same wiring defect.
+	if errors.Is(err, errMissingMCPMetadata) {
+		slog.Warn("mcp: call metadata missing", "error", err)
+		return s.rpcError(jsonRPCGatewayMisconfiguredCode, "approval gate misconfigured", "missing_mcp_metadata")
 	}
 	// Approval-store outage signal — surfaces when Edge mint was
 	// attempted (transport metadata present + edgeStore wired) but

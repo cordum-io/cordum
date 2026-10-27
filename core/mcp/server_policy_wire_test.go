@@ -55,6 +55,36 @@ func TestMCPServer_InternalErrorsHideDetail(t *testing.T) {
 	}
 }
 
+// TestMCPServer_MissingCallMetadataIsGatewayMisconfigured: a tools/call that
+// reaches the policy gate without CallMetadata is a gateway wiring defect. The
+// approval hold already answered it with -32097 and data missing_mcp_metadata,
+// but the policy gate answered a generic -32603 with the sentinel's text. Both
+// now give the documented -32097 reply.
+func TestMCPServer_MissingCallMetadataIsGatewayMisconfigured(t *testing.T) {
+	t.Parallel()
+	srv := NewServer(nil, &fakeToolService{}, nil, ServerConfig{}).
+		WithPolicyGate("cordum.builtin", ToolCallDeps{
+			Pipeline:      &fakePolicyDispatcher{},
+			EventEmitter:  &fakeEventEmitter{},
+			ArtifactStore: &fakeArtifactStore{},
+		}).
+		WithApprovalHold(ApprovalHoldDeps{
+			Store:          &fakeApprovalClaimStore{},
+			PolicySnapshot: func(context.Context) string { return "snap" },
+			ServerName:     "cordum.builtin",
+		})
+	for name, call := range map[string]string{
+		"policy gate":   `{"name":"fs.write","arguments":{"path":"/tmp/x"}}`,
+		"approval hold": `{"name":"fs.write","arguments":{"path":"/tmp/x","_approval_ref":"edge_appr_1"}}`,
+	} {
+		_, reply := srv.handleToolsCall(context.Background(), json.RawMessage(call))
+		if reply == nil || reply.Code != jsonRPCGatewayMisconfiguredCode || reply.Data != "missing_mcp_metadata" {
+			t.Errorf("%s without call metadata = %+v, want %d with data missing_mcp_metadata",
+				name, reply, jsonRPCGatewayMisconfiguredCode)
+		}
+	}
+}
+
 // TestMCPServer_WithPolicyGate_AllZeroDepsDisablesGate locks the
 // c530c1c0 contract: passing a zero-value ToolCallDeps is the explicit
 // opt-out path that leaves the gate off. The bridge then falls through

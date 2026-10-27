@@ -68,7 +68,7 @@ Client                            MCP Server                           Edge Appr
 | `-32099` | `approval_required` | Initial hold. Caller did not present `_approval_ref`; action-gate returned `REQUIRE_HUMAN`. | `approval_ref` (new), `expires_at`, `args_hash`, `retry_hint` (`retry_with_approval_ref`; `retry_with_same_args` when the approval hold is not wired) |
 | `-32096` | `approval_lifecycle_error` | Caller presented `_approval_ref` but the store refused the claim (fail-closed lifecycle). | `kind`, `approval_ref`, `reason` |
 | `-32098` | `not_authorized` | Scope filter rejected the call (pre-policy). | `tool`, `sub_reason`, `agent_id` |
-| `-32097` | `gateway_misconfigured` | Server-side wiring defect (e.g. missing `CallMetadata` in context). | (none) |
+| `-32097` | `gateway_misconfigured` | Server-side wiring defect (e.g. missing `CallMetadata` in context). | A string: `missing_mcp_metadata`, `missing_policy_snapshot`, or `approval_gate_misconfigured` |
 
 ### `error.data.kind` enum on `-32096`
 
