@@ -13,6 +13,7 @@ This document covers Redis cluster topology, key inventory, per-service dependen
 - **Persistence**: AOF enabled (`appendonly yes`), 20Gi PVC per node
 - **TLS**: Full mutual TLS (`tls-auth-clients yes`), plain port disabled (`port 0`)
 - **Cluster bus**: port 16379 (`cluster-port 16379`)
+- **Replication**: over TLS (`tls-replication yes`) with the `cordum-client-tls` certificate and `masterauth`
 - **Exporter**: `oliver006/redis_exporter:v1.58.0` sidecar on port 9121
 - **Anti-affinity**: Preferred pod anti-affinity on `kubernetes.io/hostname` (best-effort spread)
 - **PDB**: `minAvailable: 2` for primaries during node drains (see `ha.yaml`)

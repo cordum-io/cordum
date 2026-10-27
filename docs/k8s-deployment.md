@@ -382,6 +382,8 @@ The production overlay deploys a 6-node Redis cluster (3 masters + 3 replicas).
 - **Persistence**: AOF enabled (`appendonly yes`), 20Gi PVC per node
 - **Cluster mode**: `cluster-enabled yes`, `cluster-node-timeout 5000`
 - **Cluster bus**: port 16379 (`cluster-port 16379`; with `port 0` it would default to 10000)
+- **Replication**: replicas connect to their primary's TLS port (`tls-replication yes`),
+  presenting the `cordum-client-tls` certificate and authenticating with `masterauth`
 - **Exporter sidecar**: `oliver006/redis_exporter:v1.58.0` on port 9121
 
 ### Cluster Init Job
