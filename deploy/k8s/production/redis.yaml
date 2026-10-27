@@ -11,6 +11,11 @@ data:
     tls-key-file /etc/redis/tls/tls.key
     tls-ca-cert-file /etc/redis/tls/ca.crt
     tls-auth-clients yes
+    # Replicas reach their primary on the TLS port (the plain port is 0)
+    # and present the client certificate, like every other Redis client.
+    tls-replication yes
+    tls-client-cert-file /etc/redis/client-tls/tls.crt
+    tls-client-key-file /etc/redis/client-tls/tls.key
     protected-mode yes
     appendonly yes
     dir /data
@@ -72,7 +77,7 @@ spec:
       containers:
       - name: redis
         image: redis:7
-        command: ["sh", "-c", "exec redis-server /etc/redis/redis.conf --requirepass \"$REDIS_PASSWORD\""]
+        command: ["sh", "-c", "exec redis-server /etc/redis/redis.conf --requirepass \"$REDIS_PASSWORD\" --masterauth \"$REDIS_PASSWORD\""]
         env:
         - name: REDIS_PASSWORD
           valueFrom:
@@ -113,6 +118,9 @@ spec:
           readOnly: true
         - name: tls
           mountPath: /etc/redis/tls
+          readOnly: true
+        - name: client-tls
+          mountPath: /etc/redis/client-tls
           readOnly: true
         - name: data
           mountPath: /data
@@ -155,6 +163,9 @@ spec:
       - name: tls
         secret:
           secretName: cordum-redis-server-tls
+      - name: client-tls
+        secret:
+          secretName: cordum-client-tls
   volumeClaimTemplates:
   - metadata:
       name: data
