@@ -2,8 +2,8 @@
 # Triggered automatically on git tag push: git tag v0.9.3 && git push --tags
 #
 # Required GitHub Secrets:
-#   DOCKERHUB_USERNAME  — Docker Hub username
-#   DOCKERHUB_TOKEN     — Docker Hub access token (PAT)
+#   DOCKERHUB_USERNAME  - Docker Hub username
+#   DOCKERHUB_TOKEN     - Docker Hub access token (PAT)
 #
 # Published artifacts:
 #   Docker Hub: cordum/api-gateway:0.9.3, cordum/scheduler:0.9.3, ...
@@ -85,7 +85,7 @@ jobs:
             ghcr.io/cordum-io/cordum/${{ matrix.name }}
             cordum/${{ matrix.name }}
           # :latest only moves on final release tags. Pre-release suffixes
-          # (v1.0.0-rc.1, -beta, -alpha) must NEVER overwrite :latest —
+          # (v1.0.0-rc.1, -beta, -alpha) must NEVER overwrite :latest -
           # that's the single most common way to ship a production-unsafe
           # image by accident.
           tags: |
@@ -256,7 +256,7 @@ jobs:
           # upstream node:20-alpine and nginx:alpine bases are both
           # multi-arch so no Dockerfile changes are required. The preceding
           # verify step loads the amd64 image locally and runs it via
-          # `docker run` on the amd64 runner — cross-arch docker run needs
+          # `docker run` on the amd64 runner - cross-arch docker run needs
           # QEMU *execution* support which we don't install, so verify
           # stays amd64-only by design.
           platforms: linux/amd64,linux/arm64
@@ -427,7 +427,7 @@ jobs:
               echo "::endgroup::"
               continue
             fi
-            # dashboard is an nginx container — boot probe rather than --help.
+            # dashboard is an nginx container - boot probe rather than --help.
             if [[ "${name}" == "dashboard" ]]; then
               if ! docker run -d --name "smoke-${name}" -p 18080:8080 "${image}"; then
                 failed+=("${name}: container failed to start")
@@ -492,6 +492,7 @@ jobs:
             --body "${body}"
 
   helm-chart:
+    needs: smoke-published-images
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
