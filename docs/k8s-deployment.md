@@ -13,6 +13,9 @@ Detailed guide for deploying Cordum on Kubernetes — from dev-mode single-apply
 ```
 deploy/k8s/
 ├── base.yaml                          # All-in-one dev manifest
+├── base/
+│   ├── kustomization.yaml             # Base the overlays build from
+│   └── base.yaml                      # Copy of ../base.yaml (CI keeps them identical)
 ├── ingress.yaml                       # Dev ingress (no TLS)
 ├── local-patches.yaml                 # Local dev overrides
 ├── local/
@@ -29,6 +32,7 @@ deploy/k8s/
 │   └── patches/
 │       ├── delete-nats-deployment.yaml    # Remove dev NATS Deployment
 │       ├── delete-redis-deployment.yaml   # Remove dev Redis Deployment
+│       ├── nats-config.yaml               # Clustered TLS nats.conf for cordum-nats-config
 │       ├── tls-env.yaml                   # Inject TLS env vars + volume mounts
 │       ├── service-labels.yaml            # Add app labels to Services
 │       └── pod-anti-affinity.yaml         # Spread pods across nodes

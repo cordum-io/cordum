@@ -144,7 +144,7 @@ config. Lower values improve crash durability at the cost of throughput.
 
 - Compose: edit `config/nats.dev-tls.conf` (mounted as `/etc/nats/nats.conf`).
 - K8s base: edit the `cordum-nats-config` ConfigMap in `deploy/k8s/base.yaml`.
-- Production overlay: edit the `cordum-nats-config` ConfigMap in `deploy/k8s/production/nats.yaml`.
+- Production overlay: edit the `cordum-nats-config` patch in `deploy/k8s/production/patches/nats-config.yaml`.
 - Helm: set `nats.jetstream.syncInterval` in `cordum-helm/values.yaml` (or `--set nats.jetstream.syncInterval=1s`).
 
 For full details, see `docs/DOCKER.md`.

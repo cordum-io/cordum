@@ -1,0 +1,37 @@
+# Replaces nats.conf in the base cordum-nats-config ConfigMap with the
+# clustered, TLS-only server config the cordum-nats StatefulSet
+# (nats.yaml) mounts. NATS routes are hardcoded for 3 nodes.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cordum-nats-config
+  namespace: cordum
+data:
+  nats.conf: |
+    port: 4222
+    http: 8222
+    jetstream {
+      store_dir: /data/jetstream
+      sync_interval: "1s"
+    }
+    tls {
+      cert_file: /etc/nats/tls/tls.crt
+      key_file: /etc/nats/tls/tls.key
+      ca_file: /etc/nats/tls/ca.crt
+      verify: true
+    }
+    cluster {
+      name: cordum
+      port: 6222
+      routes = [
+        nats://cordum-nats-0.cordum-nats.cordum.svc:6222
+        nats://cordum-nats-1.cordum-nats.cordum.svc:6222
+        nats://cordum-nats-2.cordum-nats.cordum.svc:6222
+      ]
+      tls {
+        cert_file: /etc/nats/tls/tls.crt
+        key_file: /etc/nats/tls/tls.key
+        ca_file: /etc/nats/tls/ca.crt
+        verify: true
+      }
+    }

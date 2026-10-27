@@ -194,9 +194,10 @@ spec:
         type: Utilization
         averageUtilization: 80
 ---
-# NOTE: NATS routes are hardcoded for 3 nodes (cordum-nats-{0,1,2}) in nats.yaml.
-# Scaling NATS beyond 3 nodes requires updating the route list in
-# deploy/k8s/production/nats.yaml to include additional peer addresses.
+# NOTE: NATS routes are hardcoded for 3 nodes (cordum-nats-{0,1,2}) in
+# patches/nats-config.yaml. Scaling NATS beyond 3 nodes requires updating the
+# route list in deploy/k8s/production/patches/nats-config.yaml to include
+# additional peer addresses.
 #
 # NATS cluster: 3 nodes, minAvailable 2 maintains quorum during node drains.
 apiVersion: policy/v1

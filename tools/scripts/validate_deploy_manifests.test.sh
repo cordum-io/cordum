@@ -243,6 +243,30 @@ PY
   assert_contains "$output" "cordum-scheduler"
 }
 
+test_strict_validator_rejects_broken_kustomization() {
+  local tmp output
+  if ! command -v kubectl >/dev/null 2>&1 && ! command -v kustomize >/dev/null 2>&1; then
+    echo "SKIP: kubectl/kustomize not installed; kustomize build gate not exercised"
+    return 0
+  fi
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' RETURN
+  copy_validation_fixture "$tmp"
+  cp -R "$ROOT/deploy/k8s/." "$tmp/deploy/k8s/"
+  output="$(CORDUM_DEPLOY_ROOT="$tmp" bash "$VALIDATOR" --strict 2>&1 || true)"
+  assert_contains "$output" "INFO: deploy/k8s/production — builds"
+  # A second cordum-nats-config resource is the duplicate id that broke the overlay.
+  { echo "---"; cat "$tmp/deploy/k8s/production/patches/nats-config.yaml"; } \
+    >>"$tmp/deploy/k8s/production/nats.yaml"
+  printf '# drift\n' >>"$tmp/deploy/k8s/base/base.yaml"
+  if output="$(CORDUM_DEPLOY_ROOT="$tmp" bash "$VALIDATOR" --strict 2>&1)"; then
+    fail "strict validator accepted a production overlay that does not build"
+  fi
+  assert_contains "$output" "deploy/k8s/production — kustomize build failed"
+  assert_contains "$output" "already registered id"
+  assert_contains "$output" "deploy/k8s/base/base.yaml differs"
+}
+
 test_default_chart_is_explicitly_legacy_safe
 test_active_chart_requires_and_renders_all_authorities
 test_chart_enforces_mode_classes
@@ -250,4 +274,5 @@ test_strict_validator_rejects_trust_default_drift
 test_strict_validator_rejects_missing_workflow_handshake_default
 test_strict_validator_rejects_checker_crash
 test_manifest_checker_rejects_env_on_wrong_container
+test_strict_validator_rejects_broken_kustomization
 echo "PASS: deployment trust defaults and Helm authority refs"
