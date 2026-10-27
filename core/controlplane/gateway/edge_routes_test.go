@@ -1366,3 +1366,19 @@ func TestGatewayEdgeMaxExecutionsPerSessionCapDefaultAcceptsSmallSessions(t *tes
 		}
 	}
 }
+
+// The cap is parsed as a 32-bit value so the store's int option holds it on
+// every platform; anything larger counts as invalid and gets the default.
+func TestEdgeMaxExecutionsPerSessionRejectsValuesAbove32Bits(t *testing.T) {
+	for raw, want := range map[string]int64{
+		"2":          2,
+		"2147483647": 2147483647,
+		"2147483648": int64(edgecore.DefaultMaxExecutionsPerSession),
+		"0":          int64(edgecore.DefaultMaxExecutionsPerSession),
+	} {
+		t.Setenv("CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION", raw)
+		if got := edgeMaxExecutionsPerSession(); got != want {
+			t.Errorf("CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION=%s: got %d, want %d", raw, got, want)
+		}
+	}
+}
