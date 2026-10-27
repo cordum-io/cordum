@@ -57,6 +57,11 @@ pip install -r requirements.txt
 
 This installs LangChain, LangGraph, and the `cordum-guard` SDK with LangChain integration.
 
+The tutorial needs `cordum-guard` 2.17.1 or later. `CordumToolGuard` 2.17.0
+runs the tool on `REQUIRE_APPROVAL` and sends no tool arguments, so the
+`arg.amount` threshold below never matches and a large transfer would go
+through.
+
 ## Step 3: Define Your Safety Policy (2 minutes)
 
 Open `safety.yaml` in this directory. It defines three rules:

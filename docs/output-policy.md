@@ -43,6 +43,9 @@ Operational characteristics from current scheduler code:
 - sync checks are fail-open on checker error/unavailable (result flow continues)
 - async checks run in the background and do not block the result; when the
   async check itself fails they quarantine by default (see 3.2)
+- an async `REDACT` is recorded on the output safety record but does not
+  replace the result, which stays readable; rely on `QUARANTINE` for content
+  that must not be released after the sync check passes it
 - output safety record is persisted for API/dashboard retrieval
 
 ## 3. Enabling Output Scanning

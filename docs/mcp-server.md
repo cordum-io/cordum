@@ -95,6 +95,9 @@ Each session is bound to the authenticated caller that opened it (tenant and
 principal, plus the API key or login session used), so a `/mcp/message` naming
 an unknown session or another caller's session gets HTTP `404` with JSON-RPC
 error `-32001` (`session not found`); reconnect to `/mcp/sse` for a new id.
+Signing in again creates a new login session, so a client that re-authenticates
+with a login session also reconnects. JWT and OIDC callers are bound by tenant
+and principal, so a refreshed token keeps the session.
 
 A new login session token does not inherit the previous token's MCP stream,
 even for the same tenant and principal. After signing in again or rotating an
