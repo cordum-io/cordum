@@ -467,6 +467,7 @@ network) can reach nothing.
 | NATS | NATS backup CronJob (`app: cordum-nats-backup`) | 4222 |
 | Redis | All Cordum services + Redis peers | 6379 (client), 16379 (cluster bus) |
 | Redis | Cluster init Job (`app: cordum-redis-cluster-init`), Redis backup CronJob (`app: cordum-redis-backup`) | 6379 |
+| Safety Kernel | API Gateway, Scheduler | 50051 |
 
 ### Egress Rules
 
