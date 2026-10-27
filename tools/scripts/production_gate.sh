@@ -636,6 +636,8 @@ ensure_mock_bank_worker() {
     # the launching subshell instead, then read it back in this shell.
     (
       cd "${ROOT_DIR}"
+      # The long-lived worker must not hold the runner stdout open via PG_MASK_FD.
+      if [[ -n "${PG_MASK_FD:-}" ]]; then exec {PG_MASK_FD}>&-; fi
       nohup env NATS_URL="${NATS_URL}" NATS_TOKEN="${NATS_TOKEN:-}" REDIS_URL="${REDIS_URL}" \
         NATS_TLS_CA="${NATS_TLS_CA:-}" NATS_TLS_CERT="${NATS_TLS_CERT:-}" NATS_TLS_KEY="${NATS_TLS_KEY:-}" NATS_TLS_SERVER_NAME="${NATS_TLS_SERVER_NAME:-}" \
         REDIS_TLS_CA="${REDIS_TLS_CA:-}" REDIS_TLS_CERT="${REDIS_TLS_CERT:-}" REDIS_TLS_KEY="${REDIS_TLS_KEY:-}" REDIS_TLS_SERVER_NAME="${REDIS_TLS_SERVER_NAME:-}" \
@@ -1908,15 +1910,20 @@ gate_9_identity() {
   local session_token
   local key_resp key_id key_secret
   local viewer_id viewer_password
+  local new_password
 
+  pg_require_untraced || return 1
   user_name="pg9-$(date +%s)-$$"
   user_password="PgT3stSecure#$(date +%s)"
+  pg_register_secret "${user_password}" || return 1
 
   # --- Create user (admin operation) ---
-  resp="$(api_call POST /users "$(jq -cn \
+  resp="$(api_response POST /users "${JSON_HEADERS[@]}" -d "$(jq -cn \
     --arg u "${user_name}" \
     --arg p "${user_password}" \
-    '{username: $u, password: $p, role: "user"}')" 2>&1 || true)"
+    '{username: $u, password: $p, role: "user"}')" || true)"
+  code="$(api_response_code "${resp}")"
+  resp="$(api_response_body "${resp}")"
   user_id="$(echo "${resp}" | jq -r '.id // .user_id // empty' 2>/dev/null || true)"
   if [[ -z "${user_id}" ]]; then
     # User management may be disabled in some environments (not a code bug)
@@ -1924,7 +1931,7 @@ gate_9_identity() {
       echo "user management not enabled — skipping identity gate"
       return 0
     fi
-    echo "failed to create test user (response: ${resp:0:200})" >&2
+    echo "failed to create test user ($(format_api_failure "${code}" "credential response omitted because it may echo the password"))" >&2
     return 1
   fi
 
@@ -1946,6 +1953,7 @@ gate_9_identity() {
     echo "login for created user failed (no token returned)" >&2
     return 1
   }
+  pg_register_secret "${session_token}" || return 1
 
   # --- Session check ---
   code="$(http_code GET "$(api_url /auth/session)" \
@@ -1979,6 +1987,7 @@ gate_9_identity() {
     echo "failed to create API key" >&2
     return 1
   }
+  pg_register_secret "${key_secret}" || return 1
 
   # --- List keys ---
   code="$(api_code GET /auth/keys)"
@@ -2012,6 +2021,7 @@ gate_9_identity() {
 
   # --- RBAC: create viewer user ---
   viewer_password="ViewerPass#$(date +%s)"
+  pg_register_secret "${viewer_password}" || return 1
   resp="$(api_call POST /users "$(jq -cn \
     --arg u "pg9-viewer-${user_name}" \
     --arg p "${viewer_password}" \
@@ -2026,6 +2036,7 @@ gate_9_identity() {
       -d "$(jq -cn --arg u "pg9-viewer-${user_name}" --arg p "${viewer_password}" '{username:$u, password:$p}')")"
     session_token="$(echo "${resp}" | jq -r '.token // .session_token // empty' 2>/dev/null || true)"
     if [[ -n "${session_token}" ]]; then
+      pg_register_secret "${session_token}" || return 1
       # Viewer submitting job should be forbidden
       code="$(http_code POST "$(api_url /jobs)" \
         -H "Authorization: Bearer ${session_token}" -H "X-Tenant-ID: ${TENANT_ID}" \
@@ -2052,7 +2063,9 @@ gate_9_identity() {
     -d "$(jq -cn --arg u "${user_name}" --arg p "${user_password}" '{username:$u, password:$p}')")"
   session_token="$(echo "${resp}" | jq -r '.token // .session_token // empty' 2>/dev/null || true)"
   if [[ -n "${session_token}" ]]; then
-    local new_password="NewPgSecure#$(date +%s)"
+    pg_register_secret "${session_token}" || return 1
+    new_password="NewPgSecure#$(date +%s)"
+    pg_register_secret "${new_password}" || return 1
     code="$(http_code POST "$(api_url /auth/password)" \
       -H "Authorization: Bearer ${session_token}" -H "X-Tenant-ID: ${TENANT_ID}" \
       "${JSON_HEADERS[@]}" \
@@ -2823,9 +2836,10 @@ gate_16_degradation() {
   local code resp
   local job_resp job_id job_state
   local approval_job approval_state
-  local submitter_key_raw submitter_key_resp submitter_key_code submitter_key_diagnostic
+  local submitter_key_raw submitter_key_resp submitter_key_code
   local submitter_key_id submitter_key_secret
 
+  pg_require_untraced || return 1
   ensure_mock_bank_pack
   ensure_mock_bank_worker
 
@@ -2840,15 +2854,12 @@ gate_16_degradation() {
   submitter_key_id="$(echo "${submitter_key_resp}" | jq -r '.key.id // .id // .key_id // empty' 2>/dev/null || true)"
   submitter_key_secret="$(echo "${submitter_key_resp}" | jq -r '.secret // .key // .api_key // empty' 2>/dev/null || true)"
   [[ -n "${submitter_key_id}" && -n "${submitter_key_secret}" ]] || {
-    submitter_key_diagnostic="${submitter_key_resp}"
-    if [[ "${submitter_key_code}" == 2* ]]; then
-      submitter_key_diagnostic="credential response omitted because it may contain an API key"
-    fi
-    echo "failed to create gate16 submitter API key ($(format_api_failure "${submitter_key_code}" "${submitter_key_diagnostic}"))" >&2
+    echo "failed to create gate16 submitter API key ($(format_api_failure "${submitter_key_code}" "credential response omitted because it may contain an API key"))" >&2
     return 1
   }
   GATE16_SUBMITTER_KEY_ID="${submitter_key_id}"
   trap 'if [[ -n "${GATE16_SUBMITTER_KEY_ID:-}" ]]; then if api_code DELETE "/auth/keys/${GATE16_SUBMITTER_KEY_ID}" >/dev/null 2>&1; then GATE16_SUBMITTER_KEY_ID=""; fi; fi; cleanup' EXIT
+  pg_register_secret "${submitter_key_secret}" || return 1
 
   job_resp="$(curl -sS -X POST \
     "${CURL_TLS_OPTS[@]}" \
@@ -3553,6 +3564,63 @@ gate_19_ha() {
   echo "HA gate passed (deploy, 40-job no-duplicate, rate limit, snapshot consistency, scheduler failover)"
 }
 
+# ---------------------------------------------------------------------------
+# Runtime credential registration
+# ---------------------------------------------------------------------------
+# Gates 9 and 16 mint passwords, sessions and API keys. In GitHub Actions each
+# value is registered with ::add-mask:: before its first use, on PG_MASK_FD: a
+# copy of the runner stdout taken before run_gate starts capturing, so the
+# command never reaches tee'd gate output, GATE_MESSAGE or the results JSON.
+# Gates run in subshells, so a failure leaves a marker file that fails the
+# whole run regardless of gate class or strict mode.
+pg_init_secret_registration() {
+  PG_MASK_FD=""
+  PG_SECRET_STATE_DIR="$(mktemp -d -t production-gate-masks.XXXXXX)" || return 1
+  PG_SECRET_FAILURE_MARKER="${PG_SECRET_STATE_DIR}/registration-failed"
+  [[ "${GITHUB_ACTIONS:-}" == "true" ]] || return 0
+  # shellcheck source=tools/scripts/github_actions_mask_env.sh
+  source "${SCRIPT_DIR}/github_actions_mask_env.sh" || return 1
+  exec {PG_MASK_FD}>&1
+}
+
+pg_secret_registration_failed() {
+  echo "[production-gate] ERROR: runtime credential registration failed: $1" >&2
+  if [[ -n "${PG_SECRET_FAILURE_MARKER:-}" ]]; then
+    : >"${PG_SECRET_FAILURE_MARKER}"
+  fi
+  return 1
+}
+
+# xtrace would print credentials as they are assigned, before registration.
+pg_require_untraced() {
+  [[ "$-" != *x* ]] || pg_secret_registration_failed "xtrace is active; refusing to handle runtime credentials"
+}
+
+pg_register_secret() {
+  if [[ "$#" -ne 1 || -z "${1-}" || "${1-}" == *$'\n'* || "${1-}" == *$'\r'* ]]; then
+    pg_secret_registration_failed "refusing an empty or multiline value"
+    return 1
+  fi
+  pg_require_untraced || return 1
+  [[ "${GITHUB_ACTIONS:-}" == "true" ]] || return 0
+  if [[ -z "${PG_MASK_FD:-}" ]] || ! declare -F gha_mask_value >/dev/null; then
+    pg_secret_registration_failed "mask registration is unavailable"
+    return 1
+  fi
+  if ! gha_mask_value "$1" >&"${PG_MASK_FD}"; then
+    pg_secret_registration_failed "mask registration failed"
+    return 1
+  fi
+}
+
+pg_assert_secret_registration() {
+  if [[ -n "${PG_SECRET_FAILURE_MARKER:-}" && -d "${PG_SECRET_STATE_DIR:-}" && ! -e "${PG_SECRET_FAILURE_MARKER}" ]]; then
+    return 0
+  fi
+  echo "[production-gate] ERROR: runtime credential registration failed; failing the run regardless of gate class" >&2
+  return 1
+}
+
 run_gate() {
   local gate_no="$1"
   local fn="$2"
@@ -3777,6 +3845,7 @@ fi
 MOCK_BANK_WORKER_PID=""
 MOCK_BANK_WORKER_STARTED=0
 GATE14_ROLLBACK_SNAPSHOT_ID=""
+PG_SECRET_STATE_DIR=""
 SKIP_REBUILD=0
 SELECT_GATE=""
 EXCLUDED_GATES=()
@@ -3806,6 +3875,11 @@ cleanup() {
     wait "${MOCK_BANK_WORKER_PID}" 2>/dev/null || true
   fi
   rm -f "${MOCK_BANK_PID_FILE}" /tmp/gate_ws_*.tmp 2>/dev/null || true
+  # Gate subshell EXIT traps also call cleanup; only the main shell may drop
+  # the registration state that pg_assert_secret_registration reads.
+  if [[ "${BASHPID}" == "$$" && -n "${PG_SECRET_STATE_DIR:-}" ]]; then
+    rm -rf "${PG_SECRET_STATE_DIR}" 2>/dev/null || true
+  fi
 }
 trap cleanup EXIT
 
@@ -3943,6 +4017,8 @@ declare -A GATE_DURATION_MS
 declare -A GATE_MESSAGE
 declare -A GATE_NAME
 
+pg_init_secret_registration || die "runtime credential registration is unavailable"
+
 for gate in "${SELECTED_GATES[@]}"; do
   case "${gate}" in
     1)  run_gate 1  gate_1_deploy           "Gate 1 Deploy" ;;
@@ -3970,4 +4046,9 @@ for gate in "${SELECTED_GATES[@]}"; do
 done
 
 write_results_json
-print_summary
+summary_rc=0
+print_summary || summary_rc=$?
+pg_assert_secret_registration || summary_rc=1
+# Conditional, not a bare exit: shellcheck 0.9 marks every function unreachable
+# when a script always ends in exit.
+[[ "${summary_rc}" -eq 0 ]] || exit "${summary_rc}"
