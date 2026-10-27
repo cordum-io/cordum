@@ -117,7 +117,7 @@ Key compose settings:
 
 - NATS uses `config/nats.dev-tls.conf` with `verify: true`
 - Redis uses `--tls-port 6379` with `--port 0` (TLS-only)
-- All services use `tls://nats:4222` and `rediss://redis:6379`
+- All services use `tls://nats:4222` and `rediss://:${REDIS_PASSWORD}@redis:6379`
 - Gateway, safety kernel, and context engine serve TLS on their gRPC/HTTP ports
 
 ## Production Setup
@@ -296,7 +296,7 @@ NATS expects `tls://` scheme when TLS is enabled.
 
 Redis expects `rediss://` scheme (double 's') for TLS connections.
 
-**Fix:** Set `REDIS_URL=rediss://redis:6379` (not `redis://`).
+**Fix:** Set `REDIS_URL=rediss://:${REDIS_PASSWORD}@redis:6379` (not `redis://`).
 
 ### Dashboard shows "Bad Gateway" after enabling TLS
 

@@ -15,13 +15,13 @@ Prereqs: Docker + Docker Compose. The smoke test script requires `curl` and `jq`
 
 | Service | Dockerfile | Ports | Health Endpoint | Depends On |
 |---------|-----------|-------|-----------------|------------|
-| `nats` | *(image: nats:2.10-alpine)* | 4222 | `nc -z localhost 4222` | — |
+| `nats` | *(image: nats:2.10-alpine)* | 4222 | `GET /healthz` on :8222 | — |
 | `redis` | *(image: redis:7-alpine)* | 6379 | `redis-cli ping` (TLS) | — |
-| `context-engine` | `Dockerfile` (SERVICE=cordum-context-engine) | 50070 (gRPC) | `nc -z localhost 50070` | redis |
-| `safety-kernel` | `Dockerfile` (SERVICE=cordum-safety-kernel) | 50051 (gRPC) | `nc -z localhost 50051` | nats |
-| `scheduler` | `Dockerfile` (SERVICE=cordum-scheduler) | 9090 (metrics) | `GET /metrics` on :9090 | nats, redis, safety-kernel |
-| `api-gateway` | `Dockerfile` (SERVICE=cordum-api-gateway) | 8080 (gRPC, host: 9080), 8081 (HTTPS REST), 9092 (metrics) | `GET /health` on :8081 (HTTPS) | nats, redis, scheduler, safety-kernel |
-| `workflow-engine` | `Dockerfile` (SERVICE=cordum-workflow-engine) | 9093 (HTTP) | `GET /health` on :9093 | nats, redis, scheduler |
+| `context-engine` | `Dockerfile` (SERVICE=cordum-context-engine) | 50070 (gRPC, host: 50400) | `GET /readyz` on :9094 | redis |
+| `safety-kernel` | `Dockerfile` (SERVICE=cordum-safety-kernel) | 50051 (gRPC) | `GET /readyz` on :9095 | nats |
+| `scheduler` | `Dockerfile` (SERVICE=cordum-scheduler) | 9090 (metrics) | `GET /readyz` on :9090 | nats, redis, safety-kernel |
+| `api-gateway` | `Dockerfile` (SERVICE=cordum-api-gateway) | 8080 (gRPC, host: 9080), 8081 (HTTPS REST), 9092 (metrics) | `GET /readyz` on :8081 (HTTPS) | nats, redis, scheduler, safety-kernel |
+| `workflow-engine` | `Dockerfile` (SERVICE=cordum-workflow-engine) | 9093 (HTTP) | `GET /readyz` on :9093 | nats, redis, scheduler |
 | `dashboard` | `dashboard/Dockerfile` | 8082→8080 (nginx) | `GET /healthz` on :8080 | api-gateway |
 
 The root `Dockerfile` is a multi-service image — the `SERVICE` build arg selects which binary under `cmd/` to compile. The dashboard has its own Dockerfile using a Node builder + nginx runtime.
@@ -185,13 +185,13 @@ healthcheck:
 
 | Service | Command | What It Checks |
 |---------|---------|---------------|
-| nats | `nc -z localhost 4222` | TCP port open |
+| nats | `wget -qO- http://localhost:8222/healthz \|\| exit 1` | NATS HTTP monitoring healthz endpoint (`http_port: 8222` in `config/nats.dev-tls.conf`) |
 | redis | `redis-cli --tls --cacert <ca> -a <pass> ping` | Redis responds to PING over TLS |
-| context-engine | `nc -z localhost 50070` | gRPC port open |
-| safety-kernel | `nc -z localhost 50051` | gRPC port open |
-| scheduler | `wget --spider -q http://127.0.0.1:9090/metrics` | Prometheus metrics endpoint |
-| api-gateway | `wget --spider -q --no-check-certificate https://127.0.0.1:8081/health` | Dedicated health HTTPS endpoint (gateway is TLS by default) |
-| workflow-engine | `wget --spider -q http://127.0.0.1:9093/health` | Dedicated health HTTP endpoint |
+| context-engine | `wget --spider -q http://127.0.0.1:9094/readyz` | Dedicated readiness HTTP endpoint |
+| safety-kernel | `wget --spider -q http://127.0.0.1:9095/readyz` | Dedicated readiness HTTP endpoint |
+| scheduler | `wget --spider -q http://127.0.0.1:9090/readyz` | Dedicated readiness HTTP endpoint |
+| api-gateway | `wget --spider -q --no-check-certificate https://127.0.0.1:8081/readyz` | Dedicated readiness HTTPS endpoint (gateway is TLS by default) |
+| workflow-engine | `wget --spider -q http://127.0.0.1:9093/readyz` | Dedicated readiness HTTP endpoint |
 | dashboard | `curl -f http://127.0.0.1:8080/healthz` | Nginx healthz endpoint |
 
 ### Verifying Health Manually

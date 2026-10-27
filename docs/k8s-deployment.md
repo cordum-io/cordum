@@ -436,7 +436,7 @@ For a complete key inventory, DR runbooks, and base-to-production migration, see
 All Cordum services connect to Redis cluster via:
 ```
 REDIS_CLUSTER_ADDRESSES=cordum-redis-0.cordum-redis.cordum.svc:6379,...,cordum-redis-5.cordum-redis.cordum.svc:6379
-REDIS_URL=rediss://redis:6379
+REDIS_URL=rediss://:$(REDIS_PASSWORD)@redis:6379
 REDIS_TLS_CA=/etc/cordum/tls/client/ca.crt
 REDIS_TLS_CERT=/etc/cordum/tls/client/tls.crt
 REDIS_TLS_KEY=/etc/cordum/tls/client/tls.key
@@ -736,9 +736,15 @@ kubectl logs -n cordum deployment/cordum-api-gateway --tail=100
 kubectl exec -n cordum cordum-redis-0 -c redis -- \
   sh -c 'redis-cli --tls --cacert /etc/redis/tls/ca.crt --cert /etc/redis/tls/tls.crt --key /etc/redis/tls/tls.key -a "$REDIS_PASSWORD" cluster info'
 
-# Check NATS JetStream streams
-kubectl exec -n cordum cordum-nats-0 -- nats --tlscacert /etc/nats/tls/ca.crt \
-  --tlscert /etc/nats/tls/tls.crt --tlskey /etc/nats/tls/tls.key stream ls
+# Check NATS JetStream streams (production overlay). The NATS image has no
+# nats CLI. Read the monitoring port (8222, plain HTTP) instead: a port-forward
+# connects from inside the pod, so it needs no client certificate and no
+# NetworkPolicy change.
+kubectl port-forward -n cordum cordum-nats-0 8222:8222 >/dev/null &
+sleep 2
+curl -s 'http://localhost:8222/jsz?streams=true' | \
+  jq '.account_details[].stream_detail[] | {name, messages: .state.messages, bytes: .state.bytes}'
+kill %1
 
 # Check network policies
 kubectl get networkpolicy -n cordum
