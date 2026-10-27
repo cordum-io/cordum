@@ -100,6 +100,14 @@ spec:
       port: 6222
     - protocol: TCP
       port: 8222
+  # The NATS backup CronJob reaches the client port only.
+  - from:
+    - podSelector:
+        matchLabels:
+          app: cordum-nats-backup
+    ports:
+    - protocol: TCP
+      port: 4222
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -135,9 +143,21 @@ spec:
     ports:
     - protocol: TCP
       port: 6379
-    # Redis cluster bus (gossip/replication)
+    # Redis cluster bus (gossip and failover; replication uses 6379)
     - protocol: TCP
       port: 16379
+  # The cluster init Job and the Redis backup CronJob reach the client port
+  # only.
+  - from:
+    - podSelector:
+        matchLabels:
+          app: cordum-redis-cluster-init
+    - podSelector:
+        matchLabels:
+          app: cordum-redis-backup
+    ports:
+    - protocol: TCP
+      port: 6379
 ---
 # Egress policies — restrict outbound traffic per service
 apiVersion: networking.k8s.io/v1
@@ -336,6 +356,115 @@ spec:
     ports:
     - protocol: TCP
       port: 6379
+  - ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+---
+# Egress for NATS servers: cluster routes to their peers, and DNS to resolve
+# the cordum-nats-N.cordum-nats route URLs in nats.conf.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cordum-egress-nats
+  namespace: cordum
+spec:
+  podSelector:
+    matchLabels:
+      app: nats
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: nats
+    ports:
+    - protocol: TCP
+      port: 6222
+  - ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+---
+# Egress for Redis nodes: the cluster bus to their peers, and a primary's TLS
+# port for replication. Nodes address each other by IP, so they need no DNS.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cordum-egress-redis
+  namespace: cordum
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+    - protocol: TCP
+      port: 16379
+---
+# Egress for the Redis cluster init Job and the Redis backup CronJob: the
+# Redis client port, and DNS for the cordum-redis-N.cordum-redis names.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cordum-egress-redis-jobs
+  namespace: cordum
+spec:
+  podSelector:
+    matchExpressions:
+    - key: app
+      operator: In
+      values:
+      - cordum-redis-cluster-init
+      - cordum-redis-backup
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  - ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+---
+# Egress for the NATS backup CronJob: the NATS client port, and DNS for
+# cordum-nats.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cordum-egress-nats-backup
+  namespace: cordum
+spec:
+  podSelector:
+    matchLabels:
+      app: cordum-nats-backup
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: nats
+    ports:
+    - protocol: TCP
+      port: 4222
   - ports:
     - protocol: UDP
       port: 53

@@ -183,6 +183,9 @@ metadata:
   namespace: cordum
 spec:
   template:
+    metadata:
+      labels:
+        app: cordum-redis-cluster-init
     spec:
       restartPolicy: OnFailure
       containers:
