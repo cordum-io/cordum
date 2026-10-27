@@ -51,14 +51,10 @@ CA (and client cert/key) via the `*_TLS_*` env vars the worker reads:
 cd examples/demo-guardrails/worker
 REDIS_URL=${REDIS_URL:-rediss://:${REDIS_PASSWORD}@localhost:6379} \
 REDIS_TLS_CA=../../../certs/ca/ca.crt \
-REDIS_TLS_CERT=../../../certs/client/tls.crt \
-REDIS_TLS_KEY=../../../certs/client/tls.key \
-REDIS_TLS_SERVER_NAME=redis \
 NATS_URL=${NATS_URL:-tls://localhost:4222} \
 NATS_TLS_CA=../../../certs/ca/ca.crt \
 NATS_TLS_CERT=../../../certs/client/tls.crt \
 NATS_TLS_KEY=../../../certs/client/tls.key \
-NATS_TLS_SERVER_NAME=nats \
 go run .
 ```
 
@@ -86,12 +82,10 @@ CORDUM_ORG_ID=${CORDUM_ORG_ID:-default} \
 ./tools/scripts/demo_guardrails.sh
 ```
 
-The script defaults to a plain-HTTP gateway URL, which the default stack's TLS
-gateway rejects. With an `https://` base it trusts `CORDUM_TLS_CA`, or else
-`certs/ca/ca.crt` in the checkout, for curl and `cordumctl`.
-
-If your gateway is not on localhost (for example, the script runs in a
-container on the Compose network), set the API base, gateway and CA:
+The scripts default to `https://localhost:8081` and trust `./certs/ca/ca.crt`
+when it exists (set `CORDUM_TLS_CA` to use another CA). If your gateway is not
+on localhost (for example, running inside a Docker network), set the API base
+and gateway:
 
 ```bash
 CORDUM_API_BASE=https://cordum-api-gateway:8081 \
