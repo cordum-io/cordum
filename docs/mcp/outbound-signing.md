@@ -15,11 +15,14 @@ startup.
 
 ## Threat model
 
+The "With signing" column holds only where a receiver verifies the
+signature, which the gateway does not do on its own.
+
 | Threat | Without signing | With signing |
 |---|---|---|
 | MITM injects fake tool call | Accepted as real | Signature mismatch → rejected |
 | Attacker replays captured request | Accepted every time | Nonce in replay window → rejected |
-| Compromised worker spoofs a different agent | Accepted | Signed agent_id must match peer's trust record |
+| Compromised worker spoofs a different agent | Accepted | Not stopped: the verifier maps the key ID to its public key and does not check the signed agent_id, so any trusted key can sign for any agent |
 | Clock-skew DoS (far-future timestamp) | n/a | Rejected as expired (5 min default) |
 
 Signing does NOT protect against: (1) a compromised `cordum-mcp`

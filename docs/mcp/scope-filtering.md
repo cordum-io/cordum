@@ -255,16 +255,18 @@ Phase 1: MCP Zero-Trust Governance.
   doesn't have the scope for never reaches the approval gate, so
   attackers can't probe the approval workflow to enumerate the tool
   surface.
-- **Signed outbound MCP calls** (task-ba236f62). When Cordum acts
-  as an MCP CLIENT calling external MCP servers, every call is
-  signed with the caller's ECDSA P-256 key so the remote can
-  verify the caller's identity. Scope filtering governs what a
-  caller can REQUEST; signing proves who made the request.
+- **Signed outbound calls** (task-ba236f62). `cordum-mcp` signs the
+  POST and PUT calls it sends to the gateway with its ECDSA P-256 key.
+  The gateway does not verify them on receipt; a signed request is
+  checked only when it is posted to `POST /api/v1/mcp/verify-signature`
+  (see [outbound signing](outbound-signing.md)). Scope filtering
+  governs what a caller can REQUEST; a verified signature shows who
+  sent it.
 
-All three controls operate independently. Defence in depth: a
-privilege-escalation probe must pass the scope filter, satisfy the
-approval gate, and be signed by a key the remote MCP trusts before any
-effect is observable.
+Scope filtering and the approval gate are enforced on every call and
+operate independently: a privilege-escalation probe must pass the scope
+filter and then satisfy the approval gate before any effect is
+observable. Signing adds no enforcement until a receiver verifies it.
 
 ## Operational checklist
 
