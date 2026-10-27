@@ -721,6 +721,44 @@ func TestEnsureMCPHTTPTraceParentsCreatesEdgeParents(t *testing.T) {
 	}
 }
 
+func TestMCPAuthRuntimeCollectorOwnsTraceParents(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.auth = mcpTestAuth{apiKey: "test-key", tenant: "default"}
+	s.edgeStore = edge.NewRedisStoreFromClient(s.redisClient())
+	seedMCPBindingAgent(t, s, "default", "agent-trace")
+	if err := s.agentIdentityStore.LinkWorker(context.Background(), "agent-trace", "tester"); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/mcp/message", nil)
+	req.Header.Set("X-API-Key", "test-key")
+	req.Header.Set("X-Tenant-ID", "default")
+	req.Header.Set("X-MCP-Session-ID", "trace-owned")
+	rec := httptest.NewRecorder()
+	s.mcpAuth(func(w http.ResponseWriter, r *http.Request) {
+		identity := mcp.IdentityFromContext(r.Context())
+		if identity == nil || identity.ID != "agent-trace" {
+			t.Fatalf("bound MCP identity=%+v", identity)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("MCP auth: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	execution, found, err := s.edgeStore.GetExecution(context.Background(), "default", "mcp-trace-owned")
+	if err != nil || !found {
+		t.Fatalf("GetExecution: found=%v err=%v", found, err)
+	}
+	if execution.WorkerID != "tester" || execution.Labels["agent_id"] != "agent-trace" {
+		t.Fatalf("execution ownership/identity: %+v", execution)
+	}
+	validator := newRuntimeIngestParentValidator(s.edgeStore)
+	if err := validator.validate(context.Background(), edge.AgentActionEvent{
+		TenantID: "default", SessionID: "trace-owned", ExecutionID: "mcp-trace-owned",
+	}, "tester"); err != nil {
+		t.Fatalf("authenticated principal cannot ingest its MCP trace: %v", err)
+	}
+}
+
 func TestLoadMCPConfigDefaultsAndOverrides(t *testing.T) {
 	t.Parallel()
 	s, _, _ := newTestGateway(t)

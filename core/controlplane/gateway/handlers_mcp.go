@@ -502,7 +502,7 @@ func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentI
 		return s.edgeStore.CreateExecution(ctx, edge.AgentExecution{
 			ExecutionID: executionID, SessionID: sessionID, TenantID: tenantID,
 			Adapter: edge.AdapterMCPGateway, Mode: edge.ExecutionModeLocalDev,
-			WorkerID: agentID, Status: edge.ExecutionStatusRunning,
+			WorkerID: principalID, Status: edge.ExecutionStatusRunning,
 			StartedAt: now, Labels: edge.Labels{"agent_id": agentID},
 		})
 	}
