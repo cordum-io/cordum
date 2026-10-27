@@ -788,7 +788,8 @@ func TestRedisJobStoreApplyApprovalRepairApprovedResolution(t *testing.T) {
 		Topic:    "job.test",
 		TenantId: "default",
 		Labels: map[string]string{
-			"approval_granted": "true",
+			"approval_granted":  "true",
+			"approval_snapshot": "snap-1",
 		},
 	}
 	if err := store.SetJobMeta(ctx, req); err != nil {

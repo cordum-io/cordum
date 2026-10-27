@@ -885,7 +885,8 @@ func TestRepairApprovalApplyApprovedResolutionPublishesAndAudits(t *testing.T) {
 		Topic:    "job.test",
 		TenantId: "default",
 		Labels: map[string]string{
-			"approval_granted": "true",
+			"approval_granted":  "true",
+			"approval_snapshot": "snap-1",
 		},
 	}
 	if err := s.jobStore.SetJobMeta(ctx, req); err != nil {
@@ -1345,6 +1346,33 @@ func TestApproveJobDoubleApproveIdempotent(t *testing.T) {
 	}
 	if !strings.Contains(rr2.Body.String(), "already_approved") {
 		t.Fatalf("second approve: expected already_approved in body, got %s", rr2.Body.String())
+	}
+}
+
+// Only the stored approval record makes an approve call idempotent: a job that
+// merely carries the approval_granted label was never approved.
+func TestApproveJobIdempotencyNeedsRecordedApproval(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+	jobID := uuid.NewString()
+	req := &pb.JobRequest{JobId: jobID, Topic: "job.test", TenantId: "default", Labels: map[string]string{"approval_granted": "true"}}
+	if err := s.jobStore.SetJobMeta(ctx, req); err != nil {
+		t.Fatalf("set job meta: %v", err)
+	}
+	if err := s.jobStore.SetJobRequest(ctx, req); err != nil {
+		t.Fatalf("set job req: %v", err)
+	}
+	if err := s.jobStore.SetState(ctx, jobID, model.JobStatePending); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/approve", strings.NewReader(`{"reason":"ok"}`))
+	httpReq.Header.Set("X-Tenant-ID", "default")
+	httpReq.SetPathValue("job_id", jobID)
+	httpReq = withAuth(httpReq, &auth.AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
+	rr := httptest.NewRecorder()
+	s.handleApproveJob(rr, httpReq)
+	if rr.Code != http.StatusConflict || strings.Contains(rr.Body.String(), "already_approved") {
+		t.Fatalf("label-only job: got %d %s, want a 409 conflict", rr.Code, rr.Body.String())
 	}
 }
 
