@@ -1755,7 +1755,6 @@ export interface McpConfig {
   enabled: boolean;
   transport: McpTransport;
   port: number;
-  requireAuth: boolean;
   allowedOrigins: string[];
   apiKeyMasked?: string;
   tools: Record<string, { enabled: boolean }>;
