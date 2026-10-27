@@ -86,6 +86,7 @@ workflow.
 
 ```
 <dir>/
+├── certs/              # dev CA + server/client certs; the gateway serves HTTPS with them
 ├── docker-compose.yml
 ├── config/
 │   ├── pools.yaml
@@ -101,6 +102,9 @@ workflow.
 ```bash
 cordumctl init my-project
 cd my-project
+export CORDUM_API_KEY="$(openssl rand -hex 32)"
+docker compose up -d
+cordumctl status   # https://localhost:8081, trusting ./certs/ca/ca.crt
 ```
 
 ---
