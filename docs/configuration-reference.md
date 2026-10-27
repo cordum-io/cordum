@@ -834,7 +834,23 @@ Invalid values (non-numeric, zero, negative) are silently replaced with defaults
 | `ARTIFACT_MAX_BYTES` | — | Max artifact upload/download size |
 | `WORKFLOW_FOREACH_MAX_ITEMS` | — | Max items in workflow for-each expansion |
 | `POLICY_CHECK_FAIL_MODE` | `closed` | Behavior when Safety Kernel is unreachable during policy evaluation (both gateway submit-time and scheduler dispatch-time). `closed` (default): reject the job. `open`: allow with warning log. |
+
+### Gateway — MCP
+
+Read by the gateway's built-in MCP server (`/mcp/*`). The standalone
+`cordum-mcp` bridge has its own variables under [MCP Server](#mcp-server).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
 | `CORDUM_MCP_ALLOW_UNBOUND_AGENT_ID` | `false` | Set to `true` to trust the `X-Agent-Id` header on the gateway's `/mcp/*` routes without a caller binding, as before the binding existed: any authenticated caller in the tenant can act as any agent identity it names. The gateway logs a warning at MCP start while it is set. A temporary bridge while existing identities are linked to their callers; see [MCP scope filtering](mcp/scope-filtering.md#upgrading-bind-existing-agent-identities). |
+| `CORDUM_MCP_DESTRUCTIVE_TOOL_GLOBS` | `*delete*,*remove*,*archive*` | Comma-separated `path.Match` globs for tool names the MCP gate treats as destructive. A destructive call in a session that an earlier tool result tainted with a prompt injection is denied; the globs only scope that deny and never deny on their own. See [Session-taint destructive scope](edge/mcp-tool-policy.md#session-taint-destructive-scope) |
+| `CORDUM_MCP_DESTRUCTIVE_MUTATION_ARG_KEYS` | `query,mutation,gql,graphql` | Comma-separated string arguments scanned for a GraphQL `mutation` document, so a passthrough tool that carries a destructive mutation counts as destructive |
+| `CORDUM_MCP_DESTRUCTIVE_MUTATION_GLOBS` | `delete_*,archive_*,remove_*,delete,archive,remove` | Comma-separated globs for GraphQL mutation field names treated as destructive |
+| `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` | `false` | Set to `true` to hold a destructive call for human approval when the session-taint lookup fails (reason `taint_lookup_unavailable_failclosed`). Off, such a call is not held |
+| `CORDUM_MCP_TAINT_BACKEND` | `redis` when the gateway has Redis | Session-taint store: `redis` (shared by gateway replicas) or `memory` (per process). An unknown value, or `redis` without Redis, selects `memory` |
+| `CORDUM_MCP_TAINT_TTL` | `3600` | Seconds a session taint lasts in Redis. Keep it longer than an agent session: once the taint expires, a destructive call goes through. Invalid or non-positive values use the default |
+| `CORDUM_MCP_DEDUPE_BACKEND` | `redis` when the gateway has Redis | Store behind the tools/call [retry dedupe](mcp-server.md#retry-dedupe): `redis` (shared by gateway replicas) or `memory` (per process). An unknown value, or `redis` without Redis, selects `memory` |
+| `CORDUM_MCP_INBOUND_TRUSTED_KEY_<ID>` | — | ECDSA P-256 public key (base64 SPKI or PEM) that `POST /api/v1/mcp/verify-signature` trusts for key id `<ID>`; one variable per key. With no key, or a malformed one, the endpoint answers `503`. See [MCP outbound signing](mcp/outbound-signing.md) |
 
 ### Gateway — API Keys
 

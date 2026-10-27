@@ -286,13 +286,11 @@ process restarts; error outcomes delete the entry so the next retry
 fires a fresh upstream attempt (transient transport failures do not
 become sticky).
 
-**Cross-process scope**: today's gateway is single-instance per
-deployment unit, so the in-process `sync.Map` is sufficient. A
-multi-instance HA gateway behind a load balancer would need a Redis
-SETNX-backed `DedupeStore` for cross-process collapse; this is
-tracked as a follow-up Moe task (PR #276 Sub-B deferred) — when
-adopted, the in-process backend stays the default and the Redis
-backend is gated by `CORDUM_MCP_DEDUPE_BACKEND=redis`.
+**Cross-process scope**: when the gateway has Redis it keeps the dedupe
+slots in a Redis SETNX-backed `DedupeStore` (entries expire after
+`MCPDedupeTTL`, 10 minutes), so replicas behind a load balancer collapse
+the same retry. `CORDUM_MCP_DEDUPE_BACKEND=memory` keeps them in process,
+as does a gateway without Redis.
 
 #### Evidence write failures
 
