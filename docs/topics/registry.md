@@ -101,12 +101,14 @@ doc → policy bundle fragments.
 call that needs a human. No worker serves it: once the job is allowed or
 approved, the scheduler marks it `SUCCEEDED` and the SDK runs the call.
 
-It still goes through the registry check. Once the registry is not
-empty (a pack is installed, or topics were migrated from
-`config/pools.yaml`), every tenant that uses `@guard` must register
-`job.guard`, or the gateway rejects its approval jobs with
-`400 unknown_topic`. Any existing pool works, since the job is never
-dispatched:
+It still goes through the registry check: once the registry is not
+empty, the gateway rejects jobs on an unregistered topic with
+`400 unknown_topic`. The shipped `config/pools.yaml` maps `job.guard`
+to the `approval-gates` pool, as it does `job.cordum.approval-gate`, so
+a registry migrated from it accepts `@guard` jobs. Register the topic
+by hand only if your registry was populated before `config/pools.yaml`
+listed it, or from a pools config that does not. Any existing pool
+works, since the job is never dispatched:
 
 ```
 POST /api/v1/topics
