@@ -132,7 +132,7 @@ jobs:
           trap cleanup EXIT
           docker run --detach --name dashboard-recovery-probe --publish 127.0.0.1:18080:8080 \
             --add-host cordum-api-gateway:127.0.0.1 "$image"
-          curl --fail --silent --show-error --retry 15 --retry-connrefused --retry-delay 2 \
+          curl --fail --silent --show-error --retry 15 --retry-all-errors --retry-connrefused --retry-delay 2 \
             --retry-max-time 60 http://127.0.0.1:18080/healthz
 
       - name: Apply original release OS vulnerability gate
