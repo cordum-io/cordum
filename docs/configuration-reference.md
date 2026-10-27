@@ -1155,7 +1155,7 @@ the variable.
 | `MCP_HTTP_ADDR` | `127.0.0.1:8090` | HTTP listen address (only used when `MCP_TRANSPORT=http`) |
 | `CORDUM_MCP_HTTP_AUTH_TOKEN` | — | Bearer token every `/sse` and `/message` request must send (`--http-auth-token`). Required for a non-loopback `MCP_HTTP_ADDR` unless `--allow-unauthenticated-http` is passed |
 | `CORDUM_TLS_CA` | — | PEM CA certificate(s) to trust for the gateway's TLS in addition to the system roots (`--cacert`), for example the compose stack's `./certs/ca/ca.crt`. Startup fails if the file cannot be read or holds no certificate |
-| `CORDUM_MCP_OUTBOUND_SIGNING_KEY` | — | ECDSA P-256 private key (PEM, or base64 DER) that signs every gateway call. Unset along with `_PATH`, calls go unsigned and startup logs a warning; a malformed key fails startup. See [MCP outbound signing](mcp/outbound-signing.md) |
+| `CORDUM_MCP_OUTBOUND_SIGNING_KEY` | — | ECDSA P-256 private key (PEM, or base64 DER) that signs the POST and PUT calls tools make to the gateway, and resource reads; tool calls that GET go unsigned. Unset along with `_PATH`, calls go unsigned and startup logs a warning; a malformed key fails startup. See [MCP outbound signing](mcp/outbound-signing.md) |
 | `CORDUM_MCP_OUTBOUND_SIGNING_KEY_PATH` | — | File holding the signing key, read when `CORDUM_MCP_OUTBOUND_SIGNING_KEY` is unset |
 | `CORDUM_MCP_OUTBOUND_SIGNING_KEY_ID` | `default` | Key ID sent in `X-Cordum-Key-Id`; verifiers look the public key up under it |
 | `CORDUM_MCP_OUTBOUND_AGENT_ID` | `--agent-id` | Agent ID recorded on outbound audit events and sent in `X-Cordum-Agent-Id` on signed calls, where an empty value falls back to the tenant |
