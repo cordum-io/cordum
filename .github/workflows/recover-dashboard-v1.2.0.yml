@@ -1,6 +1,6 @@
-# One-off recovery of the missing v1.2.0 dashboard, without moving release aliases.
-# The build context is the original release commit, not this workflow branch.
-name: Recover dashboard 1.2.0
+# Read-only closure for the completed dashboard v1.2.0 recovery.
+# This replaces the one-off publisher at its original workflow path.
+name: Verify recovered dashboard 1.2.0
 
 on:
   push:
@@ -17,6 +17,7 @@ permissions:
 env:
   SOURCE_SHA: 3244b5419b74c1684facb9cf2e8e2f9b1df3627c
   IMAGE_VERSION: 1.2.0
+  EXPECTED_DIGEST: sha256:2f664d745a52f94236a5bb3e325ad9f53296627bf2028e874f646ccd5af8a235
   GHCR_IMAGE: ghcr.io/cordum-io/cordum/dashboard
   HUB_IMAGE: docker.io/cordum/dashboard
   CERTIFICATE_IDENTITY: https://github.com/cordum-io/cordum/.github/workflows/recover-dashboard-v1.2.0.yml@refs/heads/repair/dashboard-v1.2.0-20261027
@@ -26,254 +27,8 @@ defaults:
     shell: bash
 
 jobs:
-  preflight:
-    if: github.repository == 'cordum-io/cordum' && github.event_name == 'push' && github.ref == 'refs/heads/repair/dashboard-v1.2.0-20261027'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - name: Require both version tags to be anonymously missing
-        run: |
-          set -euo pipefail
-          require_missing() {
-            local token_url="$1" manifest_url="$2" token body status
-            token=$(curl --fail --silent --show-error "$token_url" | jq -er '.token')
-            body=$(mktemp)
-            status=$(curl --silent --show-error --output "$body" --write-out '%{http_code}' \
-              --header "Authorization: Bearer $token" \
-              --header 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
-              "$manifest_url")
-            if [[ "$status" != 404 ]] || ! jq -e '.errors | any(.code == "MANIFEST_UNKNOWN")' "$body" >/dev/null; then
-              echo "::error::Expected missing manifest at $manifest_url; received HTTP $status. Refusing publication."
-              rm -f "$body"
-              return 1
-            fi
-            rm -f "$body"
-            echo "Confirmed missing: $manifest_url"
-          }
-          require_missing \
-            'https://ghcr.io/token?service=ghcr.io&scope=repository:cordum-io/cordum/dashboard:pull' \
-            "https://ghcr.io/v2/cordum-io/cordum/dashboard/manifests/$IMAGE_VERSION"
-          require_missing \
-            'https://auth.docker.io/token?service=registry.docker.io&scope=repository:cordum/dashboard:pull' \
-            "https://registry-1.docker.io/v2/cordum/dashboard/manifests/$IMAGE_VERSION"
-
-  build:
-    needs: preflight
-    permissions:
-      contents: read
-      packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-24.04
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
-    steps:
-      - name: Checkout exact original release source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: 3244b5419b74c1684facb9cf2e8e2f9b1df3627c
-          persist-credentials: false
-
-      - name: Verify source commit
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-          git diff --exit-code -- dashboard
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-
-      - name: Login to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build native platform and push by digest only
-        id: build
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: ./dashboard
-          file: ./dashboard/Dockerfile
-          platforms: linux/${{ matrix.arch }}
-          sbom: true
-          provenance: mode=max
-          # No tag is emitted here, including implicit latest aliases.
-          outputs: type=image,"name=ghcr.io/cordum-io/cordum/dashboard,docker.io/cordum/dashboard",push-by-digest=true,name-canonical=true,push=true
-          labels: |
-            org.opencontainers.image.source=https://github.com/cordum-io/cordum
-            org.opencontainers.image.revision=3244b5419b74c1684facb9cf2e8e2f9b1df3627c
-            org.opencontainers.image.version=1.2.0
-
-      - name: Pull exact native digest and probe dashboard
-        env:
-          DIGEST: ${{ steps.build.outputs.digest }}
-          ARCH: ${{ matrix.arch }}
-        run: |
-          set -euo pipefail
-          [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
-          image="$GHCR_IMAGE@$DIGEST"
-          docker pull --platform "linux/$ARCH" "$image"
-          test "$(docker image inspect "$image" --format '{{.Architecture}}')" = "$ARCH"
-          test "$(docker image inspect "$image" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$SOURCE_SHA"
-          cleanup() { docker rm -f dashboard-recovery-probe >/dev/null 2>&1 || true; }
-          trap cleanup EXIT
-          docker run --detach --name dashboard-recovery-probe --publish 127.0.0.1:18080:8080 \
-            --add-host cordum-api-gateway:127.0.0.1 "$image"
-          curl --fail --silent --show-error --retry 15 --retry-all-errors --retry-connrefused --retry-delay 2 \
-            --retry-max-time 60 http://127.0.0.1:18080/healthz
-
-      - name: Apply original release OS vulnerability gate
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: ghcr.io/cordum-io/cordum/dashboard@${{ steps.build.outputs.digest }}
-          format: table
-          severity: CRITICAL
-          ignore-unfixed: true
-          exit-code: '1'
-          vuln-type: os
-
-      - name: Export verified architecture digest
-        env:
-          DIGEST: ${{ steps.build.outputs.digest }}
-          ARCH: ${{ matrix.arch }}
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/recovery-digests"
-          printf '%s\n' "$DIGEST" > "$RUNNER_TEMP/recovery-digests/$ARCH"
-
-      - name: Upload architecture digest
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: dashboard-digest-${{ matrix.arch }}
-          path: ${{ runner.temp }}/recovery-digests/${{ matrix.arch }}
-          if-no-files-found: error
-          retention-days: 7
-
-  publish:
-    needs: build
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
-    outputs:
-      digest: ${{ steps.merge.outputs.digest }}
-    steps:
-      - name: Download both verified digests
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        with:
-          pattern: dashboard-digest-*
-          path: ${{ runner.temp }}/recovery-digests
-          merge-multiple: true
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-
-      - name: Login to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Recheck missing targets and publish only 1.2.0
-        id: merge
-        run: |
-          set -euo pipefail
-          amd64_digest=$(cat "$RUNNER_TEMP/recovery-digests/amd64")
-          arm64_digest=$(cat "$RUNNER_TEMP/recovery-digests/arm64")
-          [[ "$amd64_digest" =~ ^sha256:[a-f0-9]{64}$ ]]
-          [[ "$arm64_digest" =~ ^sha256:[a-f0-9]{64}$ ]]
-          require_missing() {
-            local token_url="$1" manifest_url="$2" token body status
-            token=$(curl --fail --silent --show-error "$token_url" | jq -er '.token')
-            body=$(mktemp)
-            status=$(curl --silent --show-error --output "$body" --write-out '%{http_code}' \
-              --header "Authorization: Bearer $token" \
-              --header 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
-              "$manifest_url")
-            if [[ "$status" != 404 ]] || ! jq -e '.errors | any(.code == "MANIFEST_UNKNOWN")' "$body" >/dev/null; then
-              echo "::error::Expected missing manifest at $manifest_url; received HTTP $status. Refusing publication."
-              rm -f "$body"
-              return 1
-            fi
-            rm -f "$body"
-          }
-          # Both must still be missing before any version tag is written.
-          require_missing \
-            'https://ghcr.io/token?service=ghcr.io&scope=repository:cordum-io/cordum/dashboard:pull' \
-            "https://ghcr.io/v2/cordum-io/cordum/dashboard/manifests/$IMAGE_VERSION"
-          require_missing \
-            'https://auth.docker.io/token?service=registry.docker.io&scope=repository:cordum/dashboard:pull' \
-            "https://registry-1.docker.io/v2/cordum/dashboard/manifests/$IMAGE_VERSION"
-          for image in "$GHCR_IMAGE" "$HUB_IMAGE"; do
-            # Minimize the race window by checking again immediately before
-            # each registry write. OCI registries offer no cross-registry transaction.
-            if [[ "$image" == "$GHCR_IMAGE" ]]; then
-              require_missing \
-                'https://ghcr.io/token?service=ghcr.io&scope=repository:cordum-io/cordum/dashboard:pull' \
-                "https://ghcr.io/v2/cordum-io/cordum/dashboard/manifests/$IMAGE_VERSION"
-            else
-              require_missing \
-                'https://auth.docker.io/token?service=registry.docker.io&scope=repository:cordum/dashboard:pull' \
-                "https://registry-1.docker.io/v2/cordum/dashboard/manifests/$IMAGE_VERSION"
-            fi
-            docker buildx imagetools create \
-              --tag "$image:$IMAGE_VERSION" \
-              "$image@$amd64_digest" "$image@$arm64_digest"
-          done
-          ghcr_digest=$(docker buildx imagetools inspect "$GHCR_IMAGE:$IMAGE_VERSION" --format '{{json .Manifest}}' | jq -er '.digest')
-          hub_digest=$(docker buildx imagetools inspect "$HUB_IMAGE:$IMAGE_VERSION" --format '{{json .Manifest}}' | jq -er '.digest')
-          [[ "$ghcr_digest" =~ ^sha256:[a-f0-9]{64}$ ]]
-          test "$ghcr_digest" = "$hub_digest"
-          echo "digest=$ghcr_digest" >> "$GITHUB_OUTPUT"
-          {
-            echo '## Dashboard 1.2.0 recovery'
-            echo "Source commit: \`$SOURCE_SHA\`"
-            echo "amd64 build digest: \`$amd64_digest\`"
-            echo "arm64 build digest: \`$arm64_digest\`"
-            echo "Published index: \`$ghcr_digest\` (GHCR and Docker Hub)"
-            echo "Certificate identity: \`$CERTIFICATE_IDENTITY\`"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Install cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-
-      - name: Sign and verify exact recovery workflow identity
-        env:
-          DIGEST: ${{ steps.merge.outputs.digest }}
-        run: |
-          set -euo pipefail
-          for image in "$GHCR_IMAGE" "$HUB_IMAGE"; do
-            cosign sign --yes "$image@$DIGEST"
-            cosign verify "$image@$DIGEST" \
-              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-              --certificate-identity "$CERTIFICATE_IDENTITY" >/dev/null
-          done
-          echo 'Both registry indexes signed and verified with the exact recovery workflow identity.' >> "$GITHUB_STEP_SUMMARY"
-
   verify-anonymous:
-    needs: publish
+    if: github.repository == 'cordum-io/cordum' && github.event_name == 'push' && github.ref == 'refs/heads/repair/dashboard-v1.2.0-20261027'
     strategy:
       fail-fast: false
       matrix:
@@ -285,15 +40,22 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     steps:
-      - name: Verify anonymous indexes and native pulls from both registries
+      - name: Install the verifier used for recovery
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.0.6
+
+      - name: Verify existing manifests, signatures and native health anonymously
         env:
-          EXPECTED_DIGEST: ${{ needs.publish.outputs.digest }}
           ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
-          # This job never logs in. Empty config also excludes ambient Docker credentials.
+          # No registry login: exclude any ambient Docker credential configuration.
           export DOCKER_CONFIG
           DOCKER_CONFIG=$(mktemp -d)
+          cleanup() { docker rm -f dashboard-recovery-verification >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
           check_manifest() {
             local token_url="$1" manifest_url="$2" token body headers digest
             token=$(curl --fail --silent --show-error "$token_url" | jq -er '.token')
@@ -306,20 +68,69 @@ jobs:
             digest=$(awk 'tolower($1) == "docker-content-digest:" {gsub("\r", "", $2); print $2}' "$headers")
             test "$digest" = "$EXPECTED_DIGEST"
             jq -e '[.manifests[] | select(.platform.os == "linux") | .platform.architecture] | sort == ["amd64", "arm64"]' "$body" >/dev/null
-            # BuildKit attestations must survive the two-platform index merge.
             jq -e '[.manifests[] | select(.annotations["vnd.docker.reference.type"] == "attestation-manifest")] | length == 2' "$body" >/dev/null
             rm -f "$body" "$headers"
           }
+
+          verify_signature() {
+            local image="$1" attempt status output errors
+            output=$(mktemp)
+            errors=$(mktemp)
+            # Docker Hub's OCI referrer can become visible after signing returns.
+            # Retry only the transient missing-signature result; never sign again.
+            for attempt in {1..12}; do
+              if cosign verify "$image@$EXPECTED_DIGEST" \
+                --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+                --certificate-identity "$CERTIFICATE_IDENTITY" >"$output" 2>"$errors"; then
+                cat "$errors"
+                jq -e --arg digest "$EXPECTED_DIGEST" \
+                  'length > 0 and all(.[]; .critical.image["docker-manifest-digest"] == $digest)' "$output" >/dev/null
+                rm -f "$output" "$errors"
+                return 0
+              else
+                status=$?
+              fi
+              if [[ "$status" != 10 ]] || ! grep -Fq 'no signatures found' "$errors" || (( attempt == 12 )); then
+                cat "$errors" >&2
+                rm -f "$output" "$errors"
+                return "$status"
+              fi
+              echo "Signature referrer not visible for $image; read-only retry $attempt/12."
+              sleep 10
+            done
+          }
+
+          # Establish that both public version tags resolve to the known index
+          # before starting either native pull.
           check_manifest \
             'https://ghcr.io/token?service=ghcr.io&scope=repository:cordum-io/cordum/dashboard:pull' \
             "https://ghcr.io/v2/cordum-io/cordum/dashboard/manifests/$IMAGE_VERSION"
           check_manifest \
             'https://auth.docker.io/token?service=registry.docker.io&scope=repository:cordum/dashboard:pull' \
             "https://registry-1.docker.io/v2/cordum/dashboard/manifests/$IMAGE_VERSION"
+
           for image in "$GHCR_IMAGE" "$HUB_IMAGE"; do
+            verify_signature "$image"
             docker pull --platform "linux/$ARCH" "$image:$IMAGE_VERSION"
+            # Docker stores Docker Hub repository names without the docker.io prefix.
+            canonical_image="${image#docker.io/}"
+            docker image inspect "$image:$IMAGE_VERSION" --format '{{json .RepoDigests}}' \
+              | jq -e --arg expected "$canonical_image@$EXPECTED_DIGEST" 'index($expected) != null' >/dev/null
             test "$(docker image inspect "$image:$IMAGE_VERSION" --format '{{.Architecture}}')" = "$ARCH"
+            test "$(docker image inspect "$image:$IMAGE_VERSION" --format '{{index .Config.Labels "org.opencontainers.image.source"}}')" = 'https://github.com/cordum-io/cordum'
             test "$(docker image inspect "$image:$IMAGE_VERSION" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$SOURCE_SHA"
             test "$(docker image inspect "$image:$IMAGE_VERSION" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')" = "$IMAGE_VERSION"
+            docker run --pull=never --detach --name dashboard-recovery-verification \
+              --publish 127.0.0.1:18080:8080 --add-host cordum-api-gateway:127.0.0.1 \
+              "$image:$IMAGE_VERSION"
+            curl --fail --silent --show-error --retry 15 --retry-all-errors --retry-connrefused --retry-delay 2 \
+              --retry-max-time 60 http://127.0.0.1:18080/healthz
+            docker rm -f dashboard-recovery-verification >/dev/null
+            echo "Anonymous linux/$ARCH pull, pinned digest, source labels, signature and health passed: $image:$IMAGE_VERSION" >> "$GITHUB_STEP_SUMMARY"
           done
-          echo "Anonymous linux/$ARCH pulls from GHCR and Docker Hub passed; index $EXPECTED_DIGEST has both platforms and attestations." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "Index digest: \`$EXPECTED_DIGEST\`"
+            echo "Original source: \`$SOURCE_SHA\`"
+            echo "Verified certificate identity: \`$CERTIFICATE_IDENTITY\`"
+            echo 'Both indexes retain linux/amd64, linux/arm64 and their build attestations.'
+          } >> "$GITHUB_STEP_SUMMARY"
