@@ -97,6 +97,10 @@ Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
 
 ### Fixed
 
+#### core/controlplane/gateway — MCP approval-required (-32099) responses no longer fail to encode on the legacy path (2026-10-26, task-ff988dfa)
+
+- Legacy MCP approval expiry was decoded as Unix seconds instead of microseconds, so without an Edge store (or without Edge session metadata) HTTP MCP answered `500 encode response` for any approval-required tool call. `expires_at` in the -32099 payload now reflects the approval TTL.
+
 #### tools/scripts/soak_test.sh — memory-drift gate stops failing the nightly soak on integer truncation and warm-up heap growth (2026-10-17)
 
 - The nightly **Soak Test (stability)** job failed every night on its memory-drift gate. Example from the 2026-10-17 run: `cordum-api-gateway-1: 3.52% -> 8.71% (166% growth)` and `cordum-safety-kernel-1: 2.59% -> 4.05% (100% growth)`. The check truncated docker stats percentages to integers before dividing, so 2.59 → 4.05 was computed as 2 → 4 = 100%. It also compared against an idle pre-load sample, where the Go services sit at 13–18MiB inside 512MiB limits and legitimately grow once load starts. **Fix:** growth is computed in floating point by `memory_drift_findings` in `soak_test_lib.sh`, which uses only POSIX awk features so mawk and gawk agree. The baseline is re-captured after `SOAK_WARMUP_SECONDS` of load (default 300, capped at half the run). A container fails only when its growth exceeds both `SOAK_MEMORY_DRIFT_PCT` and the new absolute floor `SOAK_MEMORY_DRIFT_MIN_MIB` (default 32); growth past only the relative limit is reported as a warning. Replaying the 2026-10-17 metrics artifact through the new logic gives zero failures and two warnings (api-gateway +17MiB and redis +12MiB after warm-up). New cases in `soak_test_lib.test.sh`, which runs in CI, pin the decimal math, the MiB conversion and the FAIL/WARN split.
