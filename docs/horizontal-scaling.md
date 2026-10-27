@@ -193,6 +193,8 @@ This is a known limitation — NATS does not auto-discover new peers in a static
 
 ## Troubleshooting
 
+The `redis-cli` examples below connect from the repo root to the Compose stack's Redis, which is TLS-only, needs `REDIS_PASSWORD` and publishes port 6379. For another deployment, point `-h`, `--cacert` and `-a` at your Redis.
+
 ### Duplicate Job Dispatch
 
 **Symptoms**: Same job appears multiple times in terminal state, or job processed by multiple schedulers simultaneously.
@@ -200,10 +202,10 @@ This is a known limitation — NATS does not auto-discover new peers in a static
 **Diagnosis**:
 ```bash
 # Check job lock in Redis
-redis-cli GET "cordum:scheduler:job:<jobID>"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "cordum:scheduler:job:<jobID>"
 
 # Check reconciler lock
-redis-cli GET "cordum:reconciler:default"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "cordum:reconciler:default"
 ```
 
 **Resolution**: Verify all scheduler replicas are using the same Redis instance. Check that job lock TTL (30s) is not too short for your job processing time.
@@ -218,7 +220,7 @@ redis-cli GET "cordum:reconciler:default"
 # Look for REDIS_RATE_LIMIT env var in gateway config
 
 # Check rate limit counters
-redis-cli KEYS "cordum:rl:*"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" KEYS "cordum:rl:*"
 ```
 
 **Resolution**: Ensure `REDIS_RATE_LIMIT` is not set to `false`/`0`/`no`. If Redis is unreachable, each replica falls back to per-replica in-memory rate limiting (effectively multiplying the limit by replica count).
@@ -230,10 +232,10 @@ redis-cli KEYS "cordum:rl:*"
 **Diagnosis**:
 ```bash
 # Check snapshot writer lock
-redis-cli GET "cordum:scheduler:snapshot:writer"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "cordum:scheduler:snapshot:writer"
 
 # Check snapshot data
-redis-cli GET "sys:workers:snapshot"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "sys:workers:snapshot"
 ```
 
 **Resolution**: The scheduler snapshot writer runs every 5s under a distributed lock. If the lock holder crashes, the lock expires after 30s and another replica takes over. Wait up to 35s for convergence.
@@ -250,7 +252,7 @@ redis-cli GET "sys:workers:snapshot"
 
 **Diagnosis**:
 ```bash
-redis-cli GET "cordum:dlq:cleanup"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "cordum:dlq:cleanup"
 ```
 
 **Resolution**: If the lock is held by a crashed replica, wait for TTL expiry. The next live replica will acquire the lock and resume cleanup.
@@ -261,8 +263,8 @@ redis-cli GET "cordum:dlq:cleanup"
 
 **Diagnosis**:
 ```bash
-redis-cli GET "cordum:cb:safety:failures"
-redis-cli GET "cordum:cb:safety:output:failures"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "cordum:cb:safety:failures"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "cordum:cb:safety:output:failures"
 ```
 
 **Resolution**: Circuit breaker state is shared across replicas via Redis. If the safety kernel recovers, the circuit breaker will close after the configured recovery window. Delete the Redis key to force-reset (use with caution).

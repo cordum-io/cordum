@@ -2,6 +2,10 @@
 
 Common issues and debugging procedures for Cordum. Each entry includes symptoms, likely causes, diagnostic commands, and fixes.
 
+The `redis-cli` examples connect from the repo root to the Compose stack's Redis, which is TLS-only, needs `REDIS_PASSWORD` and publishes port 6379. For Kubernetes or another deployment, point `-h`, `--cacert` and `-a` at your Redis.
+
+The `nats` CLI examples connect the same way to the Compose NATS, which is TLS-only, requires a client certificate (`verify: true`) and publishes port 4222. For another deployment, point `--server`, `--tlsca`, `--tlscert` and `--tlskey` at your NATS.
+
 > For production operational runbooks, see [production.md](production.md).
 > For configuration reference, see [configuration-reference.md](configuration-reference.md).
 > For Docker-specific issues, see [DOCKER.md](DOCKER.md).
@@ -75,7 +79,7 @@ node ./node_modules/typescript/bin/tsc --noEmit
 **Fix**: Prefix commands with `MSYS_NO_PATHCONV=1`:
 
 ```bash
-MSYS_NO_PATHCONV=1 docker exec cordum-redis redis-cli PING
+MSYS_NO_PATHCONV=1 docker exec cordum-redis-1 redis-cli --tls --cacert /etc/cordum/tls/ca/ca.crt -a "$REDIS_PASSWORD" PING
 ```
 
 ### `go test -race` fails on Windows
@@ -198,7 +202,7 @@ topics:
 
 Then delete the cached config in Redis to force reload:
 ```bash
-redis-cli DEL cfg:system:default
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" DEL cfg:system:default
 ```
 
 > **Note**: `cfg:system:default` is write-once (`bootstrapConfig`). The system reads it once at startup and caches it. You must delete the key and restart to apply changes.
@@ -377,12 +381,12 @@ cordumctl topic list
 # Check env vars
 env | grep SAFETY_KERNEL
 
-# Test gRPC health (from gateway container)
-grpcurl -plaintext localhost:50051 grpc.health.v1.Health/Check
+# Test gRPC health from the host. Compose serves the kernel's gRPC over TLS
+# on localhost:50051; grpcurl needs CORDUM_GRPC_REFLECTION=1 on the kernel.
+grpcurl -cacert ./certs/ca/ca.crt localhost:50051 grpc.health.v1.Health/Check
 
-# With TLS
-grpcurl -cacert /path/to/ca.crt \
-  cordum-safety-kernel:50051 grpc.health.v1.Health/Check
+# Kernel started without SAFETY_KERNEL_TLS_CERT (outside production)
+grpcurl -plaintext localhost:50051 grpc.health.v1.Health/Check
 ```
 
 **Fix**: Ensure these env vars are set correctly:
@@ -557,7 +561,7 @@ The worker must heartbeat with `pool=hello-pack`.
 **Diagnostic**:
 ```bash
 # Test NATS connectivity
-nats pub test "hello" --server nats://localhost:4222
+nats pub test "hello" --server tls://localhost:4222 --tlsca ./certs/ca/ca.crt --tlscert ./certs/client/tls.crt --tlskey ./certs/client/tls.key
 
 # Check NATS logs
 docker compose logs nats --tail=50
@@ -577,7 +581,7 @@ docker compose logs nats --tail=50
 ```bash
 # Check Redis
 docker compose ps redis
-redis-cli PING
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" PING
 # Should return PONG
 ```
 
@@ -585,16 +589,19 @@ redis-cli PING
 
 ### Redis TLS misconfigured
 
-**Cause**: Production mode expects TLS for Redis connections.
+**Symptoms**: A service exits with `redis tls required in production`, or Redis connections fail the TLS handshake or certificate check.
 
-**Fix**: Set TLS env vars:
+**Cause**: The URL scheme decides TLS. `rediss://` connects over TLS and reads the `REDIS_TLS_*` variables; `redis://` is plaintext. In production (`CORDUM_ENV=production`), a `rediss://` URL with no `REDIS_TLS_*` settings is rejected. The default Compose Redis is TLS-only, so it needs `rediss://`.
+
+**Fix**: Use `rediss://` and point the TLS variables at the CA and client certificate (Compose sets them to the `./certs` files mounted at `/etc/cordum/tls`):
 ```bash
-export REDIS_TLS_CA=/path/to/ca.crt
-export REDIS_TLS_CERT=/path/to/client.crt
-export REDIS_TLS_KEY=/path/to/client.key
+export REDIS_URL="rediss://:$REDIS_PASSWORD@localhost:6379"
+export REDIS_TLS_CA=./certs/ca/ca.crt
+export REDIS_TLS_CERT=./certs/client/tls.crt
+export REDIS_TLS_KEY=./certs/client/tls.key
 ```
 
-Or for development, use non-TLS Redis (set `CORDUM_ENV=development`).
+`CORDUM_ENV=development` doesn't turn TLS off. A `redis://` URL works only against a Redis that accepts plaintext, which the default Compose Redis doesn't.
 
 ### Redis Cluster not initialized
 
@@ -618,7 +625,7 @@ kubectl apply -k deploy/k8s/production
 
 **Fix**:
 ```bash
-redis-cli DEL cfg:system:default
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" DEL cfg:system:default
 # Then restart the gateway/scheduler
 ```
 
@@ -647,11 +654,11 @@ curl -s http://localhost:9090/metrics | grep output_eval_duration
 
 **Diagnostic**:
 ```bash
-redis-cli INFO memory
-redis-cli DBSIZE
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" INFO memory
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" DBSIZE
 
 # Check keys without TTL
-redis-cli --scan --pattern "ctx:job:*" | head -5 | xargs -I{} redis-cli TTL {}
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" --scan --pattern "ctx:job:*" | head -5 | xargs -I{} redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" TTL {}
 ```
 
 **Fix**:
@@ -669,7 +676,7 @@ redis-cli --scan --pattern "ctx:job:*" | head -5 | xargs -I{} redis-cli TTL {}
 curl -s http://localhost:9090/metrics | grep job_lock_wait
 
 # Check Redis slowlog
-redis-cli SLOWLOG GET 10
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" SLOWLOG GET 10
 
 # Check scheduler goroutines
 curl -s http://localhost:9090/metrics | grep active_goroutines
@@ -729,17 +736,17 @@ In multi-replica deployments, only one replica runs DLQ index cleanup per interv
 **Diagnostic**:
 ```bash
 # Check if the cleanup lock exists (indicates an active cleaner)
-redis-cli GET cordum:dlq:cleanup
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET cordum:dlq:cleanup
 
 # Check index size vs actual entries
-redis-cli ZCARD dlq:index
-redis-cli --scan --pattern "dlq:entry:*" | wc -l
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" ZCARD dlq:index
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" --scan --pattern "dlq:entry:*" | wc -l
 # If ZCARD >> entry count, stale entries exist
 ```
 
 **Fix**: If cleanup appears stalled, verify at least one replica is healthy and can reach Redis. The lock expires after one cleanup interval, so a new replica will take over automatically. To force immediate cleanup, delete the lock key:
 ```bash
-redis-cli DEL cordum:dlq:cleanup
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" DEL cordum:dlq:cleanup
 ```
 
 ---
@@ -752,7 +759,7 @@ redis-cli DEL cordum:dlq:cleanup
 
 **Diagnostic**:
 ```bash
-nats server info --server nats://localhost:4222
+nats server info --server tls://localhost:4222 --tlsca ./certs/ca/ca.crt --tlscert ./certs/client/tls.crt --tlskey ./certs/client/tls.key
 # Look for: jetstream: true
 ```
 
@@ -771,13 +778,13 @@ jetstream {
 
 **Diagnostic**:
 ```bash
-nats consumer list CORDUM_JOBS --server nats://localhost:4222
-nats consumer info CORDUM_JOBS cordum-scheduler --server nats://localhost:4222
+nats consumer list CORDUM_JOBS --server tls://localhost:4222 --tlsca ./certs/ca/ca.crt --tlscert ./certs/client/tls.crt --tlskey ./certs/client/tls.key
+nats consumer info CORDUM_JOBS cordum-scheduler --server tls://localhost:4222 --tlsca ./certs/ca/ca.crt --tlscert ./certs/client/tls.crt --tlskey ./certs/client/tls.key
 ```
 
 **Fix**: If a consumer is stuck, delete and let the scheduler recreate it:
 ```bash
-nats consumer rm CORDUM_JOBS cordum-scheduler --server nats://localhost:4222
+nats consumer rm CORDUM_JOBS cordum-scheduler --server tls://localhost:4222 --tlsca ./certs/ca/ca.crt --tlscert ./certs/client/tls.crt --tlskey ./certs/client/tls.key
 # Restart the scheduler
 ```
 
@@ -791,8 +798,9 @@ nats consumer rm CORDUM_JOBS cordum-scheduler --server nats://localhost:4222
 # Gateway HTTP health
 curl --cacert ./certs/ca/ca.crt https://localhost:8081/health
 
-# Gateway gRPC health
-grpcurl -plaintext localhost:50051 grpc.health.v1.Health/Check
+# Safety Kernel gRPC health (TLS in Compose; grpcurl needs
+# CORDUM_GRPC_REFLECTION=1 on the kernel)
+grpcurl -cacert ./certs/ca/ca.crt localhost:50051 grpc.health.v1.Health/Check
 
 # System health (authenticated)
 curl --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
@@ -815,29 +823,29 @@ curl -s --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-
 
 ```bash
 # Check config cache
-redis-cli GET cfg:system:default
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET cfg:system:default
 
 # Check job state directly
-redis-cli HGETALL job:JOB_ID
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" HGETALL job:JOB_ID
 
 # Check Redis memory
-redis-cli INFO memory | grep used_memory_human
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" INFO memory | grep used_memory_human
 
 # List all job keys
-redis-cli --scan --pattern "job:*" | wc -l
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" --scan --pattern "job:*" | wc -l
 ```
 
 ### NATS inspection
 
 ```bash
 # List streams
-nats stream list --server nats://localhost:4222
+nats stream list --server tls://localhost:4222 --tlsca ./certs/ca/ca.crt --tlscert ./certs/client/tls.crt --tlskey ./certs/client/tls.key
 
 # Check stream info
-nats stream info CORDUM_JOBS --server nats://localhost:4222
+nats stream info CORDUM_JOBS --server tls://localhost:4222 --tlsca ./certs/ca/ca.crt --tlscert ./certs/client/tls.crt --tlskey ./certs/client/tls.key
 
 # Monitor messages in real-time
-nats sub "sys.>" --server nats://localhost:4222
+nats sub "sys.>" --server tls://localhost:4222 --tlsca ./certs/ca/ca.crt --tlscert ./certs/client/tls.crt --tlskey ./certs/client/tls.key
 ```
 
 ### Metrics
@@ -911,13 +919,13 @@ All Cordum services shut down gracefully within **15 seconds** when receiving SI
 **Diagnostic**:
 ```bash
 # Check if job lock exists
-redis-cli GET "cordum:scheduler:job:JOB_ID"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "cordum:scheduler:job:JOB_ID"
 
 # Check reconciler lock (should be held by one replica)
-redis-cli GET "cordum:reconciler:default"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "cordum:reconciler:default"
 
 # Check pending replayer lock
-redis-cli GET "cordum:replayer:pending"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "cordum:replayer:pending"
 ```
 
 **Fix**: Verify all scheduler replicas connect to the same Redis. The job lock TTL is 60s with renewal at 20s intervals — if jobs take longer than 60s without renewal, increase the timeout or investigate Redis latency.
@@ -931,7 +939,7 @@ redis-cli GET "cordum:replayer:pending"
 **Diagnostic**:
 ```bash
 # Check rate limit keys in Redis
-redis-cli KEYS "cordum:rl:*"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" KEYS "cordum:rl:*"
 # Should show keys like cordum:rl:default:1708444800
 
 # Check gateway env
@@ -949,16 +957,16 @@ docker compose exec api-gateway env | grep REDIS_RATE_LIMIT
 **Diagnostic**:
 ```bash
 # Check snapshot writer lock
-redis-cli GET "cordum:scheduler:snapshot:writer"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "cordum:scheduler:snapshot:writer"
 
 # Check snapshot freshness
-redis-cli OBJECT IDLETIME "sys:workers:snapshot"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" OBJECT IDLETIME "sys:workers:snapshot"
 # Idle time > 15s indicates the writer may be stalled
 ```
 
 **Fix**: The snapshot writer runs every 5s with a 10s lock TTL. If a replica crashes, the lock expires and another takes over within ~15s. If the lock appears stuck, delete it:
 ```bash
-redis-cli DEL "cordum:scheduler:snapshot:writer"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" DEL "cordum:scheduler:snapshot:writer"
 ```
 
 ### Config drift between replicas
@@ -987,17 +995,18 @@ docker compose restart scheduler
 **Diagnostic**:
 ```bash
 # Check circuit breaker state
-redis-cli GET "cordum:cb:safety:failures"
-redis-cli GET "cordum:cb:safety:output:failures"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "cordum:cb:safety:failures"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "cordum:cb:safety:output:failures"
 
-# Check safety kernel health
-grpcurl -plaintext safety-kernel:50051 grpc.health.v1.Health/Check
+# Check safety kernel health (gRPC over TLS in Compose; grpcurl needs
+# CORDUM_GRPC_REFLECTION=1 on the kernel)
+grpcurl -cacert ./certs/ca/ca.crt localhost:50051 grpc.health.v1.Health/Check
 ```
 
 **Fix**: The circuit breaker enters half-open state after 30s and allows probe requests. If the safety kernel is healthy, the circuit closes after 2 successful probes. To force-reset:
 ```bash
-redis-cli DEL "cordum:cb:safety:failures"
-redis-cli DEL "cordum:cb:safety:output:failures"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" DEL "cordum:cb:safety:failures"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" DEL "cordum:cb:safety:output:failures"
 ```
 
 ### Safety decision cache staleness
@@ -1019,10 +1028,10 @@ redis-cli DEL "cordum:cb:safety:output:failures"
 **Diagnostic**:
 ```bash
 # Check run lock
-redis-cli GET "cordum:wf:run:lock:RUN_ID"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "cordum:wf:run:lock:RUN_ID"
 
 # Check workflow reconciler lock
-redis-cli GET "cordum:workflow-engine:reconciler:default"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "cordum:workflow-engine:reconciler:default"
 ```
 
 **Fix**: Verify workflow engine replicas connect to the same Redis. The per-run lock has a 30s TTL with 10s renewal. If Redis is unreachable, the engine falls back to local-only locking (safe for single-replica but not cross-replica).
@@ -1036,15 +1045,15 @@ redis-cli GET "cordum:workflow-engine:reconciler:default"
 **Diagnostic**:
 ```bash
 # Check durable delay timers in Redis
-redis-cli ZRANGE "cordum:wf:delay:timers" 0 -1 WITHSCORES
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" ZRANGE "cordum:wf:delay:timers" 0 -1 WITHSCORES
 
 # Check delay poller lock
-redis-cli GET "cordum:wf:delay:poller"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "cordum:wf:delay:poller"
 ```
 
 **Fix**: Delays ≥10s are persisted to Redis sorted set. The delay poller runs every 5s and fires past-due timers. On restart, `recoverDelayTimers` fires all past-due entries immediately. If the poller lock is stuck, delete it:
 ```bash
-redis-cli DEL "cordum:wf:delay:poller"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" DEL "cordum:wf:delay:poller"
 ```
 
 ---
@@ -1063,10 +1072,10 @@ redis-cli DEL "cordum:wf:delay:poller"
 **Diagnostic commands**:
 ```bash
 # Count pending messages in the CORDUM_SYS stream
-nats stream info CORDUM_SYS
+nats stream info CORDUM_SYS --server tls://localhost:4222 --tlsca ./certs/ca/ca.crt --tlscert ./certs/client/tls.crt --tlskey ./certs/client/tls.key
 
 # List consumers and their pending counts
-nats consumer ls CORDUM_SYS
+nats consumer ls CORDUM_SYS --server tls://localhost:4222 --tlsca ./certs/ca/ca.crt --tlscert ./certs/client/tls.crt --tlskey ./certs/client/tls.key
 
 # Check for specific orphan run IDs in gateway logs
 grep "discarding stale job result" /var/log/cordum/gateway.log
@@ -1082,7 +1091,7 @@ grep "discarding stale job result" /var/log/cordum/gateway.log
 **Manual purge** (if queue has pre-fix stale data):
 ```bash
 # Purge all stale sys.job messages (safe — active results will be re-published by workers)
-nats stream purge CORDUM_SYS --subject "sys.job.>" --force
+nats stream purge CORDUM_SYS --subject "sys.job.>" --force --server tls://localhost:4222 --tlsca ./certs/ca/ca.crt --tlscert ./certs/client/tls.crt --tlskey ./certs/client/tls.key
 ```
 
 **JetStream consumer bounds** (env vars in `core/infra/bus/nats.go`):

@@ -12,7 +12,7 @@ Compose mounts these files from `config/`:
 - `config/pools.yaml` - topic -> pool routing
 - `config/timeouts.yaml` - per-topic and per-workflow timeouts
 - `config/safety.yaml` - safety kernel policy
-- `config/nats.conf` - NATS server config (JetStream `sync_interval`)
+- `config/nats.dev-tls.conf` (mounted as `/etc/nats/nats.conf`) - NATS server config (JetStream `sync_interval`, TLS with client certificates)
 
 `config/system.yaml` is a sample payload for the config service (budgets, rate limits, observability, alerting). It is not mounted by default; use `POST /api/v1/config` to store it.
 
@@ -142,7 +142,7 @@ User management endpoints (admin only):
 JetStream fsync cadence is controlled by `sync_interval` in the NATS server
 config. Lower values improve crash durability at the cost of throughput.
 
-- Compose: edit `config/nats.conf`.
+- Compose: edit `config/nats.dev-tls.conf` (mounted as `/etc/nats/nats.conf`).
 - K8s base: edit the `cordum-nats-config` ConfigMap in `deploy/k8s/base.yaml`.
 - Production overlay: edit the `cordum-nats-config` ConfigMap in `deploy/k8s/production/nats.yaml`.
 - Helm: set `nats.jetstream.syncInterval` in `cordum-helm/values.yaml` (or `--set nats.jetstream.syncInterval=1s`).

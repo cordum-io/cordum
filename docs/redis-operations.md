@@ -357,8 +357,10 @@ This procedure migrates from the single-node `base.yaml` Redis Deployment to the
 
 1. **Export data from single-node Redis** (optional if starting fresh):
    ```bash
-   kubectl exec -it redis-0 -n cordum -- redis-cli BGSAVE
-   kubectl cp cordum/redis-0:/data/dump.rdb ./dump.rdb
+   # Base manifests (deploy/k8s/base.yaml): a single-pod Deployment, no TLS, password required
+   REDIS_POD=$(kubectl get pod -n cordum -l app=redis -o jsonpath='{.items[0].metadata.name}')
+   kubectl exec -n cordum "$REDIS_POD" -- sh -c 'redis-cli -a "$REDIS_PASSWORD" BGSAVE'
+   kubectl cp "cordum/$REDIS_POD:/data/dump.rdb" ./dump.rdb
    ```
 
 2. **Scale down all Cordum services** to prevent writes during migration:
@@ -378,9 +380,8 @@ This procedure migrates from the single-node `base.yaml` Redis Deployment to the
 
 5. **Verify cluster health**:
    ```bash
-   kubectl exec -it cordum-redis-0 -n cordum -- redis-cli --tls \
-     --cacert /etc/redis/tls/ca.crt --cert /etc/redis/tls/tls.crt --key /etc/redis/tls/tls.key \
-     CLUSTER INFO
+   kubectl exec -n cordum cordum-redis-0 -c redis -- \
+     sh -c 'redis-cli --tls --cacert /etc/redis/tls/ca.crt --cert /etc/redis/tls/tls.crt --key /etc/redis/tls/tls.key -a "$REDIS_PASSWORD" CLUSTER INFO'
    # Expect: cluster_state:ok, cluster_slots_ok:16384, cluster_known_nodes:6
    ```
 

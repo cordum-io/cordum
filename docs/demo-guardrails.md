@@ -29,10 +29,22 @@ docker compose up -d
 
 ## 2) Start the demo worker
 
+The default stack runs Redis and NATS **TLS-only**, so a manual worker run
+must use the `rediss://` / `tls://` schemes and point at the auto-generated
+CA (and client cert/key) via the `*_TLS_*` env vars the worker reads:
+
 ```bash
 cd examples/demo-guardrails/worker
-REDIS_URL=${REDIS_URL:-redis://:${REDIS_PASSWORD}@localhost:6379} \
-NATS_URL=${NATS_URL:-nats://localhost:4222} \
+REDIS_URL=${REDIS_URL:-rediss://:${REDIS_PASSWORD}@localhost:6379} \
+REDIS_TLS_CA=../../../certs/ca/ca.crt \
+REDIS_TLS_CERT=../../../certs/client/tls.crt \
+REDIS_TLS_KEY=../../../certs/client/tls.key \
+REDIS_TLS_SERVER_NAME=redis \
+NATS_URL=${NATS_URL:-tls://localhost:4222} \
+NATS_TLS_CA=../../../certs/ca/ca.crt \
+NATS_TLS_CERT=../../../certs/client/tls.crt \
+NATS_TLS_KEY=../../../certs/client/tls.key \
+NATS_TLS_SERVER_NAME=nats \
 go run .
 ```
 

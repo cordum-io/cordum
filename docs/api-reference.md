@@ -2551,7 +2551,7 @@ curl -sS --cacert ./certs/ca/ca.crt https://localhost:8081/api/v1/marketplace/pa
   "nats": {
     "connected": true,
     "status": "CONNECTED",
-    "url": "nats://nats:4222"
+    "url": "tls://nats:4222"
   },
   "redis": {
     "ok": true,

@@ -16,7 +16,7 @@ Prereqs: Docker + Docker Compose. The smoke test script requires `curl` and `jq`
 | Service | Dockerfile | Ports | Health Endpoint | Depends On |
 |---------|-----------|-------|-----------------|------------|
 | `nats` | *(image: nats:2.10-alpine)* | 4222 | `nc -z localhost 4222` | — |
-| `redis` | *(image: redis:7-alpine)* | 6379 | `redis-cli ping` | — |
+| `redis` | *(image: redis:7-alpine)* | 6379 | `redis-cli ping` (TLS) | — |
 | `context-engine` | `Dockerfile` (SERVICE=cordum-context-engine) | 50070 (gRPC) | `nc -z localhost 50070` | redis |
 | `safety-kernel` | `Dockerfile` (SERVICE=cordum-safety-kernel) | 50051 (gRPC) | `nc -z localhost 50051` | nats |
 | `scheduler` | `Dockerfile` (SERVICE=cordum-scheduler) | 9090 (metrics) | `GET /metrics` on :9090 | nats, redis, safety-kernel |
@@ -87,7 +87,7 @@ bash ./tools/scripts/platform_smoke.sh
 
 | Host Path | Container Path | Service | Purpose |
 |-----------|---------------|---------|---------|
-| `config/nats.conf` | `/etc/nats/nats.conf` | nats | NATS server config (JetStream, auth, `sync_interval`) |
+| `config/nats.dev-tls.conf` | `/etc/nats/nats.conf` | nats | NATS server config (JetStream, `sync_interval`, TLS that requires client certificates) |
 | `config/safety.yaml` | `/etc/cordum/safety.yaml` | safety-kernel | Safety policy rules |
 | `config/pools.yaml` | `/etc/cordum/pools.yaml` | scheduler | Worker pool→topic mapping |
 | `config/timeouts.yaml` | `/etc/cordum/timeouts.yaml` | scheduler | Job timeout configuration |
@@ -98,7 +98,7 @@ All config mounts are `:ro` (read-only).
 
 ```bash
 # Back up Redis data
-docker compose exec redis redis-cli -a "${REDIS_PASSWORD}" BGSAVE
+docker compose exec redis redis-cli --tls --cacert /etc/cordum/tls/ca/ca.crt -a "${REDIS_PASSWORD}" BGSAVE
 docker cp "$(docker compose ps -q redis)":/data/dump.rdb ./backup/
 
 # Back up NATS JetStream
@@ -186,7 +186,7 @@ healthcheck:
 | Service | Command | What It Checks |
 |---------|---------|---------------|
 | nats | `nc -z localhost 4222` | TCP port open |
-| redis | `redis-cli -a <password> ping` | Redis responds to PING |
+| redis | `redis-cli --tls --cacert <ca> -a <pass> ping` | Redis responds to PING over TLS |
 | context-engine | `nc -z localhost 50070` | gRPC port open |
 | safety-kernel | `nc -z localhost 50051` | gRPC port open |
 | scheduler | `wget --spider -q http://127.0.0.1:9090/metrics` | Prometheus metrics endpoint |
@@ -232,7 +232,7 @@ healthcheck:
 #### NATS
 | Variable | Default | Description |
 |----------|---------|-------------|
-| *(configured via nats.conf)* | — | JetStream settings, auth, sync_interval |
+| *(configured via `config/nats.dev-tls.conf`, mounted as `/etc/nats/nats.conf`)* | — | JetStream, sync_interval, and TLS that requires a client certificate (`verify: true`) |
 
 #### Redis
 | Variable | Default | Description |
@@ -241,15 +241,17 @@ healthcheck:
 
 ### Control Plane Services
 
+Compose connects every service to NATS and Redis over TLS. Next to the `tls://` and `rediss://` URLs below, it sets `NATS_TLS_CA`, `NATS_TLS_CERT`, `NATS_TLS_KEY`, `NATS_TLS_SERVER_NAME` and the matching `REDIS_TLS_*` variables to the `./certs` files mounted at `/etc/cordum/tls`.
+
 #### API Gateway
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_API_KEY` | *(required)* | Primary API key for authentication |
 | `CORDUM_API_KEYS` | — | Comma-separated or JSON array of multiple keys |
 | `CORDUM_API_KEYS_PATH` | — | File path for hot-reloadable API keys |
-| `NATS_URL` | `nats://nats:4222` | NATS connection URL |
+| `NATS_URL` | `tls://nats:4222` | NATS connection URL |
 | `NATS_USE_JETSTREAM` | `1` | Enable JetStream for durable messaging |
-| `REDIS_URL` | `redis://:$REDIS_PASSWORD@redis:6379` | Redis connection URL |
+| `REDIS_URL` | `rediss://:$REDIS_PASSWORD@redis:6379` | Redis connection URL |
 | `SAFETY_KERNEL_ADDR` | `safety-kernel:50051` | gRPC address of safety kernel |
 | `TENANT_ID` | `default` | Default tenant ID |
 | `API_RATE_LIMIT_RPS` | `30` | Authenticated per-tenant requests/sec limit |
@@ -271,9 +273,9 @@ healthcheck:
 #### Scheduler
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NATS_URL` | `nats://nats:4222` | NATS connection URL |
+| `NATS_URL` | `tls://nats:4222` | NATS connection URL |
 | `NATS_USE_JETSTREAM` | `1` | Enable JetStream |
-| `REDIS_URL` | `redis://:$REDIS_PASSWORD@redis:6379` | Redis connection URL |
+| `REDIS_URL` | `rediss://:$REDIS_PASSWORD@redis:6379` | Redis connection URL |
 | `SAFETY_KERNEL_ADDR` | `safety-kernel:50051` | gRPC address of safety kernel |
 | `POOL_CONFIG_PATH` | `/etc/cordum/pools.yaml` | Worker pool configuration |
 | `TIMEOUT_CONFIG_PATH` | `/etc/cordum/timeouts.yaml` | Job timeout configuration. In production (`CORDUM_ENV=production`), load/parse failures are fatal. |
@@ -283,17 +285,17 @@ healthcheck:
 #### Safety Kernel
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NATS_URL` | `nats://nats:4222` | NATS connection URL |
-| `REDIS_URL` | `redis://:$REDIS_PASSWORD@redis:6379` | Redis connection URL |
+| `NATS_URL` | `tls://nats:4222` | NATS connection URL |
+| `REDIS_URL` | `rediss://:$REDIS_PASSWORD@redis:6379` | Redis connection URL |
 | `SAFETY_KERNEL_ADDR` | `:50051` | Listen address for gRPC |
 | `SAFETY_POLICY_PATH` | `/etc/cordum/safety.yaml` | Safety policy file path |
 
 #### Workflow Engine
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NATS_URL` | `nats://nats:4222` | NATS connection URL |
+| `NATS_URL` | `tls://nats:4222` | NATS connection URL |
 | `NATS_USE_JETSTREAM` | `1` | Enable JetStream |
-| `REDIS_URL` | `redis://:$REDIS_PASSWORD@redis:6379` | Redis connection URL |
+| `REDIS_URL` | `rediss://:$REDIS_PASSWORD@redis:6379` | Redis connection URL |
 | `WORKFLOW_ENGINE_HTTP_ADDR` | `:9093` | HTTP listen address |
 | `WORKFLOW_ENGINE_SCAN_INTERVAL` | `5s` | How often to scan for pending runs |
 | `WORKFLOW_ENGINE_RUN_SCAN_LIMIT` | `200` | Max runs to process per scan |
@@ -301,7 +303,7 @@ healthcheck:
 #### Context Engine
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `REDIS_URL` | `redis://:$REDIS_PASSWORD@redis:6379` | Redis connection URL |
+| `REDIS_URL` | `rediss://:$REDIS_PASSWORD@redis:6379` | Redis connection URL |
 | `CONTEXT_ENGINE_ADDR` | `:50070` | Listen address for gRPC |
 
 #### Dashboard
@@ -375,7 +377,7 @@ echo "node_modules" >> dashboard/.dockerignore
 
 **Fix**: Prefix commands with `MSYS_NO_PATHCONV=1`:
 ```bash
-MSYS_NO_PATHCONV=1 docker exec cordum-redis-1 redis-cli -a "$REDIS_PASSWORD" ping
+MSYS_NO_PATHCONV=1 docker exec cordum-redis-1 redis-cli --tls --cacert /etc/cordum/tls/ca/ca.crt -a "$REDIS_PASSWORD" ping
 ```
 
 ### Port Conflicts
@@ -408,7 +410,7 @@ docker compose logs redis
 
 **Fix**: Delete the cached key and restart:
 ```bash
-docker compose exec redis redis-cli -a "$REDIS_PASSWORD" DEL cfg:system:default
+docker compose exec redis redis-cli --tls --cacert /etc/cordum/tls/ca/ca.crt -a "$REDIS_PASSWORD" DEL cfg:system:default
 docker compose restart scheduler
 ```
 
@@ -426,12 +428,11 @@ docker compose up -d
 
 **Symptom**: Scheduler or gateway logs show `jetstream not enabled`.
 
-**Fix**: Verify `config/nats.conf` has JetStream enabled:
+**Fix**: Verify `config/nats.dev-tls.conf` (mounted as `/etc/nats/nats.conf`) has JetStream enabled:
 ```
 jetstream {
-  store_dir: /data
-  max_mem: 256MB
-  max_file: 1GB
+  store_dir: /data/jetstream
+  sync_interval: "1s"
 }
 ```
 
@@ -477,7 +478,27 @@ The Go services don't support hot reload inside Docker. For rapid iteration:
 
 1. Run infrastructure in Docker: `docker compose up -d nats redis`
 2. Run Go services locally with `go run ./cmd/cordum-api-gateway`
-3. Point local services at Docker infra: `NATS_URL=nats://localhost:4222 REDIS_URL=redis://:$REDIS_PASSWORD@localhost:6379`
+3. Point local services at Docker infra. Compose runs NATS and Redis TLS-only
+   with the certificates in `./certs/`, and every `docker compose` command
+   needs `CORDUM_API_KEY` and `REDIS_PASSWORD` set
+   (`./tools/scripts/quickstart.sh` creates the certificates and writes both
+   to `.env`; `cordumctl generate-certs` creates only the certificates). NATS
+   requires a client certificate (`verify: true`); Redis checks only the password
+   (`--tls-auth-clients no`), so it needs just the CA and the same
+   `REDIS_PASSWORD` in your shell (for example `source .env`):
+
+   ```bash
+   NATS_URL=tls://localhost:4222 \
+   NATS_TLS_CA=./certs/ca/ca.crt \
+   NATS_TLS_CERT=./certs/client/tls.crt \
+   NATS_TLS_KEY=./certs/client/tls.key \
+   REDIS_URL=rediss://:$REDIS_PASSWORD@localhost:6379 \
+   REDIS_TLS_CA=./certs/ca/ca.crt \
+   go run ./cmd/cordum-api-gateway
+   ```
+
+   The services apply the `*_TLS_*` variables only to `tls://` and `rediss://`
+   URLs, and the server certificate covers `localhost`.
 
 For the dashboard, run `npm run dev` in `dashboard/` and configure `VITE_API_URL=https://localhost:8081/api/v1` (the gateway HTTP API listens on `8081` over TLS; `8080` is the internal gRPC port, host-mapped to `9080`).
 
@@ -609,9 +630,9 @@ Compose mounts:
 - `config/pools.yaml`
 - `config/timeouts.yaml`
 - `config/safety.yaml`
-- `config/nats.conf` (NATS server config; tune `sync_interval` for JetStream durability)
+- `config/nats.dev-tls.conf` as `/etc/nats/nats.conf` (NATS server config; tune `sync_interval` for JetStream durability)
 
-To adjust JetStream durability for local/dev, edit `config/nats.conf` and set
+To adjust JetStream durability for local/dev, edit `config/nats.dev-tls.conf` and set
 `sync_interval` (lower values improve crash durability at the cost of throughput).
 
 If you install policy bundles via packs, the safety kernel must have `REDIS_URL`

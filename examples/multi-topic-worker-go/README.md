@@ -55,10 +55,12 @@ REDIS_URL=redis://:cordum-dev@127.0.0.1:6379/0 \
   ./bin/multi-topic-worker
 ```
 
-For the TLS-enabled stack started by `make dev-up`, set the same
-`NATS_TLS_*` / `REDIS_TLS_*` envs that `examples/hello-worker-go` uses
-(`tls://nats:4222`, `rediss://:${REDIS_PASSWORD}@redis:6379`, plus the cert
-paths under `/etc/cordum/tls`).
+The compose stack (`make dev-up`, quickstart) is TLS-only, so set the same
+`NATS_TLS_*` / `REDIS_TLS_*` envs that `examples/hello-worker-go` uses. From
+the repo root that is `tls://localhost:4222`,
+`rediss://:${REDIS_PASSWORD}@localhost:6379` and the cert paths under
+`./certs/`; inside the compose network use `tls://nats:4222`,
+`rediss://:${REDIS_PASSWORD}@redis:6379` and `/etc/cordum/tls`.
 
 ## Submitting jobs
 

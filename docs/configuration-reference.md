@@ -37,7 +37,7 @@ Cordum uses three configuration layers:
 | `config/safety.yaml` | Safety kernel input/output rules, MCP allow/deny lists | Yes (JSON Schema) |
 | `config/output_scanners.yaml` | Output content scanner regex patterns (secret, PII, injection) | No |
 | `config/system.yaml` | System-wide config (budgets, rate limits, models, SLOs) — stored via config service | No |
-| `config/nats.conf` | NATS server config (JetStream `sync_interval`) | N/A |
+| `config/nats.dev-tls.conf` | NATS server config that Compose mounts as `/etc/nats/nats.conf` (JetStream `sync_interval`, TLS with client certificates). `config/nats.conf` is a no-TLS variant for local runs; `docker-compose.release.yml` uses `config/nats.release.conf` | N/A |
 
 The control plane validates pools, timeouts, and safety files against embedded JSON schemas in `core/infra/config/schema/`. Invalid configs return errors; for timeouts, the system falls back to defaults.
 
@@ -306,8 +306,8 @@ Config changes propagate to all replicas through two mechanisms:
 To force a config reload from files:
 
 ```bash
-# Delete the Redis config key
-redis-cli DEL cfg:system:default
+# Delete the Redis config key (Compose stack: TLS-only Redis with a password)
+docker compose exec redis redis-cli --tls --cacert /etc/cordum/tls/ca/ca.crt -a "$REDIS_PASSWORD" DEL cfg:system:default
 
 # The next scheduler tick (or restart) will re-bootstrap from files
 ```

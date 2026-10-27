@@ -443,7 +443,10 @@ For custom workers or sidecar processes:
 ```go
 import "github.com/cordum/cordum/sdk/runtime"
 
-nc, _ := nats.Connect("nats://localhost:4222")
+// The default stack's NATS is TLS-only with client certificates;
+// NATSTLSConfigFromEnv reads NATS_TLS_CA, NATS_TLS_CERT and NATS_TLS_KEY.
+tlsCfg, _ := runtime.NATSTLSConfigFromEnv()
+nc, _ := nats.Connect("tls://localhost:4222", nats.Secure(tlsCfg))
 
 // Build heartbeat payload
 payload, _ := runtime.HeartbeatPayload(

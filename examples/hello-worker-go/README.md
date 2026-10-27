@@ -9,12 +9,16 @@ Redis, and writes an echo result back to Redis.
 | --- | --- | --- |
 | `NATS_URL` | `nats://localhost:4222` | `tls://localhost:4222` |
 | `REDIS_URL` | `redis://:cordum-dev@localhost:6379/0` | `rediss://:${REDIS_PASSWORD}@localhost:6379/0` |
-| `NATS_TLS_CA` | unset | `./certs/ca/ca.crt` |
-| `NATS_TLS_CERT` | unset | `./certs/client/tls.crt` |
-| `NATS_TLS_KEY` | unset | `./certs/client/tls.key` |
-| `REDIS_TLS_CA` | unset | `./certs/ca/ca.crt` |
-| `REDIS_TLS_CERT` | unset | `./certs/client/tls.crt` |
-| `REDIS_TLS_KEY` | unset | `./certs/client/tls.key` |
+| `NATS_TLS_CA` | unset | `../../certs/ca/ca.crt` |
+| `NATS_TLS_CERT` | unset | `../../certs/client/tls.crt` |
+| `NATS_TLS_KEY` | unset | `../../certs/client/tls.key` |
+| `REDIS_TLS_CA` | unset | `../../certs/ca/ca.crt` |
+| `REDIS_TLS_CERT` | unset | `../../certs/client/tls.crt` |
+| `REDIS_TLS_KEY` | unset | `../../certs/client/tls.key` |
+
+The default Cordum compose stack is TLS-only, so it needs the TLS column; the
+plaintext column is for a NATS and Redis you run without TLS. Paths are
+relative to this directory, where `go run .` runs.
 
 ```bash
 export NATS_URL=${NATS_URL:-nats://localhost:4222}
@@ -32,19 +36,19 @@ docker run --rm \
   cordum-hello-worker-go
 ```
 
-When running against the prod-like Cordum compose stack, keep the TLS posture
-and use the same environment names as core services:
+When running against the Cordum compose stack (TLS-only), use the same
+environment names as core services. From this directory:
 
 ```bash
 export NATS_URL=tls://localhost:4222
-export NATS_TLS_CA=./certs/ca/ca.crt
-export NATS_TLS_CERT=./certs/client/tls.crt
-export NATS_TLS_KEY=./certs/client/tls.key
+export NATS_TLS_CA=../../certs/ca/ca.crt
+export NATS_TLS_CERT=../../certs/client/tls.crt
+export NATS_TLS_KEY=../../certs/client/tls.key
 
-export REDIS_URL=rediss://:${REDIS_PASSWORD:-cordum-dev}@localhost:6379/0
-export REDIS_TLS_CA=./certs/ca/ca.crt
-export REDIS_TLS_CERT=./certs/client/tls.crt
-export REDIS_TLS_KEY=./certs/client/tls.key
+export REDIS_URL=rediss://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@localhost:6379/0
+export REDIS_TLS_CA=../../certs/ca/ca.crt
+export REDIS_TLS_CERT=../../certs/client/tls.crt
+export REDIS_TLS_KEY=../../certs/client/tls.key
 go run .
 ```
 

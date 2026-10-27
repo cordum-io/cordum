@@ -225,7 +225,7 @@ docker compose logs -f api-gateway
 | TLS/SSL cert errors | Remove `./certs/` and re-run — certs auto-regenerate |
 | `openssl` not found | Not needed — quickstart.sh auto-generates keys without it |
 | Go build fails | Requires Go 1.26.3+ — check with `go version` |
-| Stale config after changes | `redis-cli DEL cfg:system:default` then restart |
+| Stale config after changes | `docker compose exec redis redis-cli --tls --cacert /etc/cordum/tls/ca/ca.crt -a "$REDIS_PASSWORD" DEL cfg:system:default` then restart |
 
 For detailed troubleshooting, see [docs/troubleshooting.md](docs/troubleshooting.md).
 
