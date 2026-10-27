@@ -385,6 +385,9 @@ spec:
             drop: ["ALL"]
         command: ["redis-server"]
         args: ["--appendonly", "yes", "--requirepass", "$(REDIS_PASSWORD)"]
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
         env:
         - name: REDIS_PASSWORD
           valueFrom:
@@ -408,6 +411,11 @@ spec:
           limits:
             cpu: 500m
             memory: 512Mi
+      volumes:
+      # readOnlyRootFilesystem leaves no writable /data for --appendonly;
+      # base has no PVC, so AOF data lives as long as the pod.
+      - name: redis-data
+        emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
