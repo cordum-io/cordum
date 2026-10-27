@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import type { z } from "zod";
 import type { Node } from "reactflow";
 import { X, ChevronDown, ChevronRight, Trash2 } from "lucide-react";
 import { Input } from "../../ui/Input";
@@ -89,7 +90,7 @@ export function PackActionConfig({ node, onSave, onClose, onDelete }: PackAction
     watch,
     setValue,
     formState: { errors, isDirty },
-  } = useForm<PackActionFormValues>({
+  } = useForm<z.input<typeof packActionSchema>, unknown, PackActionFormValues>({
     resolver: zodResolver(packActionSchema),
     defaultValues: nodeToDefaults(node.data),
   });

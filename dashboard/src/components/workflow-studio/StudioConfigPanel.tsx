@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useFieldArray, useForm, type Resolver } from "react-hook-form";
+import { useFieldArray, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import type { Node } from "reactflow";
@@ -14,7 +14,7 @@ import {
   schemaForType,
   unifiedNodeToDefaults,
   formToUnifiedNodeData,
-  type SwitchCaseFormValue,
+  type AnySchema,
 } from "./configSchemas";
 import { AgentTaskConfig } from "./config/AgentTaskConfig";
 import { PackActionConfig } from "./config/PackActionConfig";
@@ -94,22 +94,23 @@ function GenericConfigForm({
     reset,
     watch,
     control,
+    getFieldState,
     formState: { errors, isDirty },
-  } = useForm({
-    resolver: zodResolver(schema as z.ZodTypeAny) as Resolver<Record<string, unknown>>,
-    defaultValues: unifiedNodeToDefaults(node.data) as Record<string, unknown>,
+  } = useForm<z.input<AnySchema>, unknown, z.output<AnySchema>>({
+    resolver: zodResolver<z.input<AnySchema>, unknown, z.output<AnySchema>>(schema),
+    defaultValues: unifiedNodeToDefaults(node.data),
   });
 
   const { fields: switchCaseFields, append: appendSwitchCase, remove: removeSwitchCase } = useFieldArray({
     control,
-    name: "switchCases" as never,
+    name: "switchCases",
   });
 
   useEffect(() => {
-    reset(unifiedNodeToDefaults(node.data) as Record<string, unknown>);
+    reset(unifiedNodeToDefaults(node.data));
   }, [node.id, reset, node.data]);
 
-  const onSubmit = (values: Record<string, unknown>) => {
+  const onSubmit = (values: z.output<AnySchema>) => {
     onSave(node.id, formToUnifiedNodeData(nodeType, values));
   };
 
@@ -138,7 +139,7 @@ function GenericConfigForm({
       </div>
 
       <form onSubmit={handleSubmit(onSubmit)} className="flex flex-1 flex-col gap-4 p-4">
-        <Field label="Name" error={errors.label?.message as string | undefined}>
+        <Field label="Name" error={errors.label?.message}>
           <Input {...register("label")} placeholder="Step name" />
         </Field>
 
@@ -154,20 +155,20 @@ function GenericConfigForm({
         )}
 
         {nodeType === "delay" && (
-          <Field label="Duration" error={errors.duration?.message as string | undefined}>
+          <Field label="Duration" error={getFieldState("duration").error?.message}>
             <Input {...register("duration")} placeholder="5m" />
           </Field>
         )}
 
         {nodeType === "condition" && (
-          <Field label="Expression" error={errors.expression?.message as string | undefined}>
+          <Field label="Expression" error={getFieldState("expression").error?.message}>
             <Textarea {...register("expression")} placeholder="result.status == 'ok'" rows={3} />
           </Field>
         )}
 
         {nodeType === "notify" && (
           <>
-            <Field label="Channel" error={errors.channel?.message as string | undefined}>
+            <Field label="Channel" error={getFieldState("channel").error?.message}>
               <Input {...register("channel")} placeholder="slack, email" />
             </Field>
             <Field label="Message Template">
@@ -189,7 +190,7 @@ function GenericConfigForm({
 
         {nodeType === "parallel" && (
           <>
-            <Field label="Child Steps" error={errors.parallelSteps?.message as string | undefined} hint="Ctrl/Cmd-click for multi-select">
+            <Field label="Child Steps" error={getFieldState("parallelSteps").error?.message} hint="Ctrl/Cmd-click for multi-select">
               <select
                 {...register("parallelSteps")}
                 multiple
@@ -221,7 +222,7 @@ function GenericConfigForm({
 
         {nodeType === "http" && (
           <>
-            <Field label="Method" error={errors.method?.message as string | undefined}>
+            <Field label="Method" error={getFieldState("method").error?.message}>
               <Select {...register("method")}>
                 <option value="GET">GET</option>
                 <option value="POST">POST</option>
@@ -229,7 +230,7 @@ function GenericConfigForm({
                 <option value="DELETE">DELETE</option>
               </Select>
             </Field>
-            <Field label="URL" error={errors.url?.message as string | undefined}>
+            <Field label="URL" error={getFieldState("url").error?.message}>
               <Input {...register("url")} placeholder="https://api.example.com/endpoint" />
             </Field>
             <Field label="Headers" hint="JSON">
@@ -246,7 +247,7 @@ function GenericConfigForm({
 
         {nodeType === "transform" && (
           <>
-            <Field label="Expression" error={errors.expression?.message as string | undefined}>
+            <Field label="Expression" error={getFieldState("expression").error?.message}>
               <Textarea {...register("expression")} placeholder="result.data.map(item => item.name)" rows={4} />
             </Field>
             <Field label="Input Mapping">
@@ -266,7 +267,7 @@ function GenericConfigForm({
             <div className="space-y-2 rounded-xl border border-border p-3">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-semibold text-ink">Cases</p>
-                <Button type="button" variant="ghost" size="sm" onClick={() => appendSwitchCase({ matchValue: "", stepId: "" } as SwitchCaseFormValue)}>
+                <Button type="button" variant="ghost" size="sm" onClick={() => appendSwitchCase({ matchValue: "", stepId: "" })}>
                   Add Case
                 </Button>
               </div>
@@ -304,7 +305,7 @@ function GenericConfigForm({
 
         {nodeType === "loop" && (
           <>
-            <Field label="Body Step" error={errors.bodyStep?.message as string | undefined} hint="Step executed each iteration">
+            <Field label="Body Step" error={getFieldState("bodyStep").error?.message} hint="Step executed each iteration">
               <Select {...register("bodyStep")}>
                 <option value="">Select body step</option>
                 {availableSteps.map((c) => (
@@ -329,7 +330,7 @@ function GenericConfigForm({
 
         {nodeType === "sub-workflow" && (
           <>
-            <Field label="Workflow ID" error={errors.workflowId?.message as string | undefined}>
+            <Field label="Workflow ID" error={getFieldState("workflowId").error?.message}>
               <Select {...register("workflowId")}>
                 <option value="">Select workflow</option>
                 {workflowOptions.map((wf) => (
@@ -351,14 +352,14 @@ function GenericConfigForm({
 
         {nodeType === "storage" && (
           <>
-            <Field label="Operation" error={errors.operation?.message as string | undefined}>
+            <Field label="Operation" error={getFieldState("operation").error?.message}>
               <Select {...register("operation")}>
                 <option value="read">read</option>
                 <option value="write">write</option>
                 <option value="delete">delete</option>
               </Select>
             </Field>
-            <Field label="Key Path" error={errors.key?.message as string | undefined} hint="dot-separated, e.g. data.user.name">
+            <Field label="Key Path" error={getFieldState("key").error?.message} hint="dot-separated, e.g. data.user.name">
               <Input {...register("key")} placeholder="data.message" />
             </Field>
             {watch("operation") === "write" && (
