@@ -59,6 +59,7 @@ import (
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/cordum/cordum/core/telemetry"
 	"github.com/gorilla/websocket"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/sync/singleflight"
 	"google.golang.org/grpc"
@@ -228,10 +229,9 @@ type server struct {
 	auditVerifyCoalesce singleflight.Group
 
 	// edgeRecorder is the EDGE-014 observability recorder used by Edge
-	// handlers to emit metrics. Defaults to NoopRecorder so a missing
-	// Prometheus registerer never panics on first metric emission;
-	// production wiring sets this to NewPrometheusRecorder via the
-	// metrics initializer.
+	// handlers to emit metrics, shared with the Edge store
+	// (newGatewayEdgeStore). Nil-safe at every call site, so test gateways
+	// may leave it unset.
 	edgeRecorder      edgecore.Recorder
 	edgeSweeperCancel context.CancelFunc
 
@@ -755,9 +755,6 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		return fmt.Errorf("init audit exporter: %w", err)
 	}
 
-	// Hoist edgeRecorder before edgeStore so the store and handlers share the
-	// same Recorder instance. EDGE-054 store-level metrics flow through this.
-	edgeRecorder := edgecore.NewNoopRecorder()
 	edgeRetentionTTL, err := edgeSessionRetentionTTLFromEnv()
 	if err != nil {
 		return err
@@ -770,14 +767,7 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	if err != nil {
 		return err
 	}
-	edgeStore := edgecore.NewRedisStoreFromClient(
-		jobStore.Client(),
-		edgecore.WithRecorder(edgeRecorder),
-		edgecore.WithApprovalMaxTTL(edgeApprovalMaxTTL),
-		// The store enforces the same execution cap as the Edge executions
-		// API pre-check, and MCP sessions rotate before it (ExecutionCaps).
-		edgecore.WithMaxExecutionsPerSession(int(edgeMaxExecutionsPerSession())),
-	)
+	edgeStore, edgeRecorder := newGatewayEdgeStore(jobStore.Client(), prometheus.DefaultRegisterer, edgeApprovalMaxTTL)
 	runtimeReplayWindow := runtimeingest.NewReplayWindow(
 		jobStore.Client(),
 		runtimeingest.ReplayWindowTTL,
@@ -1251,6 +1241,24 @@ func newHTTPHandler(s *server) (http.Handler, error) {
 	readAuditRate := parseFloatEnv("CORDUM_AUDIT_READ_SAMPLE_RATE", 0.0)
 	inner := auditReadMiddleware(s.auditExporter, readAuditRate, tenantMiddleware(s.auth, maxBodyMiddleware(mux, s.entitlements)))
 	return requestLoggingMiddleware(tracingMiddleware(corsMiddleware(rateLimitMiddleware(s.auth, s.apiRL, s.publicRL, apiKeyMiddleware(s.auth, inner, s.auditExporter))))), nil
+}
+
+// newGatewayEdgeStore builds the gateway's Edge store and the recorder that
+// the store and the gateway's Edge handlers share, so store-level (EDGE-054)
+// and handler metrics land in one place. The recorder registers the Edge
+// metrics on reg; RunWithAuth passes the default registry, which the metrics
+// listener serves.
+func newGatewayEdgeStore(client redis.UniversalClient, reg prometheus.Registerer, approvalMaxTTL time.Duration) (*edgecore.RedisStore, edgecore.Recorder) {
+	recorder := edgecore.NewPrometheusRecorder(reg)
+	store := edgecore.NewRedisStoreFromClient(
+		client,
+		edgecore.WithRecorder(recorder),
+		edgecore.WithApprovalMaxTTL(approvalMaxTTL),
+		// The store enforces the same execution cap as the Edge executions
+		// API pre-check, and MCP sessions rotate before it (ExecutionCaps).
+		edgecore.WithMaxExecutionsPerSession(int(edgeMaxExecutionsPerSession())),
+	)
+	return store, recorder
 }
 
 func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.Server) error {
