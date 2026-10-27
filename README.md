@@ -672,9 +672,10 @@ Cordum core and CAP release independently, each with its own tags
 - **Cordum core (`v<major>.<minor>.<patch>` tags, currently 1.x).** A `v*` tag builds and signs the container
   images for api-gateway, scheduler, safety-kernel, workflow-engine,
   context-engine, mcp, dashboard and the demo quickstart worker, and publishes
-  the Helm chart ([docker.yml](.github/workflows/docker.yml)). It also publishes
-  signed `cordum-hook`, `cordum-agentd` and `cordum-claude` binaries
-  ([release.yml](.github/workflows/release.yml)). `cordumctl` is built from
+  the Helm chart ([docker.yml](.github/workflows/docker.yml)). The separate
+  [desktop binary workflow](.github/workflows/release.yml) builds
+  `cordum-hook`, `cordum-agentd` and `cordum-claude`; publication requires its
+  signed-manifest gate to pass. `cordumctl` is built from
   source (`make build`). The default `docker compose` stack runs api-gateway,
   scheduler, safety-kernel, workflow-engine, context-engine and dashboard with
   NATS and Redis. Cordum's own Python and TypeScript SDKs use separate
