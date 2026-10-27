@@ -5,8 +5,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
-## [v1.3.0] - 2026-10-28
-
 Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
 
 ### Changed
@@ -126,6 +124,9 @@ Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
 
 ### CI and documentation
 
+- Helm chart publication now waits for successful published-image smoke tests
+  (#493). A failed, cancelled or skipped image job prevents the chart from
+  being published with missing images.
 - CI workflows mask generated credentials (#431): new
   `tools/scripts/github_actions_mask_env.sh` and
   `tools/scripts/workflow_credential_guard.py`, applied to the nightly,
@@ -162,7 +163,21 @@ d2f6ec2b (soak memory-drift gate).
 
 ## [v1.2.0] - 2026-07-21
 
-Tagged at 3244b541; no GitHub Release; images published for 7 of 8 components (dashboard not published).
+Tagged at 3244b541 on 2026-07-21. The
+[GitHub Release](https://github.com/cordum-io/cordum/releases/tag/v1.2.0) was
+published on 2026-10-17 without binary assets.
+
+The original image run missed the dashboard. On 2026-10-27, dashboard
+`1.2.0` was recovered from the exact tagged source and published to GHCR and
+Docker Hub for `linux/amd64` and `linux/arm64`, with SBOMs, provenance and
+keyless signatures. Anonymous native pulls, signature and health checks
+[passed](https://github.com/cordum-io/cordum/actions/runs/40509395712), as did
+an isolated fresh installation of the published Helm chart. The existing chart
+and floating image aliases were unchanged by the repair. The recovered
+dashboard uses the
+[recovery workflow signing identity](https://github.com/cordum-io/cordum/blob/a0350ab9a47430ef4c03bd242815dd4911016210/.github/workflows/recover-dashboard-v1.2.0.yml),
+so its verifier must use that exact branch identity rather than the normal
+release-tag identity.
 
 Changes on main from v1.1.0 (6835c06b) to the v1.2.0 tag.
 
