@@ -45,7 +45,7 @@ Gates are classified as **blocking** (security/correctness fundamentals) or **ad
 | 14 | Policy Lifecycle | ADVISORY | Bundle CRUD, snapshots, simulation | Bundle store empty, snapshot endpoint not wired | Install policy bundles, check policy bundle handler routes |
 | 15 | Pack Management | ADVISORY | Pack install/upgrade, marketplace | Marketplace URL unreachable, pack validation failing | Check `validateMarketplaceURL`, verify pack store |
 | 16 | Degradation | ADVISORY | Graceful degradation, gRPC fallback | gRPC services unreachable, fallback not implemented | Verify gRPC health checks, check circuit breaker config |
-| 17 | Dashboard | ADVISORY | HTML, static assets, CSP, SPA fallback | Dashboard not built, static file serving misconfigured | Run `npm run build` in dashboard, verify nginx/gateway static routes |
+| 17 | Dashboard | ADVISORY | HTML, static assets, CSP, SPA fallback | Dashboard not built, static file serving misconfigured | Run `pnpm run build` in dashboard, verify nginx/gateway static routes |
 
 ## Prerequisites
 

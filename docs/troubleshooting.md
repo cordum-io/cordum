@@ -141,16 +141,17 @@ go version
 # If below 1.24, upgrade: https://go.dev/dl/
 ```
 
-### Dashboard `npm install` fails
+### Dashboard `pnpm install` fails
 
-**Symptoms**: `npm install` or `npm run build` fails in the `dashboard/` directory.
+**Symptoms**: `pnpm install` or `pnpm run build` fails in the `dashboard/` directory.
 
-**Fix**: Requires **Node 18+**. If you use nvm, the dashboard includes `.nvmrc`:
+**Fix**: The dashboard uses pnpm (`packageManager` in `package.json`, `pnpm-lock.yaml`) and needs **Node 20.19+** (Vite 8). If you use nvm, the dashboard includes `.nvmrc`:
 
 ```bash
 cd dashboard
-nvm use    # reads .nvmrc (Node 20)
-npm install
+nvm use          # reads .nvmrc (Node 20)
+corepack enable  # provides the pnpm version pinned in package.json
+pnpm install
 ```
 
 ### 502 Bad Gateway from dashboard
@@ -394,10 +395,17 @@ grpcurl -plaintext localhost:50051 grpc.health.v1.Health/Check
 - `SAFETY_KERNEL_TLS_CA` — CA certificate path
 - `SAFETY_KERNEL_TLS_REQUIRED` — Set to `true` in production
 
-For development, if you don't need TLS:
+`CORDUM_ENV=development` doesn't turn TLS off. The kernel serves TLS when
+`SAFETY_KERNEL_TLS_CERT`/`SAFETY_KERNEL_TLS_KEY` are set, and its clients
+(gateway, scheduler, workflow engine) dial with TLS when `SAFETY_KERNEL_TLS_CA`
+is set, so both sides must agree. Compose sets all three; leave them there. To
+run without TLS outside Compose (development only: plaintext is refused when
+`CORDUM_ENV=production` or `CORDUM_PRODUCTION=true`), unset them on both sides:
 ```bash
-unset SAFETY_KERNEL_TLS_REQUIRED
-# Or set CORDUM_ENV=development
+# Safety kernel
+unset SAFETY_KERNEL_TLS_CERT SAFETY_KERNEL_TLS_KEY
+# Gateway, scheduler and workflow engine
+unset SAFETY_KERNEL_TLS_CA SAFETY_KERNEL_TLS_REQUIRED
 ```
 
 ### Safety kernel crashlooping
@@ -454,7 +462,7 @@ curl -s http://localhost:9090/metrics | grep output_policy_quarantined
 |-------|-----------|-----|
 | API URL not configured | Check browser console for 404s | Set `VITE_API_URL` or configure runtime config |
 | CORS blocking API calls | Browser console shows CORS errors | Set `CORDUM_ALLOWED_ORIGINS` to include dashboard origin |
-| JavaScript build error | Browser console shows JS errors | Rebuild: `cd dashboard && npm run build` |
+| JavaScript build error | Browser console shows JS errors | Rebuild: `cd dashboard && pnpm run build` |
 
 **Diagnostic**:
 ```bash

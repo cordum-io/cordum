@@ -128,7 +128,7 @@ http://localhost:8082
 
 > The dashboard image listens on container port `8080` and is published to
 > host port `8082` (see `docker-compose.yml`). The `5173` port is only used
-> when running the dashboard via `npm run dev` directly, which is not part
+> when running the dashboard via `pnpm run dev` directly, which is not part
 > of `make dev-up`.
 
 Navigate to **Edge Sessions** (left nav). You should see one session row from
@@ -224,8 +224,8 @@ Dashboard regression (run from `dashboard/`):
 ```bash
 cd dashboard
 node ./node_modules/typescript/bin/tsc --noEmit
-npx vitest run
-npm run build
+pnpm exec vitest run
+pnpm run build
 ```
 
 All of the above should be green on `feature/cordum-edge-p0` HEAD.
