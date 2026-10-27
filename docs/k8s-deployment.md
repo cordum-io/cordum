@@ -665,10 +665,10 @@ The production overlay includes hourly CronJob backups for both Redis and NATS.
 ### Redis Backup
 
 - **Schedule**: `0 * * * *` (hourly)
-- **Method**: `redis-cli --rdb` creates an RDB snapshot from `cordum-redis-0`
+- **Method**: `redis-cli --rdb` against every node that `INFO replication` reports as a primary
 - **Storage**: `cordum-backups` PVC (20Gi)
-- **Retention**: Last 2 successful + 2 failed jobs kept
-- **File format**: `redis-YYYYMMDDTHHMMSSZ.rdb`
+- **Retention**: 7 days (`cordum-backup-retention`, daily at 03:30 UTC); the CronJob keeps its last 2 successful + 2 failed jobs
+- **File format**: `redis-YYYYMMDDTHHMMSSZ-node<N>.rdb`, one per primary, `N` being the pod ordinal
 
 ### NATS JetStream Backup
 
@@ -679,51 +679,17 @@ The production overlay includes hourly CronJob backups for both Redis and NATS.
 
 ### Restore Procedures
 
-**Redis:**
-```bash
-# Stop the cluster, copy RDB to data dir, restart
-kubectl cp backup/redis-20260213T120000Z.rdb cordum/cordum-redis-0:/data/dump.rdb
-kubectl delete pod cordum-redis-0 -n cordum  # Pod restarts and loads RDB
-```
+**Base manifest (`deploy/k8s/base.yaml`)**: there is nothing to restore from. Its
+single Redis pod has no persistent volume, NATS keeps JetStream on an `emptyDir`,
+and there are no backup jobs, so the data lasts only as long as the pods. Use the
+production overlay, or add PVCs and backups of your own, for data you need to keep.
 
-**NATS:**
-
-The NATS server image has no `nats` CLI, so restore from your machine with the
-CLI through a port-forward. The overlay's NATS requires a client certificate,
-and its server certificate names `cordum-nats`, not `localhost`, so point that
-name at the forward first (for example, add `127.0.0.1 cordum-nats` to
-`/etc/hosts`). A restore refuses to overwrite an existing stream ("stream name
-already in use"), so stop the consumers and remove the stream first.
-
-```bash
-# 1. Copy the snapshot directory off the cordum-backups PVC through a
-#    temporary pod that mounts it
-kubectl run nats-restore-files -n cordum --restart=Never --image=busybox:1.36 \
-  --overrides='{"spec":{"containers":[{"name":"nats-restore-files","image":"busybox:1.36","command":["sleep","3600"],"volumeMounts":[{"name":"backup","mountPath":"/backup"}]}],"volumes":[{"name":"backup","persistentVolumeClaim":{"claimName":"cordum-backups"}}]}}'
-kubectl wait -n cordum --for=condition=Ready pod/nats-restore-files
-kubectl exec -n cordum nats-restore-files -- ls /backup   # pick a nats-<timestamp>
-kubectl cp cordum/nats-restore-files:/backup/nats-<timestamp>/CORDUM_JOBS.snapshot ./CORDUM_JOBS.snapshot
-kubectl delete pod -n cordum nats-restore-files
-
-# 2. Client certificate from the cordum-client-tls Secret
-kubectl get secret -n cordum cordum-client-tls -o jsonpath='{.data.ca\.crt}' | base64 -d > ca.crt
-kubectl get secret -n cordum cordum-client-tls -o jsonpath='{.data.tls\.crt}' | base64 -d > client.crt
-kubectl get secret -n cordum cordum-client-tls -o jsonpath='{.data.tls\.key}' | base64 -d > client.key
-
-# 3. Stop the consumers, then replace the stream through a port-forward
-#    (newer CLIs also call the restore `nats backup restore stream`)
-kubectl scale deployment cordum-scheduler cordum-workflow-engine --replicas=0 -n cordum
-kubectl port-forward -n cordum cordum-nats-0 4222:4222 >/dev/null &
-sleep 2
-nats stream rm CORDUM_JOBS --force --server tls://cordum-nats:4222 \
-  --tlsca ca.crt --tlscert client.crt --tlskey client.key
-nats stream restore ./CORDUM_JOBS.snapshot --server tls://cordum-nats:4222 \
-  --tlsca ca.crt --tlscert client.crt --tlskey client.key
-kill %1
-
-# 4. Bring the consumers back (2 is the HPA minimum)
-kubectl scale deployment cordum-scheduler cordum-workflow-engine --replicas=2 -n cordum
-```
+**Production overlay**: follow [Backup + Restore](./production.md#restore-procedures).
+Stop the services and the backup CronJobs, restore Redis onto each primary's volume
+with Redis stopped ([Restore From Backup](./redis-operations.md#restore-from-backup)),
+and restore the NATS streams from a nats-box pod. Do not copy an RDB into a running
+Redis pod and restart it: with `appendonly yes`, Redis loads its AOF on startup and
+ignores `dump.rdb`, and each backup file holds only one primary's slots.
 
 ---
 
@@ -784,9 +750,10 @@ kubectl get events -n cordum --sort-by=.lastTimestamp | tail -20
 # Logs for a specific service
 kubectl logs -n cordum deployment/cordum-api-gateway --tail=100
 
-# Check Redis cluster status (production overlay: TLS client certs + password)
-kubectl exec -n cordum cordum-redis-0 -c redis -- \
-  sh -c 'redis-cli --tls --cacert /etc/redis/tls/ca.crt --cert /etc/redis/tls/tls.crt --key /etc/redis/tls/tls.key -a "$REDIS_PASSWORD" cluster info'
+# Check Redis cluster status (with the client certificate and the password)
+kubectl exec -n cordum cordum-redis-0 -c redis -- sh -c 'redis-cli --tls \
+  --cacert /etc/redis/tls/ca.crt --cert /etc/redis/client-tls/tls.crt \
+  --key /etc/redis/client-tls/tls.key -a "$REDIS_PASSWORD" --no-auth-warning cluster info'
 
 # Check NATS JetStream streams (production overlay). The NATS image has no
 # nats CLI. Read the monitoring port (8222, plain HTTP) instead: a port-forward
