@@ -168,7 +168,7 @@ metadata. They do not inline raw artifact bodies.
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION` | `100` | Maximum number of `AgentExecution` rows that may be recorded under a single `EdgeSession`. The Gateway counts executions before each `POST /api/v1/edge/executions` and rejects the call with `429 max_executions_exceeded` once the cap is reached. Missing/invalid/non-positive values fall back to the default. |
+| `CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION` | `100` | Maximum number of `AgentExecution` rows that may be recorded under a single `EdgeSession`. The Gateway counts executions before each `POST /api/v1/edge/executions` and rejects the call with `429 max_executions_exceeded` once the cap is reached; its Edge store enforces the same cap on every execution it records, and MCP gateway sessions move to a new Edge session before reaching it. Missing/invalid/non-positive values fall back to the default. |
 | `CORDUM_EDGE_SESSION_RETENTION_TTL` | `720h` (30 days) | Sessions older than this are eligible for the Gateway retention sweeper. Explicit values must parse as positive Go durations; `0`, negative, or invalid values fail startup. |
 | `CORDUM_EDGE_SESSION_SWEEP_INTERVAL` | `1h` | Sweep cadence after the initial Gateway boot sweep. Explicit values must parse as positive Go durations. |
 

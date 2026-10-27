@@ -774,6 +774,9 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		jobStore.Client(),
 		edgecore.WithRecorder(edgeRecorder),
 		edgecore.WithApprovalMaxTTL(edgeApprovalMaxTTL),
+		// The store enforces the same execution cap as the Edge executions
+		// API pre-check, and MCP sessions rotate before it (ExecutionCaps).
+		edgecore.WithMaxExecutionsPerSession(int(edgeMaxExecutionsPerSession())),
 	)
 	runtimeReplayWindow := runtimeingest.NewReplayWindow(
 		jobStore.Client(),

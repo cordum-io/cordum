@@ -177,7 +177,8 @@ func WithMaxEventBytes(max int) StoreOption {
 }
 
 // WithMaxExecutionsPerSession overrides the per-session execution fanout cap.
-// It is primarily intended for tests that exercise cleanup pagination.
+// The gateway sets it from CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION; tests use
+// it to exercise cleanup pagination.
 func WithMaxExecutionsPerSession(max int) StoreOption {
 	return func(s *RedisStore) {
 		s.maxExecutionsPerSession = max
