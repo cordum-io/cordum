@@ -492,6 +492,7 @@ jobs:
             --body "${body}"
 
   helm-chart:
+    needs: smoke-published-images
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
