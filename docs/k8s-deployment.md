@@ -455,13 +455,18 @@ REDIS_TLS_KEY=/etc/cordum/tls/client/tls.key
 ## 6. Network Policies
 
 The production overlay defines strict ingress and egress rules per service.
+`cordum-default-deny` blocks every other flow in the namespace, so a pod with no
+matching label (for example the `cordum-backup-retention` CronJob, which needs no
+network) can reach nothing.
 
 ### Ingress Rules
 
 | Target | Allowed Sources | Ports |
 |--------|----------------|-------|
 | NATS | All Cordum services + NATS peers | 4222 (client), 6222 (cluster), 8222 (monitor) |
+| NATS | NATS backup CronJob (`app: cordum-nats-backup`) | 4222 |
 | Redis | All Cordum services + Redis peers | 6379 (client), 16379 (cluster bus) |
+| Redis | Cluster init Job (`app: cordum-redis-cluster-init`), Redis backup CronJob (`app: cordum-redis-backup`) | 6379 |
 
 ### Egress Rules
 
@@ -472,6 +477,11 @@ The production overlay defines strict ingress and egress rules per service.
 | Workflow Engine | NATS, Redis, DNS | 4222, 6379, 53 |
 | Safety Kernel | NATS, Redis, DNS | 4222, 6379, 53 |
 | Dashboard | API Gateway, DNS | 8081, 53 |
+| Context Engine | Redis, DNS | 6379, 53 |
+| NATS | NATS peers (cluster routes), DNS | 6222, 53 |
+| Redis | Redis peers (cluster bus, replication) | 16379, 6379 |
+| Redis cluster init Job, Redis backup CronJob | Redis, DNS | 6379, 53 |
+| NATS backup CronJob | NATS, DNS | 4222, 53 |
 
 ### Traffic Flow Diagram
 

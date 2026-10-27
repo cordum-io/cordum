@@ -22,6 +22,9 @@ spec:
   jobTemplate:
     spec:
       template:
+        metadata:
+          labels:
+            app: cordum-redis-backup
         spec:
           restartPolicy: OnFailure
           containers:
@@ -102,6 +105,9 @@ spec:
   jobTemplate:
     spec:
       template:
+        metadata:
+          labels:
+            app: cordum-nats-backup
         spec:
           restartPolicy: OnFailure
           containers:
