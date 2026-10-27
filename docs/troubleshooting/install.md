@@ -45,7 +45,7 @@ cordumctl doctor
 
 | Detail | Cause | Fix |
 |--------|-------|-----|
-| `gateway reports NATS disconnected` | NATS container crashed, network partition, or a rejected client certificate | `docker compose logs nats`; Compose NATS authenticates clients by certificate (`verify: true`, no token), so check `./certs/` and restart the whole stack after regenerating it |
+| `gateway reports NATS disconnected` | NATS container crashed, network partition, or the client certs in `./certs` no longer match the NATS server's CA | `docker compose logs nats`; after `cordumctl generate-certs --force`, restart the whole stack so NATS and every service load the same CA |
 | `skipped — /api/v1/status unavailable` | Earlier check failed; rerun after fixing `gateway_auth` | — |
 
 ### `redis_ok`
@@ -155,7 +155,7 @@ If every check lands on fail, it's usually one of three things:
 ```
 [FIX] NATS connected (nats_connected)
       detail: gateway reports NATS disconnected
-      suggested: docker compose logs nats  (verify NATS_TOKEN + nats service health)
+      suggested: docker compose logs nats  (NATS authenticates clients by certificate: check ./certs/client from cordumctl generate-certs, and restart the whole stack after regenerating)
       run now? [y/N/a]
 ```
 
