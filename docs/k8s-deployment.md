@@ -326,6 +326,12 @@ The production overlay deploys a 3-node NATS cluster as a StatefulSet.
 - **Cluster routes**: Hardcoded in ConfigMap for deterministic discovery
 - **Monitoring**: Port 8222 exposed for `/healthz` probes and metrics
 - **Anti-affinity**: Pods spread across nodes via `preferredDuringSchedulingIgnoredDuringExecution`
+- **Startup**: `podManagementPolicy: Parallel`, and the headless Service publishes pods before
+  they are ready (`publishNotReadyAddresses: true`). A server alone fails `/healthz` until
+  JetStream has a meta leader, which needs the routes, so ordered startup would never get past
+  `cordum-nats-0`. Kubernetes cannot change `podManagementPolicy` in place: if an older
+  `cordum-nats` StatefulSet exists, delete it first (`kubectl delete statefulset cordum-nats -n cordum`;
+  the PVCs stay).
 
 ### NATS ConfigMap (production)
 
