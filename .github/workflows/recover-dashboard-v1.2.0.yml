@@ -6,6 +6,7 @@ on:
   push:
     branches: [repair/dashboard-v1.2.0-20261027]
     paths: [.github/workflows/recover-dashboard-v1.2.0.yml]
+  workflow_dispatch:
 
 concurrency:
   group: recover-dashboard-v1.2.0
@@ -28,7 +29,12 @@ defaults:
 
 jobs:
   verify-anonymous:
-    if: github.repository == 'cordum-io/cordum' && github.event_name == 'push' && github.ref == 'refs/heads/repair/dashboard-v1.2.0-20261027'
+    if: >-
+      github.repository == 'cordum-io/cordum' &&
+      (
+        (github.event_name == 'push' && github.ref == 'refs/heads/repair/dashboard-v1.2.0-20261027') ||
+        (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+      )
     strategy:
       fail-fast: false
       matrix:
