@@ -668,9 +668,42 @@ kubectl delete pod cordum-redis-0 -n cordum  # Pod restarts and loads RDB
 ```
 
 **NATS:**
+
+The NATS server image has no `nats` CLI, so restore from your machine with the
+CLI through a port-forward. The overlay's NATS requires a client certificate,
+and its server certificate names `cordum-nats`, not `localhost`, so point that
+name at the forward first (for example, add `127.0.0.1 cordum-nats` to
+`/etc/hosts`). A restore refuses to overwrite an existing stream ("stream name
+already in use"), so stop the consumers and remove the stream first.
+
 ```bash
-# Restore a stream snapshot
-kubectl exec -n cordum cordum-nats-0 -- nats stream restore CORDUM_JOBS /backup/nats-.../CORDUM_JOBS.snapshot
+# 1. Copy the snapshot directory off the cordum-backups PVC through a
+#    temporary pod that mounts it
+kubectl run nats-restore-files -n cordum --restart=Never --image=busybox:1.36 \
+  --overrides='{"spec":{"containers":[{"name":"nats-restore-files","image":"busybox:1.36","command":["sleep","3600"],"volumeMounts":[{"name":"backup","mountPath":"/backup"}]}],"volumes":[{"name":"backup","persistentVolumeClaim":{"claimName":"cordum-backups"}}]}}'
+kubectl wait -n cordum --for=condition=Ready pod/nats-restore-files
+kubectl exec -n cordum nats-restore-files -- ls /backup   # pick a nats-<timestamp>
+kubectl cp cordum/nats-restore-files:/backup/nats-<timestamp>/CORDUM_JOBS.snapshot ./CORDUM_JOBS.snapshot
+kubectl delete pod -n cordum nats-restore-files
+
+# 2. Client certificate from the cordum-client-tls Secret
+kubectl get secret -n cordum cordum-client-tls -o jsonpath='{.data.ca\.crt}' | base64 -d > ca.crt
+kubectl get secret -n cordum cordum-client-tls -o jsonpath='{.data.tls\.crt}' | base64 -d > client.crt
+kubectl get secret -n cordum cordum-client-tls -o jsonpath='{.data.tls\.key}' | base64 -d > client.key
+
+# 3. Stop the consumers, then replace the stream through a port-forward
+#    (newer CLIs also call the restore `nats backup restore stream`)
+kubectl scale deployment cordum-scheduler cordum-workflow-engine --replicas=0 -n cordum
+kubectl port-forward -n cordum cordum-nats-0 4222:4222 >/dev/null &
+sleep 2
+nats stream rm CORDUM_JOBS --force --server tls://cordum-nats:4222 \
+  --tlsca ca.crt --tlscert client.crt --tlskey client.key
+nats stream restore ./CORDUM_JOBS.snapshot --server tls://cordum-nats:4222 \
+  --tlsca ca.crt --tlscert client.crt --tlskey client.key
+kill %1
+
+# 4. Bring the consumers back (2 is the HPA minimum)
+kubectl scale deployment cordum-scheduler cordum-workflow-engine --replicas=2 -n cordum
 ```
 
 ---

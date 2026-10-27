@@ -436,7 +436,9 @@ cluster once the pods are ready. Re-run it if you replace the cluster.
 
 8. **Data loss assessment**: Check the last successful backup timestamp:
    ```bash
-   kubectl get jobs -l job-name=cordum-redis-backup -n cordum --sort-by=.status.startTime
+   kubectl get cronjob cordum-redis-backup -n cordum -o jsonpath='{.status.lastSuccessfulTime}{"\n"}'
+   # Each run is a Job named cordum-redis-backup-<n> (its job-name label is that full name)
+   kubectl get jobs -n cordum --sort-by=.status.startTime | grep cordum-redis-backup
    ```
    The backup CronJob backs up all primaries (not just node-0). Each backup produces per-shard files: `redis-{timestamp}-node{N}.rdb`.
 
@@ -452,7 +454,7 @@ cluster once the pods are ready. Re-run it if you replace the cluster.
 
 1. Check NATS cluster status:
    ```bash
-   kubectl get pods -l app=cordum-nats -n cordum
+   kubectl get pods -l app=nats -n cordum
    nats server list --server tls://cordum-nats:4222 ...
    ```
 

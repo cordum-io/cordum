@@ -134,11 +134,11 @@ python -c "import secrets; print(secrets.token_hex(32))"
 
 **Symptoms**: `go build` or `make build` fails with syntax or module errors.
 
-**Fix**: Cordum requires **Go 1.26.3+**. Check your version:
+**Fix**: Cordum requires **Go 1.26.3+** (the `go` line in `go.mod`). Check your version:
 
 ```bash
 go version
-# If below 1.24, upgrade: https://go.dev/dl/
+# If below 1.26.3, upgrade: https://go.dev/dl/
 ```
 
 ### Dashboard `pnpm install` fails
