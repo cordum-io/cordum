@@ -281,7 +281,7 @@ func edgeCheckManagedSettings(_ context.Context, env *edgeDoctorEnv) checkResult
 	if path == "" {
 		return checkResult{State: stateSkip, Detail: "managed-settings-path not configured; skip for non-enterprise deployments"}
 	}
-	res, err := claude.VerifyManagedSettingsFromPath(path)
+	res, err := claude.VerifyManagedSettingsFromPathWithOptions(path, claude.ManagedSettingsVerifyOptions{MCPGatewayURL: env.mcpGatewayURL})
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return checkResult{
@@ -297,12 +297,12 @@ func edgeCheckManagedSettings(_ context.Context, env *edgeDoctorEnv) checkResult
 		}
 	}
 	if res.OK {
-		return checkResult{State: stateOK, Detail: "managed-settings.json matches Cordum Edge invariants"}
+		return checkResult{State: stateOK, Detail: "managed-settings.json matches Cordum Edge invariants and trusted MCP endpoint; paired MCP files and runtime inventory were not inspected"}
 	}
 	return checkResult{
 		State:  stateFail,
 		Detail: "managed settings drift: " + summariseManagedSettingsDrifts(res.Drifts, 3),
-		Fix:    "regenerate with cordumctl edge managed-settings export",
+		Fix:    "supply --mcp-gateway-url from trusted deployment configuration; regenerate drifted settings with cordumctl edge managed-settings export",
 	}
 }
 

@@ -780,6 +780,33 @@ func TestMCPSessionOwnerSeparatesCallers(t *testing.T) {
 	}
 }
 
+func TestMCPSessionOwnerLoginRenewalKeepsCredentialBoundary(t *testing.T) {
+	t.Parallel()
+	owner := func(token string, source auth.AuthSource) string {
+		req := httptest.NewRequest(http.MethodPost, "/mcp/message", nil)
+		req.Header.Set("X-Tenant-ID", "default")
+		req.Header.Set("Authorization", "Bearer "+token)
+		ac := &auth.AuthContext{PrincipalID: "alice", AuthSource: source}
+		if source == auth.AuthSourceSession {
+			// Session authentication stores the validated token in APIKey;
+			// JWT authentication carries the verified principal without it.
+			ac.APIKey = token
+		}
+		req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, ac))
+		return mcpSessionOwner(req)
+	}
+	previous := owner("session-before-login", auth.AuthSourceSession)
+	if got := owner("session-before-login", auth.AuthSourceSession); got == "" || got != previous {
+		t.Fatalf("same login session changed owner: %q vs %q", previous, got)
+	}
+	if got := owner("session-after-login", auth.AuthSourceSession); got == previous {
+		t.Fatal("new login token must not inherit another login session's MCP stream")
+	}
+	if a, b := owner("jwt-before-refresh", auth.AuthSourceJWT), owner("jwt-after-refresh", auth.AuthSourceJWT); a == "" || a != b {
+		t.Fatal("JWT refresh with the same verified identity must preserve stream ownership")
+	}
+}
+
 // newMCPTwoKeyGateway serves the real MCP routes behind static API keys for
 // alice and bob (tenant default) with a Redis-backed edge store.
 func newMCPTwoKeyGateway(t *testing.T) (*server, string) {

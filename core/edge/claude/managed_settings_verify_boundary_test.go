@@ -137,7 +137,7 @@ func verifyManagedSettingsMap(t *testing.T, doc map[string]any) ManagedSettingsV
 	if err != nil {
 		t.Fatalf("marshal managed settings: %v", err)
 	}
-	res, err := VerifyManagedSettings(data)
+	res, err := VerifyManagedSettingsWithOptions(data, ManagedSettingsVerifyOptions{MCPGatewayURL: trustedManagedMCPGatewayURL})
 	if err != nil {
 		t.Fatalf("VerifyManagedSettings returned parse error: %v", err)
 	}

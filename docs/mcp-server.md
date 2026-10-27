@@ -96,6 +96,12 @@ principal, plus the API key or login session used), so a `/mcp/message` naming
 an unknown session or another caller's session gets HTTP `404` with JSON-RPC
 error `-32001` (`session not found`); reconnect to `/mcp/sse` for a new id.
 
+A new login session token does not inherit the previous token's MCP stream,
+even for the same tenant and principal. After signing in again or rotating an
+API key, reopen `/mcp/sse` with the new credential and use its new session ID.
+Refreshing a JWT with the same verified tenant and principal does not by
+itself change stream ownership; JWT ownership does not include the raw token.
+
 ### 3) `cordum-mcp` over HTTP + SSE
 
 `MCP_TRANSPORT=http` serves the stdio tool set on `/sse` and `/message`,

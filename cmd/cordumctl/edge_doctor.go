@@ -28,6 +28,7 @@ type edgeDoctorEnv struct {
 	agentdURL           string
 	settingsPath        string
 	managedSettingsPath string
+	mcpGatewayURL       string
 	copilotHooksPath    string
 	dashboardURL        string
 	lookPath            func(string) (string, error)
@@ -45,6 +46,7 @@ type edgeDoctorOptions struct {
 	agentdURL           string
 	settingsPath        string
 	managedSettingsPath string
+	mcpGatewayURL       string
 	copilotHooksPath    string
 	dashboardURL        string
 }
@@ -75,6 +77,7 @@ func runEdgeDoctorCmd(args []string, stdout, stderr io.Writer) int {
 	agentdURL := fs.String("agentd-url", firstEnvDefault(defaultEdgeAgentdURL, "CORDUM_AGENTD_URL", "CORDUM_AGENTD_SOCKET"), "local cordum-agentd hook URL")
 	settingsPath := fs.String("settings-path", firstEnvDefault(defaultClaudeSettingsPath(), "CORDUM_EDGE_SETTINGS_PATH", "CLAUDE_SETTINGS_PATH"), "Claude settings.json path to validate")
 	managedSettingsPath := fs.String("managed-settings-path", firstEnv("CORDUM_EDGE_MANAGED_SETTINGS_PATH"), "managed-settings.json path for the managed_settings_compliance check (empty = skip)")
+	mcpGatewayURL := fs.String("mcp-gateway-url", "", "independent trusted MCP gateway endpoint for managed-settings verification")
 	copilotHooksPath := fs.String("copilot-hooks-path", firstEnv("CORDUM_EDGE_COPILOT_HOOKS_PATH"), "GitHub Copilot hooks file that runs cordum-hook copilot, for the copilot_hooks check (empty = skip)")
 	dashboardURL := fs.String("dashboard-url", firstEnv("CORDUM_EDGE_DASHBOARD_URL", "CORDUM_DASHBOARD_URL"), "dashboard URL to probe")
 	shadowCluster, shadowCI := registerEdgeDoctorShadowFlags(fs.FlagSet)
@@ -93,6 +96,7 @@ func runEdgeDoctorCmd(args []string, stdout, stderr io.Writer) int {
 		agentdURL:           *agentdURL,
 		settingsPath:        *settingsPath,
 		managedSettingsPath: *managedSettingsPath,
+		mcpGatewayURL:       *mcpGatewayURL,
 		copilotHooksPath:    *copilotHooksPath,
 		dashboardURL:        *dashboardURL,
 	})
@@ -167,6 +171,7 @@ func buildEdgeDoctorEnv(fs *flagSet, opts edgeDoctorOptions) (*edgeDoctorEnv, er
 		agentdURL:           strings.TrimSpace(opts.agentdURL),
 		settingsPath:        strings.TrimSpace(opts.settingsPath),
 		managedSettingsPath: strings.TrimSpace(opts.managedSettingsPath),
+		mcpGatewayURL:       strings.TrimSpace(opts.mcpGatewayURL),
 		copilotHooksPath:    strings.TrimSpace(opts.copilotHooksPath),
 		dashboardURL:        strings.TrimSpace(opts.dashboardURL),
 		lookPath:            exec.LookPath,

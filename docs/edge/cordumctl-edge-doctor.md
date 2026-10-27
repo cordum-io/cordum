@@ -50,6 +50,7 @@ cordumctl edge doctor \
 | `--agentd-url` | `CORDUM_AGENTD_URL`, `CORDUM_AGENTD_SOCKET`, or local default | Local loopback hook URL to dial. |
 | `--settings-path` | `CORDUM_EDGE_SETTINGS_PATH`, `CLAUDE_SETTINGS_PATH`, or `~/.claude/settings.json` | Claude settings JSON to validate. |
 | `--managed-settings-path` | `CORDUM_EDGE_MANAGED_SETTINGS_PATH` | Managed-settings JSON to validate via the `managed_settings_compliance` check. Empty = skip (non-enterprise hosts). |
+| `--mcp-gateway-url` | — | Independent trusted MCP endpoint for managed-settings verification. Required when a managed-settings path is supplied; never inferred from `--gateway` or the inspected file. |
 | `--copilot-hooks-path` | `CORDUM_EDGE_COPILOT_HOOKS_PATH` | GitHub Copilot hooks file (for example `.github/hooks/cordum.json`) for the `copilot_hooks` check. Empty = skip. |
 | `--dashboard-url` | `CORDUM_EDGE_DASHBOARD_URL`, `CORDUM_DASHBOARD_URL` | Optional dashboard reachability probe. |
 | `--timeout` | `30` | Overall deadline in seconds. Each check is still individually bounded. |
@@ -81,7 +82,7 @@ The doctor reports `ok`, `warn`, `fail`, or `skip` for each check:
 - Policy-mode implications.
 - Managed settings compliance: when `--managed-settings-path` (or
   `CORDUM_EDGE_MANAGED_SETTINGS_PATH`) is set, validates the deployed
-  `managed-settings.json` against the 17 enterprise invariants documented
+  `managed-settings.json` against the 18 enterprise invariants documented
   in [managed-settings-deploy.md § 6](managed-settings-deploy.md#6-verification-reference).
   Empty path → `skip` so non-enterprise hosts do not see a spurious failure.
 - Copilot hooks (`copilot_hooks`): when `--copilot-hooks-path` (or

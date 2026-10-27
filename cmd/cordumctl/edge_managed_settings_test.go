@@ -145,7 +145,7 @@ func TestManagedSettingsVerifyPassesGolden(t *testing.T) {
 		t.Fatalf("export prep failed: code=%d stderr=%s", code, stderr)
 	}
 	path := filepath.Join(dir, "managed-settings.json")
-	code, stdout, stderr := runManagedSettingsForTest(t, "verify", "--path", path)
+	code, stdout, stderr := runManagedSettingsForTest(t, "verify", "--mcp-gateway-url", testManagedMCPGatewayURL, "--path", path)
 	if code != 0 {
 		t.Fatalf("verify exit=%d stderr=%s stdout=%s", code, stderr, stdout)
 	}
@@ -160,7 +160,7 @@ func TestManagedSettingsVerifyJSONFlagEmitsEnvelope(t *testing.T) {
 		t.Fatalf("export prep failed: code=%d stderr=%s", code, stderr)
 	}
 	path := filepath.Join(dir, "managed-settings.json")
-	code, stdout, _ := runManagedSettingsForTest(t, "verify", "--path", path, "--json")
+	code, stdout, _ := runManagedSettingsForTest(t, "verify", "--mcp-gateway-url", testManagedMCPGatewayURL, "--path", path, "--json")
 	if code != 0 {
 		t.Fatalf("verify --json exit=%d stdout=%s", code, stdout)
 	}
@@ -185,6 +185,20 @@ func TestManagedSettingsVerifyJSONFlagEmitsEnvelope(t *testing.T) {
 	}
 }
 
+func TestManagedSettingsVerifyRequiresIndependentGateway(t *testing.T) {
+	dir := t.TempDir()
+	if code, _, stderr := runManagedSettingsForTest(t, exportArgs(dir)...); code != 0 {
+		t.Fatalf("export prep: code=%d stderr=%s", code, stderr)
+	}
+	path := filepath.Join(dir, "managed-settings.json")
+	if code, _, stderr := runManagedSettingsForTest(t, "verify", "--path", path); code != 2 || !strings.Contains(stderr, "--mcp-gateway-url required") {
+		t.Fatalf("missing baseline: code=%d stderr=%s", code, stderr)
+	}
+	if code, stdout, _ := runManagedSettingsForTest(t, "verify", "--path", path, "--mcp-gateway-url", "https://other.example/mcp"); code != 1 || !strings.Contains(stdout, "serverUrl") {
+		t.Fatalf("mismatched baseline: code=%d stdout=%s", code, stdout)
+	}
+}
+
 func TestManagedSettingsVerifyDetectsDrift(t *testing.T) {
 	dir := t.TempDir()
 	if code, _, stderr := runManagedSettingsForTest(t, exportArgs(dir)...); code != 0 {
@@ -194,7 +208,7 @@ func TestManagedSettingsVerifyDetectsDrift(t *testing.T) {
 	if err := flipManagedSettingsBool(path, "allowManagedHooksOnly", false); err != nil {
 		t.Fatalf("inject drift: %v", err)
 	}
-	code, stdout, _ := runManagedSettingsForTest(t, "verify", "--path", path)
+	code, stdout, _ := runManagedSettingsForTest(t, "verify", "--mcp-gateway-url", testManagedMCPGatewayURL, "--path", path)
 	if code != 1 {
 		t.Fatalf("verify drift expected exit 1; got %d stdout=%s", code, stdout)
 	}
@@ -205,7 +219,7 @@ func TestManagedSettingsVerifyDetectsDrift(t *testing.T) {
 
 func TestManagedSettingsVerifyMissingFileExits2(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing.json")
-	code, _, stderr := runManagedSettingsForTest(t, "verify", "--path", missing)
+	code, _, stderr := runManagedSettingsForTest(t, "verify", "--mcp-gateway-url", testManagedMCPGatewayURL, "--path", missing)
 	if code != 2 {
 		t.Fatalf("missing-file expected exit 2; got %d stderr=%s", code, stderr)
 	}
@@ -217,7 +231,7 @@ func TestManagedSettingsVerifyMalformedFileExits2(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{ not valid"), 0o600); err != nil {
 		t.Fatalf("write broken fixture: %v", err)
 	}
-	code, _, stderr := runManagedSettingsForTest(t, "verify", "--path", path)
+	code, _, stderr := runManagedSettingsForTest(t, "verify", "--mcp-gateway-url", testManagedMCPGatewayURL, "--path", path)
 	if code != 2 {
 		t.Fatalf("malformed expected exit 2; got %d stderr=%s", code, stderr)
 	}

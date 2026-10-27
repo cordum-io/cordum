@@ -157,7 +157,7 @@ schedule, and synthetic-rollback test surface live in
 | Subcommand | Purpose |
 | --- | --- |
 | `export` | Render `managed-settings.json` + `managed-mcp.json` into `--output <dir>`. Refuses to overwrite without `--force`. Rejects flag values containing secret markers (`sk-…`, `ghp_…`, bearer tokens). |
-| `verify` | Validate a deployed `managed-settings.json` at `--path <file>` against the 17 enterprise invariants (see [managed-settings-deploy.md § 6](managed-settings-deploy.md#6-verification-reference)). `--json` emits `{ok, drifts[], source}`. |
+| `verify` | Validate a deployed `managed-settings.json` at `--path <file>` against the 18 enterprise invariants (see [managed-settings-deploy.md § 6](managed-settings-deploy.md#6-verification-reference)). `--json` emits `{ok, drifts[], source}`. |
 | `rollback-template` | **Synthetic test fixture only — not a production rollback.** Atomically regenerates the template at `--path <file>` (mode `0600`) and re-runs `verify`. Production rollback is MDM-orchestrated; see [managed-settings-deploy.md § 8](managed-settings-deploy.md#8-rollback). |
 
 ### Common flags
@@ -166,7 +166,7 @@ schedule, and synthetic-rollback test surface live in
 | --- | --- | --- |
 | `--output <dir>` | `export` | Destination directory for both JSON files. Required. |
 | `--path <file>` | `verify`, `rollback-template` | Deployed `managed-settings.json` to inspect or atomically rewrite. Required. |
-| `--mcp-gateway-url <url>` | `export`, `rollback-template` | Cordum MCP gateway URL to embed. Required. |
+| `--mcp-gateway-url <url>` | `export`, `verify`, `rollback-template` | Cordum MCP endpoint to embed or independently verify against. Required; obtain it from trusted deployment configuration. |
 | `--llm-proxy-base-url <url>` | `export`, `rollback-template` | Cordum LLM proxy base URL. Required. |
 | `--api-key-helper-command <cmd>` | `export`, `rollback-template` | Path to `cordum-agentd claude api-key-helper`. Required. |
 | `--hook-command <cmd>` | `export`, `rollback-template` | `cordum-hook` install path. Default `/opt/cordum/bin/cordum-hook`. |
@@ -195,6 +195,7 @@ cordumctl edge managed-settings export \
 
 # Verify a deployed file (workstation, no gateway needed)
 cordumctl edge managed-settings verify \
+  --mcp-gateway-url https://mcp.cordum.example/mcp \
   --path /etc/claude-code/managed-settings.json
 ```
 
