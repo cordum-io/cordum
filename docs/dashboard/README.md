@@ -10,17 +10,16 @@ pnpm install
 pnpm run dev
 ```
 
-By default, the dashboard uses `/config.json` from `dashboard/public`. To point at a local gateway, update the API base URL (plain HTTP only when the gateway runs without `GATEWAY_HTTP_TLS_CERT`, outside production):
+The dev server proxies `/api`, including the `/api/v1/stream` WebSocket, to the
+compose gateway at `https://localhost:8081`. It trusts the dev CA that
+`cordumctl generate-certs` writes to `certs/ca/ca.crt` at the repo root, and
+never skips certificate verification. Set `VITE_API_TARGET` to proxy to another
+gateway (for example `http://localhost:8081` for a gateway without TLS). A
+non-localhost HTTPS target is verified against Node's trust store, so add a
+private CA with `NODE_EXTRA_CA_CERTS`.
 
-```json
-{
-  "apiBaseUrl": "http://localhost:8081",
-  "apiKey": "",
-  "tenantId": "default",
-  "principalId": "dashboard",
-  "principalRole": "admin"
-}
-```
+Keep `apiBaseUrl` empty in `dashboard/public/config.json` so the dashboard
+calls `/api/v1` on its own origin and requests go through the proxy.
 
 ## Runtime Configuration
 
