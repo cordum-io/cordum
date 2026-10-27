@@ -24,7 +24,7 @@ importers:
         version: 4.0.5
       '@hookform/resolvers':
         specifier: ^5.9.1
-        version: 5.9.1(@standard-schema/spec@1.1.0)(ajv-errors@3.0.0(ajv@8.20.0))(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(joi@18.3.0)(react-hook-form@7.90.0(@types/react@19.3.0)(react@19.3.1))(zod@3.25.76)
+        version: 5.9.1(@standard-schema/spec@1.1.0)(ajv-errors@3.0.0(ajv@8.20.0))(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(joi@18.3.0)(react-hook-form@7.90.0(@types/react@19.3.0)(react@19.3.1))(zod@4.6.6)
       '@monaco-editor/react':
         specifier: ^4.7.0
         version: 4.7.0(monaco-editor@0.55.1)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
@@ -149,8 +149,8 @@ importers:
         specifier: ^2.9.1
         version: 2.9.1
       zod:
-        specifier: ^3.23.8
-        version: 3.25.76
+        specifier: ^4.6.6
+        version: 4.6.6
       zustand:
         specifier: ^5.0.15
         version: 5.0.15(@types/react@19.3.0)(immer@9.0.21)(react@19.3.1)(use-sync-external-store@1.6.0(react@19.3.1))
@@ -202,7 +202,7 @@ importers:
         version: 2.15.0(@types/node@26.1.1)(typescript@5.9.3)
       orval:
         specifier: ^8
-        version: 8.31.0(@tanstack/react-query@5.104.3(react@19.3.1))(msw@2.15.0(@types/node@26.1.1)(typescript@5.9.3))(prettier@3.9.10)(typescript@5.9.3)(zod@3.25.76)
+        version: 8.31.0(@tanstack/react-query@5.104.3(react@19.3.1))(msw@2.15.0(@types/node@26.1.1)(typescript@5.9.3))(prettier@3.9.10)(typescript@5.9.3)(zod@4.6.6)
       postcss:
         specifier: ^8.5.30
         version: 8.5.30
@@ -3659,8 +3659,8 @@ packages:
     resolution: {integrity: sha512-/O3/DoQmI1XAhklDvF1dAjFf/epE8u3lzOZegQfLZ8G7Ud5bTRSZiFOpukHCu6jODrCA4gtIdwUCC7htxcDACA==}
     engines: {node: '> 0.8'}
 
-  legacy-javascript@0.0.3:
-    resolution: {integrity: sha512-1r6MT4dVaJyXt4G07Cm2cQ0AUaLJdefiEp4SmIAylA++gnEQ82YvmzE58RkM5EP0fk5hROLCslUPGnwIYdZQVA==}
+  legacy-javascript@0.0.4:
+    resolution: {integrity: sha512-UTmeKBVxnfJcpmpOvzzNnLsQT99BXHpPlc/ZKddIRmWmrR0fw6335I3lq4+sJoP60UTbBNaYsGYVPc65YB1x3A==}
 
   leven@4.1.0:
     resolution: {integrity: sha512-KZ9W9nWDT7rF7Dazg8xyLHGLrmpgq2nVNFUckhqdW3szVP6YhCpp/RAnpmVExA9JvrMynjwSLVrEj3AepHR6ew==}
@@ -5320,8 +5320,8 @@ packages:
   zod@3.25.76:
     resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
 
-  zod@4.6.7:
-    resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
+  zod@4.6.6:
+    resolution: {integrity: sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA==}
 
   zustand@4.5.7:
     resolution: {integrity: sha512-CHOUy7mu3lbD6o6LJLfllpjkzhHXSBlX8B9+qPddUsIfeF5S/UZ5q0kmCsnRqT1UHFQZchNFDDzMbQsuesHWlw==}
@@ -5633,7 +5633,7 @@ snapshots:
     dependencies:
       '@hapi/hoek': 11.0.7
 
-  '@hookform/resolvers@5.9.1(@standard-schema/spec@1.1.0)(ajv-errors@3.0.0(ajv@8.20.0))(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(joi@18.3.0)(react-hook-form@7.90.0(@types/react@19.3.0)(react@19.3.1))(zod@3.25.76)':
+  '@hookform/resolvers@5.9.1(@standard-schema/spec@1.1.0)(ajv-errors@3.0.0(ajv@8.20.0))(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(joi@18.3.0)(react-hook-form@7.90.0(@types/react@19.3.0)(react@19.3.1))(zod@4.6.6)':
     dependencies:
       '@standard-schema/utils': 0.3.0
       react-hook-form: 7.90.0(@types/react@19.3.0)(react@19.3.1)
@@ -5643,7 +5643,7 @@ snapshots:
       ajv-errors: 3.0.0(ajv@8.20.0)
       ajv-formats: 2.1.1(ajv@8.20.0)
       joi: 18.3.0
-      zod: 3.25.76
+      zod: 4.6.6
 
   '@humanfs/core@0.19.2':
     dependencies:
@@ -5846,10 +5846,10 @@ snapshots:
       - supports-color
       - typescript
 
-  '@orval/hono@8.31.0(typescript@5.9.3)(zod@3.25.76)':
+  '@orval/hono@8.31.0(typescript@5.9.3)(zod@4.6.6)':
     dependencies:
       '@orval/core': 8.31.0(typescript@5.9.3)
-      '@orval/zod': 8.31.0(typescript@5.9.3)(zod@3.25.76)
+      '@orval/zod': 8.31.0(typescript@5.9.3)(zod@4.6.6)
       fs-extra: 11.3.5
     optionalDependencies:
       typescript: 5.9.3
@@ -5858,11 +5858,11 @@ snapshots:
       - supports-color
       - zod
 
-  '@orval/mcp@8.31.0(typescript@5.9.3)(zod@3.25.76)':
+  '@orval/mcp@8.31.0(typescript@5.9.3)(zod@4.6.6)':
     dependencies:
       '@orval/core': 8.31.0(typescript@5.9.3)
       '@orval/fetch': 8.31.0(typescript@5.9.3)
-      '@orval/zod': 8.31.0(typescript@5.9.3)(zod@3.25.76)
+      '@orval/zod': 8.31.0(typescript@5.9.3)(zod@4.6.6)
     transitivePeerDependencies:
       - '@faker-js/faker'
       - supports-color
@@ -5908,13 +5908,13 @@ snapshots:
       - supports-color
       - typescript
 
-  '@orval/zod@8.31.0(typescript@5.9.3)(zod@3.25.76)':
+  '@orval/zod@8.31.0(typescript@5.9.3)(zod@4.6.6)':
     dependencies:
       '@orval/core': 8.31.0(typescript@5.9.3)
       jsesc: 3.1.0
       remeda: 2.48.0
     optionalDependencies:
-      zod: 3.25.76
+      zod: 4.6.6
     transitivePeerDependencies:
       - '@faker-js/faker'
       - supports-color
@@ -6044,7 +6044,7 @@ snapshots:
 
   '@paulirish/trace_engine@0.0.53':
     dependencies:
-      legacy-javascript: 0.0.3
+      legacy-javascript: 0.0.4
       third-party-web: 0.30.0
 
   '@puppeteer/browsers@2.13.1':
@@ -8852,7 +8852,7 @@ snapshots:
       tinyglobby: 0.2.17
       unbash: 5.1.0
       yaml: 2.9.1
-      zod: 4.6.7
+      zod: 4.6.6
 
   language-subtag-registry@0.3.23: {}
 
@@ -8862,7 +8862,7 @@ snapshots:
 
   lazy-ass@2.0.3: {}
 
-  legacy-javascript@0.0.3: {}
+  legacy-javascript@0.0.4: {}
 
   leven@4.1.0: {}
 
@@ -9293,7 +9293,7 @@ snapshots:
       type-check: 0.4.0
       word-wrap: 1.2.5
 
-  orval@8.31.0(@tanstack/react-query@5.104.3(react@19.3.1))(msw@2.15.0(@types/node@26.1.1)(typescript@5.9.3))(prettier@3.9.10)(typescript@5.9.3)(zod@3.25.76):
+  orval@8.31.0(@tanstack/react-query@5.104.3(react@19.3.1))(msw@2.15.0(@types/node@26.1.1)(typescript@5.9.3))(prettier@3.9.10)(typescript@5.9.3)(zod@4.6.6):
     dependencies:
       '@commander-js/extra-typings': 15.0.0(commander@15.0.0)
       '@orval/angular': 8.31.0(typescript@5.9.3)
@@ -9301,13 +9301,13 @@ snapshots:
       '@orval/core': 8.31.0(typescript@5.9.3)
       '@orval/effect': 8.31.0(typescript@5.9.3)
       '@orval/fetch': 8.31.0(typescript@5.9.3)
-      '@orval/hono': 8.31.0(typescript@5.9.3)(zod@3.25.76)
-      '@orval/mcp': 8.31.0(typescript@5.9.3)(zod@3.25.76)
+      '@orval/hono': 8.31.0(typescript@5.9.3)(zod@4.6.6)
+      '@orval/mcp': 8.31.0(typescript@5.9.3)(zod@4.6.6)
       '@orval/mock': 8.31.0(msw@2.15.0(@types/node@26.1.1)(typescript@5.9.3))(typescript@5.9.3)
       '@orval/query': 8.31.0(@tanstack/react-query@5.104.3(react@19.3.1))(typescript@5.9.3)
       '@orval/solid-start': 8.31.0(typescript@5.9.3)
       '@orval/swr': 8.31.0(typescript@5.9.3)
-      '@orval/zod': 8.31.0(typescript@5.9.3)(zod@3.25.76)
+      '@orval/zod': 8.31.0(typescript@5.9.3)(zod@4.6.6)
       '@scalar/json-magic': 0.12.20
       '@scalar/openapi-parser': 0.28.16
       '@scalar/openapi-types': 0.9.4
@@ -10589,7 +10589,7 @@ snapshots:
 
   zod@3.25.76: {}
 
-  zod@4.6.7: {}
+  zod@4.6.6: {}
 
   zustand@4.5.7(@types/react@19.3.0)(immer@9.0.21)(react@19.3.1):
     dependencies:
