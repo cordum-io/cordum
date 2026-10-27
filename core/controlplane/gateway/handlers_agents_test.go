@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1113,6 +1115,73 @@ func TestListAgentsIncludesLastActive(t *testing.T) {
 // with create's checks. A worker linked to another identity is refused,
 // re-linking the same worker is fine, and an identity in another tenant is
 // not found and links nothing.
+// failWorkerLinkLookups fails the worker-link reads GetByWorkerID makes while
+// on is set, as a Redis outage would.
+type failWorkerLinkLookups struct{ on atomic.Bool }
+
+func (*failWorkerLinkLookups) DialHook(next redis.DialHook) redis.DialHook { return next }
+func (*failWorkerLinkLookups) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+func (h *failWorkerLinkLookups) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		if args := cmd.Args(); h.on.Load() && cmd.Name() == "get" && len(args) > 1 && strings.HasPrefix(fmt.Sprint(args[1]), "agent:by-worker:") {
+			cmd.SetErr(errors.New("dial tcp: connection refused"))
+			return cmd.Err()
+		}
+		return next(ctx, cmd)
+	}
+}
+
+// TestAgentWorkerLinkLookupErrorFailsClosed: create and update refuse a worker
+// already linked to another identity, but a failed link lookup read as "not
+// linked", so LinkWorker then moved the worker's link to the new identity. A
+// lookup error now fails the request with 500 and leaves the link alone.
+func TestAgentWorkerLinkLookupErrorFailsClosed(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
+	ctx := context.Background()
+	newIdentity := func(name string) *store.AgentIdentity {
+		t.Helper()
+		identity, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+			TenantID: "default", Name: name, Owner: "ops", RiskTier: "low", Status: "active",
+		})
+		if err != nil {
+			t.Fatalf("create %s: %v", name, err)
+		}
+		return identity
+	}
+	owner, other := newIdentity("owner-agent"), newIdentity("other-agent")
+	if err := s.agentIdentityStore.LinkWorker(ctx, owner.ID, "key-shared"); err != nil {
+		t.Fatalf("link owner: %v", err)
+	}
+	hook := &failWorkerLinkLookups{}
+	s.jobStore.Client().AddHook(hook)
+	hook.on.Store(true)
+	send := func(method, path, id, body string, handler http.HandlerFunc) *httptest.ResponseRecorder {
+		req := withAuth(httptest.NewRequest(method, path, bytes.NewBufferString(body)), &auth.AuthContext{Tenant: "default", Role: "admin"})
+		req.Header.Set("Content-Type", "application/json")
+		if id != "" {
+			req.SetPathValue("id", id)
+		}
+		rr := httptest.NewRecorder()
+		handler(rr, req)
+		return rr
+	}
+	for name, rr := range map[string]*httptest.ResponseRecorder{
+		"create": send(http.MethodPost, "/api/v1/agents", "", `{"name":"new-agent","owner":"ops","risk_tier":"low","agent_id":"key-shared"}`, s.handleCreateAgent),
+		"update": send(http.MethodPut, "/api/v1/agents/"+other.ID, other.ID, `{"agent_id":"key-shared"}`, s.handleUpdateAgent),
+	} {
+		if rr.Code != http.StatusInternalServerError {
+			t.Errorf("%s with a failing link lookup = %d %s, want 500", name, rr.Code, rr.Body.String())
+		}
+	}
+	hook.on.Store(false)
+	if linked, err := s.agentIdentityStore.GetByWorkerID(ctx, "key-shared"); err != nil || linked == nil || linked.ID != owner.ID {
+		t.Fatalf("key-shared linked to %+v (err %v), want %s", linked, err, owner.ID)
+	}
+}
+
 func TestUpdateAgent_LinksWorkerForExistingIdentity(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	enableAgentIdentityEntitlement(t, s)

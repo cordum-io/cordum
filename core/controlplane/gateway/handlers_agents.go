@@ -139,11 +139,8 @@ func (s *server) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 	// worker is already linked — otherwise LinkWorker below would overwrite
 	// the global worker->identity mapping and orphan the prior identity.
 	workerID := strings.TrimSpace(req.AgentID)
-	if workerID != "" {
-		if existing, lookupErr := s.agentIdentityStore.GetByWorkerID(r.Context(), workerID); lookupErr == nil && existing != nil {
-			writeJSONError(w, http.StatusConflict, errorCodeAgentWorkerConflict, "worker is already linked to an agent identity")
-			return
-		}
+	if s.refuseLinkedWorker(w, r, workerID, "") {
+		return
 	}
 
 	identity := store.AgentIdentity{
@@ -366,6 +363,26 @@ func (s *server) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, agentResponseFromIdentity(identity))
 }
 
+// refuseLinkedWorker answers the request when workerID is linked to an
+// identity other than id (any identity when id is ""): 409, or 500 when the
+// lookup fails, so a store error never reads as "not linked" and lets
+// LinkWorker overwrite the link. Reports whether it answered.
+func (s *server) refuseLinkedWorker(w http.ResponseWriter, r *http.Request, workerID, id string) bool {
+	if workerID == "" {
+		return false
+	}
+	existing, err := s.agentIdentityStore.GetByWorkerID(r.Context(), workerID)
+	if err != nil {
+		writeInternalError(w, r, "look up agent worker link", err)
+		return true
+	}
+	if existing != nil && existing.ID != id {
+		writeJSONError(w, http.StatusConflict, errorCodeAgentWorkerConflict, "worker is already linked to an agent identity")
+		return true
+	}
+	return false
+}
+
 func (s *server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermissionOrRole(w, r, auth.PermAgentsWrite, "admin") {
 		return
@@ -398,11 +415,8 @@ func (s *server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 	// As on create: refuse a worker already linked to another identity, since
 	// LinkWorker below would overwrite the global worker->identity mapping.
 	workerID := strings.TrimSpace(req.AgentID)
-	if workerID != "" {
-		if existing, lookupErr := s.agentIdentityStore.GetByWorkerID(r.Context(), workerID); lookupErr == nil && existing != nil && existing.ID != id {
-			writeJSONError(w, http.StatusConflict, errorCodeAgentWorkerConflict, "worker is already linked to an agent identity")
-			return
-		}
+	if s.refuseLinkedWorker(w, r, workerID, id) {
+		return
 	}
 
 	updates := store.AgentIdentity{
