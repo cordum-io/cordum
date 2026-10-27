@@ -21,6 +21,7 @@ import (
 	"github.com/cordum/cordum/core/infra/resourceio"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
+	"github.com/cordum/cordum/core/policylabels"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	wf "github.com/cordum/cordum/core/workflow"
@@ -47,6 +48,42 @@ type approvalDecisionSummary struct {
 	ItemsPreview     []string `json:"items_preview,omitempty"`
 	EscalationReason string   `json:"escalation_reason,omitempty"`
 	MissingFields    []string `json:"missing_fields,omitempty"`
+}
+
+// jobWorkflowLink returns the workflow linkage of a stored job request. Only
+// the workflow engine sets WorkflowId, and job submit strips the run_id and
+// step_id labels from client input, so a job without WorkflowId has no
+// linkage, whatever its labels or input payload claim.
+func jobWorkflowLink(req *pb.JobRequest) (workflowID, runID, stepID string) {
+	if workflowID = strings.TrimSpace(req.GetWorkflowId()); workflowID == "" {
+		return "", "", ""
+	}
+	labels := req.GetLabels()
+	return workflowID, strings.TrimSpace(labels["run_id"]), strings.TrimSpace(labels["step_id"])
+}
+
+// addWorkflowLink sets the approval item's workflow fields from a job's link.
+func addWorkflowLink(item map[string]any, workflowID, runID, stepID string) {
+	if workflowID != "" {
+		item["workflow_id"] = workflowID
+	}
+	if runID != "" {
+		item["workflow_run_id"] = runID
+	}
+	if stepID != "" {
+		item["workflow_step_id"] = stepID
+		item["step_name"] = stepID
+	}
+}
+
+// linkedWorkflowMetadata returns the workflow metadata in a job's input
+// payload, only for a job the workflow engine dispatched: the payload is
+// caller input for any other job. Callers take IDs from jobWorkflowLink.
+func linkedWorkflowMetadata(req *pb.JobRequest, payload map[string]any) map[string]any {
+	if workflowID, _, _ := jobWorkflowLink(req); workflowID == "" {
+		return nil
+	}
+	return approvalWorkflowMetadata(payload)
 }
 
 func approvalWorkflowMetadata(payload map[string]any) map[string]any {
@@ -152,16 +189,12 @@ func formatApprovalAmount(amount float64) string {
 }
 
 func buildApprovalDecisionSummary(req *pb.JobRequest, policyReason string, payload map[string]any, contextStatus string) approvalDecisionSummary {
-	workflowMeta := approvalWorkflowMetadata(payload)
+	workflowMeta := linkedWorkflowMetadata(req, payload)
 	decision := approvalDecisionPayload(payload)
-	labels := req.GetLabels()
+	workflowID, _, stepID := jobWorkflowLink(req)
 	stepName := firstStringValue(workflowMeta, "step_name")
 	if stepName == "" {
-		stepName = strings.TrimSpace(labels["step_id"])
-	}
-	workflowID := firstStringValue(workflowMeta, "workflow_id")
-	if workflowID == "" {
-		workflowID = strings.TrimSpace(labels["workflow_id"])
+		stepName = stepID
 	}
 	topic := strings.TrimSpace(req.GetTopic())
 	contextPtr := strings.TrimSpace(req.GetContextPtr())
@@ -497,29 +530,19 @@ func (s *server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 				payload       map[string]any
 				contextStatus = "absent"
 			)
-			if req.Labels != nil {
-				// Filter out stale unresolved approvals: if the run is terminal,
-				// skip only items that have not been resolved yet.
-				if runID := strings.TrimSpace(req.Labels["run_id"]); runID != "" && s.workflowStore != nil {
-					if run, runErr := s.workflowStore.GetRun(r.Context(), runID); runErr == nil && run != nil {
-						if wf.IsTerminalRunStatus(run.Status) && !hasResolvedApproval && job.State != model.JobStateTimeout {
-							continue
-						}
+			workflowID, runID, stepID := jobWorkflowLink(req)
+			// Filter out stale unresolved approvals: if the run is terminal,
+			// skip only items that have not been resolved yet.
+			if runID != "" && s.workflowStore != nil {
+				if run, runErr := s.workflowStore.GetRun(r.Context(), runID); runErr == nil && run != nil {
+					if wf.IsTerminalRunStatus(run.Status) && !hasResolvedApproval && job.State != model.JobStateTimeout {
+						continue
 					}
 				}
-				if v := req.Labels["workflow_id"]; v != "" {
-					item["workflow_id"] = v
-				}
-				if v := req.Labels["run_id"]; v != "" {
-					item["workflow_run_id"] = v
-				}
-				if v := req.Labels["step_id"]; v != "" {
-					item["workflow_step_id"] = v
-					item["step_name"] = v
-				}
-				if v := req.Labels["gate_type"]; v != "" {
-					item["gate_type"] = v
-				}
+			}
+			addWorkflowLink(item, workflowID, runID, stepID)
+			if v := req.GetLabels()["gate_type"]; v != "" {
+				item["gate_type"] = v
 			}
 			if ptr := strings.TrimSpace(req.GetContextPtr()); ptr != "" && s.memoryResourceReader.Compatibility.Enabled {
 				// Display-only location reference, gated the same as legacy
@@ -544,22 +567,10 @@ func (s *server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 					contextStatus = "malformed"
 				}
 			}
-			if workflowMeta := approvalWorkflowMetadata(payload); workflowMeta != nil {
-				if _, exists := item["workflow_id"]; !exists {
-					if value := firstStringValue(workflowMeta, "workflow_id"); value != "" {
-						item["workflow_id"] = value
-					}
-				}
-				if _, exists := item["workflow_run_id"]; !exists {
-					if value := firstStringValue(workflowMeta, "run_id"); value != "" {
-						item["workflow_run_id"] = value
-					}
-				}
+			// Display names only; the IDs come from the job's workflow link.
+			if workflowMeta := linkedWorkflowMetadata(req, payload); workflowMeta != nil {
 				if value := firstStringValue(workflowMeta, "workflow_name"); value != "" {
 					item["workflow_name"] = value
-				}
-				if value := firstStringValue(workflowMeta, "step_id"); value != "" {
-					item["workflow_step_id"] = value
 				}
 				if value := firstStringValue(workflowMeta, "step_name"); value != "" {
 					item["step_name"] = value
@@ -1128,7 +1139,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 
 		// Check if workflow run is terminal (under lock to prevent TOCTOU).
 		if req.Labels != nil {
-			if runID := strings.TrimSpace(req.Labels["run_id"]); runID != "" && s.workflowStore != nil {
+			if _, runID, _ := jobWorkflowLink(req); runID != "" && s.workflowStore != nil {
 				if run, runErr := s.workflowStore.GetRun(ctx, runID); runErr == nil && run != nil {
 					if wf.IsTerminalRunStatus(run.Status) {
 						msg := fmt.Sprintf("workflow run %s — approval no longer valid", run.Status)
@@ -1270,11 +1281,13 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 					WorkflowId:  strings.TrimSpace(req.WorkflowId),
 					Priority:    req.Priority.String(),
 					PrincipalId: requesterPrincipal,
-					Labels:      req.Labels,
-					Budget:      req.Budget,
-					MemoryId:    strings.TrimSpace(req.MemoryId),
-					Meta:        freshMeta,
-					Identity:    policyIdentity,
+					// Scoped like the scheduler's check: workflow scope from
+					// WorkflowId, never from a label.
+					Labels:   policylabels.WithWorkflowScope(req.Labels, req.WorkflowId),
+					Budget:   req.Budget,
+					MemoryId: strings.TrimSpace(req.MemoryId),
+					Meta:     freshMeta,
+					Identity: policyIdentity,
 				}, s.configSvc, defaultTenant)
 				if freshErr != nil {
 					s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policybundles.PolicyActorID(r), policybundles.PolicyRole(r),
@@ -1348,7 +1361,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 		// Re-check workflow run terminal status under lock right before
 		// the state transition to prevent approving dead workflow runs.
 		if req.Labels != nil {
-			if runID := strings.TrimSpace(req.Labels["run_id"]); runID != "" && s.workflowStore != nil {
+			if _, runID, _ := jobWorkflowLink(req); runID != "" && s.workflowStore != nil {
 				if run, runErr := s.workflowStore.GetRun(ctx, runID); runErr == nil && run != nil {
 					if wf.IsTerminalRunStatus(run.Status) {
 						msg := fmt.Sprintf("workflow run %s — approval no longer valid", run.Status)
@@ -1548,7 +1561,7 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if req.Labels != nil {
-			if runID := strings.TrimSpace(req.Labels["run_id"]); runID != "" && s.workflowStore != nil {
+			if _, runID, _ := jobWorkflowLink(req); runID != "" && s.workflowStore != nil {
 				if run, runErr := s.workflowStore.GetRun(ctx, runID); runErr == nil && run != nil {
 					if wf.IsTerminalRunStatus(run.Status) {
 						msg := fmt.Sprintf("workflow run %s — approval no longer valid", run.Status)
@@ -1763,20 +1776,10 @@ func (s *server) handleApprovalContext(w http.ResponseWriter, r *http.Request) {
 		decisionSummary = &summary
 
 		// Add workflow metadata.
-		if labels != nil {
-			if v := labels["workflow_id"]; v != "" {
-				approvalItem["workflow_id"] = v
-			}
-			if v := labels["run_id"]; v != "" {
-				approvalItem["workflow_run_id"] = v
-			}
-			if v := labels["step_id"]; v != "" {
-				approvalItem["workflow_step_id"] = v
-				approvalItem["step_name"] = v
-			}
-			if v := labels["gate_type"]; v != "" {
-				approvalItem["gate_type"] = v
-			}
+		linkedWorkflowID, linkedRunID, linkedStepID := jobWorkflowLink(req)
+		addWorkflowLink(approvalItem, linkedWorkflowID, linkedRunID, linkedStepID)
+		if v := labels["gate_type"]; v != "" {
+			approvalItem["gate_type"] = v
 		}
 	} else {
 		slog.Warn("approval context: job request unavailable",

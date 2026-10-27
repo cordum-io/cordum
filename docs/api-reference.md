@@ -809,8 +809,12 @@ Per-tenant immutable retention holds on audit data. All endpoints require admin 
 
 - Errors: `400`, `403`, `409`, `429`, `503`
 - Labels Cordum sets itself are dropped from `labels` (and logged): keys
-  starting with `_`, any `approval_*` key, `gate_type`, `cordum.bus_msg_id`
-  and `policy.attachment_id`. The gRPC `SubmitJob` call does the same.
+  starting with `_`, any `approval_*` key, `gate_type`, `cordum.bus_msg_id`,
+  `policy.attachment_id`, and the workflow context the workflow engine writes
+  (`workflow_id`, `run_id`, `step_id`, plus `workflow`, `workflow_run_id` and
+  `workflow.*`, which the Safety Kernel reads as the workflow policy scope).
+  The gRPC `SubmitJob` call and the MCP submit tool do the same. Only jobs the
+  workflow engine dispatches belong to a workflow run.
 
 ### GET `/api/v1/jobs`
 

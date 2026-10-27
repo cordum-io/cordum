@@ -74,12 +74,20 @@ func mutableLabel(key string) bool {
 }
 
 // ServerOwnedLabel reports whether only Cordum services may set a job label:
-// every label Canonical leaves out of the hash, plus gate_type, the workflow
-// approval-gate marker the approve handler trusts. The scheduler, approval code
-// and Safety Kernel act on these, so entry points that accept labels from
-// clients or workflow authors drop them.
+// every label Canonical leaves out of the hash, gate_type (the workflow
+// approval-gate marker the approve handler trusts) and the workflow context
+// (policylabels.WorkflowContextLabel). The scheduler, approval code and Safety
+// Kernel act on these, so entry points that accept labels from clients or
+// workflow authors drop them.
 func ServerOwnedLabel(key string) bool {
-	return mutableLabel(key) || key == "gate_type"
+	return mutableLabel(key) || key == "gate_type" || policylabels.WorkflowContextLabel(key)
+}
+
+// ReservedLabel reports whether a label is reserved for Cordum services: the
+// "_"-prefixed system labels (_source, _content.*, ...) and every
+// ServerOwnedLabel. Neither client input nor workflow route labels set them.
+func ReservedLabel(key string) bool {
+	return strings.HasPrefix(key, "_") || ServerOwnedLabel(key)
 }
 
 // Hash computes the deterministic canonical hash of a JobRequest as a

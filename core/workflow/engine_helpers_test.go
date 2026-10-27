@@ -334,12 +334,15 @@ func TestBuildJobRequestMetadata(t *testing.T) {
 	}
 }
 
-func TestBuildJobRequestDropsServerOwnedRouteLabels(t *testing.T) {
+func TestBuildJobRequestDropsReservedRouteLabels(t *testing.T) {
 	// Route labels come from the workflow author; approval state, the gate
-	// marker and the policy scope must stay the engine's own.
+	// marker, the policy scope and the workflow context must stay the
+	// engine's own.
 	step := &Step{ID: "s", Type: StepTypeWorker, Topic: "job.test", RouteLabels: map[string]string{
 		"pool": "default", "approval_granted": "true", "approval_snapshot": "snap-1",
 		"gate_type": "workflow_approval", edgecore.LabelPolicyAttachmentID: "job/other-job/policy",
+		"workflow_id": "wf-other", "run_id": "run-other", "step_id": "other", "_source": "api",
+		"workflow.id": "wf-other", "workflow": "wf-other", "workflow_run_id": "run-other",
 	}}
 	req := (&Engine{}).buildJobRequest(context.Background(), &Workflow{ID: "wf"}, &WorkflowRun{ID: "run"}, step, "s", "job-1")
 	if req.Labels["pool"] != "default" {
@@ -348,7 +351,16 @@ func TestBuildJobRequestDropsServerOwnedRouteLabels(t *testing.T) {
 	if got := req.Labels[edgecore.LabelPolicyAttachmentID]; got != edgecore.JobPolicyAttachmentID("job-1") {
 		t.Fatalf("policy attachment = %q, want the job's own", got)
 	}
-	for _, k := range []string{"approval_granted", "approval_snapshot", "gate_type"} {
+	engineOwned := map[string]string{"workflow_id": "wf", "run_id": "run", "step_id": "s", "_source": "workflow"}
+	for k, want := range engineOwned {
+		if got := req.Labels[k]; got != want {
+			t.Fatalf("%s = %q, want the engine's %q: %#v", k, got, want, req.Labels)
+		}
+	}
+	if req.WorkflowId != "wf" {
+		t.Fatalf("WorkflowId = %q, want wf", req.WorkflowId)
+	}
+	for _, k := range []string{"approval_granted", "approval_snapshot", "gate_type", "workflow.id", "workflow", "workflow_run_id"} {
 		if _, ok := req.Labels[k]; ok {
 			t.Fatalf("route label %q reached the job: %#v", k, req.Labels)
 		}

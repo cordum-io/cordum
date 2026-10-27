@@ -20,6 +20,7 @@ import (
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/licensing"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/cordum/cordum/core/protocol/reqhash"
 	wf "github.com/cordum/cordum/core/workflow"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -1076,13 +1077,25 @@ func (s *server) handleWorkflowDryRun(w http.ResponseWriter, r *http.Request) {
 			topic = "job." + string(step.Type)
 		}
 
+		// The labels the step's job carries in a real run: route labels minus
+		// the reserved ones (as the workflow engine filters them), then the
+		// engine's own workflow context.
+		labels := map[string]string{}
+		for k, v := range step.RouteLabels {
+			if !reqhash.ReservedLabel(k) {
+				labels[k] = v
+			}
+		}
+		labels["workflow_id"] = id
+		labels["step_id"] = stepID
+		labels["_source"] = "workflow"
 		checkReq, err := buildPolicyCheckRequest(r.Context(), &policyCheckRequest{
 			Topic:      topic,
 			WorkflowId: id,
 			StepId:     stepID,
 			Tenant:     tenant,
 			OrgId:      tenant,
-			Labels:     step.RouteLabels,
+			Labels:     labels,
 		}, s.configSvc, s.tenant)
 		if err != nil {
 			slog.Error("dry-run build request failed", "step_id", stepID, "error", err)

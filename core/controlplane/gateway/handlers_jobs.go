@@ -643,18 +643,9 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	var delegationLineage model.DelegationLineage
 	if s.jobStore != nil {
 		if jobRequest != nil {
-			if jobRequest.WorkflowId != "" {
-				workflowID = jobRequest.WorkflowId
-			}
-			if len(jobRequest.Labels) > 0 {
-				for k, v := range jobRequest.Labels {
-					labels[k] = v
-				}
-				if workflowID == "" {
-					workflowID = jobRequest.Labels["workflow_id"]
-				}
-				runID = jobRequest.Labels["run_id"]
-				stepID = jobRequest.Labels["step_id"]
+			workflowID, runID, stepID = jobWorkflowLink(jobRequest)
+			for k, v := range jobRequest.Labels {
+				labels[k] = v
 			}
 		}
 		if lineage, err := s.jobStore.GetDelegationLineage(r.Context(), id); err == nil {

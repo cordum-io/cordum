@@ -232,7 +232,9 @@ When a job **succeeds** and has a `Compensation` field defined in its request:
 ### Rollback Trigger
 
 Rollback fires when a job result arrives with status `FAILED_FATAL` and the job
-belongs to a workflow:
+belongs to a workflow. Only the request's `WorkflowId` field, which the workflow
+engine sets, links a job to a saga (recording and rollback alike); a
+`workflow_id` label does not:
 
 ```
 handleJobResult (FAILED_FATAL + workflow_id)

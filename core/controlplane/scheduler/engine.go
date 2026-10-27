@@ -2563,12 +2563,11 @@ func (e *Engine) handleJobResult(res *pb.JobResult) error {
 			}
 		}
 		if status == pb.JobStatus_JOB_STATUS_FAILED_FATAL && e.saga != nil {
+			// WorkflowId, not the workflow_id label: a job a client labelled
+			// with another workflow's ID must not roll back that saga.
 			workflowID := ""
 			if jobReq != nil {
 				workflowID = strings.TrimSpace(jobReq.WorkflowId)
-				if workflowID == "" && jobReq.Labels != nil {
-					workflowID = strings.TrimSpace(jobReq.Labels["workflow_id"])
-				}
 			}
 			if workflowID != "" {
 				e.wg.Add(1)
