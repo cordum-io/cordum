@@ -124,6 +124,10 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 ROOT_DIR="${CORDUM_REPO_ROOT:-$(cd "${SCRIPT_DIR}/../.." && pwd -P)}"
+if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+  # shellcheck source=tools/scripts/github_actions_mask_env.sh
+  source "${SCRIPT_DIR}/github_actions_mask_env.sh" || { echo "failed to load the GitHub Actions mask helper" >&2; exit 1; }
+fi
 
 require() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -469,6 +473,49 @@ base64_urlsafe() {
   printf '%s' "$1" | base64 | tr '+/' '-_' | tr -d '=' | tr -d '\n'
 }
 
+# Admin login for block 2.5. The session token is never printed; in GitHub
+# Actions it is registered with ::add-mask:: before any use. xtrace would print
+# the password and token, so the login is refused under it.
+e2e_admin_login() {
+  local body code
+  SESSION=""
+  if [[ "$-" == *x* ]]; then
+    red "  FAIL: xtrace is active; refusing to handle the admin session token"
+    FAIL=$((FAIL+1))
+    ERRORS="${ERRORS}\n  - Login: refused under xtrace"
+    return 0
+  fi
+  body=$(http_body -X POST "$BASE/auth/login" \
+    -H "Content-Type: application/json" \
+    -H "X-API-Key: $API_KEY" \
+    -d "{\"username\":\"${ADMIN_USERNAME}\",\"password\":\"${ADMIN_PASSWORD}\",\"tenant\":\"${TENANT_ID}\"}")
+  code=$(http_code -X POST "$BASE/auth/login" \
+    -H "Content-Type: application/json" \
+    -H "X-API-Key: $API_KEY" \
+    -d "{\"username\":\"${ADMIN_USERNAME}\",\"password\":\"${ADMIN_PASSWORD}\",\"tenant\":\"${TENANT_ID}\"}")
+  check "POST /auth/login" "200" "$code"
+
+  # Extract session token
+  SESSION=$(echo "$body" | jq -r '.token // empty' 2>/dev/null || true)
+  if [ -n "$SESSION" ] && [[ "${GITHUB_ACTIONS:-}" == "true" ]] && ! gha_mask_value "$SESSION"; then
+    SESSION=""
+    red "  FAIL: Session token could not be registered as a mask"
+    FAIL=$((FAIL+1))
+    ERRORS="${ERRORS}\n  - Login: session token mask registration failed"
+    return 0
+  fi
+  if [ -n "$SESSION" ]; then
+    green "  PASS: Got session token"
+    PASS=$((PASS+1))
+  else
+    red "  FAIL: No session token in login response"
+    FAIL=$((FAIL+1))
+    ERRORS="${ERRORS}\n  - Login: no session token returned"
+    # Fallback to API key for remaining tests
+    SESSION=""
+  fi
+}
+
 SESSION=""
 
 # =============================================================================
@@ -594,28 +641,7 @@ check "GET /workers (bad key)" "401" "$code"
 
 bold "2.5 User login (${ADMIN_USERNAME})"
 if [ -n "$ADMIN_PASSWORD" ]; then
-  body=$(http_body -X POST "$BASE/auth/login" \
-    -H "Content-Type: application/json" \
-    -H "X-API-Key: $API_KEY" \
-    -d "{\"username\":\"${ADMIN_USERNAME}\",\"password\":\"${ADMIN_PASSWORD}\",\"tenant\":\"${TENANT_ID}\"}")
-  code=$(http_code -X POST "$BASE/auth/login" \
-    -H "Content-Type: application/json" \
-    -H "X-API-Key: $API_KEY" \
-    -d "{\"username\":\"${ADMIN_USERNAME}\",\"password\":\"${ADMIN_PASSWORD}\",\"tenant\":\"${TENANT_ID}\"}")
-  check "POST /auth/login" "200" "$code"
-
-  # Extract session token
-  SESSION=$(echo "$body" | jq -r '.token // empty' 2>/dev/null || true)
-  if [ -n "$SESSION" ]; then
-    green "  PASS: Got session token (${SESSION:0:20}...)"
-    PASS=$((PASS+1))
-  else
-    red "  FAIL: No session token in login response"
-    FAIL=$((FAIL+1))
-    ERRORS="${ERRORS}\n  - Login: no session token returned"
-    # Fallback to API key for remaining tests
-    SESSION=""
-  fi
+  e2e_admin_login
 else
   yellow "  SKIP: CORDUM_ADMIN_PASSWORD not set"
   SKIP=$((SKIP+1))
