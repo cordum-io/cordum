@@ -316,7 +316,7 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 		Tool:        tool.Name,
 	}
 	if rec.ExpiresAt > 0 {
-		legacy.ExpiresAt = time.Unix(rec.ExpiresAt, 0).UTC()
+		legacy.ExpiresAt = time.UnixMicro(rec.ExpiresAt).UTC()
 	}
 	return legacy, nil
 }

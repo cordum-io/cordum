@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/cordum/cordum/core/mcp"
 	"github.com/cordum/cordum/core/model"
@@ -270,7 +271,9 @@ func TestGate_ApprovalRequiredCarriesResumeMetadata(t *testing.T) {
 	if got.RetryHint == "" {
 		t.Error("RetryHint empty; clients have no machine-readable signal to retry with _approval_ref")
 	}
-	if got.ExpiresAt.IsZero() {
-		t.Error("ExpiresAt zero; DoD #3 (bounded timeout) requires the client to see the hold window")
+	// The record stores its expiry in microseconds; read as seconds it
+	// landed millions of years out.
+	if now := time.Now(); !got.ExpiresAt.After(now) || got.ExpiresAt.After(now.Add(mcpApprovalDefaultTTL+time.Minute)) {
+		t.Errorf("ExpiresAt = %v; DoD #3 (bounded timeout) requires the %v hold window", got.ExpiresAt, mcpApprovalDefaultTTL)
 	}
 }

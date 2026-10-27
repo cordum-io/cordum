@@ -328,10 +328,13 @@ func (s *MCPApprovalStore) EnqueueMCPApproval(ctx context.Context, req *MCPAppro
 
 	pipe := s.client.TxPipeline()
 	pipe.Set(ctx, mcpApprovalKey(rec.ID), raw, ttl+time.Minute)
-	// Index goes into a per-tuple set so a single agent/tool/args trio
-	// can have at most one outstanding PENDING approval. The set member
-	// is the approval ID — pre-approval lookup walks members and picks
-	// an APPROVED+unconsumed record via CAS.
+	// Index goes into a per-tuple set; the set member is the approval ID,
+	// and the pre-approval lookup walks members to pick an
+	// APPROVED+unconsumed record via CAS. Every call adds a record: a re-ask
+	// is not deduped here. The gate hands a caller back its pending
+	// approval itself (pendingMCPApproval) wherever it mints an Edge
+	// approval, which in the gateway is every tools/call; only a gate
+	// without an Edge store enqueues each re-ask.
 	idxKey := mcpApprovalIndexKey(rec.Tenant, rec.AgentID, rec.ToolName, rec.ArgsHash)
 	pipe.SAdd(ctx, idxKey, rec.ID)
 	pipe.Expire(ctx, idxKey, ttl+time.Minute)
