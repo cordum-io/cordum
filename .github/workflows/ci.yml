@@ -213,6 +213,7 @@ jobs:
         bash tools/scripts/fetch_stargazers.test.sh
         bash tools/scripts/production_gate_http.test.sh
         bash tools/scripts/production_gate.test.sh
+        bash tools/scripts/runtime_credential_masking.test.sh
         bash tools/scripts/nightly_workflows.test.sh
         bash tools/scripts/soak_test_lib.test.sh
         bash tools/scripts/handshake_interop_workflow.test.sh
