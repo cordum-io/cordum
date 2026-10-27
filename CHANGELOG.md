@@ -14,6 +14,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - **Audit compliance export:** the `from` lower bound follows the plan's retention window (Team 90 days, Enterprise unlimited) instead of a hard-coded 168 hours.
 - **Legal holds:** `POST /api/v1/audit/legal-hold` without `tenant_id` now targets the caller's tenant, not the server default tenant.
 - **Deprecated:** `rules[].constraints.max_output_bytes`, `allowed_destinations` and `redact_patterns` (added in task-e4e9489c) are still accepted by the policy schema, but the Safety Kernel never enforced them. They are now documented as deprecated no-ops; use `budgets` or `output_rules` instead.
+- **MCP agent identity:** `X-Agent-Id` is honoured only for an agent identity linked to the caller's principal or API key ID (agent create or update `agent_id`, or a worker credential), or for a caller who passes the agent-identity admin gate. Other callers get 403 `agent identity not bound to caller`. `CORDUM_MCP_ALLOW_UNBOUND_AGENT_ID=true` restores the old trust as a temporary bridge and logs a warning at start.
+- **Managed API keys** no longer take a principal from `X-Principal-Id` in production. Without `CORDUM_ALLOW_HEADER_PRINCIPAL=true` the caller is the key itself (audit identity = key ID), so dashboard API-key mode in production attributes actions to the key.
+- **`cordum-mcp` HTTP mode** binds `127.0.0.1:8090` by default. A non-loopback bind needs `--http-auth-token` / `CORDUM_MCP_HTTP_AUTH_TOKEN`, or the explicit `--allow-unauthenticated-http`.
+- **`/api/v1/policy/evaluate`** is open to callers who can submit jobs (`jobs.write` with admin or user) or read policy, as well as to policy writers. `simulate` and `explain` still need `policy.write` + admin.
+- **MCP invariant denies** are answered like action-gate denies (an `isError` result, audited as deny) instead of JSON-RPC `-32603`.
+- **Audit verify:** a chain prefix that is missing without a valid retention anchor now verifies as `compromised`. Chains trimmed by hand, which earlier docs allowed, must be re-baselined once with `cordumctl audit adopt-anchor` (see `docs/audit-operations.md`).
+- **Edge retention:** Edge sessions of tenants under legal hold are kept.
+- **Dashboard:** the MCP page's Port and "Auth required" tiles are removed; the gateway never read either setting. Copy URL copies the gateway's `/mcp/sse` through the dashboard's new `/mcp/` proxy.
+- **Helm:** the dashboard's browser API base defaults to `/api/v1` through its nginx, which verifies the gateway certificate when TLS is on. The certificate must list `<release>-api-gateway.<namespace>.svc.cluster.local`.
+- **Copilot hooks:** the generated hooks file has `"version": 1`, and denies exit 2 with a top-level `permissionDecision`.
+- **cordumctl** defaults the gateway to `https://localhost:8081` and trusts `./certs/ca/ca.crt` from `cordumctl generate-certs` when it is present. A gateway without TLS needs `--gateway` or `CORDUM_GATEWAY` set to its `http://` URL. The dashboard dev server and the guardrails and mock-bank demo scripts default to the same URL.
+- **Job submit** drops the workflow context labels (`workflow_id`, `run_id`, `step_id`, `workflow`, `workflow_run_id`, `workflow.*`) over HTTP, gRPC and MCP, and workflow `route_labels` cannot set them. A job belongs to a workflow only through the `WorkflowId` the engine sets; client jobs stored earlier with those labels are treated as standalone.
+- **gRPC `SubmitJob`** refuses an `agent_id` that is not linked to the calling credential (`PermissionDenied`) and `_governance.*` or `_ma.*` labels (`InvalidArgument`), as HTTP submit does.
+- **MCP taint lookup failures:** in production a destructive MCP call whose session-taint lookup fails is now denied (`taint_lookup_unavailable_failclosed`); an explicit `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` still wins. It is held for approval instead only with `CORDUM_MCP_TAINT_FAILCLOSED_APPROVER=true`, so deployments that set `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE=true` to get holds must set that too.
+- **MCP replies:** the `-32099` reply hints `retry_with_same_args` when `mcp.policy_gate_enabled` is off, since only the approval hold consumes `_approval_ref`. A policy-gate call without metadata gets `-32097` (`missing_mcp_metadata`) instead of `-32603`.
+- **Compose** no longer sets `NATS_TOKEN`; the dev NATS server authenticates clients by certificate and never checked it.
 
 #### CAP dependency promoted to the published v2.17.0 release (2026-07-22, task-a24b53c5)
 
@@ -34,6 +50,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   are part of CAP v2.17.0.
 
 ### Security
+
+#### Job approval requires a recorded human decision (2026-10-26)
+
+- The scheduler accepted approval state carried in a job's labels as proof that a human had approved it, and job submit did not reserve those labels, so a job that policy held for approval could reach a worker without a human decision. The approval fast path, the pending replayer and the reconciler's approval auto-repair now require the job's stored approval record (an `approve` decision and an approver, written only by the approve and repair paths) on top of the existing job-hash and policy-snapshot binding. Job submit over HTTP and gRPC (and MCP and cordumctl, which use HTTP) drops client-supplied `approval_*`, `gate_type`, `cordum.bus_msg_id` and `policy.attachment_id` labels and logs the drop; workflow `route_labels` cannot set them either.
+- Over gRPC, job submit took any client `agent_id`, and over HTTP naming another worker as `principal_id` lent its agent. Both now bind `agent_id` to the calling credential.
+- A client job could claim another workflow's `workflow_id` or `run_id` labels and get that workflow's policy scope, or have its saga run that workflow's compensations on failure. The workflow context is now server-owned (see Changed).
+- The approval repair loop re-approved a job whose approval snapshot no longer matched, and approve answered `already_approved` without a recorded approver. A stale approval now waits for a fresh human decision, and `already_approved` comes only from the stored approval record.
+
+#### MCP agent identity, managed-key principals and cordum-mcp HTTP auth (2026-10-26)
+
+- Any authenticated caller in a tenant could name another agent's identity in `X-Agent-Id` and get its tool scope, risk tier, pre-approved tools, action-gate identity and Copilot transcripts; the header is now bound to the caller (see Changed).
+- Managed API keys took any `X-Principal-Id` in every mode, so a key holder could act as any principal for the self-approval guard, audit attribution and principal-bound agent links.
+- `cordum-mcp` HTTP mode listened on all interfaces with no inbound auth and called the gateway with its own key.
+- A rejected MCP approval could still be approved and claimed through its Edge twin; resolving either side now resolves both.
+
+#### The global invariant floor applies everywhere (2026-10-26)
+
+- A `block` invariant (and every other deny alias) was treated as non-deny by the invariant splitters, so a tenant allow beat it. `config.IsAllowClassDecision` now derives the class from `normalizeDecision`.
+- MCP invariants ran only on approval-gated tools, and not at all for calls forwarded to fronted upstreams. They now run on every `tools/call`.
+- The kernel and the MCP gate read `match.mcp` with opposite meanings; a rule with MCP lists now never matches a non-MCP job.
+- MCP upstream validation now rejects `0.0.0.0/8` and CGNAT endpoints, like `url_guard`, and `label_threshold` resolves an unreadable value restrictively.
+
+#### Audit chain anchors can't hide truncation (2026-10-26)
+
+- Deleting the retention anchor together with the oldest chain events made the truncation verify as routine retention. Verify now requires the oldest retained event to link to a valid anchor, or to be the genesis event. With `CORDUM_AUDIT_HMAC_KEY` set the sweeper signs the anchor, and verify rejects an unsigned or forged one; on Redis Cluster the sweeper also refuses to build on an anchor it did not sign. Compliance exports now verify against the anchor and check HMAC tags.
 
 #### MCP HTTP/SSE sessions are bound to the authenticated caller (2026-10-26)
 
@@ -125,6 +166,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+#### Audit chain and legal holds on Redis Cluster; adopt-anchor for hand-trimmed chains (2026-10-26)
+
+- On Redis Cluster (the production K8s overlay), every audit chain append failed with `CROSSSLOT`. The chain, the retention sweeper, verify and legal holds now have a cluster path built from single-key steps: a compare-and-append on the stream, a three-step trim with a pending anchor that carries the previous one, and an anchor re-read in verify. The single-node scripts are unchanged. Scans reach every master. Integration tests run against a real cluster when `CORDUM_TEST_REDIS_CLUSTER_ADDRESSES` is set. Other subsystems still use multi-key operations that Redis Cluster rejects; see `docs/horizontal-scaling.md`.
+- `POST /api/v1/audit/chain/retention-anchor` and `cordumctl audit adopt-anchor --expected-oldest-seq N [--replace-invalid]` (admin, tenant-scoped) record a hand-trimmed chain's oldest event as its retention boundary, append an `audit.retention_anchor_adopted` chain event, and refuse on a seq mismatch, over a valid anchor, or while a cluster trim is pending.
+
+#### MCP and Edge additions (2026-10-26)
+
+- `cordum-mcp --cacert` / `CORDUM_TLS_CA` trusts a private gateway CA.
+- `PUT /api/v1/agents/{id}` accepts `agent_id` to link a worker, with the same checks as create.
+- Long-lived MCP SSE sessions rotate their Edge execution and session before the Edge store caps; `CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION` now reaches the gateway's store.
+- New metric `cordum_mcp_evidence_write_failures_total{kind}`.
+- Cordum Edge checks the Claude Code version before relying on `onFailure`, documents writing Copilot hooks by hand, and the doctor reports Copilot hook problems a corrected file fixes.
+- `cordumctl generate-certs --san NAME|IP` (repeatable) adds DNS names and IP addresses to the server certificate, such as the gateway Service FQDN that Helm installs with TLS verify.
+
 #### Audit chain retention enforcement, opt-in (2026-10-26)
 
 - Retention and legal hold were documented, but nothing trimmed `audit:chain:<tenant>`. A retention sweeper (`core/audit/retention.go`, started by the gateway) now trims each tenant's chain to the effective window: the plan's `AuditRetentionDays` (Community 7, Team 90, Enterprise unlimited), shortened by `CORDUM_AUDIT_RETENTION_HOURS` if set.
@@ -138,7 +193,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 #### core/mcp - destructive taint-lookup fail-closed flag (2026-05-31, task-098b8d02)
 
-- Added default-OFF `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE`: when enabled, a destructive MCP call whose session-taint lookup errors is held with `REQUIRE_HUMAN` (`taint_lookup_unavailable_failclosed`) instead of proceeding as clean. Read-side taint persist remains fail-open, tainted destructive calls still hard-DENY with `session_tainted_prompt_injection`, and flag-OFF preserves the existing fail-open behavior for compatibility.
+- Added default-OFF `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE`: when enabled, a destructive MCP call whose session-taint lookup errors is held with `REQUIRE_HUMAN` (`taint_lookup_unavailable_failclosed`) instead of proceeding as clean. Read-side taint persist remains fail-open, tainted destructive calls still hard-DENY with `session_tainted_prompt_injection`, and flag-OFF preserves the existing fail-open behavior for compatibility. Superseded on 2026-10-26: production now fails closed by default and denies the call; it is held for approval only with `CORDUM_MCP_TAINT_FAILCLOSED_APPROVER=true` (see Changed).
 
 #### core/edge/shadow/ci — GitLab CI / Jenkins / Buildkite / CircleCI shadow detectors (2026-05-18, task-5d8c904c, EDGE-143.3)
 
@@ -149,6 +204,52 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - `core/mcp/dedupe_store.go` (new) introduces the `DedupeStore` interface (`LoadOrStore`/`Store`/`Delete`) plus `NewInProcessDedupeStore()` (sync.Map-backed default) and public constants `MCPDedupeKeyPrefix = "mcp:dedupe:"` + `MCPDedupeTTL = 10m`. `core/mcp/dedupe_redis.go` (new) adds `RedisDedupeStore` (SET NX EX MCPDedupeTTL winner-selection, GET decode on NX-miss, in-process fail-soft on any Redis error per taskRail #3) and `SelectDedupeStore(hint, client)` honoring `CORDUM_MCP_DEDUPE_BACKEND={redis,memory}` (defaults to Redis when client wired, in-process otherwise; unknown values fall back to in-process without panic). `ToolCallDeps.DedupeState` type changed from `*sync.Map` to `DedupeStore`; `dedupeBegin`/`dedupeFinish` now handle both backends with a 50ms poll + MCPDedupeTTL deadline-breaker on the Redis loser path. `core/controlplane/gateway/mcp_policy_wire.go` passes `s.jobStore.Client()` into `BuildMCPPolicyDeps` so multi-instance HA gateway deployments collapse identical retries across instances; today's single-instance gateway keeps in-process semantics. Test coverage: `core/mcp/dedupe_redis_test.go` (6 tests including TestRedisDedupeStore_CrossProcessCollapses), `core/mcp/policy_evaluate_dedupe_inprocess_test.go` (4 tests including error-delete + ctx-cancel waiter contracts), `core/controlplane/gateway/mcp_policy_wire_dedupe_backend_test.go` (5 backend-selection tests).
 
 ### Fixed
+
+#### MCP approvals, Edge waits, audit export, deploy defaults and docs (2026-10-26)
+
+- **Approvals:** an approved job whose dispatch failed and was retried went back to `APPROVAL_REQUIRED` with its approval status reset to pending, and could cycle until the scheduling-retry limit. It now stays approved while its job hash and approval snapshot still match. Jobs on `job.guard`, where the Python `@guard` SDK files approval requests, are completed once allowed or approved instead of being retried against a topic no worker serves, and `config/pools.yaml` registers `job.guard`. A DLQ retry no longer carries the original job's server-owned labels; with the approval republish's `cordum.bus_msg_id` a retried approved job could be dropped as a duplicate.
+- **MCP approvals:**
+  - HTTP MCP Edge approval mints referenced a parent event that was never created, so they failed in production.
+  - A consumed `_approval_ref` claim now satisfies the gates for that one call; before, the gate asked again and the call never ran.
+  - A re-ask returns the caller's pending approval instead of minting another.
+  - Session-less (VS Code `type:"http"`) callers can claim their approval, and keep their session taint.
+  - A fresh install with no policy config can mint approvals.
+  - A call that already ran upstream keeps its outcome when its post event fails to append, so the client no longer retries it.
+  - JSON-RPC errors no longer expose execution ids.
+  - The `-32099` `expires_at` is correct.
+  - A worker-link lookup error fails closed.
+- **MCP:**
+  - The pinned-IP gateway transport dropped the caller's TLS config.
+  - The gateway's Edge metrics never reached its `/metrics` listener; it now exports them, as agentd does.
+- **Edge:** agentd ends an inline approval wait before cordum-hook gives up, so an unresolved approval returns its `approval_ref` instead of a generic timeout.
+- **Scheduler and config:** the fail-mode env vars reach the per-tenant resolver; `safety.mcp.allow_plain_http` is honoured by the Redis upstream registry; the MCP gateway policy fields are flagged as reserved.
+- **Deploy:**
+  - The default Helm install gave the dashboard's browser the in-cluster gateway name as its API base.
+  - The base K8s Redis had no writable `/data` for its append-only file.
+  - The K8s ingresses route `/mcp`.
+  - Helm: a `gateway.service.httpPort` other than 8081 broke the chart, and `nats.auth.token` locked every service out of NATS. The gateway now gets its listen addresses from the Service ports, and the services receive `NATS_TOKEN`.
+  - `kubectl apply -k` failed for the production and local overlays; both build now.
+  - The dashboard nginx did not verify the gateway certificate on `/api/v1/stream`.
+  - `install.sh` started compose without certs or `.env`; it now brings the stack up through `quickstart.sh`.
+  - The `cordumctl init` scaffold could not start; it now starts and serves its gateway over HTTPS.
+  - The dashboard dev server proxied to the gateway's gRPC port over plain HTTP.
+  - The dashboard wrote back `mcp.require_auth`, which the gateway never reads.
+  - The production NATS cluster could not start: the `nats:2.10` image has no shell, and ordered startup stalled on pod 0 until JetStream had a meta leader. The flags are passed as args, and the pods start in parallel.
+  - The production Redis cluster never formed, because its init Job sent no password. Its bus listened on 10000, not 16379; Redis never got SIGTERM, so every stop ended in SIGKILL; and replicas never synced. Replication now runs over TLS with the client certificate and `masterauth`.
+  - The production NATS backup CronJob failed on every run: natscli has no `--tlscacert`. It passes `--tlsca`.
+  - The production NetworkPolicies blocked NATS and Redis peer traffic, the backup jobs, the Redis init Job, and the gateway and scheduler calls to the safety kernel. The jobs are labelled, and each of those flows has its own rule.
+  - The restore runbooks: NATS restores run from a nats-box pod and remove each stream first, and `redis-operations.md` has a tested Redis "Restore From Backup" procedure. The old steps copied an RDB into a running pod, which Redis ignores with `appendonly yes`.
+  - Upgrading the production overlay: delete the `cordum-redis-cluster-init` Job and the `cordum-nats` StatefulSet (its PVCs stay) before `kubectl apply -k`, since both changes touch immutable fields.
+- **Docs:**
+  - Gateway URLs are `https://localhost:8081` with `--cacert ./certs/ca/ca.crt` wherever the default stack is meant, and WebSockets are `wss://`.
+  - Examples use TLS NATS and Redis (`tls://`, `rediss://`, `redis-cli --tls`), and `config/nats.dev-tls.conf` replaces `config/nats.conf`.
+  - grpcurl examples use the TLS ports.
+  - Secret rotation covers client certificates and the Redis password.
+  - The install, guardrails and mock-bank setup creates certs and `REDIS_PASSWORD`.
+  - Production auth statements are corrected, and the duplicate troubleshooting block is removed.
+  - `TESTING.md` describes the test doubles the suite really uses.
+  - The outbound-signing and scope-filtering pages say `cordum-mcp` signs its gateway calls and that the gateway does not verify them on receipt.
+  - The configuration reference lists every gateway and `cordum-mcp` MCP variable.
 
 #### Safety policy schema, job idempotency keys and docs drift (2026-10-26)
 
