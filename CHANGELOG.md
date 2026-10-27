@@ -30,6 +30,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - **MCP taint lookup failures:** in production a destructive MCP call whose session-taint lookup fails is now denied (`taint_lookup_unavailable_failclosed`); an explicit `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` still wins. It is held for approval instead only with `CORDUM_MCP_TAINT_FAILCLOSED_APPROVER=true`, so deployments that set `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE=true` to get holds must set that too.
 - **MCP replies:** the `-32099` reply hints `retry_with_same_args` when `mcp.policy_gate_enabled` is off, since only the approval hold consumes `_approval_ref`. A policy-gate call without metadata gets `-32097` (`missing_mcp_metadata`) instead of `-32603`.
 - **Compose** no longer sets `NATS_TOKEN`; the dev NATS server authenticates clients by certificate and never checked it.
+- **Managed settings:** `edge managed-settings export` and `rollback-template` refuse an `--mcp-gateway-url` without the gateway's MCP path or with a wildcard, since Claude Code matches a `serverUrl` without a path against every path on its host. `verify` reports such a `serverUrl` as critical drift, and its new `--mcp-gateway-url` flag requires the allowlisted URL to be exactly the gateway's.
 
 #### CAP dependency promoted to the published v2.17.0 release (2026-07-22, task-a24b53c5)
 
@@ -221,7 +222,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - **MCP:**
   - The pinned-IP gateway transport dropped the caller's TLS config.
   - The gateway's Edge metrics never reached its `/metrics` listener; it now exports them, as agentd does.
-- **Edge:** agentd ends an inline approval wait before cordum-hook gives up, so an unresolved approval returns its `approval_ref` instead of a generic timeout.
+- **Edge:** agentd ends an inline approval wait before cordum-hook gives up, so an unresolved approval returns its `approval_ref` instead of a generic timeout. `CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION` above 2147483647 falls back to the default, as other invalid values do.
+- **Audit retention:** the sweep lock lasted the whole interval, so a replica's next tick could lose to its own lock and skip an hour. The lock and the sweep now end a tenth of an interval early.
 - **Scheduler and config:** the fail-mode env vars reach the per-tenant resolver; `safety.mcp.allow_plain_http` is honoured by the Redis upstream registry; the MCP gateway policy fields are flagged as reserved.
 - **Deploy:**
   - The default Helm install gave the dashboard's browser the in-cluster gateway name as its API base.
@@ -247,6 +249,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   - Secret rotation covers client certificates and the Redis password.
   - The install, guardrails and mock-bank setup creates certs and `REDIS_PASSWORD`.
   - Production auth statements are corrected, and the duplicate troubleshooting block is removed.
+  - The LangChain guard tutorial and example need `cordum-guard` 2.17.1 or later: 2.17.0 runs a tool on `REQUIRE_APPROVAL` and sends no tool arguments. An output rule's `redact` applies when the synchronous check matches; an asynchronous match is only recorded. A client using a login session reconnects its MCP stream after signing in again.
   - `TESTING.md` describes the test doubles the suite really uses.
   - The outbound-signing and scope-filtering pages say `cordum-mcp` signs its gateway calls and that the gateway does not verify them on receipt.
   - The configuration reference lists every gateway and `cordum-mcp` MCP variable.
