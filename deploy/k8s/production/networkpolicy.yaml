@@ -38,6 +38,31 @@ spec:
     - protocol: TCP
       port: 9092
 ---
+# Ingress policy for safety kernel — the gateway and the scheduler call its
+# gRPC port (their egress policies allow 50051)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cordum-ingress-safety-kernel
+  namespace: cordum
+spec:
+  podSelector:
+    matchLabels:
+      app: cordum-safety-kernel
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: cordum-api-gateway
+    - podSelector:
+        matchLabels:
+          app: cordum-scheduler
+    ports:
+    - protocol: TCP
+      port: 50051
+---
 # Ingress policy for dashboard — only accept from ingress controller
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
