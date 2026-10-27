@@ -181,48 +181,18 @@ func TestMatcher_MatchCapabilities(t *testing.T) {
 
 ### Integration Tests
 
-Test component interactions with real dependencies.
+Integration-tagged tests (`//go:build integration`) exercise several components
+together in-process. They need no Docker and no external services:
 
-```go
-// core/scheduler/scheduler_integration_test.go
-//go:build integration
-
-func TestScheduler_FullFlow(t *testing.T) {
-    // Setup infrastructure
-    ctx := context.Background()
-    infra := testutil.NewInfra(t)
-    defer infra.Cleanup()
-    
-    // Create scheduler with real dependencies
-    sched := NewScheduler(Config{
-        Bus:          infra.NatsBus,
-        Store:        infra.RedisStore,
-        SafetyKernel: safety.New(testPolicy),
-    })
-    
-    go sched.Run(ctx)
-    defer sched.Shutdown()
-    
-    // Submit job
-    job := &Job{
-        ID:           "test-job-1",
-        Type:         "echo",
-        Capabilities: []string{"read"},
-        RiskTags:     []string{"low"},
-    }
-    
-    err := sched.Submit(ctx, job)
-    require.NoError(t, err)
-    
-    // Wait for dispatch
-    time.Sleep(100 * time.Millisecond)
-    
-    // Verify state
-    stored, err := infra.RedisStore.GetJob(ctx, job.ID)
-    require.NoError(t, err)
-    assert.Equal(t, JobStatusDispatched, stored.Status)
-}
+```bash
+make test-integration   # go test -tags=integration ./...
 ```
+
+They use the same in-process Redis, NATS, and HTTP doubles as the unit tests
+(see [Test Utilities](#test-utilities)). The full stack (Compose with TLS NATS
+and Redis, the platform smoke test, and the production gates) runs in the
+nightly workflow, `.github/workflows/integration-nightly.yml`, and locally
+with `./tools/scripts/quickstart.sh` and `./tools/scripts/production_gate.sh`.
 
 ### Edge backend integration tests
 
@@ -386,137 +356,41 @@ rules:
 
 ### Test Utilities
 
-```go
-// testutil/infra.go
-type Infra struct {
-    NatsBus    bus.Bus
-    RedisStore store.Store
-    NatsURL    string
-    RedisURL   string
-    t          *testing.T
-}
+Tests run real protocol implementations in-process instead of shared
+containers, so `go test ./...` needs no services:
 
-func NewInfra(t *testing.T) *Infra {
+- **Redis**: [miniredis](https://github.com/alicebob/miniredis).
+  `miniredis.RunT(t)` starts a server that stops when the test ends; connect a
+  client to `srv.Addr()`.
+- **NATS**: an embedded `nats-server` (`github.com/nats-io/nats-server/v2/server`)
+  on a random port, with JetStream stored in `t.TempDir()` when the test needs it.
+- **HTTP**: `net/http/httptest`. Use `httptest.NewRecorder()` to call handlers
+  directly, and `httptest.NewServer` or `httptest.NewTLSServer` for clients.
+
+The embedded NATS pattern, from `core/infra/bus/nats_test.go`:
+
+```go
+func startTestNATSServer(t *testing.T, enableJS bool) *natsserver.Server {
     t.Helper()
-    
-    // Start containers if not running
-    natsURL := getEnvOrDefault("TEST_NATS_URL", "nats://localhost:4222")
-    redisURL := getEnvOrDefault("TEST_REDIS_URL", "redis://localhost:6379")
-    
-    // Create connections
-    natsBus, err := bus.NewNats(natsURL)
-    require.NoError(t, err)
-    
-    redisStore, err := store.NewRedis(redisURL)
-    require.NoError(t, err)
-    
-    // Clean state
-    redisStore.FlushAll(context.Background())
-    
-    return &Infra{
-        NatsBus:    natsBus,
-        RedisStore: redisStore,
-        NatsURL:    natsURL,
-        RedisURL:   redisURL,
-        t:          t,
+    opts := &natsserver.Options{Port: -1, NoLog: true, NoSigs: true}
+    if enableJS {
+        opts.JetStream = true
+        opts.StoreDir = t.TempDir()
     }
-}
-
-func (i *Infra) Cleanup() {
-    i.NatsBus.Close()
-    i.RedisStore.Close()
-}
-```
-
-### Mock Generation
-
-```go
-// Using mockgen
-//go:generate mockgen -source=kernel.go -destination=mocks/kernel_mock.go -package=mocks
-
-// Usage in tests
-func TestScheduler_WithMockedKernel(t *testing.T) {
-    ctrl := gomock.NewController(t)
-    defer ctrl.Finish()
-    
-    mockKernel := mocks.NewMockKernel(ctrl)
-    mockKernel.EXPECT().
-        Evaluate(gomock.Any(), gomock.Any()).
-        Return(&Decision{Type: DecisionAllow}, nil)
-    
-    sched := NewScheduler(Config{
-        SafetyKernel: mockKernel,
-    })
-    
-    // Test with mock...
+    ns, err := natsserver.NewServer(opts)
+    if err != nil {
+        t.Fatalf("start test nats: %v", err)
+    }
+    go ns.Start()
+    if !ns.ReadyForConnections(5 * time.Second) {
+        t.Fatal("nats server not ready")
+    }
+    t.Cleanup(ns.Shutdown)
+    return ns
 }
 ```
 
-### Test Fixtures
-
-```go
-// testutil/fixtures.go
-func LoadTestPolicy(t *testing.T, name string) *Policy {
-    t.Helper()
-    
-    path := filepath.Join("testdata", "policies", name+".yaml")
-    data, err := os.ReadFile(path)
-    require.NoError(t, err)
-    
-    policy, err := ParsePolicy(data)
-    require.NoError(t, err)
-    
-    return policy
-}
-
-func LoadTestJob(t *testing.T, name string) *Job {
-    t.Helper()
-    
-    path := filepath.Join("testdata", "jobs", name+".json")
-    data, err := os.ReadFile(path)
-    require.NoError(t, err)
-    
-    var job Job
-    require.NoError(t, json.Unmarshal(data, &job))
-    
-    return &job
-}
-```
-
-## Test Data
-
-### Policy Test Data
-
-```yaml
-# testdata/policies/strict.yaml
-version: "1"
-rules:
-  - id: deny-all-prod
-    match:
-      risk_tags: [prod]
-    decision: deny
-    reason: "Production access denied in test"
-    
-  - id: allow-read
-    match:
-      capabilities: [read]
-    decision: allow
-```
-
-### Job Test Data
-
-```json
-// testdata/jobs/read_job.json
-{
-  "id": "test-read-job",
-  "type": "data.read",
-  "capabilities": ["read"],
-  "risk_tags": ["low"],
-  "metadata": {
-    "source": "test"
-  }
-}
-```
+Connect with `nats.Connect(ns.ClientURL())`.
 
 ## Running Tests
 
@@ -568,60 +442,17 @@ The script writes `production_gate_results.json`, which can be consumed by CI ar
 
 ### CI Pipeline Tests
 
-```yaml
-# .github/workflows/test.yml
-name: Tests
-on: [push, pull_request]
+`.github/workflows/ci.yml` runs on pushes to `main` and `develop` and on pull
+requests into them:
 
-jobs:
-  unit:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.26.3'
-      - run: go test -race -coverprofile=coverage.out ./...
-      - uses: codecov/codecov-action@v3
-        with:
-          files: coverage.out
+- `test`: `go test -v -race -coverprofile=coverage.out -covermode=atomic ./...`,
+  then the benchmarks.
+- `integration-tests`: `go test -v -tags=integration -timeout 10m ./...`, with
+  no service containers.
 
-  integration:
-    runs-on: ubuntu-latest
-    services:
-      nats:
-        image: nats:latest
-        ports:
-          - 4222:4222
-      redis:
-        image: redis:7
-        ports:
-          - 6379:6379
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.26.3'
-      - run: go test -tags=integration ./...
-        env:
-          TEST_NATS_URL: nats://localhost:4222
-          TEST_REDIS_URL: redis://localhost:6379
-
-  benchmark:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.26.3'
-      - run: go test -bench=. -benchmem ./... | tee bench.txt
-      - uses: benchmark-action/github-action-benchmark@v1
-        with:
-          tool: 'go'
-          output-file-path: bench.txt
-          fail-on-alert: true
-          alert-threshold: '150%'
-```
+`.github/workflows/integration-nightly.yml` generates TLS certificates, starts
+the Compose stack, and runs the platform smoke test, the integration-tagged
+tests, and the production gates against it.
 
 ## Testing Best Practices
 

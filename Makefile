@@ -133,7 +133,7 @@ help:
 	@echo "  make build SERVICE=X    Build a single service (e.g. SERVICE=cordum-scheduler, cordum-hook, or cordum-agentd)"
 	@echo "  make proto              Regenerate protobuf Go code"
 	@echo "  make test               Run all Go tests"
-	@echo "  make test-integration   Run integration tests (requires Docker)"
+	@echo "  make test-integration   Run integration-tagged tests (in-process, no Docker)"
 	@echo "  make coverage           Full coverage report"
 	@echo "  make coverage-core      Core coverage check (80% minimum)"
 	@echo "  make openapi            Validate cordum-api.yaml (Redocly lint)"

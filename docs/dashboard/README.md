@@ -100,13 +100,22 @@ Example:
 docker build -t cordum-dashboard -f dashboard/Dockerfile dashboard
 ```
 
-Run the container and point it at the API gateway (plain HTTP only when the gateway runs without `GATEWAY_HTTP_TLS_CERT`, outside production):
+Run the container next to the compose stack. Its nginx serves the dashboard
+and proxies `/api/` to the gateway, verifying the gateway certificate with the
+CA mounted at `/etc/cordum/tls/ca/ca.crt`:
 
 ```bash
 docker run --rm -p 8082:8080 \
-  -e CORDUM_API_BASE_URL=http://localhost:8081 \
+  --network cordum_default \
+  -e CORDUM_API_UPSTREAM_HOST=cordum-api-gateway \
+  -e CORDUM_API_UPSTREAM_SCHEME=https \
+  -v "$PWD/certs:/etc/cordum/tls:ro" \
   cordum-dashboard
 ```
+
+Leave `CORDUM_API_BASE_URL` unset. The dashboard then calls `/api/v1` on its own
+origin, which is the only origin its Content-Security-Policy (`connect-src 'self'`)
+allows. A gateway URL there would be cross-origin and blocked.
 
 To embed an API key (not recommended for shared environments), add:
 
