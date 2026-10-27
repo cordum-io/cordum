@@ -807,7 +807,7 @@ Complete list of production-relevant environment variables:
 | `CORDUM_TLS_MIN_VERSION` | All | Minimum TLS version (`1.2` or `1.3`; defaults to 1.3 in production) |
 | `CORDUM_GRPC_REFLECTION` | Gateway | Enable gRPC reflection (`1` to enable) |
 | `CORDUM_DASHBOARD_EMBED_API_KEY` | Gateway | Embed API key in dashboard JS (DO NOT use in production) |
-| `CORDUM_ALLOW_HEADER_PRINCIPAL` | Gateway | Allow `X-Principal` header override (disabled in production) |
+| `CORDUM_ALLOW_HEADER_PRINCIPAL` | Gateway | Set to `true` to honour `X-Principal-Id` in production, for static keys without `principal_id` and for managed keys (always honoured outside production) |
 | `GATEWAY_HTTP_ADDR` | Gateway | HTTP listen address (default `:8081`) |
 | `GATEWAY_GRPC_ADDR` | Gateway | gRPC listen address (default `:8080`) |
 | `GATEWAY_METRICS_ADDR` | Gateway | Metrics listen address (default `:9092`) |

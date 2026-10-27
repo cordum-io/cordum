@@ -709,7 +709,7 @@ scanners:
 | `CORDUM_AGENTD_SAFE_ALLOW_CACHE_TTL` | `5m` | No | Safe-allow cache TTL when the cache is enabled; bounded and validated by agentd. |
 | `CORDUM_AGENTD_SAFE_ALLOW_CACHE_MAX_ENTRIES` | `128` | No | Safe-allow cache entry cap when the cache is enabled; invalid non-positive or very large values are rejected. |
 | `CORDUM_AGENTD_INLINE_APPROVAL_WAIT` | `false` | No | Local/demo-only inline approval wait for Gateway `REQUIRE_APPROVAL`. Default behavior returns an approval ref/URL and asks the user to approve then retry. |
-| `CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` | `30s` | No | Strict inline approval wait budget. Approval allows the action; rejection, timeout, pending, or wait errors return `DENY` and do not consume/cache an allow. |
+| `CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` | `30s` | No | Upper bound on the inline approval wait. For hook requests agentd ends the wait 1s before `cordum-hook`'s agentd budget (`4s` by default), so the wait lasts about 3s and the `30s` default never applies there. Approval allows the action and rejection denies it. An approval still pending when the wait ends, or a failed wait, gets the usual deny with `approval_ref` and retry guidance, and never consumes or caches an allow. |
 | `CORDUM_EDGE_HEARTBEAT_TTL` | `30s` | No | Agentd Gateway heartbeat TTL for active Edge sessions. |
 | `CORDUM_EDGE_HEARTBEAT_INTERVAL` | `TTL/2` | No | Agentd heartbeat interval; must be positive and no greater than half the TTL. |
 | `CORDUM_EDGE_APPROVAL_WAIT_TIMEOUT` | — | No | Legacy/settings-generator placeholder for approval-wait UX. Agentd runtime inline wait uses `CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT`. |
@@ -860,7 +860,7 @@ Read by the gateway's built-in MCP server (`/mcp/*`). The standalone
 | `API_KEY` | — | Fallback if `CORDUM_API_KEY` not set |
 | `CORDUM_API_KEYS` | — | Multiple keys: comma-separated or JSON array |
 | `CORDUM_API_KEYS_PATH` | — | Path to keys file (reloads on change) |
-| `CORDUM_ALLOW_INSECURE_NO_AUTH` | — | Set to `1` for no-auth mode (dev only) |
+| `CORDUM_ALLOW_INSECURE_NO_AUTH` | — | Set to `1` for no-auth mode (dev only). In production the gateway refuses to start with it set. |
 | `CORDUM_ALLOW_HEADER_PRINCIPAL` | — | Set to `true` to honour `X-Principal-Id` for static keys without `principal_id` and for managed keys (on by default outside production, off in production) |
 
 ### Gateway — Rate Limiting

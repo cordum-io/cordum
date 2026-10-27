@@ -13,7 +13,7 @@ production-only hardening across all services:
   Services fail fast at startup if cert/key files are missing.
 - **Client TLS enforced** for NATS and Redis connections (insecure rejected)
 - **gRPC reflection disabled** by default
-- **Anonymous auth blocked** (`CORDUM_ALLOW_INSECURE_NO_AUTH` ignored)
+- **Anonymous auth blocked**: the gateway refuses to start with `CORDUM_ALLOW_INSECURE_NO_AUTH` set
 - **Header principal override off by default**: `X-Principal-Id` is ignored
   unless `CORDUM_ALLOW_HEADER_PRINCIPAL=true`, which turns it back on for static
   API keys without a `principal_id` and for managed keys (outside production it
