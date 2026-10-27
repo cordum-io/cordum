@@ -684,7 +684,7 @@ scanners:
 | `CORDUM_LOG_FORMAT` | `text` | No | Log format: `json` or `text` |
 | `CORDUM_GRPC_REFLECTION` | — | No | Set to `1` to enable gRPC reflection (dev only) |
 | `NATS_URL` | `nats://localhost:4222` | Yes | NATS server URL |
-| `REDIS_URL` | `redis://localhost:6379` | Yes | Redis URL (Compose: `redis://:${REDIS_PASSWORD}@redis:6379` — password required) |
+| `REDIS_URL` | `redis://localhost:6379` | Yes | Redis URL (Compose: `rediss://:${REDIS_PASSWORD}@redis:6379` over TLS with `REDIS_TLS_*` — password required) |
 | `NATS_USE_JETSTREAM` | `0` | No | Enable NATS JetStream: `0` or `1` |
 | `POOL_CONFIG_PATH` | `config/pools.yaml` | No | Path to pools config |
 | `TIMEOUT_CONFIG_PATH` | `config/timeouts.yaml` | No | Path to timeouts config. **Production mode**: if explicitly set and the file cannot be loaded or parsed, the scheduler exits with an error. In dev mode, falls back to built-in defaults with a warning. |

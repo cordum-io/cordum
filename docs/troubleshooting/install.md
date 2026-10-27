@@ -45,7 +45,7 @@ cordumctl doctor
 
 | Detail | Cause | Fix |
 |--------|-------|-----|
-| `gateway reports NATS disconnected` | NATS container crashed or network partition | `docker compose logs nats`; verify `NATS_TOKEN` matches gateway's env |
+| `gateway reports NATS disconnected` | NATS container crashed, network partition, or a rejected client certificate | `docker compose logs nats`; Compose NATS authenticates clients by certificate (`verify: true`, no token), so check `./certs/` and restart the whole stack after regenerating it |
 | `skipped — /api/v1/status unavailable` | Earlier check failed; rerun after fixing `gateway_auth` | — |
 
 ### `redis_ok`

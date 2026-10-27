@@ -29,8 +29,8 @@ Shared across services:
 - `CORDUM_TLS_MIN_VERSION` (`1.2` or `1.3`, default `1.3` in production)
 - `CORDUM_LOG_FORMAT` (`json` or `text`, default `text`)
 - `CORDUM_GRPC_REFLECTION` (set to `1` to enable gRPC reflection, dev only)
-- `NATS_URL` (default `nats://nats:4222`)
-- `REDIS_URL` (compose default `redis://:${REDIS_PASSWORD}@redis:6379` — `REDIS_PASSWORD` is required)
+- `NATS_URL` (default `nats://localhost:4222`; Compose sets `tls://nats:4222` with `NATS_TLS_*`)
+- `REDIS_URL` (default `redis://localhost:6379`; Compose sets `rediss://:${REDIS_PASSWORD}@redis:6379` with `REDIS_TLS_*` — `REDIS_PASSWORD` is required)
 - `NATS_USE_JETSTREAM` (`0|1`)
 - `POOL_CONFIG_PATH`, `TIMEOUT_CONFIG_PATH`
 - `SAFETY_KERNEL_ADDR`
