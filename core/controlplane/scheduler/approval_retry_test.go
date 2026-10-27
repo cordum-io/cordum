@@ -5,6 +5,7 @@ package scheduler
 // asking the kernel, which would put it back in APPROVAL_REQUIRED.
 
 import (
+	"maps"
 	"testing"
 
 	"github.com/cordum/cordum/core/model"
@@ -73,13 +74,20 @@ func TestApprovedJobSurvivesFailedDispatch(t *testing.T) {
 	}
 }
 
+// An approval that stops binding is not honored, and it settles instead of
+// cycling between the reconciler (re-queue) and the scheduler (re-gate).
 func TestRetriedApprovalStillBound(t *testing.T) {
 	for _, tc := range []struct {
-		name, id string
-		mutate   func(*pb.JobRequest)
+		name, id  string
+		mutate    func(*pb.JobRequest)
+		wantState model.JobState
+		reapprove bool
 	}{
-		{"request changed", "approved-changed", func(r *pb.JobRequest) { r.Labels["amount"] = "50000" }},
-		{"snapshot no longer matches", "approved-stale-snapshot", func(r *pb.JobRequest) { r.Labels["approval_snapshot"] = "snap-0" }},
+		// No longer the approved request: invalidated like any stale request.
+		{"request changed", "approved-changed", func(r *pb.JobRequest) { r.Labels["amount"] = "50000" }, model.JobStateDenied, false},
+		// Approved under another snapshot than the stored decision: it waits
+		// for a fresh human decision.
+		{"snapshot no longer matches", "approved-stale-snapshot", func(r *pb.JobRequest) { r.Labels["approval_snapshot"] = "snap-0" }, model.JobStateApproval, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newApprovalHarness(t, reportsRouting())
@@ -88,11 +96,24 @@ func TestRetriedApprovalStillBound(t *testing.T) {
 			tc.mutate(redelivery)
 			h.must("redelivery", h.engine.handleJobRequest(redelivery, "trace"))
 			h.sweep()
+			settled := h.meta(tc.id)
+			h.sweep()
+			after := h.meta(tc.id)
 			if n := h.dispatches(tc.id); n != 0 {
 				t.Fatalf("dispatched %d times on an approval that no longer binds", n)
 			}
-			if state := h.meta(tc.id)["state"]; state != string(model.JobStateApproval) {
-				t.Fatalf("state = %s, want %s", state, model.JobStateApproval)
+			if after["state"] != string(tc.wantState) {
+				t.Fatalf("state = %s, want %s", after["state"], tc.wantState)
+			}
+			// Settled: the second sweep leaves the job untouched.
+			if !maps.Equal(settled, after) {
+				t.Fatalf("still cycling: job metadata changed between sweeps: %v -> %v", settled, after)
+			}
+			if tc.reapprove {
+				h.must("re-approval", h.engine.handleJobRequest(h.approve(tc.id), "trace"))
+				if n := h.dispatches(tc.id); n != 1 {
+					t.Fatalf("re-approved job dispatched %d times, want 1", n)
+				}
 			}
 		})
 	}

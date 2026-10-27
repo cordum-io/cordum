@@ -1032,17 +1032,14 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 			if state == model.JobStatePending || state == model.JobStateSucceeded ||
 				state == model.JobStateScheduled || state == model.JobStateDispatched ||
 				state == model.JobStateRunning {
-				req, reqErr := s.jobStore.GetJobRequest(ctx, jobID)
-				if reqErr != nil {
-					slog.Warn("approve: idempotency check skipped, job request lookup failed",
-						"job_id", jobID, "error", reqErr)
+				// Only the stored approval record says a human approved; the
+				// approval_granted label is a hint a request can carry anyway.
+				rec, recErr := s.jobStore.GetApprovalRecord(ctx, jobID)
+				if recErr != nil {
+					slog.Warn("approve: idempotency check skipped, approval record lookup failed",
+						"job_id", jobID, "error", recErr)
 				}
-				if req != nil && req.Labels != nil && req.Labels["approval_granted"] == "true" {
-					rec, recErr := s.jobStore.GetApprovalRecord(ctx, jobID)
-					if recErr != nil {
-						slog.Warn("approve: idempotent approval record lookup failed",
-							"job_id", jobID, "error", recErr)
-					}
+				if recErr == nil && rec.Decision == model.ApprovalDecisionApprove && strings.TrimSpace(rec.ApprovedBy) != "" {
 					traceID, traceErr := s.jobStore.GetTraceID(ctx, jobID)
 					if traceErr != nil {
 						slog.Warn("approve: idempotent trace ID lookup failed",
