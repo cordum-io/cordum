@@ -2,7 +2,7 @@
 
 ## Overview
 
-Cordum uses five credential groups that must be rotated periodically or after any suspected compromise. All secrets live in `.env` (never committed — see `.gitignore`). Reference `.env.example` for the full variable catalog.
+Cordum uses five credential groups that must be rotated periodically or after any suspected compromise. Secrets live in `.env` and the TLS certificates in `./certs/` (neither is committed — see `.gitignore`). Reference `.env.example` for the full variable catalog.
 
 ## Secrets
 
@@ -11,20 +11,22 @@ Cordum uses five credential groups that must be rotated periodically or after an
 | Redis password | `REDIS_PASSWORD` | 12 chars | `openssl rand -hex 16` | All services via `REDIS_URL` |
 | API key | `CORDUM_API_KEY` | 32 chars | `openssl rand -hex 32` | Gateway, dashboard |
 | Admin password | `CORDUM_ADMIN_PASSWORD` | 16 chars | `openssl rand -base64 24` | Gateway (user auth) |
-| NATS token | `NATS_TOKEN` | 16 chars | `openssl rand -hex 16` | All services via NATS auth |
+| TLS certificates (NATS client auth) | files in `./certs/` (gitignored) | n/a | `cordumctl generate-certs --force` | NATS, Redis, gateway (HTTPS + gRPC), safety kernel, context engine |
 | License token | `CORDUM_LICENSE_TOKEN` | n/a | Issued by licensing portal | Gateway, scheduler, safety kernel, workflow engine |
 
 ## Rotation Procedures
 
 ### Redis Password
 
-1. Generate new password: `openssl rand -hex 16`
-2. Update Redis ACL: `redis-cli ACL SETUSER default on >'<new-password>'`
-3. Update `.env` with new `REDIS_PASSWORD`
-4. Restart all Cordum services (gateway, scheduler, workflow engine, context engine)
-5. Verify connectivity: `redis-cli -a '<new-password>' PING`
+Compose starts Redis with `--requirepass "$REDIS_PASSWORD"` and passes the same value to every service in `REDIS_URL`, so `REDIS_PASSWORD` is the one place to change it. A live `ACL SETUSER` or `CONFIG SET requirepass` doesn't persist: the next time the container starts, the password reverts to `REDIS_PASSWORD`.
 
-**Zero-downtime:** Update Redis ACL first, then roll services one at a time.
+1. Generate new password: `openssl rand -hex 16`
+2. Update `.env` with new `REDIS_PASSWORD`. A value exported in your shell overrides `.env`, so update or unset it there too.
+3. Recreate the stack: `docker compose up -d`. Compose recreates Redis and every service whose configuration uses the password.
+4. Restart anything outside Compose that still uses the old password, such as workers you run by hand.
+5. Verify connectivity: `docker compose exec redis redis-cli --tls --cacert /etc/cordum/tls/ca/ca.crt -a '<new-password>' PING`
+
+**Downtime:** Redis restarts with the new password, so expect a short outage while services reconnect.
 
 ### API Key
 
@@ -43,21 +45,22 @@ Cordum uses five credential groups that must be rotated periodically or after an
 3. Restart the gateway (new password takes effect on next login)
 4. Log in with new credentials to verify
 
-### NATS Token
+### NATS Client Certificates
 
-The NATS token is set in two places: `.env` (for services) and `config/nats.dev-tls.conf` (for the NATS server). Both must match.
+Under Docker Compose, NATS has no token to rotate. `config/nats.dev-tls.conf` (and `config/nats.release.conf` for `docker-compose.release.yml`) has no `authorization` block; its `tls` block sets `verify: true`, so NATS accepts any client that presents a certificate signed by the CA in `./certs/ca/`. Services present `./certs/client/tls.crt`. The server never checks the `NATS_TOKEN` that Compose passes to services, so changing it does nothing.
 
-1. Generate new token: `openssl rand -hex 16`
-2. Update `NATS_TOKEN` in `.env`
-3. Update `authorization.token` in `config/nats.dev-tls.conf`
-4. Restart NATS and all dependent services: `docker compose down && docker compose up -d`
-5. Verify: check service logs for NATS connection errors
+Rotate the certificates instead. `cordumctl generate-certs` writes one set (CA, server and client certificates) that NATS, Redis, the gateway, the safety kernel and the context engine all use, so they rotate together:
 
-**Note:** Unlike Redis, NATS does not support live token rotation. All services must be restarted together.
+1. From the repo root, regenerate the set: `cordumctl generate-certs --force` (or `go run ./cmd/cordumctl generate-certs --force`). Without `--force` it refuses to overwrite `./certs/`; `--days N` changes the 365-day validity.
+2. Restart the whole stack so every service loads the new files: `docker compose down && docker compose up -d`
+3. Update anything outside Compose: restart workers you run by hand with `./certs/client`, and re-import `./certs/ca/ca.crt` wherever the old CA was trusted (OS or browser trust store, `SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS`).
+4. Verify: `docker compose ps` shows every service healthy, and `curl --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" https://localhost:8081/api/v1/health` succeeds.
+
+**Note:** The new CA replaces the old one, so old and new certificates can't overlap. Plan a short restart window.
 
 ## After a Suspected Compromise
 
-1. Rotate ALL three secrets immediately
+1. Rotate every credential in the [Secrets](#secrets) table immediately
 2. Check audit logs for unauthorized access
 3. Revoke all active sessions
 4. Review recent API key usage patterns

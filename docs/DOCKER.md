@@ -418,9 +418,10 @@ docker compose restart scheduler
 
 **Symptom**: `error: CORDUM_API_KEY is not set`.
 
-**Fix**: Generate and export an API key before starting:
+**Fix**: Generate and export an API key before starting. Compose also requires `REDIS_PASSWORD` (it stops with `REDIS_PASSWORD_not_set` without it), so set both, or keep both in `.env`:
 ```bash
 export CORDUM_API_KEY="$(openssl rand -hex 32)"
+export REDIS_PASSWORD="$(openssl rand -hex 24)"
 docker compose up -d
 ```
 
@@ -462,13 +463,16 @@ docker compose up -d api-gateway
 
 ### Running Tests Against Docker Services
 
-```bash
-# Run Go tests that connect to local Redis/NATS
-REDIS_URL=redis://:$REDIS_PASSWORD@localhost:6379 \
-NATS_URL=nats://localhost:4222 \
-go test ./core/... -count=1
+The Go test suites don't use the Compose services and don't read `REDIS_URL` or `NATS_URL`. Unit tests and the `integration`-tagged tests run against in-process stand-ins (`miniredis`, an embedded `nats-server`, `httptest`, in-memory buses), so they need no running stack:
 
-# Run the platform smoke test
+```bash
+go test ./core/... -count=1
+make test-integration   # go test -tags=integration ./...
+```
+
+To test the running stack itself, use the platform smoke test. It needs `CORDUM_API_KEY`, and when `./certs/ca/ca.crt` exists it calls `https://localhost:8081` with that CA (override with `CORDUM_TLS_CA` and `CORDUM_API_BASE`):
+
+```bash
 bash ./tools/scripts/platform_smoke.sh
 ```
 
@@ -500,7 +504,7 @@ The Go services don't support hot reload inside Docker. For rapid iteration:
    The services apply the `*_TLS_*` variables only to `tls://` and `rediss://`
    URLs, and the server certificate covers `localhost`.
 
-For the dashboard, run `npm run dev` in `dashboard/` and configure `VITE_API_URL=https://localhost:8081/api/v1` (the gateway HTTP API listens on `8081` over TLS; `8080` is the internal gRPC port, host-mapped to `9080`).
+For the dashboard, run `pnpm install` and then `pnpm run dev` in `dashboard/` with `VITE_API_URL=http://localhost:8081/api/v1`, the API base the app calls. A gateway started with `go run` and no `GATEWAY_HTTP_TLS_CERT` serves plain HTTP on `8081` (only outside production; production refuses to start without TLS); once you set `GATEWAY_HTTP_TLS_CERT`/`GATEWAY_HTTP_TLS_KEY`, use `https://`. `8080` is the gateway's gRPC port (host-mapped to `9080` in Compose).
 
 ---
 

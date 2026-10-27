@@ -1,13 +1,13 @@
 # Cordum Dashboard
 
-Production dashboard for Cordum. Built with React 18, TypeScript, and Tailwind.
+Production dashboard for Cordum. Built with React 19, TypeScript, Vite, and Tailwind.
 
 ## Local Development
 
 ```bash
 cd dashboard
-npm install
-npm run dev
+pnpm install
+pnpm run dev
 ```
 
 By default, the dashboard uses `/config.json` from `dashboard/public`. To point at a local gateway, update the API base URL (plain HTTP only when the gateway runs without `GATEWAY_HTTP_TLS_CERT`, outside production):

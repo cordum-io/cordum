@@ -19,13 +19,27 @@ make build SERVICE=cordumctl
 
 ## 1) Start the stack
 
+The stack needs `CORDUM_API_KEY` and `REDIS_PASSWORD` (from your shell or
+`.env`) and TLS certificates in `./certs/`. Export both values so the later
+steps can use them too:
+
 ```bash
+export CORDUM_API_KEY="$(openssl rand -hex 32)"
+export REDIS_PASSWORD="$(openssl rand -hex 24)"
+
+# cordumctl up generates ./certs/ when it's missing:
 go run ./cmd/cordumctl up
 # or:
 ./bin/cordumctl up
-# or:
+# or, with plain Compose, generate the certificates first:
+go run ./cmd/cordumctl generate-certs
 docker compose up -d
 ```
+
+Put both values in `.env` too if you'll run `docker compose` from another
+shell ([Installation, Option C](install.md#option-c-docker-compose-manual)).
+`./tools/scripts/quickstart.sh` does all of this in one step: it creates
+`./certs/`, writes any missing values to `.env` and starts the stack.
 
 ## 2) Start the demo worker
 

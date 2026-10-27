@@ -45,14 +45,25 @@ CORDUM_API_KEY="$(openssl rand -hex 32)" CORDUM_TENANT_ID=default ./tools/script
 
 ## Option C: Docker Compose (manual)
 
+Compose needs `CORDUM_API_KEY`, `REDIS_PASSWORD` and the TLS certificates in
+`./certs/` that every service mounts; `quickstart.sh` (Option A) creates all
+three. By hand:
+
 ```bash
 export CORDUM_API_KEY="$(openssl rand -hex 32)"
+export REDIS_PASSWORD="$(openssl rand -hex 24)"
 export CORDUM_TENANT_ID=default
+
+# TLS certificates in ./certs/ (needs Go; or run: cordumctl generate-certs)
+go run ./cmd/cordumctl generate-certs
 
 docker compose build
 
 docker compose up -d
 ```
+
+Compose reads both values from the shell or from `.env`; put them in `.env` so
+later `docker compose` commands in a new shell still work.
 
 ## Option D: Kubernetes (Helm)
 
@@ -90,6 +101,12 @@ curl -sS --cacert ./certs/ca/ca.crt https://localhost:8081/api/v1/status \
   -H "X-API-Key: ${CORDUM_API_KEY}" \
   -H "X-Tenant-ID: ${CORDUM_TENANT_ID}" | jq
 ```
+
+The Compose installs serve the gateway over HTTPS with the development CA in
+`./certs/ca/ca.crt`. The Helm chart leaves gateway TLS off unless
+`global.tls.enabled=true`, so a default Helm install answers on
+`http://localhost:8081` (plain HTTP only when the gateway runs without
+`GATEWAY_HTTP_TLS_CERT`, outside production); drop `--cacert` there.
 
 ## Next steps
 
