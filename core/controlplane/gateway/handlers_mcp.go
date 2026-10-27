@@ -1100,17 +1100,9 @@ func (s *server) wireMCPApprovalGate(approvalStore *MCPApprovalStore, invariantL
 	if invariantLookup != nil {
 		gate.WithInvariantLookup(invariantLookup)
 	}
-	// EDGE-103 reopen #1: wire Edge approval mint so the gate can
-	// dual-write a consumable EdgeApproval alongside the legacy
-	// MCPApprovalStore record. Falls back to legacy-only when the
-	// Edge store is nil (dev/test) or when the request lacks
-	// mcp.CallMetadata SessionID/ExecutionID (transports without an
-	// EdgeSession). The same snapshot provider used by WithApprovalHold
-	// is reused so the mint + consume paths bind to identical
-	// PolicySnapshot strings.
-	if s.edgeStore != nil {
-		gate.WithEdgeApprovalMint(s.edgeStore, s.mcpPolicySnapshotFunc(), mcpPolicyServerName)
-	}
+	// No Edge approval mint here: attachMCPPolicyDepsNamed wires it beside
+	// WithApprovalHold, since without the hold an Edge ref is never consumed
+	// and no parent action event exists to bind it to (task-f44be149).
 	return gate, gate
 }
 
