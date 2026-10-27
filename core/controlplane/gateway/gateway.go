@@ -1256,7 +1256,7 @@ func newGatewayEdgeStore(client redis.UniversalClient, reg prometheus.Registerer
 		edgecore.WithApprovalMaxTTL(approvalMaxTTL),
 		// The store enforces the same execution cap as the Edge executions
 		// API pre-check, and MCP sessions rotate before it (ExecutionCaps).
-		edgecore.WithMaxExecutionsPerSession(int(edgeMaxExecutionsPerSession())),
+		edgecore.WithMaxExecutionsPerSession(edgeMaxExecutionsPerSession()),
 	)
 	return store, recorder
 }
