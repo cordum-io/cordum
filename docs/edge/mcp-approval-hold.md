@@ -19,7 +19,10 @@ limits come from policy bundles and SafetyKernel `PolicyConstraints`,
 not from this approval-hold path.
 
 EDGE-103 layers the **resume** path on top of EDGE-102's policy gate.
-The initial **hold** path is unchanged from EDGE-102.
+The initial **hold** path is unchanged from EDGE-102. Both are wired
+only when `mcp.policy_gate_enabled` is on; without it, nothing consumes
+`_approval_ref` (see
+[Approval-hold consume path](../mcp-server.md#approval-hold-consume-path)).
 
 ## Protocol
 

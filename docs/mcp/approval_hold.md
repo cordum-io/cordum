@@ -5,6 +5,9 @@ decision with the Edge approval store so a held tool call can resume
 once an operator approves. The mint path runs inside the gateway's
 action-gate evaluation; the consume path runs inside the MCP server
 when the client retries the call with an `_approval_ref` argument.
+Both are wired only when `mcp.policy_gate_enabled` is on; without it,
+nothing consumes `_approval_ref` (see
+[Approval-hold consume path](../mcp-server.md#approval-hold-consume-path)).
 For destructive action-gate approvals, a successful consume is not the whole
 provenance contract: the tenant audit chain must also contain an approved
 `EventEdgeApprovalResolved` / `edge.approval_resolved` event for the same

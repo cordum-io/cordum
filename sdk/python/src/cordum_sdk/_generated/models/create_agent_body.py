@@ -23,22 +23,37 @@ class CreateAgentBody:
         name (str):
         owner (str):
         risk_tier (str):
+        agent_id (Union[Unset, str]): Worker id (a principal or API key id) to link to the new identity. A worker
+            already linked to an agent identity is refused with 409 AGENT_WORKER_CONFLICT.
         description (Union[Unset, str]):
         team (Union[Unset, str]):
         allowed_topics (Union[Unset, List[str]]):
         allowed_pools (Union[Unset, List[str]]):
+        allowed_servers (Union[Unset, List[str]]): MCP server-name glob allowlist. Empty or omitted fail-closes server-
+            guarded MCP actions.
         allowed_tools (Union[Unset, List[str]]):
+        allowed_resources (Union[Unset, List[str]]): cordum:// resource URI glob allowlist. Empty or omitted fail-closes
+            resource-guarded MCP actions.
+        entitlements (Union[Unset, List[str]]): Capability tokens the identity holds for MCP required-entitlement
+            checks.
+        preapproved_mutating_tools (Union[Unset, List[str]]): Mutating MCP tool names/globs this identity may call
+            without human approval. Empty or omitted requires approval for every mutating tool.
         data_classifications (Union[Unset, List[str]]):
     """
 
     name: str
     owner: str
     risk_tier: str
+    agent_id: Union[Unset, str] = UNSET
     description: Union[Unset, str] = UNSET
     team: Union[Unset, str] = UNSET
     allowed_topics: Union[Unset, List[str]] = UNSET
     allowed_pools: Union[Unset, List[str]] = UNSET
+    allowed_servers: Union[Unset, List[str]] = UNSET
     allowed_tools: Union[Unset, List[str]] = UNSET
+    allowed_resources: Union[Unset, List[str]] = UNSET
+    entitlements: Union[Unset, List[str]] = UNSET
+    preapproved_mutating_tools: Union[Unset, List[str]] = UNSET
     data_classifications: Union[Unset, List[str]] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -48,6 +63,8 @@ class CreateAgentBody:
         owner = self.owner
 
         risk_tier = self.risk_tier
+
+        agent_id = self.agent_id
 
         description = self.description
 
@@ -61,9 +78,25 @@ class CreateAgentBody:
         if not isinstance(self.allowed_pools, Unset):
             allowed_pools = self.allowed_pools
 
+        allowed_servers: Union[Unset, List[str]] = UNSET
+        if not isinstance(self.allowed_servers, Unset):
+            allowed_servers = self.allowed_servers
+
         allowed_tools: Union[Unset, List[str]] = UNSET
         if not isinstance(self.allowed_tools, Unset):
             allowed_tools = self.allowed_tools
+
+        allowed_resources: Union[Unset, List[str]] = UNSET
+        if not isinstance(self.allowed_resources, Unset):
+            allowed_resources = self.allowed_resources
+
+        entitlements: Union[Unset, List[str]] = UNSET
+        if not isinstance(self.entitlements, Unset):
+            entitlements = self.entitlements
+
+        preapproved_mutating_tools: Union[Unset, List[str]] = UNSET
+        if not isinstance(self.preapproved_mutating_tools, Unset):
+            preapproved_mutating_tools = self.preapproved_mutating_tools
 
         data_classifications: Union[Unset, List[str]] = UNSET
         if not isinstance(self.data_classifications, Unset):
@@ -78,6 +111,8 @@ class CreateAgentBody:
                 "risk_tier": risk_tier,
             }
         )
+        if agent_id is not UNSET:
+            field_dict["agent_id"] = agent_id
         if description is not UNSET:
             field_dict["description"] = description
         if team is not UNSET:
@@ -86,8 +121,16 @@ class CreateAgentBody:
             field_dict["allowed_topics"] = allowed_topics
         if allowed_pools is not UNSET:
             field_dict["allowed_pools"] = allowed_pools
+        if allowed_servers is not UNSET:
+            field_dict["allowed_servers"] = allowed_servers
         if allowed_tools is not UNSET:
             field_dict["allowed_tools"] = allowed_tools
+        if allowed_resources is not UNSET:
+            field_dict["allowed_resources"] = allowed_resources
+        if entitlements is not UNSET:
+            field_dict["entitlements"] = entitlements
+        if preapproved_mutating_tools is not UNSET:
+            field_dict["preapproved_mutating_tools"] = preapproved_mutating_tools
         if data_classifications is not UNSET:
             field_dict["data_classifications"] = data_classifications
 
@@ -102,6 +145,8 @@ class CreateAgentBody:
 
         risk_tier = d.pop("risk_tier")
 
+        agent_id = d.pop("agent_id", UNSET)
+
         description = d.pop("description", UNSET)
 
         team = d.pop("team", UNSET)
@@ -110,7 +155,15 @@ class CreateAgentBody:
 
         allowed_pools = cast(List[str], d.pop("allowed_pools", UNSET))
 
+        allowed_servers = cast(List[str], d.pop("allowed_servers", UNSET))
+
         allowed_tools = cast(List[str], d.pop("allowed_tools", UNSET))
+
+        allowed_resources = cast(List[str], d.pop("allowed_resources", UNSET))
+
+        entitlements = cast(List[str], d.pop("entitlements", UNSET))
+
+        preapproved_mutating_tools = cast(List[str], d.pop("preapproved_mutating_tools", UNSET))
 
         data_classifications = cast(List[str], d.pop("data_classifications", UNSET))
 
@@ -118,11 +171,16 @@ class CreateAgentBody:
             name=name,
             owner=owner,
             risk_tier=risk_tier,
+            agent_id=agent_id,
             description=description,
             team=team,
             allowed_topics=allowed_topics,
             allowed_pools=allowed_pools,
+            allowed_servers=allowed_servers,
             allowed_tools=allowed_tools,
+            allowed_resources=allowed_resources,
+            entitlements=entitlements,
+            preapproved_mutating_tools=preapproved_mutating_tools,
             data_classifications=data_classifications,
         )
 

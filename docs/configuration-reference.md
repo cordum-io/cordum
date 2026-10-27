@@ -834,6 +834,7 @@ Invalid values (non-numeric, zero, negative) are silently replaced with defaults
 | `ARTIFACT_MAX_BYTES` | — | Max artifact upload/download size |
 | `WORKFLOW_FOREACH_MAX_ITEMS` | — | Max items in workflow for-each expansion |
 | `POLICY_CHECK_FAIL_MODE` | `closed` | Behavior when Safety Kernel is unreachable during policy evaluation (both gateway submit-time and scheduler dispatch-time). `closed` (default): reject the job. `open`: allow with warning log. |
+| `CORDUM_MCP_ALLOW_UNBOUND_AGENT_ID` | `false` | Set to `true` to trust the `X-Agent-Id` header on the gateway's `/mcp/*` routes without a caller binding, as before the binding existed: any authenticated caller in the tenant can act as any agent identity it names. The gateway logs a warning at MCP start while it is set. A temporary bridge while existing identities are linked to their callers; see [MCP scope filtering](mcp/scope-filtering.md#upgrading-bind-existing-agent-identities). |
 
 ### Gateway — API Keys
 

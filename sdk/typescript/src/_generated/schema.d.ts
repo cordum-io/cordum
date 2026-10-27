@@ -6898,6 +6898,8 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** @description Worker id (a principal or API key id) to link to the new identity. A worker already linked to an agent identity is refused with 409 AGENT_WORKER_CONFLICT. */
+                    agent_id?: string;
                     allowed_pools?: string[];
                     /** @description cordum:// resource URI glob allowlist. Empty or omitted fail-closes resource-guarded MCP actions. */
                     allowed_resources?: string[];

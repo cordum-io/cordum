@@ -208,6 +208,16 @@ policy-gate `REQUIRE_HUMAN` let the call run instead of asking again
 (a `DENY` still wins). The claim is single-use, so a second retry with
 the same `_approval_ref` is refused.
 
+The consume path is wired only when `mcp.policy_gate_enabled=true`; the
+`mcp.policy_gate wired` boot line reports it as `approval_hold_active`.
+With the flag off, the registry's `RequiresApproval` gate still holds the
+call and replies `-32099` with an `approval_ref` and
+`retry_hint: retry_with_approval_ref`, but nothing consumes the ref: a
+retry that carries `_approval_ref` is held as a new call and gets a new
+approval. Without the flag, retry with the same args and no
+`_approval_ref`; once the approval is approved, that retry claims it and
+runs the call once.
+
 Both mint paths (the registry's `RequiresApproval` gate and the
 policy gate's `REQUIRE_HUMAN` handoff) first record an
 `approval.requested` event in the caller's Edge execution and bind the

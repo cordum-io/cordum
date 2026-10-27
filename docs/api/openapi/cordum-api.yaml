@@ -7677,6 +7677,7 @@ paths:
       operationId: createAgent
       x-cordum-error-codes:
       - AGENT_REQUEST_INVALID
+      - AGENT_WORKER_CONFLICT
       summary: Create an agent identity
       tags:
       - Agents
@@ -7690,6 +7691,9 @@ paths:
               type: object
               required: [name, owner, risk_tier]
               properties:
+                agent_id:
+                  type: string
+                  description: Worker id (a principal or API key id) to link to the new identity. A worker already linked to an agent identity is refused with 409 AGENT_WORKER_CONFLICT.
                 name: {type: string}
                 description: {type: string}
                 owner: {type: string}
