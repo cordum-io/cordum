@@ -268,8 +268,10 @@ func TestGate_ApprovalRequiredCarriesResumeMetadata(t *testing.T) {
 	if got.ArgsHash == "" {
 		t.Error("ArgsHash empty; DoD #2 (args hash match on resume) cannot be checked without it")
 	}
-	if got.RetryHint == "" {
-		t.Error("RetryHint empty; clients have no machine-readable signal to retry with _approval_ref")
+	// A legacy record id is no `_approval_ref` the approval hold could claim,
+	// so the client resumes with the same args.
+	if got.RetryHint != mcpRetryWithSameArgs {
+		t.Errorf("RetryHint = %q; want %q for a legacy-only approval", got.RetryHint, mcpRetryWithSameArgs)
 	}
 	// The record stores its expiry in microseconds; read as seconds it
 	// landed millions of years out.

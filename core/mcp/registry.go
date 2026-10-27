@@ -101,9 +101,11 @@ type ApprovalRequired struct {
 	// approval. ClaimApproval rejects with kind=policy_mismatch when
 	// the active snapshot drifted between hold and resume.
 	PolicySnapshot string `json:"policy_snapshot,omitempty"`
-	// RetryHint is the machine-readable instruction for the client.
-	// Today: "retry_with_approval_ref" — clients echo ApprovalRef in
-	// the next call's args under `_approval_ref`.
+	// RetryHint is the machine-readable instruction for the client:
+	// "retry_with_approval_ref" — echo ApprovalRef in the next call's
+	// args under `_approval_ref` (the server's approval hold consumes
+	// it); "retry_with_same_args" — resend the call unchanged once the
+	// approval is approved (no approval hold, or a legacy-only record).
 	RetryHint string `json:"retry_hint,omitempty"`
 	Reason    string `json:"reason,omitempty"`
 	Tool      string `json:"tool"`

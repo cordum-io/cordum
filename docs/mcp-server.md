@@ -210,13 +210,13 @@ the same `_approval_ref` is refused.
 
 The consume path is wired only when `mcp.policy_gate_enabled=true`; the
 `mcp.policy_gate wired` boot line reports it as `approval_hold_active`.
-With the flag off, the registry's `RequiresApproval` gate still holds the
-call and replies `-32099` with an `approval_ref` and
-`retry_hint: retry_with_approval_ref`, but nothing consumes the ref: a
-retry that carries `_approval_ref` is held as a new call and gets a new
-approval. Without the flag, retry with the same args and no
-`_approval_ref`; once the approval is approved, that retry claims it and
-runs the call once.
+The `-32099` reply's `retry_hint` names the retry that works:
+`retry_with_approval_ref` while the hold is wired, `retry_with_same_args`
+without it. With the flag off, the registry's `RequiresApproval` gate
+still holds the call, but nothing consumes `_approval_ref`: a retry that
+carries it is held as a new call and gets a new approval. Retry with the
+same args and no `_approval_ref` instead; once the approval is approved,
+that retry claims it and runs the call once.
 
 Both mint paths (the registry's `RequiresApproval` gate and the
 policy gate's `REQUIRE_HUMAN` handoff) first record an

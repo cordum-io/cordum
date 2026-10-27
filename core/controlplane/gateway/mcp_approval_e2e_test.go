@@ -42,6 +42,13 @@ const (
 
 func newMCPApprovalE2E(t *testing.T, opts ...edge.StoreOption) *mcpApprovalE2E {
 	t.Helper()
+	return newMCPApprovalE2EGate(t, true, opts...)
+}
+
+// newMCPApprovalE2EGate is newMCPApprovalE2E with mcp.policy_gate_enabled,
+// and with it the approval hold, set to policyGate.
+func newMCPApprovalE2EGate(t *testing.T, policyGate bool, opts ...edge.StoreOption) *mcpApprovalE2E {
+	t.Helper()
 	s, _, _ := newTestGateway(t)
 	s.auth = newBasicAuthForTest(t, map[string]string{
 		"CORDUM_ENV": "production",
@@ -52,7 +59,7 @@ func newMCPApprovalE2E(t *testing.T, opts ...edge.StoreOption) *mcpApprovalE2E {
 	t.Cleanup(func() { close(s.shutdownCh) })
 	s.edgeStore = edge.NewRedisStoreFromClient(s.jobStore.Client(), opts...)
 	s.wireActionGatePipeline()
-	setMCPConfigForBoot(t, s, true, true)
+	setMCPConfigForBoot(t, s, true, policyGate)
 	ctx := context.Background()
 	// A policy config document gives the approvals a policy snapshot.
 	if err := s.configSvc.Set(ctx, &configsvc.Document{
@@ -77,8 +84,9 @@ func newMCPApprovalE2E(t *testing.T, opts ...edge.StoreOption) *mcpApprovalE2E {
 		t.Fatalf("register mcp routes: %v", err)
 	}
 	runtime := s.getMCPRuntime()
-	if runtime == nil || !runtime.server.HasApprovalHold() {
-		t.Fatal("mcp runtime without approval hold; the policy gate must be wired")
+	if runtime == nil || runtime.server.HasApprovalHold() != policyGate {
+		t.Fatalf("mcp runtime approval hold wired = %t, want %t (policy gate %t)",
+			runtime != nil && runtime.server.HasApprovalHold(), policyGate, policyGate)
 	}
 	h := &mcpApprovalE2E{s: s}
 	if err := runtime.toolRegistry.Register(mcp.Tool{Name: e2eGatedTool, RequiresApproval: true, RiskTier: "low"},
@@ -227,6 +235,47 @@ func TestMCPApprovalClaimRunsCallOnce(t *testing.T) {
 	}
 	if n := h.calls.Load(); n != 1 {
 		t.Fatalf("tool ran %d times, want exactly once", n)
+	}
+}
+
+// TestMCPApprovalRetryHintMatchesHold: the -32099 reply always said
+// retry_with_approval_ref, but only the approval hold, wired with
+// mcp.policy_gate_enabled, consumes `_approval_ref`. Without it a client that
+// followed the hint got a new approval on every retry. The hint now names the
+// retry that runs the approved call: `_approval_ref` with the hold, the same
+// args without it.
+func TestMCPApprovalRetryHintMatchesHold(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		policyGate bool
+		want       string
+	}{
+		{name: "policy gate on", policyGate: true, want: mcpRetryWithApprovalRef},
+		{name: "policy gate off", policyGate: false, want: mcpRetryWithSameArgs},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newMCPApprovalE2EGate(t, tc.policyGate)
+			held := h.call(t, "key-alice", "agent-a", map[string]any{"note": "hi"})
+			ref := held.approvalRef(t)
+			var data struct {
+				RetryHint string `json:"retry_hint"`
+			}
+			if err := json.Unmarshal(held.Error.Data, &data); err != nil || data.RetryHint != tc.want {
+				t.Fatalf("retry_hint = %q (err %v), want %q", data.RetryHint, err, tc.want)
+			}
+			h.approve(t, ref)
+			retry := map[string]any{"note": "hi"}
+			if data.RetryHint == mcpRetryWithApprovalRef {
+				retry["_approval_ref"] = ref
+			}
+			got := h.call(t, "key-alice", "agent-a", retry)
+			if got.Error != nil || got.Result == nil || len(got.Result.Content) == 0 || got.Result.Content[0].Text != "written" {
+				t.Fatalf("retry as hinted = %+v (error %s), want the tool's result", got.Result, got.errorText())
+			}
+			if n := h.calls.Load(); n != 1 {
+				t.Fatalf("tool ran %d times, want once", n)
+			}
+		})
 	}
 }
 

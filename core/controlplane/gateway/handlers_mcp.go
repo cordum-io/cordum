@@ -340,6 +340,11 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 			"reason", "policy_gate_enabled config flag is false",
 		)
 	}
+	// The gate's -32099 retry_hint names the retry that works: `_approval_ref`
+	// only while the approval hold consumes it.
+	if approvalGate != nil {
+		approvalGate.approvalHold = mcpServer.HasApprovalHold()
+	}
 	sweeperStop := make(chan struct{})
 	if approvalStore != nil {
 		go runMCPApprovalSweeper(approvalStore, sweeperStop)

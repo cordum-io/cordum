@@ -91,7 +91,22 @@ type gatewayApprovalGate struct {
 	serverName     string
 	preapproval    PreapprovalLookup
 	invariants     MCPInvariantLookup
+	// approvalHold is set when the MCP server consumes `_approval_ref`
+	// retries (WithApprovalHold, wired only with mcp.policy_gate_enabled).
+	// Without it the -32099 reply asks for a same-args retry instead.
+	approvalHold bool
 }
+
+// The -32099 retry_hint values: how the client resumes once a reviewer
+// approves the call.
+const (
+	// mcpRetryWithApprovalRef: resend the call with the reply's approval_ref
+	// in the `_approval_ref` argument; the approval hold claims it.
+	mcpRetryWithApprovalRef = "retry_with_approval_ref"
+	// mcpRetryWithSameArgs: resend the call unchanged; the gate claims the
+	// caller's approved approval for it (claimApprovedTwin, ClaimPreApproved).
+	mcpRetryWithSameArgs = "retry_with_same_args"
+)
 
 // NewGatewayApprovalGate returns a gate backed by the given store.
 // Passing a nil store yields a permissive gate (no gating) — useful for
@@ -261,7 +276,7 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 				if h := mcp.InvocationHandleFromContext(ctx); h != nil {
 					h.MarkApprovalRequired(approvalID)
 				}
-				return mcpApprovalRequired(tool.Name, argsHash, approvalID, pending), nil
+				return mcpApprovalRequired(tool.Name, argsHash, approvalID, g.edgeRetryHint(), pending), nil
 			}
 		}
 	}
@@ -305,13 +320,15 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 		h.MarkApprovalRequired(rec.ID)
 	}
 	if approval != nil {
-		return mcpApprovalRequired(tool.Name, argsHash, rec.ID, approval), nil
+		return mcpApprovalRequired(tool.Name, argsHash, rec.ID, g.edgeRetryHint(), approval), nil
 	}
+	// A legacy record id is not an Edge approval_ref, so the approval hold
+	// cannot claim it; only a same-args retry does (ClaimPreApproved).
 	legacy := &mcp.ApprovalRequired{
 		ApprovalID:  rec.ID,
 		ApprovalRef: rec.ID,
 		ArgsHash:    argsHash,
-		RetryHint:   "retry_with_approval_ref",
+		RetryHint:   mcpRetryWithSameArgs,
 		Reason:      rec.Reason,
 		Tool:        tool.Name,
 	}
@@ -350,14 +367,23 @@ func (g *gatewayApprovalGate) claimApprovedTwin(ctx context.Context, meta MCPCal
 	return "", nil
 }
 
+// edgeRetryHint is the retry_hint for an Edge approval: an `_approval_ref`
+// retry where the approval hold consumes one, otherwise a same-args retry.
+func (g *gatewayApprovalGate) edgeRetryHint() string {
+	if g.approvalHold {
+		return mcpRetryWithApprovalRef
+	}
+	return mcpRetryWithSameArgs
+}
+
 // mcpApprovalRequired is the -32099 payload for an Edge approval.
-func mcpApprovalRequired(tool, argsHash, approvalID string, approval *edge.EdgeApproval) *mcp.ApprovalRequired {
+func mcpApprovalRequired(tool, argsHash, approvalID, retryHint string, approval *edge.EdgeApproval) *mcp.ApprovalRequired {
 	out := &mcp.ApprovalRequired{
 		ApprovalID:     approvalID,
 		ApprovalRef:    approval.ApprovalRef,
 		ArgsHash:       argsHash,
 		PolicySnapshot: approval.PolicySnapshot,
-		RetryHint:      "retry_with_approval_ref",
+		RetryHint:      retryHint,
 		Reason:         approval.Reason,
 		Tool:           tool,
 	}
