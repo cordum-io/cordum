@@ -365,20 +365,23 @@ func (s *RetentionSweeper) Run(ctx context.Context) {
 	}
 }
 
-// sweepIfLeader runs one sweep, bounded by the interval, when this replica
-// wins the cycle lock. The lock is never released: it expires with the sweep
-// deadline, so replicas do not sweep concurrently and a crashed leader is
-// replaced next cycle. Overlapping sweeps would still be safe (every trim
-// batch is atomic); the lock only avoids duplicate work.
+// sweepIfLeader runs one sweep when this replica wins the cycle lock. The
+// lock is never released: it expires with the sweep deadline, so replicas do
+// not sweep concurrently and a crashed leader is replaced next cycle. Both end
+// a tenth of an interval early: a lock that lasted the whole interval could
+// still be held when this replica's own next tick fires, and that tick would
+// skip a cycle. Overlapping sweeps would still be safe (every trim batch is
+// atomic); the lock only avoids duplicate work.
 func (s *RetentionSweeper) sweepIfLeader(ctx context.Context) {
-	won, err := s.client.SetNX(ctx, retentionLockKey, "1", s.interval).Result()
+	hold := s.interval - s.interval/10
+	won, err := s.client.SetNX(ctx, retentionLockKey, "1", hold).Result()
 	if err != nil || !won {
 		if err != nil && ctx.Err() == nil {
 			slog.Warn("audit retention: acquire sweep lock failed", "error", err)
 		}
 		return
 	}
-	sweepCtx, cancel := context.WithTimeout(ctx, s.interval)
+	sweepCtx, cancel := context.WithTimeout(ctx, hold)
 	defer cancel()
 	if _, err := s.SweepOnce(sweepCtx); err != nil && ctx.Err() == nil {
 		slog.Warn("audit retention sweep incomplete", "error", err)

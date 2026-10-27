@@ -252,8 +252,8 @@ is ever trimmed. The same window is reported as `retention_window_hours` by
 **What the sweeper does** when enforcement is on:
 
 - Runs in the gateway at boot and then hourly. One replica sweeps per hour:
-  it takes the Redis key `audit:retention:lock`, which expires after the hour
-  instead of being released. Each trim batch is atomic, so overlapping
+  it takes the Redis key `audit:retention:lock`, which expires 6 minutes
+  before the next run instead of being released. Each trim batch is atomic, so overlapping
   sweeps are still safe.
 - Cuts off by the Redis server clock (the clock that stamped the stream IDs):
   it deletes entries of `audit:chain:<tenant>` whose stream ID is older than

@@ -432,8 +432,9 @@ func TestRetentionSweeper_OneLeaderPerInterval(t *testing.T) {
 	if got := f.streamLen("other"); got != 3 {
 		t.Fatalf("other stream len = %d, want 3 (lock held)", got)
 	}
-	if ttl := f.mr.TTL(retentionLockKey); ttl <= 0 || ttl > DefaultRetentionSweepInterval {
-		t.Fatalf("lock ttl = %s, want (0, %s]", ttl, DefaultRetentionSweepInterval)
+	// The lock ends before the next tick, or that tick loses to it.
+	if ttl := f.mr.TTL(retentionLockKey); ttl <= 0 || ttl >= DefaultRetentionSweepInterval {
+		t.Fatalf("lock ttl = %s, want (0, %s)", ttl, DefaultRetentionSweepInterval)
 	}
 }
 
