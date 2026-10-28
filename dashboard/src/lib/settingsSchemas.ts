@@ -7,7 +7,7 @@ import { z } from "zod";
 export const notificationChannelSchema = z.object({
   name: z.string().min(1, "Name is required"),
   type: z.enum(["email", "slack", "webhook", "pagerduty"]),
-  config: z.record(z.unknown()).default({}),
+  config: z.record(z.string(), z.unknown()).default({}),
   enabled: z.boolean().default(true),
 });
 
@@ -34,7 +34,7 @@ export type NotificationRuleForm = z.infer<typeof notificationRuleSchema>;
 export const environmentSchema = z.object({
   name: z.string().min(1, "Name is required"),
   endpoint: z.string().url("Must be a valid URL").optional().or(z.literal("")),
-  config: z.record(z.unknown()).default({}),
+  config: z.record(z.string(), z.unknown()).default({}),
 });
 
 export type EnvironmentForm = z.infer<typeof environmentSchema>;

@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import type { ReactNode } from "react";
-import { useForm, Controller, type UseFormSetError, type Resolver } from "react-hook-form";
+import { useForm, Controller, type UseFormSetError } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { ChevronDown, ChevronRight, Loader, RefreshCw, X } from "lucide-react";
@@ -192,8 +192,8 @@ export function JobSubmitDrawer({ open, onClose, onSuccess }: JobSubmitDrawerPro
     setValue,
     reset,
     formState: { errors },
-  } = useForm<FormValues>({
-    resolver: zodResolver(submitJobSchema) as Resolver<FormValues>,
+  } = useForm<z.input<typeof submitJobSchema>, unknown, FormValues>({
+    resolver: zodResolver(submitJobSchema),
     defaultValues: DEFAULT_VALUES,
   });
 
@@ -329,7 +329,7 @@ export function JobSubmitDrawer({ open, onClose, onSuccess }: JobSubmitDrawerPro
                 name="capabilities"
                 render={({ field }) => (
                   <TagInput
-                    value={field.value}
+                    value={field.value ?? []}
                     onChange={field.onChange}
                     placeholder="e.g. code_execution, web_browse"
                   />
@@ -343,7 +343,7 @@ export function JobSubmitDrawer({ open, onClose, onSuccess }: JobSubmitDrawerPro
                 name="risk_tags"
                 render={({ field }) => (
                   <TagInput
-                    value={field.value}
+                    value={field.value ?? []}
                     onChange={field.onChange}
                     placeholder="e.g. data_access, external_api"
                   />
@@ -357,7 +357,7 @@ export function JobSubmitDrawer({ open, onClose, onSuccess }: JobSubmitDrawerPro
                 name="labels"
                 render={({ field }) => (
                   <KeyValueEditor
-                    value={field.value}
+                    value={field.value ?? []}
                     onChange={field.onChange}
                     keyPlaceholder="label key"
                     valuePlaceholder="label value"
@@ -397,7 +397,7 @@ export function JobSubmitDrawer({ open, onClose, onSuccess }: JobSubmitDrawerPro
                     name="context_hints"
                     render={({ field }) => (
                       <TagInput
-                        value={field.value}
+                        value={field.value ?? []}
                         onChange={field.onChange}
                         placeholder="e.g. include_recent_history"
                       />
