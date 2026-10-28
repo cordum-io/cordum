@@ -97,6 +97,10 @@ Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
 
 ### Fixed
 
+#### core/controlplane/gateway — HTTP MCP approval-required tools return -32099 again on production gateways (2026-10-26, task-f44be149)
+
+- With `mcp.policy_gate_enabled=false` (the default), every approval-required HTTP MCP tool call failed with `-32096 approval_store_unavailable`. The gateway always builds an Edge store, so the approval gate tried to mint an Edge approval that had no parent action event and no `_approval_ref` consumer. The Edge approval mint is now wired only together with the policy gate's approval hold, with the same server name. With the policy gate off, the legacy MCP approval store is the sole authority: approve as a distinct operator, then retry with byte-identical arguments, which executes once. Wherever a mint is attempted, an Edge store outage still fails closed with -32096. The -32099 `retry_hint` now matches the resume path: `retry_with_same_args` for legacy approvals, and `retry_with_approval_ref` only when an Edge `approval_ref` was minted.
+
 #### core/controlplane/gateway — MCP approval-required (-32099) responses no longer fail to encode on the legacy path (2026-10-26, task-ff988dfa)
 
 - Legacy MCP approval expiry was decoded as Unix seconds instead of microseconds, so without an Edge store (or without Edge session metadata) HTTP MCP answered `500 encode response` for any approval-required tool call. `expires_at` in the -32099 payload now reflects the approval TTL.
