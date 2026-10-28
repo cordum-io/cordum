@@ -273,7 +273,8 @@ jobs:
       working-directory: dashboard
       run: |
         mkdir -p test-results
-        pnpm exec vitest run --reporter=junit --outputFile=./test-results/vitest.xml
+        # JUnit omits run-level errors; retain their console diagnostics too.
+        pnpm exec vitest run --reporter=default --reporter=junit --outputFile=./test-results/vitest.xml
 
     - name: Upload dashboard test results
       if: always()
