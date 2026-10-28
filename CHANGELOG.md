@@ -5,10 +5,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
+
 ### Changed
 
 #### CAP dependency promoted to the published v2.17.0 release (2026-07-22, task-a24b53c5)
 
+- Landed in #408 (root and `sdk` modules pin v2.17.0) and #441, which folds
+  the CAP v2.17.0 capstone #410 (this entry and
+  `tools/scripts/cap_version_consistency_test.go`).
 - Root and nested `sdk` modules pin the released `github.com/cordum-io/cap/v2 v2.17.0`
   (tag commit `e580c670d54a7563c749835c7dd09d81f116c823`), completed as a full
   release: GitHub Release published, `cap-sdk-node`/`cap-sdk-python`/`cordum-guard`
@@ -25,10 +30,38 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   (TraceContext, WorkflowEvent, A2A bridge, governed MCP demo) — none of these
   are part of CAP v2.17.0.
 
+#### Dependency updates (#400, #401, #402, #404, #408, #441, c7d33432, #467)
+
+- CAP: `github.com/cordum-io/cap/v2` moved from v2.15.1 (at the v1.2.0 tag),
+  through the interim pseudo-version pinned by #394, to the published v2.16.1
+  (#404), then to v2.17.0 in both the root and nested `sdk` modules (#408).
+- Go modules (root): go-deps group bumps in #400 (nats.go 1.52.0, grpc 1.82.1,
+  x/crypto 0.54.0, x/sync 0.22.0), #441 (#436, 26 updates) and c7d33432 (#453:
+  otel 1.47.0 / otelgrpc 0.72.0, grpc 1.84.0, nats-server 2.15.1,
+  nats.go 1.54.0, client_golang 1.25.0, go-redis 9.23.0, miniredis 2.40.0,
+  x/crypto 0.57.0, x/net 0.59.0, x/sys 0.49.0, k8s.io 0.35.9), then #467
+  (x/crypto 0.58.0, x/net 0.60.0, x/term 0.47.0, x/text 0.43.0).
+- Go modules (`sdk`): google.golang.org/grpc 1.79.3 -> 1.82.1 (#402), then
+  1.83.2 (#441, from #433).
+- Dashboard: dashboard-deps group bumps in #401 (32 updates), #441 (#437,
+  46 updates; orval 8 with the regenerated client, #435; vite dagre/graphlib
+  CJS aliases) and c7d33432 (#451/#456: react 19.3, vite 8.3, framer-motion 14,
+  radix, react-query, lucide, eslint, knip, postcss 8.5.30), then #467
+  (#464: nuqs 2.10.2, dompurify 3.4.17; orval stays locked at 8.31.0 because
+  8.42 needs Node 21+). Held back on
+  their current majors: `@tanstack/react-table` ^8, vitest ^4, jsdom ^29 and
+  msw ^2.
+- `sdk/typescript`: vitest 4.1.11 and lockfile refreshes (#441: #438, #439,
+  #434); undici 7.30.1 and brace-expansion lockfile-only updates (c7d33432:
+  #448, #449); `test-browser` source-map-js 1.2.2 (c7d33432: #454). The
+  generated `sdk/typescript/src/_generated/schema.d.ts` was regenerated
+  (233 operations) in #441.
+
 ### Security
 
 #### CAP-PRODUCTION — fail-closed exact-wire trust, attempt fencing, durable effects, and structured resources (2026-07-21, task-a13f83fa)
 
+- Landed in #394.
 - Added the explicit `CORDUM_CAP_PROFILE` switch. The scheduler advertises
   `cap_production` only after authenticated handshake enforcement, exact-wire
   raw admission, replay, local key/session authority, outbound subject-bound
@@ -62,8 +95,101 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   not yet a full-stack activation claim. The operator guide documents that
   boundary, key rotation, compatibility telemetry, and migration.
 
+### Fixed
+
+#### core/controlplane/gateway — MCP approval-required (-32099) responses no longer fail to encode on the legacy path (2026-10-26, task-ff988dfa)
+
+- Legacy MCP approval expiry was decoded as Unix seconds instead of microseconds, so without an Edge store (or without Edge session metadata) HTTP MCP answered `500 encode response` for any approval-required tool call. `expires_at` in the -32099 payload now reflects the approval TTL.
+
+#### tools/scripts/soak_test.sh — memory-drift gate stops failing the nightly soak on integer truncation and warm-up heap growth (2026-10-17)
+
+- The nightly **Soak Test (stability)** job failed every night on its memory-drift gate. Example from the 2026-10-17 run: `cordum-api-gateway-1: 3.52% -> 8.71% (166% growth)` and `cordum-safety-kernel-1: 2.59% -> 4.05% (100% growth)`. The check truncated docker stats percentages to integers before dividing, so 2.59 → 4.05 was computed as 2 → 4 = 100%. It also compared against an idle pre-load sample, where the Go services sit at 13–18MiB inside 512MiB limits and legitimately grow once load starts. **Fix:** growth is computed in floating point by `memory_drift_findings` in `soak_test_lib.sh`, which uses only POSIX awk features so mawk and gawk agree. The baseline is re-captured after `SOAK_WARMUP_SECONDS` of load (default 300, capped at half the run). A container fails only when its growth exceeds both `SOAK_MEMORY_DRIFT_PCT` and the new absolute floor `SOAK_MEMORY_DRIFT_MIN_MIB` (default 32); growth past only the relative limit is reported as a warning. Replaying the 2026-10-17 metrics artifact through the new logic gives zero failures and two warnings (api-gateway +17MiB and redis +12MiB after warm-up). New cases in `soak_test_lib.test.sh`, which runs in CI, pin the decimal math, the MiB conversion and the FAIL/WARN split.
+
+#### core/controlplane/gateway — compat profile re-enables the legacy memory pointer reader (2026-09-03, integration-nightly gate 16)
+
+- `GET /api/v1/memory?key=|?ptr=` answered every request with 400
+  "structured resource reference required" since the CAP-PRODUCTION
+  landing (#394): the gateway's resource reader is fail-closed by default
+  and `RunWithAuth` never called `WithLegacyMemoryCompatibility` for the
+  default/compat profile, unlike the embedded workflow engine right above
+  it. The gateway now opts the legacy Redis pointer bridge in under the same
+  `!capProfile.IsProduction()` guard, which also restores the raw
+  `context_ptr`/`result_ptr` echoes on job and approval views. CAP-PRODUCTION
+  stays fail-closed. Fixes production gate 16 (Degradation) in the
+  "Integration (Nightly)" workflow, red since 2026-07-23, and the dashboard
+  memory inspector.
+
+#### sdk/python — generated client covers every OpenAPI operation again (#403)
+
+- Added the two missing endpoint modules (`ingest_edge_llm_events`,
+  `resolve_memory_resource`) and their model dependencies. The OpenAPI spec
+  had 233 operationIds against 231 generated modules, which failed
+  `test_every_operation_id_generates_endpoint_module`.
+
+### CI and documentation
+
+- Helm chart publication now waits for successful published-image smoke tests
+  (#493). A failed, cancelled or skipped image job prevents the chart from
+  being published with missing images.
+- CI workflows mask generated credentials (#431): new
+  `tools/scripts/github_actions_mask_env.sh` and
+  `tools/scripts/workflow_credential_guard.py`, applied to the nightly,
+  integration-nightly, e2e, platform-smoke, demo-mock-bank-e2e and
+  edge-fake-hook-e2e workflows, with guard tests that preserve generator
+  failures and failure artifacts.
+- Star Tracker: dropped the timestamped stargazer media type (#406), then fell
+  back to count-only tracking when no `STARGAZER_PAT` secret is present (#409).
+- GitHub Actions bumps: codeql-action/analyze 4.37.2 (#395), setup-python 7
+  (#396), sticky-pull-request-comment 3.0.5 (#397), gh-action-pypi-publish
+  1.14.1 (#398), setup-go 7 (#399), and SHA bumps in `ci.yml`, `docker.yml`
+  and `docker-main.yml` (#441: #411-#415).
+- GitHub Actions bumps folded in #467: codeql-action init, autobuild and
+  analyze pinned together at 4.38.3 (#458 had moved only autobuild, which
+  CodeQL rejects), setup-node 7, cache 6, docker/login-action 4.6.0 and
+  docker/setup-qemu-action 4.4.0. Dependabot now groups
+  `github/codeql-action*` and ignores orval minor updates (#467).
+- GitHub Actions bumps folded in #474: codeql-action/upload-sarif 4.38.3
+  (#470), gh-action-pypi-publish 1.14.2 (#471), golangci-lint-action 9.3.0
+  (#472) and pnpm/action-setup 6.1.0 (#473).
+- Dependabot defers the semver-major dashboard updates that need Node 22 or a
+  migration (`@tanstack/react-table` 9, vitest 5, jsdom 30, msw 3); dashboard
+  CI runs Node 20 from `dashboard/.nvmrc` (dda9f0aa).
+- The handshake interop test's pinned NATS server version follows the
+  nats-server dependency (2.14.6 in #441, 2.15.1 in c7d33432).
+- README refreshed for adoption clarity: one Quickstart flow, a fixed dead
+  link, and SDK links pointing at the published PyPI/npm packages (#405).
+- Line endings renormalized to match `.gitattributes`; content-identical
+  (#407).
+
+Direct commits without PR numbers: c7d33432 (dependency consolidation),
+dda9f0aa (Dependabot deferrals), 832236ad (compat memory pointer reads) and
+d2f6ec2b (soak memory-drift gate).
+
+## [v1.2.0] - 2026-07-21
+
+Tagged at 3244b541 on 2026-07-21. The
+[GitHub Release](https://github.com/cordum-io/cordum/releases/tag/v1.2.0) was
+published on 2026-10-17 without binary assets.
+
+The original image run missed the dashboard. On 2026-10-27, dashboard
+`1.2.0` was recovered from the exact tagged source and published to GHCR and
+Docker Hub for `linux/amd64` and `linux/arm64`, with SBOMs, provenance and
+keyless signatures. Anonymous native pulls, signature and health checks
+[passed](https://github.com/cordum-io/cordum/actions/runs/40509395712), as did
+an isolated fresh installation of the published Helm chart. The existing chart
+and floating image aliases were unchanged by the repair. The recovered
+dashboard uses the
+[recovery workflow signing identity](https://github.com/cordum-io/cordum/blob/a0350ab9a47430ef4c03bd242815dd4911016210/.github/workflows/recover-dashboard-v1.2.0.yml),
+so its verifier must use that exact branch identity rather than the normal
+release-tag identity.
+
+Changes on main from v1.1.0 (6835c06b) to the v1.2.0 tag.
+
+### Security
+
 #### CAP + scheduler/gateway — authenticated P-256 worker proof and bound session authority replace self-asserted handshake trust (2026-07-19, task-a4b71af7)
 
+- Landed in #389, with a follow-up for the same task in #390.
 - Added one protobuf challenge/authenticate/result contract on
   `sys.worker.handshake.challenge` and
   `sys.worker.handshake.authenticate`. Scheduler-signed P-256 challenges,
@@ -96,12 +222,97 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 #### core/controlplane/scheduler + gateway + core/workflow — control-plane service tokens + subject-binding harden the session-token gate for enforce (2026-06-03, task-948d913b)
 
+- Landed in #341.
 - Three entangled hardenings of the Phase-2 session-token gate (`CORDUM_SDK_HANDSHAKE`) so it can run in `enforce`:
   - **Internal-broadcast auth (CodeRabbit PR #326 #7).** Under enforce, peer schedulers dropped the control plane's OWN internal `JobResult`/`JobCancel` broadcasts (they carried no auth token), so a cancel flipped the local job store but never propagated across schedulers. Fixed with a stateless, short-TTL (~5m) Ed25519 **service token** (`typ=cordum-service`, synthetic `_system` tenant) minted by each producer with the signing key it already holds and verified by a peer with `checkActive=false` — no Redis active record (a service token is unrevocable-by-design, bounded by the short TTL + key rotation). New neutral package `core/auth/servicetoken` (imports only `core/policysign` + stdlib — proven no import cycle) owns the mint primitive + the reserved-identity allowlist `{cordum-scheduler, api-gateway, workflow-engine}` as the single source of truth. Explicitly NOT a `SenderId/RequestedBy==defaultSenderID` exemption (that field is worker-forgeable). Attached at the scheduler's three self-reject emitters, the gateway cancel-ack result + cancel broadcast (cancel-ack `JobResult.WorkerId` is now set to `api-gateway` so the binding accepts it), and the workflow-engine cancel.
   - **Forge vuln (subject-binding) — found in review, not by CodeRabbit.** `verifySessionToken` switched on the verdict but DISCARDED `result.Claims`, so a provisioned worker A holding its OWN valid token could publish `JobResult{WorkerId:"w-victim"}` / `JobCancel{RequestedBy:"w-victim"}` and drive a victim job to SUCCEEDED/cancelled. The gate now binds `strings.TrimSpace(Claims.Subject) == packet identity` AND `safeSenderID(packet) == packet identity` on every token-verified packet (the warn/off/token-less paths, where Claims is nil, are intentionally untouched) and rejects + logs a SECURITY event on mismatch (never logging the token).
   - **Fail-open foot-gun (strict boot).** A typo'd `CORDUM_SDK_HANDSHAKE` (e.g. `enforse`) silently degraded to warn/admit. `buildSessionTokenMiddleware` now uses `ParseHandshakeModeStrict`, which refuses to boot on any non-empty value that does not round-trip to `off`/`warn`/`enforce`. The lenient `ParseHandshakeMode` is retained for non-boot callers.
 - Non-spoofable rests on TWO jointly-required guards (omitting either reopens the hole): (1) the signed `typ` header is asserted on BOTH verify paths (a worker's `cordum-session` token cannot ride the no-active-check service path, and a service token cannot be presented as a worker token), and (2) the reserved control-plane identities are reserved at handshake-issue time, so a worker can never handshake AS a service and obtain a real worker token whose Subject impersonates a control-plane service.
 - **Behavior change:** a typo'd `CORDUM_SDK_HANDSHAKE` now refuses to boot (previously degraded silently to warn). **New requirement:** the workflow-engine now needs the shared Ed25519 signing key (it loaded none before); enabling `enforce` fleet-wide requires the key deployed to scheduler + api-gateway + workflow-engine first, so `enforce` stays OFF until then. Cross-service admit/reject matrix verified by `TestEnforce_CrossServiceBroadcastMatrix`. General-purpose platform security hardening (demo-neutral).
+
+#### Security fixes from the v1.2.0 cycle (#335, #336, #362)
+
+- MCP agent identity lookups are scoped to the request tenant and fail closed
+  when it is absent; previously an empty-tenant lookup let an authenticated
+  tenant assume another tenant's MCP identity (#362).
+- The scheduler keeps the delegation dispatch token on retryable failures
+  instead of clearing it before lineage is persisted (#362).
+- The safety kernel runs input scanners on THROTTLE decisions too, and the
+  file/URL policy load uses the same signature verifier as the Redis bundle
+  path, honouring `CORDUM_POLICY_STRICT` (#362).
+- `handleApproveJob` fails closed (503) when the tenant lookup errors (#362).
+- Go stdlib and module CVEs reported by govulncheck: go.mod requests the
+  go1.26.5 toolchain and golang.org/x/net moved to 0.55.0 (#362).
+- MCP approval resolution is scoped by tenant (#336).
+- The safety kernel fails closed on an unreadable result pointer in gRPC
+  `CheckOutput` and on truncated output scans (#335).
+
+### Added
+
+- GitHub Copilot (VS Code agent mode) governed through Cordum's MCP server:
+  `cordumctl mcp attach --client vscode` emits Copilot's `mcp.json`, tool calls
+  are recorded as Copilot audit sessions in a Redis-backed store, and
+  `X-Copilot-Session-Id` links jobs to the session (#370).
+- GitHub Copilot agent hooks: `cordum-hook copilot <event>` routes chat turns
+  and tool actions through the existing Edge hook stack (#371).
+- LLM-proxy ingest endpoint `POST /api/v1/edge/llm/events` for governing
+  Copilot chat turns, behind `CORDUM_EDGE_LLM_INGEST_ENABLED` (default off)
+  (#372).
+- Edge approvals on the dashboard Approvals page (`?lane=edge`); approval
+  listing accepts session_id-only queries, and the default Edge approval TTL
+  is 20 minutes instead of 5 (#342).
+- Edge classifier routes Bash file arguments and Grep/Glob paths through
+  secret-path detection, so the deny-secret-reads policy applies regardless of
+  tool (EDGE-073); the Claude Code launcher fails closed in every policy mode
+  except observe (#363).
+- `cordumctl edge doctor` reports the effective fail-open/fail-closed posture
+  and gains a `--fail-closed` flag; the Edge docs qualify their enforce
+  fail-closed claims (#391).
+
+### Changed
+
+- **Telemetry behavior change:** the default `local_only` telemetry mode now
+  sends at most one successful install ping and one first-use ping to
+  `telemetry.cordum.io`; set `CORDUM_TELEMETRY_MODE=off` for zero outbound
+  calls (#363).
+- Go 1.26: the go directive moved to 1.26.3 and CI pins Go 1.26.x (#380).
+- Go module bumps: golang.org/x/net 0.55.0 (#377), go-deps group with
+  22 updates (#393), and golang.org/x/crypto 0.52.0 in `sdk` (#379).
+- Dashboard bumps: vite 8.0.16 (#348) and the dashboard-deps group with
+  48 updates (#388). `sdk/typescript` bumps: vite 8.0.16 (#349), js-yaml and
+  @redocly/openapi-core (#378).
+
+### Fixed
+
+- Scheduler critical-section state writes use the lock-fence context, so
+  writes after lock-renewal abandonment no longer race the takeover handler
+  (#339).
+- The audit buffer drains queued events on `Close` with a fresh bounded
+  context instead of dropping them with `context canceled` (#337).
+- `github.com/cordum-io/cap/v2` repinned off a deleted CAP commit, restoring
+  builds without a warm module cache (#392).
+- A gateway shadow-exception test no longer uses a hardcoded expiry date that
+  had passed (#361).
+
+### CI and documentation
+
+- Full CI and CodeQL run on stacked `moe/**` pull requests (#340).
+- Scheduled and PR workflows recovered: license env isolation, live workflow
+  gates, nightly soak over trusted TLS (#382).
+- Dependabot configuration for Go modules and dashboard npm dependencies
+  (#353).
+- GitHub Actions bumps: golangci-lint-action 9.2.1 (#330), cosign-installer
+  4.1.2 (#334), docker/metadata-action 6.1.0 then 6.2.0 (#331, #383),
+  docker/login-action 4.2.0 (#332), codeql-action 4.36.2 (#333),
+  codeql-action/upload-sarif (#386), codeql-action/analyze 4.37.1 (#385),
+  trivy-action (#344), download-artifact 8 (#346), github-script 9 (#345),
+  codecov-action 7.0.0 (#343), setup-helm 5.0.0 then 5.0.1 (#347, #384),
+  find-comment 4.0.0 (#369), setup-qemu-action 4.1.0 (#367), setup-node 6
+  (#365), pnpm/action-setup 6.0.9 (#364), checkout 7 (#374), cache 5 (#366),
+  lychee-action 2.9.0 (#387).
+- `SECURITY.md` replaces unsupported maturity claims (#381).
+
+## Earlier changes (recorded under [Unreleased] up to v1.1.0; not split per release)
 
 ### Added
 
@@ -122,28 +333,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - `core/mcp/dedupe_store.go` (new) introduces the `DedupeStore` interface (`LoadOrStore`/`Store`/`Delete`) plus `NewInProcessDedupeStore()` (sync.Map-backed default) and public constants `MCPDedupeKeyPrefix = "mcp:dedupe:"` + `MCPDedupeTTL = 10m`. `core/mcp/dedupe_redis.go` (new) adds `RedisDedupeStore` (SET NX EX MCPDedupeTTL winner-selection, GET decode on NX-miss, in-process fail-soft on any Redis error per taskRail #3) and `SelectDedupeStore(hint, client)` honoring `CORDUM_MCP_DEDUPE_BACKEND={redis,memory}` (defaults to Redis when client wired, in-process otherwise; unknown values fall back to in-process without panic). `ToolCallDeps.DedupeState` type changed from `*sync.Map` to `DedupeStore`; `dedupeBegin`/`dedupeFinish` now handle both backends with a 50ms poll + MCPDedupeTTL deadline-breaker on the Redis loser path. `core/controlplane/gateway/mcp_policy_wire.go` passes `s.jobStore.Client()` into `BuildMCPPolicyDeps` so multi-instance HA gateway deployments collapse identical retries across instances; today's single-instance gateway keeps in-process semantics. Test coverage: `core/mcp/dedupe_redis_test.go` (6 tests including TestRedisDedupeStore_CrossProcessCollapses), `core/mcp/policy_evaluate_dedupe_inprocess_test.go` (4 tests including error-delete + ctx-cancel waiter contracts), `core/controlplane/gateway/mcp_policy_wire_dedupe_backend_test.go` (5 backend-selection tests).
 
 ### Fixed
-
-#### core/controlplane/gateway — MCP approval-required (-32099) responses no longer fail to encode on the legacy path (2026-10-26, task-ff988dfa)
-
-- Legacy MCP approval expiry was decoded as Unix seconds instead of microseconds, so without an Edge store (or without Edge session metadata) HTTP MCP answered `500 encode response` for any approval-required tool call. `expires_at` in the -32099 payload now reflects the approval TTL.
-
-#### tools/scripts/soak_test.sh — memory-drift gate stops failing the nightly soak on integer truncation and warm-up heap growth (2026-10-17)
-
-- The nightly **Soak Test (stability)** job failed every night on its memory-drift gate. Example from the 2026-10-17 run: `cordum-api-gateway-1: 3.52% -> 8.71% (166% growth)` and `cordum-safety-kernel-1: 2.59% -> 4.05% (100% growth)`. The check truncated docker stats percentages to integers before dividing, so 2.59 → 4.05 was computed as 2 → 4 = 100%. It also compared against an idle pre-load sample, where the Go services sit at 13–18MiB inside 512MiB limits and legitimately grow once load starts. **Fix:** growth is computed in floating point by `memory_drift_findings` in `soak_test_lib.sh`, which uses only POSIX awk features so mawk and gawk agree. The baseline is re-captured after `SOAK_WARMUP_SECONDS` of load (default 300, capped at half the run). A container fails only when its growth exceeds both `SOAK_MEMORY_DRIFT_PCT` and the new absolute floor `SOAK_MEMORY_DRIFT_MIN_MIB` (default 32); growth past only the relative limit is reported as a warning. Replaying the 2026-10-17 metrics artifact through the new logic gives zero failures and two warnings (api-gateway +17MiB and redis +12MiB after warm-up). New cases in `soak_test_lib.test.sh`, which runs in CI, pin the decimal math, the MiB conversion and the FAIL/WARN split.
-
-#### core/controlplane/gateway — compat profile re-enables the legacy memory pointer reader (2026-09-03, integration-nightly gate 16)
-
-- `GET /api/v1/memory?key=|?ptr=` answered every request with 400
-  "structured resource reference required" since the CAP-PRODUCTION
-  landing (#394): the gateway's resource reader is fail-closed by default
-  and `RunWithAuth` never called `WithLegacyMemoryCompatibility` for the
-  default/compat profile, unlike the embedded workflow engine right above
-  it. The gateway now opts the legacy Redis pointer bridge in under the same
-  `!capProfile.IsProduction()` guard, which also restores the raw
-  `context_ptr`/`result_ptr` echoes on job and approval views. CAP-PRODUCTION
-  stays fail-closed. Fixes production gate 16 (Degradation) in the
-  "Integration (Nightly)" workflow, red since 2026-07-23, and the dashboard
-  memory inspector.
 
 #### cmd/cordum-scheduler — /health handler deps are now race-free during startup (2026-06-02, task-db950d76)
 
