@@ -98,7 +98,8 @@ jobs:
   browser:
     name: Browser smoke (Playwright)
     needs: test
-    runs-on: ubuntu-latest
+    # Playwright 1.59.1 does not support Ubuntu 26.04 from ubuntu-latest.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
