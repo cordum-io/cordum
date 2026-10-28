@@ -132,6 +132,12 @@ func (s *server) attachMCPPolicyDepsNamed(mcpServer *mcp.MCPServer, gate *gatewa
 	mcpServer = mcpServer.WithPolicyGate(name, policyDeps)
 
 	mcpServer = mcpServer.WithApprovalHold(s.mcpApprovalHoldDeps(name))
+	// The Edge mint and the `_approval_ref` consume path share one store,
+	// snapshot provider and server name, so every minted ref is one the
+	// hold can consume (task-f44be149).
+	if gate != nil && s.edgeStore != nil && mcpServer.HasApprovalHold() {
+		gate.WithEdgeApprovalMint(s.edgeStore, s.mcpPolicySnapshotFunc(), name)
+	}
 	return mcpServer, ""
 }
 

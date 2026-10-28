@@ -102,10 +102,10 @@ type gatewayApprovalGate struct {
 const (
 	// mcpRetryWithApprovalRef: resend the call with the reply's approval_ref
 	// in the `_approval_ref` argument; the approval hold claims it.
-	mcpRetryWithApprovalRef = "retry_with_approval_ref"
+	mcpRetryWithApprovalRef = mcp.RetryHintApprovalRef
 	// mcpRetryWithSameArgs: resend the call unchanged; the gate claims the
 	// caller's approved approval for it (claimApprovedTwin, ClaimPreApproved).
-	mcpRetryWithSameArgs = "retry_with_same_args"
+	mcpRetryWithSameArgs = mcp.RetryHintSameArgs
 )
 
 // NewGatewayApprovalGate returns a gate backed by the given store.

@@ -71,6 +71,12 @@ type InvariantFloor interface {
 	CheckInvariants(ctx context.Context, tool Tool) error
 }
 
+// ApprovalRequired.RetryHint values (JSON-RPC -32099 error.data.retry_hint).
+const (
+	RetryHintApprovalRef = "retry_with_approval_ref"
+	RetryHintSameArgs    = "retry_with_same_args"
+)
+
 // ApprovalRequired is the structured payload the gate returns when a
 // tools/call must wait for human approval. It serialises to JSON-RPC
 // -32099 error.data so MCP clients can branch retry logic on the
@@ -102,10 +108,13 @@ type ApprovalRequired struct {
 	// the active snapshot drifted between hold and resume.
 	PolicySnapshot string `json:"policy_snapshot,omitempty"`
 	// RetryHint is the machine-readable instruction for the client:
-	// "retry_with_approval_ref" — echo ApprovalRef in the next call's
-	// args under `_approval_ref` (the server's approval hold consumes
-	// it); "retry_with_same_args" — resend the call unchanged once the
-	// approval is approved (no approval hold, or a legacy-only record).
+	//   - RetryHintApprovalRef ("retry_with_approval_ref"): echo
+	//     ApprovalRef in the next call's args under `_approval_ref`. Only
+	//     issued when the gateway's policy gate and approval hold are
+	//     wired, i.e. an Edge approval was minted.
+	//   - RetryHintSameArgs ("retry_with_same_args"): after approval,
+	//     resend the byte-identical args. This is the legacy
+	//     MCPApprovalStore path; ApprovalRef then equals ApprovalID.
 	RetryHint string `json:"retry_hint,omitempty"`
 	Reason    string `json:"reason,omitempty"`
 	Tool      string `json:"tool"`
