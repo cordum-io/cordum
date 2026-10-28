@@ -113,22 +113,36 @@
       ]
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "fieldConfig": {
-        "defaults": { "color": { "mode": "palette-classic" }, "unit": "ops" }
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
       },
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 10 },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "ops"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 10
+      },
       "id": 5,
-      "title": "Safety Decisions",
+      "title": "Scheduler Dispatch & Enforcement",
+      "description": "Dispatches include approved jobs released for execution; they are not a count of safety allow decisions. Denials here are evaluated by the scheduler. Submit-time gateway denials are persisted as jobs but do not increment the scheduler denial counter.",
       "type": "timeseries",
       "targets": [
         {
           "expr": "sum(rate(cordum_scheduler_jobs_dispatched_total{namespace=~\"$namespace\"}[$__rate_interval]))",
-          "legendFormat": "allowed"
+          "legendFormat": "dispatched"
         },
         {
           "expr": "sum(rate(cordum_scheduler_safety_denied_total{namespace=~\"$namespace\"}[$__rate_interval]))",
-          "legendFormat": "denied"
+          "legendFormat": "denied at scheduler"
         },
         {
           "expr": "sum(rate(cordum_scheduler_output_policy_quarantined_total{namespace=~\"$namespace\"}[$__rate_interval]))",
@@ -217,37 +231,137 @@
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 23
+      },
       "id": 103,
-      "title": "Workflows & Sagas",
+      "title": "Human Approvals",
       "type": "row"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "fieldConfig": {
-        "defaults": { "color": { "mode": "palette-classic" }, "unit": "ops" }
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
       },
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 24 },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 24
+      },
       "id": 10,
-      "title": "Workflow Runs",
-      "type": "timeseries",
+      "title": "Pending Approval Snapshots",
+      "description": "Each gateway or scheduler reports its last observed Redis approval queue depth. Reporters observe the same queue, so values must not be summed. Snapshots update on lifecycle events and may be stale between updates. risk_tier=all is the aggregate queue, not a risk classification.",
+      "type": "stat",
       "targets": [
         {
-          "expr": "sum(rate(cordum_workflows_started_total{namespace=~\"$namespace\"}[$__rate_interval]))",
-          "legendFormat": "started"
-        },
-        {
-          "expr": "sum(rate(cordum_workflows_completed_total{namespace=~\"$namespace\"}[$__rate_interval]))",
-          "legendFormat": "completed"
+          "expr": "cordum_approval_queue_depth{namespace=~\"$namespace\"}",
+          "legendFormat": "{{job}} / {{pod}} / {{risk_tier}}"
         }
       ]
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "fieldConfig": {
-        "defaults": { "color": { "mode": "palette-classic" }, "unit": "short" }
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
       },
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 24 },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "ops"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 24
+      },
+      "id": 13,
+      "title": "Approval Resolution Rate",
+      "description": "Resolution events from gateway or scheduler, including approved, denied, expired, or repaired outcomes. This is not the number of submissions requiring approval.",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(cordum_approval_decisions_total{namespace=~\"$namespace\"}[$__rate_interval])) by (decision)",
+          "legendFormat": "{{decision}}"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "s"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 24
+      },
+      "id": 14,
+      "title": "Approval Resolution Latency (P95)",
+      "description": "Time from the recorded safety check to an approval resolution, for resolutions with valid request and resolution timestamps. Pending approvals do not produce latency samples. The current exporter uses default finite buckets ending at 10 seconds; longer waits overflow into +Inf and this quantile can report 10 seconds. Use job timestamps for actual human wait duration.",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(cordum_approval_latency_seconds_bucket{namespace=~\"$namespace\"}[$__rate_interval])) by (le))",
+          "legendFormat": "p95"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      },
+      "id": 104,
+      "title": "Sagas",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 33
+      },
       "id": 11,
       "title": "Active Sagas",
       "type": "stat",
@@ -259,11 +373,24 @@
       ]
     },
     {
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "fieldConfig": {
-        "defaults": { "color": { "mode": "palette-classic" }, "unit": "ops" }
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
       },
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 24 },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "ops"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 8,
+        "y": 33
+      },
       "id": 12,
       "title": "Saga Rollbacks",
       "type": "timeseries",
@@ -284,26 +411,25 @@
   "templating": {
     "list": [
       {
-        "current": { "selected": false, "text": "All", "value": "$__all" },
-        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
         "definition": "label_values(cordum_api_gateway_http_requests_total, namespace)",
         "hide": 0,
         "includeAll": true,
+        "allValue": ".*",
         "multi": false,
         "name": "namespace",
-        "query": { "query": "label_values(cordum_api_gateway_http_requests_total, namespace)", "refId": "StandardVariableQuery" },
-        "refresh": 2,
-        "type": "query"
-      },
-      {
-        "current": { "selected": false, "text": "All", "value": "$__all" },
-        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "definition": "label_values(cordum_api_gateway_http_requests_total, pod)",
-        "hide": 0,
-        "includeAll": true,
-        "multi": true,
-        "name": "service",
-        "query": { "query": "label_values(cordum_api_gateway_http_requests_total, pod)", "refId": "StandardVariableQuery" },
+        "query": {
+          "query": "label_values(cordum_api_gateway_http_requests_total, namespace)",
+          "refId": "StandardVariableQuery"
+        },
         "refresh": 2,
         "type": "query"
       }
@@ -314,5 +440,5 @@
   "timezone": "",
   "title": "Cordum Overview",
   "uid": "cordum-overview",
-  "version": 1
+  "version": 2
 }
