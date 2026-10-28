@@ -1,0 +1,13 @@
+name: Grafana dashboard contract
+on:
+  pull_request:
+    paths: ['deploy/grafana/**', '.github/workflows/grafana-dashboard.yml']
+  push:
+    branches: [main]
+    paths: ['deploy/grafana/**', '.github/workflows/grafana-dashboard.yml']
+jobs:
+  dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: python3 -m unittest discover -s deploy/grafana -p 'test_*.py' -v
