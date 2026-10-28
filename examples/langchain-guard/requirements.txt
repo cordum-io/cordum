@@ -3,8 +3,10 @@ langchain>=0.3.0
 langgraph>=0.2.0
 langchain-openai>=0.2.0
 
-# Cordum safety SDK (with LangChain integration)
-cordum-guard[langchain]
+# Cordum safety SDK (with LangChain integration). 2.17.0 runs a tool on
+# REQUIRE_APPROVAL and sends no tool arguments, so this demo's policy would
+# let a large transfer through.
+cordum-guard[langchain]>=2.17.1
 
 # For the demo agent's mock tools
 httpx>=0.27.0

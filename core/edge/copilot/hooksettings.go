@@ -1,19 +1,28 @@
 // Package copilot generates the GitHub Copilot (VS Code agent mode) hook
 // configuration that routes Copilot's governance events through Cordum.
 //
-// Copilot's Agent Hooks contract matches Claude Code's (same stdin payload and
-// the same hookSpecificOutput.permissionDecision / exit-code response), so the
-// generated config simply points Copilot's hook commands at `cordum-hook
-// copilot <event>`, which reuses the existing Edge runner + agentd + safety
-// kernel path. The produced JSON is written to a Copilot hooks config location
-// (e.g. .github/hooks/cordum.json or ~/.copilot/hooks/cordum.json).
+// PascalCase Copilot hook events send Claude Code's stdin payload, so the
+// generated config points Copilot's hook commands at `cordum-hook copilot
+// <event>`, which reuses the existing Edge runner + agentd + safety kernel path
+// and re-encodes its answer for Copilot. The produced JSON is written to a
+// Copilot hooks config location (e.g. .github/hooks/cordum.json or
+// ~/.copilot/hooks/cordum.json).
+//
+// Unlike Claude Code, Copilot has no "onFailure": "block" for the hook process
+// itself: a hook timeout is always fail-open, and the Local harness also lets
+// exits other than 2 through. FailClosed covers only failures cordum-hook
+// handles itself. See docs/edge/cordum-hook.md#github-copilot.
 package copilot
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
+
+	"github.com/cordum/cordum/core/edge/claude"
 )
 
 // HookSettingsOptions configures the generated Copilot agent-hooks document.
@@ -25,8 +34,11 @@ type HookSettingsOptions struct {
 	// PolicyMode is observe | enforce | enterprise-strict. Default "enforce".
 	PolicyMode string
 	// FailClosed denies the action when agentd errors/times out (enforce posture).
+	// Copilot has no onFailure equivalent, so a hook that itself times out or
+	// crashes is still handled by Copilot's own (mostly fail-open) rules.
 	FailClosed bool
-	// TimeoutMS bounds each hook; kept under Copilot's per-hook budget. Default 4500.
+	// TimeoutMS is Copilot's per-hook timeout, rounded up to whole seconds and
+	// never below claude.ClaudeHookDeadline (5s). Default 5s.
 	TimeoutMS int
 }
 
@@ -37,8 +49,14 @@ type hookCommandEntry struct {
 	Env     map[string]string `json:"env,omitempty"`
 }
 
+// hooksDocument is one hooks file both Copilot harnesses read. The GitHub
+// Copilot hooks reference requires "version": 1 ("Structural errors ... a bad
+// version ... reject the entire file"); VS Code's Local hooks reference says
+// "a numeric version does not select a different Local payload schema", so
+// the field is safe there too.
 type hooksDocument struct {
-	Hooks map[string][]hookCommandEntry `json:"hooks"`
+	Version int                           `json:"version"`
+	Hooks   map[string][]hookCommandEntry `json:"hooks"`
 }
 
 // copilotGovernanceEvents maps Copilot hook event names to the cordum-hook
@@ -86,7 +104,7 @@ func GenerateHookSettings(opts HookSettingsOptions) ([]byte, error) {
 		env["CORDUM_AGENTD_URL"] = agentdURL
 	}
 
-	doc := hooksDocument{Hooks: map[string][]hookCommandEntry{}}
+	doc := hooksDocument{Version: 1, Hooks: map[string][]hookCommandEntry{}}
 	for _, e := range copilotGovernanceEvents {
 		// env is copied per entry so future per-event tweaks don't alias.
 		entryEnv := make(map[string]string, len(env))
@@ -103,20 +121,71 @@ func GenerateHookSettings(opts HookSettingsOptions) ([]byte, error) {
 	return json.MarshalIndent(doc, "", "  ")
 }
 
+// VerifyHookSettings returns the first problem that stops a Copilot hooks file
+// from sending every governance event through cordum-hook: unparsable JSON, a
+// version other than 1, a governance event with no hook that runs
+// `cordum-hook copilot <event>`, or a timeout below claude.ClaudeHookDeadline,
+// which lets Copilot time the hook out (fail-open) before it decides. These
+// are the problems a regenerated file fixes; the harness limits it cannot fix
+// are documented in docs/edge/cordum-hook.md#github-copilot.
+func VerifyHookSettings(data []byte) error {
+	var doc struct {
+		Version any                         `json:"version"`
+		Hooks   map[string][]map[string]any `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return fmt.Errorf("cannot parse hooks file: %w", err)
+	}
+	if v, _ := doc.Version.(float64); v != 1 {
+		return errors.New(`"version" is not 1, so the Copilot harness rejects the whole file`)
+	}
+	floor := claude.ClaudeHookDeadline.Seconds()
+	for _, e := range copilotGovernanceEvents {
+		found := false
+		for _, entry := range doc.Hooks[e.event] {
+			if !runsCordumHook(entry, e.sub) {
+				continue
+			}
+			// Copilot reads timeoutSec first and Local reads timeout first,
+			// so each one present is the timeout in one of the harnesses.
+			for _, key := range []string{"timeoutSec", "timeout"} {
+				if t, ok := entry[key].(float64); ok && t < floor {
+					return fmt.Errorf("%s %s is %gs, below cordum-hook's %gs deadline, so Copilot can time the hook out and let the action through", e.event, key, t, floor)
+				}
+			}
+			found = true
+		}
+		if !found {
+			return fmt.Errorf("%s has no hook that runs cordum-hook copilot %s", e.event, e.sub)
+		}
+	}
+	return nil
+}
+
+// runsCordumHook reports whether a hook entry runs `cordum-hook copilot <sub>`.
+// Each harness picks one command field per platform, so every one present must.
+func runsCordumHook(entry map[string]any, sub string) bool {
+	found := false
+	for _, key := range []string{"command", "bash", "powershell", "windows", "linux", "osx"} {
+		if cmd, ok := entry[key].(string); ok {
+			if !strings.HasSuffix(strings.TrimSpace(cmd), " copilot "+sub) {
+				return false
+			}
+			found = true
+		}
+	}
+	return found
+}
+
 // timeoutSeconds converts the caller's millisecond hook budget into the SECONDS
 // unit the GitHub/Copilot hook `timeout` field expects. Emitting TimeoutMS
-// verbatim would turn the 4500 default into a 4500-second (75 minute) window
-// during which a stuck hook could block the agent. Defaults to 4500ms (5s) and
-// never rounds below 1s.
+// verbatim would turn a 4500 value into a 4500-second (75 minute) window
+// during which a stuck hook could block the agent. Copilot times a hook out
+// fail-open, so the result never drops below claude.ClaudeHookDeadline: the
+// deadline cordum-hook's own 4.5s budget is built to finish under, which lets
+// the hook decide (and deny, when fail-closed) before Copilot gives up.
 func timeoutSeconds(ms int) int {
-	if ms <= 0 {
-		ms = 4500
-	}
-	sec := (ms + 999) / 1000
-	if sec < 1 {
-		sec = 1
-	}
-	return sec
+	return max((ms+999)/1000, int(claude.ClaudeHookDeadline/time.Second))
 }
 
 // stripAgentdURLNonce removes the loopback auth nonce query param from an agentd

@@ -18,7 +18,8 @@ cordumctl edge claude [edge flags] -- [claude args...]
 Example with placeholders only:
 
 ```bash
-CORDUM_GATEWAY=http://localhost:8081 \
+CORDUM_GATEWAY=https://localhost:8081 \
+CORDUM_TLS_CA=<cordum-checkout>/certs/ca/ca.crt \
 CORDUM_API_KEY=<cordum-api-key> \
 CORDUM_TENANT_ID=default \
 cordumctl edge claude -- --print "summarize the current repository status"
@@ -33,7 +34,7 @@ accidentally replaced.
 
 | Input | Env fallback | Default | Notes |
 | --- | --- | --- | --- |
-| `--gateway` | `CORDUM_GATEWAY` | `http://localhost:8081` from the global cordumctl flag | Gateway base URL. Use HTTPS outside local dev. |
+| `--gateway` | `CORDUM_GATEWAY` | `http://localhost:8081` from the global cordumctl flag | Gateway base URL. Use HTTPS: the compose stack needs `https://localhost:8081` with `--cacert` (`CORDUM_TLS_CA`). |
 | `--api-key` | `CORDUM_API_KEY` | none | Secret. Redacted from errors and dry-run output. |
 | `--tenant` | `CORDUM_TENANT_ID` | `default` | Tenant used for Gateway auth and evidence. |
 | `--principal` | `CORDUM_PRINCIPAL_ID`, `CORDUM_EDGE_PRINCIPAL_ID` | launcher-detected principal where possible | Audit principal for Edge evidence. |
@@ -110,20 +111,28 @@ the audit chain. A retry is allowed only when the chain contains an approved
 `approval_ref`, and `action_hash`; an approval-requested row by itself remains
 a pending-review signal, not proof of approval.
 
-The wrapper enables local/demo inline approval wait for convenience. Rejection,
-timeout, pending, or wait errors deny the action and ask the user to retry after
-review.
+The wrapper enables local/demo inline approval wait for convenience. The wait
+ends 1s before the hook's agentd budget, so it lasts about 3 seconds. Rejection
+denies the action. An approval still pending then, or a wait error, gets the
+same deny as without inline wait: `approval_ref` plus retry guidance.
 
 ## Fail modes
 
 | Mode | Gateway/agentd unavailable | Intended use |
 | --- | --- | --- |
 | `observe` | Allow degraded and write evidence where possible. | Discovery/local visibility. |
-| `enforce` | Allow only known-safe degraded actions; deny risky/unknown actions — requires `CORDUM_AGENTD_FAIL_CLOSED=true`, which is not the default. Without it the session fails **open** on agentd error/timeout. | Developer enforcement and demos. |
+| `enforce` | Allow only known-safe degraded actions; deny risky/unknown actions. The wrapper renders `CORDUM_AGENTD_FAIL_CLOSED=true` and `"onFailure": "block"` on the blocking hooks (Claude Code v2.1.295+), so agentd errors/timeouts and a failed hook process block too. | Developer enforcement and demos. |
 | `enterprise-strict` | Fail closed. | Managed enterprise rollout. |
 
+Before launching Claude Code in any mode except `observe`, the wrapper runs
+`claude --version`. On a version older than 2.1.295, `enterprise-strict`
+refuses to launch and the other modes print a warning, because those versions
+ignore `"onFailure": "block"`. A version that cannot be read only produces a
+warning.
+
 Malformed hook input fails closed with redacted stderr. Hook timeout values must
-stay below Claude Code's 5s command-hook deadline; generated settings use `4.5s`.
+stay below the command-hook `"timeout": 5` the wrapper generates (Claude Code's
+own default is 600 seconds); generated settings use `4.5s`.
 
 ## Token tradeoffs
 
@@ -148,7 +157,7 @@ schedule, and synthetic-rollback test surface live in
 | Subcommand | Purpose |
 | --- | --- |
 | `export` | Render `managed-settings.json` + `managed-mcp.json` into `--output <dir>`. Refuses to overwrite without `--force`. Rejects flag values containing secret markers (`sk-…`, `ghp_…`, bearer tokens). |
-| `verify` | Validate a deployed `managed-settings.json` at `--path <file>` against the 14 enterprise invariants (see [managed-settings-deploy.md § 6](managed-settings-deploy.md#6-verification-reference)). `--json` emits `{ok, drifts[], source}`. |
+| `verify` | Validate a deployed `managed-settings.json` at `--path <file>` against the 18 enterprise invariants (see [managed-settings-deploy.md § 6](managed-settings-deploy.md#6-verification-reference)). `--json` emits `{ok, drifts[], source}`. |
 | `rollback-template` | **Synthetic test fixture only — not a production rollback.** Atomically regenerates the template at `--path <file>` (mode `0600`) and re-runs `verify`. Production rollback is MDM-orchestrated; see [managed-settings-deploy.md § 8](managed-settings-deploy.md#8-rollback). |
 
 ### Common flags
@@ -157,7 +166,7 @@ schedule, and synthetic-rollback test surface live in
 | --- | --- | --- |
 | `--output <dir>` | `export` | Destination directory for both JSON files. Required. |
 | `--path <file>` | `verify`, `rollback-template` | Deployed `managed-settings.json` to inspect or atomically rewrite. Required. |
-| `--mcp-gateway-url <url>` | `export`, `rollback-template` | Cordum MCP gateway URL to embed. Required. |
+| `--mcp-gateway-url <url>` | `export`, `verify`, `rollback-template` | Cordum MCP endpoint to embed or independently verify against. Required; obtain it from trusted deployment configuration. |
 | `--llm-proxy-base-url <url>` | `export`, `rollback-template` | Cordum LLM proxy base URL. Required. |
 | `--api-key-helper-command <cmd>` | `export`, `rollback-template` | Path to `cordum-agentd claude api-key-helper`. Required. |
 | `--hook-command <cmd>` | `export`, `rollback-template` | `cordum-hook` install path. Default `/opt/cordum/bin/cordum-hook`. |
@@ -186,6 +195,7 @@ cordumctl edge managed-settings export \
 
 # Verify a deployed file (workstation, no gateway needed)
 cordumctl edge managed-settings verify \
+  --mcp-gateway-url https://mcp.cordum.example/mcp \
   --path /etc/claude-code/managed-settings.json
 ```
 

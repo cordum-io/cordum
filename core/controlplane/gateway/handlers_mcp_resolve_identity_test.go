@@ -4,10 +4,12 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/mcp"
 )
 
 // TestResolveMCPIdentity_CrossTenantHeaderReturnsNil locks the HIGH
@@ -173,5 +175,104 @@ func TestResolveMCPIdentity_WorkerIDPathSameTenant(t *testing.T) {
 	}
 	if len(got.AllowedTools) != 1 || got.AllowedTools[0] != "safe_tool" {
 		t.Fatalf("AllowedTools = %v, want [safe_tool]", got.AllowedTools)
+	}
+}
+
+// newMCPBindingGateway serves mcpAuth behind static keys for viewers alice
+// and bob and admin root (tenant default). Agent identity agent-a is linked to
+// alice's principal, agent-b to bob's API key id, and agent-x (tenant other)
+// to bob's principal.
+func newMCPBindingGateway(t *testing.T) *server {
+	t.Helper()
+	s, _, _ := newTestGateway(t)
+	s.auth = newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"key-alice","tenant":"default","principal_id":"alice","role":"viewer"},` +
+			`{"key":"key-bob","tenant":"default","principal_id":"bob","role":"viewer"},` +
+			`{"key":"key-root","tenant":"default","principal_id":"root","role":"admin"}]`,
+	})
+	ctx := context.Background()
+	for _, link := range []struct{ id, tenant, worker string }{
+		{"agent-a", "default", "alice"},
+		{"agent-b", "default", "static:" + auth.APIKeyFingerprint("key-bob")},
+		{"agent-x", "other", "bob"},
+	} {
+		if _, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+			ID: link.id, TenantID: link.tenant, Name: link.id, Owner: "ops", RiskTier: "low",
+			AllowedTools: []string{"safe_tool"}, Status: "active",
+		}); err != nil {
+			t.Fatalf("Create %s: %v", link.id, err)
+		}
+		if err := s.agentIdentityStore.LinkWorker(ctx, link.id, link.worker); err != nil {
+			t.Fatalf("LinkWorker %s: %v", link.id, err)
+		}
+	}
+	return s
+}
+
+// mcpAuthAs runs one POST through mcpAuth as the given API key, optionally
+// naming an agent in X-Agent-Id, and reports what the wrapped handler saw.
+func mcpAuthAs(t *testing.T, s *server, key, agentID string) (code int, body, identity, metaAgent string) {
+	t.Helper()
+	h := s.mcpAuth(func(w http.ResponseWriter, r *http.Request) {
+		if id := mcp.IdentityFromContext(r.Context()); id != nil {
+			identity = id.ID
+		}
+		if meta, ok := MCPCallMetadataFromContext(r.Context()); ok {
+			metaAgent = meta.AgentID
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	req := httptest.NewRequest(http.MethodPost, "/mcp/message", nil)
+	req.Header.Set("X-API-Key", key)
+	req.Header.Set("X-Tenant-ID", "default")
+	if agentID != "" {
+		req.Header.Set(mcpAgentIDHeader, agentID)
+	}
+	rr := httptest.NewRecorder()
+	h(rr, req)
+	return rr.Code, rr.Body.String(), identity, metaAgent
+}
+
+// X-Agent-Id is a claim: a tenant user may act only as an identity linked to
+// its own principal or API key, unless it may manage agent identities anyway.
+func TestMCPAuthAgentIDHeaderRequiresBinding(t *testing.T) {
+	s := newMCPBindingGateway(t)
+	for _, tc := range []struct {
+		name, key, header string
+		wantCode          int
+		wantIdentity      string
+		wantMetaAgent     string
+	}{
+		{"user cannot adopt another user's agent", "key-bob", "agent-a", http.StatusForbidden, "", ""},
+		{"unknown agent looks the same as unbound", "key-bob", "agent-missing", http.StatusForbidden, "", ""},
+		{"link in another tenant does not bind", "key-bob", "agent-x", http.StatusForbidden, "", ""},
+		{"bound by principal", "key-alice", "agent-a", http.StatusNoContent, "agent-a", "agent-a"},
+		{"bound by API key id", "key-bob", "agent-b", http.StatusNoContent, "agent-b", "agent-b"},
+		{"admin may act as any agent", "key-root", "agent-a", http.StatusNoContent, "agent-a", "agent-a"},
+		{"no header keeps the linked identity", "key-alice", "", http.StatusNoContent, "agent-a", "alice"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, body, identity, metaAgent := mcpAuthAs(t, s, tc.key, tc.header)
+			if code != tc.wantCode || identity != tc.wantIdentity || metaAgent != tc.wantMetaAgent {
+				t.Fatalf("got code=%d identity=%q meta.AgentID=%q body=%s; want code=%d identity=%q meta.AgentID=%q",
+					code, identity, metaAgent, body, tc.wantCode, tc.wantIdentity, tc.wantMetaAgent)
+			}
+			if code == http.StatusForbidden && !strings.Contains(body, "agent identity not bound to caller") {
+				t.Fatalf("403 body = %s, want the binding error", body)
+			}
+		})
+	}
+}
+
+// The legacy switch restores header trust for unbound identities, still
+// tenant-scoped.
+func TestMCPAuthAllowUnboundAgentIDSwitch(t *testing.T) {
+	s := newMCPBindingGateway(t)
+	t.Setenv(mcpAllowUnboundAgentIDEnv, "true")
+	if code, body, identity, _ := mcpAuthAs(t, s, "key-bob", "agent-a"); code != http.StatusNoContent || identity != "agent-a" {
+		t.Fatalf("legacy switch: code=%d identity=%q body=%s, want 204 as agent-a", code, identity, body)
+	}
+	if code, _, identity, _ := mcpAuthAs(t, s, "key-bob", "agent-x"); code != http.StatusNoContent || identity != "" {
+		t.Fatalf("legacy switch, other tenant's agent: code=%d identity=%q, want 204 with no identity", code, identity)
 	}
 }

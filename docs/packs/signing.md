@@ -219,8 +219,9 @@ name instead of falling back to the bare kid. Two registration paths:
 ```sh
 # Redis (persistent, shared across replicas). JSON document keyed
 # by kid; at minimum set publisher_id, optionally display_name +
-# added_at.
-redis-cli SET packs:publishers:acme \
+# added_at. Compose stack shown (TLS-only Redis with a password); point
+# -h, --cacert and -a at your Redis elsewhere.
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" SET packs:publishers:acme \
   '{"publisher_id":"acme-corp","display_name":"Acme Corp","added_at":"2026-04-20T00:00:00Z"}'
 
 # Environment (per-gateway bootstrap shorthand). publisher_id only;
@@ -276,8 +277,9 @@ When a compromised publisher key surfaces, ops can escalate the
 fleet immediately without a redeploy:
 
 ```sh
-# Gateway side: propagates across replicas within 1s.
-redis-cli SET cfg:packs:strict_mode true
+# Gateway side: propagates across replicas within 1s. Compose stack shown;
+# point -h, --cacert and -a at your Redis elsewhere.
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" SET cfg:packs:strict_mode true
 
 # cordumctl side: ship CORDUM_PACK_STRICT=true via config-management,
 # or push a follow-up key revocation so --trusted-keys drops the

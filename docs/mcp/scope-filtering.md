@@ -144,12 +144,55 @@ and invalidates every cached slice at once.
 `mcpAuth` middleware on `/mcp/message` reads the
 `X-Agent-Id` header. If present, it resolves via the agent identity store
 and attaches the resulting `*mcp.AgentIdentity` to the request context.
-If absent, it falls back to the auth-principal's linked worker identity
-(useful for workers that already authenticate with a credentialed
-`PrincipalID`).
+If absent, it falls back to the identity linked to the caller's principal
+or API key ID (useful for workers that already authenticate with a
+credentialed `PrincipalID`).
+
+`X-Agent-Id` is a claim, not a credential. The gateway honours it only
+when the named identity is linked to the caller's principal or API key ID
+(the agent worker link: `agent_id` on `POST /api/v1/agents`, or a worker
+credential's `agent_id`), or when the caller passes the `agents.write` /
+admin gate of the agent identity routes. Otherwise every `/mcp/*` route
+answers `403 agent identity not bound to caller`, the same answer as for
+an identity that does not exist. For identities not linked yet,
+`CORDUM_MCP_ALLOW_UNBOUND_AGENT_ID=true` restores the old header trust
+(still tenant-scoped); the gateway logs a warning at MCP start while it
+is set. The binding is only as strong as the principal. Dev mode (any
+non-production `CORDUM_ENV`, or `CORDUM_ALLOW_HEADER_PRINCIPAL=true`)
+takes the principal from the `X-Principal-Id` header for keys without a
+`principal_id`, so there any such caller can claim a linked principal
+and act as its identity. Binding API key IDs is the safe choice: a
+caller cannot claim another key's ID.
 
 The HTTP transport stamps the resolved identity onto `JSONRPCMessage`
 before enqueuing it for the MCP dispatcher.
+
+#### Upgrading: bind existing agent identities
+
+Before this binding, the gateway trusted any `X-Agent-Id` in the tenant.
+After upgrading, a client that names an identity not linked to it gets
+`403 agent identity not bound to caller`. Link each identity to the API
+key ID its client authenticates with (a managed key's `id`, or
+`static:<fingerprint>` for a static key, as the [audit log](../audit.md)
+shows it), or to its principal where the header principal is off (see
+above). An existing identity is linked with `agent_id` on update,
+without re-creating it:
+
+```bash
+curl -X PUT "$CORDUM_GATEWAY/api/v1/agents/<identity-id>" \
+  -H "X-API-Key: $CORDUM_ADMIN_KEY" -H "X-Tenant-ID: <tenant>" \
+  -H "Content-Type: application/json" \
+  -d '{"agent_id": "<api-key-id>"}'
+```
+
+The caller needs `agents.write` or admin. A key or principal already
+linked to another identity is refused with `409 AGENT_WORKER_CONFLICT`;
+each one links to a single identity. New identities take the same
+`agent_id` on `POST /api/v1/agents`.
+
+`CORDUM_MCP_ALLOW_UNBOUND_AGENT_ID=true` is a temporary bridge for the
+rollout only: while it is set, any caller in the tenant can act as any
+identity it names. Unset it once every client's identity is linked.
 
 ### stdio transport (cordum-mcp)
 
@@ -212,16 +255,18 @@ Phase 1: MCP Zero-Trust Governance.
   doesn't have the scope for never reaches the approval gate, so
   attackers can't probe the approval workflow to enumerate the tool
   surface.
-- **Signed outbound MCP calls** (task-ba236f62). When Cordum acts
-  as an MCP CLIENT calling external MCP servers, every call is
-  signed with the caller's ECDSA P-256 key so the remote can
-  verify the caller's identity. Scope filtering governs what a
-  caller can REQUEST; signing proves who made the request.
+- **Signed outbound calls** (task-ba236f62). `cordum-mcp` signs the
+  POST and PUT calls it sends to the gateway with its ECDSA P-256 key.
+  The gateway does not verify them on receipt; a signed request is
+  checked only when it is posted to `POST /api/v1/mcp/verify-signature`
+  (see [outbound signing](outbound-signing.md)). Scope filtering
+  governs what a caller can REQUEST; a verified signature shows who
+  sent it.
 
-All three controls operate independently. Defence in depth: a
-privilege-escalation probe must pass the scope filter, satisfy the
-approval gate, and be signed by a key the remote MCP trusts before any
-effect is observable.
+Scope filtering and the approval gate are enforced on every call and
+operate independently: a privilege-escalation probe must pass the scope
+filter and then satisfy the approval gate before any effect is
+observable. Signing adds no enforcement until a receiver verifies it.
 
 ## Operational checklist
 

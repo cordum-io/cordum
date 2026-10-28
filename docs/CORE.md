@@ -474,9 +474,9 @@ verification and three tiers (Community/Team/Enterprise). Entitlement enforcemen
 is applied across all services: gateway rate limits, scheduler concurrency caps,
 workflow step limits, safety kernel policy bundle quotas, and audit retention
 periods. Licenses degrade gracefully on expiry (services continue at Community
-tier). Enterprise add-ons (license issuance, SSO/SAML, advanced RBAC, SIEM
-export, support SLA) live in the enterprise and tools repos; this repo provides
-the loading, validation, and tier enforcement layer.
+tier). Enterprise features (SSO/SAML and OIDC, SCIM, advanced RBAC, SIEM
+export) ship in this repo behind license entitlements; license issuance is the
+`cordum-tools/cmd/licensegen/` CLI. See [enterprise.md](enterprise.md).
 
 ---
 

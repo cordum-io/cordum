@@ -70,10 +70,11 @@ func TestGenerateManagedSettingsTemplateIncludesEnterpriseControls(t *testing.T)
 	assertCommandHook(t, hooks, "UserPromptSubmit", "", "/opt/cordum/bin/cordum-hook claude user-prompt-submit", 5)
 	assertCommandHook(t, hooks, "ConfigChange", "user_settings|project_settings|local_settings|skills", "/opt/cordum/bin/cordum-hook claude config-change", 5)
 	assertCommandHook(t, hooks, "FileChanged", ".claude/settings.json|.claude/settings.local.json|CLAUDE.md", "/opt/cordum/bin/cordum-hook claude file-changed", 5)
+	assertHookOnFailure(t, hooks, true)
 
 	allowed := jsonArray(t, settings["allowedMcpServers"])
-	if len(allowed) != 1 || jsonObject(t, allowed[0])["serverName"] != "cordum-edge" {
-		t.Fatalf("allowedMcpServers = %#v", allowed)
+	if len(allowed) != 1 || len(jsonObject(t, allowed[0])) != 1 || jsonObject(t, allowed[0])["serverUrl"] != "https://mcp.cordum.example/mcp" {
+		t.Fatalf("allowedMcpServers = %#v, want exactly the managed MCP gateway serverUrl", allowed)
 	}
 	if _, ok := settings["disableAllHooks"]; ok {
 		t.Fatalf("managed template must not emit weakening disableAllHooks: %#v", settings)

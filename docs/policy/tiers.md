@@ -58,7 +58,7 @@ rules:
 | Tier | Storage / source | Evaluate-time scope |
 | --- | --- | --- |
 | Global | Unified Global authority from EDGE-052 / policy bundles. | Always applies. |
-| Workflow | `workflow.policy_override` YAML; loaded as synthetic bundle `workflow/{id}/policy`. | Labels such as `workflow_id` / `workflow_run_id`. |
+| Workflow | `workflow.policy_override` YAML; loaded as synthetic bundle `workflow/{id}/policy`. | Labels such as `workflow_id` / `workflow_run_id`. For jobs, the scheduler sets `workflow_id` from the request's `WorkflowId` (set only by the workflow engine) and drops the other workflow scope labels; job submit drops them from client labels. |
 | Job | No new persistence layer. The workflow engine and Edge session creation stamp `policy.attachment_id`. | `policy.attachment_id` first, then job/session labels as fallbacks. |
 
 Edge sessions receive `policy.attachment_id=session/{session_id}/policy`.

@@ -83,7 +83,7 @@ redacted summaries, hashes, and artifact pointers.
 | Mode | Intent | Governance-unavailable behavior |
 | --- | --- | --- |
 | `observe` | Development visibility and low-friction evidence. | Allow degraded actions while recording evidence where possible. |
-| `enforce` / `local-dev-enforce` | Local enforcement for risky or unknown actions. | Known-safe actions may proceed; risky or unclassified actions deny/fail closed **only when `CORDUM_AGENTD_FAIL_CLOSED` is enabled**. That variable defaults to `false`, so an `enforce` session without it fails **open** on agentd error/timeout. `cordumctl edge doctor` warns when a session is fail-open. |
+| `enforce` / `local-dev-enforce` | Local enforcement for risky or unknown actions. | Known-safe actions may proceed; risky or unclassified actions deny/fail closed. `cordumctl edge claude` renders `CORDUM_AGENTD_FAIL_CLOSED=true` and `"onFailure": "block"` on the blocking hooks for every mode except `observe` (`onFailure` needs Claude Code v2.1.295+). That variable defaults to `false`, so fail-open is only possible for hand-wired hook settings without them: those still deny `PreToolUse` on agentd error/timeout but let other hook events through, and let any action through if the hook process itself fails. `cordumctl edge doctor` reports the effective posture. |
 | `enterprise-strict` | Managed enterprise enforcement. | Fail closed when Cordum governance is unavailable. |
 | `requires-edge-governance` tag | Production workflow action that must be governed. | Fail closed on Gateway miss regardless of session mode. |
 

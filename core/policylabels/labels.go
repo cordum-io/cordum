@@ -8,6 +8,43 @@ const (
 	PolicyAttachmentID = "policy.attachment_id"
 )
 
+// WorkflowContextLabel reports whether key carries a job's workflow linkage:
+// workflow_id, run_id and step_id, which the workflow engine writes, and
+// workflow, workflow_run_id and workflow.*, which the Safety Kernel also reads
+// as the workflow policy scope. Only the workflow engine may set them.
+func WorkflowContextLabel(key string) bool {
+	switch key {
+	case "run_id", "step_id":
+		return true
+	}
+	return workflowScopeLabel(key)
+}
+
+// WithWorkflowScope returns a copy of labels whose workflow policy scope is
+// workflowID, a request's WorkflowId (a field only the workflow engine sets).
+// Workflow scope labels are dropped first, so a label alone never claims a
+// workflow's policy scope.
+func WithWorkflowScope(labels map[string]string, workflowID string) map[string]string {
+	out := make(map[string]string, len(labels))
+	for k, v := range labels {
+		if !workflowScopeLabel(k) {
+			out[k] = v
+		}
+	}
+	if id := strings.TrimSpace(workflowID); id != "" {
+		out["workflow_id"] = id
+	}
+	return out
+}
+
+func workflowScopeLabel(key string) bool {
+	switch key {
+	case "workflow_id", "workflow", "workflow_run_id":
+		return true
+	}
+	return strings.HasPrefix(key, "workflow.")
+}
+
 // JobAttachmentID returns the synthetic bundle key for a Cordum job.
 func JobAttachmentID(jobID string) string {
 	return attachmentID("job", jobID)

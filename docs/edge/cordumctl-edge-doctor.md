@@ -11,7 +11,8 @@ local governed Claude session.
 ## Usage
 
 ```bash
-CORDUM_GATEWAY=http://localhost:8081 \
+CORDUM_GATEWAY=https://localhost:8081 \
+CORDUM_TLS_CA=<cordum-checkout>/certs/ca/ca.crt \
 CORDUM_API_KEY=<cordum-api-key> \
 CORDUM_TENANT_ID=default \
 cordumctl edge doctor
@@ -38,17 +39,19 @@ cordumctl edge doctor \
 
 | Flag | Env/default | Purpose |
 | --- | --- | --- |
-| `--gateway` | `CORDUM_GATEWAY` or `http://localhost:8081` | Gateway base URL. |
+| `--gateway` | `CORDUM_GATEWAY` or `http://localhost:8081` | Gateway base URL. The compose stack needs `https://localhost:8081` with `--cacert` (`CORDUM_TLS_CA`). |
 | `--api-key` | `CORDUM_API_KEY` | Gateway API key. The value is never printed. |
 | `--tenant` | `CORDUM_TENANT_ID` or `default` | Tenant sent as `X-Tenant-ID`. |
 | `--policy-mode` | `CORDUM_EDGE_POLICY_MODE` or `enforce` | Reports degraded/fail-closed implications. |
 | `--fail-closed` | `CORDUM_AGENTD_FAIL_CLOSED` (unset = not explicitly configured) | Effective posture used to judge an `enforce` session. The doctor accepts the same spellings agentd itself does (`1`/`0`, `true`/`false`, `yes`/`no`, `y`/`n`, `on`/`off`, case-insensitive) and reports `ok` either way. An unset value is also `ok` (posture undetermined from outside the session). A non-empty value that does not match any of those spellings is reported as `warn` — it is likely a typo, and agentd would silently fail to parse it too. |
-| `--claude-path` | `CLAUDE_PATH` or PATH lookup | Claude Code executable to verify. |
+| `--claude-path` | `CLAUDE_PATH` or PATH lookup | Claude Code executable to verify and to run with `--version`. |
 | `--hook-command` | `CORDUM_HOOK_COMMAND` or `cordum-hook` | Hook command embedded in generated settings. |
 | `--agentd-path` | `CORDUM_AGENTD_PATH` or PATH lookup | `cordum-agentd` executable to verify. |
 | `--agentd-url` | `CORDUM_AGENTD_URL`, `CORDUM_AGENTD_SOCKET`, or local default | Local loopback hook URL to dial. |
 | `--settings-path` | `CORDUM_EDGE_SETTINGS_PATH`, `CLAUDE_SETTINGS_PATH`, or `~/.claude/settings.json` | Claude settings JSON to validate. |
 | `--managed-settings-path` | `CORDUM_EDGE_MANAGED_SETTINGS_PATH` | Managed-settings JSON to validate via the `managed_settings_compliance` check. Empty = skip (non-enterprise hosts). |
+| `--mcp-gateway-url` | — | Independent trusted MCP endpoint for managed-settings verification. Required when a managed-settings path is supplied; never inferred from `--gateway` or the inspected file. |
+| `--copilot-hooks-path` | `CORDUM_EDGE_COPILOT_HOOKS_PATH` | GitHub Copilot hooks file (for example `.github/hooks/cordum.json`) for the `copilot_hooks` check. Empty = skip. |
 | `--dashboard-url` | `CORDUM_EDGE_DASHBOARD_URL`, `CORDUM_DASHBOARD_URL` | Optional dashboard reachability probe. |
 | `--timeout` | `30` | Overall deadline in seconds. Each check is still individually bounded. |
 | `--json` | false | Emit JSON envelope instead of the human table. |
@@ -62,6 +65,13 @@ The doctor reports `ok`, `warn`, `fail`, or `skip` for each check:
 - Safety Kernel reachability through Gateway via `GET /api/v1/policy/snapshots`.
 - Edge sessions API ping via `GET /api/v1/edge/sessions?limit=1`.
 - `claude`, `cordum-hook`, and `cordum-agentd` executable discovery.
+- Claude Code version (`claude_code_version`): runs `claude --version`.
+  Every mode except `observe` generates `"onFailure": "block"` on the
+  `PreToolUse`, `UserPromptSubmit`, and `ConfigChange` hooks, and Claude Code
+  honors it only from v2.1.295. On an older version a hook that cannot start,
+  times out, or prints invalid JSON fails open, so the check reports `warn`
+  (`fail` in `enterprise-strict`). If the version cannot be read, the check
+  reports `warn` with the reason. `observe` skips the check.
 - Generated Claude settings shape: required Cordum command hooks, session and
   execution metadata, bare `CORDUM_AGENTD_URL`/socket, and no persisted API key
   or nonce fields.
@@ -72,9 +82,19 @@ The doctor reports `ok`, `warn`, `fail`, or `skip` for each check:
 - Policy-mode implications.
 - Managed settings compliance: when `--managed-settings-path` (or
   `CORDUM_EDGE_MANAGED_SETTINGS_PATH`) is set, validates the deployed
-  `managed-settings.json` against the 14 enterprise invariants documented
+  `managed-settings.json` against the 18 enterprise invariants documented
   in [managed-settings-deploy.md § 6](managed-settings-deploy.md#6-verification-reference).
   Empty path → `skip` so non-enterprise hosts do not see a spurious failure.
+- Copilot hooks (`copilot_hooks`): when `--copilot-hooks-path` (or
+  `CORDUM_EDGE_COPILOT_HOOKS_PATH`) is set, reports `warn` only when a
+  corrected file would fix the problem: the file is missing or not JSON,
+  `version` is not `1`, an event has no `cordum-hook copilot <event>`
+  command, or a `timeout` or `timeoutSec` is under `5`. Otherwise `ok` in
+  every policy mode, with the Copilot harness limits in the detail (a
+  timed-out hook lets the action through, prompts are never blocked in the
+  Copilot harness, other events log a failed hook and continue). See
+  [cordum-hook.md § GitHub Copilot](cordum-hook.md#github-copilot). Empty
+  path → `skip`.
 
 ## Exit codes
 

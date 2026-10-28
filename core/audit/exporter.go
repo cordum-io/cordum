@@ -107,6 +107,13 @@ const (
 	// role_name and tenant. Identity carries the actor. SIEM rules can
 	// detect cleanup-after-attack patterns (delete role to remove evidence).
 	EventAuthRoleDeleted = "auth.role_deleted"
+	// EventRetentionAnchorAdopted is appended to a tenant's audit chain
+	// when an operator adopts a retention anchor for a chain trimmed
+	// outside the retention sweeper (POST
+	// /api/v1/audit/chain/retention-anchor). Identity carries the actor;
+	// Extra carries adopted_seq, adopted_stream_id, previous_anchor and
+	// previous_anchor_state.
+	EventRetentionAnchorAdopted = "audit.retention_anchor_adopted"
 
 	// EDGE-014 audit event constants. These cover the Edge action
 	// lifecycle (sessions, executions, decisions, approvals, degraded /
@@ -329,9 +336,9 @@ func NewExporterFromEnv() (*BufferedExporter, error) {
 }
 
 // NewExporterFromEnvWithEntitlements reads CORDUM_AUDIT_EXPORT_* environment
-// variables and applies runtime entitlement gates for SIEM export and audit
-// retention. Invalid or missing resolvers gracefully fall back to community
-// defaults.
+// variables and applies the runtime SIEM export entitlement gate. Invalid or
+// missing resolvers gracefully fall back to community defaults. Audit chain
+// retention is enforced separately by RetentionSweeper.
 func NewExporterFromEnvWithEntitlements(resolver *licensing.EntitlementResolver) (*BufferedExporter, error) {
 	typ := strings.ToLower(strings.TrimSpace(os.Getenv("CORDUM_AUDIT_EXPORT_TYPE")))
 	if !isDiscardExportType(typ) && !siemExportEnabled(currentEntitlements(resolver)) {
@@ -347,7 +354,7 @@ func NewExporterFromEnvWithEntitlements(resolver *licensing.EntitlementResolver)
 	if err != nil || exp == nil {
 		return nil, err
 	}
-	return NewBufferedExporter(exp, WithRetentionTTL(RetentionTTLFromEntitlements(currentEntitlements(resolver)))), nil
+	return NewBufferedExporter(exp), nil
 }
 
 // parseSyslogAddr parses "tcp://host:port" or "udp://host:port".
@@ -461,7 +468,7 @@ func isDiscardExportType(typ string) bool {
 }
 
 // DiscardExporter implements Exporter by dropping every batch. Used when
-// CORDUM_AUDIT_EXPORT_TYPE=null|discard|chain-only so the Merkle audit
+// CORDUM_AUDIT_EXPORT_TYPE=null|discard|chain-only so the audit hash
 // chain is still engaged even though no SIEM backend consumes the stream.
 type DiscardExporter struct{}
 

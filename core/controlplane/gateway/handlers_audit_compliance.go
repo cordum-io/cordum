@@ -97,16 +97,18 @@ func (s *server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 	opts.TenantID = tenant
 
 	// Retention-aware lower bound: reject windows whose lower edge is
-	// older than the operator-configured retention plus skew. Prevents
-	// a request for a year-old audit window on a tenant with 30-day
-	// retention from silently returning empty.
-	retention := auditChainRetention()
-	oldestAllowed := time.Now().Add(-(retention + defaultComplianceExportClockSkew))
-	if opts.From.Before(oldestAllowed) {
-		writeErrorJSON(w, http.StatusBadRequest,
-			fmt.Sprintf("from %s is older than retention window %s", opts.From.Format(time.RFC3339), retention))
-		observeAuditExport(string(opts.Format), "bad_request", 0)
-		return
+	// older than the effective retention window plus skew. Prevents a
+	// request for a year-old audit window on a tenant with 30-day
+	// retention from silently returning empty. Unlimited retention (0)
+	// has no lower bound.
+	if retention := audit.RetentionWindow(entitlements); retention > 0 {
+		oldestAllowed := time.Now().Add(-(retention + defaultComplianceExportClockSkew))
+		if opts.From.Before(oldestAllowed) {
+			writeErrorJSON(w, http.StatusBadRequest,
+				fmt.Sprintf("from %s is older than retention window %s", opts.From.Format(time.RFC3339), retention))
+			observeAuditExport(string(opts.Format), "bad_request", 0)
+			return
+		}
 	}
 
 	// Tighten MaxEvents to the entitlement ceiling.
@@ -122,7 +124,14 @@ func (s *server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 		observeAuditExport(string(opts.Format), "unavailable", 0)
 		return
 	}
-	opts.StreamKey = audit.NewChainer(client, "").StreamKey(tenant)
+	chainer := audit.NewChainer(client, "")
+	opts.StreamKey = chainer.StreamKey(tenant)
+	// Verify like /api/v1/audit/verify: link to the retention anchor and
+	// check HMAC tags (the key only ever comes from the server's chainer).
+	opts.RetentionAnchorKey = chainer.AnchorKey(tenant)
+	if s.auditChainer != nil && s.auditChainer.HMACEnabled() {
+		opts.HMACKey = s.auditChainer.HMACKeyForVerify()
+	}
 	opts.BundleLookup = func(ctx context.Context, _ string, from, to time.Time) ([]audit.SignedBundleSnapshot, error) {
 		return s.listSignedBundleSnapshots(ctx, from, to)
 	}

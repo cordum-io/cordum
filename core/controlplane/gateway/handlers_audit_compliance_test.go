@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -349,6 +350,88 @@ func TestHandleAuditExport_RejectsBadRange(t *testing.T) {
 	s.handleAuditExport(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("spread>366d: status = %d, want 400", rec.Code)
+	}
+}
+
+// TestHandleAuditExport_RetentionBoundFollowsEffectiveWindow: the export's
+// lower bound is the effective retention window, and unlimited retention
+// (Enterprise) has none.
+func TestHandleAuditExport_RetentionBoundFollowsEffectiveWindow(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	now := time.Now().UTC()
+	path := fmt.Sprintf("/api/v1/audit/export?format=json&from=%s&to=%s",
+		now.Add(-30*24*time.Hour).Format(time.RFC3339), now.Format(time.RFC3339))
+	export := func() int {
+		rec := httptest.NewRecorder()
+		s.handleAuditExport(rec, adminCtx(httptest.NewRequest(http.MethodGet, path, nil)))
+		return rec.Code
+	}
+
+	grantExportEntitlement(t, s)
+	if code := export(); code != http.StatusOK {
+		t.Fatalf("enterprise 30-day window: status = %d, want 200", code)
+	}
+
+	setTestEntitlements(t, s, licensing.PlanCommunity, func(ent *licensing.Entitlements) {
+		ent.SIEMExport = true
+		ent.AuditExport = true
+	})
+	if code := export(); code != http.StatusBadRequest {
+		t.Fatalf("community 7-day retention: status = %d, want 400", code)
+	}
+}
+
+// TestHandleAuditExport_WindowAtTrimBoundaryIsComplete: after retention
+// trimmed the chain, an export window that starts at the oldest retained
+// event links to the retention anchor and attests as complete; one reaching
+// back past the trim is partial.
+func TestHandleAuditExport_WindowAtTrimBoundaryIsComplete(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	grantExportEntitlement(t, s)
+	client := s.redisClient()
+	seedComplianceEvents(t, client, "default", 3)
+	time.Sleep(5 * time.Millisecond) // retained events get later stream IDs
+	seedComplianceEvents(t, client, "default", 3)
+	chainer := audit.NewChainer(client, "")
+	trimChainPrefix(t, client, chainer, "default", 3)
+	oldest, err := client.XRangeN(context.Background(), chainer.StreamKey("default"), "-", "+", 1).Result()
+	if err != nil || len(oldest) != 1 {
+		t.Fatalf("xrange: %v", err)
+	}
+	ms, _, _ := strings.Cut(oldest[0].ID, "-")
+	boundaryMs, err := strconv.ParseInt(ms, 10, 64)
+	if err != nil {
+		t.Fatalf("stream id %q: %v", oldest[0].ID, err)
+	}
+
+	export := func(format string, from time.Time) *audit.VerifyResult {
+		t.Helper()
+		to := time.Now().UTC().Add(30 * time.Second).Format(time.RFC3339)
+		req := adminCtx(httptest.NewRequest(http.MethodGet,
+			"/api/v1/audit/export?format="+format+"&from="+from.UTC().Format(time.RFC3339Nano)+"&to="+to, nil))
+		rec := httptest.NewRecorder()
+		s.handleAuditExport(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+		}
+		line, _, _ := strings.Cut(rec.Body.String(), "\n")
+		line = strings.TrimPrefix(line, "# cordum-manifest: ") // CSV
+		var manifest struct {
+			ChainVerification *audit.VerifyResult `json:"chain_verification"`
+		}
+		if err := json.Unmarshal([]byte(line), &manifest); err != nil || manifest.ChainVerification == nil {
+			t.Fatalf("manifest %q: %v", line, err)
+		}
+		return manifest.ChainVerification
+	}
+
+	for _, format := range []string{"json", "csv"} {
+		if got := export(format, time.UnixMilli(boundaryMs)); got.Status != audit.VerifyStatusOK || got.TotalEvents != 3 || len(got.Gaps) != 0 {
+			t.Fatalf("%s window at the trim boundary: %+v, want ok over 3 events", format, got)
+		}
+		if got := export(format, time.Now().Add(-time.Hour)); got.Status != audit.VerifyStatusPartial {
+			t.Fatalf("%s window reaching past the trim: %+v, want partial", format, got)
+		}
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/resourceio"
+	"github.com/cordum/cordum/core/policylabels"
 	jobidentity "github.com/cordum/cordum/core/protocol/identity"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/redis/go-redis/v9"
@@ -166,9 +167,11 @@ func (c *SafetyClient) Check(ctx context.Context, req *pb.JobRequest) (SafetyDec
 		PrincipalId: req.GetPrincipalId(),
 		Priority:    req.GetPriority(),
 		Budget:      req.GetBudget(),
-		Labels:      req.GetLabels(),
-		MemoryId:    req.GetMemoryId(),
-		Meta:        req.GetMeta(),
+		// The kernel scopes policy by workflow_id; take it from WorkflowId,
+		// which only the workflow engine sets, not from a label.
+		Labels:   policylabels.WithWorkflowScope(req.GetLabels(), req.GetWorkflowId()),
+		MemoryId: req.GetMemoryId(),
+		Meta:     req.GetMeta(),
 	}, c.productionIdentityEnforcement)
 	if err != nil {
 		return SafetyDecisionRecord{Decision: SafetyUnavailable, Reason: "policy identity rejected"}, err

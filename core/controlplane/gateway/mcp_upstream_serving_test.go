@@ -2,9 +2,13 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"testing"
 
 	edgecore "github.com/cordum/cordum/core/edge"
+	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/mcp"
 )
 
 // These tests cover the gateway's upstream-fronting seam (mcp_upstream_serving.go)
@@ -142,4 +146,36 @@ func TestMCPUpstreamServing_SelectSkipsDisabledPicksEnabled(t *testing.T) {
 	if up.Name != "enabled-second" {
 		t.Fatalf("selected = %q, want enabled-second (disabled-first must be skipped)", up.Name)
 	}
+}
+
+// TestInvariantFlooredToolsMatchesUpstreamName: the fronted floor matches the
+// upstream's name as the MCP server, and forwards calls no invariant covers.
+func TestInvariantFlooredToolsMatchesUpstreamName(t *testing.T) {
+	t.Parallel()
+	lookup := MCPInvariantLookupFunc(func(context.Context) []config.PolicyRule {
+		return []config.PolicyRule{{ID: "inv-no-monday", Decision: "deny",
+			Match: config.PolicyMatch{MCP: config.MCPPolicy{DenyServers: []string{"cordum.monday"}}}}}
+	})
+	_, gate := (&server{}).wireMCPApprovalGate(newTestMCPStore(t), lookup)
+	ctx := WithMCPCallMetadata(context.Background(), MCPCallMetadata{Tenant: "default"})
+	for _, tc := range []struct {
+		server   string
+		wantDeny bool
+	}{{"cordum.monday", true}, {"cordum.jira", false}} {
+		inner := &recordingToolService{}
+		_, err := invariantFlooredTools{ToolService: inner, floor: gate, server: tc.server}.
+			Call(ctx, "list_boards", json.RawMessage(`{}`))
+		if denied := errors.Is(err, ErrMCPInvariantDeny); denied != tc.wantDeny || (inner.calls == 0) != tc.wantDeny {
+			t.Errorf("server %s: err=%v forwarded=%d, want deny=%v", tc.server, err, inner.calls, tc.wantDeny)
+		}
+	}
+}
+
+type recordingToolService struct{ calls int }
+
+func (r *recordingToolService) ListTools(context.Context) []mcp.Tool { return nil }
+
+func (r *recordingToolService) Call(context.Context, string, json.RawMessage) (*mcp.ToolCallResult, error) {
+	r.calls++
+	return &mcp.ToolCallResult{}, nil
 }

@@ -17,6 +17,8 @@ import (
 	"github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/infra/config"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
 // upstreamErrorRedactPatterns defines URL/token regex rules applied to
@@ -133,6 +135,19 @@ type CallMetadata struct {
 	AgentID     string
 	SessionID   string
 	ExecutionID string
+	// MCPSessionID is the client's MCP session when the gateway records it
+	// across several Edge sessions (SessionID is then the current one). The
+	// session taint is kept per MCP session, so it outlives that rotation.
+	// Empty means SessionID.
+	MCPSessionID string
+}
+
+// taintSession is the session a prompt-injection taint is kept for.
+func (m CallMetadata) taintSession() string {
+	if m.MCPSessionID != "" {
+		return m.MCPSessionID
+	}
+	return m.SessionID
 }
 
 type callMetadataKey struct{}
@@ -252,6 +267,26 @@ type ToolCallApprovalContext struct {
 	ActionHash string
 	Args       json.RawMessage
 }
+
+// PolicyDenied is a policy DENY raised past the action gates, such as the
+// gateway's SecOps invariant floor. The server answers it the way it answers
+// an action-gate DENY: an isError result carrying Reason, decision=deny on the
+// invocation audit and, with the policy gate wired, a blocked mcp.tool.failed
+// event. Err is the cause errors.Is and errors.As see.
+type PolicyDenied struct {
+	Reason    string
+	SubReason string
+	Err       error
+}
+
+func (e *PolicyDenied) Error() string {
+	if e.Err != nil {
+		return e.Err.Error()
+	}
+	return "mcp: policy denied: " + e.Reason
+}
+
+func (e *PolicyDenied) Unwrap() error { return e.Err }
 
 // ToolCallDeps bundles the production wiring EvaluateToolCall and
 // InvokeToolWithPolicy consume. Every field is interface-typed so
@@ -512,10 +547,10 @@ func EvaluateToolCall(ctx context.Context, deps ToolCallDeps, params ToolCallPar
 	// fail-open by design. Decision captured in
 	// Monday-demo/artifacts/taint-fail-open-decision.md (task-098b8d02).
 	if deps.TaintStore != nil {
-		if t, ok, terr := deps.TaintStore.GetTaint(ctx, meta.Tenant, meta.SessionID); terr != nil {
+		if t, ok, terr := deps.TaintStore.GetTaint(ctx, meta.Tenant, meta.taintSession()); terr != nil {
 			descriptor.TaintLookupFailed = true
 			slog.WarnContext(ctx, "mcp.session_taint.lookup_failed",
-				"tenant", meta.Tenant, "session_id", meta.SessionID, "error", terr.Error())
+				"tenant", meta.Tenant, "session_id", meta.taintSession(), "error", terr.Error())
 		} else if ok && t != nil {
 			descriptor.RiskTags = append(descriptor.RiskTags, config.RiskTagSessionPromptInjection)
 			descriptor.SessionTaint = &config.ActionSessionTaint{
@@ -587,7 +622,7 @@ func EvaluateToolCall(ctx context.Context, deps ToolCallDeps, params ToolCallPar
 		return EvaluateToolCallResult{}, errors.New("deps.EventEmitter is required")
 	}
 	if err := deps.EventEmitter.Emit(ctx, event); err != nil {
-		return EvaluateToolCallResult{}, fmt.Errorf("emit pre event: %w", err)
+		return EvaluateToolCallResult{}, fmt.Errorf("%w: emit pre event: %w", ErrInternal, err)
 	}
 	logToolCallDecision(ctx, event, descriptor, decision)
 
@@ -851,7 +886,11 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 		return nil, err
 	}
 	dec := evalResult.Decision
+	// A consumed `_approval_ref` claim for exactly this call is the human
+	// approval REQUIRE_HUMAN asks for; DENY and THROTTLE still win.
+	claimed := dec.requiresHuman() && claimCoversCall(ctx, params.Name, params.Arguments)
 	switch {
+	case claimed:
 	case dec.requiresHuman():
 		// Require deps.ApprovalHandoff: without it we cannot mint an
 		// approval reference, so returning "approval pending: " with an
@@ -886,6 +925,12 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 			Args: params.Arguments,
 		})
 		if herr != nil {
+			if blocked := newPostEvent(evalResult.PreEvent, deps.Clock, edge.EventKindMCPToolFailed, dec); markPolicyDenied(blocked, herr) {
+				if emitErr := deps.EventEmitter.Emit(ctx, blocked); emitErr != nil {
+					finalErr = fmt.Errorf("emit failed event: %w", emitErr)
+					return nil, finalErr
+				}
+			}
 			finalErr = fmt.Errorf("approval handoff: %w", herr)
 			return nil, finalErr
 		}
@@ -923,20 +968,24 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 		return nil, finalErr
 	}
 	upstreamResult, upstreamErr := deps.Upstream.Invoke(ctx, params)
+	kind := edge.EventKindMCPToolPost
 	if upstreamErr != nil {
-		failed := newPostEvent(evalResult.PreEvent, deps.Clock, edge.EventKindMCPToolFailed, dec)
-		failed.ErrorMessage = sanitizeUpstreamError(upstreamErr)
-		if emitErr := deps.EventEmitter.Emit(ctx, failed); emitErr != nil {
-			finalErr = fmt.Errorf("emit failed event: %w", emitErr)
-			return nil, finalErr
-		}
+		kind = edge.EventKindMCPToolFailed
+	}
+	terminal := newPostEvent(evalResult.PreEvent, deps.Clock, kind, dec)
+	if upstreamErr != nil && !markPolicyDenied(terminal, upstreamErr) {
+		terminal.ErrorMessage = sanitizeUpstreamError(upstreamErr)
+	}
+	// The call already ran upstream: reporting a failed append as its outcome
+	// would invite a retry that runs it again. Like the Edge hook path when
+	// its decision evidence fails to write, keep the outcome and surface the
+	// gap instead.
+	if err := deps.EventEmitter.Emit(ctx, terminal); err != nil {
+		recordEvidenceWriteFailure(ctx, terminal, err)
+	}
+	if upstreamErr != nil {
 		finalErr = upstreamErr
 		return nil, upstreamErr
-	}
-	post := newPostEvent(evalResult.PreEvent, deps.Clock, edge.EventKindMCPToolPost, dec)
-	if err := deps.EventEmitter.Emit(ctx, post); err != nil {
-		finalErr = fmt.Errorf("emit post event: %w", err)
-		return nil, finalErr
 	}
 	// Best-effort content session-taint (DoD#1): scan the read RESULT for a
 	// prompt injection and, on a hit, persist a taint keyed by (tenant, session)
@@ -949,6 +998,30 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 	scanResultForSessionTaint(ctx, deps, params.Name, upstreamResult, stableEventID)
 	finalResult = upstreamResult
 	return upstreamResult, nil
+}
+
+// mcpEvidenceWriteFailures counts terminal Edge events (mcp.tool.post or
+// mcp.tool.failed) that failed to append for a call that already ran
+// upstream: each is a call missing from the Edge timeline.
+var mcpEvidenceWriteFailures = promauto.NewCounterVec(prometheus.CounterOpts{
+	Namespace: "cordum",
+	Subsystem: "mcp",
+	Name:      "evidence_write_failures_total",
+	Help:      "MCP tool calls that ran upstream but whose terminal Edge event failed to append, by event kind.",
+}, []string{"kind"})
+
+// recordEvidenceWriteFailure makes a failed terminal-event append visible: a
+// log line with the detail, the evidence-write metric, and a mark on the
+// call's invocation audit event.
+func recordEvidenceWriteFailure(ctx context.Context, event *edge.AgentActionEvent, err error) {
+	mcpEvidenceWriteFailures.WithLabelValues(string(event.Kind)).Inc()
+	slog.WarnContext(ctx, "mcp.tool.evidence_write_failed",
+		"kind", event.Kind, "tool", event.ToolName, "tenant", event.TenantID,
+		"session_id", event.SessionID, "execution_id", event.ExecutionID,
+		"event_id", event.EventID, "error", err)
+	if h := InvocationHandleFromContext(ctx); h != nil {
+		h.MarkEvidenceWriteFailed(string(event.Kind))
+	}
 }
 
 // maxResultScanBytes bounds a single scanned window. Each Content[].Text and each
@@ -1000,7 +1073,7 @@ func scanResultForSessionTaint(ctx context.Context, deps ToolCallDeps, tool stri
 	if !found {
 		return
 	}
-	if err := deps.TaintStore.Taint(ctx, meta.Tenant, meta.SessionID, SessionTaint{
+	if err := deps.TaintStore.Taint(ctx, meta.Tenant, meta.taintSession(), SessionTaint{
 		Tool:          tool,
 		Pattern:       f.Pattern,
 		Snippet:       f.Snippet,
@@ -1010,7 +1083,7 @@ func scanResultForSessionTaint(ctx context.Context, deps ToolCallDeps, tool stri
 		SourceEventID: eventID,
 	}); err != nil {
 		slog.WarnContext(ctx, "mcp.session_taint.persist_failed",
-			"tenant", meta.Tenant, "session_id", meta.SessionID, "tool", tool, "error", err.Error())
+			"tenant", meta.Tenant, "session_id", meta.taintSession(), "tool", tool, "error", err.Error())
 	}
 }
 
@@ -1109,6 +1182,21 @@ func walkStructuredStrings(v any, depth int, visit func(string) bool) bool {
 		}
 	}
 	return false
+}
+
+// markPolicyDenied gives a failed event the shape EvaluateToolCall gives an
+// action-gate DENY when err is a PolicyDenied (a deny raised past the action
+// gates, such as the gateway's invariant floor), and reports whether it was.
+func markPolicyDenied(evt *edge.AgentActionEvent, err error) bool {
+	var denied *PolicyDenied
+	if !errors.As(err, &denied) {
+		return false
+	}
+	evt.Decision = edge.DecisionDeny
+	evt.Status = edge.ActionStatusBlocked
+	evt.DecisionReason = denied.Reason
+	evt.Constraints = nil
+	return true
 }
 
 // newPostEvent clones the identity/session fields from the pre event

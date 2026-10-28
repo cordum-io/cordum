@@ -788,7 +788,8 @@ func TestRedisJobStoreApplyApprovalRepairApprovedResolution(t *testing.T) {
 		Topic:    "job.test",
 		TenantId: "default",
 		Labels: map[string]string{
-			"approval_granted": "true",
+			"approval_granted":  "true",
+			"approval_snapshot": "snap-1",
 		},
 	}
 	if err := store.SetJobMeta(ctx, req); err != nil {
@@ -813,7 +814,19 @@ func TestRedisJobStoreApplyApprovalRepairApprovedResolution(t *testing.T) {
 		t.Fatalf("set safety decision: %v", err)
 	}
 
+	// The label alone is no approval: a client could once set it at submit.
 	snapshot, err := store.InspectApprovalRepair(ctx, req.GetJobId())
+	if err != nil {
+		t.Fatalf("inspect repair: %v", err)
+	}
+	if plan := ClassifyApprovalRepair(*snapshot, ApprovalRepairClassifyOptions{}); plan.Kind == ApprovalRepairApplyApprovedResolution {
+		t.Fatal("approval_granted label without an approver must not classify as an approved resolution")
+	}
+	// Legacy approvals persisted only the approver plus the label.
+	if err := store.SetApprovalRecord(ctx, req.GetJobId(), ApprovalRecord{ApprovedBy: "alice"}); err != nil {
+		t.Fatalf("set approval record: %v", err)
+	}
+	snapshot, err = store.InspectApprovalRepair(ctx, req.GetJobId())
 	if err != nil {
 		t.Fatalf("inspect repair: %v", err)
 	}

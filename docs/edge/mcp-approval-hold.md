@@ -19,7 +19,10 @@ limits come from policy bundles and SafetyKernel `PolicyConstraints`,
 not from this approval-hold path.
 
 EDGE-103 layers the **resume** path on top of EDGE-102's policy gate.
-The initial **hold** path is unchanged from EDGE-102.
+The initial **hold** path is unchanged from EDGE-102. Both are wired
+only when `mcp.policy_gate_enabled` is on; without it, nothing consumes
+`_approval_ref` (see
+[Approval-hold consume path](../mcp-server.md#approval-hold-consume-path)).
 
 ## Protocol
 
@@ -62,10 +65,10 @@ Client                            MCP Server                           Edge Appr
 
 | Code | Name | When | error.data fields |
 | --- | --- | --- | --- |
-| `-32099` | `approval_required` | Initial hold. Caller did not present `_approval_ref`; action-gate returned `REQUIRE_HUMAN`. | `approval_ref` (new), `expires_at`, `args_hash`, `retry_hint` |
+| `-32099` | `approval_required` | Initial hold. Caller did not present `_approval_ref`; action-gate returned `REQUIRE_HUMAN`. | `approval_ref` (new), `expires_at`, `args_hash`, `retry_hint` (`retry_with_approval_ref`; `retry_with_same_args` when the approval hold is not wired) |
 | `-32096` | `approval_lifecycle_error` | Caller presented `_approval_ref` but the store refused the claim (fail-closed lifecycle). | `kind`, `approval_ref`, `reason` |
 | `-32098` | `not_authorized` | Scope filter rejected the call (pre-policy). | `tool`, `sub_reason`, `agent_id` |
-| `-32097` | `gateway_misconfigured` | Server-side wiring defect (e.g. missing `CallMetadata` in context). | (none) |
+| `-32097` | `gateway_misconfigured` | Server-side wiring defect (e.g. missing `CallMetadata` in context). | A string: `missing_mcp_metadata`, `missing_policy_snapshot`, or `approval_gate_misconfigured` |
 
 ### `error.data.kind` enum on `-32096`
 

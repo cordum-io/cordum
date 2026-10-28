@@ -3,7 +3,6 @@ package gateway
 import (
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
 	"strings"
 
@@ -11,20 +10,6 @@ import (
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/licensing"
 )
-
-// initLegalHoldStore creates a legal hold store from a Redis URL.
-// Returns nil on error (non-fatal — legal hold is optional).
-func initLegalHoldStore(redisURL string) *audit.LegalHoldStore {
-	if strings.TrimSpace(redisURL) == "" {
-		return nil
-	}
-	store, err := audit.NewLegalHoldStore(redisURL)
-	if err != nil {
-		slog.Warn("legal hold store init failed", "error", err)
-		return nil
-	}
-	return store
-}
 
 // requireLegalHoldEntitlement checks the LegalHold entitlement and writes
 // a 403 response if not entitled. Returns true if the caller should return.
@@ -78,8 +63,20 @@ func (s *server) handleCreateLegalHold(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if strings.TrimSpace(req.TenantID) == "" {
-		req.TenantID = s.tenant
+	// Holds gate audit deletion, so the caller must have access to the
+	// tenant it holds. An omitted tenant_id means the caller's own tenant.
+	tenant := strings.TrimSpace(req.TenantID)
+	if tenant == "" {
+		resolved, err := s.resolveTenant(r, "")
+		if err != nil {
+			writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
+			return
+		}
+		tenant = resolved
+	}
+	if err := s.requireTenantAccess(r, tenant); err != nil {
+		writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
+		return
 	}
 	if strings.TrimSpace(req.Reason) == "" {
 		writeErrorJSON(w, http.StatusBadRequest, "reason required")
@@ -92,7 +89,14 @@ func (s *server) handleCreateLegalHold(w http.ResponseWriter, r *http.Request) {
 		createdBy = auth.PrincipalID
 	}
 
-	hold, err := s.legalHoldStore.CreateHold(r.Context(), req.TenantID, req.Reason, createdBy)
+	hold, err := s.legalHoldStore.CreateHold(r.Context(), tenant, req.Reason, createdBy)
+	if errors.Is(err, audit.ErrHoldUnconfirmed) {
+		// The hold is in place; the deletions in flight when it was created
+		// outlasted the request and end on their own.
+		w.WriteHeader(http.StatusAccepted)
+		writeJSON(w, map[string]any{"hold": hold, "warning": err.Error()})
+		return
+	}
 	if err != nil {
 		if errors.Is(err, audit.ErrHoldAlreadyExists) {
 			writeErrorJSON(w, http.StatusConflict, "active legal hold already exists for this tenant")
@@ -106,7 +110,8 @@ func (s *server) handleCreateLegalHold(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"hold": hold})
 }
 
-// handleListLegalHolds lists legal holds, optionally filtered by tenant.
+// handleListLegalHolds lists legal holds in the tenants the caller can
+// access, optionally filtered by tenant.
 // GET /api/v1/audit/legal-holds
 func (s *server) handleListLegalHolds(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermissionOrRole(w, r, auth.PermLegalHoldRead, "admin") {
@@ -121,13 +126,27 @@ func (s *server) handleListLegalHolds(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tenant := strings.TrimSpace(r.URL.Query().Get("tenant"))
+	if tenant != "" && s.requireTenantAccess(r, tenant) != nil {
+		writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
+		return
+	}
 	holds, err := s.legalHoldStore.ListHolds(r.Context(), tenant)
 	if err != nil {
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to list legal holds")
 		return
 	}
 
-	writeJSON(w, map[string]any{"holds": holds})
+	// Without a tenant filter ListHolds returns every tenant's holds; keep
+	// only the tenants the caller may access (all of them for a
+	// cross-tenant principal).
+	visible := make([]*audit.LegalHold, 0, len(holds))
+	for _, hold := range holds {
+		if s.requireTenantAccess(r, hold.TenantID) == nil {
+			visible = append(visible, hold)
+		}
+	}
+
+	writeJSON(w, map[string]any{"holds": visible})
 }
 
 // handleReleaseLegalHold releases a legal hold. Does NOT delete retained data.
@@ -155,7 +174,16 @@ func (s *server) handleReleaseLegalHold(w http.ResponseWriter, r *http.Request) 
 		releasedBy = auth.PrincipalID
 	}
 
-	if err := s.legalHoldStore.ReleaseHold(r.Context(), id, releasedBy); err != nil {
+	hold, err := s.legalHoldStore.GetHold(r.Context(), id)
+	if err == nil && s.requireTenantAccess(r, hold.TenantID) != nil {
+		// Answer exactly like an unknown ID so callers cannot probe
+		// which hold IDs exist in tenants they cannot access.
+		err = audit.ErrHoldNotFound
+	}
+	if err == nil {
+		err = s.legalHoldStore.ReleaseHold(r.Context(), id, releasedBy)
+	}
+	if err != nil {
 		if errors.Is(err, audit.ErrHoldNotFound) {
 			writeErrorJSON(w, http.StatusNotFound, "legal hold not found")
 			return

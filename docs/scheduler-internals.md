@@ -74,8 +74,16 @@ Every job progresses through a well-defined set of states. Terminal states are
 - **Max scheduling retries**: After 50 failed dispatch attempts (exponential
   backoff 1s–30s), the job moves to `FAILED` and is emitted to the DLQ.
 - **Approval flow**: `REQUIRE_APPROVAL` → job waits in `APPROVAL_REQUIRED`.
-  When approved (`approval_granted=true` label + matching job hash), the job
-  re-enters the normal dispatch flow.
+  When a human approves it, the job re-enters the normal dispatch flow and
+  skips the policy check. The `approval_granted` label only tells the
+  scheduler to look: the stored approval record must hold an `approve`
+  decision and an approver, the request must still hash to the job hash
+  pinned when approval was requested, and (outside workflow gates) the
+  `approval_snapshot` label must match the stored policy snapshot. The
+  gateway drops client-supplied `approval_*` labels at submit. A failed
+  dispatch (no workers, a publish error) keeps the approval: while those
+  checks hold, each retry skips the policy check again instead of going back
+  to `APPROVAL_REQUIRED`.
 
 ---
 
@@ -189,8 +197,8 @@ recover orphaned jobs:
 
 - **Pending jobs**: Jobs stuck in `PENDING` longer than `pendingAge` (default
   2 minutes) are re-submitted through `handleJobRequest`.
-- **Approved jobs**: Jobs in `APPROVAL_REQUIRED` with `approval_granted=true`
-  label are replayed to resume dispatch.
+- **Approved jobs**: Jobs in `APPROVAL_REQUIRED` that a human approved (same
+  checks as the approval flow above) are replayed to resume dispatch.
 - **Distributed lock**: `cordum:replayer:pending` (TTL = 2× poll interval).
 - **Metrics**: Orphan replays are counted via `IncOrphanReplayed(topic)`.
 
@@ -201,7 +209,7 @@ PendingReplayer tick (every 30s)
     │   └─ For each: load JobRequest → handleJobRequest(req, traceID)
     │
     └─ Scan APPROVAL_REQUIRED jobs older than 2 minutes
-        └─ For each with approval_granted=true: handleJobRequest(req, traceID)
+        └─ For each with a recorded, still-binding approval: handleJobRequest(req, traceID)
 ```
 
 ---
@@ -224,7 +232,9 @@ When a job **succeeds** and has a `Compensation` field defined in its request:
 ### Rollback Trigger
 
 Rollback fires when a job result arrives with status `FAILED_FATAL` and the job
-belongs to a workflow:
+belongs to a workflow. Only the request's `WorkflowId` field, which the workflow
+engine sets, links a job to a saga (recording and rollback alike); a
+`workflow_id` label does not:
 
 ```
 handleJobResult (FAILED_FATAL + workflow_id)
@@ -415,11 +425,14 @@ gRPC timeout) is controlled by the `POLICY_CHECK_FAIL_MODE` setting:
   `cordum_scheduler_input_fail_open_total` Prometheus counter is incremented
   (labeled by `topic`). This trades safety guarantees for availability.
 
-Configuration:
-- **Env var**: `POLICY_CHECK_FAIL_MODE` — values: `closed` (default), `open`
-- **Config file**: `config/safety.yaml` under `input_policy.fail_mode`
-
-The env var takes precedence over the config file value.
+Configuration, first match wins: the tenant's `scheduler.input_fail_mode` in
+the config service, then the system-scope `scheduler.input_fail_mode`, then
+the `POLICY_CHECK_FAIL_MODE` env var (`closed` or `open`), then `closed`.
+`FailModeResolver` (`core/controlplane/scheduler/failmode.go`) applies this
+order. The async output check uses the same order with
+`scheduler.output_fail_mode` and `OUTPUT_POLICY_FAIL_MODE`. Under the
+production CAP profile both always fail closed. `input_policy.fail_mode` in
+`config/safety.yaml` is not read by the scheduler.
 
 ---
 

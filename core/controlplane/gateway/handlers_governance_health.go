@@ -221,7 +221,8 @@ func (d *governanceHealthDeps) VerifyChain(ctx context.Context) (governance.Chai
 		return governance.ChainStatusUnavailable, nil
 	}
 
-	streamKey := audit.NewChainer(client, "").StreamKey(d.tenant)
+	chainer := audit.NewChainer(client, "")
+	streamKey := chainer.StreamKey(d.tenant)
 	boundary, err := readRetentionBoundary(ctx, client, streamKey)
 	if err != nil {
 		return governance.ChainStatusUnavailable, err
@@ -230,6 +231,7 @@ func (d *governanceHealthDeps) VerifyChain(ctx context.Context) (governance.Chai
 	opts := audit.VerifyOptions{
 		Limit:                audit.DefaultVerifyLimit,
 		RetentionBoundarySeq: boundary,
+		RetentionAnchorKey:   chainer.AnchorKey(d.tenant),
 	}
 	// Verify HMAC tags when HMAC is enabled; the key comes only from the
 	// server's configured chainer (never request input). Mirrors

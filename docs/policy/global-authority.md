@@ -31,7 +31,7 @@ floor, and the wire surface (`/api/v1/policy/global`).
 | `input_rules`      | Cordum job evaluator  | `core/controlplane/safetykernel/kernel.go evaluate()` iterates `s.policy.Rules`   |
 | `output_rules`     | Output scanner        | `core/controlplane/safetykernel/output_policy.go EvaluateOutput / CheckOutput`    |
 | `edge_action_rules`| Edge action evaluator | `core/controlplane/gateway/handlers_edge_evaluate.go evaluateEdgeSafety` → kernel |
-| `mcp_tool_rules`   | MCP tool gate         | `core/controlplane/gateway/mcp_gate.go gatewayApprovalGate.Check`                 |
+| `mcp_tool_rules`   | MCP tool gate         | `core/controlplane/gateway/mcp_gate_invariants.go gatewayApprovalGate.CheckInvariants` (every gateway tools/call, built-in or fronted upstream) and `mcp_gate.go Check` |
 | `invariants`       | ALL FOUR              | `applyKernelInvariants` (kernel) + `MCPInvariantLookup` wired via `s.wireMCPApprovalGate` (gateway, see `handlers_mcp.go`) |
 
 Implementation entry points:
@@ -54,11 +54,17 @@ Invariants are rules authored ONCE in the dedicated
 `secops/invariants` bundle and applied to ALL FOUR evaluators with
 SECURITY-FLOOR precedence:
 
-1. **Invariant DENY rules are uncrossable.** They are prepended to
+1. **Invariant DENY rules are uncrossable.** Every invariant whose
+   decision is not allow-class (`deny` and its alias `block`,
+   `require_approval` and its aliases, `throttle`) is prepended to
    `merged.Rules` so a first-match evaluator returns DENY before
    reaching any pack-contributed ALLOW that targets the same input.
-2. **Invariant ALLOW rules are a default fallback.** They are
-   appended to `merged.Rules` so any explicit DENY (pack, studio
+   `config.IsAllowClassDecision`, which reads decisions through the
+   same normalizer as rule evaluation, draws this line for the kernel,
+   the policy-bundle merger and the MCP gate.
+2. **Invariant ALLOW rules are a default fallback.** Invariants with
+   `allow` (or `permit`) and `allow_with_constraints` are appended to
+   `merged.Rules` so any explicit DENY (pack, studio
    global, file-loader) earlier in the slice still wins. Without this
    rule, pack-contributed safety DENYs authored before an invariant
    ALLOW default would become unenforceable.
@@ -82,6 +88,7 @@ rules:
       mcp:
         deny_tools: [fs.read]
     decision: deny
+    reason: MCP tool fs.read is forbidden
 output_rules:
   - id: inv-quarantine-secret-output
     severity: critical
@@ -92,10 +99,21 @@ output_rules:
         - 'AKIA[A-Z0-9]{16}'
 ```
 
+The Safety Kernel and the gateway MCP gate read `match.mcp` the same way
+(`config.MCPRuleMatch`). The lists apply only to MCP tool calls: the kernel
+sees one as `mcp.server` / `mcp.tool` labels, and a rule with `match.mcp`
+lists never matches a job without them. On a deny-class rule (`deny` or
+`block`, `require_approval`, `throttle`), `deny_tools` and `deny_servers` list what the
+rule blocks, and a non-empty `allow_tools` or `allow_servers` blocks every
+value not in it. So `inv-deny-mcp-fs-read` above denies `fs.read` and nothing
+else, in both evaluators. On an `allow` or `allow_with_constraints` rule the
+lists select the calls they permit. The MCP gate reads only `match.tenants` and `match.mcp`, and uses
+`tool.ApprovalScope` as the server (see Known limitations).
+
 The cross-evaluator integration test
 (`core/controlplane/safetykernel/global_invariants_integration_test.go`,
-build-tagged `//go:build integration`) pins this guarantee with four
-subtests sharing ONE SnapshotHash.
+build-tagged `//go:build integration`) pins this guarantee with subtests
+sharing ONE SnapshotHash.
 
 ## Bundle layout
 
@@ -212,15 +230,34 @@ that bundle entry; the unified GET projects it as part of the
   one bucket only. Authoring a rule with multiple topic intents is
   uncommon; if needed, duplicate the rule per intended bucket.
 - **MCP server-scope matching uses `tool.ApprovalScope`.** `mcp.Tool`
-  has no `Server` field, so invariant `Match.MCP.DenyServers` matches
-  against `tool.ApprovalScope` (a tag the tool advertises). For
+  has no `Server` field, so invariant `deny_servers` / `allow_servers`
+  match against `tool.ApprovalScope` (a tag the tool advertises). For
   fine-grained server-scope invariants, ensure tools advertise a
-  consistent ApprovalScope per logical server.
-- **Decision string typos silently no-op.** Invariant rules with
-  unknown `decision` values (e.g. `dney` instead of `deny`) skip the
-  DENY-uncrossable enforcement — they fall into the ALLOW bucket per
-  `isInvariantDeny` semantics. Authors should validate via
-  `config.ParseSafetyPolicy` errors at upload time.
+  consistent ApprovalScope per logical server. The gate has no resource
+  or action either, so a non-empty `allow_resources` or `allow_actions`
+  list blocks every tool call.
+- **The MCP invariant floor covers every gateway tools/call.**
+  `ToolRegistry.Call` runs the gate's `CheckInvariants` on every
+  built-in tools/call, approval-gated or not, after the scope filter
+  and before approval gating (`core/mcp/registry.go`). When the gateway
+  fronts a registered remote upstream (EDGE-101 fronting), tools/call
+  goes to that upstream instead of the registry, and
+  `invariantFlooredTools` runs the same check before each call is
+  forwarded, with or without `mcp.policy_gate_enabled`
+  (`core/controlplane/gateway/mcp_upstream_serving.go`). For fronted
+  calls the server that `deny_servers` / `allow_servers` match is the
+  upstream's name, e.g. `cordum.monday`. With the policy gate on, the
+  action gates run first, and a call they deny never reaches the floor.
+  A floor deny is answered like an action-gate DENY: an `isError` tool
+  result with the invariant's reason and ID, not a JSON-RPC error, and
+  `decision=deny` in the audit records (see
+  [MCP tool policy](../edge/mcp-tool-policy.md#decision-semantics)).
+- **Decision values are checked at upload.** The policy schema accepts
+  only known decisions, so `config.ParseSafetyPolicy` rejects a typo
+  such as `dney`. A rule with no `decision` is evaluated as deny, and as
+  an invariant it is prepended like one: `config.IsAllowClassDecision`
+  treats every decision that does not normalize to `allow` or
+  `allow_with_constraints` as deny-class.
 
 ## Cross-references
 

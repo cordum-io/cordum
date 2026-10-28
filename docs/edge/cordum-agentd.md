@@ -19,8 +19,12 @@ From the repository root:
 
 ```bash
 make build SERVICE=cordum-agentd
-go run ./cmd/cordum-agentd --gateway http://127.0.0.1:8081 --tenant <tenant-id>
+CORDUM_TLS_CA=./certs/ca/ca.crt \
+  go run ./cmd/cordum-agentd --gateway https://127.0.0.1:8081 --tenant <tenant-id>
 ```
+
+The default stack serves the gateway over HTTPS with the development CA in
+`./certs/ca/ca.crt`; `CORDUM_TLS_CA` names that CA for agentd's Gateway calls.
 
 Required Gateway credentials:
 
@@ -43,7 +47,7 @@ Common options:
 | `CORDUM_AGENTD_SAFE_ALLOW_CACHE_TTL` | Safe-allow cache TTL when enabled |
 | `CORDUM_AGENTD_SAFE_ALLOW_CACHE_MAX_ENTRIES` | Safe-allow cache entry cap when enabled |
 | `CORDUM_AGENTD_INLINE_APPROVAL_WAIT` | Local/demo-only inline approval wait; default off |
-| `CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` | Strict inline wait timeout; timeout/rejection denies and asks the user to retry |
+| `CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` | Upper bound on the inline wait (default `30s`). For hook requests the wait also ends 1s before the hook's agentd budget, so the default never applies there. Rejection denies; a still-pending approval or a failed wait gets the usual deny with `approval_ref` and retry guidance |
 | `CORDUM_AGENTD_STATE_DIR` | Override state root |
 | `CORDUM_AGENTD_NONCE` | Trusted-launcher-only loopback nonce override; see [Trusted launcher override](#trusted-launcher-override-cordum_agentd_nonce) |
 
@@ -87,10 +91,16 @@ Gateway decisions map to the hook result as follows:
 Inline approval wait is intentionally opt-in and local/demo-oriented. It is
 enabled only when `CORDUM_AGENTD_INLINE_APPROVAL_WAIT=true`; agentd then calls
 `POST /api/v1/edge/approvals/{approval_ref}/wait` with
-`CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT`. Approval allows the action,
-optional reviewer-updated input is forwarded, and rejection/timeout/Gateway wait
-errors return `DENY` with retry guidance. Approval-derived allows are never
-stored in the safe allow cache.
+`CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT`, capped so the wait ends 1s before
+the hook stops waiting. `cordum-hook` sends its remaining agentd budget in the
+`X-Cordum-Hook-Budget-Ms` header; without it agentd assumes the default `4s`.
+The last second is for consuming an approval, flushing evidence, and answering.
+Approval consumes the single-use approval and then allows the action, forwarding
+optional reviewer-updated input. Rejection returns `DENY`. An approval still
+pending when the wait ends, or a failed Gateway wait, returns the same
+`REQUIRE_APPROVAL` answer as with inline wait off: the hook denies with
+`approval_ref` and retry guidance. Approval-derived allows are never stored in
+the safe allow cache.
 
 The safe allow cache is disabled by default. When explicitly enabled, it is
 bounded in memory by TTL and max entries, keyed by tenant, policy mode, the
@@ -117,10 +127,11 @@ Gateway outage behavior follows the PRD modes:
 
 - `observe`: allow degraded and write evidence.
 - `enforce`: allow only locally known-safe actions during a degraded miss; risky
-  or unknown actions deny/fail closed **only when `CORDUM_AGENTD_FAIL_CLOSED` is
-  enabled**. `CORDUM_AGENTD_FAIL_CLOSED` defaults to `false`, so an `enforce`
-  session that does not set it fails **open** on a degraded miss (agentd error or
-  timeout).
+  or unknown actions deny/fail closed regardless of `CORDUM_AGENTD_FAIL_CLOSED`
+  (the enforce branch never reads it). That flag only matters when the local
+  agentd process itself is unreachable: the hook still denies `PreToolUse`, and
+  lets other hook events through unless the flag is `true`, which
+  `cordumctl edge claude` sets for every mode except `observe`.
 - `enterprise-strict`: deny/fail closed when Cordum governance is unavailable.
 - Workflow actions tagged `requires-edge-governance` fail closed on a Gateway
   miss even if the session policy mode is observe.

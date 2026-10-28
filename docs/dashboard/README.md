@@ -1,26 +1,25 @@
 # Cordum Dashboard
 
-Production dashboard for Cordum. Built with React 18, TypeScript, and Tailwind.
+Production dashboard for Cordum. Built with React 19, TypeScript, Vite, and Tailwind.
 
 ## Local Development
 
 ```bash
 cd dashboard
-npm install
-npm run dev
+pnpm install
+pnpm run dev
 ```
 
-By default, the dashboard uses `/config.json` from `dashboard/public`. To point at a local gateway, update the API base URL:
+The dev server proxies `/api`, including the `/api/v1/stream` WebSocket, to the
+compose gateway at `https://localhost:8081`. It trusts the dev CA that
+`cordumctl generate-certs` writes to `certs/ca/ca.crt` at the repo root, and
+never skips certificate verification. Set `VITE_API_TARGET` to proxy to another
+gateway (for example `http://localhost:8081` for a gateway without TLS). A
+non-localhost HTTPS target is verified against Node's trust store, so add a
+private CA with `NODE_EXTRA_CA_CERTS`.
 
-```json
-{
-  "apiBaseUrl": "http://localhost:8081",
-  "apiKey": "",
-  "tenantId": "default",
-  "principalId": "dashboard",
-  "principalRole": "admin"
-}
-```
+Keep `apiBaseUrl` empty in `dashboard/public/config.json` so the dashboard
+calls `/api/v1` on its own origin and requests go through the proxy.
 
 ## Runtime Configuration
 
@@ -101,13 +100,22 @@ Example:
 docker build -t cordum-dashboard -f dashboard/Dockerfile dashboard
 ```
 
-Run the container and point it at the API gateway:
+Run the container next to the compose stack. Its nginx serves the dashboard
+and proxies `/api/` to the gateway, verifying the gateway certificate with the
+CA mounted at `/etc/cordum/tls/ca/ca.crt`:
 
 ```bash
 docker run --rm -p 8082:8080 \
-  -e CORDUM_API_BASE_URL=http://localhost:8081 \
+  --network cordum_default \
+  -e CORDUM_API_UPSTREAM_HOST=cordum-api-gateway \
+  -e CORDUM_API_UPSTREAM_SCHEME=https \
+  -v "$PWD/certs:/etc/cordum/tls:ro" \
   cordum-dashboard
 ```
+
+Leave `CORDUM_API_BASE_URL` unset. The dashboard then calls `/api/v1` on its own
+origin, which is the only origin its Content-Security-Policy (`connect-src 'self'`)
+allows. A gateway URL there would be cross-origin and blocked.
 
 To embed an API key (not recommended for shared environments), add:
 

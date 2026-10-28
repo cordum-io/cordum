@@ -457,56 +457,6 @@ if ! docker info >/dev/null 2>&1; then
   exit 1
 fi
 
-port_in_use() {
-  local port="$1"
-  if command -v ss >/dev/null 2>&1; then
-    if ss -ltn 2>/dev/null | awk '{print $4}' | grep -E "(^|:)${port}$" >/dev/null 2>&1; then
-      return 0
-    fi
-    return 1
-  fi
-  if command -v lsof >/dev/null 2>&1; then
-    if lsof -iTCP:"${port}" -sTCP:LISTEN >/dev/null 2>&1; then
-      return 0
-    fi
-    return 1
-  fi
-  if command -v netstat >/dev/null 2>&1; then
-    if netstat -ltn 2>/dev/null | awk '{print $4}' | grep -E "(^|:)${port}$" >/dev/null 2>&1; then
-      return 0
-    fi
-    return 1
-  fi
-  return 2
-}
-
-warn_port() {
-  local port="$1"
-  local name="$2"
-  if port_in_use "${port}"; then
-    echo "[install] warning: port ${port} (${name}) is already in use; compose may fail to bind." >&2
-  fi
-}
-
-warn_port 8081 "api-gateway http"
-warn_port 8082 "dashboard"
-warn_port 8080 "api-gateway grpc"
-warn_port 9092 "gateway metrics"
-warn_port 9093 "workflow-engine http"
-warn_port 50051 "safety-kernel grpc"
-warn_port 50070 "context-engine grpc"
-warn_port 4222 "nats client"
-warn_port 6379 "redis"
-
-API_KEY=${CORDUM_API_KEY:-${API_KEY:-}}
-if [[ -z "${API_KEY}" ]]; then
-  echo "CORDUM_API_KEY is required; export it before running install." >&2
-  exit 1
-fi
-export CORDUM_API_KEY="${API_KEY}"
-TENANT_ID=${CORDUM_TENANT_ID:-default}
-export CORDUM_TENANT_ID="${TENANT_ID}"
-
 if [ -d "${DEST_DIR}/.git" ]; then
   echo "using existing repo at ${DEST_DIR}"
 else
@@ -516,24 +466,30 @@ fi
 
 cd "${DEST_DIR}"
 
+# quickstart.sh brings the stack up the way docker-compose.yml expects it: it
+# writes .env (CORDUM_API_KEY, REDIS_PASSWORD, admin login), generates ./certs
+# with `cordumctl generate-certs`, starts compose and waits until the HTTPS
+# gateway reports NATS and Redis healthy. stdin is /dev/null so that a
+# `curl ... | bash` install keeps reading the rest of this script.
+quickstart=(./tools/scripts/quickstart.sh --skip-smoke)
 if [ "${USE_RELEASE_IMAGES}" = "1" ]; then
+  # docker-compose.release.yml is the production stack: export CORDUM_API_KEY,
+  # REDIS_PASSWORD, SAFETY_POLICY_PUBLIC_KEY and SAFETY_POLICY_SIGNATURE first
+  # (docs/deployment/policy-signing.md). Its certs default to ./certs here.
   echo "starting from GHCR images (CORDUM_VERSION=${CORDUM_VERSION})"
   export CORDUM_VERSION
+  export CORDUM_TLS_DIR="${CORDUM_TLS_DIR:-./certs}"
   "${compose_cmd[@]}" -f docker-compose.release.yml pull
-  "${compose_cmd[@]}" -f docker-compose.release.yml up -d
+  CORDUM_COMPOSE_FILES=docker-compose.release.yml "${quickstart[@]}" --skip-build </dev/null
 else
   echo "building from source"
-  "${compose_cmd[@]}" build
-  "${compose_cmd[@]}" up -d
+  "${quickstart[@]}" </dev/null
 fi
 
 cat <<'EOF'
-Cordum is up.
-- Dashboard: http://localhost:8082
-- API: http://localhost:8081
-Next steps (OSS, from repo root):
-- Quickstart: ./tools/scripts/quickstart.sh
-- Smoke test: CORDUM_API_KEY=<your-api-key> CORDUM_TENANT_ID=default ./tools/scripts/platform_smoke.sh
+Next steps (OSS, from repo root; quickstart wrote the credentials to .env):
+- Load them: set -a; . ./.env; set +a
+- Smoke test: ./tools/scripts/platform_smoke.sh
 - Guardrails demo: ./tools/scripts/demo_guardrails_run.sh
 - Mock bank demo: ./tools/scripts/demo_mock_bank.sh
 EOF

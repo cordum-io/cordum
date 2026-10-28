@@ -153,8 +153,8 @@ field distinguishes three outcomes:
 
 | Status         | Meaning                                                           | Auditor action |
 |----------------|-------------------------------------------------------------------|----------------|
-| `ok`           | Every event in range hashes correctly + links to its predecessor. | Accept evidence. |
-| `partial`      | Some events were retention-trimmed before the range; chain intact above the boundary. | Evidence is valid for `retention_boundary_seq` onward. |
+| `ok`           | Every event in range hashes correctly + links to its predecessor (for a range starting at the retention trim boundary, to the retention anchor). | Accept evidence. |
+| `partial`      | The retention sweeper deleted events inside the range; chain intact from the boundary. | Evidence is valid for `retention_boundary_seq` onward. |
 | `compromised`  | At least one event failed hash recomputation, was missing, or landed out of order. | **Do not rely on any event from or after the first gap.** See incident runbook. |
 
 A compromised manifest carries a `gaps` array describing each failure:

@@ -3,6 +3,8 @@ package scheduler
 import (
 	"context"
 	"log/slog"
+	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -33,6 +35,11 @@ type FailModeResolver struct {
 	systemInput atomic.Value // string
 	systemAsync atomic.Value // string
 
+	// Env defaults (POLICY_CHECK_FAIL_MODE / OUTPUT_POLICY_FAIL_MODE), used
+	// while the config service sets no system-wide mode.
+	envInput string
+	envAsync string
+
 	// Per-tenant cache: orgID → *tenantFailModes
 	tenants sync.Map
 
@@ -43,6 +50,11 @@ type FailModeResolver struct {
 
 // NewFailModeResolver creates a resolver with the given config provider and
 // cache TTL. If ttl is zero, defaults to 30 seconds.
+//
+// Precedence, per tenant: the tenant's effective scheduler.*_fail_mode, then
+// the system one (SetSystemInputMode / SetSystemAsyncMode), then the
+// POLICY_CHECK_FAIL_MODE / OUTPUT_POLICY_FAIL_MODE env vars read here, then
+// closed.
 func NewFailModeResolver(provider FailModeConfigProvider, ttl time.Duration) *FailModeResolver {
 	if ttl <= 0 {
 		ttl = 30 * time.Second
@@ -50,6 +62,8 @@ func NewFailModeResolver(provider FailModeConfigProvider, ttl time.Duration) *Fa
 	r := &FailModeResolver{
 		configProvider: provider,
 		cacheTTL:       ttl,
+		envInput:       strings.TrimSpace(os.Getenv("POLICY_CHECK_FAIL_MODE")),
+		envAsync:       strings.TrimSpace(os.Getenv("OUTPUT_POLICY_FAIL_MODE")),
 	}
 	r.systemInput.Store("")
 	r.systemAsync.Store("")
@@ -197,15 +211,15 @@ func (r *FailModeResolver) triggerBackgroundRefresh(orgID string) {
 }
 
 func (r *FailModeResolver) systemInputMode() string {
-	if v, ok := r.systemInput.Load().(string); ok {
+	if v, ok := r.systemInput.Load().(string); ok && v != "" {
 		return v
 	}
-	return ""
+	return r.envInput
 }
 
 func (r *FailModeResolver) systemAsyncMode() string {
-	if v, ok := r.systemAsync.Load().(string); ok {
+	if v, ok := r.systemAsync.Load().(string); ok && v != "" {
 		return v
 	}
-	return ""
+	return r.envAsync
 }

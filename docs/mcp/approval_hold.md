@@ -5,6 +5,9 @@ decision with the Edge approval store so a held tool call can resume
 once an operator approves. The mint path runs inside the gateway's
 action-gate evaluation; the consume path runs inside the MCP server
 when the client retries the call with an `_approval_ref` argument.
+Both are wired only when `mcp.policy_gate_enabled` is on; without it,
+nothing consumes `_approval_ref` (see
+[Approval-hold consume path](../mcp-server.md#approval-hold-consume-path)).
 For destructive action-gate approvals, a successful consume is not the whole
 provenance contract: the tenant audit chain must also contain an approved
 `EventEdgeApprovalResolved` / `edge.approval_resolved` event for the same
@@ -35,7 +38,9 @@ scopes see [`scope-preapproval.md`](scope-preapproval.md).
                                        │
                               mintEdgeApprovalForActionGate
                                        │
-                              edge.Store.EnqueueApproval
+                              edge.Store.AppendEvent (approval.requested)
+                                       │
+                              edge.Store.EnqueueApproval (bound to that event)
                                        │
                               return approval_ref to client
                                        │
@@ -49,7 +54,15 @@ scopes see [`scope-preapproval.md`](scope-preapproval.md).
                               approval audit evidence
                                        │
                               invokeTool with `_approval_ref`-stripped args
+                              (the consumed claim satisfies RequiresApproval
+                              and REQUIRE_HUMAN for this call only)
 ```
+
+Before minting, both mint paths look for the caller's pending approval
+for the same call (same requester identity, agent, `(ActionHash,
+InputHash)` and policy snapshot) and return it, so a client that re-asks
+without `_approval_ref` does not pile up approvals. Another requester
+gets their own.
 
 The mint and consume paths each compute a `(ActionHash, InputHash)`
 pair through `BuildMCPApprovalBinding`. Any drift between the two

@@ -6,6 +6,7 @@
 import { motion } from "framer-motion";
 import { AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
+import { mcpSseUrl } from "@/api/client";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { InstrumentCard, InstrumentCardBody } from "@/components/ui/InstrumentCard";
@@ -41,9 +42,7 @@ export default function SettingsMcpPage() {
   const toolCount = tools.length;
   const enabledToolCount = tools.filter((tool) => tool.enabled).length;
   const resourceCount = resources.length;
-  const serverUrl = mcpConfig
-    ? `${mcpConfig.transport}://${window.location.hostname}:${mcpConfig.port}`
-    : "";
+  const serverUrl = mcpConfig ? mcpSseUrl() : "";
 
   const handleCopyUrl = async () => {
     if (!serverUrl) {

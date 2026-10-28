@@ -95,6 +95,29 @@ change event, and emits a `topic_unregistered` SIEM event per topic.
 The uninstall order is: topics → worker credential → pack registry
 doc → policy bundle fragments.
 
+## Approval-only topics
+
+`job.guard` is where the Python `@guard` SDK files the approval job for a
+call that needs a human. No worker serves it: once the job is allowed or
+approved, the scheduler marks it `SUCCEEDED` and the SDK runs the call.
+
+It still goes through the registry check: once the registry is not
+empty, the gateway rejects jobs on an unregistered topic with
+`400 unknown_topic`. The shipped `config/pools.yaml` maps `job.guard`
+to the `approval-gates` pool, as it does `job.cordum.approval-gate`, so
+a registry migrated from it accepts `@guard` jobs. Register the topic
+by hand only if your registry was populated before `config/pools.yaml`
+listed it, or from a pools config that does not. Any existing pool
+works, since the job is never dispatched:
+
+```
+POST /api/v1/topics
+{"name": "job.guard", "pool": "default"}
+```
+
+A custom `topic=` passed to `@guard` needs a registration too, and is not
+completed automatically: only `job.guard` is.
+
 ## Collision handling
 
 The registry is keyed by topic name across all tenants. A pack that
@@ -151,7 +174,7 @@ gateway's audit exporter:
 | `topic_registered` | After a successful `SetMany` during pack install | `INFO` | `pack_id`, `topic_name`, `actor_id` |
 | `topic_unregistered` | After a successful `DeleteMany` during pack uninstall | `MEDIUM` | `pack_id`, `topic_name`, `actor_id` |
 
-Events land in the tenant audit chain via the Merkle chainer (see
+Events land in the tenant audit hash chain via the chainer (see
 `docs/deployment/audit-chain.md`) — so a compliance reviewer can
 reconstruct the full lifecycle of a topic, including which admin
 added or removed it. Uninstall is `MEDIUM` severity because the

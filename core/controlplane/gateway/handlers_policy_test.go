@@ -19,6 +19,7 @@ import (
 	edgecore "github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/infra/capprofile"
 	runtimeconfig "github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/licensing"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
@@ -26,24 +27,55 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
-// TestPolicyEvaluate_UserRoleRejected proves red-team #19 is closed:
-// a non-admin (user role) caller cannot access policy/evaluate.
-func TestPolicyEvaluate_UserRoleRejected(t *testing.T) {
-	s, _, _ := newTestGateway(t)
-	s.auth = newBasicAuthForTest(t, nil)
-
-	body := `{"topic": "job.default", "risk_tags": ["low"]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/policy/evaluate", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Tenant-ID", "default")
-	req.Header.Set("X-API-Key", "test-api-key")
-	req = withAuth(req, &auth.AuthContext{Tenant: "default", Role: "user", PrincipalID: "attacker"})
-	rec := httptest.NewRecorder()
-
-	s.handlePolicyEvaluate(rec, req)
-
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("RED-TEAM #19 BYPASS: user-role caller got %d (want 403): %s", rec.Code, rec.Body.String())
+// TestPolicyCheckAccess pins who may call the policy check routes.
+// /api/v1/policy/evaluate is a read-only "would this be allowed" call: a
+// caller who can submit jobs (jobs.write with the admin or user role, as
+// POST /api/v1/jobs requires) learns the same decision by submitting, so
+// evaluate is open to job submitters as well as policy readers and writers.
+// Every call is still audited for enumeration detection. simulate and explain
+// stay policy.write + admin; red-team #19 (a user-role caller probing them)
+// stays closed there.
+func TestPolicyCheckAccess(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		rbac       bool
+		rolePerms  []string // RBAC role definition for role when rbac is set
+		role       string
+		mode       string
+		wantForbid bool
+	}{
+		{name: "user evaluates", role: "user", mode: "evaluate"},
+		{name: "admin evaluates", role: "admin", mode: "evaluate"},
+		{name: "viewer cannot evaluate", role: "viewer", mode: "evaluate", wantForbid: true},
+		{name: "user cannot simulate", role: "user", mode: "simulate", wantForbid: true},
+		{name: "user cannot explain", role: "user", mode: "explain", wantForbid: true},
+		{name: "rbac user with jobs.write evaluates", rbac: true, rolePerms: []string{auth.PermJobsWrite}, role: "user", mode: "evaluate"},
+		{name: "rbac user without jobs.write cannot evaluate", rbac: true, rolePerms: []string{auth.PermJobsRead}, role: "user", mode: "evaluate", wantForbid: true},
+		{name: "rbac user with jobs.write cannot simulate", rbac: true, rolePerms: []string{auth.PermJobsWrite}, role: "user", mode: "simulate", wantForbid: true},
+		// secops passes the legacy admin role check; holding only policy.read
+		// isolates the policy-reader grant.
+		{name: "rbac policy reader evaluates", rbac: true, rolePerms: []string{auth.PermPolicyRead}, role: "secops", mode: "evaluate"},
+		{name: "rbac policy reader cannot simulate", rbac: true, rolePerms: []string{auth.PermPolicyRead}, role: "secops", mode: "simulate", wantForbid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _, _ := newTestGateway(t)
+			s.auth = newBasicAuthForTest(t, nil)
+			if tc.rbac {
+				setTestEntitlements(t, s, licensing.PlanEnterprise, func(e *licensing.Entitlements) { e.RBAC = true })
+				if err := s.rbacStore.PutRole(context.Background(), &auth.RoleDefinition{Name: tc.role, Permissions: tc.rolePerms}); err != nil {
+					t.Fatalf("PutRole: %v", err)
+				}
+			}
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/policy/"+tc.mode, strings.NewReader(`{"topic": "job.default"}`))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Tenant-ID", "default")
+			req = withAuth(req, &auth.AuthContext{Tenant: "default", Role: tc.role, PrincipalID: "caller"})
+			rec := httptest.NewRecorder()
+			s.handlePolicyCheck(rec, req, tc.mode)
+			if forbidden := rec.Code == http.StatusForbidden; forbidden != tc.wantForbid {
+				t.Fatalf("status %d (forbidden=%v, want %v): %s", rec.Code, forbidden, tc.wantForbid, rec.Body.String())
+			}
+		})
 	}
 }
 

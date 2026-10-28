@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"time"
 )
@@ -54,6 +55,11 @@ var (
 	// gatewayApprovalGate.Check + ConsumeActionGateDecision when Edge
 	// mint fails after metadata was present (the fail-closed branch).
 	ErrApprovalStoreUnavailable = errors.New("approval_store_unavailable: approval store unavailable")
+	// ErrInternal marks a failure of the MCP machinery itself (Edge event
+	// store, approval store, artifact store) rather than of the tool. Its
+	// text can name internal ids such as Edge execution ids, so the
+	// JSON-RPC reply carries a generic message and the detail is logged.
+	ErrInternal = errors.New("mcp: internal error")
 )
 
 // ToolService provides tool listing and execution for MCP server handlers.
@@ -500,14 +506,15 @@ func (s *MCPServer) handleToolsCall(ctx context.Context, params json.RawMessage)
 	// error.data.kind; on a successful consume we replace req.Arguments
 	// with the `_approval_ref`-stripped form so the upstream tool handler
 	// and the policy gate both see the originally-authorized payload.
+	claimRef := ""
 	if s.approvalHoldDeps != nil {
 		outcome, err := ProcessApprovalClaim(ctx, *s.approvalHoldDeps, req)
 		if err != nil {
-			if errors.Is(err, errMissingMCPMetadata) {
-				return nil, s.rpcError(jsonRPCGatewayMisconfiguredCode, "approval gate misconfigured", "missing_mcp_metadata")
-			}
 			if errors.Is(err, errMissingPolicySnapshot) {
 				return nil, s.rpcError(jsonRPCGatewayMisconfiguredCode, "approval gate misconfigured", "missing_policy_snapshot")
+			}
+			if errors.Is(err, errMissingMCPMetadata) || errors.Is(err, ErrInternal) {
+				return nil, s.mapHandlerError(err)
 			}
 			return nil, s.rpcError(jsonRPCInvalidParamsCode, "invalid approval ref", err.Error())
 		}
@@ -518,21 +525,33 @@ func (s *MCPServer) handleToolsCall(ctx context.Context, params json.RawMessage)
 				"reason":       outcome.ConflictErr.Reason,
 			})
 		}
-		if outcome.Consumed && len(outcome.StrippedArgs) > 0 {
-			req.Arguments = outcome.StrippedArgs
+		if outcome.Consumed {
+			if len(outcome.StrippedArgs) > 0 {
+				req.Arguments = outcome.StrippedArgs
+			}
+			// The consumed claim is this call's approval: the gates must
+			// not hold it again (claimCoversCall).
+			ctx = withClaimedCall(ctx, req.Name, req.Arguments)
+			claimRef = outcome.ClaimRef
 		}
 	}
 	// Bracket every terminal tools/call with the invocation auditor so
 	// success + handler-error + approval-required + scope-deny all
-	// land on the Merkle audit chain. Start happens BEFORE the call so
+	// land on the audit hash chain. Start happens BEFORE the call so
 	// latency_ms measures everything downstream including the filter
 	// + approval gate.
 	var handle *InvocationHandle
 	if s.auditor != nil {
 		agentID, tenantID := identityForAudit(ctx)
 		ctx, handle = s.auditor.StartInbound(ctx, agentID, tenantID, req.Name, req.Arguments)
+		if claimRef != "" {
+			handle.MarkApprovalConsumed(claimRef)
+		}
 	}
 	result, err := s.invokeTool(ctx, req)
+	if denied, ok := policyDeniedResult(ctx, err); ok {
+		result, err = denied, nil
+	}
 	if s.auditor != nil {
 		s.auditor.FinishInbound(handle, result, err)
 	}
@@ -557,6 +576,20 @@ func (s *MCPServer) invokeTool(ctx context.Context, req ToolCallParams) (*ToolCa
 		deps.Upstream = toolServiceAdapter{tools: s.tools}
 	}
 	return InvokeToolWithPolicy(ctx, deps, req, s.policyServerName)
+}
+
+// policyDeniedResult answers a PolicyDenied like InvokeToolWithPolicy answers
+// an action-gate DENY: an isError result carrying the reason, stamped as a
+// deny on the invocation audit. ok is false for any other error.
+func policyDeniedResult(ctx context.Context, err error) (*ToolCallResult, bool) {
+	var denied *PolicyDenied
+	if !errors.As(err, &denied) {
+		return nil, false
+	}
+	if h := InvocationHandleFromContext(ctx); h != nil {
+		h.MarkPolicyDenied(denied.Reason, denied.SubReason)
+	}
+	return &ToolCallResult{Content: []ContentItem{{Type: "text", Text: denied.Reason}}, IsError: true}, true
 }
 
 // toolServiceAdapter adapts the existing ToolService.Call signature
@@ -646,7 +679,14 @@ func (s *MCPServer) mapHandlerError(err error) *JSONRPCError {
 	// Checked before the generic internal-error bucket so operators
 	// page on a specific code instead of chasing "internal error".
 	if errors.Is(err, ErrApprovalGateMisconfigured) {
-		return s.rpcError(jsonRPCGatewayMisconfiguredCode, "gateway misconfigured", err.Error())
+		slog.Warn("mcp: approval gate misconfigured", "error", err)
+		return s.rpcError(jsonRPCGatewayMisconfiguredCode, "gateway misconfigured", "approval_gate_misconfigured")
+	}
+	// The policy gate and the approval hold refuse a call that carries no
+	// CallMetadata (errMissingMCPMetadata): the same wiring defect.
+	if errors.Is(err, errMissingMCPMetadata) {
+		slog.Warn("mcp: call metadata missing", "error", err)
+		return s.rpcError(jsonRPCGatewayMisconfiguredCode, "approval gate misconfigured", "missing_mcp_metadata")
 	}
 	// Approval-store outage signal — surfaces when Edge mint was
 	// attempted (transport metadata present + edgeStore wired) but
@@ -656,10 +696,15 @@ func (s *MCPServer) mapHandlerError(err error) *JSONRPCError {
 	// the JSON-RPC envelope matches the snake_case enum used by the
 	// other -32096 lifecycle paths (args_mismatch, etc.).
 	if errors.Is(err, ErrApprovalStoreUnavailable) {
+		slog.Warn("mcp: approval store unavailable", "error", err)
 		return s.rpcError(jsonRPCApprovalLifecycleErrorCode, "approval lifecycle error", map[string]any{
 			"kind":   "approval_store_unavailable",
-			"reason": err.Error(),
+			"reason": "approval store unavailable",
 		})
+	}
+	if errors.Is(err, ErrInternal) {
+		slog.Warn("mcp: internal error", "error", err)
+		return s.rpcError(jsonRPCInternalErrorCode, "internal error", nil)
 	}
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):

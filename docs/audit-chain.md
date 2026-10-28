@@ -26,6 +26,7 @@ and CC7.3 (detection of security incidents) trust criteria documented in
 |---|---|---|
 | `audit:chain:<tenant>` | Stream | Ordered event log, one entry per event |
 | `audit:chain:head:<tenant>` | String | `"<seq>:<event_hash>"` — current chain tip |
+| `audit:chain:anchor:<tenant>` | String | `"<seq>:<event_hash>:<stream_id>"` of the newest event the retention sweeper deleted, plus `":<hmac>"` when `CORDUM_AUDIT_HMAC_KEY` is set; absent until the first trim. On Redis Cluster a trim in progress also carries the anchor it replaces ([details](horizontal-scaling.md#audit-chain-and-legal-holds-on-redis-cluster)) |
 
 ### Event Schema (`SIEMEvent`)
 
@@ -67,6 +68,10 @@ Appending is protected by a Compare-and-Set Lua script that atomically:
 2. Compares it to the caller's expected value
 3. If they match: `XADD` the event, `SET` the new head
 4. If they don't: returns 0 (CAS miss → Go retries with jitter)
+
+On Redis Cluster the head key and the stream hash to different slots, so the
+append compares against the stream's last entry instead and the head becomes
+a hint ([details](horizontal-scaling.md#audit-chain-and-legal-holds-on-redis-cluster)).
 
 This prevents two concurrent producers from both seeing the same head and
 both committing at the same sequence number.
@@ -169,6 +174,12 @@ Optional parameters:
 }
 ```
 
+`retention_boundary_seq` is the lowest seq that should still be present: the
+retention anchor's seq + 1 once the chain has been trimmed. On a chain that was
+never trimmed it reports the lowest seq in the stream, and every absent seq is
+`missing`. `retention_window_hours` is the effective retention window (omitted
+when unlimited).
+
 ### Status Values
 
 | Status | Meaning |
@@ -181,11 +192,14 @@ Optional parameters:
 
 | Gap Type | Meaning |
 |---|---|
-| `missing` | Seq absent from stream (after retention boundary) |
+| `missing` | Seq absent from stream at or above `retention_boundary_seq` |
 | `out_of_order` | Seq appeared before its predecessor |
-| `hash_mismatch` | Event hash or prev_hash linkage failed |
+| `hash_mismatch` | Event hash or prev_hash linkage failed (including the oldest retained event's link to the retention anchor) |
 | `hmac_mismatch` | HMAC-SHA256 tag verification failed |
-| `retention_trimmed` | Expected gap due to log retention policy |
+| `retention_trimmed` | Seq at or below the retention anchor: deleted by the retention sweeper |
+
+A run of absent seqs lists at most its first 1,000 gaps, so the response stays
+bounded however many events are gone.
 
 ### Edge approval provenance
 
@@ -235,13 +249,25 @@ Controlled by `CORDUM_AUDIT_CHAIN_FAIL`:
 
 ## Retention
 
-Audit retention is entitlement-gated:
+Audit retention is entitlement-gated (`AuditRetentionDays` in
+`core/licensing/tiers.go`):
 
 | Plan | Retention |
 |---|---|
 | Community | 7 days |
-| Pro | Configurable |
+| Team | 90 days |
 | Enterprise | Unlimited + legal hold |
 
-The verify endpoint distinguishes retention-trimmed gaps from tampering
-so operators don't get false positives on long-running chains.
+`CORDUM_AUDIT_RETENTION_HOURS` can only shorten this window. Trimming is
+opt-in: nothing is deleted unless `CORDUM_AUDIT_RETENTION_ENFORCE=true`.
+When enabled, the gateway's retention sweeper deletes events older than the
+window (never a tenant's newest event, never a tenant under legal hold) and
+records the newest deleted event as the retention anchor in the same atomic
+step (in three single-key steps on Redis Cluster, see
+[Redis Cluster](horizontal-scaling.md#audit-chain-and-legal-holds-on-redis-cluster)), HMAC-signed when `CORDUM_AUDIT_HMAC_KEY` is set. Verify then reports the
+trimmed prefix as `retention_trimmed`, checks that the oldest retained event
+links to the anchor, and reports anything else absent as `missing` — events
+deleted outside retention are not mistaken for it. Nothing else deletes chain
+events, so a missing prefix with no anchor (for example, the anchor key was
+deleted) or with an anchor whose HMAC does not verify is `compromised`. See
+[audit-operations.md](audit-operations.md#retention) for the full rules.

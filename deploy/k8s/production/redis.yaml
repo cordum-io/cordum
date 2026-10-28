@@ -11,12 +11,20 @@ data:
     tls-key-file /etc/redis/tls/tls.key
     tls-ca-cert-file /etc/redis/tls/ca.crt
     tls-auth-clients yes
+    # Replicas reach their primary on the TLS port (the plain port is 0)
+    # and present the client certificate, like every other Redis client.
+    tls-replication yes
+    tls-client-cert-file /etc/redis/client-tls/tls.crt
+    tls-client-key-file /etc/redis/client-tls/tls.key
     protected-mode yes
     appendonly yes
     dir /data
     cluster-enabled yes
     cluster-config-file nodes.conf
     cluster-node-timeout 5000
+    # The bus port defaults to port + 10000, which is 10000 with port 0.
+    # Pin it to the port the Service and NetworkPolicies use.
+    cluster-port 16379
 ---
 apiVersion: v1
 kind: Service
@@ -69,7 +77,7 @@ spec:
       containers:
       - name: redis
         image: redis:7
-        command: ["sh", "-c", "redis-server /etc/redis/redis.conf --requirepass \"$REDIS_PASSWORD\""]
+        command: ["sh", "-c", "exec redis-server /etc/redis/redis.conf --requirepass \"$REDIS_PASSWORD\" --masterauth \"$REDIS_PASSWORD\""]
         env:
         - name: REDIS_PASSWORD
           valueFrom:
@@ -110,6 +118,9 @@ spec:
           readOnly: true
         - name: tls
           mountPath: /etc/redis/tls
+          readOnly: true
+        - name: client-tls
+          mountPath: /etc/redis/client-tls
           readOnly: true
         - name: data
           mountPath: /data
@@ -152,6 +163,9 @@ spec:
       - name: tls
         secret:
           secretName: cordum-redis-server-tls
+      - name: client-tls
+        secret:
+          secretName: cordum-client-tls
   volumeClaimTemplates:
   - metadata:
       name: data
@@ -169,6 +183,9 @@ metadata:
   namespace: cordum
 spec:
   template:
+    metadata:
+      labels:
+        app: cordum-redis-cluster-init
     spec:
       restartPolicy: OnFailure
       containers:
@@ -187,6 +204,13 @@ spec:
             done
           done
           redis-cli --tls --cacert /etc/cordum/tls/client/ca.crt --cert /etc/cordum/tls/client/tls.crt --key /etc/cordum/tls/client/tls.key --cluster create $nodes --cluster-replicas 1 --cluster-yes
+        env:
+        # redis-cli sends this password to every node.
+        - name: REDISCLI_AUTH
+          valueFrom:
+            secretKeyRef:
+              name: cordum-redis-secret
+              key: REDIS_PASSWORD
         resources:
           requests:
             cpu: 50m

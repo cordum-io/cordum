@@ -55,7 +55,8 @@ Expected response for a healthy chain:
 | `CORDUM_AUDIT_HMAC_OPTIONAL` | `false` | Set to `true` to bypass the production HMAC requirement; emits a loud warning and weakens ProvenanceGate `audit_chain_compromised`. |
 | `CORDUM_AUDIT_CHAIN_FAIL` | `strict` | `strict`: drop unchained events; `permissive`: export anyway |
 | `CORDUM_AUDIT_EXPORT_TYPE` | `none` | SIEM backend: `webhook`, `syslog`, `datadog`, `cloudwatch`, `chain-only` |
-| `CORDUM_AUDIT_RETENTION_HOURS` | `168` (7 days) | Audit retention window in hours |
+| `CORDUM_AUDIT_RETENTION_ENFORCE` | `false` | `true` lets the gateway delete audit chain events older than the retention window. Off by default: nothing is ever trimmed. See [Retention](#retention). |
+| `CORDUM_AUDIT_RETENTION_HOURS` | unset (plan entitlement) | Narrows the plan's retention window (Community 7 days, Team 90 days, Enterprise unlimited) to a shorter number of hours. It cannot extend the window; unset, `0` or invalid values use the entitlement. |
 | `CORDUM_AUDIT_READ_SAMPLE_RATE` | `0.0` | Fraction (`0.0`–`1.0`) of `/api/v1/audit/events` reads that emit an `audit.read.events` meta-event. **Recommended prod default `0.0`** — raising it floods the chain with routine `system.auth` / `audit.read.events` rows that bury governance signal. If your goal is a governance-focused audit artifact, filter with `?category=governance` (see below) rather than tuning this sample rate. |
 
 ## HMAC Key Management
@@ -116,12 +117,13 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 
 ### Prometheus Metrics
 
-The audit pipeline exposes counters via the `/metrics` endpoint:
+The gateway exposes these audit metrics via the `/metrics` endpoint:
 
-- `cordum_audit_chain_append_total` — total events chained
-- `cordum_audit_chain_append_errors_total` — chain failures
-- `cordum_audit_export_total` — events exported to SIEM
-- `cordum_audit_export_errors_total` — export failures
+- `cordum_audit_batch_drops_total` — SIEM export batches dropped after exhausting retries
+- `cordum_audit_export_total{format,status}` / `cordum_audit_export_events` — compliance export requests and events per export
+- `cordum_audit_verify_duration_seconds`, `cordum_audit_verify_events_total`, `cordum_audit_verify_inflight`, `cordum_audit_verify_coalesced_total` — `/api/v1/audit/verify` walks
+- `cordum_audit_retention_trimmed_total` — events deleted by the retention sweeper
+- `cordum_audit_retention_skipped_total{reason}` — tenant sweeps skipped: `legal_hold`, `hold_check_error`, `trim_error`
 
 ### Automated Verification
 
@@ -133,12 +135,15 @@ RESULT=$(curl -s -H "Authorization: Bearer $API_KEY" \
   "https://your-cordum/api/v1/audit/verify?tenant=default")
 
 STATUS=$(echo "$RESULT" | jq -r '.status')
-if [ "$STATUS" != "ok" ]; then
+# Once retention trims a chain, a healthy result is "partial" with only
+# retention_trimmed gaps. Any other gap type is an integrity failure.
+UNEXPECTED=$(echo "$RESULT" | jq '[.gaps[] | select(.type != "retention_trimmed")] | length')
+if [ "$STATUS" = "compromised" ] || [ "$UNEXPECTED" -gt 0 ]; then
   echo "ALERT: Audit chain integrity check failed: $STATUS"
   echo "$RESULT" | jq '.gaps'
   exit 1
 fi
-echo "Audit chain verified: $(echo "$RESULT" | jq '.verified_events') events OK"
+echo "Audit chain verified ($STATUS): $(echo "$RESULT" | jq '.verified_events') events OK"
 ```
 
 ## Troubleshooting
@@ -175,7 +180,12 @@ for verification, OR events were forged by a process without the key.
 1. Check for `XDEL` commands in Redis slow log
 2. Check for Redis memory pressure causing eviction (should not happen with
    streams, but verify `maxmemory-policy`)
-3. Distinguish from retention trimming by checking `retention_boundary_seq`
+3. Retention never produces `missing` gaps: the sweeper records the last seq
+   it trimmed (the retention anchor), so only seqs below
+   `retention_boundary_seq` are reported `retention_trimmed`. A missing
+   prefix with no anchor means the anchor key was deleted along with events,
+   or the chain was trimmed by hand (see
+   [Upgrading: chains you trimmed by hand](#upgrading-chains-you-trimmed-by-hand))
 
 ### CAS Retry Budget Exhausted
 
@@ -222,21 +232,170 @@ Fix the audit pipeline or rerun the approval flow after the chain is healthy;
 do not bypass by relying on the approval-requested event or by pasting raw
 payloads into audit records.
 
+## Retention
+
+Retention is **off by default**. Existing deployments have never had their
+audit chain trimmed, so deleting events is opt-in: unless
+`CORDUM_AUDIT_RETENTION_ENFORCE=true` is set, each gateway logs
+`audit retention not enforced` once at boot and never deletes audit events.
+(The default is the `DefaultRetentionEnforce` constant in
+`core/audit/retention.go`.)
+
+**Effective window.** The plan's audit retention entitlement — Community 7
+days, Team 90 days, Enterprise unlimited — narrowed by
+`CORDUM_AUDIT_RETENTION_HOURS` when that is set to a shorter positive number
+of hours. The env var cannot extend the entitlement. Unlimited means nothing
+is ever trimmed. The same window is reported as `retention_window_hours` by
+`/api/v1/audit/verify` (omitted when unlimited) and bounds how far back
+`/api/v1/audit/export` accepts `from`.
+
+**What the sweeper does** when enforcement is on:
+
+- Runs in the gateway at boot and then hourly. One replica sweeps per hour:
+  it takes the Redis key `audit:retention:lock`, which expires 6 minutes
+  before the next run instead of being released. Each trim batch is atomic, so overlapping
+  sweeps are still safe.
+- Cuts off by the Redis server clock (the clock that stamped the stream IDs):
+  it deletes entries of `audit:chain:<tenant>` whose stream ID is older than
+  now minus the window, in atomic batches of 1,000.
+- In the same atomic step, it records the newest deleted event as the
+  tenant's retention anchor, `audit:chain:anchor:<tenant>` =
+  `seq:event_hash:stream_id`. When `CORDUM_AUDIT_HMAC_KEY` is set the anchor
+  also carries an HMAC (`:hmac`) bound to the tenant's anchor key.
+- On Redis Cluster the anchor and the stream hash to different slots, so the
+  anchor moves in three steps around the trim instead: a pending anchor, the
+  trim, then a confirmation. See
+  [Audit chain and legal holds on Redis Cluster](horizontal-scaling.md#audit-chain-and-legal-holds-on-redis-cluster)
+  for what an interrupted trim looks like to verify.
+- Never deletes a tenant's newest event (the chain head), so an idle tenant
+  keeps one event older than the window.
+- Skips tenants under legal hold (see below). If the event that would become
+  the anchor is malformed, that tenant is skipped (`trim_error`) so the
+  evidence stays in place.
+
+**Verify after trimming.** A trimmed chain verifies as `partial`, with
+`retention_trimmed` gaps for every seq up to the anchor (the first 1,000 are
+listed) and `retention_boundary_seq` = anchor + 1. The oldest retained event
+must be anchor + 1 and link to the anchor's hash; any event deleted beyond
+that is reported `missing` and the chain is `compromised`. Hash, linkage and
+HMAC checks on the retained events are unchanged. A windowed verify (`since`)
+whose window starts after the newest trimmed event is `ok`; one that reaches
+back past it is `partial`.
+
+The sweeper is the only thing that deletes chain events, so verify treats a
+missing prefix as tampering unless the anchor explains it:
+
+- No anchor (never trimmed, or the anchor key was deleted): the oldest
+  retained event must be seq 1, otherwise the absent seqs are `missing` and
+  the chain is `compromised`.
+- With `CORDUM_AUDIT_HMAC_KEY` set, an anchor without a valid HMAC is an
+  `hmac_mismatch` gap and the chain is `compromised`; the forged anchor
+  explains nothing. Rotating the key has the same effect on the existing
+  anchor as on old events until the next trim re-signs it.
+
+**Turning it on.** Set `CORDUM_AUDIT_RETENTION_ENFORCE=true` on every gateway
+replica. The first sweep can delete a large backlog, so take a compliance
+export or a Redis snapshot first. To reset a tenant's chain on purpose,
+delete its stream, head and anchor keys together; an anchor left behind makes
+the restarted chain verify as `compromised`.
+
+The flip side: deleting all three keys together leaves Redis looking like a
+tenant that never had events, which verify cannot tell apart from Redis alone.
+Compliance exports and the SIEM copy of the audit events are the external
+record that the chain existed.
+
+### Upgrading: chains you trimmed by hand
+
+Earlier docs called stream max-length eviction and admin `XDEL` retention.
+Trimming the chain by hand is no longer supported: retention is the
+sweeper's job, and verify reports any prefix the sweeper did not record as
+`missing`. A chain trimmed by hand before the upgrade therefore verifies as
+`compromised`. So does a chain whose anchor the first retention sweeper wrote
+(`seq:event_hash`, without a stream ID or HMAC) once `CORDUM_AUDIT_HMAC_KEY`
+is set. Without the key such an anchor still anchors the chain, but a
+windowed verify that reaches the oldest retained event is `partial` until the
+next trim replaces it.
+
+To accept a tenant's missing prefix as trimmed, adopt a retention anchor for
+it, once:
+
+1. Run `cordumctl audit verify <tenant> --json`. `first_seq` is the oldest
+   retained event. Check that the gaps below it are the events you trimmed
+   and that nothing above it is `missing` or mismatched.
+2. Run `cordumctl audit adopt-anchor <tenant> --expected-oldest-seq <first_seq>`
+   (`POST /api/v1/audit/chain/retention-anchor`, admin only). It writes the
+   anchor the sweeper would have written for that prefix, signed when
+   `CORDUM_AUDIT_HMAC_KEY` is set, and appends an
+   `audit.retention_anchor_adopted` event to the chain naming you and the
+   anchor it replaced. If the tenant already has an anchor that does not
+   anchor the chain (malformed, `hmac_mismatch`, or not linked to the oldest
+   retained event), add `--replace-invalid`.
+3. Verify again: the chain is `partial`, with `retention_trimmed` gaps up to
+   the adopted anchor.
+
+Adoption changes nothing when the oldest retained event is not the seq you
+named, when the current anchor already anchors the chain, or while a Redis
+Cluster trim is in progress (the next sweep finishes it). Nothing adopts an
+anchor automatically. An adopted anchor accepts whatever is missing below
+it, so adopt only a prefix you trimmed yourself; the adoption event is the
+record that you did. On Redis Cluster the sweeper skips a tenant whose
+anchor does not verify under the HMAC key, so such a tenant is not trimmed
+again until you adopt.
+
 ## Legal Hold Integration
 
-When a legal hold is active (`POST /api/v1/audit/legal-holds`), audit events
-for the affected tenant are **never** retention-trimmed. The hold prevents
-deletion until explicitly released.
+Legal holds require the Enterprise `legal_hold` entitlement to create, list
+or release. Holds are tenant-scoped: a caller can only create, list or release
+holds in tenants it can access (all tenants for a cross-tenant principal);
+releasing another tenant's hold answers like an unknown ID. While a tenant has
+any active hold, the retention sweeper never trims its chain:
+
+- The hold is checked before every trim batch, and the trim step itself
+  refuses while the tenant's hold fence exists. `POST /api/v1/audit/legal-hold`
+  writes the hold record, then the fence, a key in the chain stream's slot
+  (`{audit:chain:<tenant>}:legal_hold_fence`) that both trim scripts check in
+  the same atomic step that deletes, and answers `201` only after the Edge
+  session deletions already in flight for the tenant have ended. From that
+  answer on, no deletion of the tenant's data completes. If those deletions
+  outlast the request, it answers `202` with the hold and a `warning`: the
+  hold is in place and they end on their own.
+- If the hold check fails (Redis error, unreadable hold record, or a hold
+  store that does not fence the chain stream the sweeper trims), the tenant
+  is skipped for that sweep and counted as `hold_check_error`. If the gateway
+  has no legal hold store, nothing is trimmed at all.
+- Holds keep blocking trimming even if the `legal_hold` entitlement later
+  lapses.
+- Releasing a hold deletes nothing; trimming resumes on the next sweep.
+
+The retention sweeper is the only code path that deletes audit chain events.
+
+Holds also cover Edge sessions: the Edge session sweeper keeps every expired
+session (with its executions and events) of a tenant under hold, checking
+before each deletion, and keeps a tenant's sessions when its hold check fails.
+It registers each deletion while it runs, which is what a hold created during
+one waits for before it is acknowledged. Without a legal hold store it deletes
+no sessions at all.
+
+**Not covered by legal hold:** the policy decision log (`gov:dec:<tenant>:*`,
+the Governance Timeline). Its records expire on their own Redis TTL
+(`CORDUM_DECISION_LOG_TTL_SECONDS`, default 30 days) and its indexes are
+pruned on every write, whether or not the tenant is under hold. If decision
+records must be preserved for a hold, page them out through
+`GET /api/v1/governance/decisions` before they age out.
 
 ```bash
 # Create a legal hold
 curl -X POST -H "Authorization: Bearer $API_KEY" \
   -d '{"tenant_id":"acme-corp","reason":"SEC investigation ref-2024-001"}' \
+  "https://your-cordum/api/v1/audit/legal-hold"
+
+# List holds (optionally ?tenant=acme-corp)
+curl -H "Authorization: Bearer $API_KEY" \
   "https://your-cordum/api/v1/audit/legal-holds"
 
 # Release when investigation concludes
 curl -X DELETE -H "Authorization: Bearer $API_KEY" \
-  "https://your-cordum/api/v1/audit/legal-holds/<hold_id>"
+  "https://your-cordum/api/v1/audit/legal-hold/<hold_id>"
 ```
 
 ## Compliance

@@ -23,7 +23,7 @@ the hook/agentd contracts in [cordum-hook.md](cordum-hook.md) and
 
 | Variable | Default | Required by | Security notes |
 | --- | --- | --- | --- |
-| `CORDUM_GATEWAY` | `cordumctl` defaults to `http://localhost:8081`; raw `cordum-agentd` requires a value. | `cordumctl edge claude`, `cordum-agentd` | Use HTTPS outside local dev. Do not include credentials in the URL. |
+| `CORDUM_GATEWAY` | `cordumctl` defaults to `https://localhost:8081`; raw `cordum-agentd` requires a value. | `cordumctl edge claude`, `cordum-agentd` | Use HTTPS; the compose stack serves `https://localhost:8081`, with its CA in `CORDUM_TLS_CA`. Do not include credentials in the URL. |
 | `CORDUM_API_KEY` | none | `cordumctl edge claude`, `cordum-agentd` | Secret. Passed to agentd for Gateway calls; never written to generated Claude settings, logs, dashboard evidence, or export bundles. |
 | `CORDUM_TENANT_ID` | `cordumctl` defaults to `default`; raw `cordum-agentd` requires a value. | Gateway auth, agentd, generated hook env | Must match the tenant header used by Edge APIs. |
 | `CORDUM_PRINCIPAL_ID` | launcher-detected principal when available | agentd session metadata | Preferred explicit principal for audit evidence. |
@@ -51,7 +51,7 @@ supported P0 delivery path; URL query-string nonces are refused.
 
 | Variable | Default | Bounds | Notes |
 | --- | --- | --- | --- |
-| `CORDUM_AGENTD_HOOK_TIMEOUT` | generated Claude settings use `4.5s`; raw agentd internal default is `5s` | hook values must be `<5s`; agentd durations must be `>0` and `<=5m` | Controls the Claude hook wall-clock budget and agentd evaluator budget. Keep generated hook values below Claude Code's 5s command-hook deadline. |
+| `CORDUM_AGENTD_HOOK_TIMEOUT` | generated Claude settings use `4.5s`; raw agentd internal default is `5s` | hook values must be `<5s`; agentd durations must be `>0` and `<=5m` | Controls the Claude hook wall-clock budget and agentd evaluator budget. Keep hook values below the `"timeout": 5` Cordum generates on each command hook (Claude Code's own default is 600s). |
 | `CORDUM_AGENTD_GATEWAY_TIMEOUT` | `10s` | `>0` and `<=5m` | Per-call Gateway lifecycle/evaluate/approval/evidence timeout. |
 | `CORDUM_EDGE_HEARTBEAT_TTL` | `30s` | `>0` and `<=5m` | Gateway heartbeat TTL for active Edge sessions. |
 | `CORDUM_EDGE_HEARTBEAT_INTERVAL` | `TTL/2` | `>0`, `<=5m`, and `<= TTL/2` | Agentd heartbeat cadence. |
@@ -59,7 +59,7 @@ supported P0 delivery path; URL query-string nonces are refused.
 
 Do not copy Claude's command-hook `"timeout": 5` value into
 `CORDUM_AGENTD_HOOK_TIMEOUT`; the environment value must leave response-write
-reserve below Claude's 5s deadline.
+reserve below that 5s timeout.
 
 ## Policy and fail modes
 
@@ -67,54 +67,41 @@ reserve below Claude's 5s deadline.
 | --- | --- | --- |
 | `CORDUM_EDGE_POLICY_MODE` | raw agentd `observe`; `cordumctl edge claude` defaults to `enforce` unless overridden by `--policy-mode`/env | Values: `observe`, `enforce`, `enterprise-strict`. Drives Gateway evaluate fail-mode behavior. |
 | `CORDUM_EDGE_MODE` | generated settings mirror the selected policy mode | Hook-side mode for local/dev settings. Enterprise templates set `enterprise-strict`. |
-| `CORDUM_AGENTD_FAIL_CLOSED` | `false` | When true, hook/agentd fail closed if local governance cannot start or respond safely. |
+| `CORDUM_AGENTD_FAIL_CLOSED` | `false`; `cordumctl edge claude` sets `true` for every mode except `observe` | When true, hook/agentd fail closed if local governance cannot start or respond safely. Generated settings then also put `"onFailure": "block"` on the `PreToolUse`, `UserPromptSubmit`, and `ConfigChange` hooks (Claude Code v2.1.295+), so a hook that cannot start or times out blocks too. |
 | `CORDUM_AGENTD_INLINE_APPROVAL_WAIT` | `false`; wrapper enables it for local/demo sessions | Local/demo-only inline wait for `REQUIRE_APPROVAL`; enterprise UX should not rely on interactive defer semantics. |
-| `CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` | `30s` | Nominal wait budget. Rejection, timeout, pending, or wait errors deny and require retry. In practice it is always clamped well below this by the surrounding hook budget — see the note below — so it never actually gets close to Claude Code's 5s hook deadline. |
+| `CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` | `30s` | Upper bound on the inline wait. For hook requests agentd also ends the wait 1s before `cordum-hook`'s agentd budget runs out (about 3s with the default `4.5s` hook timeout), so the `30s` default never applies there; see the note below. An approval still pending when the wait ends, or a failed wait, gets the same deny as with inline wait off: `approval_ref` plus retry guidance. Rejection denies. |
 
-> **The 30s default looks unsafe next to Claude's 5s hook deadline, but it is
-> not: the wait is already clamped by the same budget that bounds the whole
-> hook call, and the result denies either way.**
+> **How the inline wait fits in the hook budget.** `cordum-hook` gives agentd
+> `4s` of its `4.5s` budget (less with a shorter `CORDUM_AGENTD_HOOK_TIMEOUT`)
+> and sends that budget to agentd in the `X-Cordum-Hook-Budget-Ms` request
+> header. agentd ends the inline wait 1s before that budget runs out, which
+> leaves time to consume an approval, flush evidence, and answer. A hook that
+> sends no header is assumed to have the default `4s`.
 >
-> `CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` is **not** independently
-> validated against the 5s deadline (it is only checked for `>0` and `<=5m`),
-> which reads like an unsafe combination at face value. It isn't, for two
-> layered reasons:
+> - Approved within the wait: agentd consumes the single-use approval, then
+>   allows the action.
+> - Rejected: deny.
+> - Still pending when the wait ends, or the Gateway wait failed: the same deny
+>   as with inline wait off, carrying `approval_ref` and "approve then retry
+>   the tool call".
 >
-> 1. **The wait can never run for its nominal duration.** agentd derives the
->    wait's context from the *incoming hook request's own context*
->    (`context.WithTimeout(ctx, timeout)` in `approvalRequiredDecision`,
->    `core/edge/agentd/approval_waiter.go`), which Go resolves to the
->    *earlier* of the two deadlines. That parent request is already bounded to
->    a few seconds by `CORDUM_AGENTD_HOOK_TIMEOUT` on both sides —
->    `cordum-hook`'s own outbound POST budget (`DefaultAgentdPostBudget = 4s`,
->    derived from its `4.5s` total wall-clock budget) and agentd's per-request
->    `evaluationContext` (`defaultHookTimeout = 5s` internally). So a `30s`
->    (or any) `INLINE_APPROVAL_WAIT_TIMEOUT` is silently capped to whatever is
->    left of that budget — typically ~4s — regardless of its configured
->    value. `cordum-hook` itself is validated to always finish strictly below
->    Claude's 5s deadline (`validateHookTimeout`,
->    `core/edge/claude/hook_input.go`), so Claude's own hook-process timeout
->    is not expected to fire at all in this path.
-> 2. **Even if it did, enforce mode denies anyway.** An unresolved wait
->    returns an error, which `handleAgentdError` treats like any other agentd
->    timeout: `enforce` mode denies risky/unclassified `PreToolUse` actions via
->    its own `enforceMode` check, independent of `CORDUM_AGENTD_FAIL_CLOSED`
->    (see the policy-mode summary below). `enterprise-strict` denies
->    unconditionally. Only `observe` allows through on a timeout — the same as
->    it does for every other degraded path, with or without inline wait.
+> No outcome runs the action without a consumed approval, and agentd answers
+> before the hook's own budget ends, so Claude Code shows the `approval_ref`
+> rather than a generic "Cordum Edge timeout". If agentd still misses the
+> budget (for example, a very slow Gateway during the consume or the evidence
+> flush), the hook's timeout handling applies: `enforce` and
+> `enterprise-strict` block the action; `observe` lets it through, as on every
+> other degraded path.
 >
-> The practical implication is UX, not a fail-open security gap: because the
-> wait is clamped to a few seconds regardless of the configured value, a human
-> reviewer effectively has no realistic chance to approve inline before it
-> times out and denies. Don't rely on `CORDUM_AGENTD_INLINE_APPROVAL_WAIT` for
-> interactive review. Prefer one of:
+> A reviewer therefore has at most about 3 seconds to approve inline, so don't
+> rely on `CORDUM_AGENTD_INLINE_APPROVAL_WAIT` for interactive review. Prefer
+> one of:
 >
 > 1. Disable inline wait (`CORDUM_AGENTD_INLINE_APPROVAL_WAIT=false`, the raw
 >    agentd default) so `REQUIRE_APPROVAL` denies immediately with retry
->    guidance instead of blocking and then denying anyway.
-> 2. Prefer deny-and-retry over block-and-wait: return the approval reference
->    to the agent and let it retry after a reviewer resolves it, rather than
->    holding the hook open for a wait that cannot outlive the hook budget.
+>    guidance.
+> 2. Deny and retry: approve the `approval_ref` from the dashboard, then retry
+>    the same action.
 
 Policy-mode summary:
 
@@ -181,7 +168,7 @@ metadata. They do not inline raw artifact bodies.
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION` | `100` | Maximum number of `AgentExecution` rows that may be recorded under a single `EdgeSession`. The Gateway counts executions before each `POST /api/v1/edge/executions` and rejects the call with `429 max_executions_exceeded` once the cap is reached. Missing/invalid/non-positive values fall back to the default. |
+| `CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION` | `100` | Maximum number of `AgentExecution` rows that may be recorded under a single `EdgeSession`. The Gateway counts executions before each `POST /api/v1/edge/executions` and rejects the call with `429 max_executions_exceeded` once the cap is reached; its Edge store enforces the same cap on every execution it records, and MCP gateway sessions move to a new Edge session before reaching it. Missing/invalid/non-positive values fall back to the default. |
 | `CORDUM_EDGE_SESSION_RETENTION_TTL` | `720h` (30 days) | Sessions older than this are eligible for the Gateway retention sweeper. Explicit values must parse as positive Go durations; `0`, negative, or invalid values fail startup. |
 | `CORDUM_EDGE_SESSION_SWEEP_INTERVAL` | `1h` | Sweep cadence after the initial Gateway boot sweep. Explicit values must parse as positive Go durations. |
 

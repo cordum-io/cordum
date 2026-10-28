@@ -63,6 +63,14 @@ type ApprovalGate interface {
 	Check(ctx context.Context, tool Tool, paramsJSON json.RawMessage) (*ApprovalRequired, error)
 }
 
+// InvariantFloor is an optional ApprovalGate extension for a security
+// floor that holds on every tools/call, approval-gated or not.
+// ToolRegistry.Call runs CheckInvariants after the scope filter and before
+// approval gating; a non-nil error denies the call.
+type InvariantFloor interface {
+	CheckInvariants(ctx context.Context, tool Tool) error
+}
+
 // ApprovalRequired.RetryHint values (JSON-RPC -32099 error.data.retry_hint).
 const (
 	RetryHintApprovalRef = "retry_with_approval_ref"
@@ -333,15 +341,26 @@ func (r *ToolRegistry) Call(ctx context.Context, name string, params json.RawMes
 		}
 	}
 
-	// Approval gating.
+	// Invariant floor, then approval gating. The floor sees every call with
+	// the same tool view (runtime approval scope applied) that Check gets,
+	// including calls an approval claim covers. A consumed `_approval_ref`
+	// claim for exactly this call is its approval; asking again would mint
+	// a new one.
 	effectiveGated, effectiveScope := r.effectiveApprovalForTool(entry.tool)
-	if effectiveGated {
-		gatedTool := entry.tool
-		gatedTool.RequiresApproval = true
-		if effectiveScope != "" {
-			gatedTool.ApprovalScope = effectiveScope
+	callTool := entry.tool
+	if effectiveScope != "" {
+		callTool.ApprovalScope = effectiveScope
+	}
+	gate := r.approvalGate()
+	if floor, ok := gate.(InvariantFloor); ok {
+		if err := floor.CheckInvariants(ctx, callTool); err != nil {
+			return nil, err
 		}
-		if gate := r.approvalGate(); gate != nil {
+	}
+	if effectiveGated && !claimCoversCall(ctx, entry.tool.Name, params) {
+		gatedTool := callTool
+		gatedTool.RequiresApproval = true
+		if gate != nil {
 			gated, err := gate.Check(ctx, gatedTool, params)
 			if err != nil {
 				return nil, err

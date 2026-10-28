@@ -7,6 +7,8 @@
  */
 
 export type UpdateAgentBody = {
+  /** Worker id (a principal or API key id) to link to this identity, so an existing identity can be bound without being re-created. A worker already linked to another identity is refused with 409 AGENT_WORKER_CONFLICT. */
+  agent_id?: string;
   name?: string;
   description?: string;
   owner?: string;

@@ -59,6 +59,7 @@ func (v *auditChainApprovalVerifier) VerifyForApproval(
 	}
 	opts := auditVerifyOptionsForApproval(approval, v.now())
 	opts.RetentionBoundarySeq = boundary
+	opts.RetentionAnchorKey = v.chainer.AnchorKey(tenant)
 	if v.chainer.HMACEnabled() {
 		opts.HMACKey = v.chainer.HMACKeyForVerify()
 	}

@@ -2,6 +2,10 @@
 
 Common issues and debugging procedures for Cordum. Each entry includes symptoms, likely causes, diagnostic commands, and fixes.
 
+The `redis-cli` examples connect from the repo root to the Compose stack's Redis, which is TLS-only, needs `REDIS_PASSWORD` and publishes port 6379. For Kubernetes or another deployment, point `-h`, `--cacert` and `-a` at your Redis.
+
+The `nats` CLI examples connect the same way to the Compose NATS, which is TLS-only, requires a client certificate (`verify: true`) and publishes port 4222. For another deployment, point `--server`, `--tlsca`, `--tlscert` and `--tlskey` at your NATS.
+
 > For production operational runbooks, see [production.md](production.md).
 > For configuration reference, see [configuration-reference.md](configuration-reference.md).
 > For Docker-specific issues, see [DOCKER.md](DOCKER.md).
@@ -75,7 +79,7 @@ node ./node_modules/typescript/bin/tsc --noEmit
 **Fix**: Prefix commands with `MSYS_NO_PATHCONV=1`:
 
 ```bash
-MSYS_NO_PATHCONV=1 docker exec cordum-redis redis-cli PING
+MSYS_NO_PATHCONV=1 docker exec cordum-redis-1 redis-cli --tls --cacert /etc/cordum/tls/ca/ca.crt -a "$REDIS_PASSWORD" PING
 ```
 
 ### `go test -race` fails on Windows
@@ -130,23 +134,24 @@ python -c "import secrets; print(secrets.token_hex(32))"
 
 **Symptoms**: `go build` or `make build` fails with syntax or module errors.
 
-**Fix**: Cordum requires **Go 1.26.3+**. Check your version:
+**Fix**: Cordum requires **Go 1.26.3+** (the `go` line in `go.mod`). Check your version:
 
 ```bash
 go version
-# If below 1.24, upgrade: https://go.dev/dl/
+# If below 1.26.3, upgrade: https://go.dev/dl/
 ```
 
-### Dashboard `npm install` fails
+### Dashboard `pnpm install` fails
 
-**Symptoms**: `npm install` or `npm run build` fails in the `dashboard/` directory.
+**Symptoms**: `pnpm install` or `pnpm run build` fails in the `dashboard/` directory.
 
-**Fix**: Requires **Node 18+**. If you use nvm, the dashboard includes `.nvmrc`:
+**Fix**: The dashboard uses pnpm (`packageManager` in `package.json`, `pnpm-lock.yaml`) and needs **Node 20.19+** (Vite 8). If you use nvm, the dashboard includes `.nvmrc`:
 
 ```bash
 cd dashboard
-nvm use    # reads .nvmrc (Node 20)
-npm install
+nvm use          # reads .nvmrc (Node 20)
+corepack enable  # provides the pnpm version pinned in package.json
+pnpm install
 ```
 
 ### 502 Bad Gateway from dashboard
@@ -185,8 +190,8 @@ cat config/pools.yaml
 # Should have: topics: { "job.default": "default" }
 
 # Check the job's topic
-curl -s -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  http://localhost:8081/api/v1/jobs/JOB_ID | jq .topic
+curl -s --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/jobs/JOB_ID | jq .topic
 ```
 
 **Fix**: Add the topic-to-pool mapping in `config/pools.yaml`:
@@ -198,7 +203,7 @@ topics:
 
 Then delete the cached config in Redis to force reload:
 ```bash
-redis-cli DEL cfg:system:default
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" DEL cfg:system:default
 ```
 
 > **Note**: `cfg:system:default` is write-once (`bootstrapConfig`). The system reads it once at startup and caches it. You must delete the key and restart to apply changes.
@@ -210,8 +215,8 @@ redis-cli DEL cfg:system:default
 **Diagnostic**:
 ```bash
 # Check worker heartbeats
-curl -s -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  http://localhost:8081/api/v1/workers | jq '.items[] | {id, pool, last_heartbeat}'
+curl -s --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/workers | jq '.items[] | {id, pool, last_heartbeat}'
 
 # Check scheduler logs for "no workers" errors
 docker compose logs scheduler --tail=100 | grep "no_workers\|no workers"
@@ -226,14 +231,14 @@ docker compose logs scheduler --tail=100 | grep "no_workers\|no workers"
 **Diagnostic**:
 ```bash
 # Check DLQ for failed jobs
-curl -s -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  http://localhost:8081/api/v1/dlq?limit=10 | jq '.[] | {id, error}'
+curl -s --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/dlq?limit=10 | jq '.[] | {id, error}'
 ```
 
 **Fix**: Address the root cause (no workers, no pool mapping, overloaded pool) and retry from DLQ:
 ```bash
-curl -X POST -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  http://localhost:8081/api/v1/dlq/JOB_ID/retry
+curl --cacert ./certs/ca/ca.crt -X POST -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/dlq/JOB_ID/retry
 ```
 
 ---
@@ -258,8 +263,8 @@ created with `cordumctl topic create`, or it was deleted from the registry.
 cordumctl topic list
 
 # Optional: inspect the raw registry API response
-curl -s -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  http://localhost:8081/api/v1/topics | jq .
+curl -s --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/topics | jq .
 ```
 
 **Fix**:
@@ -288,8 +293,8 @@ same mismatch is logged instead of rejected.
 cordumctl topic list
 
 # Fetch the schema document
-curl -s -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  http://localhost:8081/api/v1/schemas/SCHEMA_ID | jq .
+curl -s --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/schemas/SCHEMA_ID | jq .
 ```
 
 **Fix**:
@@ -377,12 +382,12 @@ cordumctl topic list
 # Check env vars
 env | grep SAFETY_KERNEL
 
-# Test gRPC health (from gateway container)
-grpcurl -plaintext localhost:50051 grpc.health.v1.Health/Check
+# Test gRPC health from the host. Compose serves the kernel's gRPC over TLS
+# on localhost:50051; grpcurl needs CORDUM_GRPC_REFLECTION=1 on the kernel.
+grpcurl -cacert ./certs/ca/ca.crt localhost:50051 grpc.health.v1.Health/Check
 
-# With TLS
-grpcurl -cacert /path/to/ca.crt \
-  cordum-safety-kernel:50051 grpc.health.v1.Health/Check
+# Kernel started without SAFETY_KERNEL_TLS_CERT (outside production)
+grpcurl -plaintext localhost:50051 grpc.health.v1.Health/Check
 ```
 
 **Fix**: Ensure these env vars are set correctly:
@@ -390,10 +395,17 @@ grpcurl -cacert /path/to/ca.crt \
 - `SAFETY_KERNEL_TLS_CA` — CA certificate path
 - `SAFETY_KERNEL_TLS_REQUIRED` — Set to `true` in production
 
-For development, if you don't need TLS:
+`CORDUM_ENV=development` doesn't turn TLS off. The kernel serves TLS when
+`SAFETY_KERNEL_TLS_CERT`/`SAFETY_KERNEL_TLS_KEY` are set, and its clients
+(gateway, scheduler, workflow engine) dial with TLS when `SAFETY_KERNEL_TLS_CA`
+is set, so both sides must agree. Compose sets all three; leave them there. To
+run without TLS outside Compose (development only: plaintext is refused when
+`CORDUM_ENV=production` or `CORDUM_PRODUCTION=true`), unset them on both sides:
 ```bash
-unset SAFETY_KERNEL_TLS_REQUIRED
-# Or set CORDUM_ENV=development
+# Safety kernel
+unset SAFETY_KERNEL_TLS_CERT SAFETY_KERNEL_TLS_KEY
+# Gateway, scheduler and workflow engine
+unset SAFETY_KERNEL_TLS_CA SAFETY_KERNEL_TLS_REQUIRED
 ```
 
 ### Safety kernel crashlooping
@@ -424,8 +436,8 @@ cat config/safety.yaml | python -c "import yaml, sys; yaml.safe_load(sys.stdin.r
 **Diagnostic**:
 ```bash
 # Check the job's quarantine reason
-curl -s -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  http://localhost:8081/api/v1/jobs/JOB_ID | jq '{status, error_message, failure_reason}'
+curl -s --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/jobs/JOB_ID | jq '{status, error_message, failure_reason}'
 
 # Check output policy metrics
 curl -s http://localhost:9090/metrics | grep output_policy_quarantined
@@ -450,7 +462,7 @@ curl -s http://localhost:9090/metrics | grep output_policy_quarantined
 |-------|-----------|-----|
 | API URL not configured | Check browser console for 404s | Set `VITE_API_URL` or configure runtime config |
 | CORS blocking API calls | Browser console shows CORS errors | Set `CORDUM_ALLOWED_ORIGINS` to include dashboard origin |
-| JavaScript build error | Browser console shows JS errors | Rebuild: `cd dashboard && npm run build` |
+| JavaScript build error | Browser console shows JS errors | Rebuild: `cd dashboard && pnpm run build` |
 
 **Diagnostic**:
 ```bash
@@ -459,9 +471,9 @@ env | grep CORS
 env | grep ALLOWED_ORIGINS
 
 # Test API from dashboard origin
-curl -H "Origin: http://localhost:5173" \
+curl --cacert ./certs/ca/ca.crt -H "Origin: http://localhost:5173" \
   -H "Access-Control-Request-Method: GET" \
-  -X OPTIONS http://localhost:8081/api/v1/jobs
+  -X OPTIONS https://localhost:8081/api/v1/jobs
 ```
 
 **Fix**: Set allowed origins (checked in order: `CORDUM_ALLOWED_ORIGINS`, `CORDUM_CORS_ALLOW_ORIGINS`, `CORS_ALLOW_ORIGINS`):
@@ -476,12 +488,12 @@ export CORDUM_ALLOWED_ORIGINS="http://localhost:5173,https://dashboard.example.c
 **Diagnostic**:
 ```bash
 # Test API key
-curl -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  http://localhost:8081/api/v1/jobs
+curl --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/jobs
 # Should return 200, not 401
 
 # If user auth is enabled, test login
-curl -X POST http://localhost:8081/api/v1/auth/login \
+curl --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"your-password"}'
 ```
@@ -557,7 +569,7 @@ The worker must heartbeat with `pool=hello-pack`.
 **Diagnostic**:
 ```bash
 # Test NATS connectivity
-nats pub test "hello" --server nats://localhost:4222
+nats pub test "hello" --server tls://localhost:4222 --tlsca ./certs/ca/ca.crt --tlscert ./certs/client/tls.crt --tlskey ./certs/client/tls.key
 
 # Check NATS logs
 docker compose logs nats --tail=50
@@ -577,7 +589,7 @@ docker compose logs nats --tail=50
 ```bash
 # Check Redis
 docker compose ps redis
-redis-cli PING
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" PING
 # Should return PONG
 ```
 
@@ -585,16 +597,19 @@ redis-cli PING
 
 ### Redis TLS misconfigured
 
-**Cause**: Production mode expects TLS for Redis connections.
+**Symptoms**: A service exits with `redis tls required in production`, or Redis connections fail the TLS handshake or certificate check.
 
-**Fix**: Set TLS env vars:
+**Cause**: The URL scheme decides TLS. `rediss://` connects over TLS and reads the `REDIS_TLS_*` variables; `redis://` is plaintext. In production (`CORDUM_ENV=production`), a `rediss://` URL with no `REDIS_TLS_*` settings is rejected. The default Compose Redis is TLS-only, so it needs `rediss://`.
+
+**Fix**: Use `rediss://` and point the TLS variables at the CA and client certificate (Compose sets them to the `./certs` files mounted at `/etc/cordum/tls`):
 ```bash
-export REDIS_TLS_CA=/path/to/ca.crt
-export REDIS_TLS_CERT=/path/to/client.crt
-export REDIS_TLS_KEY=/path/to/client.key
+export REDIS_URL="rediss://:$REDIS_PASSWORD@localhost:6379"
+export REDIS_TLS_CA=./certs/ca/ca.crt
+export REDIS_TLS_CERT=./certs/client/tls.crt
+export REDIS_TLS_KEY=./certs/client/tls.key
 ```
 
-Or for development, use non-TLS Redis (set `CORDUM_ENV=development`).
+`CORDUM_ENV=development` doesn't turn TLS off. A `redis://` URL works only against a Redis that accepts plaintext, which the default Compose Redis doesn't.
 
 ### Redis Cluster not initialized
 
@@ -618,7 +633,7 @@ kubectl apply -k deploy/k8s/production
 
 **Fix**:
 ```bash
-redis-cli DEL cfg:system:default
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" DEL cfg:system:default
 # Then restart the gateway/scheduler
 ```
 
@@ -647,11 +662,11 @@ curl -s http://localhost:9090/metrics | grep output_eval_duration
 
 **Diagnostic**:
 ```bash
-redis-cli INFO memory
-redis-cli DBSIZE
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" INFO memory
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" DBSIZE
 
 # Check keys without TTL
-redis-cli --scan --pattern "ctx:job:*" | head -5 | xargs -I{} redis-cli TTL {}
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" --scan --pattern "ctx:job:*" | head -5 | xargs -I{} redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" TTL {}
 ```
 
 **Fix**:
@@ -669,7 +684,7 @@ redis-cli --scan --pattern "ctx:job:*" | head -5 | xargs -I{} redis-cli TTL {}
 curl -s http://localhost:9090/metrics | grep job_lock_wait
 
 # Check Redis slowlog
-redis-cli SLOWLOG GET 10
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" SLOWLOG GET 10
 
 # Check scheduler goroutines
 curl -s http://localhost:9090/metrics | grep active_goroutines
@@ -689,12 +704,12 @@ curl -s http://localhost:9090/metrics | grep active_goroutines
 **Diagnostic**:
 ```bash
 # List DLQ entries
-curl -s -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  http://localhost:8081/api/v1/dlq?limit=20 | jq '.[] | {id, error, created_at}'
+curl -s --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/dlq?limit=20 | jq '.[] | {id, error, created_at}'
 
 # Group by error type
-curl -s -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  http://localhost:8081/api/v1/dlq?limit=100 | jq '[.[].error] | group_by(.) | map({error: .[0], count: length})'
+curl -s --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/dlq?limit=100 | jq '[.[].error] | group_by(.) | map({error: .[0], count: length})'
 ```
 
 **Common DLQ reasons**:
@@ -712,12 +727,12 @@ curl -s -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
 **Retry or delete**:
 ```bash
 # Retry a job
-curl -X POST -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  http://localhost:8081/api/v1/dlq/JOB_ID/retry
+curl --cacert ./certs/ca/ca.crt -X POST -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/dlq/JOB_ID/retry
 
 # Delete a job from DLQ
-curl -X DELETE -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  http://localhost:8081/api/v1/dlq/JOB_ID
+curl --cacert ./certs/ca/ca.crt -X DELETE -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/dlq/JOB_ID
 ```
 
 ### DLQ cleanup leader election
@@ -729,17 +744,17 @@ In multi-replica deployments, only one replica runs DLQ index cleanup per interv
 **Diagnostic**:
 ```bash
 # Check if the cleanup lock exists (indicates an active cleaner)
-redis-cli GET cordum:dlq:cleanup
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET cordum:dlq:cleanup
 
 # Check index size vs actual entries
-redis-cli ZCARD dlq:index
-redis-cli --scan --pattern "dlq:entry:*" | wc -l
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" ZCARD dlq:index
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" --scan --pattern "dlq:entry:*" | wc -l
 # If ZCARD >> entry count, stale entries exist
 ```
 
 **Fix**: If cleanup appears stalled, verify at least one replica is healthy and can reach Redis. The lock expires after one cleanup interval, so a new replica will take over automatically. To force immediate cleanup, delete the lock key:
 ```bash
-redis-cli DEL cordum:dlq:cleanup
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" DEL cordum:dlq:cleanup
 ```
 
 ---
@@ -752,7 +767,7 @@ redis-cli DEL cordum:dlq:cleanup
 
 **Diagnostic**:
 ```bash
-nats server info --server nats://localhost:4222
+nats server info --server tls://localhost:4222 --tlsca ./certs/ca/ca.crt --tlscert ./certs/client/tls.crt --tlskey ./certs/client/tls.key
 # Look for: jetstream: true
 ```
 
@@ -771,13 +786,13 @@ jetstream {
 
 **Diagnostic**:
 ```bash
-nats consumer list CORDUM_JOBS --server nats://localhost:4222
-nats consumer info CORDUM_JOBS cordum-scheduler --server nats://localhost:4222
+nats consumer list CORDUM_JOBS --server tls://localhost:4222 --tlsca ./certs/ca/ca.crt --tlscert ./certs/client/tls.crt --tlskey ./certs/client/tls.key
+nats consumer info CORDUM_JOBS cordum-scheduler --server tls://localhost:4222 --tlsca ./certs/ca/ca.crt --tlscert ./certs/client/tls.crt --tlskey ./certs/client/tls.key
 ```
 
 **Fix**: If a consumer is stuck, delete and let the scheduler recreate it:
 ```bash
-nats consumer rm CORDUM_JOBS cordum-scheduler --server nats://localhost:4222
+nats consumer rm CORDUM_JOBS cordum-scheduler --server tls://localhost:4222 --tlsca ./certs/ca/ca.crt --tlscert ./certs/client/tls.crt --tlskey ./certs/client/tls.key
 # Restart the scheduler
 ```
 
@@ -789,55 +804,56 @@ nats consumer rm CORDUM_JOBS cordum-scheduler --server nats://localhost:4222
 
 ```bash
 # Gateway HTTP health
-curl http://localhost:8081/health
+curl --cacert ./certs/ca/ca.crt https://localhost:8081/health
 
-# Gateway gRPC health
-grpcurl -plaintext localhost:50051 grpc.health.v1.Health/Check
+# Safety Kernel gRPC health (TLS in Compose; grpcurl needs
+# CORDUM_GRPC_REFLECTION=1 on the kernel)
+grpcurl -cacert ./certs/ca/ca.crt localhost:50051 grpc.health.v1.Health/Check
 
 # System health (authenticated)
-curl -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  http://localhost:8081/api/v1/system/health
+curl --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/system/health
 ```
 
 ### Job state inspection
 
 ```bash
 # Get job details
-curl -s -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  http://localhost:8081/api/v1/jobs/JOB_ID | jq '{id, status, topic, error_message}'
+curl -s --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/jobs/JOB_ID | jq '{id, status, topic, error_message}'
 
 # List recent jobs
-curl -s -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
-  "http://localhost:8081/api/v1/jobs?limit=10&sort=created_at&order=desc" | jq '.items[] | {id, status, topic}'
+curl -s --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  "https://localhost:8081/api/v1/jobs?limit=10&sort=created_at&order=desc" | jq '.items[] | {id, status, topic}'
 ```
 
 ### Redis inspection
 
 ```bash
 # Check config cache
-redis-cli GET cfg:system:default
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET cfg:system:default
 
 # Check job state directly
-redis-cli HGETALL job:JOB_ID
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" HGETALL job:JOB_ID
 
 # Check Redis memory
-redis-cli INFO memory | grep used_memory_human
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" INFO memory | grep used_memory_human
 
 # List all job keys
-redis-cli --scan --pattern "job:*" | wc -l
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" --scan --pattern "job:*" | wc -l
 ```
 
 ### NATS inspection
 
 ```bash
 # List streams
-nats stream list --server nats://localhost:4222
+nats stream list --server tls://localhost:4222 --tlsca ./certs/ca/ca.crt --tlscert ./certs/client/tls.crt --tlskey ./certs/client/tls.key
 
 # Check stream info
-nats stream info CORDUM_JOBS --server nats://localhost:4222
+nats stream info CORDUM_JOBS --server tls://localhost:4222 --tlsca ./certs/ca/ca.crt --tlscert ./certs/client/tls.crt --tlskey ./certs/client/tls.key
 
 # Monitor messages in real-time
-nats sub "sys.>" --server nats://localhost:4222
+nats sub "sys.>" --server tls://localhost:4222 --tlsca ./certs/ca/ca.crt --tlscert ./certs/client/tls.crt --tlskey ./certs/client/tls.key
 ```
 
 ### Metrics
@@ -911,13 +927,13 @@ All Cordum services shut down gracefully within **15 seconds** when receiving SI
 **Diagnostic**:
 ```bash
 # Check if job lock exists
-redis-cli GET "cordum:scheduler:job:JOB_ID"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "cordum:scheduler:job:JOB_ID"
 
 # Check reconciler lock (should be held by one replica)
-redis-cli GET "cordum:reconciler:default"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "cordum:reconciler:default"
 
 # Check pending replayer lock
-redis-cli GET "cordum:replayer:pending"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "cordum:replayer:pending"
 ```
 
 **Fix**: Verify all scheduler replicas connect to the same Redis. The job lock TTL is 60s with renewal at 20s intervals — if jobs take longer than 60s without renewal, increase the timeout or investigate Redis latency.
@@ -931,7 +947,7 @@ redis-cli GET "cordum:replayer:pending"
 **Diagnostic**:
 ```bash
 # Check rate limit keys in Redis
-redis-cli KEYS "cordum:rl:*"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" KEYS "cordum:rl:*"
 # Should show keys like cordum:rl:default:1708444800
 
 # Check gateway env
@@ -949,16 +965,16 @@ docker compose exec api-gateway env | grep REDIS_RATE_LIMIT
 **Diagnostic**:
 ```bash
 # Check snapshot writer lock
-redis-cli GET "cordum:scheduler:snapshot:writer"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "cordum:scheduler:snapshot:writer"
 
 # Check snapshot freshness
-redis-cli OBJECT IDLETIME "sys:workers:snapshot"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" OBJECT IDLETIME "sys:workers:snapshot"
 # Idle time > 15s indicates the writer may be stalled
 ```
 
 **Fix**: The snapshot writer runs every 5s with a 10s lock TTL. If a replica crashes, the lock expires and another takes over within ~15s. If the lock appears stuck, delete it:
 ```bash
-redis-cli DEL "cordum:scheduler:snapshot:writer"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" DEL "cordum:scheduler:snapshot:writer"
 ```
 
 ### Config drift between replicas
@@ -987,17 +1003,18 @@ docker compose restart scheduler
 **Diagnostic**:
 ```bash
 # Check circuit breaker state
-redis-cli GET "cordum:cb:safety:failures"
-redis-cli GET "cordum:cb:safety:output:failures"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "cordum:cb:safety:failures"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "cordum:cb:safety:output:failures"
 
-# Check safety kernel health
-grpcurl -plaintext safety-kernel:50051 grpc.health.v1.Health/Check
+# Check safety kernel health (gRPC over TLS in Compose; grpcurl needs
+# CORDUM_GRPC_REFLECTION=1 on the kernel)
+grpcurl -cacert ./certs/ca/ca.crt localhost:50051 grpc.health.v1.Health/Check
 ```
 
 **Fix**: The circuit breaker enters half-open state after 30s and allows probe requests. If the safety kernel is healthy, the circuit closes after 2 successful probes. To force-reset:
 ```bash
-redis-cli DEL "cordum:cb:safety:failures"
-redis-cli DEL "cordum:cb:safety:output:failures"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" DEL "cordum:cb:safety:failures"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" DEL "cordum:cb:safety:output:failures"
 ```
 
 ### Safety decision cache staleness
@@ -1019,10 +1036,10 @@ redis-cli DEL "cordum:cb:safety:output:failures"
 **Diagnostic**:
 ```bash
 # Check run lock
-redis-cli GET "cordum:wf:run:lock:RUN_ID"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "cordum:wf:run:lock:RUN_ID"
 
 # Check workflow reconciler lock
-redis-cli GET "cordum:workflow-engine:reconciler:default"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "cordum:workflow-engine:reconciler:default"
 ```
 
 **Fix**: Verify workflow engine replicas connect to the same Redis. The per-run lock has a 30s TTL with 10s renewal. If Redis is unreachable, the engine falls back to local-only locking (safe for single-replica but not cross-replica).
@@ -1036,15 +1053,15 @@ redis-cli GET "cordum:workflow-engine:reconciler:default"
 **Diagnostic**:
 ```bash
 # Check durable delay timers in Redis
-redis-cli ZRANGE "cordum:wf:delay:timers" 0 -1 WITHSCORES
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" ZRANGE "cordum:wf:delay:timers" 0 -1 WITHSCORES
 
 # Check delay poller lock
-redis-cli GET "cordum:wf:delay:poller"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "cordum:wf:delay:poller"
 ```
 
 **Fix**: Delays ≥10s are persisted to Redis sorted set. The delay poller runs every 5s and fires past-due timers. On restart, `recoverDelayTimers` fires all past-due entries immediately. If the poller lock is stuck, delete it:
 ```bash
-redis-cli DEL "cordum:wf:delay:poller"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" DEL "cordum:wf:delay:poller"
 ```
 
 ---
@@ -1063,10 +1080,10 @@ redis-cli DEL "cordum:wf:delay:poller"
 **Diagnostic commands**:
 ```bash
 # Count pending messages in the CORDUM_SYS stream
-nats stream info CORDUM_SYS
+nats stream info CORDUM_SYS --server tls://localhost:4222 --tlsca ./certs/ca/ca.crt --tlscert ./certs/client/tls.crt --tlskey ./certs/client/tls.key
 
 # List consumers and their pending counts
-nats consumer ls CORDUM_SYS
+nats consumer ls CORDUM_SYS --server tls://localhost:4222 --tlsca ./certs/ca/ca.crt --tlscert ./certs/client/tls.crt --tlskey ./certs/client/tls.key
 
 # Check for specific orphan run IDs in gateway logs
 grep "discarding stale job result" /var/log/cordum/gateway.log
@@ -1082,7 +1099,7 @@ grep "discarding stale job result" /var/log/cordum/gateway.log
 **Manual purge** (if queue has pre-fix stale data):
 ```bash
 # Purge all stale sys.job messages (safe — active results will be re-published by workers)
-nats stream purge CORDUM_SYS --subject "sys.job.>" --force
+nats stream purge CORDUM_SYS --subject "sys.job.>" --force --server tls://localhost:4222 --tlsca ./certs/ca/ca.crt --tlscert ./certs/client/tls.crt --tlskey ./certs/client/tls.key
 ```
 
 **JetStream consumer bounds** (env vars in `core/infra/bus/nats.go`):
@@ -1115,7 +1132,7 @@ missing`, `malformed`, or `unavailable`.
 
 ```bash
 # Inspect the approval record
-curl -sS "http://localhost:8081/api/v1/approvals?include_resolved=false" \
+curl -sS --cacert ./certs/ca/ca.crt "https://localhost:8081/api/v1/approvals?include_resolved=false" \
   -H "X-API-Key: $CORDUM_API_KEY" \
   -H "X-Tenant-ID: $CORDUM_TENANT_ID" \
   | jq --arg job "$JOB_ID" '
@@ -1129,7 +1146,7 @@ curl -sS "http://localhost:8081/api/v1/approvals?include_resolved=false" \
     '
 
 # If this is a workflow approval, inspect the related run
-curl -sS "http://localhost:8081/api/v1/workflow-runs/${RUN_ID}" \
+curl -sS --cacert ./certs/ca/ca.crt "https://localhost:8081/api/v1/workflow-runs/${RUN_ID}" \
   -H "X-API-Key: $CORDUM_API_KEY" \
   -H "X-Tenant-ID: $CORDUM_TENANT_ID" \
   | jq '{id, status, current_step, error}'
@@ -1174,7 +1191,7 @@ Inspect the approval record before deciding whether this is an operator repair c
 normal race:
 
 ```bash
-curl -sS "http://localhost:8081/api/v1/approvals?include_resolved=true" \
+curl -sS --cacert ./certs/ca/ca.crt "https://localhost:8081/api/v1/approvals?include_resolved=true" \
   -H "X-API-Key: $CORDUM_API_KEY" \
   -H "X-Tenant-ID: $CORDUM_TENANT_ID" \
   | jq --arg job "$JOB_ID" '
@@ -1227,7 +1244,7 @@ cordumctl approval repair "$JOB_ID"
 Equivalent API call:
 
 ```bash
-curl -sS -X POST "http://localhost:8081/api/v1/approvals/${JOB_ID}/repair" \
+curl -sS --cacert ./certs/ca/ca.crt -X POST "https://localhost:8081/api/v1/approvals/${JOB_ID}/repair" \
   -H "X-API-Key: $CORDUM_API_KEY" \
   -H "X-Tenant-ID: $CORDUM_TENANT_ID" \
   -H "Content-Type: application/json" \

@@ -31,6 +31,7 @@ import type {
   ForbiddenResponse,
   GetAgent200,
   GetAgentStats200,
+  InternalServerErrorResponse,
   IssueDelegationToken201,
   IssueDelegationTokenBody,
   ListAgents200,
@@ -231,6 +232,7 @@ export const getCreateAgentMutationOptions = <
     | UnauthorizedResponse
     | ForbiddenResponse
     | ConflictResponse
+    | InternalServerErrorResponse
     | ServiceUnavailableResponse,
   TContext = unknown,
 >(options?: {
@@ -276,6 +278,7 @@ export type CreateAgentMutationError =
   | UnauthorizedResponse
   | ForbiddenResponse
   | ConflictResponse
+  | InternalServerErrorResponse
   | ServiceUnavailableResponse;
 export type CreateAgentMutationVariables = { data: CreateAgentBody };
 
@@ -288,6 +291,7 @@ export const useCreateAgent = <
     | UnauthorizedResponse
     | ForbiddenResponse
     | ConflictResponse
+    | InternalServerErrorResponse
     | ServiceUnavailableResponse,
   TContext = unknown,
 >(
@@ -492,6 +496,8 @@ export const getUpdateAgentMutationOptions = <
     | UnauthorizedResponse
     | ForbiddenResponse
     | NotFoundResponse
+    | ConflictResponse
+    | InternalServerErrorResponse
     | ServiceUnavailableResponse,
   TContext = unknown,
 >(options?: {
@@ -537,6 +543,8 @@ export type UpdateAgentMutationError =
   | UnauthorizedResponse
   | ForbiddenResponse
   | NotFoundResponse
+  | ConflictResponse
+  | InternalServerErrorResponse
   | ServiceUnavailableResponse;
 export type UpdateAgentMutationVariables = {
   id: string;
@@ -552,6 +560,8 @@ export const useUpdateAgent = <
     | UnauthorizedResponse
     | ForbiddenResponse
     | NotFoundResponse
+    | ConflictResponse
+    | InternalServerErrorResponse
     | ServiceUnavailableResponse,
   TContext = unknown,
 >(

@@ -1,22 +1,33 @@
 # MCP Outbound Signing (ECDSA P-256)
 
-Cordum's gateway signs every outbound MCP call with an ECDSA P-256
-signature. Cooperating peers verify the signature; non-cooperating
-servers see additive headers and ignore them. The feature is
-opt-in — no signing key means no signature, no broken requests.
+`cordum-mcp`, the standalone MCP bridge, signs the requests it sends
+to the Cordum gateway with an ECDSA P-256 signature. Tool calls that
+POST or PUT are signed, and so are resource reads. Tool calls that GET,
+such as listing jobs, and the boot-time agent lookup go unsigned. The
+gateway loads no signing key and signs nothing.
+
+The gateway does not check these headers on the requests it receives:
+a signed request is checked only when someone posts it to the
+[verification endpoint](#verification-endpoint). The feature is
+opt-in. With no signing key, `cordum-mcp` logs a warning at startup
+and sends its calls unsigned; a key it cannot parse stops it at
+startup.
 
 ## Threat model
+
+The "With signing" column holds only where a receiver verifies the
+signature, which the gateway does not do on its own.
 
 | Threat | Without signing | With signing |
 |---|---|---|
 | MITM injects fake tool call | Accepted as real | Signature mismatch → rejected |
 | Attacker replays captured request | Accepted every time | Nonce in replay window → rejected |
-| Compromised worker spoofs a different agent | Accepted | Signed agent_id must match peer's trust record |
+| Compromised worker spoofs a different agent | Accepted | Not stopped: the verifier maps the key ID to its public key and does not check the signed agent_id, so any trusted key can sign for any agent |
 | Clock-skew DoS (far-future timestamp) | n/a | Rejected as expired (5 min default) |
 
-Signing does NOT protect against: (1) a compromised gateway private
-key — rotate via `cordumctl mcp keygen` + trust store update; (2)
-peers that don't verify — the headers are advisory to them.
+Signing does NOT protect against: (1) a compromised `cordum-mcp`
+private key — rotate via `cordumctl mcp keygen` + trust store update;
+(2) receivers that don't verify — the headers are advisory to them.
 
 ## Wire format
 
@@ -42,6 +53,9 @@ tenant
 agent_id
 ```
 
+`cordum-mcp` puts the HTTP method and path in `method`, for example
+`POST /api/v1/jobs`, and the request body in `params`.
+
 `canonical(params)` decodes the JSON body and re-encodes it with
 key-sorted / whitespace-stripped output so `{"a":1,"b":2}` and
 `{"b":2,"a":1}` hash identically.
@@ -55,17 +69,18 @@ cat pub.b64
 # ZjBQxJUlxQ... (base64-encoded SubjectPublicKeyInfo)
 ```
 
-- **Private key** — deploy to the signing gateway only; never commit.
-  Stored in `CORDUM_MCP_OUTBOUND_SIGNING_KEY` (inline) or
+- **Private key** — deploy to the `cordum-mcp` process only; never
+  commit. Stored in `CORDUM_MCP_OUTBOUND_SIGNING_KEY` (inline) or
   `CORDUM_MCP_OUTBOUND_SIGNING_KEY_PATH` (file).
-- **Public key** — distribute to every verifying peer; each peer
-  registers it via `CORDUM_MCP_INBOUND_TRUSTED_KEY_<ID>=<base64>`.
-  The `<ID>` must match the gateway's `CORDUM_MCP_OUTBOUND_SIGNING_KEY_ID`
-  (default: `default`).
+- **Public key** — distribute to every verifier. The gateway's
+  verification endpoint reads it from
+  `CORDUM_MCP_INBOUND_TRUSTED_KEY_<ID>=<base64>`. The `<ID>` must match
+  `cordum-mcp`'s `CORDUM_MCP_OUTBOUND_SIGNING_KEY_ID` (default:
+  `default`).
 
 ## Environment variables
 
-### Signing gateway
+### Signing process (`cordum-mcp`)
 
 | Variable | Purpose | Required |
 |---|---|---|
@@ -73,34 +88,36 @@ cat pub.b64
 | `CORDUM_MCP_OUTBOUND_SIGNING_KEY_PATH` | File with the same contents as KEY | One of KEY / KEY_PATH |
 | `CORDUM_MCP_OUTBOUND_SIGNING_KEY_ID` | Key id stamped in headers | No (default: `default`) |
 
-### Verifying peer
+### Verifier (gateway)
 
 | Variable | Purpose | Required |
 |---|---|---|
-| `CORDUM_MCP_INBOUND_TRUSTED_KEY_<ID>` | base64 SPKI or PEM of peer's public key | Yes per peer |
+| `CORDUM_MCP_INBOUND_TRUSTED_KEY_<ID>` | base64 SPKI or PEM of a `cordum-mcp` public key | Yes, one per signing key |
 
 ## Clock-skew tuning
 
-Default window: ±5 minutes. Both sides enforce the window on verify,
-so a peer with a drifted clock will reject the gateway's calls. Sync
-clocks via NTP; emergency widening lives in task plan as a future knob.
+Default window: ±5 minutes, checked by the verifier. When the clocks
+of the `cordum-mcp` host and the gateway drift further apart than
+that, verification fails with `expired`. Sync clocks via NTP;
+emergency widening lives in task plan as a future knob.
 
 ## Interop with non-Cordum MCP servers
 
-Other MCP implementations see `X-Cordum-*` as opaque custom headers
-and ignore them. The tools/call succeeds normally; only Cordum-aware
-peers can verify. Deploying the gateway against a mixed peer set is
-safe — peers that don't implement the verifier are not broken.
+`cordum-mcp` sends signed requests only to the Cordum gateway, so
+other MCP servers never see them. The `X-Cordum-*` headers are
+additive: a receiver that does not verify, the gateway included,
+handles a signed request like an unsigned one, so turning signing on
+breaks no caller.
 
 ## Verification endpoint
 
-For peers that want to verify without shipping their own ECDSA code,
-Cordum exposes:
+To check a signed request without shipping your own ECDSA code, post
+it to the gateway:
 
 ```
 POST /api/v1/mcp/verify-signature
 {
-  "method": "tools/call",
+  "method": "POST /api/v1/jobs",
   "params": { ... },
   "headers": { "X-Cordum-Key-Id": "...", ... }
 }

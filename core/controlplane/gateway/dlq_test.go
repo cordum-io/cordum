@@ -10,9 +10,12 @@ import (
 	"testing"
 	"time"
 
+	infrabus "github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/policylabels"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/cordum/cordum/core/protocol/reqhash"
 )
 
 func TestHandleDLQListAndDelete(t *testing.T) {
@@ -231,6 +234,71 @@ func TestHandleRetryDLQPreservesRequestFields(t *testing.T) {
 	}
 	if req.GetLabels()["priority"] != "high" || req.GetLabels()["retry"] != "true" {
 		t.Fatalf("expected labels merged with retry overrides, got %#v", req.GetLabels())
+	}
+}
+
+// A retry is a new job: the original's server-owned labels (approval state,
+// gate marker, bus dedupe ID, policy attachment, run context) stay behind,
+// while its own labels, its "_" system labels and its workflow link carry over.
+func TestRetryDLQDropsServerOwnedLabels(t *testing.T) {
+	s, bus, _ := newTestGateway(t)
+	ctx := context.Background()
+	jobID := "job-retry-owned"
+	if err := s.dlqStore.Add(ctx, store.DLQEntry{JobID: jobID, Topic: "job.test", CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("add dlq: %v", err)
+	}
+	_ = s.jobStore.SetTenant(ctx, jobID, "tenant")
+	if err := s.jobStore.SetJobRequest(ctx, &pb.JobRequest{
+		JobId: jobID, Topic: "job.test", WorkflowId: "wf-1",
+		Labels: map[string]string{
+			"approval_granted": "true", "approval_snapshot": "snap-1", "approval_by": "alice",
+			"gate_type": "workflow_approval", infrabus.LabelBusMsgID: "approval:" + jobID,
+			policylabels.PolicyAttachmentID: policylabels.JobAttachmentID(jobID), "workflow_id": "wf-1",
+			"run_id": "run-1", "step_id": "s1",
+			"_source": "workflow", "_content.prompt": "hello", "team": "alpha",
+		},
+	}); err != nil {
+		t.Fatalf("set job request: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/dlq/"+jobID+"/retry", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	req.SetPathValue("job_id", jobID)
+	s.handleRetryDLQ(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("retry status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode retry: %v", err)
+	}
+	stored, err := s.jobStore.GetJobRequest(ctx, resp["job_id"])
+	if err != nil {
+		t.Fatalf("stored retry: %v", err)
+	}
+	bus.mu.Lock()
+	published := bus.published[len(bus.published)-1].packet.GetJobRequest()
+	bus.mu.Unlock()
+
+	for where, retry := range map[string]*pb.JobRequest{"stored": stored, "published": published} {
+		labels := retry.GetLabels()
+		for k := range labels {
+			if reqhash.ServerOwnedLabel(k) {
+				t.Fatalf("%s retry carries the original's server-owned label %q: %v", where, k, labels)
+			}
+		}
+		for k, want := range map[string]string{
+			"retry": "true", "dlq_entry": jobID, "retry_of_job": jobID,
+			"_source": "workflow", "_content.prompt": "hello", "team": "alpha",
+		} {
+			if labels[k] != want {
+				t.Fatalf("%s retry label %s = %q, want %q: %v", where, k, labels[k], want, labels)
+			}
+		}
+		if retry.GetWorkflowId() != "wf-1" {
+			t.Fatalf("%s retry WorkflowId = %q, want wf-1", where, retry.GetWorkflowId())
+		}
 	}
 }
 

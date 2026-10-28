@@ -885,7 +885,10 @@ Fields from `Step` model that apply across types:
 - `timeout_sec`: job budget deadline (ms in request budget)
 - `retry`: retry policy (`max_retries`, `initial_backoff_sec`, `max_backoff_sec`, `multiplier`)
 - `on_error`: modeled jump target field (documented, minimal runtime handling today)
-- `route_labels`: propagated to job labels for pool/worker routing
+- `route_labels`: propagated to job labels for pool/worker routing. Labels
+  Cordum sets itself (the reserved set listed under job submit in
+  `api-reference.md`, including `workflow_id`, `run_id`, `step_id` and
+  `_source`) are dropped, so a step cannot claim another workflow's context
 - `meta`: job metadata overrides (`actor_id`, `actor_type`, `idempotency_key`, `pack_id`, `capability`, `risk_tags`, `requires`, `labels`)
 
 `output_path` behavior:

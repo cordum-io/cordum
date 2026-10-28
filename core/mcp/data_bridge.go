@@ -355,11 +355,7 @@ func (b *HTTPDataBridge) doRequest(ctx context.Context, method, path string, hea
 	}
 	// Pin DNS resolution to prevent rebinding attacks (TOCTOU).
 	if len(pinnedIPs) > 0 {
-		client = &http.Client{
-			Timeout:       client.Timeout,
-			CheckRedirect: client.CheckRedirect,
-			Transport:     &http.Transport{DialContext: pinnedDialer(pinnedIPs)},
-		}
+		client = pinnedClient(client, pinnedIPs)
 	}
 	// Bracket the outbound HTTP round-trip with the invocation auditor
 	// so FinishRequest sees the terminal status + latency + response

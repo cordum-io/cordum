@@ -34,7 +34,7 @@ Redis is the **single source of truth** for jobs, workflows, contexts, results, 
 | `REDIS_MIN_IDLE_CONNS` | `5` | All | Warm connections kept in the pool |
 | `REDIS_RATE_LIMIT` | `true` | api-gateway | Enable Redis-backed distributed rate limiting |
 | `MCP_TRANSPORT` | `stdio` | cordum-mcp | Transport mode: `stdio` or `http` |
-| `MCP_HTTP_ADDR` | `:8090` | cordum-mcp | Listen address when `MCP_TRANSPORT=http` |
+| `MCP_HTTP_ADDR` | `127.0.0.1:8090` | cordum-mcp | Listen address when `MCP_TRANSPORT=http`; a non-loopback address also needs `CORDUM_MCP_HTTP_AUTH_TOKEN` |
 | `AUDIT_TRANSPORT` | (local buffer) | api-gateway | Set to `nats` for durable cross-replica audit export |
 | `CORDUM_INSTANCE_ID` | `os.Hostname()` | All | Pod/instance label for Prometheus metrics |
 | `SAFETY_DECISION_CACHE_TTL` | `0` (disabled) | safety-kernel | Per-replica decision cache TTL (e.g. `30s`) |
@@ -193,6 +193,8 @@ This is a known limitation — NATS does not auto-discover new peers in a static
 
 ## Troubleshooting
 
+The `redis-cli` examples below connect from the repo root to the Compose stack's Redis, which is TLS-only, needs `REDIS_PASSWORD` and publishes port 6379. For another deployment, point `-h`, `--cacert` and `-a` at your Redis.
+
 ### Duplicate Job Dispatch
 
 **Symptoms**: Same job appears multiple times in terminal state, or job processed by multiple schedulers simultaneously.
@@ -200,10 +202,10 @@ This is a known limitation — NATS does not auto-discover new peers in a static
 **Diagnosis**:
 ```bash
 # Check job lock in Redis
-redis-cli GET "cordum:scheduler:job:<jobID>"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "cordum:scheduler:job:<jobID>"
 
 # Check reconciler lock
-redis-cli GET "cordum:reconciler:default"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "cordum:reconciler:default"
 ```
 
 **Resolution**: Verify all scheduler replicas are using the same Redis instance. Check that job lock TTL (30s) is not too short for your job processing time.
@@ -218,7 +220,7 @@ redis-cli GET "cordum:reconciler:default"
 # Look for REDIS_RATE_LIMIT env var in gateway config
 
 # Check rate limit counters
-redis-cli KEYS "cordum:rl:*"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" KEYS "cordum:rl:*"
 ```
 
 **Resolution**: Ensure `REDIS_RATE_LIMIT` is not set to `false`/`0`/`no`. If Redis is unreachable, each replica falls back to per-replica in-memory rate limiting (effectively multiplying the limit by replica count).
@@ -230,10 +232,10 @@ redis-cli KEYS "cordum:rl:*"
 **Diagnosis**:
 ```bash
 # Check snapshot writer lock
-redis-cli GET "cordum:scheduler:snapshot:writer"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "cordum:scheduler:snapshot:writer"
 
 # Check snapshot data
-redis-cli GET "sys:workers:snapshot"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "sys:workers:snapshot"
 ```
 
 **Resolution**: The scheduler snapshot writer runs every 5s under a distributed lock. If the lock holder crashes, the lock expires after 30s and another replica takes over. Wait up to 35s for convergence.
@@ -250,7 +252,7 @@ redis-cli GET "sys:workers:snapshot"
 
 **Diagnosis**:
 ```bash
-redis-cli GET "cordum:dlq:cleanup"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "cordum:dlq:cleanup"
 ```
 
 **Resolution**: If the lock is held by a crashed replica, wait for TTL expiry. The next live replica will acquire the lock and resume cleanup.
@@ -261,8 +263,8 @@ redis-cli GET "cordum:dlq:cleanup"
 
 **Diagnosis**:
 ```bash
-redis-cli GET "cordum:cb:safety:failures"
-redis-cli GET "cordum:cb:safety:output:failures"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "cordum:cb:safety:failures"
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" GET "cordum:cb:safety:output:failures"
 ```
 
 **Resolution**: Circuit breaker state is shared across replicas via Redis. If the safety kernel recovers, the circuit breaker will close after the configured recovery window. Delete the Redis key to force-reset (use with caution).
@@ -285,8 +287,10 @@ docker compose -f docker-compose.yml -f docker-compose.ha.yaml up -d --build
 # Gateway-2: localhost:8083 (HTTP API)
 
 # Verify both gateways are healthy
-curl http://localhost:8081/api/v1/status
-curl http://localhost:8083/api/v1/status
+curl --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8081/api/v1/status
+curl --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" -H "X-Tenant-ID: default" \
+  https://localhost:8083/api/v1/status
 
 # Run the HA production gate
 ./tools/scripts/production_gate.sh --gate 19
@@ -336,16 +340,35 @@ During rolling restarts, broadcast subjects may miss messages while a replica is
 
 ## Redis Cluster Limitations
 
-When running Redis in cluster mode, Lua scripts that touch keys in different hash slots will fail with `CROSSSLOT` errors. Cordum has 12 Lua scripts; 9 are single-key (safe for cluster mode). Three scripts touch multiple keys across slots:
+When running Redis in cluster mode, Lua scripts and MULTI transactions that touch keys in different hash slots fail with `CROSSSLOT` errors, and `SCAN` reaches only one node. Among the scripts and transactions that touch multiple slots:
 
 | Script | File | Keys | Risk | Status |
 |--------|------|------|------|--------|
 | `updateRunScript` | `core/workflow/store_redis.go` | 4 KEYS + dynamic index keys | High (every step completion) | Refactored — index updates moved to Go pipeline |
 | `idempotencyScopedScript` | `core/infra/store/job_store.go` | 2 KEYS + dynamic `job:meta:` | Medium (job submit) | Documented; use hash tags or pipeline split for cluster |
 | `createUserLua` | `core/controlplane/gateway/auth/userstore_redis.go` | 2 KEYS + dynamic `user:id:`, `user:tenant:` | Low (admin operation) | Documented; use hash tags or pipeline split for cluster |
+| `chainAppendScript` | `core/audit/chain.go` | `audit:chain:head:<tenant>` + `audit:chain:<tenant>` | High (every audit event) | Cluster path: single-key append on the stream, see below |
+| `retentionTrimScript` | `core/audit/retention.go` | `audit:chain:<tenant>` + `audit:chain:anchor:<tenant>` | Medium (retention sweep) | Cluster path: anchor moved in single-key steps, see below |
+| Chain verify read (MULTI) | `core/audit/chain_verify.go` | stream + anchor | High (verify, compliance export, ProvenanceGate) | Cluster path: anchor read before and after the stream, see below |
+| Legal hold create (MULTI) | `core/audit/legal_hold.go` | `audit:legal_hold:<id>` + `audit:legal_holds:<tenant>` | Low (admin operation) | Two single-key writes, index first |
 
 ### Remediation for Redis Cluster
 
 **`updateRunScript` (refactored):** The hot-path Lua script has been split: the atomic GET+SET of the run document stays in Lua (single key), while ZADD/ZREM index updates are performed in a Go pipeline afterward. Index operations are idempotent (ZADD is upsert, ZREM is no-op if missing), so eventual consistency is safe.
 
 **`idempotencyScopedScript` and `createUserLua`:** These remain as multi-key Lua scripts. For Redis Cluster deployments, use hash tags (e.g., `{tenant}:user:...`) to colocate related keys in the same slot, or refactor to pipeline-based approaches similar to `updateRunScript`.
+
+### Audit chain and legal holds on Redis Cluster
+
+The audit chain keeps its single-node key names on a cluster, so a tenant's stream (`audit:chain:<tenant>`), head (`audit:chain:head:<tenant>`) and retention anchor (`audit:chain:anchor:<tenant>`) sit in different slots. Cordum picks the cluster code path from the client type: `REDIS_CLUSTER_ADDRESSES` with more than one seed builds a cluster client. There is no flag. On a single node nothing changes.
+
+- **The head is a hint.** Each event links to the stream's last entry and commits with a single-key compare-and-append on the stream. The head key is written afterwards and only ever moves forward. A crash in between leaves it behind the stream, which is harmless. The head is used only as a floor for the next seq: if it is ahead of the stream, entries were deleted from the tail, and the next event is numbered past the head so the deletion stays visible as `missing` seqs.
+- **The trim takes three single-key steps.** (1) The sweeper writes a *pending* anchor: the newest entry to delete plus the anchor it replaces, signed together. (2) It checks the legal hold again, then trims the stream; the trim script itself refuses while the tenant's hold fence exists, a key in the stream's slot (`{audit:chain:<tenant>}:legal_hold_fence`) that a hold writes before it is acknowledged, so a hold created after the check still keeps the events. (3) It confirms, rewriting the anchor without the one it replaced. Until step 3, verify links the stream to the replaced anchor.
+- **What verify sees after an interruption:**
+  - *Crash, or a new legal hold, after step 1:* the events are still there and verify end to end from the previous anchor. Deleting any of them, including exactly the range the pending anchor names, is reported as `missing`. The next sweep without a hold finishes the trim.
+  - *Crash after step 2:* the trimmed events read as `missing` (`compromised`) until the next sweep, outside a legal hold, confirms the trim. An unconfirmed trim looks the same as someone else deleting those events.
+- **Verify reads the anchor before and after the stream.** It accepts a verdict that holds against either read, and re-reads (about 150 ms in all) while a sweep moves the anchor or is about to confirm a trim. If the anchor keeps moving it returns an error instead of a verdict.
+- **Legal holds** write the tenant index, the hold record and the fence as separate commands, in that order, so an interrupted create reads as no hold everywhere and a fence always names a record. A create then waits for the tenant's Edge session deletions in flight (registered in `audit:legal_hold_inflight:<tenant>`) before it answers.
+- **Cluster-wide scans** run on every master: retention tenant discovery, `GET /api/v1/audit/legal-holds` without a tenant, and the Edge session sweeper.
+
+These guarantees assume `CORDUM_AUDIT_HMAC_KEY` is set: without it, anchors are unsigned and can be forged on a cluster as on a single node. With it, the cluster sweeper skips a tenant whose anchor does not verify instead of building on it, because confirming a forged pending anchor would sign the deletion it names. Verify reports that anchor as `hmac_mismatch`.

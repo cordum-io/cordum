@@ -12,7 +12,7 @@ This pack registers a minimal workflow that dispatches a single worker job on
 ## Run
 
 ```bash
-curl -sS -X POST http://localhost:8081/api/v1/workflows/hello-pack.echo/runs \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/workflows/hello-pack.echo/runs \
   -H "X-API-Key: ${CORDUM_API_KEY:?set CORDUM_API_KEY}" \
   -H "X-Tenant-ID: ${CORDUM_TENANT_ID:-default}" \
   -H "Content-Type: application/json" \

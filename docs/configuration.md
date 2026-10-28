@@ -12,7 +12,7 @@ Compose mounts these files from `config/`:
 - `config/pools.yaml` - topic -> pool routing
 - `config/timeouts.yaml` - per-topic and per-workflow timeouts
 - `config/safety.yaml` - safety kernel policy
-- `config/nats.conf` - NATS server config (JetStream `sync_interval`)
+- `config/nats.dev-tls.conf` (mounted as `/etc/nats/nats.conf`) - NATS server config (JetStream `sync_interval`, TLS with client certificates)
 
 `config/system.yaml` is a sample payload for the config service (budgets, rate limits, observability, alerting). It is not mounted by default; use `POST /api/v1/config` to store it.
 
@@ -29,8 +29,8 @@ Shared across services:
 - `CORDUM_TLS_MIN_VERSION` (`1.2` or `1.3`, default `1.3` in production)
 - `CORDUM_LOG_FORMAT` (`json` or `text`, default `text`)
 - `CORDUM_GRPC_REFLECTION` (set to `1` to enable gRPC reflection, dev only)
-- `NATS_URL` (default `nats://nats:4222`)
-- `REDIS_URL` (compose default `redis://:${REDIS_PASSWORD}@redis:6379` — `REDIS_PASSWORD` is required)
+- `NATS_URL` (default `nats://localhost:4222`; Compose sets `tls://nats:4222` with `NATS_TLS_*`)
+- `REDIS_URL` (default `redis://localhost:6379`; Compose sets `rediss://:${REDIS_PASSWORD}@redis:6379` with `REDIS_TLS_*` — `REDIS_PASSWORD` is required)
 - `NATS_USE_JETSTREAM` (`0|1`)
 - `POOL_CONFIG_PATH`, `TIMEOUT_CONFIG_PATH`
 - `SAFETY_KERNEL_ADDR`
@@ -75,7 +75,8 @@ security notes. The short version:
   `X-Cordum-Agentd-Nonce`. Neither value belongs in Claude settings, managed
   settings, logs, metrics, state, or evidence exports.
 - Hook deadline: generated Claude settings use `CORDUM_AGENTD_HOOK_TIMEOUT=4.5s`
-  so Cordum stays below Claude Code's 5s command-hook deadline.
+  so Cordum answers before the `"timeout": 5` it sets on each command hook
+  (Claude Code's own default is 600s).
 - Modes: `CORDUM_EDGE_POLICY_MODE` accepts `observe`, `enforce`, and
   `enterprise-strict`; `CORDUM_AGENTD_FAIL_CLOSED=true` forces fail-closed
   behavior when local governance cannot respond safely.
@@ -141,9 +142,9 @@ User management endpoints (admin only):
 JetStream fsync cadence is controlled by `sync_interval` in the NATS server
 config. Lower values improve crash durability at the cost of throughput.
 
-- Compose: edit `config/nats.conf`.
+- Compose: edit `config/nats.dev-tls.conf` (mounted as `/etc/nats/nats.conf`).
 - K8s base: edit the `cordum-nats-config` ConfigMap in `deploy/k8s/base.yaml`.
-- Production overlay: edit the `cordum-nats-config` ConfigMap in `deploy/k8s/production/nats.yaml`.
+- Production overlay: edit the `cordum-nats-config` patch in `deploy/k8s/production/patches/nats-config.yaml`.
 - Helm: set `nats.jetstream.syncInterval` in `cordum-helm/values.yaml` (or `--set nats.jetstream.syncInterval=1s`).
 
 For full details, see `docs/DOCKER.md`.

@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -222,6 +223,35 @@ func TestDefaultSANs(t *testing.T) {
 		if !found {
 			t.Errorf("missing IP SAN: %s", ipStr)
 		}
+	}
+}
+
+func TestGenerateAllExtraSANs(t *testing.T) {
+	dir := t.TempDir()
+	extra := []string{"cordum-api-gateway.cordum.svc.cluster.local", "*.example.test", "10.20.30.40", "fd00::7"}
+	if err := GenerateAll(Options{BaseDir: dir, Days: 30, SANs: extra}); err != nil {
+		t.Fatalf("GenerateAll: %v", err)
+	}
+	cert := loadCert(t, filepath.Join(dir, "server/tls.crt"))
+	for _, host := range append([]string{"localhost", "cordum-api-gateway", "127.0.0.1", "api.example.test"}, extra[0], extra[2], extra[3]) {
+		if err := cert.VerifyHostname(host); err != nil {
+			t.Errorf("server cert does not cover %q: %v", host, err)
+		}
+	}
+}
+
+func TestGenerateAllRejectsInvalidSANBeforeWriting(t *testing.T) {
+	for _, san := range []string{"", "two words", "-lead.example", "trail-.example", "a..b", "bad_char.example", "x.", strings.Repeat("a", 64) + ".example"} {
+		t.Run(san, func(t *testing.T) {
+			dir := t.TempDir()
+			err := GenerateAll(Options{BaseDir: dir, Days: 30, SANs: []string{san}})
+			if err == nil || !strings.Contains(err.Error(), "invalid SAN") {
+				t.Fatalf("GenerateAll(SAN %q) error = %v, want invalid SAN", san, err)
+			}
+			if _, statErr := os.Stat(filepath.Join(dir, "ca", "ca.crt")); !os.IsNotExist(statErr) {
+				t.Fatalf("ca.crt written despite invalid SAN (stat err %v)", statErr)
+			}
+		})
 	}
 }
 

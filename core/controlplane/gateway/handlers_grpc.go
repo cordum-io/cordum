@@ -140,7 +140,11 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	// Strip reserved labels from client input (same as HTTP path).
+	// Same label handling as the HTTP path: loud reject for spoofed
+	// governance/multi-agent labels, then strip the rest of the reserved set.
+	if err := rejectReservedGovernanceLabels(payloadReq.Labels); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
 	payloadReq.Labels = stripReservedLabels(payloadReq.Labels)
 
 	// Inject request source for policy rules.
@@ -186,18 +190,17 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		meta.Labels = payloadReq.Labels
 	}
 
-	// Inject agent_id from linked worker credential if not already set.
-	if payloadReq.Labels["agent_id"] == "" && s.agentIdentityStore != nil {
-		if agent, err := s.agentIdentityStore.GetByWorkerID(ctx, principalID); err == nil && agent != nil {
-			if payloadReq.Labels == nil {
-				payloadReq.Labels = map[string]string{}
-			}
-			payloadReq.Labels["agent_id"] = agent.ID
-			if meta.Labels == nil {
-				meta.Labels = map[string]string{}
-			}
-			meta.Labels["agent_id"] = agent.ID
+	// Bind agent_id to the authenticated principal, as the HTTP path does.
+	agentID, err := s.credentialAgentID(ctx, principalID, payloadReq.Labels["agent_id"])
+	if err != nil {
+		return nil, status.Error(codes.PermissionDenied, err.Error())
+	}
+	if agentID != "" {
+		payloadReq.Labels["agent_id"] = agentID
+		if meta.Labels == nil {
+			meta.Labels = map[string]string{}
 		}
+		meta.Labels["agent_id"] = agentID
 	}
 	if s.capProfile.IsProduction() {
 		probe := &pb.JobRequest{

@@ -131,7 +131,7 @@ func (g *GlobalPolicy) RulesForJobWorkflow(workflowID, jobID string) []config.Po
 	}
 	workflowID = strings.TrimSpace(workflowID)
 	jobID = strings.TrimSpace(jobID)
-	invariantDenies, invariantAllows := splitGlobalInvariantRules(g.Invariants)
+	invariantDenies, invariantAllows := splitKernelInvariantRulesByDecision(g.Invariants)
 	rules := make([]config.PolicyRule, 0, len(g.Invariants)+len(g.InputRules))
 	rules = append(rules, invariantDenies...)
 	if jobID != "" {
@@ -204,7 +204,7 @@ func (g *GlobalPolicy) rulesForScopedSection(
 ) []config.PolicyRule {
 	workflowID = strings.TrimSpace(workflowID)
 	jobID = strings.TrimSpace(jobID)
-	invariantDenies, invariantAllows := splitGlobalInvariantRules(g.Invariants)
+	invariantDenies, invariantAllows := splitKernelInvariantRulesByDecision(g.Invariants)
 	rules := make([]config.PolicyRule, 0, len(g.Invariants)+len(globalRules))
 	rules = append(rules, invariantDenies...)
 	if jobID != "" {
@@ -249,17 +249,9 @@ func isEdgeActionRule(rule config.PolicyRule) bool {
 
 // isMCPToolRule reports whether a PolicyRule has any MCP-shaped matcher.
 // Any non-empty allow_*/deny_* field on Match.MCP marks the rule as an
-// MCP-gate rule for the typed view. The kernel's matcher continues to
-// evaluate MCP fields uniformly across all rules — the bucket is just
-// for the GlobalPolicy authoring/inspection surface.
+// MCP-gate rule for the typed view. The kernel's matcher evaluates the same
+// lists (config.MCPRuleMatch) — the bucket is just for the GlobalPolicy
+// authoring/inspection surface.
 func isMCPToolRule(rule config.PolicyRule) bool {
-	mcp := rule.Match.MCP
-	return len(mcp.AllowServers) > 0 ||
-		len(mcp.DenyServers) > 0 ||
-		len(mcp.AllowTools) > 0 ||
-		len(mcp.DenyTools) > 0 ||
-		len(mcp.AllowResources) > 0 ||
-		len(mcp.DenyResources) > 0 ||
-		len(mcp.AllowActions) > 0 ||
-		len(mcp.DenyActions) > 0
+	return rule.Match.MCP.HasLists()
 }

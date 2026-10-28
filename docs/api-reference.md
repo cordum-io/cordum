@@ -24,7 +24,8 @@ SDK/CLI callers using unscoped API keys should omit `org_id` or set it to the se
 
 ## Base URL and Servers
 
-- Gateway HTTP (default): `http://localhost:8081`
+- Gateway (local compose): `https://localhost:8081`. Its certificate is signed by the
+  development CA in `./certs/ca/ca.crt`; pass that to curl with `--cacert`.
 - Metrics server (default): `http://localhost:9092/metrics`
 
 ## Authentication and Tenant Rules
@@ -360,11 +361,11 @@ Common errors:
 ### Example: login + session check
 
 ```bash
-curl -sS -X POST http://localhost:8081/api/v1/auth/login \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"username":"admin","password":"YOUR_API_KEY","tenant":"default"}'
 
-curl -sS http://localhost:8081/api/v1/auth/session \
+curl -sS --cacert ./certs/ca/ca.crt https://localhost:8081/api/v1/auth/session \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default'
 ```
@@ -458,7 +459,7 @@ All endpoints below require admin role and tenant-scoped access.
 ### Example: create user
 
 ```bash
-curl -sS -X POST http://localhost:8081/api/v1/users \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/users \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default' \
   -H 'Content-Type: application/json' \
@@ -535,7 +536,7 @@ All endpoints require admin role.
 ### Example: create API key
 
 ```bash
-curl -sS -X POST http://localhost:8081/api/v1/auth/keys \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/auth/keys \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default' \
   -H 'Content-Type: application/json' \
@@ -732,21 +733,27 @@ Per-tenant immutable retention holds on audit data. All endpoints require admin 
 }
 ```
 
-- `tenant_id` defaults to the server default tenant if omitted
+- `tenant_id` defaults to the caller's tenant if omitted; the caller must have
+  access to it (`403` otherwise)
 - Duplicate hold on same tenant returns `409`
 - Response: `201` with `{"hold": {...}}`
-- Errors: `400` (missing reason), `403` (not entitled), `409` (active hold exists), `500`
+- Errors: `400` (missing reason), `403` (not entitled or no tenant access), `409` (active hold exists), `500`
 
 ### GET `/api/v1/audit/legal-holds`
 
 - Auth: required + admin + LegalHold entitlement
-- Query params: `?tenant=<id>` (optional filter)
+- Query params: `?tenant=<id>` (optional filter; `403` if the caller has no
+  access to that tenant)
+- Returns only holds in tenants the caller can access: its own tenant, or every
+  tenant for a cross-tenant principal
 - Response: `{"holds": [...]}`
 
 ### DELETE `/api/v1/audit/legal-hold/{id}`
 
 - Auth: required + admin + LegalHold entitlement
-- Releases the hold. Does NOT delete retained data — normal TTL resumes.
+- Releases the hold. Does NOT delete retained data — normal retention resumes.
+- A hold in a tenant the caller cannot access returns the same `404` as an
+  unknown ID
 - Response: `{"released": true, "id": "..."}`
 - Errors: `404` (hold not found), `409` (already released), `403`, `500`
 
@@ -801,6 +808,13 @@ Per-tenant immutable retention holds on audit data. All endpoints require admin 
 ```
 
 - Errors: `400`, `403`, `409`, `429`, `503`
+- Labels Cordum sets itself are dropped from `labels` (and logged): keys
+  starting with `_`, any `approval_*` key, `gate_type`, `cordum.bus_msg_id`,
+  `policy.attachment_id`, and the workflow context the workflow engine writes
+  (`workflow_id`, `run_id`, `step_id`, plus `workflow`, `workflow_run_id` and
+  `workflow.*`, which the Safety Kernel reads as the workflow policy scope).
+  The gRPC `SubmitJob` call and the MCP submit tool do the same. Only jobs the
+  workflow engine dispatches belong to a workflow run.
 
 ### GET `/api/v1/jobs`
 
@@ -907,14 +921,14 @@ Per-tenant immutable retention holds on audit data. All endpoints require admin 
 ### Example: submit + fetch job
 
 ```bash
-curl -sS -X POST http://localhost:8081/api/v1/jobs \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/jobs \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default' \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: demo-job-001' \
   -d '{"prompt":"hello","topic":"job.default"}'
 
-curl -sS http://localhost:8081/api/v1/jobs/JOB_ID \
+curl -sS --cacert ./certs/ca/ca.crt https://localhost:8081/api/v1/jobs/JOB_ID \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default'
 ```
@@ -974,11 +988,16 @@ All DLQ endpoints require admin role.
 ```
 
 - Errors: `400`, `403`, `404`, `500`, `503`
+- The retry is a new job built from the original request, workflow link
+  included. The original job's server-owned labels (`approval_*`, `gate_type`,
+  `cordum.bus_msg_id`, `policy.attachment_id`, `run_id`, `step_id` and the
+  workflow scope labels) are not carried over; its own labels and `_` system
+  labels are, plus `retry`, `dlq_entry` and `retry_of_job`.
 
 ### Example: retry DLQ entry
 
 ```bash
-curl -sS -X POST http://localhost:8081/api/v1/dlq/JOB_ID/retry \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/dlq/JOB_ID/retry \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default'
 ```
@@ -1214,7 +1233,7 @@ The `timers` array is omitted when no active delay timers exist for the run. Tim
 ### Example: start workflow run
 
 ```bash
-curl -sS -X POST http://localhost:8081/api/v1/workflows/WF_ID/runs \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/workflows/WF_ID/runs \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default' \
   -H 'Content-Type: application/json' \
@@ -1236,7 +1255,7 @@ curl -sS -X POST http://localhost:8081/api/v1/workflows/WF_ID/runs \
 {
   "items": [
     {
-      "job": { "id": "job-id", "state": "APPROVAL" },
+      "job": { "id": "job-id", "state": "APPROVAL_REQUIRED" },
       "decision": "REQUIRE_APPROVAL",
       "policy_snapshot": "cfg:...",
       "policy_rule_id": "rule-1",
@@ -1504,6 +1523,16 @@ Notes:
 ### POST `/api/v1/policy/explain`
 
 - Auth: required
+- Access:
+  - `evaluate`: any caller who can submit jobs (`jobs.write` with the
+    `admin` or `user` role, as `POST /api/v1/jobs` requires), or `policy.read`
+    or `policy.write` with the `admin` role. It is a read-only check, and a
+    job submitter learns the same decision by submitting. The guard SDKs call
+    it with agent keys. Every call is audited (`policy.evaluate`).
+  - `simulate` and `explain`: `policy.write` with the `admin` role.
+
+  With advanced RBAC the named permission is required as well as the role;
+  without it the role alone decides.
 - Request schema (`policyCheckRequest`):
 
 ```json
@@ -1888,7 +1917,7 @@ Notes:
 ### Example: policy evaluate
 
 ```bash
-curl -sS -X POST http://localhost:8081/api/v1/policy/evaluate \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/policy/evaluate \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default' \
   -H 'Content-Type: application/json' \
@@ -2170,7 +2199,7 @@ Rules:
 ### Example: register and list topics
 
 ```bash
-curl -sS -X POST http://localhost:8081/api/v1/topics \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/topics \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default' \
   -H 'Content-Type: application/json' \
@@ -2185,7 +2214,7 @@ curl -sS -X POST http://localhost:8081/api/v1/topics \
     "status":"active"
   }'
 
-curl -sS http://localhost:8081/api/v1/topics \
+curl -sS --cacert ./certs/ca/ca.crt https://localhost:8081/api/v1/topics \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default'
 ```
@@ -2288,7 +2317,7 @@ Important:
 ### Example: issue and revoke a worker credential
 
 ```bash
-curl -sS -X POST http://localhost:8081/api/v1/workers/credentials \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/workers/credentials \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default' \
   -H 'Content-Type: application/json' \
@@ -2302,7 +2331,7 @@ curl -sS -X POST http://localhost:8081/api/v1/workers/credentials \
     "allowed_topics":["job.sre-investigator.collect.k8s"]
   }'
 
-curl -sS -X DELETE http://localhost:8081/api/v1/workers/credentials/external-worker-01 \
+curl -sS --cacert ./certs/ca/ca.crt -X DELETE https://localhost:8081/api/v1/workers/credentials/external-worker-01 \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default'
 ```
@@ -2431,7 +2460,7 @@ All endpoints in this section require admin role.
 ### Example: list marketplace packs
 
 ```bash
-curl -sS http://localhost:8081/api/v1/marketplace/packs \
+curl -sS --cacert ./certs/ca/ca.crt https://localhost:8081/api/v1/marketplace/packs \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default'
 ```
@@ -2531,7 +2560,7 @@ curl -sS http://localhost:8081/api/v1/marketplace/packs \
   "nats": {
     "connected": true,
     "status": "CONNECTED",
-    "url": "nats://nats:4222"
+    "url": "tls://nats:4222"
   },
   "redis": {
     "ok": true,
@@ -2875,7 +2904,7 @@ Example request:
 ### Example: MCP message call
 
 ```bash
-curl -sS -X POST http://localhost:8081/mcp/message \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/mcp/message \
   -H 'Content-Type: application/json' \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default' \
@@ -3061,7 +3090,7 @@ The following routes are registered in the gateway (`registerRoute` calls). Gene
 
 <!-- BEGIN:rest-routes -->
 
-_Generated from `core/controlplane/gateway/gateway.go`, `core/controlplane/gateway/handlers_mcp.go` (registration order) — do not edit by hand; run `make docs-tables`. 227 routes._
+_Generated from `core/controlplane/gateway/gateway.go`, `core/controlplane/gateway/handlers_mcp.go` (registration order) — do not edit by hand; run `make docs-tables`. 229 routes._
 
 | Method | Path |
 |--------|------|
@@ -3129,6 +3158,7 @@ _Generated from `core/controlplane/gateway/gateway.go`, `core/controlplane/gatew
 | GET | `/api/v1/audit/export/config` |
 | POST | `/api/v1/audit/export/test` |
 | GET | `/api/v1/audit/verify` |
+| POST | `/api/v1/audit/chain/retention-anchor` |
 | GET | `/api/v1/audit/events` |
 | GET | `/api/v1/governance/health` |
 | POST | `/api/v1/audit/legal-hold` |

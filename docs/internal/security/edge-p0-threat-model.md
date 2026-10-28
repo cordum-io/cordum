@@ -162,8 +162,8 @@ Hook/agentd review maps to threats 1, 2, 3, 4, 6, 7, and 8:
   subcommands and routes them through `claude.Run`; stdout/stderr separation is
   enforced by `cmd/cordum-hook/main.go:73-85` and tested by
   `TestRunCLIDelegatesClaudeHookAndKeepsStdoutJSONOnly`.
-- The hook enforces one bounded stdin JSON object, a hook timeout below Claude
-  Code's 5s command-hook deadline, and sanitized stderr errors in
+- The hook enforces one bounded stdin JSON object, a hook timeout below the 5s
+  command-hook `timeout` Cordum generates, and sanitized stderr errors in
   `core/edge/claude/runner.go:27-62`, `:82-120`, and
   `core/edge/claude/hook_input_test.go:14`.
 - P0 uses a local-only loopback agentd HTTP boundary rather than the Week 0 HTTP

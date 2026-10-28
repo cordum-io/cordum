@@ -127,6 +127,11 @@ type ComplianceExportOptions struct {
 	SOC2Legend   map[string]string
 	BundleLookup BundleLookupFn
 	Verifier     ChainVerifierFn
+	// RetentionAnchorKey and HMACKey feed the chain verification (see
+	// VerifyOptions): without the anchor a window that starts at the
+	// retention trim boundary cannot be linked and reads as compromised.
+	RetentionAnchorKey string
+	HMACKey            []byte
 }
 
 // rowMatches reports whether ev passes the configured row filter. Returns true
@@ -345,9 +350,11 @@ func writeNDJSONExport(
 	// Chain verification first so the manifest reflects integrity at
 	// export time. The verifier uses the same time bounds as the walk.
 	verifyOpts := VerifyOptions{
-		SinceMs: timeToMillis(opts.From),
-		UntilMs: timeToMillis(opts.To),
-		Limit:   int64(opts.MaxEvents),
+		SinceMs:            timeToMillis(opts.From),
+		UntilMs:            timeToMillis(opts.To),
+		Limit:              int64(opts.MaxEvents),
+		RetentionAnchorKey: opts.RetentionAnchorKey,
+		HMACKey:            opts.HMACKey,
 	}
 	if verifyOpts.Limit > MaxVerifyLimit {
 		verifyOpts.Limit = MaxVerifyLimit
@@ -525,9 +532,11 @@ func writeCSVExport(
 ) (*ExportManifest, error) {
 	// Verify BEFORE writing so the comment-line manifest is authoritative.
 	verifyOpts := VerifyOptions{
-		SinceMs: timeToMillis(opts.From),
-		UntilMs: timeToMillis(opts.To),
-		Limit:   int64(opts.MaxEvents),
+		SinceMs:            timeToMillis(opts.From),
+		UntilMs:            timeToMillis(opts.To),
+		Limit:              int64(opts.MaxEvents),
+		RetentionAnchorKey: opts.RetentionAnchorKey,
+		HMACKey:            opts.HMACKey,
 	}
 	if verifyOpts.Limit > MaxVerifyLimit {
 		verifyOpts.Limit = MaxVerifyLimit

@@ -39,14 +39,41 @@ Primary code paths:
 Run:
 
 ```bash
-go run ./cmd/cordum-mcp --addr http://localhost:8081 --api-key "$CORDUM_API_KEY"
+go run ./cmd/cordum-mcp --addr https://localhost:8081 --api-key "$CORDUM_API_KEY" --allow-private-gateway
 ```
+
+The default compose stack serves the gateway over HTTPS with a development
+CA (`./certs/ca/ca.crt`). Point `cordum-mcp` at it with
+`--addr https://localhost:8081 --cacert ./certs/ca/ca.crt` (or
+`CORDUM_TLS_CA=./certs/ca/ca.crt`); the CA is trusted in addition to the
+system roots, and certificate verification stays on.
 
 Flags:
 
-- `--addr` (default `http://localhost:8081`)
+- `--addr` (default `http://localhost:8081`; the compose stack needs
+  `https://localhost:8081`)
 - `--api-key` (or `CORDUM_API_KEY`)
+- `--cacert` (or `CORDUM_TLS_CA`, the name `cordumctl` and `cordum-agentd`
+  use): PEM CA certificate(s) the gateway's TLS certificate may chain to,
+  added to the system roots. `cordum-mcp` refuses to start if the file
+  cannot be read or holds no certificate. There is no option to skip
+  verification.
+- `--allow-private-gateway` (or `CORDUM_MCP_ALLOW_PRIVATE_GATEWAY=true`;
+  default `false`): allow a gateway on `localhost` or a private or loopback
+  address. Without it, every gateway call to such an `--addr`, the default
+  included, fails with `target host resolves to private address`.
+- `--gateway-allowlist` (or `CORDUM_MCP_GATEWAY_ALLOWLIST`): comma-separated
+  hosts or domains that the `--addr` host must match. A domain also matches
+  its subdomains. It applies even with `--allow-private-gateway`. See
+  [Endpoint validation](#endpoint-validation).
 - `--request-timeout` (default `30s`)
+
+`cordum-mcp` has no approval gating and no `match.mcp` invariant floor: it
+never holds a tool call for approval or checks it against SecOps invariants,
+in stdio mode or with `MCP_TRANSPORT=http`. Its tools call the gateway's REST
+API, so they rely on the gateway's RBAC for each call and on the Safety Kernel
+for the jobs they create. Connect clients to the gateway's own transport
+(below) to get both.
 
 ### 2) Gateway HTTP + SSE (remote clients)
 
@@ -64,6 +91,37 @@ Routes:
 
 `/mcp/sse` returns `X-MCP-Session-ID`. Clients can send `X-MCP-Session-ID` on
 `/mcp/message` to correlate session responses.
+Each session is bound to the authenticated caller that opened it (tenant and
+principal, plus the API key or login session used), so a `/mcp/message` naming
+an unknown session or another caller's session gets HTTP `404` with JSON-RPC
+error `-32001` (`session not found`); reconnect to `/mcp/sse` for a new id.
+Signing in again creates a new login session, so a client that re-authenticates
+with a login session also reconnects. JWT and OIDC callers are bound by tenant
+and principal, so a refreshed token keeps the session.
+
+A new login session token does not inherit the previous token's MCP stream,
+even for the same tenant and principal. After signing in again or rotating an
+API key, reopen `/mcp/sse` with the new credential and use its new session ID.
+Refreshing a JWT with the same verified tenant and principal does not by
+itself change stream ownership; JWT ownership does not include the raw token.
+
+### 3) `cordum-mcp` over HTTP + SSE
+
+`MCP_TRANSPORT=http` serves the stdio tool set on `/sse` and `/message`,
+calling the gateway with this process's `--api-key`. Anyone who can reach the
+listener acts with that key, so:
+
+- `MCP_HTTP_ADDR` defaults to `127.0.0.1:8090` (loopback only).
+- `--http-auth-token` (or `CORDUM_MCP_HTTP_AUTH_TOKEN`, which keeps the token
+  out of process listings) makes every request send
+  `Authorization: Bearer <token>`; anything else gets HTTP `401`.
+- A non-loopback `MCP_HTTP_ADDR` without a token refuses to start unless
+  `--allow-unauthenticated-http` is passed, which logs a loud warning.
+
+```bash
+MCP_TRANSPORT=http MCP_HTTP_ADDR=:8090 CORDUM_MCP_HTTP_AUTH_TOKEN="$(openssl rand -hex 32)" \
+  cordum-mcp --addr https://gateway.example.com --api-key "$CORDUM_API_KEY"
+```
 
 ### Policy Gate + Approval Hold (EDGE-102 / EDGE-103)
 
@@ -147,10 +205,69 @@ an `_approval_ref` field referencing a previously-minted Edge
 approval. The server-reserved field is stripped before the upstream
 handler sees the args, and the approval is consumed atomically through
 `edge.RedisStore.ClaimApproval` with the bundle-updated-at timestamp
-as the consume-time `PolicySnapshot`. Lifecycle conflicts (rejected /
+as the consume-time `PolicySnapshot`. While no policy config document
+exists (a fresh install), approvals bind to the snapshot `empty-policy`
+instead, so creating the first policy invalidates them like any later
+policy change. Lifecycle conflicts (rejected /
 expired / consumed / args_mismatch / policy_mismatch / self_approval /
 cross_tenant / not_found) surface as JSON-RPC `-32096` with
-`error.data.kind` carrying the typed conflict family.
+`error.data.kind` carrying the typed conflict family. A consumed claim
+is that call's approval: the registry's `RequiresApproval` gate and a
+policy-gate `REQUIRE_HUMAN` let the call run instead of asking again
+(a `DENY` still wins). The claim is single-use, so a second retry with
+the same `_approval_ref` is refused.
+
+The consume path is wired only when `mcp.policy_gate_enabled=true`; the
+`mcp.policy_gate wired` boot line reports it as `approval_hold_active`.
+The `-32099` reply's `retry_hint` names the retry that works:
+`retry_with_approval_ref` while the hold is wired, `retry_with_same_args`
+without it. With the flag off, the registry's `RequiresApproval` gate
+still holds the call, but nothing consumes `_approval_ref`: a retry that
+carries it is held as a new call and gets a new approval. Retry with the
+same args and no `_approval_ref` instead; once the approval is approved,
+that retry claims it and runs the call once.
+
+Both mint paths (the registry's `RequiresApproval` gate and the
+policy gate's `REQUIRE_HUMAN` handoff) first record an
+`approval.requested` event in the caller's Edge execution and bind the
+approval to it, as the Edge hook path binds to its decision event. A
+retry seldom runs in the minting Edge session: a `/mcp/message` POST
+that names no MCP session (a `"type": "http"` client) runs in its own
+one-shot Edge session. The claim therefore binds to the approval's own
+session, execution and parent event, but only when the approval was
+minted for the same caller (same API key or login and the same
+principal) acting as the same agent. The args, policy snapshot, status,
+expiry and self-approval checks still apply, and a claim for anyone
+else's approval is refused.
+
+The registry's `RequiresApproval` gate dual-writes each Edge approval
+with a record on the MCP approvals page. Approving or rejecting either
+one resolves both, and the other page then answers `409`. The Edge
+approval is the pair's single consume token: a retry with the same args
+and no `_approval_ref` claims it too, so one approval runs the call once
+whichever way the client retries.
+
+A client that asks again without `_approval_ref` while its approval is
+still pending gets that approval back instead of a new one, when the
+requester identity, agent, tool, args and policy snapshot all match.
+Once a reviewer resolves the approval, it is no longer reused. Another
+requester asking for the same call gets their own approval.
+
+An SSE session records its calls in the Edge session with its own id,
+in execution `mcp-<id>`. The Edge store caps the events of an execution
+and the executions of a session, and an approval can only be minted or
+claimed while its execution holds at most 500 events. So a long-lived
+SSE session moves on before it reaches them: its next call goes to a
+new execution (`mcp-<id>.e1`, ...) once the current one holds 80% of
+the smaller of the event cap and 500, and to a new Edge session
+(`<id>.s1`, ..., labelled `mcp_session_id=<id>`) once the current
+session holds its last execution. Earlier sessions and executions stay
+running, so an approval minted before a rotation is still claimed
+through `_approval_ref`, and the session's prompt-injection taint is
+kept for the MCP session, not its current Edge session. A POST that names
+no MCP session keeps its taint per caller and agent, the same key as its
+Copilot session, so a client cannot shed a taint by not keeping a
+session.
 
 #### Retry dedupe
 
@@ -178,13 +295,27 @@ process restarts; error outcomes delete the entry so the next retry
 fires a fresh upstream attempt (transient transport failures do not
 become sticky).
 
-**Cross-process scope**: today's gateway is single-instance per
-deployment unit, so the in-process `sync.Map` is sufficient. A
-multi-instance HA gateway behind a load balancer would need a Redis
-SETNX-backed `DedupeStore` for cross-process collapse; this is
-tracked as a follow-up Moe task (PR #276 Sub-B deferred) — when
-adopted, the in-process backend stays the default and the Redis
-backend is gated by `CORDUM_MCP_DEDUPE_BACKEND=redis`.
+**Cross-process scope**: when the gateway has Redis it keeps the dedupe
+slots in a Redis SETNX-backed `DedupeStore` (entries expire after
+`MCPDedupeTTL`, 10 minutes), so replicas behind a load balancer collapse
+the same retry. `CORDUM_MCP_DEDUPE_BACKEND=memory` keeps them in process,
+as does a gateway without Redis.
+
+#### Evidence write failures
+
+If the Edge store fails to append a call's `mcp.tool.post` or
+`mcp.tool.failed` event after the call ran upstream, the client still
+gets the call's own result or tool error: reporting the call as failed
+would invite a retry that runs it again. As on the Edge hook path, the
+gap is surfaced instead. The gateway logs `mcp.tool.evidence_write_failed`
+with the detail, counts it in
+`cordum_mcp_evidence_write_failures_total{kind}`, and marks the call's
+`mcp.tool_invocation` audit event with `evidence_write_failed=<kind>`.
+
+JSON-RPC errors caused by Cordum's own stores (Edge events, approvals,
+artifacts) carry a fixed message, such as `internal error` or
+`approval store unavailable`. The detail, which can name internal ids
+such as Edge execution ids, is in the gateway log.
 
 
 ## Upstream Server Registry (EDGE-101)
@@ -201,9 +332,9 @@ Each registry entry stores:
 
 - `name` - stable upstream identifier (`A-Z`, `a-z`, `0-9`, `.`, `-`).
 - `transport` - one of `http`, `sse`, or `stdio`.
-- `endpoint` - HTTPS/HTTP URL for remote transports. Enterprise-strict mode
-  rejects unsafe local endpoints and rejects any host that resolves to loopback
-  or unspecified IPs.
+- `endpoint` - URL for the `http` and `sse` transports. It must be `https://`,
+  and internal or cloud-metadata hosts are rejected in every policy mode (see
+  [Endpoint validation](#endpoint-validation)).
 - `command` - shell-free argv vector for `stdio`; shell metacharacters such as
   `;`, `&&`, pipes, redirects, backticks, and `$(` are rejected.
 - `tenant_id` - tenant scope; `*` is reserved for system-wide entries and
@@ -235,9 +366,59 @@ emit only redacted error details.
 | `POST` | `/api/v1/edge/mcp/upstreams/{name}/disable` | Disable an entry without deleting it. |
 | `POST` | `/api/v1/edge/mcp/upstreams/{name}/enable` | Re-enable a disabled entry. |
 
-Create/update validation rejects raw secret refs, unsafe strict-mode endpoints,
-invalid transports, unsafe `stdio` argv elements, name/tenant key escapes, and
-enterprise-strict entries that are not allowlisted.
+Create, update and validate-only requests reject an `auth_secret_ref` that is
+not a `secret://` reference, an unsafe endpoint (in every mode), a transport
+other than `http`, `sse` or `stdio`, empty or shell-metacharacter `stdio` argv
+elements, a name or a tenant ID (other than `*`) outside `[A-Za-z0-9.-]`
+(first character alphanumeric), an unknown `risk`, and, in enterprise-strict
+mode, a name that is not allowlisted.
+
+### Endpoint validation
+
+`core/edge/mcp_upstream_validation.go` checks `http` and `sse` endpoints in
+every policy mode:
+
+- The URL needs a scheme and a host, and the scheme must be `https`. Plain
+  `http` is rejected unless trusted tenant config sets
+  `safety.mcp.allow_plain_http: true`. The opt-in covers `?validate_only=true`,
+  create and update. The Redis-backed registry validates again on create and
+  update, and the gateway passes it the same opt-in.
+- Cloud-metadata hostnames are rejected before any DNS lookup:
+  `metadata.google.internal`, `metadata.azure.com` and
+  `instance-data.ec2.internal` (case-insensitive, trailing dot ignored).
+- `localhost` is rejected, and so is any IP literal or resolved address in an
+  internal range: loopback (`127.0.0.0/8`, `::1`), "this network"
+  (`0.0.0.0/8`) and IPv6 unspecified (`::`), RFC 1918 (`10.0.0.0/8`,
+  `172.16.0.0/12`, `192.168.0.0/16`), carrier-grade NAT (`100.64.0.0/10`),
+  link-local (`169.254.0.0/16`, which includes the cloud metadata IP
+  `169.254.169.254`, and `fe80::/10`), IPv6 unique-local (`fc00::/7`) and
+  multicast. These are the same IPv4 and IPv6 ranges the gateway guard below
+  rejects. IPv4-mapped IPv6 addresses are checked as IPv4. One internal
+  address among a host's DNS answers is enough to reject it. There is no
+  opt-in for private upstreams. Tailscale gives tailnet devices addresses in
+  `100.64.0.0/10`, so an upstream hosted on a tailnet needs a public
+  endpoint.
+- A failed DNS lookup rejects the endpoint only in enterprise-strict mode.
+
+The addresses a host resolves to at registration are stored as
+`resolved_ips`. Right before Cordum dials an upstream,
+`RevalidateMCPUpstreamAtUse` resolves the host again and refuses the call if
+the host is a cloud-metadata name, the lookup fails, any address is internal,
+or the set of addresses differs from `resolved_ips` (DNS-rebinding
+protection). An entry stored without `resolved_ips` is therefore never dialed.
+`stdio` entries skip the use-time check.
+
+The `cordum-mcp` server's own calls to the gateway (`--addr`) go through a
+separate guard, `core/mcp/url_guard.go`. The scheme must be `http` or `https`,
+and the host must match `--gateway-allowlist` (`CORDUM_MCP_GATEWAY_ALLOWLIST`)
+when one is set. Unless `--allow-private-gateway`
+(`CORDUM_MCP_ALLOW_PRIVATE_GATEWAY=true`) is set, the host must not be
+`localhost` or `metadata.google.internal`, must resolve, and must not resolve
+to `0.0.0.0/8`, `10.0.0.0/8`, `100.64.0.0/10`, `127.0.0.0/8`,
+`169.254.0.0/16`, `172.16.0.0/12`, `192.168.0.0/16`, `::1`, `fe80::/10`,
+`fc00::/7` or a multicast address. The connection is then pinned to the
+checked addresses. A local gateway such as
+`https://localhost:8081` therefore needs `--allow-private-gateway`.
 
 ### `cordumctl mcp upstream`
 
@@ -261,10 +442,14 @@ provider API keys or bearer tokens on the command line.
 
 ### Enterprise-strict allowlist
 
-In enterprise-strict mode, registry writes are allowed only when the upstream
-`name` appears in the effective MCP allowlist (`safety.mcp.allowed_upstreams`,
-or the handler's explicit validation query parameters in tests/tools). This
-prevents unmanaged upstreams from being introduced by local attach flows.
+The policy mode comes only from trusted tenant config: `safety.mcp.policy_mode`
+(`enterprise-strict`), which defaults to enterprise-strict when
+`safety.mcp.allowed_upstreams` is set. Requests that pass `policy_mode`,
+`allowed_upstream`, `allowed_upstreams` or `allow_plain_http` as query
+parameters are rejected with 400. In enterprise-strict mode, registry writes
+are allowed only when the upstream `name` appears in
+`safety.mcp.allowed_upstreams`. This prevents unmanaged upstreams from being
+introduced by local attach flows.
 
 ### Backup-on-update
 
@@ -980,7 +1165,7 @@ Response example:
 Quick status check:
 
 ```bash
-curl -sS http://localhost:8081/mcp/status \
+curl -sS --cacert ./certs/ca/ca.crt https://localhost:8081/mcp/status \
   -H "X-API-Key: $CORDUM_API_KEY" \
   -H "X-Tenant-ID: default"
 ```
@@ -994,7 +1179,7 @@ curl -sS http://localhost:8081/mcp/status \
   "mcpServers": {
     "cordum": {
       "command": "cordum-mcp",
-      "args": ["--addr", "http://localhost:8081"],
+      "args": ["--addr", "https://localhost:8081", "--allow-private-gateway"],
       "env": {
         "CORDUM_API_KEY": "replace-with-api-key"
       }
@@ -1006,13 +1191,13 @@ curl -sS http://localhost:8081/mcp/status \
 ### Claude Code CLI
 
 ```bash
-claude mcp add cordum -- cordum-mcp --addr http://localhost:8081
+claude mcp add cordum -- cordum-mcp --addr https://localhost:8081 --allow-private-gateway
 ```
 
 ### HTTP/SSE test call
 
 ```bash
-curl -sS -X POST http://localhost:8081/mcp/message \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/mcp/message \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $CORDUM_API_KEY" \
   -H "X-Tenant-ID: default" \
@@ -1022,7 +1207,8 @@ curl -sS -X POST http://localhost:8081/mcp/message \
 ### TypeScript custom client (HTTP mode)
 
 ```ts
-const res = await fetch("http://localhost:8081/mcp/message", {
+// Node: start with NODE_EXTRA_CA_CERTS=./certs/ca/ca.crt to trust the dev CA.
+const res = await fetch("https://localhost:8081/mcp/message", {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
@@ -1042,22 +1228,36 @@ console.log(payload);
 
 ## Dashboard Configuration
 
-The dashboard provides a full MCP management UI at **Settings > MCP Server** (`/settings/mcp`).
+**Settings > MCP Server** (`/settings/mcp`) shows the MCP server's state:
 
-### Setup Flow
+- **Status**: running or not, connected clients, uptime, and the configured
+  transport. A warning card appears while MCP is disabled. `/mcp/*` always
+  requires authentication (see [HTTP/SSE mode](#httpsse-mode)); the gateway
+  does not read `mcp.require_auth`, so the page does not show it.
+- **Tools and Resources**: the registered MCP tools (e.g. `cordum_submit_job`)
+  and resources (e.g. `cordum://jobs/{id}`), each marked enabled or disabled.
+  The lists are read-only; change them with the config API below.
+- **Enable runtime / Disable runtime** sets `mcp.enabled`.
+- **Copy URL** copies the gateway's MCP SSE endpoint, `/mcp/sse`, on the
+  origin of the dashboard's API base URL: `CORDUM_API_BASE_URL` when it is an
+  absolute URL, else the dashboard's own origin. The bundled dashboard nginx
+  proxies `/mcp/` to the gateway the same way as `/api/`, unbuffered for SSE,
+  so in the default compose stack the copied URL is
+  `http://localhost:8082/mcp/sse` (plain HTTP, like the dashboard). Send the
+  same `X-API-Key` and `X-Tenant-ID` headers as on the gateway. The K8s
+  ingress manifests route `/mcp` to the gateway. The Helm chart defaults
+  `dashboard.env.apiBaseUrl` to `/api/v1`, so the URL is on the dashboard
+  host, whose nginx proxies `/mcp/` the same way. Keep the API base on the
+  dashboard's origin: its CSP (`connect-src 'self'`) blocks API calls to any
+  other origin.
+  `mcp.port` is metadata only: nothing listens on it, so the page does not
+  show it.
 
-1. **Enable MCP**: Navigate to `/settings/mcp` and toggle **Enable MCP Server** on.
-2. **Configure transport**: Expand the Transport Configuration card and choose a mode:
-   - **HTTP + SSE** (recommended) — for remote Claude Desktop / Claude Code connections
-   - **stdio** — for local process integration
-   - **Both** — enable both simultaneously
-   Set the HTTP port (default 3001) and allowed CORS origins as needed, then click **Save Transport Settings**.
-3. **Set up authentication**: In the Authentication card, ensure **Require API Key** is on, then click **Generate MCP API Key**. Copy the generated secret immediately — it is only shown once.
-4. **Copy config snippet**: The Quick Start card provides ready-to-paste snippets:
-   - **Claude Desktop**: JSON for `claude_desktop_config.json`
-   - **Claude Code**: CLI command `claude mcp add cordum -- cordum-mcp --addr http://localhost:3001`
-5. **Verify connection**: The status indicator in the page header turns green when the MCP server is running. It shows the connected client count and uptime.
-6. **Manage tools and resources**: The Tools and Resources tables let you enable or disable individual MCP tools (e.g., `cordum_submit_job`) and resources (e.g., `cordum://jobs/{id}`) with per-item toggles. Expand any tool row to preview its input schema.
+The page has no client config snippets. Create an API key under
+**Settings > API Keys** (`/settings/keys`), then configure the client as in
+[Integration Examples](#integration-examples), which point `cordum-mcp` at the
+gateway with `--addr https://localhost:8081 --allow-private-gateway`
+(and the CA trust described under [Transport Modes](#transport-modes)).
 
 ### API-based Configuration
 
@@ -1099,17 +1299,23 @@ The canonical client attach / upstream-forwarding endpoint is
 | --- | --- | --- |
 | `GET` | `/api/v1/mcp/gateway/health` | Always 200; body `{status, gateway_enabled, component}`. Never touches the store — safe operator probe even when disabled. |
 | `GET` | `/api/v1/mcp/gateway/config` | Returns redacted per-tenant config `{gateway_enabled, upstream_count, upstream_forwarding}`. Never echoes upstream credentials or tokens. |
-| `POST` | `/api/v1/mcp/gateway/upstream/*` | 503 always in P1: `gateway_disabled` when `MCPPolicy.GatewayEnabled` is false (default, zero Edge records); `no_upstream_configured` when true but registry empty (EDGE-101 populates), with `session_id` + `execution_id` correlation IDs and a persisted `mcp.server.failed` event. |
+| `POST` | `/api/v1/mcp/gateway/upstream/*` | 503 always in P1: `gateway_disabled` on every tenant, with zero Edge records, because the per-tenant flag is not read yet (see below). The `no_upstream_configured` branch (flag on but registry empty, with `session_id` + `execution_id` correlation IDs and a persisted `mcp.server.failed` event) is unreachable until EDGE-101. |
 | `POST` | `/api/v1/mcp/gateway/clients/connect` | Creates EdgeSession + AgentExecution attributed to the **resolved** tenant + principal — NEVER body claims. Emits `mcp.server.connected` only after the event is durably appended. Storage failures before or during evidence creation return 500 and are logged structurally. |
 
 ### Per-tenant enable flag
 
-`MCPPolicy.GatewayEnabled` (defined in `core/infra/config/mcp.go`)
-controls the upstream-forwarding family per tenant. Default `false` ships
-fail-closed per DoD #1 — the upstream route family returns 503 on every
-tenant until EDGE-101 wires the per-tenant config lookup. Health and
-config routes remain reachable regardless so operators can probe a
-disabled deployment.
+`MCPPolicy.GatewayEnabled` (`tenants.<tenant>.mcp.gateway_enabled`, defined
+in `core/infra/config/mcp.go`) is meant to control the upstream-forwarding
+family per tenant. It is reserved and not enforced yet: the gateway
+hard-codes the lookup to `false` (TODO EDGE-101 in
+`core/controlplane/gateway/gateway.go`), so the upstream route family returns
+503 on every tenant whatever the policy says. The same holds for
+`tenants.<tenant>.mcp.upstream_servers` and `allowed_upstreams`: the policy
+schema accepts them, nothing reads them, and the Safety Kernel logs a warning
+when a loaded policy sets any of them. Upstreams are registered through
+`/api/v1/edge/mcp/upstreams` and governed by the config-service
+`safety.mcp.*` settings described above. Health and config routes remain
+reachable regardless so operators can probe a disabled deployment.
 
 ### Tenant/principal attribution contract
 

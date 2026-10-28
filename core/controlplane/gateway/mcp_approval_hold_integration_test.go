@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -71,21 +73,17 @@ func TestApprovalHoldMintConsumeIntegration_Miniredis(t *testing.T) {
 		tenantID    = "tnt_a"
 		sessionID   = "sess_hold_integration"
 		executionID = "exec_hold_integration"
-		eventID     = "agent_alpha" // mint side stores meta.AgentID as EventID; consume side echoes
+		eventID     = "agent_alpha" // the agent id; the mint records the approval's parent event itself
 		principalID = "alice"
 		toolName    = "fs.write"
 		serverName  = "cordum.builtin"
 	)
 	ctx := context.Background()
 
-	// Seed the EdgeSession + AgentExecution + AgentActionEvent parents
-	// that EnqueueApproval validates against. The parent event's
-	// (InputHash, PolicySnapshot) MUST match what the mint produces or
-	// validateApprovalEventBinding refuses with input_hash_mismatch.
+	// Seed the EdgeSession + AgentExecution the MCP middleware creates;
+	// the mint records the approval.requested parent event itself.
 	args := json.RawMessage(`{"path":"/etc/hostname","contents":"hi"}`)
-	_, expectedInputHash := mcp.BuildMCPApprovalBinding(tenantID, serverName,
-		mcp.ToolCallParams{Name: toolName, Arguments: args}, "policy-v7")
-	seedApprovalParents(t, ctx, edgeStore, tenantID, sessionID, executionID, eventID, principalID, base, expectedInputHash)
+	seedApprovalParents(t, ctx, edgeStore, tenantID, sessionID, executionID, principalID, base)
 
 	gate := &gatewayApprovalGate{
 		store:          &MCPApprovalStore{},
@@ -94,11 +92,11 @@ func TestApprovalHoldMintConsumeIntegration_Miniredis(t *testing.T) {
 		serverName:     serverName,
 	}
 
-	// Mint context carries the requester principal. The consume side
-	// uses a DIFFERENT principal (`consumerPrincipal`) so the store's
-	// "caller is requester" self-approval guard doesn't fire — that
-	// check is separate from the InputHash binding this test pins.
-	const consumerPrincipal = "agent-runner"
+	// Mint context carries the requester principal. The consume side is
+	// the same caller retrying: the production claim store binds a claim
+	// to the approval's parent event only for the caller and agent it was
+	// minted for.
+	const consumerPrincipal = principalID // the same caller retries
 	ctxMeta := mcp.WithCallMetadata(ctx, mcp.CallMetadata{
 		Tenant:      tenantID,
 		Principal:   principalID,
@@ -150,7 +148,7 @@ func TestApprovalHoldMintConsumeIntegration_Miniredis(t *testing.T) {
 	// the real edge.RedisStore. Must NOT surface ArgsMismatch.
 	resumeArgs := json.RawMessage(`{"path":"/etc/hostname","contents":"hi","_approval_ref":"` + ref + `"}`)
 	outcome, err := mcp.ProcessApprovalClaim(consumeCtx, mcp.ApprovalHoldDeps{
-		Store:          edgeStore,
+		Store:          mcpApprovalClaims{store: edgeStore},
 		PolicySnapshot: func(context.Context) string { return "policy-v7" },
 		ServerName:     serverName,
 	}, mcp.ToolCallParams{Name: toolName, Arguments: resumeArgs})
@@ -171,7 +169,7 @@ func TestApprovalHoldMintConsumeIntegration_Miniredis(t *testing.T) {
 	// NEGATIVE PATH: mutated args MUST surface kind=args_mismatch. Mint
 	// a fresh approval (the first one is already consumed) and resume
 	// with different args.
-	seedApprovalParents(t, ctx, edgeStore, tenantID, sessionID+"_neg", executionID+"_neg", eventID, principalID, base, expectedInputHash)
+	seedApprovalParents(t, ctx, edgeStore, tenantID, sessionID+"_neg", executionID+"_neg", principalID, base)
 	negCtx := mcp.WithCallMetadata(ctx, mcp.CallMetadata{
 		Tenant:      tenantID,
 		Principal:   principalID,
@@ -210,7 +208,7 @@ func TestApprovalHoldMintConsumeIntegration_Miniredis(t *testing.T) {
 
 	mutatedArgs := json.RawMessage(`{"path":"/etc/passwd","contents":"hi","_approval_ref":"` + negRef + `"}`)
 	negOutcome, err := mcp.ProcessApprovalClaim(negConsumeCtx, mcp.ApprovalHoldDeps{
-		Store:          edgeStore,
+		Store:          mcpApprovalClaims{store: edgeStore},
 		PolicySnapshot: func(context.Context) string { return "policy-v7" },
 		ServerName:     serverName,
 	}, mcp.ToolCallParams{Name: toolName, Arguments: mutatedArgs})
@@ -232,7 +230,7 @@ func TestApprovalHoldMintConsumeIntegration_Miniredis(t *testing.T) {
 	// MUST fail with kind=not_found-or-similar. Tests the consume-once
 	// contract under the real CAS path.
 	dupOutcome, err := mcp.ProcessApprovalClaim(consumeCtx, mcp.ApprovalHoldDeps{
-		Store:          edgeStore,
+		Store:          mcpApprovalClaims{store: edgeStore},
 		PolicySnapshot: func(context.Context) string { return "policy-v7" },
 		ServerName:     serverName,
 	}, mcp.ToolCallParams{Name: toolName, Arguments: resumeArgs})
@@ -244,11 +242,10 @@ func TestApprovalHoldMintConsumeIntegration_Miniredis(t *testing.T) {
 	}
 }
 
-// seedApprovalParents creates the EdgeSession + AgentExecution +
-// AgentActionEvent records that edge.RedisStore.EnqueueApproval
-// validates against. Without these the store rejects the enqueue
-// before the tuple is even stored.
-func seedApprovalParents(t *testing.T, ctx context.Context, store *edge.RedisStore, tenantID, sessionID, executionID, eventID, principalID string, base time.Time, inputHash string) {
+// seedApprovalParents creates the EdgeSession + AgentExecution records the
+// MCP middleware (ensureMCPHTTPTraceParents) creates in production. The
+// approval.requested parent event is recorded by the mint itself.
+func seedApprovalParents(t *testing.T, ctx context.Context, store *edge.RedisStore, tenantID, sessionID, executionID, principalID string, base time.Time) {
 	t.Helper()
 	if err := store.CreateSession(ctx, edge.EdgeSession{
 		SessionID:         sessionID,
@@ -278,25 +275,6 @@ func seedApprovalParents(t *testing.T, ctx context.Context, store *edge.RedisSto
 		StartedAt:      base.Add(time.Second),
 	}); err != nil {
 		t.Fatalf("CreateExecution: %v", err)
-	}
-	// EnqueueApproval requires a parent AgentActionEvent for binding.
-	if _, err := store.AppendEvent(ctx, edge.AgentActionEvent{
-		EventID:        eventID,
-		SessionID:      sessionID,
-		ExecutionID:    executionID,
-		TenantID:       tenantID,
-		PrincipalID:    principalID,
-		Timestamp:      base.Add(2 * time.Second),
-		Layer:          edge.LayerMCP,
-		Kind:           edge.EventKindApprovalRequested,
-		ActionName:     "fs.write",
-		ToolName:       "fs.write",
-		Decision:       edge.DecisionRequireApproval,
-		Status:         edge.ActionStatusBlocked,
-		InputHash:      inputHash,
-		PolicySnapshot: "policy-v7",
-	}); err != nil {
-		t.Fatalf("AppendEvent parent: %v", err)
 	}
 }
 
@@ -360,11 +338,9 @@ func TestApprovalHoldIntegration_RejectedReturns32096(t *testing.T) {
 		serverName  = "cordum.builtin"
 	)
 	args := json.RawMessage(`{"path":"/etc/hostname","contents":"hi"}`)
-	_, inputHash := mcp.BuildMCPApprovalBinding(tenantID, serverName,
-		mcp.ToolCallParams{Name: toolName, Arguments: args}, "policy-v7")
-	seedApprovalParents(t, h.ctx, h.edgeStore, tenantID, sessionID, executionID, eventID, principalID, h.base, inputHash)
+	seedApprovalParents(t, h.ctx, h.edgeStore, tenantID, sessionID, executionID, principalID, h.base)
 
-	const consumerPrincipal = "agent-runner"
+	const consumerPrincipal = principalID // the same caller retries
 	mintCtx := mcp.WithCallMetadata(h.ctx, mcp.CallMetadata{
 		Tenant: tenantID, Principal: principalID, AgentID: eventID,
 		SessionID: sessionID, ExecutionID: executionID,
@@ -400,7 +376,7 @@ func TestApprovalHoldIntegration_RejectedReturns32096(t *testing.T) {
 
 	resumeArgs := json.RawMessage(`{"path":"/etc/hostname","contents":"hi","_approval_ref":"` + ref + `"}`)
 	outcome, err := mcp.ProcessApprovalClaim(consumeCtx, mcp.ApprovalHoldDeps{
-		Store:          h.edgeStore,
+		Store:          mcpApprovalClaims{store: h.edgeStore},
 		PolicySnapshot: func(context.Context) string { return "policy-v7" },
 		ServerName:     serverName,
 	}, mcp.ToolCallParams{Name: toolName, Arguments: resumeArgs})
@@ -452,11 +428,9 @@ func TestApprovalHoldIntegration_ExpiredReturns32096(t *testing.T) {
 		serverName  = "cordum.builtin"
 	)
 	args := json.RawMessage(`{"path":"/etc/hostname","contents":"hi"}`)
-	_, inputHash := mcp.BuildMCPApprovalBinding(tenantID, serverName,
-		mcp.ToolCallParams{Name: toolName, Arguments: args}, "policy-v7")
-	seedApprovalParents(t, h.ctx, h.edgeStore, tenantID, sessionID, executionID, eventID, principalID, h.base, inputHash)
+	seedApprovalParents(t, h.ctx, h.edgeStore, tenantID, sessionID, executionID, principalID, h.base)
 
-	const consumerPrincipal = "agent-runner"
+	const consumerPrincipal = principalID // the same caller retries
 	mintCtx := mcp.WithCallMetadata(h.ctx, mcp.CallMetadata{
 		Tenant: tenantID, Principal: principalID, AgentID: eventID,
 		SessionID: sessionID, ExecutionID: executionID,
@@ -490,7 +464,7 @@ func TestApprovalHoldIntegration_ExpiredReturns32096(t *testing.T) {
 
 	resumeArgs := json.RawMessage(`{"path":"/etc/hostname","contents":"hi","_approval_ref":"` + ref + `"}`)
 	outcome, err := mcp.ProcessApprovalClaim(consumeCtx, mcp.ApprovalHoldDeps{
-		Store:          h.edgeStore,
+		Store:          mcpApprovalClaims{store: h.edgeStore},
 		PolicySnapshot: func(context.Context) string { return "policy-v7" },
 		ServerName:     serverName,
 	}, mcp.ToolCallParams{Name: toolName, Arguments: resumeArgs})
@@ -527,11 +501,9 @@ func TestApprovalHoldIntegration_PolicyMismatchReturns32096(t *testing.T) {
 		serverName  = "cordum.builtin"
 	)
 	args := json.RawMessage(`{"path":"/etc/hostname","contents":"hi"}`)
-	_, inputHash := mcp.BuildMCPApprovalBinding(tenantID, serverName,
-		mcp.ToolCallParams{Name: toolName, Arguments: args}, "policy-v7")
-	seedApprovalParents(t, h.ctx, h.edgeStore, tenantID, sessionID, executionID, eventID, principalID, h.base, inputHash)
+	seedApprovalParents(t, h.ctx, h.edgeStore, tenantID, sessionID, executionID, principalID, h.base)
 
-	const consumerPrincipal = "agent-runner"
+	const consumerPrincipal = principalID // the same caller retries
 	mintCtx := mcp.WithCallMetadata(h.ctx, mcp.CallMetadata{
 		Tenant: tenantID, Principal: principalID, AgentID: eventID,
 		SessionID: sessionID, ExecutionID: executionID,
@@ -564,7 +536,7 @@ func TestApprovalHoldIntegration_PolicyMismatchReturns32096(t *testing.T) {
 	// mint time (policy-v7) MUST refuse this claim.
 	resumeArgs := json.RawMessage(`{"path":"/etc/hostname","contents":"hi","_approval_ref":"` + ref + `"}`)
 	outcome, err := mcp.ProcessApprovalClaim(consumeCtx, mcp.ApprovalHoldDeps{
-		Store:          h.edgeStore,
+		Store:          mcpApprovalClaims{store: h.edgeStore},
 		PolicySnapshot: func(context.Context) string { return "policy-v8" },
 		ServerName:     serverName,
 	}, mcp.ToolCallParams{Name: toolName, Arguments: resumeArgs})
@@ -602,11 +574,9 @@ func TestApprovalHoldIntegration_ConcurrentConsume(t *testing.T) {
 		serverName  = "cordum.builtin"
 	)
 	args := json.RawMessage(`{"path":"/etc/hostname","contents":"hi"}`)
-	_, inputHash := mcp.BuildMCPApprovalBinding(tenantID, serverName,
-		mcp.ToolCallParams{Name: toolName, Arguments: args}, "policy-v7")
-	seedApprovalParents(t, h.ctx, h.edgeStore, tenantID, sessionID, executionID, eventID, principalID, h.base, inputHash)
+	seedApprovalParents(t, h.ctx, h.edgeStore, tenantID, sessionID, executionID, principalID, h.base)
 
-	const consumerPrincipal = "agent-runner"
+	const consumerPrincipal = principalID // the same caller retries
 	mintCtx := mcp.WithCallMetadata(h.ctx, mcp.CallMetadata{
 		Tenant: tenantID, Principal: principalID, AgentID: eventID,
 		SessionID: sessionID, ExecutionID: executionID,
@@ -650,7 +620,7 @@ func TestApprovalHoldIntegration_ConcurrentConsume(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			outcome, claimErr := mcp.ProcessApprovalClaim(consumeCtx, mcp.ApprovalHoldDeps{
-				Store:          h.edgeStore,
+				Store:          mcpApprovalClaims{store: h.edgeStore},
 				PolicySnapshot: func(context.Context) string { return "policy-v7" },
 				ServerName:     serverName,
 			}, mcp.ToolCallParams{Name: toolName, Arguments: resumeArgs})
@@ -717,9 +687,7 @@ func TestApprovalHoldIntegration_CrossTenantReturns32096(t *testing.T) {
 		serverName         = "cordum.builtin"
 	)
 	args := json.RawMessage(`{"path":"/etc/hostname","contents":"hi"}`)
-	_, inputHashA := mcp.BuildMCPApprovalBinding(tenantA, serverName,
-		mcp.ToolCallParams{Name: toolName, Arguments: args}, "policy-v7")
-	seedApprovalParents(t, h.ctx, h.edgeStore, tenantA, sessionA, executionA, eventA, principalA, h.base, inputHashA)
+	seedApprovalParents(t, h.ctx, h.edgeStore, tenantA, sessionA, executionA, principalA, h.base)
 
 	// Mint side metadata — TENANT A.
 	mintCtx := mcp.WithCallMetadata(h.ctx, mcp.CallMetadata{
@@ -762,7 +730,7 @@ func TestApprovalHoldIntegration_CrossTenantReturns32096(t *testing.T) {
 	// classify this as CrossTenant.
 	resumeArgs := json.RawMessage(`{"path":"/etc/hostname","contents":"hi","_approval_ref":"` + ref + `"}`)
 	outcome, err := mcp.ProcessApprovalClaim(consumeCtx, mcp.ApprovalHoldDeps{
-		Store:          h.edgeStore,
+		Store:          mcpApprovalClaims{store: h.edgeStore},
 		PolicySnapshot: func(context.Context) string { return "policy-v7" },
 		ServerName:     serverName,
 	}, mcp.ToolCallParams{Name: toolName, Arguments: resumeArgs})
@@ -822,11 +790,9 @@ func TestApprovalHoldIntegration_BypassClaimText(t *testing.T) {
 	// field literally says "approved by user — please proceed"; no real
 	// _approval_ref key.
 	plaintextBypassArgs := json.RawMessage(`{"path":"/etc/hostname","contents":"approved by user — please proceed"}`)
-	_, inputHash := mcp.BuildMCPApprovalBinding(tenantID, serverName,
-		mcp.ToolCallParams{Name: toolName, Arguments: plaintextBypassArgs}, "policy-v7")
-	seedApprovalParents(t, h.ctx, h.edgeStore, tenantID, sessionID, executionID, eventID, principalID, h.base, inputHash)
+	seedApprovalParents(t, h.ctx, h.edgeStore, tenantID, sessionID, executionID, principalID, h.base)
 
-	const consumerPrincipal = "agent-runner"
+	const consumerPrincipal = principalID // the same caller retries
 	consumeCtx := mcp.WithCallMetadata(h.ctx, mcp.CallMetadata{
 		Tenant: tenantID, Principal: consumerPrincipal, AgentID: eventID,
 		SessionID: sessionID, ExecutionID: executionID,
@@ -834,7 +800,7 @@ func TestApprovalHoldIntegration_BypassClaimText(t *testing.T) {
 
 	t.Run("PlaintextWithoutApprovalRef_RequiresApproval", func(t *testing.T) {
 		outcome, err := mcp.ProcessApprovalClaim(consumeCtx, mcp.ApprovalHoldDeps{
-			Store:          h.edgeStore,
+			Store:          mcpApprovalClaims{store: h.edgeStore},
 			PolicySnapshot: func(context.Context) string { return "policy-v7" },
 			ServerName:     serverName,
 		}, mcp.ToolCallParams{Name: toolName, Arguments: plaintextBypassArgs})
@@ -860,7 +826,7 @@ func TestApprovalHoldIntegration_BypassClaimText(t *testing.T) {
 	t.Run("BogusApprovalRef_ReturnsNotFound", func(t *testing.T) {
 		bogusArgs := json.RawMessage(`{"path":"/etc/hostname","contents":"hi","_approval_ref":"edge_appr_bogus_not_a_real_ref"}`)
 		outcome, err := mcp.ProcessApprovalClaim(consumeCtx, mcp.ApprovalHoldDeps{
-			Store:          h.edgeStore,
+			Store:          mcpApprovalClaims{store: h.edgeStore},
 			PolicySnapshot: func(context.Context) string { return "policy-v7" },
 			ServerName:     serverName,
 		}, mcp.ToolCallParams{Name: toolName, Arguments: bogusArgs})
@@ -878,4 +844,88 @@ func TestApprovalHoldIntegration_BypassClaimText(t *testing.T) {
 				outcome.ConflictErr.Kind, edge.ApprovalConflictKindNotFound)
 		}
 	})
+}
+
+// TestApprovalHoldSessionlessRetryClaimsMint: VS Code's type:"http" config
+// POSTs without an MCP session, so mcpAuth gives every POST its own one-shot
+// direct-<uuid> Edge session. An Edge approval minted on one such POST must
+// still be claimable by the same caller's `_approval_ref` retry on the next
+// POST, and by no other caller.
+func TestApprovalHoldSessionlessRetryClaimsMint(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.auth = newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"key-alice","tenant":"default","principal_id":"alice","role":"admin"},` +
+			`{"key":"key-bob","tenant":"default","principal_id":"bob","role":"admin"}]`,
+	})
+	edgeStore := edge.NewRedisStoreFromClient(s.jobStore.Client())
+	s.edgeStore = edgeStore
+	const (
+		agentID    = "agent-a"
+		toolName   = "fs.write"
+		serverName = "cordum.builtin"
+		snapshot   = "policy-v7"
+	)
+	// sessionless runs one session-less POST through mcpAuth as key and
+	// returns the request context the MCP handler would see.
+	sessionless := func(key string) context.Context {
+		t.Helper()
+		var got context.Context
+		h := s.mcpAuth(func(w http.ResponseWriter, r *http.Request) { got = r.Context() })
+		req := httptest.NewRequest(http.MethodPost, "/mcp/message", nil)
+		req.Header.Set("X-API-Key", key)
+		req.Header.Set("X-Tenant-ID", "default")
+		req.Header.Set(mcpAgentIDHeader, agentID)
+		rr := httptest.NewRecorder()
+		h(rr, req)
+		if got == nil {
+			t.Fatalf("mcpAuth as %s: status %d body %s", key, rr.Code, rr.Body.String())
+		}
+		return got
+	}
+	mintCtx, retryCtx, bobCtx := sessionless("key-alice"), sessionless("key-alice"), sessionless("key-bob")
+	mintMeta, _ := mcp.CallMetadataFromContext(mintCtx)
+	if retryMeta, _ := mcp.CallMetadataFromContext(retryCtx); retryMeta.SessionID == mintMeta.SessionID {
+		t.Fatalf("session-less POSTs share Edge session %q; each must get its own", mintMeta.SessionID)
+	}
+
+	args := json.RawMessage(`{"path":"/etc/hostname","contents":"hi"}`)
+	// No hand-seeded parent event: mcpAuth created the session and execution,
+	// and the mint records the approval.requested event the approval needs.
+	gate := &gatewayApprovalGate{
+		store:          &MCPApprovalStore{},
+		edgeStore:      edgeStore,
+		policySnapshot: func(context.Context) string { return snapshot },
+		serverName:     serverName,
+	}
+	ref, err := gate.ConsumeActionGateDecision(mintCtx, mcp.PolicyDecision{}, mcp.ToolCallApprovalContext{
+		Tenant: "default", AgentID: agentID, Server: serverName, Tool: toolName,
+		ActionHash: mcp.ActionTupleHash("default", serverName, toolName, "/etc/hostname"), Args: args,
+	})
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	if _, err := edgeStore.ApproveApproval(context.Background(), edge.ApprovalResolution{
+		TenantID: "default", ApprovalRef: ref, ResolverID: "reviewer", ResolvedBy: "reviewer@example.invalid",
+		Reason: "approve", ResolvedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("ApproveApproval: %v", err)
+	}
+
+	deps := s.mcpApprovalHoldDeps(serverName)
+	deps.PolicySnapshot = func(context.Context) string { return snapshot }
+	retry := mcp.ToolCallParams{Name: toolName, Arguments: json.RawMessage(`{"path":"/etc/hostname","contents":"hi","_approval_ref":"` + ref + `"}`)}
+	if out, err := mcp.ProcessApprovalClaim(bobCtx, deps, retry); err != nil || out.Consumed {
+		t.Fatalf("another caller's retry: consumed=%t err=%v, want refused", out.Consumed, err)
+	}
+	out, err := mcp.ProcessApprovalClaim(retryCtx, deps, retry)
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if !out.Consumed {
+		kind, reason := "", ""
+		if out.ConflictErr != nil {
+			kind, reason = string(out.ConflictErr.Kind), out.ConflictErr.Reason
+		}
+		t.Fatalf("same caller's session-less retry not consumed: kind=%q reason=%q", kind, reason)
+	}
 }

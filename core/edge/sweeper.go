@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -32,17 +35,26 @@ type SessionSweeperOptions struct {
 	RetentionTTL time.Duration
 	Interval     time.Duration
 	Now          func() time.Time
+	// LegalHolds is checked before every deletion: sessions of a tenant
+	// under an active audit legal hold are kept, and so are those of a
+	// tenant whose hold check fails. Nil keeps every session.
+	LegalHolds *audit.LegalHoldStore
 }
 
 // SessionSweeper removes Edge sessions that are older than the configured
-// retention TTL. It delegates deletion to RedisStore.DeleteSession so cleanup
-// inherits bounded ZSCAN + batched DEL behavior.
+// retention TTL, except for tenants under legal hold. It delegates deletion
+// to RedisStore.DeleteSession so cleanup inherits bounded ZSCAN + batched
+// DEL behavior.
 type SessionSweeper struct {
 	store        *RedisStore
 	retentionTTL time.Duration
 	interval     time.Duration
 	now          func() time.Time
+	holds        *audit.LegalHoldStore
 }
+
+// errSessionSweepNoLegalHolds stops a sweep that cannot check legal holds.
+var errSessionSweepNoLegalHolds = errors.New("edge session sweeper: legal hold store unavailable; nothing deleted")
 
 // ApprovalSweeperOptions configures the periodic approval-expiry sweeper.
 type ApprovalSweeperOptions struct {
@@ -84,7 +96,7 @@ func NewSessionSweeper(store *RedisStore, opts SessionSweeperOptions) (*SessionS
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &SessionSweeper{store: store, retentionTTL: retentionTTL, interval: interval, now: now}, nil
+	return &SessionSweeper{store: store, retentionTTL: retentionTTL, interval: interval, now: now, holds: opts.LegalHolds}, nil
 }
 
 // NewApprovalSweeper validates and builds an approval-expiry sweeper.
@@ -157,26 +169,28 @@ func (s *SessionSweeper) SweepOnce(ctx context.Context) (int, error) {
 	if err := s.store.ensureReady(); err != nil {
 		return 0, err
 	}
-	var swept int
-	var cursor uint64
-	for {
-		if err := ctx.Err(); err != nil {
-			return swept, err
-		}
-		keys, nextCursor, err := s.store.client.Scan(ctx, cursor, "edge:session:*", sessionSweepScanCount).Result()
-		if err != nil {
-			return swept, fmt.Errorf("scan edge sessions for retention: %w", err)
-		}
-		count, err := s.sweepSessionKeys(ctx, keys)
-		if err != nil {
-			return swept, err
-		}
-		swept += count
-		cursor = nextCursor
-		if cursor == 0 {
-			return swept, nil
-		}
+	if s.holds == nil {
+		return 0, errSessionSweepNoLegalHolds
 	}
+	var swept int
+	var sweepErr error
+	logged := map[string]bool{}
+	err := redisutil.ScanEach(ctx, s.store.client, "edge:session:*", sessionSweepScanCount, func(keys []string) error {
+		if sweepErr = ctx.Err(); sweepErr != nil {
+			return sweepErr
+		}
+		var count int
+		count, sweepErr = s.sweepSessionKeys(ctx, keys, logged)
+		swept += count
+		return sweepErr
+	})
+	if sweepErr != nil {
+		return swept, sweepErr
+	}
+	if err != nil {
+		return swept, fmt.Errorf("scan edge sessions for retention: %w", err)
+	}
+	return swept, nil
 }
 
 // SweepOnce scans pending-approval status indexes, expires stale approvals per
@@ -234,7 +248,7 @@ func (s *ApprovalSweeper) sweepPendingApprovalIndexes(ctx context.Context) (int,
 	}
 }
 
-func (s *SessionSweeper) sweepSessionKeys(ctx context.Context, keys []string) (int, error) {
+func (s *SessionSweeper) sweepSessionKeys(ctx context.Context, keys []string, logged map[string]bool) (int, error) {
 	var swept int
 	for _, key := range keys {
 		if !isSweepSessionDocumentKey(key) {
@@ -247,7 +261,20 @@ func (s *SessionSweeper) sweepSessionKeys(ctx context.Context, keys []string) (i
 		if !ok || !s.sessionExpired(session) {
 			continue
 		}
-		if err := s.store.DeleteSession(ctx, session.TenantID, session.SessionID); err != nil {
+		// Checked per session, so a hold placed mid-sweep stops deletion; a
+		// hold placed during the deletion is acknowledged only after it.
+		deleted, err := s.holds.DeleteUnlessHeld(ctx, session.TenantID, session.SessionID, func(ctx context.Context) error {
+			return s.store.DeleteSession(ctx, session.TenantID, session.SessionID)
+		})
+		if errors.As(err, new(audit.HoldCheckError)) || (err == nil && !deleted) {
+			if !logged[session.TenantID] {
+				logged[session.TenantID] = true
+				slog.Warn("edge session retention: keeping tenant's expired sessions",
+					"tenant_id", session.TenantID, "legal_hold", err == nil, "hold_check_error", err)
+			}
+			continue
+		}
+		if err != nil {
 			return swept, err
 		}
 		s.store.recorder.RecordSessionSwept()

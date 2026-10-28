@@ -16,7 +16,7 @@ import (
 // tool-invocation events that carry a copilot_session_id and appends a
 // transcript message to the Copilot session store, then always forwards the
 // event to the inner sender. Ingestion is best-effort — a store failure is
-// logged and never affects the audit Merkle chain or the tool call.
+// logged and never affects the audit hash chain or the tool call.
 type copilotIngestSender struct {
 	inner audit.AuditSender
 	store *copilot.RedisStore
@@ -102,8 +102,14 @@ func (c *copilotIngestSender) ingest(event audit.SIEMEvent) {
 	// appends from a different one (copilot.ErrOwnerMismatch). That is what
 	// stops a different agent from setting X-Copilot-Session-Id to another
 	// user's (guessed) session id and injecting fabricated transcript
-	// entries into it.
+	// entries into it. It is the resolved agent identity, which mcpAuth only
+	// lets a caller act as when bound to it; a call with no identity is
+	// audited as "unknown", an owner every identity-less caller would share,
+	// so it gets no transcript entry.
 	agentID := strings.TrimSpace(event.AgentID)
+	if agentID == "" || event.Extra["identity_missing"] == "true" {
+		return
+	}
 	if err := c.store.AppendMessage(ctx, tenant, agentID, sessionID, msg); err != nil {
 		if errors.Is(err, copilot.ErrOwnerMismatch) {
 			slog.Warn("copilot ingest: rejected cross-principal append",

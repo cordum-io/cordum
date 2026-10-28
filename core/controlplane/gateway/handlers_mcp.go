@@ -3,7 +3,10 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"log/slog"
@@ -20,6 +23,8 @@ import (
 	"github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/infra/env"
+	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/mcp"
 	mcpresources "github.com/cordum/cordum/core/mcp/resources"
 	mcptools "github.com/cordum/cordum/core/mcp/tools"
@@ -30,7 +35,14 @@ import (
 // mcpAgentIDHeader is the request header that identifies the calling
 // MCP agent. The gateway uses it (with a principal-ID fallback) to
 // populate MCPCallMetadata so the approval gate can log who is asking.
+// It is a claim, not a credential: mcpAuth honours it only for a caller
+// allowed to act as that identity (see mayActAsMCPAgent).
 const mcpAgentIDHeader = "X-Agent-Id"
+
+// mcpAllowUnboundAgentIDEnv restores the pre-binding behaviour in which any
+// authenticated caller could act as any same-tenant agent identity by naming
+// it in X-Agent-Id. Off by default; the MCP runtime logs a warning when on.
+const mcpAllowUnboundAgentIDEnv = "CORDUM_MCP_ALLOW_UNBOUND_AGENT_ID"
 
 // mcpCopilotSessionIDHeader optionally groups a client's tool calls into a
 // Copilot audit session. Clients (e.g. VS Code Copilot agent mode) set it so
@@ -119,8 +131,13 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 		runtime.server.ReloadConfig(cfg.Raw)
 		return nil
 	}
+	if env.Bool(mcpAllowUnboundAgentIDEnv) {
+		slog.Warn("mcp: X-Agent-Id is trusted without a caller binding; any authenticated caller can act as any agent identity in its tenant",
+			"env", mcpAllowUnboundAgentIDEnv)
+	}
 
-	transport := mcp.NewHTTPTransport(mcp.DefaultMaxMessageBytes, mcp.DefaultHTTPResponseTimeout)
+	transport := mcp.NewHTTPTransport(mcp.DefaultMaxMessageBytes, mcp.DefaultHTTPResponseTimeout).
+		WithSessionOwner(mcpSessionOwner)
 	toolRegistry := mcp.NewToolRegistry()
 	resourceRegistry := mcp.NewResourceRegistry()
 	toolRegistry.SetConfig(cfg.Raw)
@@ -140,6 +157,9 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 	if client := s.redisClient(); client != nil {
 		approvalStore = NewMCPApprovalStore(client).WithAuditHook(s.mcpApprovalAuditHook())
 		approvalHandler = newMCPApprovalHandler(approvalStore)
+		if s.edgeStore != nil {
+			approvalHandler.resolveEdgeTwin = s.resolveMCPApprovalEdgeTwin
+		}
 		// Scope-preapproval lookup — gate consults the agent identity
 		// store first so a CI bot with PreapprovedMutatingTools set
 		// can skip the human-approval step. Audit still fires; see
@@ -199,7 +219,7 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 	}
 	// mcp.tool_called audit hook. Every successful tools/call emits a
 	// SIEMEvent through the gateway's audit exporter so it lands in the
-	// Merkle chain. Without this wire-up the epic rail "Audit every
+	// audit hash chain. Without this wire-up the epic rail "Audit every
 	// tool call via SIEMEvent mcp_tool_called" is violated — another
 	// QA reopen fix.
 	if hook := s.mcpToolCallAuditHook(); hook != nil {
@@ -232,7 +252,7 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 		// Tap the invocation audit stream into Copilot session transcripts when
 		// the Redis store is wired. The decorator only acts on inbound
 		// invocation events that carry a copilot_session_id; it always forwards
-		// to the inner sender so the audit Merkle chain is unaffected.
+		// to the inner sender so the audit hash chain is unaffected.
 		auditSender := s.auditExporter
 		if s.copilotSessionStore != nil {
 			auditSender = newCopilotIngestSender(s.auditExporter, s.copilotSessionStore)
@@ -267,11 +287,12 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 	// configured or the secret/endpoint is unresolved. The fronted upstream is
 	// intentionally scoped to the tenant used for resolution below; mcpAuth refuses
 	// other tenants rather than proxying them with default-tenant upstream credentials.
+	// Every forwarded tools/call first passes the invariant floor, policy gate or not.
 	toolService := mcp.ToolService(toolRegistry)
 	upstreamServerName := ""
 	upstreamTenant := ""
 	if frontTS, frontName := s.buildFrontedUpstreamToolService(context.Background(), "default"); frontTS != nil {
-		toolService = frontTS
+		toolService = invariantFlooredTools{ToolService: frontTS, floor: approvalGate, server: frontName}
 		upstreamServerName = frontName
 		upstreamTenant = "default"
 	}
@@ -318,6 +339,11 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 			"policy_gate_active", false,
 			"reason", "policy_gate_enabled config flag is false",
 		)
+	}
+	// The gate's -32099 retry_hint names the retry that works: `_approval_ref`
+	// only while the approval hold consumes it.
+	if approvalGate != nil {
+		approvalGate.approvalHold = mcpServer.HasApprovalHold()
 	}
 	sweeperStop := make(chan struct{})
 	if approvalStore != nil {
@@ -405,8 +431,15 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		// knowing about gateway identity types. Tenant + principal come
 		// from the auth context; agent_id prefers the X-Agent-Id header
 		// and falls back to the principal so the self-approval guard
-		// has something to compare against.
+		// has something to compare against. The header is checked here,
+		// once, so everything below (scope filter, action gate,
+		// preapprovals, approvals, trace parents, Copilot transcript owner)
+		// only ever sees an agent id this caller may act as.
 		agentID := strings.TrimSpace(r.Header.Get(mcpAgentIDHeader))
+		if agentID != "" && !s.mayActAsMCPAgent(r, tenantID, agentID) {
+			writeErrorJSON(w, http.StatusForbidden, "agent identity not bound to caller")
+			return
+		}
 		if agentID == "" {
 			agentID = strings.TrimSpace(authCtx.PrincipalID)
 		}
@@ -426,31 +459,57 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		if transportSessionID == "" {
 			transportSessionID = strings.TrimSpace(r.URL.Query().Get("session_id"))
 		}
+		// Trust a client-supplied session id only once the transport vouches
+		// that this caller opened it, so an unknown or foreign id never feeds
+		// the trace parents, approval tuple, or Copilot session below. A POST
+		// naming one is handed to the transport untouched, which answers its
+		// usual "session not found" 404; the SSE GET and status routes ignore
+		// client session ids anyway. mcpHTTPTransport is resolved per request
+		// and nil-safe (no transport: not vouched, and the handler answers 503).
+		if transportSessionID != "" && !s.mcpHTTPTransport().OwnsSession(r, transportSessionID) {
+			if r.Method == http.MethodPost {
+				next(w, r)
+				return
+			}
+			transportSessionID = ""
+		}
 		// VS Code's type:"http" config POSTs neither X-MCP-Session-ID nor
-		// X-Copilot-Session-Id. The HTTP transport would otherwise mint a
-		// "direct-<uuid>" session id only *after* this middleware builds
-		// mcpCtx, leaving copilot_session_id empty — so the transcript is
-		// dropped and cordum_submit_job misses its session_id label. Mint the
-		// id here in the transport's own format and write it back onto the
-		// request so the transport reuses the same id, keeping the audit
-		// session, trace parents, and spawned-job label consistent. Scoped to
-		// POST so the SSE GET keeps its server-assigned session id.
-		if transportSessionID == "" && r.Method == http.MethodPost {
-			transportSessionID = "direct-" + uuid.NewString()
-			r.Header.Set("X-MCP-Session-ID", transportSessionID)
+		// X-Copilot-Session-Id, which would leave copilot_session_id empty —
+		// so the transcript is dropped and cordum_submit_job misses its
+		// session_id label. Mint a one-shot Edge session id here in the
+		// transport's own format for the trace parents. It is deliberately NOT
+		// written back onto the request: the transport only accepts session
+		// ids it issued to this caller over SSE (anything else is "session not
+		// found") and routes a session-less POST under its own one-shot id.
+		// Scoped to POST so the SSE GET keeps its server-assigned session id.
+		// The Edge session stays one-shot because the Edge store caps events
+		// per execution and executions per session; mcpApprovalClaims lets
+		// the caller's `_approval_ref` retry claim an approval minted under an
+		// earlier one-shot session. An SSE session rotates its Edge session
+		// and execution before those caps bite (mcpEdgeTrace).
+		sessionless := transportSessionID == "" && r.Method == http.MethodPost
+		// mcpSessionID is the MCP session the call's Copilot session and
+		// prompt-injection taint are kept for. A session-less caller gets one
+		// per caller and agent, so not keeping a session neither splits its
+		// transcript nor sheds its taint.
+		mcpSessionID := transportSessionID
+		if sessionless {
+			transportSessionID = mcpDirectSessionPrefix + uuid.NewString()
+			mcpSessionID = mcpSessionlessCopilotSessionID(r, agentID, transportSessionID)
 		}
 		if transportSessionID != "" {
-			executionID := "mcp-" + transportSessionID
-			if err := s.ensureMCPHTTPTraceParents(r.Context(), tenantID, agentID, principalID, transportSessionID, executionID); err != nil {
+			sessionID, executionID, err := s.mcpEdgeTrace(r.Context(), tenantID, agentID, principalID, transportSessionID)
+			if err != nil {
 				writeErrorJSON(w, http.StatusInternalServerError, "mcp trace unavailable")
 				return
 			}
 			mcpCtx = mcp.WithCallMetadata(mcpCtx, mcp.CallMetadata{
-				Tenant:      tenantID,
-				Principal:   principalID,
-				AgentID:     agentID,
-				SessionID:   transportSessionID,
-				ExecutionID: executionID,
+				Tenant:       tenantID,
+				Principal:    principalID,
+				AgentID:      agentID,
+				SessionID:    sessionID,
+				ExecutionID:  executionID,
+				MCPSessionID: mcpSessionID,
 			})
 		}
 		// Also stash tenant for the mcp.tool_called audit hook, which
@@ -459,11 +518,12 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		// identity types).
 		mcpCtx = mcp.WithTenant(mcpCtx, tenantID)
 		// Thread the Copilot session id (explicit header → transport session
-		// id, now always populated for POSTs) so tool invocations can be
-		// grouped into an audit session and spawned jobs labelled with it.
+		// id, or for a session-less POST one id per caller and agent) so tool
+		// invocations can be grouped into an audit session and spawned jobs
+		// labelled with it.
 		copilotSessionID := strings.TrimSpace(r.Header.Get(mcpCopilotSessionIDHeader))
 		if copilotSessionID == "" {
-			copilotSessionID = transportSessionID
+			copilotSessionID = mcpSessionID
 		}
 		if copilotSessionID != "" {
 			mcpCtx = mcp.WithCopilotSessionID(mcpCtx, copilotSessionID)
@@ -481,7 +541,127 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentID, principalID, sessionID, executionID string) error {
+// mcpDirectSessionPrefix marks the one-shot Edge session mcpAuth gives a POST
+// that names no MCP session; SSE session ids are bare UUIDs.
+const mcpDirectSessionPrefix = "direct-"
+
+// mcpSessionlessCopilotSessionID groups a session-less caller's tool calls
+// into one Copilot session and one session taint per caller and agent instead
+// of one per POST. It derives from the session owner key, so two callers never
+// share one; callers the auth layer cannot tell apart (no credential, no
+// principal) keep the per-POST fallback.
+func mcpSessionlessCopilotSessionID(r *http.Request, agentID, fallback string) string {
+	if submitterIdentity(r) == "" {
+		return fallback
+	}
+	sum := sha256.Sum256([]byte(mcpSessionOwner(r) + "\x00" + agentID))
+	return mcpDirectSessionPrefix + hex.EncodeToString(sum[:16])
+}
+
+// mcpApprovalClaims binds an `_approval_ref` claim to the Edge session,
+// execution and parent event of the approval it names, when that approval was
+// minted for this caller acting as the same agent (mcpApprovalIsCallers). The
+// mint records its own parent event, and the retry usually arrives in another
+// Edge session: a session-less POST runs in a one-shot session. A claim for
+// anyone else's approval keeps the caller's own tuple, which the store refuses
+// (tuple_mismatch); the store still checks args, policy snapshot, status,
+// expiry and self-approval.
+type mcpApprovalClaims struct{ store edge.Store }
+
+func (c mcpApprovalClaims) ClaimApproval(ctx context.Context, req edge.ApprovalClaimRequest) (*edge.EdgeApproval, bool, error) {
+	if approval, found, err := c.store.GetApproval(ctx, req.TenantID, req.ApprovalRef); err == nil && found && mcpApprovalIsCallers(ctx, approval) {
+		req.SessionID, req.ExecutionID, req.EventID = approval.SessionID, approval.ExecutionID, approval.EventID
+	}
+	return c.store.ClaimApproval(ctx, req)
+}
+
+// mcpSessionOwner is the owner key MCP HTTP/SSE sessions are bound to: the
+// request's tenant, auth source, and submitterIdentity (credential hash +
+// principal, the caller identity the self-approval guard compares). The auth
+// source keeps a header-asserted principal on an anonymous request from
+// matching the same verified principal. Requests without an auth context (no
+// auth provider configured) all share the anonymous owner "".
+func mcpSessionOwner(r *http.Request) string {
+	ac := auth.FromRequest(r)
+	if ac == nil {
+		return ""
+	}
+	return fmt.Sprintf("%q %q %q", tenantFromRequest(r), ac.AuthSource, submitterIdentity(r))
+}
+
+// mcpEdgeTraceCaps is what mcpEdgeTrace needs from the Edge store to rotate
+// (edge.RedisStore). Without it an MCP session stays in one execution.
+type mcpEdgeTraceCaps interface {
+	ExecutionCaps() (maxExecutions, maxEvents int)
+	CountExecutionEvents(ctx context.Context, tenantID, executionID string) (int64, error)
+}
+
+// mcpSessionLabel links each Edge session an MCP session is recorded in to it.
+const mcpSessionLabel = "mcp_session_id"
+
+// mcpEdgeTrace returns the Edge session and execution the next call of MCP
+// session mcpSessionID records into, creating them when missing. The Edge
+// store caps executions per session and events per execution, and an
+// execution past the approval validation cap can neither mint nor claim an
+// approval, so a long-lived SSE session moves on before the caps bite: to a
+// new execution once the current one holds 80% of its event budget, and to
+// the next Edge session (<id>.s1, <id>.s2, ..., labelled mcp_session_id) once
+// the current one has no execution left. Earlier sessions and executions stay
+// running, so approvals minted in them stay claimable: mcpApprovalClaims binds
+// a claim to the approval's own session and execution.
+// ponytail: stateless, so each call re-reads the count and size of every full
+// Edge session before the current one (two O(1) reads each, one Edge session
+// per ~10k calls), and executions added to an MCP Edge session through the
+// Edge API make calls open new executions until that session fills. Track the
+// current session and execution per SSE session if either matters.
+func (s *server) mcpEdgeTrace(ctx context.Context, tenantID, agentID, principalID, mcpSessionID string) (sessionID, executionID string, err error) {
+	caps, rotates := s.edgeStore.(mcpEdgeTraceCaps)
+	for gen := 0; ; gen++ {
+		sessionID = mcpSessionID
+		if gen > 0 {
+			sessionID = fmt.Sprintf("%s.s%d", mcpSessionID, gen)
+		}
+		executionID = mcpEdgeExecutionID(sessionID, 0)
+		if rotates {
+			maxExecutions, maxEvents := caps.ExecutionCaps()
+			n, err := s.edgeStore.CountSessionExecutions(ctx, tenantID, sessionID)
+			if err != nil {
+				return "", "", err
+			}
+			if n > 0 {
+				executionID = mcpEdgeExecutionID(sessionID, n-1)
+				events, err := caps.CountExecutionEvents(ctx, tenantID, executionID)
+				if err != nil {
+					return "", "", err
+				}
+				if events >= max(int64(maxEvents)*4/5, 1) {
+					if n >= int64(maxExecutions) {
+						continue
+					}
+					executionID = mcpEdgeExecutionID(sessionID, n)
+				}
+			}
+		}
+		err = s.ensureMCPHTTPTraceParents(ctx, tenantID, agentID, principalID, mcpSessionID, sessionID, executionID)
+		if errors.Is(err, edge.ErrSessionExecutionFanoutExceeded) {
+			continue
+		}
+		return sessionID, executionID, err
+	}
+}
+
+// mcpEdgeExecutionID names execution n of an MCP Edge session.
+func mcpEdgeExecutionID(sessionID string, n int64) string {
+	if n == 0 {
+		return "mcp-" + sessionID
+	}
+	return fmt.Sprintf("mcp-%s.e%d", sessionID, n)
+}
+
+// ensureMCPHTTPTraceParents creates the Edge session and execution an MCP call
+// records into when missing. A concurrent call of the same MCP session may
+// create either first; that counts as created.
+func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentID, principalID, mcpSessionID, sessionID, executionID string) error {
 	if s == nil || s.edgeStore == nil || sessionID == "" || executionID == "" {
 		return nil
 	}
@@ -496,20 +676,79 @@ func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentI
 			PolicyMode: edge.PolicyModeEnforce, Status: edge.SessionStatusRunning,
 			StartedAt: now, EnforcementLayers: edge.EnforcementLayers{"mcp": true},
 			RiskSummary: edge.RiskSummary{MaxRisk: edge.RiskLevelLow},
-			Labels:      edge.Labels{"agent_id": agentID},
+			Labels:      edge.Labels{"agent_id": agentID, mcpSessionLabel: mcpSessionID},
 		}); err != nil {
-			return err
+			if _, ok, _ := s.edgeStore.GetSession(ctx, tenantID, sessionID); !ok {
+				return err
+			}
 		}
 	}
 	if _, ok, err := s.edgeStore.GetExecution(ctx, tenantID, executionID); err != nil {
 		return err
 	} else if !ok {
-		return s.edgeStore.CreateExecution(ctx, edge.AgentExecution{
+		if err := s.edgeStore.CreateExecution(ctx, edge.AgentExecution{
 			ExecutionID: executionID, SessionID: sessionID, TenantID: tenantID,
 			Adapter: edge.AdapterMCPGateway, Mode: edge.ExecutionModeLocalDev,
 			WorkerID: agentID, Status: edge.ExecutionStatusRunning,
 			StartedAt: now, Labels: edge.Labels{"agent_id": agentID},
-		})
+		}); err != nil {
+			if _, ok, _ := s.edgeStore.GetExecution(ctx, tenantID, executionID); !ok {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// mayActAsMCPAgent reports whether the caller may act as the agent identity
+// it named in X-Agent-Id: the identity is linked to the caller's principal or
+// API key id (the agent worker link job submit and delegation also bind on),
+// or the caller passes the agents.write/admin gate of the agent identity
+// routes (it could relink the identity anyway), or the legacy
+// CORDUM_MCP_ALLOW_UNBOUND_AGENT_ID switch is on. A missing identity and an
+// unbound one look the same to the caller.
+func (s *server) mayActAsMCPAgent(r *http.Request, tenant, agentID string) bool {
+	if env.Bool(mcpAllowUnboundAgentIDEnv) || s.canManageAgentIdentities(r) {
+		return true
+	}
+	return s.linkedAgentIdentity(r.Context(), auth.FromRequest(r), tenant, agentID) != nil
+}
+
+// canManageAgentIdentities mirrors requirePermissionOrRole(PermAgentsWrite,
+// "admin"), the gate on agent identity create/update/delete, without writing
+// a response.
+func (s *server) canManageAgentIdentities(r *http.Request) bool {
+	if s.requireRole(r, "admin") != nil {
+		return false
+	}
+	if s.auth != nil && s.permChecker != nil && auth.RBACEntitled(s.currentEntitlements()) {
+		return s.permChecker.RequirePermission(r, auth.PermAgentsWrite) == nil
+	}
+	return true
+}
+
+// linkedAgentIdentity returns the same-tenant agent identity linked to the
+// caller's principal or, failing that, its API key id (store.LinkWorker, set
+// by agent create's agent_id or a worker credential's agent_id). With want
+// set, only that identity counts. GetByWorkerID uses the store's empty-tenant
+// lookup, so the tenant is enforced here: a link to another tenant's agent
+// never applies that agent's scope.
+func (s *server) linkedAgentIdentity(ctx context.Context, ac *auth.AuthContext, tenant, want string) *store.AgentIdentity {
+	if s == nil || s.agentIdentityStore == nil || ac == nil || tenant == "" {
+		return nil
+	}
+	for _, workerID := range []string{ac.PrincipalID, ac.KeyID} {
+		workerID = strings.TrimSpace(workerID)
+		if workerID == "" {
+			continue
+		}
+		identity, err := s.agentIdentityStore.GetByWorkerID(ctx, workerID)
+		if err != nil || identity == nil || strings.TrimSpace(identity.TenantID) != tenant {
+			continue
+		}
+		if want == "" || identity.ID == want {
+			return identity
+		}
 	}
 	return nil
 }
@@ -517,7 +756,8 @@ func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentI
 // resolveMCPIdentity looks up the agent identity for this MCP request.
 // Resolution order:
 //  1. X-Agent-Id header (explicit — matches the documented contract).
-//  2. auth-principal fallback via agent_by_worker reverse index, so
+//     mcpAuth has already refused a header this caller may not act as.
+//  2. the identity linked to the caller's principal or API key id, so
 //     credentialled workers inherit their linked identity without
 //     needing to send the header explicitly.
 //
@@ -546,26 +786,7 @@ func (s *server) resolveMCPIdentity(r *http.Request) *mcp.AgentIdentity {
 		}
 		return mcpIdentityFromStore(identity)
 	}
-	authCtx := auth.FromContext(ctx)
-	if authCtx == nil {
-		return nil
-	}
-	principal := strings.TrimSpace(authCtx.PrincipalID)
-	if principal == "" {
-		return nil
-	}
-	identity, err := s.agentIdentityStore.GetByWorkerID(ctx, principal)
-	if err != nil || identity == nil {
-		return nil
-	}
-	// GetByWorkerID resolves by the authenticated principal but uses an
-	// empty-tenant store lookup internally; enforce tenant isolation here too
-	// so a worker credential bound to another tenant's agent cannot apply that
-	// agent's scope to this request.
-	if strings.TrimSpace(identity.TenantID) != tenant {
-		return nil
-	}
-	return mcpIdentityFromStore(identity)
+	return mcpIdentityFromStore(s.linkedAgentIdentity(ctx, auth.FromContext(ctx), tenant, ""))
 }
 
 // runMCPApprovalSweeper expires PENDING MCP approvals whose TTL has
@@ -1100,9 +1321,17 @@ func (s *server) wireMCPApprovalGate(approvalStore *MCPApprovalStore, invariantL
 	if invariantLookup != nil {
 		gate.WithInvariantLookup(invariantLookup)
 	}
-	// No Edge approval mint here: attachMCPPolicyDepsNamed wires it beside
-	// WithApprovalHold, since without the hold an Edge ref is never consumed
-	// and no parent action event exists to bind it to (task-f44be149).
+	// EDGE-103 reopen #1: wire Edge approval mint so the gate can
+	// dual-write a consumable EdgeApproval alongside the legacy
+	// MCPApprovalStore record. Falls back to legacy-only when the
+	// Edge store is nil (dev/test) or when the request lacks
+	// mcp.CallMetadata SessionID/ExecutionID (transports without an
+	// EdgeSession). The same snapshot provider used by WithApprovalHold
+	// is reused so the mint + consume paths bind to identical
+	// PolicySnapshot strings.
+	if s.edgeStore != nil {
+		gate.WithEdgeApprovalMint(s.edgeStore, s.mcpPolicySnapshotFunc(), mcpPolicyServerName)
+	}
 	return gate, gate
 }
 

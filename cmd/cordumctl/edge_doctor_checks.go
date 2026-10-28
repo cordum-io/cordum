@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/cordum/cordum/core/edge/claude"
+	"github.com/cordum/cordum/core/edge/copilot"
 )
 
 var edgeDemoPolicyRequiredRules = []string{
@@ -95,6 +96,43 @@ func edgeCheckSessionsAPI(ctx context.Context, env *edgeDoctorEnv) checkResult {
 
 func edgeCheckClaudeBinary(_ context.Context, env *edgeDoctorEnv) checkResult {
 	return edgeCheckExecutable(env, "claude", env.claudePath, "claude", "install Claude Code or pass --claude-path")
+}
+
+// edgeCheckClaudeCodeVersion reads `claude --version`. Every mode except
+// observe puts "onFailure": "block" on the blocking hooks, and Claude Code
+// honors that field only from claude.MinHookOnFailureVersion; older versions
+// let a failed hook through, which enterprise-strict cannot accept.
+func edgeCheckClaudeCodeVersion(ctx context.Context, env *edgeDoctorEnv) checkResult {
+	mode := edgePolicyModeOrDefault(env.policyMode)
+	if mode == "observe" {
+		return checkResult{State: stateSkip, Detail: "observe mode does not set onFailure; Claude Code version not checked"}
+	}
+	command := strings.TrimSpace(env.claudePath)
+	if command == "" {
+		command = "claude"
+	}
+	path, err := edgeResolveExecutable(env, command)
+	if err != nil {
+		return checkResult{State: stateSkip, Detail: "claude binary not resolved; see claude_binary"}
+	}
+	upgrade := "upgrade Claude Code to " + claude.MinHookOnFailureVersion + " or later"
+	version, err := claude.ClaudeCodeVersion(ctx, path, nil)
+	if err != nil {
+		return checkResult{
+			State: stateWarn,
+			Detail: "could not determine the Claude Code version (" + edgeDoctorRedact(err.Error(), env.base.apiKey) + "); Claude Code older than " +
+				claude.MinHookOnFailureVersion + " ignores \"onFailure\": \"block\", so hook failures would fail open",
+			Fix: "run claude --version; " + upgrade,
+		}
+	}
+	if claude.SupportsHookOnFailure(version) {
+		return checkResult{State: stateOK, Detail: "Claude Code " + version + " honors \"onFailure\": \"block\""}
+	}
+	state := stateWarn
+	if mode == "enterprise-strict" {
+		state = stateFail
+	}
+	return checkResult{State: state, Detail: claude.HookOnFailureUnsupportedMessage(version), Fix: upgrade}
 }
 
 func edgeCheckHookBinary(_ context.Context, env *edgeDoctorEnv) checkResult {
@@ -243,7 +281,7 @@ func edgeCheckManagedSettings(_ context.Context, env *edgeDoctorEnv) checkResult
 	if path == "" {
 		return checkResult{State: stateSkip, Detail: "managed-settings-path not configured; skip for non-enterprise deployments"}
 	}
-	res, err := claude.VerifyManagedSettingsFromPath(path)
+	res, err := claude.VerifyManagedSettingsFromPathWithOptions(path, claude.ManagedSettingsVerifyOptions{MCPGatewayURL: env.mcpGatewayURL})
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return checkResult{
@@ -259,12 +297,45 @@ func edgeCheckManagedSettings(_ context.Context, env *edgeDoctorEnv) checkResult
 		}
 	}
 	if res.OK {
-		return checkResult{State: stateOK, Detail: "managed-settings.json matches Cordum Edge invariants"}
+		return checkResult{State: stateOK, Detail: "managed-settings.json matches Cordum Edge invariants and trusted MCP endpoint; paired MCP files and runtime inventory were not inspected"}
 	}
 	return checkResult{
 		State:  stateFail,
 		Detail: "managed settings drift: " + summariseManagedSettingsDrifts(res.Drifts, 3),
-		Fix:    "regenerate with cordumctl edge managed-settings export",
+		Fix:    "supply --mcp-gateway-url from trusted deployment configuration; regenerate drifted settings with cordumctl edge managed-settings export",
+	}
+}
+
+// edgeCheckCopilotHooks checks the GitHub Copilot hooks file named by
+// --copilot-hooks-path. It warns only on problems a corrected file fixes
+// (see copilot.VerifyHookSettings). The Copilot harness limits that no file or
+// setting fixes are reported in the ok detail instead, in every policy mode,
+// so they do not hold edge doctor at exit 2 on every run.
+func edgeCheckCopilotHooks(_ context.Context, env *edgeDoctorEnv) checkResult {
+	path := strings.TrimSpace(env.copilotHooksPath)
+	if path == "" {
+		return checkResult{State: stateSkip, Detail: "copilot-hooks-path not configured; skip unless Copilot runs cordum-hook"}
+	}
+	data, err := env.readFile(path)
+	if err != nil {
+		return checkResult{
+			State:  stateWarn,
+			Detail: "read Copilot hooks file failed: " + edgeDoctorRedact(err.Error(), env.base.apiKey),
+			Fix:    "pass the hooks file Copilot loads, for example .github/hooks/cordum.json",
+		}
+	}
+	if err := copilot.VerifyHookSettings(data); err != nil {
+		return checkResult{
+			State:  stateWarn,
+			Detail: path + ": " + edgeDoctorRedact(err.Error(), env.base.apiKey),
+			Fix:    "rewrite the Copilot hooks file from docs/edge/cordum-hook.md#write-the-hooks-file",
+		}
+	}
+	return checkResult{
+		State: stateOK,
+		Detail: "Copilot hooks run cordum-hook copilot for prompts and tool calls. Harness limits that no setting fixes: " +
+			"a timed-out hook lets the action through, the Copilot harness records prompts but never blocks them, " +
+			"and other events log a failed hook and continue; see docs/edge/cordum-hook.md#github-copilot",
 	}
 }
 

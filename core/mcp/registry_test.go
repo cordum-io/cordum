@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 )
 
@@ -305,5 +306,55 @@ func TestURITemplateMatching(t *testing.T) {
 	}
 	if content.URI != "cordum://jobs/123" {
 		t.Fatalf("unexpected content uri: %q", content.URI)
+	}
+}
+
+// floorGate is an ApprovalGate that also implements InvariantFloor. It
+// records every call so the test can pin the order.
+type floorGate struct {
+	deny  string
+	calls []string
+}
+
+func (g *floorGate) CheckInvariants(_ context.Context, tool Tool) error {
+	g.calls = append(g.calls, "floor:"+tool.Name)
+	if tool.Name == g.deny {
+		return errors.New("denied by floor")
+	}
+	return nil
+}
+
+func (g *floorGate) Check(_ context.Context, tool Tool, _ json.RawMessage) (*ApprovalRequired, error) {
+	g.calls = append(g.calls, "check:"+tool.Name)
+	return &ApprovalRequired{ApprovalID: "apr-1"}, nil
+}
+
+func TestToolRegistryRunsInvariantFloorOnEveryCall(t *testing.T) {
+	gate := &floorGate{deny: "blocked"}
+	reg := NewToolRegistry()
+	reg.SetApprovalGate(gate)
+	ran := map[string]bool{}
+	for _, tool := range []Tool{{Name: "blocked"}, {Name: "open"}, {Name: "gated", RequiresApproval: true}} {
+		name := tool.Name
+		if err := reg.Register(tool, func(context.Context, json.RawMessage) (*ToolCallResult, error) {
+			ran[name] = true
+			return &ToolCallResult{}, nil
+		}); err != nil {
+			t.Fatalf("Register %s: %v", name, err)
+		}
+	}
+	if _, err := reg.Call(context.Background(), "blocked", nil); err == nil || ran["blocked"] {
+		t.Fatalf("floor must deny a non-gated tool before its handler runs: err=%v ran=%v", err, ran["blocked"])
+	}
+	if _, err := reg.Call(context.Background(), "open", nil); err != nil || !ran["open"] {
+		t.Fatalf("a non-gated tool the floor passes must run without approval: err=%v ran=%v", err, ran["open"])
+	}
+	_, err := reg.Call(context.Background(), "gated", nil)
+	var required *ApprovalRequired
+	if !errors.As(err, &required) || ran["gated"] {
+		t.Fatalf("a gated tool must still wait for approval: err=%v ran=%v", err, ran["gated"])
+	}
+	if want := []string{"floor:blocked", "floor:open", "floor:gated", "check:gated"}; !slices.Equal(gate.calls, want) {
+		t.Fatalf("gate calls = %v; want %v", gate.calls, want)
 	}
 }

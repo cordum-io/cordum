@@ -62,8 +62,9 @@ cd cordum
 - Dashboard at http://localhost:8082 — log in as `admin` / `ChangeMe123!`
   (the default dev password, also saved to `.env` as `CORDUM_ADMIN_PASSWORD`;
   change it before exposing the stack).
-- Gateway at http://localhost:8081 with a generated `CORDUM_API_KEY` in
-  `.env`.
+- Gateway at https://localhost:8081 (its certificate is signed by the
+  development CA in `./certs/ca/ca.crt`) with a generated `CORDUM_API_KEY`
+  in `.env`.
 - TLS CA, server, and client keypairs under `./certs/`.
 - A working approval-gate workflow proven by the built-in
   `platform_smoke.sh` run.
@@ -224,7 +225,7 @@ docker compose logs -f api-gateway
 | TLS/SSL cert errors | Remove `./certs/` and re-run — certs auto-regenerate |
 | `openssl` not found | Not needed — quickstart.sh auto-generates keys without it |
 | Go build fails | Requires Go 1.26.3+ — check with `go version` |
-| Stale config after changes | `redis-cli DEL cfg:system:default` then restart |
+| Stale config after changes | `docker compose exec redis redis-cli --tls --cacert /etc/cordum/tls/ca/ca.crt -a "$REDIS_PASSWORD" DEL cfg:system:default` then restart |
 
 For detailed troubleshooting, see [docs/troubleshooting.md](docs/troubleshooting.md).
 

@@ -52,11 +52,16 @@ mechanism:
 
 ## 2. On-disk shape
 
-Every tenant gets two Redis keys:
+Every tenant gets two Redis keys, plus a third once retention has trimmed
+its chain:
 
 ```
 audit:chain:<tenant>        — Redis Stream (XADD *), one entry per event
 audit:chain:head:<tenant>   — "seq:event_hash" of the tenant's chain head
+audit:chain:anchor:<tenant> — "seq:event_hash:stream_id[:hmac]" of the
+                              newest event the retention sweeper deleted
+                              (on Redis Cluster a trim in progress also
+                              carries the anchor it replaces)
 ```
 
 The stream entry has two fields:
@@ -84,7 +89,8 @@ genesis.
 
 `NATSAuditConsumer` (in `core/audit/consumer.go`) invokes
 `Chainer.Append` immediately before `exporter.Export`. Chain append is
-atomic via a CAS Lua script on the head key. In direct-transport mode
+atomic via a CAS Lua script on the head key (on Redis Cluster, on the
+stream's last entry: see [Redis Cluster](../horizontal-scaling.md#audit-chain-and-legal-holds-on-redis-cluster)). In direct-transport mode
 (`AUDIT_TRANSPORT` unset), the gateway wraps the write path in an
 `auditChainSender` that appends to the chain before forwarding to the
 configured exporter, so the chain is populated whether or not a NATS
@@ -154,9 +160,9 @@ Exit codes:
 
 | Code | Meaning                                                                                  |
 |------|------------------------------------------------------------------------------------------|
-| 0    | `status=ok` — chain intact, no gaps or only a retention-trimmed prefix.                  |
+| 0    | `status=ok` — chain intact, no gaps.                                                     |
 | 2    | `status=compromised` — tampering detected.                                               |
-| 3    | `status=partial` — boundary issue, verify could not conclude. Investigate but not panic. |
+| 3    | `status=partial` — only a retention-trimmed prefix (expected once retention trims), or verify could not link the window's first event. Investigate but not panic. |
 | 1    | Fatal (network / permissions / usage).                                                   |
 
 Example output:
@@ -224,13 +230,16 @@ shared the same leader walk.
 | Some gaps, **all** classified as `retention_trimmed`.                                   | `partial`       |
 | Any `missing`, `hash_mismatch`, or `out_of_order` gap.                                  | `compromised`   |
 
-`retention_boundary_seq` is the lowest seq currently present in the
-stream. Gaps strictly below it are retention-trimmed (expected); gaps
-at or above are real integrity failures.
+`retention_boundary_seq` is the lowest seq that should still be present:
+the retention anchor's seq + 1 once the chain has been trimmed. Gaps
+strictly below it are retention-trimmed (expected); gaps at or above are
+real integrity failures. On a chain that was never trimmed it reports the
+lowest seq currently in the stream, and every absent seq is `missing`.
 
-`retention_window_hours` mirrors `CORDUM_AUDIT_RETENTION_HOURS` so
-dashboards can render "your policy is N hours" without round-tripping
-to the config service.
+`retention_window_hours` is the effective retention window (plan
+entitlement narrowed by `CORDUM_AUDIT_RETENTION_HOURS`; omitted when
+unlimited) so dashboards can render "your policy is N hours" without
+round-tripping to the config service.
 
 The response **never** contains raw event bodies — verify is an
 integrity-reporting endpoint, not an event-retrieval API.
@@ -242,22 +251,42 @@ integrity-reporting endpoint, not an event-retrieval API.
 Both retention expiry and tampering produce absent seq numbers. The
 chain distinguishes them by construction:
 
-1. **`retention_boundary_seq`** is the oldest seq still present in the
-   stream. It is a concrete, cryptographically grounded cutoff — the
-   chain cannot lie about it without breaking every downstream hash.
-2. **Gaps below the boundary** were trimmed by retention policy: either
-   stream max-length eviction or explicit admin-driven XDEL. They are
-   reported as `retention_trimmed` and do **not** flip status to
-   compromised.
+1. **The retention anchor.** The retention sweeper is the only code path
+   that deletes chain events. In the same atomic step as each trim (in
+   three single-key steps on [Redis Cluster](../horizontal-scaling.md#audit-chain-and-legal-holds-on-redis-cluster)) it
+   records the newest deleted event as `audit:chain:anchor:<tenant>`
+   (HMAC-signed when `CORDUM_AUDIT_HMAC_KEY` is set), and verify requires
+   the oldest retained event to be anchor + 1 and to link to the anchor's
+   hash.
+2. **Gaps below `retention_boundary_seq`** (anchor + 1) were deleted by the
+   sweeper. They are reported as `retention_trimmed` and do **not** flip
+   status to compromised. Without an anchor (never trimmed, or the anchor
+   key deleted) the oldest event must be seq 1, and an anchor whose HMAC
+   does not verify explains nothing: either way an absent prefix is
+   `missing` and the chain is `compromised`.
 3. **Gaps at or above the boundary** happen inside the "should still
    exist" window. They are reported as `missing` and **do** flip status
    to compromised.
 
-The window is the operator-set `CORDUM_AUDIT_RETENTION_HOURS` (default
-168h / 7 days). If the oldest present event has a timestamp older than
-`now − retention_window`, something has held the chain open — either
-legal hold, or the retention reaper is behind. Neither is inherently
-bad; surface it on the dashboard.
+Trimming is opt-in (`CORDUM_AUDIT_RETENTION_ENFORCE=true`). The window is the
+plan's retention entitlement (Community 7 days, Team 90 days, Enterprise
+unlimited), narrowed by `CORDUM_AUDIT_RETENTION_HOURS`. If the oldest present
+event is older than `now − retention_window`, something has held the chain
+open: enforcement is off (the default), the tenant is under legal hold, it is
+the tenant's newest event (never trimmed), or the hourly sweep has not run
+yet. None of these is inherently bad; surface it on the dashboard. See
+[audit-operations.md](../audit-operations.md#retention) for the sweeper rules.
+
+**Upgrading: chains you trimmed by hand.** Earlier versions of this page
+called stream max-length eviction and admin `XDEL` retention. They are not:
+trimming the chain by hand is no longer supported, retention is the sweeper's
+job, and a chain trimmed by hand verifies as `compromised`. Adopt a retention
+anchor for such a chain once, with
+`cordumctl audit adopt-anchor <tenant> --expected-oldest-seq <first_seq>`
+(`POST /api/v1/audit/chain/retention-anchor`), and leave trimming to the
+sweeper from then on. See
+[audit-operations.md](../audit-operations.md#upgrading-chains-you-trimmed-by-hand)
+for the steps, and for anchors written by the first retention sweeper.
 
 ---
 
@@ -283,7 +312,9 @@ bad; surface it on the dashboard.
    Redis ACL or network access; assume the credential is compromised.
 7. **Do NOT attempt to repair the chain.** The chain is append-only and
    cannot be retro-fitted. A compromised chain stays compromised from
-   that seq forward — the integrity signal itself is the record.
+   that seq forward — the integrity signal itself is the record. The one
+   exception is a prefix you trimmed by hand yourself before upgrading:
+   that is not tampering, and adopting an anchor for it is covered in §6.
 
 If `GET /api/v1/audit/verify` returns `503 audit chainer not installed`
 on a current build, the gateway failed to construct the chainer at

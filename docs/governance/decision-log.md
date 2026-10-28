@@ -77,7 +77,7 @@ GET /api/v1/governance/decisions
 Set these once:
 
 ```bash
-export BASE=http://localhost:8081
+export BASE=https://localhost:8081   # default stack; curl gets --cacert ./certs/ca/ca.crt
 export TENANT=acme
 export AUTH="X-API-Key: $CORDUM_API_KEY"
 ```
@@ -85,7 +85,7 @@ export AUTH="X-API-Key: $CORDUM_API_KEY"
 ### List the last 24 hours of policy decisions
 
 ```bash
-curl -sS "$BASE/api/v1/governance/decisions" \
+curl -sS --cacert ./certs/ca/ca.crt "$BASE/api/v1/governance/decisions" \
   -H "X-Tenant-ID: $TENANT" \
   -H "$AUTH"
 ```
@@ -93,7 +93,7 @@ curl -sS "$BASE/api/v1/governance/decisions" \
 ### Filter by verdict + topic + time window
 
 ```bash
-curl -sS "$BASE/api/v1/governance/decisions?verdict=require_approval&topic=payments.transfer&since=2026-04-13T00:00:00Z&until=2026-04-20T00:00:00Z&limit=100" \
+curl -sS --cacert ./certs/ca/ca.crt "$BASE/api/v1/governance/decisions?verdict=require_approval&topic=payments.transfer&since=2026-04-13T00:00:00Z&until=2026-04-20T00:00:00Z&limit=100" \
   -H "X-Tenant-ID: $TENANT" \
   -H "$AUTH"
 ```
@@ -101,7 +101,7 @@ curl -sS "$BASE/api/v1/governance/decisions?verdict=require_approval&topic=payme
 ### Continue pagination
 
 ```bash
-curl -sS "$BASE/api/v1/governance/decisions?cursor=<next_cursor>&limit=100" \
+curl -sS --cacert ./certs/ca/ca.crt "$BASE/api/v1/governance/decisions?cursor=<next_cursor>&limit=100" \
   -H "X-Tenant-ID: $TENANT" \
   -H "$AUTH"
 ```
@@ -117,8 +117,9 @@ Redis-backed index store:
   agent/topic/verdict indexes when new writes land
 
 The log is an operator-facing governance index, not the canonical audit
-archive. Long-lived compliance retention should still rely on the audit
-export + legal-hold surfaces.
+archive, and it is not covered by legal hold: records keep expiring while a
+tenant is under hold. Long-lived compliance retention should still rely on the
+audit export + legal-hold surfaces.
 
 ## RBAC notes
 

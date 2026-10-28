@@ -55,29 +55,31 @@ REDIS_URL=redis://:cordum-dev@127.0.0.1:6379/0 \
   ./bin/multi-topic-worker
 ```
 
-For the TLS-enabled stack started by `make dev-up`, set the same
-`NATS_TLS_*` / `REDIS_TLS_*` envs that `examples/hello-worker-go` uses
-(`tls://nats:4222`, `rediss://:${REDIS_PASSWORD}@redis:6379`, plus the cert
-paths under `/etc/cordum/tls`).
+The compose stack (`make dev-up`, quickstart) is TLS-only, so set the same
+`NATS_TLS_*` / `REDIS_TLS_*` envs that `examples/hello-worker-go` uses. From
+the repo root that is `tls://localhost:4222`,
+`rediss://:${REDIS_PASSWORD}@localhost:6379` and the cert paths under
+`./certs/`; inside the compose network use `tls://nats:4222`,
+`rediss://:${REDIS_PASSWORD}@redis:6379` and `/etc/cordum/tls`.
 
 ## Submitting jobs
 
 Each topic's input shape matches its typed `In` struct:
 
 ```bash
-curl -X POST http://localhost:8081/api/v1/jobs \
+curl --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/jobs \
   -H "X-API-Key: $KEY" \
   -H "Content-Type: application/json" \
   -d '{"topic":"job.multi-topic.upper","context":{"text":"hello"}}'
 # → {"text":"HELLO"}
 
-curl -X POST http://localhost:8081/api/v1/jobs \
+curl --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/jobs \
   -H "X-API-Key: $KEY" \
   -H "Content-Type: application/json" \
   -d '{"topic":"job.multi-topic.add","context":{"a":2,"b":3}}'
 # → {"sum":5}
 
-curl -X POST http://localhost:8081/api/v1/jobs \
+curl --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/jobs \
   -H "X-API-Key: $KEY" \
   -H "Content-Type: application/json" \
   -d '{"topic":"job.multi-topic.tag","context":{"items":["a","b"],"tag":"x"}}'

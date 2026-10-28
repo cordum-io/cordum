@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 	"github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/infra/artifacts"
 	"github.com/cordum/cordum/core/mcp"
@@ -129,28 +131,40 @@ func (s *server) attachMCPPolicyDepsNamed(mcpServer *mcp.MCPServer, gate *gatewa
 	policyDeps := BuildMCPPolicyDeps(s.actionGatePipeline, gate, emitter, artifactStore, redisClient)
 	mcpServer = mcpServer.WithPolicyGate(name, policyDeps)
 
-	snapshot := s.mcpPolicySnapshotFunc()
-	mcpServer = mcpServer.WithApprovalHold(mcp.ApprovalHoldDeps{
-		Store:          s.edgeStore,
-		PolicySnapshot: snapshot,
-		ServerName:     name,
-	})
-	// EDGE-103 mint and consume halves are wired together, with the same
-	// store, snapshot and server name, so every minted Edge approval ref is
-	// one the approval hold can consume (task-f44be149).
-	if gate != nil && mcpServer.HasApprovalHold() {
-		gate.WithEdgeApprovalMint(s.edgeStore, snapshot, name)
+	mcpServer = mcpServer.WithApprovalHold(s.mcpApprovalHoldDeps(name))
+	// The Edge mint and the `_approval_ref` consume path share one store,
+	// snapshot provider and server name, so every minted ref is one the
+	// hold can consume (task-f44be149).
+	if gate != nil && s.edgeStore != nil && mcpServer.HasApprovalHold() {
+		gate.WithEdgeApprovalMint(s.edgeStore, s.mcpPolicySnapshotFunc(), name)
 	}
 	return mcpServer, ""
 }
+
+// mcpApprovalHoldDeps is the `_approval_ref` consume wiring for serverName.
+func (s *server) mcpApprovalHoldDeps(serverName string) mcp.ApprovalHoldDeps {
+	return mcp.ApprovalHoldDeps{
+		Store:          mcpApprovalClaims{store: s.edgeStore},
+		PolicySnapshot: s.mcpPolicySnapshotFunc(),
+		ServerName:     serverName,
+	}
+}
+
+// mcpEmptyPolicySnapshot is the PolicySnapshot MCP approvals bind to while
+// no policy config document exists, as on a fresh install. A policy
+// document's snapshot is its updated-at timestamp, which never equals it,
+// and configsvc never deletes a document: creating the first policy
+// invalidates those approvals like any later policy change.
+const mcpEmptyPolicySnapshot = "empty-policy"
 
 // mcpPolicySnapshotFunc returns a closure the WithApprovalHold consume
 // path calls to compute the current PolicySnapshot used in the
 // ApprovalClaimRequest. The snapshot is the bundle-updated-at timestamp
 // returned by loadPolicyBundles — it changes monotonically when the
 // active policy bundle rotates, so a consume against a stale snapshot
-// surfaces as `policy_mismatch` from the Edge approval store. Empty
-// string on a config-load error fails closed at the validation layer
+// surfaces as `policy_mismatch` from the Edge approval store. Without a
+// policy config document it is mcpEmptyPolicySnapshot. Empty string on a
+// config-load error fails closed at the validation layer
 // (ApprovalClaimRequest rejects empty snapshots).
 func (s *server) mcpPolicySnapshotFunc() func(ctx context.Context) string {
 	return func(ctx context.Context) string {
@@ -158,6 +172,12 @@ func (s *server) mcpPolicySnapshotFunc() func(ctx context.Context) string {
 		if err != nil {
 			return ""
 		}
-		return snapshot
+		if snapshot != "" {
+			return snapshot
+		}
+		if _, err := s.configSvc.Get(ctx, configsvc.Scope(packs.PolicyConfigScope), packs.PolicyConfigID); errors.Is(err, redis.Nil) {
+			return mcpEmptyPolicySnapshot
+		}
+		return ""
 	}
 }

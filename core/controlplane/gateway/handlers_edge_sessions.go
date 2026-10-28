@@ -18,18 +18,18 @@ import (
 )
 
 // edgeMaxExecutionsPerSession resolves the per-session AgentExecution cap.
-// Reads CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION as int64; falls back to
-// edgecore.DefaultMaxExecutionsPerSession when missing/invalid/<=0. The
-// cap protects DeleteSession + dashboard timelines from unbounded
-// per-session fanout (PR #243 senior review finding; EDGE-037).
-func edgeMaxExecutionsPerSession() int64 {
+// Reads CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION as the native int used by the
+// Edge store; falls back to edgecore.DefaultMaxExecutionsPerSession when
+// missing, invalid, out of range or <=0. The cap protects DeleteSession and
+// dashboard timelines from unbounded per-session fanout (EDGE-037).
+func edgeMaxExecutionsPerSession() int {
 	raw := strings.TrimSpace(os.Getenv("CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION"))
 	if raw == "" {
-		return int64(edgecore.DefaultMaxExecutionsPerSession)
+		return edgecore.DefaultMaxExecutionsPerSession
 	}
-	n, err := strconv.ParseInt(raw, 10, 64)
+	n, err := strconv.Atoi(raw)
 	if err != nil || n <= 0 {
-		return int64(edgecore.DefaultMaxExecutionsPerSession)
+		return edgecore.DefaultMaxExecutionsPerSession
 	}
 	return n
 }
@@ -633,7 +633,7 @@ func (s *server) executeCreateEdgeExecution(r *http.Request, store edgecore.Stor
 	// (count >= maxExecutions rejects); this matches the count-current-then-
 	// create-one semantics, so the cap is the maximum number of stored
 	// executions.
-	maxExecutions := edgeMaxExecutionsPerSession()
+	maxExecutions := int64(edgeMaxExecutionsPerSession())
 	executionCount, err := store.CountSessionExecutions(r.Context(), tenantID, sessionID)
 	if err != nil {
 		return edgeIdempotentWriteResult{}, edgeCreateExecutionInternalErr{op: "count edge session executions", wrapped: err}

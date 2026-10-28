@@ -17,10 +17,10 @@ is not provided on the command line.
 
 | Flag | Env Variable | Default | Description |
 |------|-------------|---------|-------------|
-| `--gateway` | `CORDUM_GATEWAY` | `http://localhost:8081` | Gateway base URL |
+| `--gateway` | `CORDUM_GATEWAY` | `https://localhost:8081` | Gateway base URL (`http://...` for a gateway without TLS) |
 | `--api-key` | `CORDUM_API_KEY` | *(none)* | API authentication key |
 | `--tenant` | `CORDUM_TENANT_ID` | `default` | Tenant ID |
-| `--cacert` | `CORDUM_TLS_CA` | *(none)* | CA certificate for TLS verification |
+| `--cacert` | `CORDUM_TLS_CA` | *(none)* | CA certificate for TLS verification; for an `https://localhost` gateway, `./certs/ca/ca.crt` is used when present |
 | `--insecure` | `CORDUM_TLS_INSECURE` | `false` | Skip TLS verification (dev/debug only) |
 
 ```bash
@@ -86,6 +86,7 @@ workflow.
 
 ```
 <dir>/
+├── certs/              # dev CA + server/client certs; the gateway serves HTTPS with them
 ├── docker-compose.yml
 ├── config/
 │   ├── pools.yaml
@@ -101,6 +102,9 @@ workflow.
 ```bash
 cordumctl init my-project
 cd my-project
+export CORDUM_API_KEY="$(openssl rand -hex 32)"
+docker compose up -d
+cordumctl status   # https://localhost:8081, trusting ./certs/ca/ca.crt
 ```
 
 ---
@@ -117,6 +121,7 @@ Generate a full TLS certificate chain: CA certificate, server certificate
 | `--dir` | `./certs` | Output directory |
 | `--force` | `false` | Overwrite existing certificates |
 | `--days` | `365` | Certificate validity in days |
+| `--san` | *(none)* | Extra DNS name or IP for the server certificate, added to the default SANs; repeatable |
 
 Certificates use EC P-256 keys with PKCS8 encoding.
 
@@ -129,6 +134,9 @@ cordumctl generate-certs --dir /path/to/certs
 
 # Regenerate expired certificates
 cordumctl generate-certs --force --days 730
+
+# Also cover a Kubernetes Service name (see cordum-helm/README.md)
+cordumctl generate-certs --san cordum-api-gateway.cordum.svc.cluster.local
 ```
 
 **Output structure:**
@@ -484,7 +492,7 @@ started with `up`/`dev`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CORDUM_GATEWAY` | `http://localhost:8081` | Gateway base URL |
+| `CORDUM_GATEWAY` | `https://localhost:8081` | Gateway base URL |
 | `CORDUM_API_KEY` | *(none)* | API authentication key |
 | `CORDUM_TENANT_ID` | `default` | Tenant ID |
 
@@ -720,13 +728,16 @@ Used in CI as `tools/scripts/doctor_integration_test.sh`.
 
 ### `cordumctl audit`
 
-Audit chain operations — verify, replay, export.
+Audit chain operations — verify, adopt a retention anchor.
 
 ```bash
-cordumctl audit verify --since 24h        # verify chain integrity over a window
-cordumctl audit replay --job <job_id>     # replay a job's audit timeline locally
-cordumctl audit export --backend datadog  # one-shot export to a configured backend
+cordumctl audit verify [tenant] [--since ms] [--until ms] [--limit N] [--json]
+cordumctl audit adopt-anchor [tenant] --expected-oldest-seq N [--replace-invalid] [--json]
 ```
+
+`verify` exits 0 for `ok`, 3 for `partial`, 2 for `compromised`, 1 on errors.
+`adopt-anchor` accepts a prefix trimmed outside the retention sweeper; see
+[Upgrading: chains you trimmed by hand](audit-operations.md#upgrading-chains-you-trimmed-by-hand).
 
 See [audit.md](audit.md) for event types + SIEM exporter
 configuration.

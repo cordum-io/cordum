@@ -8,8 +8,8 @@ info:
   license:
     name: Proprietary
 servers:
-- url: http://localhost:8081
-  description: Gateway HTTP (local default)
+- url: https://localhost:8081
+  description: Gateway on the default compose stack (HTTPS; development CA in ./certs/ca/ca.crt)
 - url: /
   description: Relative gateway base
 tags:
@@ -5626,13 +5626,59 @@ paths:
               $ref: '#/components/schemas/JsonRpcRequest'
       responses:
         '200':
-          description: JSON-RPC response
+          description: >
+            JSON-RPC response to a request that carries an `id`. Tool and
+            approval failures are JSON-RPC errors inside this 200 (for
+            example `-32099` approval required, `-32096` approval
+            lifecycle error).
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/JsonRpcResponse'
+        '202':
+          description: A notification (no `id`) was accepted. No body.
         '400':
           $ref: '#/components/responses/BadRequest'
+        '404':
+          description: >
+            The `X-MCP-Session-ID` header or `session_id` query names a
+            session that does not exist or that another caller opened (the
+            two look the same). JSON-RPC error `-32001`; open `/mcp/sse`
+            for a new session id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonRpcResponse'
+              example:
+                jsonrpc: '2.0'
+                id: 1
+                error:
+                  code: -32001
+                  message: session not found
+        '408':
+          description: >
+            The client went away before the reply. JSON-RPC error `-32603`
+            (`request canceled`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonRpcResponse'
+        '413':
+          description: >
+            The message exceeds the transport size limit. JSON-RPC error
+            `-32600` (`request too large`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonRpcResponse'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          description: The Edge session for the call could not be recorded (`mcp trace unavailable`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '503':
           description: >
             MCP HTTP transport is unavailable. Stable error `code`:
@@ -5641,10 +5687,25 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '504':
+          description: >
+            No reply within the transport response timeout. JSON-RPC error
+            `-32603` (`request timeout`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonRpcResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          description: >
+            Tenant missing or not allowed, upstream fronting not configured
+            for the tenant, or `X-Agent-Id` names an agent identity this
+            caller is not bound to (`agent identity not bound to caller`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
       parameters:
       - $ref: '#/components/parameters/TenantID'
   /mcp/status:
@@ -6710,6 +6771,53 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/audit/chain/retention-anchor:
+    post:
+      operationId: adoptRetentionAnchor
+      summary: Adopt a retention anchor for a chain trimmed outside the sweeper
+      description: |
+        Writes the retention anchor that a tenant chain trimmed outside the retention sweeper (by
+        hand, or by stream max-length eviction) lacks, so verify reports the missing prefix as
+        `retention_trimmed` instead of `missing`. The anchor is the oldest retained event's
+        predecessor: seq `expected_oldest_seq - 1`, the oldest event's `prev_hash`, and the stream
+        ID just below its entry, HMAC-signed when `CORDUM_AUDIT_HMAC_KEY` is set. Admin-only.
+
+        Refused with 409, changing nothing, when the oldest retained event is not
+        `expected_oldest_seq`, when the current anchor already links the chain, when a Redis
+        Cluster retention trim is in progress, or when the current anchor is invalid and
+        `replace_invalid` is not set. The adoption is appended to the tenant's audit chain
+        (`audit.retention_anchor_adopted`, naming the actor and the replaced anchor) before the
+        anchor is written. If a retention sweep moves the anchor in between, the call returns
+        409 and that event stays in the chain.
+      tags:
+      - AuditExport
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdoptRetentionAnchorRequest'
+      responses:
+        '200':
+          description: Retention anchor adopted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdoptRetentionAnchorResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /api/v1/audit/events:
     get:
       operationId: getAuditEvents
@@ -7569,6 +7677,7 @@ paths:
       operationId: createAgent
       x-cordum-error-codes:
       - AGENT_REQUEST_INVALID
+      - AGENT_WORKER_CONFLICT
       summary: Create an agent identity
       tags:
       - Agents
@@ -7582,6 +7691,9 @@ paths:
               type: object
               required: [name, owner, risk_tier]
               properties:
+                agent_id:
+                  type: string
+                  description: Worker id (a principal or API key id) to link to the new identity. A worker already linked to an agent identity is refused with 409 AGENT_WORKER_CONFLICT.
                 name: {type: string}
                 description: {type: string}
                 owner: {type: string}
@@ -7631,6 +7743,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
   /api/v1/agents/{id}:
@@ -7670,6 +7784,7 @@ paths:
       x-cordum-error-codes:
       - AGENT_REQUEST_INVALID
       - AGENT_NOT_FOUND
+      - AGENT_WORKER_CONFLICT
       summary: Update an agent identity
       tags:
       - Agents
@@ -7680,6 +7795,9 @@ paths:
             schema:
               type: object
               properties:
+                agent_id:
+                  type: string
+                  description: Worker id (a principal or API key id) to link to this identity, so an existing identity can be bound without being re-created. A worker already linked to another identity is refused with 409 AGENT_WORKER_CONFLICT.
                 name: {type: string}
                 description: {type: string}
                 owner: {type: string}
@@ -7730,6 +7848,10 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
     delete:
@@ -13970,6 +14092,60 @@ components:
       - verified_events
       - gaps
       - retention_boundary_seq
+    AdoptRetentionAnchorRequest:
+      type: object
+      properties:
+        tenant_id:
+          type: string
+          description: Tenant whose chain to anchor; must match caller scope and defaults to the authenticated/request tenant.
+        expected_oldest_seq:
+          type: integer
+          format: int64
+          minimum: 2
+          description: Seq of the oldest retained event, as verify reports it (`first_seq`). Adoption is refused when the chain starts anywhere else.
+        replace_invalid:
+          type: boolean
+          default: false
+          description: Replace an existing anchor that does not anchor the chain (malformed, `hmac_mismatch`, or not linked to the oldest retained event). A valid anchor is never replaced.
+      required:
+      - expected_oldest_seq
+    AdoptRetentionAnchorResult:
+      type: object
+      properties:
+        tenant:
+          type: string
+        adopted_seq:
+          type: integer
+          format: int64
+          description: Seq of the adopted anchor, one below the oldest retained event.
+        adopted_hash:
+          type: string
+          description: Event hash the oldest retained event links to (its `prev_hash`).
+        adopted_stream_id:
+          type: string
+          description: Redis Stream ID just below the oldest retained entry.
+        previous_anchor:
+          type: string
+          description: The replaced anchor value; empty when there was none.
+        previous_anchor_state:
+          type: string
+          enum:
+          - none
+          - malformed
+          - hmac_mismatch
+          - unlinked
+        event_seq:
+          type: integer
+          format: int64
+          description: Seq of the chain event that records the adoption.
+      required:
+      - tenant
+      - adopted_seq
+      - adopted_hash
+      - adopted_stream_id
+      - previous_anchor
+      - previous_anchor_state
+      - event_seq
     RoleDefinition:
       type: object
       properties:

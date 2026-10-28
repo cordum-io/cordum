@@ -156,6 +156,10 @@ refresh interval is the canonical recurring check cadence.
   compromise.
 - Any `hash_mismatch`, `missing`, or `out_of_order` gap is a compliance
   stop-condition.
+- A chain trimmed by hand, outside the retention sweeper, reads as
+  `missing` below its oldest event. If you trimmed it yourself, adopt a
+  retention anchor for it with `POST /api/v1/audit/chain/retention-anchor`
+  (see [Upgrading: chains you trimmed by hand](../audit-operations.md#upgrading-chains-you-trimmed-by-hand)).
 
 ## See also
 

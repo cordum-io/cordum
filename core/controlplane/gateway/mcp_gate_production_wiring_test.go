@@ -170,8 +170,11 @@ func (h *pwHarness) requireLegacyApproval(r pwReply) string {
 	if id == "" {
 		h.t.Fatalf("-32099 without approval_id: %+v", r.Error.Data)
 	}
-	if ref, _ := r.Error.Data["approval_ref"].(string); ref != id {
-		h.t.Errorf("approval_ref = %q, want approval_id %q (no Edge approval minted)", ref, id)
+	// Without the policy gate the Edge approval is still minted beside the
+	// legacy record, but nothing consumes `_approval_ref`: the reply asks
+	// for a same-args retry, which claims the pair (claimApprovedTwin).
+	if ref, _ := r.Error.Data["approval_ref"].(string); ref == "" {
+		h.t.Errorf("-32099 without approval_ref: %+v", r.Error.Data)
 	}
 	if hint, _ := r.Error.Data["retry_hint"].(string); hint != "retry_with_same_args" {
 		h.t.Errorf("retry_hint = %q, want retry_with_same_args", hint)
@@ -281,26 +284,6 @@ func pwCheck(t *testing.T, gate *gatewayApprovalGate, ctx context.Context) (*mcp
 	return gate.Check(ctx, mcp.Tool{Name: pwToolName, RequiresApproval: true}, json.RawMessage(pwArgs))
 }
 
-func TestWireMCPApprovalGate_NoEdgeMintWithoutApprovalHold(t *testing.T) {
-	t.Parallel()
-	edgeStore := &captureEdgeStore{}
-	srv := &server{edgeStore: edgeStore}
-	_, gate := srv.wireMCPApprovalGate(newTestMCPStore(t), nil)
-	if gate == nil {
-		t.Fatal("wireMCPApprovalGate returned nil concrete gate")
-	}
-	if gate.edgeStore != nil || gate.policySnapshot != nil || gate.serverName != "" {
-		t.Fatalf("Edge mint wired without its approval hold: edgeStore=%v serverName=%q", gate.edgeStore, gate.serverName)
-	}
-	got, err := pwCheck(t, gate, pwGateCtx())
-	if err != nil || got == nil {
-		t.Fatalf("Check = %+v, %v; want legacy ApprovalRequired", got, err)
-	}
-	if edgeStore.lastReq.SessionID != "" {
-		t.Fatalf("Edge EnqueueApproval called without an approval hold: %+v", edgeStore.lastReq)
-	}
-}
-
 func TestAttachMCPPolicyDeps_WiresEdgeMintWithHold(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ name, serverName, want string }{
@@ -360,9 +343,12 @@ func TestGate_EdgeMintOutageFailsClosed(t *testing.T) {
 
 func TestGate_RetryHintReflectsMintedPath(t *testing.T) {
 	t.Parallel()
-	t.Run("edge_minted", func(t *testing.T) {
+	// The hint follows the `_approval_ref` consume path: a minted ref is
+	// advertised only while the MCP server's approval hold can claim it.
+	t.Run("edge_minted_with_hold", func(t *testing.T) {
 		gate := NewGatewayApprovalGate(newTestMCPStore(t)).(*gatewayApprovalGate)
 		gate.WithEdgeApprovalMint(&captureEdgeStore{approvalID: "edge-ref"}, pwSnapshot, mcpPolicyServerName)
+		gate.approvalHold = true
 		got, err := pwCheck(t, gate, pwGateCtx())
 		if err != nil || got == nil {
 			t.Fatalf("Check = %+v, %v", got, err)

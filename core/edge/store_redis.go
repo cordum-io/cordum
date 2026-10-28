@@ -177,7 +177,8 @@ func WithMaxEventBytes(max int) StoreOption {
 }
 
 // WithMaxExecutionsPerSession overrides the per-session execution fanout cap.
-// It is primarily intended for tests that exercise cleanup pagination.
+// The gateway sets it from CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION; tests use
+// it to exercise cleanup pagination.
 func WithMaxExecutionsPerSession(max int) StoreOption {
 	return func(s *RedisStore) {
 		s.maxExecutionsPerSession = max
@@ -666,6 +667,9 @@ func (s *RedisStore) removeSessionSecondaryIndexes(ctx context.Context, session 
 }
 
 func (s *RedisStore) deleteRedisKeysInBatches(ctx context.Context, keys []string) (int64, error) {
+	if redisutil.IsCluster(s.client) {
+		return s.deleteRedisKeysPerKey(ctx, keys)
+	}
 	var deleted int64
 	for start := 0; start < len(keys); start += sessionCleanupDeleteBatchSize {
 		end := start + sessionCleanupDeleteBatchSize
@@ -679,6 +683,24 @@ func (s *RedisStore) deleteRedisKeysInBatches(ctx context.Context, keys []string
 		deleted += count
 	}
 	return deleted, nil
+}
+
+// deleteRedisKeysPerKey deletes keys one DEL each, pipelined: on Redis
+// Cluster a multi-key DEL must keep all its keys in one hash slot.
+func (s *RedisStore) deleteRedisKeysPerKey(ctx context.Context, keys []string) (int64, error) {
+	cmds, err := s.client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		for _, key := range keys {
+			pipe.Del(ctx, key)
+		}
+		return nil
+	})
+	var deleted int64
+	for _, cmd := range cmds {
+		if del, ok := cmd.(*redis.IntCmd); ok {
+			deleted += del.Val()
+		}
+	}
+	return deleted, err
 }
 
 func (s *RedisStore) continueDeleteSessionInBackground(tenantID, sessionID string, cursor uint64) {
@@ -929,6 +951,33 @@ func (s *RedisStore) CountSessionExecutions(ctx context.Context, tenantID, sessi
 	count, err := s.client.ZCard(ctx, edgeSessionExecutionsIndexKey(sessionID)).Result()
 	if err != nil {
 		return 0, fmt.Errorf("count edge session executions %s: %w", sessionID, err)
+	}
+	return count, nil
+}
+
+// ExecutionCaps reports how many executions one session may hold, and how
+// many events one execution may hold while approvals bound to its events can
+// still be minted and claimed: the smaller of the event cap and the approval
+// validation cap. Callers that keep a long-lived stream in one session rotate
+// executions and sessions before these bite.
+func (s *RedisStore) ExecutionCaps() (maxExecutions, maxEvents int) {
+	return s.maxExecutionsPerSession, min(s.maxEventsPerExecution, maxEventsPerApprovalValidation)
+}
+
+// CountExecutionEvents returns the number of events recorded for executionID
+// (LLEN, O(1)). As with CountSessionExecutions, the caller resolves the
+// execution against tenantID first.
+func (s *RedisStore) CountExecutionEvents(ctx context.Context, tenantID, executionID string) (int64, error) {
+	if err := s.ensureReady(); err != nil {
+		return 0, err
+	}
+	executionID = strings.TrimSpace(executionID)
+	if strings.TrimSpace(tenantID) == "" || executionID == "" {
+		return 0, fmt.Errorf("%w: tenant_id and execution_id are required", ErrValidation)
+	}
+	count, err := s.client.LLen(ctx, edgeEventsKey(executionID)).Result()
+	if err != nil {
+		return 0, fmt.Errorf("count events for execution %s: %w", executionID, err)
 	}
 	return count, nil
 }

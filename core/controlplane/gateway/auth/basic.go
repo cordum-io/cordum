@@ -369,6 +369,14 @@ func (b *BasicAuthProvider) authenticateWithScope(ctx context.Context, key, prin
 						slog.Warn("failed to record api key usage", "key_id", keyID, "error", err) // #nosec -- key id is validated and safe for logs.
 					}
 				}(mk.ID)
+				// A managed key record carries no principal, so X-Principal-Id
+				// follows the rule for a static key without principal_id: honoured
+				// only where header principals are allowed (non-production, or
+				// CORDUM_ALLOW_HEADER_PRINCIPAL). Without it the caller is the key
+				// itself: KeyID is the stable identity audit attribution uses.
+				if !b.allowHeaderPrincipal {
+					principalID = ""
+				}
 				return &AuthContext{
 					APIKey:      key,
 					Tenant:      tenant,

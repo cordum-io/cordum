@@ -284,7 +284,7 @@ appropriate and how to audit it.
 
 ## Audit trail fields
 
-Every mutating call produces two SIEMEvents that land on the Merkle audit chain:
+Every mutating call produces two SIEMEvents that land on the audit hash chain:
 
 1. `mcp.tool_approval(outcome=enqueued)` — emitted by the gate when it enqueues.
    Extra carries `tool_name`, `args_hash`, `approval_id`, `requester`,
@@ -338,7 +338,7 @@ exits cleanly."*
 ```
 
 Claude Code surfaces: *"This tool needs approval. Approve at:
-http://localhost:8081/approvals?mcp=apr-1a2b3c"*
+http://localhost:8082/approvals?mcp=apr-1a2b3c"* (the dashboard's approvals page)
 
 **Step 4.** The operator opens the dashboard, clicks the approval, reviews the
 canonical args in the modal, and clicks **Approve**.

@@ -37,12 +37,13 @@ func runUpCmd(args []string) {
 		fail(err.Error())
 	}
 
+	caPath := filepath.ToSlash(filepath.Join(filepath.Dir(*file), "certs", "ca", "ca.crt"))
 	fmt.Println("Cordum stack started.")
-	fmt.Println("Gateway: https://localhost:8081")
+	fmt.Println("Gateway: " + defaultGateway + " (CA: " + caPath + ")")
 	fmt.Println("Dashboard: http://localhost:8082")
 	if source != "" {
 		fmt.Println("API Key: configured (value hidden)")
-		fmt.Println("Status: curl -sS http://localhost:8081/api/v1/status -H \"X-API-Key: <your-key>\" -H \"X-Tenant-ID: <tenant>\"")
+		fmt.Println("Status: curl -sS --cacert " + caPath + " " + defaultGateway + "/api/v1/status -H \"X-API-Key: <your-key>\" -H \"X-Tenant-ID: <tenant>\"")
 		fmt.Println("Smoke (from repo root): CORDUM_API_KEY=<your-key> CORDUM_TENANT_ID=<tenant> ./tools/scripts/platform_smoke.sh")
 	}
 }

@@ -643,18 +643,9 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	var delegationLineage model.DelegationLineage
 	if s.jobStore != nil {
 		if jobRequest != nil {
-			if jobRequest.WorkflowId != "" {
-				workflowID = jobRequest.WorkflowId
-			}
-			if len(jobRequest.Labels) > 0 {
-				for k, v := range jobRequest.Labels {
-					labels[k] = v
-				}
-				if workflowID == "" {
-					workflowID = jobRequest.Labels["workflow_id"]
-				}
-				runID = jobRequest.Labels["run_id"]
-				stepID = jobRequest.Labels["step_id"]
+			workflowID, runID, stepID = jobWorkflowLink(jobRequest)
+			for k, v := range jobRequest.Labels {
+				labels[k] = v
 			}
 		}
 		if lineage, err := s.jobStore.GetDelegationLineage(r.Context(), id); err == nil {
@@ -1252,6 +1243,37 @@ func (s *server) handleRemediateJob(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"job_id": newJobID, "trace_id": traceID})
 }
 
+var (
+	errAgentIDNeedsCredential = errors.New("client-supplied agent_id requires an authenticated worker credential")
+	errAgentIDMismatch        = errors.New("client-supplied agent_id does not match authenticated principal")
+)
+
+// credentialAgentID returns the agent identity linked to the submitter's
+// credential and rejects a client-supplied agent_id (claimed) that disagrees
+// with it. Never trust labels.agent_id: the credential's agent identity is the
+// only authoritative one. The credential's own principal wins over the
+// requested principalID, which a caller can name freely.
+func (s *server) credentialAgentID(ctx context.Context, principalID, claimed string) (string, error) {
+	if ac := auth.FromContext(ctx); ac != nil && strings.TrimSpace(ac.PrincipalID) != "" {
+		principalID = ac.PrincipalID
+	}
+	var derived string
+	if s.agentIdentityStore != nil {
+		if agent, err := s.agentIdentityStore.GetByWorkerID(ctx, strings.TrimSpace(principalID)); err == nil && agent != nil {
+			derived = agent.ID
+		}
+	}
+	if claimed != "" {
+		if derived == "" {
+			return "", errAgentIDNeedsCredential
+		}
+		if claimed != derived {
+			return "", errAgentIDMismatch
+		}
+	}
+	return derived, nil
+}
+
 func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	// RBAC: custom roles may submit when they hold jobs.write. When advanced
 	// RBAC is disabled, preserve the historical admin/user fallback.
@@ -1370,6 +1392,12 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	teamID := req.TeamId
 	projectID := req.ProjectId
 
+	// The body idempotency_key wins. Without it, take the Idempotency-Key
+	// header that HTTP clients (Python SDK, curl) send, like other write
+	// endpoints do.
+	if strings.TrimSpace(req.IdempotencyKey) == "" {
+		req.IdempotencyKey = idempotencyKeyFromRequest(r)
+	}
 	key := strings.TrimSpace(req.IdempotencyKey)
 	if key != "" && s.jobStore != nil {
 		existingID, err := s.jobStore.GetJobByIdempotencyKeyScoped(r.Context(), orgID, key)
@@ -1478,27 +1506,14 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		meta.Labels = req.Labels
 	}
 
-	// Bind agent_id to the authenticated principal. Never trust
-	// client-supplied labels.agent_id: a client that can reach this
-	// handler already has a worker credential, and that credential's
-	// agent identity is the only authoritative one. A mismatch between
-	// client-asserted and credential-derived agent_id is an
+	// Bind agent_id to the authenticated principal (credentialAgentID). A
+	// mismatch between client-asserted and credential-derived agent_id is an
 	// impersonation attempt and rejects 403.
-	var authDerivedAgentID string
-	if s.agentIdentityStore != nil {
-		if agent, err := s.agentIdentityStore.GetByWorkerID(r.Context(), principalID); err == nil && agent != nil {
-			authDerivedAgentID = agent.ID
-		}
-	}
-	if clientAgentID := req.Labels["agent_id"]; clientAgentID != "" {
-		if authDerivedAgentID == "" {
-			writeErrorJSON(w, http.StatusForbidden, "client-supplied agent_id requires an authenticated worker credential")
-			return
-		}
-		if clientAgentID != authDerivedAgentID {
-			writeErrorJSON(w, http.StatusForbidden, "client-supplied agent_id does not match authenticated principal")
-			return
-		}
+	authDerivedAgentID, agentErr := s.credentialAgentID(r.Context(), principalID, req.Labels["agent_id"])
+	if agentErr != nil {
+		// One of the errAgentID* sentinels: fixed, client-facing text.
+		writeErrorJSON(w, http.StatusForbidden, agentErr.Error())
+		return
 	}
 	if authDerivedAgentID != "" {
 		if req.Labels == nil {

@@ -22,9 +22,12 @@ import type {
 } from "@tanstack/react-query";
 
 import type {
+  AdoptRetentionAnchorRequest,
+  AdoptRetentionAnchorResult,
   AuditEventsEnvelope,
   AuditVerifyResult,
   BadRequestResponse,
+  ConflictResponse,
   Error,
   ExportAuditComplianceParams,
   ForbiddenResponse,
@@ -251,6 +254,129 @@ export function useVerifyAuditChain<
   return withQueryKey(query, queryOptions.queryKey);
 }
 
+/**
+ * Writes the retention anchor that a tenant chain trimmed outside the retention sweeper (by
+ * hand, or by stream max-length eviction) lacks, so verify reports the missing prefix as
+ * `retention_trimmed` instead of `missing`. The anchor is the oldest retained event's
+ * predecessor: seq `expected_oldest_seq - 1`, the oldest event's `prev_hash`, and the stream
+ * ID just below its entry, HMAC-signed when `CORDUM_AUDIT_HMAC_KEY` is set. Admin-only.
+ *
+ * Refused with 409, changing nothing, when the oldest retained event is not
+ * `expected_oldest_seq`, when the current anchor already links the chain, when a Redis
+ * Cluster retention trim is in progress, or when the current anchor is invalid and
+ * `replace_invalid` is not set. The adoption is appended to the tenant's audit chain
+ * (`audit.retention_anchor_adopted`, naming the actor and the replaced anchor) before the
+ * anchor is written. If a retention sweep moves the anchor in between, the call returns
+ * 409 and that event stays in the chain.
+ * @summary Adopt a retention anchor for a chain trimmed outside the sweeper
+ */
+export const adoptRetentionAnchor = (
+  adoptRetentionAnchorRequest: AdoptRetentionAnchorRequest,
+  signal?: AbortSignal,
+) => {
+  return apiClient<AdoptRetentionAnchorResult>({
+    url: `/api/v1/audit/chain/retention-anchor`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: adoptRetentionAnchorRequest,
+    signal,
+  });
+};
+
+export const getAdoptRetentionAnchorMutationKey = () =>
+  ["adoptRetentionAnchor"] as const;
+
+export const getAdoptRetentionAnchorMutationOptions = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ConflictResponse
+    | InternalServerErrorResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof adoptRetentionAnchor>>,
+    TError,
+    AdoptRetentionAnchorMutationVariables,
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof adoptRetentionAnchor>>,
+  TError,
+  AdoptRetentionAnchorMutationVariables,
+  TContext
+> => {
+  const mutationKey = getAdoptRetentionAnchorMutationKey();
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof adoptRetentionAnchor>>,
+    AdoptRetentionAnchorMutationVariables
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return adoptRetentionAnchor(data);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AdoptRetentionAnchorMutationResult = NonNullable<
+  Awaited<ReturnType<typeof adoptRetentionAnchor>>
+>;
+export type AdoptRetentionAnchorMutationBody = AdoptRetentionAnchorRequest;
+export type AdoptRetentionAnchorMutationError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | ConflictResponse
+  | InternalServerErrorResponse
+  | ServiceUnavailableResponse;
+export type AdoptRetentionAnchorMutationVariables = {
+  data: AdoptRetentionAnchorRequest;
+};
+
+/**
+ * @summary Adopt a retention anchor for a chain trimmed outside the sweeper
+ */
+export const useAdoptRetentionAnchor = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ConflictResponse
+    | InternalServerErrorResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof adoptRetentionAnchor>>,
+      TError,
+      AdoptRetentionAnchorMutationVariables,
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof adoptRetentionAnchor>>,
+  TError,
+  AdoptRetentionAnchorMutationVariables,
+  TContext
+> => {
+  return useMutation(
+    getAdoptRetentionAnchorMutationOptions(options),
+    queryClient,
+  );
+};
 /**
  * Returns a paginated list of SIEM audit events for a tenant — the full
  * chained feed (MCP, edge, worker, output policy, delegation, license, ...)

@@ -27,10 +27,24 @@ func TestEdgeDoctorManagedSettingsCheckPasses(t *testing.T) {
 	env := &edgeDoctorEnv{
 		readFile:            os.ReadFile,
 		managedSettingsPath: path,
+		mcpGatewayURL:       "https://mcp.cordum.example/mcp",
 	}
 	res := edgeCheckManagedSettings(context.Background(), env)
 	if res.State != stateOK {
 		t.Fatalf("golden expected OK; got state=%q detail=%q", res.State, res.Detail)
+	}
+}
+
+func TestEdgeDoctorManagedSettingsRequiresIndependentGateway(t *testing.T) {
+	env := &edgeDoctorEnv{managedSettingsPath: writeManagedSettingsFixture(t)}
+	result := edgeCheckManagedSettings(context.Background(), env)
+	if result.State != stateFail || !strings.Contains(result.Detail, "trusted.mcpGatewayURL") {
+		t.Fatalf("missing trusted baseline: %+v", result)
+	}
+	env.mcpGatewayURL = "https://other.example/mcp"
+	result = edgeCheckManagedSettings(context.Background(), env)
+	if result.State != stateFail || !strings.Contains(result.Detail, "serverUrl") {
+		t.Fatalf("mismatched trusted baseline: %+v", result)
 	}
 }
 
@@ -40,6 +54,7 @@ func TestEdgeDoctorManagedSettingsCheckFailsOnDrift(t *testing.T) {
 	env := &edgeDoctorEnv{
 		readFile:            os.ReadFile,
 		managedSettingsPath: path,
+		mcpGatewayURL:       "https://mcp.cordum.example/mcp",
 	}
 	res := edgeCheckManagedSettings(context.Background(), env)
 	if res.State != stateFail {

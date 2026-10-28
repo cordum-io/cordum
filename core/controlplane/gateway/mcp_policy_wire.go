@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/cordum/cordum/core/controlplane/safetykernel"
-	"github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/mcp"
 	"github.com/cordum/cordum/core/policy/actiongates"
@@ -99,12 +98,12 @@ func (a policyDispatcherAdapter) Dispatch(ctx context.Context, in *config.Policy
 //  2. PreapprovalLookup HIT — skip approval store entirely.
 //  3. Fall through to MCPApprovalStore claim/enqueue.
 //
-// On invariant DENY this returns an error so the caller can map it
-// to a -32097 / -32099 JSON-RPC code. On preapproval HIT, returns
+// On invariant DENY this returns invariantDenied's *mcp.PolicyDenied,
+// which the MCP server answers like an action-gate DENY. On preapproval HIT, returns
 // ("", nil) so the caller treats the call as immediately allowed.
 func (g *gatewayApprovalGate) ConsumeActionGateDecision(ctx context.Context, _ mcp.PolicyDecision, ctxData mcp.ToolCallApprovalContext) (string, error) {
 	if g == nil || g.store == nil {
-		return "", fmt.Errorf("mcp gate: approval store unavailable")
+		return "", fmt.Errorf("%w: mcp gate: approval store unavailable", mcp.ErrInternal)
 	}
 	// Invariant DENY first — fail closed regardless of the actiongate
 	// decision so a pack-contributed actiongate ALLOW cannot override
@@ -116,8 +115,7 @@ func (g *gatewayApprovalGate) ConsumeActionGateDecision(ctx context.Context, _ m
 		tool := mcp.Tool{Name: ctxData.Tool}
 		meta := MCPCallMetadata{Tenant: ctxData.Tenant, AgentID: ctxData.AgentID}
 		if rule, denied := matchMCPInvariantDeny(rules, tool, meta); denied {
-			return "", fmt.Errorf("%w: tool %q denied by invariant %q",
-				ErrMCPInvariantDeny, ctxData.Tool, rule.ID)
+			return "", invariantDenied(ctxData.Tool, rule)
 		}
 	}
 	// Preapproval HIT short-circuits the approval store. The bridge's
@@ -160,7 +158,7 @@ func (g *gatewayApprovalGate) ConsumeActionGateDecision(ctx context.Context, _ m
 	// SIEM correlation column always carries a stable 64-char shape.
 	argsHash := legacyMCPApprovalArgsHash(ctxData.ActionHash)
 	if rec, err := g.store.ClaimPreApproved(ctx, ctxData.Tenant, ctxData.AgentID, ctxData.Tool, argsHash); err != nil {
-		return "", fmt.Errorf("mcp gate: pre-approval claim: %w", err)
+		return "", fmt.Errorf("%w: mcp gate: pre-approval claim: %w", mcp.ErrInternal, err)
 	} else if rec != nil {
 		return rec.ID, nil
 	}
@@ -176,7 +174,7 @@ func (g *gatewayApprovalGate) ConsumeActionGateDecision(ctx context.Context, _ m
 	}
 	rec, err := g.store.EnqueueMCPApproval(ctx, req)
 	if err != nil {
-		return "", fmt.Errorf("mcp gate: enqueue approval: %w", err)
+		return "", fmt.Errorf("%w: mcp gate: enqueue approval: %w", mcp.ErrInternal, err)
 	}
 	return rec.ID, nil
 }
@@ -195,45 +193,23 @@ func (g *gatewayApprovalGate) ConsumeActionGateDecision(ctx context.Context, _ m
 // (ProcessApprovalClaim) computes. Without this match, edge.RedisStore
 // classifyApprovalClaimMismatch surfaces ApprovalConflictKindArgsMismatch
 // on every legitimate retry — the EDGE-103 reopen #1 core bug QA flagged.
+// While the same caller's approval for this call is still pending, a re-ask
+// gets that ref back instead of a new approval.
 func (g *gatewayApprovalGate) mintEdgeApprovalForActionGate(ctx context.Context, ctxData mcp.ToolCallApprovalContext) (string, error, bool) {
-	if g == nil || g.edgeStore == nil {
+	meta, ok := g.edgeMintMetadata(ctx)
+	if !ok {
 		return "", nil, false
 	}
-	meta, ok := mcp.CallMetadataFromContext(ctx)
-	if !ok || meta.SessionID == "" || meta.ExecutionID == "" {
-		return "", nil, false
-	}
-	policySnapshot := ""
-	if g.policySnapshot != nil {
-		policySnapshot = g.policySnapshot(ctx)
-	}
-	actionHash, inputHash := mcp.BuildMCPApprovalBinding(
-		meta.Tenant,
-		g.serverName,
-		mcp.ToolCallParams{Name: ctxData.Tool, Arguments: ctxData.Args},
-		policySnapshot,
-	)
-	requester := strings.TrimSpace(meta.Principal)
-	if gatewayMeta, ok := MCPCallMetadataFromContext(ctx); ok {
-		requester = mcpRequesterIdentity(gatewayMeta)
-	}
-	approval, err := g.edgeStore.EnqueueApproval(ctx, edge.EdgeApprovalRequest{
-		TenantID:       meta.Tenant,
-		SessionID:      meta.SessionID,
-		ExecutionID:    meta.ExecutionID,
-		EventID:        meta.AgentID,
-		PrincipalID:    meta.Principal,
-		Requester:      requester,
-		Reason:         "policy gate REQUIRE_HUMAN",
-		ActionHash:     actionHash,
-		InputHash:      inputHash,
-		PolicySnapshot: policySnapshot,
-	})
+	binding, err := g.bindMCPApproval(ctx, meta, ctxData.Tool, ctxData.Args)
 	if err != nil {
 		return "", err, true
 	}
-	if approval == nil {
-		return "", fmt.Errorf("edge store returned nil approval without error"), true
+	if pending := g.pendingMCPApproval(ctx, meta, binding); pending != nil {
+		return pending.ApprovalRef, nil, true
+	}
+	approval, err := g.mintMCPEdgeApproval(ctx, meta, binding, ctxData.Tool, "policy gate REQUIRE_HUMAN", "", "")
+	if err != nil {
+		return "", err, true
 	}
 	return approval.ApprovalRef, nil, true
 }

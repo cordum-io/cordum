@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
@@ -16,12 +17,25 @@ import (
 // not callable until the invariant is changed (which requires SecOps
 // authorship of the secops/invariants bundle, not a pack install).
 //
-// Wraps mcp.ErrToolDisabled so the JSON-RPC layer maps it to "method
-// not found" semantics — from the client's point of view, the tool is
-// unavailable, the same shape it would see for a disabled tool. The
-// rule.Reason and rule.ID land in the wrapped error message so audit
-// consumers can identify which invariant fired.
+// It travels inside an *mcp.PolicyDenied (see invariantDenied), which the
+// MCP server answers like an action-gate DENY: an isError tool result, not
+// a JSON-RPC error, carrying the rule's reason and ID, with decision=deny
+// on the invocation audit and a blocked mcp.tool.failed event when the
+// policy gate is on.
 var ErrMCPInvariantDeny = errors.New("mcp gate: denied by invariant")
+
+// invariantDenied is the error for a tools/call that invariant rule blocks.
+func invariantDenied(tool string, rule config.PolicyRule) error {
+	reason := strings.TrimSpace(rule.Reason)
+	if reason == "" {
+		reason = "denied by SecOps invariant"
+	}
+	return &mcp.PolicyDenied{
+		Reason:    fmt.Sprintf("%s (invariant %s)", reason, rule.ID),
+		SubReason: "secops_invariant",
+		Err:       fmt.Errorf("%w: tool %q denied by invariant %q: %s", ErrMCPInvariantDeny, tool, rule.ID, reason),
+	}
+}
 
 // MCPInvariantLookup returns the invariant rules currently in effect for
 // MCP tool-call evaluation. Implementations MUST be safe for concurrent
@@ -45,44 +59,49 @@ func (f MCPInvariantLookupFunc) InvariantsForMCPTool(ctx context.Context) []conf
 	return f(ctx)
 }
 
-// matchMCPInvariantDeny iterates invariant rules looking for a DENY-class
-// rule whose MCP matchers cover the candidate tool call. Returns the
-// matching rule and true when a hard deny applies; (zero rule, false)
-// otherwise. The matcher considers (in order):
+// CheckInvariants enforces the SecOps invariant floor on a tools/call,
+// approval-gated or not (mcp.InvariantFloor): ToolRegistry.Call runs it
+// before approval gating, so a deny invariant also blocks tools that never
+// reach Check, and invariantFlooredTools runs it before forwarding a call to
+// a fronted upstream. A call without MCPCallMetadata is matched with an empty
+// tenant, so tenant-scoped invariants skip it and the rest still apply.
 //
-//   - Match.MCP.DenyTools containing tool.Name (most common case)
-//   - Match.MCP.DenyServers containing tool.Server
-//   - Match.MCP.DenyResources / DenyActions where the tool advertises one
-//   - Match.MCP.AllowTools non-empty AND tool.Name not in it (implicit deny)
+// ponytail: one configsvc read and invariants YAML parse per tools/call;
+// cache by bundle revision if call volume makes that matter.
+func (g *gatewayApprovalGate) CheckInvariants(ctx context.Context, tool mcp.Tool) error {
+	if g == nil || g.invariants == nil {
+		return nil
+	}
+	meta, _ := MCPCallMetadataFromContext(ctx)
+	rule, denied := matchMCPInvariantDeny(g.invariants.InvariantsForMCPTool(ctx), tool, meta)
+	if !denied {
+		return nil
+	}
+	return invariantDenied(tool.Name, rule)
+}
+
+// matchMCPInvariantDeny iterates invariant rules looking for a DENY-class
+// rule (any decision config.IsAllowClassDecision rejects) whose MCP
+// matchers cover the candidate tool call. Returns the
+// matching rule and true when a hard deny applies; (zero rule, false)
+// otherwise. Only Match.Tenants and Match.MCP are consulted; see
+// mcpMatchHits for the list semantics.
 //
 // Tenant scoping: when Match.Tenants is non-empty, the rule fires only
 // for the matching tenant. Empty Match.Tenants means "all tenants".
 func matchMCPInvariantDeny(rules []config.PolicyRule, tool mcp.Tool, meta MCPCallMetadata) (config.PolicyRule, bool) {
 	for _, rule := range rules {
-		if !isMCPInvariantDenyDecision(rule.Decision) {
+		if config.IsAllowClassDecision(rule.Decision) {
 			continue
 		}
 		if !matchTenantScope(rule.Match.Tenants, meta.Tenant) {
 			continue
 		}
-		if mcpMatchHits(rule.Match.MCP, tool) {
+		if mcpMatchHits(rule, tool) {
 			return rule, true
 		}
 	}
 	return config.PolicyRule{}, false
-}
-
-// isMCPInvariantDenyDecision returns true for the decision strings that
-// represent a DENY-class outcome (block + escalate). Mirrors
-// policybundles.isInvariantDeny but lives gateway-side to avoid a
-// cross-package call from the MCP gate hot path.
-func isMCPInvariantDenyDecision(decision string) bool {
-	switch strings.ToLower(strings.TrimSpace(decision)) {
-	case "deny", "require_approval", "require-approval", "require_human", "throttle":
-		return true
-	default:
-		return false
-	}
 }
 
 // matchTenantScope reports whether the invariant rule applies to the
@@ -100,43 +119,18 @@ func matchTenantScope(tenants []string, candidate string) bool {
 	return false
 }
 
-// mcpMatchHits reports whether an invariant rule's MCP matchers cover the
-// candidate tool. The check is intentionally permissive about WHICH
-// matcher fires — any DENY hit is a deny. Allow-list emptiness is treated
-// as "no allow constraint", consistent with the existing config.MCPAllowed
-// semantics elsewhere in the codebase. mcp.Tool has no Server field, so
-// server-scope invariants must match by ApprovalScope or naming
-// convention (e.g. tool names prefixed by server) rather than a discrete
-// Server attribute. Tag-based matching is not in scope for v1.
-func mcpMatchHits(mcpMatch config.MCPPolicy, tool mcp.Tool) bool {
-	if listContainsFold(mcpMatch.DenyTools, tool.Name) {
-		return true
-	}
-	if tool.ApprovalScope != "" && listContainsFold(mcpMatch.DenyServers, tool.ApprovalScope) {
-		return true
-	}
-	// AllowTools non-empty and tool not in it = implicit deny by allowlist
-	// inversion. This lets SecOps author "MCP allow_tools: [calculator,
-	// search]" as an invariant that denies everything else.
-	if len(mcpMatch.AllowTools) > 0 && !listContainsFold(mcpMatch.AllowTools, tool.Name) {
-		return true
-	}
-	return false
-}
-
-// listContainsFold returns true when needle (case-insensitive) appears in
-// the haystack. Whitespace around entries is trimmed.
-func listContainsFold(haystack []string, needle string) bool {
-	needle = strings.TrimSpace(needle)
-	if needle == "" {
-		return false
-	}
-	for _, item := range haystack {
-		if strings.EqualFold(strings.TrimSpace(item), needle) {
-			return true
-		}
-	}
-	return false
+// mcpMatchHits reports whether a rule's match.mcp lists select the tool
+// call. It uses config.MCPRuleMatch, the matcher the Safety Kernel applies
+// to MCP jobs, so a rule reads the same in both places: for a deny-class
+// rule, a tool in deny_tools (or a server in deny_servers) is hit, and a
+// non-empty allow list hits every value not in it. mcp.Tool has no Server
+// field, so the server is tool.ApprovalScope; the gate knows no resource or
+// action, so a non-empty allow_resources or allow_actions list hits every
+// call, as it does for an MCP job without those labels. A rule with no MCP
+// lists never hits here.
+func mcpMatchHits(rule config.PolicyRule, tool mcp.Tool) bool {
+	return rule.Match.MCP.HasLists() && config.MCPRuleMatch(rule.Match.MCP, rule.Decision,
+		config.MCPRequest{Server: tool.ApprovalScope, Tool: tool.Name})
 }
 
 // loadMCPInvariantsFromBundles is the gateway-server-side helper that

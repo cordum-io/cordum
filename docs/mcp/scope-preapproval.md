@@ -141,7 +141,7 @@ Compare with the normal human-approved flow, which emits FOUR events per call
 faster and cheaper, but with less human-visible scrutiny. That trade-off is
 why the default is human-in-the-loop.
 
-All events land on the per-tenant Merkle audit chain (task-2497391e), so
+All events land on the per-tenant audit hash chain (task-2497391e), so
 preapproved-bypass activity is tamper-evident.
 
 ## Alerting on preapproved abuse
@@ -249,7 +249,7 @@ message: "release-bot ran >10 preapproved calls in 10m — investigate"
 
 The CI pipeline now provisions without a human click per run, but:
 
-- Every call lands on the Merkle audit chain with
+- Every call lands on the audit hash chain with
   `approval_status=preapproved`.
 - An anomalous burst pages an engineer.
 - The preapproval list is itself admin-gated — release-bot can't expand its

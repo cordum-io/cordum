@@ -1366,3 +1366,19 @@ func TestGatewayEdgeMaxExecutionsPerSessionCapDefaultAcceptsSmallSessions(t *tes
 		}
 	}
 }
+
+// An invalid or non-positive cap falls back to the default; a positive int
+// is used as-is.
+func TestEdgeMaxExecutionsPerSessionFallsBackOnInvalidValues(t *testing.T) {
+	for raw, want := range map[string]int{
+		"2":    2,
+		"0":    edgecore.DefaultMaxExecutionsPerSession,
+		"-1":   edgecore.DefaultMaxExecutionsPerSession,
+		"many": edgecore.DefaultMaxExecutionsPerSession,
+	} {
+		t.Setenv("CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION", raw)
+		if got := edgeMaxExecutionsPerSession(); got != want {
+			t.Errorf("CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION=%s: got %d, want %d", raw, got, want)
+		}
+	}
+}

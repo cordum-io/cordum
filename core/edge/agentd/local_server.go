@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -139,6 +140,7 @@ func (s *LocalServer) Nonce() string {
 }
 
 func (s *LocalServer) handleHook(w http.ResponseWriter, r *http.Request) {
+	answerBy := hookAnswerBy(r, time.Now())
 	if r.Method != http.MethodPost {
 		writeLocalError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -174,7 +176,7 @@ func (s *LocalServer) handleHook(w http.ResponseWriter, r *http.Request) {
 		Reason:   "Cordum Edge agentd is not ready to evaluate hooks yet; denying by fail-closed local boundary",
 	}
 	if s.evaluator != nil {
-		got, err := s.evaluateHookWithBuffer(r.Context(), req, buffer)
+		got, err := s.evaluateHookWithBuffer(withHookAnswerBy(r.Context(), answerBy), req, buffer)
 		if err != nil {
 			bufferedEvents := buffer.Events()
 			if flushErr := s.flushHookEventBatch(r.Context(), bufferedEvents, s.hookBatchIdempotencyKey(req, bufferedEvents)); flushErr != nil {
@@ -211,6 +213,18 @@ func (s *LocalServer) handleHook(w http.ResponseWriter, r *http.Request) {
 		}
 		s.recorder.RecordAgentdResponseWriteAborted(reason)
 	}
+}
+
+// hookAnswerBy is when cordum-hook stops waiting for this request: receipt
+// plus the budget it sent in claude.AgentdHookBudgetHeader, or plus the
+// default hook budget when the header is missing or invalid (older hooks).
+func hookAnswerBy(r *http.Request, receivedAt time.Time) time.Time {
+	budget := claude.DefaultAgentdPostBudget
+	raw := strings.TrimSpace(r.Header.Get(claude.AgentdHookBudgetHeader))
+	if ms, err := strconv.ParseInt(raw, 10, 64); err == nil && ms > 0 && ms <= maxAgentdDuration.Milliseconds() {
+		budget = time.Duration(ms) * time.Millisecond
+	}
+	return receivedAt.Add(budget)
 }
 
 // isWriteTimeoutError reports whether err is the net/http

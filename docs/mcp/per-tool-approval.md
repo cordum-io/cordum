@@ -157,6 +157,13 @@ tool, args_hash) tuple, it marks the record `consumed_at` and lets the
 call through. Any subsequent call with identical args **re-enqueues a
 fresh approval** — there is no replay window.
 
+When the gateway has an Edge store, each record is dual-written with an
+Edge approval, and the Edge approval is the pair's single consume token:
+the gate lets the call through by claiming it, then marks the record
+consumed. Approving or rejecting on either the MCP or the Edge approvals
+page resolves both. See
+[Approval-hold consume path](../mcp-server.md#approval-hold-consume-path).
+
 ## Self-approval guard
 
 The handler refuses any approval whose approver principal matches the

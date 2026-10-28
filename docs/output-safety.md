@@ -82,7 +82,7 @@ Output safety runs in two phases with **different** failure semantics:
 | `closed` (default) | Quarantine job on checker error/timeout | Production, regulated, high-risk tenants |
 | `open` | Allow result through, count as skipped | Development, low-risk tenants |
 
-Configure the async fail mode via environment variable `OUTPUT_POLICY_FAIL_MODE` at scheduler startup, or at runtime through the config service (`PUT /api/v1/config` with `{"scheduler":{"output_fail_mode":"open"}}`). Runtime changes are hot-reloaded every 30 seconds.
+Configure the async fail mode via environment variable `OUTPUT_POLICY_FAIL_MODE` at scheduler startup, or at runtime through the config service (`PUT /api/v1/config` with `{"scheduler":{"output_fail_mode":"open"}}`). Runtime changes are hot-reloaded every 30 seconds. A tenant's `scheduler.output_fail_mode` wins over the system-scope value, which wins over the env var; with none set the mode is `closed`. Under the production CAP profile the async check always fails closed.
 
 A Redis-backed circuit breaker (3 failures → open for 30s → half-open probe) protects against cascading failures when the output safety checker is persistently unavailable.
 

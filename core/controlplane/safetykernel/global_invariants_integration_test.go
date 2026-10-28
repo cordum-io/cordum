@@ -76,18 +76,12 @@ func TestEDGE052_OneInvariantBlocksAllFourSurfaces(t *testing.T) {
 	// SecOps invariant: SECURITY FLOOR. Authored ONCE, applied to all
 	// four evaluators. The Cordum-job + Edge cases share a single
 	// invariant rule (same labels + decision) — proves cross-section
-	// reuse. The MCP case lives in the same Invariants block. The
+	// reuse. The MCP case lives in the same Invariants block, deliberately
+	// FIRST: its match.mcp lists apply only to MCP tool calls, so the
+	// non-MCP subtests below must still reach inv-deny-secret-paths. The
 	// output case has its own invariant OutputRule for content scanning.
 	invariants := &config.SafetyPolicy{
 		Rules: []config.PolicyRule{
-			{
-				ID: "inv-deny-secret-paths",
-				Match: config.PolicyMatch{
-					Labels: map[string]string{"path.class": "secret"},
-				},
-				Decision: "deny",
-				Reason:   "SecOps invariant — secret paths forbidden across all surfaces",
-			},
 			{
 				ID: "inv-deny-mcp-fs-read",
 				Match: config.PolicyMatch{
@@ -95,6 +89,14 @@ func TestEDGE052_OneInvariantBlocksAllFourSurfaces(t *testing.T) {
 				},
 				Decision: "deny",
 				Reason:   "SecOps invariant — fs.read forbidden",
+			},
+			{
+				ID: "inv-deny-secret-paths",
+				Match: config.PolicyMatch{
+					Labels: map[string]string{"path.class": "secret"},
+				},
+				Decision: "deny",
+				Reason:   "SecOps invariant — secret paths forbidden across all surfaces",
 			},
 		},
 		OutputRules: []config.OutputPolicyRule{
@@ -128,7 +130,8 @@ func TestEDGE052_OneInvariantBlocksAllFourSurfaces(t *testing.T) {
 		// Even though pack-allow-cordum-job-secret-read targets job.deploy
 		// + label path.class=secret with decision=allow, the invariant
 		// inv-deny-secret-paths (label match only) fires first because
-		// applyKernelInvariants prepends DENYs to merged.Rules.
+		// applyKernelInvariants prepends DENYs to merged.Rules. The
+		// earlier inv-deny-mcp-fs-read is skipped: this is not an MCP call.
 		resp, err := srv.Evaluate(context.Background(), &pb.PolicyCheckRequest{
 			JobId:  "job-cordum",
 			Topic:  "job.deploy",
@@ -193,6 +196,31 @@ func TestEDGE052_OneInvariantBlocksAllFourSurfaces(t *testing.T) {
 		mcpRules := g.RulesForMCPTool()
 		if !containsRuleID(mcpRules, "inv-deny-mcp-fs-read") {
 			t.Fatalf("MCP gate's RulesForMCPTool() missing invariant; got %v", ruleIDs(mcpRules))
+		}
+	})
+
+	t.Run("C2_MCPToolJobInKernel", func(t *testing.T) {
+		// The same MCP invariant, evaluated by the kernel for an MCP tool
+		// call carried as mcp.server / mcp.tool labels: it denies fs.read,
+		// as the gate does, and does not fire for any other tool.
+		check := func(tool string) *pb.PolicyCheckResponse {
+			t.Helper()
+			resp, err := srv.Evaluate(context.Background(), &pb.PolicyCheckRequest{
+				JobId:  "job-mcp-" + tool,
+				Topic:  EdgeActionTopic,
+				Tenant: "default",
+				Labels: map[string]string{"mcp.server": "fs", "mcp.tool": tool},
+			})
+			if err != nil {
+				t.Fatalf("kernel.Evaluate (mcp %s): %v", tool, err)
+			}
+			return resp
+		}
+		if resp := check("fs.read"); resp.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY || resp.GetRuleId() != "inv-deny-mcp-fs-read" {
+			t.Fatalf("MCP fs.read: want DENY by inv-deny-mcp-fs-read, got %v rule=%q", resp.GetDecision(), resp.GetRuleId())
+		}
+		if resp := check("fs.write"); resp.GetRuleId() == "inv-deny-mcp-fs-read" {
+			t.Fatalf("MCP fs.write: inv-deny-mcp-fs-read must not fire, got %v rule=%q", resp.GetDecision(), resp.GetRuleId())
 		}
 	})
 

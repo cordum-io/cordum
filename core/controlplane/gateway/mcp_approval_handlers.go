@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
+	"github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/model"
 	"github.com/redis/go-redis/v9"
 )
@@ -40,6 +42,9 @@ type mcpApprovalHandler struct {
 	approverPrincipalID func(r *http.Request) string
 	// approverRole is retained for job-approval parity; MCP handlers do not audit today.
 	approverRole func(r *http.Request) string
+	// resolveEdgeTwin resolves the Edge approval a record is dual-written
+	// with (EdgeApprovalRef). Nil without an Edge store.
+	resolveEdgeTwin func(r *http.Request, rec *MCPApprovalRecord, decision model.ApprovalDecision, reason string) error
 }
 
 // newMCPApprovalHandler wires the production handler. Used from
@@ -190,8 +195,25 @@ func (h *mcpApprovalHandler) resolve(w http.ResponseWriter, r *http.Request, id 
 		_ = json.NewDecoder(r.Body).Decode(&body) // best-effort; body is optional
 	}
 
+	reason := strings.TrimSpace(body.Reason)
+	// The Edge approval dual-written with this record is the pair's consume
+	// token, so it is resolved first: a pair is never approved on one page
+	// and rejected on the other. A twin that is no longer pending (resolved,
+	// expired, consumed or gone) means the pair is already settled.
+	if rec.EdgeApprovalRef != "" && h.resolveEdgeTwin != nil {
+		if err := h.resolveEdgeTwin(r, rec, decision, reason); err != nil {
+			if errors.Is(err, edge.ErrApprovalConflict) || errors.Is(err, edge.ErrNotFound) {
+				slog.Warn("mcp approval resolve conflict", "approval_id", id, "approval_ref", rec.EdgeApprovalRef, "error", err)
+				writeJSONError(w, http.StatusConflict, "approval_already_resolved", "approval already resolved")
+				return
+			}
+			writeMCPApprovalStoreError(w, r, "resolve mcp approval edge twin", err, slog.String("approval_id", id))
+			return
+		}
+	}
+
 	resolverID := h.approverPrincipalID(r)
-	resolved, err := h.store.Resolve(ctx, id, decision, resolverID, strings.TrimSpace(body.Reason))
+	resolved, err := h.store.Resolve(ctx, id, decision, resolverID, reason)
 	if err != nil {
 		var stateConflict *MCPApprovalStateConflictError
 		if errors.As(err, &stateConflict) || errors.Is(err, ErrMCPApprovalAlreadyResolved) {
@@ -207,6 +229,44 @@ func (h *mcpApprovalHandler) resolve(w http.ResponseWriter, r *http.Request, id 
 		return
 	}
 	writeJSONObject(w, http.StatusOK, resolved)
+}
+
+// resolveMCPApprovalEdgeTwin resolves the Edge approval dual-written with a
+// legacy MCP approval record as the Edge approvals page would, for a reviewer
+// resolving the record on the MCP approvals page.
+func (s *server) resolveMCPApprovalEdgeTwin(r *http.Request, rec *MCPApprovalRecord, decision model.ApprovalDecision, reason string) error {
+	edgeDecision := edge.ApprovalDecisionReject
+	if decision == model.ApprovalDecisionApprove {
+		edgeDecision = edge.ApprovalDecisionApprove
+	}
+	_, err := s.executeResolveEdgeApproval(r, s.edgeStore, edgeDecision, rec.Tenant, rec.EdgeApprovalRef,
+		edgeApprovalResolverID(r), edgeApprovalResolvedBy(r), reason)
+	return err
+}
+
+// resolveMCPLegacyTwin applies an Edge approval's resolution to the legacy MCP
+// approval record dual-written with it (Metadata mcp_approval_id), so the MCP
+// approvals page shows it and cannot resolve the record the other way. Best
+// effort: the Edge approval is the pair's consume token either way, and the
+// MCP approvals page re-checks it before resolving.
+func (s *server) resolveMCPLegacyTwin(ctx context.Context, approval *edge.EdgeApproval, decision edge.ApprovalDecision, resolverID, reason string) {
+	runtime := s.getMCPRuntime()
+	id := ""
+	if approval != nil {
+		id = approval.Metadata[mcpLegacyApprovalIDKey]
+	}
+	if id == "" || runtime == nil || runtime.approvalStore == nil {
+		return
+	}
+	legacyDecision := model.ApprovalDecisionReject
+	if decision == edge.ApprovalDecisionApprove {
+		legacyDecision = model.ApprovalDecisionApprove
+	}
+	if _, err := runtime.approvalStore.Resolve(ctx, id, legacyDecision, resolverID, reason); err != nil &&
+		!errors.Is(err, ErrMCPApprovalAlreadyResolved) && !errors.Is(err, redis.Nil) {
+		slog.Warn("mcp approval: resolve legacy twin failed",
+			"approval_ref", approval.ApprovalRef, "approval_id", id, "error", err)
+	}
 }
 
 func writeMCPApprovalStoreError(w http.ResponseWriter, r *http.Request, operation string, err error, attrs ...slog.Attr) {

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -29,6 +30,7 @@ import (
 	"github.com/cordum/cordum/core/model"
 	jobidentity "github.com/cordum/cordum/core/protocol/identity"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/cordum/cordum/core/protocol/reqhash"
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
@@ -356,20 +358,34 @@ func isPolicyFailOpen() bool {
 	return strings.EqualFold(mode, "open")
 }
 
-// stripReservedLabels removes labels with an underscore prefix from client
-// input. Labels starting with "_" are reserved for system use (e.g., _internal,
-// _content.prompt). The gateway re-adds the system labels it needs after this
-// sanitization step.
+// stripReservedLabels removes system labels from client input. Labels starting
+// with "_" are reserved for system use (e.g., _internal, _content.prompt); the
+// gateway re-adds the ones it needs after this step. Server-owned labels
+// (reqhash.ServerOwnedLabel: approval_*, gate_type, the bus dedupe override,
+// policy.attachment_id, the workflow context) are state that the scheduler,
+// approval code and Safety Kernel act on: approval_granted plus
+// approval_snapshot would make a job look human-approved, and workflow_id
+// would claim a workflow's policy scope. Those are dropped too, and logged, so
+// a client cannot forge them.
 func stripReservedLabels(labels map[string]string) map[string]string {
 	if len(labels) == 0 {
 		return labels
 	}
 	clean := make(map[string]string, len(labels))
+	var dropped []string
 	for k, v := range labels {
 		if strings.HasPrefix(k, "_") {
 			continue
 		}
+		if reqhash.ServerOwnedLabel(k) {
+			dropped = append(dropped, k)
+			continue
+		}
 		clean[k] = v
+	}
+	if len(dropped) > 0 {
+		sort.Strings(dropped)
+		slog.Warn("dropped server-owned labels from client job input", "labels", dropped)
 	}
 	return clean
 }
@@ -1406,6 +1422,36 @@ func (s *server) requirePermissionOrRole(w http.ResponseWriter, r *http.Request,
 		return false
 	}
 	return s.requireLicensePermission(w, r, permission)
+}
+
+// permissionGrant is one permission plus the legacy roles that must come with
+// it, as requirePermissionOrRole checks them.
+type permissionGrant struct {
+	permission string
+	roles      []string
+}
+
+// requireAnyPermissionOrRole passes when the caller satisfies any one grant
+// the way requirePermissionOrRole checks a single one (the named permission
+// when advanced RBAC is entitled, plus the legacy roles), then applies that
+// grant's license check. When none matches it writes the denial for the first.
+func (s *server) requireAnyPermissionOrRole(w http.ResponseWriter, r *http.Request, grants ...permissionGrant) bool {
+	for _, g := range grants {
+		if s.permissionOrRoleAllowed(r, g.permission, g.roles...) {
+			return s.requirePermissionOrRole(w, r, g.permission, g.roles...)
+		}
+	}
+	return s.requirePermissionOrRole(w, r, grants[0].permission, grants[0].roles...)
+}
+
+// permissionOrRoleAllowed is requirePermissionOrRole's check without the
+// license step and without writing a response.
+func (s *server) permissionOrRoleAllowed(r *http.Request, permission string, roles ...string) bool {
+	if s != nil && s.auth != nil && s.permChecker != nil && auth.RBACEntitled(s.currentEntitlements()) &&
+		s.permChecker.RequirePermission(r, permission) != nil {
+		return false
+	}
+	return len(roles) == 0 || s.requireRole(r, roles...) == nil
 }
 
 func (s *server) requireFeatureEntitlement(w http.ResponseWriter, feature, message string) bool {

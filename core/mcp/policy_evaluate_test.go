@@ -15,6 +15,7 @@ import (
 	"github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/infra/config"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // fakePolicyDispatcher implements PolicyDispatcher for tests. Returns a
@@ -1017,4 +1018,106 @@ func (f *capturingApprovalHandoff) ConsumeActionGateDecision(_ context.Context, 
 	f.calls++
 	f.lastCtx = ctxData
 	return f.ref, f.err
+}
+
+// kindFailingEmitter refuses events of kind fail, as an Edge store at its
+// event cap would, and records the rest.
+type kindFailingEmitter struct {
+	fail   edge.EventKind
+	events []*edge.AgentActionEvent
+}
+
+func (e *kindFailingEmitter) Emit(_ context.Context, evt *edge.AgentActionEvent) error {
+	if evt.Kind == e.fail {
+		return errors.New("edge execution exec_99 is full")
+	}
+	e.events = append(e.events, evt)
+	return nil
+}
+
+// TestInvokeToolWithPolicy_KeepsOutcomeWhenTerminalEventFails: once a call
+// has run upstream, a failed append of its post (or failed) event used to
+// replace the call's outcome with an error, which invites a retry and a
+// second execution. The call's own outcome now comes back, and the gap is
+// counted and marked on the invocation audit event.
+func TestInvokeToolWithPolicy_KeepsOutcomeWhenTerminalEventFails(t *testing.T) {
+	upstreamErr := errors.New("upstream refused")
+	for _, tc := range []struct {
+		kind     edge.EventKind
+		upstream *fakeUpstreamToolCaller
+	}{
+		{edge.EventKindMCPToolPost, &fakeUpstreamToolCaller{result: &ToolCallResult{Content: []ContentItem{{Type: "text", Text: "ran"}}}}},
+		{edge.EventKindMCPToolFailed, &fakeUpstreamToolCaller{err: upstreamErr}},
+	} {
+		t.Run(string(tc.kind), func(t *testing.T) {
+			deps := newToolCallDepsFixture(&fakePolicyDispatcher{}, nil, &fakeArtifactStore{})
+			deps.EventEmitter = &kindFailingEmitter{fail: tc.kind}
+			deps.Upstream = tc.upstream
+			sender := &recordingSender{}
+			auditor := NewToolInvocationAuditor(sender, nil)
+			ctx, handle := auditor.StartInbound(newAuthedToolCallCtx(), "agent_alpha", "tnt_a", "fs.write", nil)
+			counter := mcpEvidenceWriteFailures.WithLabelValues(string(tc.kind))
+			before := testutil.ToFloat64(counter)
+
+			result, err := InvokeToolWithPolicy(ctx, deps, ToolCallParams{Name: "fs.write", Arguments: json.RawMessage(`{"path":"/tmp/x"}`)}, "cordum.builtin")
+			auditor.FinishInbound(handle, result, err)
+
+			if tc.upstream.err != nil {
+				if !errors.Is(err, upstreamErr) || result != nil {
+					t.Fatalf("InvokeToolWithPolicy = (%+v, %v), want the upstream's error", result, err)
+				}
+			} else if err != nil || result != tc.upstream.result {
+				t.Fatalf("InvokeToolWithPolicy = (%+v, %v), want the upstream's result", result, err)
+			}
+			if tc.upstream.calls != 1 {
+				t.Fatalf("upstream ran %d times, want once", tc.upstream.calls)
+			}
+			if got := testutil.ToFloat64(counter) - before; got != 1 {
+				t.Fatalf("evidence write failures for %s rose by %v, want 1", tc.kind, got)
+			}
+			if ev := sender.last(); ev == nil || ev.Extra["evidence_write_failed"] != string(tc.kind) {
+				t.Fatalf("invocation audit event = %+v, want evidence_write_failed=%s", ev, tc.kind)
+			}
+		})
+	}
+}
+
+// TestInvokeToolWithPolicy_ConsumedClaimSatisfiesRequireHuman: a consumed
+// `_approval_ref` claim for exactly this call is the approval REQUIRE_HUMAN
+// asks for, so the call runs instead of minting another approval. A claim
+// for other args, or none, still hands off to the approval store.
+func TestInvokeToolWithPolicy_ConsumedClaimSatisfiesRequireHuman(t *testing.T) {
+	t.Parallel()
+	args := json.RawMessage(`{"path":"/var/data/x.db"}`)
+	for _, tc := range []struct {
+		name        string
+		claimedArgs json.RawMessage
+		wantRun     bool
+	}{
+		{"claim for this call", json.RawMessage(`{ "path": "/var/data/x.db" }`), true},
+		{"claim for other args", json.RawMessage(`{"path":"/etc/passwd"}`), false},
+		{"no claim", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pipeline := &fakePolicyDispatcher{
+				decision: PolicyDecision{Decision: pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN, GateID: "actiongate.mcp"},
+				fired:    true,
+			}
+			upstream := &fakeUpstreamToolCaller{result: &ToolCallResult{Content: []ContentItem{{Type: "text", Text: "ran"}}}}
+			handoff := &capturingApprovalHandoff{ref: "edge_appr_new"}
+			deps := newToolCallDepsFixture(pipeline, &fakeEventEmitter{}, &fakeArtifactStore{})
+			deps.Upstream = upstream
+			deps.ApprovalHandoff = handoff
+			ctx := newAuthedToolCallCtx()
+			if tc.claimedArgs != nil {
+				ctx = withClaimedCall(ctx, "fs.delete", tc.claimedArgs)
+			}
+			if _, err := InvokeToolWithPolicy(ctx, deps, ToolCallParams{Name: "fs.delete", Arguments: args}, "cordum.builtin"); err != nil {
+				t.Fatalf("InvokeToolWithPolicy: %v", err)
+			}
+			if ran := upstream.calls == 1 && handoff.calls == 0; ran != tc.wantRun {
+				t.Fatalf("upstream calls = %d, handoffs = %d; want ran=%t", upstream.calls, handoff.calls, tc.wantRun)
+			}
+		})
+	}
 }

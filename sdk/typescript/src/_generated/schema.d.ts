@@ -313,6 +313,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/audit/chain/retention-anchor": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Adopt a retention anchor for a chain trimmed outside the sweeper
+         * @description Writes the retention anchor that a tenant chain trimmed outside the retention sweeper (by
+         *     hand, or by stream max-length eviction) lacks, so verify reports the missing prefix as
+         *     `retention_trimmed` instead of `missing`. The anchor is the oldest retained event's
+         *     predecessor: seq `expected_oldest_seq - 1`, the oldest event's `prev_hash`, and the stream
+         *     ID just below its entry, HMAC-signed when `CORDUM_AUDIT_HMAC_KEY` is set. Admin-only.
+         *
+         *     Refused with 409, changing nothing, when the oldest retained event is not
+         *     `expected_oldest_seq`, when the current anchor already links the chain, when a Redis
+         *     Cluster retention trim is in progress, or when the current anchor is invalid and
+         *     `replace_invalid` is not set. The adoption is appended to the tenant's audit chain
+         *     (`audit.retention_anchor_adopted`, naming the actor and the replaced anchor) before the
+         *     anchor is written. If a retention sweep moves the anchor in between, the call returns
+         *     409 and that event stays in the chain.
+         */
+        post: operations["adoptRetentionAnchor"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/audit/events": {
         parameters: {
             query?: never;
@@ -3784,6 +3816,41 @@ export interface components {
             ttl_remaining_ms: number;
             type: string;
         };
+        AdoptRetentionAnchorRequest: {
+            /**
+             * Format: int64
+             * @description Seq of the oldest retained event, as verify reports it (`first_seq`). Adoption is refused when the chain starts anywhere else.
+             */
+            expected_oldest_seq: number;
+            /**
+             * @description Replace an existing anchor that does not anchor the chain (malformed, `hmac_mismatch`, or not linked to the oldest retained event). A valid anchor is never replaced.
+             * @default false
+             */
+            replace_invalid: boolean;
+            /** @description Tenant whose chain to anchor; must match caller scope and defaults to the authenticated/request tenant. */
+            tenant_id?: string;
+        };
+        AdoptRetentionAnchorResult: {
+            /** @description Event hash the oldest retained event links to (its `prev_hash`). */
+            adopted_hash: string;
+            /**
+             * Format: int64
+             * @description Seq of the adopted anchor, one below the oldest retained event.
+             */
+            adopted_seq: number;
+            /** @description Redis Stream ID just below the oldest retained entry. */
+            adopted_stream_id: string;
+            /**
+             * Format: int64
+             * @description Seq of the chain event that records the adoption.
+             */
+            event_seq: number;
+            /** @description The replaced anchor value; empty when there was none. */
+            previous_anchor: string;
+            /** @enum {string} */
+            previous_anchor_state: "none" | "malformed" | "hmac_mismatch" | "unlinked";
+            tenant: string;
+        };
         APIKeyInfo: {
             /** Format: date-time */
             createdAt?: string;
@@ -6831,6 +6898,8 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** @description Worker id (a principal or API key id) to link to the new identity. A worker already linked to an agent identity is refused with 409 AGENT_WORKER_CONFLICT. */
+                    agent_id?: string;
                     allowed_pools?: string[];
                     /** @description cordum:// resource URI glob allowlist. Empty or omitted fail-closes resource-guarded MCP actions. */
                     allowed_resources?: string[];
@@ -6867,6 +6936,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalServerError"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };
@@ -6916,6 +6986,8 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** @description Worker id (a principal or API key id) to link to this identity, so an existing identity can be bound without being re-created. A worker already linked to another identity is refused with 409 AGENT_WORKER_CONFLICT. */
+                    agent_id?: string;
                     allowed_pools?: string[];
                     /** @description Full replacement cordum:// resource URI glob allowlist. Send [] to clear. */
                     allowed_resources?: string[];
@@ -6953,6 +7025,8 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalServerError"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };
@@ -7668,6 +7742,39 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
             500: components["responses"]["InternalServerError"];
+        };
+    };
+    adoptRetentionAnchor: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdoptRetentionAnchorRequest"];
+            };
+        };
+        responses: {
+            /** @description Retention anchor adopted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdoptRetentionAnchorResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalServerError"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     getAuditEvents: {
@@ -15257,7 +15364,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description JSON-RPC response */
+            /** @description JSON-RPC response to a request that carries an `id`. Tool and approval failures are JSON-RPC errors inside this 200 (for example `-32099` approval required, `-32096` approval lifecycle error). */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -15266,9 +15373,71 @@ export interface operations {
                     "application/json": components["schemas"]["JsonRpcResponse"];
                 };
             };
+            /** @description A notification (no `id`) was accepted. No body. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
+            /** @description Tenant missing or not allowed, upstream fronting not configured for the tenant, or `X-Agent-Id` names an agent identity this caller is not bound to (`agent identity not bound to caller`). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The `X-MCP-Session-ID` header or `session_id` query names a session that does not exist or that another caller opened (the two look the same). JSON-RPC error `-32001`; open `/mcp/sse` for a new session id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "jsonrpc": "2.0",
+                     *       "id": 1,
+                     *       "error": {
+                     *         "code": -32001,
+                     *         "message": "session not found"
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["JsonRpcResponse"];
+                };
+            };
+            /** @description The client went away before the reply. JSON-RPC error `-32603` (`request canceled`). */
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JsonRpcResponse"];
+                };
+            };
+            /** @description The message exceeds the transport size limit. JSON-RPC error `-32600` (`request too large`). */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JsonRpcResponse"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            /** @description The Edge session for the call could not be recorded (`mcp trace unavailable`). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             /** @description MCP HTTP transport is unavailable. Stable error `code`: `MCP_HTTP_TRANSPORT_UNAVAILABLE`. */
             503: {
                 headers: {
@@ -15276,6 +15445,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No reply within the transport response timeout. JSON-RPC error `-32603` (`request timeout`). */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JsonRpcResponse"];
                 };
             };
         };
@@ -15517,6 +15695,7 @@ export enum ApiPaths {
     setTelemetryConsent = "/api/v1/telemetry/consent",
     listAdminLocks = "/api/v1/admin/locks",
     verifyAuditChain = "/api/v1/audit/verify",
+    adoptRetentionAnchor = "/api/v1/audit/chain/retention-anchor",
     getAuditEvents = "/api/v1/audit/events",
     exportAuditCompliance = "/api/v1/audit/export",
     getAuditExportHealth = "/api/v1/audit/export/health",

@@ -581,11 +581,18 @@ func (e *Engine) isAsyncFailOpenForTenant(orgID string) bool {
 }
 
 // isApprovalGateTopic returns true if the topic is a synthetic approval gate
-// subject, not an actual worker topic. Only these topics should be auto-completed
-// with synthetic SUCCEEDED results; worker topics must always be dispatched.
+// subject, not an actual worker topic. Only these topics and guardApprovalTopic
+// are auto-completed with synthetic SUCCEEDED results; worker topics must
+// always be dispatched.
 func isApprovalGateTopic(topic string) bool {
 	return topic == capsdk.SubjectApprovalGate || topic == capsdk.SubjectWorkflowApprovalGate
 }
+
+// guardApprovalTopic is the default topic of the Python @guard SDK's approval
+// jobs. No worker serves it (the SDK runs the guarded call itself once the job
+// is approved), so an allowed job is completed instead of dispatched. It is not
+// a gate topic: its approvals keep the policy snapshot binding.
+const guardApprovalTopic = "job.guard"
 
 // Start registers subscriptions for the scheduler.
 func (e *Engine) Start() error {
@@ -1664,12 +1671,12 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 		if record.Constraints != nil {
 			applyConstraints(req, record.Constraints)
 		}
-		// Approval gate auto-complete: when an approval gate job is processed,
-		// publish a synthetic success result instead of dispatching to workers.
-		// IMPORTANT: Only auto-complete actual approval gate topics, NOT regular
+		// Approval-only auto-complete: when an approval gate or @guard job is
+		// processed, publish a synthetic success result instead of dispatching
+		// to workers. IMPORTANT: Only auto-complete these topics, NOT regular
 		// worker jobs that went through the approval flow. Worker jobs with
 		// reason "approval granted" must still be dispatched to their handlers.
-		if isApprovalGateTopic(topic) {
+		if isApprovalGateTopic(topic) || topic == guardApprovalTopic {
 			pkt := &pb.BusPacket{
 				TraceId:         traceID,
 				SenderId:        defaultSenderID,
@@ -2256,6 +2263,64 @@ func (e *Engine) checkSafetyDecisionTraced(ctx context.Context, req *pb.JobReque
 	return record, err
 }
 
+var (
+	errNoRecordedApproval       = errors.New("no recorded human approval")
+	errApprovalHashMismatch     = errors.New("job request differs from the approved one")
+	errApprovalSnapshotMismatch = errors.New("approval_snapshot does not match the stored policy snapshot")
+)
+
+// approvalBinding returns nil when the stored records let req skip the policy
+// check. Labels grant nothing by themselves: the job's approval record must
+// hold an approve decision and an approver (only the approve and repair paths
+// write those), the request must hash to the JobHash pinned when approval was
+// requested, and, outside workflow gates, the approval_snapshot the approve
+// path stamped must match the stored PolicySnapshot (base only, ignoring
+// config-overlay churn). ResolveApproval rotates that snapshot to the one the
+// human approved under, so a mismatch means the safety record drifted since.
+//
+// The stored safety record need not still say REQUIRE_APPROVAL: the fast path
+// overwrites it with its own ALLOW (same JobHash and snapshot), and an approved
+// job whose dispatch failed must not be re-gated when it is retried.
+func approvalBinding(req *pb.JobRequest, prev SafetyDecisionRecord, approval ApprovalRecord) error {
+	if prev.JobHash == "" {
+		return errNoRecordedApproval
+	}
+	if hash, err := HashJobRequest(req); err != nil || hash != prev.JobHash {
+		return errApprovalHashMismatch
+	}
+	// Workflow approval gates carry no policy decision to bind to (SafetyBasic
+	// returns an empty PolicySnapshot for them), so they skip the snapshot match.
+	if !isApprovalGateTopic(strings.TrimSpace(req.GetTopic())) {
+		asserted := strings.TrimSpace(req.GetLabels()["approval_snapshot"])
+		stored := strings.TrimSpace(prev.PolicySnapshot)
+		if asserted == "" || stored == "" || snapshotBase(asserted) != snapshotBase(stored) {
+			return errApprovalSnapshotMismatch
+		}
+	}
+	if approval.Decision != ApprovalDecisionApprove || strings.TrimSpace(approval.ApprovedBy) == "" {
+		return errNoRecordedApproval
+	}
+	return nil
+}
+
+// loadApproval reads the safety and approval records stored for jobID.
+func loadApproval(ctx context.Context, store JobStore, jobID string) (SafetyDecisionRecord, ApprovalRecord, error) {
+	approvals, ok := store.(interface {
+		GetApprovalRecord(context.Context, string) (ApprovalRecord, error)
+	})
+	if !ok {
+		return SafetyDecisionRecord{}, ApprovalRecord{}, errNoRecordedApproval
+	}
+	storeCtx, cancel := context.WithTimeout(ctx, storeOpTimeout)
+	defer cancel()
+	prev, err := store.GetSafetyDecision(storeCtx, jobID)
+	if err != nil {
+		return prev, ApprovalRecord{}, err
+	}
+	approval, err := approvals.GetApprovalRecord(storeCtx, jobID)
+	return prev, approval, err
+}
+
 // checkSafetyDecision evaluates safety for a job. The caller's ctx MUST be the
 // lock-fenced context from withJobLock — any state mutations derived from this
 // call (notably the approval fast-path SetSafetyDecision) must be cancelled
@@ -2273,78 +2338,46 @@ func (e *Engine) checkSafetyDecision(ctx context.Context, req *pb.JobRequest) (S
 		return record, fmt.Errorf("missing job id")
 	}
 
-	approved := false
-	if req.Labels != nil {
-		if raw := strings.TrimSpace(req.Labels["approval_granted"]); raw != "" && strings.EqualFold(raw, "true") {
-			approved = true
+	// approval_granted only says a human approval may exist; the stored
+	// records decide whether it does (approvalBinding).
+	if strings.EqualFold(strings.TrimSpace(req.GetLabels()["approval_granted"]), "true") && e.jobStore != nil {
+		prev, approval, err := loadApproval(ctx, e.jobStore, jobID)
+		if err == nil {
+			err = approvalBinding(req, prev, approval)
 		}
-	}
-	if approved {
-		if e.jobStore != nil {
-			storeCtx, cancel := context.WithTimeout(ctx, storeOpTimeout)
-			defer cancel()
-			prev, err := e.jobStore.GetSafetyDecision(storeCtx, jobID)
-			if err == nil && (prev.ApprovalRequired || prev.Decision == SafetyRequireApproval) && prev.JobHash != "" {
-				hash, err := HashJobRequest(req)
-				if err == nil && hash == prev.JobHash {
-					// Bind the fast-path to the PolicySnapshot this approval
-					// was admitted against. The gateway stamps approval_snapshot
-					// onto the resubmitted request when it resolves the
-					// approval; we compare it (base only, to ignore config-
-					// overlay churn) against the stored safety record's
-					// PolicySnapshot — which ResolveApproval rotates to the
-					// human-approved snapshot on approve. A mismatch means the
-					// stored safety decision drifted after admission (reconciler
-					// invalidated it, or the label predates this binding), so
-					// we fall through to a full safety check instead of
-					// short-circuiting to SafetyAllow.
-					asserted := strings.TrimSpace(req.Labels["approval_snapshot"])
-					stored := strings.TrimSpace(prev.PolicySnapshot)
-					// Workflow approval gates (sys.approval.gate /
-					// sys.workflow.approval.gate) carry no policy decision —
-					// SafetyBasic returns an empty PolicySnapshot for them.
-					// There is no TOCTOU concern to bind to, so skip the
-					// snapshot match for gate topics. Regular jobs still
-					// require the binding.
-					isGate := isApprovalGateTopic(strings.TrimSpace(req.GetTopic()))
-					if !isGate && (asserted == "" || stored == "" || snapshotBase(asserted) != snapshotBase(stored)) {
-						e.emitApprovalRevisionMismatch(req, stored, asserted)
-						slog.Warn("approval fast-path rejected: policy snapshot mismatch",
-							"job_id", jobID,
-							"stored_snapshot", stored,
-							"asserted_snapshot", asserted,
-						)
-					} else {
-						record = SafetyDecisionRecord{
-							Decision:       SafetyAllow,
-							Reason:         "approval granted",
-							CheckedAt:      time.Now().UTC().UnixNano() / int64(time.Microsecond),
-							Constraints:    prev.Constraints,
-							PolicySnapshot: prev.PolicySnapshot,
-							RuleID:         prev.RuleID,
-							JobHash:        prev.JobHash,
-						}
-						if e.jobStore != nil {
-							// Derive the store-op timeout from the caller's
-							// lock-fenced ctx, NOT e.ctx. If the lock is lost
-							// mid-evaluation the fenced ctx is cancelled and
-							// this write must not complete after the takeover
-							// handler has already mutated the job state.
-							writeCtx, cancel := context.WithTimeout(ctx, storeOpTimeout)
-							defer cancel()
-							if err := e.jobStore.SetSafetyDecision(writeCtx, jobID, record); err != nil {
-								return record, err
-							}
-							e.appendDecisionLog(req, record)
-						}
-						return record, nil
-					}
-				} else {
-					slog.Warn("approval label ignored (hash mismatch)", "job_id", jobID)
-				}
-			} else {
-				slog.Warn("approval label ignored (no approval record)", "job_id", jobID)
+		switch {
+		case err == nil:
+			record = SafetyDecisionRecord{
+				Decision:       SafetyAllow,
+				Reason:         "approval granted",
+				CheckedAt:      time.Now().UTC().UnixNano() / int64(time.Microsecond),
+				Constraints:    prev.Constraints,
+				PolicySnapshot: prev.PolicySnapshot,
+				RuleID:         prev.RuleID,
+				JobHash:        prev.JobHash,
 			}
+			// Derive the store-op timeout from the caller's lock-fenced ctx,
+			// NOT e.ctx. If the lock is lost mid-evaluation the fenced ctx is
+			// cancelled and this write must not complete after the takeover
+			// handler has already mutated the job state.
+			writeCtx, cancel := context.WithTimeout(ctx, storeOpTimeout)
+			defer cancel()
+			if err := e.jobStore.SetSafetyDecision(writeCtx, jobID, record); err != nil {
+				return record, err
+			}
+			e.appendDecisionLog(req, record)
+			return record, nil
+		case errors.Is(err, errApprovalSnapshotMismatch):
+			stored := strings.TrimSpace(prev.PolicySnapshot)
+			asserted := strings.TrimSpace(req.GetLabels()["approval_snapshot"])
+			e.emitApprovalRevisionMismatch(req, stored, asserted)
+			slog.Warn("approval fast-path rejected: policy snapshot mismatch",
+				"job_id", jobID,
+				"stored_snapshot", stored,
+				"asserted_snapshot", asserted,
+			)
+		default:
+			slog.Warn("approval label ignored", "job_id", jobID, "reason", err)
 		}
 	}
 
@@ -2530,12 +2563,11 @@ func (e *Engine) handleJobResult(res *pb.JobResult) error {
 			}
 		}
 		if status == pb.JobStatus_JOB_STATUS_FAILED_FATAL && e.saga != nil {
+			// WorkflowId, not the workflow_id label: a job a client labelled
+			// with another workflow's ID must not roll back that saga.
 			workflowID := ""
 			if jobReq != nil {
 				workflowID = strings.TrimSpace(jobReq.WorkflowId)
-				if workflowID == "" && jobReq.Labels != nil {
-					workflowID = strings.TrimSpace(jobReq.Labels["workflow_id"])
-				}
 			}
 			if workflowID != "" {
 				e.wg.Add(1)

@@ -10,6 +10,8 @@ import (
 
 	"github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/mcp"
+	"github.com/cordum/cordum/core/model"
+	"github.com/google/uuid"
 )
 
 // MCPCallMetadata carries the request-scoped context an ApprovalGate
@@ -89,7 +91,22 @@ type gatewayApprovalGate struct {
 	serverName     string
 	preapproval    PreapprovalLookup
 	invariants     MCPInvariantLookup
+	// approvalHold is set when the MCP server consumes `_approval_ref`
+	// retries (WithApprovalHold, wired only with mcp.policy_gate_enabled).
+	// Without it the -32099 reply asks for a same-args retry instead.
+	approvalHold bool
 }
+
+// The -32099 retry_hint values: how the client resumes once a reviewer
+// approves the call.
+const (
+	// mcpRetryWithApprovalRef: resend the call with the reply's approval_ref
+	// in the `_approval_ref` argument; the approval hold claims it.
+	mcpRetryWithApprovalRef = mcp.RetryHintApprovalRef
+	// mcpRetryWithSameArgs: resend the call unchanged; the gate claims the
+	// caller's approved approval for it (claimApprovedTwin, ClaimPreApproved).
+	mcpRetryWithSameArgs = mcp.RetryHintSameArgs
+)
 
 // NewGatewayApprovalGate returns a gate backed by the given store.
 // Passing a nil store yields a permissive gate (no gating) — useful for
@@ -187,17 +204,10 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 	// Invariants consultation (EDGE-052). Invariant DENY rules are the
 	// SECURITY FLOOR — they fire before any approval flow so a pack
 	// rule that allows a tool cannot override a SecOps invariant DENY.
-	// Lookup is optional; nil lookup proceeds to existing flow.
-	if g.invariants != nil {
-		rules := g.invariants.InvariantsForMCPTool(ctx)
-		if rule, denied := matchMCPInvariantDeny(rules, tool, meta); denied {
-			reason := strings.TrimSpace(rule.Reason)
-			if reason == "" {
-				reason = "denied by SecOps invariant"
-			}
-			return nil, fmt.Errorf("%w: tool %q denied by invariant %q: %s",
-				ErrMCPInvariantDeny, tool.Name, rule.ID, reason)
-		}
+	// ToolRegistry.Call already ran CheckInvariants; repeating it keeps
+	// the floor for direct Check callers. Nil lookup proceeds.
+	if err := g.CheckInvariants(ctx, tool); err != nil {
+		return nil, err
 	}
 
 	// Scope-preapproval bypass (task-2d989055). If the agent
@@ -217,7 +227,7 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 	}
 
 	if rec, err := g.store.ClaimPreApproved(ctx, meta.Tenant, meta.AgentID, tool.Name, argsHash); err != nil {
-		return nil, fmt.Errorf("mcp gate: pre-approval claim: %w", err)
+		return nil, fmt.Errorf("%w: mcp gate: pre-approval claim: %w", mcp.ErrInternal, err)
 	} else if rec != nil {
 		// Stamp the consumed approval onto the in-flight invocation
 		// handle so the eventual mcp.tool_invocation event carries
@@ -230,6 +240,45 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 			h.MarkApprovalConsumed(rec.ID)
 		}
 		return nil, nil
+	}
+
+	// EDGE-103: when the gate is wired for Edge mint and mcp.CallMetadata
+	// carries SessionID/ExecutionID, the approval is an EdgeApproval whose
+	// ref is the `_approval_ref` resume handle, dual-written with the
+	// legacy MCPApprovalStore record. The Edge approval is the pair's single
+	// consume token: a retry with the same args claims it too
+	// (claimApprovedTwin), and either approvals page resolves both halves.
+	// While the same caller's approval for this call is still pending, a
+	// re-ask gets that one back instead of a second pair. Without Edge
+	// wiring or Edge metadata, ApprovalRef falls back to the legacy record
+	// id and the legacy retry-with-same-args protocol still works via
+	// ClaimPreApproved above. An Edge-store outage (wired + metadata present
+	// but the mint errored) fails closed per DoD #5: no silent fallback to a
+	// non-resumable legacy approval_id.
+	edgeMeta, edgeMint := g.edgeMintMetadata(ctx)
+	var binding mcpApprovalBinding
+	if edgeMint {
+		if binding, err = g.bindMCPApproval(ctx, edgeMeta, tool.Name, params); err != nil {
+			return nil, fmt.Errorf("%w: edge approval mint failed: %w", mcp.ErrApprovalStoreUnavailable, err)
+		}
+		if approvalID, err := g.claimApprovedTwin(ctx, meta, edgeMeta, binding, tool.Name, argsHash); err != nil {
+			return nil, fmt.Errorf("%w: mcp gate: pre-approval claim: %w", mcp.ErrInternal, err)
+		} else if approvalID != "" {
+			if h := mcp.InvocationHandleFromContext(ctx); h != nil {
+				h.MarkApprovalConsumed(approvalID)
+			}
+			return nil, nil
+		}
+		// The pair is reused only while its legacy record is pending too, so
+		// the reply never names a legacy record that is gone or resolved.
+		if pending := g.pendingMCPApproval(ctx, edgeMeta, binding); pending != nil {
+			if approvalID := pending.Metadata[mcpLegacyApprovalIDKey]; g.legacyApprovalPending(ctx, approvalID) {
+				if h := mcp.InvocationHandleFromContext(ctx); h != nil {
+					h.MarkApprovalRequired(approvalID)
+				}
+				return mcpApprovalRequired(tool.Name, argsHash, approvalID, g.edgeRetryHint(), pending), nil
+			}
+		}
 	}
 
 	// Requester is the authenticated composite identity when HTTP middleware
@@ -247,9 +296,21 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 		Requester: requester,
 		Reason:    approvalReasonFor(tool),
 	}
+	// The Edge approval is minted first, naming the legacy record id it is
+	// dual-written with, so the record can name it back (EdgeApprovalRef).
+	var approval *edge.EdgeApproval
+	if edgeMint {
+		if req.ID, err = mcpApprovalID(); err != nil {
+			return nil, fmt.Errorf("%w: mcp gate: approval id: %w", mcp.ErrInternal, err)
+		}
+		if approval, err = g.mintMCPEdgeApproval(ctx, edgeMeta, binding, tool.Name, req.Reason, tool.ApprovalScope, req.ID); err != nil {
+			return nil, fmt.Errorf("%w: edge approval mint failed: %w", mcp.ErrApprovalStoreUnavailable, err)
+		}
+		req.EdgeApprovalRef = approval.ApprovalRef
+	}
 	rec, err := g.store.EnqueueMCPApproval(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("mcp gate: enqueue: %w", err)
+		return nil, fmt.Errorf("%w: mcp gate: enqueue: %w", mcp.ErrInternal, err)
 	}
 	// Mark the handle so the invocation event records
 	// approval_status=required + approval_id=<rec.ID> — lets SIEM
@@ -258,96 +319,222 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 	if h := mcp.InvocationHandleFromContext(ctx); h != nil {
 		h.MarkApprovalRequired(rec.ID)
 	}
-	// EDGE-103: try to dual-write an EdgeApproval when the gate is
-	// wired for it AND mcp.CallMetadata has SessionID/ExecutionID.
-	// On success the returned ApprovalRef is the Edge ref consumable
-	// by the new `_approval_ref` resume path. On legitimate miss (no
-	// Edge wiring or no Edge metadata), ApprovalRef falls back to the
-	// legacy MCPApprovalStore record id; the legacy retry-with-same-args
-	// protocol still works via ClaimPreApproved above. On Edge-store
-	// outage (wired + metadata present but EnqueueApproval errored),
-	// fail-closed per DoD #5 — no silent fallback to a non-resumable
-	// legacy approval_id.
-	approvalRef, policySnapshot, expiresAt, mintErr := g.dualWriteEdgeApproval(ctx, meta, tool, params, rec)
-	if mintErr != nil {
-		return nil, fmt.Errorf("%w: edge approval mint failed: %w", mcp.ErrApprovalStoreUnavailable, mintErr)
+	if approval != nil {
+		return mcpApprovalRequired(tool.Name, argsHash, rec.ID, g.edgeRetryHint(), approval), nil
 	}
-	// Advertise `_approval_ref` only for a minted Edge ref; the legacy
-	// record resumes via ClaimPreApproved on byte-identical args.
-	retryHint := mcp.RetryHintSameArgs
-	if approvalRef != rec.ID {
-		retryHint = mcp.RetryHintApprovalRef
+	// A legacy record id is not an Edge approval_ref, so the approval hold
+	// cannot claim it; only a same-args retry does (ClaimPreApproved).
+	legacy := &mcp.ApprovalRequired{
+		ApprovalID:  rec.ID,
+		ApprovalRef: rec.ID,
+		ArgsHash:    argsHash,
+		RetryHint:   mcpRetryWithSameArgs,
+		Reason:      rec.Reason,
+		Tool:        tool.Name,
 	}
-	return &mcp.ApprovalRequired{
-		ApprovalID:     rec.ID,
-		ApprovalRef:    approvalRef,
-		ArgsHash:       argsHash,
-		ExpiresAt:      expiresAt,
-		PolicySnapshot: policySnapshot,
-		RetryHint:      retryHint,
-		Reason:         rec.Reason,
-		Tool:           tool.Name,
-	}, nil
+	if rec.ExpiresAt > 0 {
+		legacy.ExpiresAt = time.UnixMicro(rec.ExpiresAt).UTC()
+	}
+	return legacy, nil
 }
 
-// dualWriteEdgeApproval mints an EdgeApproval alongside the legacy
-// MCPApprovalStore record when the gate has been wired for Edge mint
-// AND mcp.CallMetadata carries SessionID + ExecutionID. The Edge
-// record's ref is the EDGE-103 `_approval_ref` resume handle; without
-// it, the response falls back to the legacy ID (resumable via
-// retry-with-same-args, not via `_approval_ref`).
-//
-// Returns a four-tuple — the last field is non-nil when Edge mint was
-// ATTEMPTED (transport metadata present) and FAILED. Caller surfaces
-// approval_store_unavailable per DoD #5 in that case. nil errors include
-// both the success path and the legitimate-fallback path where Edge mint
-// was skipped (no edgeStore wired, or no CallMetadata in ctx).
-func (g *gatewayApprovalGate) dualWriteEdgeApproval(ctx context.Context, meta MCPCallMetadata, tool mcp.Tool, params json.RawMessage, rec *MCPApprovalRecord) (approvalRef, policySnapshot string, expiresAt time.Time, mintErr error) {
-	approvalRef = rec.ID
-	if rec.ExpiresAt > 0 {
-		// MCPApprovalRecord.ExpiresAt is UnixMicro (mcp_approvals.go).
-		expiresAt = time.UnixMicro(rec.ExpiresAt).UTC()
+// claimApprovedTwin runs a retry without `_approval_ref` on the caller's
+// approved Edge approval for this call, found through the legacy record
+// dual-written with it. Claiming the Edge approval is what consumes the pair,
+// whichever page approved it, so the call runs once across both retry styles.
+// Returns the claimed pair's legacy record id, or "" when there is none.
+func (g *gatewayApprovalGate) claimApprovedTwin(ctx context.Context, meta MCPCallMetadata, edgeMeta mcp.CallMetadata, b mcpApprovalBinding, tool, argsHash string) (string, error) {
+	twins, err := g.store.EdgeTwins(ctx, meta.Tenant, meta.AgentID, tool, argsHash)
+	if err != nil {
+		return "", err
 	}
-	if g.edgeStore == nil {
-		return approvalRef, "", expiresAt, nil
+	for _, rec := range twins {
+		// mcpApprovalClaims binds the claim to the approval's own session,
+		// execution and parent event when it is this caller's; the store
+		// refuses anything else, and checks status, expiry, args and policy.
+		_, claimed, err := mcpApprovalClaims{store: g.edgeStore}.ClaimApproval(ctx, edge.ApprovalClaimRequest{
+			TenantID: meta.Tenant, ApprovalRef: rec.EdgeApprovalRef,
+			ActionHash: b.actionHash, InputHash: b.inputHash, PolicySnapshot: b.policySnapshot,
+			ConsumedAt: time.Now().UTC(), CallerAgentID: edgeMeta.Principal,
+		})
+		if err == nil && claimed {
+			// The legacy half records the consume for its own audit trail.
+			_ = g.store.MarkConsumed(ctx, rec.ID)
+			g.store.pruneIndexFor(ctx, rec)
+			return rec.ID, nil
+		}
 	}
-	edgeMeta, ok := mcp.CallMetadataFromContext(ctx)
-	if !ok || edgeMeta.SessionID == "" || edgeMeta.ExecutionID == "" {
-		return approvalRef, "", expiresAt, nil
+	return "", nil
+}
+
+// edgeRetryHint is the retry_hint for an Edge approval: an `_approval_ref`
+// retry where the approval hold consumes one, otherwise a same-args retry.
+func (g *gatewayApprovalGate) edgeRetryHint() string {
+	if g.approvalHold {
+		return mcpRetryWithApprovalRef
 	}
+	return mcpRetryWithSameArgs
+}
+
+// mcpApprovalRequired is the -32099 payload for an Edge approval.
+func mcpApprovalRequired(tool, argsHash, approvalID, retryHint string, approval *edge.EdgeApproval) *mcp.ApprovalRequired {
+	out := &mcp.ApprovalRequired{
+		ApprovalID:     approvalID,
+		ApprovalRef:    approval.ApprovalRef,
+		ArgsHash:       argsHash,
+		PolicySnapshot: approval.PolicySnapshot,
+		RetryHint:      retryHint,
+		Reason:         approval.Reason,
+		Tool:           tool,
+	}
+	if approval.ExpiresAt != nil {
+		out.ExpiresAt = approval.ExpiresAt.UTC()
+	}
+	return out
+}
+
+const (
+	// mcpApprovalAgentLabel is the Edge approval label naming the agent
+	// identity an MCP approval was minted for. A claim binds to the approval,
+	// and a re-ask reuses it, only for the same caller acting as the same
+	// agent (mcpApprovalIsCallers).
+	mcpApprovalAgentLabel = "agent_id"
+	// mcpLegacyApprovalIDKey is the Edge approval metadata key holding the
+	// legacy MCPApprovalStore record id dual-written with it.
+	mcpLegacyApprovalIDKey = "mcp_approval_id"
+)
+
+// edgeMintMetadata returns the call's Edge linkage when the gate mints Edge
+// approvals for it: Edge wiring plus a session and execution.
+func (g *gatewayApprovalGate) edgeMintMetadata(ctx context.Context) (mcp.CallMetadata, bool) {
+	if g == nil || g.edgeStore == nil {
+		return mcp.CallMetadata{}, false
+	}
+	meta, ok := mcp.CallMetadataFromContext(ctx)
+	return meta, ok && meta.SessionID != "" && meta.ExecutionID != ""
+}
+
+// mcpApprovalBinding is what an MCP Edge approval binds a tool call to.
+type mcpApprovalBinding struct{ policySnapshot, actionHash, inputHash string }
+
+func (g *gatewayApprovalGate) bindMCPApproval(ctx context.Context, meta mcp.CallMetadata, tool string, args json.RawMessage) (mcpApprovalBinding, error) {
+	b := mcpApprovalBinding{}
 	if g.policySnapshot != nil {
-		policySnapshot = g.policySnapshot(ctx)
+		b.policySnapshot = g.policySnapshot(ctx)
 	}
-	actionHash, inputHash := mcp.BuildMCPApprovalBinding(
-		edgeMeta.Tenant,
-		g.serverName,
-		mcp.ToolCallParams{Name: tool.Name, Arguments: params},
-		policySnapshot,
-	)
-	edgeApproval, err := g.edgeStore.EnqueueApproval(ctx, edge.EdgeApprovalRequest{
-		TenantID:       edgeMeta.Tenant,
-		SessionID:      edgeMeta.SessionID,
-		ExecutionID:    edgeMeta.ExecutionID,
-		EventID:        edgeMeta.AgentID,
-		PrincipalID:    edgeMeta.Principal,
-		Requester:      mcpRequesterIdentity(meta),
-		Reason:         rec.Reason,
-		RuleID:         tool.ApprovalScope,
-		PolicySnapshot: policySnapshot,
-		ActionHash:     actionHash,
-		InputHash:      inputHash,
+	if b.policySnapshot == "" {
+		return b, errors.New("policy snapshot unavailable")
+	}
+	b.actionHash, b.inputHash = mcp.BuildMCPApprovalBinding(meta.Tenant, g.serverName, mcp.ToolCallParams{Name: tool, Arguments: args}, b.policySnapshot)
+	return b, nil
+}
+
+// pendingMCPApproval returns the caller's pending Edge approval for this
+// call (same requester identity, agent, tool and target, args and policy
+// snapshot), so a re-ask without `_approval_ref` does not mint another.
+// ponytail: scans the principal's 50 newest pending approvals and does not
+// re-check that the approval's Edge session is still open; a miss mints a new
+// approval, as before.
+func (g *gatewayApprovalGate) pendingMCPApproval(ctx context.Context, meta mcp.CallMetadata, b mcpApprovalBinding) *edge.EdgeApproval {
+	page, err := g.edgeStore.ListApprovals(ctx, edge.ListApprovalsQuery{
+		TenantID: meta.Tenant, PrincipalID: meta.Principal, Status: edge.ApprovalStatusPending, Limit: 50,
 	})
 	if err != nil {
-		return "", policySnapshot, expiresAt, err
+		return nil
 	}
-	if edgeApproval == nil {
-		return "", policySnapshot, expiresAt, fmt.Errorf("edge store returned nil approval without error")
+	now := time.Now().UTC()
+	for i := range page.Items {
+		a := &page.Items[i]
+		if a.ActionHash == b.actionHash && a.InputHash == b.inputHash && a.PolicySnapshot == b.policySnapshot &&
+			(a.ExpiresAt == nil || a.ExpiresAt.After(now)) && mcpApprovalIsCallers(ctx, a) {
+			return a
+		}
 	}
-	approvalRef = edgeApproval.ApprovalRef
-	if edgeApproval.ExpiresAt != nil {
-		expiresAt = edgeApproval.ExpiresAt.UTC()
+	return nil
+}
+
+// legacyApprovalPending reports whether the legacy MCPApprovalStore record id
+// is still pending.
+func (g *gatewayApprovalGate) legacyApprovalPending(ctx context.Context, id string) bool {
+	if id == "" {
+		return false
 	}
-	return approvalRef, policySnapshot, expiresAt, nil
+	rec, err := g.store.Get(ctx, id)
+	return err == nil && rec != nil && rec.Status == model.ApprovalStatusPending
+}
+
+// mintMCPEdgeApproval records the tool call's approval.requested event and
+// enqueues an Edge approval bound to it, as the Edge hook path appends its
+// decision event before EnqueueApproval: the store only accepts an approval
+// whose parent event exists in the execution, with the same policy snapshot
+// and input hash. legacyID, when set, is the dual-written legacy record.
+func (g *gatewayApprovalGate) mintMCPEdgeApproval(ctx context.Context, meta mcp.CallMetadata, b mcpApprovalBinding, tool, reason, ruleID, legacyID string) (*edge.EdgeApproval, error) {
+	parent, err := g.edgeStore.AppendEvent(ctx, edge.AgentActionEvent{
+		EventID:        uuid.NewString(),
+		SessionID:      meta.SessionID,
+		ExecutionID:    meta.ExecutionID,
+		TenantID:       meta.Tenant,
+		PrincipalID:    meta.Principal,
+		Timestamp:      time.Now().UTC(),
+		Layer:          edge.LayerMCP,
+		Kind:           edge.EventKindApprovalRequested,
+		ToolName:       tool,
+		ActionName:     tool,
+		Decision:       edge.DecisionRequireApproval,
+		DecisionReason: reason,
+		RuleID:         ruleID,
+		Status:         edge.ActionStatusBlocked,
+		PolicySnapshot: b.policySnapshot,
+		InputHash:      b.inputHash,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("record approval event: %w", err)
+	}
+	var metadata edge.Metadata
+	if legacyID != "" {
+		metadata = edge.Metadata{mcpLegacyApprovalIDKey: legacyID}
+	}
+	requester, agentID := mcpCallRequester(ctx)
+	approval, err := g.edgeStore.EnqueueApproval(ctx, edge.EdgeApprovalRequest{
+		TenantID:       meta.Tenant,
+		SessionID:      meta.SessionID,
+		ExecutionID:    meta.ExecutionID,
+		EventID:        parent.EventID,
+		PrincipalID:    meta.Principal,
+		Requester:      requester,
+		Reason:         reason,
+		RuleID:         ruleID,
+		PolicySnapshot: b.policySnapshot,
+		ActionHash:     b.actionHash,
+		InputHash:      b.inputHash,
+		Labels:         edge.Labels{mcpApprovalAgentLabel: agentID},
+		Metadata:       metadata,
+	})
+	if err == nil && approval == nil {
+		err = errors.New("edge store returned nil approval without error")
+	}
+	return approval, err
+}
+
+// mcpCallRequester returns who is making this MCP call, the way approvals
+// record it: the authenticated requester identity (credential hash and
+// principal) when the HTTP middleware supplied one, else the principal; and
+// the agent identity the call acts as.
+func mcpCallRequester(ctx context.Context) (requester, agentID string) {
+	meta, _ := mcp.CallMetadataFromContext(ctx)
+	requester, agentID = strings.TrimSpace(meta.Principal), strings.TrimSpace(meta.AgentID)
+	if gatewayMeta, ok := MCPCallMetadataFromContext(ctx); ok {
+		requester = mcpRequesterIdentity(gatewayMeta)
+	}
+	return requester, agentID
+}
+
+// mcpApprovalIsCallers reports whether approval was minted for the caller of
+// ctx acting as the same agent.
+func mcpApprovalIsCallers(ctx context.Context, approval *edge.EdgeApproval) bool {
+	requester, agentID := mcpCallRequester(ctx)
+	return approval != nil && requester != "" && approval.Requester == requester &&
+		approval.Labels[mcpApprovalAgentLabel] == agentID
 }
 
 // approvalReasonFor builds the reason string stored on the approval

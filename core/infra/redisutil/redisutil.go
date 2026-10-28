@@ -1,6 +1,7 @@
 package redisutil
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cordum/cordum/core/infra/env"
@@ -61,6 +63,46 @@ func NewClient(url string) (redis.UniversalClient, error) {
 		startPoolStatsLogger(client)
 	}
 	return client, nil
+}
+
+// IsCluster reports whether client talks to a Redis Cluster: there, a script
+// or MULTI may only touch keys in one hash slot, and SCAN reaches one node.
+func IsCluster(client redis.UniversalClient) bool {
+	_, ok := client.(*redis.ClusterClient)
+	return ok
+}
+
+// ScanEach calls fn with each page of keys matching match, from every master
+// of a Redis Cluster (a cluster client's SCAN reaches a single node) or from
+// the one server otherwise. fn is never called concurrently; its error stops
+// the scan and is returned unchanged.
+func ScanEach(ctx context.Context, client redis.UniversalClient, match string, count int64, fn func(keys []string) error) error {
+	cluster, ok := client.(*redis.ClusterClient)
+	if !ok {
+		return scanNode(ctx, client, match, count, fn)
+	}
+	var mu sync.Mutex
+	return cluster.ForEachMaster(ctx, func(ctx context.Context, node *redis.Client) error {
+		mu.Lock()
+		defer mu.Unlock()
+		return scanNode(ctx, node, match, count, fn)
+	})
+}
+
+func scanNode(ctx context.Context, client redis.UniversalClient, match string, count int64, fn func(keys []string) error) error {
+	var cursor uint64
+	for {
+		keys, next, err := client.Scan(ctx, cursor, match, count).Result()
+		if err != nil {
+			return err
+		}
+		if err := fn(keys); err != nil {
+			return err
+		}
+		if cursor = next; cursor == 0 {
+			return nil
+		}
+	}
 }
 
 func startPoolStatsLogger(client redis.UniversalClient) {

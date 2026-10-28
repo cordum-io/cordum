@@ -79,6 +79,31 @@ func TestCopilotIngest_IgnoresWhenNoSessionID(t *testing.T) {
 	}
 }
 
+// An invocation with no resolved agent identity is audited as "unknown", an
+// owner every identity-less caller in the tenant would share, so it must not
+// create or extend a transcript.
+func TestCopilotIngest_IgnoresIdentityLessInvocation(t *testing.T) {
+	dec, inner, store := newIngestTestRig(t)
+	dec.Send(audit.SIEMEvent{
+		Timestamp: time.Now().UTC(),
+		EventType: audit.EventMCPToolInvocation,
+		TenantID:  "tenant-a",
+		AgentID:   "unknown",
+		Extra: map[string]string{
+			"copilot_session_id": "sess-anon",
+			"tool_name":          "cordum_list_jobs",
+			"identity_missing":   "true",
+		},
+	})
+	dec.wg.Wait()
+	if len(inner.sent) != 1 {
+		t.Fatalf("inner.sent = %d, want 1 (always forwarded)", len(inner.sent))
+	}
+	if _, err := store.GetSession(context.Background(), "tenant-a", "sess-anon", ""); err == nil {
+		t.Fatal("identity-less invocation wrote a transcript")
+	}
+}
+
 func TestCopilotIngest_IgnoresNonInvocationEvents(t *testing.T) {
 	dec, inner, store := newIngestTestRig(t)
 	dec.Send(audit.SIEMEvent{

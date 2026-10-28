@@ -1,0 +1,1349 @@
+# Core stack manifest. For enterprise gateway, apply the overlay from
+# cordum-enterprise/deploy/k8s/enterprise-gateway.yaml after this file.
+# NOTE: Cordum service images are intentionally untagged here. Image tags are
+# set via kustomize overlays (see production/kustomization.yaml).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cordum
+---
+# ServiceAccount for all Cordum workloads. automountServiceAccountToken is
+# disabled because no Cordum service needs Kubernetes API access.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cordum
+  namespace: cordum
+automountServiceAccountToken: false
+---
+# ResourceQuota prevents runaway pods from consuming unbounded cluster
+# resources. Values accommodate production HPA maxReplicas (36 pods) plus
+# headroom for NATS, Redis, and jobs. Adjust for larger deployments.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: cordum-quota
+  namespace: cordum
+spec:
+  hard:
+    requests.cpu: "8"
+    requests.memory: 8Gi
+    limits.cpu: "16"
+    limits.memory: 16Gi
+    pods: "50"
+    services: "20"
+    persistentvolumeclaims: "10"
+---
+# LimitRange assigns default resource requests/limits to containers that
+# don't specify them, preventing unbounded resource consumption.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: cordum-limits
+  namespace: cordum
+spec:
+  limits:
+  - default:
+      cpu: 500m
+      memory: 256Mi
+    defaultRequest:
+      cpu: 100m
+      memory: 128Mi
+    type: Container
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cordum-pools
+  namespace: cordum
+data:
+  pools.yaml: |
+    topics:
+      job.default: default
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cordum-timeouts
+  namespace: cordum
+data:
+  timeouts.yaml: |
+    workflows: {}
+    topics: {}
+    reconciler:
+      dispatch_timeout_seconds: 300
+      # Per-topic overrides available via topics.<topic>.running_timeout_seconds
+      running_timeout_seconds: 900
+      scan_interval_seconds: 30
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cordum-nats-config
+  namespace: cordum
+data:
+  nats.conf: |
+    port: 4222
+    jetstream {
+      store_dir: /data/jetstream
+      sync_interval: "1s"
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cordum-safety
+  namespace: cordum
+data:
+  safety.yaml: |
+    # Fail-closed: unmatched jobs are denied.
+    default_decision: deny
+
+    rules:
+      # Fraud detection jobs require human approval before execution
+      - id: fraud-review-required
+        match:
+          topics:
+            - job.fraud-detection.process
+        decision: require_approval
+        reason: "Fraud detection results must be reviewed by a human before action."
+
+      # Risk assessment agents require approval — high-impact decisions
+      - id: risk-assessment-approval
+        match:
+          topics:
+            - job.risk-agents.process
+        decision: require_approval
+        reason: "Risk assessment outcomes require human sign-off."
+
+      # Compliance jobs require approval — regulatory oversight
+      - id: compliance-approval
+        match:
+          topics:
+            - job.compliance-agents.process
+        decision: require_approval
+        reason: "Compliance checks require human verification before proceeding."
+
+      # Bank executors (wire transfers, account changes) — always require approval
+      - id: bank-executor-approval
+        match:
+          topics:
+            - job.bank-executors.process
+        decision: require_approval
+        reason: "Financial execution actions require explicit human authorization."
+
+      # Underwriting requires approval — loan decisions are high-stakes
+      - id: underwriting-approval
+        match:
+          topics:
+            - job.underwriting-agents.process
+        decision: require_approval
+        reason: "Underwriting decisions require human review before commitment."
+
+      # Low-risk topics are auto-allowed
+      - id: validators-auto-allow
+        match:
+          topics:
+            - job.bank-validators.process
+            - job.notification-service.process
+            - job.valuation-agents.process
+        decision: allow
+        reason: "Read-only validation and notification jobs are auto-approved."
+
+    output_policy:
+      enabled: true
+      fail_mode: closed
+
+    output_rules:
+      - id: output-secret-leak
+        description: "Quarantine outputs that contain likely credential or key material."
+        match:
+          topics:
+            - "job.*"
+          scanners:
+            - "secret"
+        decision: quarantine
+        severity: critical
+        reason: "Potential secret material detected in output."
+
+      - id: output-pii-leak
+        description: "PII detection rule (disabled by default to avoid false positives)."
+        enabled: true
+        match:
+          topics:
+            - "job.*"
+          scanners:
+            - "pii"
+        decision: quarantine
+        severity: high
+        reason: "Potential PII detected in output."
+
+      - id: output-injection-detected
+        description: "Quarantine outputs containing likely injection payload fragments."
+        match:
+          topics:
+            - "job.*"
+          scanners:
+            - "injection"
+        decision: quarantine
+        severity: high
+        reason: "Potential injection payload detected in output."
+
+      - id: output-size-limit
+        description: "Quarantine oversized outputs beyond the default 10 MiB threshold."
+        match:
+          topics:
+            - "job.*"
+          output_size_gt: 10485760
+        decision: quarantine
+        severity: medium
+        reason: "Output exceeds configured size threshold."
+
+      - id: output-error-secret-leak
+        description: "Quarantine failed job outputs when secret indicators are present."
+        match:
+          topics:
+            - "job.*"
+          has_error: true
+          scanners:
+            - "secret"
+        decision: quarantine
+        severity: high
+        reason: "Secrets detected in failed job output context."
+
+    default_tenant: default
+    tenants:
+      default:
+        allow_topics:
+          - "job.*"
+        deny_topics:
+          - "sys.*"
+        allowed_repo_hosts: []
+        denied_repo_hosts: []
+        mcp:
+          allow_servers: []
+          deny_servers: []
+          allow_tools: []
+          deny_tools: []
+          allow_resources: []
+          deny_resources: []
+          allow_actions: []
+          deny_actions: []
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cordum-api-key
+  namespace: cordum
+type: Opaque
+stringData:
+  # REQUIRED: set to a strong API key before applying.
+  API_KEY: ""
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cordum-admin-creds
+  namespace: cordum
+type: Opaque
+stringData:
+  # Admin credentials for user authentication.
+  # Set these before applying if CORDUM_USER_AUTH_ENABLED=true.
+  CORDUM_ADMIN_USERNAME: "admin"
+  CORDUM_ADMIN_PASSWORD: ""
+  CORDUM_ADMIN_EMAIL: ""
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cordum-redis-secret
+  namespace: cordum
+type: Opaque
+stringData:
+  # REQUIRED: set to a strong Redis password before applying.
+  REDIS_PASSWORD: ""
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nats
+  namespace: cordum
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: nats}
+  template:
+    metadata:
+      labels: {app: nats}
+    spec:
+      serviceAccountName: cordum
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: nats
+        image: nats:2.10
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        args: ["-c", "/etc/nats/nats.conf"]
+        ports:
+        - name: client
+          containerPort: 4222
+        volumeMounts:
+        - name: nats-config
+          mountPath: /etc/nats/nats.conf
+          subPath: nats.conf
+          readOnly: true
+        - name: nats-data
+          mountPath: /data
+        livenessProbe:
+          tcpSocket: {port: 4222}
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          tcpSocket: {port: 4222}
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+      volumes:
+      - name: nats-config
+        configMap:
+          name: cordum-nats-config
+      - name: nats-data
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nats
+  namespace: cordum
+spec:
+  selector: {app: nats}
+  ports:
+  - name: client
+    port: 4222
+    targetPort: 4222
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: cordum
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: redis}
+  template:
+    metadata:
+      labels: {app: redis}
+    spec:
+      serviceAccountName: cordum
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+      - name: validate-secrets
+        image: alpine:3.19
+        command: ["sh", "-c"]
+        args:
+        - |
+          echo 'Validating required secrets...'
+          [ -z "$REDIS_PASSWORD" ] && echo 'FATAL: REDIS_PASSWORD secret is empty. See docs/production/k8s-deployment.md' && exit 1
+          echo 'All required secrets present.'
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cordum-redis-secret
+              key: REDIS_PASSWORD
+      containers:
+      - name: redis
+        image: redis:7
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        command: ["redis-server"]
+        args: ["--appendonly", "yes", "--requirepass", "$(REDIS_PASSWORD)"]
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cordum-redis-secret
+              key: REDIS_PASSWORD
+        ports:
+        - containerPort: 6379
+        livenessProbe:
+          tcpSocket: {port: 6379}
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          tcpSocket: {port: 6379}
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+      volumes:
+      # readOnlyRootFilesystem leaves no writable /data for --appendonly;
+      # base has no PVC, so AOF data lives as long as the pod.
+      - name: redis-data
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: cordum
+spec:
+  selector: {app: redis}
+  ports:
+  - name: redis
+    port: 6379
+    targetPort: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cordum-context-engine
+  namespace: cordum
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: cordum-context-engine}
+  template:
+    metadata:
+      labels: {app: cordum-context-engine}
+    spec:
+      serviceAccountName: cordum
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+      - name: validate-secrets
+        image: alpine:3.19
+        command: ["sh", "-c"]
+        args:
+        - |
+          echo 'Validating required secrets...'
+          [ -z "$REDIS_PASSWORD" ] && echo 'FATAL: REDIS_PASSWORD secret is empty. See docs/production/k8s-deployment.md' && exit 1
+          echo 'All required secrets present.'
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cordum-redis-secret
+              key: REDIS_PASSWORD
+      containers:
+      - name: context-engine
+        image: cordum-context-engine
+        imagePullPolicy: Always
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cordum-redis-secret
+              key: REDIS_PASSWORD
+        - name: REDIS_URL
+          value: redis://:$(REDIS_PASSWORD)@redis:6379
+        - name: CONTEXT_ENGINE_ADDR
+          value: :50070
+        - name: CONTEXT_ENGINE_METRICS_ADDR
+          value: :9094
+        # --- Licensing ---
+        # Uncomment when deploying with an enterprise license secret/volume.
+        # - name: CORDUM_LICENSE_TOKEN
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: cordum-license
+        #       key: license.json
+        # - name: CORDUM_LICENSE_PUBLIC_KEY
+        #   value: "<paste-public-key>"
+        # - name: CORDUM_LICENSE_FILE
+        #   value: /etc/cordum/license.json
+        # --- Telemetry ---
+        # Runtime defaults to local_only; uncomment to make the mode explicit or set a custom endpoint.
+        # - name: CORDUM_TELEMETRY_MODE
+        #   value: local_only
+        # - name: CORDUM_TELEMETRY_ENDPOINT
+        #   value: https://telemetry.cordum.io/v1/report
+        # --- NATS auth ---
+        # Uncomment when your NATS deployment requires token auth.
+        # - name: NATS_TOKEN
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: cordum-nats-token
+        #       key: NATS_TOKEN
+        # --- Logging ---
+        # - name: CORDUM_LOG_LEVEL
+        #   value: info
+        # - name: CORDUM_LOG_FORMAT
+        #   value: text
+        ports:
+        - containerPort: 50070
+        - containerPort: 9094
+          name: metrics
+        startupProbe:
+          httpGet:
+            path: /livez
+            port: 9094
+          failureThreshold: 30
+          periodSeconds: 2
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 9094
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 9094
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cordum-context-engine
+  namespace: cordum
+spec:
+  selector: {app: cordum-context-engine}
+  ports:
+  - name: grpc
+    port: 50070
+    targetPort: 50070
+  - name: metrics
+    port: 9094
+    targetPort: 9094
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cordum-safety-kernel
+  namespace: cordum
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: cordum-safety-kernel}
+  template:
+    metadata:
+      labels: {app: cordum-safety-kernel}
+    spec:
+      serviceAccountName: cordum
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+      - name: validate-secrets
+        image: alpine:3.19
+        command: ["sh", "-c"]
+        args:
+        - |
+          echo 'Validating required secrets...'
+          [ -z "$REDIS_PASSWORD" ] && echo 'FATAL: REDIS_PASSWORD secret is empty. See docs/production/k8s-deployment.md' && exit 1
+          echo 'All required secrets present.'
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cordum-redis-secret
+              key: REDIS_PASSWORD
+      containers:
+      - name: safety
+        image: cordum-safety-kernel
+        imagePullPolicy: Always
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        env:
+        - name: NATS_URL
+          value: nats://nats:4222
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cordum-redis-secret
+              key: REDIS_PASSWORD
+        - name: REDIS_URL
+          value: redis://:$(REDIS_PASSWORD)@redis:6379
+        - name: SAFETY_KERNEL_ADDR
+          value: :50051
+        - name: SAFETY_POLICY_PATH
+          value: /etc/cordum/safety.yaml
+        # --- Licensing ---
+        # Uncomment when deploying with an enterprise license secret/volume.
+        # - name: CORDUM_LICENSE_TOKEN
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: cordum-license
+        #       key: license.json
+        # - name: CORDUM_LICENSE_PUBLIC_KEY
+        #   value: "<paste-public-key>"
+        # - name: CORDUM_LICENSE_FILE
+        #   value: /etc/cordum/license.json
+        # --- Telemetry ---
+        # Runtime defaults to local_only; uncomment to make the mode explicit or set a custom endpoint.
+        # - name: CORDUM_TELEMETRY_MODE
+        #   value: local_only
+        # - name: CORDUM_TELEMETRY_ENDPOINT
+        #   value: https://telemetry.cordum.io/v1/report
+        # --- NATS auth ---
+        # Uncomment when your NATS deployment requires token auth.
+        # - name: NATS_TOKEN
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: cordum-nats-token
+        #       key: NATS_TOKEN
+        # --- Logging ---
+        # - name: CORDUM_LOG_LEVEL
+        #   value: info
+        # - name: CORDUM_LOG_FORMAT
+        #   value: text
+        volumeMounts:
+        - name: cordum-safety
+          mountPath: /etc/cordum
+          readOnly: true
+        ports:
+        - containerPort: 50051
+        - containerPort: 9095
+          name: admin
+        startupProbe:
+          httpGet:
+            path: /livez
+            port: 9095
+          failureThreshold: 30
+          periodSeconds: 2
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 9095
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 9095
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+      volumes:
+      - name: cordum-safety
+        configMap:
+          name: cordum-safety
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cordum-safety-kernel
+  namespace: cordum
+spec:
+  selector: {app: cordum-safety-kernel}
+  ports:
+  - name: grpc
+    port: 50051
+    targetPort: 50051
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cordum-scheduler
+  namespace: cordum
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: cordum-scheduler}
+  template:
+    metadata:
+      labels: {app: cordum-scheduler}
+    spec:
+      serviceAccountName: cordum
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+      - name: validate-secrets
+        image: alpine:3.19
+        command: ["sh", "-c"]
+        args:
+        - |
+          echo 'Validating required secrets...'
+          [ -z "$REDIS_PASSWORD" ] && echo 'FATAL: REDIS_PASSWORD secret is empty. See docs/production/k8s-deployment.md' && exit 1
+          echo 'All required secrets present.'
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cordum-redis-secret
+              key: REDIS_PASSWORD
+      containers:
+      - name: scheduler
+        image: cordum-scheduler
+        imagePullPolicy: Always
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        env:
+        - name: NATS_URL
+          value: nats://nats:4222
+        - name: NATS_USE_JETSTREAM
+          value: "1"
+        # CAP runtime profile. "compat" (default) keeps legacy unsigned
+        # packets, string resource pointers, and configured fail-open modes
+        # reachable. "production" selects CAP-PRODUCTION enforcement and
+        # refuses to start unless every mandatory dependency is initialized.
+        # An unrecognised value fails startup rather than downgrading.
+        - name: CORDUM_CAP_PROFILE
+          value: "compat"
+        - name: CORDUM_SDK_HANDSHAKE
+          value: "off"
+        - name: CORDUM_HEARTBEAT_MODE
+          value: "authority"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cordum-redis-secret
+              key: REDIS_PASSWORD
+        - name: REDIS_URL
+          value: redis://:$(REDIS_PASSWORD)@redis:6379
+        - name: SAFETY_KERNEL_ADDR
+          value: cordum-safety-kernel:50051
+        - name: POLICY_CHECK_FAIL_MODE
+          value: "closed"
+        - name: POOL_CONFIG_PATH
+          value: /etc/cordum/pools.yaml
+        - name: TIMEOUT_CONFIG_PATH
+          value: /etc/cordum/timeouts.yaml
+        # --- Control-plane service-token signing (CORDUM_SDK_HANDSHAKE=enforce) ---
+        # The scheduler both verifies control-plane service tokens on inbound
+        # cancel broadcasts and mints them for its own. Wire the SAME Ed25519
+        # signing key (single shared kid) the workflow-engine and api-gateway
+        # use. REQUIRED on all three services before enabling enforce.
+        # - name: CORDUM_POLICY_SIGNING_KEY_ID
+        #   value: "<shared-kid>"
+        # - name: CORDUM_POLICY_SIGNING_KEY
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: cordum-policy-signing
+        #       key: signing-key
+        # --- Licensing ---
+        # Uncomment when deploying with an enterprise license secret/volume.
+        # - name: CORDUM_LICENSE_TOKEN
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: cordum-license
+        #       key: license.json
+        # - name: CORDUM_LICENSE_PUBLIC_KEY
+        #   value: "<paste-public-key>"
+        # - name: CORDUM_LICENSE_FILE
+        #   value: /etc/cordum/license.json
+        # --- Telemetry ---
+        # Runtime defaults to local_only; uncomment to make the mode explicit or set a custom endpoint.
+        # - name: CORDUM_TELEMETRY_MODE
+        #   value: local_only
+        # - name: CORDUM_TELEMETRY_ENDPOINT
+        #   value: https://telemetry.cordum.io/v1/report
+        # --- NATS auth ---
+        # Uncomment when your NATS deployment requires token auth.
+        # - name: NATS_TOKEN
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: cordum-nats-token
+        #       key: NATS_TOKEN
+        # --- Logging ---
+        # - name: CORDUM_LOG_LEVEL
+        #   value: info
+        # - name: CORDUM_LOG_FORMAT
+        #   value: text
+        volumeMounts:
+        - name: cordum-pools
+          mountPath: /etc/cordum/pools.yaml
+          subPath: pools.yaml
+          readOnly: true
+        - name: cordum-timeouts
+          mountPath: /etc/cordum/timeouts.yaml
+          subPath: timeouts.yaml
+          readOnly: true
+        ports:
+        - containerPort: 9090
+        startupProbe:
+          httpGet:
+            path: /livez
+            port: 9090
+          failureThreshold: 30
+          periodSeconds: 2
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 9090
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 9090
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: 150m
+            memory: 256Mi
+          limits:
+            cpu: 750m
+            memory: 768Mi
+      volumes:
+      - name: cordum-pools
+        configMap:
+          name: cordum-pools
+      - name: cordum-timeouts
+        configMap:
+          name: cordum-timeouts
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cordum-scheduler
+  namespace: cordum
+spec:
+  selector: {app: cordum-scheduler}
+  ports:
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cordum-api-gateway
+  namespace: cordum
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: cordum-api-gateway}
+  template:
+    metadata:
+      labels: {app: cordum-api-gateway}
+    spec:
+      serviceAccountName: cordum
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+      - name: validate-secrets
+        image: alpine:3.19
+        command: ["sh", "-c"]
+        args:
+        - |
+          echo 'Validating required secrets...'
+          fail=0
+          [ -z "$API_KEY" ] && echo 'FATAL: API_KEY secret is empty' && fail=1
+          [ -z "$REDIS_PASSWORD" ] && echo 'FATAL: REDIS_PASSWORD secret is empty' && fail=1
+          [ $fail -eq 1 ] && echo 'Set required secrets before deploying. See docs/production/k8s-deployment.md' && exit 1
+          echo 'All required secrets present.'
+        env:
+        - name: API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: cordum-api-key
+              key: API_KEY
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cordum-redis-secret
+              key: REDIS_PASSWORD
+      containers:
+      - name: gateway
+        image: cordum-api-gateway
+        imagePullPolicy: Always
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        env:
+        - name: NATS_URL
+          value: nats://nats:4222
+        - name: NATS_USE_JETSTREAM
+          value: "1"
+        # CAP runtime profile. "compat" (default) keeps legacy unsigned
+        # packets, string resource pointers, and configured fail-open modes
+        # reachable. "production" selects CAP-PRODUCTION enforcement and
+        # refuses to start unless every mandatory dependency is initialized.
+        # An unrecognised value fails startup rather than downgrading.
+        - name: CORDUM_CAP_PROFILE
+          value: "compat"
+        - name: CORDUM_SDK_HANDSHAKE
+          value: "off"
+        - name: CORDUM_HEARTBEAT_MODE
+          value: "authority"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cordum-redis-secret
+              key: REDIS_PASSWORD
+        - name: REDIS_URL
+          value: redis://:$(REDIS_PASSWORD)@redis:6379
+        - name: SAFETY_KERNEL_ADDR
+          value: cordum-safety-kernel:50051
+        - name: TENANT_ID
+          value: default
+        - name: API_RATE_LIMIT_RPS
+          value: "50"
+        - name: API_RATE_LIMIT_BURST
+          value: "100"
+        - name: REDIS_DATA_TTL
+          value: 24h
+        - name: JOB_META_TTL
+          value: 168h
+        - name: API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: cordum-api-key
+              key: API_KEY
+        - name: CORDUM_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: cordum-api-key
+              key: API_KEY
+        - name: CORDUM_USER_AUTH_ENABLED
+          value: "false"
+        - name: CORDUM_ADMIN_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: cordum-admin-creds
+              key: CORDUM_ADMIN_USERNAME
+              optional: true
+        - name: CORDUM_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cordum-admin-creds
+              key: CORDUM_ADMIN_PASSWORD
+              optional: true
+        - name: CORDUM_ADMIN_EMAIL
+          valueFrom:
+            secretKeyRef:
+              name: cordum-admin-creds
+              key: CORDUM_ADMIN_EMAIL
+              optional: true
+        # --- Control-plane service-token signing (CORDUM_SDK_HANDSHAKE=enforce) ---
+        # The api-gateway mints a control-plane service token on operator- and
+        # API-initiated JobCancel broadcasts so enforce-mode schedulers admit
+        # them. Wire the SAME Ed25519 signing key (single shared kid) the
+        # scheduler and workflow-engine use. REQUIRED on all three services
+        # before enabling enforce.
+        # - name: CORDUM_POLICY_SIGNING_KEY_ID
+        #   value: "<shared-kid>"
+        # - name: CORDUM_POLICY_SIGNING_KEY
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: cordum-policy-signing
+        #       key: signing-key
+        # --- Licensing ---
+        # Uncomment when deploying with an enterprise license secret/volume.
+        # - name: CORDUM_LICENSE_TOKEN
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: cordum-license
+        #       key: license.json
+        # - name: CORDUM_LICENSE_PUBLIC_KEY
+        #   value: "<paste-public-key>"
+        # - name: CORDUM_LICENSE_FILE
+        #   value: /etc/cordum/license.json
+        # --- Telemetry ---
+        # Runtime defaults to local_only; uncomment to make the mode explicit or set a custom endpoint.
+        # - name: CORDUM_TELEMETRY_MODE
+        #   value: local_only
+        # - name: CORDUM_TELEMETRY_ENDPOINT
+        #   value: https://telemetry.cordum.io/v1/report
+        # --- NATS auth ---
+        # Uncomment when your NATS deployment requires token auth.
+        # - name: NATS_TOKEN
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: cordum-nats-token
+        #       key: NATS_TOKEN
+        # --- Logging ---
+        # - name: CORDUM_LOG_LEVEL
+        #   value: info
+        # - name: CORDUM_LOG_FORMAT
+        #   value: text
+        ports:
+        - containerPort: 8080
+        - containerPort: 8081
+        - containerPort: 9092
+        startupProbe:
+          httpGet:
+            path: /livez
+            port: 8081
+          failureThreshold: 30
+          periodSeconds: 2
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+          limits:
+            cpu: 1000m
+            memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cordum-api-gateway
+  namespace: cordum
+spec:
+  selector: {app: cordum-api-gateway}
+  ports:
+  - name: grpc
+    port: 8080
+    targetPort: 8080
+  - name: http
+    port: 8081
+    targetPort: 8081
+  - name: metrics
+    port: 9092
+    targetPort: 9092
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cordum-workflow-engine
+  namespace: cordum
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: cordum-workflow-engine}
+  template:
+    metadata:
+      labels: {app: cordum-workflow-engine}
+    spec:
+      serviceAccountName: cordum
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+      - name: validate-secrets
+        image: alpine:3.19
+        command: ["sh", "-c"]
+        args:
+        - |
+          echo 'Validating required secrets...'
+          [ -z "$REDIS_PASSWORD" ] && echo 'FATAL: REDIS_PASSWORD secret is empty. See docs/production/k8s-deployment.md' && exit 1
+          echo 'All required secrets present.'
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cordum-redis-secret
+              key: REDIS_PASSWORD
+      containers:
+      - name: workflow-engine
+        image: cordum-workflow-engine
+        imagePullPolicy: Always
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        env:
+        - name: NATS_URL
+          value: nats://nats:4222
+        - name: NATS_USE_JETSTREAM
+          value: "1"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cordum-redis-secret
+              key: REDIS_PASSWORD
+        - name: REDIS_URL
+          value: redis://:$(REDIS_PASSWORD)@redis:6379
+        # CAP runtime profile (see scheduler deployment for semantics).
+        - name: CORDUM_CAP_PROFILE
+          value: "compat"
+        - name: WORKFLOW_ENGINE_HTTP_ADDR
+          value: :9093
+        - name: WORKFLOW_ENGINE_SCAN_INTERVAL
+          value: 5s
+        - name: WORKFLOW_ENGINE_RUN_SCAN_LIMIT
+          value: "200"
+        - name: CORDUM_SDK_HANDSHAKE
+          value: "off"
+        # --- Control-plane service-token signing (CORDUM_SDK_HANDSHAKE=enforce) ---
+        # When the scheduler's session-token gate runs in enforce mode, the
+        # workflow-engine must mint a control-plane service token on its internal
+        # JobCancel broadcasts so peer schedulers admit them. Wire the SAME
+        # Ed25519 signing key (single shared kid) the scheduler and api-gateway
+        # use. REQUIRED on all three services before enabling enforce.
+        # - name: CORDUM_POLICY_SIGNING_KEY_ID
+        #   value: "<shared-kid>"
+        # - name: CORDUM_POLICY_SIGNING_KEY
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: cordum-policy-signing
+        #       key: signing-key
+        # --- Licensing ---
+        # Uncomment when deploying with an enterprise license secret/volume.
+        # - name: CORDUM_LICENSE_TOKEN
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: cordum-license
+        #       key: license.json
+        # - name: CORDUM_LICENSE_PUBLIC_KEY
+        #   value: "<paste-public-key>"
+        # - name: CORDUM_LICENSE_FILE
+        #   value: /etc/cordum/license.json
+        # --- Telemetry ---
+        # Runtime defaults to local_only; uncomment to make the mode explicit or set a custom endpoint.
+        # - name: CORDUM_TELEMETRY_MODE
+        #   value: local_only
+        # - name: CORDUM_TELEMETRY_ENDPOINT
+        #   value: https://telemetry.cordum.io/v1/report
+        # --- NATS auth ---
+        # Uncomment when your NATS deployment requires token auth.
+        # - name: NATS_TOKEN
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: cordum-nats-token
+        #       key: NATS_TOKEN
+        # --- Logging ---
+        # - name: CORDUM_LOG_LEVEL
+        #   value: info
+        # - name: CORDUM_LOG_FORMAT
+        #   value: text
+        ports:
+        - containerPort: 9093
+        startupProbe:
+          httpGet:
+            path: /livez
+            port: 9093
+          failureThreshold: 30
+          periodSeconds: 2
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 9093
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 9093
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: 150m
+            memory: 256Mi
+          limits:
+            cpu: 750m
+            memory: 768Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cordum-workflow-engine
+  namespace: cordum
+spec:
+  selector: {app: cordum-workflow-engine}
+  ports:
+  - name: http
+    port: 9093
+    targetPort: 9093
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cordum-dashboard
+  namespace: cordum
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: cordum-dashboard}
+  template:
+    metadata:
+      labels: {app: cordum-dashboard}
+    spec:
+      serviceAccountName: cordum
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+      - name: validate-secrets
+        image: alpine:3.19
+        command: ["sh", "-c"]
+        args:
+        - |
+          echo 'Validating required secrets...'
+          [ -z "$CORDUM_API_KEY" ] && echo 'FATAL: API_KEY secret is empty. See docs/production/k8s-deployment.md' && exit 1
+          echo 'All required secrets present.'
+        env:
+        - name: CORDUM_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: cordum-api-key
+              key: API_KEY
+      - name: copy-static
+        image: cordum-dashboard
+        command: ["sh", "-c", "cp -r /usr/share/nginx/html/. /html/"]
+        volumeMounts:
+        - name: html
+          mountPath: /html
+      containers:
+      - name: dashboard
+        image: cordum-dashboard
+        imagePullPolicy: Always
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        env:
+        - name: CORDUM_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: cordum-api-key
+              key: API_KEY
+        - name: CORDUM_TENANT_ID
+          value: default
+        - name: CORDUM_API_UPSTREAM_SCHEME
+          value: http
+        ports:
+        - containerPort: 8080
+        volumeMounts:
+        - name: html
+          mountPath: /usr/share/nginx/html
+        - name: tmp
+          mountPath: /tmp
+        - name: nginx-cache
+          mountPath: /var/cache/nginx
+        - name: nginx-run
+          mountPath: /var/run
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+      volumes:
+      - name: html
+        emptyDir: {}
+      - name: tmp
+        emptyDir: {}
+      - name: nginx-cache
+        emptyDir: {}
+      - name: nginx-run
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cordum-dashboard
+  namespace: cordum
+spec:
+  selector: {app: cordum-dashboard}
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080

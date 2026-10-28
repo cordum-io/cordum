@@ -897,3 +897,36 @@ func (c *Client) VerifyAuditChain(ctx context.Context, tenant string, opts Audit
 	}
 	return &out, nil
 }
+
+// AdoptRetentionAnchorRequest is the body of
+// POST /api/v1/audit/chain/retention-anchor. TenantID "" uses the client's
+// default tenant.
+type AdoptRetentionAnchorRequest struct {
+	TenantID          string `json:"tenant_id,omitempty"`
+	ExpectedOldestSeq int64  `json:"expected_oldest_seq"`
+	ReplaceInvalid    bool   `json:"replace_invalid,omitempty"`
+}
+
+// AdoptRetentionAnchorResult mirrors the gateway's audit.AdoptAnchorResult.
+type AdoptRetentionAnchorResult struct {
+	Tenant              string `json:"tenant"`
+	AdoptedSeq          int64  `json:"adopted_seq"`
+	AdoptedHash         string `json:"adopted_hash"`
+	AdoptedStreamID     string `json:"adopted_stream_id"`
+	PreviousAnchor      string `json:"previous_anchor"`
+	PreviousAnchorState string `json:"previous_anchor_state"`
+	EventSeq            int64  `json:"event_seq"`
+}
+
+// AdoptRetentionAnchor calls POST /api/v1/audit/chain/retention-anchor
+// (admin only): it adopts a retention anchor for a tenant chain trimmed
+// outside the retention sweeper, so verify reads the missing prefix as
+// retention_trimmed. The gateway answers 409 when the chain does not start at
+// ExpectedOldestSeq or already has a valid anchor.
+func (c *Client) AdoptRetentionAnchor(ctx context.Context, req AdoptRetentionAnchorRequest) (*AdoptRetentionAnchorResult, error) {
+	var out AdoptRetentionAnchorResult
+	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/audit/chain/retention-anchor", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}

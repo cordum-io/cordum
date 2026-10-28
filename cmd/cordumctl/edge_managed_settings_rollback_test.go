@@ -44,7 +44,7 @@ func TestManagedSettingsFullRollbackCycle(t *testing.T) {
 	}
 
 	// (3) verify — assert exit 1 and stdout names the drifted field.
-	driftCode, driftStdout, driftStderr := runManagedSettingsForTest(t, "verify", "--path", settingsPath)
+	driftCode, driftStdout, driftStderr := runManagedSettingsForTest(t, "verify", "--mcp-gateway-url", testManagedMCPGatewayURL, "--path", settingsPath)
 	if driftCode != 1 {
 		t.Fatalf("drift verify: expected exit 1; got %d stdout=%s stderr=%s", driftCode, driftStdout, driftStderr)
 	}
@@ -70,7 +70,7 @@ func TestManagedSettingsFullRollbackCycle(t *testing.T) {
 	}
 
 	// (5) post-rollback verify — assert exit 0 and 'ok:' line.
-	postCode, postStdout, postStderr := runManagedSettingsForTest(t, "verify", "--path", settingsPath)
+	postCode, postStdout, postStderr := runManagedSettingsForTest(t, "verify", "--mcp-gateway-url", testManagedMCPGatewayURL, "--path", settingsPath)
 	if postCode != 0 {
 		t.Fatalf("post-rollback verify: exit=%d stdout=%s stderr=%s", postCode, postStdout, postStderr)
 	}

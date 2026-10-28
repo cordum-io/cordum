@@ -31,10 +31,14 @@ Generated protobuf types live in `core/protocol/pb/v1/`.
 ```go
 import "github.com/cordum/cordum/sdk/client"
 
-c := client.New("http://localhost:8081", os.Getenv("CORDUM_API_KEY"))
+c := client.New("https://localhost:8081", os.Getenv("CORDUM_API_KEY"))
 ```
 
 `New()` reads `CORDUM_TENANT_ID` from the environment (defaults to `"default"`). The client sets `X-API-Key` and `X-Tenant-ID` headers on every request.
+
+`New()` verifies the gateway certificate against the system trust store. To
+trust the default stack's development CA instead, use
+`client.NewWithTLSErr(baseURL, apiKey, client.TLSOptions{CACertPath: "./certs/ca/ca.crt"})`.
 
 You can override the tenant or HTTP client after creation:
 
@@ -439,7 +443,10 @@ For custom workers or sidecar processes:
 ```go
 import "github.com/cordum/cordum/sdk/runtime"
 
-nc, _ := nats.Connect("nats://localhost:4222")
+// The default stack's NATS is TLS-only with client certificates;
+// NATSTLSConfigFromEnv reads NATS_TLS_CA, NATS_TLS_CERT and NATS_TLS_KEY.
+tlsCfg, _ := runtime.NATSTLSConfigFromEnv()
+nc, _ := nats.Connect("tls://localhost:4222", nats.Secure(tlsCfg))
 
 // Build heartbeat payload
 payload, _ := runtime.HeartbeatPayload(

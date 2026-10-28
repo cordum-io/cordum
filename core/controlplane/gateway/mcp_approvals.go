@@ -93,6 +93,13 @@ type MCPApprovalRequest struct {
 	// trigger reason and never overwritten by a resolver's free-form
 	// reason — see ResolutionReason on the record.
 	Reason string
+	// ID, when set, is the record id to use instead of a generated one. The
+	// gate pre-generates it so the Edge approval minted first can name the
+	// record it is dual-written with.
+	ID string
+	// EdgeApprovalRef names the Edge approval this record is dual-written
+	// with; see MCPApprovalRecord.EdgeApprovalRef.
+	EdgeApprovalRef string
 }
 
 // MCPApprovalRecord is the persisted shape stored at mcp:approvals:<id>.
@@ -122,6 +129,11 @@ type MCPApprovalRecord struct {
 	ResolvedBy       string                 `json:"resolved_by,omitempty"`
 	Decision         model.ApprovalDecision `json:"decision,omitempty"`
 	ConsumedAt       int64                  `json:"consumed_at,omitempty"`
+	// EdgeApprovalRef names the Edge approval dual-written with this record.
+	// The Edge approval is the pair's consume token and is resolved together
+	// with the record from either approvals page; ClaimPreApproved never
+	// consumes such a record (see EdgeTwins).
+	EdgeApprovalRef string `json:"edge_approval_ref,omitempty"`
 }
 
 // MCPApprovalStore is the per-server handle for MCP approval persistence.
@@ -272,9 +284,12 @@ func (s *MCPApprovalStore) EnqueueMCPApproval(ctx context.Context, req *MCPAppro
 		ttl = mcpApprovalDefaultTTL
 	}
 
-	id, err := mcpApprovalID()
-	if err != nil {
-		return nil, fmt.Errorf("mcp approval: generate id: %w", err)
+	id := strings.TrimSpace(req.ID)
+	if id == "" {
+		var err error
+		if id, err = mcpApprovalID(); err != nil {
+			return nil, fmt.Errorf("mcp approval: generate id: %w", err)
+		}
 	}
 	now := time.Now().UTC()
 
@@ -303,6 +318,8 @@ func (s *MCPApprovalStore) EnqueueMCPApproval(ctx context.Context, req *MCPAppro
 		Status:    model.ApprovalStatusPending,
 		CreatedAt: now.UnixMicro(),
 		ExpiresAt: now.Add(ttl).UnixMicro(),
+
+		EdgeApprovalRef: strings.TrimSpace(req.EdgeApprovalRef),
 	}
 	raw, err := json.Marshal(rec)
 	if err != nil {
@@ -311,10 +328,13 @@ func (s *MCPApprovalStore) EnqueueMCPApproval(ctx context.Context, req *MCPAppro
 
 	pipe := s.client.TxPipeline()
 	pipe.Set(ctx, mcpApprovalKey(rec.ID), raw, ttl+time.Minute)
-	// Index goes into a per-tuple set so a single agent/tool/args trio
-	// can have at most one outstanding PENDING approval. The set member
-	// is the approval ID — pre-approval lookup walks members and picks
-	// an APPROVED+unconsumed record via CAS.
+	// Index goes into a per-tuple set; the set member is the approval ID,
+	// and the pre-approval lookup walks members to pick an
+	// APPROVED+unconsumed record via CAS. Every call adds a record: a re-ask
+	// is not deduped here. The gate hands a caller back its pending
+	// approval itself (pendingMCPApproval) wherever it mints an Edge
+	// approval, which in the gateway is every tools/call; only a gate
+	// without an Edge store enqueues each re-ask.
 	idxKey := mcpApprovalIndexKey(rec.Tenant, rec.AgentID, rec.ToolName, rec.ArgsHash)
 	pipe.SAdd(ctx, idxKey, rec.ID)
 	pipe.Expire(ctx, idxKey, ttl+time.Minute)
@@ -410,6 +430,12 @@ func (s *MCPApprovalStore) ClaimPreApproved(ctx context.Context, tenant, agentID
 	// first — the CAS then decides the winner consistently.
 	sort.Strings(ids)
 	for _, id := range ids {
+		// A record dual-written with an Edge approval is consumed only through
+		// that approval, the pair's single consume token (EdgeTwins), so one
+		// approval cannot run the call once per path.
+		if rec, err := s.Get(ctx, id); err == nil && rec.EdgeApprovalRef != "" {
+			continue
+		}
 		consumed, rec, err := s.consumeRecord(ctx, id)
 		if err != nil {
 			if errors.Is(err, redis.Nil) {
@@ -431,6 +457,27 @@ func (s *MCPApprovalStore) ClaimPreApproved(ctx context.Context, tenant, agentID
 		}
 	}
 	return nil, nil
+}
+
+// EdgeTwins returns the tuple's indexed records that were dual-written with an
+// Edge approval, in ClaimPreApproved's order. ClaimPreApproved leaves them
+// alone: the gate consumes one by claiming its Edge approval.
+func (s *MCPApprovalStore) EdgeTwins(ctx context.Context, tenant, agentID, toolName, argsHash string) ([]*MCPApprovalRecord, error) {
+	if s == nil || s.client == nil {
+		return nil, errors.New("mcp approval: store is not initialised")
+	}
+	ids, err := s.client.SMembers(ctx, mcpApprovalIndexKey(tenant, agentID, toolName, argsHash)).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("mcp approval: index lookup: %w", err)
+	}
+	sort.Strings(ids)
+	var twins []*MCPApprovalRecord
+	for _, id := range ids {
+		if rec, err := s.Get(ctx, id); err == nil && rec.EdgeApprovalRef != "" {
+			twins = append(twins, rec)
+		}
+	}
+	return twins, nil
 }
 
 // MarkConsumed is a backward-compat wrapper over consumeRecord. Kept so

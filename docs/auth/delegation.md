@@ -1,7 +1,9 @@
 # Delegation tokens
 
-Cordum delegation tokens let one Enterprise agent identity delegate a reduced,
-time-bounded scope to another agent identity. The gateway issues Ed25519-signed
+Cordum delegation tokens let one agent identity delegate a reduced,
+time-bounded scope to another agent identity. The delegation endpoints are not
+license-gated; managing the agent identities themselves (`/api/v1/agents`)
+requires the `agent_identity` entitlement. The gateway issues Ed25519-signed
 JWTs, verifies them on `POST /api/v1/jobs`, injects only reserved delegation
 labels into the Safety Kernel request, and records lineage in the audit trail.
 
@@ -83,7 +85,7 @@ the required RBAC permissions.
 ### Issue
 
 ```bash
-curl -sS -X POST http://localhost:8081/api/v1/agents/agent-a/delegate \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/agents/agent-a/delegate \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default' \
   -H 'Content-Type: application/json' \
@@ -110,7 +112,7 @@ Successful response:
 ### Verify
 
 ```bash
-curl -sS -X POST http://localhost:8081/api/v1/agents/verify-delegation \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/agents/verify-delegation \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default' \
   -H 'Content-Type: application/json' \
@@ -132,7 +134,7 @@ Invalid tokens still return HTTP 200:
 ### Revoke
 
 ```bash
-curl -sS -X POST http://localhost:8081/api/v1/agents/revoke-delegation \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/agents/revoke-delegation \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default' \
   -H 'Content-Type: application/json' \

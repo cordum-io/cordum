@@ -178,70 +178,109 @@ The production K8s overlay includes CronJobs for hourly backups:
 
 **Redis RDB backup** (`cordum-redis-backup`):
 ```bash
-# Runs hourly, connects via TLS, dumps RDB to /backup/
+# Runs hourly over TLS. For each of the 6 nodes, INFO replication picks out the
+# primaries, and each primary's RDB goes to its own file:
 redis-cli --tls \
   --cacert /etc/cordum/tls/client/ca.crt \
   --cert /etc/cordum/tls/client/tls.crt \
   --key /etc/cordum/tls/client/tls.key \
-  -h cordum-redis-0.cordum-redis.cordum.svc -p 6379 \
-  --rdb /backup/redis-$(date -u +%Y%m%dT%H%M%SZ).rdb
+  -a "$REDIS_PASSWORD" \
+  -h cordum-redis-${i}.cordum-redis.cordum.svc -p 6379 \
+  --rdb /backup/redis-${ts}-node${i}.rdb
 ```
 
 **NATS JetStream snapshot** (`cordum-nats-backup`):
 ```bash
-# Snapshots both streams
-nats stream snapshot CORDUM_SYS /backup/nats-${ts}/CORDUM_SYS.snapshot
-nats stream snapshot CORDUM_JOBS /backup/nats-${ts}/CORDUM_JOBS.snapshot
+# Snapshots both streams over mTLS (natscli 0.1.5 in natsio/nats-box:0.15.0)
+nats --server tls://cordum-nats:4222 \
+  --tlsca /etc/cordum/tls/client/ca.crt \
+  --tlscert /etc/cordum/tls/client/tls.crt \
+  --tlskey /etc/cordum/tls/client/tls.key \
+  stream snapshot CORDUM_SYS /backup/nats-${ts}/CORDUM_SYS.snapshot
+# ...and the same for CORDUM_JOBS
 ```
 
 Both CronJobs use a shared 20Gi PVC (`cordum-backups`) and retain 2 successful + 2 failed job histories.
+`cordum-backup-retention` deletes backups older than 7 days.
 
 ### Restore Procedures
 
-**Redis restore from RDB**:
+Restore Redis and NATS from the same backup timestamp, so that job state in Redis
+and the job streams in NATS agree, with the Cordum services and the backup
+CronJobs stopped:
 
 ```bash
-# 1. Scale down all Cordum services
+ts=20260213T120000Z   # the backup to restore (the names on the cordum-backups PVC)
+
+kubectl patch cronjob cordum-redis-backup -n cordum -p '{"spec":{"suspend":true}}'
+kubectl patch cronjob cordum-nats-backup -n cordum -p '{"spec":{"suspend":true}}'
 kubectl scale deployment --all --replicas=0 -n cordum
-
-# 2. Copy RDB to Redis pod
-kubectl cp /path/to/redis-backup.rdb cordum/cordum-redis-0:/data/dump.rdb
-
-# 3. Restart Redis (it loads dump.rdb on startup)
-kubectl delete pod cordum-redis-0 -n cordum
-# Wait for pod to restart and become ready
-
-# 4. For Redis Cluster: repeat for each node, then run CLUSTER MEET
-# 5. Scale Cordum services back up
-kubectl scale deployment cordum-api-gateway --replicas=2 -n cordum
-kubectl scale deployment cordum-scheduler --replicas=2 -n cordum
-kubectl scale deployment cordum-safety-kernel --replicas=2 -n cordum
-kubectl scale deployment cordum-workflow-engine --replicas=1 -n cordum
+kubectl wait -n cordum --for=delete pod --timeout=5m \
+  -l 'app in (cordum-api-gateway,cordum-scheduler,cordum-safety-kernel,cordum-workflow-engine,cordum-context-engine,cordum-dashboard)'
 ```
 
-**NATS JetStream restore**:
+**Redis**: follow [Restore From Backup](./redis-operations.md#restore-from-backup).
+Each backup file holds one primary's slots, so it goes back to the pod that serves
+those slots, and it is loaded onto that pod's volume while Redis is stopped. Do not
+copy an RDB into a running pod and restart it: with `appendonly yes`, Redis loads its
+AOF on startup and ignores `dump.rdb`, so nothing is restored.
+
+**NATS JetStream**: `nats stream restore` takes only the snapshot directory and
+refuses a stream that already exists, so remove each stream first. The NATS server
+image has no `nats` CLI; run it from a nats-box pod. The pod carries the NATS backup
+CronJob's label, which the production NetworkPolicies admit to NATS's client port and
+DNS:
 
 ```bash
-# 1. Stop consumers (scale down scheduler + workflow engine)
-kubectl scale deployment cordum-scheduler --replicas=0 -n cordum
-kubectl scale deployment cordum-workflow-engine --replicas=0 -n cordum
+kubectl apply -n cordum -f - <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cordum-nats-restore
+  labels:
+    app: cordum-nats-backup
+spec:
+  restartPolicy: Never
+  containers:
+  - name: nats
+    image: natsio/nats-box:0.15.0
+    command: ["sleep", "infinity"]
+    env:
+    - {name: NATS_URL, value: "tls://cordum-nats:4222"}
+    - {name: NATS_CA, value: /etc/cordum/tls/client/ca.crt}
+    - {name: NATS_CERT, value: /etc/cordum/tls/client/tls.crt}
+    - {name: NATS_KEY, value: /etc/cordum/tls/client/tls.key}
+    volumeMounts:
+    - {name: client-tls, mountPath: /etc/cordum/tls/client, readOnly: true}
+    - {name: backup, mountPath: /backup, readOnly: true}
+  volumes:
+  - name: client-tls
+    secret: {secretName: cordum-client-tls}
+  - name: backup
+    persistentVolumeClaim: {claimName: cordum-backups, readOnly: true}
+EOF
+kubectl wait -n cordum --for=condition=Ready pod/cordum-nats-restore --timeout=120s
 
-# 2. Restore stream from snapshot
-nats stream restore CORDUM_SYS /backup/nats-${ts}/CORDUM_SYS.snapshot \
-  --server tls://cordum-nats:4222 \
-  --tlscacert /etc/cordum/tls/client/ca.crt \
-  --tlscert /etc/cordum/tls/client/tls.crt \
-  --tlskey /etc/cordum/tls/client/tls.key
+kubectl exec -n cordum cordum-nats-restore -- env ts=$ts sh -c '
+  for s in CORDUM_SYS CORDUM_JOBS; do
+    if nats stream info $s >/dev/null 2>&1; then nats stream rm --force $s; fi
+    nats stream restore /backup/nats-$ts/$s.snapshot
+  done
+  nats stream ls'
 
-nats stream restore CORDUM_JOBS /backup/nats-${ts}/CORDUM_JOBS.snapshot \
-  --server tls://cordum-nats:4222 \
-  --tlscacert /etc/cordum/tls/client/ca.crt \
-  --tlscert /etc/cordum/tls/client/tls.crt \
-  --tlskey /etc/cordum/tls/client/tls.key
+kubectl delete pod -n cordum cordum-nats-restore
+```
 
-# 3. Scale services back up
-kubectl scale deployment cordum-scheduler --replicas=2 -n cordum
-kubectl scale deployment cordum-workflow-engine --replicas=1 -n cordum
+`cordum-backups` is `ReadWriteOnce`, so run this pod and the Redis toolbox pod one
+after the other, or on the same node.
+
+**Resume** the services, which also returns each Deployment to the replica count
+in the overlay, and the backups:
+
+```bash
+kubectl apply -k deploy/k8s/production
+kubectl patch cronjob cordum-redis-backup -n cordum -p '{"spec":{"suspend":false}}'
+kubectl patch cronjob cordum-nats-backup -n cordum -p '{"spec":{"suspend":false}}'
 ```
 
 **Configuration backup/restore**:
@@ -436,7 +475,9 @@ cluster once the pods are ready. Re-run it if you replace the cluster.
 
 8. **Data loss assessment**: Check the last successful backup timestamp:
    ```bash
-   kubectl get jobs -l job-name=cordum-redis-backup -n cordum --sort-by=.status.startTime
+   kubectl get cronjob cordum-redis-backup -n cordum -o jsonpath='{.status.lastSuccessfulTime}{"\n"}'
+   # Each run is a Job named cordum-redis-backup-<n> (its job-name label is that full name)
+   kubectl get jobs -n cordum --sort-by=.status.startTime | grep cordum-redis-backup
    ```
    The backup CronJob backs up all primaries (not just node-0). Each backup produces per-shard files: `redis-{timestamp}-node{N}.rdb`.
 
@@ -452,7 +493,7 @@ cluster once the pods are ready. Re-run it if you replace the cluster.
 
 1. Check NATS cluster status:
    ```bash
-   kubectl get pods -l app=cordum-nats -n cordum
+   kubectl get pods -l app=nats -n cordum
    nats server list --server tls://cordum-nats:4222 ...
    ```
 
@@ -614,7 +655,7 @@ cluster once the pods are ready. Re-run it if you replace the cluster.
 - Base: ~100 bytes per job record, ~500 bytes per workflow run, ~1KB per DLQ entry
 - Estimate: 1 million concurrent jobs = ~100MB job state + context/result pointers
 - Rule of thumb: 2x your estimated working set for headroom
-- Monitor with: `redis-cli INFO memory`
+- Monitor with `INFO memory` on each node. The production overlay's Redis Cluster (`deploy/k8s/production`) requires TLS client certificates and the password: `kubectl exec -n cordum cordum-redis-0 -c redis -- sh -c 'redis-cli --tls --cacert /etc/redis/tls/ca.crt --cert /etc/redis/tls/tls.crt --key /etc/redis/tls/tls.key -a "$REDIS_PASSWORD" INFO memory'` (repeat for `cordum-redis-1` through `cordum-redis-5`)
 
 **NATS JetStream storage**:
 - Each JetStream stream has a configurable max size and message TTL
@@ -805,7 +846,7 @@ Complete list of production-relevant environment variables:
 | `CORDUM_TLS_MIN_VERSION` | All | Minimum TLS version (`1.2` or `1.3`; defaults to 1.3 in production) |
 | `CORDUM_GRPC_REFLECTION` | Gateway | Enable gRPC reflection (`1` to enable) |
 | `CORDUM_DASHBOARD_EMBED_API_KEY` | Gateway | Embed API key in dashboard JS (DO NOT use in production) |
-| `CORDUM_ALLOW_HEADER_PRINCIPAL` | Gateway | Allow `X-Principal` header override (disabled in production) |
+| `CORDUM_ALLOW_HEADER_PRINCIPAL` | Gateway | Set to `true` to honour `X-Principal-Id` in production, for static keys without `principal_id` and for managed keys (always honoured outside production) |
 | `GATEWAY_HTTP_ADDR` | Gateway | HTTP listen address (default `:8081`) |
 | `GATEWAY_GRPC_ADDR` | Gateway | gRPC listen address (default `:8080`) |
 | `GATEWAY_METRICS_ADDR` | Gateway | Metrics listen address (default `:9092`) |

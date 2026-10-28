@@ -3,7 +3,9 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"math"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -685,7 +687,7 @@ func (p *SafetyPolicy) Evaluate(input PolicyInput) PolicyDecision {
 		rules = legacyRules(p)
 	}
 	for _, rule := range rules {
-		if matchRule(rule.Match, input) {
+		if matchRule(rule, input) {
 			decision := normalizeDecision(rule.Decision)
 			return PolicyDecision{
 				Decision:         decision,
@@ -736,8 +738,8 @@ func (p *SafetyPolicy) DefaultPolicyDecision() PolicyDecision {
 }
 
 // MatchRule checks if a policy rule's match criteria are satisfied by the input.
-func MatchRule(match PolicyMatch, input PolicyInput) bool {
-	return matchRule(match, input)
+func MatchRule(rule PolicyRule, input PolicyInput) bool {
+	return matchRule(rule, input)
 }
 
 // NormalizeDecision normalizes a raw decision string to a canonical form.
@@ -777,6 +779,27 @@ func normalizeDecision(raw string) string {
 	}
 }
 
+// TenantsSettingReservedMCPGatewayFields lists the tenants whose mcp block
+// sets gateway_enabled, upstream_servers or allowed_upstreams. Those fields
+// are reserved: nothing reads them at runtime until EDGE-101.
+func (p *SafetyPolicy) TenantsSettingReservedMCPGatewayFields() []string {
+	if p == nil {
+		return nil
+	}
+	var out []string
+	for name, tenant := range p.Tenants {
+		if tenant.MCP.setsGatewayFields() {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// legacyRules turns tenant topic lists into rules. The tenant's MCP lists are
+// not copied into them: the kernel and policybundles enforce tenants.<t>.mcp
+// with MCPAllowed after rule evaluation, and a rule with match.mcp lists
+// would stop matching non-MCP jobs.
 func legacyRules(p *SafetyPolicy) []PolicyRule {
 	if p == nil || len(p.Tenants) == 0 {
 		return nil
@@ -791,7 +814,6 @@ func legacyRules(p *SafetyPolicy) []PolicyRule {
 				Match: PolicyMatch{
 					Tenants: []string{tenant},
 					Topics:  []string{pat},
-					MCP:     tp.MCP,
 				},
 			})
 		}
@@ -803,7 +825,6 @@ func legacyRules(p *SafetyPolicy) []PolicyRule {
 				Match: PolicyMatch{
 					Tenants: []string{tenant},
 					Topics:  []string{pat},
-					MCP:     tp.MCP,
 				},
 			})
 		}
@@ -811,7 +832,8 @@ func legacyRules(p *SafetyPolicy) []PolicyRule {
 	return out
 }
 
-func matchRule(match PolicyMatch, input PolicyInput) bool {
+func matchRule(rule PolicyRule, input PolicyInput) bool {
+	match := rule.Match
 	if len(match.Tenants) > 0 && !containsString(match.Tenants, input.Tenant) {
 		return false
 	}
@@ -851,7 +873,7 @@ func matchRule(match PolicyMatch, input PolicyInput) bool {
 	if len(match.LabelAllowlist) > 0 && !labelAllowlistMatch(match.LabelAllowlist, input.Labels) {
 		return false
 	}
-	if len(match.LabelThreshold) > 0 && !labelThresholdMatch(match.LabelThreshold, input.Labels) {
+	if len(match.LabelThreshold) > 0 && !labelThresholdMatch(match.LabelThreshold, input.Labels, rule.Decision) {
 		return false
 	}
 	if !delegationPredicateMatch(match.Predicate, input.Delegation) {
@@ -860,10 +882,7 @@ func matchRule(match PolicyMatch, input PolicyInput) bool {
 	if !evaluateDelegationMatch(match.Delegation, input.Delegation) {
 		return false
 	}
-	if !mcpMatch(match.MCP, input.MCP) {
-		return false
-	}
-	return true
+	return MCPRuleMatch(match.MCP, rule.Decision, input.MCP)
 }
 
 // labelAllowlistMatch returns true when ANY label value is NOT in its allowlist.
@@ -891,22 +910,26 @@ func labelAllowlistMatch(allowlists map[string][]string, labels map[string]strin
 }
 
 // labelThresholdMatch returns true when ANY label value exceeds its threshold.
-// If the label is missing or not a valid number, skip that check (fail-open).
-func labelThresholdMatch(thresholds map[string]float64, labels map[string]string) bool {
+// A missing label is skipped. A present value that is not a number
+// (strconv.ParseFloat, so "15,000" and "$15000" are not) or is NaN cannot be
+// compared, so it resolves to the restrictive outcome: the rule matches unless
+// its decision is allow-class, and an allow-class rule does not match.
+func labelThresholdMatch(thresholds map[string]float64, labels map[string]string, decision string) bool {
+	exceeded := false
 	for key, maxVal := range thresholds {
 		actual, exists := labels[key]
 		if !exists {
 			continue
 		}
 		parsed, err := strconv.ParseFloat(strings.TrimSpace(actual), 64)
-		if err != nil {
-			continue // not a number → skip (fail-open)
+		if err != nil || math.IsNaN(parsed) {
+			return !IsAllowClassDecision(decision)
 		}
 		if parsed > maxVal {
-			return true // exceeds threshold → rule matches (deny)
+			exceeded = true
 		}
 	}
-	return false
+	return exceeded
 }
 
 func containsString(list []string, value string) bool {
@@ -978,23 +1001,41 @@ func matchTopic(pattern, topic string) bool {
 	return ok
 }
 
-func mcpMatch(policy MCPPolicy, req MCPRequest) bool {
-	if !mcpUsed(req) {
+// MCPRuleMatch reports whether a rule's match.mcp lists select req. The
+// lists mean what they mean on tenants.<t>.mcp (see MCPAllowed): a value in a
+// deny list, or missing from a non-empty allow list, is forbidden. A rule
+// whose decision is allow or allow_with_constraints selects the MCP calls the
+// lists permit; any other decision (deny, require_approval, throttle) selects
+// the calls they forbid, which is how the gateway MCP gate reads invariants.
+// The lists apply only to MCP tool calls: once any list is set, a request
+// with no MCP fields never matches. Without lists the rule does not constrain
+// MCP at all.
+func MCPRuleMatch(lists MCPPolicy, decision string, req MCPRequest) bool {
+	if !lists.HasLists() {
 		return true
 	}
-	if ok, _ := matchMCPField("server", req.Server, policy.AllowServers, policy.DenyServers); !ok {
+	if !mcpUsed(req) {
 		return false
 	}
-	if ok, _ := matchMCPField("tool", req.Tool, policy.AllowTools, policy.DenyTools); !ok {
-		return false
+	permitted, _ := MCPAllowed(lists, req)
+	if IsAllowClassDecision(decision) {
+		return permitted
 	}
-	if ok, _ := matchMCPField("resource", req.Resource, policy.AllowResources, policy.DenyResources); !ok {
-		return false
+	return !permitted
+}
+
+// IsAllowClassDecision reports whether a rule decision lets the request
+// run: allow or allow_with_constraints once normalizeDecision has resolved
+// its aliases. Every other decision is restrictive, including values
+// normalizeDecision does not know (it maps them to deny). Rule matching and
+// every invariant-precedence split read decisions through this, so an alias
+// such as block cannot be classified differently in two places.
+func IsAllowClassDecision(decision string) bool {
+	switch normalizeDecision(decision) {
+	case "allow", "allow_with_constraints":
+		return true
 	}
-	if ok, _ := matchMCPField("action", req.Action, policy.AllowActions, policy.DenyActions); !ok {
-		return false
-	}
-	return true
+	return false
 }
 
 // MCPAllowed evaluates an MCP request against allow/deny lists, returning false with a reason when blocked.

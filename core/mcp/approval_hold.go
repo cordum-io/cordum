@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -225,12 +226,12 @@ func ProcessApprovalClaim(ctx context.Context, deps ApprovalHoldDeps, params Too
 		ApprovalRef: approvalRef,
 		SessionID:   meta.SessionID,
 		ExecutionID: meta.ExecutionID,
-		// EventID binds the claim to the AgentActionEvent the mint
-		// side recorded. For the policy-gate handoff path the mint
-		// side stamps PreEvent.EventID; for transports without a
-		// pre-event (legacy registry-gate path), AgentID is the
-		// closest available stable identity. The same source MUST be
-		// used on both sides — see ConsumeActionGateDecision.
+		// EventID must name the approval.requested event the mint side
+		// recorded, which only the approval knows: the gateway's claim
+		// store rebinds SessionID, ExecutionID and EventID to the
+		// approval's own when the approval was minted for this caller
+		// and agent. Without that rebinding this placeholder never
+		// matches and the store refuses the claim (tuple_mismatch).
 		EventID:        meta.AgentID,
 		ActionHash:     actionHash,
 		InputHash:      inputHash,
@@ -249,9 +250,11 @@ func ProcessApprovalClaim(ctx context.Context, deps ApprovalHoldDeps, params Too
 			}, nil
 		}
 		if errors.Is(claimErr, edge.ErrApprovalConflict) {
+			// The store's text names internal ids (session, execution, event).
+			slog.WarnContext(ctx, "mcp: approval claim conflict", "approval_ref", approvalRef, "error", claimErr)
 			return ApprovalClaimOutcome{
 				ClaimRef:    approvalRef,
-				ConflictErr: &edge.ApprovalConflictError{Kind: edge.ApprovalConflictKindUnknown, Reason: claimErr.Error()},
+				ConflictErr: &edge.ApprovalConflictError{Kind: edge.ApprovalConflictKindUnknown, Reason: "approval not claimable"},
 			}, nil
 		}
 		if errors.Is(claimErr, edge.ErrNotFound) {
@@ -260,7 +263,7 @@ func ProcessApprovalClaim(ctx context.Context, deps ApprovalHoldDeps, params Too
 				ConflictErr: &edge.ApprovalConflictError{Kind: edge.ApprovalConflictKindNotFound, Reason: "approval not found"},
 			}, nil
 		}
-		return ApprovalClaimOutcome{}, claimErr
+		return ApprovalClaimOutcome{}, fmt.Errorf("%w: claim approval: %w", ErrInternal, claimErr)
 	}
 	if !consumed || approval == nil {
 		return ApprovalClaimOutcome{
@@ -274,6 +277,32 @@ func ProcessApprovalClaim(ctx context.Context, deps ApprovalHoldDeps, params Too
 		Approval:     approval,
 		StrippedArgs: strippedBytes,
 	}, nil
+}
+
+// claimedCallKey marks a tools/call whose `_approval_ref` claim was consumed.
+type claimedCallKey struct{}
+
+// claimedCall is a consumed claim. The Edge store matched it to this tool and
+// these args, so it stands for the human approval the registry's
+// RequiresApproval gate and the policy gate's REQUIRE_HUMAN would ask for. It
+// covers this one call only: the claim is single-use.
+type claimedCall struct{ tool, inputHash string }
+
+// withClaimedCall records on ctx that the claim for tool with args was consumed.
+func withClaimedCall(ctx context.Context, tool string, args json.RawMessage) context.Context {
+	_, inputHash := BuildMCPApprovalBinding("", "", ToolCallParams{Name: tool, Arguments: args}, "")
+	return context.WithValue(ctx, claimedCallKey{}, claimedCall{tool: tool, inputHash: inputHash})
+}
+
+// claimCoversCall reports whether ctx carries a consumed claim for tool with
+// these args.
+func claimCoversCall(ctx context.Context, tool string, args json.RawMessage) bool {
+	claim, ok := ctx.Value(claimedCallKey{}).(claimedCall)
+	if !ok || claim.tool != tool {
+		return false
+	}
+	_, inputHash := BuildMCPApprovalBinding("", "", ToolCallParams{Name: tool, Arguments: args}, "")
+	return inputHash == claim.inputHash
 }
 
 func mcpApprovalClaimConflict(conflict *edge.ApprovalConflictError) *edge.ApprovalConflictError {

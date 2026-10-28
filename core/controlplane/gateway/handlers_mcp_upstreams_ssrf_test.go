@@ -179,3 +179,55 @@ func TestRegisterMCPUpstream_HTTPRejectedWhenAllowlistConfigured(t *testing.T) {
 		t.Fatalf("response did not include invalid_request code: %s", rec.Body.String())
 	}
 }
+
+// TestRegisterMCPUpstream_HTTPOptInReachesRedisRegistry runs the tenant
+// allow_plain_http opt-in through the production registry: with no registry
+// injected, the gateway builds the Redis-backed one (miniredis here), which
+// validates again on create and update. Both must honor the opt-in.
+func TestRegisterMCPUpstream_HTTPOptInReachesRedisRegistry(t *testing.T) {
+	prevLookup := edgecore.MCPHostLookup
+	t.Cleanup(func() { edgecore.MCPHostLookup = prevLookup })
+	edgecore.MCPHostLookup = func(_ context.Context, host string) ([]net.IP, error) {
+		if host == "mcp.example.com" {
+			return []net.IP{net.ParseIP("203.0.113.10")}, nil
+		}
+		return nil, &net.DNSError{Err: "no such host", Name: host}
+	}
+
+	s, _, _ := newTestGateway(t)
+	s.auth = newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"` + mcpUpstreamTestAPIKey + `","tenant":"tenant-a","role":"admin","principal_id":"mcp-admin"}]`,
+	})
+	s.mcpUpstreamRegistry = nil
+	if err := s.configSvc.Set(context.Background(), &configsvc.Document{
+		Scope:   configsvc.ScopeOrg,
+		ScopeID: "tenant-a",
+		Data: map[string]any{"safety": map[string]any{"mcp": map[string]any{
+			"allowed_upstreams": []any{"tenant-tools"},
+			"allow_plain_http":  true,
+		}}},
+	}); err != nil {
+		t.Fatalf("set tenant config: %v", err)
+	}
+	mux := http.NewServeMux()
+	if err := s.registerRoutes(mux); err != nil {
+		t.Fatalf("register routes: %v", err)
+	}
+	handler := apiKeyMiddleware(s.auth, tenantMiddleware(s.auth, maxBodyMiddleware(mux, s.entitlements)))
+
+	send := func(method, path, endpoint string) *httptest.ResponseRecorder {
+		body := `{"name":"tenant-tools","transport":"http","endpoint":"` + endpoint +
+			`","auth_secret_ref":"secret://vault/mcp/tenant-tools","risk":"medium","enabled":true}`
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		addMCPUpstreamAuth(req)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := send(http.MethodPost, "/api/v1/edge/mcp/upstreams", "http://mcp.example.com/tools"); rec.Code != http.StatusCreated {
+		t.Fatalf("create: status = %d body=%s, want 201", rec.Code, rec.Body.String())
+	}
+	if rec := send(http.MethodPut, "/api/v1/edge/mcp/upstreams/tenant-tools", "http://mcp.example.com/tools/v2"); rec.Code != http.StatusOK {
+		t.Fatalf("update: status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+}

@@ -29,13 +29,21 @@ With the gate off, tool calls are still scope-filtered but not policy-evaluated.
 
 ## 2. Provision a least-privilege Copilot identity
 
-Create an agent identity for Copilot (read-first; mutations require approval):
+Mint the API key Copilot will use, then create an agent identity for Copilot
+(read-first; mutations require approval) bound to that key:
 
 ```bash
+curl -sk -X POST https://<gateway>:8081/api/v1/auth/keys \
+  -H "X-API-Key: $CORDUM_ADMIN_KEY" -H "X-Tenant-ID: <tenant>" \
+  -d '{"name": "github-copilot"}'
+# -> {"key": {"id": "<key-id>", ...}, "secret": "<shown once>"}
+
 curl -sk -X POST https://<gateway>:8081/api/v1/agents \
   -H "X-API-Key: $CORDUM_ADMIN_KEY" -H "X-Tenant-ID: <tenant>" \
   -d '{
     "name": "GitHub Copilot",
+    "owner": "<team or person>",
+    "agent_id": "<key-id>",
     "risk_tier": "low",
     "allowed_tools": ["cordum_list_jobs","cordum_get_job","cordum_query_policy","cordum_list_approvals"],
     "data_classifications": ["general"],
@@ -43,8 +51,14 @@ curl -sk -X POST https://<gateway>:8081/api/v1/agents \
   }'
 ```
 
-Note the returned agent `id`. Then mint a scoped API key bound to that identity
-+ tenant with `mcp.read` permission (use your normal key-issuance flow). Keep
+Note the returned agent `id`. `agent_id` links the key to the identity: the
+gateway accepts `X-Agent-Id: <copilot-agent-id>` only from a caller whose
+principal or API key ID is linked to that identity (or an admin), and answers
+`403 agent identity not bound to caller` otherwise. A static key with a
+`principal_id` binds the same way, with `"agent_id": "<principal_id>"`. In dev
+mode (non-production, or `CORDUM_ALLOW_HEADER_PRINCIPAL=true`) the gateway also
+takes the principal from an `X-Principal-Id` header, so a principal binding can
+be spoofed there; binding the API key ID is the safe choice. Keep
 `preapproved_mutating_tools` empty so `cordum_submit_job` and other mutations
 hit human approval.
 
@@ -100,7 +114,9 @@ agent id are non-secret literals.
 > **Group calls into one audit session (optional):** add
 > `"X-Copilot-Session-Id": "<some-id>"` to `headers` to group a workspace's
 > calls under one Copilot session and label spawned jobs with it. If omitted,
-> the MCP transport session id is used.
+> the MCP transport session id is used; a `"type": "http"` server, which opens
+> no session, gets one Copilot session per API key and agent id. Its
+> prompt-injection taint is kept per API key and agent id too.
 
 ## 4. Use it
 

@@ -378,6 +378,23 @@ func assertCommandHook(t *testing.T, hooks map[string]any, eventName, matcher, c
 	}
 }
 
+// assertHookOnFailure checks the fail-closed contract: only events that can
+// block on exit 2 carry onFailure:"block", and only in fail-closed sessions.
+func assertHookOnFailure(t *testing.T, hooks map[string]any, failClosed bool) {
+	t.Helper()
+	blocking := map[string]bool{"PreToolUse": true, "UserPromptSubmit": true, "ConfigChange": true}
+	for _, event := range []string{"PreToolUse", "PostToolUse", "PostToolUseFailure", "UserPromptSubmit", "ConfigChange", "FileChanged"} {
+		var want any // nil: field absent
+		if failClosed && blocking[event] {
+			want = "block"
+		}
+		group := jsonObject(t, jsonArray(t, hooks[event])[0])
+		if got := jsonObject(t, jsonArray(t, group["hooks"])[0])["onFailure"]; got != want {
+			t.Fatalf("%s onFailure = %v, want %v (failClosed=%v)", event, got, want, failClosed)
+		}
+	}
+}
+
 func assertRenderedSettingsOmitsAgentdNonce(t *testing.T, data []byte, nonce string) {
 	t.Helper()
 	text := string(data)

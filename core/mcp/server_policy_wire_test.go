@@ -2,10 +2,88 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/cordum/cordum/core/edge"
 )
+
+// TestMCPServer_InternalErrorsHideDetail: failures of the MCP machinery itself
+// (the Edge store refusing an event, the approval store failing a claim or a
+// mint) used to reach the JSON-RPC client verbatim, internal ids included.
+// The client now gets a fixed text; the detail goes to the log.
+func TestMCPServer_InternalErrorsHideDetail(t *testing.T) {
+	t.Parallel()
+	const internal = "edge execution mcp-direct-0f3c is full"
+	gated := NewServer(nil, &fakeToolService{}, nil, ServerConfig{}).WithPolicyGate("cordum.builtin", ToolCallDeps{
+		Pipeline:      &fakePolicyDispatcher{},
+		EventEmitter:  &fakeEventEmitter{err: errors.New(internal)},
+		ArtifactStore: &fakeArtifactStore{},
+	})
+	held := NewServer(nil, &fakeToolService{}, nil, ServerConfig{}).WithApprovalHold(ApprovalHoldDeps{
+		Store:          &fakeApprovalClaimStore{err: errors.New(internal)},
+		PolicySnapshot: func(context.Context) string { return "snap" },
+		ServerName:     "cordum.builtin",
+	})
+	conflicted := NewServer(nil, &fakeToolService{}, nil, ServerConfig{}).WithApprovalHold(ApprovalHoldDeps{
+		Store:          &fakeApprovalClaimStore{err: fmt.Errorf("%w: %s", edge.ErrApprovalConflict, internal)},
+		PolicySnapshot: func(context.Context) string { return "snap" },
+		ServerName:     "cordum.builtin",
+	})
+	call := json.RawMessage(`{"name":"fs.write","arguments":{"path":"/tmp/x","_approval_ref":"edge_appr_1"}}`)
+	replies := map[string]*JSONRPCError{}
+	for name, srv := range map[string]*MCPServer{"pre event": gated, "claim store": held, "claim conflict": conflicted} {
+		_, replies[name] = srv.handleToolsCall(newAuthedToolCallCtx(), call)
+	}
+	for _, err := range []error{
+		fmt.Errorf("%w: edge approval mint failed: %s", ErrApprovalStoreUnavailable, internal),
+		fmt.Errorf("%w: %s", ErrApprovalGateMisconfigured, internal),
+	} {
+		replies[err.Error()] = gated.mapHandlerError(err)
+	}
+	for name, reply := range replies {
+		raw, _ := json.Marshal(reply)
+		if reply == nil || strings.Contains(string(raw), "mcp-direct-0f3c") {
+			t.Errorf("%s: JSON-RPC error %s, want one without the internal detail", name, raw)
+		}
+	}
+	if reply := replies["pre event"]; reply == nil || reply.Code != jsonRPCInternalErrorCode {
+		t.Errorf("pre event append failure = %+v, want %d internal error", reply, jsonRPCInternalErrorCode)
+	}
+}
+
+// TestMCPServer_MissingCallMetadataIsGatewayMisconfigured: a tools/call that
+// reaches the policy gate without CallMetadata is a gateway wiring defect. The
+// approval hold already answered it with -32097 and data missing_mcp_metadata,
+// but the policy gate answered a generic -32603 with the sentinel's text. Both
+// now give the documented -32097 reply.
+func TestMCPServer_MissingCallMetadataIsGatewayMisconfigured(t *testing.T) {
+	t.Parallel()
+	srv := NewServer(nil, &fakeToolService{}, nil, ServerConfig{}).
+		WithPolicyGate("cordum.builtin", ToolCallDeps{
+			Pipeline:      &fakePolicyDispatcher{},
+			EventEmitter:  &fakeEventEmitter{},
+			ArtifactStore: &fakeArtifactStore{},
+		}).
+		WithApprovalHold(ApprovalHoldDeps{
+			Store:          &fakeApprovalClaimStore{},
+			PolicySnapshot: func(context.Context) string { return "snap" },
+			ServerName:     "cordum.builtin",
+		})
+	for name, call := range map[string]string{
+		"policy gate":   `{"name":"fs.write","arguments":{"path":"/tmp/x"}}`,
+		"approval hold": `{"name":"fs.write","arguments":{"path":"/tmp/x","_approval_ref":"edge_appr_1"}}`,
+	} {
+		_, reply := srv.handleToolsCall(context.Background(), json.RawMessage(call))
+		if reply == nil || reply.Code != jsonRPCGatewayMisconfiguredCode || reply.Data != "missing_mcp_metadata" {
+			t.Errorf("%s without call metadata = %+v, want %d with data missing_mcp_metadata",
+				name, reply, jsonRPCGatewayMisconfiguredCode)
+		}
+	}
+}
 
 // TestMCPServer_WithPolicyGate_AllZeroDepsDisablesGate locks the
 // c530c1c0 contract: passing a zero-value ToolCallDeps is the explicit
