@@ -285,19 +285,42 @@ Reference: [docs/edge/README.md](docs/edge/README.md).
 
 ---
 
-## The Problem: The Agent Risk Gap
+## Why Pre-Dispatch Action Governance?
 
-Enterprises are rushing to deploy **Autonomous AI Agents**, but they're hitting a wall of risk. According to Gartner, **74% of enterprises see AI agents as a new attack vector**, and over 40% of agentic AI projects will be canceled due to inadequate risk controls.
+Agents act with real authority: cloud credentials, database connections,
+authenticated MCP sessions. Common controls each sit at a different boundary,
+and none of them is the point where a specific action is dispatched:
 
-The current landscape leaves teams with a choice:
-1. **Restrict agents** to simple, low-value read-only tasks.
-2. **Accept the risk** of autonomous agents taking destructive, unmonitored actions.
+- **Runtime sandboxes isolate the host, not the authority.** A container or
+  microVM limits what a process can do to the machine it runs on. It does not
+  limit what an agent can do with credentials or sessions it legitimately holds.
+- **Observability records an action after it runs.** Logs and traces explain an
+  incident; they do not hold the call that caused it.
+- **Model and prompt guardrails sit at the LLM boundary.** They check what goes
+  into and comes out of a model. Executing the resulting tool call or job
+  happens in the code that dispatches it.
 
-Without a dedicated governance layer, you're flying blind:
-- **No visibility**: You don't know what your agents are doing until *after* they do it.
-- **No safety rails**: There's no way to intercept dangerous operations before they execute.
-- **No human-in-the-loop**: Sensitive actions happen without manual oversight.
-- **No audit trail**: When things go wrong, you can't reconstruct the chain of thought.
+Cordum puts a policy decision at that dispatch boundary:
+
+- **Normalized, hashed actions.** Approval-gated CAP jobs, action descriptors,
+  MCP tool calls (tenant, server, tool, target path) and Cordum Edge evaluate
+  requests are each reduced to a canonical form and hashed with SHA-256.
+- **Explicit verdicts.** Policy evaluation yields `ALLOW`, `DENY`,
+  `REQUIRE_APPROVAL`, `THROTTLE` or `ALLOW_WITH_CONSTRAINTS`. The gateway,
+  scheduler and Edge evaluate path treat an unknown verdict as `DENY`.
+- **Hash-bound approvals.** A gated action's approval is looked up by tenant and
+  `approval_ref` and must carry the same SHA-256 `action_hash` as the action
+  being run; a changed payload is rejected as `approval_mismatch`. Self-approval,
+  expired and already-consumed approvals are rejected too.
+- **Declarative YAML policies.** Rules in [`config/safety.yaml`](config/safety.yaml)
+  match on tenant, topic, capability, risk tags, actor and labels; the shipped
+  policy denies anything no rule matches (`default_decision: deny`).
+- **Risk tags and agent risk tiers.** Rules can match `risk_tags` on any plan.
+  Agent identities, which carry the risk tier that `agent_risk_tiers` rules
+  match, require an Enterprise license.
+- **Cordum Edge.** A local hook evaluates coding-agent tool calls (Claude Code
+  today) against the gateway before they run. See
+  [Edge Quickstart](#edge-quickstart-compliance-firewall-for-claude-code).
 
 ## The Solution: Cordum Agent Control Plane
 
@@ -533,7 +556,7 @@ proof keys and control-plane signing authorities are provisioned. Follow the
 
 ## Integration Packs
 
-Extend Cordum with [30+ integration packs](https://github.com/cordum-io/cordum-packs) for Slack, GitHub, AWS, Jira, Terraform, Datadog, PagerDuty, and more. Each pack is a CAP-native worker with policy-gated workflows.
+Extend Cordum with [integration packs](https://github.com/cordum-io/cordum-packs) for Slack, GitHub, AWS, Jira, Terraform, Datadog, PagerDuty, and more. Each pack is an installable overlay of workflows, schemas and config/policy fragments ([docs/pack.md](docs/pack.md)); Core does not deploy pack workers, which run as separate deployments.
 
 | Pack | Category | Description |
 |------|----------|-------------|
@@ -583,17 +606,20 @@ See [ROADMAP.md](ROADMAP.md) for the full feature roadmap, completed milestones,
 
 See [CHANGELOG.md](CHANGELOG.md) for a detailed log of all changes by version.
 
-## Compared To
+## Where Cordum Fits in the Agent Stack
 
-| Feature | Cordum | Guardrails AI | NeMo Guardrails | Custom Middleware |
-|---------|--------|--------------|-----------------|-------------------|
-| Pre-execution policy engine | ✅ Safety Kernel | ❌ Post-generation | ⚠️ Dialog rails only | ⚠️ Manual |
-| Human-in-the-loop approvals | ✅ Built-in | ❌ | ❌ | ⚠️ DIY |
-| Multi-agent fleet governance | ✅ | ❌ Single model | ❌ Single model | ❌ |
-| Deterministic audit trail | ✅ | ❌ | ❌ | ⚠️ Manual |
-| Framework agnostic | ✅ Any via CAP | ❌ Python only | ❌ NVIDIA stack | ❌ |
-| MCP governance | ✅ Bridge + Gateway | ❌ | ❌ | ❌ |
-| Local agent-action firewall | ✅ Cordum Edge (Claude Code hook today) | ❌ | ❌ | ⚠️ DIY |
+Each layer below enforces at a different boundary, and they can be combined.
+Cordum is the action control plane layer; it is meant to run alongside the
+others, not to replace them. Descriptions of other projects paraphrase their
+own documentation.
+
+| Layer | Enforcement boundary | Examples |
+|-------|----------------------|----------|
+| Model and prompt guardrails | Inputs to and outputs from an LLM | [Guardrails AI](https://github.com/guardrails-ai/guardrails) runs Input/Output Guards in your application. [NeMo Guardrails](https://github.com/NVIDIA-NeMo/Guardrails) adds programmable guardrails to LLM-based conversational applications. [Llama Guard](https://github.com/meta-llama/PurpleLlama) is a family of input and output moderation models. |
+| Traffic and MCP gateways | The network path between clients, models, tools and APIs | [IBM ContextForge](https://github.com/IBM/mcp-context-forge) is a registry and proxy that federates MCP, A2A and REST/gRPC APIs. [LiteLLM](https://github.com/BerriAI/litellm) is an AI gateway with a single interface to many LLM providers. |
+| In-process hooks | Checks inside the agent's own process, such as framework callbacks or function wrappers | — |
+| Action control plane (Cordum) | The point where an action is submitted or dispatched | Gateway submit-time policy checks, scheduler pre-dispatch safety checks, the [MCP server](#mcp-server) policy pipeline, and the [Cordum Edge](#cordum-edge-compliance-firewall-for-ai-agents) hook. |
+| Runtime sandboxes | The process, OS or VM the action runs in | [Docker](https://docs.docker.com/get-started/docker-overview/) runs applications in a loosely isolated environment called a container. [gVisor](https://github.com/google/gvisor) is an application kernel that isolates applications from the host OS. [Firecracker](https://github.com/firecracker-microvm/firecracker) runs workloads in lightweight virtual machines called microVMs. [E2B](https://github.com/e2b-dev/E2B) runs AI-generated code in isolated cloud sandboxes. |
 
 ## Contributing
 
@@ -601,14 +627,64 @@ We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## License
 
-Licensed under [Business Source License 1.1 (BUSL-1.1)](LICENSE).
+Cordum ships from three repositories under two licenses. The table follows each
+repository's LICENSE file and package metadata; the LICENSE files are the
+authoritative terms.
 
-- **Self-host and use internally**: Permitted
-- **Modify and contribute back**: Permitted
-- **Offer as a competing hosted service**: Not permitted
-- **Change Date**: January 1, 2029 — automatically converts to Apache License 2.0
+| Component | Repository | License |
+|-----------|------------|---------|
+| Control plane services, dashboard, Cordum Edge, and Cordum's own SDKs (the Go `sdk/` module, `cordum-sdk` on PyPI, and the TypeScript `@cordum/sdk` package in `sdk/typescript/`) | [cordum-io/cordum](LICENSE) | BUSL-1.1 |
+| Integration packs | [cordum-io/cordum-packs](https://github.com/cordum-io/cordum-packs) | BUSL-1.1, with the same Additional Use Grant. A pack directory with its own LICENSE is governed by that file; for example, `packs/incident-enricher` is Apache-2.0. |
+| CAP protocol and its published SDKs (Go module `github.com/cordum-io/cap/v2`, `cap-sdk-python` and `cordum-guard` on PyPI, `cap-sdk-node` on npm) | [cordum-io/cap](https://github.com/cordum-io/cap) | Apache-2.0 |
 
-See [LICENSE](LICENSE) for full terms.
+The BUSL-1.1 parameters in [LICENSE](LICENSE):
+
+> **Additional Use Grant:** You may make use of the Licensed Work for any purpose,
+> including production use and self-hosted deployments, provided that you do not
+> use the Licensed Work to provide a Competitive Offering.
+
+- **Change Date:** 2029-01-01, or the fourth anniversary of a version's first
+  public distribution under the license, whichever comes first.
+- **Change License:** Apache License, Version 2.0 (Apache-2.0). On the earlier
+  of those two dates, rights under Apache-2.0 replace the BUSL-1.1 grant for
+  that version.
+- **Other use:** "If your use of the Licensed Work does not comply with the
+  requirements currently in effect as described in this License, you must
+  purchase a commercial license from the Licensor, its affiliated entities, or
+  authorized resellers, or you must refrain from using the Licensed Work."
+
+See [LICENSE](LICENSE) for the full terms.
+
+**Runtime entitlements are separate from the license.** The control plane
+enforces plan limits in code. Without a valid Cordum license it runs on the
+Community defaults in [`core/licensing/tiers.go`](core/licensing/tiers.go):
+3 workers, 3 concurrent jobs, 500 requests per second, 7-day audit retention,
+single approval mode and no custom policy bundles. It also falls back to these
+defaults when a license cannot be loaded or fails verification
+([`core/licensing/resolver.go`](core/licensing/resolver.go)). These are product
+limits, not BUSL-1.1 terms; see [Enterprise](#enterprise).
+
+### Versioning
+
+Cordum core and CAP release independently, each with its own tags
+([VERSIONING.md](VERSIONING.md)):
+
+- **Cordum core (`v<major>.<minor>.<patch>` tags, currently 1.x).** A `v*` tag builds and signs the container
+  images for api-gateway, scheduler, safety-kernel, workflow-engine,
+  context-engine, mcp, dashboard and the demo quickstart worker, and publishes
+  the Helm chart ([docker.yml](.github/workflows/docker.yml)). The separate
+  [desktop binary workflow](.github/workflows/release.yml) builds
+  `cordum-hook`, `cordum-agentd` and `cordum-claude`; publication requires its
+  signed-manifest gate to pass. `cordumctl` is built from
+  source (`make build`). The default `docker compose` stack runs api-gateway,
+  scheduler, safety-kernel, workflow-engine, context-engine and dashboard with
+  NATS and Redis. Cordum's own Python and TypeScript SDKs use separate
+  `sdk-python-v*` and `sdk-ts-v*` tags.
+- **CAP (`v2.x` tags).** The protocol and its SDKs release from
+  [cordum-io/cap](https://github.com/cordum-io/cap). Cordum consumes a pinned
+  CAP release through `go.mod` (`github.com/cordum-io/cap/v2 v2.17.0` at the
+  time of writing), so a CAP SDK release does not require a core release, and a
+  core release does not require a CAP release.
 
 ---
 
