@@ -88,14 +88,7 @@ func (h *afterScriptHook) DialHook(next redis.DialHook) redis.DialHook { return 
 func (h *afterScriptHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 	return func(ctx context.Context, cmd redis.Cmder) error {
 		err := next(ctx, cmd)
-		args := cmd.Args()
-		if err != nil || len(args) < 2 {
-			return err
-		}
-		body, _ := args[1].(string)
-		sum := sha1.Sum([]byte(body)) // #nosec G401 -- script hash, not security
-		if (cmd.Name() == "evalsha" && body == h.script.Hash()) ||
-			(cmd.Name() == "eval" && hex.EncodeToString(sum[:]) == h.script.Hash()) {
+		if err == nil && runsScript(cmd, h.script) {
 			h.once.Do(h.fn)
 		}
 		return err
@@ -103,6 +96,46 @@ func (h *afterScriptHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook 
 }
 
 func (h *afterScriptHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+
+// runsScript reports whether cmd runs script, by EVALSHA hash or EVAL body.
+func runsScript(cmd redis.Cmder, script *redis.Script) bool {
+	args := cmd.Args()
+	if len(args) < 2 {
+		return false
+	}
+	body, _ := args[1].(string)
+	switch cmd.Name() {
+	case "evalsha":
+		return body == script.Hash()
+	case "eval":
+		sum := sha1.Sum([]byte(body)) // #nosec G401 -- script hash, not security
+		return hex.EncodeToString(sum[:]) == script.Hash()
+	}
+	return false
+}
+
+// beforeScriptHook runs fn once, right before the client first runs script:
+// "a hold lands after the hold check, as the trim is about to run".
+type beforeScriptHook struct {
+	script *redis.Script
+	once   sync.Once
+	fn     func()
+}
+
+func (h *beforeScriptHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (h *beforeScriptHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		if runsScript(cmd, h.script) {
+			h.once.Do(h.fn)
+		}
+		return next(ctx, cmd)
+	}
+}
+
+func (h *beforeScriptHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
 	return next
 }
 
@@ -196,7 +229,8 @@ func TestRetentionCluster_CrashAfterStreamTrim(t *testing.T) {
 	f.oldAndRecentChain("acme")
 	pending := f.pendingAnchor("acme", 3, retentionAnchor{})
 	f.setAnchor("acme", pending)
-	if n, err := clusterTrimScript.Run(ctx, f.cluster, []string{f.chainer.StreamKey("acme")}, pending.StreamID).Int64(); err != nil || n != 3 {
+	streamKey := f.chainer.StreamKey("acme")
+	if n, err := clusterTrimScript.Run(ctx, f.cluster, []string{streamKey, legalHoldFenceKey(streamKey)}, pending.StreamID).Int64(); err != nil || n != 3 {
 		t.Fatalf("stream trim = %d, %v", n, err)
 	}
 
@@ -475,5 +509,51 @@ func TestParseRetentionAnchor_Pending(t *testing.T) {
 		if a, err := parseRetentionAnchor(raw); err == nil {
 			t.Errorf("parse %q = %+v, want malformed", raw, a)
 		}
+	}
+}
+
+// A hold created after the pending anchor and the hold re-check, right
+// before the stream trim, keeps the events: the cluster trim script refuses
+// while the tenant's fence exists, and the pending anchor waits for the next
+// sweep without a hold.
+func TestRetentionCluster_HoldDuringTrimKeepsEvents(t *testing.T) {
+	f := newClusterRetentionFixture(t, WithHMACKey(testHMACKey()))
+	ctx := context.Background()
+	f.oldAndRecentChain("acme")
+	var hold *LegalHold
+	f.cluster.AddHook(&beforeScriptHook{script: clusterTrimScript, fn: func() {
+		var err error
+		if hold, err = f.holds.CreateHold(ctx, "acme", "litigation", "test"); err != nil {
+			t.Errorf("create hold: %v", err)
+		}
+	}})
+
+	if n := f.sweepAt(retentionSweepTime); n != 0 {
+		t.Fatalf("trimmed %d after the hold was acknowledged, want 0", n)
+	}
+	if hold == nil {
+		t.Fatal("the trim script never ran")
+	}
+	if a := f.anchorValue("acme"); !a.Pending || a.Seq != 3 || a.PrevSeq != 0 {
+		t.Fatalf("anchor = %+v, want pending at seq 3 over no previous anchor", a)
+	}
+	if got := f.streamLen("acme"); got != 6 {
+		t.Fatalf("stream len = %d, want 6", got)
+	}
+	if res := f.verify("acme", VerifyOptions{}); res.Status != VerifyStatusOK || res.TotalEvents != 6 {
+		t.Fatalf("held events under a pending anchor: %+v, want ok", res)
+	}
+	if n := f.sweepAt(retentionT0.Add(8 * day)); n != 0 {
+		t.Fatalf("held sweep trimmed %d", n)
+	}
+
+	if err := f.holds.ReleaseHold(ctx, hold.ID, "test"); err != nil {
+		t.Fatalf("release hold: %v", err)
+	}
+	if n := f.sweepAt(retentionT0.Add(8 * day)); n != 3 {
+		t.Fatalf("sweep after release trimmed %d, want 3", n)
+	}
+	if a := f.anchorValue("acme"); a.Pending || a.Seq != 3 {
+		t.Fatalf("anchor = %+v, want confirmed at seq 3", a)
 	}
 }

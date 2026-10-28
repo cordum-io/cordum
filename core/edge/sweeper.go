@@ -261,17 +261,20 @@ func (s *SessionSweeper) sweepSessionKeys(ctx context.Context, keys []string, lo
 		if !ok || !s.sessionExpired(session) {
 			continue
 		}
-		// Checked per session, so a hold placed mid-sweep stops deletion.
-		held, err := s.holds.IsUnderHold(ctx, session.TenantID)
-		if err != nil || held {
+		// Checked per session, so a hold placed mid-sweep stops deletion; a
+		// hold placed during the deletion is acknowledged only after it.
+		deleted, err := s.holds.DeleteUnlessHeld(ctx, session.TenantID, session.SessionID, func(ctx context.Context) error {
+			return s.store.DeleteSession(ctx, session.TenantID, session.SessionID)
+		})
+		if errors.As(err, new(audit.HoldCheckError)) || (err == nil && !deleted) {
 			if !logged[session.TenantID] {
 				logged[session.TenantID] = true
 				slog.Warn("edge session retention: keeping tenant's expired sessions",
-					"tenant_id", session.TenantID, "legal_hold", held, "hold_check_error", err)
+					"tenant_id", session.TenantID, "legal_hold", err == nil, "hold_check_error", err)
 			}
 			continue
 		}
-		if err := s.store.DeleteSession(ctx, session.TenantID, session.SessionID); err != nil {
+		if err != nil {
 			return swept, err
 		}
 		s.store.recorder.RecordSessionSwept()

@@ -54,7 +54,8 @@ func (f *clusterRetentionFixture) unconfirmedTrim(tenant string) retentionAnchor
 	f.oldAndRecentChain(tenant)
 	pending := f.pendingAnchor(tenant, 3, retentionAnchor{})
 	f.setAnchor(tenant, pending)
-	if n, err := clusterTrimScript.Run(context.Background(), f.cluster, []string{f.chainer.StreamKey(tenant)}, pending.StreamID).Int64(); err != nil || n != 3 {
+	streamKey := f.chainer.StreamKey(tenant)
+	if n, err := clusterTrimScript.Run(context.Background(), f.cluster, []string{streamKey, legalHoldFenceKey(streamKey)}, pending.StreamID).Int64(); err != nil || n != 3 {
 		f.t.Fatalf("stream trim = %d, %v", n, err)
 	}
 	return pending

@@ -745,3 +745,100 @@ func TestVerifyChain_CapsMissingRun(t *testing.T) {
 		t.Fatalf("missing gaps = %d starting at %v, want %d starting at 1", len(missing), missing[:1], maxGapRun)
 	}
 }
+
+// pinHoldID makes CreateHold mint id, so a test can pre-index it.
+func pinHoldID(t *testing.T, id string) {
+	t.Helper()
+	prev := newHoldID
+	newHoldID = func() string { return id }
+	t.Cleanup(func() { newHoldID = prev })
+}
+
+// A hold created after a batch's hold check, right before its trim script
+// runs, keeps the events: the script refuses while the tenant's fence exists.
+// Preindexed, the hold's index entry already existed and the hold check
+// skipped it as dangling before the record appeared.
+func TestRetentionSweeper_HoldDuringTrimKeepsEvents(t *testing.T) {
+	for _, preindexed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("preindexed=%v", preindexed), func(t *testing.T) {
+			f := newRetentionFixture(t, nil)
+			ctx := context.Background()
+			pinHoldID(t, "hold-race")
+			f.appendAt("acme", retentionT0, 3)
+			f.appendAt("acme", retentionT0.Add(6*day), 3)
+			if preindexed {
+				if err := f.client.SAdd(ctx, legalHoldSetPrefix+"acme", "hold-race").Err(); err != nil {
+					t.Fatalf("sadd: %v", err)
+				}
+			}
+			var hold *LegalHold
+			f.client.AddHook(&beforeScriptHook{script: retentionTrimScript, fn: func() {
+				var err error
+				if hold, err = f.holds.CreateHold(ctx, "acme", "litigation", "test"); err != nil {
+					t.Errorf("create hold: %v", err)
+				}
+			}})
+			skipped := auditRetentionSkipped.WithLabelValues("legal_hold")
+			before := testutil.ToFloat64(skipped)
+
+			if n := f.sweepAt(retentionSweepTime); n != 0 {
+				t.Fatalf("trimmed %d after the hold was acknowledged, want 0", n)
+			}
+			if hold == nil {
+				t.Fatal("the trim script never ran")
+			}
+			if got := f.streamLen("acme"); got != 6 {
+				t.Fatalf("stream len = %d, want 6", got)
+			}
+			if seq, _ := f.anchor("acme"); seq != 0 {
+				t.Fatalf("anchor moved to seq %d without a trim", seq)
+			}
+			if got := testutil.ToFloat64(skipped) - before; got != 1 {
+				t.Fatalf("legal_hold skips = %v, want 1", got)
+			}
+			if res := f.verify("acme", VerifyOptions{}); res.Status != VerifyStatusOK || res.TotalEvents != 6 {
+				t.Fatalf("verify = %+v, want ok with 6 events", res)
+			}
+
+			if err := f.holds.ReleaseHold(ctx, hold.ID, "test"); err != nil {
+				t.Fatalf("release: %v", err)
+			}
+			if n := f.sweepAt(retentionSweepTime); n != 3 {
+				t.Fatalf("trimmed %d after release, want 3", n)
+			}
+		})
+	}
+}
+
+// The sweeper trims only chain streams the hold store fences: a Chainer with
+// another key prefix is skipped as a failed hold check until the store is
+// built with WithChainKeyPrefix.
+func TestRetentionSweeper_SkipsChainTheHoldStoreDoesNotFence(t *testing.T) {
+	f := newRetentionFixture(t, nil)
+	ctx := context.Background()
+	other := NewChainer(f.client, "other:chain:")
+	f.mr.SetTime(retentionT0)
+	for i := 0; i < 3; i++ {
+		if err := other.Append(ctx, baseEvent("acme", "act")); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+	}
+	f.mr.SetTime(retentionSweepTime)
+	skipped := auditRetentionSkipped.WithLabelValues("hold_check_error")
+	before := testutil.ToFloat64(skipped)
+
+	if n, err := NewRetentionSweeper(f.client, other, f.holds, nil).SweepOnce(ctx); err != nil || n != 0 {
+		t.Fatalf("sweep = %d, %v; want nothing trimmed", n, err)
+	}
+	if got, _ := f.client.XLen(ctx, other.StreamKey("acme")).Result(); got != 3 {
+		t.Fatalf("stream len = %d, want 3", got)
+	}
+	if got := testutil.ToFloat64(skipped) - before; got != 1 {
+		t.Fatalf("hold_check_error skips = %v, want 1", got)
+	}
+
+	holds := NewLegalHoldStoreFromClient(f.client).WithChainKeyPrefix("other:chain:")
+	if n, err := NewRetentionSweeper(f.client, other, holds, nil).SweepOnce(ctx); err != nil || n != 2 {
+		t.Fatalf("sweep with a matching store = %d, %v; want 2", n, err)
+	}
+}

@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/internal/testredis"
+	"github.com/redis/go-redis/v9"
 )
 
 func newTestLegalHoldStore(t *testing.T) (*LegalHoldStore, *miniredis.Miniredis) {
@@ -350,6 +352,189 @@ func TestLegalHold_ChainLinkageUnaffected(t *testing.T) {
 		}
 		if !ok {
 			t.Errorf("Seq=%d hash did not recompute under legal hold", got.Seq)
+		}
+	}
+}
+
+func TestCreateHold_FencesChainStream(t *testing.T) {
+	store, srv := newTestLegalHoldStore(t)
+	ctx := context.Background()
+	fence := store.fenceKey("tenant-f")
+	if fence != "{audit:chain:tenant-f}:legal_hold_fence" {
+		t.Fatalf("fence key = %q, want it in the chain stream's slot", fence)
+	}
+	if got := legalHoldFenceKey("{audit}:chain:tenant-f"); got != "{audit}:chain:tenant-f:legal_hold_fence" {
+		t.Fatalf("fence key for a tagged stream = %q", got)
+	}
+
+	hold, err := store.CreateHold(ctx, "tenant-f", "litigation", "test")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if got, _ := srv.Get(fence); got != hold.ID {
+		t.Fatalf("fence = %q, want the hold id %q", got, hold.ID)
+	}
+	if err := store.ReleaseHold(ctx, hold.ID, "test"); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	if srv.Exists(fence) {
+		t.Fatal("fence survived the release")
+	}
+}
+
+func TestIsUnderHold_StaleFence(t *testing.T) {
+	store, srv := newTestLegalHoldStore(t)
+	ctx := context.Background()
+	fence := store.fenceKey("tenant-s")
+
+	// A fence naming no record, or a released hold, is stale and cleared.
+	hold, err := store.CreateHold(ctx, "tenant-s", "litigation", "test")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := store.ReleaseHold(ctx, hold.ID, "test"); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	for _, id := range []string{"ghost", hold.ID} {
+		if err := srv.Set(fence, id); err != nil {
+			t.Fatalf("set fence: %v", err)
+		}
+		if held, err := store.IsUnderHold(ctx, "tenant-s"); err != nil || held {
+			t.Fatalf("fence %q: held=%v err=%v, want false/nil", id, held, err)
+		}
+		if srv.Exists(fence) {
+			t.Fatalf("stale fence %q not cleared", id)
+		}
+	}
+
+	// A fence naming an active hold holds, even one the index lost.
+	hold, err = store.CreateHold(ctx, "tenant-s", "litigation", "test")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := srv.SRem(legalHoldSetPrefix+"tenant-s", hold.ID); err != nil {
+		t.Fatalf("srem: %v", err)
+	}
+	if held, err := store.IsUnderHold(ctx, "tenant-s"); err != nil || !held {
+		t.Fatalf("held=%v err=%v, want true", held, err)
+	}
+	// An unreadable record behind the fence is surfaced, not skipped.
+	if err := srv.Set(legalHoldKeyPrefix+hold.ID, "{not json"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if _, err := store.IsUnderHold(ctx, "tenant-s"); err == nil {
+		t.Fatal("expected an error for an unreadable fenced hold")
+	}
+}
+
+func TestCreateHold_WaitsForDeletionInFlight(t *testing.T) {
+	store, _ := newTestLegalHoldStore(t)
+	ctx := context.Background()
+	deleting, release, deleted := make(chan struct{}), make(chan struct{}), make(chan bool, 1)
+	go func() {
+		ran, err := store.DeleteUnlessHeld(ctx, "tenant-w", "sess-1", func(context.Context) error {
+			close(deleting)
+			<-release
+			return nil
+		})
+		if err != nil {
+			t.Errorf("delete: %v", err)
+		}
+		deleted <- ran
+	}()
+	<-deleting
+
+	created := make(chan error, 1)
+	go func() {
+		_, err := store.CreateHold(ctx, "tenant-w", "litigation", "test")
+		created <- err
+	}()
+	select {
+	case err := <-created:
+		t.Fatalf("CreateHold returned (%v) while a deletion was in flight", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	if !<-deleted {
+		t.Fatal("the deletion in flight before the hold did not run")
+	}
+	if err := <-created; err != nil {
+		t.Fatalf("CreateHold: %v", err)
+	}
+	// From now on nothing of the tenant's is deleted.
+	ran := false
+	if deleted, err := store.DeleteUnlessHeld(ctx, "tenant-w", "sess-2", func(context.Context) error { ran = true; return nil }); err != nil || deleted || ran {
+		t.Fatalf("delete under hold: deleted=%v ran=%v err=%v, want nothing", deleted, ran, err)
+	}
+}
+
+func TestCreateHold_UnconfirmedWhenDeletionOutlastsContext(t *testing.T) {
+	store, _ := newTestLegalHoldStore(t)
+	ctx := context.Background()
+	// A deletion registered by a sweeper that has not finished.
+	if err := store.registerInflight(ctx, "tenant-u", "attempt sess-1"); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	short, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	hold, err := store.CreateHold(short, "tenant-u", "litigation", "test")
+	if !errors.Is(err, ErrHoldUnconfirmed) || hold == nil {
+		t.Fatalf("CreateHold = %+v, %v; want the hold with ErrHoldUnconfirmed", hold, err)
+	}
+	// The hold is in place regardless.
+	if held, err := store.IsUnderHold(ctx, "tenant-u"); err != nil || !held {
+		t.Fatalf("held=%v err=%v, want true", held, err)
+	}
+	if _, err := store.CreateHold(ctx, "tenant-u", "again", "test"); !errors.Is(err, ErrHoldAlreadyExists) {
+		t.Fatalf("second create: %v, want ErrHoldAlreadyExists", err)
+	}
+
+	// A registration older than legalHoldInflightStale is a crashed
+	// sweeper's, not a deletion in flight.
+	now, err := store.client.Time(ctx).Result()
+	if err != nil {
+		t.Fatalf("time: %v", err)
+	}
+	old := redis.Z{Score: float64(now.Add(-legalHoldInflightStale - time.Minute).UnixMilli()), Member: "attempt sess-old"}
+	if err := store.client.ZAdd(ctx, store.inflightKey("tenant-v"), old).Err(); err != nil {
+		t.Fatalf("zadd: %v", err)
+	}
+	bounded, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if _, err := store.CreateHold(bounded, "tenant-v", "litigation", "test"); err != nil {
+		t.Fatalf("CreateHold behind a stale registration: %v", err)
+	}
+}
+
+func TestDeleteUnlessHeld_KeepsHeldAndUnreadable(t *testing.T) {
+	store, srv := newTestLegalHoldStore(t)
+	ctx := context.Background()
+	if _, err := store.CreateHold(ctx, "tenant-h", "litigation", "test"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := srv.SAdd(legalHoldSetPrefix+"tenant-b", "h1"); err != nil {
+		t.Fatalf("sadd: %v", err)
+	}
+	if err := srv.Set(legalHoldKeyPrefix+"h1", "{not json"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	ran := false
+	del := func(context.Context) error { ran = true; return nil }
+
+	if deleted, err := store.DeleteUnlessHeld(ctx, "tenant-h", "k", del); err != nil || deleted || ran {
+		t.Fatalf("held tenant: deleted=%v ran=%v err=%v", deleted, ran, err)
+	}
+	if deleted, err := store.DeleteUnlessHeld(ctx, "tenant-b", "k", del); !errors.As(err, new(HoldCheckError)) || deleted || ran {
+		t.Fatalf("unreadable hold: deleted=%v ran=%v err=%v, want HoldCheckError", deleted, ran, err)
+	}
+	// del's own failure is the caller's, and ends the registration too.
+	boom := errors.New("boom")
+	if _, err := store.DeleteUnlessHeld(ctx, "tenant-free", "k", func(context.Context) error { return boom }); !errors.Is(err, boom) || errors.As(err, new(HoldCheckError)) {
+		t.Fatalf("failed delete: %v, want boom", err)
+	}
+	for _, tenant := range []string{"tenant-h", "tenant-b", "tenant-free"} {
+		if n, _ := store.client.ZCard(ctx, store.inflightKey(tenant)).Result(); n != 0 {
+			t.Fatalf("%s: %d deletions still registered", tenant, n)
 		}
 	}
 }

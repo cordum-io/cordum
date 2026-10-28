@@ -61,8 +61,10 @@ The sweeper:
   batched-DEL, and deadline behavior.
 - Respects context cancellation during Gateway shutdown.
 - Never deletes a session of a tenant under an active audit legal hold, nor
-  of a tenant whose hold check fails; it checks before each deletion. With
-  no legal hold store it deletes nothing (see
+  of a tenant whose hold check fails; it checks before each deletion, and
+  registers the deletion while it runs so a hold created during it is
+  acknowledged only once it has ended. With no legal hold store it deletes
+  nothing (see
   [audit-operations.md](../audit-operations.md#legal-hold-integration)).
 - Emits `cordum_edge_session_swept_total` once for each session it removes.
 

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
@@ -110,6 +111,44 @@ func listLegalHoldsAs(t *testing.T, s *server, who *auth.AuthContext, query stri
 		t.Fatalf("decode holds: %v", err)
 	}
 	return rec.Code, body.Holds
+}
+
+// A create whose request ends while the tenant's deletions in flight are
+// still running answers 202 with the hold: in place, not yet confirmed.
+func TestLegalHold_CreateAnswersAcceptedWhileDeletionsInFlight(t *testing.T) {
+	s := newLegalHoldTenantGateway(t)
+	ctx := context.Background()
+	client := s.jobStore.Client()
+	now, err := client.Time(ctx).Result()
+	if err != nil {
+		t.Fatalf("redis time: %v", err)
+	}
+	inflight := redis.Z{Score: float64(now.UnixMilli()), Member: "attempt sess-1"}
+	if err := client.ZAdd(ctx, "audit:legal_hold_inflight:tenant-a", inflight).Err(); err != nil {
+		t.Fatalf("register deletion: %v", err)
+	}
+	short, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/audit/legal-hold", strings.NewReader(`{"tenant_id":"tenant-a","reason":"probe"}`)).WithContext(short)
+	rec := httptest.NewRecorder()
+	s.handleCreateLegalHold(rec, withAuth(req, tenantAAdmin))
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("create = %d %s, want 202", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Hold    *audit.LegalHold `json:"hold"`
+		Warning string           `json:"warning"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Hold == nil || body.Hold.TenantID != "tenant-a" || !body.Hold.IsActive() || body.Warning == "" {
+		t.Fatalf("body = %+v, want the active hold with a warning", body)
+	}
+	if held, err := s.legalHoldStore.IsUnderHold(ctx, "tenant-a"); err != nil || !held {
+		t.Fatalf("tenant-a held = %v (err %v), want the hold in place", held, err)
+	}
 }
 
 func holdTenants(holds []*audit.LegalHold) map[string]bool {

@@ -117,6 +117,10 @@ Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
 
 - Generated Claude Code settings never set `onFailure`, so a `cordum-hook` that could not start, crashed or timed out let the action through even in enforce and enterprise-strict. Fail-closed sessions (every mode except observe) and the managed template now set `"onFailure": "block"` on `PreToolUse`, `UserPromptSubmit` and `ConfigChange` (requires Claude Code v2.1.295 or later). The managed template allowlists the Cordum MCP server by `serverUrl` instead of `serverName`, which Anthropic documents as not a security control. ConfigChange denies no longer emit an invalid `hookSpecificOutput`.
 
+#### Legal holds stop the deletions in flight when they are created (2026-10-28)
+
+- A legal hold created between the retention sweeper's hold check and its trim, or during an Edge session deletion, did not stop that deletion: `POST /api/v1/audit/legal-hold` acknowledged the hold and the held events were deleted anyway, also when the hold's index entry already existed and the sweeper had read it as dangling. The endpoint now writes the hold record, then a fence key in the tenant's chain stream slot that both trim scripts (single node and Redis Cluster, including a pending cluster trim) check in the atomic step that deletes, and answers only after the Edge session deletions already in flight for the tenant have ended (`202` with the hold when they outlast the request). The sweeper refuses to trim a chain stream the hold store does not fence, such as a Chainer with another key prefix.
+
 #### Legal-hold endpoints enforce tenant access (2026-10-26)
 
 - `POST /api/v1/audit/legal-hold` took `tenant_id` from the body, `DELETE /api/v1/audit/legal-hold/{id}` released any hold by id, and `GET /api/v1/audit/legal-holds` listed every tenant's holds, all without a tenant-access check. Now that holds gate retention deletion, a tenant-scoped admin could otherwise release another tenant's hold. All three go through `requireTenantAccess`, and a release without access returns the unknown-id 404. `activeHoldForTenant` no longer treats an unreadable hold record as "not held".

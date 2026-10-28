@@ -272,13 +272,16 @@ func anchorForEntry(entry redis.XMessage) (retentionAnchor, error) {
 // verify always sees the anchor that matches the trimmed stream. It deletes
 // nothing when ARGV[1] is already gone (another sweep got there first) or is
 // the chain head, which is never trimmed so chainAppendScript's genesis
-// guard (XLEN == 0) stays meaningful.
+// guard (XLEN == 0) stays meaningful. It refuses (-1) while the tenant's
+// legal hold fence exists: a hold created after the sweeper's hold check.
 //
 // KEYS[1] = chain stream   ARGV[1] = stream ID of the newest entry to delete
 // KEYS[2] = anchor key     ARGV[2] = anchor value (retentionAnchor.String)
+// KEYS[3] = legal hold fence (legalHoldFenceKey)
 //
-// Returns the number of entries deleted.
+// Returns the number of entries deleted, or -1 when fenced.
 var retentionTrimScript = redis.NewScript(`
+if redis.call('EXISTS', KEYS[3]) == 1 then return -1 end
 if #redis.call('XRANGE', KEYS[1], ARGV[1], ARGV[1]) == 0 then return 0 end
 local nxt = redis.call('XRANGE', KEYS[1], '(' .. ARGV[1], '+', 'COUNT', 1)
 if #nxt == 0 then return 0 end
@@ -288,10 +291,13 @@ return redis.call('XTRIM', KEYS[1], 'MINID', nxt[1][1])
 
 // clusterTrimScript is retentionTrimScript without the anchor write, for
 // Redis Cluster, where the anchor key hashes to another slot than the stream:
-// the anchor moves in separate steps around it (see trimBatchCluster).
+// the anchor moves in separate steps around it (see trimBatchCluster). The
+// fence shares the stream's slot.
 //
 // KEYS[1] = chain stream   ARGV[1] = stream ID of the newest entry to delete
+// KEYS[2] = legal hold fence (legalHoldFenceKey)
 var clusterTrimScript = redis.NewScript(`
+if redis.call('EXISTS', KEYS[2]) == 1 then return -1 end
 if #redis.call('XRANGE', KEYS[1], ARGV[1], ARGV[1]) == 0 then return 0 end
 local nxt = redis.call('XRANGE', KEYS[1], '(' .. ARGV[1], '+', 'COUNT', 1)
 if #nxt == 0 then return 0 end
@@ -462,8 +468,15 @@ func (s *RetentionSweeper) sweepTenant(ctx context.Context, tenant string, cutof
 
 // holdBlocks reports whether tenant must not be trimmed now: it is under an
 // active legal hold, or the hold check failed (fail safe: keep the data, and
-// return the failure).
+// return the failure). The hold store must fence the tenant's chain stream,
+// the key the trim scripts check: a store built for another chain prefix, or
+// a stream named by a tenant the store would not read back as is, fails the
+// check.
 func (s *RetentionSweeper) holdBlocks(ctx context.Context, tenant string) (bool, error) {
+	if fence := legalHoldFenceKey(s.chainer.StreamKey(tenant)); s.holds.fenceKey(tenant) != fence || strings.TrimSpace(tenant) != tenant {
+		auditRetentionSkipped.WithLabelValues("hold_check_error").Inc()
+		return true, holdCheckError{fmt.Errorf("legal hold store does not fence chain stream %s", s.chainer.StreamKey(tenant))}
+	}
 	held, err := s.holds.IsUnderHold(ctx, tenant)
 	if err != nil {
 		auditRetentionSkipped.WithLabelValues("hold_check_error").Inc()
@@ -482,6 +495,14 @@ type holdCheckError struct{ err error }
 
 func (e holdCheckError) Error() string { return "legal hold check: " + e.err.Error() }
 func (e holdCheckError) Unwrap() error { return e.err }
+
+// fenced records a trim the tenant's legal hold fence refused: a hold was
+// created after the batch's hold check. Nothing was deleted.
+func (s *RetentionSweeper) fenced(tenant string) (int64, error) {
+	auditRetentionSkipped.WithLabelValues("legal_hold").Inc()
+	slog.Info("audit retention: legal hold placed during trim, not trimmed", "tenant", tenant)
+	return 0, nil
+}
 
 // trimBatch deletes up to retentionTrimBatch of the tenant's oldest entries
 // with stream IDs up to newestOld, never the chain head, and moves the
@@ -513,7 +534,11 @@ func (s *RetentionSweeper) trimBatch(ctx context.Context, tenant, newestOld stri
 	if len(s.chainer.hmacKey) > 0 {
 		anchor.MAC = anchor.mac(anchorKey, s.chainer.hmacKey)
 	}
-	return retentionTrimScript.Run(ctx, s.client, []string{streamKey, anchorKey}, newest.ID, anchor.String()).Int64()
+	n, err := retentionTrimScript.Run(ctx, s.client, []string{streamKey, anchorKey, legalHoldFenceKey(streamKey)}, newest.ID, anchor.String()).Int64()
+	if n < 0 {
+		return s.fenced(tenant)
+	}
+	return n, err
 }
 
 // trimBatchCluster is trimBatch on Redis Cluster, where the anchor key and
@@ -611,9 +636,13 @@ func (s *RetentionSweeper) trimToPending(ctx context.Context, tenant, pendingRaw
 	if blocked, err := s.holdBlocks(ctx, tenant); blocked {
 		return 0, err
 	}
-	n, err := clusterTrimScript.Run(ctx, s.client, []string{s.chainer.StreamKey(tenant)}, pending.StreamID).Int64()
+	streamKey := s.chainer.StreamKey(tenant)
+	n, err := clusterTrimScript.Run(ctx, s.client, []string{streamKey, legalHoldFenceKey(streamKey)}, pending.StreamID).Int64()
 	if err != nil || n == 0 {
-		return n, err
+		return 0, err
+	}
+	if n < 0 {
+		return s.fenced(tenant)
 	}
 	return n, s.confirmAnchor(ctx, tenant, pendingRaw, pending)
 }

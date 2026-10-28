@@ -350,9 +350,17 @@ holds in tenants it can access (all tenants for a cross-tenant principal);
 releasing another tenant's hold answers like an unknown ID. While a tenant has
 any active hold, the retention sweeper never trims its chain:
 
-- The hold is checked before every trim batch, so a hold placed during a
-  sweep stops deletion at the next batch.
-- If the hold check fails (Redis error, unreadable hold record), the tenant
+- The hold is checked before every trim batch, and the trim step itself
+  refuses while the tenant's hold fence exists. `POST /api/v1/audit/legal-hold`
+  writes the hold record, then the fence, a key in the chain stream's slot
+  (`{audit:chain:<tenant>}:legal_hold_fence`) that both trim scripts check in
+  the same atomic step that deletes, and answers `201` only after the Edge
+  session deletions already in flight for the tenant have ended. From that
+  answer on, no deletion of the tenant's data completes. If those deletions
+  outlast the request, it answers `202` with the hold and a `warning`: the
+  hold is in place and they end on their own.
+- If the hold check fails (Redis error, unreadable hold record, or a hold
+  store that does not fence the chain stream the sweeper trims), the tenant
   is skipped for that sweep and counted as `hold_check_error`. If the gateway
   has no legal hold store, nothing is trimmed at all.
 - Holds keep blocking trimming even if the `legal_hold` entitlement later
@@ -364,7 +372,9 @@ The retention sweeper is the only code path that deletes audit chain events.
 Holds also cover Edge sessions: the Edge session sweeper keeps every expired
 session (with its executions and events) of a tenant under hold, checking
 before each deletion, and keeps a tenant's sessions when its hold check fails.
-Without a legal hold store it deletes no sessions at all.
+It registers each deletion while it runs, which is what a hold created during
+one waits for before it is acknowledged. Without a legal hold store it deletes
+no sessions at all.
 
 **Not covered by legal hold:** the policy decision log (`gov:dec:<tenant>:*`,
 the Governance Timeline). Its records expire on their own Redis TTL

@@ -66,7 +66,7 @@ func TestClusterIntegration_SingleNodeScriptsAreCrossSlot(t *testing.T) {
 			[]string{chainer.HeadKey("acme"), chainer.StreamKey("acme")},
 			"", "1", strings.Repeat("a", 64), "{}").Err(),
 		"trim": retentionTrimScript.Run(ctx, client,
-			[]string{chainer.StreamKey("acme"), chainer.AnchorKey("acme")}, "1-0", "").Err(),
+			[]string{chainer.StreamKey("acme"), chainer.AnchorKey("acme"), legalHoldFenceKey(chainer.StreamKey("acme"))}, "1-0", "").Err(),
 	} {
 		if err == nil || !strings.Contains(err.Error(), "CROSSSLOT") {
 			t.Errorf("single-node %s script on a cluster = %v, want CROSSSLOT", name, err)

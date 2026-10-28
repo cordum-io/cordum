@@ -90,6 +90,13 @@ func (s *server) handleCreateLegalHold(w http.ResponseWriter, r *http.Request) {
 	}
 
 	hold, err := s.legalHoldStore.CreateHold(r.Context(), tenant, req.Reason, createdBy)
+	if errors.Is(err, audit.ErrHoldUnconfirmed) {
+		// The hold is in place; the deletions in flight when it was created
+		// outlasted the request and end on their own.
+		w.WriteHeader(http.StatusAccepted)
+		writeJSON(w, map[string]any{"hold": hold, "warning": err.Error()})
+		return
+	}
 	if err != nil {
 		if errors.Is(err, audit.ErrHoldAlreadyExists) {
 			writeErrorJSON(w, http.StatusConflict, "active legal hold already exists for this tenant")
