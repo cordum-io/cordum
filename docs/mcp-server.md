@@ -985,6 +985,61 @@ curl -sS http://localhost:8081/mcp/status \
   -H "X-Tenant-ID: default"
 ```
 
+### Agent identity binding (`X-Agent-Id`)
+
+HTTP MCP requests run as the agent identity linked to the authenticated
+principal (the `agent:by-worker` link), and only when that identity belongs to
+the request tenant. The optional `X-Agent-Id` header may confirm that identity;
+it never selects a different one.
+
+Create the link in either of two ways:
+
+- `POST /api/v1/agents` with `"agent_id": "<principal id>"` in the body creates
+  the identity and links that principal to it. A principal that is already
+  linked gets `409`.
+- `POST /api/v1/workers/credentials` with `"worker_id": "<principal id>"` and
+  `"agent_id": "<identity id>"` links the principal to an existing active
+  identity in the tenant.
+
+| Authenticated principal | `X-Agent-Id` | Result |
+|---|---|---|
+| Linked to an identity in the request tenant | absent or blank | The bound identity |
+| Linked to an identity in the request tenant | equal to the bound identity `id` | The bound identity |
+| Linked to an identity in the request tenant | any other value | No identity, and the gateway logs `mcp X-Agent-Id does not match the principal's bound agent identity` |
+| Not linked, or linked to another tenant's identity | any | No identity |
+
+The header is compared exactly after trimming surrounding whitespace, so IDs
+are case-sensitive. A suspended or revoked bound identity also resolves to no
+identity.
+
+With no identity, the built-in tool registry lists no tools and refuses every
+`tools/call`:
+
+- With `mcp.policy_gate_enabled` off, the call fails with `-32098`
+  `no_identity`.
+- With `mcp.policy_gate_enabled` on, the policy gate refuses the call first
+  because it carries no agent ID. Today that surfaces as a `-32603` error whose
+  `error.data` starts with `missing_mcp_metadata`.
+
+When `/mcp` fronts a registered upstream (EDGE-101), the upstream catalog is
+not scope-filtered, and the bound ID only feeds the policy gate.
+
+Approval records, preapproval checks (`preapproved_mutating_tools`),
+policy-gate call metadata and Edge trace labels carry the bound identity `id`,
+or an empty value when the principal is not linked or the header disagrees.
+They never carry the header value.
+
+> **Behavior change:** `X-Agent-Id` used to select any agent identity in the
+> request tenant, and the gateway recorded the raw header as the agent ID.
+> Clients that select an identity by header must link their principal to that
+> identity, then send the bound `id` or drop the header.
+
+The binding is only as strong as the credential's principal. Use a static API
+key with a configured principal (`<tenant>:<key>:<role>:<principal>` in
+`CORDUM_API_KEYS`, or `principal_id` in its JSON form), or a JWT or SSO login,
+whose subject becomes the principal. Runtime-created API keys carry no
+principal of their own and are not a supported way to bind an MCP client.
+
 ## Integration Examples
 
 ### Claude Desktop (`claude_desktop_config.json`)
@@ -1078,6 +1133,14 @@ See [Dashboard Guide](dashboard-guide.md#how-to-configure-mcp-server) for the fu
 - `tools/list` or `resources/list` empty: entries are disabled by config
   (`mcp.tools.<tool_id>.enabled=false`,
   `mcp.resources.<resource_name>.enabled=false`).
+- `tools/list` empty, or `tools/call` fails with `-32098` `no_identity` (or
+  `-32603` `missing_mcp_metadata` with the policy gate on), while
+  `X-Agent-Id` is set: the header does not match the identity bound to the
+  authenticated principal, or the principal is not linked to an identity in
+  the request tenant. Look for `mcp X-Agent-Id does not match the principal's
+  bound agent identity` in the gateway log, then send the bound `id` or drop
+  the header. See
+  [Agent identity binding](#agent-identity-binding-x-agent-id).
 
 ## MCP Gateway (multi-upstream mode) — EDGE-100 skeleton
 

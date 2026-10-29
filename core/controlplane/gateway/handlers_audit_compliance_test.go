@@ -7,6 +7,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -243,13 +244,65 @@ func TestComplianceExport_DoesNotLeakInternalErrors(t *testing.T) {
 			rec := httptest.NewRecorder()
 			s.handleAuditExport(rec, req)
 
-			assertComplianceExportInternalErrorRedacted(t, rec.Body.String())
+			assertComplianceExportInternalErrorRedacted(t, format, rec.Body.String())
 		})
 	}
 }
 
-func assertComplianceExportInternalErrorRedacted(t *testing.T, body string) {
+func assertComplianceExportInternalErrorRedacted(t *testing.T, format, body string) {
 	t.Helper()
+	if err := validateComplianceExportInternalError(format, body); err != nil {
+		t.Fatalf("%v:\n%s", err, body)
+	}
+}
+
+func validateComplianceExportInternalError(format, body string) error {
+	if format == "json" {
+		decoder := json.NewDecoder(strings.NewReader(body))
+		if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
+			return fmt.Errorf("expected JSON error footer object")
+		}
+		footer := make(map[string]json.RawMessage, 3)
+		for decoder.More() {
+			token, err := decoder.Token()
+			key, ok := token.(string)
+			if err != nil || !ok {
+				return fmt.Errorf("invalid JSON error footer key")
+			}
+			if _, exists := footer[key]; exists {
+				return fmt.Errorf("duplicate JSON error footer key %q", key)
+			}
+			if key != "at" && key != "type" && key != "error" {
+				return fmt.Errorf("unexpected JSON error footer key %q", key)
+			}
+			var value json.RawMessage
+			if err := decoder.Decode(&value); err != nil {
+				return fmt.Errorf("decode error footer field: %w", err)
+			}
+			footer[key] = value
+		}
+		if token, err := decoder.Token(); err != nil || token != json.Delim('}') {
+			return fmt.Errorf("incomplete JSON error footer object")
+		}
+		if _, err := decoder.Token(); err != io.EOF {
+			return fmt.Errorf("unexpected content after JSON error footer")
+		}
+		var timestamp, kind, message string
+		if len(footer) != 3 ||
+			json.Unmarshal(footer["at"], &timestamp) != nil ||
+			json.Unmarshal(footer["type"], &kind) != nil || kind != "error" ||
+			json.Unmarshal(footer["error"], &message) != nil || message != "export failed" {
+			return fmt.Errorf("unexpected error footer fields")
+		}
+		if _, err := time.Parse(time.RFC3339Nano, timestamp); err != nil {
+			return fmt.Errorf("invalid error footer timestamp: %w", err)
+		}
+		// Only a validated timestamp may contain incidental address/port digits.
+		// Keep scanning every other field after rejecting duplicate keys above.
+		body = strings.Replace(body, string(footer["at"]), "", 1)
+	} else if format != "csv" || strings.TrimSpace(body) != "# cordum-error: export failed" {
+		return fmt.Errorf("unexpected CSV error footer")
+	}
 	forbidden := []string{
 		"10.0.0.5",
 		"6379",
@@ -262,11 +315,81 @@ func assertComplianceExportInternalErrorRedacted(t *testing.T, body string) {
 	}
 	for _, token := range forbidden {
 		if strings.Contains(body, token) {
-			t.Fatalf("response body leaked %q:\n%s", token, body)
+			return fmt.Errorf("response body leaked %q", token)
 		}
 	}
-	if !strings.Contains(body, "export failed") {
-		t.Fatalf("response body missing generic export failure marker:\n%s", body)
+	return nil
+}
+
+func TestComplianceExportInternalErrorRedaction_Timestamp(t *testing.T) {
+	// This valid timestamp triggered the CI leak check by containing Redis's port.
+	const body = `{"at":"2026-10-27T14:48:07.216379996Z","error":"export failed","type":"error"}`
+	assertComplianceExportInternalErrorRedacted(t, "json", body)
+}
+
+func TestComplianceExportInternalErrorRedaction_RejectsLeakedDetails(t *testing.T) {
+	for _, token := range []string{"10.0.0.5", "6379", "dial tcp", "audit:chain:", "redis:", "client is closed", "/var/lib/redis/dump.rdb", `C:\Redis\dump.rdb`} {
+		t.Run(token, func(t *testing.T) {
+			footer := map[string]string{
+				"at": "2026-10-27T14:48:07.216379996Z", "type": "error", "error": "export failed: " + token,
+			}
+			body, err := json.Marshal(footer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := validateComplianceExportInternalError("json", string(body)); err == nil {
+				t.Fatal("accepted internal error details in JSON footer")
+			}
+			footer["error"], footer["detail"] = "export failed", token
+			body, err = json.Marshal(footer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := validateComplianceExportInternalError("json", string(body)); err == nil {
+				t.Fatal("accepted internal details in an extra JSON field")
+			}
+			if err := validateComplianceExportInternalError("csv", "# cordum-error: export failed: "+token+"\n"); err == nil {
+				t.Fatal("accepted internal error details in CSV footer")
+			}
+		})
+	}
+	// Reject duplicate keys rather than letting a decoder hide earlier values.
+	const duplicate = `{"at":"2026-10-27T14:48:07.216379996Z","type":"error","error":"dial tcp 10.0.0.5:6379","error":"export failed"}`
+	if err := validateComplianceExportInternalError("json", duplicate); err == nil {
+		t.Fatal("accepted internal details in a duplicate JSON field")
+	}
+}
+
+func TestComplianceExportInternalErrorRedaction_RejectsEscapedDuplicateValues(t *testing.T) {
+	for name, body := range map[string]string{
+		"unicode_dial": `{"at":"2026-10-27T14:48:07.216379996Z","type":"error","error":"d\u0069al tcp localhost","error":"export failed"}`,
+		"windows_path": `{"at":"2026-10-27T14:48:07.216379996Z","type":"error","error":"C:\\Redis\\dump.rdb","error":"export failed"}`,
+		"escaped_key":  `{"at":"2026-10-27T14:48:07.216379996Z","type":"error","error":"export failed","\u0065rror":"export failed"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := validateComplianceExportInternalError("json", body); err == nil {
+				t.Fatal("accepted escaped internal details in a duplicate JSON field")
+			}
+		})
+	}
+}
+
+func TestComplianceExportInternalErrorRedaction_RejectsInvalidFooters(t *testing.T) {
+	for name, body := range map[string]string{
+		"extra_field":       `{"at":"2026-10-27T14:48:07.216379996Z","type":"error","error":"export failed","detail":"hidden"}`,
+		"missing_field":     `{"at":"2026-10-27T14:48:07.216379996Z","type":"error"}`,
+		"non_string_field":  `{"at":"2026-10-27T14:48:07.216379996Z","type":"error","error":{}}`,
+		"invalid_timestamp": `{"at":"not a timestamp","type":"error","error":"export failed"}`,
+		"unexpected_type":   `{"at":"2026-10-27T14:48:07.216379996Z","type":"event","error":"export failed"}`,
+		"array":             `[]`,
+		"truncated_object":  `{"at":`,
+		"trailing_object":   `{"at":"2026-10-27T14:48:07.216379996Z","type":"error","error":"export failed"}{}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := validateComplianceExportInternalError("json", body); err == nil {
+				t.Fatal("accepted an invalid JSON error footer")
+			}
+		})
 	}
 }
 

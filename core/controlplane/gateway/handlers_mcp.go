@@ -27,9 +27,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// mcpAgentIDHeader is the request header that identifies the calling
-// MCP agent. The gateway uses it (with a principal-ID fallback) to
-// populate MCPCallMetadata so the approval gate can log who is asking.
+// mcpAgentIDHeader is the optional request header naming the calling MCP
+// agent. It may only confirm the agent identity bound to the authenticated
+// principal, never select one (ruling Q4); see resolveMCPIdentity.
 const mcpAgentIDHeader = "X-Agent-Id"
 
 // mcpCopilotSessionIDHeader optionally groups a client's tool calls into a
@@ -403,17 +403,13 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		// Stash MCP call metadata so the approval gate (wired into the
 		// ToolRegistry) can evaluate per-tool approval policy without
 		// knowing about gateway identity types. Tenant + principal come
-		// from the auth context; agent_id prefers the X-Agent-Id header
-		// and falls back to the principal so the self-approval guard
-		// has something to compare against.
-		agentID := strings.TrimSpace(r.Header.Get(mcpAgentIDHeader))
-		if agentID == "" {
-			agentID = strings.TrimSpace(authCtx.PrincipalID)
-		}
+		// from the auth context. agentID and identity come from ONE
+		// resolveMCPIdentity lookup: agentID is the principal-bound agent
+		// identity ID ("" when there is none or X-Agent-Id disagrees),
+		// never the raw header, and it is the only agent value any
+		// metadata sink below records.
+		agentID, identity := s.resolveMCPIdentity(r)
 		principalID := strings.TrimSpace(authCtx.PrincipalID)
-		if principalID == "" {
-			principalID = agentID
-		}
 		mcpCtx := WithMCPCallMetadata(r.Context(), MCPCallMetadata{
 			Tenant:            tenantID,
 			AgentID:           agentID,
@@ -471,10 +467,9 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		r = r.WithContext(mcpCtx)
 		// Attach *mcp.AgentIdentity so ToolRegistry.ListTools and the
 		// scope filter can evaluate the caller's AllowedTools /
-		// RiskTier / DataClassifications. Without this the HTTP
-		// transport sees msg.identity=nil and every tool list comes
-		// back empty — which is the fail-closed outcome QA flagged.
-		if identity := s.resolveMCPIdentity(r); identity != nil {
+		// RiskTier / DataClassifications. A nil identity is the
+		// fail-closed outcome: zero tools listed, every call denied.
+		if identity != nil {
 			r = r.WithContext(mcp.ContextWithIdentity(r.Context(), identity))
 		}
 		next(w, r)
@@ -507,65 +502,59 @@ func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentI
 		return s.edgeStore.CreateExecution(ctx, edge.AgentExecution{
 			ExecutionID: executionID, SessionID: sessionID, TenantID: tenantID,
 			Adapter: edge.AdapterMCPGateway, Mode: edge.ExecutionModeLocalDev,
-			WorkerID: agentID, Status: edge.ExecutionStatusRunning,
+			WorkerID: principalID, Status: edge.ExecutionStatusRunning,
 			StartedAt: now, Labels: edge.Labels{"agent_id": agentID},
 		})
 	}
 	return nil
 }
 
-// resolveMCPIdentity looks up the agent identity for this MCP request.
-// Resolution order:
-//  1. X-Agent-Id header (explicit — matches the documented contract).
-//  2. auth-principal fallback via agent_by_worker reverse index, so
-//     credentialled workers inherit their linked identity without
-//     needing to send the header explicitly.
+// resolveMCPIdentity resolves the agent identity bound to the request's
+// authenticated principal (agent:by-worker link), scoped to the request
+// tenant. Per ruling Q4, X-Agent-Id may confirm that identity but never
+// select one: a header that names any other ID resolves to nothing.
 //
-// Returns nil when no identity could be resolved; ToolRegistry treats
-// a nil identity as fail-closed (zero tools visible, all calls denied).
-// Revoked/suspended identities also resolve to nil.
-func (s *server) resolveMCPIdentity(r *http.Request) *mcp.AgentIdentity {
+// agentID is the bound identity ID, or "" when the principal is unbound,
+// bound to another tenant, or contradicted by the header. It is the only
+// agent value request metadata may record. identity is nil whenever agentID
+// is "", and also for a revoked/suspended binding; ToolRegistry treats a nil
+// identity as fail-closed (zero tools visible, all calls denied).
+func (s *server) resolveMCPIdentity(r *http.Request) (agentID string, identity *mcp.AgentIdentity) {
 	if s == nil || s.agentIdentityStore == nil {
-		return nil
+		return "", nil
 	}
 	ctx := r.Context()
-	// Both lookup paths must be scoped to the request's tenant (authenticated
-	// and validated by mcpAuth). The store's empty-tenant lookup is a
-	// system-level bypass that skips the tenant check, so resolving an
-	// identity from another tenant — by a guessed X-Agent-Id OR via a worker
-	// credential mapped to another tenant's agent — would apply the wrong
-	// AllowedTools / AllowedServers / RiskTier. Fail closed if tenant absent.
 	tenant := tenantFromRequest(r)
 	if tenant == "" {
-		return nil
-	}
-	if id := strings.TrimSpace(r.Header.Get(mcpAgentIDHeader)); id != "" {
-		identity, err := s.agentIdentityStore.Get(ctx, tenant, id)
-		if err != nil || identity == nil {
-			return nil
-		}
-		return mcpIdentityFromStore(identity)
+		return "", nil
 	}
 	authCtx := auth.FromContext(ctx)
 	if authCtx == nil {
-		return nil
+		return "", nil
 	}
 	principal := strings.TrimSpace(authCtx.PrincipalID)
 	if principal == "" {
-		return nil
+		return "", nil
 	}
-	identity, err := s.agentIdentityStore.GetByWorkerID(ctx, principal)
-	if err != nil || identity == nil {
-		return nil
+	bound, err := s.agentIdentityStore.GetByWorkerID(ctx, principal)
+	if err != nil {
+		slog.Warn("mcp identity lookup failed", "tenant", tenant, "err", err)
+		return "", nil
 	}
-	// GetByWorkerID resolves by the authenticated principal but uses an
-	// empty-tenant store lookup internally; enforce tenant isolation here too
-	// so a worker credential bound to another tenant's agent cannot apply that
-	// agent's scope to this request.
-	if strings.TrimSpace(identity.TenantID) != tenant {
-		return nil
+	// GetByWorkerID uses an empty-tenant store lookup internally (the
+	// system-level bypass that skips the tenant check); enforce tenant
+	// isolation here so a worker credential bound to another tenant's agent
+	// cannot apply that agent's AllowedTools / AllowedServers / RiskTier.
+	if bound == nil || strings.TrimSpace(bound.TenantID) != tenant {
+		return "", nil
 	}
-	return mcpIdentityFromStore(identity)
+	// The header is client-controlled: compare it, never log or store it.
+	if header := strings.TrimSpace(r.Header.Get(mcpAgentIDHeader)); header != "" && header != bound.ID {
+		slog.Warn("mcp X-Agent-Id does not match the principal's bound agent identity",
+			"tenant", tenant, "principal", principal, "bound_agent_id", bound.ID)
+		return "", nil
+	}
+	return bound.ID, mcpIdentityFromStore(bound)
 }
 
 // runMCPApprovalSweeper expires PENDING MCP approvals whose TTL has

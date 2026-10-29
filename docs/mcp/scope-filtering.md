@@ -141,12 +141,13 @@ and invalidates every cached slice at once.
 
 ### HTTP transport (gateway)
 
-`mcpAuth` middleware on `/mcp/message` reads the
-`X-Agent-Id` header. If present, it resolves via the agent identity store
-and attaches the resulting `*mcp.AgentIdentity` to the request context.
-If absent, it falls back to the auth-principal's linked worker identity
-(useful for workers that already authenticate with a credentialed
-`PrincipalID`).
+`mcpAuth` middleware on `/mcp/message` resolves the agent identity linked to
+the authenticated principal, and only when it belongs to the request tenant.
+It attaches the resulting `*mcp.AgentIdentity` to the request context. The
+optional `X-Agent-Id` header may confirm that identity but never selects one:
+a header naming any other ID leaves the request with no identity, so it sees
+zero tools and every call is refused. See
+[Agent identity binding](../mcp-server.md#agent-identity-binding-x-agent-id).
 
 The HTTP transport stamps the resolved identity onto `JSONRPCMessage`
 before enqueuing it for the MCP dispatcher.
