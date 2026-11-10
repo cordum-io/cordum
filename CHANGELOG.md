@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v1.3.0] - 2026-11-11
+
 Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
 
 ### Changed
@@ -56,6 +58,20 @@ Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
   #448, #449); `test-browser` source-map-js 1.2.2 (c7d33432: #454). The
   generated `sdk/typescript/src/_generated/schema.d.ts` was regenerated
   (233 operations) in #441.
+- Go modules (root): go-deps group bump in #497 (go-jose/v4 4.1.5 -> 4.1.6,
+  nats.go 1.54.0 -> 1.55.0).
+- Go modules (`sdk`): github.com/klauspost/compress 1.18.4 -> 1.18.7 (#482).
+- `sdk/typescript`: vitest and @vitest/mocker 4.1.11 -> 4.1.12, with the SDK
+  browser smoke job pinned to a supported Ubuntu runner (#483), and vite
+  8.0.16 -> 8.3.5 (#484).
+- Dashboard: typed forms migrated to Zod 4 (zod 3.25.76 -> 4.6.6,
+  @hookform/resolvers 5.9.2); React Hook Form tracks raw input and parsed
+  output separately (#494). Then the dashboard-deps group with 14 updates
+  (#499): @dagrejs/dagre 3.1.3, @dagrejs/graphlib 4.0.7, @hookform/resolvers
+  6.0.0, @tanstack/react-query 5.104.5, @tanstack/react-virtual 3.14.22,
+  framer-motion 14.6.0, lucide-react 1.61.0, react-hook-form 7.91.0,
+  zod 4.6.7, zustand 5.0.16, @typescript-eslint/parser 8.72.0, knip 6.43.0,
+  postcss 8.5.31 and vite 8.3.5.
 
 ### Security
 
@@ -95,14 +111,26 @@ Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
   not yet a full-stack activation claim. The operator guide documents that
   boundary, key rotation, compatibility telemetry, and migration.
 
+#### dashboard — vulnerable dependency refresh (2026-10-28)
+
+- Landed in #494.
+- Production transitive dependencies: fast-uri 3.1.2 -> 3.1.9, and the
+  optional jsPDF DOMPurify reference consolidated on the existing patched
+  3.4.17 (the DOMPurify 3.4.2 lock entry is gone).
+- Undici 7.29.1 -> 7.30.1 within the existing jsdom range, and Vitest with
+  its exact companion packages aligned on 4.1.12, for the Undici and Vitest
+  security advisories the commit names; qs 6.15.2 -> 6.16.1.
+
 ### Fixed
 
 #### core/controlplane/gateway — HTTP MCP approval-required tools return -32099 again on production gateways (2026-10-26, task-f44be149)
 
+- Landed in #496.
 - With `mcp.policy_gate_enabled=false` (the default), every approval-required HTTP MCP tool call failed with `-32096 approval_store_unavailable`. The gateway always builds an Edge store, so the approval gate tried to mint an Edge approval that had no parent action event and no `_approval_ref` consumer. The Edge approval mint is now wired only together with the policy gate's approval hold, with the same server name. With the policy gate off, the legacy MCP approval store is the sole authority: approve as a distinct operator, then retry with byte-identical arguments, which executes once. Wherever a mint is attempted, an Edge store outage still fails closed with -32096. The -32099 `retry_hint` now matches the resume path: `retry_with_same_args` for legacy approvals, and `retry_with_approval_ref` only when an Edge `approval_ref` was minted.
 
 #### core/controlplane/gateway — MCP approval-required (-32099) responses no longer fail to encode on the legacy path (2026-10-26, task-ff988dfa)
 
+- Landed in #491.
 - Legacy MCP approval expiry was decoded as Unix seconds instead of microseconds, so without an Edge store (or without Edge session metadata) HTTP MCP answered `500 encode response` for any approval-required tool call. `expires_at` in the -32099 payload now reflects the approval TTL.
 
 #### tools/scripts/soak_test.sh — memory-drift gate stops failing the nightly soak on integer truncation and warm-up heap growth (2026-10-17)
@@ -164,6 +192,32 @@ Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
   link, and SDK links pointing at the published PyPI/npm packages (#405).
 - Line endings renormalized to match `.gitattributes`; content-identical
   (#407).
+- CI masks runtime-minted credentials before first use (#487): production
+  gates 9 and 16 and the e2e admin login register every runtime-minted
+  password, session and API key with `::add-mask::` right after it is
+  generated or received, fail the run when registration fails, and print
+  only the status of credential-endpoint responses. The contract test
+  `tools/scripts/runtime_credential_masking.test.sh` runs in the Lint job.
+- `.github/workflows/recover-dashboard-v1.2.0.yml` stays on main as a
+  read-only check that verifies the recovered dashboard 1.2.0 digest
+  without registry writes, and the dashboard Vitest step keeps console
+  diagnostics alongside the JUnit report (#495).
+- GitHub Actions bumps: the codeql-action group (upload-sarif, init,
+  autobuild, analyze) 4.38.3 -> 4.39.1 (#477), codecov-action 7.1.1 (#478),
+  docker/build-push-action 7.4.0 (#479), github-action-benchmark 1.22.2
+  (#480) and docker/setup-buildx-action 4.4.1 (#481).
+- The handshake interop test derives the embedded NATS server version from
+  build information instead of a hand-edited literal, with a `go list -m`
+  fallback for Go releases before 1.27 whose test binaries record no
+  dependencies; the bus reconnect test waits for the restored subscription
+  (#486).
+- README rewritten: unsourced analyst statistics and the integration-pack
+  count removed, the comparison matrix replaced with an agent-stack layer
+  map, and the per-repository license split and versioning streams stated
+  (#488).
+- Release history reconciled (#489): the `[v1.2.0]` section split out of
+  `[Unreleased]`, older entries moved under "Earlier changes", and
+  `docs/release-notes/v1.3.0.md` added.
 
 Direct commits without PR numbers: c7d33432 (dependency consolidation),
 dda9f0aa (Dependabot deferrals), 832236ad (compat memory pointer reads) and
