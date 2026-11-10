@@ -77,15 +77,6 @@ type cwHarness struct {
 	srv *httptest.Server
 }
 
-// skipUntilHTTPMCPApprovalGateFixed parks the HTTP-MCP approval-flow tests
-// while the production-wired gate cannot issue -32099: the Edge dual-write
-// mint has no parent action event (task-f44be149) and the legacy path
-// decodes ExpiresAt as seconds (task-ff988dfa). Remove once both land.
-func skipUntilHTTPMCPApprovalGateFixed(t *testing.T) {
-	t.Helper()
-	t.Skip("blocked on task-f44be149 + task-ff988dfa: HTTP MCP approval gate returns -32096 under production wiring")
-}
-
 func newCreateWorkflowMCPHarness(t *testing.T) *cwHarness {
 	t.Helper()
 	s, _, _ := newTestGateway(t)
@@ -96,9 +87,10 @@ func newCreateWorkflowMCPHarness(t *testing.T) *cwHarness {
 		"key-carol":   {Tenant: "tenant-b", PrincipalID: "carol", Role: "admin"},
 		"key-mallory": {Tenant: "tenant-b", PrincipalID: "mallory", Role: "admin"},
 	}}
-	// Production always wires the Edge store (gateway.go), so the gate
-	// dual-writes Edge approvals; that mint needs a policy snapshot, which
-	// comes from the policy-bundle config doc.
+	// Production always wires the Edge store (gateway.go). With the policy
+	// gate off (the default) the approval gate does not mint Edge approvals
+	// (task-f44be149), so these flows exercise the legacy store end to end
+	// exactly as production does; the policy-bundle doc mirrors a real boot.
 	s.edgeStore = edge.NewRedisStoreFromClient(s.redisClient())
 	s.shutdownCh = make(chan struct{})
 	t.Cleanup(func() { close(s.shutdownCh) })
@@ -232,7 +224,6 @@ func (h *cwHarness) requireApprovedUnconsumed(approvalID string) {
 }
 
 func TestMCPCreateWorkflow_ExecutesOnceAfterDistinctOperatorApproval(t *testing.T) {
-	skipUntilHTTPMCPApprovalGateFixed(t)
 	h := newCreateWorkflowMCPHarness(t)
 	approvalID := h.requireApproval(h.call(cwAlice, cwArgs))
 	if n := h.workflowCount(""); n != 0 {
@@ -263,7 +254,6 @@ func TestMCPCreateWorkflow_ExecutesOnceAfterDistinctOperatorApproval(t *testing.
 }
 
 func TestMCPCreateWorkflow_SelfApprovalCreatesNothing(t *testing.T) {
-	skipUntilHTTPMCPApprovalGateFixed(t)
 	h := newCreateWorkflowMCPHarness(t)
 	approvalID := h.requireApproval(h.call(cwAlice, cwArgs))
 	if status := h.approve(cwAlice, approvalID); status != http.StatusForbidden {
@@ -276,7 +266,6 @@ func TestMCPCreateWorkflow_SelfApprovalCreatesNothing(t *testing.T) {
 }
 
 func TestMCPCreateWorkflow_ChangedArgsAfterApprovalCreateNothing(t *testing.T) {
-	skipUntilHTTPMCPApprovalGateFixed(t)
 	h := newCreateWorkflowMCPHarness(t)
 	approvalID := h.requireApproval(h.call(cwAlice, cwArgs))
 	if status := h.approve(cwBob, approvalID); status != http.StatusOK {
@@ -293,7 +282,6 @@ func TestMCPCreateWorkflow_ChangedArgsAfterApprovalCreateNothing(t *testing.T) {
 }
 
 func TestMCPCreateWorkflow_CrossTenantApprovalCreatesNothing(t *testing.T) {
-	skipUntilHTTPMCPApprovalGateFixed(t)
 	h := newCreateWorkflowMCPHarness(t)
 	approvalID := h.requireApproval(h.call(cwAlice, cwArgs))
 	if status := h.approve(cwCarol, approvalID); status != http.StatusNotFound {
@@ -315,7 +303,6 @@ func TestMCPCreateWorkflow_CrossTenantApprovalCreatesNothing(t *testing.T) {
 }
 
 func TestMCPCreateWorkflow_CallerWithoutWorkflowsWriteCreatesNothing(t *testing.T) {
-	skipUntilHTTPMCPApprovalGateFixed(t)
 	h := newCreateWorkflowMCPHarness(t)
 	approvalID := h.requireApproval(h.call(cwVictor, cwArgs))
 	if status := h.approve(cwBob, approvalID); status != http.StatusOK {
@@ -331,7 +318,6 @@ func TestMCPCreateWorkflow_CallerWithoutWorkflowsWriteCreatesNothing(t *testing.
 }
 
 func TestMCPCreateWorkflow_ConcurrentApprovedRetriesCreateExactlyOne(t *testing.T) {
-	skipUntilHTTPMCPApprovalGateFixed(t)
 	h := newCreateWorkflowMCPHarness(t)
 	approvalID := h.requireApproval(h.call(cwAlice, cwArgs))
 	if status := h.approve(cwBob, approvalID); status != http.StatusOK {
