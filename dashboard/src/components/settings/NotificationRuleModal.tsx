@@ -1,5 +1,6 @@
-import { useForm, Controller, type Resolver } from "react-hook-form";
+import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import type { z } from "zod";
 import { X, Loader } from "lucide-react";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
@@ -32,8 +33,8 @@ export function NotificationRuleModal({
     handleSubmit,
     control,
     formState: { errors },
-  } = useForm<NotificationRuleForm>({
-    resolver: zodResolver(notificationRuleSchema) as Resolver<NotificationRuleForm>,
+  } = useForm<z.input<typeof notificationRuleSchema>, unknown, NotificationRuleForm>({
+    resolver: zodResolver(notificationRuleSchema),
     defaultValues: {
       eventPattern: rule?.eventPattern ?? "",
       channelIds: rule?.channelIds ?? [],

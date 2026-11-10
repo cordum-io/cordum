@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { useForm, type Resolver } from "react-hook-form";
+import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import type { z } from "zod";
 import { X, Mail, Hash, Bell, Globe, Loader, Plus, Trash2 } from "lucide-react";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
@@ -303,8 +304,8 @@ export function NotificationChannelModal({
     watch,
     setValue,
     formState: { errors },
-  } = useForm<ChannelForm>({
-    resolver: zodResolver(notificationChannelSchema) as Resolver<ChannelForm>,
+  } = useForm<z.input<typeof notificationChannelSchema>, unknown, ChannelForm>({
+    resolver: zodResolver(notificationChannelSchema),
     defaultValues: {
       name: channel?.name ?? "",
       type: channel?.type ?? "email",

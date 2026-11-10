@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo, lazy, Suspense } from "react";
-import { useForm, Controller, type Resolver } from "react-hook-form";
+import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
@@ -48,7 +48,8 @@ const ruleSchema = z.object({
   description: z.string().optional(),
 });
 
-type RuleFormData = z.infer<typeof ruleSchema>;
+type RuleFormInput = z.input<typeof ruleSchema>;
+type RuleFormData = z.output<typeof ruleSchema>;
 
 // ---------------------------------------------------------------------------
 // Decision options
@@ -67,7 +68,7 @@ const decisions = [
 
 function buildYaml(
   group: ConditionGroup,
-  data: Partial<RuleFormData>,
+  data: Partial<RuleFormInput>,
   labels: string[],
 ): string {
   const lines: string[] = [];
@@ -117,8 +118,8 @@ export function RuleEditor({ rule, onSave, onCancel }: RuleEditorProps) {
     | undefined;
   const existingLabels = (rule?.source?.labels as string[] | undefined) ?? [];
 
-  const { register, handleSubmit, control, watch, formState: { errors } } = useForm<RuleFormData>({
-    resolver: zodResolver(ruleSchema) as Resolver<RuleFormData>,
+  const { register, handleSubmit, control, watch, formState: { errors } } = useForm<RuleFormInput, unknown, RuleFormData>({
+    resolver: zodResolver(ruleSchema),
     defaultValues: {
       decisionType: (rule?.decisionType ?? "allow") as RuleFormData["decisionType"],
       reason: rule?.reason ?? "",

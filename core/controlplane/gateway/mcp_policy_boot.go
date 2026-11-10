@@ -129,11 +129,18 @@ func (s *server) attachMCPPolicyDepsNamed(mcpServer *mcp.MCPServer, gate *gatewa
 	policyDeps := BuildMCPPolicyDeps(s.actionGatePipeline, gate, emitter, artifactStore, redisClient)
 	mcpServer = mcpServer.WithPolicyGate(name, policyDeps)
 
+	snapshot := s.mcpPolicySnapshotFunc()
 	mcpServer = mcpServer.WithApprovalHold(mcp.ApprovalHoldDeps{
 		Store:          s.edgeStore,
-		PolicySnapshot: s.mcpPolicySnapshotFunc(),
+		PolicySnapshot: snapshot,
 		ServerName:     name,
 	})
+	// EDGE-103 mint and consume halves are wired together, with the same
+	// store, snapshot and server name, so every minted Edge approval ref is
+	// one the approval hold can consume (task-f44be149).
+	if gate != nil && mcpServer.HasApprovalHold() {
+		gate.WithEdgeApprovalMint(s.edgeStore, snapshot, name)
+	}
 	return mcpServer, ""
 }
 

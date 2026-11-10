@@ -14,10 +14,17 @@ import (
 func TestQueueRespondSurvivesCoreNATSReconnect(t *testing.T) {
 	first := startTestNATSServer(t, false)
 	port := first.Addr().(*net.TCPAddr).Port
+	reconnected := make(chan struct{}, 1)
 	nc, err := nats.Connect(
 		first.ClientURL(),
 		nats.MaxReconnects(-1),
 		nats.ReconnectWait(10*time.Millisecond),
+		nats.ReconnectHandler(func(*nats.Conn) {
+			select {
+			case reconnected <- struct{}{}:
+			default:
+			}
+		}),
 	)
 	if err != nil {
 		t.Fatalf("connect first server: %v", err)
@@ -39,12 +46,17 @@ func TestQueueRespondSurvivesCoreNATSReconnect(t *testing.T) {
 	first.WaitForShutdown()
 	second := restartTestNATSServer(t, port)
 
-	deadline := time.Now().Add(5 * time.Second)
-	for !nc.IsConnected() && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
+	// IsConnected may still reflect the old connection while EOF is pending.
+	// Wait for the reconnect, then acknowledge the replayed subscription.
+	readyCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	select {
+	case <-reconnected:
+	case <-readyCtx.Done():
+		t.Fatalf("bus did not reconnect: %v, status=%s", readyCtx.Err(), nc.Status())
 	}
-	if !nc.IsConnected() {
-		t.Fatalf("bus did not reconnect, status=%s", nc.Status())
+	if err := nc.FlushWithContext(readyCtx); err != nil {
+		t.Fatalf("flush restored subscription: %v", err)
 	}
 
 	client, err := nats.Connect(second.ClientURL())

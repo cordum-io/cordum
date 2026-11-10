@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import type { z } from "zod";
 import type { Node } from "reactflow";
 import { X, ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
 import { Input } from "../../ui/Input";
@@ -148,7 +149,7 @@ export function ToolCallConfig({ node, onSave, onClose, onDelete }: ToolCallConf
     watch,
     setValue,
     formState: { errors, isDirty },
-  } = useForm<ToolCallFormValues>({
+  } = useForm<z.input<typeof toolCallSchema>, unknown, ToolCallFormValues>({
     resolver: zodResolver(toolCallSchema),
     defaultValues: nodeToDefaults(node.data),
   });

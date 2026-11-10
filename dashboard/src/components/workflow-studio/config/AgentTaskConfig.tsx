@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import type { z } from "zod";
 import type { Node } from "reactflow";
 import { X, ChevronDown, ChevronRight, Trash2 } from "lucide-react";
 import { Input } from "../../ui/Input";
@@ -76,7 +77,7 @@ export function AgentTaskConfig({ node, onSave, onClose, onDelete }: AgentTaskCo
     watch,
     setValue,
     formState: { errors, isDirty },
-  } = useForm<AgentTaskFormValues>({
+  } = useForm<z.input<typeof agentTaskSchema>, unknown, AgentTaskFormValues>({
     resolver: zodResolver(agentTaskSchema),
     defaultValues: nodeToDefaults(node.data),
   });

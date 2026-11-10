@@ -12,6 +12,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"net"
+	"runtime/debug"
 	"sync"
 	"testing"
 	"time"
@@ -25,8 +26,6 @@ import (
 	gnats "github.com/nats-io/nats-server/v2/server"
 	"github.com/redis/go-redis/v9"
 )
-
-const pinnedNATSServerVersion = "2.15.1"
 
 type interopIdentity struct {
 	workerID, agentID, tenantID, keyID, sdkVersion string
@@ -69,8 +68,9 @@ func registerInteropServerCleanup(registrar cleanupRegistrar, server *interopSer
 
 func newInteropServer(t *testing.T, redisURL string) *interopServer {
 	t.Helper()
-	if gnats.VERSION != pinnedNATSServerVersion {
-		t.Fatalf("embedded NATS version=%s want=%s", gnats.VERSION, pinnedNATSServerVersion)
+	info, ok := debug.ReadBuildInfo()
+	if err := checkEmbeddedNATSVersion(info, ok, gnats.VERSION, goListNATSModule); err != nil {
+		t.Fatalf("embedded NATS version fence: %v", err)
 	}
 	rdb := connectRealRedis(t, redisURL)
 	server := &interopServer{

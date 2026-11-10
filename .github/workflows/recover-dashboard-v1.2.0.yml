@@ -1,0 +1,142 @@
+# Read-only closure for the completed dashboard v1.2.0 recovery.
+# This replaces the one-off publisher at its original workflow path.
+name: Verify recovered dashboard 1.2.0
+
+on:
+  push:
+    branches: [repair/dashboard-v1.2.0-20261027]
+    paths: [.github/workflows/recover-dashboard-v1.2.0.yml]
+  workflow_dispatch:
+
+concurrency:
+  group: recover-dashboard-v1.2.0
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_SHA: 3244b5419b74c1684facb9cf2e8e2f9b1df3627c
+  IMAGE_VERSION: 1.2.0
+  EXPECTED_DIGEST: sha256:2f664d745a52f94236a5bb3e325ad9f53296627bf2028e874f646ccd5af8a235
+  GHCR_IMAGE: ghcr.io/cordum-io/cordum/dashboard
+  HUB_IMAGE: docker.io/cordum/dashboard
+  CERTIFICATE_IDENTITY: https://github.com/cordum-io/cordum/.github/workflows/recover-dashboard-v1.2.0.yml@refs/heads/repair/dashboard-v1.2.0-20261027
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  verify-anonymous:
+    if: >-
+      github.repository == 'cordum-io/cordum' &&
+      (
+        (github.event_name == 'push' && github.ref == 'refs/heads/repair/dashboard-v1.2.0-20261027') ||
+        (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+      )
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - name: Install the verifier used for recovery
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.0.6
+
+      - name: Verify existing manifests, signatures and native health anonymously
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          # No registry login: exclude any ambient Docker credential configuration.
+          export DOCKER_CONFIG
+          DOCKER_CONFIG=$(mktemp -d)
+          cleanup() { docker rm -f dashboard-recovery-verification >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          check_manifest() {
+            local token_url="$1" manifest_url="$2" token body headers digest
+            token=$(curl --fail --silent --show-error "$token_url" | jq -er '.token')
+            body=$(mktemp)
+            headers=$(mktemp)
+            curl --fail --silent --show-error --dump-header "$headers" --output "$body" \
+              --header "Authorization: Bearer $token" \
+              --header 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+              "$manifest_url"
+            digest=$(awk 'tolower($1) == "docker-content-digest:" {gsub("\r", "", $2); print $2}' "$headers")
+            test "$digest" = "$EXPECTED_DIGEST"
+            jq -e '[.manifests[] | select(.platform.os == "linux") | .platform.architecture] | sort == ["amd64", "arm64"]' "$body" >/dev/null
+            jq -e '[.manifests[] | select(.annotations["vnd.docker.reference.type"] == "attestation-manifest")] | length == 2' "$body" >/dev/null
+            rm -f "$body" "$headers"
+          }
+
+          verify_signature() {
+            local image="$1" attempt status output errors
+            output=$(mktemp)
+            errors=$(mktemp)
+            # Docker Hub's OCI referrer can become visible after signing returns.
+            # Retry only the transient missing-signature result; never sign again.
+            for attempt in {1..12}; do
+              if cosign verify "$image@$EXPECTED_DIGEST" \
+                --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+                --certificate-identity "$CERTIFICATE_IDENTITY" >"$output" 2>"$errors"; then
+                cat "$errors"
+                jq -e --arg digest "$EXPECTED_DIGEST" \
+                  'length > 0 and all(.[]; .critical.image["docker-manifest-digest"] == $digest)' "$output" >/dev/null
+                rm -f "$output" "$errors"
+                return 0
+              else
+                status=$?
+              fi
+              if [[ "$status" != 10 ]] || ! grep -Fq 'no signatures found' "$errors" || (( attempt == 12 )); then
+                cat "$errors" >&2
+                rm -f "$output" "$errors"
+                return "$status"
+              fi
+              echo "Signature referrer not visible for $image; read-only retry $attempt/12."
+              sleep 10
+            done
+          }
+
+          # Establish that both public version tags resolve to the known index
+          # before starting either native pull.
+          check_manifest \
+            'https://ghcr.io/token?service=ghcr.io&scope=repository:cordum-io/cordum/dashboard:pull' \
+            "https://ghcr.io/v2/cordum-io/cordum/dashboard/manifests/$IMAGE_VERSION"
+          check_manifest \
+            'https://auth.docker.io/token?service=registry.docker.io&scope=repository:cordum/dashboard:pull' \
+            "https://registry-1.docker.io/v2/cordum/dashboard/manifests/$IMAGE_VERSION"
+
+          for image in "$GHCR_IMAGE" "$HUB_IMAGE"; do
+            verify_signature "$image"
+            docker pull --platform "linux/$ARCH" "$image:$IMAGE_VERSION"
+            # Docker stores Docker Hub repository names without the docker.io prefix.
+            canonical_image="${image#docker.io/}"
+            docker image inspect "$image:$IMAGE_VERSION" --format '{{json .RepoDigests}}' \
+              | jq -e --arg expected "$canonical_image@$EXPECTED_DIGEST" 'index($expected) != null' >/dev/null
+            test "$(docker image inspect "$image:$IMAGE_VERSION" --format '{{.Architecture}}')" = "$ARCH"
+            test "$(docker image inspect "$image:$IMAGE_VERSION" --format '{{index .Config.Labels "org.opencontainers.image.source"}}')" = 'https://github.com/cordum-io/cordum'
+            test "$(docker image inspect "$image:$IMAGE_VERSION" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$SOURCE_SHA"
+            test "$(docker image inspect "$image:$IMAGE_VERSION" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')" = "$IMAGE_VERSION"
+            docker run --pull=never --detach --name dashboard-recovery-verification \
+              --publish 127.0.0.1:18080:8080 --add-host cordum-api-gateway:127.0.0.1 \
+              "$image:$IMAGE_VERSION"
+            curl --fail --silent --show-error --retry 15 --retry-all-errors --retry-connrefused --retry-delay 2 \
+              --retry-max-time 60 http://127.0.0.1:18080/healthz
+            docker rm -f dashboard-recovery-verification >/dev/null
+            echo "Anonymous linux/$ARCH pull, pinned digest, source labels, signature and health passed: $image:$IMAGE_VERSION" >> "$GITHUB_STEP_SUMMARY"
+          done
+          {
+            echo "Index digest: \`$EXPECTED_DIGEST\`"
+            echo "Original source: \`$SOURCE_SHA\`"
+            echo "Verified certificate identity: \`$CERTIFICATE_IDENTITY\`"
+            echo 'Both indexes retain linux/amd64, linux/arm64 and their build attestations.'
+          } >> "$GITHUB_STEP_SUMMARY"

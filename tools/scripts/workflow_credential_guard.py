@@ -10,7 +10,7 @@ SOURCE = "tools/scripts/github_actions_mask_env.sh"
 PLACEHOLDER = "credential-unavailable-for-redaction"
 CREDENTIAL_NAME = r"[A-Z0-9_]*(?:API_KEYS?|REDIS_PASSWORD|ADMIN_PASSWORD|LICENSE_(?:TOKEN|PUBLIC_KEY))"
 CREDENTIAL = re.compile(rf"\b{CREDENTIAL_NAME}\b")
-EXPECTED_WORKFLOWS = set("binaries-pr-validation.yml ci.yml codeql.yml demo-mock-bank-e2e.yml docker-main.yml docker.yml docs-linkcheck.yml e2e.yml edge-fake-hook-e2e.yml integration-nightly.yml nightly.yml platform-smoke.yml release.yml sdk-conformance.yml sdk-python.yml sdk-typescript.yml star-tracker.yml".split())
+EXPECTED_WORKFLOWS = set("binaries-pr-validation.yml ci.yml codeql.yml demo-mock-bank-e2e.yml docker-main.yml docker.yml docs-linkcheck.yml e2e.yml edge-fake-hook-e2e.yml integration-nightly.yml nightly.yml platform-smoke.yml recover-dashboard-v1.2.0.yml release.yml sdk-conformance.yml sdk-python.yml sdk-typescript.yml star-tracker.yml".split())
 LICENSED = ("CORDUM_API_KEY", "REDIS_PASSWORD", "CORDUM_ADMIN_PASSWORD", "CORDUM_LICENSE_TOKEN", "CORDUM_LICENSE_PUBLIC_KEY")
 EXPECTED = {
     ("integration-nightly.yml", "integration"): LICENSED,
