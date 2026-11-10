@@ -7,7 +7,7 @@ import re
 import sys
 import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from workflow_credential_sources import heredoc_lines, shell_depth
+from workflow_credential_sources import heredoc_lines, shell_depth, transitive
 SOURCE = "tools/scripts/github_actions_mask_env.sh"
 PLACEHOLDER = "credential-unavailable-for-redaction"
 CREDENTIAL_NAME = r"[A-Z0-9_]*(?:API_KEYS?|REDIS_PASSWORD|ADMIN_PASSWORD|LICENSE_(?:TOKEN|PUBLIC_KEY))"
@@ -236,6 +236,7 @@ def scan(root: Path) -> list[tuple[str, str, str]]:
     quickstart = root / "tools/scripts/quickstart_env_sharing_test.sh"
     quick_codes = ["QUICKSTART_MISSING"] if not quickstart.is_file() else check_quickstart_text(quickstart.read_text(encoding="utf-8"))
     issues.extend((quickstart.name, "ci-transitive", code) for code in quick_codes)
+    issues.extend(transitive(root, set(EXPECTED) | seen)[0])
     return issues
 def self_test() -> int:
     safe = [{"run": f'source {SOURCE}\ngha_mask_env CORDUM_API_KEY "${{generated}}"'}, {"run": "touch optional.log"}, {"id": "redact", "env": {"CORDUM_API_KEY": f"${{{{ env.CORDUM_API_KEY || '{PLACEHOLDER}' }}}}"}, "run": f"source {SOURCE}\ngha_redact_paths CORDUM_API_KEY -- optional.log"}, {"if": "always() && steps.redact.outcome == 'success'", "uses": "actions/upload-artifact@v4", "with": {"path": "optional.log"}}]
