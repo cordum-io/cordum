@@ -17,6 +17,7 @@ import (
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/mcp"
 	"github.com/cordum/cordum/core/model"
+	"github.com/redis/go-redis/v9"
 )
 
 // End-to-end coverage for cordum_create_workflow over the HTTP MCP
@@ -351,6 +352,32 @@ func TestMCPCreateWorkflow_ConcurrentApprovedRetriesCreateExactlyOne(t *testing.
 	}
 	if n := h.workflowCount(""); n != 1 {
 		t.Fatalf("workflows = %d, want exactly 1", n)
+	}
+}
+
+// An approval-store outage at claim time fails closed: the gate errors
+// and the bridge never runs, even for a caller whose auth context would
+// otherwise create the workflow.
+func TestMCPCreateWorkflow_ApprovalStoreOutageFailsClosed(t *testing.T) {
+	h := newCreateWorkflowMCPHarness(t)
+	dead := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
+	_ = dead.Close() // every store command now fails
+	registry := mcp.NewToolRegistry()
+	registry.SetApprovalGate(NewGatewayApprovalGate(NewMCPApprovalStore(dead)))
+	if err := mcp.RegisterAllTools(registry, h.s.newMCPServiceBridge()); err != nil {
+		t.Fatalf("register tools: %v", err)
+	}
+	ac := h.s.auth.(createWorkflowMCPAuth).keys[cwAlice.key]
+	ac.APIKey = cwAlice.key
+	ctx := context.WithValue(context.Background(), auth.ContextKey{}, &ac)
+	ctx = WithMCPCallMetadata(ctx, MCPCallMetadata{Tenant: "default", AgentID: "agent-alice", Principal: "alice"})
+	res, err := registry.Call(ctx, "cordum_create_workflow", json.RawMessage(cwArgs))
+	var gated *mcp.ApprovalRequired
+	if err == nil || errors.As(err, &gated) {
+		t.Fatalf("store outage: result=%+v err=%v, want a non-approval error", res, err)
+	}
+	if n := h.workflowCount(""); n != 0 {
+		t.Fatalf("workflows = %d, want 0", n)
 	}
 }
 
