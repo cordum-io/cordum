@@ -7,7 +7,7 @@ import re
 import sys
 import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from workflow_credential_sources import heredoc_lines, shell_depth, transitive
+from workflow_credential_sources import heredocs, transitive
 SOURCE = "tools/scripts/github_actions_mask_env.sh"
 PLACEHOLDER = "credential-unavailable-for-redaction"
 CREDENTIAL_NAME = r"[A-Z0-9_]*(?:API_KEYS?|REDIS_PASSWORD|ADMIN_PASSWORD|LICENSE_(?:TOKEN|PUBLIC_KEY))"
@@ -187,6 +187,12 @@ def check_job(path: str, job_id: str, steps: list[object], wanted: tuple[str, ..
     if (path, job_id) in FALLBACK_KEYS and fallback_steps != 1:
         issues.append("FALLBACK_MISMATCH")
     return issues, credential_job
+def heredoc_lines(lines: list) -> set: return {k for _, body, _, _ in heredocs(lines) for k in body}
+def shell_depth(lines: list, marked: set, stop: int) -> int:
+    depth = 0
+    for index, text in enumerate(line.strip() for line in lines[:stop]):
+        if index not in marked and text and not text.startswith("#") and (depth := depth + bool(re.match(r"^(?:(?:function\s+)?[A-Za-z_]\w*\s*\(\)|function\s+[A-Za-z_]\w*)\s*\{$|^(?:if\b.*;\s*then|(?:for|while|until|select)\b.*;\s*do|case\b.*\bin)$", text)) - (text in {"}", "fi", "done", "esac"})) < 0: return -1
+    return depth
 def check_quickstart_text(text: str) -> list[str]:
     lines = text.splitlines()
     marked = heredoc_lines(lines)

@@ -2,7 +2,7 @@
 """Credential sources reached transitively from GitHub workflow run steps through bash/sh/source/./exec/make edges
 (bounded, repo-confined, symlink-refusing): each jq credential field or generated credential must be registered for
 masking, fail-closed, before any use unless a reviewed exemption's guard and condition hold. Output carries no values."""
-import collections, itertools, pathlib, posixpath, re, shlex, sys, yaml  # noqa: E401
+import collections, pathlib, posixpath, re, shlex, sys, yaml  # noqa: E401
 MAX_DEPTH, MAX_VISITS, MAX_BYTES, UNKNOWN = 10, 400, 256 * 1024, "\x00"  # UNKNOWN: set and non-empty, value unseen
 HEREDOC, DOTENV = re.compile(r"(?<!<)<<-?\s*(['\"]?)([A-Za-z_]\w*)\1"), re.compile(r">\s*[\"']?(?:[^\s\"';&|<>]*/)?\.env[\"']?(?=[\s;&|<>]|$)")
 PLAIN, DQ, ANY = re.compile(r"[^\s'\"\\$`<>&|;()#]+"), re.compile(r"[^\"\\$`\n]+"), re.compile(r".", re.S)
@@ -40,12 +40,6 @@ def heredocs(lines: list) -> list:  # (header index, body indices incl. terminat
             found.append((index, list(range(index + 1, min(end + 1, len(lines)))), bool(match.group(1)), end < len(lines))); index = end  # noqa: E702
         index += 1
     return found
-def heredoc_lines(lines: list) -> set: return {k for _, body, _, _ in heredocs(lines) for k in body}
-def shell_depth(lines: list, marked: set, stop: int) -> int:
-    depth = 0
-    for index, text in enumerate(line.strip() for line in lines[:stop]):
-        if index not in marked and text and not text.startswith("#") and (depth := depth + bool(re.match(r"^(?:(?:function\s+)?[A-Za-z_]\w*\s*\(\)|function\s+[A-Za-z_]\w*)\s*\{$|^(?:if\b.*;\s*then|(?:for|while|until|select)\b.*;\s*do|case\b.*\bin)$", text)) - (text in {"}", "fi", "done", "esac"})) < 0: return -1
-    return depth
 def split(text: str, i: int = 0, line: int = 1, sub: int = 0, closer: bool = False) -> tuple:  # (raw-word commands, substitution bodies first; end index or -1; line)
     cmds, words, word, start, quote, parens = [], [], "", line, "", 0
     def emit(op: str) -> None:
@@ -137,14 +131,19 @@ def state(cmds: list, k: int, var: str, errexit: bool) -> str:  # registered, la
             used = True
         elif (m := ASSIGN.fullmatch(cmds[j].text)) and m.group(1) == var: break
     return "unregistered"
-def shallow(text: str) -> str:  # the text without command substitutions nested below its first level
-    return "".join(c for c, depth in zip(text, itertools.accumulate((c == "(") - (c == ")") for c in text)) if depth + (c == ")") <= 1)
+def shallow(text: str) -> str:  # the text without command substitutions nested below its first level; quoted parens are literal
+    out, stack = "", [""]
+    for tok in re.findall(r"\\.|\$\(|.", text, re.S):  # an escape, "$(", or one character
+        if (top := stack[-1]) == "'" and tok[-1] == "'" or top == '"' == tok or tok == ")" and top in ("$(", "("): stack.pop()
+        elif top != "'" and (tok == "$(" or tok in ("(", "'", '"') and top != '"'): stack.append(tok)
+        out += tok if stack.count("$(") <= 1 else ""
+    return out
 def facts(text: str, line: int = 1, errexit: bool = False) -> tuple:  # (cmds, unparsable line, [(k, var, kind, state)], [(k, var, bytes)])
     cmds, error = parse(text, line)
     errexit, acqs = errexit or any(not c.stack and re.match(r"set\s+(?:-\w*e|-o\s+errexit)", c.text) for c in cmds), []
     for k, cmd in enumerate(cmds):
         var, rhs = (m.group(1), m.group(2)) if (m := ASSIGN.fullmatch(cmd.text)) else ("-", "")
-        kind = "" if "idem" in var.lower() else "auth-response" if JQ.search(rhs) else "generated" if GEN.search(shallow(rhs)) and NAME.search(var) else ""
+        kind = "" if "idem" in var.lower() else "auth-response" if JQ.search(rhs) else "generated" if NAME.search(var) and GEN.search(shallow(rhs)) else ""
         if kind or (not m and not cmd.sub and JQ.search(cmd.text) and not DEVNULL.search(cmd.text)):  # a bare extraction prints it
             acqs.append((k, var, kind or "auth-response", state(cmds, k, var, errexit) if kind else "unregistered"))
         helper = re.fullmatch(r"gha_mask_env(?:_from_command((?: [A-Z][A-Z0-9_]*)+) --| ([A-Z][A-Z0-9_]*)) .+", cmd.text, re.S)  # fail-closed: masks, then exports
@@ -172,12 +171,12 @@ def shell_operand(args: list) -> tuple:  # bash/sh: (script, argv, False) or (-c
 def literal_env(node: object) -> dict: return {str(k): "" if v is None else str(v) for k, v in node.items()} if isinstance(node, dict) else {}
 def github_env_names(run: str) -> set:  # names a run step writes to GITHUB_ENV (masked or plain)
     return set(re.findall(r"(?m)^\s*gha_mask_env\s+([A-Za-z_]\w*)", run)) | set(re.findall(r"(?m)^\s*(?:echo|printf)\s+(?:'[^']*'\s+)?[\"']?([A-Za-z_]\w*)=.*>>\s*[\"']?\$\{?GITHUB_ENV\b", run)) | {n for args in re.findall(r"(?m)^\s*gha_mask_env_from_command\s+(.+?)\s+--\s", run) for n in re.findall(r"[A-Za-z_]\w*", args)}
-def run_lines(text: str) -> dict:  # (job id, step index) -> file line just before the step's run script
+def run_lines(text: str) -> dict:  # (job id, step index) -> file line just before the step's run script, or of its uses
     def get(node: object, key: str) -> object: return next((v for k, v in node.value if getattr(k, "value", None) == key), None) if isinstance(node, yaml.MappingNode) else None
     found, jobs = {}, get(yaml.compose(text, Loader=yaml.SafeLoader), "jobs")
     for job_key, job in (jobs.value if isinstance(jobs, yaml.MappingNode) else []):
         steps = get(job, "steps")
-        for index, run in enumerate(get(step, "run") for step in (steps.value if isinstance(steps, yaml.SequenceNode) else [])):
+        for index, run in enumerate(get(step, "run") or get(step, "uses") for step in (steps.value if isinstance(steps, yaml.SequenceNode) else [])):
             if run is not None: found[(job_key.value, index)] = run.start_mark.line + (run.style in ("|", ">"))
     return found
 def guarded(cmds: list, k: int, guard: str) -> bool:  # the source or a block around it, or every (>= 1) call site of its function
@@ -256,10 +255,10 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
         name, program, dynamic = expand(words[0], table, env, here) if words else "", False, lambda: self.report("SOURCE_DYNAMIC", rel, cmd.line, True)
         if name == "eval": return dynamic()
         if name in ("make", "gmake"): return self.make([expand(w, table, env, here) for w in words[1:]], rel, cmd.line, child, chain, quiet)
-        if name in ("source", ".") and len(words) > 1: target, rest, kind = words[1], words[2:], "source"
+        if name in ("source", "."): target, rest, kind = (words + [""])[1], words[2:], "source"  # no literal operand (<(...)) is dynamic
         elif posixpath.basename(name) in ("bash", "sh"): (target, rest, program), kind = shell_operand(words[1:]), "shell"
         elif "/" in name: target, rest, kind = words[0], words[1:], "exec"
-        else: return
+        else: return dynamic() if any(w.strip("\"'").endswith(".sh") for w in words[1:]) and ("$" in name or any(posixpath.basename(w.strip("\"'")) in ("bash", "sh") for w in words[1:])) else None  # a wrapper or variable command runs a script
         if program:  # a literal -c program is scanned inline; one whose command word expands is dynamic
             unit = facts(target[1:-1] if len(target) > 1 and target[0] == target[-1] and target[0] in "'\"" else target, cmd.line)
             return dynamic() if any(re.search(r"[$`]", c.words[0]) for c in unit[0] if c.words) else self.visit(rel, unit, child, [], chain, quiet, cwd)
@@ -280,6 +279,7 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
         self.wf, self.job, self.credential, self.seen, self.visits, exported = wf, job_id, credential, set(), 0, set()
         rel, base, defaults = ".github/workflows/" + wf, {**literal_env(workflow.get("env")), **literal_env(job.get("env"))}, [(node.get("defaults") or {}).get("run") or {} for node in (job, workflow)]
         for index, step in enumerate(job.get("steps") or []):
+            if isinstance(step, dict) and "run" not in step and str(step.get("uses", "")).startswith("./"): self.report("SOURCE_DYNAMIC", rel, lines.get((job_id, index), 0) + 1, True)  # unscanned local action
             if not isinstance(step, dict) or "run" not in step: continue
             shell, cwd = (str(step.get(key) or defaults[0].get(key) or defaults[1].get(key) or "") for key in ("shell", "working-directory"))
             if shell and not re.match(r"(?:ba)?sh\b", shell): continue

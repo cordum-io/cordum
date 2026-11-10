@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# Contract tests for credentials reached transitively from GitHub workflows.
-# Each case mutates a throwaway copy of the workflow, Makefile and script tree
-# and asserts one exact guard code. Every fixture is synthetic: nothing here
-# reads, mints or prints a real credential, and SENTINEL proves that guard
-# reports and inventory lines stay value-free.
+# Contract tests for credentials reached transitively from GitHub workflows: each case mutates a throwaway copy
+# of the workflow, Makefile and script tree and asserts one exact guard code. Every fixture is synthetic (nothing
+# reads, mints or prints a real credential), and SENTINEL proves guard reports and inventory lines stay value-free.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -12,9 +10,7 @@ SOURCES="${ROOT}/tools/scripts/workflow_credential_sources.py"
 WORK="$(mktemp -d)"
 trap 'rm -rf "${WORK}"' EXIT
 SENTINEL="wcs_synthetic_${$}_${RANDOM}${RANDOM}"
-PASS=0
-FAIL=0
-SKIP=0
+PASS=0 FAIL=0 SKIP=0
 
 record() {
   case "$1" in
@@ -81,6 +77,9 @@ GEN = {
     "gen_urandom": "$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \\n')",
     "gen_random": "syn-${RANDOM}${RANDOM}",
     "gen_date": "syn-$(date +%s%N)",
+    "gen_python": "$(python3 -c 'import secrets; print(secrets.token_urlsafe(16))')",
+    "gen_quoted_paren": "$(printf '(' \"(\")$(openssl rand -hex 8)",
+    "gen_nested": '$(curl -fsS -d "$(jq -cn --arg n "syn-$(date +%s)" "{}")" https://127.0.0.1:9/)',
 }
 DYNAMIC = {
     "dyn_var": 'bash "${SYNTHETIC_DIR}/zz_synthetic_mint.sh"',
@@ -90,6 +89,9 @@ DYNAMIC = {
     "dyn_eval": 'eval "${SYNTHETIC_CMD}"',
     "dyn_make": 'make "${SYNTHETIC_TARGET}"',
     "dyn_source": 'source "${SYNTHETIC_DIR}/zz_synthetic_helper.sh"',
+    "dyn_procsub": "source <(cat tools/scripts/zz_synthetic_mint.sh)",
+    "dyn_wrapper": "timeout -s KILL 10m bash tools/scripts/zz_synthetic_mint.sh",
+    "dyn_cmdword": '"${SYNTHETIC_SHELL}" tools/scripts/zz_synthetic_mint.sh',
 }
 
 
@@ -152,6 +154,8 @@ elif case in DYNAMIC:
 elif case == "dyn_script":
     script("zz_synthetic_dyn.sh", 'source "${SYNTHETIC_DIR}/zz_synthetic_helper.sh"')
     step("bash tools/scripts/zz_synthetic_dyn.sh")
+elif case == "uses_local":
+    edit(E2E, CAPTURE, "      - name: Synthetic local action\n        uses: ./.github/actions/zz-synthetic\n" + CAPTURE)
 elif case == "edge_cycle":
     script("zz_synthetic_cycle_a.sh", "bash tools/scripts/zz_synthetic_cycle_b.sh")
     script("zz_synthetic_cycle_b.sh", "bash tools/scripts/zz_synthetic_cycle_a.sh")
@@ -243,6 +247,9 @@ gen_uuidgen e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_g
 gen_urandom e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_gen.sh
 gen_random e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_gen.sh
 gen_date e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_gen.sh
+gen_python e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_gen.sh
+gen_quoted_paren e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_gen.sh
+gen_nested clean
 nonce_bypass_removed edge-fake-hook-e2e.yml:edge-fake-hook-e2e:CREDENTIAL_UNREGISTERED@tools/scripts/edge_fake_hook_e2e.sh
 nonce_bypass_overridden edge-fake-hook-e2e.yml:edge-fake-hook-e2e:CREDENTIAL_UNREGISTERED@tools/scripts/edge_fake_hook_e2e.sh
 quickstart_unseeded docs-linkcheck.yml:link-check:CREDENTIAL_UNREGISTERED@tools/scripts/quickstart.sh
@@ -254,6 +261,10 @@ dyn_eval e2e.yml:e2e-tls:SOURCE_DYNAMIC
 dyn_make e2e.yml:e2e-tls:SOURCE_DYNAMIC
 dyn_source e2e.yml:e2e-tls:SOURCE_DYNAMIC
 dyn_script e2e.yml:e2e-tls:SOURCE_DYNAMIC@tools/scripts/zz_synthetic_dyn.sh
+dyn_procsub e2e.yml:e2e-tls:SOURCE_DYNAMIC
+dyn_wrapper e2e.yml:e2e-tls:SOURCE_DYNAMIC
+dyn_cmdword e2e.yml:e2e-tls:SOURCE_DYNAMIC
+uses_local e2e.yml:e2e-tls:SOURCE_DYNAMIC@.github/workflows/e2e.yml
 edge_cycle e2e.yml:e2e-tls:SOURCE_CYCLE
 edge_escape e2e.yml:e2e-tls:SOURCE_ESCAPE
 edge_symlink e2e.yml:e2e-tls:SOURCE_SYMLINK
