@@ -276,7 +276,9 @@ build mint_registered || inv_rc=$?
 inv="$(python "${SOURCES}" --inventory "${WORK}/mint_registered" 2>&1 | tr -d '\r')" || inv_rc=$?
 if [[ "${inv_rc}" -eq 0 && "${inv}" != *"${SENTINEL}"* ]] \
   && grep -Eq '^e2e\.yml:e2e-tls:auth-response@tools/scripts/zz_synthetic_mint\.sh:[0-9]+:minted:registered$' <<<"${inv}" \
-  && grep -Eq '^edge-fake-hook-e2e\.yml:edge-fake-hook-e2e:generated@tools/scripts/edge_fake_hook_e2e\.sh:[0-9]+:AGENTD_NONCE:exempt$' <<<"${inv}"; then
+  && grep -Eq '^edge-fake-hook-e2e\.yml:edge-fake-hook-e2e:generated@tools/scripts/edge_fake_hook_e2e\.sh:[0-9]+:AGENTD_NONCE:exempt$' <<<"${inv}" \
+  && grep -Eq '^nightly\.yml:soak-test:masked-env@\.github/workflows/nightly\.yml:[0-9]+:CORDUM_LICENSE_PUBLIC_KEY:registered$' <<<"${inv}" \
+  && grep -Eq '^e2e\.yml:e2e-tls:masked-env@\.github/workflows/e2e\.yml:[0-9]+:CORDUM_ADMIN_PASSWORD:registered$' <<<"${inv}"; then
   record PASS "inventory lists registered and condition-exempt sources without values"
 else
   record FAIL "inventory: rc=${inv_rc}: ${inv}"

@@ -2,8 +2,7 @@
 """Credential sources reached transitively from GitHub workflow run steps through bash/sh/source/./exec/make edges
 (bounded, repo-confined, symlink-refusing): each jq credential field or generated credential must be registered for
 masking, fail-closed, before any use unless a reviewed exemption's guard and condition hold. Output carries no values."""
-import collections, itertools, posixpath, re, shlex, sys, yaml  # noqa: E401
-from pathlib import Path
+import collections, itertools, pathlib, posixpath, re, shlex, sys, yaml  # noqa: E401
 MAX_DEPTH, MAX_VISITS, MAX_BYTES, UNKNOWN = 10, 400, 256 * 1024, "\x00"  # UNKNOWN: set and non-empty, value unseen
 HEREDOC, DOTENV = re.compile(r"(?<!<)<<-?\s*(['\"]?)([A-Za-z_]\w*)\1"), re.compile(r">\s*[\"']?(?:[^\s\"';&|<>]*/)?\.env[\"']?(?=[\s;&|<>]|$)")
 PLAIN, DQ, ANY = re.compile(r"[^\s'\"\\$`<>&|;()#]+"), re.compile(r"[^\"\\$`\n]+"), re.compile(r".", re.S)
@@ -148,6 +147,8 @@ def facts(text: str, line: int = 1, errexit: bool = False) -> tuple:  # (cmds, u
         kind = "" if "idem" in var.lower() else "auth-response" if JQ.search(rhs) else "generated" if GEN.search(shallow(rhs)) and NAME.search(var) else ""
         if kind or (not m and not cmd.sub and JQ.search(cmd.text) and not DEVNULL.search(cmd.text)):  # a bare extraction prints it
             acqs.append((k, var, kind or "auth-response", state(cmds, k, var, errexit) if kind else "unregistered"))
+        helper = re.fullmatch(r"gha_mask_env(?:_from_command((?: [A-Z][A-Z0-9_]*)+) --| ([A-Z][A-Z0-9_]*)) .+", cmd.text, re.S)  # fail-closed: masks, then exports
+        acqs += [(k, name, "masked-env", "registered") for name in (helper.group(1) or helper.group(2)).split()] if helper else []
     names = {a[1] for a in acqs}
     return cmds, error, acqs, [(k, m.group(1), int(m.group(2)) + int(m.group(3)) if m.group(2) else 10 ** 6) for k, c in enumerate(cmds) for m in PREFIX.finditer(c.text) if m.group(1) in names or NAME.search(m.group(1))]
 def expand(word: str, table: dict, env: dict, here: str) -> str:  # script-dir and cd/pwd idioms, known variables, defaults; drops quotes
@@ -184,7 +185,7 @@ def guarded(cmds: list, k: int, guard: str) -> bool:  # the source or a block ar
     calls = [c for c in cmds if cmds[k].func and cmds[k].func in c.words]
     return under(cmds[k], (k,)) or (bool(calls) and all(under(c) for c in calls))
 class Scan:  # walks each job's run steps through their transitive shell and make edges
-    def __init__(self, root: Path) -> None: self.root, self.cache, self.issues, self.inventory = root, {}, set(), set()
+    def __init__(self, root: pathlib.Path) -> None: self.root, self.cache, self.issues, self.inventory = root, {}, set(), set()
     def report(self, code: str, rel: str, line: int, source: bool = False) -> None:  # SOURCE_* refusals gate credential jobs only
         if self.credential or not source: self.issues.add((self.wf, self.job, f"{code}@{rel}:{line}"))
     def read(self, rel: str) -> tuple:  # (text, refusal): a regular in-repo file, no symlinked component, <= MAX_BYTES
@@ -285,7 +286,7 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
             env, errexit = {**base, **dict.fromkeys(exported, UNKNOWN), **literal_env(step.get("env"))}, shell in ("", "bash", "sh") or bool(re.search(r"\s-\w*e", shell))
             self.visit(rel, facts(str(step["run"]), lines.get((job_id, index), 0) + 1, errexit), env, [], (rel,), False, posixpath.normpath(cwd or "."))
             exported |= github_env_names(str(step["run"]))
-def transitive(root: Path, credential_jobs: set) -> tuple:  # issues (workflow, job, CODE@path:line) and value-free inventory
+def transitive(root: pathlib.Path, credential_jobs: set) -> tuple:  # issues (workflow, job, CODE@path:line) and value-free inventory
     scan = Scan(root)
     for path in sorted((root / ".github/workflows").glob("*.y*ml")):
         try: workflow, lines = yaml.safe_load(text := path.read_text(encoding="utf-8")), run_lines(text)
@@ -295,5 +296,5 @@ def transitive(root: Path, credential_jobs: set) -> tuple:  # issues (workflow, 
     return sorted(scan.issues), sorted(scan.inventory)
 def main(argv: list) -> int:
     if len(argv) != 2 or argv[0] != "--inventory": print("usage: workflow_credential_sources.py --inventory ROOT", file=sys.stderr); return 2  # noqa: E702
-    print("\n".join(transitive(Path(argv[1]), set())[1])); return 0  # noqa: E702
+    print("\n".join(transitive(pathlib.Path(argv[1]), set())[1])); return 0  # noqa: E702
 if __name__ == "__main__": raise SystemExit(main(sys.argv[1:]))
