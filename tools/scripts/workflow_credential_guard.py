@@ -6,6 +6,8 @@ from pathlib import Path, PurePosixPath
 import re
 import sys
 import yaml
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from workflow_credential_sources import heredoc_lines, shell_depth
 SOURCE = "tools/scripts/github_actions_mask_env.sh"
 PLACEHOLDER = "credential-unavailable-for-redaction"
 CREDENTIAL_NAME = r"[A-Z0-9_]*(?:API_KEYS?|REDIS_PASSWORD|ADMIN_PASSWORD|LICENSE_(?:TOKEN|PUBLIC_KEY))"
@@ -101,6 +103,11 @@ def redact_call(run: str) -> tuple[set[str], list[str]] | None:
     if not match:
         return None
     return set(match.group(1).split()), match.group(2).split()
+def env_bound(env: object, redaction: tuple[set[str], list[str]] | None) -> bool:
+    """A redaction step env must rebind exactly the redacted names, each to itself with the placeholder fallback."""
+    if not isinstance(env, dict) or redaction is None or set(env) != redaction[0]:
+        return False
+    return all(re.sub(r"\s+", "", str(value)) == f"${{{{env.{name}||'{PLACEHOLDER}'}}}}" for name, value in env.items())
 def normalized_paths(value: object) -> list[str]:
     raw = value if isinstance(value, str) else ""
     paths = [line.strip().replace("\\", "/") for line in raw.splitlines() if line.strip()]
@@ -164,6 +171,8 @@ def check_job(path: str, job_id: str, steps: list[object], wanted: tuple[str, ..
             fallback_steps += 1
             if fallback != set(wanted) or not redaction or redaction[0] != fallback:
                 issues.append("FALLBACK_SCOPE")
+        if "gha_redact_paths" in run and "env" in raw_step and not env_bound(raw_step["env"], redaction):
+            issues.append("REDACTION_VALUE_BINDING")
         if redaction and (path, job_id) in PREPARED and "soak_results.json" in redaction[1]:
             prior = steps[index - 1] if index and isinstance(steps[index - 1], dict) else {}
             if not commands(str(prior.get("run") or "")) or commands(str(prior.get("run") or ""))[0] != PREPARED[(path, job_id)]:
@@ -178,32 +187,6 @@ def check_job(path: str, job_id: str, steps: list[object], wanted: tuple[str, ..
     if (path, job_id) in FALLBACK_KEYS and fallback_steps != 1:
         issues.append("FALLBACK_MISMATCH")
     return issues, credential_job
-def heredoc_lines(lines: list[str]) -> set[int]:
-    marked: set[int] = set()
-    delimiter: str | None = None
-    for index, line in enumerate(lines):
-        if delimiter is not None:
-            marked.add(index)
-            if line.strip() == delimiter:
-                delimiter = None
-            continue
-        match = re.search(r"<<-?\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?", line)
-        if match:
-            delimiter = match.group(1)
-    return marked
-def shell_depth(lines: list[str], marked: set[int], stop: int) -> int:
-    depth = 0
-    for index, line in enumerate(lines[:stop]):
-        if index in marked or not line.strip() or line.lstrip().startswith("#"):
-            continue
-        text = line.strip()
-        if text in {"}", "fi", "done", "esac"}:
-            depth -= 1
-        if re.match(r"^(?:(?:function\s+)?[A-Za-z_]\w*\s*\(\)|function\s+[A-Za-z_]\w*)\s*\{$", text) or re.match(r"^(?:if\b.*;\s*then|(?:for|while|until|select)\b.*;\s*do|case\b.*\bin)$", text):
-            depth += 1
-        if depth < 0:
-            return -1
-    return depth
 def check_quickstart_text(text: str) -> list[str]:
     lines = text.splitlines()
     marked = heredoc_lines(lines)
@@ -284,6 +267,13 @@ def self_test() -> int:
         return 1
     unprepared = [{"run": "bash tools/scripts/soak_test.sh"}, {"run": f"source {SOURCE}\ngha_redact_paths CORDUM_API_KEY -- soak_results.json"}]
     if "OPTIONAL_ARTIFACT_PREP" not in check_job("nightly.yml", "soak-test", unprepared, ("CORDUM_API_KEY",))[0]: return 1
+    own = "${{ env.%s || '" + PLACEHOLDER + "' }}"
+    def binding_issues(env: object) -> list[str]:
+        item = deepcopy(safe); item[2]["env"] = env
+        return check_job("fixture.yml", "safe", item, ("CORDUM_API_KEY",))[0]
+    unbound = ({"CORDUM_API_KEY": own % "REDIS_PASSWORD"}, {"CORDUM_API_KEY": PLACEHOLDER}, {"CORDUM_API_KEY": "${{ secrets.SYNTHETIC || '" + PLACEHOLDER + "' }}"}, {"CORDUM_API_KEY": own % "CORDUM_API_KEY", "REDIS_PASSWORD": own % "REDIS_PASSWORD"}, {}, {"CORDUM_API_KEY_RENAMED": own % "CORDUM_API_KEY"}, "${{ fromJSON(env.SYNTHETIC) }}")
+    if binding_issues({"CORDUM_API_KEY": "${{env.CORDUM_API_KEY||'" + PLACEHOLDER + "'}}"}) or any("REDACTION_VALUE_BINDING" not in binding_issues(env) for env in unbound):
+        return 1
     good = 'test_case() {\nseeded_key=x\nseeded_redis=x\nif [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then\nsource "${REPO_ROOT}/tools/scripts/github_actions_mask_env.sh"\ngha_mask_value "${seeded_key}"\ngha_mask_value "${seeded_redis}"\nfi\ncat > .env\nif grep -Fq "${seeded_key}" "${quickstart_log}" || grep -Fq "${seeded_redis}" "${quickstart_log}"; then\nfail "quickstart output leaked a full seeded secret value"\nfi\ncat "${quickstart_log}"\n}'
     bad = (good.replace('gha_mask_value "${seeded_redis}"', ''), "cat <<BLOCK\n" + good.replace("cat > .env", "BLOCK\ncat > .env"), good.replace('"${quickstart_log}" || grep', '/dev/null || grep'), good.replace("test_case() {", "test_case() {\nif false; then") + "\nfi", good.replace("seeded_key=x", "seeded_key=x\ngha_mask_value(){ :; }"), good.replace("seeded_key=x", "seeded_key=x\nfunction source { :; }"), good.replace("seeded_key=x", "seeded_key=x\nexport GITHUB_ACTIONS=false"), good.replace("cat > .env", "seeded_key=changed\ncat > .env"), good.replace('gha_mask_value "${seeded_key}"', 'gha_mask_value "${seeded_key}" >/dev/null'), good.replace('; then\nfail', ' || true; then\nfail'), good.replace('cat "${quickstart_log}"', 'quickstart_log=other\ncat "${quickstart_log}"'))
     return int(bool(check_quickstart_text(good)) or not all(check_quickstart_text(item) for item in bad) or paths_match(["a*"], ["a?"]) or not inventory_issues({"unexpected.yml"}))
