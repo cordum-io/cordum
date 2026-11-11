@@ -27,17 +27,14 @@ cp "${ROOT}/Makefile" "${BASE}/Makefile"
 build() {
   cp -R "${BASE}" "${WORK}/$1"
   python - "${WORK}/$1" "$1" "${SENTINEL}" <<'PY'
-import os
-import pathlib
-import sys
-
+import os, pathlib, sys  # noqa: E401
 root, case, sentinel = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
 PH = "credential-unavailable-for-redaction"
 E2E, EDGE = ".github/workflows/e2e.yml", ".github/workflows/edge-fake-hook-e2e.yml"
 CAPTURE = "      - name: Capture compose logs on failure\n"
 LINK = (".github/workflows/docs-linkcheck.yml", "      - name: Run lychee (offline, gating)\n")
 API = "          CORDUM_API_KEY: ${{ env.CORDUM_API_KEY || '" + PH + "' }}\n"
-REG = 'gha_mask_value "${minted}"'
+REG, STRICT = 'gha_mask_value "${minted}"', "set -euo pipefail\n"
 SAFE = '[[ -n "${minted}" ]] || exit 1\n' + REG
 MINT_SH, RUN_MINT, INC = "tools/scripts/zz_synthetic_mint.sh", "bash tools/scripts/zz_synthetic_mint.sh", "tools/scripts/zz_synthetic_mint.inc"
 BODY = "\n".join((
@@ -62,6 +59,10 @@ MINTS = {  # (lines after the acquisition, lines after its first use) in a set -
     "mint_prefix": (REG + '\necho "synthetic prefix ${minted:0:6}"', ""), "mint_ignored": (REG + " || true", ""),
     "mint_errexit_off": ("set +e\n" + SAFE + "\nset -e", ""), "mint_xtrace": ("set -x\n" + SAFE, ""),
 }
+OPTS = {  # mint() keywords, before defaulting to SAFE
+    "mint_errexit_func": dict(head="main() {\nset -euo pipefail\n", tail="}\nmain\n"),
+    "return_global": dict(before=SAFE + " || return 1", head=STRICT + "main() {\n", tail="}\nmain || true\n"),  # the caller ignores the failure; minted outlives it
+    "return_local": dict(before=SAFE + " || return 1", head=STRICT + "main() {\nlocal minted\n", tail="}\nmain || true\n")}
 GEN = {
     "gen_openssl": "$(openssl rand -hex 16)", "gen_uuidgen": "$(uuidgen)",
     "gen_urandom": "$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \\n')", "gen_random": "syn-${RANDOM}${RANDOM}",
@@ -91,7 +92,7 @@ def write(rel, text):
     (root / rel).write_bytes(text.replace("@SENTINEL@", sentinel).encode("utf-8"))
 def script(name, body):
     write("tools/scripts/" + name, "#!/usr/bin/env bash\nset -euo pipefail\n" + body + "\n")
-def mint(before="", after="", rel=MINT_SH, head="set -euo pipefail\n", tail="", bang="#!/usr/bin/env bash\n"):
+def mint(before="", after="", rel=MINT_SH, head=STRICT, tail="", bang="#!/usr/bin/env bash\n"):
     body = BODY.replace("@BEFORE@", before).replace("@AFTER@", after)
     write(rel, bang + head + "source tools/scripts/github_actions_mask_env.sh\n" + body + "\n" + tail)
 def step(body, wf=E2E, anchor=CAPTURE, shell=""):
@@ -102,8 +103,8 @@ if case == "bind_nightly":
     edit(".github/workflows/nightly.yml", anchor, anchor + "      env:\n        CORDUM_API_KEY: ${{ secrets.SYNTHETIC_FOREIGN }}\n")
 elif case in BINDS:
     edit(E2E, API, BINDS[case])
-elif case in MINTS:
-    mint(*MINTS[case])
+elif case in MINTS or case in OPTS:
+    mint(*MINTS[case]) if case in MINTS else mint(**{"before": SAFE, **OPTS[case]})
     step(RUN_MINT)
 elif case in ("mint_make", "make_errexit"):  # make runs each recipe line with sh -c: errexit off
     mint()
@@ -139,9 +140,6 @@ elif case in SHELLS:
 elif case in TRACE:  # trace_bang: an exec'd script whose #! line turns xtrace on
     mint(SAFE, bang="#!/bin/bash -x\n" if case == "trace_bang" else "#!/usr/bin/env bash\n")
     step(TRACE[case][1], *TRACE[case][2:], shell=TRACE[case][0])
-elif case == "mint_errexit_func":  # errexit set inside main() still covers the registration
-    mint(SAFE, head="main() {\nset -euo pipefail\n", tail="}\nmain\n")
-    step(RUN_MINT)
 elif case in NOEXT:  # source and bash read any text as shell; exec only a sh #!, or an executable without #! (ENOEXEC)
     write(INC, NOEXT[case][0] + BODY.replace("@BEFORE@", "").replace("@AFTER@", "") + "\n")
     os.chmod(root / INC, NOEXT[case][2])
@@ -213,6 +211,7 @@ base clean
 bind_spacing clean
 mint_registered clean
 mint_errexit_func clean
+return_local clean
 trace_off clean
 noext_data clean
 noext_python clean
@@ -229,6 +228,7 @@ mint_prefix e2e.yml:e2e-tls:CREDENTIAL_PREFIX_PRINT@tools/scripts/zz_synthetic_m
 mint_ignored e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 mint_errexit_off e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 mint_xtrace e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
+return_global e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 trace_shell e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 trace_env e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 trace_bash_x docs-linkcheck.yml:link-check:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh

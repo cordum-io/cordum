@@ -97,11 +97,11 @@ def parse(text: str, line: int = 1) -> tuple:  # (commands with block stack and 
         name = (cmd.words[1] if first == "function" and len(cmd.words) > 1 else first).removesuffix("()") if kind == "{" and cmd.words else ""
         if kind: stack.append((len(cmds) - 1, "func" if name else kind, name))
     return cmds, error or (line if end < 0 else 0)
-def exits(cmds: list, start: int, level: tuple) -> bool:  # exit/return at level before else/elif or leaving it
-    for cmd in cmds[start:]:
-        words = cmd.words[cmd.words[:1] == ["then"]:]
-        if len(cmd.stack) < len(level) or cmd.stack == level and words[:1] in (["else"], ["elif"], ["exit"], ["return"]): return cmd.stack == level and words[:1] in (["exit"], ["return"])
-    return False
+def exits(cmds: list, start: int, level: tuple, var: str, k: int) -> bool:  # exit at level before else/elif or leaving it; return only once var is local to k's function or cleared there
+    fn, stop = next((s for s in reversed(cmds[k].stack) if cmds[s].op == "{" and cmds[s].words), -1), next((i for i in range(start, len(cmds)) if len(cmds[i].stack) < len(level) or cmds[i].stack == level and cmds[i].words[cmds[i].words[:1] == ["then"]:][:1] in (["else"], ["elif"], ["exit"], ["return"])), len(cmds))
+    words = cmds[stop].words[cmds[stop].words[:1] == ["then"]:][:1] if stop < len(cmds) and cmds[stop].stack == level else []
+    held = fn >= 0 and any(c.stack[-1:] == (fn,) and c.words[:1] == ["local"] and var in [w.split("=")[0] for w in c.words[1:]] for c in cmds[:k + 1])  # the caller cannot read it after the return
+    return words == ["exit"] or words == ["return"] and (held or any(c.stack == level and re.fullmatch(r"(?:then )?(?:unset (?:-v )?" + var + "|" + var + r"=(?:\"\"|'')?)", c.text) for c in cmds[start:stop]))
 def registered_at(cmds: list, j: int, k: int, var: str, errexit: bool) -> bool:  # cmds[j] registers var; a failure stops before any use
     words, nxt = list(cmds[j].words), cmds[j + 1] if j + 1 < len(cmds) else Cmd(0, [], "", 0)
     lead = words.pop(0) if words[:1] in (["if"], ["then"], ["do"]) else ""
@@ -113,8 +113,8 @@ def registered_at(cmds: list, j: int, k: int, var: str, errexit: bool) -> bool: 
         while lead != "if" and head and cmds[head - 1].op == "&&" and cmds[head].words[:1] != ["if"]:
             head -= 1
             if not re.fullmatch(safe, cmds[head].text): return False
-        return cmds[head].words[:1] == ["if"] and cmds[head].stack == cmds[k].stack and cmds[j].op in (";", "\n") and nxt.words[:1] == ["then"] and exits(cmds, j + 1, cmds[head].stack + (head,))
-    bail = nxt.words[:1] in (["exit"], ["return"]) or (not nxt.words and nxt.op == "{" and exits(cmds, j + 2, nxt.stack + (j + 1,)))
+        return cmds[head].words[:1] == ["if"] and cmds[head].stack == cmds[k].stack and cmds[j].op in (";", "\n") and nxt.words[:1] == ["then"] and exits(cmds, j + 1, cmds[head].stack + (head,), var, k)
+    bail = nxt.words[:1] in (["exit"], ["return"]) and exits(cmds, j + 1, nxt.stack, var, k) or (not nxt.words and nxt.op == "{" and exits(cmds, j + 2, nxt.stack + (j + 1,), var, k))
     if lead == "if" or (j and cmds[j - 1].op in ("&&", "||", "|", "|&")) or not (cmds[j].op == "||" and bail or cmds[j].op in ("\n", ";", "", ")") and errexit): return False
     level, home = cmds[j].stack, cmds[k].stack
     gate = level[-1] if level and level[:-1] == home else -1  # one if deeper, on a safe test
