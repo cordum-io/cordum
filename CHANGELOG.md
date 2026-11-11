@@ -7,6 +7,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+#### core/mcp, core/controlplane/gateway — a policy publish during a policy-gated MCP call is retryable, not a store outage (2026-11-11, task-11b3c5ef)
+
+- With `mcp.policy_gate_enabled=true`, a call whose policy changed between
+  its `mcp.tool.pre` event and the Edge approval mint returns `-32096`
+  `kind=policy_snapshot_changed` (retry the call) instead of
+  `approval_store_unavailable`. Nothing is minted in that case. Genuine
+  Edge store outages still return `approval_store_unavailable`.
+
+#### core/mcp, core/controlplane/gateway — an action-gate REQUIRE_HUMAN MCP call resumes with its `_approval_ref` (2026-11-11, task-cd9df90a)
+
+- MCP (`mcp.policy_gate_enabled=true`): a tool call held REQUIRE_HUMAN by
+  the action-gate pipeline can now be resumed with its Edge
+  `_approval_ref` and executes exactly once. The resume is no longer
+  answered from the cached `approval pending` result, and it never mints a
+  fresh approval. SecOps invariants still deny on resume (task-cd9df90a).
+
 - The seven mutating MCP tools' descriptions no longer tell clients to surface
   `/approvals?mcp=<id>`; the dashboard Approvals page ignores that parameter, so
   the link never selected the approval. They now point to `/approvals` and ask

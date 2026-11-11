@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -524,5 +525,42 @@ func TestApprovalConflictKindFromError(t *testing.T) {
 	}
 	if _, ok := ApprovalConflictKindFromError(nil); ok {
 		t.Fatal("nil error should return ok=false")
+	}
+}
+
+// TestProcessApprovalClaim_StoreErrorWrapsUnavailable pins the claim wrap
+// (task-6cf46447): a ClaimApproval failure that is neither a conflict nor a
+// not-found is the store failing, so it wraps ErrApprovalStoreUnavailable,
+// which handleToolsCall sends through mapHandlerError. The transport cause
+// stays in the chain, for the server-side log only.
+func TestProcessApprovalClaim_StoreErrorWrapsUnavailable(t *testing.T) {
+	t.Parallel()
+	store := &fakeApprovalClaimStore{err: claimOutageErr()}
+	deps := ApprovalHoldDeps{
+		Store:          store,
+		PolicySnapshot: func(_ context.Context) string { return "policy-v7" },
+	}
+	outcome, err := ProcessApprovalClaim(newApprovalHoldCtx(), deps, ToolCallParams{
+		Name:      "fs.write",
+		Arguments: json.RawMessage(`{"path":"/etc/hostname","_approval_ref":"edge_appr_xyz"}`),
+	})
+	if err == nil {
+		t.Fatal("ProcessApprovalClaim returned nil err on a store outage; want a wrapped store error")
+	}
+	if !errors.Is(err, ErrApprovalStoreUnavailable) {
+		t.Errorf("errors.Is(err, ErrApprovalStoreUnavailable) = false for %v", err)
+	}
+	var opErr *net.OpError
+	if !errors.As(err, &opErr) {
+		t.Fatalf("errors.As(*net.OpError) = false for %v; the cause must stay in the chain", err)
+	}
+	if got := opErr.Addr.String(); got != "10.20.30.40:6379" {
+		t.Errorf("cause Addr = %q; want 10.20.30.40:6379", got)
+	}
+	if outcome.Consumed || outcome.ConflictErr != nil {
+		t.Errorf("outcome = %+v; want the zero outcome (not consumed, no conflict)", outcome)
+	}
+	if store.calls != 1 {
+		t.Errorf("ClaimApproval called %d times; want exactly 1", store.calls)
 	}
 }

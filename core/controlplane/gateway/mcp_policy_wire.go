@@ -110,16 +110,8 @@ func (g *gatewayApprovalGate) ConsumeActionGateDecision(ctx context.Context, _ m
 	// Invariant DENY first — fail closed regardless of the actiongate
 	// decision so a pack-contributed actiongate ALLOW cannot override
 	// a SecOps invariant block.
-	if g.invariants != nil {
-		rules := g.invariants.InvariantsForMCPTool(ctx)
-		// We synthesize a minimal mcp.Tool/CallMetadata view from the
-		// context payload so matchMCPInvariantDeny can run.
-		tool := mcp.Tool{Name: ctxData.Tool}
-		meta := MCPCallMetadata{Tenant: ctxData.Tenant, AgentID: ctxData.AgentID}
-		if rule, denied := matchMCPInvariantDeny(rules, tool, meta); denied {
-			return "", fmt.Errorf("%w: tool %q denied by invariant %q",
-				ErrMCPInvariantDeny, ctxData.Tool, rule.ID)
-		}
+	if err := g.actionGateInvariantDeny(ctx, ctxData); err != nil {
+		return "", err
 	}
 	// Preapproval HIT short-circuits the approval store. The bridge's
 	// pre event has already been emitted with Decision=require_approval;
@@ -138,11 +130,16 @@ func (g *gatewayApprovalGate) ConsumeActionGateDecision(ctx context.Context, _ m
 	//                         design (supports HTTP MCP transit without
 	//                         an EdgeSession, dev/test deploys).
 	//   - ("",  err, true):   Edge wired + metadata present but
+	//                         policy changed (retryable), or
 	//                         EnqueueApproval errored — fail-closed per
 	//                         DoD #5 (no silent legacy fallback that
 	//                         would produce a non-resumable approval_id).
 	ref, mintErr, didTry := g.mintEdgeApprovalForActionGate(ctx, ctxData)
 	if mintErr != nil {
+		// A policy change is retryable, not a store outage.
+		if errors.Is(mintErr, mcp.ErrPolicySnapshotChanged) {
+			return "", mintErr
+		}
 		return "", fmt.Errorf("%w: mcp gate Edge enqueue failed: %w", mcp.ErrApprovalStoreUnavailable, mintErr)
 	}
 	if didTry {
@@ -182,6 +179,36 @@ func (g *gatewayApprovalGate) ConsumeActionGateDecision(ctx context.Context, _ m
 	return rec.ID, nil
 }
 
+var _ mcp.ConsumedApprovalAuthorizer = (*gatewayApprovalGate)(nil)
+
+// AuthorizeConsumedApproval authorizes a REQUIRE_HUMAN call resumed with
+// its consumed Edge approval (task-cd9df90a C2). Only the invariant DENY
+// floor applies: the approval already stands in for the preapproval and
+// the mint, so neither runs.
+func (g *gatewayApprovalGate) AuthorizeConsumedApproval(ctx context.Context, ctxData mcp.ToolCallApprovalContext) error {
+	if g == nil || g.store == nil {
+		return fmt.Errorf("mcp gate: approval store unavailable")
+	}
+	return g.actionGateInvariantDeny(ctx, ctxData)
+}
+
+// actionGateInvariantDeny is the SecOps invariant DENY floor of the
+// action-gate handoff. It synthesizes a minimal mcp.Tool/CallMetadata view
+// from the context payload so matchMCPInvariantDeny can run.
+func (g *gatewayApprovalGate) actionGateInvariantDeny(ctx context.Context, ctxData mcp.ToolCallApprovalContext) error {
+	if g.invariants == nil {
+		return nil
+	}
+	rules := g.invariants.InvariantsForMCPTool(ctx)
+	tool := mcp.Tool{Name: ctxData.Tool}
+	meta := MCPCallMetadata{Tenant: ctxData.Tenant, AgentID: ctxData.AgentID}
+	if rule, denied := matchMCPInvariantDeny(rules, tool, meta); denied {
+		return fmt.Errorf("%w: tool %q denied by invariant %q",
+			ErrMCPInvariantDeny, ctxData.Tool, rule.ID)
+	}
+	return nil
+}
+
 // mintEdgeApprovalForActionGate creates an EdgeApproval consumable via
 // the EDGE-103 `_approval_ref` resume path. Returns a three-way outcome:
 //   - (ref, nil, true):  Edge mint succeeded.
@@ -190,7 +217,8 @@ func (g *gatewayApprovalGate) ConsumeActionGateDecision(ctx context.Context, _ m
 //   - ("",  err, true):  Edge wired + metadata present but the policy
 //     pre-event id is missing or EnqueueApproval failed — caller
 //     surfaces -32096 approval_store_unavailable (DoD #5; no silent
-//     legacy fallback).
+//     legacy fallback). A policy change since the pre-event instead
+//     returns ErrPolicySnapshotChanged (retryable).
 //
 // The approval binds to the policy pre-event (mcp.tool.pre) named by
 // ctxData.EventID: edge.EnqueueApproval requires an existing event whose
@@ -214,6 +242,9 @@ func (g *gatewayApprovalGate) mintEdgeApprovalForActionGate(ctx context.Context,
 		return "", errors.New("policy pre-event id missing from approval context"), true
 	}
 	policySnapshot := g.policySnapshotForEvents(ctx)
+	if err := edgeMintSnapshotDrift(ctxData.PolicySnapshot, policySnapshot); err != nil {
+		return "", err, true
+	}
 	actionHash, inputHash := mcp.BuildMCPApprovalBinding(
 		meta.Tenant,
 		g.serverName,
