@@ -46,7 +46,7 @@ func (s *server) preserveWorkerCredentialAgent(
 	if s.agentIdentityStore == nil {
 		return errWorkerCredentialAgentStoreUnavailable
 	}
-	agent, err := s.agentIdentityStore.GetByWorkerID(ctx, existing.WorkerID)
+	agent, err := s.agentIdentityStore.GetByWorkerIDForTenant(ctx, tenant, existing.WorkerID)
 	if err != nil {
 		return fmt.Errorf("%w: %v", errWorkerCredentialAgentStoreUnavailable, err)
 	}
