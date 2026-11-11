@@ -56,7 +56,7 @@ site_blog_2() { git -C "$SITE" grep -n -I -i -E "${ASSURANCE[@]}" "$PIN_S" -- si
 ## Surfaces
 | Surface | Repo | Paths (short form) | Hits | Files | Owner | Accurate | Overstated | Unverifiable | Not-a-claim |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| cordum-top | cordum | README, SECURITY, ROADMAP, BENCHMARKS, SUPPORT | 193 | 4 | M0-07 | pending | pending | pending | pending |
+| cordum-top | cordum | README, SECURITY, ROADMAP, BENCHMARKS, SUPPORT | 193 | 4 | M0-07 | 38 | 52 | 54 | 55 |
 | cordum-docs-1 | cordum | docs root, mcp, adr | 230 | 59 | M0-07-CORE-1 | pending | pending | pending | pending |
 | cordum-docs-2 | cordum | remaining docs | 262 | 70 | M0-07-CORE-2 | pending | pending | pending | pending |
 | site-pages | Cordum-site | src except blog/tests, llms-full, docs-site | 390 | 101 | M0-07-SITE-1 | pending | pending | pending | pending |

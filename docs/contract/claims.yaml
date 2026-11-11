@@ -269,3 +269,23 @@ claims:
     tests: []
     evidence: "The canonical publish gate exists; no current signed artifact set or release qualification is attached."
     public_sources: ["cordum:README.md:676","cordum:README.md:677","cordum:README.md:678"]
+  - id: CLM-027
+    statement: "The Copilot Edge hook adapter routes chat and tool events through Cordum policy decisions."
+    boundary: "Configured VS Code Copilot hooks invoking cordum-hook copilot and agentd; not every chat or tool action outside those hooks."
+    status: supported
+    invariants: ["I01","I02","I10"]
+    findings: ["R01","R02","R14","R15"]
+    enforcement_points: [{"path":"cmd/cordum-hook/main.go","symbol":"dispatchCopilot"},{"path":"core/edge/agentd/evaluator.go","symbol":"Evaluator.evaluateHook"}]
+    tests: [{"package":"cmd/cordum-hook","name":"TestRunCLICopilotPreToolUseGovernsAndBlocks"},{"package":"cmd/cordum-hook","name":"TestRunCLICopilotUserPromptSubmitGoverned"}]
+    evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 the adapter and hook-decision tests exist; the tests use a fake agentd and do not qualify universal endpoint protection. Open findings R01, R02, R14, R15."
+    public_sources: ["cordum:ROADMAP.md:59"]
+  - id: CLM-028
+    statement: "LLM-proxy ingestion supplies redacted event records and redaction advisories for submitted model traffic."
+    boundary: "Enabled authenticated gateway LLM ingestion and its supplied event content; external proxy routing and provider delivery are not qualified here."
+    status: supported
+    invariants: ["I02","I09","I10"]
+    findings: ["R08","R12","R14","R15"]
+    enforcement_points: [{"path":"core/edge/llmingest/adapter.go","symbol":"Adapter.redactInput"},{"path":"core/edge/llmingest/adapter.go","symbol":"Adapter.mapEnvelope"},{"path":"core/controlplane/gateway/handlers_edge_llm_ingest.go","symbol":"server.handleEdgeLLMIngest"}]
+    tests: [{"package":"core/edge/llmingest","name":"TestMap_RedactsSecretInContent"}]
+    evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 content redaction, advisory responses and event persistence exist; no end-to-end provider-boundary qualification is attached. Open findings R08, R12, R14, R15."
+    public_sources: ["cordum:ROADMAP.md:60"]
