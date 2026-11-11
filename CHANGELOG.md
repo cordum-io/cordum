@@ -11,6 +11,11 @@ Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
 
 ### Changed
 
+- Added the [planned first protected-operation contract](docs/contract/protected-operation.md)
+  for Kubernetes manifest apply, with a proposed reference boundary, credential
+  inventory and measurable acceptance ideas. Broker/grant enforcement is future
+  work; runtime acceptance evidence is not measured.
+
 #### CAP dependency promoted to the published v2.17.0 release (2026-07-22, task-a24b53c5)
 
 - Landed in #408 (root and `sdk` modules pin v2.17.0) and #441, which folds
