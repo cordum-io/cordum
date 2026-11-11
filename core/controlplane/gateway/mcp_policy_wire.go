@@ -278,6 +278,9 @@ func BuildMCPPolicyDeps(pipeline *actiongates.Pipeline, gate *gatewayApprovalGat
 		// binds to (task-63400922 E2). A method value, read per call,
 		// because WithEdgeApprovalMint may attach the snapshot func after
 		// these deps are built.
+		// ponytail: one loadPolicyBundles per policy-gated call (a config
+		// GET plus a workflow list); read only the policy doc's updated-at
+		// once that cost shows (task-2688feeb).
 		PolicySnapshot: gate.policySnapshotForEvents,
 		Redactor:       mcp.DefaultRedactor(),
 		// Backend selection per mcp.SelectDedupeStore matrix: unset
