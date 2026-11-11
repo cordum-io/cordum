@@ -224,10 +224,13 @@ type UpstreamToolCaller interface {
 	Invoke(ctx context.Context, params ToolCallParams) (*ToolCallResult, error)
 }
 
-// ApprovalHandoff routes a REQUIRE_HUMAN gate decision into the
-// gateway's existing MCPApprovalStore lifecycle. The gateway-side
-// adapter (gatewayApprovalGate.ConsumeActionGateDecision) returns
-// the approval reference the caller surfaces to the client.
+// ApprovalHandoff routes a REQUIRE_HUMAN gate decision into the approval
+// lifecycle: under the policy gate, the Edge approval mint. The
+// gateway-side adapter (gatewayApprovalGate.ConsumeActionGateDecision)
+// returns the approval reference the caller surfaces to the client.
+// The contract is a non-empty approval reference or an error: an empty
+// or blank reference fails closed with ErrApprovalGateMisconfigured
+// (-32097) and is never cached (task-06784e6d).
 type ApprovalHandoff interface {
 	ConsumeActionGateDecision(ctx context.Context, dec PolicyDecision, ctxData ToolCallApprovalContext) (string, error)
 }
@@ -965,6 +968,12 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 		})
 		if herr != nil {
 			finalErr = fmt.Errorf("approval handoff: %w", herr)
+			return nil, finalErr
+		}
+		// task-06784e6d R3: "approval pending: " with no ref leaves the
+		// caller nothing to resume. Fail closed; as an error it is never cached.
+		if strings.TrimSpace(ref) == "" {
+			finalErr = fmt.Errorf("%w: approval handoff returned no approval reference", ErrApprovalGateMisconfigured)
 			return nil, finalErr
 		}
 		approvalPending := &ToolCallResult{

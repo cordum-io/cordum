@@ -2,7 +2,6 @@ package gateway
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -14,55 +13,6 @@ import (
 	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/policy/actiongates"
 )
-
-// TestLegacyMCPApprovalArgsHash_NormalizesPlaceholders is the PR #276
-// Sub-H #30 regression. The helper that bridges upstream-controlled
-// ctxData.ActionHash into the legacy MCPApprovalStore ArgsHash column
-// must (a) always return a 64-character value so the SIEM correlation
-// shape is stable and (b) never return the short "00000000" 8-char
-// placeholder that predated the canonical-args binding. Real non-empty
-// hex digests must pass through unchanged so retry idempotency keys
-// stay byte-identical across the normalization pass.
-func TestLegacyMCPApprovalArgsHash_NormalizesPlaceholders(t *testing.T) {
-	t.Parallel()
-	zero64 := legacyMCPApprovalArgsHashZero
-	if len(zero64) != 64 {
-		t.Fatalf("legacyMCPApprovalArgsHashZero len=%d, want 64 (sha256 hex shape)", len(zero64))
-	}
-	if _, err := hex.DecodeString(zero64); err != nil {
-		t.Fatalf("legacyMCPApprovalArgsHashZero hex-decode failed: %v", err)
-	}
-
-	realHash := "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-	cases := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{"empty_normalized_to_64_zeros", "", zero64},
-		{"whitespace_normalized_to_64_zeros", "   ", zero64},
-		{"short_placeholder_normalized_to_64_zeros", "00000000", zero64},
-		{"short_placeholder_padded_whitespace", "  00000000  ", zero64},
-		{"real_64_hex_passes_through", realHash, realHash},
-		{"real_64_hex_trimmed_passes_through", "  " + realHash + " ", realHash},
-		// A non-canonical but non-placeholder value MUST be preserved
-		// — the legacy SIEM table accepts arbitrary strings and a
-		// stricter shape check would drop legitimately-correlated rows.
-		{"non_hex_marker_preserved", "legacy-debug-token", "legacy-debug-token"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			got := legacyMCPApprovalArgsHash(tc.in)
-			if got != tc.want {
-				t.Fatalf("legacyMCPApprovalArgsHash(%q) = %q, want %q", tc.in, got, tc.want)
-			}
-			if got == "00000000" {
-				t.Errorf("helper returned the 8-char short placeholder; want 64-char zero hex instead")
-			}
-		})
-	}
-}
 
 // fakeInvariantLookup returns a deny rule keyed by tool name. The
 // tests use this to simulate the SecOps invariant SECURITY FLOOR
@@ -80,8 +30,9 @@ func (f fakeInvariantLookup) InvariantsForMCPTool(_ context.Context) []config.Po
 }
 
 // fakePreapprovalLookup returns IsPreapproved=true for a configured
-// (tenant, agent, tool) tuple. Used to assert preapproval HIT
-// short-circuits the approval store consultation.
+// (tenant, agent, tool) tuple and counts consultations, so tests can
+// assert the action-gate handoff does NOT consult preapproval
+// (task-06784e6d R1).
 type fakePreapprovalLookup struct {
 	tenant   string
 	agentID  string
@@ -307,13 +258,11 @@ func TestActionGateAllowSkipsApprovalStore(t *testing.T) {
 	}
 }
 
-// TestActionGateRequireHumanRoutesToApprovalStore asserts the happy
-// REQUIRE_HUMAN path: no invariant deny, no preapproval hit → the
-// gate falls through to the approval store. We use a real (nil-Redis)
-// MCPApprovalStore so the ClaimPreApproved call hits the
-// ensureReady-style early-error path and returns an error wrapped by
-// our adapter — the test verifies the wrapping, which is the contract
-// the JSON-RPC layer relies on for error code mapping.
+// TestActionGateRequireHumanRoutesToApprovalStore asserts a
+// REQUIRE_HUMAN handoff with no invariant deny and no Edge approval
+// mint wired fails closed: the gate returns an
+// mcp.ErrApprovalGateMisconfigured error (JSON-RPC -32097) and never
+// falls back to the legacy MCPApprovalStore (task-06784e6d R2).
 func TestActionGateRequireHumanRoutesToApprovalStore(t *testing.T) {
 	t.Parallel()
 	// Real store with no Redis client; ClaimPreApproved will fail at
