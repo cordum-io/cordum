@@ -21,13 +21,12 @@ def seeded(env: dict, name: str) -> bool: return (value := env.get(name, "")) !=
 def literal(value: str) -> int: return len(re.match(r"[^$\x00]*", value).group())
 def flag(cmd: Cmd, on: bool, short: str, name: str) -> bool: return next((sign == "-" for sign in reversed(re.findall(r"(?<!\S)([-+])(?:[a-zA-Z]*" + short + r"[a-zA-Z]*|o\s+" + name + r")(?!\S)", cmd.text))), on) if cmd.words[cmd.words[:1] in (["then"], ["do"], ["else"]):][:1] == ["set"] else on  # after a `set`
 def pg_runs_gate_1(argv: list) -> bool: return "--skip-rebuild" not in argv and (not (gates := [v for f, v in zip(argv, argv[1:]) if f == "--gate"]) or not gates[-1].isdigit() or gates[-1] == "1")
-# Reviewed exemptions: the source, a block around it, or every call site of its function matches the guard, and the condition
-# holds on the entry env. recover-dashboard's anonymous public-image pull token: its exact fetch sends no credential, from literal URLs.
+# Reviewed exemptions: the source, a block around it, or every call site of its function matches the guard; the entry env holds the condition.
 EXEMPT = {
     ("tools/scripts/edge_fake_hook_e2e.sh", "AGENTD_NONCE"): ("if ! want_bypass_hook", lambda env: env.get("CORDUM_EDGE_E2E_BYPASS_HOOK", "").lower() in ("1", "true", "yes", "on")),
     ("tools/scripts/quickstart.sh", "api_key"): (r'if \[\[ -z "\$\{api_key\}" \]\]', lambda env: seeded(env, "CORDUM_API_KEY")),
     ("tools/scripts/quickstart.sh", "REDIS_PASSWORD"): (r'if \[\[ -z "\$\{REDIS_PASSWORD:-\}" \]\]', lambda env: seeded(env, "REDIS_PASSWORD")),
-    (".github/workflows/recover-dashboard-v1.2.0.yml", "token"): (re.escape("token=$(curl --fail --silent --show-error \"$token_url\" | jq -er '.token')"), lambda env: True)}
+    (".github/workflows/recover-dashboard-v1.2.0.yml", "token"): (re.escape("token=$(curl --fail --silent --show-error \"$token_url\" | jq -er '.token')"), lambda env: True)}  # anonymous public-image pull token: the exact fetch sends no credential, to literal URLs
 PREFIX_EXEMPT = {("tools/scripts/quickstart.sh", "API_KEY"): lambda env, quiet, need: quiet or literal(env.get("CORDUM_API_KEY", "")) >= need}  # banner prefix: stdout discarded or seeded literal
 GATES ={("tools/scripts/production_gate.sh", "gate_1_deploy", "tools/scripts/quickstart.sh"): pg_runs_gate_1}  # quickstart runs only in gate 1, never with --skip-rebuild
 def heredocs(lines: list) -> list:  # (header index, body indices incl. terminator, quoted delimiter, terminated)
@@ -120,12 +119,12 @@ def registered_at(cmds: list, j: int, k: int, var: str, errexit: bool) -> bool: 
     level, home = cmds[j].stack, cmds[k].stack
     gate = level[-1] if level and level[:-1] == home else -1  # one if deeper, on a safe test
     return level == home or gate >= 0 and cmds[gate].words[:1] == ["if"] and bool(re.fullmatch(safe, cmds[gate].text)) and not any(c.stack == level and c.words[:1] in (["else"], ["elif"]) for c in cmds[gate + 1:j])
-def state(cmds: list, k: int, var: str, errexit: list) -> str:  # registered, late (used first) or unregistered; reassignment ends it
+def state(cmds: list, k: int, var: str, flags: list) -> str:  # registered, late (used or traced first) or unregistered; reassignment ends it
     ref = re.compile(r"\$\{?" + var + r"(?!\w)|\bexport\s+" + var + r"\b(?!=)")
     harmless, used = re.compile(r"-[nz]\s+\"?\$\{?" + var + r"\}?\"?|\$\{#" + var + r"\}"), False
     for j in range(k + 1, len(cmds)):
         if ref.search(harmless.sub("", cmds[j].text)):
-            if registered_at(cmds, j, k, var, errexit[j]): return "late" if used else "registered"
+            if registered_at(cmds, j, k, var, flags[j][0]): return "late" if used or any(on[1] for on in flags[k:j + 1]) else "registered"
             used = True
         elif (m := ASSIGN.fullmatch(cmds[j].text)) and m.group(1) == var: break
     return "unregistered"
@@ -138,14 +137,14 @@ def shallow(text: str) -> str:  # the text without command substitutions nested 
     return out
 def facts(text: str, line: int = 1, errexit: bool = False) -> tuple:  # (cmds, unparsable line, [(k, var, kind, state)], [(k, var, bytes)])
     cmds, error = parse(text, line)
-    errexit, acqs = list(itertools.accumulate(cmds, lambda on, c: flag(c, on, "e", "errexit"), initial=errexit)), []  # [k]: in force at cmds[k]
+    flags, acqs = list(itertools.accumulate(cmds, lambda on, c: (flag(c, on[0], "e", "errexit"), flag(c, on[1], "x", "xtrace")), initial=(errexit, False))), []  # [k]: in force at cmds[k]
     for k, cmd in enumerate(cmds):
         var, rhs = (m.group(1), m.group(2)) if (m := ASSIGN.fullmatch(cmd.text)) else ("-", "")
         kind = "" if "idem" in var.lower() else "auth-response" if JQ.search(rhs) else "generated" if NAME.search(var) and GEN.search(shallow(rhs)) else ""
         if kind or (not m and not cmd.sub and JQ.search(cmd.text) and not DEVNULL.search(cmd.text)):  # a bare extraction prints it
-            acqs.append((k, var, kind or "auth-response", state(cmds, k, var, errexit) if kind else "unregistered"))
+            acqs.append((k, var, kind or "auth-response", state(cmds, k, var, flags) if kind else "unregistered"))
         helper = re.fullmatch(r"gha_mask_env(?:_from_command((?: [A-Z][A-Z0-9_]*)+) --| ([A-Z][A-Z0-9_]*)) .+", cmd.text, re.S)  # fail-closed: masks, then exports
-        acqs += [(k, name, "masked-env", "registered") for name in (helper.group(1) or helper.group(2)).split()] if helper else []
+        acqs += [(k, name, "masked-env", "late" if flags[k][1] else "registered") for name in (helper.group(1) or helper.group(2)).split()] if helper else []
     names = {a[1] for a in acqs}
     return cmds, error, acqs, [(k, m.group(1), int(m.group(2)) + int(m.group(3)) if m.group(2) else 10 ** 6) for k, c in enumerate(cmds) for m in PREFIX.finditer(c.text) if m.group(1) in names or NAME.search(m.group(1))]
 def expand(word: str, table: dict, env: dict, here: str) -> str:  # script-dir and cd/pwd idioms, known variables, defaults; drops quotes
@@ -157,15 +156,15 @@ def expand(word: str, table: dict, env: dict, here: str) -> str:  # script-dir a
         word, old = VAR.sub(lookup, TOPLEVEL.sub(".", CDPWD.sub(r"\1", DIRNAME.sub(here, word)))), word
         if word == old: break
     return word.replace('"', "").replace("'", "")
-def shell_operand(args: list) -> tuple:  # bash/sh: (script, argv, False) or (-c program, [], True); "" is stdin
-    i = 0
+def shell_operand(args: list) -> tuple:  # bash/sh: (script, argv, False, traced) or (-c program, [], True, traced); "" is stdin
+    i, traced = 0, False
     while i < len(args) and args[i][:1] in ("-", "+") and args[i] != "--":
-        short = not args[i].startswith("--")
-        if short and "c" in args[i]: return (args[i + 1], [], True) if i + 1 < len(args) else ("", [], False)
-        if short and "s" in args[i]: return "", [], False
+        short, traced = not args[i].startswith("--"), traced or bool(re.fullmatch(r"-[a-zA-Z]*x[a-zA-Z]*", args[i]) or re.fullmatch(r"-[a-zA-Z]*o", args[i]) and args[i + 1:i + 2] == ["xtrace"])
+        if short and "c" in args[i]: return (args[i + 1], [], True, traced) if i + 1 < len(args) else ("", [], False, traced)
+        if short and "s" in args[i]: return "", [], False, traced
         i += 2 if short and args[i][-1] in "oO" else 1
     i += args[i:i + 1] == ["--"]
-    return (args[i], args[i + 1:], False) if i < len(args) else ("", [], False)
+    return (args[i], args[i + 1:], False, traced) if i < len(args) else ("", [], False, traced)
 def literal_env(node: object) -> dict: return {str(k): "" if v is None else str(v) for k, v in node.items()} if isinstance(node, dict) else {}
 def github_env_names(run: str) -> set:  # names a run step writes to GITHUB_ENV (masked or plain)
     return set(re.findall(r"(?m)^\s*gha_mask_env\s+([A-Za-z_]\w*)", run)) | set(re.findall(r"(?m)^\s*(?:echo|printf)\s+(?:'[^']*'\s+)?[\"']?([A-Za-z_]\w*)=.*>>\s*[\"']?\$\{?GITHUB_ENV\b", run)) | {n for args in re.findall(r"(?m)^\s*gha_mask_env_from_command\s+(.+?)\s+--\s", run) for n in re.findall(r"[A-Za-z_]\w*", args)}
@@ -183,8 +182,7 @@ def guarded(cmds: list, k: int, guard: str) -> bool:  # the source or a block ar
     return under(cmds[k], (k,)) or (bool(calls) and all(under(c) for c in calls))
 class Scan:  # walks each job's run steps through their transitive shell and make edges
     def __init__(self, root: pathlib.Path) -> None: self.root, self.cache, self.issues, self.inventory, self.exec_skip = root, {}, set(), set(), set()
-    def report(self, code: str, rel: str, line: int, source: bool = False) -> None:  # SOURCE_* refusals gate credential jobs only
-        if self.credential or not source: self.issues.add((self.wf, self.job, f"{code}@{rel}:{line}"))
+    def report(self, code: str, rel: str, line: int, source: bool = False) -> None: self.issues.add((self.wf, self.job, f"{code}@{rel}:{line}")) if self.credential or not source else None  # SOURCE_*: credential jobs only
     def read(self, rel: str) -> tuple:  # (text, refusal): a regular in-repo file, no symlinked component, <= MAX_BYTES
         path = self.root
         for part in rel.split("/"):
@@ -229,13 +227,15 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
         cmds, error, acqs, prefixes = unit
         if error: self.report("SOURCE_DYNAMIC", rel, error, True)
         for k, var, kind, status in acqs:
-            status = "exempt" if status != "registered" and (exempt := EXEMPT.get((rel, var))) and exempt[1](env) and guarded(cmds, k, exempt[0]) else status
+            status = "late" if status == "registered" and "xtrace" in env.get("SHELLOPTS", "") else "exempt" if status != "registered" and (exempt := EXEMPT.get((rel, var))) and exempt[1](env) and guarded(cmds, k, exempt[0]) else status
             self.inventory.add(f"{self.wf}:{self.job}:{kind}@{rel}:{cmds[k].line}:{var}:{status}")
             if status in ("unregistered", "late"): self.report("CREDENTIAL_UNREGISTERED" if status == "unregistered" else "CREDENTIAL_USE_BEFORE_REGISTRATION", rel, cmds[k].line)
         for k, var, need in prefixes:
             if not ((allowed := PREFIX_EXEMPT.get((rel, var))) and allowed(env, quiet and ">&2" not in cmds[k].text, need)): self.report("CREDENTIAL_PREFIX_PRINT", rel, cmds[k].line)
-        table, env = {}, dict(env)
-        for cmd in cmds: self.track(cmd.words, table, env, posixpath.dirname(rel) or "."); self.edge(cmd, rel, table, env, argv, chain, quiet, cwd)  # noqa: E702
+        table, env, traced = {}, dict(env), "xtrace" in env.get("SHELLOPTS", "")
+        for cmd in cmds:  # xtrace in force at an edge reaches its child, as if SHELLOPTS were exported
+            if (on := flag(cmd, traced, "x", "xtrace")) != traced: traced, env["SHELLOPTS"] = on, "xtrace" * on
+            self.track(cmd.words, table, env, posixpath.dirname(rel) or "."); self.edge(cmd, rel, table, env, argv, chain, quiet, cwd)  # noqa: E702
     def track(self, words: list, table: dict, env: dict, here: str) -> None:  # a pure assignment, export, declaration or unset
         keyword = words[0] if words[:1] and words[0] in ("export", "local", "declare", "typeset", "readonly", "unset") else ""
         items = [w for w in words[bool(keyword):] if not w.startswith("-")]
@@ -256,7 +256,7 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
         if name == "eval": return dynamic()
         if name in ("make", "gmake"): return self.make([expand(w, table, env, here) for w in words[1:]], rel, cmd.line, child, chain, quiet)
         if name in ("source", "."): target, rest, kind = (words + [""])[1], words[2:], "source"  # no literal operand (<(...)) is dynamic
-        elif posixpath.basename(name) in ("bash", "sh"): (target, rest, program), kind = shell_operand(words[1:]), "shell"
+        elif posixpath.basename(name) in ("bash", "sh"): (target, rest, program, traced), kind = shell_operand(words[1:]), "shell"; child.update({"SHELLOPTS": "xtrace"} if traced else {})  # noqa: E702
         elif "/" in name: target, rest, kind = words[0], words[1:], "exec"
         else: return dynamic() if any(w.strip("\"'").endswith(".sh") for w in words[1:]) and ("$" in name or any(posixpath.basename(w.strip("\"'")) in ("bash", "sh") for w in words[1:])) else None  # a wrapper or variable command runs a script
         if program:  # a literal -c program is scanned inline; one whose command word expands is dynamic
@@ -283,7 +283,7 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
             if not isinstance(step, dict) or "run" not in step: continue
             shell, cwd = (str(step.get(key) or defaults[0].get(key) or defaults[1].get(key) or "") for key in ("shell", "working-directory"))
             if shell and not re.match(r"(?:\S*/)?(?:env\s+)?(?:ba)?sh(?=\s|$)", shell): self.report("SOURCE_DYNAMIC", rel, lines.get((job_id, index), 0) + 1, True); continue  # unscanned shell
-            env, errexit = {**base, **dict.fromkeys(exported, UNKNOWN), **literal_env(step.get("env"))}, shell in ("", "bash", "sh") or bool(re.search(r"\s-\w*e", shell))
+            env, errexit = {**base, **dict.fromkeys(exported, UNKNOWN), **literal_env(step.get("env")), **({"SHELLOPTS": "xtrace"} if re.search(r"(?<!\S)-[a-zA-Z]*x|-o\s+xtrace", shell) else {})}, shell in ("", "bash", "sh") or bool(re.search(r"\s-\w*e", shell))
             self.visit(rel, facts(str(step["run"]), lines.get((job_id, index), 0) + 1, errexit), env, [], (rel,), False, posixpath.normpath(cwd or "."))
             exported |= github_env_names(str(step["run"]))
 def transitive(root: pathlib.Path, credential_jobs: set) -> tuple:  # issues (workflow, job, CODE@path:line) and value-free inventory

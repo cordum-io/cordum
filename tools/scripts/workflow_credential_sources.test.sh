@@ -63,7 +63,7 @@ BINDS = {
 MINTS = {  # (lines after the acquisition, lines after its first use) in a set -euo pipefail script
     "mint_unregistered": ("", ""), "mint_registered": (SAFE, ""), "mint_late": ("", REG),
     "mint_prefix": (REG + '\necho "synthetic prefix ${minted:0:6}"', ""), "mint_ignored": (REG + " || true", ""),
-    "mint_errexit_off": ("set +e\n" + SAFE + "\nset -e", ""),
+    "mint_errexit_off": ("set +e\n" + SAFE + "\nset -e", ""), "mint_xtrace": ("set -x\n" + SAFE, ""),
 }
 GEN = {
     "gen_openssl": "$(openssl rand -hex 16)", "gen_uuidgen": "$(uuidgen)",
@@ -79,6 +79,11 @@ DYNAMIC = {
     "dyn_wrapper": "timeout -s KILL 10m " + RUN_MINT, "dyn_cmdword": '"${SYNTHETIC_SHELL}" ' + MINT_SH,
 }
 SHELLS = {"shell_env_bash": "/usr/bin/env bash {0}", "shell_pwsh": "pwsh"}
+TRACE = {  # (shell, run[, job]): xtrace on at a fail-closed registration; run-text tracing in a job the guard leaves open
+    "trace_shell": ("bash -x {0}", "source " + MINT_SH), "trace_env": ("", "SHELLOPTS=xtrace " + RUN_MINT),
+    "trace_bash_x": ("", "bash -x " + MINT_SH, *LINK), "trace_set_x": ("", "set -x\nsource " + MINT_SH, *LINK),
+    "trace_off": ("", "set -x\nset +x\nsource " + MINT_SH, *LINK),
+}
 NOEXT = {  # (#! line, run, mode) for a credential file without a shell suffix
     "noext_source": ("", "source " + INC, 0o644), "noext_exec": ("", "./" + INC, 0o755), "noext_data": ("", "./" + INC, 0o644),
     "noext_python": ("#!/usr/bin/env python3\n", "./" + INC, 0o755)}
@@ -134,6 +139,9 @@ elif case == "uses_local":
 elif case in SHELLS:
     mint()
     step(RUN_MINT, shell=SHELLS[case])
+elif case in TRACE:
+    mint(SAFE)
+    step(TRACE[case][1], *TRACE[case][2:], shell=TRACE[case][0])
 elif case == "mint_errexit_func":  # errexit set inside main() still covers the registration
     mint(SAFE, head="main() {\nset -euo pipefail\n", tail="}\nmain\n")
     step(RUN_MINT)
@@ -208,6 +216,7 @@ base clean
 bind_spacing clean
 mint_registered clean
 mint_errexit_func clean
+trace_off clean
 noext_data clean
 noext_python clean
 bind_literal_space e2e.yml:e2e-tls:REDACTION_VALUE_BINDING
@@ -222,6 +231,11 @@ mint_late e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_sy
 mint_prefix e2e.yml:e2e-tls:CREDENTIAL_PREFIX_PRINT@tools/scripts/zz_synthetic_mint.sh
 mint_ignored e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 mint_errexit_off e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
+mint_xtrace e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
+trace_shell e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
+trace_env e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
+trace_bash_x docs-linkcheck.yml:link-check:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
+trace_set_x docs-linkcheck.yml:link-check:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 noext_source e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.inc
 noext_exec e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.inc
 mint_make e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
