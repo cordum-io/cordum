@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 	"github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/infra/artifacts"
 	"github.com/cordum/cordum/core/mcp"
@@ -144,20 +146,29 @@ func (s *server) attachMCPPolicyDepsNamed(mcpServer *mcp.MCPServer, gate *gatewa
 	return mcpServer, ""
 }
 
-// mcpPolicySnapshotFunc returns a closure the WithApprovalHold consume
-// path calls to compute the current PolicySnapshot used in the
-// ApprovalClaimRequest. The snapshot is the bundle-updated-at timestamp
-// returned by loadPolicyBundles — it changes monotonically when the
-// active policy bundle rotates, so a consume against a stale snapshot
-// surfaces as `policy_mismatch` from the Edge approval store. Empty
-// string on a config-load error fails closed at the validation layer
-// (ApprovalClaimRequest rejects empty snapshots).
+// mcpPolicySnapshotFunc returns the PolicySnapshot provider the gateway
+// shares between the approval hold's consume path (ApprovalClaimRequest),
+// the gate's Edge approval mint (EdgeApprovalRequest) and, once task-63400922
+// lands, the per-pre-event stamping. The snapshot is the policy config doc's
+// updated-at, the same value loadPolicyBundles returns second. It changes
+// monotonically when the active policy bundle rotates, so a consume against a
+// stale snapshot surfaces as `policy_mismatch` from the Edge approval store.
+//
+// It is ONE config GET. Workflow override bundles never feed the snapshot, and
+// listing them made every policy-gated call O(#workflows) Redis reads
+// (task-2688feeb). A missing doc, a read error, a zero updated-at or an
+// unwired config service returns "", which fails closed at validation:
+// EdgeApprovalRequest and ApprovalClaimRequest reject empty snapshots
+// (core/edge/approval_store.go).
 func (s *server) mcpPolicySnapshotFunc() func(ctx context.Context) string {
 	return func(ctx context.Context) string {
-		_, snapshot, err := s.loadPolicyBundles(ctx)
-		if err != nil {
+		if s == nil || s.configSvc == nil {
 			return ""
 		}
-		return snapshot
+		doc, err := s.configSvc.Get(ctx, configsvc.Scope(packs.PolicyConfigScope), packs.PolicyConfigID)
+		if err != nil || doc == nil || doc.Updated.IsZero() {
+			return ""
+		}
+		return doc.Updated.UTC().Format(time.RFC3339)
 	}
 }
