@@ -86,15 +86,57 @@ The Edge closure checklist and this platform contract have different scopes and 
 
 ## Trusted components
 
-Classification follows whether a protection claim depends on the component deciding correctly or retaining a credential.
+Findings R01-R15 are open per the roadmap review at `ebc0dd6a`; repro cases are planned in M0-08 to M0-12, and the findings have not been re-checked at the reviewed commit. *(not verified)*
+
+A component is trusted when a protection claim depends on it deciding correctly or retaining a credential/secret. A client in the agent's trust domain is untrusted even if it performs useful checks; the trusted service must re-check its requests. Status measures protection of the decision or component, not mere installation. All positive statuses below are `supported`, not bypass-resistance or release qualification.
+
+Roadmap status caps (ids only; provenance is the review above):
+
+- Safety Kernel: R05, R06, R07, R08.
+- API Gateway: R01, R03, R04, R06, R09, R12, R13, R14.
+- Scheduler: R01, R08, R10.
+- Edge agentd: R01, R09, R14.
+- Edge hook: R02, R03.
+- NATS admission / Redis replay store: R10.
+- Audit chain: R11, R12.
+- Policy source and publication: R06, R07, R13.
+- Every entry point: R15.
 
 ### Trusted-component inventory
 
 The inventory records authority, compromise consequences and protection status.
 
+| Component | Code | What it decides | What a compromise allows | Current enforcement status |
+| --- | --- | --- | --- | --- |
+| Safety Kernel | `cmd/cordum-safety-kernel/`; `core/controlplane/safetykernel/` | Policy evaluation and input/output decisions. | Corrupt policy responses used by callers. | `supported`: policy evaluation and configurable transport/signature mechanisms; trusted service, not independently qualified. |
+| API Gateway | `cmd/cordum-api-gateway/`; `core/controlplane/gateway/` | Auth, RBAC, tenant checks; HTTP/gRPC submit, Edge evaluation, approvals, policy bundles; in-process MCP action gates (`core/controlplane/gateway/mcp_policy_wire.go`, `core/mcp/policy_evaluate.go`). The MCP dispatcher runs the local pipeline, not a kernel RPC. | Impersonate API decisions, alter publication/approvals and use service credentials. | `supported`: middleware and decision mechanisms, not universal mediation. |
+| Scheduler | `cmd/cordum-scheduler/`; `core/controlplane/scheduler/` | Safety before dispatch, approval fast path with request/snapshot checks, constraints, worker attestation and saga compensation (`core/controlplane/scheduler/engine.go`, `core/controlplane/scheduler/saga.go`, `core/controlplane/scheduler/credential_cache.go`). | Dispatch unauthorized jobs or corrupt their state. | `supported`: dispatch controls depend on trusted scheduler/store and selected modes. |
+| Workflow Engine | `cmd/cordum-workflow-engine/`; `core/workflow/` | Advances runs; executes inline condition/delay/approval/notify/transform/storage/switch operations; submits worker jobs (`core/workflow/engine.go`, `docs/adr/004-inline-vs-dispatch-steps.md`). | Mutate run data or initiate jobs outside the intended workflow. | `supported`: separate inline and dispatch paths; no claim every step traverses the scheduler. |
+| Context Engine | `cmd/cordum-context-engine/`; `core/contextwindow/engine/` | Assembles context and reads/writes stored memory; receives `REDIS_URL` (`cmd/cordum-context-engine/main.go:84`). | Disclose or corrupt memory and exercise its store credentials. | `supported`: service/connection configuration; deployed Redis least privilege *(not verified)*. |
+| Edge agentd | `cmd/cordum-agentd/`; `core/edge/agentd/`; `core/edge/keychain/` | Holds endpoint session credentials and translates Gateway outcomes under configured fail modes. | Falsify local decisions/evidence or misuse retained credentials. | `supported` only on a trusted endpoint: nonce/keychain and managed deployment; not same-user isolation (`docs/security/agentd-keychain.md`). |
+| Edge hook | `cmd/cordum-hook/`; `core/edge/claude/` | Maps agent hook input and agentd responses to the agent hook contract. | Falsify the answer presented to the agent. | `supported` only on a trusted endpoint: managed settings and release-integrity mechanisms (`core/edge/claude/managed_settings.go`, `docs/security/binary-signing.md`), not an OS security boundary. |
+| Operator CLI | `cmd/cordumctl/`; `cmd/cordumctl/delegation_keygen.go`, `cmd/cordumctl/certs.go`, `cmd/cordumctl/audit.go` | Generates keys/certificates and renders audit verification results. API subcommands and the `edge claude` launcher (`cmd/cordumctl/edge_claude.go`) are clients the Gateway authorizes. | Exfiltrate generated/operator credentials or misrepresent evidence to the operator. | `supported` operator trust; client-side checks are not an independent enforcement point. |
+| Governance helper | `cmd/cordumctl-governance-helper/`; `cmd/cordumctl-governance-helper/governance.go` | Backfills `gov:dec:` records and tails `sys.audit.export` with direct Redis/NATS URLs. | Write misleading decision records and exercise its infrastructure credentials. | `supported` tooling; isolation of those credentials *(not verified)*. |
+| Redis | `core/infra/config/config.go`, `core/configsvc/`, `core/infra/replay/redis_store.go` | Stores state used as decision authority; not itself the business-policy evaluator. | Corrupt stored authority, approvals, replay state or evidence within granted permissions. | `supported` connection configuration; per-key protection in the deployment *(not verified)*. |
+| NATS | `core/infra/bus/`, `cmd/cordum-scheduler/handshake_security_keys.go` | Routes workload/control packets; admission and worker-identity mechanisms depend on configured modes. | Disrupt delivery or misuse broker privileges; application admission remains a separate check. | `supported`: transport/admission mechanisms, not qualified effect semantics. |
+| Policy source and publication | `core/controlplane/safetykernel/file_loader.go`, `core/controlplane/gateway/handlers_policy_bundles.go` | Supplies file/URL policies, bundles, signing keys and effective rules. | Change authorization through trusted publishing authority. | `supported`: signature modes and API permissions; publisher honesty remains trusted. |
+| Audit chain and exporters | `core/audit/` | Records, chains and exports event evidence. | Omit or misrepresent events, or misuse exporter/signing credentials. | `supported`: evidence mechanisms, not proof that every event was recorded or truthful. |
+| License/entitlement resolver | `core/licensing/resolver.go`, `core/licensing/license.go` | Resolves signed license claims into enabled features and limits. | Alter enabled rights/limits and the operator's view of entitlement. | `supported`: license verification is not workload authorization. |
+| Deployment configuration | `cordum-helm/`, `deploy/k8s/` | Selects service reachability, identities, modes and storage. | Replace services or relax every control that depends on those settings. | `supported` configuration artifacts; M0-02 reference-deployment qualification is `planned`. |
+
 ### Explicit untrusted list
 
 Clients and workload-controlled components require re-checks at trusted boundaries.
+
+- `cmd/cordum-claude/`: thin alias invoking the CLI launcher, developer convenience rather than authority; Gateway checks still apply (`cmd/cordum-claude/main.go:35-55`, `core/controlplane/gateway/gateway.go`).
+- `cmd/cordum-mcp/`: bridge calling Gateway REST with its configured API key; stdio lives in the client's trust domain and its optional local scope check is advisory relative to that domain. Gateway authorization must be authoritative (`cmd/cordum-mcp/main.go:103-155`, `core/controlplane/gateway/gateway.go`).
+- Agents and tool calls: workload-supplied requests, re-checked by the configured Edge/MCP/submit paths (`core/controlplane/gateway/handlers_edge_evaluate.go`, `core/mcp/policy_evaluate.go`).
+- Repository scripts: agent-domain executable inputs; classifier inspection is not confinement (`core/edge/classifier.go`, `docs/edge-074-policy-mechanism.md`). Arbitrary code confinement is M3 (planned).
+- MCP plugins: upstream descriptions and results are untrusted inputs, with registry/use-time and invocation checks at the Gateway (`core/controlplane/gateway/mcp_upstream_serving.go`, `core/mcp/policy_evaluate.go`).
+- Model output: proposals and text must be checked against backend authority, not accepted as grants (`core/mcp/policy_evaluate.go:109-114`, `core/policy/actiongates/`).
+- External workers and packs: CAP participants are not the policy authority; configured admission and Scheduler checks mediate dispatch (`core/infra/bus/raw_admission.go`, `core/controlplane/scheduler/engine.go`). They must still be trusted for honest execution when holding external credentials; that execution property is not certified here.
+- Dashboard SPA: an API client, not a trusted enforcement surface; Gateway middleware is the re-check (`core/controlplane/gateway/gateway.go`).
+- Every other API client: possession of client code or a client-side allow does not replace server authorization (`core/controlplane/gateway/gateway.go`, `core/controlplane/gateway/auth/rbac.go`).
 
 ## Reference-monitor properties
 
