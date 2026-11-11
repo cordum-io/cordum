@@ -282,7 +282,7 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
             if isinstance(step, dict) and "run" not in step and str(step.get("uses", "")).startswith("./"): self.report("SOURCE_DYNAMIC", rel, lines.get((job_id, index), 0) + 1, True)  # unscanned local action
             if not isinstance(step, dict) or "run" not in step: continue
             shell, cwd = (str(step.get(key) or defaults[0].get(key) or defaults[1].get(key) or "") for key in ("shell", "working-directory"))
-            if shell and not re.match(r"(?:ba)?sh\b", shell): continue
+            if shell and not re.match(r"(?:\S*/)?(?:env\s+)?(?:ba)?sh(?=\s|$)", shell): self.report("SOURCE_DYNAMIC", rel, lines.get((job_id, index), 0) + 1, True); continue  # unscanned shell
             env, errexit = {**base, **dict.fromkeys(exported, UNKNOWN), **literal_env(step.get("env"))}, shell in ("", "bash", "sh") or bool(re.search(r"\s-\w*e", shell))
             self.visit(rel, facts(str(step["run"]), lines.get((job_id, index), 0) + 1, errexit), env, [], (rel,), False, posixpath.normpath(cwd or "."))
             exported |= github_env_names(str(step["run"]))

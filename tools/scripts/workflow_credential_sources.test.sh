@@ -93,7 +93,7 @@ DYNAMIC = {
     "dyn_wrapper": "timeout -s KILL 10m bash tools/scripts/zz_synthetic_mint.sh",
     "dyn_cmdword": '"${SYNTHETIC_SHELL}" tools/scripts/zz_synthetic_mint.sh',
 }
-
+SHELLS = {"shell_env_bash": "/usr/bin/env bash {0}", "shell_pwsh": "pwsh"}
 
 def edit(rel, old, new):
     path = root / rel
@@ -102,24 +102,19 @@ def edit(rel, old, new):
         raise SystemExit(case + ": fixture anchor is not unique in " + rel)
     path.write_bytes(text.replace(old, new).encode("utf-8"))
 
-
 def write(rel, text):
     (root / rel).write_bytes(text.replace("@SENTINEL@", sentinel).encode("utf-8"))
 
-
 def script(name, body):
     write("tools/scripts/" + name, "#!/usr/bin/env bash\nset -euo pipefail\n" + body + "\n")
-
 
 def mint(before="", after="", rel="tools/scripts/zz_synthetic_mint.sh"):
     body = BODY.replace("@BEFORE@", before).replace("@AFTER@", after)
     write(rel, "#!/usr/bin/env bash\nset -euo pipefail\nsource tools/scripts/github_actions_mask_env.sh\n" + body + "\n")
 
-
-def step(body, wf=E2E, anchor=CAPTURE):
+def step(body, wf=E2E, anchor=CAPTURE, shell=""):
     run = "".join("          " + line + "\n" for line in body.replace("@SENTINEL@", sentinel).split("\n"))
-    edit(wf, anchor, "      - name: Synthetic fixture\n        run: |\n" + run + "\n" + anchor)
-
+    edit(wf, anchor, "      - name: Synthetic fixture\n" + ("        shell: " + shell + "\n" if shell else "") + "        run: |\n" + run + "\n" + anchor)
 
 if case == "bind_nightly":
     anchor = "      id: redact_full_gate_results\n"
@@ -156,6 +151,9 @@ elif case == "dyn_script":
     step("bash tools/scripts/zz_synthetic_dyn.sh")
 elif case == "uses_local":
     edit(E2E, CAPTURE, "      - name: Synthetic local action\n        uses: ./.github/actions/zz-synthetic\n" + CAPTURE)
+elif case in SHELLS:
+    mint()
+    step(RUN_MINT, shell=SHELLS[case])
 elif case == "edge_cycle":
     script("zz_synthetic_cycle_a.sh", "bash tools/scripts/zz_synthetic_cycle_b.sh")
     script("zz_synthetic_cycle_b.sh", "bash tools/scripts/zz_synthetic_cycle_a.sh")
@@ -265,6 +263,8 @@ dyn_procsub e2e.yml:e2e-tls:SOURCE_DYNAMIC
 dyn_wrapper e2e.yml:e2e-tls:SOURCE_DYNAMIC
 dyn_cmdword e2e.yml:e2e-tls:SOURCE_DYNAMIC
 uses_local e2e.yml:e2e-tls:SOURCE_DYNAMIC@.github/workflows/e2e.yml
+shell_env_bash e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
+shell_pwsh e2e.yml:e2e-tls:SOURCE_DYNAMIC@.github/workflows/e2e.yml
 edge_cycle e2e.yml:e2e-tls:SOURCE_CYCLE
 edge_escape e2e.yml:e2e-tls:SOURCE_ESCAPE
 edge_symlink e2e.yml:e2e-tls:SOURCE_SYMLINK
