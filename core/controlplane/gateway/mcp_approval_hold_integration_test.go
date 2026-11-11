@@ -1031,9 +1031,14 @@ func TestPolicyGateEdgeResume_HTTPLegacyApprovalCannotResume(t *testing.T) {
 	}
 	retry := h.call(t, pgArgsB)
 	h.requireCalls(t, 0)
-	firstRef, _ := h.requireEdgeHold(t, first)
-	if retryRef, _ := h.requireEdgeHold(t, retry); retryRef == firstRef {
-		t.Errorf("retry reused ref %q; want a fresh Edge hold", retryRef)
+	h.requireEdgeHold(t, first)
+	retryRef, _ := h.requireEdgeHold(t, retry)
+	// The Edge store reuses a live hold on the same (session, execution,
+	// action) tuple, so the retry may re-hold on the first ref. Either way
+	// the legacy approve must leave the Edge approval undecided.
+	approval, found, err := h.store.GetApproval(context.Background(), "default", retryRef)
+	if err != nil || !found || approval == nil || approval.Status != edge.ApprovalStatusPending {
+		t.Fatalf("Edge approval %s after legacy approve = %+v, %v, %v; want pending", retryRef, approval, found, err)
 	}
 }
 

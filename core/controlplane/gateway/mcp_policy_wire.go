@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -186,9 +187,14 @@ func (g *gatewayApprovalGate) ConsumeActionGateDecision(ctx context.Context, _ m
 //   - (ref, nil, true):  Edge mint succeeded.
 //   - ("",  nil, false): Edge unwired or required mcp.CallMetadata
 //     fields missing — caller falls back to legacy mint by design.
-//   - ("",  err, true):  Edge wired + metadata present but
-//     EnqueueApproval failed — caller surfaces -32096
-//     approval_store_unavailable (DoD #5; no silent legacy fallback).
+//   - ("",  err, true):  Edge wired + metadata present but the policy
+//     pre-event id is missing or EnqueueApproval failed — caller
+//     surfaces -32096 approval_store_unavailable (DoD #5; no silent
+//     legacy fallback).
+//
+// The approval binds to the policy pre-event (mcp.tool.pre) named by
+// ctxData.EventID: edge.EnqueueApproval requires an existing event whose
+// InputHash and PolicySnapshot match this mint (task-63400922 E1).
 //
 // InputHash + ActionHash are derived from mcp.BuildMCPApprovalBinding so
 // the mint side stores byte-identical hashes to what the consume path
@@ -203,10 +209,11 @@ func (g *gatewayApprovalGate) mintEdgeApprovalForActionGate(ctx context.Context,
 	if !ok || meta.SessionID == "" || meta.ExecutionID == "" {
 		return "", nil, false
 	}
-	policySnapshot := ""
-	if g.policySnapshot != nil {
-		policySnapshot = g.policySnapshot(ctx)
+	eventID := strings.TrimSpace(ctxData.EventID)
+	if eventID == "" {
+		return "", errors.New("policy pre-event id missing from approval context"), true
 	}
+	policySnapshot := g.policySnapshotForEvents(ctx)
 	actionHash, inputHash := mcp.BuildMCPApprovalBinding(
 		meta.Tenant,
 		g.serverName,
@@ -221,7 +228,7 @@ func (g *gatewayApprovalGate) mintEdgeApprovalForActionGate(ctx context.Context,
 		TenantID:       meta.Tenant,
 		SessionID:      meta.SessionID,
 		ExecutionID:    meta.ExecutionID,
-		EventID:        meta.AgentID,
+		EventID:        eventID,
 		PrincipalID:    meta.Principal,
 		Requester:      requester,
 		Reason:         "policy gate REQUIRE_HUMAN",
@@ -267,7 +274,12 @@ func BuildMCPPolicyDeps(pipeline *actiongates.Pipeline, gate *gatewayApprovalGat
 		EventEmitter:    emitter,
 		ArtifactStore:   store,
 		ApprovalHandoff: gate,
-		Redactor:        mcp.DefaultRedactor(),
+		// Stamps the policy pre-event with the snapshot the Edge mint
+		// binds to (task-63400922 E2). A method value, read per call,
+		// because WithEdgeApprovalMint may attach the snapshot func after
+		// these deps are built.
+		PolicySnapshot: gate.policySnapshotForEvents,
+		Redactor:       mcp.DefaultRedactor(),
 		// Backend selection per mcp.SelectDedupeStore matrix: unset
 		// env var defaults to Redis when the shared client is
 		// available (cross-process collapse across multi-instance HA),

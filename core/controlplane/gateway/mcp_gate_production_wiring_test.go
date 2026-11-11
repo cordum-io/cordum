@@ -339,8 +339,11 @@ func TestAttachMCPPolicyDeps_WiresEdgeMintWithHold(t *testing.T) {
 	})
 }
 
-// DoD-2. core/mcp TestJSONRPC_ApprovalStoreUnavailableWiresTo32096
-// (server_approval_hold_e2e_test.go) pins ErrApprovalStoreUnavailable -> -32096.
+// Under task-63400922 E1 a wired Edge mint without the policy pre-event
+// fails closed BEFORE EnqueueApproval. TestPolicyGateEdgeResume_HTTPMintOutageFailsClosed
+// pins the store outage with a real pre-event end to end, and core/mcp
+// TestJSONRPC_ApprovalStoreUnavailableWiresTo32096 (server_approval_hold_e2e_test.go)
+// pins ErrApprovalStoreUnavailable -> -32096.
 func TestGate_EdgeMintOutageFailsClosed(t *testing.T) {
 	t.Parallel()
 	edgeStore := &captureEdgeStore{enqueueErr: errors.New("dial tcp 10.0.0.7:6379: connect: connection refused")}
@@ -348,27 +351,28 @@ func TestGate_EdgeMintOutageFailsClosed(t *testing.T) {
 	gate.WithEdgeApprovalMint(edgeStore, pwSnapshot, mcpPolicyServerName)
 	got, err := pwCheck(t, gate, pwGateCtx())
 	if got != nil {
-		t.Fatalf("Edge outage returned ApprovalRequired %+v; want fail closed", got)
+		t.Fatalf("Edge mint without a pre-event returned ApprovalRequired %+v; want fail closed", got)
 	}
 	if !errors.Is(err, mcp.ErrApprovalStoreUnavailable) {
 		t.Fatalf("err = %v; want mcp.ErrApprovalStoreUnavailable", err)
 	}
-	if edgeStore.lastReq.SessionID != "pw-sess" {
-		t.Fatalf("Edge mint was not attempted: %+v", edgeStore.lastReq)
+	if edgeStore.lastReq.SessionID != "" {
+		t.Fatalf("Edge mint was attempted without a policy pre-event: %+v", edgeStore.lastReq)
 	}
 }
 
 func TestGate_RetryHintReflectsMintedPath(t *testing.T) {
 	t.Parallel()
-	t.Run("edge_minted", func(t *testing.T) {
+	t.Run("edge_wired_without_pre_event", func(t *testing.T) {
+		edgeStore := &captureEdgeStore{approvalID: "edge-ref"}
 		gate := NewGatewayApprovalGate(newTestMCPStore(t)).(*gatewayApprovalGate)
-		gate.WithEdgeApprovalMint(&captureEdgeStore{approvalID: "edge-ref"}, pwSnapshot, mcpPolicyServerName)
+		gate.WithEdgeApprovalMint(edgeStore, pwSnapshot, mcpPolicyServerName)
 		got, err := pwCheck(t, gate, pwGateCtx())
-		if err != nil || got == nil {
-			t.Fatalf("Check = %+v, %v", got, err)
+		if got != nil || !errors.Is(err, mcp.ErrApprovalStoreUnavailable) {
+			t.Fatalf("Check = %+v, %v; want ErrApprovalStoreUnavailable without a policy pre-event", got, err)
 		}
-		if got.RetryHint != "retry_with_approval_ref" || got.ApprovalRef != "edge-ref" || got.ApprovalID == "edge-ref" {
-			t.Fatalf("hint=%q ref=%q id=%q; want retry_with_approval_ref/edge-ref/legacy id", got.RetryHint, got.ApprovalRef, got.ApprovalID)
+		if edgeStore.lastReq.SessionID != "" {
+			t.Fatalf("Edge EnqueueApproval called without a policy pre-event: %+v", edgeStore.lastReq)
 		}
 	})
 	legacy := map[string]func(*gatewayApprovalGate) context.Context{
