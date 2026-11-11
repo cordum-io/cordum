@@ -391,7 +391,7 @@ jobs:
             const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
             const median = manifest.find(m => m.isRepresentativeRun) || manifest[0];
             if (!median) {
-              body += '_No representative run found in manifest._\n';
+              body += `_No representative run found in manifest (lhci: ${process.env.LHCI_OUTCOME}, manifest: ${process.env.MANIFEST_OUTCOME})._\n`;
             } else {
               const summary = median.summary || {};
               const fmt = v => (v == null ? 'n/a' : Math.round(v * 100));
@@ -400,7 +400,15 @@ jobs:
               body += `| Accessibility | ${fmt(summary.accessibility)} |\n`;
               body += `| Best Practices | ${fmt(summary['best-practices'])} |\n`;
               body += `| SEO | ${fmt(summary.seo)} |\n\n`;
-              if (median.url) body += `Run URL: ${median.url}\n`;
+              // The filesystem manifest's url is the audited (runner-local) URL.
+              // temporary-public-storage records the public report URL per
+              // audited URL in links.json; prefer it when present.
+              let reportUrl = median.url;
+              try {
+                const links = JSON.parse(fs.readFileSync(path.join(dashboardDir, lhciDir, 'links.json'), 'utf8'));
+                if (links && links[median.url]) reportUrl = links[median.url];
+              } catch (_) { /* no public upload; keep the audited URL */ }
+              if (reportUrl) body += `Run URL: ${reportUrl}\n`;
             }
             body += `\n_Soft thresholds (warn-only): perf ≥ 70, a11y ≥ 90, best-practices ≥ 85. Authenticated-flow lhci is filed as a follow-up task._`;
           } catch (e) {
