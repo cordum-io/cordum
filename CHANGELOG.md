@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### CI and documentation
+
+- Added `docs/contract/threat-model.md`, the platform threat model for the M0 security contract: assets, adversaries, trust boundaries, a trusted-component inventory covering every `cmd/` service, reference-monitor properties with their current status, five explicit non-promises and the deployment boundary. Documentation only; no behavior changes.
+
 ## [v1.3.0] - 2026-11-11
 
 Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
