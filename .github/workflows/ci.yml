@@ -360,9 +360,24 @@ jobs:
       continue-on-error: true
       run: pnpm run lhci
 
+    # lighthouserc.json uploads to temporary-public-storage, which writes only
+    # links.json. The filesystem target is what writes manifest.json, and
+    # LHCI_NO_LIGHTHOUSERC keeps this extra upload from inheriting the rc's target.
+    - name: Write Lighthouse CI manifest for the PR comment
+      id: lhci-manifest
+      if: always() && steps.lhci.outcome != 'skipped'
+      working-directory: dashboard
+      continue-on-error: true
+      env:
+        LHCI_NO_LIGHTHOUSERC: "1"
+      run: pnpm exec lhci upload --target=filesystem --outputDir=.lighthouseci/filesystem
+
     - name: Comment Lighthouse scores on PR
       if: always() && steps.lhci.outcome != 'skipped'
       uses: actions/github-script@v9
+      env:
+        LHCI_OUTCOME: ${{ steps.lhci.outcome }}
+        MANIFEST_OUTCOME: ${{ steps.lhci-manifest.outcome }}
       with:
         script: |
           const fs = require('fs');
@@ -372,7 +387,7 @@ jobs:
           const marker = '<!-- lighthouse-login-report -->';
           let body = `${marker}\n### Lighthouse CI — \`/login\`\n\n`;
           try {
-            const manifestPath = path.join(dashboardDir, lhciDir, 'manifest.json');
+            const manifestPath = path.join(dashboardDir, lhciDir, 'filesystem', 'manifest.json');
             const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
             const median = manifest.find(m => m.isRepresentativeRun) || manifest[0];
             if (!median) {
@@ -389,7 +404,7 @@ jobs:
             }
             body += `\n_Soft thresholds (warn-only): perf ≥ 70, a11y ≥ 90, best-practices ≥ 85. Authenticated-flow lhci is filed as a follow-up task._`;
           } catch (e) {
-            body += `_Lighthouse CI artifacts unavailable: ${e.message}_`;
+            body += `_Lighthouse CI results unavailable (lhci: ${process.env.LHCI_OUTCOME}, manifest: ${process.env.MANIFEST_OUTCOME}): ${e.message}_`;
           }
           const { owner, repo } = context.repo;
           const issue_number = context.payload.pull_request.number;
