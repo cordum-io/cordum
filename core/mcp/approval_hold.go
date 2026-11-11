@@ -170,13 +170,35 @@ type ConsumedApproval struct {
 // a complete binding equal to the claimed one; a refused mismatch does not
 // use it up. Nil-safe.
 func (c *ConsumedApproval) Use(tool, actionHash, inputHash string) bool {
-	if c == nil || c.Tool == "" || c.ActionHash == "" || c.InputHash == "" {
-		return false
-	}
-	if tool != c.Tool || actionHash != c.ActionHash || inputHash != c.InputHash {
+	if !c.Binds(tool, actionHash, inputHash) {
 		return false
 	}
 	return c.used.CompareAndSwap(false, true)
+}
+
+// Binds reports whether the consumed approval authorizes the action-gate
+// REQUIRE_HUMAN check of (tool, actionHash, inputHash): a complete binding
+// equal to the claimed one (task-cd9df90a C1). It never uses the approval
+// up. Use stays the single-use registry-gate authority, so one approval
+// covers both gates of a dual-gated tool. Nil-safe.
+func (c *ConsumedApproval) Binds(tool, actionHash, inputHash string) bool {
+	if c == nil || c.Tool == "" || c.ActionHash == "" || c.InputHash == "" {
+		return false
+	}
+	return tool == c.Tool && actionHash == c.ActionHash && inputHash == c.InputHash
+}
+
+// carriesApprovalRef reports whether args still hold `_approval_ref`.
+// handleToolsCall strips it after a successful claim, so a REQUIRE_HUMAN
+// call that still carries one was never consumed: it fails closed rather
+// than minting again (task-cd9df90a C4).
+func carriesApprovalRef(args json.RawMessage) bool {
+	var parsed map[string]json.RawMessage
+	if json.Unmarshal(args, &parsed) != nil {
+		return false
+	}
+	_, ok := parsed[approvalRefArgKey]
+	return ok
 }
 
 type consumedApprovalKey struct{}
