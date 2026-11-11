@@ -12,6 +12,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   inventory and measurable acceptance ideas. Broker/grant enforcement is future
   work; runtime acceptance evidence is not measured.
 
+### Fixed
+
+- `demo/quickstart/Dockerfile` runs `apk upgrade` in its runtime stage, as the
+  control-plane Dockerfile already does. The v1.3.0 publish run failed the
+  `demo-quickstart-worker` Trivy gate on zlib 1.3.2-r1 from the `alpine:3.21`
+  base (CVE-2026-4738, fixed in zlib 1.4-r0), which also skipped the
+  published-image smoke test and the Helm chart for that tag.
+
 ## [v1.3.0] - 2026-11-11
 
 Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
