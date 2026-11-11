@@ -23,6 +23,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   answered from the cached `approval pending` result, and it never mints a
   fresh approval. SecOps invariants still deny on resume (task-cd9df90a).
 
+- The seven mutating MCP tools' descriptions no longer tell clients to surface
+  `/approvals?mcp=<id>`; the dashboard Approvals page ignores that parameter, so
+  the link never selected the approval. They now point to `/approvals` and ask
+  the client to show the `approval_id` so the operator can find the request.
+  `docs/mcp-tools-reference.md` and `docs/mcp/mutating-tools.md` match. Approval
+  behaviour and the `-32099` error are unchanged.
+
 ## [v1.3.1] - 2026-11-11
 
 Changes on main since the v1.3.0 tag (d027ae97, 2026-11-11).

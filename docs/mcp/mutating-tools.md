@@ -37,12 +37,15 @@ LLM → MCP server: tools/call { name: "cordum_install_pack", args: {...} }
 MCP server → LLM: JSON-RPC error -32099
                   { code: -32099,
                     message: "tool requires human approval",
-                    data: { approval_id: "apr-7f3e…", approve_url: "/approvals?mcp=apr-7f3e…" } }
+                    data: { approval_id: "apr-7f3e…" } }
 ```
 
-The LLM's job is to surface `approve_url` to the operator (via chat, a banner, or
-whatever UX the agent framework provides). The operator clicks through, reviews the
-canonical args in the dashboard's approval modal, and clicks **Approve** (or rejects).
+The LLM's job is to show the operator the `approval_id` and the dashboard's
+Approvals page, `/approvals` on the configured dashboard base URL (via chat, a
+banner, or whatever UX the agent framework provides). The error carries no ready-made
+link, and the page does not select or filter by approval ID, so the operator finds
+the request by its `approval_id`, reviews the canonical args in the dashboard's
+approval modal, and clicks **Approve** (or rejects).
 
 The LLM then retries the same tool call with **identical arguments**. The gateway
 canonical args hash from task-94b27344 is computed with whitespace / key-order /
@@ -337,11 +340,12 @@ exits cleanly."*
 }
 ```
 
-Claude Code surfaces: *"This tool needs approval. Approve at:
-http://localhost:8081/approvals?mcp=apr-1a2b3c"*
+Claude Code surfaces: *"This tool needs approval. Open
+http://localhost:8081/approvals and approve request apr-1a2b3c"*
 
-**Step 4.** The operator opens the dashboard, clicks the approval, reviews the
-canonical args in the modal, and clicks **Approve**.
+**Step 4.** The operator opens the dashboard's Approvals page, finds the request
+with approval ID `apr-1a2b3c`, reviews the canonical args in the modal, and clicks
+**Approve**.
 
 **Step 5.** Claude Code re-issues the same call with the same
 `idempotency_key`. The gate claims the approved record, the handler runs, and
