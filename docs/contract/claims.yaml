@@ -85,8 +85,8 @@ claims:
     status: supported
     invariants: ["I02","I09"]
     findings: ["R08","R12"]
-    enforcement_points: [{"path":"core/controlplane/gateway/handlers_edge_export.go","symbol":"server.handleExportEdgeSession"}]
-    tests: [{"package":"core/edge","name":"TestSessionExportAssemblerRecordsMissingArtifactsWithoutLeakingContent"}]
+    enforcement_points: [{"path":"core/edge/export.go","symbol":"SessionExportAssembler.collectArtifacts"},{"path":"core/controlplane/gateway/handlers_edge_export.go","symbol":"server.handleExportEdgeSession"}]
+    tests: [{"package":"core/edge","name":"TestSessionExportAssemblerRecordsMissingArtifactsWithoutLeakingContent"},{"package":"core/controlplane/gateway","name":"TestGatewayEdgeRedactionRoundTripAcrossEventsApprovalsAndExport"}]
     evidence: "Metadata-only export exists; complete evidence/redaction protection is not qualified; open findings R08, R12."
     public_sources: ["cordum:README.md:261","cordum:README.md:280","cordum:README.md:281","cordum:README.md:438"]
   - id: CLM-009
@@ -95,7 +95,7 @@ claims:
     status: supported
     invariants: ["I05","I07","I09"]
     findings: ["R09","R12"]
-    enforcement_points: [{"path":"core/policy/actiongates/provenance_gate.go","symbol":"ProvenanceGate.Evaluate"}]
+    enforcement_points: [{"path":"core/policy/actiongates/provenance_gate.go","symbol":"ProvenanceGate.Evaluate"},{"path":"core/policy/actiongates/approval_binding.go","symbol":"validateApprovalBinding"}]
     tests: [{"package":"core/policy/actiongates","name":"TestProvenanceGate_EvidenceGapFailsClosed"}]
     evidence: "Approval lookup and chain checks exist; no full-boundary no-effect qualification is attached; open findings R09, R12."
     public_sources: ["cordum:README.md:277","cordum:README.md:278","cordum:README.md:279","cordum:README.md:280","cordum:README.md:390","cordum:README.md:391","cordum:README.md:392","cordum:README.md:393","cordum:README.md:438"]
@@ -125,7 +125,7 @@ claims:
     status: supported
     invariants: ["I01","I03","I10"]
     findings: ["R05","R15"]
-    enforcement_points: [{"path":"core/controlplane/gateway/helpers.go","symbol":"server.evaluateSubmitPolicy"},{"path":"core/controlplane/scheduler/engine.go","symbol":"Engine.processJob"},{"path":"core/edge/claude/agentd_client.go","symbol":"HTTPAgentdClient.EvaluateHook"}]
+    enforcement_points: [{"path":"core/controlplane/gateway/helpers.go","symbol":"server.evaluateSubmitPolicy"},{"path":"core/controlplane/scheduler/engine.go","symbol":"Engine.processJob"},{"path":"core/controlplane/gateway/handlers_edge_evaluate.go","symbol":"edgeEvaluateOutcomeFromSafety"},{"path":"core/edge/claude/agentd_client.go","symbol":"HTTPAgentdClient.EvaluateHook"}]
     tests: [{"package":"core/controlplane/gateway","name":"TestGatewayEdgeEvaluateUnknownDecisionEnumFailsClosedWithoutFalseAllow"}]
     evidence: "Default-deny branches exist; no three-path no-effect qualification is attached; open findings R05, R15."
     public_sources: ["cordum:README.md:308","cordum:README.md:309","cordum:README.md:310"]
@@ -135,7 +135,7 @@ claims:
     status: supported
     invariants: ["I05","I07"]
     findings: ["R03","R04","R09"]
-    enforcement_points: [{"path":"core/policy/actiongates/mutation_gate.go","symbol":"MutationGate.Evaluate"},{"path":"core/controlplane/gateway/handlers_edge_evaluate.go","symbol":"server.consumeEdgeEvaluateApproval"}]
+    enforcement_points: [{"path":"core/policy/actiongates/approval_binding.go","symbol":"validateApprovalBinding"},{"path":"core/policy/actiongates/mutation_gate.go","symbol":"MutationGate.Evaluate"},{"path":"core/controlplane/gateway/handlers_edge_evaluate.go","symbol":"server.consumeEdgeEvaluateApproval"}]
     tests: [{"package":"core/policy/actiongates","name":"TestMutationGate_HashMismatchConflict"},{"package":"core/policy/actiongates","name":"TestMutationGate_SelfApprovalDenied"}]
     evidence: "Approval binding and rejection checks exist; end-to-end enforcement is unqualified; open findings R03, R04, R09."
     public_sources: ["cordum:README.md:311","cordum:README.md:312","cordum:README.md:313","cordum:README.md:314"]
@@ -196,7 +196,7 @@ claims:
     invariants: ["I01","I10"]
     findings: ["R14","R15"]
     enforcement_points: [{"path":"core/controlplane/scheduler/strategy_least_loaded.go","symbol":"LeastLoadedStrategy.PickSubject"}]
-    tests: [{"package":"core/controlplane/scheduler","name":"TestPoolRoutingTopicToPool"}]
+    tests: [{"package":"core/controlplane/scheduler","name":"TestLeastLoadedStrategyPicksPoolMatch"}]
     evidence: "Pool selection exists; trusted-environment confinement is not qualified; open findings R14, R15."
     public_sources: ["cordum:README.md:434"]
   - id: CLM-020
@@ -225,7 +225,7 @@ claims:
     status: supported
     invariants: ["I01","I09"]
     findings: []
-    enforcement_points: [{"path":"core/controlplane/gateway/gateway.go","symbol":"RunWithAuth"}]
+    enforcement_points: [{"path":"core/controlplane/gateway/gateway_handshake_security.go","symbol":"loadGatewayHandshakeSecurity"},{"path":"core/controlplane/gateway/gateway.go","symbol":"RunWithAuth"}]
     tests: [{"package":"core/controlplane/gateway","name":"TestLoadGatewayHandshakeSecurityActiveModeRequiresSigningKey"}]
     evidence: "Control-plane key checks exist; external SDK behavior and deployed worker-trust enforcement are not qualified by this row."
     public_sources: ["cordum:README.md:529","cordum:README.md:530","cordum:README.md:531","cordum:README.md:532","cordum:README.md:548","cordum:README.md:549","cordum:README.md:550","cordum:README.md:551","cordum:README.md:552","cordum:README.md:553","cordum:README.md:554","cordum:README.md:555"]
