@@ -202,7 +202,7 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
             self.cache["Makefile"] = code or (rules, default)
         return self.cache["Makefile"]
     def rule(self, target: str) -> object: return None if isinstance(rules := self.rules(), str) else rules[0].get(target) or next((r for p, r in rules[0].items() if "%" in p and re.fullmatch(re.escape(p).replace("%", ".+"), target)), None)
-    def load(self, key: str) -> object:  # facts for a script, or a make target whose prerequisite rules become a make line
+    def load(self, key: str) -> object:  # facts for a script; for a make target, a list: its prerequisite rules as a make line, then each shell its recipe runs in
         if key not in self.cache and not key.startswith("Makefile#"):
             text, code = self.read(key); self.cache[key] = code or ("NOT_SHELL" if "\x00" in text else facts(text))  # noqa: E702  # source and bash read any text as shell
             if not (code or key.endswith(".sh") or re.match(r"#!.*\b(?:ba)?sh\b", text) or not text.startswith("#!") and self.root.joinpath(key).stat().st_mode & 0o100): self.exec_skip.add(key)  # exec: sh #! or ENOEXEC
@@ -211,18 +211,18 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
             rules, found = self.rules(), self.rule(key[9:])
             self.cache[key] = rules if isinstance(rules, str) else "MISSING"
             if found is not None:
-                lines, deps = [""] * max([found[0]] + [n for n, _ in found[2]]), [p for p in found[1] if "$" in p or self.rule(p) is not None]
-                lines[found[0] - 1] = "make " + " ".join(deps) if deps else ""
-                for n, text in found[2]: lines[n - 1] = text.replace("$(MAKE)", "make").replace("${MAKE}", "make").replace("$(CURDIR)", ".").replace("$$", "$")
-                self.cache[key] = facts("\n".join(lines))  # make runs each recipe line with sh -c: errexit off
+                deps, parts = [p for p in found[1] if "$" in p or self.rule(p) is not None], []  # parts: (first line, text) per shell
+                for n, text in [(found[0], "make " + " ".join(deps) if deps else "")] + [(n, t.replace("$(MAKE)", "make").replace("${MAKE}", "make").replace("$(CURDIR)", ".").replace("$$", "$")) for n, t in found[2]]:
+                    parts[-1:] = [(parts[-1][0], parts[-1][1] + "\n" * (n - parts[-1][0] - parts[-1][1].count("\n")) + text)] if parts and (parts[-1][1].endswith("\\") or len(parts) > 1 and ".ONESHELL" in rules[0]) else parts[-1:] + [(n, text)]
+                self.cache[key] = [facts(text, n) for n, text in parts]  # make runs each logical recipe line (backslash-continued) in its own sh -c, errexit off; .ONESHELL runs the recipe in one
         return self.cache[key]
     def follow(self, key: str, env: dict, argv: list, chain: tuple, quiet: bool, caller: str, line: int, binary_ok: bool = False) -> None:
         unit = "CYCLE" if key in chain else "LIMIT" if len(chain) >= MAX_DEPTH or self.visits >= MAX_VISITS else self.load(key)
         unit, env = "NOT_SHELL" if binary_ok and key in self.exec_skip else unit, dict(env, SHELLOPTS="xtrace") if key in self.bang_x else env  # an exec'd foreign or data file
-        if isinstance(unit, str):
-            if unit != "NOT_SHELL" and not (binary_ok and unit == "MISSING"): self.report("SOURCE_" + unit, caller, line, True)
+        if isinstance(unit, str): self.report("SOURCE_" + unit, caller, line, True) if unit != "NOT_SHELL" and not (binary_ok and unit == "MISSING") else None
         elif (memo := (key, tuple(sorted(env.items())), tuple(argv), quiet)) not in self.seen:
-            self.seen.add(memo); self.visits += 1; self.visit(key.split("#")[0], unit, env, argv, chain + (key,), quiet, ".")  # noqa: E702
+            self.seen.add(memo); self.visits += 1  # noqa: E702
+            for part in unit if isinstance(unit, list) else [unit]: self.visit(key.split("#")[0], part, env, argv, chain + (key,), quiet, ".")  # each shell of a make recipe starts from make's environment
     def visit(self, rel: str, unit: tuple, env: dict, argv: list, chain: tuple, quiet: bool, cwd: str) -> None:
         cmds, error, acqs, prefixes, flags = unit
         if error: self.report("SOURCE_DYNAMIC", rel, error, True)

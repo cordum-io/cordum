@@ -108,11 +108,11 @@ elif case in BINDS:
 elif case in MINTS or case in OPTS:
     mint(*MINTS[case]) if case in MINTS else mint(**{"before": SAFE, **OPTS[case]})
     step(RUN_MINT)
-elif case in ("mint_make", "make_errexit"):  # make runs each recipe line with sh -c: errexit off
+elif case in ("mint_make", "make_errexit", "make_line_errexit", "make_oneshell"):  # make runs each logical recipe line in its own sh -c, errexit off; .ONESHELL runs a recipe in one
     mint()
-    recipe = RUN_MINT if case == "mint_make" else 'synthetic_key="$$(openssl rand -hex 16)"; gha_mask_value "$$synthetic_key"; echo "$$synthetic_key"'
+    recipe = RUN_MINT if case == "mint_make" else ("" if case == "make_errexit" else "set -e\n\t") + 'synthetic_key="$$(openssl rand -hex 16)"; gha_mask_value "$$synthetic_key"; echo "$$synthetic_key"'
     makefile = root / "Makefile"
-    makefile.write_bytes(makefile.read_bytes() + ("\nzz-synthetic-mint:\n\t" + recipe + "\n").encode("utf-8"))
+    makefile.write_bytes(makefile.read_bytes() + (("\n.ONESHELL:" if case == "make_oneshell" else "") + "\nzz-synthetic-mint:\n\t" + recipe + "\n").encode("utf-8"))
     step("make zz-synthetic-mint")
 elif case == "mint_untracked_job":
     mint()
@@ -201,9 +201,9 @@ check() {
     record FAIL "${name}: expected ${want}, got rc=${rc}: ${out}"
   fi
 }
-
-while read -r name want; do
-  check "${name}" "${want}"
+# Each CASES row names one or more cases, then the code every one of them must report (or clean).
+while read -r -a row; do
+  for name in "${row[@]:0:${#row[@]}-1}"; do check "${name}" "${row[-1]}"; done
 done <<'CASES'
 base clean
 bind_spacing clean
@@ -214,6 +214,7 @@ return_local clean
 trace_off clean
 noext_data clean
 noext_python clean
+make_oneshell clean
 bind_literal_space e2e.yml:e2e-tls:REDACTION_VALUE_BINDING
 bind_cross e2e.yml:e2e-tls:REDACTION_VALUE_BINDING
 bind_const e2e.yml:e2e-tls:REDACTION_VALUE_BINDING
@@ -242,7 +243,7 @@ trace_bang e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_s
 noext_source e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.inc
 noext_exec e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.inc
 mint_make e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
-make_errexit e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@Makefile
+make_errexit make_line_errexit e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@Makefile
 mint_untracked_job docs-linkcheck.yml:link-check:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 mint_inline e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED
 gen_openssl e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_gen.sh
@@ -256,17 +257,8 @@ gen_nested clean
 nonce_bypass_removed edge-fake-hook-e2e.yml:edge-fake-hook-e2e:CREDENTIAL_UNREGISTERED@tools/scripts/edge_fake_hook_e2e.sh
 nonce_bypass_overridden edge-fake-hook-e2e.yml:edge-fake-hook-e2e:CREDENTIAL_UNREGISTERED@tools/scripts/edge_fake_hook_e2e.sh
 quickstart_unseeded docs-linkcheck.yml:link-check:CREDENTIAL_UNREGISTERED@tools/scripts/quickstart.sh
-dyn_var e2e.yml:e2e-tls:SOURCE_DYNAMIC
-dyn_c e2e.yml:e2e-tls:SOURCE_DYNAMIC
-dyn_heredoc e2e.yml:e2e-tls:SOURCE_DYNAMIC
-dyn_pipe e2e.yml:e2e-tls:SOURCE_DYNAMIC
-dyn_eval e2e.yml:e2e-tls:SOURCE_DYNAMIC
-dyn_make e2e.yml:e2e-tls:SOURCE_DYNAMIC
-dyn_source e2e.yml:e2e-tls:SOURCE_DYNAMIC
+dyn_var dyn_c dyn_heredoc dyn_pipe dyn_eval dyn_make dyn_source dyn_procsub dyn_wrapper dyn_cmdword e2e.yml:e2e-tls:SOURCE_DYNAMIC
 dyn_script e2e.yml:e2e-tls:SOURCE_DYNAMIC@tools/scripts/zz_synthetic_dyn.sh
-dyn_procsub e2e.yml:e2e-tls:SOURCE_DYNAMIC
-dyn_wrapper e2e.yml:e2e-tls:SOURCE_DYNAMIC
-dyn_cmdword e2e.yml:e2e-tls:SOURCE_DYNAMIC
 uses_local e2e.yml:e2e-tls:SOURCE_DYNAMIC@.github/workflows/e2e.yml
 shell_env_bash e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 shell_pwsh e2e.yml:e2e-tls:SOURCE_DYNAMIC@.github/workflows/e2e.yml
