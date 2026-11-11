@@ -69,10 +69,11 @@ OPTS = {  # mint() keywords, before defaulting to SAFE: a set applies in its own
     "errexit_tested": dict(head=STRICT + "main() {\n", tail="}\nmain || true\n"), "errexit_tested_body": dict(head="main() {\nset -euo pipefail\n", tail="}\nif true && main; then :; fi\n"), "errexit_tested_nested": dict(head=STRICT + "main() {\n", tail="}\nouter() { main; }\n! outer\n"),  # a tested status: bash ignores errexit in the call
     "errexit_cold": dict(head=STRICT + "main() {\n", tail="}\nset +e\nmain\nset -e\n"), "errexit_last": dict(head=STRICT + "main() {\n", tail="}\ntrue && main\n"), "mask_captured_func": dict(before=SAFE + " || exit 1", head=STRICT + "main() {\n", tail='}\nout="$(main)"\n'),
     "return_global": dict(before=SAFE + " || return 1", head=STRICT + "main() {\n", tail="}\nmain || true\n"),  # the caller ignores the failure; minted outlives it
-    "return_local": dict(before=SAFE + " || return 1", head=STRICT + "main() {\nlocal minted\n", tail="}\nmain || true\n"),
+    "return_local": dict(before=SAFE + " || return 1", head=STRICT + "main() {\nlocal minted\n", tail="}\nmain || true\n"), "exit_block": dict(before=SAFE + ' || { echo "synthetic mask failure" >&2; exit 1; }'),
     "return_unset": dict(before=SAFE + " || { unset minted; return 1; }", head=STRICT + "main() {\n", tail="}\nmain || true\n"),  # a local or a clear counts only if it runs first:
     "return_and_local": dict(before=SAFE + " || return 1", head=STRICT + "main() {\nfalse && local minted\n", tail="}\nmain || true\n"),
-    "return_and_unset": dict(before=SAFE + " || { false && unset minted; return 1; }", head=STRICT + "main() {\n", tail="}\nmain || true\n"),
+    "return_and_unset": dict(before=SAFE + " || { false && unset minted; return 1; }", head=STRICT + "main() {\n", tail="}\nmain || true\n"),  # so does the exit or return itself:
+    "exit_skipped": dict(before=SAFE + " || { true || exit 1; :; }"), "exit_captured": dict(before=SAFE + ' || { echo "$(exit 1)"; }'), "return_skipped": dict(before=SAFE + " || { true || return 1; :; }", head=STRICT + "main() {\nlocal minted\n", tail="}\nmain\n"),
     "return_nested": dict(before=SAFE + " || { if true; then return 1; fi; unset minted; return 1; }", head=STRICT + "main() {\n", tail="}\nmain || true\n")}
 GEN = {
     "gen_openssl": "$(openssl rand -hex 16)", "gen_uuidgen": "$(uuidgen)",
@@ -223,7 +224,7 @@ bind_spacing clean
 mint_registered clean
 mint_errexit_func clean
 errexit_window subshell_confined errexit_last clean
-return_local return_unset clean
+return_local return_unset exit_block clean
 trace_off clean
 noext_data clean
 noext_python clean
@@ -243,9 +244,8 @@ mint_errexit_off e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthe
 mint_xtrace e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 errexit_scoped e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 errexit_leak errexit_subshell errexit_skipped errexit_piped errexit_tested errexit_tested_body errexit_tested_nested errexit_cold mask_captured_func e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
-return_global return_and_local return_and_unset return_nested e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
-trace_unused trace_skipped trace_piped e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
-trace_scoped e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
+return_global return_and_local return_and_unset return_nested return_skipped exit_skipped exit_captured e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
+trace_unused trace_skipped trace_piped trace_scoped e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 trace_call_order e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 trace_loop e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 trace_substitution e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_gen.sh
