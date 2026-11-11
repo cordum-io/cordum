@@ -265,9 +265,10 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
         path = expand(target, table, env, here)
         if not target or re.search(r"[$`\x00]", path): return dynamic() if kind != "exec" or path.endswith(".sh") else None
         key = posixpath.normpath(posixpath.join(cwd, path))
-        if kind == "exec" and posixpath.isabs(path) and not path.endswith(".sh"): return
+        if kind == "exec" and posixpath.isabs(path) and not path.endswith(".sh"): return None
         if posixpath.isabs(key) or key == ".." or key.startswith("../"): return self.report("SOURCE_ESCAPE", rel, cmd.line, True)
         if GATES.get((rel, cmd.func, key), lambda _: True)(argv): self.follow(key, child, [expand(w, table, env, here) for w in rest], chain, quiet, rel, cmd.line, kind == "exec" and not key.endswith(".sh"))
+        return None
     def make(self, args: list, rel: str, line: int, env: dict, chain: tuple, quiet: bool) -> None:
         targets, skip, rules = [], False, self.rules()
         for arg in args:
@@ -275,6 +276,7 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
             targets, skip = targets + ([] if skip or arg[:1] == "-" or "=" in arg else [arg]), arg in ("-j", "-l", "-o", "-W", "-I")
         if isinstance(rules, str): return self.report("SOURCE_" + rules, rel, line, True)
         for target in targets or [rules[1]]: self.follow("Makefile#" + target, env, [], chain, quiet, rel, line)
+        return None
     def run_job(self, wf: str, job_id: str, job: dict, workflow: dict, lines: dict, credential: bool) -> None:
         self.wf, self.job, self.credential, self.seen, self.visits, exported = wf, job_id, credential, set(), 0, set()
         rel, base, defaults = ".github/workflows/" + wf, {**literal_env(workflow.get("env")), **literal_env(job.get("env"))}, [(node.get("defaults") or {}).get("run") or {} for node in (job, workflow)]
