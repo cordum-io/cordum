@@ -82,8 +82,7 @@ SHELLS = {"shell_env_bash": "/usr/bin/env bash {0}", "shell_pwsh": "pwsh"}
 TRACE = {  # (shell, run[, job]): xtrace on at a fail-closed registration; run-text tracing in a job the guard leaves open
     "trace_shell": ("bash -x {0}", "source " + MINT_SH), "trace_env": ("", "SHELLOPTS=xtrace " + RUN_MINT),
     "trace_bash_x": ("", "bash -x " + MINT_SH, *LINK), "trace_set_x": ("", "set -x\nsource " + MINT_SH, *LINK),
-    "trace_off": ("", "set -x\nset +x\nsource " + MINT_SH, *LINK),
-}
+    "trace_off": ("", "set -x\nset +x\nsource " + MINT_SH, *LINK), "trace_bang": ("", "./" + MINT_SH)}
 NOEXT = {  # (#! line, run, mode) for a credential file without a shell suffix
     "noext_source": ("", "source " + INC, 0o644), "noext_exec": ("", "./" + INC, 0o755), "noext_data": ("", "./" + INC, 0o644),
     "noext_python": ("#!/usr/bin/env python3\n", "./" + INC, 0o755)}
@@ -95,9 +94,9 @@ def write(rel, text):
     (root / rel).write_bytes(text.replace("@SENTINEL@", sentinel).encode("utf-8"))
 def script(name, body):
     write("tools/scripts/" + name, "#!/usr/bin/env bash\nset -euo pipefail\n" + body + "\n")
-def mint(before="", after="", rel=MINT_SH, head="set -euo pipefail\n", tail=""):
+def mint(before="", after="", rel=MINT_SH, head="set -euo pipefail\n", tail="", bang="#!/usr/bin/env bash\n"):
     body = BODY.replace("@BEFORE@", before).replace("@AFTER@", after)
-    write(rel, "#!/usr/bin/env bash\n" + head + "source tools/scripts/github_actions_mask_env.sh\n" + body + "\n" + tail)
+    write(rel, bang + head + "source tools/scripts/github_actions_mask_env.sh\n" + body + "\n" + tail)
 def step(body, wf=E2E, anchor=CAPTURE, shell=""):
     run = "".join("          " + line + "\n" for line in body.replace("@SENTINEL@", sentinel).split("\n"))
     edit(wf, anchor, "      - name: Synthetic fixture\n" + ("        shell: " + shell + "\n" if shell else "") + "        run: |\n" + run + "\n" + anchor)
@@ -139,8 +138,8 @@ elif case == "uses_local":
 elif case in SHELLS:
     mint()
     step(RUN_MINT, shell=SHELLS[case])
-elif case in TRACE:
-    mint(SAFE)
+elif case in TRACE:  # trace_bang: an exec'd script whose #! line turns xtrace on
+    mint(SAFE, bang="#!/bin/bash -x\n" if case == "trace_bang" else "#!/usr/bin/env bash\n")
     step(TRACE[case][1], *TRACE[case][2:], shell=TRACE[case][0])
 elif case == "mint_errexit_func":  # errexit set inside main() still covers the registration
     mint(SAFE, head="main() {\nset -euo pipefail\n", tail="}\nmain\n")
@@ -236,6 +235,7 @@ trace_shell e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_
 trace_env e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 trace_bash_x docs-linkcheck.yml:link-check:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 trace_set_x docs-linkcheck.yml:link-check:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
+trace_bang e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 noext_source e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.inc
 noext_exec e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.inc
 mint_make e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh

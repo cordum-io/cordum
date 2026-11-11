@@ -166,8 +166,7 @@ def shell_operand(args: list) -> tuple:  # bash/sh: (script, argv, False, traced
     i += args[i:i + 1] == ["--"]
     return (args[i], args[i + 1:], False, traced) if i < len(args) else ("", [], False, traced)
 def literal_env(node: object) -> dict: return {str(k): "" if v is None else str(v) for k, v in node.items()} if isinstance(node, dict) else {}
-def github_env_names(run: str) -> set:  # names a run step writes to GITHUB_ENV (masked or plain)
-    return set(re.findall(r"(?m)^\s*gha_mask_env\s+([A-Za-z_]\w*)", run)) | set(re.findall(r"(?m)^\s*(?:echo|printf)\s+(?:'[^']*'\s+)?[\"']?([A-Za-z_]\w*)=.*>>\s*[\"']?\$\{?GITHUB_ENV\b", run)) | {n for args in re.findall(r"(?m)^\s*gha_mask_env_from_command\s+(.+?)\s+--\s", run) for n in re.findall(r"[A-Za-z_]\w*", args)}
+def github_env_names(run: str) -> set: return set(re.findall(r"(?m)^\s*gha_mask_env\s+([A-Za-z_]\w*)", run)) | set(re.findall(r"(?m)^\s*(?:echo|printf)\s+(?:'[^']*'\s+)?[\"']?([A-Za-z_]\w*)=.*>>\s*[\"']?\$\{?GITHUB_ENV\b", run)) | {n for args in re.findall(r"(?m)^\s*gha_mask_env_from_command\s+(.+?)\s+--\s", run) for n in re.findall(r"[A-Za-z_]\w*", args)}  # names a run step writes to GITHUB_ENV (masked or plain)
 def run_lines(text: str) -> dict:  # (job id, step index) -> file line just before the step's run script, or of its uses
     def get(node: object, key: str) -> object: return next((v for k, v in node.value if getattr(k, "value", None) == key), None) if isinstance(node, yaml.MappingNode) else None
     found, jobs = {}, get(yaml.compose(text, Loader=yaml.SafeLoader), "jobs")
@@ -181,7 +180,7 @@ def guarded(cmds: list, k: int, guard: str) -> bool:  # the source or a block ar
     calls = [c for c in cmds if cmds[k].func and cmds[k].func in c.words]
     return under(cmds[k], (k,)) or (bool(calls) and all(under(c) for c in calls))
 class Scan:  # walks each job's run steps through their transitive shell and make edges
-    def __init__(self, root: pathlib.Path) -> None: self.root, self.cache, self.issues, self.inventory, self.exec_skip = root, {}, set(), set(), set()
+    def __init__(self, root: pathlib.Path) -> None: self.root, self.cache, self.issues, self.inventory, self.exec_skip, self.bang_x = root, {}, set(), set(), set(), set()
     def report(self, code: str, rel: str, line: int, source: bool = False) -> None: self.issues.add((self.wf, self.job, f"{code}@{rel}:{line}")) if self.credential or not source else None  # SOURCE_*: credential jobs only
     def read(self, rel: str) -> tuple:  # (text, refusal): a regular in-repo file, no symlinked component, <= MAX_BYTES
         path = self.root
@@ -207,6 +206,7 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
         if key not in self.cache and not key.startswith("Makefile#"):
             text, code = self.read(key); self.cache[key] = code or ("NOT_SHELL" if "\x00" in text else facts(text))  # noqa: E702  # source and bash read any text as shell
             if not (code or key.endswith(".sh") or re.match(r"#!.*\b(?:ba)?sh\b", text) or not text.startswith("#!") and self.root.joinpath(key).stat().st_mode & 0o100): self.exec_skip.add(key)  # exec: sh #! or ENOEXEC
+            if re.match(r"#![^\n]*?(?<!\S)-[a-zA-Z]*x", text): self.bang_x.add(key)  # a #! -x flag traces the file, assumed on every edge
         elif key not in self.cache:
             rules, found = self.rules(), self.rule(key[9:])
             self.cache[key] = rules if isinstance(rules, str) else "MISSING"
@@ -218,7 +218,7 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
         return self.cache[key]
     def follow(self, key: str, env: dict, argv: list, chain: tuple, quiet: bool, caller: str, line: int, binary_ok: bool = False) -> None:
         unit = "CYCLE" if key in chain else "LIMIT" if len(chain) >= MAX_DEPTH or self.visits >= MAX_VISITS else self.load(key)
-        unit = "NOT_SHELL" if binary_ok and key in self.exec_skip else unit  # an exec'd file another interpreter runs, or data
+        unit, env = "NOT_SHELL" if binary_ok and key in self.exec_skip else unit, dict(env, SHELLOPTS="xtrace") if key in self.bang_x else env  # an exec'd foreign or data file
         if isinstance(unit, str):
             if unit != "NOT_SHELL" and not (binary_ok and unit == "MISSING"): self.report("SOURCE_" + unit, caller, line, True)
         elif (memo := (key, tuple(sorted(env.items())), tuple(argv), quiet)) not in self.seen:
