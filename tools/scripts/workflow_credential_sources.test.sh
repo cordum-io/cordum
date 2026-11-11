@@ -67,6 +67,11 @@ OPTS = {  # mint() keywords, before defaulting to SAFE: a set applies in its own
     "trace_skipped": dict(head=STRICT + "set -x\nfalse && set +x\n"), "trace_piped": dict(head=STRICT + "set -x\nset +x | cat\nset +x &\nwait\n"),  # skipped, or run in another shell
     "errexit_skipped": dict(head="set -uo pipefail\nfalse && set -e\n"), "errexit_piped": dict(head="set -uo pipefail\nset -e | cat\nset -e &\nwait\n"),
     "errexit_tested": dict(head=STRICT + "main() {\n", tail="}\nmain || true\n"), "errexit_tested_body": dict(head="main() {\nset -euo pipefail\n", tail="}\nif true && main; then :; fi\n"), "errexit_tested_nested": dict(head=STRICT + "main() {\n", tail="}\nouter() { main; }\n! outer\n"),  # a tested status: bash ignores errexit in the call
+    "errexit_group_tested": dict(head=STRICT + "main() {\n", tail="}\n{ main; } || true\n"), "errexit_block_tested": dict(head=STRICT + "{\n", tail="} || true\n"), "errexit_if_tested": dict(head=STRICT + "if true; then\n", tail="fi || true\n"),  # bash ignores errexit throughout a compound command
+    "errexit_paren_tested": dict(head=STRICT + "(\n", tail=") && true\n"), "errexit_loop_tested": dict(head=STRICT + "for round in 1; do\n", tail="done || true\n"), "errexit_negated": dict(head=STRICT + "main() {\n", tail="}\n! { main; }\n"),  # that is negated, a condition, or not last in an && or || list
+    "errexit_condition": dict(head=STRICT + "main() {\n", tail="}\nif { main; }; then :; fi\n"), "errexit_then_tested": dict(head=STRICT + "main() {\n", tail="}\nif true; then { main; } || true; fi\n"), "errexit_group_last": dict(head=STRICT + "main() {\n", tail="}\ntrue && { main; }\n"),  # last: errexit holds
+    "errexit_pipe_tested": dict(head=STRICT + "main() {\n", tail="}\nmain | cat || true\n"), "errexit_group_piped": dict(head=STRICT + "main() {\n", tail="}\n{ main; } | cat || true\n"), "errexit_negated_if": dict(head=STRICT + "! if true; then\n", tail="fi\n"), "errexit_pipe_plain": dict(head=STRICT + "main() {\n", tail="}\nmain | cat\n"),  # the whole pipeline
+    "errexit_condition_list": dict(head=STRICT + "main() {\n", tail="}\nif true; main; true; then :; fi\n"), "errexit_condition_group": dict(head=STRICT + "main() {\n", tail="}\nif true && { main; }; then :; fi\n"), "errexit_then_group": dict(head=STRICT + "main() {\n", tail="}\nif true; then { main; }; fi\n"),  # any command of a condition list
     "errexit_cold": dict(head=STRICT + "main() {\n", tail="}\nset +e\nmain\nset -e\n"), "errexit_last": dict(head=STRICT + "main() {\n", tail="}\ntrue && main\n"), "mask_captured_func": dict(before=SAFE + " || exit 1", head=STRICT + "main() {\n", tail='}\nout="$(main)"\n'),
     "return_global": dict(before=SAFE + " || return 1", head=STRICT + "main() {\n", tail="}\nmain || true\n"),  # the caller ignores the failure; minted outlives it
     "return_local": dict(before=SAFE + " || return 1", head=STRICT + "main() {\nlocal minted\n", tail="}\nmain || true\n"), "exit_block": dict(before=SAFE + ' || { echo "synthetic mask failure" >&2; exit 1; }'),
@@ -223,7 +228,7 @@ base clean
 bind_spacing clean
 mint_registered clean
 mint_errexit_func clean
-errexit_window subshell_confined errexit_last clean
+errexit_window subshell_confined errexit_last errexit_group_last errexit_pipe_plain errexit_then_group clean
 return_local return_unset exit_block clean
 trace_off clean
 noext_data clean
@@ -237,22 +242,17 @@ bind_drop e2e.yml:e2e-tls:REDACTION_VALUE_BINDING
 bind_rename e2e.yml:e2e-tls:REDACTION_VALUE_BINDING
 bind_nightly nightly.yml:full-production-gate:REDACTION_VALUE_BINDING
 mint_unregistered e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
-mint_late e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
+mint_late mint_xtrace e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 mint_prefix e2e.yml:e2e-tls:CREDENTIAL_PREFIX_PRINT@tools/scripts/zz_synthetic_mint.sh
 mint_ignored e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 mint_errexit_off e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
-mint_xtrace e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 errexit_scoped e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
-errexit_leak errexit_subshell errexit_skipped errexit_piped errexit_tested errexit_tested_body errexit_tested_nested errexit_cold mask_captured_func e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
+errexit_leak errexit_subshell errexit_skipped errexit_piped errexit_tested errexit_tested_body errexit_tested_nested errexit_cold mask_captured_func errexit_group_tested errexit_block_tested errexit_if_tested errexit_paren_tested errexit_loop_tested errexit_negated errexit_condition errexit_then_tested errexit_pipe_tested errexit_group_piped errexit_negated_if errexit_condition_list errexit_condition_group e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 return_global return_and_local return_and_unset return_nested return_skipped exit_skipped exit_captured e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
-trace_unused trace_skipped trace_piped trace_scoped e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
-trace_call_order e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
-trace_loop e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
+trace_unused trace_skipped trace_piped trace_scoped trace_call_order trace_loop e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 trace_substitution e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_gen.sh
-trace_shell e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
-trace_env e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
-trace_bash_x docs-linkcheck.yml:link-check:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
-trace_set_x docs-linkcheck.yml:link-check:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
+trace_shell trace_env e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
+trace_bash_x trace_set_x docs-linkcheck.yml:link-check:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 trace_bang e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 noext_source e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.inc
 noext_exec e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.inc

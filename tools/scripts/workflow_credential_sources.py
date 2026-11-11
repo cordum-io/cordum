@@ -7,7 +7,7 @@ MAX_DEPTH, MAX_VISITS, MAX_BYTES, UNKNOWN, ERREXIT, XTRACE = 10, 400, 256 * 1024
 HEREDOC, DOTENV = re.compile(r"(?<!<)<<-?\s*(['\"]?)([A-Za-z_]\w*)\1"), re.compile(r">\s*[\"']?(?:[^\s\"';&|<>]*/)?\.env[\"']?(?=[\s;&|<>]|$)")
 PLAIN, DQ, ANY = re.compile(r"[^\s'\"\\$`<>&|;()#]+"), re.compile(r"[^\"\\$`\n]+"), re.compile(r".", re.S)
 BRACE, REDIR, RWORD = re.compile(r"\$\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}"), re.compile(r"&?(?:<<<|<<-?|<>|<&|>&|>>|>\||<|>)[ \t]*"), re.compile(r"(?:\d+|&)?[<>]")
-SEPS, CI_TEST = ("&&", "||", ";;", "|&", ";", "|", "&", "\n", "(", ")"), r'\[\[ "\$\{GITHUB_ACTIONS:-\}" == "?true"? \]\]'
+SEPS, CI_TEST, RESERVED = ("&&", "||", ";;", "|&", ";", "|", "&", "\n", "(", ")"), r'\[\[ "\$\{GITHUB_ACTIONS:-\}" == "?true"? \]\]', {"!", "if", "elif", "while", "until", "then", "do", "else"}
 ASSIGN, WORD_ASSIGN = re.compile(r"(?:(?:local|export|declare|typeset|readonly)\s+(?:-\w+\s+)*)?([A-Za-z_]\w*)=(.*)", re.S), re.compile(r"([A-Za-z_]\w*)=(.*)", re.S)
 JQ, GEN = re.compile(r"\bjq\b.*?\.(?:\w*_)?(?:token|secret|password|api_key|key)\b(?!\.)", re.S), re.compile(r"openssl\s+rand\b|\buuidgen\b|/dev/u?random\b|\$\{?RANDOM\b|\$\(\s*date\b|secrets\.token_|\bpwgen\b")
 NAME, PREFIX = re.compile(r"(?i)^(?!.*idem).*(?:passw|secret|token|key|nonce)"), re.compile(r"\$\{(\w+):(?:(\d+):(\d+)\}|\d|:|\s+-?\d|\(\s*-?\d)")
@@ -34,8 +34,8 @@ def heredocs(lines: list) -> list:  # (header index, body indices incl. terminat
     return found
 def split(text: str, i: int = 0, line: int = 1, sub: int = 0, closer: bool = False) -> tuple:  # (raw-word commands, substitution bodies first; end index or -1; line)
     cmds, words, word, start, quote, parens = [], [], "", line, "", 0
-    def emit(op: str) -> None: nonlocal words, start; cmds.append(Cmd(start, words, op, sub)) if words or op in ("(", ")", "{", "}") else None; words, start = [], line  # noqa: E702
-    def push() -> None: nonlocal word; emit(word) if word in ("{", "}") and (not words or word == "{" and (words[-1].endswith("()") or words[0] == "function")) else words.append(word) if word else None; word = ""  # noqa: E702  # a block's { or }, else a word
+    def emit(op: str) -> None: nonlocal words, start; cmds.append(Cmd(start, words, op, sub)) if words or op in ("(", ")", "{", "}") or op in ("&&", "||", "|", "|&") and cmds and cmds[-1].op in (")", "}") else None; words, start = [], line  # noqa: E702  # keeps the operator after a block
+    def push() -> None: nonlocal word; emit("\n") if word == "{" and words and set(words) <= RESERVED else None; emit(word) if word in ("{", "}") and (not words or word == "{" and (words[-1].endswith("()") or words[0] == "function")) else words.append(word) if word else None; word = ""  # noqa: E702  # a block's { or }, else a word
     while i < len(text):
         c, two = text[i], text[i:i + 2]
         if quote == "'" or two == "${":  # a single-quoted span, or a balanced ${...} in any quoting
@@ -63,7 +63,7 @@ def split(text: str, i: int = 0, line: int = 1, sub: int = 0, closer: bool = Fal
             if sep in ("&&", "||") and words[:1] == ["[["] and "]]" not in words: words.append(sep)
             elif sep == ")" and closer and not parens: emit("$)"); return cmds, i, line  # noqa: E702
             else:
-                parens += {"(": 1, ")": -1}.get(sep, 0); emit(sep)  # noqa: E702
+                parens += {"(": 1, ")": -1}.get(sep, 0); emit("\n") if sep == "(" and words and set(words) <= RESERVED else None; emit(sep)  # noqa: E702  # reserved words before a ( or { end their own command
                 if sep == "\n": line = start = line + 1
         else: word, i = word + (chunk := (PLAIN.match(text, i) or ANY.match(text, i)).group()), i + len(chunk)
     push(); emit(""); return cmds, -1 if quote or closer else i, line  # noqa: E702
@@ -76,7 +76,7 @@ def parse(text: str, line: int = 1) -> tuple:  # (commands with block stack and 
             lines[k] = "export " + m.group(1) + "=" + (shlex.quote(m.group(2)) if quoted else '"' + re.sub(r'(["\\])', r"\\\1", m.group(2)) + '"') if m else ""
     raw, end, _ = split("\n".join(lines), 0, line)
     for cmd in raw:
-        first = cmd.words[0] if cmd.words else ""
+        first = (cmd.words + [""])[cmd.words[:1] == ["!"]]  # `! if ...` opens an if
         if stack and stack[-1][1] in ({"fi": ("if",), "done": ("loop",), "esac": ("case",)}.get(first) or (("{", "func") if cmd.op == "}" and not cmd.words else ())): stack.pop()
         cmds.append(cmd._replace(stack=tuple(s[0] for s in stack), func=next((s[2] for s in reversed(stack) if s[2]), ""), text=" ".join(cmd.words)))
         if cmd.op == ")" and first != "case" and stack and stack[-1][1] == "(": stack.pop()  # not a `case ... in pattern)` line
@@ -85,6 +85,9 @@ def parse(text: str, line: int = 1) -> tuple:  # (commands with block stack and 
         if kind: stack.append((len(cmds) - 1, "func" if name else kind, name))
     return cmds, error or (line if end < 0 else 0)
 def runs(cmds: list, i: int, floor: int = 0, sub: int = 0) -> bool: return cmds[i].sub == sub and cmds[i].op not in ("|", "|&", "&") and next((cmds[h].op for h in range(i - 1, floor - 1, -1) if cmds[h].sub == sub), "") not in ("&&", "||", "|", "|&")  # whenever its block does, in that block's own shell: not in a (deeper) $(...), a pipeline or the background, nor behind && or || from floor
+def ends(cmds: list, i: int) -> str: return "" if (j := next((h for h in range(i + 1, len(cmds)) if i not in cmds[h].stack), len(cmds)) + (cmds[i].op == "{") if i + 1 < len(cmds) and i in cmds[i + 1].stack else i) >= len(cmds) or j != i and not all(RWORD.match(w) for w in cmds[j].words[cmds[j].words[:1] in (["fi"], ["done"], ["esac"]):]) else ends(cmds, n) if cmds[j].op in ("|", "|&") and (n := next((h for h in range(j + 1, len(cmds)) if cmds[h].sub == cmds[j].sub), len(cmds))) < len(cmds) else cmds[j].op  # the operator after the pipeline from cmds[i], "" if unknown; a compound command ends at its closer
+def cond(cmds: list, i: int) -> bool: return bool(st := cmds[i].stack) and (cmds[st[-1]].words + [""])[cmds[st[-1]].words[:1] == ["!"]] in ("if", "while", "until") and next((c.words[:1] for c in reversed(cmds[st[-1] + 1:i + 1]) if c.stack == st and c.words[:1] in (["then"], ["do"], ["else"], ["elif"])), ["elif"]) == ["elif"]  # in the condition of the if, elif, while or until it is directly in: no then, do or else at its level since
+def hot(cmds: list) -> set: return {s for s in {s for c in cmds for s in c.stack} if not (cmds[s].op == "{" and cmds[s].words) and (cmds[s].words[:1] == ["!"] or bool(s) and set(cmds[s - 1].words) <= RESERVED and cmds[s - 1].words[-1:] == ["!"] or cond(cmds, s) or ends(cmds, s) in ("&&", "||"))}  # blocks bash runs ignoring errexit throughout: a compound command negated, in a condition, or in a pipeline not last in an && or || list
 def exits(cmds: list, start: int, level: tuple, var: str, k: int) -> bool:  # exit at level before else/elif or leaving it, and run from start; return only once var is local to k's function or cleared there, by a command that runs
     fn, stop = next((s for s in reversed(cmds[k].stack) if cmds[s].op == "{" and cmds[s].words), -1), next((i for i in range(start, len(cmds)) if len(cmds[i].stack) < len(level) or cmds[i].stack == level and cmds[i].words[cmds[i].words[:1] == ["then"]:][:1] in (["else"], ["elif"], ["exit"], ["return"])), len(cmds))
     words = cmds[stop].words[cmds[stop].words[:1] == ["then"]:][:1] if stop < len(cmds) and cmds[stop].stack == level and runs(cmds, stop, start, cmds[k].sub) else []  # in the value's shell: not skipped, piped, backgrounded or captured
@@ -103,8 +106,7 @@ def registered_at(cmds: list, j: int, k: int, var: str, errexit: bool, captured:
         return cmds[head].words[:1] == ["if"] and cmds[head].stack == cmds[k].stack and cmds[j].op in (";", "\n") and nxt.words[:1] == ["then"] and exits(cmds, j + 1, cmds[head].stack + (head,), var, k)
     bail = nxt.words[:1] in (["exit"], ["return"]) and exits(cmds, j + 1, nxt.stack, var, k) or (not nxt.words and nxt.op == "{" and exits(cmds, j + 2, nxt.stack + (j + 1,), var, k))
     if lead == "if" or (j and cmds[j - 1].op in ("&&", "||", "|", "|&")) or not (cmds[j].op == "||" and bail or cmds[j].op in ("\n", ";", "", ")") and errexit): return False
-    level, home = cmds[j].stack, cmds[k].stack
-    gate = level[-1] if level and level[:-1] == home else -1  # one if deeper, on a safe test
+    level, home = cmds[j].stack, cmds[k].stack; gate = level[-1] if level and level[:-1] == home else -1  # noqa: E702  # one if deeper, on a safe test
     return level == home or gate >= 0 and cmds[gate].words[:1] == ["if"] and bool(re.fullmatch(safe, cmds[gate].text)) and not any(c.stack == level and c.words[:1] in (["else"], ["elif"]) for c in cmds[gate + 1:j])
 def state(cmds: list, k: int, var: str, flags: list, captured: set = frozenset()) -> str:  # registered, late (used or traced first) or unregistered; reassignment ends it
     ref, harmless, used = re.compile(r"\$\{?" + var + r"(?!\w)|\bexport\s+" + var + r"\b(?!=)"), re.compile(r"-[nz]\s+\"?\$\{?" + var + r"\}?\"?|\$\{#" + var + r"\}"), False
@@ -121,13 +123,13 @@ def shallow(text: str) -> str:  # the text without command substitutions nested 
         elif top != "'" and (tok == "$(" or tok in ("(", "'", '"') and top != '"'): stack.append(tok)
         out += tok if stack.count("$(") <= 1 else ""
     return out
-def callers(cmds: list, flags: list, prev: tuple) -> tuple:  # names of functions called where bash ignores errexit, called with errexit off, called inside a $(...); or called from such a function
+def callers(cmds: list, flags: list, prev: tuple, ign: set = frozenset()) -> tuple:  # names of functions called where bash ignores errexit (also in an ign block), called with errexit off, called inside a $(...); or called from such a function
     defs, found = {c.func for c in cmds} - {""}, (set(), set(), set())
-    for i, c in enumerate(cmds):  # bash ignores errexit for a tested status: in an && or || list but its last command, in an if, elif, while or until condition, or after `!`
+    for i, c in enumerate(cmds):  # bash ignores errexit for a tested status, in the whole pipeline: in an && or || list but its last command, in an if, elif, while or until condition, or after `!`
         if (name := (c.words + [""])[(lead := next((n for n, w in enumerate(c.words) if w not in PREFIX_WORDS and not WORD_ASSIGN.fullmatch(w)), len(c.words)))]) in defs:
-            for names, hit in zip(found, (c.op in ("&&", "||") or not {"if", "elif", "while", "until", "!"}.isdisjoint(c.words[:lead]) or next((cmds[h].words[:1] for h in range(i + 1, len(cmds)) if cmds[h].sub == c.sub), []) in (["then"], ["do"]) or c.func in prev[0], not flags[i][0], c.sub or c.func in prev[2])): names.add(name) if hit else None
+            for names, hit in zip(found, (ends(cmds, i) in ("&&", "||") or not {"if", "elif", "while", "until", "!"}.isdisjoint(c.words[:lead]) or cond(cmds, i) or c.func in prev[0] or not ign.isdisjoint(c.stack), not flags[i][0], c.sub or c.func in prev[2])): names.add(name) if hit else None
     return found
-def options(cmds: list, errexit: bool, quiet: set = frozenset(), cold: set = frozenset()) -> list:  # [k]: (errexit, xtrace) at cmds[k]; a set applies in text order within its scope: top level, function body or subshell; quiet functions ignore errexit, cold ones start without it
+def options(cmds: list, errexit: bool, quiet: set = frozenset(), cold: set = frozenset(), ign: set = frozenset()) -> list:  # [k]: (errexit, xtrace) at cmds[k]; a set applies in text order within its scope: top level, function body or subshell; quiet functions and ign blocks ignore errexit, cold functions start without it
     scope = lambda c: next((s for s in reversed(c.stack) if cmds[s].op == "(" or cmds[s].op == "{" and cmds[s].words), -1)
     shells, flat, fns = lambda c: {-1, *(s for s in c.stack if cmds[s].op == "(")}, lambda i: runs(cmds, i) and (cmds[i].stack[-1:] or (-1,))[0] == scope(cmds[i]), any(c.op == "{" and c.words for c in cmds)  # the subshells around it; runs in straight line in its scope; the file defines a function
     def wide(i: int, c: Cmd, o: tuple, v: bool) -> bool:  # c sets o to v and may apply out of text order, throughout its innermost subshell: in a loop there, tracing where a function may run, or left by a function
@@ -136,13 +138,13 @@ def options(cmds: list, errexit: bool, quiet: set = frozenset(), cold: set = fro
         return any(cmds[s].words[:1] in (["while"], ["until"], ["for"], ["select"]) and s > max(shells(c)) for s in c.stack) or v and fns or scope(c) >= 0 and cmds[scope(c)].op == "{" and not (m is not None and flat(m) and flag(cmds[m], v, *o) != v)  # a function's next change of o, before any return, must reset it in straight line
     off, on, traced, now, out = {max(shells(c)) for i, c in enumerate(cmds) if wide(i, c, ERREXIT, False)}, {max(shells(c)) for i, c in enumerate(cmds) if wide(i, c, XTRACE, True)}, any(c.sub and flag(c, False, *XTRACE) for c in cmds), {-1: (errexit, False)}, []  # traced: a $(...) turns tracing on, assumed in every $(...)
     for i, c in enumerate(cmds):
-        e, x = now[s] if (s := scope(c)) in now else now.setdefault(s, ((p := now[scope(cmds[s])])[0] and not (cmds[s].op == "{" and c.func in cold), p[1])); out.append((e and not c.sub and not off & shells(c) and c.func not in quiet, x or bool(on & shells(c)) or bool(c.sub) and traced))  # noqa: E702  # a subshell or function body starts from its parent; bash clears errexit in a $(...)
+        e, x = now[s] if (s := scope(c)) in now else now.setdefault(s, ((p := now[scope(cmds[s])])[0] and not (cmds[s].op == "{" and c.func in cold), p[1])); out.append((e and not c.sub and not off & shells(c) and c.func not in quiet and ign.isdisjoint(c.stack), x or bool(on & shells(c)) or bool(c.sub) and traced))  # noqa: E702  # a subshell or function body starts from its parent; bash clears errexit in a $(...)
         if not c.sub: now[s] = (flag(c, e, *ERREXIT), flag(c, x, *XTRACE)) if flat(i) else (e and flag(c, True, *ERREXIT), x or flag(c, False, *XTRACE))  # one that may not run, or runs in another shell, only disables errexit or starts tracing
     return out
 def facts(text: str, line: int = 1, errexit: bool = False) -> tuple:  # (cmds, unparsable line, [(k, var, kind, state)], [(k, var, bytes)], options)
     cmds, error = parse(text, line)
-    ctx, seen, acqs = (set(), set(), set()), None, []
-    while ctx != seen: seen, flags = ctx, options(cmds, errexit, *ctx[:2]); ctx = callers(cmds, flags, ctx)  # noqa: E702  # each round only adds names, so it ends
+    ctx, seen, acqs, ign = (set(), set(), set()), None, [], hot(cmds)
+    while ctx != seen: seen, flags = ctx, options(cmds, errexit, *ctx[:2], ign); ctx = callers(cmds, flags, ctx, ign)  # noqa: E702  # each round only adds names, so it ends
     for k, cmd in enumerate(cmds):
         var, rhs = (m.group(1), m.group(2)) if (m := ASSIGN.fullmatch(cmd.text)) else ("-", "")
         kind = "" if "idem" in var.lower() else "auth-response" if JQ.search(rhs) else "generated" if NAME.search(var) and GEN.search(shallow(rhs)) else ""
@@ -150,12 +152,10 @@ def facts(text: str, line: int = 1, errexit: bool = False) -> tuple:  # (cmds, u
             acqs.append((k, var, kind or "auth-response", state(cmds, k, var, flags, ctx[2]) if kind else "unregistered"))
         helper = re.fullmatch(r"gha_mask_env(?:_from_command((?: [A-Z][A-Z0-9_]*)+) --| ([A-Z][A-Z0-9_]*)) .+", cmd.text, re.S)  # fail-closed: masks, then exports
         acqs += [(k, name, "masked-env", "unregistered" if cmd.sub or cmd.func in ctx[2] else "late" if flags[k][1] else "registered") for name in (helper.group(1) or helper.group(2)).split()] if helper else []  # in a $(...), the mask is captured but the GITHUB_ENV write still lands
-    names = {a[1] for a in acqs}
-    return cmds, error, acqs, [(k, m.group(1), int(m.group(2)) + int(m.group(3)) if m.group(2) else 10 ** 6) for k, c in enumerate(cmds) for m in PREFIX.finditer(c.text) if m.group(1) in names or NAME.search(m.group(1))], flags
+    return cmds, error, acqs, [(k, m.group(1), int(m.group(2)) + int(m.group(3)) if m.group(2) else 10 ** 6) for k, c in enumerate(cmds) for m in PREFIX.finditer(c.text) if m.group(1) in {a[1] for a in acqs} or NAME.search(m.group(1))], flags
 def expand(word: str, table: dict, env: dict, here: str) -> str:  # script-dir and cd/pwd idioms, known variables, defaults; drops quotes
     def lookup(m: re.Match) -> str:
-        name, op, default = m.group(1) or m.group(4), m.group(2), m.group(3)
-        value = table[name] if name in table else env[name] if name in env else "." if name in ("GITHUB_WORKSPACE", "PWD") else None
+        name, op, default = m.group(1) or m.group(4), m.group(2), m.group(3); value = table[name] if name in table else env[name] if name in env else "." if name in ("GITHUB_WORKSPACE", "PWD") else None  # noqa: E702
         return default if op and (value is None or op[0] == ":" and value == "") else m.group(0) if value is None else value
     for _ in range(12):
         if word == (word := VAR.sub(lookup, TOPLEVEL.sub(".", CDPWD.sub(r"\1", DIRNAME.sub(here, word))))): break
