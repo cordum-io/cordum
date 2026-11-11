@@ -62,7 +62,7 @@ func TestReleaseChartWaitsForPublishedImages(t *testing.T) {
 
 	for job, required := range map[string][]string{
 		"helm-chart":             {"smoke-published-images"},
-		"smoke-published-images": {"control-plane", "dashboard"},
+		"smoke-published-images": {"control-plane", "dashboard", "demo-quickstart-worker"},
 	} {
 		t.Run(job, func(t *testing.T) {
 			config, ok := jobs[job]
@@ -232,6 +232,74 @@ func TestReleaseImagesUpgradeAlpinePackages(t *testing.T) {
 			}
 			if err := checkFinalStageUpgradesAlpine(string(data)); err != nil {
 				t.Errorf("%s: %v", name, err)
+			}
+		})
+	}
+}
+
+// TestReleaseTrivyGatesBlockImagePush keeps each image job's Trivy step in
+// front of its push. With format: sarif, trivy-action v0.36.0 (ed142fd0)
+// entrypoint.sh:75-82 unsets TRIVY_SEVERITY unless limit-severities-for-sarif
+// is "true", so the effective gate is every fixed OS-package finding at any
+// severity (ignore-unfixed: true, vuln-type: os), not only the
+// `severity: CRITICAL` the step names (verified in task-278cbdd7). Setting
+// that input, ignoring findings, or letting the job continue past the scan
+// would weaken the gate.
+func TestReleaseTrivyGatesBlockImagePush(t *testing.T) {
+	_, jobs := loadReleaseWorkflow(t)
+	for _, name := range []string{"control-plane", "dashboard", "demo-quickstart-worker"} {
+		t.Run(name, func(t *testing.T) {
+			job, ok := jobs[name]
+			if !ok {
+				t.Fatalf("required job %q missing", name)
+			}
+			if job.If != "" {
+				t.Errorf("job must keep its default condition, got if: %q", job.If)
+			}
+			assertReleaseFailureBlocks(t, job.ContinueOnError, "job")
+			scan := -1
+			for i, step := range job.Steps {
+				if !strings.HasPrefix(step.Uses, trivyAction) {
+					continue
+				}
+				if scan >= 0 {
+					t.Fatalf("want exactly one Trivy step, found another at step %d (%s)", i, step.Name)
+				}
+				scan = i
+			}
+			if scan < 0 {
+				t.Fatal("no Trivy scan step")
+			}
+			step := job.Steps[scan]
+			if got := step.With["exit-code"].Value; got != "1" {
+				t.Errorf("Trivy exit-code = %q, want \"1\"", got)
+			}
+			if limit, ok := step.With["limit-severities-for-sarif"]; ok && strings.EqualFold(limit.Value, "true") {
+				t.Error("limit-severities-for-sarif: true would narrow the gate to the named severity")
+			}
+			if _, ok := step.With["trivyignores"]; ok {
+				t.Error("Trivy step must not ignore findings through trivyignores")
+			}
+			if step.If.Kind != 0 {
+				t.Errorf("Trivy step must not carry an if: condition, got %q", step.If.Value)
+			}
+			assertReleaseFailureBlocks(t, step.ContinueOnError, "Trivy step")
+			pushes := 0
+			for i, candidate := range job.Steps {
+				if !strings.HasPrefix(candidate.Uses, buildPushAction) || candidate.With["push"].Value != "true" {
+					continue
+				}
+				pushes++
+				if i < scan {
+					t.Errorf("push step %q runs before the Trivy scan", candidate.Name)
+				}
+				if candidate.If.Kind != 0 {
+					t.Errorf("push step %q must not carry an if: condition, got %q", candidate.Name, candidate.If.Value)
+				}
+				assertReleaseFailureBlocks(t, candidate.ContinueOnError, "push step "+candidate.Name)
+			}
+			if pushes == 0 {
+				t.Fatal("no push step (docker/build-push-action with push: true)")
 			}
 		})
 	}
