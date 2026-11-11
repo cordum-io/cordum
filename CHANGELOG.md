@@ -132,6 +132,12 @@ Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
 
 ### CI and documentation
 
+- The Lighthouse CI (`/login`) PR comment shows the category scores again. The
+  comment read `dashboard/.lighthouseci/manifest.json`, but the
+  `temporary-public-storage` upload never writes a manifest, so every PR showed
+  "artifacts unavailable: ENOENT". The job now also writes LHCI's filesystem
+  manifest, and when results are missing the comment states the lhci and
+  manifest step outcomes. Assertions and thresholds are unchanged.
 - Helm chart publication now waits for successful published-image smoke tests
   (#493). A failed, cancelled or skipped image job prevents the chart from
   being published with missing images.
