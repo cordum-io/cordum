@@ -12,10 +12,7 @@ trap 'rm -rf "${WORK}"' EXIT
 SENTINEL="wcs_synthetic_${$}_${RANDOM}${RANDOM}"
 PASS=0 FAIL=0 SKIP=0
 
-record() {
-  case "$1" in PASS) PASS=$((PASS + 1)) ;; SKIP) SKIP=$((SKIP + 1)) ;; *) FAIL=$((FAIL + 1)) ;; esac
-  printf '%s %s\n' "$1" "$2"
-}
+record() { case "$1" in PASS) PASS=$((PASS + 1)) ;; SKIP) SKIP=$((SKIP + 1)) ;; *) FAIL=$((FAIL + 1)) ;; esac; printf '%s %s\n' "$1" "$2"; }
 
 # The scanned copy holds what workflow edges can reach: workflows, Makefile, tools/scripts, demo/ and tests/ shell.
 BASE="${WORK}/pristine"
@@ -108,10 +105,11 @@ elif case in BINDS:
 elif case in MINTS:
     mint(*MINTS[case])
     step(RUN_MINT)
-elif case == "mint_make":
+elif case in ("mint_make", "make_errexit"):  # make runs each recipe line with sh -c: errexit off
     mint()
+    recipe = RUN_MINT if case == "mint_make" else 'synthetic_key="$$(openssl rand -hex 16)"; gha_mask_value "$$synthetic_key"; echo "$$synthetic_key"'
     makefile = root / "Makefile"
-    makefile.write_bytes(makefile.read_bytes() + b"\nzz-synthetic-mint:\n\tbash tools/scripts/zz_synthetic_mint.sh\n")
+    makefile.write_bytes(makefile.read_bytes() + ("\nzz-synthetic-mint:\n\t" + recipe + "\n").encode("utf-8"))
     step("make zz-synthetic-mint")
 elif case == "mint_untracked_job":
     mint()
@@ -239,6 +237,7 @@ trace_bang e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_s
 noext_source e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.inc
 noext_exec e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.inc
 mint_make e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
+make_errexit e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@Makefile
 mint_untracked_job docs-linkcheck.yml:link-check:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 mint_inline e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED
 gen_openssl e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_gen.sh
