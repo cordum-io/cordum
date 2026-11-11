@@ -21,17 +21,15 @@ def seeded(env: dict, name: str) -> bool: return (value := env.get(name, "")) !=
 def literal(value: str) -> int: return len(re.match(r"[^$\x00]*", value).group())
 def flag(cmd: Cmd, on: bool, short: str, name: str) -> bool: return next((sign == "-" for sign in reversed(re.findall(r"(?<!\S)([-+])(?:[a-zA-Z]*" + short + r"[a-zA-Z]*|o\s+" + name + r")(?!\S)", cmd.text))), on) if cmd.words[cmd.words[:1] in (["then"], ["do"], ["else"]):][:1] == ["set"] else on  # after a `set`
 def pg_runs_gate_1(argv: list) -> bool: return "--skip-rebuild" not in argv and (not (gates := [v for f, v in zip(argv, argv[1:]) if f == "--gate"]) or not gates[-1].isdigit() or gates[-1] == "1")
-# Reviewed exemptions: the source, a block around it, or every call site of its function matches the guard, and the
-# condition holds on the visit's entry env. recover-dashboard's token is an anonymous public-image pull token: the exact
-# fetch sends no credential and both call sites pass literal public token URLs.
+# Reviewed exemptions: the source, a block around it, or every call site of its function matches the guard, and the condition
+# holds on the entry env. recover-dashboard's anonymous public-image pull token: its exact fetch sends no credential, from literal URLs.
 EXEMPT = {
     ("tools/scripts/edge_fake_hook_e2e.sh", "AGENTD_NONCE"): ("if ! want_bypass_hook", lambda env: env.get("CORDUM_EDGE_E2E_BYPASS_HOOK", "").lower() in ("1", "true", "yes", "on")),
     ("tools/scripts/quickstart.sh", "api_key"): (r'if \[\[ -z "\$\{api_key\}" \]\]', lambda env: seeded(env, "CORDUM_API_KEY")),
     ("tools/scripts/quickstart.sh", "REDIS_PASSWORD"): (r'if \[\[ -z "\$\{REDIS_PASSWORD:-\}" \]\]', lambda env: seeded(env, "REDIS_PASSWORD")),
     (".github/workflows/recover-dashboard-v1.2.0.yml", "token"): (re.escape("token=$(curl --fail --silent --show-error \"$token_url\" | jq -er '.token')"), lambda env: True)}
-# The quickstart banner prints a fixed-length key prefix: safe when the path discards stdout or the seeded key's literal prefix covers it.
-PREFIX_EXEMPT = {("tools/scripts/quickstart.sh", "API_KEY"): lambda env, quiet, need: quiet or literal(env.get("CORDUM_API_KEY", "")) >= need}
-GATES = {("tools/scripts/production_gate.sh", "gate_1_deploy", "tools/scripts/quickstart.sh"): pg_runs_gate_1}  # quickstart runs only in gate 1, never with --skip-rebuild
+PREFIX_EXEMPT = {("tools/scripts/quickstart.sh", "API_KEY"): lambda env, quiet, need: quiet or literal(env.get("CORDUM_API_KEY", "")) >= need}  # banner prefix: stdout discarded or seeded literal
+GATES ={("tools/scripts/production_gate.sh", "gate_1_deploy", "tools/scripts/quickstart.sh"): pg_runs_gate_1}  # quickstart runs only in gate 1, never with --skip-rebuild
 def heredocs(lines: list) -> list:  # (header index, body indices incl. terminator, quoted delimiter, terminated)
     found, index = [], 0
     while index < len(lines):
@@ -184,7 +182,7 @@ def guarded(cmds: list, k: int, guard: str) -> bool:  # the source or a block ar
     calls = [c for c in cmds if cmds[k].func and cmds[k].func in c.words]
     return under(cmds[k], (k,)) or (bool(calls) and all(under(c) for c in calls))
 class Scan:  # walks each job's run steps through their transitive shell and make edges
-    def __init__(self, root: pathlib.Path) -> None: self.root, self.cache, self.issues, self.inventory = root, {}, set(), set()
+    def __init__(self, root: pathlib.Path) -> None: self.root, self.cache, self.issues, self.inventory, self.exec_skip = root, {}, set(), set(), set()
     def report(self, code: str, rel: str, line: int, source: bool = False) -> None:  # SOURCE_* refusals gate credential jobs only
         if self.credential or not source: self.issues.add((self.wf, self.job, f"{code}@{rel}:{line}"))
     def read(self, rel: str) -> tuple:  # (text, refusal): a regular in-repo file, no symlinked component, <= MAX_BYTES
@@ -209,7 +207,8 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
     def rule(self, target: str) -> object: return None if isinstance(rules := self.rules(), str) else rules[0].get(target) or next((r for p, r in rules[0].items() if "%" in p and re.fullmatch(re.escape(p).replace("%", ".+"), target)), None)
     def load(self, key: str) -> object:  # facts for a script, or a make target whose prerequisite rules become a make line
         if key not in self.cache and not key.startswith("Makefile#"):
-            text, code = self.read(key); self.cache[key] = code or (facts(text) if key.endswith(".sh") or re.match(r"#!.*\b(?:ba)?sh\b", text) else "NOT_SHELL")
+            text, code = self.read(key); self.cache[key] = code or ("NOT_SHELL" if "\x00" in text else facts(text))  # noqa: E702  # source and bash read any text as shell
+            if not (code or key.endswith(".sh") or re.match(r"#!.*\b(?:ba)?sh\b", text) or not text.startswith("#!") and self.root.joinpath(key).stat().st_mode & 0o100): self.exec_skip.add(key)  # exec: sh #! or ENOEXEC
         elif key not in self.cache:
             rules, found = self.rules(), self.rule(key[9:])
             self.cache[key] = rules if isinstance(rules, str) else "MISSING"
@@ -221,6 +220,7 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
         return self.cache[key]
     def follow(self, key: str, env: dict, argv: list, chain: tuple, quiet: bool, caller: str, line: int, binary_ok: bool = False) -> None:
         unit = "CYCLE" if key in chain else "LIMIT" if len(chain) >= MAX_DEPTH or self.visits >= MAX_VISITS else self.load(key)
+        unit = "NOT_SHELL" if binary_ok and key in self.exec_skip else unit  # an exec'd file another interpreter runs, or data
         if isinstance(unit, str):
             if unit != "NOT_SHELL" and not (binary_ok and unit == "MISSING"): self.report("SOURCE_" + unit, caller, line, True)
         elif (memo := (key, tuple(sorted(env.items())), tuple(argv), quiet)) not in self.seen:

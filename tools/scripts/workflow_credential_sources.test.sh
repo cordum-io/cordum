@@ -42,7 +42,7 @@ LINK = (".github/workflows/docs-linkcheck.yml", "      - name: Run lychee (offli
 API = "          CORDUM_API_KEY: ${{ env.CORDUM_API_KEY || '" + PH + "' }}\n"
 REG = 'gha_mask_value "${minted}"'
 SAFE = '[[ -n "${minted}" ]] || exit 1\n' + REG
-MINT_SH, RUN_MINT = "tools/scripts/zz_synthetic_mint.sh", "bash tools/scripts/zz_synthetic_mint.sh"
+MINT_SH, RUN_MINT, INC = "tools/scripts/zz_synthetic_mint.sh", "bash tools/scripts/zz_synthetic_mint.sh", "tools/scripts/zz_synthetic_mint.inc"
 BODY = "\n".join((
     'base="${SYNTHETIC_GATEWAY:-https://127.0.0.1:9}"',
     'resp="$(curl -fsS -X POST "${base}/auth/keys" -d \'{"name":"@SENTINEL@"}\')"',
@@ -69,8 +69,7 @@ GEN = {
     "gen_openssl": "$(openssl rand -hex 16)", "gen_uuidgen": "$(uuidgen)",
     "gen_urandom": "$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \\n')", "gen_random": "syn-${RANDOM}${RANDOM}",
     "gen_date": "syn-$(date +%s%N)", "gen_python": "$(python3 -c 'import secrets; print(secrets.token_urlsafe(16))')",
-    "gen_quoted_paren": "$(printf '(' \"(\")$(openssl rand -hex 8)",
-    "gen_nested": '$(curl -fsS -d "$(jq -cn --arg n "syn-$(date +%s)" "{}")" https://127.0.0.1:9/)',
+    "gen_quoted_paren": "$(printf '(' \"(\")$(openssl rand -hex 8)", "gen_nested": '$(curl -fsS -d "$(jq -cn --arg n "syn-$(date +%s)" "{}")" https://127.0.0.1:9/)',
 }
 DYNAMIC = {
     "dyn_var": 'bash "${SYNTHETIC_DIR}/zz_synthetic_mint.sh"', "dyn_c": 'bash -c "${SYNTHETIC_CMD}"',
@@ -80,10 +79,12 @@ DYNAMIC = {
     "dyn_wrapper": "timeout -s KILL 10m " + RUN_MINT, "dyn_cmdword": '"${SYNTHETIC_SHELL}" ' + MINT_SH,
 }
 SHELLS = {"shell_env_bash": "/usr/bin/env bash {0}", "shell_pwsh": "pwsh"}
+NOEXT = {  # (#! line, run, mode) for a credential file without a shell suffix
+    "noext_source": ("", "source " + INC, 0o644), "noext_exec": ("", "./" + INC, 0o755), "noext_data": ("", "./" + INC, 0o644),
+    "noext_python": ("#!/usr/bin/env python3\n", "./" + INC, 0o755)}
 def edit(rel, old, new):
     text = (root / rel).read_bytes().decode("utf-8")
-    if text.count(old) != 1:
-        raise SystemExit(case + ": fixture anchor is not unique in " + rel)
+    if text.count(old) != 1: raise SystemExit(case + ": fixture anchor is not unique in " + rel)
     (root / rel).write_bytes(text.replace(old, new).encode("utf-8"))
 def write(rel, text):
     (root / rel).write_bytes(text.replace("@SENTINEL@", sentinel).encode("utf-8"))
@@ -136,6 +137,11 @@ elif case in SHELLS:
 elif case == "mint_errexit_func":  # errexit set inside main() still covers the registration
     mint(SAFE, head="main() {\nset -euo pipefail\n", tail="}\nmain\n")
     step(RUN_MINT)
+elif case in NOEXT:  # source and bash read any text as shell; exec only a sh #!, or an executable without #! (ENOEXEC)
+    write(INC, NOEXT[case][0] + BODY.replace("@BEFORE@", "").replace("@AFTER@", "") + "\n")
+    os.chmod(root / INC, NOEXT[case][2])
+    if case == "noext_exec" and not os.stat(root / INC).st_mode & 0o100: raise SystemExit(3)
+    step(NOEXT[case][1])
 elif case == "edge_cycle":
     script("zz_synthetic_cycle_a.sh", "bash tools/scripts/zz_synthetic_cycle_b.sh")
     script("zz_synthetic_cycle_b.sh", "bash tools/scripts/zz_synthetic_cycle_a.sh")
@@ -202,6 +208,8 @@ base clean
 bind_spacing clean
 mint_registered clean
 mint_errexit_func clean
+noext_data clean
+noext_python clean
 bind_literal_space e2e.yml:e2e-tls:REDACTION_VALUE_BINDING
 bind_cross e2e.yml:e2e-tls:REDACTION_VALUE_BINDING
 bind_const e2e.yml:e2e-tls:REDACTION_VALUE_BINDING
@@ -214,6 +222,8 @@ mint_late e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_sy
 mint_prefix e2e.yml:e2e-tls:CREDENTIAL_PREFIX_PRINT@tools/scripts/zz_synthetic_mint.sh
 mint_ignored e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 mint_errexit_off e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
+noext_source e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.inc
+noext_exec e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.inc
 mint_make e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 mint_untracked_job docs-linkcheck.yml:link-check:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 mint_inline e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED
