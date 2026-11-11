@@ -79,6 +79,16 @@ Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
   Gateway readers move in slice 2. The capstone moves the writers and retires
   the global read.
 
+#### core/mcp + gateway — approval-required MCP tools fail closed when no approval gate is wired; `cordum_create_workflow` executes after approval (2026-11-10, task-b62ae307)
+
+- **Behavior change.** Before, a tool that required approval ran ungated when no approval gate was wired. Now `ToolRegistry.Call` refuses it with `ErrApprovalGateUnavailable`, returns JSON-RPC `-32097 gateway misconfigured`, and never runs the handler. This covers built-in `RequiresApproval` tools and `mcp_policy` tools rules. It affects:
+  - an API gateway that has no Redis client;
+  - the standalone `cordum-mcp` binary (stdio and HTTP), which wires no gate and until now executed all 7 mutating tools without approval.
+
+  Tools that do not require approval are unchanged.
+- `cordum_create_workflow` on the API gateway's HTTP MCP endpoint now creates the workflow when, after a distinct operator approves, the client retries with byte-identical arguments. It runs the `POST /api/v1/workflows` handler under the caller's auth context, so permission (`workflows-write` or admin), tenant and validation are identical. Approvals are consume-once.
+- The other 6 mutating tools are still not wired on the gateway; after approval they return an `isError` result with `mcp service bridge unavailable`. `docs/mcp-tools-reference.md` documents the flow.
+
 #### CAP-PRODUCTION — fail-closed exact-wire trust, attempt fencing, durable effects, and structured resources (2026-07-21, task-a13f83fa)
 
 - Landed in #394.
