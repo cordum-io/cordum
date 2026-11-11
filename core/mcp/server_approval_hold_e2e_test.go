@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"net"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/cordum/cordum/core/edge"
+	"github.com/redis/go-redis/v9"
 )
 
 // fakeApprovalGate returns a pre-built *ApprovalRequired so the E2E test
@@ -370,5 +372,204 @@ func TestJSONRPC_ApprovalRefResumeWithoutMetadataFailsClosed(t *testing.T) {
 	}
 	if !errors.Is(errMissingMCPMetadata, errMissingMCPMetadata) {
 		t.Fatal("sentinel sanity")
+	}
+}
+
+// claimOutageDialErr is the transport error a Redis outage produces: it names
+// the internal address, so a leak assertion against it is not vacuous (a
+// closed go-redis client says only "redis: client is closed").
+func claimOutageDialErr() error {
+	return &net.OpError{
+		Op: "dial", Net: "tcp",
+		Addr: &net.TCPAddr{IP: net.IPv4(10, 20, 30, 40), Port: 6379},
+		Err:  errors.New("connect: connection refused"),
+	}
+}
+
+// claimOutageErr is a ClaimApproval failure whose Error() text carries every
+// marker assertNoClaimLeak scans for: a credentialed store URL, host:port, a
+// Redis key and the dial error.
+func claimOutageErr() error {
+	return fmt.Errorf("redis://:fixture-claim-secret@10.20.30.40:6379 WATCH edge:approvals:edge_appr_xyz: %w", claimOutageDialErr())
+}
+
+// assertNoClaimLeak fails when the marshalled JSON-RPC error (code, message
+// and data) names store internals. The bare "6379" is not forbidden: it also
+// appears inside RFC3339Nano timestamps.
+func assertNoClaimLeak(t *testing.T, raw []byte) {
+	t.Helper()
+	for _, leak := range []string{
+		"10.20.30.40", ":6379", "dial tcp", "connection refused",
+		"edge:approvals:", "fixture-claim-secret", "redis://",
+	} {
+		if strings.Contains(string(raw), leak) {
+			t.Errorf("JSON-RPC error leaks %q: %s", leak, raw)
+		}
+	}
+	for _, re := range []*regexp.Regexp{
+		regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}:\d{1,5}\b`),
+		regexp.MustCompile(`(?i)localhost:\d+`),
+	} {
+		if m := re.Find(raw); m != nil {
+			t.Errorf("JSON-RPC error leaks host:port token %q: %s", m, raw)
+		}
+	}
+}
+
+// newClaimHoldServer wires the Edge approval hold over store with one
+// fs.write tool that counts its executions.
+func newClaimHoldServer(t *testing.T, store ApprovalClaimStore) (*MCPServer, *int) {
+	t.Helper()
+	executions := new(int)
+	registry := NewToolRegistry()
+	if err := registry.Register(Tool{Name: "fs.write"}, func(_ context.Context, _ json.RawMessage) (*ToolCallResult, error) {
+		*executions++
+		return &ToolCallResult{Content: []ContentItem{{Type: "text", Text: "ok"}}}, nil
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	srv := NewServer(newChannelTransport(), registry, NewResourceRegistry(), ServerConfig{
+		Name: "test", Version: "0.0.0", ProtocolVersion: DefaultProtocolVersion,
+	}).WithApprovalHold(ApprovalHoldDeps{
+		Store:          store,
+		PolicySnapshot: func(_ context.Context) string { return "policy-v7" },
+		ServerName:     "cordum.builtin",
+	})
+	return srv, executions
+}
+
+// callWithApprovalRef sends a tools/call for fs.write whose arguments carry
+// the given `_approval_ref` value, with full call metadata in the context.
+func callWithApprovalRef(srv *MCPServer, ref any) (*ToolCallResult, *JSONRPCError) {
+	ctx := WithCallMetadata(context.Background(), CallMetadata{
+		Tenant: "tnt_a", Principal: "alice", AgentID: "agent_alpha",
+		SessionID: "sess_99", ExecutionID: "exec_88",
+	})
+	params, _ := json.Marshal(map[string]any{
+		"name":      "fs.write",
+		"arguments": map[string]any{"path": "/etc/hostname", "_approval_ref": ref},
+	})
+	return srv.handleToolsCall(ctx, params)
+}
+
+// assertSanitizedStoreOutage checks the -32096 approval_store_unavailable
+// envelope: no store internals anywhere in the marshalled error, and error.data
+// exactly the fixed kind and reason.
+func assertSanitizedStoreOutage(t *testing.T, rpcErr *JSONRPCError) {
+	t.Helper()
+	if rpcErr == nil {
+		t.Fatal("expected -32096 JSON-RPC error on an approval store outage; got nil")
+	}
+	raw, err := json.Marshal(rpcErr)
+	if err != nil {
+		t.Fatalf("marshal rpcErr: %v", err)
+	}
+	assertNoClaimLeak(t, raw)
+	if rpcErr.Code != jsonRPCApprovalLifecycleErrorCode || rpcErr.Message != "approval lifecycle error" {
+		t.Errorf("rpcErr = %d %q; want %d \"approval lifecycle error\"", rpcErr.Code, rpcErr.Message, jsonRPCApprovalLifecycleErrorCode)
+	}
+	want := map[string]any{"kind": "approval_store_unavailable", "reason": "approval store unavailable"}
+	if !reflect.DeepEqual(rpcErr.Data, want) {
+		t.Errorf("error.data = %#v; want %#v", rpcErr.Data, want)
+	}
+}
+
+// TestJSONRPC_ApprovalRefResumeClaimOutageIsSanitized pins the claim wrap
+// (task-6cf46447): a ClaimApproval transport failure on an `_approval_ref`
+// resume surfaces as -32096 approval_store_unavailable with the fixed reason,
+// not -32602 "invalid approval ref" echoing err.Error(). Nothing executes.
+func TestJSONRPC_ApprovalRefResumeClaimOutageIsSanitized(t *testing.T) {
+	t.Parallel()
+	store := &fakeApprovalClaimStore{err: claimOutageErr()}
+	srv, executions := newClaimHoldServer(t, store)
+
+	_, rpcErr := callWithApprovalRef(srv, "edge_appr_xyz")
+
+	// Count first: a fail-open that swallows the error must report the tool run
+	// before the nil-error Fatal below hides it.
+	if *executions != 0 {
+		t.Errorf("tool executed %d times on a store outage; want 0 (fail closed)", *executions)
+	}
+	if store.calls != 1 {
+		t.Errorf("ClaimApproval called %d times; want exactly 1", store.calls)
+	}
+	assertSanitizedStoreOutage(t, rpcErr)
+}
+
+// TestJSONRPC_ApprovalRefResumeRealStoreOutageIsSanitized runs the lookup path
+// over a real edge.RedisStore on a go-redis client whose dialer always fails
+// with an address-bearing error. GetApproval fails first, so this pins the
+// lookup wrap on a real client chain. The dial never reaches the network.
+func TestJSONRPC_ApprovalRefResumeRealStoreOutageIsSanitized(t *testing.T) {
+	t.Parallel()
+	// go-redis v9.23.0 forces DialerRetries <= 0 back to 5, so keep it at 1.
+	client := redis.NewClient(&redis.Options{
+		Addr: "10.20.30.40:6379", MaxRetries: -1,
+		DialerRetries: 1, DialerRetryTimeout: time.Millisecond,
+		Dialer: func(context.Context, string, string) (net.Conn, error) {
+			return nil, claimOutageDialErr()
+		},
+	})
+	t.Cleanup(func() { _ = client.Close() })
+	srv, executions := newClaimHoldServer(t, edge.NewRedisStoreFromClient(client))
+
+	_, rpcErr := callWithApprovalRef(srv, "edge_appr_xyz")
+
+	if *executions != 0 {
+		t.Errorf("tool executed %d times on a store outage; want 0 (fail closed)", *executions)
+	}
+	assertSanitizedStoreOutage(t, rpcErr)
+}
+
+// TestJSONRPC_ApprovalRefMalformedKeepsInvalidParams pins that a malformed
+// `_approval_ref` is the caller's fault: -32602 "invalid approval ref" before
+// any store call, and the tool never runs even though the store would approve.
+func TestJSONRPC_ApprovalRefMalformedKeepsInvalidParams(t *testing.T) {
+	t.Parallel()
+	const notString = "invalid _approval_ref: must be a string"
+	const empty = "invalid _approval_ref: must be non-empty"
+	cases := []struct {
+		name string
+		ref  any
+		want string
+	}{
+		{"non-string", 42, notString},
+		{"null", nil, empty},
+		{"empty", "", empty},
+		{"blank", "   ", empty},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			expires := time.Date(2026, 5, 16, 20, 0, 0, 0, time.UTC)
+			store := &fakeApprovalClaimStore{
+				approval: &edge.EdgeApproval{
+					ApprovalRef: "edge_appr_xyz", TenantID: "tnt_a",
+					Status:    edge.ApprovalStatusApproved,
+					Decision:  edge.ApprovalDecisionApprove,
+					ExpiresAt: &expires,
+				},
+				consumed: true,
+			}
+			srv, executions := newClaimHoldServer(t, store)
+
+			_, rpcErr := callWithApprovalRef(srv, tc.ref)
+
+			if store.calls != 0 {
+				t.Errorf("ClaimApproval called %d times; want 0 (rejected before the store)", store.calls)
+			}
+			if *executions != 0 {
+				t.Errorf("tool executed %d times; want 0", *executions)
+			}
+			if rpcErr == nil {
+				t.Fatal("expected -32602 JSON-RPC error on a malformed _approval_ref; got nil")
+			}
+			if rpcErr.Code != jsonRPCInvalidParamsCode || rpcErr.Message != "invalid approval ref" {
+				t.Errorf("rpcErr = %d %q; want %d \"invalid approval ref\"", rpcErr.Code, rpcErr.Message, jsonRPCInvalidParamsCode)
+			}
+			if got, _ := rpcErr.Data.(string); got != tc.want {
+				t.Errorf("error.data = %#v; want %q", rpcErr.Data, tc.want)
+			}
+		})
 	}
 }
