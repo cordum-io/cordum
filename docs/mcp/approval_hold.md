@@ -168,7 +168,10 @@ from `PreEvent.PrincipalID` and not from the `server` parameter.
 
 `ApprovalHandoff` is required for any `REQUIRE_HUMAN` decision; a nil
 handoff returns a clear configuration error rather than silently
-bypassing the approval step. Tests:
+bypassing the approval step. A handoff must return a non-empty approval
+reference or an error: an empty or blank reference fails the call closed
+with `-32097`, the tool does not run, and the outcome is never cached, so
+an identical retry reaches the handoff again (task-06784e6d). Tests:
 
 * `TestInvokeToolWithPolicy_ApprovalHandoffUsesCaller` — locks the
   caller-identity routing contract.
@@ -284,7 +287,10 @@ not run.
     same session, replays the executed result and does not run the tool
     again.
   - Until then, the pending result stays cached for identical retries
-    without `_approval_ref`.
+    without `_approval_ref`: a retry gets the same `approval pending:`
+    text from the in-process dedupe store, or a `result_sha256`
+    placeholder of it over Redis, which never stores result bodies
+    (`TestRefless_PendingStillCached`).
 - **Errors.**
   - `-32096` `args_mismatch`: the call's arguments differ from the
     approved call. The claim refuses it; a consumed approval that does not
@@ -295,10 +301,17 @@ not run.
   - `-32097` (gateway misconfigured): the call still carries
     `_approval_ref` when the action gate holds it, because no approval
     hold is wired to consume the ref; or the approval handoff cannot
-    authorize a consumed approval. Nothing is minted in either case.
-- **Known limit.** A hold resolved through a preapproval or the legacy MCP
-  approval store, instead of an Edge mint, returns no resumable Edge ref
-  (task-06784e6d).
+    authorize a consumed approval. Nothing is minted in either case. A
+    held call without `_approval_ref` also gets `-32097` when the
+    action-gate handoff has no Edge approval mint or no Edge session
+    metadata, or returns no approval reference; the tool does not run and
+    the error is never cached (task-06784e6d).
+- **Preapproval and the legacy MCP approval store (task-06784e6d).**
+  Neither resolves an action-gate hold. Scope preapproval waives only the
+  registry gate's per-tool approval, so a preapproved identity's held call
+  gets the same `approval pending: <approval_ref>` and resumes the same
+  way. The action-gate handoff never claims or enqueues a legacy MCP
+  approval record.
 
 ## Conflict kinds and JSON-RPC mapping
 
@@ -367,3 +380,7 @@ auto-retry. A `policy_snapshot_changed` is safe to retry at once.
 | A consumed approval that does not bind the call fails closed | `TestResume_BindingMismatchFailsClosed` |
 | The invariant floor applies on resume | `TestResume_InvariantFloorDenies` |
 | An unconsumed `_approval_ref` or a non-authorizing handoff fails closed | `TestResume_UnconsumedApprovalRefArgFailsClosed`, `TestResume_HandoffWithoutAuthorizerFailsClosed` |
+| Scope preapproval is not consulted on an action-gate hold | `TestActionGateHold_PreapprovalNotConsulted` |
+| A preapproved identity's action-gate hold resumes once over HTTP | `TestActionGatePreapproval` |
+| The action-gate handoff without an Edge mint fails closed with `-32097`, claiming and enqueueing no legacy record | `TestActionGateHandoff_EdgeMintUnwiredFailsClosed` |
+| An empty or blank handoff reference fails closed with `-32097` and is never cached | `TestInvokeToolWithPolicy_EmptyHandoffRefFailsClosed` |
