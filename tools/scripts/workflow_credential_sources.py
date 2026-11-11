@@ -214,7 +214,7 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
                 lines, deps = [""] * max([found[0]] + [n for n, _ in found[2]]), [p for p in found[1] if "$" in p or self.rule(p) is not None]
                 lines[found[0] - 1] = "make " + " ".join(deps) if deps else ""
                 for n, text in found[2]: lines[n - 1] = text.replace("$(MAKE)", "make").replace("${MAKE}", "make").replace("$(CURDIR)", ".").replace("$$", "$")
-                self.cache[key] = facts("\n".join(lines), 1, True)
+                self.cache[key] = facts("\n".join(lines))  # make runs each recipe line with sh -c: errexit off
         return self.cache[key]
     def follow(self, key: str, env: dict, argv: list, chain: tuple, quiet: bool, caller: str, line: int, binary_ok: bool = False) -> None:
         unit = "CYCLE" if key in chain else "LIMIT" if len(chain) >= MAX_DEPTH or self.visits >= MAX_VISITS else self.load(key)
