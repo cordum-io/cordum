@@ -429,7 +429,7 @@ func TestRevokeNonexistentCredential(t *testing.T) {
 
 func TestRotateCredentialClearsAgentLink(t *testing.T) {
 	// Regression test: rotating a credential from agent_id=X to agent_id=""
-	// must clear the reverse-lookup so GetByWorkerID no longer returns the agent.
+	// must clear the worker link so the tenant no longer resolves the agent.
 	s, _, _ := newTestGateway(t)
 	seedWorkerCredentialAccessConfig(t, s)
 	ctx := context.Background()
@@ -455,10 +455,7 @@ func TestRotateCredentialClearsAgentLink(t *testing.T) {
 	}
 
 	// Verify agent is linked.
-	linked, err := s.agentIdentityStore.GetByWorkerID(ctx, "link-worker")
-	if err != nil || linked == nil {
-		t.Fatalf("expected agent linked after create, got err=%v agent=%v", err, linked)
-	}
+	requireWorkerLink(t, s, "default", "link-worker", agent.ID)
 
 	// Rotate credential WITHOUT agent_id → should clear the link.
 	body2 := bytes.NewBufferString(`{"worker_id":"link-worker","allowed_pools":["default"],"allowed_topics":["job.external"]}`)
@@ -472,14 +469,8 @@ func TestRotateCredentialClearsAgentLink(t *testing.T) {
 		t.Fatalf("rotate: expected 200/201, got %d: %s", rec2.Code, rec2.Body.String())
 	}
 
-	// Verify agent link is cleared — GetByWorkerID should return nil.
-	stale, err := s.agentIdentityStore.GetByWorkerID(ctx, "link-worker")
-	if err != nil {
-		t.Fatalf("GetByWorkerID after rotate: %v", err)
-	}
-	if stale != nil {
-		t.Fatalf("STALE LINKAGE: GetByWorkerID returned agent %q after rotate-to-empty — should be nil", stale.ID)
-	}
+	// Verify the agent link is cleared.
+	requireWorkerLink(t, s, "default", "link-worker", "")
 }
 
 func TestRevokeCredentialClearsAgentLink(t *testing.T) {
@@ -518,14 +509,8 @@ func TestRevokeCredentialClearsAgentLink(t *testing.T) {
 		t.Fatalf("revoke: expected 204, got %d: %s", revokeRec.Code, revokeRec.Body.String())
 	}
 
-	// Verify agent link is cleared.
-	stale, err := s.agentIdentityStore.GetByWorkerID(ctx, "revoke-worker")
-	if err != nil {
-		t.Fatalf("GetByWorkerID after revoke: %v", err)
-	}
-	if stale != nil {
-		t.Fatalf("STALE LINKAGE: GetByWorkerID returned agent %q after revoke — should be nil", stale.ID)
-	}
+	// Verify the agent link is cleared.
+	requireWorkerLink(t, s, "default", "revoke-worker", "")
 }
 
 // TestCreateWorkerCredential_RejectsCrossTenantAgentID locks the cross-tenant
@@ -563,14 +548,10 @@ func TestCreateWorkerCredential_RejectsCrossTenantAgentID(t *testing.T) {
 		t.Fatalf("expected 400 for cross-tenant agent_id, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	// Must not have linked the credential to the other tenant's agent.
-	linked, err := s.agentIdentityStore.GetByWorkerID(ctx, "cross-tenant-worker")
-	if err != nil {
-		t.Fatalf("GetByWorkerID: %v", err)
-	}
-	if linked != nil {
-		t.Fatalf("cross-tenant agent_id was linked: %+v", linked)
-	}
+	// Must not have linked the credential to the other tenant's agent, in
+	// either tenant.
+	requireWorkerLink(t, s, "tenant-a", "cross-tenant-worker", "")
+	requireWorkerLink(t, s, "tenant-b", "cross-tenant-worker", "")
 
 	// The credential itself must not have been created either.
 	record, err := s.workerCredentialStore.Get(ctx, "tenant-b", "cross-tenant-worker")

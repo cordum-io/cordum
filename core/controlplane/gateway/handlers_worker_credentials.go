@@ -204,8 +204,9 @@ func (s *server) handleCreateWorkerCredential(w http.ResponseWriter, r *http.Req
 				return
 			}
 		} else {
-			// Clear stale reverse-lookup when credential is rotated without agent_id.
-			if unlinkErr := s.agentIdentityStore.UnlinkWorker(r.Context(), req.WorkerID); unlinkErr != nil {
+			// Clear the stale link when the credential is rotated without
+			// agent_id. Only the caller's tenant link is removed.
+			if unlinkErr := s.agentIdentityStore.UnlinkWorker(r.Context(), tenant, req.WorkerID); unlinkErr != nil {
 				slog.Error("unlink worker from agent identity failed",
 					"worker_id", req.WorkerID,
 					"error", unlinkErr,
@@ -289,9 +290,10 @@ func (s *server) handleDeleteWorkerCredential(w http.ResponseWriter, r *http.Req
 		}
 	}
 
-	// Clear agent reverse-lookup so revoked credentials don't inject stale agent_id.
+	// Clear the worker link so a revoked credential cannot inject a stale
+	// agent_id. Only the caller's tenant link is removed.
 	if s.agentIdentityStore != nil {
-		if unlinkErr := s.agentIdentityStore.UnlinkWorker(r.Context(), workerID); unlinkErr != nil {
+		if unlinkErr := s.agentIdentityStore.UnlinkWorker(r.Context(), tenant, workerID); unlinkErr != nil {
 			slog.Error("unlink worker from agent identity on revoke failed",
 				"worker_id", workerID,
 				"error", unlinkErr,
