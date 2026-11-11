@@ -582,6 +582,87 @@ func TestCreateWorkerCredential_RejectsCrossTenantAgentID(t *testing.T) {
 	}
 }
 
+// TestWorkerLinkTenantIsolation_AgentAndCredentialPaths locks task-c1effd5b
+// (CodeRabbit's outside-diff finding on #490): worker/principal links are per
+// tenant. Another tenant's agent registration, credential issue or credential
+// rotation for the same ID must neither replace nor delete a tenant's link.
+func TestWorkerLinkTenantIsolation_AgentAndCredentialPaths(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
+	seedWorkerCredentialAccessConfig(t, s)
+	const worker = "shared-worker"
+	const credBody = `{"worker_id":"shared-worker","allowed_pools":["default"],"allowed_topics":["job.external"]`
+
+	aRR := serveWorkerLinkRequest(t, s, s.handleCreateAgent, "tenant-a", "/api/v1/agents",
+		`{"agent_id":"shared-worker","name":"a","owner":"alice","risk_tier":"low"}`, http.StatusCreated)
+	aID := decodeAgentID(t, aRR)
+	bID := decodeAgentID(t, serveWorkerLinkRequest(t, s, s.handleCreateAgent, "tenant-b", "/api/v1/agents",
+		`{"name":"b","owner":"bob","risk_tier":"low"}`, http.StatusCreated))
+	serveWorkerLinkRequest(t, s, s.handleCreateWorkerCredential, "tenant-b", "/api/v1/workers/credentials",
+		credBody+`,"agent_id":"`+bID+`"}`, http.StatusCreated)
+
+	requireWorkerLink(t, s, "tenant-a", worker, aID)
+	requireWorkerLink(t, s, "tenant-b", worker, bID)
+
+	mcpReq := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	mcpReq.Header.Set("X-Tenant-ID", "tenant-a")
+	mcpReq = mcpReq.WithContext(context.WithValue(mcpReq.Context(), auth.ContextKey{},
+		&auth.AuthContext{PrincipalID: worker, Tenant: "tenant-a"}))
+	if got := s.resolveMCPIdentity(mcpReq); got == nil || got.ID != aID {
+		t.Fatalf("tenant-a MCP identity for %s = %+v, want ID %q", worker, got, aID)
+	}
+
+	dup := serveWorkerLinkRequest(t, s, s.handleCreateAgent, "tenant-a", "/api/v1/agents",
+		`{"agent_id":"shared-worker","name":"a2","owner":"alice","risk_tier":"low"}`, http.StatusConflict)
+	requireStableErrorCode(t, dup, http.StatusConflict, "AGENT_WORKER_CONFLICT")
+
+	// tenant-b rotates without agent_id: only tenant-b's link goes.
+	serveWorkerLinkRequest(t, s, s.handleCreateWorkerCredential, "tenant-b", "/api/v1/workers/credentials",
+		credBody+`}`, http.StatusOK)
+	requireWorkerLink(t, s, "tenant-b", worker, "")
+	requireWorkerLink(t, s, "tenant-a", worker, aID)
+}
+
+func serveWorkerLinkRequest(t *testing.T, s *server, handler http.HandlerFunc, tenant, path, body string, want int) *httptest.ResponseRecorder {
+	t.Helper()
+	req := withAuth(httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(body)), &auth.AuthContext{
+		Tenant: tenant, Role: "admin", PrincipalID: tenant + "-admin",
+	})
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+	if rec.Code != want {
+		t.Fatalf("%s POST %s: status %d, want %d: %s", tenant, path, rec.Code, want, rec.Body.String())
+	}
+	return rec
+}
+
+func decodeAgentID(t *testing.T, rec *httptest.ResponseRecorder) string {
+	t.Helper()
+	var created agentResponse
+	if err := json.NewDecoder(rec.Body).Decode(&created); err != nil || created.ID == "" {
+		t.Fatalf("decode agent response: err=%v id=%q", err, created.ID)
+	}
+	return created.ID
+}
+
+// requireWorkerLink asserts the agent ID workerID resolves to in tenant; an
+// empty want means no link.
+func requireWorkerLink(t *testing.T, s *server, tenant, workerID, want string) {
+	t.Helper()
+	got, err := s.agentIdentityStore.GetByWorkerIDForTenant(context.Background(), tenant, workerID)
+	if err != nil {
+		t.Fatalf("GetByWorkerIDForTenant(%s, %s): %v", tenant, workerID, err)
+	}
+	gotID := ""
+	if got != nil {
+		gotID = got.ID
+	}
+	if gotID != want {
+		t.Fatalf("%s link for %s = %q, want %q", tenant, workerID, gotID, want)
+	}
+}
+
 func equalStringSlices(got, want []string) bool {
 	if len(got) != len(want) {
 		return false
