@@ -5,18 +5,52 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### CI and documentation
+
+- Added `docs/contract/threat-model.md`, the platform threat model for the M0 security contract: assets, adversaries, trust boundaries, a trusted-component inventory covering every `cmd/` service, reference-monitor properties with their current status, five explicit non-promises and the deployment boundary. Documentation only; no behavior changes.
+- Qualified three platform security-posture statements against `docs/contract/threat-model.md` (task-d056042e): ADR-001's "Zero-trust guarantee" bullet is now marked as design intent with a dated status note, and `docs/mcp/scope-filtering.md` no longer labels the MCP controls a "zero-trust stack" or "zero-trust controls". The threat model rates these mechanisms `supported`, not `enforced` or `verified`.
+
+## [v1.3.1] - 2026-11-11
+
+Changes on main since the v1.3.0 tag (d027ae97, 2026-11-11).
+
+### Changed
+
+- Dependency updates (#528, from #525 and #526): crewjam/saml 0.6.1 -> 0.6.3
+  (root Go module) and the dashboard dev dependency rollup-plugin-visualizer
+  7.1.2 -> 7.1.3.
+
+### Security
+
+#### MCP approval-store outage errors no longer leak the Redis address (2026-11-11, task-66234a92)
+
+- Landed in #528 (from #523).
+- When the MCP approval store is unreachable, an approval-required HTTP MCP
+  `tools/call` now returns `-32096` with `error.data` =
+  `{"kind": "approval_store_unavailable", "reason": "approval store unavailable"}`
+  and runs nothing. It used to return `-32603`, and its `error.data` echoed
+  the raw Redis error, internal host:port included.
+- The Edge-mint `-32096` `reason` no longer echoes the store error either.
+  Operators find the cause in the gateway log
+  (`mcp approval store unavailable`).
+
 ### Fixed
 
 - `demo/quickstart/Dockerfile` runs `apk upgrade` in its runtime stage, as the
   control-plane Dockerfile already does. The v1.3.0 publish run failed the
   `demo-quickstart-worker` Trivy gate on zlib 1.3.2-r1 from the `alpine:3.21`
   base (CVE-2026-4738, fixed in zlib 1.4-r0), which also skipped the
-  published-image smoke test and the Helm chart for that tag.
+  published-image smoke test and the Helm chart for that tag (#531).
 
 ### CI and documentation
 
-- Added `docs/contract/threat-model.md`, the platform threat model for the M0 security contract: assets, adversaries, trust boundaries, a trusted-component inventory covering every `cmd/` service, reference-monitor properties with their current status, five explicit non-promises and the deployment boundary. Documentation only; no behavior changes.
-- Qualified three platform security-posture statements against `docs/contract/threat-model.md` (task-d056042e): ADR-001's "Zero-trust guarantee" bullet is now marked as design intent with a dated status note, and `docs/mcp/scope-filtering.md` no longer labels the MCP controls a "zero-trust stack" or "zero-trust controls". The threat model rates these mechanisms `supported`, not `enforced` or `verified`.
+- The Lighthouse CI (`/login`) PR comment shows the category scores again. The
+  comment read `dashboard/.lighthouseci/manifest.json`, but the
+  `temporary-public-storage` upload never writes a manifest, so every PR showed
+  "artifacts unavailable: ENOENT". The job now also writes LHCI's filesystem
+  manifest, and when results are missing the comment states the lhci and
+  manifest step outcomes. Assertions and thresholds are unchanged
+  (#528, from #522).
 
 ## [v1.3.0] - 2026-11-11
 
