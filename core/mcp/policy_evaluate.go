@@ -256,6 +256,10 @@ type ToolCallApprovalContext struct {
 	ActionHash string
 	Args       json.RawMessage
 	EventID    string
+	// PolicySnapshot is the pre-event's stamp, compared with the current
+	// snapshot at Edge mint time (task-11b3c5ef). Optional: blank keeps
+	// today's mint behavior.
+	PolicySnapshot string
 }
 
 // ToolCallDeps bundles the production wiring EvaluateToolCall and
@@ -926,7 +930,8 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 			Args: params.Arguments,
 			// task-63400922: the Edge approval binds to this call's
 			// pre-event, never to the agent id.
-			EventID: evalResult.PreEvent.EventID,
+			EventID:        evalResult.PreEvent.EventID,
+			PolicySnapshot: evalResult.PreEvent.PolicySnapshot,
 		})
 		if herr != nil {
 			finalErr = fmt.Errorf("approval handoff: %w", herr)

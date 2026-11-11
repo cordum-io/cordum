@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+
+#### core/mcp, core/controlplane/gateway — a policy publish during a policy-gated MCP call is retryable, not a store outage (2026-11-11, task-11b3c5ef)
+
+- With `mcp.policy_gate_enabled=true`, a call whose policy changed between
+  its `mcp.tool.pre` event and the Edge approval mint returns `-32096`
+  `kind=policy_snapshot_changed` (retry the call) instead of
+  `approval_store_unavailable`. Nothing is minted in that case. Genuine
+  Edge store outages still return `approval_store_unavailable`.
+
 ## [v1.3.1] - 2026-11-11
 
 Changes on main since the v1.3.0 tag (d027ae97, 2026-11-11).
