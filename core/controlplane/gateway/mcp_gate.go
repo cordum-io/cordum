@@ -159,6 +159,10 @@ func (g *gatewayApprovalGate) WithInvariantLookup(lookup MCPInvariantLookup) *ga
 //     Consume-once is guaranteed by CAS inside the store.
 //  4. On miss, EnqueueMCPApproval (persisting the canonical args blob)
 //     and return *ApprovalRequired → JSON-RPC -32099.
+//
+// Store failures in steps 3-4 wrap mcp.ErrApprovalStoreUnavailable and
+// surface as -32096 approval_store_unavailable (fixed reason; the cause
+// is logged, never returned). Request-shape failures do not.
 func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params json.RawMessage) (*mcp.ApprovalRequired, error) {
 	if g == nil || g.store == nil {
 		return nil, nil
@@ -217,7 +221,7 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 	}
 
 	if rec, err := g.store.ClaimPreApproved(ctx, meta.Tenant, meta.AgentID, tool.Name, argsHash); err != nil {
-		return nil, fmt.Errorf("mcp gate: pre-approval claim: %w", err)
+		return nil, fmt.Errorf("%w: mcp gate: pre-approval claim: %w", mcp.ErrApprovalStoreUnavailable, err)
 	} else if rec != nil {
 		// Stamp the consumed approval onto the in-flight invocation
 		// handle so the eventual mcp.tool_invocation event carries
@@ -247,9 +251,16 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 		Requester: requester,
 		Reason:    approvalReasonFor(tool),
 	}
+	// Validate before enqueueing so a request-shape failure (e.g. an
+	// empty agent_id once X-Agent-Id binding leaves AgentID unset) stays
+	// a gateway wiring error, not a retryable approval_store_unavailable:
+	// retrying a call that can never succeed helps nobody.
+	if err := validateMCPApprovalRequest(req); err != nil {
+		return nil, fmt.Errorf("mcp gate: enqueue: %w", err)
+	}
 	rec, err := g.store.EnqueueMCPApproval(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("mcp gate: enqueue: %w", err)
+		return nil, fmt.Errorf("%w: mcp gate: enqueue: %w", mcp.ErrApprovalStoreUnavailable, err)
 	}
 	// Mark the handle so the invocation event records
 	// approval_status=required + approval_id=<rec.ID> — lets SIEM
