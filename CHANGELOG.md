@@ -59,6 +59,22 @@ Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
 
 ### Security
 
+#### core/infra/store, core/controlplane/scheduler — worker-to-agent links resolve only within the worker's tenant (2026-11-11, task-76c90c6e)
+
+- Added `AgentIdentityStore.GetByWorkerIDForTenant(ctx, tenantID, workerID)`.
+  It reads the per-tenant link hash `agent:worker-links:<tenant>` first, then
+  falls back, read-only, to the legacy global `agent:by-worker:<worker>` key.
+  It returns an identity only when that identity belongs to `tenantID`, and a
+  per-tenant entry never falls back.
+- The scheduler's worker-handshake trust resolver looks the link up in the
+  tenant of the worker's credential. The `AgentResolver` scopes store links to
+  the tenant of the worker's cached credential, and a worker with no cached
+  tenant gets no store-link label.
+- Slice 1 of 3 of task-c1effd5b. Links are still written only to the legacy
+  global key, so existing links keep resolving for their owning tenant.
+  Gateway readers move in slice 2. The capstone moves the writers and retires
+  the global read.
+
 #### CAP-PRODUCTION — fail-closed exact-wire trust, attempt fencing, durable effects, and structured resources (2026-07-21, task-a13f83fa)
 
 - Landed in #394.
