@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `demo/quickstart/Dockerfile` runs `apk upgrade` in its runtime stage, as the
+  control-plane Dockerfile already does. The v1.3.0 publish run failed the
+  `demo-quickstart-worker` Trivy gate on zlib 1.3.2-r1 from the `alpine:3.21`
+  base (CVE-2026-4738, fixed in zlib 1.4-r0), which also skipped the
+  published-image smoke test and the Helm chart for that tag.
+
 ### CI and documentation
 
 - Added `docs/contract/threat-model.md`, the platform threat model for the M0 security contract: assets, adversaries, trust boundaries, a trusted-component inventory covering every `cmd/` service, reference-monitor properties with their current status, five explicit non-promises and the deployment boundary. Documentation only; no behavior changes.

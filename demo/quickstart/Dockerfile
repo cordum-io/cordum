@@ -49,7 +49,9 @@ RUN --mount=type=cache,target=/go/pkg/mod \
       -o /out/demo-quickstart-worker ./demo/quickstart/worker
 
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates wget
+# Refresh Alpine packages so fixed OS CVEs in the base image do not block
+# the release scan (same as the control-plane Dockerfile).
+RUN apk upgrade --no-cache && apk add --no-cache ca-certificates wget
 RUN adduser -D -u 65532 cordum
 USER cordum
 WORKDIR /home/cordum
