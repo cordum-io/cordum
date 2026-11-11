@@ -21,6 +21,8 @@ package gateway
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -346,16 +348,19 @@ func (h *agrHarness) holdBindsPreEvent(t *testing.T, args string) string {
 
 // resumeExecutesOnce: the approved resume returns the tool's own result (not a
 // pending or replayed one), runs the tool once with the ref stripped, consumes
-// the approval, and its post event carries the ref.
+// the approval, and its post event carries the ref. The executed result then
+// replaces the hold's cached pending one (C3).
 func (h *agrHarness) resumeExecutesOnce(t *testing.T, args, ref string) {
 	t.Helper()
 	before, want := h.calls.Load(), agrDeleted(json.RawMessage(args))
-	if r := h.resume(t, args, ref); !r.succeeded(want) {
+	r := h.resume(t, args, ref)
+	if !r.succeeded(want) {
 		t.Fatalf("resume = %s; want the tool result %q", r, want)
 	}
 	if n := h.calls.Load(); n != before+1 || h.sawRef.Load() != 0 {
 		t.Fatalf("tool executions = %d (saw _approval_ref %d times); want %d with stripped args", n, h.sawRef.Load(), before+1)
 	}
+	h.replaysExecuted(t, args, r.Result, before+1)
 	if a := h.approval(t, ref); a.ConsumedAt == nil || a.ConsumedAt.IsZero() {
 		t.Errorf("approval %s ConsumedAt = %v; want set", ref, a.ConsumedAt)
 	}
@@ -365,6 +370,23 @@ func (h *agrHarness) resumeExecutesOnce(t *testing.T, args, ref string) {
 	}
 	if !carried {
 		t.Errorf("no mcp.tool.post event carries ApprovalRef %q", ref)
+	}
+}
+
+// replaysExecuted: an identical ref-less call replays the executed result's
+// Redis dedupe record (its result_sha256), not the hold's pending one, and
+// runs nothing.
+func (h *agrHarness) replaysExecuted(t *testing.T, args string, executed *mcp.ToolCallResult, calls int64) {
+	t.Helper()
+	payload, err := json.Marshal(executed)
+	if err != nil {
+		t.Fatalf("marshal the executed result: %v", err)
+	}
+	sum := sha256.Sum256(payload)
+	later := h.call(t, args)
+	if !strings.Contains(later.text(), "result_sha256="+hex.EncodeToString(sum[:])) || h.calls.Load() != calls {
+		t.Errorf("ref-less call after the resume = %s (executions %d); want the executed result's dedupe replay, %d executions",
+			later, h.calls.Load(), calls)
 	}
 }
 
