@@ -109,7 +109,7 @@ func TestCreateAgent_LinksWorkerForHeartbeatRegistration(t *testing.T) {
 	}
 
 	// Core of #314: the worker is linked, so GetByWorkerID resolves the identity.
-	linked, err := s.agentIdentityStore.GetByWorkerID(ctx, workerID)
+	linked, err := s.agentIdentityStore.GetByWorkerIDForTenant(ctx, "default", workerID)
 	if err != nil {
 		t.Fatalf("GetByWorkerID: %v", err)
 	}
@@ -147,6 +147,61 @@ func TestCreateAgent_LinksWorkerForHeartbeatRegistration(t *testing.T) {
 		t.Fatalf("duplicate worker register: expected 409, got %d: %s", dupRR.Code, dupRR.Body.String())
 	}
 	requireStableErrorCode(t, dupRR, http.StatusConflict, "AGENT_WORKER_CONFLICT")
+}
+
+func TestCreateAgent_WorkerConflictIsTenantScoped(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
+	for i, tenant := range []string{"tenant-a", "tenant-b", "tenant-b"} {
+		req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents",
+			strings.NewReader(`{"agent_id":"p","name":"worker","owner":"alice","risk_tier":"low"}`)),
+			&auth.AuthContext{Tenant: tenant, Role: "admin"})
+		rr := httptest.NewRecorder()
+		s.handleCreateAgent(rr, req)
+		if i == 2 {
+			requireStableErrorCode(t, rr, http.StatusConflict, "AGENT_WORKER_CONFLICT")
+		} else if rr.Code != http.StatusCreated {
+			t.Fatalf("%s: expected 201, got %d: %s", tenant, rr.Code, rr.Body.String())
+		}
+	}
+}
+
+func TestGetAgent_WorkerFallbackIsTenantScoped(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
+	ctx := context.Background()
+	agent, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+		TenantID: "tenant-a", Name: "worker", Owner: "alice", RiskTier: "low",
+	})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	if err := s.agentIdentityStore.LinkWorker(ctx, agent.ID, "p"); err != nil {
+		t.Fatalf("link worker: %v", err)
+	}
+	for _, tenant := range []string{"tenant-b", "tenant-a"} {
+		t.Run(tenant, func(t *testing.T) {
+			req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents/p", nil),
+				&auth.AuthContext{Tenant: tenant, Role: "admin"})
+			req.SetPathValue("id", "p")
+			rr := httptest.NewRecorder()
+			s.handleGetAgent(rr, req)
+			if tenant == "tenant-b" {
+				requireStableErrorCode(t, rr, http.StatusNotFound, "AGENT_NOT_FOUND")
+				return
+			}
+			if rr.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+			}
+			var got agentResponse
+			if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if got.ID != agent.ID {
+				t.Fatalf("expected agent %q, got %q", agent.ID, got.ID)
+			}
+		})
+	}
 }
 
 func TestAgentIdentityAPISurfacesMCPAllowlists(t *testing.T) {
