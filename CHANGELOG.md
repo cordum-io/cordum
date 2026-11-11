@@ -5,16 +5,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
-## [v1.3.0] - 2026-11-11
-
-Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
-
-### Changed
+### Added
 
 - Added the [planned first protected-operation contract](docs/contract/protected-operation.md)
   for Kubernetes manifest apply, with a proposed reference boundary, credential
   inventory and measurable acceptance ideas. Broker/grant enforcement is future
   work; runtime acceptance evidence is not measured.
+
+## [v1.3.0] - 2026-11-11
+
+Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
+
+### Changed
 
 #### CAP dependency promoted to the published v2.17.0 release (2026-07-22, task-a24b53c5)
 
