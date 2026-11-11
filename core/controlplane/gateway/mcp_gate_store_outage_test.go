@@ -277,6 +277,12 @@ func assertNoOutageLeak(t *testing.T, raw []byte) {
 	}
 }
 
+type admitAllGate struct{}
+
+func (admitAllGate) Check(context.Context, mcp.Tool, json.RawMessage) (*mcp.ApprovalRequired, error) {
+	return nil, nil
+}
+
 func TestMCPHTTP_ApprovalStoreOutageReturnsSanitized32096(t *testing.T) {
 	t.Parallel()
 	s, srv := outageHTTPHarness(t)
@@ -305,12 +311,12 @@ func TestMCPHTTP_ApprovalStoreOutageReturnsSanitized32096(t *testing.T) {
 		t.Errorf("error.data = %#v; want %#v", data, want)
 	}
 
-	// Control: with the gate removed the same call runs the handler, so the
-	// zero above is an observation, not an unreachable probe.
-	rt.toolRegistry.SetApprovalGate(nil)
+	// Control: an admit-all gate runs the handler, so the zero above is an
+	// observation, not an unreachable probe (a nil gate now fails closed).
+	rt.toolRegistry.SetApprovalGate(admitAllGate{})
 	raw, reply = outageToolsCall(t, srv)
 	if reply.Error != nil {
-		t.Fatalf("control call (no gate) returned JSON-RPC error: %s", raw)
+		t.Fatalf("control call (admit-all gate) returned JSON-RPC error: %s", raw)
 	}
 	if n := executed.Load(); n != 1 {
 		t.Fatalf("control call executed %d time(s); want 1", n)

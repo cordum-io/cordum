@@ -1050,8 +1050,8 @@ func TestPolicyGateEdgeResume_HTTPMintOutageFailsClosed(t *testing.T) {
 	h := pgNewPolicyGateServer(t)
 	h.store.failMint.Store(true)
 	reason := h.requireLifecycle(t, h.call(t, pgArgsA), "approval_store_unavailable")
-	if !strings.Contains(reason, "connection refused") {
-		t.Errorf("outage reason = %q, want the store transport error", reason)
+	if reason != "approval store unavailable" {
+		t.Errorf("outage reason = %q, want the fixed reason, never the store error", reason)
 	}
 	h.requireCalls(t, 0)
 	if n := pgApprovalCount(t, h.store, "default"); n != 0 {
@@ -1077,8 +1077,8 @@ func TestPolicyGateEdgeResume_HTTPClaimOutageFailsClosed(t *testing.T) {
 		fail.Store(true)
 		reason := h.requireLifecycle(t, h.call(t, resume), "approval_store_unavailable")
 		fail.Store(false)
-		if !strings.Contains(reason, "connection refused") {
-			t.Errorf("outage reason = %q, want the store transport error", reason)
+		if reason != "approval store unavailable" {
+			t.Errorf("outage reason = %q, want the fixed reason, never the store error", reason)
 		}
 		h.requireCalls(t, 0)
 	}
