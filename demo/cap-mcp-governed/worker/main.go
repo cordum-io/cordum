@@ -279,7 +279,7 @@ func (s *session) do(method, path string, body []byte) (int, []byte, error) {
 	if err != nil {
 		return 0, nil, s.interrupted()
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return resp.StatusCode, nil, nil
 	}
