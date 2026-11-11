@@ -11,7 +11,6 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "${WORK}"' EXIT
 SENTINEL="wcs_synthetic_${$}_${RANDOM}${RANDOM}"
 PASS=0 FAIL=0 SKIP=0
-
 record() { case "$1" in PASS) PASS=$((PASS + 1)) ;; SKIP) SKIP=$((SKIP + 1)) ;; *) FAIL=$((FAIL + 1)) ;; esac; printf '%s %s\n' "$1" "$2"; }
 
 # The scanned copy holds what workflow edges can reach: workflows, Makefile, tools/scripts, demo/ and tests/ shell.
@@ -59,8 +58,11 @@ MINTS = {  # (lines after the acquisition, lines after its first use) in a set -
     "mint_prefix": (REG + '\necho "synthetic prefix ${minted:0:6}"', ""), "mint_ignored": (REG + " || true", ""),
     "mint_errexit_off": ("set +e\n" + SAFE + "\nset -e", ""), "mint_xtrace": ("set -x\n" + SAFE, ""),
 }
-OPTS = {  # mint() keywords, before defaulting to SAFE
-    "mint_errexit_func": dict(head="main() {\nset -euo pipefail\n", tail="}\nmain\n"),
+OPTS = {  # mint() keywords, before defaulting to SAFE: a set applies in its own scope; one that may run later or again applies anywhere
+    "mint_errexit_func": dict(head="main() {\nset -euo pipefail\n", tail="}\nmain\n"), "errexit_window": dict(head=STRICT + "probe() {\nset +e\nfalse\nset -e\n}\nprobe\n"),
+    "errexit_scoped": dict(head="set -uo pipefail\nunused() { set -e; }\n( set -e )\nif false; then set -e; fi\n"), "errexit_leak": dict(head=STRICT + "relax() { set +e; }\nrelax\n"),
+    "trace_unused": dict(head=STRICT + "set -x\nunused() { set +x; }\n"), "trace_scoped": dict(head=STRICT + "set -x\n( set +x )\nif false; then set +x; fi\n"),
+    "trace_call_order": dict(head=STRICT + "main() {\n", tail="}\nset -x\nmain\n"), "trace_loop": dict(head=STRICT + "for round in 1 2; do\n", tail="set -x\ndone\n"),
     "return_global": dict(before=SAFE + " || return 1", head=STRICT + "main() {\n", tail="}\nmain || true\n"),  # the caller ignores the failure; minted outlives it
     "return_local": dict(before=SAFE + " || return 1", head=STRICT + "main() {\nlocal minted\n", tail="}\nmain || true\n")}
 GEN = {
@@ -181,14 +183,10 @@ has_issue() {
   done <<<"$1"
   return 1
 }
-
 check() {
   local name="$1" want="$2" out rc=0 built=0
   build "${name}" || built=$?
-  if [[ "${built}" -ne 0 ]]; then
-    if [[ "${built}" -eq 3 ]]; then record SKIP "${name}: platform cannot create this fixture"; else record FAIL "${name}: fixture build failed"; fi
-    return 0
-  fi
+  if [[ "${built}" -ne 0 ]]; then if [[ "${built}" -eq 3 ]]; then record SKIP "${name}: platform cannot create this fixture"; else record FAIL "${name}: fixture build failed"; fi; return 0; fi
   out="$(python "${GUARD}" "${WORK}/${name}" 2>&1 | tr -d '\r')" || rc=$?
   rm -rf "${WORK:?}/${name}"
   if [[ "${out}" == *"${SENTINEL}"* ]]; then
@@ -211,6 +209,7 @@ base clean
 bind_spacing clean
 mint_registered clean
 mint_errexit_func clean
+errexit_window clean
 return_local clean
 trace_off clean
 noext_data clean
@@ -228,7 +227,13 @@ mint_prefix e2e.yml:e2e-tls:CREDENTIAL_PREFIX_PRINT@tools/scripts/zz_synthetic_m
 mint_ignored e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 mint_errexit_off e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 mint_xtrace e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
+errexit_scoped e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
+errexit_leak e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 return_global e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
+trace_unused e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
+trace_scoped e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
+trace_call_order e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
+trace_loop e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 trace_shell e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 trace_env e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 trace_bash_x docs-linkcheck.yml:link-check:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
@@ -275,11 +280,7 @@ CASES
 
 real_rc=0
 real_out="$(python "${GUARD}" "${ROOT}" 2>&1 | tr -d '\r')" || real_rc=$?
-if [[ "${real_rc}" -eq 0 && -z "${real_out}" ]]; then
-  record PASS "real tree: every workflow credential path is registered or condition-exempt"
-else
-  record FAIL "real tree: rc=${real_rc}: ${real_out}"
-fi
+if [[ "${real_rc}" -eq 0 && -z "${real_out}" ]]; then record PASS "real tree: every workflow credential path is registered or condition-exempt"; else record FAIL "real tree: rc=${real_rc}: ${real_out}"; fi
 
 # --inventory is the value-free census: kind@path:line:variable:state.
 inv_rc=0

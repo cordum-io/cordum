@@ -2,8 +2,8 @@
 """Credential sources reached transitively from GitHub workflow run steps through bash/sh/source/./exec/make edges
 (bounded, repo-confined, symlink-refusing): each jq credential field or generated credential must be registered for
 masking, fail-closed, before any use unless a reviewed exemption's guard and condition hold. Output carries no values."""
-import collections, itertools, pathlib, posixpath, re, shlex, sys, yaml  # noqa: E401
-MAX_DEPTH, MAX_VISITS, MAX_BYTES, UNKNOWN = 10, 400, 256 * 1024, "\x00"  # UNKNOWN: set and non-empty, value unseen
+import collections, pathlib, posixpath, re, shlex, sys, yaml  # noqa: E401
+MAX_DEPTH, MAX_VISITS, MAX_BYTES, UNKNOWN, ERREXIT, XTRACE = 10, 400, 256 * 1024, "\x00", ("e", "errexit"), ("x", "xtrace")  # UNKNOWN: set and non-empty, value unseen
 HEREDOC, DOTENV = re.compile(r"(?<!<)<<-?\s*(['\"]?)([A-Za-z_]\w*)\1"), re.compile(r">\s*[\"']?(?:[^\s\"';&|<>]*/)?\.env[\"']?(?=[\s;&|<>]|$)")
 PLAIN, DQ, ANY = re.compile(r"[^\s'\"\\$`<>&|;()#]+"), re.compile(r"[^\"\\$`\n]+"), re.compile(r".", re.S)
 BRACE, REDIR, RWORD = re.compile(r"\$\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}"), re.compile(r"&?(?:<<<|<<-?|<>|<&|>&|>>|>\||<|>)[ \t]*"), re.compile(r"(?:\d+|&)?[<>]")
@@ -12,17 +12,15 @@ ASSIGN, WORD_ASSIGN = re.compile(r"(?:(?:local|export|declare|typeset|readonly)\
 JQ, GEN = re.compile(r"\bjq\b.*?\.(?:\w*_)?(?:token|secret|password|api_key|key)\b(?!\.)", re.S), re.compile(r"openssl\s+rand\b|\buuidgen\b|/dev/u?random\b|\$\{?RANDOM\b|\$\(\s*date\b|secrets\.token_|\bpwgen\b")
 NAME, PREFIX = re.compile(r"(?i)^(?!.*idem).*(?:passw|secret|token|key|nonce)"), re.compile(r"\$\{(\w+):(?:(\d+):(\d+)\}|\d|:|\s+-?\d|\(\s*-?\d)")
 DEVNULL, TOPLEVEL = re.compile(r"(?:^|\s)(?:1|&)?>>?\s*/dev/null(?=\s|$)"), re.compile(r"\$\(\s*(?:pwd(?:\s+-P)?|git\s+rev-parse\s+--show-toplevel)\s*\)")
-DIRNAME = re.compile(r"\$\(\s*dirname\s+(?:--\s+)?\"?\$\{?(?:BASH_SOURCE(?:\[0\])?|0)\}?\"?\s*\)|\$\{BASH_SOURCE(?:\[0\])?%/\*\}")
+DIRNAME, VAR = re.compile(r"\$\(\s*dirname\s+(?:--\s+)?\"?\$\{?(?:BASH_SOURCE(?:\[0\])?|0)\}?\"?\s*\)|\$\{BASH_SOURCE(?:\[0\])?%/\*\}"), re.compile(r"\$\{([A-Za-z_]\w*)(?:(:?[-=])((?:[^{}]|\{[^{}]*\})*))?\}|\$([A-Za-z_]\w*)")
 CDPWD = re.compile(r"\$\(\s*cd\s+(?:--\s+)?(\"[^\"$]*\"|'[^']*'|[^\s;&|)$\"']+)\s*(?:>\s*/dev/null\s*)?(?:2>&1\s*)?&&\s*pwd(?:\s+-P)?\s*\)")
-VAR = re.compile(r"\$\{([A-Za-z_]\w*)(?:(:?[-=])((?:[^{}]|\{[^{}]*\})*))?\}|\$([A-Za-z_]\w*)")
 PREFIX_WORDS = {"if", "then", "else", "elif", "do", "while", "until", "!", "time", "exec", "command", "builtin", "nohup", "env", "sudo", "timeout"}
 Cmd = collections.namedtuple("Cmd", "line words op sub stack func text", defaults=((), "", ""))
 def seeded(env: dict, name: str) -> bool: return (value := env.get(name, "")) != "" and (value[0] != "$" or value.startswith("$("))
 def literal(value: str) -> int: return len(re.match(r"[^$\x00]*", value).group())
 def flag(cmd: Cmd, on: bool, short: str, name: str) -> bool: return next((sign == "-" for sign in reversed(re.findall(r"(?<!\S)([-+])(?:[a-zA-Z]*" + short + r"[a-zA-Z]*|o\s+" + name + r")(?!\S)", cmd.text))), on) if cmd.words[cmd.words[:1] in (["then"], ["do"], ["else"]):][:1] == ["set"] else on  # after a `set`
 def pg_runs_gate_1(argv: list) -> bool: return "--skip-rebuild" not in argv and (not (gates := [v for f, v in zip(argv, argv[1:]) if f == "--gate"]) or not gates[-1].isdigit() or gates[-1] == "1")
-# Reviewed exemptions: the source, a block around it, or every call site of its function matches the guard; the entry env holds the condition.
-EXEMPT = {
+EXEMPT = {  # reviewed exemptions: the source, a block around it, or every call site of its function matches the guard; the entry env holds the condition
     ("tools/scripts/edge_fake_hook_e2e.sh", "AGENTD_NONCE"): ("if ! want_bypass_hook", lambda env: env.get("CORDUM_EDGE_E2E_BYPASS_HOOK", "").lower() in ("1", "true", "yes", "on")),
     ("tools/scripts/quickstart.sh", "api_key"): (r'if \[\[ -z "\$\{api_key\}" \]\]', lambda env: seeded(env, "CORDUM_API_KEY")),
     ("tools/scripts/quickstart.sh", "REDIS_PASSWORD"): (r'if \[\[ -z "\$\{REDIS_PASSWORD:-\}" \]\]', lambda env: seeded(env, "REDIS_PASSWORD")),
@@ -33,8 +31,7 @@ def heredocs(lines: list) -> list:  # (header index, body indices incl. terminat
     found, index = [], 0
     while index < len(lines):
         if match := None if lines[index].lstrip().startswith("#") else HEREDOC.search(lines[index]):
-            end = next((k for k in range(index + 1, len(lines)) if lines[k].strip() == match.group(2)), len(lines))
-            found.append((index, list(range(index + 1, min(end + 1, len(lines)))), bool(match.group(1)), end < len(lines))); index = end  # noqa: E702
+            found.append((index, list(range(index + 1, min((end := next((k for k in range(index + 1, len(lines)) if lines[k].strip() == match.group(2)), len(lines))) + 1, len(lines)))), bool(match.group(1)), end < len(lines))); index = end  # noqa: E702
         index += 1
     return found
 def split(text: str, i: int = 0, line: int = 1, sub: int = 0, closer: bool = False) -> tuple:  # (raw-word commands, substitution bodies first; end index or -1; line)
@@ -78,8 +75,7 @@ def split(text: str, i: int = 0, line: int = 1, sub: int = 0, closer: bool = Fal
                 parens += {"(": 1, ")": -1}.get(sep, 0); emit(sep)  # noqa: E702
                 if sep == "\n": line = start = line + 1
         else: word, i = word + (chunk := (PLAIN.match(text, i) or ANY.match(text, i)).group()), i + len(chunk)
-    push(); emit("")  # noqa: E702
-    return cmds, -1 if quote or closer else i, line
+    push(); emit(""); return cmds, -1 if quote or closer else i, line  # noqa: E702
 def parse(text: str, line: int = 1) -> tuple:  # (commands with block stack and enclosing function, unparsable line)
     lines, error, cmds, stack = text.replace("\r\n", "\n").split("\n"), 0, [], []
     for head, body, quoted, closed in heredocs(lines):  # a heredoc written to .env becomes exports
@@ -92,7 +88,7 @@ def parse(text: str, line: int = 1) -> tuple:  # (commands with block stack and 
         first = cmd.words[0] if cmd.words else ""
         if stack and stack[-1][1] in ({"fi": ("if",), "done": ("loop",), "esac": ("case",)}.get(first) or (("{", "func") if cmd.op == "}" and not cmd.words else ())): stack.pop()
         cmds.append(cmd._replace(stack=tuple(s[0] for s in stack), func=next((s[2] for s in reversed(stack) if s[2]), ""), text=" ".join(cmd.words)))
-        if cmd.op == ")" and stack and stack[-1][1] == "(": stack.pop()
+        if cmd.op == ")" and first != "case" and stack and stack[-1][1] == "(": stack.pop()  # not a `case ... in pattern)` line
         kind = "if" if first == "if" else "case" if first == "case" else "loop" if first in ("while", "until", "for", "select") else cmd.op if cmd.op in ("{", "(") else ""
         name = (cmd.words[1] if first == "function" and len(cmd.words) > 1 else first).removesuffix("()") if kind == "{" and cmd.words else ""
         if kind: stack.append((len(cmds) - 1, "func" if name else kind, name))
@@ -120,8 +116,7 @@ def registered_at(cmds: list, j: int, k: int, var: str, errexit: bool) -> bool: 
     gate = level[-1] if level and level[:-1] == home else -1  # one if deeper, on a safe test
     return level == home or gate >= 0 and cmds[gate].words[:1] == ["if"] and bool(re.fullmatch(safe, cmds[gate].text)) and not any(c.stack == level and c.words[:1] in (["else"], ["elif"]) for c in cmds[gate + 1:j])
 def state(cmds: list, k: int, var: str, flags: list) -> str:  # registered, late (used or traced first) or unregistered; reassignment ends it
-    ref = re.compile(r"\$\{?" + var + r"(?!\w)|\bexport\s+" + var + r"\b(?!=)")
-    harmless, used = re.compile(r"-[nz]\s+\"?\$\{?" + var + r"\}?\"?|\$\{#" + var + r"\}"), False
+    ref, harmless, used = re.compile(r"\$\{?" + var + r"(?!\w)|\bexport\s+" + var + r"\b(?!=)"), re.compile(r"-[nz]\s+\"?\$\{?" + var + r"\}?\"?|\$\{#" + var + r"\}"), False
     for j in range(k + 1, len(cmds)):
         if ref.search(harmless.sub("", cmds[j].text)):
             if registered_at(cmds, j, k, var, flags[j][0]): return "late" if used or any(on[1] for on in flags[k:j + 1]) else "registered"
@@ -135,9 +130,21 @@ def shallow(text: str) -> str:  # the text without command substitutions nested 
         elif top != "'" and (tok == "$(" or tok in ("(", "'", '"') and top != '"'): stack.append(tok)
         out += tok if stack.count("$(") <= 1 else ""
     return out
-def facts(text: str, line: int = 1, errexit: bool = False) -> tuple:  # (cmds, unparsable line, [(k, var, kind, state)], [(k, var, bytes)])
+def options(cmds: list, errexit: bool) -> list:  # [k]: (errexit, xtrace) at cmds[k]; a set applies in text order within its scope: top level, function body or subshell
+    scope = lambda c: next((s for s in reversed(c.stack) if cmds[s].op == "(" or cmds[s].op == "{" and cmds[s].words), -1)
+    flat, fns = lambda c: not c.sub and (c.stack[-1:] or (-1,))[0] == scope(c), any(c.op == "{" and c.words for c in cmds)  # straight line in its scope; the file defines a function
+    def wide(i: int, c: Cmd, o: tuple, v: bool) -> bool:  # c sets o to v outside subshells and may apply out of text order: in a loop, tracing where a function may run, or left by a function
+        if c.sub or flag(c, not v, *o) != v or any(cmds[s].op == "(" for s in c.stack): return False
+        m = next((d for d in cmds[i + 1:] if not d.sub and scope(d) == scope(c) and (flag(d, True, *o) == flag(d, False, *o) or re.match(r"(?:(?:then|do|else) )?return\b", d.text))), None)
+        return any(cmds[s].words[:1] in (["while"], ["until"], ["for"], ["select"]) for s in c.stack) or v and fns or scope(c) >= 0 and not (m and flat(m) and flag(m, v, *o) != v)  # a function's next change of o, before any return, must reset it in straight line
+    off, on, now, out = any(wide(i, c, ERREXIT, False) for i, c in enumerate(cmds)), any(wide(i, c, XTRACE, True) for i, c in enumerate(cmds)), {-1: (errexit, False)}, []
+    for c in cmds:
+        e, x = now[s] if (s := scope(c)) in now else now.setdefault(s, now[scope(cmds[s])]); out.append((e and not off, x or on))  # noqa: E702  # a subshell or function body starts from its parent
+        if not c.sub: now[s] = (flag(c, e, *ERREXIT), flag(c, x, *XTRACE)) if flat(c) else (e and flag(c, True, *ERREXIT), x or flag(c, False, *XTRACE))  # one that may not run only disables errexit or starts tracing
+    return out
+def facts(text: str, line: int = 1, errexit: bool = False) -> tuple:  # (cmds, unparsable line, [(k, var, kind, state)], [(k, var, bytes)], options)
     cmds, error = parse(text, line)
-    flags, acqs = list(itertools.accumulate(cmds, lambda on, c: (flag(c, on[0], "e", "errexit"), flag(c, on[1], "x", "xtrace")), initial=(errexit, False))), []  # [k]: in force at cmds[k]
+    flags, acqs = options(cmds, errexit), []
     for k, cmd in enumerate(cmds):
         var, rhs = (m.group(1), m.group(2)) if (m := ASSIGN.fullmatch(cmd.text)) else ("-", "")
         kind = "" if "idem" in var.lower() else "auth-response" if JQ.search(rhs) else "generated" if NAME.search(var) and GEN.search(shallow(rhs)) else ""
@@ -146,22 +153,20 @@ def facts(text: str, line: int = 1, errexit: bool = False) -> tuple:  # (cmds, u
         helper = re.fullmatch(r"gha_mask_env(?:_from_command((?: [A-Z][A-Z0-9_]*)+) --| ([A-Z][A-Z0-9_]*)) .+", cmd.text, re.S)  # fail-closed: masks, then exports
         acqs += [(k, name, "masked-env", "late" if flags[k][1] else "registered") for name in (helper.group(1) or helper.group(2)).split()] if helper else []
     names = {a[1] for a in acqs}
-    return cmds, error, acqs, [(k, m.group(1), int(m.group(2)) + int(m.group(3)) if m.group(2) else 10 ** 6) for k, c in enumerate(cmds) for m in PREFIX.finditer(c.text) if m.group(1) in names or NAME.search(m.group(1))]
+    return cmds, error, acqs, [(k, m.group(1), int(m.group(2)) + int(m.group(3)) if m.group(2) else 10 ** 6) for k, c in enumerate(cmds) for m in PREFIX.finditer(c.text) if m.group(1) in names or NAME.search(m.group(1))], flags
 def expand(word: str, table: dict, env: dict, here: str) -> str:  # script-dir and cd/pwd idioms, known variables, defaults; drops quotes
     def lookup(m: re.Match) -> str:
         name, op, default = m.group(1) or m.group(4), m.group(2), m.group(3)
         value = table[name] if name in table else env[name] if name in env else "." if name in ("GITHUB_WORKSPACE", "PWD") else None
         return default if op and (value is None or op[0] == ":" and value == "") else m.group(0) if value is None else value
     for _ in range(12):
-        word, old = VAR.sub(lookup, TOPLEVEL.sub(".", CDPWD.sub(r"\1", DIRNAME.sub(here, word)))), word
-        if word == old: break
+        if word == (word := VAR.sub(lookup, TOPLEVEL.sub(".", CDPWD.sub(r"\1", DIRNAME.sub(here, word))))): break
     return word.replace('"', "").replace("'", "")
 def shell_operand(args: list) -> tuple:  # bash/sh: (script, argv, False, traced) or (-c program, [], True, traced); "" is stdin
     i, traced = 0, False
     while i < len(args) and args[i][:1] in ("-", "+") and args[i] != "--":
         short, traced = not args[i].startswith("--"), traced or bool(re.fullmatch(r"-[a-zA-Z]*x[a-zA-Z]*", args[i]) or re.fullmatch(r"-[a-zA-Z]*o", args[i]) and args[i + 1:i + 2] == ["xtrace"])
-        if short and "c" in args[i]: return (args[i + 1], [], True, traced) if i + 1 < len(args) else ("", [], False, traced)
-        if short and "s" in args[i]: return "", [], False, traced
+        if short and ("c" in args[i] or "s" in args[i]): return (args[i + 1], [], True, traced) if "c" in args[i] and i + 1 < len(args) else ("", [], False, traced)
         i += 2 if short and args[i][-1] in "oO" else 1
     i += args[i:i + 1] == ["--"]
     return (args[i], args[i + 1:], False, traced) if i < len(args) else ("", [], False, traced)
@@ -177,25 +182,22 @@ def run_lines(text: str) -> dict:  # (job id, step index) -> file line just befo
     return found
 def guarded(cmds: list, k: int, guard: str) -> bool:  # the source or a block around it, or every (>= 1) call site of its function
     def under(cmd: Cmd, own: tuple = ()) -> bool: return any(re.fullmatch(guard, cmds[s].text) for s in cmd.stack + own)
-    calls = [c for c in cmds if cmds[k].func and cmds[k].func in c.words]
-    return under(cmds[k], (k,)) or (bool(calls) and all(under(c) for c in calls))
+    return under(cmds[k], (k,)) or (bool(calls := [c for c in cmds if cmds[k].func and cmds[k].func in c.words]) and all(under(c) for c in calls))
 class Scan:  # walks each job's run steps through their transitive shell and make edges
     def __init__(self, root: pathlib.Path) -> None: self.root, self.cache, self.issues, self.inventory, self.exec_skip, self.bang_x = root, {}, set(), set(), set(), set()
     def report(self, code: str, rel: str, line: int, source: bool = False) -> None: self.issues.add((self.wf, self.job, f"{code}@{rel}:{line}")) if self.credential or not source else None  # SOURCE_*: credential jobs only
     def read(self, rel: str) -> tuple:  # (text, refusal): a regular in-repo file, no symlinked component, <= MAX_BYTES
         path = self.root
-        for part in rel.split("/"):
-            if (path := path / part).is_symlink(): return "", "SYMLINK"
+        if any((path := path / part).is_symlink() for part in rel.split("/")): return "", "SYMLINK"
         refusal = "MISSING" if not path.is_file() else "ESCAPE" if not path.resolve().is_relative_to(self.root.resolve()) else "OVERSIZE" if path.stat().st_size > MAX_BYTES else ""
         return ("", refusal) if refusal else (path.read_bytes().decode("utf-8", "replace").replace("\r\n", "\n"), "")
     def rules(self) -> object:  # ({target: (line, prerequisites, [(line, recipe)])}, default goal), or a refusal
         if "Makefile" not in self.cache:
             (text, code), rules, default, current = self.read("Makefile"), {}, "", []
             for n, line in enumerate(text.split("\n"), 1):
-                m = re.match(r"([^\s:=#][^:=#]*?)\s*::?(?!=)\s*([^=]*)$", line)
                 if line.startswith("\t") and current:
                     for target in current: rules[target][2].append((n, line[1:].lstrip("@-+ \t")))
-                elif m and not line.startswith(("export ", "override ", "define ")):
+                elif (m := re.match(r"([^\s:=#][^:=#]*?)\s*::?(?!=)\s*([^=]*)$", line)) and not line.startswith(("export ", "override ", "define ")):
                     current = m.group(1).split(); default = default or next((t for t in current if not t.startswith(".")), "")  # noqa: E702
                     for target in current: rules.setdefault(target, (n, [], []))[1].extend(m.group(2).split(";")[0].split())
                 elif line.strip() and not line.lstrip().startswith("#"): current = []
@@ -224,7 +226,7 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
         elif (memo := (key, tuple(sorted(env.items())), tuple(argv), quiet)) not in self.seen:
             self.seen.add(memo); self.visits += 1; self.visit(key.split("#")[0], unit, env, argv, chain + (key,), quiet, ".")  # noqa: E702
     def visit(self, rel: str, unit: tuple, env: dict, argv: list, chain: tuple, quiet: bool, cwd: str) -> None:
-        cmds, error, acqs, prefixes = unit
+        cmds, error, acqs, prefixes, flags = unit
         if error: self.report("SOURCE_DYNAMIC", rel, error, True)
         for k, var, kind, status in acqs:
             status = "late" if status == "registered" and "xtrace" in env.get("SHELLOPTS", "") else "exempt" if status != "registered" and (exempt := EXEMPT.get((rel, var))) and exempt[1](env) and guarded(cmds, k, exempt[0]) else status
@@ -233,8 +235,8 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
         for k, var, need in prefixes:
             if not ((allowed := PREFIX_EXEMPT.get((rel, var))) and allowed(env, quiet and ">&2" not in cmds[k].text, need)): self.report("CREDENTIAL_PREFIX_PRINT", rel, cmds[k].line)
         table, env, traced = {}, dict(env), "xtrace" in env.get("SHELLOPTS", "")
-        for cmd in cmds:  # xtrace in force at an edge reaches its child, as if SHELLOPTS were exported
-            if (on := flag(cmd, traced, "x", "xtrace")) != traced: traced, env["SHELLOPTS"] = on, "xtrace" * on
+        for cmd, (_, on) in zip(cmds, flags):  # xtrace in force at an edge reaches its child, as if SHELLOPTS were exported
+            if not traced and on != ("xtrace" in env.get("SHELLOPTS", "")): env["SHELLOPTS"] = "xtrace" * on
             self.track(cmd.words, table, env, posixpath.dirname(rel) or "."); self.edge(cmd, rel, table, env, argv, chain, quiet, cwd)  # noqa: E702
     def track(self, words: list, table: dict, env: dict, here: str) -> None:  # a pure assignment, export, declaration or unset
         keyword = words[0] if words[:1] and words[0] in ("export", "local", "declare", "typeset", "readonly", "unset") else ""
@@ -294,7 +296,5 @@ def transitive(root: pathlib.Path, credential_jobs: set) -> tuple:  # issues (wo
         jobs = workflow.get("jobs") if isinstance(workflow, dict) else None
         for job_id, job in (jobs.items() if isinstance(jobs, dict) else []): scan.run_job(path.name, str(job_id), job if isinstance(job, dict) else {}, workflow, lines, (path.name, job_id) in credential_jobs)
     return sorted(scan.issues), sorted(scan.inventory)
-def main(argv: list) -> int:
-    if len(argv) != 2 or argv[0] != "--inventory": print("usage: workflow_credential_sources.py --inventory ROOT", file=sys.stderr); return 2  # noqa: E702
-    print("\n".join(transitive(pathlib.Path(argv[1]), set())[1])); return 0  # noqa: E702
+def main(argv: list) -> int: return print("\n".join(transitive(pathlib.Path(argv[1]), set())[1])) or 0 if len(argv) == 2 and argv[0] == "--inventory" else print("usage: workflow_credential_sources.py --inventory ROOT", file=sys.stderr) or 2
 if __name__ == "__main__": raise SystemExit(main(sys.argv[1:]))
