@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v1.3.0] - 2026-11-11
+
 Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
 
 ### Changed
@@ -30,7 +32,7 @@ Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
   (TraceContext, WorkflowEvent, A2A bridge, governed MCP demo) — none of these
   are part of CAP v2.17.0.
 
-#### Dependency updates (#400, #401, #402, #404, #408, #441, c7d33432, #467, #483, #484)
+#### Dependency updates (#400, #401, #402, #404, #408, #441, c7d33432, #467, #482, #483, #484, #494, #497, #499, #524)
 
 - CAP: `github.com/cordum-io/cap/v2` moved from v2.15.1 (at the v1.2.0 tag),
   through the interim pseudo-version pinned by #394, to the published v2.16.1
@@ -55,16 +57,45 @@ Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
   #434); undici 7.30.1 and brace-expansion lockfile-only updates (c7d33432:
   #448, #449); `test-browser` source-map-js 1.2.2 (c7d33432: #454). The
   generated `sdk/typescript/src/_generated/schema.d.ts` was regenerated
-  (233 operations) in #441. Then vitest and @vitest/mocker 4.1.12 (#483) and
-  vite 8.3.5 (#484). The remaining Dependabot alerts are closed by
-  `test-browser` vite 8.3.7 and an npm `overrides` entry that lifts `tsup`'s
+  (233 operations) in #441.
+- Go modules (root): go-deps group bump in #497 (go-jose/v4 4.1.5 -> 4.1.6,
+  nats.go 1.54.0 -> 1.55.0).
+- Go modules (`sdk`): github.com/klauspost/compress 1.18.4 -> 1.18.7 (#482).
+- `sdk/typescript`: vitest and @vitest/mocker 4.1.11 -> 4.1.12, with the SDK
+  browser smoke job pinned to a supported Ubuntu runner (#483), and vite
+  8.0.16 -> 8.3.5 (#484).
+- Dashboard: typed forms migrated to Zod 4 (zod 3.25.76 -> 4.6.6,
+  @hookform/resolvers 5.9.2); React Hook Form tracks raw input and parsed
+  output separately (#494). Then the dashboard-deps group with 14 updates
+  (#499): @dagrejs/dagre 3.1.3, @dagrejs/graphlib 4.0.7, @hookform/resolvers
+  6.0.0, @tanstack/react-query 5.104.5, @tanstack/react-virtual 3.14.22,
+  framer-motion 14.6.0, lucide-react 1.61.0, react-hook-form 7.91.0,
+  zod 4.6.7, zustand 5.0.16, @typescript-eslint/parser 8.72.0, knip 6.43.0,
+  postcss 8.5.31 and vite 8.3.5.
+- `sdk/typescript` (#524, from #513): the remaining Dependabot alerts are closed
+  by `test-browser` vite 8.3.7 and an npm `overrides` entry that lifts `tsup`'s
   esbuild to 0.28.2 (GHSA-g7r4-m6w7-qqqr; tsup 8.5.1 pins esbuild ^0.27.0 and
   tsup 9 needs Node 22.18+).
+- Go modules (root) (#524, from #508): crewjam/saml 0.5.1 -> 0.6.1, go-jose/v4
+  4.1.6 -> 4.1.9, nats-server 2.15.1 -> 2.15.2, grpc 1.84.0 -> 1.85.0,
+  x/oauth2 0.38.0, x/sync 0.25.0, x/sys 0.50.0 and k8s.io api, apimachinery
+  and client-go 0.35.9 -> 0.35.10.
+- Dashboard (#524, from #509): the dashboard-deps group with 18 updates,
+  including @hookform/resolvers 6 -> 7.0.3, @tanstack/react-query 5.107.1,
+  @tanstack/react-virtual 3.14.26, framer-motion 14.10.1, lucide-react 1.70.0,
+  react-router-dom 7.18.5, zustand 5.1.0, @lhci/cli 0.16.0, eslint 10.14.0,
+  tailwindcss 4.3.5, postcss 8.5.32 and vite 8.3.6. Then 14 patched transitive
+  packages pinned through pnpm `overrides`, listed in `dashboard/CHANGELOG.md`
+  (#524, from #510).
+- GitHub Actions pins (#524, from #503, #505, #506, #507):
+  pypa/gh-action-pypi-publish 1.14.3, github/codeql-action 4.39.3,
+  docker/login-action 4.8.0 and pnpm/action-setup 6.1.1.
 
 ### Security
 
 #### core/infra/store, core/controlplane/scheduler — worker-to-agent links resolve only within the worker's tenant (2026-11-11, task-76c90c6e)
 
+- Landed in #524 (from #518).
 - Added `AgentIdentityStore.GetByWorkerIDForTenant(ctx, tenantID, workerID)`.
   It reads the per-tenant link hash `agent:worker-links:<tenant>` first, then
   falls back, read-only, to the legacy global `agent:by-worker:<worker>` key.
@@ -81,6 +112,7 @@ Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
 
 #### core/mcp + gateway — approval-required MCP tools fail closed when no approval gate is wired; `cordum_create_workflow` executes after approval (2026-11-10, task-b62ae307)
 
+- Landed in #524 (from #511).
 - **Behavior change.** Before, a tool that required approval ran ungated when no approval gate was wired. Now `ToolRegistry.Call` refuses it with `ErrApprovalGateUnavailable`, returns JSON-RPC `-32097 gateway misconfigured`, and never runs the handler. This covers built-in `RequiresApproval` tools and `mcp_policy` tools rules. It affects:
   - an API gateway that has no Redis client;
   - the standalone `cordum-mcp` binary (stdio and HTTP), which wires no gate and until now executed all 7 mutating tools without approval.
@@ -125,22 +157,36 @@ Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
   not yet a full-stack activation claim. The operator guide documents that
   boundary, key rotation, compatibility telemetry, and migration.
 
+#### dashboard — vulnerable dependency refresh (2026-10-28)
+
+- Landed in #494.
+- Production transitive dependencies: fast-uri 3.1.2 -> 3.1.9, and the
+  optional jsPDF DOMPurify reference consolidated on the existing patched
+  3.4.17 (the DOMPurify 3.4.2 lock entry is gone).
+- Undici 7.29.1 -> 7.30.1 within the existing jsdom range, and Vitest with
+  its exact companion packages aligned on 4.1.12, for the Undici and Vitest
+  security advisories the commit names; qs 6.15.2 -> 6.16.1.
+
 ### Fixed
 
 #### core/controlplane/gateway — the MCP policy snapshot is read with one Redis GET, however many workflows exist (2026-11-11, task-2688feeb)
 
+- Landed in #524 (from #517).
 - Every read of the MCP policy snapshot went through `loadPolicyBundles`. The snapshot is the policy config doc's updated-at, which EDGE-103 approval mints and `_approval_ref` consumes bind to. That call also listed every workflow (a `ZREVRANGE` of up to 10000 ids plus one pipelined `GET` per workflow), only to discard the result. The provider now reads just the policy config doc. The value is unchanged, and a missing doc or a read error still yields an empty snapshot, which fails closed.
 
 #### core/mcp, core/controlplane/gateway — policy-gate MCP approvals resume exactly once (2026-11-11, task-63400922)
 
+- Landed in #524 (from #519).
 - MCP (`mcp.policy_gate_enabled=true`): approval-required tools now mint an Edge `_approval_ref` bound to the real policy pre-event, and resuming with it executes exactly once. The Edge approval is the single authority under the policy gate. Approval-store outages on resume now return -32096 instead of -32602 (task-63400922).
 
 #### core/controlplane/gateway — HTTP MCP approval-required tools return -32099 again on production gateways (2026-10-26, task-f44be149)
 
+- Landed in #496.
 - With `mcp.policy_gate_enabled=false` (the default), every approval-required HTTP MCP tool call failed with `-32096 approval_store_unavailable`. The gateway always builds an Edge store, so the approval gate tried to mint an Edge approval that had no parent action event and no `_approval_ref` consumer. The Edge approval mint is now wired only together with the policy gate's approval hold, with the same server name. With the policy gate off, the legacy MCP approval store is the sole authority: approve as a distinct operator, then retry with byte-identical arguments, which executes once. Wherever a mint is attempted, an Edge store outage still fails closed with -32096. The -32099 `retry_hint` now matches the resume path: `retry_with_same_args` for legacy approvals, and `retry_with_approval_ref` only when an Edge `approval_ref` was minted.
 
 #### core/controlplane/gateway — MCP approval-required (-32099) responses no longer fail to encode on the legacy path (2026-10-26, task-ff988dfa)
 
+- Landed in #491.
 - Legacy MCP approval expiry was decoded as Unix seconds instead of microseconds, so without an Edge store (or without Edge session metadata) HTTP MCP answered `500 encode response` for any approval-required tool call. `expires_at` in the -32099 payload now reflects the approval TTL.
 
 #### tools/scripts/soak_test.sh — memory-drift gate stops failing the nightly soak on integer truncation and warm-up heap growth (2026-10-17)
@@ -170,6 +216,13 @@ Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
 
 ### CI and documentation
 
+- Folded in #524: the compliance-export leak-check test no longer flakes on
+  timestamps that contain forbidden digit runs (#514); the MCP consume-once
+  claim test detects a lost WATCH (#520); the workflow credential guard
+  follows transitive credential sources and checks redaction bindings
+  (#516); gofmt drift is cleared in `core/` (#515, #521); and the Grafana
+  overview dashboard shows real approval and dispatch panels, checked by a
+  dashboard contract workflow (#500).
 - Helm chart publication now waits for successful published-image smoke tests
   (#493). A failed, cancelled or skipped image job prevents the chart from
   being published with missing images.
@@ -202,6 +255,32 @@ Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
   link, and SDK links pointing at the published PyPI/npm packages (#405).
 - Line endings renormalized to match `.gitattributes`; content-identical
   (#407).
+- CI masks runtime-minted credentials before first use (#487): production
+  gates 9 and 16 and the e2e admin login register every runtime-minted
+  password, session and API key with `::add-mask::` right after it is
+  generated or received, fail the run when registration fails, and print
+  only the status of credential-endpoint responses. The contract test
+  `tools/scripts/runtime_credential_masking.test.sh` runs in the Lint job.
+- `.github/workflows/recover-dashboard-v1.2.0.yml` stays on main as a
+  read-only check that verifies the recovered dashboard 1.2.0 digest
+  without registry writes, and the dashboard Vitest step keeps console
+  diagnostics alongside the JUnit report (#495).
+- GitHub Actions bumps: the codeql-action group (upload-sarif, init,
+  autobuild, analyze) 4.38.3 -> 4.39.1 (#477), codecov-action 7.1.1 (#478),
+  docker/build-push-action 7.4.0 (#479), github-action-benchmark 1.22.2
+  (#480) and docker/setup-buildx-action 4.4.1 (#481).
+- The handshake interop test derives the embedded NATS server version from
+  build information instead of a hand-edited literal, with a `go list -m`
+  fallback for Go releases before 1.27 whose test binaries record no
+  dependencies; the bus reconnect test waits for the restored subscription
+  (#486).
+- README rewritten: unsourced analyst statistics and the integration-pack
+  count removed, the comparison matrix replaced with an agent-stack layer
+  map, and the per-repository license split and versioning streams stated
+  (#488).
+- Release history reconciled (#489): the `[v1.2.0]` section split out of
+  `[Unreleased]`, older entries moved under "Earlier changes", and
+  `docs/release-notes/v1.3.0.md` added.
 
 Direct commits without PR numbers: c7d33432 (dependency consolidation),
 dda9f0aa (Dependabot deferrals), 832236ad (compat memory pointer reads) and
