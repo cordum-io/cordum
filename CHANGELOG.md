@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Security
+
+#### core/controlplane/gateway — gateway worker-link readers resolve within the request tenant (2026-11-11, task-283f2317)
+
+- `POST /api/v1/agents`: the `agent_id` worker-conflict check (409 `AGENT_WORKER_CONFLICT`) now considers only the caller's tenant. Another tenant's link for the same worker ID neither blocks registration nor reveals that it exists.
+- HTTP and gRPC job submit, `POST /api/v1/agents/{id}/delegate`, the agent GET worker-id fallback, worker-credential proof preservation and MCP principal-fallback identity resolution now look up the worker link in the request tenant. A principal whose only link points at another tenant's agent gets no auth-derived `agent_id`: on HTTP job submit, a client `labels.agent_id` is refused with 403; it also fails the non-admin delegation principal check with 403.
+- Slice 2 of 3 of task-c1effd5b. Writers still write the legacy global key, so registering the same worker ID in a second tenant still replaces the first tenant's link. That tenant's readers then resolve nothing (fail closed) until the capstone moves writers to per-tenant links.
+
 ## [v1.3.1] - 2026-11-11
 
 Changes on main since the v1.3.0 tag (d027ae97, 2026-11-11).

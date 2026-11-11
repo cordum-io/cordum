@@ -188,7 +188,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 
 	// Inject agent_id from linked worker credential if not already set.
 	if payloadReq.Labels["agent_id"] == "" && s.agentIdentityStore != nil {
-		if agent, err := s.agentIdentityStore.GetByWorkerID(ctx, principalID); err == nil && agent != nil {
+		if agent, err := s.agentIdentityStore.GetByWorkerIDForTenant(ctx, orgID, principalID); err == nil && agent != nil {
 			if payloadReq.Labels == nil {
 				payloadReq.Labels = map[string]string{}
 			}
