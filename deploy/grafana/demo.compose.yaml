@@ -1,0 +1,24 @@
+services:
+  prometheus:
+    image: prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
+    ports: ["127.0.0.1:39091:9090"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes: ["./prometheus.demo.yml:/etc/prometheus/prometheus.yml:ro"]
+    tmpfs: ["/prometheus:uid=65534,gid=65534"]
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=2h"]
+  grafana:
+    image: grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205
+    ports: ["127.0.0.1:33000:3000"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_DEMO_PASSWORD:?Set a random temporary GRAFANA_DEMO_PASSWORD}"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_PLUGINS_PREINSTALL_AUTO_UPDATE: "false"
+    volumes: ["./datasources.demo.yml:/etc/grafana/provisioning/datasources/local.yml:ro"]
+    tmpfs: ["/var/lib/grafana:uid=472,gid=0"]

@@ -132,8 +132,8 @@ func TestContentScanOptionsFromEnv(t *testing.T) {
 // is folded into one redacted span.
 func TestRedactContent_OverlapMergesSpans(t *testing.T) {
 	content := []byte("AAAAAAAAAABBBBB_TAIL_SECRET_XYZ")
-	outer := regexp.MustCompile(`A{10}`)      // matches offset 0-10
-	inner := regexp.MustCompile(`A{5}B{5}`)   // matches offset 5-15 (tail "BBBBB" beyond outer's end)
+	outer := regexp.MustCompile(`A{10}`)    // matches offset 0-10
+	inner := regexp.MustCompile(`A{5}B{5}`) // matches offset 5-15 (tail "BBBBB" beyond outer's end)
 	red, fs := RedactContent(content, ContentScanOptions{
 		ExtraPatterns: []NamedContentPattern{
 			{Name: "outer", Pattern: outer},
@@ -163,7 +163,7 @@ func TestRedactContent_OverlapMergesSpans(t *testing.T) {
 func TestRedactContent_ContainedFindingDoesNotLeak(t *testing.T) {
 	content := []byte("XXXXXYYYYYZZZZZWWWWW")
 	outer := regexp.MustCompile(`XXXXXYYYYYZZZZZWWWWW`) // offset 0-20
-	inner := regexp.MustCompile(`YYYYYZZZZZ`)            // offset 5-15, fully inside outer
+	inner := regexp.MustCompile(`YYYYYZZZZZ`)           // offset 5-15, fully inside outer
 	red, fs := RedactContent(content, ContentScanOptions{
 		ExtraPatterns: []NamedContentPattern{
 			{Name: "outer", Pattern: outer},

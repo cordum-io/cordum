@@ -60,9 +60,9 @@ const (
 type ApprovalPublishTarget string
 
 const (
-	ApprovalPublishTargetSubmit        ApprovalPublishTarget = "submit"
-	ApprovalPublishTargetDLQ           ApprovalPublishTarget = "dlq"
-	ApprovalPublishTargetDLQAndResult  ApprovalPublishTarget = "dlq_and_result"
+	ApprovalPublishTargetSubmit       ApprovalPublishTarget = "submit"
+	ApprovalPublishTargetDLQ          ApprovalPublishTarget = "dlq"
+	ApprovalPublishTargetDLQAndResult ApprovalPublishTarget = "dlq_and_result"
 )
 
 // ApprovalConflictCode provides machine-readable approval failure semantics.

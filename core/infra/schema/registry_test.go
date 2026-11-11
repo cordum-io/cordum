@@ -19,7 +19,7 @@ func TestRegistryValidate(t *testing.T) {
 	schema := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"name": map[string]any{"type": "string"},
+			"name":  map[string]any{"type": "string"},
 			"count": map[string]any{"type": "integer"},
 		},
 		"required": []any{"name"},
@@ -108,8 +108,8 @@ func TestRegistryValidateID_CrossRef(t *testing.T) {
 		"$id":  "https://cordum.io/schemas/test/item.json",
 		"type": "object",
 		"properties": map[string]any{
-			"sku":  map[string]any{"type": "string"},
-			"qty":  map[string]any{"type": "integer"},
+			"sku": map[string]any{"type": "string"},
+			"qty": map[string]any{"type": "integer"},
 		},
 		"required": []any{"sku", "qty"},
 	}

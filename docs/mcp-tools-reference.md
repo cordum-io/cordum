@@ -41,6 +41,35 @@ _Generated from `core/mcp` via `RegisterAllTools` — do not edit by hand; run `
 
 <!-- END:mcp-tools -->
 
+## Approval-Required Tools
+
+Tools marked `required` in the catalog, and any tool that an `mcp_policy` tools rule puts behind approval, run only after a human approves the exact call.
+
+### Fail closed without an approval gate
+
+When no approval gate is wired, every approval-required tool is refused and its handler never runs. The call returns JSON-RPC `-32097` (`gateway misconfigured`), with `approval gate not wired; approval-required tools are disabled` in `error.data`. This happens in two cases:
+
+- An API gateway that has no Redis client. The gateway logs `mcp approval gate unavailable ... RequiresApproval tools are DISABLED (fail closed)`.
+- The standalone `cordum-mcp` binary, over both stdio and HTTP. It wires no approval gate, so all 7 mutating tools fail closed there. To run `cordum_create_workflow` with approval, call it on the API gateway's HTTP MCP endpoint.
+
+Tools that do not require approval are unaffected.
+
+### `cordum_create_workflow` executes after approval
+
+On the API gateway's HTTP MCP endpoint (`/mcp/message`), with the default `mcp.policy_gate_enabled=false`:
+
+1. The first `tools/call` returns `-32099` with an `approval_id`. Nothing is created.
+2. A distinct operator approves with `POST /api/v1/mcp/approvals/{id}/approve`. The requesting principal cannot approve its own call, and an operator in another tenant cannot see or approve it.
+3. The client retries with byte-identical arguments. The workflow is created once, and the result carries its `workflow_id`.
+
+Approvals are consume-once. A further identical retry, or a concurrent duplicate retry, gets a new `-32099` instead of a second workflow. Changed arguments also need a new approval.
+
+The tool runs the `POST /api/v1/workflows` handler under the caller's own auth context. Permission (`workflows-write` or admin), tenant resolution and request validation are therefore identical to the REST endpoint. A caller without `workflows-write` can obtain an approval, but the approved call still returns an `isError` tool result with `status_code` 403 and creates nothing. `idempotency_key` is not honored by this handler, so the consume-once approval is what bounds a retry to one workflow.
+
+### Mutating tools that are not wired yet
+
+The other 6 mutating tools are not wired on the API gateway's HTTP MCP endpoint: `cordum_install_pack`, `cordum_uninstall_pack`, `cordum_register_agent`, `cordum_update_policy_bundle`, `cordum_revoke_worker_session` and `cordum_set_agent_scope`. After approval they return an `isError` tool result whose `error` is `mcp service bridge unavailable`, and change nothing.
+
 ## JSON-RPC Examples
 
 ### Submit Job

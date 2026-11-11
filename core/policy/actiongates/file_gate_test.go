@@ -85,7 +85,6 @@ func TestFileGate_DenySensitiveUnixRead(t *testing.T) {
 	}
 }
 
-
 // TestFileGate_DenyLeadingSlashDriveLetterBypass closes the "/c:/..." bypass:
 // canonicalization can yield a leading-slash drive spelling that stripDriveLetter
 // previously left intact, so the Windows-hive and home-credential matchers missed

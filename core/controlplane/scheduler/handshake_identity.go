@@ -16,9 +16,10 @@ type HandshakeCredentialStore interface {
 	GetByWorkerID(context.Context, string) (*workercredentials.Credential, error)
 }
 
-// HandshakeAgentStore resolves the canonical worker-to-agent linkage.
+// HandshakeAgentStore resolves the canonical worker-to-agent linkage within
+// the tenant of the worker's credential.
 type HandshakeAgentStore interface {
-	GetByWorkerID(context.Context, string) (*store.AgentIdentity, error)
+	GetByWorkerIDForTenant(ctx context.Context, tenantID, workerID string) (*store.AgentIdentity, error)
 }
 
 // CredentialHandshakeTrustResolver joins credential, proof-key, and agent data.
@@ -52,7 +53,9 @@ func (r *CredentialHandshakeTrustResolver) Resolve(ctx context.Context, workerID
 	if failure := validateHandshakeCredential(credential, workerID, keyID); failure != nil {
 		return nil, failure
 	}
-	identity, err := r.agents.GetByWorkerID(ctx, workerID)
+	// validateHandshakeCredential has already rejected a blank tenant, so the
+	// link is always looked up within the credential's own tenant.
+	identity, err := r.agents.GetByWorkerIDForTenant(ctx, credential.TenantID, workerID)
 	if err != nil {
 		return nil, internalResolution("agent_store_unavailable")
 	}

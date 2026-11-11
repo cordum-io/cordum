@@ -307,3 +307,132 @@ func TestURITemplateMatching(t *testing.T) {
 		t.Fatalf("unexpected content uri: %q", content.URI)
 	}
 }
+
+// approvalGateCountingHandler returns a handler plus a pointer to its
+// invocation counter so fail-closed tests can prove the tool body never ran.
+func approvalGateCountingHandler() (ToolHandler, *int) {
+	calls := 0
+	return func(context.Context, json.RawMessage) (*ToolCallResult, error) {
+		calls++
+		return &ToolCallResult{Content: []ContentItem{{Type: "text", Text: "ran"}}}, nil
+	}, &calls
+}
+
+// TestToolRegistryCall_RequiresApprovalNilGateFailsClosed pins the fix for
+// the latent approval fail-open: a RequiresApproval tool on a registry with
+// no ApprovalGate wired (e.g. the gateway without Redis) must be refused with
+// the typed error before schema validation or handler dispatch.
+func TestToolRegistryCall_RequiresApprovalNilGateFailsClosed(t *testing.T) {
+	t.Parallel()
+	registry := NewToolRegistry()
+	handler, calls := approvalGateCountingHandler()
+	if err := registry.Register(Tool{
+		Name:             "admin.mutate",
+		RequiresApproval: true,
+		InputSchema: map[string]any{
+			"type":       "object",
+			"required":   []any{"target"},
+			"properties": map[string]any{"target": map[string]any{"type": "string"}},
+		},
+	}, handler); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	handle := &InvocationHandle{}
+	ctx := contextWithInvocationHandle(context.Background(), handle)
+	// Params deliberately fail the schema: the gate check must win so the
+	// caller learns the tool is disabled, not that its args were wrong.
+	result, err := registry.Call(ctx, "admin.mutate", json.RawMessage(`{}`))
+	if !errors.Is(err, ErrApprovalGateUnavailable) {
+		t.Fatalf("err = %v, want ErrApprovalGateUnavailable", err)
+	}
+	if !errors.Is(err, ErrApprovalGateMisconfigured) {
+		t.Fatalf("err = %v, want errors.Is(ErrApprovalGateMisconfigured) so server.go maps it to -32097", err)
+	}
+	if errors.Is(err, ErrInvalidParams) {
+		t.Fatalf("err = %v, gate check must run before schema validation", err)
+	}
+	if result != nil {
+		t.Fatalf("result = %+v, want nil", result)
+	}
+	if *calls != 0 {
+		t.Fatalf("handler invocations = %d, want 0", *calls)
+	}
+	if handle.decision != "deny" {
+		t.Fatalf("invocation handle decision = %q, want deny", handle.decision)
+	}
+}
+
+// TestToolRegistryCall_ConfigRequiresApprovalNilGateFailsClosed covers the
+// runtime-config path: a tool registered without RequiresApproval but
+// gated by an mcp_policy rule must fail closed the same way.
+func TestToolRegistryCall_ConfigRequiresApprovalNilGateFailsClosed(t *testing.T) {
+	t.Parallel()
+	registry := NewToolRegistry()
+	handler, calls := approvalGateCountingHandler()
+	if err := registry.Register(Tool{Name: "ops.restart"}, handler); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	registry.SetConfig(map[string]any{
+		"mcp_policy": map[string]any{
+			"tools": []any{map[string]any{
+				"tool_name_pattern": "ops.*",
+				"requires_approval": true,
+				"approval_scope":    ApprovalScopeWrite,
+			}},
+		},
+	})
+
+	_, err := registry.Call(context.Background(), "ops.restart", json.RawMessage(`{}`))
+	if !errors.Is(err, ErrApprovalGateUnavailable) || !errors.Is(err, ErrApprovalGateMisconfigured) {
+		t.Fatalf("err = %v, want ErrApprovalGateUnavailable wrapping ErrApprovalGateMisconfigured", err)
+	}
+	if *calls != 0 {
+		t.Fatalf("handler invocations = %d, want 0", *calls)
+	}
+}
+
+// TestToolRegistryCall_NilApprovalGateNonApprovalToolExecutes is the
+// scope guard: the fail-closed branch must not touch tools that do not
+// require approval.
+func TestToolRegistryCall_NilApprovalGateNonApprovalToolExecutes(t *testing.T) {
+	t.Parallel()
+	registry := NewToolRegistry()
+	handler, calls := approvalGateCountingHandler()
+	if err := registry.Register(Tool{Name: "jobs.list"}, handler); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	result, err := registry.Call(context.Background(), "jobs.list", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if result == nil || len(result.Content) != 1 || result.Content[0].Text != "ran" {
+		t.Fatalf("result = %+v, want handler output", result)
+	}
+	if *calls != 1 {
+		t.Fatalf("handler invocations = %d, want 1", *calls)
+	}
+}
+
+// TestToolRegistryCall_CreateWorkflowNilApprovalGateNeverReachesBridge
+// mirrors the stdio cordum-mcp boot (RegisterAllTools on a bridge that
+// implements every mutating hook, no ApprovalGate): all 7 mutating tools
+// must fail closed and the bridge must never see the call.
+func TestToolRegistryCall_CreateWorkflowNilApprovalGateNeverReachesBridge(t *testing.T) {
+	t.Parallel()
+	registry := NewToolRegistry()
+	bridge := &stubMutatingBridge{}
+	if err := RegisterAllTools(registry, bridge); err != nil {
+		t.Fatalf("RegisterAllTools: %v", err)
+	}
+	for _, spec := range mutatingToolSpecs(bridge) {
+		_, err := registry.Call(context.Background(), spec.tool.Name, json.RawMessage(`{"steps":{"s1":{"type":"approval"}}}`))
+		if !errors.Is(err, ErrApprovalGateUnavailable) {
+			t.Errorf("%s: err = %v, want ErrApprovalGateUnavailable", spec.tool.Name, err)
+		}
+	}
+	if bridge.createWorkflowCalled {
+		t.Fatal("bridge.CreateWorkflow was invoked without an approval gate")
+	}
+}

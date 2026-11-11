@@ -122,13 +122,20 @@ func (r *AgentResolver) resolveFromStores(ctx context.Context, workerID string) 
 
 	// Prefer the canonical reverse-lookup in the agent identity store when it
 	// is available. Newer worker credentials no longer carry an embedded
-	// agent_id, so the store link is the source of truth.
+	// agent_id, so the store link is the source of truth. The link is scoped
+	// to the tenant of the worker's cached credential, so a link naming
+	// another tenant's agent never labels this worker. With no cached
+	// credential, or one without a tenant, there is nothing to scope to: the
+	// lookup is skipped and resolution falls through to the credential,
+	// CAP-label and unlinked path below.
 	if r.agentStore != nil {
-		if identity, err := r.agentStore.GetByWorkerID(ctx, workerID); err == nil && identity != nil {
-			return AgentInfo{
-				AgentID:  identity.ID,
-				Name:     firstNonEmptyName(identity.Name, capName, identity.ID),
-				RiskTier: identity.RiskTier,
+		if tenantID := r.credentialTenantID(workerID); tenantID != "" {
+			if identity, err := r.agentStore.GetByWorkerIDForTenant(ctx, tenantID, workerID); err == nil && identity != nil {
+				return AgentInfo{
+					AgentID:  identity.ID,
+					Name:     firstNonEmptyName(identity.Name, capName, identity.ID),
+					RiskTier: identity.RiskTier,
+				}
 			}
 		}
 	}
@@ -168,6 +175,21 @@ func (r *AgentResolver) agentIDFromCredential(workerID string) string {
 		return ""
 	}
 	return strings.TrimSpace(cred.AgentID)
+}
+
+// credentialTenantID returns the tenant of the worker's cached credential, or
+// "" when no credential is cached.
+func (r *AgentResolver) credentialTenantID(workerID string) string {
+	if r.credCache == nil {
+		return ""
+	}
+	r.credCache.mu.RLock()
+	cred, ok := r.credCache.records[workerID]
+	r.credCache.mu.RUnlock()
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(cred.TenantID)
 }
 
 func unlinkedAgent() AgentInfo {

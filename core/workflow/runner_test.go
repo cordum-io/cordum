@@ -9,9 +9,9 @@ import (
 	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
-	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -22,7 +22,7 @@ func TestJobStatusFromState(t *testing.T) {
 		model.JobStateTimeout:   pb.JobStatus_JOB_STATUS_TIMEOUT,
 		model.JobStateDenied:    pb.JobStatus_JOB_STATUS_DENIED,
 		model.JobStateCancelled: pb.JobStatus_JOB_STATUS_CANCELLED,
-		"unknown":                   pb.JobStatus_JOB_STATUS_UNSPECIFIED,
+		"unknown":               pb.JobStatus_JOB_STATUS_UNSPECIFIED,
 	}
 	for state, expect := range cases {
 		if got := jobStatusFromState(state); got != expect {
