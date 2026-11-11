@@ -166,3 +166,76 @@ func TestPublicClaimsBaseline(t *testing.T) {
 			name, c["hits"], c["accurate"], c["overstated"], c["unverifiable"], c["not-a-claim"])
 	}
 }
+
+func TestPublicClaimsValidatorEdges(t *testing.T) {
+	cases := []struct{ name, old, replacement, rule string }{
+		{"pipe", "R15", "R15 |", "row-format"},
+		{"tabs", "1 CLM-001 overstated R15", "  1\tCLM-001\t overstated  R15  ", ""},
+		{"repeated_code", "R15", "R15 R15", ""},
+		{"lowercase_code", "R15", "r05", "entry-format"},
+		{"no_table", publicCordum, "Only prose.\n", "hit-missing"},
+		{"reverse_mix", "2 not-a-claim nav", "2 CLM-001 accurate; 2 not-a-claim nav", "entry-duplicate"},
+		{"trailing_cell", "nav |", "nav | garbage", "row-format"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, reg := publicFixture(t, false)
+			write(t, filepath.Join(dir, "cordum-x.md"), mutate(t, publicCordum, tc.old, tc.replacement))
+			got, _, err := ValidatePublicClaims(dir, reg)
+			if err != nil || (tc.rule == "" && len(got) != 0) {
+				t.Fatalf("issues=%+v error=%v", got, err)
+			}
+			if tc.rule != "" && !slices.ContainsFunc(got, func(i Issue) bool { return i.Rule == tc.rule }) {
+				t.Fatalf("missing %s: %+v", tc.rule, got)
+			}
+		})
+	}
+}
+
+func TestPublicClaimsValidatorPathsAndEmpty(t *testing.T) {
+	for _, path := range []string{"site/src/(marketing)/[slug]/a b.md", "plain.md"} {
+		dir := t.TempDir()
+		write(t, filepath.Join(dir, "site-z.hits"), path+":1\r\n\r\n")
+		write(t, filepath.Join(dir, "site-z.md"), "| "+path+" | 1 not-a-claim nav |\r\n")
+		write(t, filepath.Join(dir, "ignored.txt"), "not a surface")
+		if got, _, err := ValidatePublicClaims(dir, nil); err != nil || len(got) != 0 {
+			t.Fatalf("path %s: %+v, %v", path, got, err)
+		}
+		write(t, filepath.Join(dir, "site-z.md"), "")
+		write(t, filepath.Join(dir, "site-z.hits"), "")
+		got, counts, err := ValidatePublicClaims(dir, &ClaimRegister{})
+		if err != nil || len(got) != 0 || counts["site-z"]["hits"] != 0 || counts["site-z"]["not-a-claim"] != 0 {
+			t.Fatalf("empty pair: %+v, %v, %v", got, counts, err)
+		}
+	}
+}
+
+func TestPublicClaimsValidatorOrderAndNil(t *testing.T) {
+	dir, reg := publicFixture(t, false)
+	reg.Claims = nil
+	for _, r := range []*ClaimRegister{nil, reg} {
+		first, _, err := ValidatePublicClaims(dir, r)
+		if err != nil || len(first) != 3 || first[0].Rule != "claim-unknown" {
+			t.Fatalf("nil claims: %+v, %v", first, err)
+		}
+		for range 3 {
+			next, _, err := ValidatePublicClaims(dir, r)
+			if err != nil || !reflect.DeepEqual(first, next) {
+				t.Fatalf("unstable issues: %+v vs %+v, %v", first, next, err)
+			}
+		}
+	}
+}
+
+func TestPublicClaimsValidatorIO(t *testing.T) {
+	dir := t.TempDir()
+	if _, _, err := ValidatePublicClaims(filepath.Join(dir, "missing"), nil); err == nil {
+		t.Fatal("missing directory must be an I/O error")
+	}
+	for _, ext := range []string{".hits", ".md"} {
+		if _, err := readPublicSurface(dir, "cordum-x", nil); err == nil {
+			t.Fatalf("missing %s must be an I/O error", ext)
+		}
+		write(t, filepath.Join(dir, "cordum-x"+ext), "")
+	}
+}
