@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"time"
 )
@@ -37,6 +38,11 @@ const (
 	jsonRPCApprovalLifecycleErrorCode = -32096
 )
 
+// approvalStoreUnavailableReason is the fixed, client-facing
+// error.data.reason for -32096 approval_store_unavailable. The store's
+// own error is logged, never echoed (it carries internal addresses).
+const approvalStoreUnavailableReason = "approval store unavailable"
+
 var (
 	ErrMethodNotFound = errors.New("mcp method not found")
 	ErrInvalidParams  = errors.New("mcp invalid params")
@@ -46,13 +52,14 @@ var (
 	// Mapped to JSON-RPC -32097 so ops can distinguish a gateway wiring
 	// defect from an ordinary handler failure (-32603).
 	ErrApprovalGateMisconfigured = errors.New("mcp: approval gate misconfigured")
-	// ErrApprovalStoreUnavailable signals the Edge approval store was
-	// reachable in principle (wired) but the EnqueueApproval call
-	// errored. Mapped to JSON-RPC -32096 with error.data.kind=
-	// "approval_store_unavailable" so clients can distinguish a
+	// ErrApprovalStoreUnavailable signals an approval store was wired
+	// but errored: the Edge store's EnqueueApproval at mint time, or the
+	// legacy MCP approval store during claim or enqueue. Mapped to
+	// JSON-RPC -32096 with error.data.kind="approval_store_unavailable"
+	// (fixed reason, cause logged only) so clients can distinguish a
 	// transient store outage from a genuine policy denial. Wrapped by
-	// gatewayApprovalGate.Check + ConsumeActionGateDecision when Edge
-	// mint fails after metadata was present (the fail-closed branch).
+	// gatewayApprovalGate.Check + ConsumeActionGateDecision (the
+	// fail-closed branches).
 	ErrApprovalStoreUnavailable = errors.New("approval_store_unavailable: approval store unavailable")
 )
 
@@ -664,17 +671,24 @@ func (s *MCPServer) mapHandlerError(err error) *JSONRPCError {
 	if errors.Is(err, ErrApprovalGateMisconfigured) {
 		return s.rpcError(jsonRPCGatewayMisconfiguredCode, "gateway misconfigured", err.Error())
 	}
-	// Approval-store outage signal — surfaces when Edge mint was
-	// attempted (transport metadata present + edgeStore wired) but
-	// EnqueueApproval errored. Distinct from -32603 generic internal
-	// so clients can branch retry logic on a transient store outage
-	// vs a deterministic handler failure. Carries error.data.kind so
-	// the JSON-RPC envelope matches the snake_case enum used by the
-	// other -32096 lifecycle paths (args_mismatch, etc.).
+	// Approval-store outage signal — an approval store (the Edge store
+	// at mint time, or the legacy MCP approval store during claim or
+	// enqueue) errored. Distinct from -32603 generic internal so clients
+	// can branch retry logic on a transient store outage vs a
+	// deterministic handler failure. Carries error.data.kind so the
+	// JSON-RPC envelope matches the snake_case enum used by the other
+	// -32096 lifecycle paths (args_mismatch, etc.).
+	//
+	// The wrapped cause names internal infrastructure (Redis address,
+	// key, dial error), so it is logged server-side and NEVER returned:
+	// reason is a fixed string. This one choke point sanitizes every
+	// producer (gate Edge mint, policy-wire Edge mint, gate claim and
+	// enqueue).
 	if errors.Is(err, ErrApprovalStoreUnavailable) {
+		slog.Warn("mcp approval store unavailable", "error", err)
 		return s.rpcError(jsonRPCApprovalLifecycleErrorCode, "approval lifecycle error", map[string]any{
 			"kind":   "approval_store_unavailable",
-			"reason": err.Error(),
+			"reason": approvalStoreUnavailableReason,
 		})
 	}
 	switch {
