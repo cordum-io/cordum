@@ -17,19 +17,25 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode"
 
 	agentv1 "github.com/cordum-io/cap/v2/cordum/agent/v1"
 	capsdk "github.com/cordum-io/cap/v2/sdk/go"
 	"github.com/cordum/cordum/sdk/runtime"
+	"github.com/nats-io/nats.go"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -46,6 +52,7 @@ const (
 	maxResponseBytes   = 1 << 20
 	maxArgsBytes       = 64 << 10
 	codeApprovalNeeded = -32099
+	shutdownBudget     = 15 * time.Second
 )
 
 // Error codes. A failed job's error_message is always "<code>: <fixed
@@ -486,8 +493,77 @@ func newHTTPClient(caFile string) (*http.Client, error) {
 	}, nil
 }
 
-func loadConfig(_ func(string) string) (config, error) {
-	return config{}, errors.New("not implemented")
+var tenantID = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+
+// loadConfig reads the worker settings and fails closed. Errors name the
+// variable and never echo its value.
+func loadConfig(getenv func(string) string) (config, error) {
+	gw, err := parseGatewayURL(getenv("CORDUM_GATEWAY_URL"))
+	if err != nil {
+		return config{}, err
+	}
+	key := getenv("CORDUM_API_KEY")
+	if key == "" || strings.IndexFunc(key, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
+		return config{}, errors.New("CORDUM_API_KEY is required and must not contain whitespace or control characters")
+	}
+	tenant := getenv("CORDUM_TENANT_ID")
+	if !tenantID.MatchString(tenant) {
+		return config{}, errors.New("CORDUM_TENANT_ID is required and must match [A-Za-z0-9._-]{1,128}")
+	}
+	client, err := newHTTPClient(getenv("CORDUM_TLS_CA"))
+	if err != nil {
+		return config{}, fmt.Errorf("CORDUM_TLS_CA: %w", err)
+	}
+	timeout, err := envDuration(getenv, "CAP_MCP_JOB_TIMEOUT", 10*time.Minute, time.Second, time.Hour)
+	if err != nil {
+		return config{}, err
+	}
+	interval, err := envDuration(getenv, "CAP_MCP_POLL_INTERVAL", 2*time.Second, 100*time.Millisecond, time.Minute)
+	if err != nil {
+		return config{}, err
+	}
+	if interval >= timeout {
+		return config{}, errors.New("CAP_MCP_POLL_INTERVAL must be shorter than CAP_MCP_JOB_TIMEOUT")
+	}
+	return config{GatewayURL: gw, APIKey: key, TenantID: tenant, Client: client,
+		JobTimeout: timeout, PollInterval: interval}, nil
+}
+
+// parseGatewayURL accepts https, or http to a loopback host only, with no
+// userinfo, query, fragment or path. The API key travels in a header, so
+// plain http is limited to this machine.
+func parseGatewayURL(raw string) (*url.URL, error) {
+	const name = "CORDUM_GATEWAY_URL"
+	u, err := url.Parse(raw)
+	if raw == "" || err != nil || u.Hostname() == "" {
+		return nil, errors.New(name + " is required and must be an absolute URL with a host")
+	}
+	if u.User != nil || u.RawQuery != "" || u.ForceQuery || strings.Contains(raw, "#") || (u.Path != "" && u.Path != "/") || u.RawPath != "" {
+		return nil, errors.New(name + " must not carry userinfo, a query, a fragment or a path")
+	}
+	switch u.Scheme {
+	case "https":
+		return u, nil
+	case "http":
+		host := u.Hostname()
+		if ip := net.ParseIP(host); host == "localhost" || (ip != nil && ip.IsLoopback()) {
+			return u, nil
+		}
+		return nil, errors.New(name + " may use http only for localhost, ::1 or 127.0.0.0/8")
+	}
+	return nil, errors.New(name + " must use https")
+}
+
+func envDuration(getenv func(string) string, name string, def, low, high time.Duration) (time.Duration, error) {
+	raw := getenv(name)
+	if raw == "" {
+		return def, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d < low || d > high {
+		return 0, fmt.Errorf("%s must be a duration from %s to %s", name, low, high)
+	}
+	return d, nil
 }
 
 // buildHeartbeat advertises one job at a time: a second concurrent job
@@ -504,4 +580,73 @@ func buildHeartbeat() ([]byte, error) {
 	})
 }
 
-func main() {}
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err := run(ctx)
+	stop()
+	if err != nil {
+		log.Fatalf("[cap-mcp-governed] %v", err)
+	}
+}
+
+// run serves jobs until ctx is done. A job waiting for approval then ends
+// with worker_shutdown; draining NATS lets that result publish before the
+// connection and the blob store close.
+func run(ctx context.Context) error {
+	cfg, err := loadConfig(os.Getenv)
+	if err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+	natsURL := envOr("NATS_URL", "nats://127.0.0.1:4222")
+	store, err := runtime.NewRedisBlobStoreWithPing(envOr("REDIS_URL", "redis://:cordum-dev@127.0.0.1:6379/0"))
+	if err != nil {
+		return fmt.Errorf("redis connect: %w", err)
+	}
+	nc, err := connectNATS(natsURL)
+	if err != nil {
+		_ = store.Close()
+		return fmt.Errorf("nats connect: %w", err)
+	}
+	agent := newAgent(&worker{cfg: cfg, base: ctx}, natsURL, nc, store)
+	if err := agent.Start(); err != nil {
+		nc.Close()
+		_ = store.Close()
+		return fmt.Errorf("agent start: %w", err)
+	}
+	go runtime.HeartbeatLoop(ctx, nc, buildHeartbeat)
+	log.Printf("[cap-mcp-governed] ready (topic=%s, subject=%s, gateway=%s)", topic, directSubject, cfg.GatewayURL.Host)
+
+	<-ctx.Done()
+	log.Println("[cap-mcp-governed] shutdown requested")
+	closed := make(chan struct{})
+	nc.SetClosedHandler(func(*nats.Conn) { close(closed) })
+	if err := nc.Drain(); err == nil {
+		select {
+		case <-closed:
+		case <-time.After(shutdownBudget):
+		}
+	}
+	return agent.Close()
+}
+
+func connectNATS(natsURL string) (*nats.Conn, error) {
+	opts := []nats.Option{nats.Name(workerID), nats.Timeout(5 * time.Second)}
+	tlsCfg, err := runtime.NATSTLSConfigFromEnv()
+	if err != nil {
+		return nil, fmt.Errorf("nats tls config: %w", err)
+	}
+	if tlsCfg != nil {
+		opts = append(opts, nats.Secure(tlsCfg))
+	}
+	if token := os.Getenv("NATS_TOKEN"); token != "" {
+		opts = append(opts, nats.Token(token))
+	}
+	return nats.Connect(natsURL, opts...)
+}
+
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
