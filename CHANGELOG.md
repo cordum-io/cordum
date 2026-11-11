@@ -30,7 +30,7 @@ Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
   (TraceContext, WorkflowEvent, A2A bridge, governed MCP demo) — none of these
   are part of CAP v2.17.0.
 
-#### Dependency updates (#400, #401, #402, #404, #408, #441, c7d33432, #467)
+#### Dependency updates (#400, #401, #402, #404, #408, #441, c7d33432, #467, #483, #484)
 
 - CAP: `github.com/cordum-io/cap/v2` moved from v2.15.1 (at the v1.2.0 tag),
   through the interim pseudo-version pinned by #394, to the published v2.16.1
@@ -55,7 +55,11 @@ Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
   #434); undici 7.30.1 and brace-expansion lockfile-only updates (c7d33432:
   #448, #449); `test-browser` source-map-js 1.2.2 (c7d33432: #454). The
   generated `sdk/typescript/src/_generated/schema.d.ts` was regenerated
-  (233 operations) in #441.
+  (233 operations) in #441. Then vitest and @vitest/mocker 4.1.12 (#483) and
+  vite 8.3.5 (#484). The remaining Dependabot alerts are closed by
+  `test-browser` vite 8.3.7 and an npm `overrides` entry that lifts `tsup`'s
+  esbuild to 0.28.2 (GHSA-g7r4-m6w7-qqqr; tsup 8.5.1 pins esbuild ^0.27.0 and
+  tsup 9 needs Node 22.18+).
 
 ### Security
 
