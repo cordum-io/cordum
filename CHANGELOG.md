@@ -7,9 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Invariant catalog `docs/contract/invariants.yaml` (I01-I10) with entry points, linked tests and a finding-to-invariant map, checked by `go test ./tests/contract/... -run Invariants` (part of `make test`). Contract artifact only; runtime behavior is unchanged.
 - Claim register schema and validator: `docs/contract/claims.yaml` and the Go
-  package `tests/contract`, run by `go test ./...`. The register starts empty and
-  its entries follow in later changes. Runtime behavior is unchanged.
+  package `tests/contract`, run by `go test ./...`. The register lists protection
+  claims in README.md and SECURITY.md. Runtime behavior is unchanged.
 - Enforcement support matrix: `docs/contract/enforcement-matrix.yaml` records,
   for each entry point and each control, whether the control is enforced,
   advisory, ignored or not applicable, with a code reference. A validator in
