@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"io"
 	"maps"
 	"net/http"
@@ -693,9 +694,10 @@ func TestProtocolErrors(t *testing.T) {
 	wrongID := func(w http.ResponseWriter, _ json.RawMessage) {
 		writeJSON(w, http.StatusOK, mcp.JSONRPCMessage{JSONRPC: mcp.JSONRPCVersion, ID: json.RawMessage(`999`), Result: initOK(mcp.DefaultProtocolVersion)})
 	}
+	// A valid initialize result whose only defect is its size.
 	oversize := func(w http.ResponseWriter, id json.RawMessage) {
 		writeJSON(w, http.StatusOK, mcp.JSONRPCMessage{JSONRPC: mcp.JSONRPCVersion, ID: id,
-			Result: map[string]string{"pad": strings.Repeat("x", maxResponseBytes)}})
+			Result: map[string]string{"protocolVersion": mcp.DefaultProtocolVersion, "pad": strings.Repeat("x", maxResponseBytes)}})
 	}
 	bothResultAndError := func(w http.ResponseWriter, id json.RawMessage) {
 		writeJSON(w, http.StatusOK, mcp.JSONRPCMessage{JSONRPC: mcp.JSONRPCVersion, ID: id,
@@ -841,6 +843,36 @@ func TestInvalidInputMakesNoCalls(t *testing.T) {
 				t.Fatalf("requests = %d, want 0", n)
 			}
 		})
+	}
+}
+
+// Input that does not decode into jobInput is refused by the CAP runtime
+// before handle runs (README "Subjects and job input").
+func TestUndecodableInputFailsBeforeHandler(t *testing.T) {
+	for name, input := range map[string]string{
+		"workflow not an object": `{"workflow":5}`,
+		"steps not an object":    `{"workflow":{"name":"x","steps":[1]}}`,
+		"not json":               `not json`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFake(t)
+			res, _ := runJob(t, newTestWorker(t, testConfig(t, f.srv.URL)), topic, "job-undecodable-1", []byte(input))
+			if res.GetStatus() != agentv1.JobStatus_JOB_STATUS_FAILED || !strings.Contains(res.GetErrorMessage(), "JOB_INVALID_INPUT") {
+				t.Fatalf("status = %s (%q), want FAILED with the runtime's invalid-input error", res.GetStatus(), res.GetErrorMessage())
+			}
+			if n := len(f.requests()); n != 0 {
+				t.Fatalf("requests = %d, want 0", n)
+			}
+		})
+	}
+}
+
+func TestHandleWithoutJobRequestIsInvalid(t *testing.T) {
+	w := newTestWorker(t, testConfig(t, "http://127.0.0.1:1"))
+	_, err := w.handle(runtime.Context{}, jobInput{})
+	var je jobError
+	if !errors.As(err, &je) || je.code != codeInvalidInput {
+		t.Fatalf("err = %v, want %s", err, codeInvalidInput)
 	}
 }
 
