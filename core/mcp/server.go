@@ -509,6 +509,11 @@ func (s *MCPServer) handleToolsCall(ctx context.Context, params json.RawMessage)
 			if errors.Is(err, errMissingPolicySnapshot) {
 				return nil, s.rpcError(jsonRPCGatewayMisconfiguredCode, "approval gate misconfigured", "missing_policy_snapshot")
 			}
+			// A store outage on the claim fails closed as -32096
+			// approval_store_unavailable, like the mint (task-63400922).
+			if errors.Is(err, ErrApprovalStoreUnavailable) {
+				return nil, s.mapHandlerError(err)
+			}
 			return nil, s.rpcError(jsonRPCInvalidParamsCode, "invalid approval ref", err.Error())
 		}
 		if outcome.ConflictErr != nil {
@@ -518,8 +523,19 @@ func (s *MCPServer) handleToolsCall(ctx context.Context, params json.RawMessage)
 				"reason":       outcome.ConflictErr.Reason,
 			})
 		}
-		if outcome.Consumed && len(outcome.StrippedArgs) > 0 {
-			req.Arguments = outcome.StrippedArgs
+		if outcome.Consumed {
+			// Request-scoped: under the policy gate the registry approval
+			// gate honours this consumption once, for this exact binding
+			// (task-63400922 E4).
+			ctx = withConsumedApproval(ctx, &ConsumedApproval{
+				Ref:        outcome.ClaimRef,
+				Tool:       req.Name,
+				ActionHash: outcome.ActionHash,
+				InputHash:  outcome.InputHash,
+			})
+			if len(outcome.StrippedArgs) > 0 {
+				req.Arguments = outcome.StrippedArgs
+			}
 		}
 	}
 	// Bracket every terminal tools/call with the invocation auditor so

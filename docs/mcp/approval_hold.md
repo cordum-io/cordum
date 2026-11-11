@@ -43,7 +43,7 @@ scopes see [`scope-preapproval.md`](scope-preapproval.md).
                                        │
                               tools/call (with _approval_ref)
                                        │
-                              ProcessApprovalClaim → ClaimApproval
+                              ProcessApprovalClaim → GetApproval → ClaimApproval
                                        │
                               ProvenanceGate verifies resolved
                               approval audit evidence
@@ -132,7 +132,7 @@ when ANY of the four identity fields on `CallMetadata` is blank:
 | `Tenant` | gateway tenant middleware | tenant isolation, action-hash tuple |
 | `SessionID` | edge session middleware | audit join, approval-store key |
 | `ExecutionID` | edge execution middleware | audit join, approval-store key |
-| `AgentID` | edge identity middleware | mint event id, audit attribution |
+| `AgentID` | edge identity middleware | caller identity, audit attribution |
 
 Each function emits zero events on the fail-closed path and returns
 `errMissingMCPMetadata`. The JSON-RPC layer maps this to `-32097`
@@ -175,6 +175,54 @@ bypassing the approval step. Tests:
 * `TestInvokeToolWithPolicy_RequireApproval_RequiresHandoff` — locks
   the "no handoff means no upstream" half of the contract.
 
+## Policy gate on: event binding and single authority (task-63400922)
+
+With `mcp.policy_gate_enabled=true` every `tools/call` runs through the
+policy evaluator, which emits an `mcp.tool.pre` event before the tool
+runs. That event carries `input_hash` (the canonical argument hash, with
+`_approval_ref` stripped) and `policy_snapshot`.
+
+- **Mint.** Both mint sites bind the Edge approval to that event's
+  `event_id`: the action-gate handoff (`mintEdgeApprovalForActionGate`)
+  and the registry gate's dual-write for `RequiresApproval` tools
+  (`dualWriteEdgeApproval`). `EnqueueApproval` refuses an `event_id`
+  that names no stored event, and an `input_hash` or `policy_snapshot`
+  that differs from the event's. A gate-on mint without the pre-event
+  fails closed before `EnqueueApproval`.
+- **Claim.** `ProcessApprovalClaim` reads the approval with a
+  tenant-scoped `GetApproval` and claims with its stored `event_id`, as
+  Edge evaluate retries do: the resumed call cannot know the held call's
+  per-call event. Session, execution, hashes, snapshot and caller still
+  come from the resumed call, so the store's tuple, args and policy checks
+  apply unchanged.
+- **Single authority.** Only the Edge approval can resume a held call:
+  1. approve it with `POST /api/v1/edge/approvals/{approval_ref}/approve`;
+  2. resume once by re-sending the call with `_approval_ref`. The claim is
+     consumed atomically, and the registry gate lets that one call, with
+     the same tool and arguments, through once. A replay gets `-32096`
+     `not_found` ("approval not claimable").
+
+  The MCP approval record the registry gate dual-writes (`approval_id` in
+  the `-32099` data) is correlation-only. Approving it authorizes nothing:
+  it never lets a retry without `_approval_ref` run the tool. Within the
+  semantic dedupe TTL (10 minutes), a byte-identical retry by the same
+  principal in the same session replays the resumed call's cached result
+  without running the tool again.
+- **Outages.** An Edge store error on the mint, the approval lookup or the
+  claim returns `-32096` with `kind=approval_store_unavailable`, and the
+  tool does not run.
+- **Snapshot.** Gate-on mints need a non-empty policy snapshot. The Edge
+  store refuses an approval without one, so a deployment with no policy
+  snapshot fails every gate-on mint with `-32096`.
+- **Audit join.** The held call's `mcp.tool_invocation` records
+  `approval_status=required` with the MCP record id as `approval_id`. The
+  resumed call's records `approval_status=consumed` with the Edge
+  `approval_ref` as `approval_id`. The `-32099` data carries both ids, and
+  the Edge approval's `event_id` names the held call's `mcp.tool.pre`
+  event.
+- **Known limit.** Resuming an action-gate `REQUIRE_HUMAN` hold under the
+  policy gate is tracked in task-cd9df90a.
+
 ## Conflict kinds and JSON-RPC mapping
 
 When `ClaimApproval` refuses the claim it returns an
@@ -206,7 +254,7 @@ When `ClaimApproval` refuses the claim it returns an
 | `self_approval` | The approving identity matches the requesting agent. |
 | `cross_tenant` | The approval belongs to a different tenant. |
 | `tuple_mismatch` | The action-hash tuple differs. |
-| `approval_store_unavailable` | The Edge store errored at mint time (transient outage). |
+| `approval_store_unavailable` | The Edge store errored at mint, approval lookup or claim time (transient outage), or a policy-gate mint could not bind to its pre-event. |
 
 Clients branch retry logic on `Kind`. A `consumed` requires the user
 to re-trigger the gated action; an `args_mismatch` typically reflects
@@ -226,3 +274,9 @@ auto-retry.
 | Caller identity used (not server identity) | `TestInvokeToolWithPolicy_ApprovalHandoffUsesCaller` |
 | `ApprovalHandoff` required on REQUIRE_HUMAN | `TestInvokeToolWithPolicy_RequireApproval_RequiresHandoff` |
 | Typed conflict kinds round-trip | `TestProcessApprovalClaim_TypedConflictKind` |
+| Gate-on mint binds the policy pre-event | `TestApprovalHold_MintBindsRealPreEvent` |
+| Gate-on mint without a pre-event fails closed | `TestApprovalHold_DualWriteFailsClosedWithoutPreEvent`, `TestGate_EdgeMintOutageFailsClosed` |
+| Claim binds the stored `event_id` | `TestApprovalHold_ClaimUsesStoredEventID` |
+| Gate-on HTTP resume executes exactly once | `TestPolicyGateEdgeResume_HTTPExecutesExactlyOnce` |
+| Legacy MCP approval cannot resume under the gate | `TestPolicyGateEdgeResume_HTTPLegacyApprovalCannotResume` |
+| Gate-on mint and claim outages return `-32096` | `TestPolicyGateEdgeResume_HTTPMintOutageFailsClosed`, `TestPolicyGateEdgeResume_HTTPClaimOutageFailsClosed` |

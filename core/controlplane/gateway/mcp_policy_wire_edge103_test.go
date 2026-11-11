@@ -9,6 +9,7 @@ import (
 
 	"github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/mcp"
+	"github.com/cordum/cordum/core/model"
 )
 
 // captureEdgeStore records the EnqueueApproval request and returns a
@@ -18,12 +19,14 @@ import (
 // pure unit assertions on the mint-side tuple.
 type captureEdgeStore struct {
 	edge.Store
-	lastReq    edge.EdgeApprovalRequest
-	enqueueErr error
-	approvalID string
+	lastReq      edge.EdgeApprovalRequest
+	enqueueErr   error
+	approvalID   string
+	enqueueCalls int
 }
 
 func (c *captureEdgeStore) EnqueueApproval(_ context.Context, req edge.EdgeApprovalRequest) (*edge.EdgeApproval, error) {
+	c.enqueueCalls++
 	c.lastReq = req
 	if c.enqueueErr != nil {
 		return nil, c.enqueueErr
@@ -99,6 +102,7 @@ func TestMintEdgeApproval_InputHashMatchesConsumeBinding(t *testing.T) {
 		Tool:       tool,
 		ActionHash: actionHashIn,
 		Args:       args,
+		EventID:    "evt-pre-1",
 	})
 	if err != nil {
 		t.Fatalf("ConsumeActionGateDecision: %v", err)
@@ -122,6 +126,12 @@ func TestMintEdgeApproval_InputHashMatchesConsumeBinding(t *testing.T) {
 	}
 	if store.lastReq.Requester != principalID {
 		t.Errorf("Requester = %q; want %q (self-approval defense binds to Principal)", store.lastReq.Requester, principalID)
+	}
+	// task-63400922 (E1): the approval binds to the policy pre-event the
+	// evaluator emitted, never to the agent id.
+	if store.lastReq.EventID != "evt-pre-1" || store.lastReq.EventID == agentID {
+		t.Errorf("EnqueueApproval EventID = %q; want the policy pre-event id %q (not AgentID %q)",
+			store.lastReq.EventID, "evt-pre-1", agentID)
 	}
 }
 
@@ -155,11 +165,67 @@ func TestMintEdgeApproval_FailsClosedOnEdgeStoreError(t *testing.T) {
 			Tool:       "fs.write",
 			ActionHash: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
 			Args:       json.RawMessage(`{"path":"/x"}`),
+			EventID:    "evt-pre-1",
 		})
 	if err == nil {
 		t.Fatal("expected fail-closed error on Edge store outage; got nil (silent fallback to legacy is the DoD #5 violation)")
 	}
 	if !strings.Contains(err.Error(), "approval_store_unavailable") {
 		t.Errorf("error = %q; want substring 'approval_store_unavailable' so handleToolsCall maps to -32096 kind", err.Error())
+	}
+	if store.enqueueCalls != 1 || store.lastReq.EventID != "evt-pre-1" {
+		t.Errorf("EnqueueApproval calls = %d, EventID = %q; want 1 attempt bound to evt-pre-1 (the outage, not a missing pre-event, must be what failed)",
+			store.enqueueCalls, store.lastReq.EventID)
+	}
+}
+
+// TestMintEdgeApproval_EmptyEventIDFailsClosed pins E1 (task-63400922): with
+// the Edge mint wired and Edge transport metadata present, a handoff that
+// carries no policy pre-event id must fail closed with
+// mcp.ErrApprovalStoreUnavailable (-32096). It must neither enqueue an Edge
+// approval bound to some other identity (the old AgentID binding) nor fall
+// back to a legacy record that the `_approval_ref` resume can never consume.
+func TestMintEdgeApproval_EmptyEventIDFailsClosed(t *testing.T) {
+	t.Parallel()
+	store := &captureEdgeStore{approvalID: "edge_appr_should_not_mint"}
+	legacy := newTestMCPStore(t)
+	gate := &gatewayApprovalGate{
+		store:          legacy,
+		edgeStore:      store,
+		policySnapshot: func(context.Context) string { return "policy-v7" },
+		serverName:     "cordum.builtin",
+	}
+	ctx := mcp.WithCallMetadata(context.Background(), mcp.CallMetadata{
+		Tenant:      "tnt_a",
+		Principal:   "alice",
+		AgentID:     "agent_alpha",
+		SessionID:   "sess_99",
+		ExecutionID: "exec_88",
+	})
+
+	ref, err := gate.ConsumeActionGateDecision(ctx, mcp.PolicyDecision{}, mcp.ToolCallApprovalContext{
+		Tenant:     "tnt_a",
+		AgentID:    "agent_alpha",
+		Server:     "cordum.builtin",
+		Tool:       "fs.write",
+		ActionHash: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+		Args:       json.RawMessage(`{"path":"/x"}`),
+	})
+	if !errors.Is(err, mcp.ErrApprovalStoreUnavailable) {
+		t.Fatalf("err = %v (ref %q); want mcp.ErrApprovalStoreUnavailable for a handoff without a policy pre-event", err, ref)
+	}
+	if ref != "" {
+		t.Errorf("ref = %q; want empty on fail-closed", ref)
+	}
+	if store.enqueueCalls != 0 {
+		t.Errorf("EnqueueApproval calls = %d (EventID %q); want 0 — the mint must not bind to anything but the pre-event",
+			store.enqueueCalls, store.lastReq.EventID)
+	}
+	pending, _, err := legacy.ListByStatus(context.Background(), string(model.ApprovalStatusPending), 0, 10)
+	if err != nil {
+		t.Fatalf("legacy ListByStatus: %v", err)
+	}
+	if len(pending) != 0 {
+		t.Errorf("legacy store holds %d pending records; want 0 (no silent legacy fallback)", len(pending))
 	}
 }

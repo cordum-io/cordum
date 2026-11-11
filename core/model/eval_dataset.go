@@ -40,9 +40,9 @@ const (
 // governance replay pipeline (phase 2) treats each origin differently when
 // attributing regressions, so renaming one is a breaking wire change.
 const (
-	EvalEntrySourceManual        = "manual"
-	EvalEntrySourceAuditImport   = "audit-import"
-	EvalEntrySourceReplayImport  = "replay-import"
+	EvalEntrySourceManual       = "manual"
+	EvalEntrySourceAuditImport  = "audit-import"
+	EvalEntrySourceReplayImport = "replay-import"
 )
 
 var validEvalEntrySources = map[string]struct{}{
@@ -76,9 +76,9 @@ type EvalDataset struct {
 	// UpdatedAt exists solely to satisfy the generic resource envelope used
 	// by existing gateway responses; by rail it is always equal to
 	// CreatedAt on a freshly-created (and therefore immutable) dataset.
-	UpdatedAt   string `json:"updated_at"`
-	CreatedBy   string `json:"created_by,omitempty"`
-	EntryCount  int    `json:"entry_count"`
+	UpdatedAt  string `json:"updated_at"`
+	CreatedBy  string `json:"created_by,omitempty"`
+	EntryCount int    `json:"entry_count"`
 	// ContentHash is the sha256 (hex) of the canonical-JSON Entries slice,
 	// computed at create time. It is a tamper-evidence aid for operators
 	// auditing long-lived datasets, not a security primitive — the store
@@ -106,9 +106,9 @@ type EvalEntry struct {
 // the start of the name; CreatedAfter/Before bound the creation window in
 // unix-milli.
 type EvalDatasetFilter struct {
-	Tenant         string
-	NamePrefix     string
-	CreatedAfterMS int64
+	Tenant          string
+	NamePrefix      string
+	CreatedAfterMS  int64
 	CreatedBeforeMS int64
 }
 

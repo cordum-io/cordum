@@ -113,11 +113,11 @@ func TestBackwardCompatibility(t *testing.T) {
 	env := map[string]any{
 		"ctx": map[string]any{
 			"research": map[string]any{
-				"qualification":    map[string]any{"has_existing_automation": true},
+				"qualification":     map[string]any{"has_existing_automation": true},
 				"recommended_wedge": "governed-mcp",
-				"founder_summary":  "Strong fit for MCP governance",
-				"current_stack":    []any{"langchain", "openai"},
-				"known_agents":     []any{"chatbot-v1"},
+				"founder_summary":   "Strong fit for MCP governance",
+				"current_stack":     []any{"langchain", "openai"},
+				"known_agents":      []any{"chatbot-v1"},
 			},
 			"kill_eval": map[string]any{
 				"flags":        []any{},

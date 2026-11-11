@@ -30,7 +30,7 @@ Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
   (TraceContext, WorkflowEvent, A2A bridge, governed MCP demo) — none of these
   are part of CAP v2.17.0.
 
-#### Dependency updates (#400, #401, #402, #404, #408, #441, c7d33432, #467)
+#### Dependency updates (#400, #401, #402, #404, #408, #441, c7d33432, #467, #483, #484)
 
 - CAP: `github.com/cordum-io/cap/v2` moved from v2.15.1 (at the v1.2.0 tag),
   through the interim pseudo-version pinned by #394, to the published v2.16.1
@@ -55,9 +55,39 @@ Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
   #434); undici 7.30.1 and brace-expansion lockfile-only updates (c7d33432:
   #448, #449); `test-browser` source-map-js 1.2.2 (c7d33432: #454). The
   generated `sdk/typescript/src/_generated/schema.d.ts` was regenerated
-  (233 operations) in #441.
+  (233 operations) in #441. Then vitest and @vitest/mocker 4.1.12 (#483) and
+  vite 8.3.5 (#484). The remaining Dependabot alerts are closed by
+  `test-browser` vite 8.3.7 and an npm `overrides` entry that lifts `tsup`'s
+  esbuild to 0.28.2 (GHSA-g7r4-m6w7-qqqr; tsup 8.5.1 pins esbuild ^0.27.0 and
+  tsup 9 needs Node 22.18+).
 
 ### Security
+
+#### core/infra/store, core/controlplane/scheduler — worker-to-agent links resolve only within the worker's tenant (2026-11-11, task-76c90c6e)
+
+- Added `AgentIdentityStore.GetByWorkerIDForTenant(ctx, tenantID, workerID)`.
+  It reads the per-tenant link hash `agent:worker-links:<tenant>` first, then
+  falls back, read-only, to the legacy global `agent:by-worker:<worker>` key.
+  It returns an identity only when that identity belongs to `tenantID`, and a
+  per-tenant entry never falls back.
+- The scheduler's worker-handshake trust resolver looks the link up in the
+  tenant of the worker's credential. The `AgentResolver` scopes store links to
+  the tenant of the worker's cached credential, and a worker with no cached
+  tenant gets no store-link label.
+- Slice 1 of 3 of task-c1effd5b. Links are still written only to the legacy
+  global key, so existing links keep resolving for their owning tenant.
+  Gateway readers move in slice 2. The capstone moves the writers and retires
+  the global read.
+
+#### core/mcp + gateway — approval-required MCP tools fail closed when no approval gate is wired; `cordum_create_workflow` executes after approval (2026-11-10, task-b62ae307)
+
+- **Behavior change.** Before, a tool that required approval ran ungated when no approval gate was wired. Now `ToolRegistry.Call` refuses it with `ErrApprovalGateUnavailable`, returns JSON-RPC `-32097 gateway misconfigured`, and never runs the handler. This covers built-in `RequiresApproval` tools and `mcp_policy` tools rules. It affects:
+  - an API gateway that has no Redis client;
+  - the standalone `cordum-mcp` binary (stdio and HTTP), which wires no gate and until now executed all 7 mutating tools without approval.
+
+  Tools that do not require approval are unchanged.
+- `cordum_create_workflow` on the API gateway's HTTP MCP endpoint now creates the workflow when, after a distinct operator approves, the client retries with byte-identical arguments. It runs the `POST /api/v1/workflows` handler under the caller's auth context, so permission (`workflows-write` or admin), tenant and validation are identical. Approvals are consume-once.
+- The other 6 mutating tools are still not wired on the gateway; after approval they return an `isError` result with `mcp service bridge unavailable`. `docs/mcp-tools-reference.md` documents the flow.
 
 #### CAP-PRODUCTION — fail-closed exact-wire trust, attempt fencing, durable effects, and structured resources (2026-07-21, task-a13f83fa)
 
@@ -96,6 +126,14 @@ Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
   boundary, key rotation, compatibility telemetry, and migration.
 
 ### Fixed
+
+#### core/controlplane/gateway — the MCP policy snapshot is read with one Redis GET, however many workflows exist (2026-11-11, task-2688feeb)
+
+- Every read of the MCP policy snapshot went through `loadPolicyBundles`. The snapshot is the policy config doc's updated-at, which EDGE-103 approval mints and `_approval_ref` consumes bind to. That call also listed every workflow (a `ZREVRANGE` of up to 10000 ids plus one pipelined `GET` per workflow), only to discard the result. The provider now reads just the policy config doc. The value is unchanged, and a missing doc or a read error still yields an empty snapshot, which fails closed.
+
+#### core/mcp, core/controlplane/gateway — policy-gate MCP approvals resume exactly once (2026-11-11, task-63400922)
+
+- MCP (`mcp.policy_gate_enabled=true`): approval-required tools now mint an Edge `_approval_ref` bound to the real policy pre-event, and resuming with it executes exactly once. The Edge approval is the single authority under the policy gate. Approval-store outages on resume now return -32096 instead of -32602 (task-63400922).
 
 #### core/controlplane/gateway — HTTP MCP approval-required tools return -32099 again on production gateways (2026-10-26, task-f44be149)
 

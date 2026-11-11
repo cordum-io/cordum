@@ -69,7 +69,7 @@ func NewRedisStore(client redis.UniversalClient) *RedisStore {
 	}
 }
 
-func sessionKey(tenant, id string) string       { return sessionKeyPrefix + tenant + ":" + id }
+func sessionKey(tenant, id string) string        { return sessionKeyPrefix + tenant + ":" + id }
 func sessionIndexKey(tenant, user string) string { return sessionIndexPrefix + tenant + ":" + user }
 
 // GetSession returns the session if it exists in the caller's tenant. Missing

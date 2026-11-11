@@ -31,7 +31,7 @@ const (
 
 var (
 	globalProvider trace.TracerProvider = noop.NewTracerProvider()
-	globalShutdown                     = func(context.Context) error { return nil }
+	globalShutdown                      = func(context.Context) error { return nil }
 	initOnce       sync.Once
 )
 

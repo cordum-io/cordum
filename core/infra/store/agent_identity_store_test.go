@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -439,6 +441,153 @@ func TestAgentIdentityGetByWorkerID(t *testing.T) {
 	if got != nil {
 		t.Fatal("expected nil after unlinking")
 	}
+}
+
+// Links in these tests are planted with raw Redis writes, never LinkWorker:
+// the capstone changes what LinkWorker writes, and a LinkWorker-planted
+// "legacy" link would then silently stop exercising the fallback.
+
+func plantTenantLink(t *testing.T, s *AgentIdentityStore, tenantID, workerID, agentID string) {
+	t.Helper()
+	if err := s.client.HSet(context.Background(), agentWorkerLinksKeyPrefix+tenantID, workerID, agentID).Err(); err != nil {
+		t.Fatalf("plant tenant link: %v", err)
+	}
+}
+
+func plantLegacyLink(t *testing.T, s *AgentIdentityStore, workerID, agentID string) {
+	t.Helper()
+	if err := s.client.Set(context.Background(), agentByWorkerKeyPrefix+workerID, agentID, 0).Err(); err != nil {
+		t.Fatalf("plant legacy link: %v", err)
+	}
+}
+
+func createTenantAgent(t *testing.T, s *AgentIdentityStore, tenantID, name string) *AgentIdentity {
+	t.Helper()
+	created, err := s.Create(context.Background(), AgentIdentity{
+		TenantID: tenantID,
+		Name:     name,
+		Owner:    "admin",
+		RiskTier: "medium",
+	})
+	if err != nil {
+		t.Fatalf("Create %s: %v", name, err)
+	}
+	return created
+}
+
+// assertLinkedAgent asserts GetByWorkerIDForTenant returns exactly wantID,
+// or (nil, nil) when wantID is "".
+func assertLinkedAgent(t *testing.T, s *AgentIdentityStore, tenantID, workerID, wantID string) {
+	t.Helper()
+	got, err := s.GetByWorkerIDForTenant(context.Background(), tenantID, workerID)
+	if err != nil {
+		t.Fatalf("GetByWorkerIDForTenant(%q, %q): %v", tenantID, workerID, err)
+	}
+	switch {
+	case wantID == "" && got != nil:
+		t.Fatalf("GetByWorkerIDForTenant(%q, %q) = %q, want nil", tenantID, workerID, got.ID)
+	case wantID != "" && got == nil:
+		t.Fatalf("GetByWorkerIDForTenant(%q, %q) = nil, want %q", tenantID, workerID, wantID)
+	case wantID != "" && got.ID != wantID:
+		t.Fatalf("GetByWorkerIDForTenant(%q, %q) = %q, want %q", tenantID, workerID, got.ID, wantID)
+	}
+}
+
+func TestAgentIdentityGetByWorkerIDForTenant(t *testing.T) {
+	t.Run("two_tenants_same_worker", func(t *testing.T) {
+		s := newTestAgentIdentityStore(t)
+		a := createTenantAgent(t, s, "tenant-a", "agent-a")
+		b := createTenantAgent(t, s, "tenant-b", "agent-b")
+		plantTenantLink(t, s, "tenant-a", "w", a.ID)
+		plantTenantLink(t, s, "tenant-b", "w", b.ID)
+		assertLinkedAgent(t, s, "tenant-a", "w", a.ID)
+		assertLinkedAgent(t, s, "tenant-b", "w", b.ID)
+		assertLinkedAgent(t, s, " tenant-a ", " w ", a.ID)
+	})
+
+	t.Run("legacy_owning_tenant_only", func(t *testing.T) {
+		s := newTestAgentIdentityStore(t)
+		a := createTenantAgent(t, s, "tenant-a", "agent-a")
+		plantLegacyLink(t, s, "w", a.ID)
+		assertLinkedAgent(t, s, "tenant-a", "w", a.ID)
+		assertLinkedAgent(t, s, "tenant-b", "w", "")
+	})
+
+	t.Run("hash_wins_over_legacy", func(t *testing.T) {
+		s := newTestAgentIdentityStore(t)
+		a1 := createTenantAgent(t, s, "tenant-a", "agent-a1")
+		a2 := createTenantAgent(t, s, "tenant-a", "agent-a2")
+		plantTenantLink(t, s, "tenant-a", "w", a1.ID)
+		plantLegacyLink(t, s, "w", a2.ID)
+		assertLinkedAgent(t, s, "tenant-a", "w", a1.ID)
+	})
+
+	t.Run("foreign_hash_entry_no_fallback", func(t *testing.T) {
+		s := newTestAgentIdentityStore(t)
+		c := createTenantAgent(t, s, "tenant-b", "agent-c")
+		a := createTenantAgent(t, s, "tenant-a", "agent-a")
+		plantTenantLink(t, s, "tenant-a", "w", c.ID)
+		plantLegacyLink(t, s, "w", a.ID)
+		// The hash entry is authoritative for tenant-a: it names a foreign
+		// agent, so the read yields nil instead of falling back to agent-a.
+		assertLinkedAgent(t, s, "tenant-a", "w", "")
+	})
+
+	t.Run("untenanted_agent", func(t *testing.T) {
+		s := newTestAgentIdentityStore(t)
+		data, err := json.Marshal(AgentIdentity{ID: "agent-untenanted", Name: "legacy", Status: "active"})
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if err := s.client.Set(context.Background(), agentIdentityKeyPrefix+"agent-untenanted", data, 0).Err(); err != nil {
+			t.Fatalf("plant untenanted agent: %v", err)
+		}
+		plantLegacyLink(t, s, "w", "agent-untenanted")
+		assertLinkedAgent(t, s, "tenant-a", "w", "")
+	})
+
+	t.Run("unlinked", func(t *testing.T) {
+		s := newTestAgentIdentityStore(t)
+		assertLinkedAgent(t, s, "tenant-a", "w", "")
+	})
+
+	t.Run("invalid_input", func(t *testing.T) {
+		s := newTestAgentIdentityStore(t)
+		var nilStore *AgentIdentityStore
+		cases := []struct {
+			name             string
+			store            *AgentIdentityStore
+			tenantID, worker string
+			wantErr          string
+		}{
+			{"empty_tenant", s, "", "w", "tenant id required"},
+			{"blank_tenant", s, "   ", "w", "tenant id required"},
+			{"blank_worker", s, "tenant-a", "  ", "worker id required"},
+			{"nil_store", nilStore, "tenant-a", "w", "redis client not initialized"},
+		}
+		for _, tc := range cases {
+			got, err := tc.store.GetByWorkerIDForTenant(context.Background(), tc.tenantID, tc.worker)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("%s: err = %v, want it to contain %q", tc.name, err, tc.wantErr)
+			}
+			if got != nil {
+				t.Fatalf("%s: identity = %q, want nil", tc.name, got.ID)
+			}
+		}
+	})
+
+	t.Run("redis_error", func(t *testing.T) {
+		c := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
+		_ = c.Close()
+		s := NewAgentIdentityStoreFromClient(c)
+		got, err := s.GetByWorkerIDForTenant(context.Background(), "tenant-a", "w")
+		if err == nil {
+			t.Fatal("expected an error from a closed redis client")
+		}
+		if got != nil {
+			t.Fatalf("identity = %q, want nil", got.ID)
+		}
+	})
 }
 
 // TestAgentIdentityListPaginationSameScore is a regression test for the case where
