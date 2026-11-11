@@ -8,4 +8,264 @@
 # Renaming a symbol or test named here means updating this file.
 schema_version: 1
 sources_reviewed_at: 549772371995b9eb5a95a2c6c8685551e0231724
-claims: []
+claims:
+  - id: CLM-001
+    statement: "The Agent Control Plane defines, enforces and audits agent behavior across frameworks and models."
+    boundary: "Cordum-integrated submission, dispatch and hook paths; external agent authority is outside this register's qualification."
+    status: supported
+    invariants: ["I10"]
+    findings: ["R15"]
+    enforcement_points: [{"path":"core/controlplane/scheduler/engine.go","symbol":"Engine.checkSafetyDecision"}]
+    tests: []
+    evidence: "Policy evaluation exists; cross-framework, non-bypassable protection is not qualified; open finding R15."
+    public_sources: ["cordum:README.md:13","cordum:README.md:327"]
+  - id: CLM-002
+    statement: "Cordum Edge governs local Claude Code tools, denying risky actions before execution, including reads of .env."
+    boundary: "Claude Code launched through cordumctl edge claude (developer/demo path); enterprise enforcement needs managed settings and endpoint controls."
+    status: supported
+    invariants: ["I01","I02","I09","I10"]
+    findings: ["R01","R02","R14","R15"]
+    enforcement_points: [{"path":"core/edge/agentd/evaluator.go","symbol":"Evaluator.EvaluateHook"},{"path":"core/controlplane/gateway/handlers_edge_evaluate.go","symbol":"server.handleEdgeEvaluate"}]
+    tests: [{"package":"core/edge/agentd","name":"TestEvaluatorCallsGatewayAndRecordsDecisionEvidence"}]
+    evidence: "Hook and gateway evaluation exist; the wrapper is not a qualified endpoint boundary; open findings R01, R02, R14, R15."
+    public_sources: ["cordum:README.md:14","cordum:README.md:257","cordum:README.md:259","cordum:README.md:260","cordum:README.md:273","cordum:README.md:377","cordum:README.md:381","cordum:README.md:384","cordum:README.md:385","cordum:README.md:386","cordum:README.md:387","cordum:README.md:388","cordum:README.md:438"]
+  - id: CLM-003
+    statement: "Quickstart runs TLS-secured Redis and generates secrets and certificate keypairs."
+    boundary: "Repository quickstart script and its Docker Compose Redis configuration; not arbitrary operator deployments."
+    status: supported
+    invariants: []
+    findings: []
+    enforcement_points: [{"path":"docker-compose.yml","symbol":"--tls-port"},{"path":"tools/scripts/quickstart.sh","symbol":"cordumctl generate-certs"}]
+    tests: []
+    evidence: "TLS configuration and certificate generation exist; no current deployment or bypass qualification is recorded."
+    public_sources: ["cordum:README.md:45","cordum:README.md:46","cordum:README.md:47","cordum:README.md:48","cordum:README.md:67"]
+  - id: CLM-004
+    statement: "The post-deploy smoke test demonstrates a working approval-gate workflow."
+    boundary: "Quickstart's optional platform smoke run against the installed stack; not every protected action."
+    status: supported
+    invariants: ["I03","I07"]
+    findings: ["R09"]
+    enforcement_points: [{"path":"tools/scripts/quickstart.sh","symbol":"./tools/scripts/platform_smoke.sh"}]
+    tests: []
+    evidence: "Quickstart invokes the smoke script; this row did not run the deployed workflow; open finding R09."
+    public_sources: ["cordum:README.md:49","cordum:README.md:68","cordum:README.md:69"]
+  - id: CLM-005
+    statement: "Release-tag container images are signed with cosign keyless OIDC."
+    boundary: "Images built by the repository docker.yml tag workflow; each image digest needs its own verification."
+    status: supported
+    invariants: ["I09"]
+    findings: []
+    enforcement_points: [{"path":".github/workflows/docker.yml","symbol":"cosign sign --yes"}]
+    tests: []
+    evidence: "Signing steps exist in the workflow; no release digest/signature set is qualified by this source-only entry."
+    public_sources: ["cordum:README.md:105","cordum:README.md:107","cordum:README.md:108","cordum:README.md:110","cordum:README.md:113","cordum:README.md:672","cordum:README.md:673"]
+  - id: CLM-006
+    statement: "The quickstart demo exercises ALLOW, DENY and REQUIRE_APPROVAL decisions."
+    boundary: "The three bundled demo actions and their configured policy, not arbitrary agent behavior."
+    status: supported
+    invariants: ["I01","I03"]
+    findings: []
+    enforcement_points: [{"path":"demo/quickstart/integration_test.sh","symbol":"for verdict in \"ALLOW\" \"DENY\" \"REQUIRE_APPROVAL\""}]
+    tests: []
+    evidence: "The demo checks decision classes; no current deployed no-effect test result is attached."
+    public_sources: ["cordum:README.md:234","cordum:README.md:242","cordum:README.md:248","cordum:README.md:249","cordum:README.md:250"]
+  - id: CLM-007
+    statement: "Edge requires human approval for Edit and Write operations."
+    boundary: "The documented Claude Code wrapper demo policy and approval flow; not tools outside that hook path."
+    status: supported
+    invariants: ["I03","I07"]
+    findings: ["R05","R09"]
+    enforcement_points: [{"path":"core/controlplane/gateway/handlers_edge_evaluate.go","symbol":"server.handleEdgeEvaluate"}]
+    tests: []
+    evidence: "Approval outcomes are implemented; full-boundary enforcement is unqualified; open findings R05, R09."
+    public_sources: ["cordum:README.md:260","cordum:README.md:273"]
+  - id: CLM-008
+    statement: "Edge exports redacted session evidence and excludes raw prompts, transcripts and tool payloads from audit evidence."
+    boundary: "Gateway Edge session export and its metadata-only artifact assembly; not all possible logs or external stores."
+    status: supported
+    invariants: ["I02","I09"]
+    findings: ["R08","R12"]
+    enforcement_points: [{"path":"core/controlplane/gateway/handlers_edge_export.go","symbol":"server.handleExportEdgeSession"}]
+    tests: [{"package":"core/edge","name":"TestSessionExportAssemblerRecordsMissingArtifactsWithoutLeakingContent"}]
+    evidence: "Metadata-only export exists; complete evidence/redaction protection is not qualified; open findings R08, R12."
+    public_sources: ["cordum:README.md:261","cordum:README.md:280","cordum:README.md:281","cordum:README.md:438"]
+  - id: CLM-009
+    statement: "Destructive Edge retries require a resolved approval audit event matching the tenant, approval reference and action hash."
+    boundary: "The configured ProvenanceGate and Edge approval-retry path; requested-only records are not approval proof."
+    status: supported
+    invariants: ["I05","I07","I09"]
+    findings: ["R09","R12"]
+    enforcement_points: [{"path":"core/policy/actiongates/provenance_gate.go","symbol":"ProvenanceGate.Evaluate"}]
+    tests: [{"package":"core/policy/actiongates","name":"TestProvenanceGate_EvidenceGapFailsClosed"}]
+    evidence: "Approval lookup and chain checks exist; no full-boundary no-effect qualification is attached; open findings R09, R12."
+    public_sources: ["cordum:README.md:277","cordum:README.md:278","cordum:README.md:279","cordum:README.md:280","cordum:README.md:390","cordum:README.md:391","cordum:README.md:392","cordum:README.md:393","cordum:README.md:438"]
+  - id: CLM-010
+    statement: "Cordum checks actions at submission and dispatch through the gateway, scheduler, MCP pipeline and Edge hook."
+    boundary: "Those integrated entry points; not host isolation or control of credentials held outside them."
+    status: supported
+    invariants: ["I01","I02","I10"]
+    findings: ["R01","R15"]
+    enforcement_points: [{"path":"core/controlplane/gateway/helpers.go","symbol":"server.evaluateSubmitPolicy"},{"path":"core/controlplane/scheduler/engine.go","symbol":"Engine.checkSafetyDecision"}]
+    tests: []
+    evidence: "Submit and dispatch policy checks exist; parity and non-bypassable authority are unqualified; open findings R01, R15."
+    public_sources: ["cordum:README.md:288","cordum:README.md:303","cordum:README.md:611","cordum:README.md:616","cordum:README.md:621"]
+  - id: CLM-011
+    statement: "Approval-gated CAP jobs, action descriptors, MCP calls and Edge requests use canonical SHA-256 action hashes."
+    boundary: "The respective Cordum normalization paths, not a qualification of every execution input or external artifact."
+    status: supported
+    invariants: ["I05"]
+    findings: ["R03","R04"]
+    enforcement_points: [{"path":"core/policy/actiongates/mutation_gate.go","symbol":"CanonicalActionHash"},{"path":"core/controlplane/gateway/handlers_edge_evaluate.go","symbol":"edgeEvaluateActionHash"}]
+    tests: [{"package":"core/policy/actiongates","name":"TestCanonicalActionHash_StableUnderKeyReordering"}]
+    evidence: "Canonical hashing exists; complete authorized-input binding is unqualified; open findings R03, R04."
+    public_sources: ["cordum:README.md:305","cordum:README.md:306","cordum:README.md:307"]
+  - id: CLM-012
+    statement: "Policy yields explicit verdicts and unknown verdicts are denied by gateway, scheduler and Edge evaluate paths."
+    boundary: "Decision conversion in the named routes, not every execution path or every combined policy state."
+    status: supported
+    invariants: ["I01","I03","I10"]
+    findings: ["R05","R15"]
+    enforcement_points: [{"path":"core/controlplane/gateway/helpers.go","symbol":"server.evaluateSubmitPolicy"},{"path":"core/controlplane/scheduler/engine.go","symbol":"Engine.handleJobRequest"},{"path":"core/edge/claude/agentd_client.go","symbol":"HTTPAgentdClient.EvaluateHook"}]
+    tests: [{"package":"core/controlplane/gateway","name":"TestGatewayEdgeEvaluateUnknownDecisionEnumFailsClosedWithoutFalseAllow"}]
+    evidence: "Default-deny branches exist; no three-path no-effect qualification is attached; open findings R05, R15."
+    public_sources: ["cordum:README.md:308","cordum:README.md:309","cordum:README.md:310"]
+  - id: CLM-013
+    statement: "Approvals bind tenant, reference and action hash; changed, self-approved, expired or consumed approvals are rejected."
+    boundary: "Cordum approval-gated actions and approval stores, not authority outside their declared paths."
+    status: supported
+    invariants: ["I05","I07"]
+    findings: ["R03","R04","R09"]
+    enforcement_points: [{"path":"core/policy/actiongates/mutation_gate.go","symbol":"MutationGate.Evaluate"},{"path":"core/controlplane/gateway/handlers_edge_evaluate.go","symbol":"server.consumeEdgeEvaluateApproval"}]
+    tests: [{"package":"core/policy/actiongates","name":"TestMutationGate_HashMismatchConflict"},{"package":"core/policy/actiongates","name":"TestMutationGate_SelfApprovalDenied"}]
+    evidence: "Approval binding and rejection checks exist; end-to-end enforcement is unqualified; open findings R03, R04, R09."
+    public_sources: ["cordum:README.md:311","cordum:README.md:312","cordum:README.md:313","cordum:README.md:314"]
+  - id: CLM-014
+    statement: "Declarative YAML rules match action metadata and the shipped policy denies unmatched requests."
+    boundary: "The shipped config/safety.yaml when loaded by the Safety Kernel; not every published policy or entry point."
+    status: supported
+    invariants: ["I01","I02"]
+    findings: ["R07"]
+    enforcement_points: [{"path":"config/safety.yaml","symbol":"default_decision: deny"}]
+    tests: []
+    evidence: "The shipped default is deny; this is configuration evidence, not full policy-path qualification; open finding R07."
+    public_sources: ["cordum:README.md:315","cordum:README.md:316","cordum:README.md:317","cordum:README.md:436"]
+  - id: CLM-015
+    statement: "Lifecycle governance offers pre-execution checks, approvals, timeouts, circuit breakers and aggregate audit."
+    boundary: "Integrated Cordum jobs and workflow runs; not continuous control of arbitrary external agent execution."
+    status: supported
+    invariants: ["I01","I03","I07","I09","I10"]
+    findings: ["R01","R09","R11","R12","R15"]
+    enforcement_points: [{"path":"core/controlplane/scheduler/engine.go","symbol":"Engine.handleJobRequest"},{"path":"core/controlplane/gateway/handlers_approvals.go","symbol":"server.handleApproveJob"}]
+    tests: []
+    evidence: "Lifecycle mechanisms exist; their combined protection is unqualified; open findings R01, R09, R11, R12, R15."
+    public_sources: ["cordum:README.md:350","cordum:README.md:372","cordum:README.md:373","cordum:README.md:374"]
+  - id: CLM-016
+    statement: "Safety gating prevents destructive or unauthorized agent actions before they occur."
+    boundary: "Actions routed through configured Cordum policy entry points; not universal control of agent side effects."
+    status: supported
+    invariants: ["I01","I02","I03","I07","I10"]
+    findings: ["R01","R02","R05","R09","R15"]
+    enforcement_points: [{"path":"core/controlplane/scheduler/engine.go","symbol":"Engine.checkSafetyDecision"},{"path":"core/controlplane/gateway/handlers_edge_evaluate.go","symbol":"server.handleEdgeEvaluate"}]
+    tests: []
+    evidence: "Safety decision paths exist; the broad prevention claim is not qualified; open findings R01, R02, R05, R09, R15."
+    public_sources: ["cordum:README.md:431"]
+  - id: CLM-017
+    statement: "Output quarantine blocks PII, secrets and hallucinated results from reaching clients."
+    boundary: "Configured scheduler output scanning and result delivery; the hallucinated-results portion is not established here."
+    status: supported
+    invariants: ["I02"]
+    findings: ["R08"]
+    enforcement_points: [{"path":"core/controlplane/scheduler/output_safety_client.go","symbol":"redactOutputContent"}]
+    tests: [{"package":"core/controlplane/scheduler","name":"TestOutputClientContentModeStoresRedactedOutput"}]
+    evidence: "Scanning/redaction exist; universal blocking and hallucination detection are not qualified; open finding R08."
+    public_sources: ["cordum:README.md:432"]
+  - id: CLM-018
+    statement: "Human-in-the-loop approval mandates oversight for high-risk operations."
+    boundary: "Policy-selected Cordum approval flows; not every operation an agent can perform."
+    status: supported
+    invariants: ["I01","I03","I07"]
+    findings: ["R05","R09","R13"]
+    enforcement_points: [{"path":"core/controlplane/gateway/handlers_approvals.go","symbol":"server.handleApproveJob"}]
+    tests: []
+    evidence: "Human approval handling exists; universal oversight is not qualified; open findings R05, R09, R13."
+    public_sources: ["cordum:README.md:433"]
+  - id: CLM-019
+    statement: "Pool segmentation keeps sensitive data with agents in trusted environments."
+    boundary: "Scheduler pool routing and placement configuration; does not establish endpoint trust or data confinement."
+    status: supported
+    invariants: ["I01","I10"]
+    findings: ["R14","R15"]
+    enforcement_points: [{"path":"core/controlplane/scheduler/strategy_least_loaded.go","symbol":"LeastLoadedStrategy.PickSubject"}]
+    tests: [{"package":"core/controlplane/scheduler","name":"TestPoolRoutingTopicToPool"}]
+    evidence: "Pool selection exists; trusted-environment confinement is not qualified; open findings R14, R15."
+    public_sources: ["cordum:README.md:434"]
+  - id: CLM-020
+    statement: "Deterministic audit provides a full trail explaining why decisions were made."
+    boundary: "Cordum decision events and audit-chain storage; not proof of model reasoning or signer honesty."
+    status: supported
+    invariants: ["I09"]
+    findings: ["R11","R12"]
+    enforcement_points: [{"path":"core/audit/chain_verify.go","symbol":"VerifyChain"}]
+    tests: []
+    evidence: "Audit-chain verification exists; completeness and full reasoning coverage are unqualified; open findings R11, R12."
+    public_sources: ["cordum:README.md:435"]
+  - id: CLM-021
+    statement: "Policy Simulator tests governance rules against historical data before rollout."
+    boundary: "The policy simulation APIs and supplied inputs; not a guarantee of equivalence to every production execution."
+    status: supported
+    invariants: ["I04"]
+    findings: ["R06"]
+    enforcement_points: [{"path":"core/controlplane/gateway/handlers_policy.go","symbol":"server.handlePolicySimulate"}]
+    tests: [{"package":"core/controlplane/gateway","name":"TestPolicySimulateActionGateMapping"}]
+    evidence: "Simulation handling exists; rollout-semantic equivalence is not qualified; open finding R06."
+    public_sources: ["cordum:README.md:437"]
+  - id: CLM-022
+    statement: "CAP workers fail closed without signing keys unless AllowUnsigned; worker-trust enforcement is opt-in after provisioning."
+    boundary: "The external CAP runtime plus Cordum control-plane handshake configuration; compatibility defaults remain off/authority."
+    status: supported
+    invariants: ["I01","I09"]
+    findings: []
+    enforcement_points: [{"path":"core/controlplane/gateway/gateway.go","symbol":"RunWithAuth"}]
+    tests: [{"package":"core/controlplane/gateway","name":"TestLoadGatewayHandshakeSecurityActiveModeRequiresSigningKey"}]
+    evidence: "Control-plane key checks exist; external SDK behavior and deployed worker-trust enforcement are not qualified by this row."
+    public_sources: ["cordum:README.md:529","cordum:README.md:530","cordum:README.md:531","cordum:README.md:532","cordum:README.md:548","cordum:README.md:549","cordum:README.md:550","cordum:README.md:551","cordum:README.md:552","cordum:README.md:553","cordum:README.md:554","cordum:README.md:555"]
+  - id: CLM-023
+    statement: "Integration packs provide governed repository, infrastructure, workflow and tool actions and approval notifications."
+    boundary: "External cordum-packs integrations invoking Cordum; not all actions available through their provider credentials."
+    status: supported
+    invariants: ["I01","I10"]
+    findings: ["R15"]
+    enforcement_points: []
+    tests: []
+    evidence: "The pack catalogue is linked in README; external pack execution and non-bypassable protection are not qualified here; open finding R15."
+    public_sources: ["cordum:README.md:563","cordum:README.md:564","cordum:README.md:565","cordum:README.md:566","cordum:README.md:567","cordum:README.md:568","cordum:README.md:569","cordum:README.md:570"]
+  - id: CLM-024
+    statement: "Enterprise offers SSO/SAML/OIDC, SCIM and advanced RBAC with role hierarchy."
+    boundary: "Configured and entitled gateway identity and permission paths; not a replacement for enterprise identity administration."
+    status: supported
+    invariants: ["I01"]
+    findings: ["R13"]
+    enforcement_points: [{"path":"core/controlplane/gateway/auth/rbac.go","symbol":"HasPermission"},{"path":"core/controlplane/gateway/auth/saml.go","symbol":"SAMLAuthAdapter"},{"path":"core/controlplane/gateway/auth/oidc.go","symbol":"OIDCProvider"},{"path":"core/controlplane/gateway/auth/scim.go","symbol":"SCIMService"}]
+    tests: [{"package":"core/controlplane/gateway/auth","name":"TestHasPermission_EntitledMode"}]
+    evidence: "Identity and RBAC implementations exist; deployment-wide access-control qualification is absent; open finding R13."
+    public_sources: ["cordum:README.md:584","cordum:README.md:585"]
+  - id: CLM-025
+    statement: "Code applies Community plan limits without a valid license, including fallback when loading or verification fails."
+    boundary: "Cordum entitlement resolution and its consumers; not legal license terms or all possible deployments."
+    status: supported
+    invariants: ["I01"]
+    findings: []
+    enforcement_points: [{"path":"core/licensing/resolver.go","symbol":"EntitlementResolver.ResolvedPlan"},{"path":"core/licensing/tiers.go","symbol":"DefaultEntitlements"}]
+    tests: [{"package":"core/licensing","name":"TestEntitlementResolverInvalidLicenseFallsBackToCommunity"}]
+    evidence: "Fallback/default resolution exists; no end-to-end no-effect qualification of every listed limit is attached."
+    public_sources: ["cordum:README.md:658","cordum:README.md:659","cordum:README.md:660","cordum:README.md:661","cordum:README.md:662","cordum:README.md:663","cordum:README.md:664","cordum:README.md:665"]
+  - id: CLM-026
+    statement: "Desktop-binary publication requires the signed-manifest gate."
+    boundary: "Canonical cordum-io/cordum release.yml publication workflow, not independently distributed binaries."
+    status: supported
+    invariants: ["I09"]
+    findings: []
+    enforcement_points: [{"path":".github/workflows/release.yml","symbol":"Require signed manifest on canonical release"}]
+    tests: []
+    evidence: "The canonical publish gate exists; no current signed artifact set or release qualification is attached."
+    public_sources: ["cordum:README.md:676","cordum:README.md:677","cordum:README.md:678"]
