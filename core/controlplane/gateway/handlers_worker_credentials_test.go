@@ -602,6 +602,21 @@ func TestWorkerLinkTenantIsolation_AgentAndCredentialPaths(t *testing.T) {
 		credBody+`}`, http.StatusOK)
 	requireWorkerLink(t, s, "tenant-b", worker, "")
 	requireWorkerLink(t, s, "tenant-a", worker, aID)
+
+	// tenant-b relinks, then revokes: again only tenant-b's link goes.
+	serveWorkerLinkRequest(t, s, s.handleCreateWorkerCredential, "tenant-b", "/api/v1/workers/credentials",
+		credBody+`,"agent_id":"`+bID+`"}`, http.StatusOK)
+	requireWorkerLink(t, s, "tenant-b", worker, bID)
+	revoke := withAuth(httptest.NewRequest(http.MethodDelete, "/api/v1/workers/credentials/"+worker, nil),
+		&auth.AuthContext{Tenant: "tenant-b", Role: "admin"})
+	revoke.SetPathValue("worker_id", worker)
+	revokeRec := httptest.NewRecorder()
+	s.handleDeleteWorkerCredential(revokeRec, revoke)
+	if revokeRec.Code != http.StatusNoContent {
+		t.Fatalf("tenant-b revoke: status %d, want 204: %s", revokeRec.Code, revokeRec.Body.String())
+	}
+	requireWorkerLink(t, s, "tenant-b", worker, "")
+	requireWorkerLink(t, s, "tenant-a", worker, aID)
 }
 
 func serveWorkerLinkRequest(t *testing.T, s *server, handler http.HandlerFunc, tenant, path, body string, want int) *httptest.ResponseRecorder {
