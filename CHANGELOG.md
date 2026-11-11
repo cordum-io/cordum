@@ -5,6 +5,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Security
+
+- Release images move off Alpine 3.21, which alpinelinux.org/releases.json lists
+  as end-of-life on 2026-11-01. The control-plane and `demo-quickstart-worker`
+  runtime stages use `alpine:3.24`, and the dashboard uses
+  `nginxinc/nginx-unprivileged:1.30-alpine3.24` (was `1.27-alpine`, which is on
+  Alpine 3.21). Every runtime stage still runs `apk upgrade --no-cache`;
+  builder stages are unchanged.
+
 ### Fixed
 
 - `demo/quickstart/Dockerfile` runs `apk upgrade` in its runtime stage, as the
