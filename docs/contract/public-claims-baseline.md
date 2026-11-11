@@ -106,4 +106,3 @@ CRLF is accepted. `TestPublicClaimsBaseline` runs under `go test ./...` and logs
 Fetch each repo, then run `git -C <clone> diff --stat <pin> origin/main -- <surface paths>`.
 Empty output means the baseline also covers fresh origin/main.
 Otherwise the row's completion note lists changed files for M0-07-DOCS; pinned counts are not claims of current coverage.
-
