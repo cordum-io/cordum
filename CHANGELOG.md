@@ -97,6 +97,10 @@ Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
 
 ### Fixed
 
+#### core/mcp, core/controlplane/gateway — policy-gate MCP approvals resume exactly once (2026-11-11, task-63400922)
+
+- MCP (`mcp.policy_gate_enabled=true`): approval-required tools now mint an Edge `_approval_ref` bound to the real policy pre-event, and resuming with it executes exactly once. The Edge approval is the single authority under the policy gate. Approval-store outages on resume now return -32096 instead of -32602 (task-63400922).
+
 #### core/controlplane/gateway — HTTP MCP approval-required tools return -32099 again on production gateways (2026-10-26, task-f44be149)
 
 - With `mcp.policy_gate_enabled=false` (the default), every approval-required HTTP MCP tool call failed with `-32096 approval_store_unavailable`. The gateway always builds an Edge store, so the approval gate tried to mint an Edge approval that had no parent action event and no `_approval_ref` consumer. The Edge approval mint is now wired only together with the policy gate's approval hold, with the same server name. With the policy gate off, the legacy MCP approval store is the sole authority: approve as a distinct operator, then retry with byte-identical arguments, which executes once. Wherever a mint is attempted, an Edge store outage still fails closed with -32096. The -32099 `retry_hint` now matches the resume path: `retry_with_same_args` for legacy approvals, and `retry_with_approval_ref` only when an Edge `approval_ref` was minted.
