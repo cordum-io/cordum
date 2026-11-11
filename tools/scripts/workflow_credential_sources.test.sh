@@ -64,6 +64,8 @@ OPTS = {  # mint() keywords, before defaulting to SAFE: a set applies in its own
     "errexit_subshell": dict(head="set -uo pipefail\n(\nset -e\nrelax() { set +e; }\nrelax\n", tail=")\n"), "subshell_confined": dict(head=STRICT + "( relax() { set +e; }; relax; set -x )\nprobe=\"$(set +e; set -x; printf syn)\"\n"),
     "trace_unused": dict(head=STRICT + "set -x\nunused() { set +x; }\n"), "trace_scoped": dict(head=STRICT + "set -x\n( set +x )\nif false; then set +x; fi\n"),
     "trace_call_order": dict(head=STRICT + "main() {\n", tail="}\nset -x\nmain\n"), "trace_loop": dict(head=STRICT + "for round in 1 2; do\n", tail="set -x\ndone\n"),
+    "trace_skipped": dict(head=STRICT + "set -x\nfalse && set +x\n"), "trace_piped": dict(head=STRICT + "set -x\nset +x | cat\nset +x &\nwait\n"),  # skipped, or run in another shell
+    "errexit_skipped": dict(head="set -uo pipefail\nfalse && set -e\n"), "errexit_piped": dict(head="set -uo pipefail\nset -e | cat\nset -e &\nwait\n"),
     "return_global": dict(before=SAFE + " || return 1", head=STRICT + "main() {\n", tail="}\nmain || true\n"),  # the caller ignores the failure; minted outlives it
     "return_local": dict(before=SAFE + " || return 1", head=STRICT + "main() {\nlocal minted\n", tail="}\nmain || true\n"),
     "return_unset": dict(before=SAFE + " || { unset minted; return 1; }", head=STRICT + "main() {\n", tail="}\nmain || true\n"),  # a local or a clear counts only if it runs first:
@@ -236,9 +238,9 @@ mint_ignored e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_
 mint_errexit_off e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 mint_xtrace e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 errexit_scoped e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
-errexit_leak errexit_subshell e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
+errexit_leak errexit_subshell errexit_skipped errexit_piped e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 return_global return_and_local return_and_unset return_nested e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
-trace_unused e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
+trace_unused trace_skipped trace_piped e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 trace_scoped e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 trace_call_order e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 trace_loop e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
