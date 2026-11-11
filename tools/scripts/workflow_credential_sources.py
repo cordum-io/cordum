@@ -91,15 +91,15 @@ def parse(text: str, line: int = 1) -> tuple:  # (commands with block stack and 
         name = (cmd.words[1] if first == "function" and len(cmd.words) > 1 else first).removesuffix("()") if kind == "{" and cmd.words else ""
         if kind: stack.append((len(cmds) - 1, "func" if name else kind, name))
     return cmds, error or (line if end < 0 else 0)
-def exits(cmds: list, start: int, level: tuple, var: str, k: int) -> bool:  # exit at level before else/elif or leaving it; return only once var is local to k's function or cleared there
+def exits(cmds: list, start: int, level: tuple, var: str, k: int) -> bool:  # exit at level before else/elif or leaving it; return only once var is local to k's function or cleared there, by a command that runs
     fn, stop = next((s for s in reversed(cmds[k].stack) if cmds[s].op == "{" and cmds[s].words), -1), next((i for i in range(start, len(cmds)) if len(cmds[i].stack) < len(level) or cmds[i].stack == level and cmds[i].words[cmds[i].words[:1] == ["then"]:][:1] in (["else"], ["elif"], ["exit"], ["return"])), len(cmds))
     words = cmds[stop].words[cmds[stop].words[:1] == ["then"]:][:1] if stop < len(cmds) and cmds[stop].stack == level else []
-    held = fn >= 0 and any(c.stack[-1:] == (fn,) and c.words[:1] == ["local"] and var in [w.split("=")[0] for w in c.words[1:]] for c in cmds[:k + 1])  # the caller cannot read it after the return
-    return words == ["exit"] or words == ["return"] and (held or any(c.stack == level and re.fullmatch(r"(?:then )?(?:unset (?:-v )?" + var + "|" + var + r"=(?:\"\"|'')?)", c.text) for c in cmds[start:stop]))
+    runs = lambda i: not cmds[i].sub and cmds[i].op not in ("|", "|&", "&") and next((c.op for c in reversed(cmds[:i]) if not c.sub), "") not in ("&&", "||", "|", "|&")  # in its block's own shell, not behind && or ||
+    held = fn >= 0 and any(c.stack[-1:] == (fn,) and c.words[:1] == ["local"] and var in [w.split("=")[0] for w in c.words[1:]] and runs(i) for i, c in enumerate(cmds[:k + 1]))  # the caller cannot read it after the return
+    return words == ["exit"] or words == ["return"] and (held or any(c.stack == level and re.fullmatch(r"(?:then )?(?:unset (?:-v )?" + var + "|" + var + r"=(?:\"\"|'')?)", c.text) and runs(i) and not any(re.match(r"(?:(?:then|do|else) )?return\b", d.text) for d in cmds[start:i]) for i, c in enumerate(cmds[start:stop], start)))  # cleared before any return
 def registered_at(cmds: list, j: int, k: int, var: str, errexit: bool) -> bool:  # cmds[j] registers var; a failure stops before any use
     words, nxt = list(cmds[j].words), cmds[j + 1] if j + 1 < len(cmds) else Cmd(0, [], "", 0)
-    lead = words.pop(0) if words[:1] in (["if"], ["then"], ["do"]) else ""
-    negated = words[:1] == ["!"] and bool(words.pop(0))
+    lead = words.pop(0) if words[:1] in (["if"], ["then"], ["do"]) else ""; negated = words[:1] == ["!"] and bool(words.pop(0))  # noqa: E702
     safe = r"(?:if )?(?:" + CI_TEST + r"|\[\[? -n \"?\$\{?" + var + r"\}?\"? \]\]?)"  # CI, or var non-empty
     if not re.fullmatch(r"(?:pg_register_secret|gha_mask_value|gha_mask_env [A-Z_][A-Z0-9_]*) \"\$\{?" + var + r"\}?\"", " ".join(words)): return False
     if negated:  # if [safe tests &&] ! register "$v"; then ...; exit|return; fi
