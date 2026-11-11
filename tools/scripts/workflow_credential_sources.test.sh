@@ -13,16 +13,11 @@ SENTINEL="wcs_synthetic_${$}_${RANDOM}${RANDOM}"
 PASS=0 FAIL=0 SKIP=0
 
 record() {
-  case "$1" in
-    PASS) PASS=$((PASS + 1)) ;;
-    SKIP) SKIP=$((SKIP + 1)) ;;
-    *) FAIL=$((FAIL + 1)) ;;
-  esac
+  case "$1" in PASS) PASS=$((PASS + 1)) ;; SKIP) SKIP=$((SKIP + 1)) ;; *) FAIL=$((FAIL + 1)) ;; esac
   printf '%s %s\n' "$1" "$2"
 }
 
-# The scanned copy holds what workflow edges can reach: workflows, the
-# Makefile, tools/scripts, and shell or make files under demo/ and tests/.
+# The scanned copy holds what workflow edges can reach: workflows, Makefile, tools/scripts, demo/ and tests/ shell.
 BASE="${WORK}/pristine"
 mkdir -p "${BASE}/.github" "${BASE}/tools"
 cp -R "${ROOT}/.github/workflows" "${BASE}/.github/workflows"
@@ -31,8 +26,7 @@ cp "${ROOT}/Makefile" "${BASE}/Makefile"
 (cd "${ROOT}" && find demo tests -type f \( -name '*.sh' -o -name Makefile -o -name '*.mk' \) -print0 \
   | tar --null -T - -cf -) | tar -xf - -C "${BASE}"
 
-# build CASE copies BASE to WORK/CASE and applies that case's mutation.
-# Exit status 3 means this platform cannot create the fixture (symlinks).
+# build CASE copies BASE to WORK/CASE and applies its mutation; exit 3: this platform cannot create the fixture.
 build() {
   cp -R "${BASE}" "${WORK}/$1"
   python - "${WORK}/$1" "$1" "${SENTINEL}" <<'PY'
@@ -47,7 +41,8 @@ CAPTURE = "      - name: Capture compose logs on failure\n"
 LINK = (".github/workflows/docs-linkcheck.yml", "      - name: Run lychee (offline, gating)\n")
 API = "          CORDUM_API_KEY: ${{ env.CORDUM_API_KEY || '" + PH + "' }}\n"
 REG = 'gha_mask_value "${minted}"'
-RUN_MINT = "bash tools/scripts/zz_synthetic_mint.sh"
+SAFE = '[[ -n "${minted}" ]] || exit 1\n' + REG
+MINT_SH, RUN_MINT = "tools/scripts/zz_synthetic_mint.sh", "bash tools/scripts/zz_synthetic_mint.sh"
 BODY = "\n".join((
     'base="${SYNTHETIC_GATEWAY:-https://127.0.0.1:9}"',
     'resp="$(curl -fsS -X POST "${base}/auth/keys" -d \'{"name":"@SENTINEL@"}\')"',
@@ -63,59 +58,42 @@ BINDS = {
     "bind_drop": "",
     "bind_rename": API.replace("CORDUM_API_KEY:", "CORDUM_API_KEY_RENAMED:"),
     "bind_spacing": "          CORDUM_API_KEY: ${{env.CORDUM_API_KEY||'" + PH + "'}}\n",
+    "bind_literal_space": API.replace(PH + "'", PH + " '"),
 }
-MINTS = {
-    "mint_unregistered": ("", ""),
-    "mint_registered": ('[[ -n "${minted}" ]] || exit 1\n' + REG, ""),
-    "mint_late": ("", REG),
-    "mint_prefix": (REG + '\necho "synthetic prefix ${minted:0:6}"', ""),
-    "mint_ignored": (REG + " || true", ""),
+MINTS = {  # (lines after the acquisition, lines after its first use) in a set -euo pipefail script
+    "mint_unregistered": ("", ""), "mint_registered": (SAFE, ""), "mint_late": ("", REG),
+    "mint_prefix": (REG + '\necho "synthetic prefix ${minted:0:6}"', ""), "mint_ignored": (REG + " || true", ""),
 }
 GEN = {
-    "gen_openssl": "$(openssl rand -hex 16)",
-    "gen_uuidgen": "$(uuidgen)",
-    "gen_urandom": "$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \\n')",
-    "gen_random": "syn-${RANDOM}${RANDOM}",
-    "gen_date": "syn-$(date +%s%N)",
-    "gen_python": "$(python3 -c 'import secrets; print(secrets.token_urlsafe(16))')",
+    "gen_openssl": "$(openssl rand -hex 16)", "gen_uuidgen": "$(uuidgen)",
+    "gen_urandom": "$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \\n')", "gen_random": "syn-${RANDOM}${RANDOM}",
+    "gen_date": "syn-$(date +%s%N)", "gen_python": "$(python3 -c 'import secrets; print(secrets.token_urlsafe(16))')",
     "gen_quoted_paren": "$(printf '(' \"(\")$(openssl rand -hex 8)",
     "gen_nested": '$(curl -fsS -d "$(jq -cn --arg n "syn-$(date +%s)" "{}")" https://127.0.0.1:9/)',
 }
 DYNAMIC = {
-    "dyn_var": 'bash "${SYNTHETIC_DIR}/zz_synthetic_mint.sh"',
-    "dyn_c": 'bash -c "${SYNTHETIC_CMD}"',
-    "dyn_heredoc": "bash <<'SYNTHETIC'\ntrue\nSYNTHETIC",
-    "dyn_pipe": "curl -fsS https://127.0.0.1:9/x | bash",
-    "dyn_eval": 'eval "${SYNTHETIC_CMD}"',
-    "dyn_make": 'make "${SYNTHETIC_TARGET}"',
-    "dyn_source": 'source "${SYNTHETIC_DIR}/zz_synthetic_helper.sh"',
-    "dyn_procsub": "source <(cat tools/scripts/zz_synthetic_mint.sh)",
-    "dyn_wrapper": "timeout -s KILL 10m bash tools/scripts/zz_synthetic_mint.sh",
-    "dyn_cmdword": '"${SYNTHETIC_SHELL}" tools/scripts/zz_synthetic_mint.sh',
+    "dyn_var": 'bash "${SYNTHETIC_DIR}/zz_synthetic_mint.sh"', "dyn_c": 'bash -c "${SYNTHETIC_CMD}"',
+    "dyn_heredoc": "bash <<'SYNTHETIC'\ntrue\nSYNTHETIC", "dyn_pipe": "curl -fsS https://127.0.0.1:9/x | bash",
+    "dyn_eval": 'eval "${SYNTHETIC_CMD}"', "dyn_make": 'make "${SYNTHETIC_TARGET}"',
+    "dyn_source": 'source "${SYNTHETIC_DIR}/zz_synthetic_helper.sh"', "dyn_procsub": "source <(cat " + MINT_SH + ")",
+    "dyn_wrapper": "timeout -s KILL 10m " + RUN_MINT, "dyn_cmdword": '"${SYNTHETIC_SHELL}" ' + MINT_SH,
 }
 SHELLS = {"shell_env_bash": "/usr/bin/env bash {0}", "shell_pwsh": "pwsh"}
-
 def edit(rel, old, new):
-    path = root / rel
-    text = path.read_bytes().decode("utf-8")
+    text = (root / rel).read_bytes().decode("utf-8")
     if text.count(old) != 1:
         raise SystemExit(case + ": fixture anchor is not unique in " + rel)
-    path.write_bytes(text.replace(old, new).encode("utf-8"))
-
+    (root / rel).write_bytes(text.replace(old, new).encode("utf-8"))
 def write(rel, text):
     (root / rel).write_bytes(text.replace("@SENTINEL@", sentinel).encode("utf-8"))
-
 def script(name, body):
     write("tools/scripts/" + name, "#!/usr/bin/env bash\nset -euo pipefail\n" + body + "\n")
-
-def mint(before="", after="", rel="tools/scripts/zz_synthetic_mint.sh"):
+def mint(before="", after="", rel=MINT_SH):
     body = BODY.replace("@BEFORE@", before).replace("@AFTER@", after)
     write(rel, "#!/usr/bin/env bash\nset -euo pipefail\nsource tools/scripts/github_actions_mask_env.sh\n" + body + "\n")
-
 def step(body, wf=E2E, anchor=CAPTURE, shell=""):
     run = "".join("          " + line + "\n" for line in body.replace("@SENTINEL@", sentinel).split("\n"))
     edit(wf, anchor, "      - name: Synthetic fixture\n" + ("        shell: " + shell + "\n" if shell else "") + "        run: |\n" + run + "\n" + anchor)
-
 if case == "bind_nightly":
     anchor = "      id: redact_full_gate_results\n"
     edit(".github/workflows/nightly.yml", anchor, anchor + "      env:\n        CORDUM_API_KEY: ${{ secrets.SYNTHETIC_FOREIGN }}\n")
@@ -182,14 +160,11 @@ elif case != "base":
 PY
 }
 
-# has_issue REPORT WANT: WANT is workflow:job:CODE, optionally @path; the
-# guard may append @location or :line after it.
+# has_issue REPORT WANT: WANT is workflow:job:CODE, optionally @path; the guard may append @location or :line.
 has_issue() {
   local line
   while IFS= read -r line; do
-    if [[ "${line}" == "$2" || "${line}" == "$2@"* || "${line}" == "$2:"* ]]; then
-      return 0
-    fi
+    if [[ "${line}" == "$2" || "${line}" == "$2@"* || "${line}" == "$2:"* ]]; then return 0; fi
   done <<<"$1"
   return 1
 }
@@ -197,23 +172,18 @@ has_issue() {
 check() {
   local name="$1" want="$2" out rc=0 built=0
   build "${name}" || built=$?
-  if [[ "${built}" -eq 3 ]]; then
-    record SKIP "${name}: platform cannot create this fixture"
-    return 0
-  elif [[ "${built}" -ne 0 ]]; then
-    record FAIL "${name}: fixture build failed"
+  if [[ "${built}" -ne 0 ]]; then
+    if [[ "${built}" -eq 3 ]]; then record SKIP "${name}: platform cannot create this fixture"; else record FAIL "${name}: fixture build failed"; fi
     return 0
   fi
   out="$(python "${GUARD}" "${WORK}/${name}" 2>&1 | tr -d '\r')" || rc=$?
   rm -rf "${WORK:?}/${name}"
   if [[ "${out}" == *"${SENTINEL}"* ]]; then
     record FAIL "${name}: guard report echoed a synthetic fixture value"
+  elif [[ "${want}" == clean && "${rc}" -eq 0 && -z "${out}" ]]; then
+    record PASS "${name}: clean"
   elif [[ "${want}" == clean ]]; then
-    if [[ "${rc}" -eq 0 && -z "${out}" ]]; then
-      record PASS "${name}: clean"
-    else
-      record FAIL "${name}: expected clean, got rc=${rc}: ${out}"
-    fi
+    record FAIL "${name}: expected clean, got rc=${rc}: ${out}"
   elif [[ "${rc}" -eq 1 ]] && has_issue "${out}" "${want}"; then
     record PASS "${name}: ${want}"
   else
@@ -227,6 +197,7 @@ done <<'CASES'
 base clean
 bind_spacing clean
 mint_registered clean
+bind_literal_space e2e.yml:e2e-tls:REDACTION_VALUE_BINDING
 bind_cross e2e.yml:e2e-tls:REDACTION_VALUE_BINDING
 bind_const e2e.yml:e2e-tls:REDACTION_VALUE_BINDING
 bind_foreign e2e.yml:e2e-tls:REDACTION_VALUE_BINDING

@@ -107,7 +107,7 @@ def env_bound(env: object, redaction: tuple[set[str], list[str]] | None) -> bool
     """A redaction step env must rebind exactly the redacted names, each to itself with the placeholder fallback."""
     if not isinstance(env, dict) or redaction is None or set(env) != redaction[0]:
         return False
-    return all(re.sub(r"\s+", "", str(value)) == f"${{{{env.{name}||'{PLACEHOLDER}'}}}}" for name, value in env.items())
+    return all(re.fullmatch(r"\$\{\{\s*env\." + re.escape(name) + r"\s*\|\|\s*'" + re.escape(PLACEHOLDER) + r"'\s*\}\}", str(value)) for name, value in env.items())
 def normalized_paths(value: object) -> list[str]:
     raw = value if isinstance(value, str) else ""
     paths = [line.strip().replace("\\", "/") for line in raw.splitlines() if line.strip()]
@@ -278,7 +278,7 @@ def self_test() -> int:
     def binding_issues(env: object) -> list[str]:
         item = deepcopy(safe); item[2]["env"] = env
         return check_job("fixture.yml", "safe", item, ("CORDUM_API_KEY",))[0]
-    unbound = ({"CORDUM_API_KEY": own % "REDIS_PASSWORD"}, {"CORDUM_API_KEY": PLACEHOLDER}, {"CORDUM_API_KEY": "${{ secrets.SYNTHETIC || '" + PLACEHOLDER + "' }}"}, {"CORDUM_API_KEY": own % "CORDUM_API_KEY", "REDIS_PASSWORD": own % "REDIS_PASSWORD"}, {}, {"CORDUM_API_KEY_RENAMED": own % "CORDUM_API_KEY"}, "${{ fromJSON(env.SYNTHETIC) }}")
+    unbound = ({"CORDUM_API_KEY": own % "REDIS_PASSWORD"}, {"CORDUM_API_KEY": PLACEHOLDER}, {"CORDUM_API_KEY": "${{ secrets.SYNTHETIC || '" + PLACEHOLDER + "' }}"}, {"CORDUM_API_KEY": own % "CORDUM_API_KEY", "REDIS_PASSWORD": own % "REDIS_PASSWORD"}, {}, {"CORDUM_API_KEY_RENAMED": own % "CORDUM_API_KEY"}, "${{ fromJSON(env.SYNTHETIC) }}", {"CORDUM_API_KEY": own.replace(PLACEHOLDER, PLACEHOLDER + " ") % "CORDUM_API_KEY"})
     if binding_issues({"CORDUM_API_KEY": "${{env.CORDUM_API_KEY||'" + PLACEHOLDER + "'}}"}) or any("REDACTION_VALUE_BINDING" not in binding_issues(env) for env in unbound):
         return 1
     good = 'test_case() {\nseeded_key=x\nseeded_redis=x\nif [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then\nsource "${REPO_ROOT}/tools/scripts/github_actions_mask_env.sh"\ngha_mask_value "${seeded_key}"\ngha_mask_value "${seeded_redis}"\nfi\ncat > .env\nif grep -Fq "${seeded_key}" "${quickstart_log}" || grep -Fq "${seeded_redis}" "${quickstart_log}"; then\nfail "quickstart output leaked a full seeded secret value"\nfi\ncat "${quickstart_log}"\n}'
