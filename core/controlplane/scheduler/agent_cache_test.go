@@ -48,6 +48,7 @@ func TestAgentResolver_LinkedWorker(t *testing.T) {
 	resolver.credCache.mu.Lock()
 	resolver.credCache.records["worker-linked"] = workercredentials.Credential{
 		WorkerID: "worker-linked",
+		TenantID: "tenant-a",
 		AgentID:  agent.ID,
 	}
 	resolver.credCache.mu.Unlock()
@@ -104,6 +105,7 @@ func TestAgentResolver_CAPNameFallbackAndSpoofProtection(t *testing.T) {
 	resolver.credCache.mu.Lock()
 	resolver.credCache.records["worker-auth"] = workercredentials.Credential{
 		WorkerID: "worker-auth",
+		TenantID: "tenant-a",
 		AgentID:  agent.ID,
 	}
 	resolver.credCache.mu.Unlock()
@@ -184,6 +186,49 @@ func TestAgentResolver_StoreLinkScopedToCredentialTenant(t *testing.T) {
 	}
 }
 
+// TestAgentResolver_CredentialAgentScopedToCredentialTenant proves the legacy
+// credential path resolves a credential's AgentID only within the
+// credential's tenant: an AgentID naming another tenant's agent, or a
+// credential with no tenant, keeps the declared AgentID but never takes that
+// agent's Name or RiskTier.
+func TestAgentResolver_CredentialAgentScopedToCredentialTenant(t *testing.T) {
+	resolver, agentStore := newTestAgentResolver(t)
+	ctx := context.Background()
+
+	agentA, err := agentStore.Create(ctx, store.AgentIdentity{TenantID: "tenant-a", Name: "agent-a", Owner: "admin", RiskTier: "low"})
+	if err != nil {
+		t.Fatalf("create agent-a: %v", err)
+	}
+	agentB, err := agentStore.Create(ctx, store.AgentIdentity{TenantID: "tenant-b", Name: "agent-b", Owner: "admin", RiskTier: "high"})
+	if err != nil {
+		t.Fatalf("create agent-b: %v", err)
+	}
+
+	// No store links: every case resolves through the credential path.
+	resolver.credCache.mu.Lock()
+	resolver.credCache.records["worker-cred-own"] = workercredentials.Credential{WorkerID: "worker-cred-own", TenantID: "tenant-a", AgentID: agentA.ID}
+	resolver.credCache.records["worker-cred-foreign"] = workercredentials.Credential{WorkerID: "worker-cred-foreign", TenantID: "tenant-a", AgentID: agentB.ID}
+	resolver.credCache.records["worker-cred-untenanted"] = workercredentials.Credential{WorkerID: "worker-cred-untenanted", AgentID: agentA.ID}
+	resolver.credCache.mu.Unlock()
+
+	cases := []struct {
+		name, workerID, wantAgentID, wantName, wantRiskTier string
+	}{
+		{name: "own_tenant", workerID: "worker-cred-own", wantAgentID: agentA.ID, wantName: "agent-a", wantRiskTier: "low"},
+		{name: "foreign_tenant", workerID: "worker-cred-foreign", wantAgentID: agentB.ID, wantName: agentB.ID, wantRiskTier: ""},
+		{name: "no_tenant", workerID: "worker-cred-untenanted", wantAgentID: agentA.ID, wantName: agentA.ID, wantRiskTier: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := resolver.Resolve(ctx, tc.workerID)
+			if got.AgentID != tc.wantAgentID || got.Name != tc.wantName || got.RiskTier != tc.wantRiskTier {
+				t.Errorf("Resolve(%q) = {AgentID:%q Name:%q RiskTier:%q}, want {AgentID:%q Name:%q RiskTier:%q}",
+					tc.workerID, got.AgentID, got.Name, got.RiskTier, tc.wantAgentID, tc.wantName, tc.wantRiskTier)
+			}
+		})
+	}
+}
+
 func TestAgentResolver_UnknownWorker(t *testing.T) {
 	resolver, _ := newTestAgentResolver(t)
 	ctx := context.Background()
@@ -227,6 +272,7 @@ func TestAgentResolver_CacheHit(t *testing.T) {
 	resolver.credCache.mu.Lock()
 	resolver.credCache.records["worker-cached"] = workercredentials.Credential{
 		WorkerID: "worker-cached",
+		TenantID: "tenant-a",
 		AgentID:  agent.ID,
 	}
 	resolver.credCache.mu.Unlock()
@@ -269,7 +315,7 @@ func TestAgentResolver_CacheTTLExpiry(t *testing.T) {
 
 	resolver.credCache.mu.Lock()
 	resolver.credCache.records["worker-ttl"] = workercredentials.Credential{
-		WorkerID: "worker-ttl", AgentID: agent.ID,
+		WorkerID: "worker-ttl", TenantID: "tenant-a", AgentID: agent.ID,
 	}
 	resolver.credCache.mu.Unlock()
 
