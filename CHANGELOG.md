@@ -11,6 +11,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Claim register schema and validator: `docs/contract/claims.yaml` and the Go
   package `tests/contract`, run by `go test ./...`. The register lists protection
   claims in README.md and SECURITY.md. Runtime behavior is unchanged.
+- Enforcement support matrix: `docs/contract/enforcement-matrix.yaml` records,
+  for each entry point and each control, whether the control is enforced,
+  advisory, ignored or not applicable, with a code reference. A validator in
+  `tests/contract` keeps its columns in step with the policy constraint model.
+  Runtime behavior is unchanged.
 
 ## [v1.3.1] - 2026-11-11
 
