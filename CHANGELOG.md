@@ -15,6 +15,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `approval_store_unavailable`. Nothing is minted in that case. Genuine
   Edge store outages still return `approval_store_unavailable`.
 
+#### core/mcp, core/controlplane/gateway — an action-gate REQUIRE_HUMAN MCP call resumes with its `_approval_ref` (2026-11-11, task-cd9df90a)
+
+- MCP (`mcp.policy_gate_enabled=true`): a tool call held REQUIRE_HUMAN by
+  the action-gate pipeline can now be resumed with its Edge
+  `_approval_ref` and executes exactly once. The resume is no longer
+  answered from the cached `approval pending` result, and it never mints a
+  fresh approval. SecOps invariants still deny on resume (task-cd9df90a).
+
 ## [v1.3.1] - 2026-11-11
 
 Changes on main since the v1.3.0 tag (d027ae97, 2026-11-11).
