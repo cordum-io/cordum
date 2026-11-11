@@ -130,14 +130,14 @@ def shallow(text: str) -> str:  # the text without command substitutions nested 
     return out
 def options(cmds: list, errexit: bool) -> list:  # [k]: (errexit, xtrace) at cmds[k]; a set applies in text order within its scope: top level, function body or subshell
     scope = lambda c: next((s for s in reversed(c.stack) if cmds[s].op == "(" or cmds[s].op == "{" and cmds[s].words), -1)
-    flat, fns = lambda c: not c.sub and (c.stack[-1:] or (-1,))[0] == scope(c), any(c.op == "{" and c.words for c in cmds)  # straight line in its scope; the file defines a function
-    def wide(i: int, c: Cmd, o: tuple, v: bool) -> bool:  # c sets o to v outside subshells and may apply out of text order: in a loop, tracing where a function may run, or left by a function
-        if c.sub or flag(c, not v, *o) != v or any(cmds[s].op == "(" for s in c.stack): return False
+    shells, flat, fns = lambda c: {-1, *(s for s in c.stack if cmds[s].op == "(")}, lambda c: not c.sub and (c.stack[-1:] or (-1,))[0] == scope(c), any(c.op == "{" and c.words for c in cmds)  # the subshells around it; straight line in its scope; the file defines a function
+    def wide(i: int, c: Cmd, o: tuple, v: bool) -> bool:  # c sets o to v and may apply out of text order, throughout its innermost subshell: in a loop there, tracing where a function may run, or left by a function
+        if c.sub or flag(c, not v, *o) != v: return False
         m = next((d for d in cmds[i + 1:] if not d.sub and scope(d) == scope(c) and (flag(d, True, *o) == flag(d, False, *o) or re.match(r"(?:(?:then|do|else) )?return\b", d.text))), None)
-        return any(cmds[s].words[:1] in (["while"], ["until"], ["for"], ["select"]) for s in c.stack) or v and fns or scope(c) >= 0 and not (m and flat(m) and flag(m, v, *o) != v)  # a function's next change of o, before any return, must reset it in straight line
-    off, on, now, out = any(wide(i, c, ERREXIT, False) for i, c in enumerate(cmds)), any(wide(i, c, XTRACE, True) for i, c in enumerate(cmds)), {-1: (errexit, False)}, []
+        return any(cmds[s].words[:1] in (["while"], ["until"], ["for"], ["select"]) and s > max(shells(c)) for s in c.stack) or v and fns or scope(c) >= 0 and cmds[scope(c)].op == "{" and not (m and flat(m) and flag(m, v, *o) != v)  # a function's next change of o, before any return, must reset it in straight line
+    off, on, traced, now, out = {max(shells(c)) for i, c in enumerate(cmds) if wide(i, c, ERREXIT, False)}, {max(shells(c)) for i, c in enumerate(cmds) if wide(i, c, XTRACE, True)}, any(c.sub and flag(c, False, *XTRACE) for c in cmds), {-1: (errexit, False)}, []  # traced: a $(...) turns tracing on, assumed in every $(...)
     for c in cmds:
-        e, x = now[s] if (s := scope(c)) in now else now.setdefault(s, now[scope(cmds[s])]); out.append((e and not off, x or on))  # noqa: E702  # a subshell or function body starts from its parent
+        e, x = now[s] if (s := scope(c)) in now else now.setdefault(s, now[scope(cmds[s])]); out.append((e and not c.sub and not off & shells(c), x or bool(on & shells(c)) or bool(c.sub) and traced))  # noqa: E702  # a subshell or function body starts from its parent; bash clears errexit in a $(...)
         if not c.sub: now[s] = (flag(c, e, *ERREXIT), flag(c, x, *XTRACE)) if flat(c) else (e and flag(c, True, *ERREXIT), x or flag(c, False, *XTRACE))  # one that may not run only disables errexit or starts tracing
     return out
 def facts(text: str, line: int = 1, errexit: bool = False) -> tuple:  # (cmds, unparsable line, [(k, var, kind, state)], [(k, var, bytes)], options)
