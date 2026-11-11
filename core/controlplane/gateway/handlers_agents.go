@@ -130,12 +130,12 @@ func (s *server) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// When registering an identity for an existing worker, refuse if that
-	// worker is already linked — otherwise LinkWorker below would overwrite
-	// the global worker->identity mapping and orphan the prior identity.
+	// Only a worker link in the caller's tenant conflicts. Another tenant's
+	// link must neither block registration nor reveal that it exists.
+	// LinkWorker still writes the legacy global key until writers are migrated.
 	workerID := strings.TrimSpace(req.AgentID)
 	if workerID != "" {
-		if existing, lookupErr := s.agentIdentityStore.GetByWorkerID(r.Context(), workerID); lookupErr == nil && existing != nil {
+		if existing, lookupErr := s.agentIdentityStore.GetByWorkerIDForTenant(r.Context(), tenant, workerID); lookupErr == nil && existing != nil {
 			writeJSONError(w, http.StatusConflict, errorCodeAgentWorkerConflict, "worker is already linked to an agent identity")
 			return
 		}
@@ -344,13 +344,10 @@ func (s *server) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 	if identity == nil {
 		// Fallback: `id` may be a worker id linked to an identity (e.g. a
 		// heartbeating worker registered via the dashboard empty-state flow,
-		// #314). Resolve through the worker link, then re-apply the tenant
-		// scope that GetByWorkerID does not enforce — preserving the
-		// existence-oracle hardening of the direct lookup above.
-		if linked, linkErr := s.agentIdentityStore.GetByWorkerID(r.Context(), id); linkErr == nil && linked != nil {
-			if tenant == "" || strings.TrimSpace(linked.TenantID) == tenant {
-				identity = linked
-			}
+		// #314). Resolve the worker link within the request tenant, preserving
+		// the existence-oracle hardening of the direct lookup above.
+		if linked, linkErr := s.agentIdentityStore.GetByWorkerIDForTenant(r.Context(), tenant, id); linkErr == nil && linked != nil {
+			identity = linked
 		}
 	}
 	if identity == nil {
