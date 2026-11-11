@@ -3,12 +3,15 @@ package gateway
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/mcp"
+	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/policy/actiongates"
 )
 
@@ -127,41 +130,151 @@ func TestInvariantBeatsActionGate(t *testing.T) {
 	}
 }
 
-// TestPreapprovalSkipsActionGate asserts that a preapproved (tenant,
-// agent, tool) tuple short-circuits the approval store entirely.
-// Returns ("", nil) so the caller treats the call as immediately
-// allowed, mirroring the existing gatewayApprovalGate.Check fast path.
-// Asserts the store is NOT consulted (call count == 0).
-func TestPreapprovalSkipsActionGate(t *testing.T) {
+// paActionHash is paApprovalContext's 64-hex action hash: the legacy
+// MCPApprovalStore ArgsHash the pre-fix fallback claimed under.
+const paActionHash = "abababababababababababababababababababababababababababababababab"
+
+// paApprovalContext is the REQUIRE_HUMAN handoff context of a destructive
+// fs.delete_record call by agent_alpha in tnt_a.
+func paApprovalContext() mcp.ToolCallApprovalContext {
+	return mcp.ToolCallApprovalContext{
+		Tenant:     "tnt_a",
+		AgentID:    "agent_alpha",
+		Server:     "cordum.builtin",
+		Tool:       "fs.delete_record",
+		ActionHash: paActionHash,
+		Args:       json.RawMessage(`{"record":"rec-pa"}`),
+		EventID:    "evt-pre-pa",
+	}
+}
+
+// paCallMetadata is the Edge session metadata of paApprovalContext's call.
+func paCallMetadata() mcp.CallMetadata {
+	return mcp.CallMetadata{Tenant: "tnt_a", Principal: "alice", AgentID: "agent_alpha",
+		SessionID: "sess_pa", ExecutionID: "exec_pa"}
+}
+
+// paPreapproved preapproves paApprovalContext's (tenant, agent, tool) tuple.
+func paPreapproved() *fakePreapprovalLookup {
+	return &fakePreapprovalLookup{tenant: "tnt_a", agentID: "agent_alpha", toolName: "fs.delete_record"}
+}
+
+// TestActionGateHold_PreapprovalNotConsulted (task-06784e6d R1): scope
+// preapproval never waives an action-gate REQUIRE_HUMAN. A preapproved
+// identity's held call mints the Edge approval bound to its pre-event and
+// returns that resumable ref, never an empty one, without consulting the
+// preapproval lookup.
+func TestActionGateHold_PreapprovalNotConsulted(t *testing.T) {
 	t.Parallel()
-	preapproval := &fakePreapprovalLookup{
-		tenant:   "tnt_a",
-		agentID:  "agent_alpha",
-		toolName: "git.push",
-	}
-	// We don't pass a real store so any unexpected store call would
-	// panic — the test asserts no store interaction by reaching the
-	// end without nil-deref.
+	preapproval := paPreapproved()
+	edgeStore := &captureEdgeStore{approvalID: "edge_appr_pa_1"}
 	gate := &gatewayApprovalGate{
-		store:       &MCPApprovalStore{},
-		preapproval: preapproval,
+		store:          &MCPApprovalStore{},
+		preapproval:    preapproval,
+		edgeStore:      edgeStore,
+		policySnapshot: func(context.Context) string { return "policy-pa" },
+		serverName:     "cordum.builtin",
 	}
-	ref, err := gate.ConsumeActionGateDecision(context.Background(),
-		mcp.PolicyDecision{Decision: 3 /* REQUIRE_HUMAN */},
-		mcp.ToolCallApprovalContext{
-			Tenant:     "tnt_a",
-			AgentID:    "agent_alpha",
-			Tool:       "git.push",
-			ActionHash: "deadbeef",
+	ctx := mcp.WithCallMetadata(context.Background(), paCallMetadata())
+	ref, err := gate.ConsumeActionGateDecision(ctx, mcp.PolicyDecision{Decision: 3 /* REQUIRE_HUMAN */}, paApprovalContext())
+	if err != nil || ref != "edge_appr_pa_1" {
+		t.Errorf("ConsumeActionGateDecision = %q, %v; want the Edge ref edge_appr_pa_1", ref, err)
+	}
+	if preapproval.calls != 0 {
+		t.Errorf("preapproval consulted %d times; want 0", preapproval.calls)
+	}
+	if edgeStore.enqueueCalls != 1 || edgeStore.lastReq.EventID != "evt-pre-pa" {
+		t.Errorf("Edge enqueues = %d bound to event %q; want 1 bound to evt-pre-pa",
+			edgeStore.enqueueCalls, edgeStore.lastReq.EventID)
+	}
+}
+
+// TestActionGateHandoff_EdgeMintUnwiredFailsClosed (task-06784e6d R2): when
+// the Edge mint cannot run (Edge store unwired, or no Edge SessionID), the
+// handoff fails closed with ErrApprovalGateMisconfigured (-32097). The legacy
+// MCPApprovalStore is not an approval authority under the policy gate: an
+// approved record for the same tuple is not claimed, no PENDING record is
+// enqueued, and the preapproval lookup is not consulted.
+func TestActionGateHandoff_EdgeMintUnwiredFailsClosed(t *testing.T) {
+	t.Parallel()
+	noSession := paCallMetadata()
+	noSession.SessionID = ""
+	cases := []struct {
+		name        string
+		edgeStore   *captureEdgeStore
+		preapproval *fakePreapprovalLookup
+		meta        mcp.CallMetadata
+	}{
+		{name: "edge_store_unwired", meta: paCallMetadata()},
+		{name: "edge_store_unwired_preapproved", preapproval: paPreapproved(), meta: paCallMetadata()},
+		{name: "no_edge_session_id", edgeStore: &captureEdgeStore{approvalID: "edge_appr_pa_2"}, meta: noSession},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			store := newTestMCPStore(t)
+			seeded := paSeedApprovedLegacy(t, store)
+			gate := &gatewayApprovalGate{store: store, serverName: "cordum.builtin",
+				policySnapshot: func(context.Context) string { return "policy-pa" }}
+			// Only non-nil fakes: a typed nil pointer in an interface field is not nil.
+			if tc.edgeStore != nil {
+				gate.edgeStore = tc.edgeStore
+			}
+			if tc.preapproval != nil {
+				gate.preapproval = tc.preapproval
+			}
+			ctx := mcp.WithCallMetadata(context.Background(), tc.meta)
+			ref, err := gate.ConsumeActionGateDecision(ctx, mcp.PolicyDecision{Decision: 3 /* REQUIRE_HUMAN */}, paApprovalContext())
+			if ref != "" || !errors.Is(err, mcp.ErrApprovalGateMisconfigured) {
+				t.Errorf("ConsumeActionGateDecision = %q, %v; want \"\" and ErrApprovalGateMisconfigured", ref, err)
+			}
+			paRequireLegacyUntouched(t, store, seeded.ID)
+			if tc.edgeStore != nil && tc.edgeStore.enqueueCalls != 0 {
+				t.Errorf("Edge enqueues = %d; want 0", tc.edgeStore.enqueueCalls)
+			}
+			if tc.preapproval != nil && tc.preapproval.calls != 0 {
+				t.Errorf("preapproval consulted %d times; want 0", tc.preapproval.calls)
+			}
 		})
+	}
+}
+
+// paSeedApprovedLegacy seeds an APPROVED, unconsumed legacy MCPApprovalStore
+// record for paApprovalContext's tuple: the record the pre-fix fallback
+// claimed and returned as the "approval ref".
+func paSeedApprovedLegacy(t *testing.T, store *MCPApprovalStore) *MCPApprovalRecord {
+	t.Helper()
+	ctx := context.Background()
+	rec, err := store.EnqueueMCPApproval(ctx, &MCPApprovalRequest{Tenant: "tnt_a", AgentID: "agent_alpha",
+		ToolName: "fs.delete_record", ArgsHash: paActionHash, Requester: "agent_alpha", TTL: 5 * time.Minute})
 	if err != nil {
-		t.Fatalf("unexpected err: %v", err)
+		t.Fatalf("seed legacy approval: %v", err)
 	}
-	if ref != "" {
-		t.Fatalf("preapproval HIT should return empty ref, got %q", ref)
+	if _, err := store.Resolve(ctx, rec.ID, model.ApprovalDecisionApprove, "resolver-pa", "seeded"); err != nil {
+		t.Fatalf("approve legacy approval %s: %v", rec.ID, err)
 	}
-	if preapproval.calls != 1 {
-		t.Fatalf("preapproval consulted %d times; want exactly 1", preapproval.calls)
+	return rec
+}
+
+// paRequireLegacyUntouched asserts the seeded legacy record is still APPROVED,
+// unconsumed and claimable for its tuple, and that no PENDING record exists.
+func paRequireLegacyUntouched(t *testing.T, store *MCPApprovalStore, id string) {
+	t.Helper()
+	ctx := context.Background()
+	got, err := store.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("Get legacy approval %s: %v", id, err)
+	}
+	if got.Status != model.ApprovalStatusApproved || got.ConsumedAt != 0 {
+		t.Errorf("legacy approval %s status %q consumed_at %d; want approved and unconsumed", id, got.Status, got.ConsumedAt)
+	}
+	found, err := store.FindPreApproved(ctx, "tnt_a", "agent_alpha", "fs.delete_record", paActionHash)
+	if err != nil || found == nil || found.ID != id {
+		t.Errorf("FindPreApproved = %+v, %v; want the seeded approval %s, still claimable", found, err, id)
+	}
+	pending, _, err := store.ListByStatus(ctx, string(model.ApprovalStatusPending), 0, 50)
+	if err != nil || len(pending) != 0 {
+		t.Errorf("PENDING legacy approvals = %d, %v; want 0 (no legacy enqueue)", len(pending), err)
 	}
 }
 
