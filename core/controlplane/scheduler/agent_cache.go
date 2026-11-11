@@ -119,6 +119,10 @@ func (r *AgentResolver) resolveFromStores(ctx context.Context, workerID string) 
 	// display name — never override an authenticated Agent Identity name (a
 	// spoofed label cannot impersonate an authenticated agent). task-c8d4b056.
 	capName := r.capName(workerID)
+	// One read of the worker's cached credential serves both lookups below,
+	// so each lookup is scoped to the tenant of the credential that declared
+	// the AgentID.
+	agentID, tenantID := r.credentialAgentAndTenant(workerID)
 
 	// Prefer the canonical reverse-lookup in the agent identity store when it
 	// is available. Newer worker credentials no longer carry an embedded
@@ -128,20 +132,17 @@ func (r *AgentResolver) resolveFromStores(ctx context.Context, workerID string) 
 	// credential, or one without a tenant, there is nothing to scope to: the
 	// lookup is skipped and resolution falls through to the credential,
 	// CAP-label and unlinked path below.
-	if r.agentStore != nil {
-		if tenantID := r.credentialTenantID(workerID); tenantID != "" {
-			if identity, err := r.agentStore.GetByWorkerIDForTenant(ctx, tenantID, workerID); err == nil && identity != nil {
-				return AgentInfo{
-					AgentID:  identity.ID,
-					Name:     firstNonEmptyName(identity.Name, capName, identity.ID),
-					RiskTier: identity.RiskTier,
-				}
+	if r.agentStore != nil && tenantID != "" {
+		if identity, err := r.agentStore.GetByWorkerIDForTenant(ctx, tenantID, workerID); err == nil && identity != nil {
+			return AgentInfo{
+				AgentID:  identity.ID,
+				Name:     firstNonEmptyName(identity.Name, capName, identity.ID),
+				RiskTier: identity.RiskTier,
 			}
 		}
 	}
 
 	// Fall back to the legacy worker-credential mapping when present.
-	agentID := r.agentIDFromCredential(workerID)
 	if agentID == "" {
 		// No authenticated link. A self-reported label is still a more useful
 		// audit label than "unlinked", but AgentID stays "unlinked" so the label
@@ -152,11 +153,17 @@ func (r *AgentResolver) resolveFromStores(ctx context.Context, workerID string) 
 		return unlinkedAgent()
 	}
 
-	if r.agentStore == nil {
+	// The credential's AgentID is admin-supplied, and issuing a credential
+	// does not check that the agent belongs to the credential's tenant, so it
+	// is resolved only within that tenant. A credential with no tenant is
+	// never looked up. A foreign, missing or unscoped agent keeps the
+	// declared AgentID with no store name or risk tier: the label an unknown
+	// agent already gets, so the label is no existence oracle.
+	if r.agentStore == nil || tenantID == "" {
 		return AgentInfo{AgentID: agentID, Name: firstNonEmptyName(capName, agentID), RiskTier: ""}
 	}
 
-	identity, err := r.agentStore.Get(ctx, "", agentID)
+	identity, err := r.agentStore.Get(ctx, tenantID, agentID)
 	if err != nil || identity == nil {
 		return AgentInfo{AgentID: agentID, Name: firstNonEmptyName(capName, agentID), RiskTier: ""}
 	}
@@ -164,32 +171,20 @@ func (r *AgentResolver) resolveFromStores(ctx context.Context, workerID string) 
 	return AgentInfo{AgentID: identity.ID, Name: firstNonEmptyName(identity.Name, capName, identity.ID), RiskTier: identity.RiskTier}
 }
 
-func (r *AgentResolver) agentIDFromCredential(workerID string) string {
+// credentialAgentAndTenant returns the trimmed AgentID and TenantID of the
+// worker's cached credential, read from one snapshot, or "", "" when no
+// credential is cached.
+func (r *AgentResolver) credentialAgentAndTenant(workerID string) (agentID, tenantID string) {
 	if r.credCache == nil {
-		return ""
+		return "", ""
 	}
 	r.credCache.mu.RLock()
 	cred, ok := r.credCache.records[workerID]
 	r.credCache.mu.RUnlock()
 	if !ok {
-		return ""
+		return "", ""
 	}
-	return strings.TrimSpace(cred.AgentID)
-}
-
-// credentialTenantID returns the tenant of the worker's cached credential, or
-// "" when no credential is cached.
-func (r *AgentResolver) credentialTenantID(workerID string) string {
-	if r.credCache == nil {
-		return ""
-	}
-	r.credCache.mu.RLock()
-	cred, ok := r.credCache.records[workerID]
-	r.credCache.mu.RUnlock()
-	if !ok {
-		return ""
-	}
-	return strings.TrimSpace(cred.TenantID)
+	return strings.TrimSpace(cred.AgentID), strings.TrimSpace(cred.TenantID)
 }
 
 func unlinkedAgent() AgentInfo {
