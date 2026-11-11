@@ -254,7 +254,7 @@ When `ClaimApproval` refuses the claim it returns an
 | `self_approval` | The approving identity matches the requesting agent. |
 | `cross_tenant` | The approval belongs to a different tenant. |
 | `tuple_mismatch` | The action-hash tuple differs. |
-| `approval_store_unavailable` | The Edge store errored at mint, approval lookup or claim time (transient outage), or a policy-gate mint could not bind to its pre-event. |
+| `approval_store_unavailable` | An approval store errored: the Edge store at mint, approval lookup or claim time, or the legacy MCP approval store during claim or enqueue (transient outage; the client may retry); or a policy-gate mint could not bind to its pre-event. `reason` is always the fixed text `approval store unavailable`; the gateway logs the underlying error and never returns it to the client. |
 
 Clients branch retry logic on `Kind`. A `consumed` requires the user
 to re-trigger the gated action; an `args_mismatch` typically reflects
