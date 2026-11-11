@@ -160,14 +160,13 @@ def expand(word: str, table: dict, env: dict, here: str) -> str:  # script-dir a
     for _ in range(12):
         if word == (word := VAR.sub(lookup, TOPLEVEL.sub(".", CDPWD.sub(r"\1", DIRNAME.sub(here, word))))): break
     return word.replace('"', "").replace("'", "")
-def shell_operand(args: list) -> tuple:  # bash/sh: (script, argv, False, traced) or (-c program, [], True, traced); "" is stdin
-    i, traced = 0, False
+def shell_operand(args: list) -> tuple:  # bash/sh: (script, argv, False, traced) or (-c program, [], True, traced); "" is stdin; -c takes the first operand after all options, over -s
+    i, traced, program, stdin = 0, False, False, False
     while i < len(args) and args[i][:1] in ("-", "+") and args[i] != "--":
         short, traced = not args[i].startswith("--"), traced or bool(re.fullmatch(r"-[a-zA-Z]*x[a-zA-Z]*", args[i]) or re.fullmatch(r"-[a-zA-Z]*o", args[i]) and args[i + 1:i + 2] == ["xtrace"])
-        if short and ("c" in args[i] or "s" in args[i]): return (args[i + 1], [], True, traced) if "c" in args[i] and i + 1 < len(args) else ("", [], False, traced)
-        i += 2 if short and args[i][-1] in "oO" else 1
+        program, stdin, i = program or short and "c" in args[i], stdin or short and "s" in args[i], i + (2 if short and args[i][-1] in "oO" else 1)
     i += args[i:i + 1] == ["--"]
-    return (args[i], args[i + 1:], False, traced) if i < len(args) else ("", [], False, traced)
+    return (args[i], [], True, traced) if program and i < len(args) else ("", [], False, traced) if program or stdin or i >= len(args) else (args[i], args[i + 1:], False, traced)
 def literal_env(node: object) -> dict: return {str(k): "" if v is None else str(v) for k, v in node.items()} if isinstance(node, dict) else {}
 def github_env_names(run: str) -> set: return set(re.findall(r"(?m)^\s*gha_mask_env\s+([A-Za-z_]\w*)", run)) | set(re.findall(r"(?m)^\s*(?:echo|printf)\s+(?:'[^']*'\s+)?[\"']?([A-Za-z_]\w*)=.*>>\s*[\"']?\$\{?GITHUB_ENV\b", run)) | {n for args in re.findall(r"(?m)^\s*gha_mask_env_from_command\s+(.+?)\s+--\s", run) for n in re.findall(r"[A-Za-z_]\w*", args)}  # names a run step writes to GITHUB_ENV (masked or plain)
 def run_lines(text: str) -> dict:  # (job id, step index) -> file line just before the step's run script, or of its uses
@@ -259,9 +258,9 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
         elif posixpath.basename(name) in ("bash", "sh"): (target, rest, program, traced), kind = shell_operand(words[1:]), "shell"; child.update({"SHELLOPTS": "xtrace"} if traced else {})  # noqa: E702
         elif "/" in name: target, rest, kind = words[0], words[1:], "exec"
         else: return dynamic() if any(w.strip("\"'").endswith(".sh") for w in words[1:]) and ("$" in name or any(posixpath.basename(w.strip("\"'")) in ("bash", "sh") for w in words[1:])) else None  # a wrapper or variable command runs a script
-        if program:  # a literal -c program is scanned inline; one whose command word expands is dynamic
+        if program:  # a literal -c program is scanned inline; one whose command word (after assignments, redirections and prefix words) expands is dynamic
             unit = facts(target[1:-1] if len(target) > 1 and target[0] == target[-1] and target[0] in "'\"" else target, cmd.line)
-            return dynamic() if any(re.search(r"[$`]", c.words[0]) for c in unit[0] if c.words) else self.visit(rel, unit, child, [], chain, quiet, cwd)
+            return dynamic() if any(re.search(r"[$`]", next((w for w in c.words if w not in PREFIX_WORDS and not WORD_ASSIGN.fullmatch(w) and not RWORD.match(w)), "")) for c in unit[0]) else self.visit(rel, unit, child, [], chain, quiet, cwd)
         path = expand(target, table, env, here)
         if not target or re.search(r"[$`\x00]", path): return dynamic() if kind != "exec" or path.endswith(".sh") else None
         key = posixpath.normpath(posixpath.join(cwd, path))

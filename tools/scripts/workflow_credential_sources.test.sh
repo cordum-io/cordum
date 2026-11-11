@@ -91,13 +91,14 @@ SUBST = {"errexit_substitution": 'out="$(synthetic_key="$(openssl rand -hex 16)"
          "trace_substitution": CAPTURED.replace("$(synthetic", "$(set -x; synthetic", 1).replace("@MASK@", "pg_register_secret"), "mask_captured": CAPTURED.replace("@MASK@", "gha_mask_value"),
          "mask_fd_captured": CAPTURED.replace("@MASK@", "pg_register_secret"), "mask_env_captured": 'synthetic_key="$(openssl rand -hex 16)"\ngha_mask_value "${synthetic_key}" || exit 1\nout="$(gha_mask_env SYNTHETIC_KEY "${synthetic_key}")"'}
 DYNAMIC = {
-    "dyn_var": 'bash "${SYNTHETIC_DIR}/zz_synthetic_mint.sh"', "dyn_c": 'bash -c "${SYNTHETIC_CMD}"',
+    "dyn_var": 'bash "${SYNTHETIC_DIR}/zz_synthetic_mint.sh"', "dyn_c": 'bash -c "${SYNTHETIC_CMD}"', "dyn_c_prefixed": "bash -c 'SYNTHETIC_MODE=1 \"${SYNTHETIC_SHELL}\" synthetic_arg'",
     "dyn_heredoc": "bash <<'SYNTHETIC'\ntrue\nSYNTHETIC", "dyn_pipe": "curl -fsS https://127.0.0.1:9/x | bash",
     "dyn_eval": 'eval "${SYNTHETIC_CMD}"', "dyn_make": 'make "${SYNTHETIC_TARGET}"',
     "dyn_source": 'source "${SYNTHETIC_DIR}/zz_synthetic_helper.sh"', "dyn_procsub": "source <(cat " + MINT_SH + ")",
-    "dyn_wrapper": "timeout -s KILL 10m " + RUN_MINT, "dyn_cmdword": '"${SYNTHETIC_SHELL}" ' + MINT_SH,
+    "dyn_wrapper": "timeout -s KILL 10m " + RUN_MINT, "dyn_cmdword": '"${SYNTHETIC_SHELL}" ' + MINT_SH, "dyn_stdin_s": "bash -s synthetic_arg <<'SYNTHETIC'\ntrue\nSYNTHETIC",
 }
-SHELLS = {"shell_env_bash": "/usr/bin/env bash {0}", "shell_pwsh": "pwsh"}
+SHELLS, PROG = {"shell_env_bash": "/usr/bin/env bash {0}", "shell_pwsh": "pwsh"}, ' \'synthetic_key="$(openssl rand -hex 16)"; curl -fsS -u "synthetic:${synthetic_key}" https://127.0.0.1:9/ >/dev/null\''
+INLINE = {"shell_c_stdin": "bash -s -c" + PROG, "shell_c_option": "bash -c -e" + PROG, "shell_c_dashdash": "bash -c --" + PROG, "inline_redirect": "bash -c 'exec >\"${SYNTHETIC_LOG:-/dev/null}\" 2>&1; true'"}  # bash runs the -c program after any later option, over -s; a redirection is not its command word
 TRACE = {  # (shell, run[, job]): xtrace on at a fail-closed registration; run-text tracing in a job the guard leaves open
     "trace_shell": ("bash -x {0}", "source " + MINT_SH), "trace_env": ("", "SHELLOPTS=xtrace " + RUN_MINT),
     "trace_bash_x": ("", "bash -x " + MINT_SH, *LINK), "trace_set_x": ("", "set -x\nsource " + MINT_SH, *LINK),
@@ -147,9 +148,9 @@ elif case == "nonce_bypass_overridden":
     edit(EDGE, "run: bash tools/scripts/edge_fake_hook_e2e.sh", "run: CORDUM_EDGE_E2E_BYPASS_HOOK=0 bash tools/scripts/edge_fake_hook_e2e.sh")
 elif case == "quickstart_unseeded":
     step("bash tools/scripts/quickstart.sh --skip-build", *LINK)
-elif case in DYNAMIC:
+elif case in DYNAMIC or case in INLINE:
     mint()
-    step(DYNAMIC[case])
+    step(DYNAMIC.get(case) or INLINE[case])
 elif case == "dyn_script":
     script("zz_synthetic_dyn.sh", 'source "${SYNTHETIC_DIR}/zz_synthetic_helper.sh"')
     step("bash tools/scripts/zz_synthetic_dyn.sh")
@@ -234,8 +235,8 @@ trace_off clean
 noext_data clean
 noext_python clean
 make_oneshell clean
-bind_literal_space e2e.yml:e2e-tls:REDACTION_VALUE_BINDING
-bind_cross e2e.yml:e2e-tls:REDACTION_VALUE_BINDING
+inline_redirect clean
+bind_literal_space bind_cross e2e.yml:e2e-tls:REDACTION_VALUE_BINDING
 bind_const e2e.yml:e2e-tls:REDACTION_VALUE_BINDING
 bind_foreign e2e.yml:e2e-tls:REDACTION_VALUE_BINDING
 bind_drop e2e.yml:e2e-tls:REDACTION_VALUE_BINDING
@@ -254,18 +255,17 @@ trace_substitution e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scri
 trace_shell trace_env e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 trace_bash_x trace_set_x docs-linkcheck.yml:link-check:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 trace_bang e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
-noext_source e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.inc
-noext_exec e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.inc
+noext_source noext_exec e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.inc
 mint_make e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 make_errexit make_line_errexit e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@Makefile
 mint_untracked_job docs-linkcheck.yml:link-check:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
-mint_inline e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED
+mint_inline shell_c_stdin shell_c_option shell_c_dashdash e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED
 gen_openssl gen_uuidgen gen_urandom gen_random gen_date gen_python gen_quoted_paren errexit_substitution mask_captured mask_env_captured e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_gen.sh
 gen_nested mask_fd_captured clean
 nonce_bypass_removed edge-fake-hook-e2e.yml:edge-fake-hook-e2e:CREDENTIAL_UNREGISTERED@tools/scripts/edge_fake_hook_e2e.sh
 nonce_bypass_overridden edge-fake-hook-e2e.yml:edge-fake-hook-e2e:CREDENTIAL_UNREGISTERED@tools/scripts/edge_fake_hook_e2e.sh
 quickstart_unseeded docs-linkcheck.yml:link-check:CREDENTIAL_UNREGISTERED@tools/scripts/quickstart.sh
-dyn_var dyn_c dyn_heredoc dyn_pipe dyn_eval dyn_make dyn_source dyn_procsub dyn_wrapper dyn_cmdword e2e.yml:e2e-tls:SOURCE_DYNAMIC
+dyn_var dyn_c dyn_c_prefixed dyn_heredoc dyn_pipe dyn_eval dyn_make dyn_source dyn_procsub dyn_wrapper dyn_cmdword dyn_stdin_s e2e.yml:e2e-tls:SOURCE_DYNAMIC
 dyn_script e2e.yml:e2e-tls:SOURCE_DYNAMIC@tools/scripts/zz_synthetic_dyn.sh
 uses_local e2e.yml:e2e-tls:SOURCE_DYNAMIC@.github/workflows/e2e.yml
 shell_env_bash e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
