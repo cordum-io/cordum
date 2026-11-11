@@ -84,6 +84,9 @@ func (r *ClaimRegister) Validate(root string) []Issue {
 	if !shaRE.MatchString(r.SourcesReviewedAt) {
 		is.add("sources-sha", "", "sources_reviewed_at must be 40 lowercase hex characters")
 	}
+	if r.Claims == nil {
+		is.add("field-missing", "", "claims must be a list (possibly empty)")
+	}
 	seen := map[string]bool{}
 	for i := range r.Claims {
 		c := &r.Claims[i]

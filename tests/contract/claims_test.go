@@ -96,6 +96,8 @@ func TestClaimsValidatorRejects(t *testing.T) {
 		{"short_id", "id-format", "CLM-1", []string{"id: CLM-001", "id: CLM-1"}},
 		{"schema_version_2", "schema-version", "", []string{"schema_version: 1", "schema_version: 2"}},
 		{"short_sha", "sources-sha", "", []string{"0123456789abcdef0123456789abcdef01234567", "0123456"}},
+		{"missing_claims", "field-missing", "", []string{baseRegister[strings.Index(baseRegister, "claims:"):], ""}},
+		{"null_claims", "field-missing", "", []string{baseRegister[strings.Index(baseRegister, "claims:"):], "claims: null\n"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
