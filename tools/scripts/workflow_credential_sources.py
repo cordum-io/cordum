@@ -34,15 +34,8 @@ def heredocs(lines: list) -> list:  # (header index, body indices incl. terminat
     return found
 def split(text: str, i: int = 0, line: int = 1, sub: int = 0, closer: bool = False) -> tuple:  # (raw-word commands, substitution bodies first; end index or -1; line)
     cmds, words, word, start, quote, parens = [], [], "", line, "", 0
-    def emit(op: str) -> None:
-        nonlocal words, start
-        if words or op in ("(", ")", "{", "}"): cmds.append(Cmd(start, words, op, sub))
-        words, start = [], line
-    def push() -> None:
-        nonlocal word
-        if word in ("{", "}") and (not words or word == "{" and (words[-1].endswith("()") or words[0] == "function")): emit(word)
-        elif word: words.append(word)
-        word = ""
+    def emit(op: str) -> None: nonlocal words, start; cmds.append(Cmd(start, words, op, sub)) if words or op in ("(", ")", "{", "}") else None; words, start = [], line  # noqa: E702
+    def push() -> None: nonlocal word; emit(word) if word in ("{", "}") and (not words or word == "{" and (words[-1].endswith("()") or words[0] == "function")) else words.append(word) if word else None; word = ""  # noqa: E702  # a block's { or }, else a word
     while i < len(text):
         c, two = text[i], text[i:i + 2]
         if quote == "'" or two == "${":  # a single-quoted span, or a balanced ${...} in any quoting
@@ -97,11 +90,11 @@ def exits(cmds: list, start: int, level: tuple, var: str, k: int) -> bool:  # ex
     words = cmds[stop].words[cmds[stop].words[:1] == ["then"]:][:1] if stop < len(cmds) and cmds[stop].stack == level else []
     held = fn >= 0 and any(c.stack[-1:] == (fn,) and c.words[:1] == ["local"] and var in [w.split("=")[0] for w in c.words[1:]] and runs(cmds, i) for i, c in enumerate(cmds[:k + 1]))  # the caller cannot read it after the return
     return words == ["exit"] or words == ["return"] and (held or any(c.stack == level and re.fullmatch(r"(?:then )?(?:unset (?:-v )?" + var + "|" + var + r"=(?:\"\"|'')?)", c.text) and runs(cmds, i) and not any(re.match(r"(?:(?:then|do|else) )?return\b", d.text) for d in cmds[start:i]) for i, c in enumerate(cmds[start:stop], start)))  # cleared before any return
-def registered_at(cmds: list, j: int, k: int, var: str, errexit: bool) -> bool:  # cmds[j] registers var; a failure stops before any use
+def registered_at(cmds: list, j: int, k: int, var: str, errexit: bool, captured: set = frozenset()) -> bool:  # cmds[j] registers var; a failure stops before any use
     words, nxt = list(cmds[j].words), cmds[j + 1] if j + 1 < len(cmds) else Cmd(0, [], "", 0)
     lead = words.pop(0) if words[:1] in (["if"], ["then"], ["do"]) else ""; negated = words[:1] == ["!"] and bool(words.pop(0))  # noqa: E702
     safe = r"(?:if )?(?:" + CI_TEST + r"|\[\[? -n \"?\$\{?" + var + r"\}?\"? \]\]?)"  # CI, or var non-empty
-    if not re.fullmatch(r"(?:pg_register_secret|gha_mask_value|gha_mask_env [A-Z_][A-Z0-9_]*) \"\$\{?" + var + r"\}?\"", " ".join(words)) or cmds[j].sub and words[0] != "pg_register_secret": return False  # a $(...) captures the mask; pg_register_secret writes to PG_MASK_FD, a copy of the runner stdout
+    if not re.fullmatch(r"(?:pg_register_secret|gha_mask_value|gha_mask_env [A-Z_][A-Z0-9_]*) \"\$\{?" + var + r"\}?\"", " ".join(words)) or (cmds[j].sub or cmds[j].func in captured) and words[0] != "pg_register_secret": return False  # a $(...) captures the mask, also in a function called there; pg_register_secret writes to PG_MASK_FD, a copy of the runner stdout
     if negated:  # if [safe tests &&] ! register "$v"; then ...; exit|return; fi
         head = j
         while lead != "if" and head and cmds[head - 1].op == "&&" and cmds[head].words[:1] != ["if"]:
@@ -113,11 +106,11 @@ def registered_at(cmds: list, j: int, k: int, var: str, errexit: bool) -> bool: 
     level, home = cmds[j].stack, cmds[k].stack
     gate = level[-1] if level and level[:-1] == home else -1  # one if deeper, on a safe test
     return level == home or gate >= 0 and cmds[gate].words[:1] == ["if"] and bool(re.fullmatch(safe, cmds[gate].text)) and not any(c.stack == level and c.words[:1] in (["else"], ["elif"]) for c in cmds[gate + 1:j])
-def state(cmds: list, k: int, var: str, flags: list) -> str:  # registered, late (used or traced first) or unregistered; reassignment ends it
+def state(cmds: list, k: int, var: str, flags: list, captured: set = frozenset()) -> str:  # registered, late (used or traced first) or unregistered; reassignment ends it
     ref, harmless, used = re.compile(r"\$\{?" + var + r"(?!\w)|\bexport\s+" + var + r"\b(?!=)"), re.compile(r"-[nz]\s+\"?\$\{?" + var + r"\}?\"?|\$\{#" + var + r"\}"), False
     for j in range(k + 1, len(cmds)):
         if ref.search(harmless.sub("", cmds[j].text)):
-            if registered_at(cmds, j, k, var, flags[j][0]): return "late" if used or any(on[1] for on in flags[k:j + 1]) else "registered"
+            if registered_at(cmds, j, k, var, flags[j][0], captured): return "late" if used or any(on[1] for on in flags[k:j + 1]) else "registered"
             used = True
         elif (m := ASSIGN.fullmatch(cmds[j].text)) and m.group(1) == var: break
     return "unregistered"
@@ -128,7 +121,13 @@ def shallow(text: str) -> str:  # the text without command substitutions nested 
         elif top != "'" and (tok == "$(" or tok in ("(", "'", '"') and top != '"'): stack.append(tok)
         out += tok if stack.count("$(") <= 1 else ""
     return out
-def options(cmds: list, errexit: bool) -> list:  # [k]: (errexit, xtrace) at cmds[k]; a set applies in text order within its scope: top level, function body or subshell
+def callers(cmds: list, flags: list, prev: tuple) -> tuple:  # names of functions called where bash ignores errexit, called with errexit off, called inside a $(...); or called from such a function
+    defs, found = {c.func for c in cmds} - {""}, (set(), set(), set())
+    for i, c in enumerate(cmds):  # bash ignores errexit for a tested status: in an && or || list but its last command, in an if, elif, while or until condition, or after `!`
+        if (name := (c.words + [""])[(lead := next((n for n, w in enumerate(c.words) if w not in PREFIX_WORDS and not WORD_ASSIGN.fullmatch(w)), len(c.words)))]) in defs:
+            for names, hit in zip(found, (c.op in ("&&", "||") or not {"if", "elif", "while", "until", "!"}.isdisjoint(c.words[:lead]) or next((cmds[h].words[:1] for h in range(i + 1, len(cmds)) if cmds[h].sub == c.sub), []) in (["then"], ["do"]) or c.func in prev[0], not flags[i][0], c.sub or c.func in prev[2])): names.add(name) if hit else None
+    return found
+def options(cmds: list, errexit: bool, quiet: set = frozenset(), cold: set = frozenset()) -> list:  # [k]: (errexit, xtrace) at cmds[k]; a set applies in text order within its scope: top level, function body or subshell; quiet functions ignore errexit, cold ones start without it
     scope = lambda c: next((s for s in reversed(c.stack) if cmds[s].op == "(" or cmds[s].op == "{" and cmds[s].words), -1)
     shells, flat, fns = lambda c: {-1, *(s for s in c.stack if cmds[s].op == "(")}, lambda i: runs(cmds, i) and (cmds[i].stack[-1:] or (-1,))[0] == scope(cmds[i]), any(c.op == "{" and c.words for c in cmds)  # the subshells around it; runs in straight line in its scope; the file defines a function
     def wide(i: int, c: Cmd, o: tuple, v: bool) -> bool:  # c sets o to v and may apply out of text order, throughout its innermost subshell: in a loop there, tracing where a function may run, or left by a function
@@ -137,19 +136,20 @@ def options(cmds: list, errexit: bool) -> list:  # [k]: (errexit, xtrace) at cmd
         return any(cmds[s].words[:1] in (["while"], ["until"], ["for"], ["select"]) and s > max(shells(c)) for s in c.stack) or v and fns or scope(c) >= 0 and cmds[scope(c)].op == "{" and not (m is not None and flat(m) and flag(cmds[m], v, *o) != v)  # a function's next change of o, before any return, must reset it in straight line
     off, on, traced, now, out = {max(shells(c)) for i, c in enumerate(cmds) if wide(i, c, ERREXIT, False)}, {max(shells(c)) for i, c in enumerate(cmds) if wide(i, c, XTRACE, True)}, any(c.sub and flag(c, False, *XTRACE) for c in cmds), {-1: (errexit, False)}, []  # traced: a $(...) turns tracing on, assumed in every $(...)
     for i, c in enumerate(cmds):
-        e, x = now[s] if (s := scope(c)) in now else now.setdefault(s, now[scope(cmds[s])]); out.append((e and not c.sub and not off & shells(c), x or bool(on & shells(c)) or bool(c.sub) and traced))  # noqa: E702  # a subshell or function body starts from its parent; bash clears errexit in a $(...)
+        e, x = now[s] if (s := scope(c)) in now else now.setdefault(s, ((p := now[scope(cmds[s])])[0] and not (cmds[s].op == "{" and c.func in cold), p[1])); out.append((e and not c.sub and not off & shells(c) and c.func not in quiet, x or bool(on & shells(c)) or bool(c.sub) and traced))  # noqa: E702  # a subshell or function body starts from its parent; bash clears errexit in a $(...)
         if not c.sub: now[s] = (flag(c, e, *ERREXIT), flag(c, x, *XTRACE)) if flat(i) else (e and flag(c, True, *ERREXIT), x or flag(c, False, *XTRACE))  # one that may not run, or runs in another shell, only disables errexit or starts tracing
     return out
 def facts(text: str, line: int = 1, errexit: bool = False) -> tuple:  # (cmds, unparsable line, [(k, var, kind, state)], [(k, var, bytes)], options)
     cmds, error = parse(text, line)
-    flags, acqs = options(cmds, errexit), []
+    ctx, seen, acqs = (set(), set(), set()), None, []
+    while ctx != seen: seen, flags = ctx, options(cmds, errexit, *ctx[:2]); ctx = callers(cmds, flags, ctx)  # noqa: E702  # each round only adds names, so it ends
     for k, cmd in enumerate(cmds):
         var, rhs = (m.group(1), m.group(2)) if (m := ASSIGN.fullmatch(cmd.text)) else ("-", "")
         kind = "" if "idem" in var.lower() else "auth-response" if JQ.search(rhs) else "generated" if NAME.search(var) and GEN.search(shallow(rhs)) else ""
         if kind or (not m and not cmd.sub and JQ.search(cmd.text) and not DEVNULL.search(cmd.text)):  # a bare extraction prints it
-            acqs.append((k, var, kind or "auth-response", state(cmds, k, var, flags) if kind else "unregistered"))
+            acqs.append((k, var, kind or "auth-response", state(cmds, k, var, flags, ctx[2]) if kind else "unregistered"))
         helper = re.fullmatch(r"gha_mask_env(?:_from_command((?: [A-Z][A-Z0-9_]*)+) --| ([A-Z][A-Z0-9_]*)) .+", cmd.text, re.S)  # fail-closed: masks, then exports
-        acqs += [(k, name, "masked-env", "unregistered" if cmd.sub else "late" if flags[k][1] else "registered") for name in (helper.group(1) or helper.group(2)).split()] if helper else []  # in a $(...), the mask is captured but the GITHUB_ENV write still lands
+        acqs += [(k, name, "masked-env", "unregistered" if cmd.sub or cmd.func in ctx[2] else "late" if flags[k][1] else "registered") for name in (helper.group(1) or helper.group(2)).split()] if helper else []  # in a $(...), the mask is captured but the GITHUB_ENV write still lands
     names = {a[1] for a in acqs}
     return cmds, error, acqs, [(k, m.group(1), int(m.group(2)) + int(m.group(3)) if m.group(2) else 10 ** 6) for k, c in enumerate(cmds) for m in PREFIX.finditer(c.text) if m.group(1) in names or NAME.search(m.group(1))], flags
 def expand(word: str, table: dict, env: dict, here: str) -> str:  # script-dir and cd/pwd idioms, known variables, defaults; drops quotes
