@@ -65,9 +65,9 @@ claims:
     status: supported
     invariants: ["I01","I03"]
     findings: []
-    enforcement_points: [{"path":"demo/quickstart/integration_test.sh","symbol":"for verdict in \"ALLOW\" \"DENY\" \"REQUIRE_APPROVAL\""}]
-    tests: []
-    evidence: "The demo checks decision classes; no current deployed no-effect test result is attached."
+    enforcement_points: [{"path":"demo/quickstart/pack/overlays/policy.fragment.yaml","symbol":"demo-quickstart-greet-allow"},{"path":"demo/quickstart/pack/overlays/policy.fragment.yaml","symbol":"demo-quickstart-delete-deny"},{"path":"demo/quickstart/pack/overlays/policy.fragment.yaml","symbol":"demo-quickstart-admin-approve"}]
+    tests: [{"package":"demo/quickstart","name":"TestPolicyFragmentParses"}]
+    evidence: "Three demo policy-fragment rules set the ALLOW, DENY and REQUIRE_APPROVAL verdicts and the cited test parses them; no deployed no-effect run is attached."
     public_sources: ["cordum:README.md:234","cordum:README.md:242","cordum:README.md:248","cordum:README.md:249","cordum:README.md:250"]
   - id: CLM-007
     statement: "Edge requires human approval for Edit and Write operations."
@@ -125,7 +125,7 @@ claims:
     status: supported
     invariants: ["I01","I03","I10"]
     findings: ["R05","R15"]
-    enforcement_points: [{"path":"core/controlplane/gateway/helpers.go","symbol":"server.evaluateSubmitPolicy"},{"path":"core/controlplane/scheduler/engine.go","symbol":"Engine.handleJobRequest"},{"path":"core/edge/claude/agentd_client.go","symbol":"HTTPAgentdClient.EvaluateHook"}]
+    enforcement_points: [{"path":"core/controlplane/gateway/helpers.go","symbol":"server.evaluateSubmitPolicy"},{"path":"core/controlplane/scheduler/engine.go","symbol":"Engine.processJob"},{"path":"core/edge/claude/agentd_client.go","symbol":"HTTPAgentdClient.EvaluateHook"}]
     tests: [{"package":"core/controlplane/gateway","name":"TestGatewayEdgeEvaluateUnknownDecisionEnumFailsClosedWithoutFalseAllow"}]
     evidence: "Default-deny branches exist; no three-path no-effect qualification is attached; open findings R05, R15."
     public_sources: ["cordum:README.md:308","cordum:README.md:309","cordum:README.md:310"]
@@ -155,7 +155,7 @@ claims:
     status: supported
     invariants: ["I01","I03","I07","I09","I10"]
     findings: ["R01","R09","R11","R12","R15"]
-    enforcement_points: [{"path":"core/controlplane/scheduler/engine.go","symbol":"Engine.handleJobRequest"},{"path":"core/controlplane/gateway/handlers_approvals.go","symbol":"server.handleApproveJob"}]
+    enforcement_points: [{"path":"core/controlplane/scheduler/engine.go","symbol":"Engine.processJob"},{"path":"core/controlplane/gateway/handlers_approvals.go","symbol":"server.handleApproveJob"}]
     tests: []
     evidence: "Lifecycle mechanisms exist; their combined protection is unqualified; open findings R01, R09, R11, R12, R15."
     public_sources: ["cordum:README.md:350","cordum:README.md:372","cordum:README.md:373","cordum:README.md:374"]
@@ -255,7 +255,7 @@ claims:
     status: supported
     invariants: ["I01"]
     findings: []
-    enforcement_points: [{"path":"core/licensing/resolver.go","symbol":"EntitlementResolver.ResolvedPlan"},{"path":"core/licensing/tiers.go","symbol":"DefaultEntitlements"}]
+    enforcement_points: [{"path":"core/licensing/resolver.go","symbol":"EntitlementResolver.Init"},{"path":"core/licensing/tiers.go","symbol":"DefaultEntitlements"}]
     tests: [{"package":"core/licensing","name":"TestEntitlementResolverInvalidLicenseFallsBackToCommunity"}]
     evidence: "Fallback/default resolution exists; no end-to-end no-effect qualification of every listed limit is attached."
     public_sources: ["cordum:README.md:658","cordum:README.md:659","cordum:README.md:660","cordum:README.md:661","cordum:README.md:662","cordum:README.md:663","cordum:README.md:664","cordum:README.md:665"]
