@@ -25,9 +25,9 @@ claims:
     status: supported
     invariants: ["I01","I02","I09","I10"]
     findings: ["R01","R02","R14","R15"]
-    enforcement_points: [{"path":"core/edge/agentd/evaluator.go","symbol":"Evaluator.EvaluateHook"},{"path":"core/controlplane/gateway/handlers_edge_evaluate.go","symbol":"server.handleEdgeEvaluate"}]
-    tests: [{"package":"core/edge/agentd","name":"TestEvaluatorCallsGatewayAndRecordsDecisionEvidence"}]
-    evidence: "Hook and gateway evaluation exist; the wrapper is not a qualified endpoint boundary; open findings R01, R02, R14, R15."
+    enforcement_points: [{"path":"core/edge/agentd/evaluator.go","symbol":"Evaluator.evaluateHook"},{"path":"core/controlplane/gateway/handlers_edge_evaluate.go","symbol":"server.handleEdgeEvaluate"},{"path":"examples/cordum-edge-pack/overlays/policy.fragment.yaml","symbol":"claude-code.deny-secret-reads"}]
+    tests: [{"package":"core/edge/agentd","name":"TestEvaluatorCallsGatewayAndRecordsDecisionEvidence"},{"package":"core/edge","name":"TestEdgeDemoPolicyFragmentParsesAndOrdersRules"}]
+    evidence: "Hook and gateway evaluation exist and a demo Edge policy rule denies secret-path reads; the wrapper is not a qualified endpoint boundary; open findings R01, R02, R14, R15."
     public_sources: ["cordum:README.md:14","cordum:README.md:257","cordum:README.md:259","cordum:README.md:260","cordum:README.md:273","cordum:README.md:377","cordum:README.md:381","cordum:README.md:384","cordum:README.md:385","cordum:README.md:386","cordum:README.md:387","cordum:README.md:388","cordum:README.md:438"]
   - id: CLM-003
     statement: "Quickstart runs TLS-secured Redis and generates secrets and certificate keypairs."
@@ -75,9 +75,9 @@ claims:
     status: supported
     invariants: ["I03","I07"]
     findings: ["R05","R09"]
-    enforcement_points: [{"path":"core/controlplane/gateway/handlers_edge_evaluate.go","symbol":"server.handleEdgeEvaluate"}]
-    tests: []
-    evidence: "Approval outcomes are implemented; full-boundary enforcement is unqualified; open findings R05, R09."
+    enforcement_points: [{"path":"examples/cordum-edge-pack/overlays/policy.fragment.yaml","symbol":"claude-code.require-approval-for-edits"},{"path":"core/controlplane/gateway/handlers_edge_evaluate.go","symbol":"server.handleEdgeEvaluate"}]
+    tests: [{"package":"core/edge","name":"TestEdgeDemoPolicyFragmentParsesAndOrdersRules"}]
+    evidence: "A demo Edge policy rule requires approval for file writes and the gateway evaluate path applies it; full-boundary enforcement is unqualified; open findings R05, R09."
     public_sources: ["cordum:README.md:260","cordum:README.md:273"]
   - id: CLM-008
     statement: "Edge exports redacted session evidence and excludes raw prompts, transcripts and tool payloads from audit evidence."
@@ -105,9 +105,9 @@ claims:
     status: supported
     invariants: ["I01","I02","I10"]
     findings: ["R01","R15"]
-    enforcement_points: [{"path":"core/controlplane/gateway/helpers.go","symbol":"server.evaluateSubmitPolicy"},{"path":"core/controlplane/scheduler/engine.go","symbol":"Engine.checkSafetyDecision"}]
-    tests: []
-    evidence: "Submit and dispatch policy checks exist; parity and non-bypassable authority are unqualified; open findings R01, R15."
+    enforcement_points: [{"path":"core/controlplane/gateway/helpers.go","symbol":"server.evaluateSubmitPolicy"},{"path":"core/controlplane/scheduler/engine.go","symbol":"Engine.checkSafetyDecision"},{"path":"core/mcp/policy_evaluate.go","symbol":"EvaluateToolCall"},{"path":"core/controlplane/gateway/handlers_edge_evaluate.go","symbol":"server.handleEdgeEvaluate"}]
+    tests: [{"package":"core/mcp","name":"TestInvokeToolWithPolicy_DenyDoesNotForwardUpstream"}]
+    evidence: "Gateway submit, scheduler dispatch, MCP tool-call and Edge evaluate policy checks exist; parity and non-bypassable authority are unqualified; open findings R01, R15."
     public_sources: ["cordum:README.md:288","cordum:README.md:303","cordum:README.md:611","cordum:README.md:616","cordum:README.md:621"]
   - id: CLM-011
     statement: "Approval-gated CAP jobs, action descriptors, MCP calls and Edge requests use canonical SHA-256 action hashes."
@@ -115,9 +115,9 @@ claims:
     status: supported
     invariants: ["I05"]
     findings: ["R03","R04"]
-    enforcement_points: [{"path":"core/policy/actiongates/mutation_gate.go","symbol":"CanonicalActionHash"},{"path":"core/controlplane/gateway/handlers_edge_evaluate.go","symbol":"edgeEvaluateActionHash"}]
-    tests: [{"package":"core/policy/actiongates","name":"TestCanonicalActionHash_StableUnderKeyReordering"}]
-    evidence: "Canonical hashing exists; complete authorized-input binding is unqualified; open findings R03, R04."
+    enforcement_points: [{"path":"core/protocol/reqhash/reqhash.go","symbol":"Hash"},{"path":"core/policy/actiongates/mutation_gate.go","symbol":"CanonicalActionHash"},{"path":"core/mcp/policy_evaluate.go","symbol":"ActionTupleHash"},{"path":"core/controlplane/gateway/handlers_edge_evaluate.go","symbol":"edgeEvaluateActionHash"}]
+    tests: [{"package":"core/protocol/reqhash","name":"TestHash_DetectsRealPayloadChange"},{"package":"core/policy/actiongates","name":"TestCanonicalActionHash_StableUnderKeyReordering"}]
+    evidence: "Canonical SHA-256 hashing exists for CAP job requests, action descriptors, MCP tool-call tuples and Edge evaluate requests; complete authorized-input binding is unqualified; open findings R03, R04."
     public_sources: ["cordum:README.md:305","cordum:README.md:306","cordum:README.md:307"]
   - id: CLM-012
     statement: "Policy yields explicit verdicts and unknown verdicts are denied by gateway, scheduler and Edge evaluate paths."
@@ -155,9 +155,9 @@ claims:
     status: supported
     invariants: ["I01","I03","I07","I09","I10"]
     findings: ["R01","R09","R11","R12","R15"]
-    enforcement_points: [{"path":"core/controlplane/scheduler/engine.go","symbol":"Engine.processJob"},{"path":"core/controlplane/gateway/handlers_approvals.go","symbol":"server.handleApproveJob"}]
-    tests: []
-    evidence: "Lifecycle mechanisms exist; their combined protection is unqualified; open findings R01, R09, R11, R12, R15."
+    enforcement_points: [{"path":"core/controlplane/scheduler/engine.go","symbol":"Engine.processJob"},{"path":"core/controlplane/gateway/handlers_approvals.go","symbol":"server.handleApproveJob"},{"path":"core/controlplane/scheduler/reconciler.go","symbol":"Reconciler.handleTimeouts"}]
+    tests: [{"package":"core/controlplane/scheduler","name":"TestReconcilerTimeouts"}]
+    evidence: "Pre-dispatch checks, approval resolution and reconciler timeouts exist; their combined protection is unqualified; open findings R01, R09, R11, R12, R15."
     public_sources: ["cordum:README.md:350","cordum:README.md:372","cordum:README.md:373","cordum:README.md:374"]
   - id: CLM-016
     statement: "Safety gating prevents destructive or unauthorized agent actions before they occur."
@@ -175,9 +175,9 @@ claims:
     status: supported
     invariants: ["I02"]
     findings: ["R08"]
-    enforcement_points: [{"path":"core/controlplane/scheduler/output_safety_client.go","symbol":"redactOutputContent"}]
-    tests: [{"package":"core/controlplane/scheduler","name":"TestOutputClientContentModeStoresRedactedOutput"}]
-    evidence: "Scanning/redaction exist; universal blocking and hallucination detection are not qualified; open finding R08."
+    enforcement_points: [{"path":"core/controlplane/scheduler/engine.go","symbol":"Engine.handleJobResult"},{"path":"core/controlplane/scheduler/output_safety_client.go","symbol":"redactOutputContent"}]
+    tests: [{"package":"core/controlplane/scheduler","name":"TestHandleJobResultOutputQuarantined"},{"package":"core/controlplane/scheduler","name":"TestOutputClientContentModeStoresRedactedOutput"}]
+    evidence: "Result handling quarantines output the output policy flags, and content mode stores redacted output; universal blocking and hallucination detection are not qualified; open finding R08."
     public_sources: ["cordum:README.md:432"]
   - id: CLM-018
     statement: "Human-in-the-loop approval mandates oversight for high-risk operations."
@@ -185,9 +185,9 @@ claims:
     status: supported
     invariants: ["I01","I03","I07"]
     findings: ["R05","R09","R13"]
-    enforcement_points: [{"path":"core/controlplane/gateway/handlers_approvals.go","symbol":"server.handleApproveJob"}]
+    enforcement_points: [{"path":"core/controlplane/scheduler/engine.go","symbol":"Engine.processJob"},{"path":"core/controlplane/gateway/handlers_approvals.go","symbol":"server.handleApproveJob"}]
     tests: []
-    evidence: "Human approval handling exists; universal oversight is not qualified; open findings R05, R09, R13."
+    evidence: "A policy-required approval holds the job until a human approves it; universal oversight is not qualified; open findings R05, R09, R13."
     public_sources: ["cordum:README.md:433"]
   - id: CLM-019
     statement: "Pool segmentation keeps sensitive data with agents in trusted environments."
@@ -205,19 +205,19 @@ claims:
     status: supported
     invariants: ["I09"]
     findings: ["R11","R12"]
-    enforcement_points: [{"path":"core/audit/chain_verify.go","symbol":"VerifyChain"}]
-    tests: []
-    evidence: "Audit-chain verification exists; completeness and full reasoning coverage are unqualified; open findings R11, R12."
+    enforcement_points: [{"path":"core/controlplane/scheduler/engine.go","symbol":"Engine.appendDecisionLog"},{"path":"core/audit/chain_verify.go","symbol":"VerifyChain"}]
+    tests: [{"package":"core/controlplane/scheduler","name":"TestCheckSafetyDecisionAppendsDecisionLog"}]
+    evidence: "Scheduler safety decisions are logged with verdict, rule id, policy version and reason, and audit-chain verification exists; completeness and full reasoning coverage are unqualified; open findings R11, R12."
     public_sources: ["cordum:README.md:435"]
   - id: CLM-021
     statement: "Policy Simulator tests governance rules against historical data before rollout."
-    boundary: "The policy simulation APIs and supplied inputs; not a guarantee of equivalence to every production execution."
+    boundary: "The policy replay API (POST /api/v1/policy/replay) over stored jobs from a bounded time window and a candidate or current policy; not a guarantee of equivalence to every production execution."
     status: supported
     invariants: ["I04"]
     findings: ["R06"]
-    enforcement_points: [{"path":"core/controlplane/gateway/handlers_policy.go","symbol":"server.handlePolicySimulate"}]
-    tests: [{"package":"core/controlplane/gateway","name":"TestPolicySimulateActionGateMapping"}]
-    evidence: "Simulation handling exists; rollout-semantic equivalence is not qualified; open finding R06."
+    enforcement_points: [{"path":"core/controlplane/gateway/handlers_policy_replay.go","symbol":"server.handlePolicyReplay"}]
+    tests: [{"package":"core/controlplane/gateway","name":"TestHandlePolicyReplay_Basic"}]
+    evidence: "Replay re-evaluates stored jobs from a bounded time window against a candidate policy; rollout-semantic equivalence is not qualified; open finding R06."
     public_sources: ["cordum:README.md:437"]
   - id: CLM-022
     statement: "CAP workers fail closed without signing keys unless AllowUnsigned; worker-trust enforcement is opt-in after provisioning."
