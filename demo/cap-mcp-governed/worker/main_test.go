@@ -714,6 +714,7 @@ func TestProtocolErrors(t *testing.T) {
 	}{
 		{"approval id missing", keyCreate, approvalRequired("")},
 		{"approval id traversal", keyCreate, approvalRequired("../x")},
+		{"approval id dot-dot", keyCreate, approvalRequired("..")},
 		{"approval id 129 chars", keyCreate, approvalRequired(strings.Repeat("a", 129))},
 		{"approval data not an object", keyCreate, rpcError(-32099, serverSecret)},
 		{"response id mismatch", keyInit, wrongID},
@@ -824,6 +825,7 @@ func TestInvalidInputMakesNoCalls(t *testing.T) {
 		{"neither source", "", []byte(`{}`)},
 		{"null sources", "", []byte(`{"workflow":null,"context":{"workflow":null}}`)},
 		{"job id with slash", "bad/job", directInput(t)},
+		{"job id dot-dot", "..", directInput(t)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
