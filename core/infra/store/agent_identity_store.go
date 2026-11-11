@@ -21,6 +21,15 @@ const (
 	agentByWorkerKeyPrefix = "agent:by-worker:"
 	defaultAgentListLimit  = 50
 	maxAgentListLimit      = 200
+
+	// agentWorkerLinksKeyPrefix keys one Redis hash per tenant
+	// (agent:worker-links:<tenantID>), with field = worker or principal ID and
+	// value = agent identity ID. It is deliberately NOT under
+	// agentByWorkerKeyPrefix: worker IDs are only whitespace-validated and the
+	// POST /api/v1/agents agent_id is not validated, so either can contain ':'.
+	// A "agent:by-worker:<tenant>:<worker>" string key would therefore be
+	// ambiguous across tenants and could collide with legacy keys.
+	agentWorkerLinksKeyPrefix = "agent:worker-links:"
 )
 
 var validRiskTiers = map[string]bool{
@@ -455,6 +464,38 @@ func (s *AgentIdentityStore) GetByWorkerID(ctx context.Context, workerID string)
 		return nil, fmt.Errorf("get agent by worker %s: %w", workerID, err)
 	}
 	return s.Get(ctx, "", agentID)
+}
+
+// GetByWorkerIDForTenant returns the agent identity linked to workerID within
+// tenantID, or nil when there is none. The per-tenant hash
+// agent:worker-links:<tenant> is authoritative for its tenant; only when it
+// has no entry does the read fall back to the legacy global
+// agent:by-worker:<worker> key, written before tenant qualification. Either
+// way the identity must belong to tenantID, so a link naming another tenant's
+// agent, or an agent with no tenant, resolves to nil.
+func (s *AgentIdentityStore) GetByWorkerIDForTenant(ctx context.Context, tenantID, workerID string) (*AgentIdentity, error) {
+	if s == nil || s.client == nil {
+		return nil, fmt.Errorf("agent_identity_store: redis client not initialized")
+	}
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		return nil, fmt.Errorf("tenant id required")
+	}
+	workerID = strings.TrimSpace(workerID)
+	if workerID == "" {
+		return nil, fmt.Errorf("worker id required")
+	}
+	agentID, err := s.client.HGet(ctx, agentWorkerLinksKeyPrefix+tenantID, workerID).Result()
+	if err == redis.Nil {
+		agentID, err = s.client.Get(ctx, agentByWorkerKeyPrefix+workerID).Result()
+		if err == redis.Nil {
+			return nil, nil
+		}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get agent by worker %s in tenant %s: %w", workerID, tenantID, err)
+	}
+	return s.Get(ctx, tenantID, agentID)
 }
 
 // LinkWorker creates a reverse-lookup mapping from worker ID to agent identity ID.
