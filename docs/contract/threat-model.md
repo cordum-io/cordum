@@ -142,10 +142,82 @@ Clients and workload-controlled components require re-checks at trusted boundari
 
 These properties assess mediation, tamper resistance and analyzability without assuming deployment qualification.
 
+The roadmap invariants I01-I10 are targets, not achieved certifications: authority before effects; restriction fidelity; hard-prohibition precedence; policy identity; authorized-input fidelity; delivery versus completion; bounded revocation; honest unknown outcomes; required evidence; and non-weakening execution paths. M0-03/M0-04/M0-13 are planned contract/entry-point checks.
+
+### Always mediated
+
+Requirement: every protected effect must pass an authorization point that its workload cannot skip.
+
+There are distinct mediation mechanisms: Gateway Edge calls the kernel (`core/controlplane/gateway/handlers_edge_evaluate.go:433-439`), the Scheduler checks before dispatch (`core/controlplane/scheduler/engine.go`), and Gateway MCP runs an in-process action-gate dispatcher without a kernel RPC (`core/controlplane/gateway/mcp_policy_wire.go:75-88`, `core/mcp/policy_evaluate.go`). The Scheduler also has a stored-approval fast path, with request-hash and policy-snapshot checks (`core/controlplane/scheduler/engine.go:2276-2340`). These are separate decision paths, not evidence of one universal monitor.
+
+Inline workflow steps execute inside the engine, without job dispatch (`core/workflow/engine.go:1163-1195`, `core/workflow/engine.go:2306-2340`, `docs/adr/004-inline-vs-dispatch-steps.md`). Edge observe-mode failure handling can return allow with degraded evidence (`core/edge/agentd/fail_modes.go:88-160`). TB9's independently held external credentials remain a deployment assumption, not an exhaustively measured boundary. *(not verified)*
+
+Current status: `supported` for the listed paths; universal effect mediation is `unsupported`.
+
+### Tamper resistant
+
+Requirement: the workload must not be able to alter the monitor, its policy, credentials or decision evidence.
+
+Policy signature modes exist for file/URL policy loading (`core/controlplane/safetykernel/file_loader.go`); Gateway bundle publication is a privileged path (`core/controlplane/gateway/handlers_policy_bundles.go`). Redis policy/configuration writes use the connection's permissions (`core/configsvc/service.go:53-70`, `core/configsvc/service.go:84-126`): anyone with the corresponding write-capable `REDIS_URL` credentials can exercise those permissions. A URL alone is not proof of unrestricted Redis rights; deployed ACL separation is *(not verified)*.
+
+Kernel gRPC server TLS is mandatory only when production mode is selected, and this wiring does not require client certificates (`core/controlplane/safetykernel/kernel.go:349-371`). Endpoint keychain/managed settings and install-time signature/hash verification exist (`core/edge/keychain/bootstrap.go`, `core/edge/claude/managed_settings.go`, `tools/scripts/install.sh`, `tools/scripts/install.ps1`). Actual signing-key provisioning and installed-artifact integrity on any endpoint were not measured; no runtime enclave or hostile-administrator protection is claimed (`docs/security/binary-signing.md`).
+
+Current status: `supported` mechanisms under trusted administration; resistance to a hostile endpoint administrator is `unsupported`.
+
+### Small enough to analyze
+
+Requirement: the entire authorization trusted computing base must be small and explicit enough for a reviewer to analyze as one boundary.
+
+The decision surfaces are distributed: kernel job/input/output decisions (`core/controlplane/safetykernel/kernel.go`, `core/controlplane/safetykernel/input_policy.go`, `core/controlplane/safetykernel/output_policy.go`); rule evaluation (`core/infra/config/safety_policy.go`); Gateway HTTP/gRPC authorization, Edge outcomes and human/MCP approvals (`core/controlplane/gateway/`, `core/controlplane/gateway/auth/`); MCP dispatch and approval handling (`core/mcp/`); action-gate decisions (`core/policy/actiongates/`); Scheduler safety/approval, worker dispatch and compensation (`core/controlplane/scheduler/`); workflow inline approval/control decisions (`core/workflow/engine.go`); endpoint classification, hook response and fail-mode decisions (`core/edge/`). This is a package-level review map, not a claim that supporting auth/storage dependencies are excluded from trust.
+
+Measured at the reviewed commit, recursive tracked non-test Go lines (including comments and blank lines), per package tree and combined:
+
+| package tree | lines |
+| --- | ---: |
+| `core/controlplane/safetykernel/` | 8,049 |
+| `core/controlplane/gateway/` | 60,158 |
+| `core/controlplane/scheduler/` | 13,793 |
+| `core/workflow/` | 8,978 |
+| `core/edge/` | 36,263 |
+| `core/mcp/` | 14,741 |
+| `core/policy/actiongates/` | 2,997 |
+| `core/infra/config/` | 3,299 |
+| Total | 148,278 |
+
+Reproduce at the reviewed commit with `git ls-files -- <dirs> | grep -E '[.]go$' | grep -vE '_test[.]go$' | xargs cat | wc -l`, substituting each package tree above and then all eight together. This count is a size proxy, not a complexity metric or proof of correctness. A 148,278-line distributed decision surface does not substantiate a small single reference monitor.
+
+Current status: `unsupported` as a small, comprehensively analyzed platform monitor; reducing/qualifying the boundary remains planned.
+
 ## Non-promises
 
 These exclusions bound the security promise rather than weakening an implicit universal guarantee.
 
+1. Protection against a hostile endpoint administrator on a trusted endpoint. Why: the administrator controls the OS, binaries and managed settings that the Edge path relies on (`docs/security/binary-signing.md`, `docs/security/agentd-keychain.md`).
+2. Universal understanding of arbitrary program behavior. Why: classifiers inspect declared actions rather than all consequences of arbitrary execution, so such code needs confinement rather than presumed understanding (`core/edge/classifier.go`, `docs/edge-074-policy-mechanism.md`).
+3. Automatic reversal of committed external changes. Why: undo depends on the external system; Cordum's compensation jobs are best effort, not transactional reversal (`core/controlplane/scheduler/saga.go:360-417`), and broader reconciliation is planned.
+4. Generic exactly-once external effects. Why: even single-use authorization cannot remove uncertainty after a remote commit but before its response is saved; the roadmap lifecycle calls for reconciliation rather than reporting that uncertainty as success, and is not a delivered lifecycle claim.
+5. That a signed receipt proves the signer was honest. Why: a signature associates a key with bytes, not the truth of the signer's statement; key ownership and honest event production remain separate assumptions (`docs/audit-chain.md`, `docs/mcp/outbound-signing.md`).
+
 ## Deployment boundary
 
-Deployment conditions limit which protection claims can eventually be qualified.
+The intended promise is enforceable authorization within a declared, tested deployment boundary, with no claim outside it. The following are necessary conditions for qualification, not evidence that a deployment has met them.
+
+### Inside the boundary
+
+| component/condition | setting and source default | qualification requirement |
+| --- | --- | --- |
+| Gateway transport | `GATEWAY_HTTP_TLS_CERT` / `GATEWAY_HTTP_TLS_KEY` default empty; so do `GRPC_TLS_CERT` / `GRPC_TLS_KEY`. Production rejects missing TLS (`core/controlplane/gateway/gateway.go:963-988`, `core/controlplane/gateway/gateway.go:1274-1283`). | Configure authenticated clients, server TLS and trusted keys; HTTP/gRPC authorization remains required. |
+| Production mode and kernel transport | `CORDUM_PRODUCTION` defaults false; `CORDUM_ENV` defaults empty, with prod/production selecting production. Kernel certificate/key default empty and are required in production (`core/infra/env/env.go:19-40`, `core/controlplane/safetykernel/kernel.go:349-371`). | Select production explicitly; configure `SAFETY_KERNEL_TLS_CERT` / `SAFETY_KERNEL_TLS_KEY`, and restrict private kernel access rather than treating server TLS as caller authentication. |
+| Redis and NATS | `REDIS_URL` defaults to local Redis on port 6379; `NATS_URL` to local NATS on 4222, without embedded credentials. Production requires explicit values (`core/infra/config/config.go:11-14`, `core/infra/config/config.go:48-57`, `core/infra/env/env.go:81-100`). | Private network, credentialed connections and constrained identities; actual ACL/TLS configuration *(not verified)*. |
+| Worker identity and readiness | `WORKER_ATTESTATION` defaults `off` (`core/controlplane/scheduler/credential_cache.go:39-49`); `WORKER_READINESS_REQUIRED` defaults false and readiness TTL to 60s (`core/controlplane/scheduler/readiness.go:14-46`). `CORDUM_SDK_HANDSHAKE` has no accepted empty default (`core/infra/handshakemode/mode.go`). | Select and qualify a worker-authentication mode and readiness policy explicitly. Active legacy attestation and active session-handshake modes cannot be combined (`cmd/cordum-scheduler/worker_security_modes.go:11-29`); do not blindly enable both. |
+| Trusted Edge endpoint | `CORDUM_EDGE_POLICY_MODE` defaults `observe`; `CORDUM_AGENTD_FAIL_CLOSED` defaults false (`core/edge/agentd/config.go:50-78`). Bootstrap defaults dev unless `CORDUM_AGENTD_STRICT` or enterprise-strict mode selects strict (`cmd/cordum-agentd/bootstrap.go:81-94`). | Enterprise-strict, strict keychain bootstrap, deployed managed settings and controlled binaries; generated managed settings select strict mode (`core/edge/claude/managed_settings.go:56-83`), but deployment and integrity require measurement. |
+| Policy signatures | File/URL `CORDUM_POLICY_STRICT` defaults to `warn` outside production and `enforce` in production; legacy `SAFETY_POLICY_SIGNATURE_REQUIRED` selects enforce (`core/controlplane/safetykernel/file_loader.go:86-114`). | Configure trusted keys and enforce-mode publication/loading; qualify bundle policy separately, not just a file-policy flag (`core/controlplane/safetykernel/policy_signing.go`). |
+| Gateway MCP policy path | `mcp.policy_gate_enabled` defaults false (`core/controlplane/gateway/handlers_mcp.go:41-50`). | Explicitly configure and measure the intended MCP gate path; existence of a server is not evidence it mediates all calls. |
+
+### Outside the boundary
+
+Excluded are the hostile endpoint administrator, unmanaged developer machines, independently agent-held external credentials, external systems' own authorization/commit semantics, and any configuration that weakens the conditions above. Observe mode is explicitly non-strict in the local failure policy (`core/edge/agentd/fail_modes.go:150-160`). No protected-effect claim extends to an unmeasured alternative route.
+
+### Reference deployment
+
+M0-02 defines the reference deployment (planned), using the existing `cordum-helm/` and `deploy/k8s/` artifacts. No deployment is qualified by this document: not measured. Qualification must pin source/artifact/policy/authority versions, executor/platform and deployment settings, test corpus, negative-effect evidence and open exceptions; source review or a successful documentation verifier is not deployed security evidence.
