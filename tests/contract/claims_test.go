@@ -156,6 +156,21 @@ func TestClaimsReferenceHelpers(t *testing.T) {
 	}
 }
 
+func TestClaimsRepoRoot(t *testing.T) {
+	root := claimsFixture(t)
+	write(t, filepath.Join(root, "go.mod"), "module fixture\n")
+	t.Chdir(filepath.Join(root, "pkg"))
+	for _, dir := range []string{".", filepath.Join(root, "pkg")} {
+		got, err := repoRoot(dir)
+		if err != nil || got != root {
+			t.Errorf("repoRoot(%q) = %q, %v; want %q", dir, got, err, root)
+		}
+	}
+	if _, err := repoRoot(t.TempDir()); err == nil {
+		t.Error("missing go.mod must return an error")
+	}
+}
+
 func TestClaimsRegister(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {

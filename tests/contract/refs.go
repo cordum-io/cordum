@@ -16,7 +16,11 @@ import (
 
 // repoRoot walks up from dir to the directory that holds go.mod.
 func repoRoot(dir string) (string, error) {
-	for d := dir; ; d = filepath.Dir(d) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("resolve repo directory: %w", err)
+	}
+	for d := abs; ; d = filepath.Dir(d) {
 		if _, err := os.Stat(filepath.Join(d, "go.mod")); err == nil {
 			return d, nil
 		}
