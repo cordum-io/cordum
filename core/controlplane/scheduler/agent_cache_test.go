@@ -137,6 +137,53 @@ func TestAgentResolver_UnlinkedWorker(t *testing.T) {
 	}
 }
 
+// TestAgentResolver_StoreLinkScopedToCredentialTenant proves a store link only
+// labels a worker within the tenant of its cached credential: a link naming
+// another tenant's agent, a worker with no cached credential, and a credential
+// with no tenant all resolve to unlinked.
+func TestAgentResolver_StoreLinkScopedToCredentialTenant(t *testing.T) {
+	resolver, agentStore := newTestAgentResolver(t)
+	ctx := context.Background()
+
+	// Agents are created (with a tenant) BEFORE linking: the capstone makes
+	// LinkWorker reject unknown or untenanted agents.
+	agentA, err := agentStore.Create(ctx, store.AgentIdentity{TenantID: "tenant-a", Name: "agent-a", Owner: "admin", RiskTier: "low"})
+	if err != nil {
+		t.Fatalf("create agent-a: %v", err)
+	}
+	agentB, err := agentStore.Create(ctx, store.AgentIdentity{TenantID: "tenant-b", Name: "agent-b", Owner: "admin", RiskTier: "high"})
+	if err != nil {
+		t.Fatalf("create agent-b: %v", err)
+	}
+	links := map[string]string{
+		"worker-own":        agentA.ID,
+		"worker-foreign":    agentB.ID,
+		"worker-nocred":     agentA.ID,
+		"worker-untenanted": agentA.ID,
+	}
+	for workerID, agentID := range links {
+		if err := agentStore.LinkWorker(ctx, agentID, workerID); err != nil {
+			t.Fatalf("link %s: %v", workerID, err)
+		}
+	}
+
+	resolver.credCache.mu.Lock()
+	resolver.credCache.records["worker-own"] = workercredentials.Credential{WorkerID: "worker-own", TenantID: "tenant-a"}
+	resolver.credCache.records["worker-foreign"] = workercredentials.Credential{WorkerID: "worker-foreign", TenantID: "tenant-a"}
+	resolver.credCache.records["worker-untenanted"] = workercredentials.Credential{WorkerID: "worker-untenanted"}
+	resolver.credCache.mu.Unlock()
+
+	own := resolver.Resolve(ctx, "worker-own")
+	if own.AgentID != agentA.ID || own.Name != "agent-a" || own.RiskTier != "low" {
+		t.Errorf("worker-own = %+v, want AgentID %q Name agent-a RiskTier low", own, agentA.ID)
+	}
+	for _, workerID := range []string{"worker-foreign", "worker-nocred", "worker-untenanted"} {
+		if info := resolver.Resolve(ctx, workerID); info.AgentID != agentCacheUnlinked {
+			t.Errorf("%s AgentID = %q, want %q", workerID, info.AgentID, agentCacheUnlinked)
+		}
+	}
+}
+
 func TestAgentResolver_UnknownWorker(t *testing.T) {
 	resolver, _ := newTestAgentResolver(t)
 	ctx := context.Background()
