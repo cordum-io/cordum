@@ -172,11 +172,8 @@ func (g *gatewayApprovalGate) WithInvariantLookup(lookup MCPInvariantLookup) *ga
 //     mint wired (policy gate on) the Edge approval is the only resume
 //     authority instead: see useConsumedEdgeApproval.
 //  4. On miss, EnqueueMCPApproval (persisting the canonical args blob)
-//     and return *ApprovalRequired → JSON-RPC -32099.
-//
-// Store failures in steps 3-4 wrap mcp.ErrApprovalStoreUnavailable and
-// surface as -32096 approval_store_unavailable (fixed reason; the cause
-// is logged, never returned). Request-shape failures do not.
+//     and return *ApprovalRequired → JSON-RPC -32099. Store errors in
+//     3-4 wrap mcp.ErrApprovalStoreUnavailable (-32096).
 func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params json.RawMessage) (*mcp.ApprovalRequired, error) {
 	if g == nil || g.store == nil {
 		return nil, nil
@@ -274,10 +271,8 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 		Requester: requester,
 		Reason:    approvalReasonFor(tool),
 	}
-	// Validate before enqueueing so a request-shape failure (e.g. an
-	// empty agent_id once X-Agent-Id binding leaves AgentID unset) stays
-	// a gateway wiring error, not a retryable approval_store_unavailable:
-	// retrying a call that can never succeed helps nobody.
+	// Validate first: a request-shape failure (e.g. an empty agent_id) is
+	// a wiring error, not a retryable approval_store_unavailable.
 	if err := validateMCPApprovalRequest(req); err != nil {
 		return nil, fmt.Errorf("mcp gate: enqueue: %w", err)
 	}
