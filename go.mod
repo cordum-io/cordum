@@ -18,7 +18,7 @@ require (
 	github.com/cordum-io/cap/v2 v2.17.0
 	github.com/cordum/cordum/sdk v0.0.0
 	github.com/coreos/go-oidc/v3 v3.21.0
-	github.com/crewjam/saml v0.6.1
+	github.com/crewjam/saml v0.6.3
 	github.com/expr-lang/expr v1.17.8
 	github.com/go-jose/go-jose/v4 v4.1.9
 	github.com/golang-jwt/jwt/v5 v5.3.1

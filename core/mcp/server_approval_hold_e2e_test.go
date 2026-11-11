@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -264,6 +266,58 @@ func TestJSONRPC_ApprovalStoreUnavailableWiresTo32096(t *testing.T) {
 	}
 	if got, _ := data["kind"].(string); got != "approval_store_unavailable" {
 		t.Errorf("error.data.kind = %q; want approval_store_unavailable", got)
+	}
+}
+
+// TestJSONRPC_ApprovalStoreUnavailableReasonIsSanitized pins the leak fix
+// (task-66234a92): the wrapped store cause names internal infrastructure
+// (a Redis dial error with host:port), so the -32096 error.data must carry
+// only the fixed kind + reason, never err.Error().
+func TestJSONRPC_ApprovalStoreUnavailableReasonIsSanitized(t *testing.T) {
+	t.Parallel()
+	registry := NewToolRegistry()
+	tool := Tool{Name: "fs.write", RequiresApproval: true}
+	if err := registry.Register(tool, func(_ context.Context, _ json.RawMessage) (*ToolCallResult, error) {
+		t.Fatal("tool handler must NOT execute when gate returns approval_store_unavailable")
+		return nil, nil
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	dialErr := &net.OpError{
+		Op: "dial", Net: "tcp",
+		Addr: &net.TCPAddr{IP: net.IPv4(10, 20, 30, 40), Port: 6379},
+		Err:  errors.New("connect: connection refused"),
+	}
+	registry.SetApprovalGate(approvalGateFunc(func(_ context.Context, _ Tool, _ json.RawMessage) (*ApprovalRequired, error) {
+		return nil, fmt.Errorf("%w: edge approval mint failed: %w", ErrApprovalStoreUnavailable, dialErr)
+	}))
+	srv := NewServer(newChannelTransport(), registry, NewResourceRegistry(), ServerConfig{
+		Name: "test", Version: "0.0.0", ProtocolVersion: DefaultProtocolVersion,
+	})
+
+	params, _ := json.Marshal(map[string]any{
+		"name":      tool.Name,
+		"arguments": map[string]any{"path": "/etc/hostname"},
+	})
+	_, rpcErr := srv.handleToolsCall(context.Background(), params)
+	if rpcErr == nil {
+		t.Fatal("expected -32096 JSON-RPC error on approval_store_unavailable; got nil")
+	}
+	if rpcErr.Code != jsonRPCApprovalLifecycleErrorCode || rpcErr.Message != "approval lifecycle error" {
+		t.Errorf("rpcErr = %d %q; want %d \"approval lifecycle error\"", rpcErr.Code, rpcErr.Message, jsonRPCApprovalLifecycleErrorCode)
+	}
+	want := map[string]any{"kind": "approval_store_unavailable", "reason": "approval store unavailable"}
+	if !reflect.DeepEqual(rpcErr.Data, want) {
+		t.Errorf("error.data = %#v; want %#v", rpcErr.Data, want)
+	}
+	raw, err := json.Marshal(rpcErr)
+	if err != nil {
+		t.Fatalf("marshal rpcErr: %v", err)
+	}
+	for _, leak := range []string{"10.20.30.40", "dial tcp"} {
+		if strings.Contains(string(raw), leak) {
+			t.Errorf("JSON-RPC error leaks %q: %s", leak, raw)
+		}
 	}
 }
 

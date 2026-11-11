@@ -360,9 +360,24 @@ jobs:
       continue-on-error: true
       run: pnpm run lhci
 
+    # lighthouserc.json uploads to temporary-public-storage, which writes only
+    # links.json. The filesystem target is what writes manifest.json, and
+    # LHCI_NO_LIGHTHOUSERC keeps this extra upload from inheriting the rc's target.
+    - name: Write Lighthouse CI manifest for the PR comment
+      id: lhci-manifest
+      if: always() && steps.lhci.outcome != 'skipped'
+      working-directory: dashboard
+      continue-on-error: true
+      env:
+        LHCI_NO_LIGHTHOUSERC: "1"
+      run: pnpm exec lhci upload --target=filesystem --outputDir=.lighthouseci/filesystem
+
     - name: Comment Lighthouse scores on PR
       if: always() && steps.lhci.outcome != 'skipped'
       uses: actions/github-script@v9
+      env:
+        LHCI_OUTCOME: ${{ steps.lhci.outcome }}
+        MANIFEST_OUTCOME: ${{ steps.lhci-manifest.outcome }}
       with:
         script: |
           const fs = require('fs');
@@ -372,11 +387,11 @@ jobs:
           const marker = '<!-- lighthouse-login-report -->';
           let body = `${marker}\n### Lighthouse CI — \`/login\`\n\n`;
           try {
-            const manifestPath = path.join(dashboardDir, lhciDir, 'manifest.json');
+            const manifestPath = path.join(dashboardDir, lhciDir, 'filesystem', 'manifest.json');
             const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
             const median = manifest.find(m => m.isRepresentativeRun) || manifest[0];
             if (!median) {
-              body += '_No representative run found in manifest._\n';
+              body += `_No representative run found in manifest (lhci: ${process.env.LHCI_OUTCOME}, manifest: ${process.env.MANIFEST_OUTCOME})._\n`;
             } else {
               const summary = median.summary || {};
               const fmt = v => (v == null ? 'n/a' : Math.round(v * 100));
@@ -385,11 +400,19 @@ jobs:
               body += `| Accessibility | ${fmt(summary.accessibility)} |\n`;
               body += `| Best Practices | ${fmt(summary['best-practices'])} |\n`;
               body += `| SEO | ${fmt(summary.seo)} |\n\n`;
-              if (median.url) body += `Run URL: ${median.url}\n`;
+              // The filesystem manifest's url is the audited (runner-local) URL.
+              // temporary-public-storage records the public report URL per
+              // audited URL in links.json; prefer it when present.
+              let reportUrl = median.url;
+              try {
+                const links = JSON.parse(fs.readFileSync(path.join(dashboardDir, lhciDir, 'links.json'), 'utf8'));
+                if (links && links[median.url]) reportUrl = links[median.url];
+              } catch (_) { /* no public upload; keep the audited URL */ }
+              if (reportUrl) body += `Run URL: ${reportUrl}\n`;
             }
             body += `\n_Soft thresholds (warn-only): perf ≥ 70, a11y ≥ 90, best-practices ≥ 85. Authenticated-flow lhci is filed as a follow-up task._`;
           } catch (e) {
-            body += `_Lighthouse CI artifacts unavailable: ${e.message}_`;
+            body += `_Lighthouse CI results unavailable (lhci: ${process.env.LHCI_OUTCOME}, manifest: ${process.env.MANIFEST_OUTCOME}): ${e.message}_`;
           }
           const { owner, repo } = context.repo;
           const issue_number = context.payload.pull_request.number;
