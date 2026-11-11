@@ -69,7 +69,6 @@ func TestInProcessTaintStore_RoundTripAndIsolation(t *testing.T) {
 	}
 }
 
-
 // TestInProcessTaintStore_ConcurrentRefreshNotReportedClean pins the fix for the
 // expiry-window race: GetTaint snapshots the entry, finds it expired on the STALE
 // snapshot, then re-checks under the write lock. If a concurrent Taint refreshed
