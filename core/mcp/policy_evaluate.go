@@ -244,6 +244,10 @@ type ApprovalHandoff interface {
 // derives. Without this field the mint had no way to compute the
 // args hash and was storing ActionHash in its place — surfacing as
 // ApprovalConflictKindArgsMismatch on every legitimate retry.
+//
+// EventID is the policy pre-event (mcp.tool.pre) the Edge approval binds
+// to: EnqueueApproval requires it to name an existing event whose
+// InputHash and PolicySnapshot match the mint (task-63400922).
 type ToolCallApprovalContext struct {
 	Tenant     string
 	AgentID    string
@@ -251,6 +255,7 @@ type ToolCallApprovalContext struct {
 	Tool       string
 	ActionHash string
 	Args       json.RawMessage
+	EventID    string
 }
 
 // ToolCallDeps bundles the production wiring EvaluateToolCall and
@@ -269,6 +274,10 @@ type ToolCallDeps struct {
 	ApprovalHandoff ApprovalHandoff
 	Clock           func() time.Time
 	EventIDFactory  func() string
+	// PolicySnapshot, when set, stamps the pre-event with the policy
+	// snapshot an Edge approval minted for the call binds to
+	// (task-63400922). Optional: nil leaves the event's snapshot empty.
+	PolicySnapshot func(context.Context) string
 	// DedupeState scopes retry dedupe to a single caller (HTTP server,
 	// test fixture) instead of a global map. Production wires this to
 	// either a NewInProcessDedupeStore (single-instance gateway) or a
@@ -302,6 +311,29 @@ type EvaluateToolCallResult struct {
 	Decision    PolicyDecision
 	PreEvent    *edge.AgentActionEvent
 	ArtifactPtr *edge.ArtifactPointer
+}
+
+// PolicyPreEvent identifies the mcp.tool.pre event the policy evaluator
+// emitted for the in-flight tool call. InvokeToolWithPolicy places it on
+// the ctx it hands upstream, so the registry approval gate can bind an
+// Edge approval to that real parent event (task-63400922 E1).
+type PolicyPreEvent struct {
+	EventID        string
+	InputHash      string
+	PolicySnapshot string
+}
+
+type policyPreEventKey struct{}
+
+func withPolicyPreEvent(ctx context.Context, pre PolicyPreEvent) context.Context {
+	return context.WithValue(ctx, policyPreEventKey{}, pre)
+}
+
+// PolicyPreEventFromContext returns the policy pre-event of the in-flight
+// tool call; ok is false when the policy gate did not evaluate it.
+func PolicyPreEventFromContext(ctx context.Context) (PolicyPreEvent, bool) {
+	pre, ok := ctx.Value(policyPreEventKey{}).(PolicyPreEvent)
+	return pre, ok
 }
 
 // errMissingMCPMetadata is returned when the calling middleware did
@@ -539,6 +571,14 @@ func EvaluateToolCall(ctx context.Context, deps ToolCallDeps, params ToolCallPar
 		Kind:        edge.EventKindMCPToolPre,
 		ToolName:    params.Name,
 		ActionName:  params.Name,
+	}
+	// Approval binding (task-63400922 E2): EnqueueApproval checks an Edge
+	// approval's InputHash and PolicySnapshot against its parent event, so
+	// stamp both. Hash the RAW params, as the mint and the consume do,
+	// never redactedArgs.
+	_, event.InputHash = BuildMCPApprovalBinding(meta.Tenant, server, params, "")
+	if deps.PolicySnapshot != nil {
+		event.PolicySnapshot = deps.PolicySnapshot(ctx)
 	}
 
 	inlineRedacted, artifactPtr, err := materializeRedactedPayload(ctx, deps, redactedArgs, event, edge.ArtifactTypeMCPRequest)
@@ -884,6 +924,9 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 			// mint side can compute the same InputHash that
 			// ProcessApprovalClaim's BuildMCPApprovalBinding produces.
 			Args: params.Arguments,
+			// task-63400922: the Edge approval binds to this call's
+			// pre-event, never to the agent id.
+			EventID: evalResult.PreEvent.EventID,
 		})
 		if herr != nil {
 			finalErr = fmt.Errorf("approval handoff: %w", herr)
@@ -922,7 +965,15 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 		finalErr = errors.New("deps.Upstream is required for ALLOW decisions")
 		return nil, finalErr
 	}
-	upstreamResult, upstreamErr := deps.Upstream.Invoke(ctx, params)
+	// Only the upstream call sees the pre-event: the registry approval gate
+	// binds its Edge mint to it (task-63400922 E1). Events and dedupe keep
+	// ctx.
+	upstreamCtx := withPolicyPreEvent(ctx, PolicyPreEvent{
+		EventID:        evalResult.PreEvent.EventID,
+		InputHash:      evalResult.PreEvent.InputHash,
+		PolicySnapshot: evalResult.PreEvent.PolicySnapshot,
+	})
+	upstreamResult, upstreamErr := deps.Upstream.Invoke(upstreamCtx, params)
 	if upstreamErr != nil {
 		failed := newPostEvent(evalResult.PreEvent, deps.Clock, edge.EventKindMCPToolFailed, dec)
 		failed.ErrorMessage = sanitizeUpstreamError(upstreamErr)
