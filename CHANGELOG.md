@@ -95,14 +95,12 @@ Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
 
 #### MCP approval-store outage errors no longer leak the Redis address (2026-11-11, task-66234a92)
 
-- When the MCP approval store is unreachable, an approval-required HTTP MCP
-  `tools/call` now returns `-32096` with `error.data` =
+- With the MCP approval store unreachable, an approval-required HTTP MCP
+  `tools/call` returns `-32096` with `error.data` =
   `{"kind": "approval_store_unavailable", "reason": "approval store unavailable"}`
-  and runs nothing. It used to return `-32603`, and its `error.data` echoed
-  the raw Redis error, internal host:port included.
-- The Edge-mint `-32096` `reason` no longer echoes the store error either.
-  Operators find the cause in the gateway log
-  (`mcp approval store unavailable`).
+  and runs nothing. It used to return `-32603` with the raw Redis error,
+  internal host:port included. Every `approval_store_unavailable` `reason`,
+  Edge store included, is now that fixed text; the gateway logs the cause.
 
 #### core/infra/store, core/controlplane/scheduler — worker-to-agent links resolve only within the worker's tenant (2026-11-11, task-76c90c6e)
 
