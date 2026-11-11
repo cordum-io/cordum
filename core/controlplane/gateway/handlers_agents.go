@@ -21,7 +21,7 @@ type createAgentRequest struct {
 	Name string `json:"name"`
 	// AgentID, when set, registers this identity for an existing worker. The
 	// server links worker_id -> identity (LinkWorker) so audit/scheduler
-	// resolution via GetByWorkerID surfaces the human label instead of the raw
+	// resolution via GetByWorkerIDForTenant surfaces the human label instead of the raw
 	// agent_id (#314). Empty preserves the prior behaviour (unlinked identity).
 	AgentID                  string   `json:"agent_id,omitempty"`
 	Description              string   `json:"description,omitempty"`
@@ -131,8 +131,8 @@ func (s *server) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Only a worker link in the caller's tenant conflicts. Another tenant's
-	// link must neither block registration nor reveal that it exists.
-	// LinkWorker still writes the legacy global key until writers are migrated.
+	// link must neither block registration nor reveal that it exists, and
+	// LinkWorker writes only into this tenant's links.
 	workerID := strings.TrimSpace(req.AgentID)
 	if workerID != "" {
 		if existing, lookupErr := s.agentIdentityStore.GetByWorkerIDForTenant(r.Context(), tenant, workerID); lookupErr == nil && existing != nil {
@@ -164,7 +164,7 @@ func (s *server) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Link the worker so GetByWorkerID-based resolution (audit enrichment,
+	// Link the worker so GetByWorkerIDForTenant resolution (audit enrichment,
 	// scheduler, MCP/job principals) maps this worker's agent_id to the new
 	// identity. Without this the identity exists but audit rows still fall
 	// back to the raw agent_id — the exact bug #314 set out to fix. The

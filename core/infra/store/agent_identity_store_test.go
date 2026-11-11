@@ -388,58 +388,175 @@ func TestAgentIdentityDelete(t *testing.T) {
 	}
 }
 
-func TestAgentIdentityGetByWorkerID(t *testing.T) {
+func TestAgentIdentityWorkerLinkLifecycle(t *testing.T) {
 	s := newTestAgentIdentityStore(t)
 	ctx := context.Background()
+	a := createTenantAgent(t, s, "tenant-a", "linked-agent")
+	assertLinkedAgent(t, s, "tenant-a", "worker-1", "")
 
-	created, err := s.Create(ctx, AgentIdentity{
-		TenantID: "tenant-a",
-		Name:     "linked-agent",
-		Owner:    "admin",
-		RiskTier: "medium",
-	})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-
-	// Before linking, should return nil
-	got, err := s.GetByWorkerID(ctx, "worker-1")
-	if err != nil {
-		t.Fatalf("GetByWorkerID before link: %v", err)
-	}
-	if got != nil {
-		t.Fatal("expected nil before linking")
-	}
-
-	// Link and verify
-	if err := s.LinkWorker(ctx, created.ID, "worker-1"); err != nil {
+	if err := s.LinkWorker(ctx, " "+a.ID+" ", " worker-1 "); err != nil {
 		t.Fatalf("LinkWorker: %v", err)
 	}
+	assertLinkedAgent(t, s, "tenant-a", "worker-1", a.ID)
+	assertLinkedAgent(t, s, "tenant-b", "worker-1", "")
+	assertRawWorkerLink(t, s, "tenant-a", "worker-1", a.ID, false)
 
-	got, err = s.GetByWorkerID(ctx, "worker-1")
-	if err != nil {
-		t.Fatalf("GetByWorkerID after link: %v", err)
-	}
-	if got == nil {
-		t.Fatal("expected linked identity")
-	}
-	if got.ID != created.ID {
-		t.Fatalf("expected ID %q, got %q", created.ID, got.ID)
-	}
-	if got.Name != "linked-agent" {
-		t.Fatalf("expected name linked-agent, got %q", got.Name)
-	}
-
-	// Unlink and verify
-	if err := s.UnlinkWorker(ctx, "worker-1"); err != nil {
+	if err := s.UnlinkWorker(ctx, " tenant-a ", " worker-1 "); err != nil {
 		t.Fatalf("UnlinkWorker: %v", err)
 	}
-	got, err = s.GetByWorkerID(ctx, "worker-1")
-	if err != nil {
-		t.Fatalf("GetByWorkerID after unlink: %v", err)
+	assertLinkedAgent(t, s, "tenant-a", "worker-1", "")
+	assertRawWorkerLink(t, s, "tenant-a", "worker-1", "", false)
+}
+
+func TestAgentIdentityLinkWorkerIsTenantQualified(t *testing.T) {
+	s := newTestAgentIdentityStore(t)
+	ctx := context.Background()
+	a := createTenantAgent(t, s, "tenant-a", "agent-a")
+	b := createTenantAgent(t, s, "tenant-b", "agent-b")
+	for _, agentID := range []string{a.ID, b.ID} {
+		if err := s.LinkWorker(ctx, agentID, "p"); err != nil {
+			t.Fatalf("LinkWorker(%s): %v", agentID, err)
+		}
 	}
-	if got != nil {
-		t.Fatal("expected nil after unlinking")
+	assertLinkedAgent(t, s, "tenant-a", "p", a.ID)
+	assertLinkedAgent(t, s, "tenant-b", "p", b.ID)
+
+	if err := s.UnlinkWorker(ctx, "tenant-b", "p"); err != nil {
+		t.Fatalf("UnlinkWorker: %v", err)
+	}
+	assertLinkedAgent(t, s, "tenant-b", "p", "")
+	assertLinkedAgent(t, s, "tenant-a", "p", a.ID)
+}
+
+func TestAgentIdentityLinkWorkerRejectsUnknownOrUntenantedAgent(t *testing.T) {
+	s := newTestAgentIdentityStore(t)
+	ctx := context.Background()
+	plantUntenantedAgent(t, s, "agent-untenanted")
+	for agentID, wantErr := range map[string]string{
+		"agent-missing":    "agent identity agent-missing not found",
+		"agent-untenanted": "agent identity agent-untenanted has no tenant",
+	} {
+		if err := s.LinkWorker(ctx, agentID, "p"); err == nil || err.Error() != wantErr {
+			t.Fatalf("LinkWorker(%s) err = %v, want %q", agentID, err, wantErr)
+		}
+	}
+	keys, err := s.client.Keys(ctx, agentWorkerLinksKeyPrefix+"*").Result()
+	if err != nil || len(keys) != 0 {
+		t.Fatalf("worker-link hashes after rejected links = %v (err %v), want none", keys, err)
+	}
+	assertRawWorkerLink(t, s, "", "p", "", false)
+
+	closed := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
+	_ = closed.Close()
+	if err := NewAgentIdentityStoreFromClient(closed).LinkWorker(ctx, "agent-a", "p"); err == nil ||
+		!strings.Contains(err.Error(), "link worker p: get agent identity agent-a") {
+		t.Fatalf("LinkWorker on closed client err = %v, want wrapped lookup error", err)
+	}
+}
+
+func TestAgentIdentityUnlinkWorkerRetiresOnlySameTenantLegacyLink(t *testing.T) {
+	s := newTestAgentIdentityStore(t)
+	ctx := context.Background()
+	a := createTenantAgent(t, s, "tenant-a", "agent-a")
+	plantLegacyLink(t, s, "p", a.ID)
+	assertLinkedAgent(t, s, "tenant-a", "p", a.ID)
+
+	// Another tenant's unlink never removes tenant-a's pre-migration link.
+	if err := s.UnlinkWorker(ctx, "tenant-b", "p"); err != nil {
+		t.Fatalf("UnlinkWorker(tenant-b): %v", err)
+	}
+	assertLinkedAgent(t, s, "tenant-a", "p", a.ID)
+	assertRawWorkerLink(t, s, "tenant-a", "p", "", true)
+
+	// After relink+unlink in tenant-a, the legacy link must not reappear.
+	a2 := createTenantAgent(t, s, "tenant-a", "agent-a2")
+	if err := s.LinkWorker(ctx, a2.ID, "p"); err != nil {
+		t.Fatalf("LinkWorker: %v", err)
+	}
+	assertLinkedAgent(t, s, "tenant-a", "p", a2.ID)
+	if err := s.UnlinkWorker(ctx, "tenant-a", "p"); err != nil {
+		t.Fatalf("UnlinkWorker(tenant-a): %v", err)
+	}
+	assertLinkedAgent(t, s, "tenant-a", "p", "")
+	assertRawWorkerLink(t, s, "tenant-a", "p", "", false)
+
+	// A legacy link naming an untenanted agent belongs to no tenant: it stays.
+	plantUntenantedAgent(t, s, "agent-untenanted")
+	plantLegacyLink(t, s, "q", "agent-untenanted")
+	if err := s.UnlinkWorker(ctx, "tenant-a", "q"); err != nil {
+		t.Fatalf("UnlinkWorker(q): %v", err)
+	}
+	assertRawWorkerLink(t, s, "tenant-a", "q", "", true)
+}
+
+func TestAgentLegacyLinkDeleteScriptComparesValue(t *testing.T) {
+	s := newTestAgentIdentityStore(t)
+	ctx := context.Background()
+	key := agentByWorkerKeyPrefix + "p"
+	plantLegacyLink(t, s, "p", "agent-x")
+	for _, tc := range []struct {
+		expect      string
+		wantDeleted int64
+		wantExists  int64
+	}{{"agent-y", 0, 1}, {"agent-x", 1, 0}} {
+		deleted, err := agentLegacyLinkDeleteScript.Run(ctx, s.client, []string{key}, tc.expect).Int64()
+		if err != nil || deleted != tc.wantDeleted {
+			t.Fatalf("delete expecting %s = %d (err %v), want %d", tc.expect, deleted, err, tc.wantDeleted)
+		}
+		if exists, err := s.client.Exists(ctx, key).Result(); err != nil || exists != tc.wantExists {
+			t.Fatalf("after delete expecting %s: exists = %d (err %v), want %d", tc.expect, exists, err, tc.wantExists)
+		}
+	}
+}
+
+func TestAgentIdentityUnlinkWorkerValidation(t *testing.T) {
+	s := newTestAgentIdentityStore(t)
+	var nilStore *AgentIdentityStore
+	closed := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
+	_ = closed.Close()
+	cases := []struct {
+		name, tenantID, worker, wantErr string
+		store                           *AgentIdentityStore
+	}{
+		{"empty_tenant", " ", "w", "tenant id required", s},
+		{"empty_worker", "tenant-a", " ", "worker id required", s},
+		{"nil_store", "tenant-a", "w", "redis client not initialized", nilStore},
+		{"redis_error", "tenant-a", "w", "unlink worker w in tenant tenant-a", NewAgentIdentityStoreFromClient(closed)},
+	}
+	for _, tc := range cases {
+		if err := tc.store.UnlinkWorker(context.Background(), tc.tenantID, tc.worker); err == nil ||
+			!strings.Contains(err.Error(), tc.wantErr) {
+			t.Fatalf("%s: err = %v, want it to contain %q", tc.name, err, tc.wantErr)
+		}
+	}
+}
+
+// assertRawWorkerLink checks the raw keys: the tenant hash field holds
+// wantHash ("" = absent) and the legacy key exists only when wantLegacy.
+func assertRawWorkerLink(t *testing.T, s *AgentIdentityStore, tenantID, workerID, wantHash string, wantLegacy bool) {
+	t.Helper()
+	ctx := context.Background()
+	got, err := s.client.HGet(ctx, agentWorkerLinksKeyPrefix+tenantID, workerID).Result()
+	if err == redis.Nil {
+		got, err = "", nil
+	}
+	if err != nil || got != wantHash {
+		t.Fatalf("hash %s[%s] = %q (err %v), want %q", tenantID, workerID, got, err, wantHash)
+	}
+	exists, err := s.client.Exists(ctx, agentByWorkerKeyPrefix+workerID).Result()
+	if err != nil || (exists == 1) != wantLegacy {
+		t.Fatalf("legacy key for %s: exists = %d (err %v), want %v", workerID, exists, err, wantLegacy)
+	}
+}
+
+func plantUntenantedAgent(t *testing.T, s *AgentIdentityStore, agentID string) {
+	t.Helper()
+	data, err := json.Marshal(AgentIdentity{ID: agentID, Name: "legacy", Status: "active"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := s.client.Set(context.Background(), agentIdentityKeyPrefix+agentID, data, 0).Err(); err != nil {
+		t.Fatalf("plant untenanted agent: %v", err)
 	}
 }
 

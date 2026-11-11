@@ -429,7 +429,7 @@ func TestRevokeNonexistentCredential(t *testing.T) {
 
 func TestRotateCredentialClearsAgentLink(t *testing.T) {
 	// Regression test: rotating a credential from agent_id=X to agent_id=""
-	// must clear the reverse-lookup so GetByWorkerID no longer returns the agent.
+	// must clear the worker link so the tenant no longer resolves the agent.
 	s, _, _ := newTestGateway(t)
 	seedWorkerCredentialAccessConfig(t, s)
 	ctx := context.Background()
@@ -455,10 +455,7 @@ func TestRotateCredentialClearsAgentLink(t *testing.T) {
 	}
 
 	// Verify agent is linked.
-	linked, err := s.agentIdentityStore.GetByWorkerID(ctx, "link-worker")
-	if err != nil || linked == nil {
-		t.Fatalf("expected agent linked after create, got err=%v agent=%v", err, linked)
-	}
+	requireWorkerLink(t, s, "default", "link-worker", agent.ID)
 
 	// Rotate credential WITHOUT agent_id → should clear the link.
 	body2 := bytes.NewBufferString(`{"worker_id":"link-worker","allowed_pools":["default"],"allowed_topics":["job.external"]}`)
@@ -472,14 +469,8 @@ func TestRotateCredentialClearsAgentLink(t *testing.T) {
 		t.Fatalf("rotate: expected 200/201, got %d: %s", rec2.Code, rec2.Body.String())
 	}
 
-	// Verify agent link is cleared — GetByWorkerID should return nil.
-	stale, err := s.agentIdentityStore.GetByWorkerID(ctx, "link-worker")
-	if err != nil {
-		t.Fatalf("GetByWorkerID after rotate: %v", err)
-	}
-	if stale != nil {
-		t.Fatalf("STALE LINKAGE: GetByWorkerID returned agent %q after rotate-to-empty — should be nil", stale.ID)
-	}
+	// Verify the agent link is cleared.
+	requireWorkerLink(t, s, "default", "link-worker", "")
 }
 
 func TestRevokeCredentialClearsAgentLink(t *testing.T) {
@@ -518,14 +509,8 @@ func TestRevokeCredentialClearsAgentLink(t *testing.T) {
 		t.Fatalf("revoke: expected 204, got %d: %s", revokeRec.Code, revokeRec.Body.String())
 	}
 
-	// Verify agent link is cleared.
-	stale, err := s.agentIdentityStore.GetByWorkerID(ctx, "revoke-worker")
-	if err != nil {
-		t.Fatalf("GetByWorkerID after revoke: %v", err)
-	}
-	if stale != nil {
-		t.Fatalf("STALE LINKAGE: GetByWorkerID returned agent %q after revoke — should be nil", stale.ID)
-	}
+	// Verify the agent link is cleared.
+	requireWorkerLink(t, s, "default", "revoke-worker", "")
 }
 
 // TestCreateWorkerCredential_RejectsCrossTenantAgentID locks the cross-tenant
@@ -563,14 +548,10 @@ func TestCreateWorkerCredential_RejectsCrossTenantAgentID(t *testing.T) {
 		t.Fatalf("expected 400 for cross-tenant agent_id, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	// Must not have linked the credential to the other tenant's agent.
-	linked, err := s.agentIdentityStore.GetByWorkerID(ctx, "cross-tenant-worker")
-	if err != nil {
-		t.Fatalf("GetByWorkerID: %v", err)
-	}
-	if linked != nil {
-		t.Fatalf("cross-tenant agent_id was linked: %+v", linked)
-	}
+	// Must not have linked the credential to the other tenant's agent, in
+	// either tenant.
+	requireWorkerLink(t, s, "tenant-a", "cross-tenant-worker", "")
+	requireWorkerLink(t, s, "tenant-b", "cross-tenant-worker", "")
 
 	// The credential itself must not have been created either.
 	record, err := s.workerCredentialStore.Get(ctx, "tenant-b", "cross-tenant-worker")
@@ -579,6 +560,102 @@ func TestCreateWorkerCredential_RejectsCrossTenantAgentID(t *testing.T) {
 	}
 	if record != nil {
 		t.Fatalf("credential was created despite rejected agent_id: %+v", record)
+	}
+}
+
+// TestWorkerLinkTenantIsolation_AgentAndCredentialPaths locks task-c1effd5b
+// (CodeRabbit's outside-diff finding on #490): worker/principal links are per
+// tenant. Another tenant's agent registration, credential issue or credential
+// rotation for the same ID must neither replace nor delete a tenant's link.
+func TestWorkerLinkTenantIsolation_AgentAndCredentialPaths(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
+	seedWorkerCredentialAccessConfig(t, s)
+	const worker = "shared-worker"
+	const credBody = `{"worker_id":"shared-worker","allowed_pools":["default"],"allowed_topics":["job.external"]`
+
+	aRR := serveWorkerLinkRequest(t, s, s.handleCreateAgent, "tenant-a", "/api/v1/agents",
+		`{"agent_id":"shared-worker","name":"a","owner":"alice","risk_tier":"low"}`, http.StatusCreated)
+	aID := decodeAgentID(t, aRR)
+	bID := decodeAgentID(t, serveWorkerLinkRequest(t, s, s.handleCreateAgent, "tenant-b", "/api/v1/agents",
+		`{"name":"b","owner":"bob","risk_tier":"low"}`, http.StatusCreated))
+	serveWorkerLinkRequest(t, s, s.handleCreateWorkerCredential, "tenant-b", "/api/v1/workers/credentials",
+		credBody+`,"agent_id":"`+bID+`"}`, http.StatusCreated)
+
+	requireWorkerLink(t, s, "tenant-a", worker, aID)
+	requireWorkerLink(t, s, "tenant-b", worker, bID)
+
+	mcpReq := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	mcpReq.Header.Set("X-Tenant-ID", "tenant-a")
+	mcpReq = mcpReq.WithContext(context.WithValue(mcpReq.Context(), auth.ContextKey{},
+		&auth.AuthContext{PrincipalID: worker, Tenant: "tenant-a"}))
+	if got := s.resolveMCPIdentity(mcpReq); got == nil || got.ID != aID {
+		t.Fatalf("tenant-a MCP identity for %s = %+v, want ID %q", worker, got, aID)
+	}
+
+	dup := serveWorkerLinkRequest(t, s, s.handleCreateAgent, "tenant-a", "/api/v1/agents",
+		`{"agent_id":"shared-worker","name":"a2","owner":"alice","risk_tier":"low"}`, http.StatusConflict)
+	requireStableErrorCode(t, dup, http.StatusConflict, "AGENT_WORKER_CONFLICT")
+
+	// tenant-b rotates without agent_id: only tenant-b's link goes.
+	serveWorkerLinkRequest(t, s, s.handleCreateWorkerCredential, "tenant-b", "/api/v1/workers/credentials",
+		credBody+`}`, http.StatusOK)
+	requireWorkerLink(t, s, "tenant-b", worker, "")
+	requireWorkerLink(t, s, "tenant-a", worker, aID)
+
+	// tenant-b relinks, then revokes: again only tenant-b's link goes.
+	serveWorkerLinkRequest(t, s, s.handleCreateWorkerCredential, "tenant-b", "/api/v1/workers/credentials",
+		credBody+`,"agent_id":"`+bID+`"}`, http.StatusOK)
+	requireWorkerLink(t, s, "tenant-b", worker, bID)
+	revoke := withAuth(httptest.NewRequest(http.MethodDelete, "/api/v1/workers/credentials/"+worker, nil),
+		&auth.AuthContext{Tenant: "tenant-b", Role: "admin"})
+	revoke.SetPathValue("worker_id", worker)
+	revokeRec := httptest.NewRecorder()
+	s.handleDeleteWorkerCredential(revokeRec, revoke)
+	if revokeRec.Code != http.StatusNoContent {
+		t.Fatalf("tenant-b revoke: status %d, want 204: %s", revokeRec.Code, revokeRec.Body.String())
+	}
+	requireWorkerLink(t, s, "tenant-b", worker, "")
+	requireWorkerLink(t, s, "tenant-a", worker, aID)
+}
+
+func serveWorkerLinkRequest(t *testing.T, s *server, handler http.HandlerFunc, tenant, path, body string, want int) *httptest.ResponseRecorder {
+	t.Helper()
+	req := withAuth(httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(body)), &auth.AuthContext{
+		Tenant: tenant, Role: "admin", PrincipalID: tenant + "-admin",
+	})
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+	if rec.Code != want {
+		t.Fatalf("%s POST %s: status %d, want %d: %s", tenant, path, rec.Code, want, rec.Body.String())
+	}
+	return rec
+}
+
+func decodeAgentID(t *testing.T, rec *httptest.ResponseRecorder) string {
+	t.Helper()
+	var created agentResponse
+	if err := json.NewDecoder(rec.Body).Decode(&created); err != nil || created.ID == "" {
+		t.Fatalf("decode agent response: err=%v id=%q", err, created.ID)
+	}
+	return created.ID
+}
+
+// requireWorkerLink asserts the agent ID workerID resolves to in tenant; an
+// empty want means no link.
+func requireWorkerLink(t *testing.T, s *server, tenant, workerID, want string) {
+	t.Helper()
+	got, err := s.agentIdentityStore.GetByWorkerIDForTenant(context.Background(), tenant, workerID)
+	if err != nil {
+		t.Fatalf("GetByWorkerIDForTenant(%s, %s): %v", tenant, workerID, err)
+	}
+	gotID := ""
+	if got != nil {
+		gotID = got.ID
+	}
+	if gotID != want {
+		t.Fatalf("%s link for %s = %q, want %q", tenant, workerID, gotID, want)
 	}
 }
 
