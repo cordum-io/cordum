@@ -78,8 +78,10 @@ GEN = {
     "gen_date": "syn-$(date +%s%N)", "gen_python": "$(python3 -c 'import secrets; print(secrets.token_urlsafe(16))')",
     "gen_quoted_paren": "$(printf '(' \"(\")$(openssl rand -hex 8)", "gen_nested": '$(curl -fsS -d "$(jq -cn --arg n "syn-$(date +%s)" "{}")" https://127.0.0.1:9/)',
 }
+CAPTURED = 'out="$(synthetic_key="$(openssl rand -hex 16)"; @MASK@ "${synthetic_key}" || exit 1; printf %s "${synthetic_key}")"'  # a $(...) captures the mask; pg_register_secret writes to PG_MASK_FD
 SUBST = {"errexit_substitution": 'out="$(synthetic_key="$(openssl rand -hex 16)"; gha_mask_value "${synthetic_key}"; printf %s "${synthetic_key}")"',  # bash clears errexit in $(...)
-         "trace_substitution": 'out="$(set -x; synthetic_key="$(openssl rand -hex 16)"; gha_mask_value "${synthetic_key}" || exit 1; printf %s "${synthetic_key}")"'}
+         "trace_substitution": CAPTURED.replace("$(synthetic", "$(set -x; synthetic", 1).replace("@MASK@", "pg_register_secret"), "mask_captured": CAPTURED.replace("@MASK@", "gha_mask_value"),
+         "mask_fd_captured": CAPTURED.replace("@MASK@", "pg_register_secret"), "mask_env_captured": 'synthetic_key="$(openssl rand -hex 16)"\ngha_mask_value "${synthetic_key}" || exit 1\nout="$(gha_mask_env SYNTHETIC_KEY "${synthetic_key}")"'}
 DYNAMIC = {
     "dyn_var": 'bash "${SYNTHETIC_DIR}/zz_synthetic_mint.sh"', "dyn_c": 'bash -c "${SYNTHETIC_CMD}"',
     "dyn_heredoc": "bash <<'SYNTHETIC'\ntrue\nSYNTHETIC", "dyn_pipe": "curl -fsS https://127.0.0.1:9/x | bash",
@@ -256,8 +258,8 @@ mint_make e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_min
 make_errexit make_line_errexit e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@Makefile
 mint_untracked_job docs-linkcheck.yml:link-check:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 mint_inline e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED
-gen_openssl gen_uuidgen gen_urandom gen_random gen_date gen_python gen_quoted_paren errexit_substitution e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_gen.sh
-gen_nested clean
+gen_openssl gen_uuidgen gen_urandom gen_random gen_date gen_python gen_quoted_paren errexit_substitution mask_captured mask_env_captured e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_gen.sh
+gen_nested mask_fd_captured clean
 nonce_bypass_removed edge-fake-hook-e2e.yml:edge-fake-hook-e2e:CREDENTIAL_UNREGISTERED@tools/scripts/edge_fake_hook_e2e.sh
 nonce_bypass_overridden edge-fake-hook-e2e.yml:edge-fake-hook-e2e:CREDENTIAL_UNREGISTERED@tools/scripts/edge_fake_hook_e2e.sh
 quickstart_unseeded docs-linkcheck.yml:link-check:CREDENTIAL_UNREGISTERED@tools/scripts/quickstart.sh

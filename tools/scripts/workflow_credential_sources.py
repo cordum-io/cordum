@@ -101,7 +101,7 @@ def registered_at(cmds: list, j: int, k: int, var: str, errexit: bool) -> bool: 
     words, nxt = list(cmds[j].words), cmds[j + 1] if j + 1 < len(cmds) else Cmd(0, [], "", 0)
     lead = words.pop(0) if words[:1] in (["if"], ["then"], ["do"]) else ""; negated = words[:1] == ["!"] and bool(words.pop(0))  # noqa: E702
     safe = r"(?:if )?(?:" + CI_TEST + r"|\[\[? -n \"?\$\{?" + var + r"\}?\"? \]\]?)"  # CI, or var non-empty
-    if not re.fullmatch(r"(?:pg_register_secret|gha_mask_value|gha_mask_env [A-Z_][A-Z0-9_]*) \"\$\{?" + var + r"\}?\"", " ".join(words)): return False
+    if not re.fullmatch(r"(?:pg_register_secret|gha_mask_value|gha_mask_env [A-Z_][A-Z0-9_]*) \"\$\{?" + var + r"\}?\"", " ".join(words)) or cmds[j].sub and words[0] != "pg_register_secret": return False  # a $(...) captures the mask; pg_register_secret writes to PG_MASK_FD, a copy of the runner stdout
     if negated:  # if [safe tests &&] ! register "$v"; then ...; exit|return; fi
         head = j
         while lead != "if" and head and cmds[head - 1].op == "&&" and cmds[head].words[:1] != ["if"]:
@@ -149,7 +149,7 @@ def facts(text: str, line: int = 1, errexit: bool = False) -> tuple:  # (cmds, u
         if kind or (not m and not cmd.sub and JQ.search(cmd.text) and not DEVNULL.search(cmd.text)):  # a bare extraction prints it
             acqs.append((k, var, kind or "auth-response", state(cmds, k, var, flags) if kind else "unregistered"))
         helper = re.fullmatch(r"gha_mask_env(?:_from_command((?: [A-Z][A-Z0-9_]*)+) --| ([A-Z][A-Z0-9_]*)) .+", cmd.text, re.S)  # fail-closed: masks, then exports
-        acqs += [(k, name, "masked-env", "late" if flags[k][1] else "registered") for name in (helper.group(1) or helper.group(2)).split()] if helper else []
+        acqs += [(k, name, "masked-env", "unregistered" if cmd.sub else "late" if flags[k][1] else "registered") for name in (helper.group(1) or helper.group(2)).split()] if helper else []  # in a $(...), the mask is captured but the GITHUB_ENV write still lands
     names = {a[1] for a in acqs}
     return cmds, error, acqs, [(k, m.group(1), int(m.group(2)) + int(m.group(3)) if m.group(2) else 10 ** 6) for k, c in enumerate(cmds) for m in PREFIX.finditer(c.text) if m.group(1) in names or NAME.search(m.group(1))], flags
 def expand(word: str, table: dict, env: dict, here: str) -> str:  # script-dir and cd/pwd idioms, known variables, defaults; drops quotes
