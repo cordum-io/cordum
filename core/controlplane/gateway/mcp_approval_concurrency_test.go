@@ -10,7 +10,50 @@ import (
 
 	"github.com/cordum/cordum/core/mcp"
 	"github.com/cordum/cordum/core/model"
+	"github.com/redis/go-redis/v9"
 )
+
+// consumeReadBarrier is a test-only go-redis hook that makes N claimers
+// overlap inside consumeRecord's WATCH window. It runs the record-key GET
+// first, then parks the first parties-1 arrivals until the last one arrives, so
+// every claimer has read the APPROVED, unconsumed record (and, unmutated,
+// holds its WATCH) before any of them can reach MULTI/EXEC. Later arrivals are
+// CAS-retry re-reads and pass straight through. The pipeline hook is left
+// alone: MULTI/EXEC must never block.
+type consumeReadBarrier struct {
+	key      string
+	parties  int64
+	arrived  atomic.Int64
+	timedOut atomic.Int64
+	release  chan struct{}
+}
+
+func (b *consumeReadBarrier) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (b *consumeReadBarrier) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+
+func (b *consumeReadBarrier) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		err := next(ctx, cmd) // run the GET first, then wait
+		args := cmd.Args()
+		if cmd.Name() != "get" || len(args) != 2 || args[1] != b.key {
+			return err
+		}
+		switch n := b.arrived.Add(1); {
+		case n == b.parties:
+			close(b.release)
+		case n < b.parties:
+			select {
+			case <-b.release:
+			case <-time.After(10 * time.Second):
+				b.timedOut.Add(1)
+			}
+		}
+		return err
+	}
+}
 
 // TestClaimPreApprovedIsAtomicUnderConcurrentClaimers fires N concurrent
 // ClaimPreApproved calls against a single APPROVED record. Exactly ONE
@@ -38,13 +81,28 @@ func TestClaimPreApprovedIsAtomicUnderConcurrentClaimers(t *testing.T) {
 		t.Fatalf("approve: %v", err)
 	}
 
-	// miniredis does not guarantee the same concurrency semantics as
-	// real Redis, but it honours WATCH sufficiently for the atomicity
-	// check here: a record observed under WATCH and then modified by
-	// another goroutine causes the second TxPipelined EXEC to return
-	// redis.TxFailedErr, which our CAS loop retries — on retry the
-	// loser sees ConsumedAt != 0 and returns (nil, nil).
+	// The claimers run on their own PoolSize=workers client to the SAME
+	// miniredis. The default test client has PoolSize 1, and a go-redis Tx
+	// holds its connection from WATCH through EXEC, so on it every claim was
+	// serialized and removing WATCH from consumeRecord went undetected. With a
+	// wide pool plus consumeReadBarrier, every claimer reads the record before
+	// any can write, so the overlap is deterministic. Unmutated, the 15 losers
+	// fail EXEC with TxFailedErr, retry (mcpCASMaxAttempts = 5) and see
+	// ConsumedAt != 0, returning (nil, nil). Seeding and the final Get stay on
+	// the PoolSize-1 store so they never consume barrier slots.
 	const workers = 16
+	base, ok := store.client.(*redis.Client)
+	if !ok {
+		t.Fatalf("test store client is %T; want *redis.Client", store.client)
+	}
+	opts := testRedisOptions(base.Options().Addr)
+	opts.PoolSize = workers
+	wide := redis.NewClient(opts)
+	t.Cleanup(func() { _ = wide.Close() })
+	barrier := &consumeReadBarrier{key: mcpApprovalKey(rec.ID), parties: workers, release: make(chan struct{})}
+	wide.AddHook(barrier)
+	claimers := NewMCPApprovalStore(wide)
+
 	var (
 		wg       sync.WaitGroup
 		winners  atomic.Int64
@@ -54,7 +112,7 @@ func TestClaimPreApprovedIsAtomicUnderConcurrentClaimers(t *testing.T) {
 	for range workers {
 		go func() {
 			defer wg.Done()
-			claimed, err := store.ClaimPreApproved(ctx, req.Tenant, req.AgentID, req.ToolName, req.ArgsHash)
+			claimed, err := claimers.ClaimPreApproved(ctx, req.Tenant, req.AgentID, req.ToolName, req.ArgsHash)
 			if err != nil {
 				hardErrs.Add(1)
 				return
@@ -66,6 +124,10 @@ func TestClaimPreApprovedIsAtomicUnderConcurrentClaimers(t *testing.T) {
 	}
 	wg.Wait()
 
+	if barrier.timedOut.Load() != 0 || barrier.arrived.Load() < workers {
+		t.Errorf("barrier: arrived=%d timedOut=%d; want all %d claimers to read before any writes",
+			barrier.arrived.Load(), barrier.timedOut.Load(), workers)
+	}
 	if hardErrs.Load() != 0 {
 		t.Errorf("hard errors during concurrent claim: %d (want 0)", hardErrs.Load())
 	}
