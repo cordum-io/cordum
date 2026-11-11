@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- Claim register schema and validator: `docs/contract/claims.yaml` and the Go
+  package `tests/contract`, run by `go test ./...`. The register starts empty and
+  its entries follow in later changes. Runtime behavior is unchanged.
+
 ## [v1.3.1] - 2026-11-11
 
 Changes on main since the v1.3.0 tag (d027ae97, 2026-11-11).
