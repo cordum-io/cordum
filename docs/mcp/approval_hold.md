@@ -211,6 +211,17 @@ runs. That event carries `input_hash` (the canonical argument hash, with
 - **Outages.** An Edge store error on the mint, the approval lookup or the
   claim returns `-32096` with `kind=approval_store_unavailable`, and the
   tool does not run.
+- **Policy change during the call.** Both mint sites compare the snapshot
+  stamped on the call's `mcp.tool.pre` event with the current snapshot.
+  If a policy publish changed it between those reads, nothing is minted:
+  the call returns `-32096` `kind=policy_snapshot_changed` with a fixed
+  reason. Retry the call without `_approval_ref`: it is evaluated under
+  the current policy, and the error is never cached. A blank snapshot on
+  either side is not a confirmed change; a blank current snapshot still
+  fails with `approval_store_unavailable` (see **Snapshot**). A publish
+  after the comparison, including after minting, remains possible: an
+  approval with an older snapshot is refused at resume with
+  `policy_mismatch`, as before.
 - **Snapshot.** Gate-on mints need a non-empty policy snapshot. The Edge
   store refuses an approval without one, so a deployment with no policy
   snapshot fails every gate-on mint with `-32096`.
@@ -241,7 +252,9 @@ When `ClaimApproval` refuses the claim it returns an
 }
 ```
 
-`Kind` is the snake_case enum from `edge.ApprovalConflictKind`:
+Claim conflict kinds are the snake_case enum from `edge.ApprovalConflictKind`.
+`approval_store_unavailable` and `policy_snapshot_changed` originate in the
+MCP layer, not `ClaimApproval`:
 
 | Kind | Meaning |
 |------|---------|
@@ -251,6 +264,7 @@ When `ClaimApproval` refuses the claim it returns an
 | `consumed` | The approval already fired; retry with a fresh ref. |
 | `args_mismatch` | The canonical input hash differs from the minted approval. |
 | `policy_mismatch` | The active policy snapshot differs from the minted approval's snapshot. |
+| `policy_snapshot_changed` | The policy changed while the call was being evaluated, before any approval was minted. Nothing was minted; retry the call. |
 | `self_approval` | The approving identity matches the requesting agent. |
 | `cross_tenant` | The approval belongs to a different tenant. |
 | `tuple_mismatch` | The action-hash tuple differs. |
@@ -259,7 +273,7 @@ When `ClaimApproval` refuses the claim it returns an
 Clients branch retry logic on `Kind`. A `consumed` requires the user
 to re-trigger the gated action; an `args_mismatch` typically reflects
 a client-side arg mutation between mint and resume and should NOT
-auto-retry.
+auto-retry. A `policy_snapshot_changed` is safe to retry at once.
 
 ## Test pins
 
@@ -280,3 +294,5 @@ auto-retry.
 | Gate-on HTTP resume executes exactly once | `TestPolicyGateEdgeResume_HTTPExecutesExactlyOnce` |
 | Legacy MCP approval cannot resume under the gate | `TestPolicyGateEdgeResume_HTTPLegacyApprovalCannotResume` |
 | Gate-on mint and claim outages return `-32096` | `TestPolicyGateEdgeResume_HTTPMintOutageFailsClosed`, `TestPolicyGateEdgeResume_HTTPClaimOutageFailsClosed` |
+| Mid-call policy change mints nothing; retry binds the current snapshot | `TestEdgeMintPolicySnapshotDrift_IsRetryable`, `TestJSONRPC_PolicySnapshotChangedWiresTo32096` |
+| Blank snapshots preserve existing mint outcomes | `TestEdgeMintPolicySnapshotDrift_BlankSnapshotsKeepTodaysOutcome` |
