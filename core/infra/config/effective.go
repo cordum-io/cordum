@@ -37,4 +37,3 @@ func ParseEffectiveSafety(payload []byte) (SafetyConfig, bool) {
 	}
 	return SafetyConfig{}, false
 }
-

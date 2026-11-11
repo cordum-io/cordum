@@ -37,14 +37,14 @@ import (
 // between StartInbound and FinishInbound (no concurrent access), so
 // no mutex is required.
 type InvocationHandle struct {
-	startedAt      time.Time
-	direction      string // "inbound" | "outbound"
-	agentID        string
-	tenantID       string
-	toolName       string
-	serverID       string // outbound only
-	approvalID     string
-	approvalStatus string // "" (default → "none"), "required", "consumed"
+	startedAt        time.Time
+	direction        string // "inbound" | "outbound"
+	agentID          string
+	tenantID         string
+	toolName         string
+	serverID         string // outbound only
+	approvalID       string
+	approvalStatus   string // "" (default → "none"), "required", "consumed"
 	argsRaw          json.RawMessage
 	decision         string
 	reason           string
