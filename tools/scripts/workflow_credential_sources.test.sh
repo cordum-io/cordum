@@ -63,6 +63,7 @@ BINDS = {
 MINTS = {  # (lines after the acquisition, lines after its first use) in a set -euo pipefail script
     "mint_unregistered": ("", ""), "mint_registered": (SAFE, ""), "mint_late": ("", REG),
     "mint_prefix": (REG + '\necho "synthetic prefix ${minted:0:6}"', ""), "mint_ignored": (REG + " || true", ""),
+    "mint_errexit_off": ("set +e\n" + SAFE + "\nset -e", ""),
 }
 GEN = {
     "gen_openssl": "$(openssl rand -hex 16)", "gen_uuidgen": "$(uuidgen)",
@@ -88,9 +89,9 @@ def write(rel, text):
     (root / rel).write_bytes(text.replace("@SENTINEL@", sentinel).encode("utf-8"))
 def script(name, body):
     write("tools/scripts/" + name, "#!/usr/bin/env bash\nset -euo pipefail\n" + body + "\n")
-def mint(before="", after="", rel=MINT_SH):
+def mint(before="", after="", rel=MINT_SH, head="set -euo pipefail\n", tail=""):
     body = BODY.replace("@BEFORE@", before).replace("@AFTER@", after)
-    write(rel, "#!/usr/bin/env bash\nset -euo pipefail\nsource tools/scripts/github_actions_mask_env.sh\n" + body + "\n")
+    write(rel, "#!/usr/bin/env bash\n" + head + "source tools/scripts/github_actions_mask_env.sh\n" + body + "\n" + tail)
 def step(body, wf=E2E, anchor=CAPTURE, shell=""):
     run = "".join("          " + line + "\n" for line in body.replace("@SENTINEL@", sentinel).split("\n"))
     edit(wf, anchor, "      - name: Synthetic fixture\n" + ("        shell: " + shell + "\n" if shell else "") + "        run: |\n" + run + "\n" + anchor)
@@ -132,6 +133,9 @@ elif case == "uses_local":
 elif case in SHELLS:
     mint()
     step(RUN_MINT, shell=SHELLS[case])
+elif case == "mint_errexit_func":  # errexit set inside main() still covers the registration
+    mint(SAFE, head="main() {\nset -euo pipefail\n", tail="}\nmain\n")
+    step(RUN_MINT)
 elif case == "edge_cycle":
     script("zz_synthetic_cycle_a.sh", "bash tools/scripts/zz_synthetic_cycle_b.sh")
     script("zz_synthetic_cycle_b.sh", "bash tools/scripts/zz_synthetic_cycle_a.sh")
@@ -197,6 +201,7 @@ done <<'CASES'
 base clean
 bind_spacing clean
 mint_registered clean
+mint_errexit_func clean
 bind_literal_space e2e.yml:e2e-tls:REDACTION_VALUE_BINDING
 bind_cross e2e.yml:e2e-tls:REDACTION_VALUE_BINDING
 bind_const e2e.yml:e2e-tls:REDACTION_VALUE_BINDING
@@ -208,6 +213,7 @@ mint_unregistered e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synth
 mint_late e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 mint_prefix e2e.yml:e2e-tls:CREDENTIAL_PREFIX_PRINT@tools/scripts/zz_synthetic_mint.sh
 mint_ignored e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
+mint_errexit_off e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 mint_make e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 mint_untracked_job docs-linkcheck.yml:link-check:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 mint_inline e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED

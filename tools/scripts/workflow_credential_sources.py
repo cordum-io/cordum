@@ -2,7 +2,7 @@
 """Credential sources reached transitively from GitHub workflow run steps through bash/sh/source/./exec/make edges
 (bounded, repo-confined, symlink-refusing): each jq credential field or generated credential must be registered for
 masking, fail-closed, before any use unless a reviewed exemption's guard and condition hold. Output carries no values."""
-import collections, pathlib, posixpath, re, shlex, sys, yaml  # noqa: E401
+import collections, itertools, pathlib, posixpath, re, shlex, sys, yaml  # noqa: E401
 MAX_DEPTH, MAX_VISITS, MAX_BYTES, UNKNOWN = 10, 400, 256 * 1024, "\x00"  # UNKNOWN: set and non-empty, value unseen
 HEREDOC, DOTENV = re.compile(r"(?<!<)<<-?\s*(['\"]?)([A-Za-z_]\w*)\1"), re.compile(r">\s*[\"']?(?:[^\s\"';&|<>]*/)?\.env[\"']?(?=[\s;&|<>]|$)")
 PLAIN, DQ, ANY = re.compile(r"[^\s'\"\\$`<>&|;()#]+"), re.compile(r"[^\"\\$`\n]+"), re.compile(r".", re.S)
@@ -19,6 +19,7 @@ PREFIX_WORDS = {"if", "then", "else", "elif", "do", "while", "until", "!", "time
 Cmd = collections.namedtuple("Cmd", "line words op sub stack func text", defaults=((), "", ""))
 def seeded(env: dict, name: str) -> bool: return (value := env.get(name, "")) != "" and (value[0] != "$" or value.startswith("$("))
 def literal(value: str) -> int: return len(re.match(r"[^$\x00]*", value).group())
+def flag(cmd: Cmd, on: bool, short: str, name: str) -> bool: return next((sign == "-" for sign in reversed(re.findall(r"(?<!\S)([-+])(?:[a-zA-Z]*" + short + r"[a-zA-Z]*|o\s+" + name + r")(?!\S)", cmd.text))), on) if cmd.words[cmd.words[:1] in (["then"], ["do"], ["else"]):][:1] == ["set"] else on  # after a `set`
 def pg_runs_gate_1(argv: list) -> bool: return "--skip-rebuild" not in argv and (not (gates := [v for f, v in zip(argv, argv[1:]) if f == "--gate"]) or not gates[-1].isdigit() or gates[-1] == "1")
 # Reviewed exemptions: the source, a block around it, or every call site of its function matches the guard, and the
 # condition holds on the visit's entry env. recover-dashboard's token is an anonymous public-image pull token: the exact
@@ -30,8 +31,7 @@ EXEMPT = {
     (".github/workflows/recover-dashboard-v1.2.0.yml", "token"): (re.escape("token=$(curl --fail --silent --show-error \"$token_url\" | jq -er '.token')"), lambda env: True)}
 # The quickstart banner prints a fixed-length key prefix: safe when the path discards stdout or the seeded key's literal prefix covers it.
 PREFIX_EXEMPT = {("tools/scripts/quickstart.sh", "API_KEY"): lambda env, quiet, need: quiet or literal(env.get("CORDUM_API_KEY", "")) >= need}
-# production_gate.sh runs quickstart.sh only in gate_1_deploy, never with --skip-rebuild or a --gate other than 1.
-GATES = {("tools/scripts/production_gate.sh", "gate_1_deploy", "tools/scripts/quickstart.sh"): pg_runs_gate_1}
+GATES = {("tools/scripts/production_gate.sh", "gate_1_deploy", "tools/scripts/quickstart.sh"): pg_runs_gate_1}  # quickstart runs only in gate 1, never with --skip-rebuild
 def heredocs(lines: list) -> list:  # (header index, body indices incl. terminator, quoted delimiter, terminated)
     found, index = [], 0
     while index < len(lines):
@@ -122,12 +122,12 @@ def registered_at(cmds: list, j: int, k: int, var: str, errexit: bool) -> bool: 
     level, home = cmds[j].stack, cmds[k].stack
     gate = level[-1] if level and level[:-1] == home else -1  # one if deeper, on a safe test
     return level == home or gate >= 0 and cmds[gate].words[:1] == ["if"] and bool(re.fullmatch(safe, cmds[gate].text)) and not any(c.stack == level and c.words[:1] in (["else"], ["elif"]) for c in cmds[gate + 1:j])
-def state(cmds: list, k: int, var: str, errexit: bool) -> str:  # registered, late (used first) or unregistered; reassignment ends it
+def state(cmds: list, k: int, var: str, errexit: list) -> str:  # registered, late (used first) or unregistered; reassignment ends it
     ref = re.compile(r"\$\{?" + var + r"(?!\w)|\bexport\s+" + var + r"\b(?!=)")
     harmless, used = re.compile(r"-[nz]\s+\"?\$\{?" + var + r"\}?\"?|\$\{#" + var + r"\}"), False
     for j in range(k + 1, len(cmds)):
         if ref.search(harmless.sub("", cmds[j].text)):
-            if registered_at(cmds, j, k, var, errexit): return "late" if used else "registered"
+            if registered_at(cmds, j, k, var, errexit[j]): return "late" if used else "registered"
             used = True
         elif (m := ASSIGN.fullmatch(cmds[j].text)) and m.group(1) == var: break
     return "unregistered"
@@ -140,7 +140,7 @@ def shallow(text: str) -> str:  # the text without command substitutions nested 
     return out
 def facts(text: str, line: int = 1, errexit: bool = False) -> tuple:  # (cmds, unparsable line, [(k, var, kind, state)], [(k, var, bytes)])
     cmds, error = parse(text, line)
-    errexit, acqs = errexit or any(not c.stack and re.match(r"set\s+(?:-\w*e|-o\s+errexit)", c.text) for c in cmds), []
+    errexit, acqs = list(itertools.accumulate(cmds, lambda on, c: flag(c, on, "e", "errexit"), initial=errexit)), []  # [k]: in force at cmds[k]
     for k, cmd in enumerate(cmds):
         var, rhs = (m.group(1), m.group(2)) if (m := ASSIGN.fullmatch(cmd.text)) else ("-", "")
         kind = "" if "idem" in var.lower() else "auth-response" if JQ.search(rhs) else "generated" if NAME.search(var) and GEN.search(shallow(rhs)) else ""
