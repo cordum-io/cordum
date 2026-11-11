@@ -110,16 +110,8 @@ func (g *gatewayApprovalGate) ConsumeActionGateDecision(ctx context.Context, _ m
 	// Invariant DENY first — fail closed regardless of the actiongate
 	// decision so a pack-contributed actiongate ALLOW cannot override
 	// a SecOps invariant block.
-	if g.invariants != nil {
-		rules := g.invariants.InvariantsForMCPTool(ctx)
-		// We synthesize a minimal mcp.Tool/CallMetadata view from the
-		// context payload so matchMCPInvariantDeny can run.
-		tool := mcp.Tool{Name: ctxData.Tool}
-		meta := MCPCallMetadata{Tenant: ctxData.Tenant, AgentID: ctxData.AgentID}
-		if rule, denied := matchMCPInvariantDeny(rules, tool, meta); denied {
-			return "", fmt.Errorf("%w: tool %q denied by invariant %q",
-				ErrMCPInvariantDeny, ctxData.Tool, rule.ID)
-		}
+	if err := g.actionGateInvariantDeny(ctx, ctxData); err != nil {
+		return "", err
 	}
 	// Preapproval HIT short-circuits the approval store. The bridge's
 	// pre event has already been emitted with Decision=require_approval;
@@ -185,6 +177,36 @@ func (g *gatewayApprovalGate) ConsumeActionGateDecision(ctx context.Context, _ m
 		return "", fmt.Errorf("mcp gate: enqueue approval: %w", err)
 	}
 	return rec.ID, nil
+}
+
+var _ mcp.ConsumedApprovalAuthorizer = (*gatewayApprovalGate)(nil)
+
+// AuthorizeConsumedApproval authorizes a REQUIRE_HUMAN call resumed with
+// its consumed Edge approval (task-cd9df90a C2). Only the invariant DENY
+// floor applies: the approval already stands in for the preapproval and
+// the mint, so neither runs.
+func (g *gatewayApprovalGate) AuthorizeConsumedApproval(ctx context.Context, ctxData mcp.ToolCallApprovalContext) error {
+	if g == nil || g.store == nil {
+		return fmt.Errorf("mcp gate: approval store unavailable")
+	}
+	return g.actionGateInvariantDeny(ctx, ctxData)
+}
+
+// actionGateInvariantDeny is the SecOps invariant DENY floor of the
+// action-gate handoff. It synthesizes a minimal mcp.Tool/CallMetadata view
+// from the context payload so matchMCPInvariantDeny can run.
+func (g *gatewayApprovalGate) actionGateInvariantDeny(ctx context.Context, ctxData mcp.ToolCallApprovalContext) error {
+	if g.invariants == nil {
+		return nil
+	}
+	rules := g.invariants.InvariantsForMCPTool(ctx)
+	tool := mcp.Tool{Name: ctxData.Tool}
+	meta := MCPCallMetadata{Tenant: ctxData.Tenant, AgentID: ctxData.AgentID}
+	if rule, denied := matchMCPInvariantDeny(rules, tool, meta); denied {
+		return fmt.Errorf("%w: tool %q denied by invariant %q",
+			ErrMCPInvariantDeny, ctxData.Tool, rule.ID)
+	}
+	return nil
 }
 
 // mintEdgeApprovalForActionGate creates an EdgeApproval consumable via

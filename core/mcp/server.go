@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/cordum/cordum/core/edge"
 )
 
 const (
@@ -706,6 +708,16 @@ func (s *MCPServer) mapHandlerError(err error) *JSONRPCError {
 		return s.rpcError(jsonRPCApprovalLifecycleErrorCode, "approval lifecycle error", map[string]any{
 			"kind":   "approval_store_unavailable",
 			"reason": approvalStoreUnavailableReason,
+		})
+	}
+	// A typed approval conflict raised after the claim (a consumed approval
+	// that does not bind the call, task-cd9df90a C4) maps like a claim
+	// conflict. Only the typed reason is returned, never the wrap.
+	var conflict *edge.ApprovalConflictError
+	if errors.As(err, &conflict) {
+		return s.rpcError(jsonRPCApprovalLifecycleErrorCode, "approval lifecycle error", map[string]any{
+			"kind":   string(conflict.Kind),
+			"reason": conflict.Reason,
 		})
 	}
 	switch {
