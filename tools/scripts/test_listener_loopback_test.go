@@ -186,8 +186,8 @@ func listenerLiteralAddrIsWide(args []ast.Expr) bool {
 // listenerAddrIsWide checks the address argument of ListenTCP, ListenUDP or
 // ListenIP: nil, or an Addr literal with no IP or an unspecified IP.
 func listenerAddrIsWide(arg ast.Expr, imports map[string]string) bool {
-	if id, ok := arg.(*ast.Ident); ok {
-		return id.Name == "nil"
+	if listenerIsNil(arg) {
+		return true
 	}
 	u, ok := arg.(*ast.UnaryExpr)
 	if !ok || u.Op != token.AND {
@@ -206,8 +206,16 @@ func listenerAddrIsWide(arg ast.Expr, imports map[string]string) bool {
 	if !ok {
 		return true
 	}
-	return listenerIsPkgSel(ip, imports, "net", "IPv4zero") ||
+	return listenerIsNil(ip) ||
+		listenerIsPkgSel(ip, imports, "net", "IPv4zero") ||
 		listenerIsPkgSel(ip, imports, "net", "IPv6unspecified")
+}
+
+// listenerIsNil reports whether e is the identifier nil. A nil net.IP in an
+// Addr literal is a wildcard address, the same as leaving IP out.
+func listenerIsNil(e ast.Expr) bool {
+	id, ok := e.(*ast.Ident)
+	return ok && id.Name == "nil"
 }
 
 func TestTestListenerScannerRules(t *testing.T) {
@@ -246,6 +254,7 @@ func TestTestListenerScannerRules(t *testing.T) {
 		{name: "r3 ListenUDP nil", body: `_, _ = net.ListenUDP("udp", nil)`, want: []string{listenerRuleAddr}},
 		{name: "r3 ListenIP nil", body: `_, _ = net.ListenIP("ip4:icmp", nil)`, want: []string{listenerRuleAddr}},
 		{name: "r3 TCPAddr without IP", body: `_, _ = net.ListenTCP("tcp", &net.TCPAddr{Port: 0})`, want: []string{listenerRuleAddr}},
+		{name: "r3 TCPAddr with explicit nil IP", body: `_, _ = net.ListenTCP("tcp", &net.TCPAddr{IP: nil, Port: 0})`, want: []string{listenerRuleAddr}},
 		{name: "r3 UDPAddr with IPv4zero", body: `_, _ = net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero})`, want: []string{listenerRuleAddr}},
 		{name: "r3 clean TCPAddr loopback IP", body: `_, _ = net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})`},
 		{name: "r3 clean variable address", body: `_, _ = net.ListenUDP("udp", addr)`},
