@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+#### TypeScript SDK — dev-only minimatch advisory GHSA-g3hv-75wg-m249 (2026-11-11, task-f09d31be)
+
+- Scope `minimatch` overrides to `@typescript-eslint/typescript-estree` and `@ts-morph/common`, using `^11.0.1` while both parents still require the vulnerable 10.x line. Remove these overrides when both parents support the patched line. This changes SDK development tooling, not the published SDK runtime.
+
 #### dashboard — dev-only minimatch advisory GHSA-g3hv-75wg-m249 (2026-11-11, task-3c2704b3)
 
 - `dashboard/package.json` overrides `minimatch@^10.0.0` to `^11.0.1`, in `pnpm.overrides` and in the npm `overrides` mirror. No minimatch 10.x release carries the fix. eslint, `@eslint/config-array` and `@typescript-eslint/typescript-estree` still declare `^10`, and they call only `Minimatch#match` and `minimatch()`, which 11.x keeps.
