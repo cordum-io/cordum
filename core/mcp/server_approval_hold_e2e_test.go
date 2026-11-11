@@ -485,13 +485,15 @@ func TestJSONRPC_ApprovalRefResumeClaimOutageIsSanitized(t *testing.T) {
 
 	_, rpcErr := callWithApprovalRef(srv, "edge_appr_xyz")
 
-	assertSanitizedStoreOutage(t, rpcErr)
-	if store.calls != 1 {
-		t.Errorf("ClaimApproval called %d times; want exactly 1", store.calls)
-	}
+	// Count first: a fail-open that swallows the error must report the tool run
+	// before the nil-error Fatal below hides it.
 	if *executions != 0 {
 		t.Errorf("tool executed %d times on a store outage; want 0 (fail closed)", *executions)
 	}
+	if store.calls != 1 {
+		t.Errorf("ClaimApproval called %d times; want exactly 1", store.calls)
+	}
+	assertSanitizedStoreOutage(t, rpcErr)
 }
 
 // TestJSONRPC_ApprovalRefResumeRealStoreOutageIsSanitized runs the lookup path
@@ -513,10 +515,10 @@ func TestJSONRPC_ApprovalRefResumeRealStoreOutageIsSanitized(t *testing.T) {
 
 	_, rpcErr := callWithApprovalRef(srv, "edge_appr_xyz")
 
-	assertSanitizedStoreOutage(t, rpcErr)
 	if *executions != 0 {
 		t.Errorf("tool executed %d times on a store outage; want 0 (fail closed)", *executions)
 	}
+	assertSanitizedStoreOutage(t, rpcErr)
 }
 
 // TestJSONRPC_ApprovalRefMalformedKeepsInvalidParams pins that a malformed
@@ -553,6 +555,12 @@ func TestJSONRPC_ApprovalRefMalformedKeepsInvalidParams(t *testing.T) {
 
 			_, rpcErr := callWithApprovalRef(srv, tc.ref)
 
+			if store.calls != 0 {
+				t.Errorf("ClaimApproval called %d times; want 0 (rejected before the store)", store.calls)
+			}
+			if *executions != 0 {
+				t.Errorf("tool executed %d times; want 0", *executions)
+			}
 			if rpcErr == nil {
 				t.Fatal("expected -32602 JSON-RPC error on a malformed _approval_ref; got nil")
 			}
@@ -561,12 +569,6 @@ func TestJSONRPC_ApprovalRefMalformedKeepsInvalidParams(t *testing.T) {
 			}
 			if got, _ := rpcErr.Data.(string); got != tc.want {
 				t.Errorf("error.data = %#v; want %q", rpcErr.Data, tc.want)
-			}
-			if store.calls != 0 {
-				t.Errorf("ClaimApproval called %d times; want 0 (rejected before the store)", store.calls)
-			}
-			if *executions != 0 {
-				t.Errorf("tool executed %d times; want 0", *executions)
 			}
 		})
 	}
