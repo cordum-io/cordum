@@ -138,11 +138,16 @@ func (g *gatewayApprovalGate) ConsumeActionGateDecision(ctx context.Context, _ m
 	//                         design (supports HTTP MCP transit without
 	//                         an EdgeSession, dev/test deploys).
 	//   - ("",  err, true):   Edge wired + metadata present but
+	//                         policy changed (retryable), or
 	//                         EnqueueApproval errored — fail-closed per
 	//                         DoD #5 (no silent legacy fallback that
 	//                         would produce a non-resumable approval_id).
 	ref, mintErr, didTry := g.mintEdgeApprovalForActionGate(ctx, ctxData)
 	if mintErr != nil {
+		// A policy change is retryable, not a store outage.
+		if errors.Is(mintErr, mcp.ErrPolicySnapshotChanged) {
+			return "", mintErr
+		}
 		return "", fmt.Errorf("%w: mcp gate Edge enqueue failed: %w", mcp.ErrApprovalStoreUnavailable, mintErr)
 	}
 	if didTry {
@@ -190,7 +195,8 @@ func (g *gatewayApprovalGate) ConsumeActionGateDecision(ctx context.Context, _ m
 //   - ("",  err, true):  Edge wired + metadata present but the policy
 //     pre-event id is missing or EnqueueApproval failed — caller
 //     surfaces -32096 approval_store_unavailable (DoD #5; no silent
-//     legacy fallback).
+//     legacy fallback). A policy change since the pre-event instead
+//     returns ErrPolicySnapshotChanged (retryable).
 //
 // The approval binds to the policy pre-event (mcp.tool.pre) named by
 // ctxData.EventID: edge.EnqueueApproval requires an existing event whose
@@ -214,6 +220,9 @@ func (g *gatewayApprovalGate) mintEdgeApprovalForActionGate(ctx context.Context,
 		return "", errors.New("policy pre-event id missing from approval context"), true
 	}
 	policySnapshot := g.policySnapshotForEvents(ctx)
+	if err := edgeMintSnapshotDrift(ctxData.PolicySnapshot, policySnapshot); err != nil {
+		return "", err, true
+	}
 	actionHash, inputHash := mcp.BuildMCPApprovalBinding(
 		meta.Tenant,
 		g.serverName,
