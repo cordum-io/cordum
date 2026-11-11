@@ -167,6 +167,17 @@ jobs:
         go-version: '1.26.5'
         cache: false
 
+    - name: Check gofmt on every tracked Go file
+      # Explicit bash = -eo pipefail: a failing git ls-files or a gofmt parse error fails the step.
+      shell: bash
+      run: |
+        unformatted="$(git ls-files -z -- '*.go' | xargs -0 gofmt -l)"
+        if [ -n "$unformatted" ]; then
+          echo "::error::gofmt drift in the files listed below; run gofmt -w on them"
+          printf '%s\n' "$unformatted"
+          exit 1
+        fi
+
     - name: Drop local replace directives (CI uses published modules)
       run: |
         go mod edit -dropreplace github.com/cordum-io/cap/v2
