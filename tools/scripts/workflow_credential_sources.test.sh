@@ -11,11 +11,7 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "${WORK}"' EXIT
 SENTINEL="wcs_synthetic_${$}_${RANDOM}${RANDOM}"
 PASS=0 FAIL=0 SKIP=0
-
-record() {
-  case "$1" in PASS) PASS=$((PASS + 1)) ;; SKIP) SKIP=$((SKIP + 1)) ;; *) FAIL=$((FAIL + 1)) ;; esac
-  printf '%s %s\n' "$1" "$2"
-}
+record() { case "$1" in PASS) PASS=$((PASS + 1)) ;; SKIP) SKIP=$((SKIP + 1)) ;; *) FAIL=$((FAIL + 1)) ;; esac; printf '%s %s\n' "$1" "$2"; }
 
 # The scanned copy holds what workflow edges can reach: workflows, Makefile, tools/scripts, demo/ and tests/ shell.
 BASE="${WORK}/pristine"
@@ -30,17 +26,14 @@ cp "${ROOT}/Makefile" "${BASE}/Makefile"
 build() {
   cp -R "${BASE}" "${WORK}/$1"
   python - "${WORK}/$1" "$1" "${SENTINEL}" <<'PY'
-import os
-import pathlib
-import sys
-
+import os, pathlib, sys  # noqa: E401
 root, case, sentinel = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
 PH = "credential-unavailable-for-redaction"
 E2E, EDGE = ".github/workflows/e2e.yml", ".github/workflows/edge-fake-hook-e2e.yml"
 CAPTURE = "      - name: Capture compose logs on failure\n"
 LINK = (".github/workflows/docs-linkcheck.yml", "      - name: Run lychee (offline, gating)\n")
 API = "          CORDUM_API_KEY: ${{ env.CORDUM_API_KEY || '" + PH + "' }}\n"
-REG = 'gha_mask_value "${minted}"'
+REG, STRICT = 'gha_mask_value "${minted}"', "set -euo pipefail\n"
 SAFE = '[[ -n "${minted}" ]] || exit 1\n' + REG
 MINT_SH, RUN_MINT, INC = "tools/scripts/zz_synthetic_mint.sh", "bash tools/scripts/zz_synthetic_mint.sh", "tools/scripts/zz_synthetic_mint.inc"
 BODY = "\n".join((
@@ -65,20 +58,47 @@ MINTS = {  # (lines after the acquisition, lines after its first use) in a set -
     "mint_prefix": (REG + '\necho "synthetic prefix ${minted:0:6}"', ""), "mint_ignored": (REG + " || true", ""),
     "mint_errexit_off": ("set +e\n" + SAFE + "\nset -e", ""), "mint_xtrace": ("set -x\n" + SAFE, ""),
 }
+OPTS = {  # mint() keywords, before defaulting to SAFE: a set applies in its own scope; one that may run later or again applies throughout its subshell
+    "mint_errexit_func": dict(head="main() {\nset -euo pipefail\n", tail="}\nmain\n"), "errexit_window": dict(head=STRICT + "probe() {\nset +e\nfalse\nset -e\n}\nprobe\n"),
+    "errexit_scoped": dict(head="set -uo pipefail\nunused() { set -e; }\n( set -e )\nif false; then set -e; fi\n"), "errexit_leak": dict(head=STRICT + "relax() { set +e; }\nrelax\n"),
+    "errexit_subshell": dict(head="set -uo pipefail\n(\nset -e\nrelax() { set +e; }\nrelax\n", tail=")\n"), "subshell_confined": dict(head=STRICT + "( relax() { set +e; }; relax; set -x )\nprobe=\"$(set +e; set -x; printf syn)\"\n"),
+    "trace_unused": dict(head=STRICT + "set -x\nunused() { set +x; }\n"), "trace_scoped": dict(head=STRICT + "set -x\n( set +x )\nif false; then set +x; fi\n"),
+    "trace_call_order": dict(head=STRICT + "main() {\n", tail="}\nset -x\nmain\n"), "trace_loop": dict(head=STRICT + "for round in 1 2; do\n", tail="set -x\ndone\n"),
+    "trace_skipped": dict(head=STRICT + "set -x\nfalse && set +x\n"), "trace_piped": dict(head=STRICT + "set -x\nset +x | cat\nset +x &\nwait\n"),  # skipped, or run in another shell
+    "errexit_skipped": dict(head="set -uo pipefail\nfalse && set -e\n"), "errexit_piped": dict(head="set -uo pipefail\nset -e | cat\nset -e &\nwait\n"),
+    "errexit_tested": dict(head=STRICT + "main() {\n", tail="}\nmain || true\n"), "errexit_tested_body": dict(head="main() {\nset -euo pipefail\n", tail="}\nif true && main; then :; fi\n"), "errexit_tested_nested": dict(head=STRICT + "main() {\n", tail="}\nouter() { main; }\n! outer\n"),  # a tested status: bash ignores errexit in the call
+    "errexit_group_tested": dict(head=STRICT + "main() {\n", tail="}\n{ main; } || true\n"), "errexit_block_tested": dict(head=STRICT + "{\n", tail="} || true\n"), "errexit_if_tested": dict(head=STRICT + "if true; then\n", tail="fi || true\n"),  # bash ignores errexit throughout a compound command
+    "errexit_paren_tested": dict(head=STRICT + "(\n", tail=") && true\n"), "errexit_loop_tested": dict(head=STRICT + "for round in 1; do\n", tail="done || true\n"), "errexit_negated": dict(head=STRICT + "main() {\n", tail="}\n! { main; }\n"),  # that is negated, a condition, or not last in an && or || list
+    "errexit_condition": dict(head=STRICT + "main() {\n", tail="}\nif { main; }; then :; fi\n"), "errexit_then_tested": dict(head=STRICT + "main() {\n", tail="}\nif true; then { main; } || true; fi\n"), "errexit_group_last": dict(head=STRICT + "main() {\n", tail="}\ntrue && { main; }\n"),  # last: errexit holds
+    "errexit_pipe_tested": dict(head=STRICT + "main() {\n", tail="}\nmain | cat || true\n"), "errexit_group_piped": dict(head=STRICT + "main() {\n", tail="}\n{ main; } | cat || true\n"), "errexit_negated_if": dict(head=STRICT + "! if true; then\n", tail="fi\n"), "errexit_pipe_plain": dict(head=STRICT + "main() {\n", tail="}\nmain | cat\n"),  # the whole pipeline
+    "errexit_condition_list": dict(head=STRICT + "main() {\n", tail="}\nif true; main; true; then :; fi\n"), "errexit_condition_group": dict(head=STRICT + "main() {\n", tail="}\nif true && { main; }; then :; fi\n"), "errexit_then_group": dict(head=STRICT + "main() {\n", tail="}\nif true; then { main; }; fi\n"),  # any command of a condition list
+    "errexit_cold": dict(head=STRICT + "main() {\n", tail="}\nset +e\nmain\nset -e\n"), "errexit_last": dict(head=STRICT + "main() {\n", tail="}\ntrue && main\n"), "mask_captured_func": dict(before=SAFE + " || exit 1", head=STRICT + "main() {\n", tail='}\nout="$(main)"\n'),
+    "return_global": dict(before=SAFE + " || return 1", head=STRICT + "main() {\n", tail="}\nmain || true\n"),  # the caller ignores the failure; minted outlives it
+    "return_local": dict(before=SAFE + " || return 1", head=STRICT + "main() {\nlocal minted\n", tail="}\nmain || true\n"), "exit_block": dict(before=SAFE + ' || { echo "synthetic mask failure" >&2; exit 1; }'),
+    "return_unset": dict(before=SAFE + " || { unset minted; return 1; }", head=STRICT + "main() {\n", tail="}\nmain || true\n"),  # a local or a clear counts only if it runs first:
+    "return_and_local": dict(before=SAFE + " || return 1", head=STRICT + "main() {\nfalse && local minted\n", tail="}\nmain || true\n"),
+    "return_and_unset": dict(before=SAFE + " || { false && unset minted; return 1; }", head=STRICT + "main() {\n", tail="}\nmain || true\n"),  # so does the exit or return itself:
+    "exit_skipped": dict(before=SAFE + " || { true || exit 1; :; }"), "exit_captured": dict(before=SAFE + ' || { echo "$(exit 1)"; }'), "return_skipped": dict(before=SAFE + " || { true || return 1; :; }", head=STRICT + "main() {\nlocal minted\n", tail="}\nmain\n"),
+    "return_nested": dict(before=SAFE + " || { if true; then return 1; fi; unset minted; return 1; }", head=STRICT + "main() {\n", tail="}\nmain || true\n")}
 GEN = {
     "gen_openssl": "$(openssl rand -hex 16)", "gen_uuidgen": "$(uuidgen)",
     "gen_urandom": "$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \\n')", "gen_random": "syn-${RANDOM}${RANDOM}",
     "gen_date": "syn-$(date +%s%N)", "gen_python": "$(python3 -c 'import secrets; print(secrets.token_urlsafe(16))')",
     "gen_quoted_paren": "$(printf '(' \"(\")$(openssl rand -hex 8)", "gen_nested": '$(curl -fsS -d "$(jq -cn --arg n "syn-$(date +%s)" "{}")" https://127.0.0.1:9/)',
 }
+CAPTURED = 'out="$(synthetic_key="$(openssl rand -hex 16)"; @MASK@ "${synthetic_key}" || exit 1; printf %s "${synthetic_key}")"'  # a $(...) captures the mask; pg_register_secret writes to PG_MASK_FD
+SUBST = {"errexit_substitution": 'out="$(synthetic_key="$(openssl rand -hex 16)"; gha_mask_value "${synthetic_key}"; printf %s "${synthetic_key}")"',  # bash clears errexit in $(...)
+         "trace_substitution": CAPTURED.replace("$(synthetic", "$(set -x; synthetic", 1).replace("@MASK@", "pg_register_secret"), "mask_captured": CAPTURED.replace("@MASK@", "gha_mask_value"),
+         "mask_fd_captured": CAPTURED.replace("@MASK@", "pg_register_secret"), "mask_env_captured": 'synthetic_key="$(openssl rand -hex 16)"\ngha_mask_value "${synthetic_key}" || exit 1\nout="$(gha_mask_env SYNTHETIC_KEY "${synthetic_key}")"'}
 DYNAMIC = {
-    "dyn_var": 'bash "${SYNTHETIC_DIR}/zz_synthetic_mint.sh"', "dyn_c": 'bash -c "${SYNTHETIC_CMD}"',
+    "dyn_var": 'bash "${SYNTHETIC_DIR}/zz_synthetic_mint.sh"', "dyn_c": 'bash -c "${SYNTHETIC_CMD}"', "dyn_c_prefixed": "bash -c 'SYNTHETIC_MODE=1 \"${SYNTHETIC_SHELL}\" synthetic_arg'",
     "dyn_heredoc": "bash <<'SYNTHETIC'\ntrue\nSYNTHETIC", "dyn_pipe": "curl -fsS https://127.0.0.1:9/x | bash",
     "dyn_eval": 'eval "${SYNTHETIC_CMD}"', "dyn_make": 'make "${SYNTHETIC_TARGET}"',
     "dyn_source": 'source "${SYNTHETIC_DIR}/zz_synthetic_helper.sh"', "dyn_procsub": "source <(cat " + MINT_SH + ")",
-    "dyn_wrapper": "timeout -s KILL 10m " + RUN_MINT, "dyn_cmdword": '"${SYNTHETIC_SHELL}" ' + MINT_SH,
+    "dyn_wrapper": "timeout -s KILL 10m " + RUN_MINT, "dyn_cmdword": '"${SYNTHETIC_SHELL}" ' + MINT_SH, "dyn_stdin_s": "bash -s synthetic_arg <<'SYNTHETIC'\ntrue\nSYNTHETIC",
 }
-SHELLS = {"shell_env_bash": "/usr/bin/env bash {0}", "shell_pwsh": "pwsh"}
+SHELLS, PROG = {"shell_env_bash": "/usr/bin/env bash {0}", "shell_pwsh": "pwsh"}, ' \'synthetic_key="$(openssl rand -hex 16)"; curl -fsS -u "synthetic:${synthetic_key}" https://127.0.0.1:9/ >/dev/null\''
+INLINE = {"shell_c_stdin": "bash -s -c" + PROG, "shell_c_option": "bash -c -e" + PROG, "shell_c_dashdash": "bash -c --" + PROG, "inline_redirect": "bash -c 'exec >\"${SYNTHETIC_LOG:-/dev/null}\" 2>&1; true'"}  # bash runs the -c program after any later option, over -s; a redirection is not its command word
 TRACE = {  # (shell, run[, job]): xtrace on at a fail-closed registration; run-text tracing in a job the guard leaves open
     "trace_shell": ("bash -x {0}", "source " + MINT_SH), "trace_env": ("", "SHELLOPTS=xtrace " + RUN_MINT),
     "trace_bash_x": ("", "bash -x " + MINT_SH, *LINK), "trace_set_x": ("", "set -x\nsource " + MINT_SH, *LINK),
@@ -94,7 +114,7 @@ def write(rel, text):
     (root / rel).write_bytes(text.replace("@SENTINEL@", sentinel).encode("utf-8"))
 def script(name, body):
     write("tools/scripts/" + name, "#!/usr/bin/env bash\nset -euo pipefail\n" + body + "\n")
-def mint(before="", after="", rel=MINT_SH, head="set -euo pipefail\n", tail="", bang="#!/usr/bin/env bash\n"):
+def mint(before="", after="", rel=MINT_SH, head=STRICT, tail="", bang="#!/usr/bin/env bash\n"):
     body = BODY.replace("@BEFORE@", before).replace("@AFTER@", after)
     write(rel, bang + head + "source tools/scripts/github_actions_mask_env.sh\n" + body + "\n" + tail)
 def step(body, wf=E2E, anchor=CAPTURE, shell=""):
@@ -105,21 +125,22 @@ if case == "bind_nightly":
     edit(".github/workflows/nightly.yml", anchor, anchor + "      env:\n        CORDUM_API_KEY: ${{ secrets.SYNTHETIC_FOREIGN }}\n")
 elif case in BINDS:
     edit(E2E, API, BINDS[case])
-elif case in MINTS:
-    mint(*MINTS[case])
+elif case in MINTS or case in OPTS:
+    mint(*MINTS[case]) if case in MINTS else mint(**{"before": SAFE, **OPTS[case]})
     step(RUN_MINT)
-elif case == "mint_make":
+elif case in ("mint_make", "make_errexit", "make_line_errexit", "make_oneshell"):  # make runs each logical recipe line in its own sh -c, errexit off; .ONESHELL runs a recipe in one
     mint()
+    recipe = RUN_MINT if case == "mint_make" else ("" if case == "make_errexit" else "set -e\n\t") + 'synthetic_key="$$(openssl rand -hex 16)"; gha_mask_value "$$synthetic_key"; echo "$$synthetic_key"'
     makefile = root / "Makefile"
-    makefile.write_bytes(makefile.read_bytes() + b"\nzz-synthetic-mint:\n\tbash tools/scripts/zz_synthetic_mint.sh\n")
+    makefile.write_bytes(makefile.read_bytes() + (("\n.ONESHELL:" if case == "make_oneshell" else "") + "\nzz-synthetic-mint:\n\t" + recipe + "\n").encode("utf-8"))
     step("make zz-synthetic-mint")
 elif case == "mint_untracked_job":
     mint()
     step(RUN_MINT, *LINK)
 elif case == "mint_inline":
     step(BODY.replace("@BEFORE@", "").replace("@AFTER@", ""))
-elif case in GEN:
-    script("zz_synthetic_gen.sh", 'synthetic_password="' + GEN[case] + '"\ncurl -fsS -u "synthetic:${synthetic_password}" https://127.0.0.1:9/ >/dev/null')
+elif case in GEN or case in SUBST:
+    script("zz_synthetic_gen.sh", SUBST.get(case) or 'synthetic_password="' + GEN[case] + '"\ncurl -fsS -u "synthetic:${synthetic_password}" https://127.0.0.1:9/ >/dev/null')
     step("bash tools/scripts/zz_synthetic_gen.sh")
 elif case == "nonce_bypass_removed":
     edit(EDGE, '          CORDUM_EDGE_E2E_BYPASS_HOOK: "1"\n', "")
@@ -127,9 +148,9 @@ elif case == "nonce_bypass_overridden":
     edit(EDGE, "run: bash tools/scripts/edge_fake_hook_e2e.sh", "run: CORDUM_EDGE_E2E_BYPASS_HOOK=0 bash tools/scripts/edge_fake_hook_e2e.sh")
 elif case == "quickstart_unseeded":
     step("bash tools/scripts/quickstart.sh --skip-build", *LINK)
-elif case in DYNAMIC:
+elif case in DYNAMIC or case in INLINE:
     mint()
-    step(DYNAMIC[case])
+    step(DYNAMIC.get(case) or INLINE[case])
 elif case == "dyn_script":
     script("zz_synthetic_dyn.sh", 'source "${SYNTHETIC_DIR}/zz_synthetic_helper.sh"')
     step("bash tools/scripts/zz_synthetic_dyn.sh")
@@ -141,9 +162,6 @@ elif case in SHELLS:
 elif case in TRACE:  # trace_bang: an exec'd script whose #! line turns xtrace on
     mint(SAFE, bang="#!/bin/bash -x\n" if case == "trace_bang" else "#!/usr/bin/env bash\n")
     step(TRACE[case][1], *TRACE[case][2:], shell=TRACE[case][0])
-elif case == "mint_errexit_func":  # errexit set inside main() still covers the registration
-    mint(SAFE, head="main() {\nset -euo pipefail\n", tail="}\nmain\n")
-    step(RUN_MINT)
 elif case in NOEXT:  # source and bash read any text as shell; exec only a sh #!, or an executable without #! (ENOEXEC)
     write(INC, NOEXT[case][0] + BODY.replace("@BEFORE@", "").replace("@AFTER@", "") + "\n")
     os.chmod(root / INC, NOEXT[case][2])
@@ -185,14 +203,10 @@ has_issue() {
   done <<<"$1"
   return 1
 }
-
 check() {
   local name="$1" want="$2" out rc=0 built=0
   build "${name}" || built=$?
-  if [[ "${built}" -ne 0 ]]; then
-    if [[ "${built}" -eq 3 ]]; then record SKIP "${name}: platform cannot create this fixture"; else record FAIL "${name}: fixture build failed"; fi
-    return 0
-  fi
+  if [[ "${built}" -ne 0 ]]; then if [[ "${built}" -eq 3 ]]; then record SKIP "${name}: platform cannot create this fixture"; else record FAIL "${name}: fixture build failed"; fi; return 0; fi
   out="$(python "${GUARD}" "${WORK}/${name}" 2>&1 | tr -d '\r')" || rc=$?
   rm -rf "${WORK:?}/${name}"
   if [[ "${out}" == *"${SENTINEL}"* ]]; then
@@ -207,62 +221,52 @@ check() {
     record FAIL "${name}: expected ${want}, got rc=${rc}: ${out}"
   fi
 }
-
-while read -r name want; do
-  check "${name}" "${want}"
+# Each CASES row names one or more cases, then the code every one of them must report (or clean).
+while read -r -a row; do
+  for name in "${row[@]:0:${#row[@]}-1}"; do check "${name}" "${row[-1]}"; done
 done <<'CASES'
 base clean
 bind_spacing clean
 mint_registered clean
 mint_errexit_func clean
+errexit_window subshell_confined errexit_last errexit_group_last errexit_pipe_plain errexit_then_group clean
+return_local return_unset exit_block clean
 trace_off clean
 noext_data clean
 noext_python clean
-bind_literal_space e2e.yml:e2e-tls:REDACTION_VALUE_BINDING
-bind_cross e2e.yml:e2e-tls:REDACTION_VALUE_BINDING
+make_oneshell clean
+inline_redirect clean
+bind_literal_space bind_cross e2e.yml:e2e-tls:REDACTION_VALUE_BINDING
 bind_const e2e.yml:e2e-tls:REDACTION_VALUE_BINDING
 bind_foreign e2e.yml:e2e-tls:REDACTION_VALUE_BINDING
 bind_drop e2e.yml:e2e-tls:REDACTION_VALUE_BINDING
 bind_rename e2e.yml:e2e-tls:REDACTION_VALUE_BINDING
 bind_nightly nightly.yml:full-production-gate:REDACTION_VALUE_BINDING
 mint_unregistered e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
-mint_late e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
+mint_late mint_xtrace e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 mint_prefix e2e.yml:e2e-tls:CREDENTIAL_PREFIX_PRINT@tools/scripts/zz_synthetic_mint.sh
 mint_ignored e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 mint_errexit_off e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
-mint_xtrace e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
-trace_shell e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
-trace_env e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
-trace_bash_x docs-linkcheck.yml:link-check:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
-trace_set_x docs-linkcheck.yml:link-check:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
+errexit_scoped e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
+errexit_leak errexit_subshell errexit_skipped errexit_piped errexit_tested errexit_tested_body errexit_tested_nested errexit_cold mask_captured_func errexit_group_tested errexit_block_tested errexit_if_tested errexit_paren_tested errexit_loop_tested errexit_negated errexit_condition errexit_then_tested errexit_pipe_tested errexit_group_piped errexit_negated_if errexit_condition_list errexit_condition_group e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
+return_global return_and_local return_and_unset return_nested return_skipped exit_skipped exit_captured e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
+trace_unused trace_skipped trace_piped trace_scoped trace_call_order trace_loop e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
+trace_substitution e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_gen.sh
+trace_shell trace_env e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
+trace_bash_x trace_set_x docs-linkcheck.yml:link-check:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 trace_bang e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
-noext_source e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.inc
-noext_exec e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.inc
+noext_source noext_exec e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.inc
 mint_make e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
+make_errexit make_line_errexit e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@Makefile
 mint_untracked_job docs-linkcheck.yml:link-check:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
-mint_inline e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED
-gen_openssl e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_gen.sh
-gen_uuidgen e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_gen.sh
-gen_urandom e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_gen.sh
-gen_random e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_gen.sh
-gen_date e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_gen.sh
-gen_python e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_gen.sh
-gen_quoted_paren e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_gen.sh
-gen_nested clean
+mint_inline shell_c_stdin shell_c_option shell_c_dashdash e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED
+gen_openssl gen_uuidgen gen_urandom gen_random gen_date gen_python gen_quoted_paren errexit_substitution mask_captured mask_env_captured e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_gen.sh
+gen_nested mask_fd_captured clean
 nonce_bypass_removed edge-fake-hook-e2e.yml:edge-fake-hook-e2e:CREDENTIAL_UNREGISTERED@tools/scripts/edge_fake_hook_e2e.sh
 nonce_bypass_overridden edge-fake-hook-e2e.yml:edge-fake-hook-e2e:CREDENTIAL_UNREGISTERED@tools/scripts/edge_fake_hook_e2e.sh
 quickstart_unseeded docs-linkcheck.yml:link-check:CREDENTIAL_UNREGISTERED@tools/scripts/quickstart.sh
-dyn_var e2e.yml:e2e-tls:SOURCE_DYNAMIC
-dyn_c e2e.yml:e2e-tls:SOURCE_DYNAMIC
-dyn_heredoc e2e.yml:e2e-tls:SOURCE_DYNAMIC
-dyn_pipe e2e.yml:e2e-tls:SOURCE_DYNAMIC
-dyn_eval e2e.yml:e2e-tls:SOURCE_DYNAMIC
-dyn_make e2e.yml:e2e-tls:SOURCE_DYNAMIC
-dyn_source e2e.yml:e2e-tls:SOURCE_DYNAMIC
+dyn_var dyn_c dyn_c_prefixed dyn_heredoc dyn_pipe dyn_eval dyn_make dyn_source dyn_procsub dyn_wrapper dyn_cmdword dyn_stdin_s e2e.yml:e2e-tls:SOURCE_DYNAMIC
 dyn_script e2e.yml:e2e-tls:SOURCE_DYNAMIC@tools/scripts/zz_synthetic_dyn.sh
-dyn_procsub e2e.yml:e2e-tls:SOURCE_DYNAMIC
-dyn_wrapper e2e.yml:e2e-tls:SOURCE_DYNAMIC
-dyn_cmdword e2e.yml:e2e-tls:SOURCE_DYNAMIC
 uses_local e2e.yml:e2e-tls:SOURCE_DYNAMIC@.github/workflows/e2e.yml
 shell_env_bash e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 shell_pwsh e2e.yml:e2e-tls:SOURCE_DYNAMIC@.github/workflows/e2e.yml
@@ -276,11 +280,7 @@ CASES
 
 real_rc=0
 real_out="$(python "${GUARD}" "${ROOT}" 2>&1 | tr -d '\r')" || real_rc=$?
-if [[ "${real_rc}" -eq 0 && -z "${real_out}" ]]; then
-  record PASS "real tree: every workflow credential path is registered or condition-exempt"
-else
-  record FAIL "real tree: rc=${real_rc}: ${real_out}"
-fi
+if [[ "${real_rc}" -eq 0 && -z "${real_out}" ]]; then record PASS "real tree: every workflow credential path is registered or condition-exempt"; else record FAIL "real tree: rc=${real_rc}: ${real_out}"; fi
 
 # --inventory is the value-free census: kind@path:line:variable:state.
 inv_rc=0
