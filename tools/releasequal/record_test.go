@@ -305,3 +305,87 @@ func TestCheck(t *testing.T) {
 		})
 	}
 }
+
+func TestParseRejectsMalformedInputs(t *testing.T) {
+	for name, data := range map[string][]byte{
+		"empty": nil, "empty-object": []byte(`{}`), "null": []byte(`null`),
+		"bom":             append([]byte{0xef, 0xbb, 0xbf}, fixture(t)...),
+		"null-artifacts":  changed(t, "", "artifacts", nil, false),
+		"null-gates":      changed(t, "", "gates", nil, false),
+		"null-exceptions": changed(t, "", "exceptions", nil, false),
+	} {
+		t.Run(name, func(t *testing.T) {
+			r, err := Parse(data)
+			if err == nil || r != nil {
+				t.Fatalf("invalid input released: %v", err)
+			}
+		})
+	}
+}
+
+func TestParseDuplicateKeysAgree(t *testing.T) {
+	for _, result := range []string{ResultPass, ResultFail, "skipped"} {
+		t.Run(result, func(t *testing.T) {
+			data := bytes.Replace(fixture(t), []byte(`"result": "pass"`), []byte(`"result":"fail","result":"`+result+`"`), 1)
+			var decoded Record
+			if err := strictDecode(data, &decoded); err != nil {
+				t.Fatal(err)
+			}
+			if decoded.Gates[0].Result != result {
+				t.Fatal("decoder did not use last value")
+			}
+			schemaErr := infraschema.ValidateSchema(SchemaName, SchemaJSON(), data)
+			r, err := Parse(data)
+			if result == "skipped" {
+				wantError(t, schemaErr, "/gates/0/result")
+				wantError(t, err, "/gates/0/result")
+				return
+			}
+			if schemaErr != nil || err != nil || r.Gates[0].Result != result {
+				t.Fatalf("schema/decoder disagree: %v %v", schemaErr, err)
+			}
+			if result == ResultFail {
+				wantError(t, r.Check("api-gateway", r.Artifacts[0].Digest), `result is "fail"`)
+			}
+		})
+	}
+	last := `{"repository":"cordum-io/cordum","sha":"` + strings.Repeat("c", 40) + `"}`
+	data := bytes.Replace(fixture(t), []byte(`"source":`), []byte(`"source":`+last+`,"source":`), 1)
+	r, err := Parse(data)
+	if err != nil || r.Source.SHA != strings.Repeat("a", 40) {
+		t.Fatalf("object keys disagree: %v", err)
+	}
+}
+
+func TestParseJoinsAllViolations(t *testing.T) {
+	r := parsed(t)
+	r.Gates[0].Digest = r.Artifacts[1].Digest
+	r.Release.Ref = "refs/heads/main"
+	got, err := Parse(encoded(t, r))
+	wantError(t, err, "gate \"image-smoke\"")
+	wantError(t, err, "non-dry-run ref")
+	if got != nil || strings.Count(err.Error(), "qualification record:") != 2 {
+		t.Fatal("did not join both prefixed violations")
+	}
+}
+
+func TestAssembleInitializesEmptySlices(t *testing.T) {
+	h, f := fragments(t)
+	f[1].Artifacts[0].Name = "a-binary"
+	f[1].Gates = []Gate{{ID: "binary", Artifact: "a-binary", Digest: f[1].Artifacts[0].Digest, Result: ResultPass, Log: "log"}}
+	f[0].Gates[0], f[0].Gates[1] = f[0].Gates[1], f[0].Gates[0]
+	f[0].Exceptions, f[1].Exceptions = nil, nil
+	r, err := Assemble(h.Release, h.Source, f[0], f[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Exceptions == nil || len(r.Exceptions) != 0 || r.Gates[0].Artifact != "a-binary" || r.Gates[1].ID != "image-smoke" {
+		t.Fatalf("wrong slice/gate ordering: %+v", r)
+	}
+	f[0].Gates, f[1].Gates = nil, nil
+	f[0].Exceptions = []Exception{{ID: "no-gates", Artifacts: []string{"api-gateway", "a-binary"}, Reason: "Not measured"}}
+	r, err = Assemble(h.Release, h.Source, f...)
+	if err != nil || r.Gates == nil || len(r.Gates) != 0 {
+		t.Fatalf("nil gates: %v", err)
+	}
+}
