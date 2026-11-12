@@ -54,7 +54,7 @@ BINDS = {
     "bind_literal_space": API.replace(PH + "'", PH + " '"),
 }
 MINTS = {  # (lines after the acquisition, lines after its first use) in a set -euo pipefail script
-    "mint_unregistered": ("", ""), "mint_registered": (SAFE, ""), "mint_late": ("", REG),
+    "mint_unregistered": ("", ""), "mint_registered": (SAFE, ""), "mint_late": ("", REG), "mint_echo_n": ('echo -n "${minted}"\n' + SAFE, ""),  # -n is a test only in [, [[ or test
     "mint_prefix": (REG + '\necho "synthetic prefix ${minted:0:6}"', ""), "mint_ignored": (REG + " || true", ""),
     "mint_errexit_off": ("set +e\n" + SAFE + "\nset -e", ""), "mint_xtrace": ("set -x\n" + SAFE, ""),
 }
@@ -98,7 +98,7 @@ DYNAMIC = {
     "dyn_wrapper": "timeout -s KILL 10m " + RUN_MINT, "dyn_cmdword": '"${SYNTHETIC_SHELL}" ' + MINT_SH, "dyn_stdin_s": "bash -s synthetic_arg <<'SYNTHETIC'\ntrue\nSYNTHETIC",
 }
 SHELLS, PROG = {"shell_env_bash": "/usr/bin/env bash {0}", "shell_pwsh": "pwsh"}, ' \'synthetic_key="$(openssl rand -hex 16)"; curl -fsS -u "synthetic:${synthetic_key}" https://127.0.0.1:9/ >/dev/null\''
-INLINE = {"shell_c_stdin": "bash -s -c" + PROG, "shell_c_option": "bash -c -e" + PROG, "shell_c_dashdash": "bash -c --" + PROG, "inline_redirect": "bash -c 'exec >\"${SYNTHETIC_LOG:-/dev/null}\" 2>&1; true'"}  # bash runs the -c program after any later option, over -s; a redirection is not its command word
+INLINE = {"shell_c_stdin": "bash -s -c" + PROG, "shell_c_option": "bash -c -e" + PROG, "shell_c_dashdash": "bash -c --" + PROG, "inline_redirect_first": "bash -c '> /dev/null " + RUN_MINT + "'", "inline_redirect": "bash -c 'exec >\"${SYNTHETIC_LOG:-/dev/null}\" 2>&1; true'"}  # bash runs the -c program after any later option, over -s; a redirection is not its command word
 TRACE = {  # (shell, run[, job]): xtrace on at a fail-closed registration; run-text tracing in a job the guard leaves open
     "trace_shell": ("bash -x {0}", "source " + MINT_SH), "trace_env": ("", "SHELLOPTS=xtrace " + RUN_MINT),
     "trace_bash_x": ("", "bash -x " + MINT_SH, *LINK), "trace_set_x": ("", "set -x\nsource " + MINT_SH, *LINK),
@@ -243,7 +243,7 @@ bind_drop e2e.yml:e2e-tls:REDACTION_VALUE_BINDING
 bind_rename e2e.yml:e2e-tls:REDACTION_VALUE_BINDING
 bind_nightly nightly.yml:full-production-gate:REDACTION_VALUE_BINDING
 mint_unregistered e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
-mint_late mint_xtrace e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
+mint_late mint_echo_n mint_xtrace e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 mint_prefix e2e.yml:e2e-tls:CREDENTIAL_PREFIX_PRINT@tools/scripts/zz_synthetic_mint.sh
 mint_ignored e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 mint_errexit_off e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
@@ -258,6 +258,7 @@ trace_bang e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_s
 noext_source noext_exec e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.inc
 mint_make e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 make_errexit make_line_errexit e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@Makefile
+inline_redirect_first e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 mint_untracked_job docs-linkcheck.yml:link-check:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 mint_inline shell_c_stdin shell_c_option shell_c_dashdash e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED
 gen_openssl gen_uuidgen gen_urandom gen_random gen_date gen_python gen_quoted_paren errexit_substitution mask_captured mask_env_captured e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_gen.sh

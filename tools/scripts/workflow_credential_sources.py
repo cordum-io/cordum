@@ -11,7 +11,7 @@ SEPS, CI_TEST, RESERVED = ("&&", "||", ";;", "|&", ";", "|", "&", "\n", "(", ")"
 ASSIGN, WORD_ASSIGN = re.compile(r"(?:(?:local|export|declare|typeset|readonly)\s+(?:-\w+\s+)*)?([A-Za-z_]\w*)=(.*)", re.S), re.compile(r"([A-Za-z_]\w*)=(.*)", re.S)
 JQ, GEN = re.compile(r"\bjq\b.*?\.(?:\w*_)?(?:token|secret|password|api_key|key)\b(?!\.)", re.S), re.compile(r"openssl\s+rand\b|\buuidgen\b|/dev/u?random\b|\$\{?RANDOM\b|\$\(\s*date\b|secrets\.token_|\bpwgen\b")
 NAME, PREFIX = re.compile(r"(?i)^(?!.*idem).*(?:passw|secret|token|key|nonce)"), re.compile(r"\$\{(\w+):(?:(\d+):(\d+)\}|\d|:|\s+-?\d|\(\s*-?\d)")
-DEVNULL, TOPLEVEL = re.compile(r"(?:^|\s)(?:1|&)?>>?\s*/dev/null(?=\s|$)"), re.compile(r"\$\(\s*(?:pwd(?:\s+-P)?|git\s+rev-parse\s+--show-toplevel)\s*\)")
+DEVNULL, TESTCMD, TOPLEVEL = re.compile(r"(?:^|\s)(?:1|&)?>>?\s*/dev/null(?=\s|$)"), re.compile(r"(?:(?:if|elif|while|until|then|do|else|!) )*(?:\[\[?|test) "), re.compile(r"\$\(\s*(?:pwd(?:\s+-P)?|git\s+rev-parse\s+--show-toplevel)\s*\)")
 DIRNAME, VAR = re.compile(r"\$\(\s*dirname\s+(?:--\s+)?\"?\$\{?(?:BASH_SOURCE(?:\[0\])?|0)\}?\"?\s*\)|\$\{BASH_SOURCE(?:\[0\])?%/\*\}"), re.compile(r"\$\{([A-Za-z_]\w*)(?:(:?[-=])((?:[^{}]|\{[^{}]*\})*))?\}|\$([A-Za-z_]\w*)")
 CDPWD, PREFIX_WORDS = re.compile(r"\$\(\s*cd\s+(?:--\s+)?(\"[^\"$]*\"|'[^']*'|[^\s;&|)$\"']+)\s*(?:>\s*/dev/null\s*)?(?:2>&1\s*)?&&\s*pwd(?:\s+-P)?\s*\)"), {"if", "then", "else", "elif", "do", "while", "until", "!", "time", "exec", "command", "builtin", "nohup", "env", "sudo", "timeout"}
 Cmd = collections.namedtuple("Cmd", "line words op sub stack func text", defaults=((), "", ""))
@@ -109,9 +109,9 @@ def registered_at(cmds: list, j: int, k: int, var: str, errexit: bool, captured:
     level, home = cmds[j].stack, cmds[k].stack; gate = level[-1] if level and level[:-1] == home else -1  # noqa: E702  # one if deeper, on a safe test
     return level == home or gate >= 0 and cmds[gate].words[:1] == ["if"] and bool(re.fullmatch(safe, cmds[gate].text)) and not any(c.stack == level and c.words[:1] in (["else"], ["elif"]) for c in cmds[gate + 1:j])
 def state(cmds: list, k: int, var: str, flags: list, captured: set = frozenset()) -> str:  # registered, late (used or traced first) or unregistered; reassignment ends it
-    ref, harmless, used = re.compile(r"\$\{?" + var + r"(?!\w)|\bexport\s+" + var + r"\b(?!=)"), re.compile(r"-[nz]\s+\"?\$\{?" + var + r"\}?\"?|\$\{#" + var + r"\}"), False
+    ref, harmless, length, used = re.compile(r"\$\{?" + var + r"(?!\w)|\bexport\s+" + var + r"\b(?!=)"), re.compile(r"-[nz]\s+\"?\$\{?" + var + r"\}?\"?|\$\{#" + var + r"\}"), re.compile(r"\$\{#" + var + r"\}"), False  # -n/-z reads no value only in a test command ([, [[ or test); echo -n prints it
     for j in range(k + 1, len(cmds)):
-        if ref.search(harmless.sub("", cmds[j].text)):
+        if ref.search((harmless if TESTCMD.match(cmds[j].text) else length).sub("", cmds[j].text)):
             if registered_at(cmds, j, k, var, flags[j][0], captured): return "late" if used or any(on[1] for on in flags[k:j + 1]) else "registered"
             used = True
         elif (m := ASSIGN.fullmatch(cmds[j].text)) and m.group(1) == var: break
