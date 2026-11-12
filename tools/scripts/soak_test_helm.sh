@@ -15,6 +15,7 @@
 #   CORDUM_API_KEY            Override API key (skips secret lookup if set)
 #   SOAK_DURATION_MINUTES     Passed through to soak_test.sh (default: 60)
 #   SOAK_LOCAL_PORT           Local port for port-forward (default: 18081)
+#   SOAK_METRICS_SOURCE       Defaults to none here (no docker stats on Kubernetes)
 #
 # All other SOAK_* env vars are passed through to soak_test.sh.
 # =============================================================================
@@ -112,6 +113,10 @@ log "Gateway reachable through port-forward"
 # ---------------------------------------------------------------------------
 export CORDUM_API_BASE="http://localhost:${LOCAL_PORT}/api/v1"
 export CORDUM_API_KEY
+# Kubernetes has no docker stats: the memory drift and restart checks are then
+# reported as not evaluated (a WARN and memory_drift_evaluated=false), never as a
+# passing leak check. Override only where docker stats really covers the stack.
+export SOAK_METRICS_SOURCE="${SOAK_METRICS_SOURCE:-none}"
 
 log "Delegating to soak_test.sh..."
 exec bash "${SCRIPT_DIR}/soak_test.sh"
