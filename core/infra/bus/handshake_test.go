@@ -13,7 +13,7 @@ import (
 
 func startTestNATS(t *testing.T) *server.Server {
 	t.Helper()
-	opts := &server.Options{Port: -1, NoLog: true, NoSigs: true}
+	opts := &server.Options{Host: "127.0.0.1", Port: -1, NoLog: true, NoSigs: true}
 	ns, err := server.NewServer(opts)
 	if err != nil {
 		t.Fatalf("start test nats: %v", err)

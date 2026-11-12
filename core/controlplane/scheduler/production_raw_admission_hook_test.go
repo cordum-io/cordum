@@ -93,7 +93,7 @@ func TestInstallProductionRawAdmissionRejectsIncompleteConfiguration(t *testing.
 
 func startProductionAdmissionNATS(t *testing.T) *natsserver.Server {
 	t.Helper()
-	ns, err := natsserver.NewServer(&natsserver.Options{Port: -1, NoLog: true, NoSigs: true})
+	ns, err := natsserver.NewServer(&natsserver.Options{Host: "127.0.0.1", Port: -1, NoLog: true, NoSigs: true})
 	if err != nil {
 		t.Fatalf("new NATS server: %v", err)
 	}
