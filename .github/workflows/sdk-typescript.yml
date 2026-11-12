@@ -101,6 +101,9 @@ jobs:
       - name: Pack dry-run
         run: npm pack --dry-run
 
+      - name: Packed-artifact consumer smoke
+        run: npm run smoke:packed
+
   browser:
     name: Browser smoke (Playwright)
     needs: test

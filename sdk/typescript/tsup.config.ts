@@ -3,7 +3,8 @@ import { defineConfig } from "tsup";
 export default defineConfig({
   entry: ["src/index.ts"],
   format: ["esm", "cjs"],
-  dts: true,
+  // JS already bundles openapi-fetch; consumers cannot resolve types from our devDependencies.
+  dts: { resolve: ["openapi-fetch", "openapi-typescript-helpers"] },
   sourcemap: true,
   splitting: false,
   clean: true,
