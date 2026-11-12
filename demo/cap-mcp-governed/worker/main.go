@@ -53,6 +53,7 @@ const (
 	maxArgsBytes       = 64 << 10
 	codeApprovalNeeded = -32099
 	shutdownBudget     = 15 * time.Second
+	maxRateLimitWait   = 30 * time.Second
 )
 
 // Error codes. A failed job's error_message is always "<code>: <fixed
@@ -199,14 +200,16 @@ func buildArgs(jobID string, in jobInput) ([]byte, error) {
 
 // session is one job's MCP session. JSON-RPC ids count up from 1. gated is
 // set once the gateway asked for approval; from then on the job deadline
-// reports as mcp_approval_timeout.
+// reports as mcp_approval_timeout. retryAfter is the Retry-After header of
+// the last non-200 response.
 type session struct {
-	cfg    config
-	base   context.Context // worker lifetime
-	ctx    context.Context // job deadline, derived from base
-	id     string
-	nextID int
-	gated  bool
+	cfg        config
+	base       context.Context // worker lifetime
+	ctx        context.Context // job deadline, derived from base
+	id         string
+	nextID     int
+	gated      bool
+	retryAfter string
 }
 
 type rpcRequest struct {
@@ -281,6 +284,7 @@ func (s *session) do(method, path string, body []byte) (int, []byte, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
+		s.retryAfter = resp.Header.Get("Retry-After")
 		return resp.StatusCode, nil, nil
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
@@ -416,9 +420,12 @@ func (s *session) create(args []byte, retry bool) (workflowID, approvalID string
 }
 
 // awaitApproval polls the approval record, first immediately, until a
-// human resolves it. The worker only reads the record.
+// human resolves it. The worker only reads the record. A 429 (rate limit)
+// says nothing about the approval, so the poll backs off and tries again
+// until the job deadline.
 func (s *session) awaitApproval(approvalID string) error {
 	path := "/api/v1/mcp/approvals/" + url.PathEscape(approvalID)
+	backoff := s.cfg.PollInterval
 	for {
 		status, data, err := s.do(http.MethodGet, path, nil)
 		if err != nil {
@@ -427,6 +434,14 @@ func (s *session) awaitApproval(approvalID string) error {
 		if status == http.StatusNotFound {
 			return jobError{codeApprovalNotFound, "the approval record does not exist"}
 		}
+		if status == http.StatusTooManyRequests {
+			backoff = min(2*backoff, maxRateLimitWait)
+			if err := s.sleep(rateLimitWait(s.retryAfter, backoff)); err != nil {
+				return err
+			}
+			continue
+		}
+		backoff = s.cfg.PollInterval
 		if status != http.StatusOK {
 			return statusErr(status)
 		}
@@ -447,12 +462,30 @@ func (s *session) awaitApproval(approvalID string) error {
 		default:
 			return errBadApproval
 		}
-		select {
-		case <-s.ctx.Done():
-			return s.interrupted()
-		case <-time.After(s.cfg.PollInterval):
+		if err := s.sleep(s.cfg.PollInterval); err != nil {
+			return err
 		}
 	}
+}
+
+// sleep waits for d, or fails when the job deadline passes or the worker
+// stops first.
+func (s *session) sleep(d time.Duration) error {
+	select {
+	case <-s.ctx.Done():
+		return s.interrupted()
+	case <-time.After(d):
+		return nil
+	}
+}
+
+// rateLimitWait is the pause after a 429: the Retry-After header when it is
+// a positive number of seconds, capped at maxRateLimitWait, else backoff.
+func rateLimitWait(retryAfter string, backoff time.Duration) time.Duration {
+	if secs, err := strconv.Atoi(strings.TrimSpace(retryAfter)); err == nil && secs > 0 {
+		return time.Duration(min(secs, int(maxRateLimitWait/time.Second))) * time.Second
+	}
+	return backoff
 }
 
 // newAgent builds the unsigned (compat-profile) CAP agent and registers the

@@ -26,6 +26,9 @@ then every `CAP_MCP_POLL_INTERVAL`:
   arguments, exactly once. There is never a third call.
 - `rejected`, `expired`, a missing record or any other status: the job fails
   with the matching code below and nothing is retried.
+- HTTP `429` (rate limited) on the poll: poll again after `Retry-After`
+  seconds (at most 30), or without that header after a doubling backoff that
+  starts at twice the poll interval (at most 30s), until the job deadline.
 
 A failed read or status call stops the job before the mutation is requested.
 The handler is registered with 0 runtime retries, because a retry would ask
@@ -35,6 +38,21 @@ for a new approval.
 
 - A Cordum gateway with Redis. Without Redis no approval gate is wired, and
   every approval-required tool fails closed with JSON-RPC `-32097`.
+- MCP enabled in the gateway config: `mcp.enabled=true` with `mcp.transport`
+  `http` (the default) or `both`. `mcp.enabled` defaults to false, and then
+  `POST /mcp/message` answers 503, so every job fails at `initialize` with
+  `mcp_unavailable`. An admin can set it through the config API (see
+  `docs/mcp-server.md`); the gateway reloads MCP at once:
+
+  ```bash
+  curl -sS -X POST http://localhost:8081/api/v1/config \
+    -H "X-API-Key: $CORDUM_ADMIN_KEY" -H "X-Tenant-ID: default" \
+    -H "Content-Type: application/json" \
+    -d '{"mcp": {"enabled": true, "transport": "http"}}'
+  ```
+
+  This replaces the whole `mcp` object of the system config, so include any
+  `mcp` settings that are already there.
 - `mcp.policy_gate_enabled=false`, the default. In that mode a byte-identical
   retry after approval runs the call. With the policy gate on, only an
   `_approval_ref` argument resumes a gated call. This worker does not send
@@ -45,6 +63,35 @@ for a new approval.
 - An API key for the worker in the target tenant with `workflows.write`. A key
   without it can still obtain an approval, but the approved call returns a
   403 tool error and the job fails with `mcp_call_failed`.
+- An MCP agent identity linked to the worker key's principal in the same
+  tenant. The gateway scope-filters every `tools/call`. The worker sends no
+  `X-Agent-Id`, so the gateway looks the identity up by the authenticated
+  principal ID, in the request tenant only. Without that link
+  `cordum_status` is denied with JSON-RPC `-32098`, whatever permissions the
+  key has, and the job fails with `mcp_call_failed` before any approval is
+  requested. This needs two things:
+
+  - The key itself carries a principal ID, because the worker sends no
+    `X-Principal-Id` either. For a key in `CORDUM_API_KEYS` that is the
+    `principal_id` field of its JSON entry.
+  - An identity created with `POST /api/v1/agents` under the worker's
+    `X-Tenant-ID`, with `agent_id` set to that principal ID. That call
+    creates the identity and the link in one step. It needs `agents.write`
+    or the `admin` role, and the `agent_identity` license entitlement:
+
+    ```bash
+    curl -sS -X POST http://localhost:8081/api/v1/agents \
+      -H "X-API-Key: $CORDUM_ADMIN_KEY" -H "X-Tenant-ID: default" \
+      -H "Content-Type: application/json" \
+      -d '{"name": "cap-mcp-governed", "owner": "demo",
+           "agent_id": "<worker key principal_id>", "risk_tier": "high",
+           "allowed_tools": ["cordum_status", "cordum_create_workflow"]}'
+    ```
+
+    `allowed_tools` must admit both tools; an empty list admits none.
+    `risk_tier` must be `high` or `critical`: `cordum_status` declares no
+    tier, which the scope filter treats as `high`
+    (`cordum_create_workflow` is `medium`).
 - A route from the topic to the pool in the scheduler's pool map
   (`config/pools.yaml`):
 
@@ -72,12 +119,15 @@ INFO approval required job_id=<job_id> ... approval_id=<approval_id>
 ## Run
 
 ```bash
-export CORDUM_GATEWAY_URL=https://localhost:8081
+export CORDUM_GATEWAY_URL=http://localhost:8081
 export CORDUM_API_KEY=<worker key with workflows.write>
 export CORDUM_TENANT_ID=default
-export CORDUM_TLS_CA=./certs/ca/ca.crt   # when the gateway uses a private CA
 go run ./demo/cap-mcp-governed/worker
 ```
+
+`http://localhost:8081` is the gateway's default endpoint. For a gateway that
+serves TLS, use its `https://` URL and, when its certificate comes from a
+private CA, set `CORDUM_TLS_CA=./certs/ca/ca.crt`.
 
 | Variable | Default | Meaning |
 |----------|---------|---------|

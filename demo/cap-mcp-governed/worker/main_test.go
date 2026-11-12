@@ -539,6 +539,51 @@ func TestApprovalOutcomesFailWithoutRetry(t *testing.T) {
 	}
 }
 
+func TestApprovalPollRetriesRateLimit(t *testing.T) {
+	t.Run("429 then approved", func(t *testing.T) {
+		f := newFake(t)
+		f.script(keyCreate, approvalRequired(testApproval), created("wf-429"))
+		f.pollScript(pollHTTP(http.StatusTooManyRequests), pollStatus(model.ApprovalStatusApproved))
+		res, blob := runJob(t, newTestWorker(t, testConfig(t, f.srv.URL)), topic, "job-429-1", directInput(t))
+		wantSucceeded(t, res, blob, `{"workflow_id":"wf-429","approval_id":"`+testApproval+`"}`)
+		wantCreates(t, f, 2)
+		if got := f.count("poll"); got != 2 {
+			t.Fatalf("polls = %d, want 2", got)
+		}
+	})
+	t.Run("persistent 429 ends at the deadline", func(t *testing.T) {
+		f := newFake(t)
+		f.script(keyCreate, approvalRequired(testApproval))
+		f.pollScript(pollHTTP(http.StatusTooManyRequests))
+		cfg := testConfig(t, f.srv.URL)
+		cfg.JobTimeout = 300 * time.Millisecond
+		res, _ := runJob(t, newTestWorker(t, cfg), topic, "job-429-2", directInput(t))
+		wantFailed(t, res, codeApprovalTimeout)
+		wantCreates(t, f, 1)
+		if got := f.count("poll"); got < 2 {
+			t.Fatalf("polls = %d, want at least 2", got)
+		}
+	})
+}
+
+func TestRateLimitWait(t *testing.T) {
+	const backoff = 40 * time.Millisecond
+	for header, want := range map[string]time.Duration{
+		"":                              backoff,
+		"2":                             2 * time.Second,
+		" 3 ":                           3 * time.Second,
+		"0":                             backoff,
+		"-5":                            backoff,
+		"3600":                          maxRateLimitWait,
+		"99999999999999999999":          backoff,
+		"Wed, 21 Oct 2026 07:28:00 GMT": backoff,
+	} {
+		if got := rateLimitWait(header, backoff); got != want {
+			t.Errorf("rateLimitWait(%q) = %s, want %s", header, got, want)
+		}
+	}
+}
+
 // ---- DoD 4 ----
 
 func TestReadAndStatusPrecedeMutation(t *testing.T) {
