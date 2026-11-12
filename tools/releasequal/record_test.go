@@ -111,3 +111,81 @@ func testSchemaMutations(t *testing.T) {
 		})
 	}
 }
+
+func parsed(t *testing.T) *Record {
+	t.Helper()
+	r, err := Parse(fixture(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+func TestParseValidRecord(t *testing.T) {
+	r := parsed(t)
+	if r.Source.SHA != strings.Repeat("a", 40) || len(r.Artifacts) != 2 || len(r.Gates) != 2 || len(r.Exceptions) != 2 {
+		t.Fatalf("unexpected record: %+v", r)
+	}
+}
+
+func TestParseRunsTheSchema(t *testing.T) {
+	for _, tc := range []struct {
+		path, key string
+		value     any
+		want      string
+	}{
+		{"gates", "result", "skipped", "/gates/0/result"}, {"release", "unknown", true, "unknown"},
+	} {
+		t.Run(tc.key, func(t *testing.T) {
+			r, err := Parse(changed(t, tc.path, tc.key, tc.value, false))
+			wantError(t, err, tc.want)
+			if r != nil {
+				t.Fatal("invalid record released")
+			}
+		})
+	}
+}
+
+func TestParseRejectsTrailingData(t *testing.T) {
+	r, err := Parse(append(fixture(t), []byte("{}")...))
+	if err == nil || r != nil {
+		t.Fatalf("trailing data accepted: %v", err)
+	}
+}
+
+func TestParseRejectsCrossReferenceViolations(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*Record)
+		want   string
+	}{
+		{"gate-digest", func(r *Record) { r.Gates[0].Digest = r.Artifacts[1].Digest }, "gate \"image-smoke\" artifact \"api-gateway\": digest"},
+		{"unknown-gate-artifact", func(r *Record) { r.Gates[0].Artifact = "missing" }, "gate \"image-smoke\": unknown artifact"},
+		{"duplicate-artifact", func(r *Record) { r.Artifacts = append(r.Artifacts, r.Artifacts[0]) }, "duplicate artifact"},
+		{"duplicate-gate", func(r *Record) { r.Gates = append(r.Gates, r.Gates[0]) }, "duplicate gate"},
+		{"duplicate-exception", func(r *Record) { r.Exceptions = append(r.Exceptions, r.Exceptions[0]) }, "duplicate exception"},
+		{"unknown-exception-artifact", func(r *Record) { r.Exceptions[0].Artifacts = []string{"missing"} }, "exception \"binary-no-release-gate\": unknown artifact"},
+		{"uncovered-artifact", func(r *Record) { r.Gates = []Gate{}; r.Exceptions = []Exception{} }, "has neither a gate nor an exception"},
+		{"non-tag-release", func(r *Record) { r.Release.Ref = "refs/heads/main" }, "non-dry-run ref"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := parsed(t)
+			tc.mutate(r)
+			got, err := Parse(encoded(t, r))
+			wantError(t, err, tc.want)
+			if got != nil {
+				t.Fatal("invalid record released")
+			}
+		})
+	}
+}
+
+func TestParseAcceptsDryRunBranchRecord(t *testing.T) {
+	r := parsed(t)
+	r.Release.DryRun = true
+	r.Release.Ref = "refs/heads/release-dry-run/x"
+	if _, err := Parse(encoded(t, r)); err != nil {
+		t.Fatal(err)
+	}
+}
