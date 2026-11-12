@@ -17,6 +17,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `tests/contract` keeps its columns in step with the policy constraint model.
   Runtime behavior is unchanged.
 
+### Changed
+
+- Docs: DESIGN.md, docs/CORE.md and docs/mcp-server.md now state which policy
+  constraints the scheduler enforces and which are advisory or planned, and link
+  to `docs/contract/enforcement-matrix.yaml`.
+
 ## [v1.3.1] - 2026-11-11
 
 Changes on main since the v1.3.0 tag (d027ae97, 2026-11-11).
