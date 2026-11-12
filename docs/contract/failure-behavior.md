@@ -86,7 +86,7 @@ returns to the agent runtime; whether the runtime honors that decision is outsid
 | safety-kernel | protected | RQ-1 | [a] Scheduler default-closed probe: retryable error, no publish, no DISPATCHED/RUNNING/DENIED state. [b] Gateway closed submit: HTTP 403 with DENIED state and only a DLQ publish; gRPC PermissionDenied with no publish. [c] Gateway POLICY_CHECK_FAIL_MODE=open probe publishes a submit. [d] Scheduler open-mode probe increments the fail-open metric. [e] Edge enterprise-strict low-risk and enforce high-risk probes return DENY/deny with degraded/safety_unavailable; observe returns ALLOW/allow with degraded. [f] Class-specific approvals, MCP, output checks and other paths: not measured. | [a] `TestFailureBehaviorKernelUnavailableClosedDispatchesNothing`; [b] `TestHandleSubmitJobHTTP_PolicyFailClosed`, `TestSubmitJobGRPC_PolicyFailClosed`; [c] `TestHandleSubmitJobHTTP_PolicyFailOpen`; [d] `TestSafetyUnavailable_FailOpen_Metric`; [e] `TestGatewayEdgeEvaluateSafetyUnavailableByPolicyMode`; [f] not measured | G03 |
 | gateway-from-edge | low | RQ-3 | [a] Hook enforce safe-command timeout probe emits permissionDecision deny. [b] Hook observe unavailable probe emits empty output and a degraded warning. [c] Enterprise-strict agentd unavailable/policy-unavailable probes return degraded DENY. [d] Full hook-to-Gateway outage and offline exceptions: not measured. | [a] `TestRunEnforceModeDeniesPreToolUseOnAgentdTimeoutWithoutFailClosed`; [b] `TestRunObserveModeAllowsNoopWhenAgentdUnavailable`; [c] `TestApplyFailModeMatrixCoversObserveEnforceEnterpriseStrict`; [d] not measured | G04 |
 | gateway-from-edge | approval | RQ-2 | [a] Enterprise-strict inline approval wait returns DENY on a Gateway error or timeout. [b] Full hook-to-Gateway outage, approval consumption and other modes: not measured. | [a] `TestAgentdDecisionFromEvaluateInlineWaitRejectedTimeoutAndErrorDeny`; [b] not measured | G04 |
-| gateway-from-edge | protected | RQ-1 | [a] Enforce hook degraded-response probe emits permissionDecision deny for Edit. [b] Enterprise-strict hook unavailable probe emits permissionDecision deny. [c] Full hook-to-Gateway outage and other protected operations: not measured. | [a] `TestRunEnforceDeniesDegradedPreToolUse`; [b] `TestRunStrictModeDeniesWhenAgentdUnavailable`; [c] not measured | G04 |
+| gateway-from-edge | protected | RQ-1 | [a] Enforce hook degraded-response probe emits permissionDecision deny for Edit. [b] Enterprise-strict hook malformed-agentd-response probe emits permissionDecision deny. [c] Full hook-to-Gateway outage and other protected operations: not measured. | [a] `TestRunEnforceDeniesDegradedPreToolUse`; [b] `TestRunEnterpriseStrictDeniesMalformedAgentdResponse`; [c] not measured | G04 |
 | approval-store | low | RQ-3 | [a] MCP registry ungated tool executes once without consulting an unavailable approval gate. [b] Gateway, Edge and other low-risk paths: not measured. | [a] `TestFailureBehaviorApprovalStoreOutageLeavesUngatedToolsUnaffected`; [b] not measured | G05 |
 | approval-store | approval | RQ-2 | [a] MCP HTTP approval-gated tool returns sanitized -32096 and invokes no handler during a store outage; the recovery control invokes it once. [b] Scheduler approval-gate persistence error returns retryable with no publish. [c] Other approve, Edge and workflow paths: not measured. | [a] `TestMCPHTTP_ApprovalStoreOutageReturnsSanitized32096`; [b] `TestProcessJobApprovalGateStoreFailureReturnsRetryableError`; [c] not measured | G05 |
 | approval-store | protected | RQ-1, RQ-2 | [a] MCP HTTP approval-gated tool returns sanitized -32096 and invokes no handler during a store outage; the recovery control invokes it once. [b] Scheduler approval-gate persistence error returns retryable with no publish. [c] Other approve, Edge and workflow paths: not measured. | [a] `TestMCPHTTP_ApprovalStoreOutageReturnsSanitized32096`; [b] `TestProcessJobApprovalGateStoreFailureReturnsRetryableError`; [c] not measured | G05 |
@@ -148,36 +148,12 @@ Owner is a finding id (R01-R15) or the board row key that will close or measure 
 Run from the repository root. Every test named in the Evidence column appears in one of these commands.
 
 ```bash
-go test ./core/controlplane/scheduler -run '^(TestDuplicateDispatchOnDispatchedStateFailure|TestFailureBehaviorKernelUnavailableClosedDispatchesNothing|TestProcessJobApprovalGateStoreFailureReturnsRetryableError|TestProcessJobPublishFailureScheduledReplayIncrementsAttempts|TestProcessJob_HashFenceReadFailureDoesNotFailOpen|TestProcessJob_SetStateDeniedFailure_ReturnsRetryable|TestSafetyUnavailable_FailOpen_Metric)
-```
-
- -count=1
-go test ./core/controlplane/gateway -run '^(TestBreakGlass_GraceStateJobSubmitReturns503|TestFailureBehaviorEdgeEnforceKernelUnavailableDeniesKnownSafe|TestGatewayEdgeEvaluateDoesNotStreamWhenPersistenceFails|TestGatewayEdgeEvaluateSafetyUnavailableByPolicyMode|TestHandleSubmitJobHTTP_PolicyFailClosed|TestHandleSubmitJobHTTP_PolicyFailOpen|TestMCPHTTP_ApprovalStoreOutageReturnsSanitized32096|TestRedisRateLimiterFallback|TestSubmitJobGRPC_PolicyFailClosed|TestSubmitJobHTTP_PublishFails_GCsOrphanedContext)
-```
-
- -count=1
-go test ./core/workflow -run '^(TestWorkflowApprovalStepFailsWhenContextStoreUnavailable)
-```
-
- -count=1
-go test ./core/edge/claude -run '^(TestRunEnforceDeniesDegradedPreToolUse|TestRunEnforceModeDeniesPreToolUseOnAgentdTimeoutWithoutFailClosed|TestRunObserveModeAllowsNoopWhenAgentdUnavailable|TestRunStrictModeDeniesWhenAgentdUnavailable)
-```
-
- -count=1
-go test ./core/edge/agentd -run '^(TestAgentdDecisionFromEvaluateInlineWaitRejectedTimeoutAndErrorDeny|TestApplyFailModeMatrixCoversObserveEnforceEnterpriseStrict|TestHandleHookEventsAreAtomicAcrossBatchFailure)
-```
-
- -count=1
-go test ./core/mcp -run '^(TestFailureBehaviorApprovalStoreOutageLeavesUngatedToolsUnaffected)
-```
-
- -count=1
-go test ./core/controlplane/safetykernel -run '^(TestEvaluateNilPolicyDeniesFailClosed|TestWatchPolicyReloadFailureKeepsOldPolicy)
-```
-
- -count=1
-go test ./core/licensing -run '^(TestEntitlementResolverInvalidLicenseFallsBackToCommunity)
-```
-
- -count=1
+go test ./core/controlplane/scheduler -run '^(TestDuplicateDispatchOnDispatchedStateFailure|TestFailureBehaviorKernelUnavailableClosedDispatchesNothing|TestProcessJobApprovalGateStoreFailureReturnsRetryableError|TestProcessJobPublishFailureScheduledReplayIncrementsAttempts|TestProcessJob_HashFenceReadFailureDoesNotFailOpen|TestProcessJob_SetStateDeniedFailure_ReturnsRetryable|TestSafetyUnavailable_FailOpen_Metric)$' -count=1
+go test ./core/controlplane/gateway -run '^(TestBreakGlass_GraceStateJobSubmitReturns503|TestFailureBehaviorEdgeEnforceKernelUnavailableDeniesKnownSafe|TestGatewayEdgeEvaluateDoesNotStreamWhenPersistenceFails|TestGatewayEdgeEvaluateSafetyUnavailableByPolicyMode|TestHandleSubmitJobHTTP_PolicyFailClosed|TestHandleSubmitJobHTTP_PolicyFailOpen|TestMCPHTTP_ApprovalStoreOutageReturnsSanitized32096|TestRedisRateLimiterFallback|TestSubmitJobGRPC_PolicyFailClosed|TestSubmitJobHTTP_PublishFails_GCsOrphanedContext)$' -count=1
+go test ./core/workflow -run '^(TestWorkflowApprovalStepFailsWhenContextStoreUnavailable)$' -count=1
+go test ./core/edge/claude -run '^(TestRunEnforceDeniesDegradedPreToolUse|TestRunEnforceModeDeniesPreToolUseOnAgentdTimeoutWithoutFailClosed|TestRunEnterpriseStrictDeniesMalformedAgentdResponse|TestRunObserveModeAllowsNoopWhenAgentdUnavailable)$' -count=1
+go test ./core/edge/agentd -run '^(TestAgentdDecisionFromEvaluateInlineWaitRejectedTimeoutAndErrorDeny|TestApplyFailModeMatrixCoversObserveEnforceEnterpriseStrict|TestHandleHookEventsAreAtomicAcrossBatchFailure)$' -count=1
+go test ./core/mcp -run '^(TestFailureBehaviorApprovalStoreOutageLeavesUngatedToolsUnaffected)$' -count=1
+go test ./core/controlplane/safetykernel -run '^(TestEvaluateNilPolicyDeniesFailClosed|TestWatchPolicyReloadFailureKeepsOldPolicy)$' -count=1
+go test ./core/licensing -run '^(TestEntitlementResolverInvalidLicenseFallsBackToCommunity)$' -count=1
 ```
