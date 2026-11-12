@@ -108,6 +108,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - `dashboard/package.json` overrides `minimatch@^10.0.0` to `^11.0.1`, in `pnpm.overrides` and in the npm `overrides` mirror. No minimatch 10.x release carries the fix. eslint, `@eslint/config-array` and `@typescript-eslint/typescript-estree` still declare `^10`, and they call only `Minimatch#match` and `minimatch()`, which 11.x keeps.
 - typedoc, typedoc-plugin-coverage and typedoc-plugin-markdown are removed from the install with pnpm `-` overrides. typedoc 0.28 calls `Minimatch#matchOne`, which 11.x removed. orval 8.31.0 loads typedoc only for its `docs` output, which the dashboard does not configure. Until typedoc supports minimatch 11, enabling that output fails at import. orval stays at 8.31.0.
 
+### Security
+
+- Release images move off Alpine 3.21, which alpinelinux.org/releases.json lists
+  as end-of-life on 2026-11-01. The control-plane and `demo-quickstart-worker`
+  runtime stages use `alpine:3.24`, and the dashboard uses
+  `nginxinc/nginx-unprivileged:1.30-alpine3.24` (was `1.27-alpine`, which is on
+  Alpine 3.21). Every runtime stage still runs `apk upgrade --no-cache`;
+  builder stages are unchanged.
+
 ## [v1.3.1] - 2026-11-11
 
 Changes on main since the v1.3.0 tag (d027ae97, 2026-11-11).
