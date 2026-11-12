@@ -77,3 +77,122 @@ be substituted for a guest task bound. A source-level controller is not proof
 of a correctly configured, workload-inaccessible ceiling. M3-07 must demonstrate
 that property using the pinned runtime; otherwise M3-03 refuses the profile and
 the stack decision must be revisited rather than silently weakened.
+
+## Reference host
+
+Kernel version floor: Linux 6.8 (proposed reference series; not yet qualified).
+cgroup version: v2 (unified hierarchy only; hybrid or v1 hosts are refused)
+
+Architecture: x86_64 initially. Distribution: Ubuntu 24.04 LTS, GA kernel series
+with security updates; its [release notes](https://discourse.ubuntu.com/t/noble-numbat-release-notes/39890)
+identify Linux 6.8. Ubuntu's [unified-mode default dates to 21.10](https://discourse.ubuntu.com/t/impish-indri-release-notes/21951),
+but a default is not evidence of a host's boot configuration or delegation.
+Runtime: direct OCI `runsc` on systrap, not Docker or a shared containerd daemon.
+Upstream [installation requirements](https://gvisor.dev/docs/user_guide/install/)
+currently list Linux 5.6+ and x86_64/ARM64; they do not qualify a Cordum profile.
+
+M3-12 must pin the exact patched kernel build/configuration, distribution image,
+runsc release and binary SHA-256, OCI profile, helper binaries and nftables
+version in each qualification record. No floating `latest` is admissible.
+The 6.8 floor selects the series to qualify, not support for older kernels or
+blanket qualification of later versions. Only the exact recorded host/profile
+can inherit its own evidence; upgrades or changed execution paths need re-tests.
+
+### Required kernel features
+
+The minima below are upstream feature introduction points, not an alternative
+host support matrix. The actual floor remains 6.8, with all features available
+to the runner service. A kernel version string cannot replace a capability test.
+
+| Feature | Minimum kernel | Used for | Source |
+| --- | --- | --- | --- |
+| seccomp filter / SECCOMP_RET_TRAP on x86_64 | 3.5 | Systrap interception and host syscall reduction | [seccomp(2)](https://man7.org/linux/man-pages/man2/seccomp.2.html) |
+| no_new_privs | 3.5 | Prevent workload privilege gain on exec | [Kernel API](https://docs.kernel.org/userspace-api/no_new_privs.html) |
+| Unified cgroup v2, memory.max, pids.max | 4.5 | Host memory/task envelope, including helpers | [cgroups(7)](https://man7.org/linux/man-pages/man7/cgroups.7.html) |
+| cgroup v2 CPU controller / cpu.max | 4.15 | Host CPU quota | [cgroups(7)](https://man7.org/linux/man-pages/man7/cgroups.7.html) |
+| memory.oom.group | 4.19 | Group OOM treatment, not proof of teardown completion | [Linux 4.19 documentation](https://github.com/torvalds/linux/blob/v4.19/Documentation/admin-guide/cgroup-v2.rst) |
+| cgroup.kill | 5.14 | Terminate dedicated run subtree, then wait for empty | [Linux 5.14 documentation](https://github.com/torvalds/linux/blob/v5.14/Documentation/admin-guide/cgroup-v2.rst) |
+| Network namespaces plus nftables | 2.6.29 / 3.13 | Private link and trusted-side default-deny packet filtering | [clone(2)](https://man7.org/linux/man-pages/man2/clone.2.html), [nftables](https://wiki.nftables.org/wiki-nftables/index.php/What_is_nftables%3F) |
+| User namespaces with UID/GID mappings | 3.8 | runsc namespace setup; actual service/LSM permission must pass probe | [user_namespaces(7)](https://man7.org/linux/man-pages/man7/user_namespaces.7.html) |
+| tmpfs with size and inode limits | 2.4 | Bounded workspace; finite memory/swap policy also required | [tmpfs(5)](https://man7.org/linux/man-pages/man5/tmpfs.5.html) |
+| openat2, RESOLVE_BENEATH / RESOLVE_NO_SYMLINKS | 5.6 | Host-side descriptor-based input materialization | [openat2(2)](https://man7.org/linux/man-pages/man2/openat2.2.html) |
+| clone3 CLONE_INTO_CGROUP (or pre-confined trusted launcher) | 5.7 for this flag | Enter resource envelope before untrusted execution, never after | [clone(2)](https://man7.org/linux/man-pages/man2/clone.2.html) |
+
+Require private mount, PID and IPC namespaces as part of the pinned OCI profile;
+no host namespace sharing. CPU, memory and pids controllers must be enabled and
+delegated, with finite configured limits and a swap policy. The trusted launcher
+and all runsc/gofer helpers must start within a per-run ancestor envelope, so
+runtime creation and teardown are bounded too. The workload gets no cgroup
+control files or control API. Host pids.max bounds host tasks, not necessarily
+virtual guest tasks. No io controller or host OverlayFS is relied on for this
+initial tmpfs design. [Cgroup semantics](https://docs.kernel.org/admin-guide/cgroup-v2.html)
+and [runsc v2 source](https://github.com/google/gvisor/blob/2a653cea7b2054a2dc9c6419337d3de8031275d6/runsc/cgroup/cgroup_v2.go)
+are design inputs, not an acceptance result.
+
+## Placement
+
+Choose dedicated Linux runner hosts in an execution-only domain, separated from
+management services and protected application namespaces. Do not place management
+or production-effect credentials on these hosts. A narrowly scoped runner/proposal
+identity is not a production credential; brokers must independently authorize
+any proposed effect (M2B). The service must not expose runtime control to workloads.
+
+M3-04's trusted runner service prepares an OCI bundle per run and invokes runsc
+directly. Before untrusted start it must establish the resource envelope, private
+namespaces, non-root workload credentials, empty capability sets, no-new-privileges,
+mount/descriptor restrictions and egress policy. No post-start repair window.
+Choose `--directfs=false`, `--host-uds=none`, `--host-fifo=none`,
+`--overlay2=none` explicitly; restrict workload-influenced runtime annotations.
+The gofer remains trusted filesystem mediation. Use a read-only root and private
+read-only digest-checked input copies; writable temporary paths belong to the one
+bounded workspace. A writable overlay over an input is not an immutable input.
+See [filesystem modes](https://gvisor.dev/docs/user_guide/filesystem/).
+
+For networked profiles use `--network=sandbox`, one run netns and a routed veth
+pair. Install default-deny rules on the trusted host-side receive/forward path
+before bringing up the link or starting code: INPUT denies host services and
+FORWARD permits only the broker proposal entry and explicitly listed mirrors.
+No alternative interface, bridge forwarding or host-network mode is allowed.
+This placement is deliberate: gVisor emits link-layer packets via AF_PACKET;
+run-netns OUTPUT rules alone would not cover them. This is a design inference
+from [gVisor networking](https://gvisor.dev/docs/user_guide/networking/) and
+[packet(7)](https://man7.org/linux/man-pages/man7/packet.7.html), to be measured
+by M3-06/M3-10, not an existing Cordum guarantee.
+
+Deny all unlisted protocols and destinations, including UDP, direct DNS,
+cloud metadata, link-local, host loopback and IPv6 routes. If IPv6 is enabled,
+it needs equivalent default-deny rules, not an IPv4-only policy. Guest loopback
+is private, not a host-service route. Resolve any allowed endpoint in the trusted
+plane and pin its address/port set; no wildcard internet/DNS escape. An allowed
+mirror/proposal service must not act as a general proxy. If no destination is
+allowed, use `--network=none` with no external link. M3-06 owns mirror policy.
+
+A [Kubernetes RuntimeClass](https://kubernetes.io/docs/concepts/containers/runtime-class/)
+with the [runsc containerd shim](https://gvisor.dev/docs/user_guide/containerd/quick_start/)
+is a later packaging option, not the initial path. It would need
+[Restricted Pod Security](https://kubernetes.io/docs/concepts/security/pod-security-standards/),
+[`automountServiceAccountToken: false`](https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/)
+and an execution-only placement policy. [NetworkPolicy](https://kubernetes.io/docs/concepts/services-networking/network-policies/)
+depends on the plugin and policy handling; a pod can start before a newly created
+policy is handled. RuntimeClass selection alone is not equivalence evidence.
+M3-12/M6 must re-qualify that path; M3-10's kind harness does not qualify a host.
+
+## Escape coverage
+
+These are planned stopping mechanisms, not demonstrated prevention. M3-02 owns
+the corpus; M3-12 must show the prohibited effect is absent, not merely an error.
+
+| Class | Escape class | Stopping mechanism (S1) | Enforcement point | Corpus class / owning row |
+| --- | --- | --- | --- | --- |
+| X1 | Child processes | Same sandbox/mount/network boundary for all descendants, not an argv allowlist; guest count remains Q7-blocked. | Sentry plus trusted host envelope, outside workload control | Descendant confinement / M3-02, M3-04, M3-07 |
+| X2 | Alternate interpreters | Interpreter changes do not change the sandbox boundary or grant host credentials. | Sentry and pre-start OCI profile | Interpreter-independent restrictions / M3-02, M3-04, M3-08 |
+| X3 | Background jobs (nohup, setsid, double fork) | Destroy entire sandbox on end/timeout, terminate run cgroup including helpers, wait for empty; guest task limit separately unresolved. | Trusted supervisor and host cgroup ancestor, not parent PID tracking | No survivors/effects after termination / M3-02, M3-07 |
+| X4 | Mutable inputs | Materialize independent bytes by content digest, verify final private copy, mount read-only with no writable alias/overlay. | Trusted materializer before start, then sandbox mounts | Mutation leaves consumed bytes unchanged / M2A-07, M3-05 |
+| X5 | Path races | Resolve beneath runner-owned directories without symlinks, copy via held descriptors, verify copy; never re-resolve a host input path after verification. | Host openat2/descriptor boundary, not a lexical path check | Symlink/hard-link races cannot redirect reads or writes / M3-02, M3-05 |
+| X6 | Direct network attempts | Netstack plus pre-installed trusted-side default-deny routing; no direct production credentials or alternate interface. | Host veth receive/forward hooks outside sandbox; broker authority boundary | No forbidden packets/API effects, IPv4 and IPv6 / M3-02, M3-06, M3-10 |
+
+Hard links must not retain a shared mutable input inode: copy bytes into private
+storage and verify that copy, rather than bind-mounting a verified path. Failure
+to prove empty teardown quarantines the run/host; it cannot be reported as clean
+completion or reused while survivors may remain. [Sandbox destruction source](https://github.com/google/gvisor/blob/2a653cea7b2054a2dc9c6419337d3de8031275d6/runsc/sandbox/sandbox.go)
+is a mechanism reference, not proof of those lifecycle obligations.
