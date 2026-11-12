@@ -392,7 +392,7 @@ claims:
     findings: []
     enforcement_points: [{"path":"core/controlplane/gateway/auth/basic.go","symbol":"BasicAuthProvider.ResolveTenant"}]
     tests: [{"package":"core/controlplane/gateway","name":"TestResolveTenantCrossTenantDenied"}]
-    evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 BasicAuthProvider.ResolveTenant, the default gateway auth provider, refuses a requested tenant other than the authenticated one unless the credential allows cross-tenant access, and TestResolveTenantCrossTenantDenied covers it; per-handler coverage of every route is not qualified."
+    evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 the gateway's default auth provider decides this in BasicAuthProvider.ResolveTenant: it refuses a requested tenant other than the authenticated one unless the credential allows cross-tenant access, and TestResolveTenantCrossTenantDenied covers it; per-handler coverage of every route is not qualified."
     public_sources: ["cordum:docs/api-reference.md:72"]
   - id: CLM-060
     statement: "Admins with the LegalHold entitlement can create, list and release per-tenant legal holds on audit data."
