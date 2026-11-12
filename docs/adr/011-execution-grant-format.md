@@ -112,3 +112,61 @@ A later move to CAP for non-Go or out-of-tree executors remains an open question
 Relocation alone need not change signed bytes: proto package names are not wire
 data. Field numbers, types, canonical rules, version and domains must remain
 unchanged; relocation is not permission to reinterpret existing grants.
+
+## Grant fields
+
+Group legend: **G1** tenant, human principal, agent, session and delegation;
+**G2** operation and canonical parameters; **G3** target account, environment,
+resource and state preconditions; **G4** inputs/artifacts and tool/runtime;
+**G5** effective policy digest and authority epoch; **G6** approval and action
+commitment; **G7** enforcement profile; **G8** time, uses and execution identity;
+**G9** intended executor/broker. **M** is envelope or payload metadata.
+
+Types below are proposed protobuf types, not implemented symbols. `bytes(32)`
+and `bytes(16)` mean bytes with an exact length check. Nested messages are local
+to the grant schema. Names such as `tenant_id`, `principal_id`, `sha256`,
+`media_type` and `size_bytes` follow CAP IdentityBinding/ResourceRef vocabulary
+without importing their messages. M2A-02 assigns payload field numbers.
+
+| Group | Field | Type | Required | Verifier rule |
+| --- | --- | --- | --- | --- |
+| M | envelope.grant, envelope.signature, envelope.algorithm | bytes, bytes(64), string | Yes | Exact-byte signature and algorithm checks; M2A-03: bad signature. |
+| M | envelope.key_id | string | Yes | Only dedicated local trust lookup; M2A-03: unknown key. |
+| M | schema_version | uint32 | Yes, 1 | Explicit allowlist; M2A-03: unknown version. |
+| M | issuer_id, issuer_key_id | string, string | Yes | Match operator-configured issuer/key binding and envelope key_id; unknown key or action mismatch (M2A-03). |
+| G1 | tenant_id, principal_id, agent_id, session_id | string each | Yes | Compare with independently authenticated/request-bound identities, not self-asserted grant values; wrong tenant or action mismatch (M2A-03); absent value: missing required field. |
+| G1 | delegation_chain | repeated DelegationLink { string agent_id; string token_jti; string parent_jti; } | If delegated | Root-to-leaf order, unique nonempty token_jti; root parent empty, each later parent_jti equals preceding token_jti. Maximum is the configured delegation depth (default 3); issuer validates provenance, M2A-05 checks revocation of every JTI. Empty only for independently established non-delegated authority. |
+| G2 | action.operation | string | Yes | Registered protected-operation id, initially kubernetes.manifest.apply; unknown ids deny (M2A-09 registry; M2A-03 action mismatch). |
+| G2 | action.parameters | oneof { KubernetesManifestApply kubernetes_manifest_apply; } | Exactly one | Must match operation; absent: missing required field; different variant: action mismatch (M2A-03). |
+| G2 | action.kubernetes_manifest_apply.manifest_input | string | Yes | Names exactly one action.inputs entry; missing reference or altered binding denies (M2A-03 digest mismatch). |
+| G2 | action.kubernetes_manifest_apply.objects | repeated KubernetesObjectRef { string api_group; string api_version; string kind; string namespace; string name; } | Nonempty | Closed object set, sorted/unique by (api_group, api_version, kind, namespace, name); api_group may be empty for core APIs; all others required. Namespace equals target.resource; M2B-01 validates manifest-to-object equality and apply/ownership/conflict semantics. |
+| G3 | action.target.account, action.target.environment, action.target.resource | string each | Yes | Independently established cluster/account identity, not a kube-context alias; resource is the named namespace. Any mismatch: action mismatch (M2A-03); resolution semantics M2B-01. |
+| G3 | action.preconditions | repeated Precondition { string resource; PreconditionKind kind; string expected_version; } | As required by operation | Kind is MUST_EXIST, MUST_NOT_EXIST or VERSION_EQUALS; UNSPECIFIED/unknown denies. Sort by (resource, kind), unique on that key; expected_version required only for VERSION_EQUALS, otherwise empty. Broker evaluates immediately before effect; unsupported or unsatisfied condition denies (M2B-01). |
+| G4 | action.inputs | repeated InputDigest { string name; string media_type; bytes sha256; uint64 size_bytes; } | Nonempty | Sort/unique by name; sha256 exactly 32 bytes; size within bounds. Read immutable bytes by digest from M2A-07, check length and re-hash before use; never reopen a path. M2A-03: digest mismatch. |
+| G4 | action.runtime | RuntimeIdentity { string tool_id; string tool_version; bytes image_sha256; } | Yes; image digest when profile requires | Bind approved tool/version and, when required, 32-byte image identity to actual runtime; missing field or action mismatch (M2A-03); profile interpretation M2A-04/M2B-01. |
+| G5 | policy_digest | bytes(32) | Yes | Identity of effective policy from M1 hardening, not a file label; M2A-09 resolves identity and M2A-03 rejects mismatch. |
+| G5 | authority_epoch | uint64 | Yes, greater than 0 | Match authoritative current epoch; older or unknown future value denies. Freshness and revocation semantics owned by M2A-05. |
+| G6 | approval.state | ApprovalState enum { UNSPECIFIED, NOT_REQUIRED, APPROVED } | Yes | UNSPECIFIED/unknown denies; NOT_REQUIRED only when independently checked policy and M2A-04 ceilings allow no approval; never an issuer-controlled override. |
+| G6 | approval.approval_ref, approval.approver_ids, approval.action_commitment | string; repeated string; bytes(32) | When APPROVED | Nonempty reference and sorted/unique nonempty approvers; M2A-08 resolves the immutable approval record, checks identity/tenant/action, and recomputes commitment from action. Missing: missing required field; mismatch: action mismatch (M2A-03). Must be absent for NOT_REQUIRED. |
+| G7 | enforcement_profile.profile_id, enforcement_profile.required_capabilities | string; repeated string | Yes, nonempty | Capabilities sorted/unique bytewise; executor must have every capability. M2A-04 independently requires minimum profile/capabilities per operation; unsupported or downgraded restrictions deny. |
+| G8 | grant_id | bytes(16) | Yes | Cryptographically random authorization id; M2A-06 binds it to tenant, execution_id and grant digest, never signature bytes. |
+| G8 | execution_id | string | Yes | Durable execution/idempotency identity; M2A-06 rejects a changed grant digest under the same execution and atomically prevents repeated claims, including re-issuance under another grant_id. |
+| G8 | issued_at_unix, not_before_unix, expires_at_unix | int64 seconds each | Yes, positive | issued_at <= not_before < expires_at; lifetime expires_at - issued_at within M2A-04 ceiling; bounded skew only as M2A-04 defines. M2A-03: expired or not yet valid. |
+| G8 | max_uses | uint32 | Yes, exactly 1 in v1 | M2A-06 atomic single-use claim before effect; state unavailable means deny, not best-effort execution. |
+| G9 | executor.executor_id | string | Yes | Equals verifying executor's authenticated identity, not a caller-supplied label; M2A-03: wrong executor. |
+| G9 | executor.executor_kind | ExecutorKind enum { UNSPECIFIED, BROKER, RUNNER } | Yes | Known nonzero kind must match authenticated runtime; M2A-03 wrong executor; concrete identity/channel semantics M2B-01. |
+
+All strings, repeated fields, message depth and total bytes require explicit
+bounds; M2A-02 fixes the numbers. Set ordering is bytewise lexicographic on the
+named string/tuple keys (numeric enum order for kind), with no normalization.
+Kubernetes apply mode, ownership/conflict handling and state-precondition
+semantics remain M2B-01 decisions; new parameter fields bump schema_version.
+The `action` sub-message is the unit of approval, not the mutable submission.
+Approval lookup binds the action commitment to identities and tenant separately.
+
+The table covers all ten M2A-03 typed rejection reasons: bad signature, unknown
+key, expired, not yet valid, wrong executor, wrong tenant, action mismatch,
+digest mismatch, unknown version and missing required field. Detailed error
+classification beyond those reasons belongs to that verifier row; no unmatched
+failure becomes an allow. A claim is not proof of completion or exactly-once
+external effects; outcome uncertainty and reconciliation belong to M2A-06/M2B.
