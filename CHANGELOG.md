@@ -46,6 +46,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Audit publishing tolerates a missing fallback or exporter: events without a
+  usable sink are dropped, logged and counted in
+  `cordum_audit_events_dropped_total{reason}`. The Safety Kernel's shadow sender
+  has a discard fallback, and cordum-mcp's NATS audit fallback writes to stderr
+  when no SIEM exporter is configured.
 - MCP approval resume: a call resumed with `_approval_ref` is refused with
   `-32096` `policy_snapshot_changed` when policy was published between the
   approval claim and the call's `mcp.tool.pre` stamp. Nothing runs and the

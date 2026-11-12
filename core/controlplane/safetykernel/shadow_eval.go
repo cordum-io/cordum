@@ -125,12 +125,10 @@ func chooseShadowAuditSender(natsBus *bus.NatsBus) audit.AuditSender {
 }
 
 func newShadowAuditSender(b audit.AuditBus) audit.AuditSender {
-	// A nil fallback BufferedExporter is fine — the NATSAuditPublisher
-	// only falls back when the NATS publish itself errors; at that
-	// point losing a shadow_eval event is acceptable (observability
-	// only). Passing a non-nil local exporter would double-count in
-	// the gateway consumer which also reads from the bus.
-	return audit.NewNATSAuditPublisher(b, nil)
+	// Events that fail to publish are logged by the publisher and discarded
+	// locally. A forwarding exporter would double-count events in the
+	// gateway's NATS consumer, which also reads from the bus.
+	return audit.NewNATSAuditPublisher(b, audit.NewBufferedExporter(audit.NewDiscardExporter()))
 }
 
 // auditSenderName is used only for the boot log; tells operators
