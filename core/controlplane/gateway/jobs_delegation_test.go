@@ -13,6 +13,7 @@ import (
 	"github.com/cordum/cordum/core/auth/delegation"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/licensing"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -21,11 +22,11 @@ func TestHandleSubmitJobHTTPInjectsDelegationContextIntoPolicyCheck(t *testing.T
 	enableTestAuth(s)
 	setDelegationKeys(t)
 
+	createDelegationAgent(t, s, "default", "agent-a", []string{"read", "write"}, []string{"job.test"})
+	createDelegationAgent(t, s, "default", "agent-b", []string{"read"}, []string{"job.test"})
 	if err := s.agentIdentityStore.LinkWorker(context.Background(), "agent-b", "worker-b"); err != nil {
 		t.Fatalf("LinkWorker() error = %v", err)
 	}
-	createDelegationAgent(t, s, "default", "agent-a", []string{"read", "write"}, []string{"job.test"})
-	createDelegationAgent(t, s, "default", "agent-b", []string{"read"}, []string{"job.test"})
 
 	service, err := s.delegationTokenService()
 	if err != nil {
@@ -85,11 +86,11 @@ func TestHandleSubmitJobHTTPPersistsDelegationDispatchToken(t *testing.T) {
 	enableTestAuth(s)
 	setDelegationKeys(t)
 
+	createDelegationAgent(t, s, "default", "agent-a", []string{"read", "write"}, []string{"job.test"})
+	createDelegationAgent(t, s, "default", "agent-b", []string{"read"}, []string{"job.test"})
 	if err := s.agentIdentityStore.LinkWorker(context.Background(), "agent-b", "worker-b"); err != nil {
 		t.Fatalf("LinkWorker() error = %v", err)
 	}
-	createDelegationAgent(t, s, "default", "agent-a", []string{"read", "write"}, []string{"job.test"})
-	createDelegationAgent(t, s, "default", "agent-b", []string{"read"}, []string{"job.test"})
 
 	service, err := s.delegationTokenService()
 	if err != nil {
@@ -144,11 +145,11 @@ func TestHandleSubmitJobHTTPEmitsDelegationExtrasOnSafetyDecisionAudit(t *testin
 	sink := &recordingAuditSender{}
 	s.auditExporter = sink
 
+	createDelegationAgent(t, s, "default", "agent-a", []string{"read", "write"}, []string{"job.test"})
+	createDelegationAgent(t, s, "default", "agent-b", []string{"read"}, []string{"job.test"})
 	if err := s.agentIdentityStore.LinkWorker(context.Background(), "agent-b", "worker-b"); err != nil {
 		t.Fatalf("LinkWorker() error = %v", err)
 	}
-	createDelegationAgent(t, s, "default", "agent-a", []string{"read", "write"}, []string{"job.test"})
-	createDelegationAgent(t, s, "default", "agent-b", []string{"read"}, []string{"job.test"})
 
 	service, err := s.delegationTokenService()
 	if err != nil {
@@ -229,10 +230,10 @@ func TestHandleSubmitJobHTTPEmitsDelegationRejectedAuditOnVerifyFailure(t *testi
 	sink := &testAuditSender{}
 	s.auditExporter = sink
 
+	createDelegationAgent(t, s, "default", "agent-b", []string{"read"}, []string{"job.test"})
 	if err := s.agentIdentityStore.LinkWorker(context.Background(), "agent-b", "worker-b"); err != nil {
 		t.Fatalf("LinkWorker() error = %v", err)
 	}
-	createDelegationAgent(t, s, "default", "agent-b", []string{"read"}, []string{"job.test"})
 
 	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/jobs", strings.NewReader(`{"prompt":"hello","topic":"job.test","delegation_token":"not-a-jwt"}`)), &auth.AuthContext{
 		Tenant:      "default",
@@ -269,12 +270,12 @@ func TestHandleSubmitJobHTTPRejectsDelegationAudienceMismatch(t *testing.T) {
 	enableTestAuth(s)
 	setDelegationKeys(t)
 
-	if err := s.agentIdentityStore.LinkWorker(context.Background(), "agent-c", "worker-c"); err != nil {
-		t.Fatalf("LinkWorker() error = %v", err)
-	}
 	createDelegationAgent(t, s, "default", "agent-a", []string{"read"}, []string{"job.test"})
 	createDelegationAgent(t, s, "default", "agent-b", []string{"read"}, []string{"job.test"})
 	createDelegationAgent(t, s, "default", "agent-c", []string{"read"}, []string{"job.test"})
+	if err := s.agentIdentityStore.LinkWorker(context.Background(), "agent-c", "worker-c"); err != nil {
+		t.Fatalf("LinkWorker() error = %v", err)
+	}
 
 	service, err := s.delegationTokenService()
 	if err != nil {
@@ -346,10 +347,10 @@ func TestHandleSubmitJobHTTPRejectsMalformedDelegationToken(t *testing.T) {
 	enableTestAuth(s)
 	setDelegationKeys(t)
 
+	createDelegationAgent(t, s, "default", "agent-b", []string{"read"}, []string{"job.test"})
 	if err := s.agentIdentityStore.LinkWorker(context.Background(), "agent-b", "worker-b"); err != nil {
 		t.Fatalf("LinkWorker() error = %v", err)
 	}
-	createDelegationAgent(t, s, "default", "agent-b", []string{"read"}, []string{"job.test"})
 
 	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/jobs", strings.NewReader(`{"prompt":"hello","topic":"job.test","delegation_token":"not-a-jwt"}`)), &auth.AuthContext{
 		Tenant:      "default",
@@ -373,11 +374,11 @@ func TestHandleSubmitJobHTTPRejectsRevokedDelegationToken(t *testing.T) {
 	enableTestAuth(s)
 	setDelegationKeys(t)
 
+	createDelegationAgent(t, s, "default", "agent-a", []string{"read"}, []string{"job.test"})
+	createDelegationAgent(t, s, "default", "agent-b", []string{"read"}, []string{"job.test"})
 	if err := s.agentIdentityStore.LinkWorker(context.Background(), "agent-b", "worker-b"); err != nil {
 		t.Fatalf("LinkWorker() error = %v", err)
 	}
-	createDelegationAgent(t, s, "default", "agent-a", []string{"read"}, []string{"job.test"})
-	createDelegationAgent(t, s, "default", "agent-b", []string{"read"}, []string{"job.test"})
 
 	service, err := s.delegationTokenService()
 	if err != nil {
@@ -419,11 +420,11 @@ func TestHandleSubmitJobHTTPRejectsExpiredDelegationToken(t *testing.T) {
 	enableTestAuth(s)
 	signingKey := setDelegationKeys(t)
 
+	createDelegationAgent(t, s, "default", "agent-a", []string{"read"}, []string{"job.test"})
+	createDelegationAgent(t, s, "default", "agent-b", []string{"read"}, []string{"job.test"})
 	if err := s.agentIdentityStore.LinkWorker(context.Background(), "agent-b", "worker-b"); err != nil {
 		t.Fatalf("LinkWorker() error = %v", err)
 	}
-	createDelegationAgent(t, s, "default", "agent-a", []string{"read"}, []string{"job.test"})
-	createDelegationAgent(t, s, "default", "agent-b", []string{"read"}, []string{"job.test"})
 
 	now := time.Now().UTC().Add(-2 * time.Hour)
 	expiresAt := now.Add(-15 * time.Minute)
@@ -484,12 +485,12 @@ func TestHandleSubmitJobHTTPRejectsAudienceOverrideWithoutImpersonatePermission(
 
 	// Relay worker is bound to agent-b, but will try to submit with
 	// delegation_audience_agent_id=agent-c (impersonation attempt).
-	if err := s.agentIdentityStore.LinkWorker(context.Background(), "agent-b", "worker-b"); err != nil {
-		t.Fatalf("LinkWorker() error = %v", err)
-	}
 	createDelegationAgent(t, s, "default", "agent-a", []string{"read"}, []string{"job.test"})
 	createDelegationAgent(t, s, "default", "agent-b", []string{"read"}, []string{"job.test"})
 	createDelegationAgent(t, s, "default", "agent-c", []string{"read"}, []string{"job.test"})
+	if err := s.agentIdentityStore.LinkWorker(context.Background(), "agent-b", "worker-b"); err != nil {
+		t.Fatalf("LinkWorker() error = %v", err)
+	}
 
 	// Role holds jobs.write (so the outer gate passes) but NOT
 	// delegation.impersonate, so the audience override gate must fire.
@@ -522,6 +523,105 @@ func TestHandleSubmitJobHTTPRejectsAudienceOverrideWithoutImpersonatePermission(
 	s.handleSubmitJobHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status=%d body=%s want 403", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleSubmitJobHTTPIgnoresOtherTenantsWorkerLink(t *testing.T) {
+	for _, clientLabel := range []bool{true, false} {
+		name := "no_label"
+		if clientLabel {
+			name = "client_label"
+		}
+		t.Run(name, func(t *testing.T) {
+			s, bus, safetyClient := newTestGateway(t)
+			enableTestAuth(s)
+			createDelegationAgent(t, s, "tenant-b", "agent-foreign", []string{"read"}, []string{"job.test"})
+			if err := s.agentIdentityStore.LinkWorker(context.Background(), "agent-foreign", "p"); err != nil {
+				t.Fatalf("link worker: %v", err)
+			}
+			body := `{"prompt":"hello","topic":"job.test"}`
+			if clientLabel {
+				body = `{"prompt":"hello","topic":"job.test","labels":{"agent_id":"agent-foreign"}}`
+			}
+			req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/jobs", strings.NewReader(body)),
+				&auth.AuthContext{Tenant: "default", PrincipalID: "p", Role: "admin"})
+			rr := httptest.NewRecorder()
+			s.handleSubmitJobHTTP(rr, req)
+			if clientLabel {
+				if rr.Code != http.StatusForbidden || len(bus.published) != 0 {
+					t.Fatalf("expected 403 and no publish, got %d, publishes=%d: %s", rr.Code, len(bus.published), rr.Body.String())
+				}
+				return
+			}
+			if rr.Code != http.StatusOK || safetyClient.lastReq == nil {
+				t.Fatalf("expected 200 and policy check, got %d: %s", rr.Code, rr.Body.String())
+			}
+			if got := safetyClient.lastReq.GetLabels()["agent_id"]; got != "" {
+				t.Fatalf("agent_id = %q, want no injected identity", got)
+			}
+		})
+	}
+}
+
+func TestHandleDelegateAgentRefusesOtherTenantsWorkerLink(t *testing.T) {
+	for _, tenant := range []string{"tenant-b", "default"} {
+		t.Run(tenant, func(t *testing.T) {
+			s, _, _ := newTestGateway(t)
+			// Exercise the principal-binding gate directly: the outer legacy
+			// role gate otherwise admits only admins, even with RBAC enabled.
+			setTestEntitlements(t, s, licensing.PlanEnterprise, func(e *licensing.Entitlements) {
+				e.AgentIdentity, e.RBAC = true, true
+			})
+			setDelegationKeys(t)
+			putTestRole(t, s, "delegator", auth.PermAgentsDelegate)
+			createDelegationAgent(t, s, tenant, "agent-source", []string{"read"}, []string{"job.alpha"})
+			createDelegationAgent(t, s, "default", "agent-target", []string{"read"}, []string{"job.alpha"})
+			if err := s.agentIdentityStore.LinkWorker(context.Background(), "agent-source", "p"); err != nil {
+				t.Fatalf("link worker: %v", err)
+			}
+			body := `{"target_agent_id":"agent-target","allowed_actions":["read"],"allowed_topics":["job.alpha"]}`
+			req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents/agent-source/delegate", strings.NewReader(body)),
+				&auth.AuthContext{Tenant: "default", PrincipalID: "p", Role: "delegator"})
+			req.SetPathValue("id", "agent-source")
+			rr := httptest.NewRecorder()
+			s.handleDelegateAgent(rr, req)
+			want := http.StatusCreated
+			if tenant == "tenant-b" {
+				want = http.StatusForbidden
+			}
+			if rr.Code != want {
+				t.Fatalf("expected %d, got %d: %s", want, rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestSubmitJobGRPCIgnoresOtherTenantsWorkerLink(t *testing.T) {
+	for _, tenant := range []string{"tenant-b", "default"} {
+		t.Run(tenant, func(t *testing.T) {
+			s, _, safetyClient := newTestGateway(t)
+			s.tenant = "default"
+			createDelegationAgent(t, s, tenant, "agent-source", []string{"read"}, []string{"job.default"})
+			if err := s.agentIdentityStore.LinkWorker(context.Background(), "agent-source", "p"); err != nil {
+				t.Fatalf("link worker: %v", err)
+			}
+			_, err := s.SubmitJob(context.Background(), &pb.SubmitJobRequest{
+				Prompt: "hello", Topic: "job.default", OrgId: "default", PrincipalId: "p",
+			})
+			if err != nil {
+				t.Fatalf("submit job: %v", err)
+			}
+			if safetyClient.lastReq == nil {
+				t.Fatal("expected policy check")
+			}
+			want := "agent-source"
+			if tenant == "tenant-b" {
+				want = ""
+			}
+			if got := safetyClient.lastReq.GetLabels()["agent_id"]; got != want {
+				t.Fatalf("agent_id = %q, want %q", got, want)
+			}
+		})
 	}
 }
 

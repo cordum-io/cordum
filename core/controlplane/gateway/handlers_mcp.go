@@ -518,7 +518,7 @@ func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentI
 // resolveMCPIdentity looks up the agent identity for this MCP request.
 // Resolution order:
 //  1. X-Agent-Id header (explicit — matches the documented contract).
-//  2. auth-principal fallback via agent_by_worker reverse index, so
+//  2. auth-principal fallback via its worker link in the request tenant, so
 //     credentialled workers inherit their linked identity without
 //     needing to send the header explicitly.
 //
@@ -555,14 +555,13 @@ func (s *server) resolveMCPIdentity(r *http.Request) *mcp.AgentIdentity {
 	if principal == "" {
 		return nil
 	}
-	identity, err := s.agentIdentityStore.GetByWorkerID(ctx, principal)
+	identity, err := s.agentIdentityStore.GetByWorkerIDForTenant(ctx, tenant, principal)
 	if err != nil || identity == nil {
 		return nil
 	}
-	// GetByWorkerID resolves by the authenticated principal but uses an
-	// empty-tenant store lookup internally; enforce tenant isolation here too
-	// so a worker credential bound to another tenant's agent cannot apply that
-	// agent's scope to this request.
+	// The store resolves only within the request tenant. Keep this check as
+	// defense in depth so a store regression cannot apply another tenant's
+	// AllowedTools / AllowedServers / RiskTier to this request.
 	if strings.TrimSpace(identity.TenantID) != tenant {
 		return nil
 	}
