@@ -12,6 +12,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   inventory and measurable acceptance ideas. Broker/grant enforcement is future
   work; runtime acceptance evidence is not measured.
 
+### Changed
+
+- The eight required checks also run on `merge_group` events, with OpenAPI
+  Validate comparing each group against its base commit. No check's content
+  changed; enabling the merge queue remains a maintainer change to the Main
+  ruleset (task-fd34e921).
+
 ### Security
 
 - Release images move off Alpine 3.21, which alpinelinux.org/releases.json lists
