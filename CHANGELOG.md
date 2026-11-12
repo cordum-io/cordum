@@ -7,6 +7,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+#### core/mcp — the MCP invocation audit keeps a consumed human approval when scope preapproval also applies (2026-11-12, task-74f4c01e)
+
+- MCP audit: when a tool call both consumes a human approval and passes a
+  scope preapproval, the `mcp.tool_invocation` event now records
+  `approval_status=consumed` with that approval's `approval_id`, instead of
+  `preapproved` with no `approval_id`. This happens under
+  `mcp.policy_gate_enabled=true`, when an identity whose
+  `PreapprovedMutatingTools` covers a `RequiresApproval` tool resumes an
+  action-gate hold with `_approval_ref`. Authorization is unchanged.
+
 #### core/mcp, core/controlplane/gateway — a preapproved identity's action-gate MCP hold returns a resumable approval ref (2026-11-12, task-06784e6d)
 
 - MCP (`mcp.policy_gate_enabled=true`): scope preapproval no longer

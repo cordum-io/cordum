@@ -81,10 +81,23 @@ func (h *InvocationHandle) MarkApprovalRequired(approvalID string) {
 // records approval_status="preapproved" (NOT "consumed") so SIEM
 // consumers can distinguish scope-based bypass from a consumed human
 // approval — the distinction matters for forensics and for alerting
-// when a preapproved bot identity goes rogue. No approval_id is
-// stamped because no record was written.
+// when a preapproved bot identity goes rogue. "preapproved" means a
+// scope bypass for which no human approval was recorded on this call,
+// so no approval_id is stamped.
+//
+// A consumed human approval already recorded on this handle wins and is
+// never downgraded (task-74f4c01e). Example: the action-gate
+// `_approval_ref` resume (task-cd9df90a) of a tool that is also
+// RequiresApproval marks the handle consumed, then passes the registry
+// gate's preapproval bypass. Keeping "consumed" keeps approval_id joined
+// to the Edge approval and to its mcp.tool.post ApprovalRef. This is
+// audit labelling only, with no authorization effect. A consumed mark
+// with an empty id names no approval and is not protected.
 func (h *InvocationHandle) MarkApprovalPreapproved(toolName string) {
 	if h == nil {
+		return
+	}
+	if h.approvalStatus == "consumed" && h.approvalID != "" {
 		return
 	}
 	h.approvalID = ""
