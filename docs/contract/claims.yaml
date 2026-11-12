@@ -360,7 +360,7 @@ claims:
     status: supported
     invariants: []
     findings: []
-    enforcement_points: [{"path":"core/controlplane/gateway/middleware.go","symbol":"rateLimitMiddleware"},{"path":"core/controlplane/gateway/middleware.go","symbol":"redisRateLimiter.Allow"}]
+    enforcement_points: [{"path":"core/controlplane/gateway/middleware.go","symbol":"keyedRateLimiter.Allow"},{"path":"core/controlplane/gateway/middleware.go","symbol":"redisRateLimiter.Allow"}]
     tests: [{"package":"core/controlplane/gateway","name":"TestRedisRateLimiterMultiReplica"}]
     evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 rateLimitMiddleware applies one API limiter to /api/ and /mcp/, the default is 30 requests per second, and TestRedisRateLimiterMultiReplica covers the shared limiter."
     public_sources: ["cordum:docs/configuration-reference.md:91","cordum:docs/mcp/_prereqs.md:57"]
@@ -380,7 +380,7 @@ claims:
     status: supported
     invariants: []
     findings: []
-    enforcement_points: [{"path":"core/audit/soc2.go","symbol":"CategoryFor"}]
+    enforcement_points: []
     tests: [{"package":"core/audit","name":"TestDefaultSOC2Mapping_CoversAllEventTypes"}]
     evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 core/audit/soc2.go holds the default mapping and TestDefaultSOC2Mapping_CoversAllEventTypes checks coverage; no SOC 2 attestation is in the repository."
     public_sources: ["cordum:docs/audit-chain.md:17","cordum:docs/audit-operations.md:244","cordum:docs/audit.md:134"]
@@ -390,7 +390,7 @@ claims:
     status: supported
     invariants: []
     findings: []
-    enforcement_points: [{"path":"core/controlplane/gateway/middleware.go","symbol":"tenantMiddleware"},{"path":"core/controlplane/gateway/handlers_auth.go","symbol":"server.resolveTenant"}]
+    enforcement_points: [{"path":"core/controlplane/gateway/handlers_auth.go","symbol":"server.resolveTenant"}]
     tests: [{"package":"core/controlplane/gateway","name":"TestResolveTenantCrossTenantDenied"}]
     evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 tenantMiddleware and server.resolveTenant refuse a tenant other than the authenticated one, with a unit test; per-handler coverage of every route is not qualified."
     public_sources: ["cordum:docs/api-reference.md:72"]
@@ -430,7 +430,7 @@ claims:
     status: supported
     invariants: []
     findings: []
-    enforcement_points: [{"path":"core/infra/capprofile/profile.go","symbol":"Readiness.Validate"},{"path":"core/infra/store/job_event_store.go","symbol":"RedisJobStore.ApplyJobResult"},{"path":"core/infra/resource/registry.go","symbol":"Registry.Resolve"}]
+    enforcement_points: [{"path":"core/infra/capprofile/profile.go","symbol":"Readiness.missing"},{"path":"core/infra/store/job_event_store.go","symbol":"RedisJobStore.ApplyJobResult"},{"path":"core/infra/resource/registry.go","symbol":"Registry.Resolve"}]
     tests: [{"package":"core/infra/capprofile","name":"TestReadinessValidateRejectsEachMissingDependency"},{"package":"core/infra/store","name":"TestApplyJobResultRejectsMessageIDDigestConflict"},{"package":"core/infra/resource","name":"TestRegistryValidatesExpirySizeAndDigestAfterFetch"},{"package":"core/infra/resource","name":"TestRegistryHasNoNetworkOrFileFallback"}]
     evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 readiness validation, digest-conflict rejection and registry checks exist with unit tests; end-to-end production qualification is not attached."
     public_sources: ["cordum:docs/cap_production_profile.md:91"]
