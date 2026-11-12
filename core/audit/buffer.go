@@ -29,6 +29,11 @@ var auditBatchDrops = promauto.NewCounter(prometheus.CounterOpts{
 	Help: "Total audit batches permanently dropped after exhausting retries.",
 })
 
+var auditEventDrops = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "cordum_audit_events_dropped_total",
+	Help: "Audit events dropped before export, by reason.",
+}, []string{"reason"})
+
 func auditMaxRetries() int {
 	if raw := strings.TrimSpace(os.Getenv("CORDUM_AUDIT_EXPORT_MAX_RETRIES")); raw != "" {
 		if v, err := strconv.Atoi(raw); err == nil && v > 0 {

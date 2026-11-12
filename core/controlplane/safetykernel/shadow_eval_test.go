@@ -2,6 +2,7 @@ package safetykernel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -11,7 +12,75 @@ import (
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/policyshadow"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/prometheus/client_golang/prometheus"
 )
+
+type failingAuditBus struct{ attempts atomic.Int64 }
+
+func (b *failingAuditBus) Publish(_ string, _ *pb.BusPacket) error {
+	b.attempts.Add(1)
+	return errors.New("publish unavailable")
+}
+
+func (*failingAuditBus) Subscribe(_, _ string, _ func(*pb.BusPacket) error) error {
+	return nil
+}
+
+func TestShadowEvaluator_SurvivesAuditPublishFailure(t *testing.T) {
+	loader := seedLoader(t, map[string]map[string]string{"tenant-a": {"b-1": `version: "1"
+rules:
+  - id: shadow-deny
+    match:
+      topics: ["job.foo"]
+    decision: deny
+`}})
+	bus := &failingAuditBus{}
+	sender := newShadowAuditSender(bus)
+	t.Cleanup(func() {
+		if err := sender.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	eval := NewShadowEvaluator(loader, sender, ShadowEvaluatorOptions{Workers: 1, QueueSize: 8})
+	t.Cleanup(eval.Close)
+	before := noFallbackDropCount(t)
+	for job := int64(1); job <= 3; job++ {
+		eval.Submit(config.PolicyDecision{Decision: "allow"}, allowInput("tenant-a"), "tenant-a", fmt.Sprintf("job-%d", job))
+		deadline := time.Now().Add(2 * time.Second)
+		for bus.attempts.Load() < job && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
+		}
+		if got := bus.attempts.Load(); got != job {
+			t.Fatalf("publish attempts = %d, want %d", got, job)
+		}
+	}
+	eval.Close()
+	if got := noFallbackDropCount(t) - before; got != 0 {
+		t.Fatalf("no_fallback drops = %v, want 0", got)
+	}
+}
+
+func noFallbackDropCount(t *testing.T) float64 {
+	t.Helper()
+	families, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range families {
+		if family.GetName() != "cordum_audit_events_dropped_total" {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			for _, label := range metric.GetLabel() {
+				if label.GetName() == "reason" && label.GetValue() == "no_fallback" {
+					return metric.GetCounter().GetValue()
+				}
+			}
+		}
+	}
+	return 0
+}
 
 // capturingSender is an audit.AuditSender that retains every event it
 // sees so tests can assert emission shape.
