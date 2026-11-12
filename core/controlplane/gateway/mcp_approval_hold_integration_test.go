@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -657,6 +658,70 @@ func TestApprovalHold_ClaimUsesStoredEventID(t *testing.T) {
 			t.Fatalf("ClaimApproval calls = %d; want 1", n)
 		}
 	})
+}
+
+// pgRequireConsumed asserts a resume claim consumed exactly the approval ref.
+func pgRequireConsumed(t *testing.T, outcome mcp.ApprovalClaimOutcome, err error, ref string) {
+	t.Helper()
+	if err != nil || outcome.ConflictErr != nil {
+		t.Fatalf("resume of %s: err=%v conflict=%+v; want a consumed claim", ref, err, outcome.ConflictErr)
+	}
+	if !outcome.Consumed || outcome.Approval == nil || outcome.Approval.ApprovalRef != ref {
+		t.Fatalf("resume of %s: outcome = %+v; want approval %q consumed", ref, outcome, ref)
+	}
+}
+
+// TestApprovalHold_OverlappingHoldsGetDistinctRefs pins task-29afcbe9:
+// ActionTupleHash leaves out non-path args, so two holds of one tool in one
+// session share an ActionHash, and each must still get a ref it can claim.
+func TestApprovalHold_OverlappingHoldsGetDistinctRefs(t *testing.T) {
+	t.Parallel()
+	h := newHoldHarness(t, "policy-v7", 0)
+	call := h.seedCall(t, holdTenant, "sess_hold_overlap", "exec_hold_overlap")
+	argsB := json.RawMessage(`{"path":"/etc/hostname","contents":"bye"}`)
+
+	refA := pgDriveRequireHuman(t, h, call, holdArgs)
+	refB := pgDriveRequireHuman(t, h, call, argsB)
+	if refB == refA {
+		t.Fatalf("hold B (args differ outside the path) got hold A's ref %q (task-29afcbe9); want its own claimable ref", refA)
+	}
+
+	get := func(ref string) *edge.EdgeApproval {
+		approval, found, err := h.edgeStore.GetApproval(h.ctx, holdTenant, ref)
+		if err != nil || !found || approval == nil {
+			t.Fatalf("GetApproval(%s) = %+v, %v, %v", ref, approval, found, err)
+		}
+		return approval
+	}
+	apprA, apprB := get(refA), get(refB)
+	if apprA.ActionHash != apprB.ActionHash || apprA.InputHash == apprB.InputHash {
+		t.Fatalf("precondition: want one shared ActionHash and different InputHash; got action %q/%q input %q/%q",
+			apprA.ActionHash, apprB.ActionHash, apprA.InputHash, apprB.InputHash)
+	}
+	if apprA.EventID == apprB.EventID {
+		t.Fatalf("both holds bound to event %q; want each bound to its own mcp.tool.pre event", apprA.EventID)
+	}
+	var preIDs []string
+	for _, ev := range pgPreEvents(t, h.edgeStore, holdTenant, call.session, call.execution) {
+		preIDs = append(preIDs, ev.EventID)
+	}
+	if !slices.Contains(preIDs, apprB.EventID) {
+		t.Fatalf("approval B EventID %q is not one of the session's pre-events %v", apprB.EventID, preIDs)
+	}
+
+	if again := pgDriveRequireHuman(t, h, call, holdArgs); again != refA {
+		t.Fatalf("identical re-hold of A returned %q; want the existing ref %q", again, refA)
+	}
+	if n := pgApprovalCount(t, h.edgeStore, holdTenant); n != 2 {
+		t.Fatalf("Edge approvals = %d; want 2 (one per distinct args)", n)
+	}
+
+	h.approve(t, holdTenant, refB)
+	outcome, err := h.claim(h.edgeStore, call.consumer(), pgWithRef(t, argsB, refB), "policy-v7")
+	pgRequireConsumed(t, outcome, err, refB)
+	h.approve(t, holdTenant, refA)
+	outcome, err = h.claim(h.edgeStore, call.consumer(), pgWithRef(t, holdArgs, refA), "policy-v7")
+	pgRequireConsumed(t, outcome, err, refA)
 }
 
 // TestConsumedApproval_SingleUseAndBound pins E4's request-scoped token: it
