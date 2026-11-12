@@ -1,8 +1,81 @@
 package main
 
 import (
+	"bytes"
+	"errors"
+	"log/slog"
+	"strings"
 	"testing"
+
+	"github.com/cordum/cordum/core/audit"
 )
+
+func TestMCPAuditFallbackNilExporter(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{{"unconfigured", nil}, {"configuration_error", errors.New("invalid audit configuration")}} {
+		t.Run(tc.name, func(t *testing.T) {
+			logs := captureAuditLogs(t)
+			b := newAuditFallback(func() (*audit.BufferedExporter, error) { return nil, tc.err })
+			if b == nil {
+				t.Fatal("expected a fallback buffer")
+			}
+			t.Cleanup(func() { closeAuditFallback(t, b) })
+			if _, ok := b.Backend().(stderrAuditExporter); !ok {
+				t.Fatalf("backend = %T, want stderrAuditExporter", b.Backend())
+			}
+			if got := strings.Contains(logs.String(), "WARN"); got != (tc.err != nil) {
+				t.Fatalf("configuration warning = %v, want %v", got, tc.err != nil)
+			}
+		})
+	}
+	t.Run("configured", func(t *testing.T) {
+		configured := audit.NewBufferedExporter(audit.NewDiscardExporter())
+		t.Cleanup(func() { closeAuditFallback(t, configured) })
+		if got := newAuditFallback(func() (*audit.BufferedExporter, error) { return configured, nil }); got != configured {
+			t.Fatal("configured exporter was replaced")
+		}
+	})
+	t.Run("stderr_drain", func(t *testing.T) {
+		logs := captureAuditLogs(t)
+		b := newAuditFallback(func() (*audit.BufferedExporter, error) { return nil, nil })
+		b.Send(audit.SIEMEvent{EventType: "test.mcp.fallback"})
+		closeAuditFallback(t, b)
+		if !strings.Contains(logs.String(), "test.mcp.fallback") {
+			t.Fatalf("stderr event missing: %s", logs.String())
+		}
+	})
+}
+
+func TestMCPAuditFallbackNilExporterFromEnv(t *testing.T) {
+	for _, mode := range []string{"", "none"} {
+		t.Run("mode_"+mode, func(t *testing.T) {
+			t.Setenv("CORDUM_AUDIT_EXPORT_TYPE", mode)
+			b := newAuditFallback(audit.NewExporterFromEnv)
+			t.Cleanup(func() { closeAuditFallback(t, b) })
+			if _, ok := b.Backend().(stderrAuditExporter); !ok {
+				t.Fatalf("backend = %T, want stderrAuditExporter", b.Backend())
+			}
+		})
+	}
+}
+
+func captureAuditLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	logs := &bytes.Buffer{}
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	return logs
+}
+
+func closeAuditFallback(t *testing.T, b *audit.BufferedExporter) {
+	t.Helper()
+	if err := b.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestResolveTransportConfig_DefaultStdio(t *testing.T) {
 	t.Setenv("MCP_TRANSPORT", "")
