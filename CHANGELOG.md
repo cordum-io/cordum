@@ -5,11 +5,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
-### CI and documentation
-
-- Added `docs/contract/threat-model.md`, the platform threat model for the M0 security contract: assets, adversaries, trust boundaries, a trusted-component inventory covering every `cmd/` service, reference-monitor properties with their current status, five explicit non-promises and the deployment boundary. Documentation only; no behavior changes.
-- Qualified three platform security-posture statements against `docs/contract/threat-model.md` (task-d056042e): ADR-001's "Zero-trust guarantee" bullet is now marked as design intent with a dated status note, and `docs/mcp/scope-filtering.md` no longer labels the MCP controls a "zero-trust stack" or "zero-trust controls". The threat model rates these mechanisms `supported`, not `enforced` or `verified`. Clarified that qualification requires protected transport on every Gateway client/proxy hop; deployment remains unverified.
-
 ### Added
 
 - Added the [planned first protected-operation contract](docs/contract/protected-operation.md)
@@ -18,6 +13,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   work; runtime acceptance evidence is not measured.
 
 ### Security
+
+- Release images move off Alpine 3.21, which alpinelinux.org/releases.json lists
+  as end-of-life on 2026-11-01. The control-plane and `demo-quickstart-worker`
+  runtime stages use `alpine:3.24`, and the dashboard uses
+  `nginxinc/nginx-unprivileged:1.30-alpine3.24` (was `1.27-alpine`, which is on
+  Alpine 3.21). Every runtime stage still runs `apk upgrade --no-cache`;
+  builder stages are unchanged.
 
 #### core/controlplane/gateway — gateway worker-link readers resolve within the request tenant (2026-11-11, task-283f2317)
 
@@ -33,6 +35,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Go API: `AgentIdentityStore.GetByWorkerID` is removed (use `GetByWorkerIDForTenant`); `UnlinkWorker` takes the tenant ID; `LinkWorker` rejects unknown or untenanted agents.
 - Slices: task-76c90c6e, task-283f2317.
 
+#### TypeScript SDK — dev-only minimatch advisory GHSA-g3hv-75wg-m249 (2026-11-11, task-f09d31be)
+
+- Scope `minimatch` overrides to `@typescript-eslint/typescript-estree` and `@ts-morph/common`, using `^11.0.1` while both parents still require the vulnerable 10.x line. Remove these overrides when both parents support the patched line. This changes SDK development tooling, not the published SDK runtime.
+
+#### dashboard — dev-only minimatch advisory GHSA-g3hv-75wg-m249 (2026-11-11, task-3c2704b3)
+
+- `dashboard/package.json` overrides `minimatch@^10.0.0` to `^11.0.1`, in `pnpm.overrides` and in the npm `overrides` mirror. No minimatch 10.x release carries the fix. eslint, `@eslint/config-array` and `@typescript-eslint/typescript-estree` still declare `^10`, and they call only `Minimatch#match` and `minimatch()`, which 11.x keeps.
+- typedoc, typedoc-plugin-coverage and typedoc-plugin-markdown are removed from the install with pnpm `-` overrides. typedoc 0.28 calls `Minimatch#matchOne`, which 11.x removed. orval 8.31.0 loads typedoc only for its `docs` output, which the dashboard does not configure. Until typedoc supports minimatch 11, enabling that output fails at import. orval stays at 8.31.0.
+
 ### Fixed
 
 - Edge approvals: a held MCP call whose arguments differ from a still-pending
@@ -43,7 +54,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `policy_mismatch`. An identical retry still returns the existing ref
   (task-29afcbe9).
 
-### Fixed
+- The dashboard test run no longer fails after every test passes when a console line, written by work that outlived its test file, is still being delivered as the Vitest worker shuts down (`EnvironmentTeardownError: Closing rpc while "onUserConsoleLog" was pending`). `dashboard/vitest.config.ts` ignores exactly that error, so every other unhandled error still fails the run. `KeyboardShortcutsHelp.test.tsx`, which produced it, now answers the AppShell's requests in-process and waits for them to settle (task-04eef2b3).
 
 #### core/mcp — the MCP invocation audit keeps a consumed human approval when scope preapproval also applies (2026-11-12, task-74f4c01e)
 
@@ -95,27 +106,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `docs/mcp-tools-reference.md` and `docs/mcp/mutating-tools.md` match. Approval
   behaviour and the `-32099` error are unchanged.
 
-- The dashboard test run no longer fails after every test passes when a console line, written by work that outlived its test file, is still being delivered as the Vitest worker shuts down (`EnvironmentTeardownError: Closing rpc while "onUserConsoleLog" was pending`). `dashboard/vitest.config.ts` ignores exactly that error, so every other unhandled error still fails the run. `KeyboardShortcutsHelp.test.tsx`, which produced it, now answers the AppShell's requests in-process and waits for them to settle (task-04eef2b3).
+### CI and documentation
 
-### Security
-
-#### TypeScript SDK — dev-only minimatch advisory GHSA-g3hv-75wg-m249 (2026-11-11, task-f09d31be)
-
-- Scope `minimatch` overrides to `@typescript-eslint/typescript-estree` and `@ts-morph/common`, using `^11.0.1` while both parents still require the vulnerable 10.x line. Remove these overrides when both parents support the patched line. This changes SDK development tooling, not the published SDK runtime.
-
-#### dashboard — dev-only minimatch advisory GHSA-g3hv-75wg-m249 (2026-11-11, task-3c2704b3)
-
-- `dashboard/package.json` overrides `minimatch@^10.0.0` to `^11.0.1`, in `pnpm.overrides` and in the npm `overrides` mirror. No minimatch 10.x release carries the fix. eslint, `@eslint/config-array` and `@typescript-eslint/typescript-estree` still declare `^10`, and they call only `Minimatch#match` and `minimatch()`, which 11.x keeps.
-- typedoc, typedoc-plugin-coverage and typedoc-plugin-markdown are removed from the install with pnpm `-` overrides. typedoc 0.28 calls `Minimatch#matchOne`, which 11.x removed. orval 8.31.0 loads typedoc only for its `docs` output, which the dashboard does not configure. Until typedoc supports minimatch 11, enabling that output fails at import. orval stays at 8.31.0.
-
-### Security
-
-- Release images move off Alpine 3.21, which alpinelinux.org/releases.json lists
-  as end-of-life on 2026-11-01. The control-plane and `demo-quickstart-worker`
-  runtime stages use `alpine:3.24`, and the dashboard uses
-  `nginxinc/nginx-unprivileged:1.30-alpine3.24` (was `1.27-alpine`, which is on
-  Alpine 3.21). Every runtime stage still runs `apk upgrade --no-cache`;
-  builder stages are unchanged.
+- Added `docs/contract/threat-model.md`, the platform threat model for the M0 security contract: assets, adversaries, trust boundaries, a trusted-component inventory covering every `cmd/` service, reference-monitor properties with their current status, five explicit non-promises and the deployment boundary. Documentation only; no behavior changes.
+- Qualified three platform security-posture statements against `docs/contract/threat-model.md` (task-d056042e): ADR-001's "Zero-trust guarantee" bullet is now marked as design intent with a dated status note, and `docs/mcp/scope-filtering.md` no longer labels the MCP controls a "zero-trust stack" or "zero-trust controls". The threat model rates these mechanisms `supported`, not `enforced` or `verified`. Clarified that qualification requires protected transport on every Gateway client/proxy hop; deployment remains unverified.
 
 ## [v1.3.1] - 2026-11-11
 
