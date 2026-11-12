@@ -87,6 +87,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `mcp.policy_gate_enabled=true`, when an identity whose
   `PreapprovedMutatingTools` covers a `RequiresApproval` tool resumes an
   action-gate hold with `_approval_ref`. Authorization is unchanged.
+- MCP audit: an `_approval_ref` resume whose new evaluation allows the call,
+  for example after the session-taint lookup recovers, now records that
+  `approval_ref` on its `mcp.tool.post` or `mcp.tool.failed` event, as a
+  `REQUIRE_HUMAN` resume already did. Authorization is unchanged.
 
 #### core/mcp, core/controlplane/gateway — a preapproved identity's action-gate MCP hold returns a resumable approval ref (2026-11-12, task-06784e6d)
 
