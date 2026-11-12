@@ -110,6 +110,57 @@ func TestMutatingTools_RegisterAllTools_Includes7Mutators(t *testing.T) {
 	}
 }
 
+// The dashboard Approvals page does not read an `mcp` query parameter,
+// so the advertised hint must point at the supported /approvals page,
+// show approval_id separately and keep the human-before-retry guidance.
+// Expectations are literal on purpose: they must not be derived from
+// mutatingApprovalHint, or the test would follow the constant wherever
+// it drifts.
+func TestMutatingTools_ApprovalNavigationHint(t *testing.T) {
+	t.Parallel()
+	reg := NewToolRegistry()
+	if err := RegisterAllTools(reg, &mockServiceBridge{}); err != nil {
+		t.Fatalf("RegisterAllTools err: %v", err)
+	}
+	mutators := []string{
+		ToolCreateWorkflow,
+		ToolInstallPack,
+		ToolUninstallPack,
+		ToolRegisterAgent,
+		ToolUpdatePolicyBundle,
+		ToolRevokeWorkerSession,
+		ToolSetAgentScope,
+	}
+	registered := map[string]Tool{}
+	for _, tool := range reg.ListToolsUnfiltered() {
+		registered[tool.Name] = tool
+	}
+	if len(registered) == 0 {
+		t.Fatal("registry is empty after RegisterAllTools")
+	}
+	for _, name := range mutators {
+		tool, ok := registered[name]
+		if !ok {
+			t.Errorf("mutating tool %q missing from registry", name)
+			continue
+		}
+		desc := tool.Description
+		for _, want := range []string{
+			"(/approvals)",
+			"approval_id",
+			"-32099",
+			"retry the call after they approve",
+		} {
+			if !strings.Contains(desc, want) {
+				t.Errorf("%s: description must contain %q; got %q", name, want, desc)
+			}
+		}
+		if strings.Contains(desc, "/approvals?") {
+			t.Errorf("%s: description must not advertise a query-bearing approvals URL (the page ignores it); got %q", name, desc)
+		}
+	}
+}
+
 // Handler contract test — each handler should forward the args into
 // the bridge, surface the bridge's output as a JSON tool-call result,
 // and map bridge errors into IsError=true results.

@@ -42,8 +42,7 @@ decision branch
    ├── DENY / THROTTLE                  ───►  short-circuit (no upstream call)
    ├── REQUIRE_HUMAN                    ───►  ApprovalHandoff.ConsumeActionGateDecision
    │                                            ├── invariant check
-   │                                            ├── preapproval check
-   │                                            └── MCPApprovalStore.Enqueue
+   │                                            └── Edge approval mint ➜ approval pending: <approval_ref>
    └── upstream error                   ───►  mcp.tool.failed (with sanitized error)
 ```
 
@@ -170,14 +169,21 @@ Path normalization (backslash → forward slash) is applied in
 `core/mcp.CanonicalActionHash` so Windows and POSIX callers operating on
 the same logical file converge on a single approval lifecycle key.
 
-Precedence at the approval-handoff site (matches `gatewayApprovalGate.Check`):
+Precedence at the approval-handoff site:
 
-1. **MCP invariants** — `ErrMCPInvariantDeny` always wins, even over an
-   action-gate ALLOW from a pack-contributed rule.
-2. **Preapproval** — short-circuit; no approval-store write.
-3. **Approval store** — `ClaimPreApproved` first, else
-   `EnqueueMCPApproval` and surface the returned reference as
-   `approval pending: <ref>` content to the client.
+1. **MCP invariants** — `ErrMCPInvariantDeny` always wins.
+2. **Edge approval mint** — the Edge approval is bound to the call's
+   policy pre-event (`mcp.tool.pre`), and its reference reaches the
+   client as `approval pending: <approval_ref>`. After a human approves
+   it, the client resumes the call once with `_approval_ref`.
+
+Scope preapproval and the legacy MCP approval store are not consulted at
+this site: preapproval waives only the registry gate's per-tool approval
+(see [What preapproval does not waive](../mcp/scope-preapproval.md#what-preapproval-does-not-waive)).
+With no Edge approval mint wired, or no Edge session metadata on the call,
+the call fails closed with JSON-RPC `-32097`. A handoff that returns an
+empty approval reference also gets `-32097`, and that outcome is never
+cached (task-06784e6d).
 
 The bridge's `mcp.tool.pre` event carries `Decision = require_approval` so
 the audit trail records the gating point even if the lifecycle resolves

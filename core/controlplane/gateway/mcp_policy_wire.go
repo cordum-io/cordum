@@ -15,41 +15,6 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// legacyMCPApprovalArgsHashZero is the 64-character zero-hex placeholder
-// used when a legacy ArgsHash is missing or carries the short 8-character
-// "00000000" sentinel that predates the canonical-args binding. A SHA-256
-// hex digest is always 64 chars; the legacy SIEM correlation tables key
-// off this column, so persisting a short value here would either truncate
-// downstream rows (BigQuery STRING with NOT NULL + length constraint) or
-// silently collide every "no-hash" approval into a single row.
-const legacyMCPApprovalArgsHashZero = "0000000000000000000000000000000000000000000000000000000000000000"
-
-// legacyMCPApprovalArgsHash normalizes the ArgsHash the legacy MCP
-// approval store sees on the ClaimPreApproved + EnqueueMCPApproval path.
-// EDGE-103 mint now derives a real SHA-256 via BuildMCPApprovalBinding,
-// but the legacy fallback still accepts an upstream-supplied
-// ctxData.ActionHash. Three normalizations:
-//
-//  1. Trim whitespace — guards against caller bugs that pass " <hex> ".
-//  2. Empty string → 64-char zero hex. Empty would otherwise produce a
-//     Redis key with a trailing colon and fan out across consumers.
-//  3. Short "00000000" placeholder (the 8-char value some legacy emit
-//     sites wrote before the canonical hash work) → 64-char zero hex.
-//
-// A real non-empty, non-placeholder value is preserved BYTE-FOR-BYTE so
-// retry idempotency keys stay stable across this normalization pass.
-// The function intentionally does NOT validate hex shape: the legacy
-// SIEM table accepts arbitrary strings and a stricter check would
-// reject perfectly-correlated rows that happened to write non-hex
-// debug markers.
-func legacyMCPApprovalArgsHash(s string) string {
-	trimmed := strings.TrimSpace(s)
-	if trimmed == "" || trimmed == "00000000" {
-		return legacyMCPApprovalArgsHashZero
-	}
-	return trimmed
-}
-
 // policyDispatcherAdapter wraps the production action-gate pipeline so
 // the core/mcp policy layer can dispatch against it through the narrow
 // mcp.PolicyDispatcher interface. The adapter exists to break the
@@ -88,21 +53,19 @@ func (a policyDispatcherAdapter) Dispatch(ctx context.Context, in *config.Policy
 	}, fired
 }
 
-// ConsumeActionGateDecision routes a REQUIRE_HUMAN gate decision into
-// the existing MCPApprovalStore lifecycle. The gate has already
-// computed the canonical action hash; we reuse it (instead of
-// recomputing) so the gate's decision and the approval record stay
-// bound to the same key. Returns the approval reference the client
-// surfaces as an approval-pending marker.
+// ConsumeActionGateDecision routes an action-gate REQUIRE_HUMAN decision
+// into the Edge approval lifecycle. It returns the ref of an Edge approval
+// bound to the call's policy pre-event; the client surfaces it as an
+// approval-pending marker and resumes with it as `_approval_ref`.
 //
-// Precedence (matches gatewayApprovalGate.Check exactly):
+// Precedence:
 //  1. MCPInvariantLookup DENY — SECURITY FLOOR, always wins.
-//  2. PreapprovalLookup HIT — skip approval store entirely.
-//  3. Fall through to MCPApprovalStore claim/enqueue.
+//  2. The Edge approval mint, bound to the policy pre-event.
+//  3. Otherwise -32097 (mcp.ErrApprovalGateMisconfigured): without the
+//     Edge mint and Edge session metadata no resumable approval exists.
 //
-// On invariant DENY this returns an error so the caller can map it
-// to a -32097 / -32099 JSON-RPC code. On preapproval HIT, returns
-// ("", nil) so the caller treats the call as immediately allowed.
+// It returns a non-empty Edge ref or an error. Scope preapproval and the
+// legacy MCP approval store's records are not consulted (task-06784e6d).
 func (g *gatewayApprovalGate) ConsumeActionGateDecision(ctx context.Context, _ mcp.PolicyDecision, ctxData mcp.ToolCallApprovalContext) (string, error) {
 	if g == nil || g.store == nil {
 		return "", fmt.Errorf("mcp gate: approval store unavailable")
@@ -110,87 +73,80 @@ func (g *gatewayApprovalGate) ConsumeActionGateDecision(ctx context.Context, _ m
 	// Invariant DENY first — fail closed regardless of the actiongate
 	// decision so a pack-contributed actiongate ALLOW cannot override
 	// a SecOps invariant block.
-	if g.invariants != nil {
-		rules := g.invariants.InvariantsForMCPTool(ctx)
-		// We synthesize a minimal mcp.Tool/CallMetadata view from the
-		// context payload so matchMCPInvariantDeny can run.
-		tool := mcp.Tool{Name: ctxData.Tool}
-		meta := MCPCallMetadata{Tenant: ctxData.Tenant, AgentID: ctxData.AgentID}
-		if rule, denied := matchMCPInvariantDeny(rules, tool, meta); denied {
-			return "", fmt.Errorf("%w: tool %q denied by invariant %q",
-				ErrMCPInvariantDeny, ctxData.Tool, rule.ID)
-		}
+	if err := g.actionGateInvariantDeny(ctx, ctxData); err != nil {
+		return "", err
 	}
-	// Preapproval HIT short-circuits the approval store. The bridge's
-	// pre event has already been emitted with Decision=require_approval;
-	// returning ("", nil) lets the caller fall through to upstream as
-	// if the call had been allowed. Production wiring should also fire
-	// an audit-side preapproval emission via the invocation handle.
-	if g.preapproval != nil && g.preapproval.IsPreapproved(ctx, ctxData.Tenant, ctxData.AgentID, ctxData.Tool) {
-		return "", nil
-	}
-	// EDGE-103 reopen #1: Edge approval store is the source of truth
-	// per DoD #4. Try Edge mint FIRST when wired + transport metadata
-	// present. Three-way outcome from mintEdgeApprovalForActionGate:
+	// Scope preapproval waives only the registry gate's per-tool approval (gatewayApprovalGate.Check).
+	// It never waives an action-gate REQUIRE_HUMAN such as MCPGate's taint-unavailable hold (task-06784e6d R1).
+	//
+	// EDGE-103 reopen #1: the Edge approval store is the source of truth
+	// per DoD #4. Three-way outcome from mintEdgeApprovalForActionGate:
 	//   - (ref, nil, true):   Edge mint succeeded — return ref.
-	//   - ("",  nil, false):  Edge unwired or no CallMetadata — fall
-	//                         back to legacy MCPApprovalStore mint by
-	//                         design (supports HTTP MCP transit without
-	//                         an EdgeSession, dev/test deploys).
-	//   - ("",  err, true):   Edge wired + metadata present but
-	//                         EnqueueApproval errored — fail-closed per
-	//                         DoD #5 (no silent legacy fallback that
-	//                         would produce a non-resumable approval_id).
+	//   - ("",  err, true):   the mint ran and failed: a policy change
+	//                         since the pre-event (retryable), or a
+	//                         missing pre-event id or EnqueueApproval
+	//                         error (-32096 approval_store_unavailable).
+	//   - ("",  nil, false):  the mint was not attempted (Edge store
+	//                         unwired or no Edge session metadata) —
+	//                         fail closed with -32097. There is no
+	//                         legacy fallback (task-06784e6d R2).
 	ref, mintErr, didTry := g.mintEdgeApprovalForActionGate(ctx, ctxData)
 	if mintErr != nil {
+		// A policy change is retryable, not a store outage.
+		if errors.Is(mintErr, mcp.ErrPolicySnapshotChanged) {
+			return "", mintErr
+		}
 		return "", fmt.Errorf("%w: mcp gate Edge enqueue failed: %w", mcp.ErrApprovalStoreUnavailable, mintErr)
 	}
-	if didTry {
-		return ref, nil
+	if !didTry {
+		return "", fmt.Errorf("%w: action-gate REQUIRE_HUMAN needs the Edge approval mint and Edge session metadata; "+
+			"the legacy MCP approval store is not an approval authority under the policy gate", mcp.ErrApprovalGateMisconfigured)
 	}
-	// Legacy MCPApprovalStore path (non-authoritative SIEM correlation).
-	// Only reached when Edge mint was skipped because of missing wiring
-	// or absent transport metadata. The legacy retry-with-same-args
-	// protocol still works via ClaimPreApproved for pre-EDGE-103 SIEM
-	// consumers that don't speak `_approval_ref`.
-	//
-	// ctxData.ActionHash is upstream-controlled — the canonical legacy
-	// emit sites supplied a SHA-256 hex digest, but a few older code
-	// paths wrote the short "00000000" placeholder before the canonical
-	// binding existed. Normalize via legacyMCPApprovalArgsHash so the
-	// SIEM correlation column always carries a stable 64-char shape.
-	argsHash := legacyMCPApprovalArgsHash(ctxData.ActionHash)
-	if rec, err := g.store.ClaimPreApproved(ctx, ctxData.Tenant, ctxData.AgentID, ctxData.Tool, argsHash); err != nil {
-		return "", fmt.Errorf("mcp gate: pre-approval claim: %w", err)
-	} else if rec != nil {
-		return rec.ID, nil
+	return ref, nil
+}
+
+var _ mcp.ConsumedApprovalAuthorizer = (*gatewayApprovalGate)(nil)
+
+// AuthorizeConsumedApproval authorizes a REQUIRE_HUMAN call resumed with
+// its consumed Edge approval (task-cd9df90a C2). Only the invariant DENY
+// floor applies: the approval already stands in for the preapproval and
+// the mint, so neither runs.
+func (g *gatewayApprovalGate) AuthorizeConsumedApproval(ctx context.Context, ctxData mcp.ToolCallApprovalContext) error {
+	if g == nil || g.store == nil {
+		return fmt.Errorf("mcp gate: approval store unavailable")
 	}
-	req := &MCPApprovalRequest{
-		Tenant:   ctxData.Tenant,
-		AgentID:  ctxData.AgentID,
-		ToolName: ctxData.Tool,
-		ArgsHash: argsHash,
+	return g.actionGateInvariantDeny(ctx, ctxData)
+}
+
+// actionGateInvariantDeny is the SecOps invariant DENY floor of the
+// action-gate handoff. It synthesizes a minimal mcp.Tool/CallMetadata view
+// from the context payload so matchMCPInvariantDeny can run.
+func (g *gatewayApprovalGate) actionGateInvariantDeny(ctx context.Context, ctxData mcp.ToolCallApprovalContext) error {
+	if g.invariants == nil {
+		return nil
 	}
-	if gatewayMeta, ok := MCPCallMetadataFromContext(ctx); ok {
-		req.Principal = strings.TrimSpace(gatewayMeta.Principal)
-		req.Requester = mcpRequesterIdentity(gatewayMeta)
+	rules := g.invariants.InvariantsForMCPTool(ctx)
+	tool := mcp.Tool{Name: ctxData.Tool}
+	meta := MCPCallMetadata{Tenant: ctxData.Tenant, AgentID: ctxData.AgentID}
+	if rule, denied := matchMCPInvariantDeny(rules, tool, meta); denied {
+		return fmt.Errorf("%w: tool %q denied by invariant %q",
+			ErrMCPInvariantDeny, ctxData.Tool, rule.ID)
 	}
-	rec, err := g.store.EnqueueMCPApproval(ctx, req)
-	if err != nil {
-		return "", fmt.Errorf("mcp gate: enqueue approval: %w", err)
-	}
-	return rec.ID, nil
+	return nil
 }
 
 // mintEdgeApprovalForActionGate creates an EdgeApproval consumable via
 // the EDGE-103 `_approval_ref` resume path. Returns a three-way outcome:
 //   - (ref, nil, true):  Edge mint succeeded.
-//   - ("",  nil, false): Edge unwired or required mcp.CallMetadata
-//     fields missing — caller falls back to legacy mint by design.
+//   - ("",  nil, false): the mint was not attempted: Edge unwired or
+//     required mcp.CallMetadata fields missing. The caller fails closed
+//     with -32097 (mcp.ErrApprovalGateMisconfigured); this is never a
+//     legacy fallback (task-06784e6d R2).
 //   - ("",  err, true):  Edge wired + metadata present but the policy
 //     pre-event id is missing or EnqueueApproval failed — caller
 //     surfaces -32096 approval_store_unavailable (DoD #5; no silent
-//     legacy fallback).
+//     legacy fallback). A policy change since the pre-event instead
+//     returns ErrPolicySnapshotChanged (retryable).
 //
 // The approval binds to the policy pre-event (mcp.tool.pre) named by
 // ctxData.EventID: edge.EnqueueApproval requires an existing event whose
@@ -214,6 +170,9 @@ func (g *gatewayApprovalGate) mintEdgeApprovalForActionGate(ctx context.Context,
 		return "", errors.New("policy pre-event id missing from approval context"), true
 	}
 	policySnapshot := g.policySnapshotForEvents(ctx)
+	if err := edgeMintSnapshotDrift(ctxData.PolicySnapshot, policySnapshot); err != nil {
+		return "", err, true
+	}
 	actionHash, inputHash := mcp.BuildMCPApprovalBinding(
 		meta.Tenant,
 		g.serverName,
@@ -278,9 +237,6 @@ func BuildMCPPolicyDeps(pipeline *actiongates.Pipeline, gate *gatewayApprovalGat
 		// binds to (task-63400922 E2). A method value, read per call,
 		// because WithEdgeApprovalMint may attach the snapshot func after
 		// these deps are built.
-		// ponytail: one loadPolicyBundles per policy-gated call (a config
-		// GET plus a workflow list); read only the policy doc's updated-at
-		// once that cost shows (task-2688feeb).
 		PolicySnapshot: gate.policySnapshotForEvents,
 		Redactor:       mcp.DefaultRedactor(),
 		// Backend selection per mcp.SelectDedupeStore matrix: unset

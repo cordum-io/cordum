@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/cordum/cordum/core/edge"
 )
 
 const (
@@ -43,6 +45,8 @@ const (
 // own error is logged, never echoed (it carries internal addresses).
 const approvalStoreUnavailableReason = "approval store unavailable"
 
+const policySnapshotChangedReason = "policy changed while the call was evaluated; retry the call"
+
 var (
 	ErrMethodNotFound = errors.New("mcp method not found")
 	ErrInvalidParams  = errors.New("mcp invalid params")
@@ -61,6 +65,12 @@ var (
 	// gatewayApprovalGate.Check + ConsumeActionGateDecision (the
 	// fail-closed branches).
 	ErrApprovalStoreUnavailable = errors.New("approval_store_unavailable: approval store unavailable")
+	// ErrPolicySnapshotChanged means policy changed between the call's
+	// mcp.tool.pre stamp and the Edge mint, so nothing was minted. An old
+	// snapshot would fail the resumed call's current-snapshot claim; a new
+	// one fails the store's event binding. Maps to -32096
+	// kind=policy_snapshot_changed; retrying re-evaluates (task-11b3c5ef).
+	ErrPolicySnapshotChanged = errors.New("policy_snapshot_changed: policy changed during the call")
 )
 
 // ToolService provides tool listing and execution for MCP server handlers.
@@ -671,6 +681,15 @@ func (s *MCPServer) mapHandlerError(err error) *JSONRPCError {
 	if errors.Is(err, ErrApprovalGateMisconfigured) {
 		return s.rpcError(jsonRPCGatewayMisconfiguredCode, "gateway misconfigured", err.Error())
 	}
+	// A confirmed policy change outranks a store-failure wrap. The fixed
+	// reason hides snapshot values in the cause. No log: an ordinary race,
+	// not a fault.
+	if errors.Is(err, ErrPolicySnapshotChanged) {
+		return s.rpcError(jsonRPCApprovalLifecycleErrorCode, "approval lifecycle error", map[string]any{
+			"kind":   "policy_snapshot_changed",
+			"reason": policySnapshotChangedReason,
+		})
+	}
 	// Approval-store outage signal — an approval store (the Edge store
 	// at mint time, or the legacy MCP approval store during claim or
 	// enqueue) errored. Distinct from -32603 generic internal so clients
@@ -689,6 +708,16 @@ func (s *MCPServer) mapHandlerError(err error) *JSONRPCError {
 		return s.rpcError(jsonRPCApprovalLifecycleErrorCode, "approval lifecycle error", map[string]any{
 			"kind":   "approval_store_unavailable",
 			"reason": approvalStoreUnavailableReason,
+		})
+	}
+	// A typed approval conflict raised after the claim (a consumed approval
+	// that does not bind the call, task-cd9df90a C4) maps like a claim
+	// conflict. Only the typed reason is returned, never the wrap.
+	var conflict *edge.ApprovalConflictError
+	if errors.As(err, &conflict) {
+		return s.rpcError(jsonRPCApprovalLifecycleErrorCode, "approval lifecycle error", map[string]any{
+			"kind":   string(conflict.Kind),
+			"reason": conflict.Reason,
 		})
 	}
 	switch {

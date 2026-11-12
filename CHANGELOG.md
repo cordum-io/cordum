@@ -43,6 +43,58 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `policy_mismatch`. An identical retry still returns the existing ref
   (task-29afcbe9).
 
+### Fixed
+
+#### core/mcp — the MCP invocation audit keeps a consumed human approval when scope preapproval also applies (2026-11-12, task-74f4c01e)
+
+- MCP audit: when a tool call both consumes a human approval and passes a
+  scope preapproval, the `mcp.tool_invocation` event now records
+  `approval_status=consumed` with that approval's `approval_id`, instead of
+  `preapproved` with no `approval_id`. This happens under
+  `mcp.policy_gate_enabled=true`, when an identity whose
+  `PreapprovedMutatingTools` covers a `RequiresApproval` tool resumes an
+  action-gate hold with `_approval_ref`. Authorization is unchanged.
+
+#### core/mcp, core/controlplane/gateway — a preapproved identity's action-gate MCP hold returns a resumable approval ref (2026-11-12, task-06784e6d)
+
+- MCP (`mcp.policy_gate_enabled=true`): scope preapproval no longer
+  short-circuits an action-gate REQUIRE_HUMAN hold. Today that is the
+  destructive-call hold when the session-taint store is unavailable and
+  `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` is on (default off). A
+  preapproved identity now receives the same resumable
+  `approval pending: <approval_ref>` as any identity, instead of an empty,
+  cached `approval pending: ` that could never execute or resume.
+  Preapproval still waives the per-tool approval of `RequiresApproval`
+  tools.
+- The action-gate handoff no longer falls back to the legacy MCP approval
+  store. Without an Edge approval mint or Edge session metadata, or when a
+  handoff returns no approval reference, the call fails closed with
+  `-32097` and nothing is cached. A policy gate wired by hand without an
+  Edge store now returns `-32097` here instead of a legacy approval id.
+
+#### core/mcp, core/controlplane/gateway — a policy publish during a policy-gated MCP call is retryable, not a store outage (2026-11-11, task-11b3c5ef)
+
+- With `mcp.policy_gate_enabled=true`, a call whose policy changed between
+  its `mcp.tool.pre` event and the Edge approval mint returns `-32096`
+  `kind=policy_snapshot_changed` (retry the call) instead of
+  `approval_store_unavailable`. Nothing is minted in that case. Genuine
+  Edge store outages still return `approval_store_unavailable`.
+
+#### core/mcp, core/controlplane/gateway — an action-gate REQUIRE_HUMAN MCP call resumes with its `_approval_ref` (2026-11-11, task-cd9df90a)
+
+- MCP (`mcp.policy_gate_enabled=true`): a tool call held REQUIRE_HUMAN by
+  the action-gate pipeline can now be resumed with its Edge
+  `_approval_ref` and executes exactly once. The resume is no longer
+  answered from the cached `approval pending` result, and it never mints a
+  fresh approval. SecOps invariants still deny on resume (task-cd9df90a).
+
+- The seven mutating MCP tools' descriptions no longer tell clients to surface
+  `/approvals?mcp=<id>`; the dashboard Approvals page ignores that parameter, so
+  the link never selected the approval. They now point to `/approvals` and ask
+  the client to show the `approval_id` so the operator can find the request.
+  `docs/mcp-tools-reference.md` and `docs/mcp/mutating-tools.md` match. Approval
+  behaviour and the `-32099` error are unchanged.
+
 ## [v1.3.1] - 2026-11-11
 
 Changes on main since the v1.3.0 tag (d027ae97, 2026-11-11).

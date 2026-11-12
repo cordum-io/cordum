@@ -27,7 +27,7 @@ import (
 // handlers below only execute AFTER a human approves and the MCP
 // client retries.
 
-const mutatingApprovalHint = "This tool requires human approval by default. On first call, expect a JSON-RPC -32099 error with an approval_id in the data — surface the dashboard link (/approvals?mcp=<id>) to the operator and retry the call after they approve."
+const mutatingApprovalHint = "This tool requires human approval by default. On first call, expect a JSON-RPC -32099 error with an approval_id in the data — surface the dashboard link (/approvals) and the approval_id to the operator, ask them to locate that request, and retry the call after they approve."
 
 // mutatingTags is the common tag set applied to every mutating tool
 // so runtime scope-filter rules can refer to the family as a whole.
