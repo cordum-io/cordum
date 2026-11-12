@@ -159,10 +159,10 @@ from [gVisor networking](https://gvisor.dev/docs/user_guide/networking/) and
 [packet(7)](https://man7.org/linux/man-pages/man7/packet.7.html), to be measured
 by M3-06/M3-10, not an existing Cordum guarantee.
 
-Deny all unlisted protocols and destinations, including UDP, direct DNS,
-cloud metadata, link-local, host loopback and IPv6 routes. If IPv6 is enabled,
-it needs equivalent default-deny rules, not an IPv4-only policy. Guest loopback
-is private, not a host-service route. Resolve any allowed endpoint in the trusted
+Deny all unlisted protocols and destinations. The initial profile must also
+exclude UDP, direct DNS, cloud metadata, link-local and host loopback even from
+its allowlist. IPv6 needs equivalent default-deny rules, not an IPv4-only policy.
+Guest loopback is private, not a host-service route. Resolve endpoints in the trusted
 plane and pin its address/port set; no wildcard internet/DNS escape. An allowed
 mirror/proposal service must not act as a general proxy. If no destination is
 allowed, use `--network=none` with no external link. M3-06 owns mirror policy.
@@ -195,7 +195,9 @@ Hard links must not retain a shared mutable input inode: copy bytes into private
 storage and verify that copy, rather than bind-mounting a verified path. Failure
 to prove empty teardown quarantines the run/host; it cannot be reported as clean
 completion or reused while survivors may remain. [Sandbox destruction source](https://github.com/google/gvisor/blob/2a653cea7b2054a2dc9c6419337d3de8031275d6/runsc/sandbox/sandbox.go)
-is a mechanism reference, not proof of those lifecycle obligations.
+is a mechanism reference, not proof of those lifecycle obligations. M3-07 must
+also reconcile orphaned runs after supervisor failure before admitting new work;
+unknown cleanup state is quarantine, not successful completion.
 
 ## Mechanism limits
 
