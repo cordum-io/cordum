@@ -163,6 +163,16 @@ Note the **absence of `approval_id`** — no approval record was created, so
 there's nothing to correlate against. The `approval_status=preapproved` field
 is the definitive signal for forensics and alerting.
 
+Under `mcp.policy_gate_enabled=true`, preapproval does not waive an
+action-gate hold (see
+[What preapproval does not waive](#what-preapproval-does-not-waive)). When a
+human approves such a hold and the bot resumes with `_approval_ref`, a tool
+that is also `RequiresApproval` still passes the registry gate's preapproval
+bypass. That invocation event nevertheless records
+`approval_status: consumed` with `approval_id: <approval_ref>`, because a
+consumed human approval recorded for the call outranks the scope-bypass label
+(task-74f4c01e).
+
 Compare with the normal human-approved flow, which emits FOUR events per call
 (enqueue, approve, consume, invocation). The preapproved path writes 1 event —
 faster and cheaper, but with less human-visible scrutiny. That trade-off is
