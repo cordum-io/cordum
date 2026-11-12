@@ -7,6 +7,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+#### core/mcp, core/controlplane/gateway — a preapproved identity's action-gate MCP hold returns a resumable approval ref (2026-11-12, task-06784e6d)
+
+- MCP (`mcp.policy_gate_enabled=true`): scope preapproval no longer
+  short-circuits an action-gate REQUIRE_HUMAN hold. Today that is the
+  destructive-call hold when the session-taint store is unavailable and
+  `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` is on (default off). A
+  preapproved identity now receives the same resumable
+  `approval pending: <approval_ref>` as any identity, instead of an empty,
+  cached `approval pending: ` that could never execute or resume.
+  Preapproval still waives the per-tool approval of `RequiresApproval`
+  tools.
+- The action-gate handoff no longer falls back to the legacy MCP approval
+  store. Without an Edge approval mint or Edge session metadata, or when a
+  handoff returns no approval reference, the call fails closed with
+  `-32097` and nothing is cached. A policy gate wired by hand without an
+  Edge store now returns `-32097` here instead of a legacy approval id.
+
 #### core/mcp, core/controlplane/gateway — a policy publish during a policy-gated MCP call is retryable, not a store outage (2026-11-11, task-11b3c5ef)
 
 - With `mcp.policy_gate_enabled=true`, a call whose policy changed between
