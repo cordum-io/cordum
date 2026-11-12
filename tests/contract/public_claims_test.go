@@ -101,9 +101,10 @@ func changePublicFixture(t *testing.T, dir string, tc publicRejectCase) string {
 		return dir
 	}
 	file, body := "cordum-x.md", publicCordum
-	if tc.name == "hits" {
+	switch tc.name {
+	case "hits":
 		file, body = "cordum-x.hits", "README.md:1\nREADME.md:2\n"
-	} else if tc.name == "unfilled" {
+	case "unfilled":
 		file, body = "site-y.md", publicSite
 	}
 	write(t, filepath.Join(dir, file), mutate(t, body, tc.old, tc.replacement))
