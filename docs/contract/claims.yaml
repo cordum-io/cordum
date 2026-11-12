@@ -1,10 +1,15 @@
-# Claim register: one entry per protection claim, tied to an invariant, an
-# enforcement point and a test, so that a claim cannot be stronger than its evidence.
+# Claim register: one entry per recorded protection claim, with its status, boundary,
+# evidence and public sources, and any invariants, enforcement points and tests.
 # Status: planned (not built); supported (the feature exists, but a workload could
 # bypass it or it is untested against bypass); enforced (an enforcement point exists
 # that the workload cannot skip inside the declared boundary); verified (enforced,
 # with passing negative tests at a pinned release); unsupported (explicitly not provided).
 # Checked by `go test ./tests/contract/... -run Claims`, which `make test` also runs.
+# The check is static: an enforced or verified entry must name invariants and an
+# enforcement point; a verified entry must also name a test and no finding; each
+# named enforcement point, test and cordum public-source file must exist. It does
+# not show that a statement matches its evidence or that the named code and tests
+# cover the claim.
 # Renaming a symbol or test named here means updating this file.
 schema_version: 1
 sources_reviewed_at: 549772371995b9eb5a95a2c6c8685551e0231724
