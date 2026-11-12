@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Edge approvals: a held MCP call whose arguments differ from a still-pending
+  hold of the same tool in the same session now gets its own approval ref. It
+  used to get the first hold's ref, so resuming it failed with `-32096`
+  `args_mismatch` until that approval was used or expired. A hold made after a
+  policy change likewise gets a new approval instead of one that fails
+  `policy_mismatch`. An identical retry still returns the existing ref
+  (task-29afcbe9).
+
 ## [v1.3.1] - 2026-11-11
 
 Changes on main since the v1.3.0 tag (d027ae97, 2026-11-11).
