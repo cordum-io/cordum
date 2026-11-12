@@ -310,9 +310,9 @@ claims:
     status: supported
     invariants: ["I01","I07"]
     findings: ["R15"]
-    enforcement_points: [{"path":"core/mcp/filter.go","symbol":"EvaluateForIdentity"},{"path":"core/policy/actiongates/mcp_gate.go","symbol":"MCPGate.Evaluate"},{"path":"core/controlplane/gateway/handlers_mcp.go","symbol":"server.handleMCPSSE"}]
+    enforcement_points: [{"path":"core/mcp/filter.go","symbol":"EvaluateForIdentity"},{"path":"core/policy/actiongates/mcp_gate.go","symbol":"MCPGate.Evaluate"}]
     tests: [{"package":"core/mcp","name":"TestEvaluateForIdentity_Reasons"},{"package":"core/policy/actiongates","name":"TestMCPGate_ServerNotAllowlistedDenied"},{"package":"core/controlplane/gateway","name":"TestMCPSSEReauthFirstTickRevokedCredentialDisconnectsWithinTwoSeconds"}]
-    evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 identity filtering, the MCP action gate and SSE re-authentication exist with unit tests; non-bypassable coverage of every MCP path is not qualified; open finding R15."
+    evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 identity filtering and the MCP action gate exist with unit tests, and the goroutine closure in server.handleMCPSSE (core/controlplane/gateway/handlers_mcp.go) re-authenticates the SSE request and cancels the session when that fails, which TestMCPSSEReauthFirstTickRevokedCredentialDisconnectsWithinTwoSeconds covers; non-bypassable coverage of every MCP path is not qualified; open finding R15."
     public_sources: ["cordum:docs/mcp/mutating-tools.md:268","cordum:docs/mcp/quickstart-vscode-copilot.md:109","cordum:docs/mcp/scope-filtering.md:34"]
   - id: CLM-052
     statement: "Policy bundle writes are signed, and the Safety Kernel rejects policies without a valid signature when signatures are required."
@@ -390,9 +390,9 @@ claims:
     status: supported
     invariants: []
     findings: []
-    enforcement_points: [{"path":"core/controlplane/gateway/handlers_auth.go","symbol":"server.resolveTenant"}]
+    enforcement_points: [{"path":"core/controlplane/gateway/auth/basic.go","symbol":"BasicAuthProvider.ResolveTenant"}]
     tests: [{"package":"core/controlplane/gateway","name":"TestResolveTenantCrossTenantDenied"}]
-    evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 tenantMiddleware and server.resolveTenant refuse a tenant other than the authenticated one, with a unit test; per-handler coverage of every route is not qualified."
+    evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 the gateway's default auth provider decides this in BasicAuthProvider.ResolveTenant: it refuses a requested tenant other than the authenticated one unless the credential allows cross-tenant access, and TestResolveTenantCrossTenantDenied covers it; per-handler coverage of every route is not qualified."
     public_sources: ["cordum:docs/api-reference.md:72"]
   - id: CLM-060
     statement: "Admins with the LegalHold entitlement can create, list and release per-tenant legal holds on audit data."
@@ -480,7 +480,7 @@ claims:
     status: supported
     invariants: []
     findings: []
-    enforcement_points: [{"path":"core/controlplane/gateway/policybundles/audit.go","symbol":"ActorIdentity"},{"path":"core/audit/humanize.go","symbol":"HumanSummary"}]
+    enforcement_points: [{"path":"core/controlplane/gateway/policybundles/audit.go","symbol":"ActorIdentity"},{"path":"core/audit/humanize.go","symbol":"allowedExtra"}]
     tests: [{"package":"core/controlplane/gateway/policybundles","name":"TestAuditEntryToSIEM_NeverLeaksRawKey"},{"package":"core/audit","name":"TestAllowedExtra_RejectsNonAllowlistedKeys"}]
     evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 ActorIdentity emits a fingerprint, not the key, and summaries use an extra-key allowlist, with unit tests; absence of secrets in every audit value is not qualified."
     public_sources: ["cordum:docs/audit.md:223"]
