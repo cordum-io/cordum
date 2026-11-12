@@ -292,7 +292,17 @@ case "\$1" in
       ok) printf '%s\n' '${record}' ;;
       fail) exit 1 ;;
     esac ;;
-  compose) if [[ "\$2" == ps ]]; then echo "api-1 Up 5 seconds"; fi ;;
+  compose)
+    if [[ "\$2" == ps ]]; then
+      n=0
+      if [[ -f "\${STUB_PS_COUNT:-}" ]]; then n=\$(<"\${STUB_PS_COUNT}"); fi
+      if [[ -n "\${STUB_PS_COUNT:-}" ]]; then echo \$((n + 1)) >"\${STUB_PS_COUNT}"; fi
+      case "\${STUB_PS:-ok}" in
+        ok) echo "api-1 Up 5 seconds" ;;
+        gone) if [[ \$n -eq 0 ]]; then echo "api-1 Up 5 seconds"; fi ;;
+        restart) if [[ \$n -eq 0 ]]; then echo "api-1 Up 5 seconds"; else echo "api-1 Restarting (2) 3 seconds ago"; fi ;;
+      esac
+    fi ;;
 esac
 EOF
 chmod +x "${stubs}/curl" "${stubs}/docker"
@@ -306,6 +316,9 @@ run_soak() {
     PATH="${stubs}:${PATH}" "$@" "${BASH}" "${SOAK}" 2>&1) || true
 }
 count_in() { grep -cF -- "$2" "$1" || true; }
+# in_failures FILE TEXT: occurrences of TEXT inside the results JSON "failures"
+# array only, so a finding that was downgraded to a warning does not count.
+in_failures() { sed -n '/"failures": \[/,/^  \],/p' "$1" | grep -cF -- "$2" || true; }
 
 assert_eq "an unknown SOAK_METRICS_SOURCE is rejected" \
   "[soak] ERROR: SOAK_METRICS_SOURCE must be docker or none (got 'bogus')" \
@@ -346,6 +359,18 @@ assert_eq "a failing docker stats fails the run at the start and at the end" "1 
 run_soak STUB_DOCKER=empty >/dev/null
 assert_eq "an empty docker stats fails the run at the end" "1" \
   "$(count_in "${tmpdir}/soak.json" 'docker stats returned no container records during the final collection')"
+assert_eq "the start and end collection failures are FAILs, never warnings" "1 0" \
+  "$(in_failures "${tmpdir}/soak.json" 'during the final collection') $(sed -n '/"warnings": \[/,/^  \],/p' "${tmpdir}/soak.json" | grep -cF 'during the final collection' || true)"
+
+run_soak STUB_PS=gone STUB_PS_COUNT="${tmpdir}/soak.pscount" >/dev/null
+assert_eq "a container running at the start and gone at the end fails the run" "1" \
+  "$(in_failures "${tmpdir}/soak.json" 'Container api-1 was running at the start of the soak but is absent at the end')"
+run_soak STUB_PS=restart STUB_PS_COUNT="${tmpdir}/soak.pscount" >/dev/null
+assert_eq "a container whose restart count grows fails the run" "1" \
+  "$(in_failures "${tmpdir}/soak.json" 'Container api-1 restarted during soak (0 -> 2)')"
+run_soak >/dev/null
+assert_eq "a steady container is not reported as a restart" "0" \
+  "$(count_in "${tmpdir}/soak.json" 'restarted during soak')"
 
 echo "SUMMARY: ${PASS} pass, ${FAIL} fail"
 [[ "${FAIL}" -eq 0 ]]
