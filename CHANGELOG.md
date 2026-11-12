@@ -10,6 +10,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Added `docs/contract/threat-model.md`, the platform threat model for the M0 security contract: assets, adversaries, trust boundaries, a trusted-component inventory covering every `cmd/` service, reference-monitor properties with their current status, five explicit non-promises and the deployment boundary. Documentation only; no behavior changes.
 - Qualified three platform security-posture statements against `docs/contract/threat-model.md` (task-d056042e): ADR-001's "Zero-trust guarantee" bullet is now marked as design intent with a dated status note, and `docs/mcp/scope-filtering.md` no longer labels the MCP controls a "zero-trust stack" or "zero-trust controls". The threat model rates these mechanisms `supported`, not `enforced` or `verified`. Clarified that qualification requires protected transport on every Gateway client/proxy hop; deployment remains unverified.
 
+### Added
+
+- Added the [planned first protected-operation contract](docs/contract/protected-operation.md)
+  for Kubernetes manifest apply, with a proposed reference boundary, credential
+  inventory and measurable acceptance ideas. Broker/grant enforcement is future
+  work; runtime acceptance evidence is not measured.
+
 ## [v1.3.1] - 2026-11-11
 
 Changes on main since the v1.3.0 tag (d027ae97, 2026-11-11).
