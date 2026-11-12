@@ -11,7 +11,7 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 RUN pnpm run build
 
-FROM nginxinc/nginx-unprivileged:1.27-alpine
+FROM nginxinc/nginx-unprivileged:1.30-alpine3.24
 USER root
 # Refresh Alpine packages so fixed OS CVEs in the base image do not block release scans.
 RUN apk upgrade --no-cache && apk add --no-cache curl gettext

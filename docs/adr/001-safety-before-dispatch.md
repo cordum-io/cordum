@@ -40,9 +40,15 @@ Key source files:
 ## Consequences
 
 Positive:
-- Zero-trust guarantee: no agent action executes without policy approval
+- Design intent at decision time: no agent action executes without policy approval (see the status note below)
 - Deterministic audit trail — every job has a recorded safety decision
 - Policy changes take effect immediately via cache reload
+
+Status note (2026-11, M0-01): the first Positive bullet was the design intent when this
+decision was made. It is not a platform-wide guarantee, and it applies to actions Cordum
+mediates. The platform threat model rates the mediation mechanisms `supported` and
+universal effect mediation `unsupported` (R15, unverified); see
+[Always mediated](../contract/threat-model.md#always-mediated) for the current status.
 
 Tradeoffs:
 - Scheduler throughput is bounded by Safety Kernel latency

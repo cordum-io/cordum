@@ -9,9 +9,9 @@
 //
 // The naive copy-paste for a worker with multiple typed handlers looks like:
 //
-//   runtime.Register(agent, "job.app.a", handlerA)         // Handler[InA, OutA]
-//   runtime.Register(agent, "job.app.b", handlerB)         // Handler[InB, OutB]
-//   runtime.Register(agent, runtime.DirectSubject(id), handlerA)  // ← bug
+//	runtime.Register(agent, "job.app.a", handlerA)         // Handler[InA, OutA]
+//	runtime.Register(agent, "job.app.b", handlerB)         // Handler[InB, OutB]
+//	runtime.Register(agent, runtime.DirectSubject(id), handlerA)  // ← bug
 //
 // The last line silently makes `handlerA` run for EVERY job the scheduler
 // dispatches via the per-worker direct subject — regardless of JobRequest.Topic.

@@ -14,10 +14,10 @@ import (
 func startTestNATS(t *testing.T) (*server.Server, string) {
 	t.Helper()
 	opts := &server.Options{
-		Port:     -1, // Random available port
-		Host:     "127.0.0.1",
-		NoLog:    true,
-		NoSigs:   true,
+		Port:       -1, // Random available port
+		Host:       "127.0.0.1",
+		NoLog:      true,
+		NoSigs:     true,
 		MaxPending: 64 * 1024 * 1024,
 	}
 	ns, err := server.NewServer(opts)

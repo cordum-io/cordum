@@ -5,6 +5,126 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- Added the [planned first protected-operation contract](docs/contract/protected-operation.md)
+  for Kubernetes manifest apply, with a proposed reference boundary, credential
+  inventory and measurable acceptance ideas. Broker/grant enforcement is future
+  work; runtime acceptance evidence is not measured.
+
+### Security
+
+- Release images move off Alpine 3.21, which alpinelinux.org/releases.json lists
+  as end-of-life on 2026-11-01. The control-plane and `demo-quickstart-worker`
+  runtime stages use `alpine:3.24`, and the dashboard uses
+  `nginxinc/nginx-unprivileged:1.30-alpine3.24` (was `1.27-alpine`, which is on
+  Alpine 3.21). Every runtime stage still runs `apk upgrade --no-cache`;
+  builder stages are unchanged.
+
+#### core/controlplane/gateway — gateway worker-link readers resolve within the request tenant (2026-11-11, task-283f2317)
+
+- `POST /api/v1/agents`: the `agent_id` worker-conflict check (409 `AGENT_WORKER_CONFLICT`) now considers only the caller's tenant. Another tenant's link for the same worker ID neither blocks registration nor reveals that it exists.
+- HTTP and gRPC job submit, `POST /api/v1/agents/{id}/delegate`, the agent GET worker-id fallback, worker-credential proof preservation and MCP principal-fallback identity resolution now look up the worker link in the request tenant. A principal whose only link points at another tenant's agent gets no auth-derived `agent_id`: on HTTP job submit, a client `labels.agent_id` is refused with 403; it also fails the non-admin delegation principal check with 403.
+- Slice 2 of 3 of task-c1effd5b. Writers still write the legacy global key, so registering the same worker ID in a second tenant still replaces the first tenant's link. That tenant's readers then resolve nothing (fail closed) until the capstone moves writers to per-tenant links.
+
+#### Worker→agent identity links are tenant-qualified (2026-11-11, task-c1effd5b)
+
+- Worker and principal links to agent identities now live per tenant, in the Redis hash `agent:worker-links:<tenant>`.
+- Another tenant's agent registration (`POST /api/v1/agents` with `agent_id`), or its worker-credential issue, rotate or revoke for the same worker or principal ID, can no longer replace or delete a tenant's link, so it no longer changes that tenant's MCP identity binding. This was CodeRabbit's outside-diff finding on #490, and it removes the interim limitation noted in the task-283f2317 entry above.
+- Pre-existing global `agent:by-worker:<worker>` links keep resolving for the tenant that owns the linked agent, and that tenant's next unlink retires them. Nothing writes them any more.
+- Go API: `AgentIdentityStore.GetByWorkerID` is removed (use `GetByWorkerIDForTenant`); `UnlinkWorker` takes the tenant ID; `LinkWorker` rejects unknown or untenanted agents.
+- Slices: task-76c90c6e, task-283f2317.
+
+#### TypeScript SDK — dev-only minimatch advisory GHSA-g3hv-75wg-m249 (2026-11-11, task-f09d31be)
+
+- Scope `minimatch` overrides to `@typescript-eslint/typescript-estree` and `@ts-morph/common`, using `^11.0.1` while both parents still require the vulnerable 10.x line. Remove these overrides when both parents support the patched line. This changes SDK development tooling, not the published SDK runtime.
+
+#### dashboard — dev-only minimatch advisory GHSA-g3hv-75wg-m249 (2026-11-11, task-3c2704b3)
+
+- `dashboard/package.json` overrides `minimatch@^10.0.0` to `^11.0.1`, in `pnpm.overrides` and in the npm `overrides` mirror. No minimatch 10.x release carries the fix. eslint, `@eslint/config-array` and `@typescript-eslint/typescript-estree` still declare `^10`, and they call only `Minimatch#match` and `minimatch()`, which 11.x keeps.
+- typedoc, typedoc-plugin-coverage and typedoc-plugin-markdown are removed from the install with pnpm `-` overrides. typedoc 0.28 calls `Minimatch#matchOne`, which 11.x removed. orval 8.31.0 loads typedoc only for its `docs` output, which the dashboard does not configure. Until typedoc supports minimatch 11, enabling that output fails at import. orval stays at 8.31.0.
+
+### Fixed
+
+- MCP approval resume: a call resumed with `_approval_ref` is refused with
+  `-32096` `policy_snapshot_changed` when policy was published between the
+  approval claim and the call's `mcp.tool.pre` stamp. Nothing runs and the
+  approval is used up, so the client retries without `_approval_ref`.
+- MCP dedupe: a resumed call takes its dedupe slot over in one write, and a call
+  that held the slot before can no longer publish to it or delete it. An
+  identical call without `_approval_ref` used to be able to cache a second
+  pending hold over the executed result. `DedupeStore` gains `CompareAndSwap`
+  and `CompareAndDelete`.
+- The mutating MCP tool descriptions and `docs/mcp/mutating-tools.md` describe
+  the Edge approval flow used when `mcp.policy_gate_enabled=true`: approve the
+  `approval_ref`, then retry with `_approval_ref`.
+- The governed MCP demo worker retries a `429` on the approval poll, and its
+  README lists the MCP, agent identity and endpoint prerequisites.
+- Edge approvals: a held MCP call whose arguments differ from a still-pending
+  hold of the same tool in the same session now gets its own approval ref. It
+  used to get the first hold's ref, so resuming it failed with `-32096`
+  `args_mismatch` until that approval was used or expired. A hold made after a
+  policy change likewise gets a new approval instead of one that fails
+  `policy_mismatch`. An identical retry still returns the existing ref
+  (task-29afcbe9).
+
+- The dashboard test run no longer fails after every test passes when a console line, written by work that outlived its test file, is still being delivered as the Vitest worker shuts down (`EnvironmentTeardownError: Closing rpc while "onUserConsoleLog" was pending`). `dashboard/vitest.config.ts` ignores exactly that error, so every other unhandled error still fails the run. `KeyboardShortcutsHelp.test.tsx`, which produced it, now answers the AppShell's requests in-process and waits for them to settle (task-04eef2b3).
+
+#### core/mcp — the MCP invocation audit keeps a consumed human approval when scope preapproval also applies (2026-11-12, task-74f4c01e)
+
+- MCP audit: when a tool call both consumes a human approval and passes a
+  scope preapproval, the `mcp.tool_invocation` event now records
+  `approval_status=consumed` with that approval's `approval_id`, instead of
+  `preapproved` with no `approval_id`. This happens under
+  `mcp.policy_gate_enabled=true`, when an identity whose
+  `PreapprovedMutatingTools` covers a `RequiresApproval` tool resumes an
+  action-gate hold with `_approval_ref`. Authorization is unchanged.
+
+#### core/mcp, core/controlplane/gateway — a preapproved identity's action-gate MCP hold returns a resumable approval ref (2026-11-12, task-06784e6d)
+
+- MCP (`mcp.policy_gate_enabled=true`): scope preapproval no longer
+  short-circuits an action-gate REQUIRE_HUMAN hold. Today that is the
+  destructive-call hold when the session-taint store is unavailable and
+  `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` is on (default off). A
+  preapproved identity now receives the same resumable
+  `approval pending: <approval_ref>` as any identity, instead of an empty,
+  cached `approval pending: ` that could never execute or resume.
+  Preapproval still waives the per-tool approval of `RequiresApproval`
+  tools.
+- The action-gate handoff no longer falls back to the legacy MCP approval
+  store. Without an Edge approval mint or Edge session metadata, or when a
+  handoff returns no approval reference, the call fails closed with
+  `-32097` and nothing is cached. A policy gate wired by hand without an
+  Edge store now returns `-32097` here instead of a legacy approval id.
+
+#### core/mcp, core/controlplane/gateway — a policy publish during a policy-gated MCP call is retryable, not a store outage (2026-11-11, task-11b3c5ef)
+
+- With `mcp.policy_gate_enabled=true`, a call whose policy changed between
+  its `mcp.tool.pre` event and the Edge approval mint returns `-32096`
+  `kind=policy_snapshot_changed` (retry the call) instead of
+  `approval_store_unavailable`. Nothing is minted in that case. Genuine
+  Edge store outages still return `approval_store_unavailable`.
+
+#### core/mcp, core/controlplane/gateway — an action-gate REQUIRE_HUMAN MCP call resumes with its `_approval_ref` (2026-11-11, task-cd9df90a)
+
+- MCP (`mcp.policy_gate_enabled=true`): a tool call held REQUIRE_HUMAN by
+  the action-gate pipeline can now be resumed with its Edge
+  `_approval_ref` and executes exactly once. The resume is no longer
+  answered from the cached `approval pending` result, and it never mints a
+  fresh approval. SecOps invariants still deny on resume (task-cd9df90a).
+
+- The seven mutating MCP tools' descriptions no longer tell clients to surface
+  `/approvals?mcp=<id>`; the dashboard Approvals page ignores that parameter, so
+  the link never selected the approval. They now point to `/approvals` and ask
+  the client to show the `approval_id` so the operator can find the request.
+  `docs/mcp-tools-reference.md` and `docs/mcp/mutating-tools.md` match. Approval
+  behaviour and the `-32099` error are unchanged.
+
+### CI and documentation
+
+- Added `docs/contract/threat-model.md`, the platform threat model for the M0 security contract: assets, adversaries, trust boundaries, a trusted-component inventory covering every `cmd/` service, reference-monitor properties with their current status, five explicit non-promises and the deployment boundary. Documentation only; no behavior changes.
+- Qualified three platform security-posture statements against `docs/contract/threat-model.md` (task-d056042e): ADR-001's "Zero-trust guarantee" bullet is now marked as design intent with a dated status note, and `docs/mcp/scope-filtering.md` no longer labels the MCP controls a "zero-trust stack" or "zero-trust controls". The threat model rates these mechanisms `supported`, not `enforced` or `verified`. Clarified that qualification requires protected transport on every Gateway client/proxy hop; deployment remains unverified.
+
 ## [v1.3.1] - 2026-11-11
 
 Changes on main since the v1.3.0 tag (d027ae97, 2026-11-11).
@@ -29,6 +149,15 @@ Changes on main since the v1.3.0 tag (d027ae97, 2026-11-11).
   Operators find the cause in the gateway log
   (`mcp approval store unavailable`).
 
+### Added
+
+#### demo/cap-mcp-governed — CAP worker calls governed Cordum MCP tools and waits for human approval (2026-11-11, task-ba678d95)
+
+- New CAP v2.17.0 demo worker on `job.cap-mcp-governed.create-workflow` and `worker.cap-mcp-governed.jobs`. Each job opens an MCP session on the gateway's `/mcp/message`, then runs `initialize`, `resources/read cordum://jobs/<job_id>`, `cordum_status` and `cordum_create_workflow`, in that order.
+- On JSON-RPC `-32099` it polls `GET /api/v1/mcp/approvals/{id}` until a human decides. After approval it retries with byte-identical arguments exactly once. It never calls approve or reject.
+- Failed jobs report one of 10 documented codes (`invalid_input`, `mcp_unavailable`, `mcp_protocol_error`, `mcp_call_failed`, `mcp_approval_rejected`, `mcp_approval_expired`, `mcp_approval_not_found`, `mcp_approval_timeout`, `mcp_approval_invalid`, `worker_shutdown`), never server text or the API key.
+- Unsigned agent, so compat CAP profile only. It needs the default `mcp.policy_gate_enabled=false`, because it does not send `_approval_ref`. `demo/cap-mcp-governed/README.md` covers setup.
+
 ### Fixed
 
 - `demo/quickstart/Dockerfile` runs `apk upgrade` in its runtime stage, as the
@@ -46,7 +175,6 @@ Changes on main since the v1.3.0 tag (d027ae97, 2026-11-11).
   manifest, and when results are missing the comment states the lhci and
   manifest step outcomes. Assertions and thresholds are unchanged
   (#528, from #522).
-
 
 ## [v1.3.0] - 2026-11-11
 

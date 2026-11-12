@@ -212,6 +212,78 @@ func TestRedisDedupeStore_Delete(t *testing.T) {
 	}
 }
 
+// TestRedisDedupeStore_CompareAndSwapOwnsTheRow: CompareAndSwap and
+// CompareAndDelete act only on the caller's own pending row, across store
+// instances, and CompareAndSwap reapplies MCPDedupeTTL. A row another call
+// took over is left as it is.
+func TestRedisDedupeStore_CompareAndSwapOwnsTheRow(t *testing.T) {
+	t.Parallel()
+	client, mr := newMiniRedisDedupeBackend(t)
+	store, other := NewRedisDedupeStore(client), NewRedisDedupeStore(client)
+	const key = "k.cas"
+	fullKey := MCPDedupeKeyPrefix + key
+	mine := &redisDedupeRecord{State: redisDedupeStatePending, Owner: "owner-a"}
+	theirs := &redisDedupeRecord{State: redisDedupeStatePending, Owner: "owner-b"}
+	completed := &redisDedupeRecord{State: redisDedupeStateCompleted, Result: &redisDedupeResultMetadata{
+		ContentCount: 1, ResultSHA256: strings.Repeat("c", sha256.Size*2),
+	}}
+
+	store.LoadOrStore(key, mine)
+	other.Store(key, theirs) // a resume on another instance takes the slot over
+	taken, _ := mr.Get(fullKey)
+	if store.CompareAndSwap(key, mine, completed) || store.CompareAndDelete(key, mine) {
+		t.Fatal("a stale owner changed a row another call took over")
+	}
+	if got, _ := mr.Get(fullKey); got != taken {
+		t.Fatalf("row = %s after the stale finish; want it unchanged: %s", got, taken)
+	}
+	if !other.CompareAndSwap(key, theirs, completed) {
+		t.Fatal("CompareAndSwap = false for the row's owner")
+	}
+	if got, _ := mr.Get(fullKey); !strings.Contains(got, redisDedupeStateCompleted) {
+		t.Fatalf("row = %s; want the completed record", got)
+	}
+	if ttl := mr.TTL(fullKey); ttl <= 0 || ttl > MCPDedupeTTL {
+		t.Fatalf("TTL after CompareAndSwap = %v; want in (0, %v]", ttl, MCPDedupeTTL)
+	}
+
+	other.Store(key, theirs)
+	if !other.CompareAndDelete(key, theirs) || mr.Exists(fullKey) {
+		t.Fatal("CompareAndDelete did not remove the owner's own row")
+	}
+}
+
+// TestRedisDedupeStore_CompareAndSwapFailSoft: a reservation that landed in
+// the fallback during an outage is finished there, and a reservation made
+// in Redis before the outage still leaves its result in the fallback.
+func TestRedisDedupeStore_CompareAndSwapFailSoft(t *testing.T) {
+	t.Parallel()
+	client, mr := newMiniRedisDedupeBackend(t)
+	store := NewRedisDedupeStore(client)
+	completed := &redisDedupeRecord{State: redisDedupeStateCompleted, Result: &redisDedupeResultMetadata{
+		ContentCount: 1, ResultSHA256: strings.Repeat("c", sha256.Size*2),
+	}}
+	before := &redisDedupeRecord{State: redisDedupeStatePending, Owner: "before-outage"}
+	store.LoadOrStore("k.before", before)
+	_ = client.Close()
+	mr.Close()
+
+	during := &redisDedupeRecord{State: redisDedupeStatePending, Owner: "during-outage"}
+	store.LoadOrStore("k.during", during)
+	for key, pending := range map[string]*redisDedupeRecord{"k.before": before, "k.during": during} {
+		if !store.CompareAndSwap(key, pending, completed) {
+			t.Errorf("%s: CompareAndSwap = false during the outage", key)
+		}
+		if got, loaded := store.LoadOrStore(key, &redisDedupeRecord{State: redisDedupeStatePending}); !loaded || got != any(completed) {
+			t.Errorf("%s: fallback holds %+v (loaded=%t); want the completed record", key, got, loaded)
+		}
+	}
+	// The fallback entry is not this caller's pending record any more.
+	if store.CompareAndDelete("k.during", during) {
+		t.Error("CompareAndDelete removed a fallback entry that is not the caller's reservation")
+	}
+}
+
 // TestRedisDedupeStore_FailSoftOnClosedClient is the fail-soft taskRail
 // #3 contract: a Redis outage MUST NOT block MCP gate traffic. When
 // Redis commands error, the store routes through its internal in-

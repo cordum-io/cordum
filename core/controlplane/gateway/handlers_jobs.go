@@ -1486,7 +1486,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	// impersonation attempt and rejects 403.
 	var authDerivedAgentID string
 	if s.agentIdentityStore != nil {
-		if agent, err := s.agentIdentityStore.GetByWorkerID(r.Context(), principalID); err == nil && agent != nil {
+		if agent, err := s.agentIdentityStore.GetByWorkerIDForTenant(r.Context(), orgID, principalID); err == nil && agent != nil {
 			authDerivedAgentID = agent.ID
 		}
 	}

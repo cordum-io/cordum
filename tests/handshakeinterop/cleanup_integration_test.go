@@ -17,7 +17,8 @@ func (s *interopServer) cleanupOwnedState() {
 	pipe := s.redis.TxPipeline()
 	for _, identity := range s.identities {
 		pipe.Del(ctx, "agent:identity:"+identity.agentID)
-		pipe.Del(ctx, "agent:by-worker:"+identity.workerID)
+		pipe.Del(ctx, "agent:by-worker:"+identity.workerID) // legacy key; a long-lived dev Redis may still hold it
+		pipe.HDel(ctx, "agent:worker-links:"+identity.tenantID, identity.workerID)
 		pipe.ZRem(ctx, "agent:identity:index", identity.agentID)
 	}
 	if _, err := pipe.Exec(ctx); err != nil {

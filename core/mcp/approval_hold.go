@@ -142,16 +142,18 @@ type ApprovalHoldDeps struct {
 // (fail-closed); the caller surfaces the conflict to the client as a
 // JSON-RPC error keyed by ConflictErr.Kind.
 //
-// ActionHash and InputHash are the binding the claim was consumed with,
-// set only when Consumed (task-63400922 E4).
+// ActionHash, InputHash and PolicySnapshot are the binding and the policy
+// snapshot the claim was consumed with, set only when Consumed
+// (task-63400922 E4).
 type ApprovalClaimOutcome struct {
-	Consumed     bool
-	ClaimRef     string
-	Approval     *edge.EdgeApproval
-	ConflictErr  *edge.ApprovalConflictError
-	StrippedArgs json.RawMessage
-	ActionHash   string
-	InputHash    string
+	Consumed       bool
+	ClaimRef       string
+	Approval       *edge.EdgeApproval
+	ConflictErr    *edge.ApprovalConflictError
+	StrippedArgs   json.RawMessage
+	ActionHash     string
+	InputHash      string
+	PolicySnapshot string
 }
 
 // ConsumedApproval records the Edge approval handleToolsCall consumed for
@@ -162,7 +164,11 @@ type ConsumedApproval struct {
 	Tool       string
 	ActionHash string
 	InputHash  string
-	used       atomic.Bool
+	// PolicySnapshot is the snapshot the claim was made under. The action
+	// and input hashes do not cover it, so resumeConsumedApproval compares
+	// it with the resumed call's pre-event stamp.
+	PolicySnapshot string
+	used           atomic.Bool
 }
 
 // Use reports whether the consumed approval authorizes a gate check of
@@ -170,13 +176,35 @@ type ConsumedApproval struct {
 // a complete binding equal to the claimed one; a refused mismatch does not
 // use it up. Nil-safe.
 func (c *ConsumedApproval) Use(tool, actionHash, inputHash string) bool {
-	if c == nil || c.Tool == "" || c.ActionHash == "" || c.InputHash == "" {
-		return false
-	}
-	if tool != c.Tool || actionHash != c.ActionHash || inputHash != c.InputHash {
+	if !c.Binds(tool, actionHash, inputHash) {
 		return false
 	}
 	return c.used.CompareAndSwap(false, true)
+}
+
+// Binds reports whether the consumed approval authorizes the action-gate
+// REQUIRE_HUMAN check of (tool, actionHash, inputHash): a complete binding
+// equal to the claimed one (task-cd9df90a C1). It never uses the approval
+// up. Use stays the single-use registry-gate authority, so one approval
+// covers both gates of a dual-gated tool. Nil-safe.
+func (c *ConsumedApproval) Binds(tool, actionHash, inputHash string) bool {
+	if c == nil || c.Tool == "" || c.ActionHash == "" || c.InputHash == "" {
+		return false
+	}
+	return tool == c.Tool && actionHash == c.ActionHash && inputHash == c.InputHash
+}
+
+// carriesApprovalRef reports whether args still hold `_approval_ref`.
+// handleToolsCall strips it after a successful claim, so a REQUIRE_HUMAN
+// call that still carries one was never consumed: it fails closed rather
+// than minting again (task-cd9df90a C4).
+func carriesApprovalRef(args json.RawMessage) bool {
+	var parsed map[string]json.RawMessage
+	if json.Unmarshal(args, &parsed) != nil {
+		return false
+	}
+	_, ok := parsed[approvalRefArgKey]
+	return ok
 }
 
 type consumedApprovalKey struct{}
@@ -343,12 +371,13 @@ func ProcessApprovalClaim(ctx context.Context, deps ApprovalHoldDeps, params Too
 		}, nil
 	}
 	return ApprovalClaimOutcome{
-		Consumed:     true,
-		ClaimRef:     approvalRef,
-		Approval:     approval,
-		StrippedArgs: strippedBytes,
-		ActionHash:   actionHash,
-		InputHash:    inputHash,
+		Consumed:       true,
+		ClaimRef:       approvalRef,
+		Approval:       approval,
+		StrippedArgs:   strippedBytes,
+		ActionHash:     actionHash,
+		InputHash:      inputHash,
+		PolicySnapshot: policySnapshot,
 	}, nil
 }
 
