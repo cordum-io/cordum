@@ -3,8 +3,11 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"go/parser"
+	"go/token"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -162,5 +165,27 @@ func TestCrossTenantSweepHarnessTenantsAreBound(t *testing.T) {
 	messages[0].subject = "copy-only"
 	if sw.publishedSince(mark)[0].subject != "sweep.self-test" {
 		t.Fatal("publishedSince returned the bus slice rather than a copy")
+	}
+}
+
+func TestCrossTenantSweepDefaultTestNames(t *testing.T) {
+	for _, tc := range []struct {
+		name, source string
+		want         []string
+	}{
+		{"test", "package gateway\nfunc TestReal(t *testing.T) {}", []string{"TestReal"}},
+		{"helper", "package gateway\nfunc Testhelper(t *testing.T) {}", nil},
+		{"tagged", "//go:build integration\n\npackage gateway\nfunc TestReal(t *testing.T) {}", nil},
+		{"literal", "package gateway\nfunc TestReal(t *testing.T) { _ = `//go:build ignore` }", []string{"TestReal"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			file, err := parser.ParseFile(token.NewFileSet(), "fixture_test.go", tc.source, parser.ParseComments)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := crossTenantTestNames(file); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("test names=%v, want %v", got, tc.want)
+			}
+		})
 	}
 }

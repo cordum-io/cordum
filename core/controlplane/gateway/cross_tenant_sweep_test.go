@@ -3,6 +3,7 @@ package gateway
 import (
 	"fmt"
 	"go/ast"
+	"go/build"
 	"go/parser"
 	"go/token"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode"
 
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
@@ -131,19 +133,43 @@ func crossTenantSourceInventory(t *testing.T, live map[string]bool) (map[string]
 			t.Fatal(err)
 		}
 		if strings.HasSuffix(path, "_test.go") {
-			if strings.Contains(string(data), "//go:build ") || strings.Contains(string(data), "// +build ") {
+			matches, err := build.Default.MatchFile(".", path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !matches {
 				continue
 			}
-			for _, decl := range file.Decls {
-				if fn, ok := decl.(*ast.FuncDecl); ok && fn.Recv == nil && strings.HasPrefix(fn.Name.Name, "Test") {
-					tests[fn.Name.Name] = true
-				}
+			for _, name := range crossTenantTestNames(file) {
+				tests[name] = true
 			}
 			continue
 		}
 		issues = append(issues, crossTenantStaticRoutes(fset, file, live)...)
 	}
 	return tests, issues
+}
+
+func crossTenantTestNames(file *ast.File) []string {
+	for _, group := range file.Comments {
+		for _, comment := range group.List {
+			if comment.Pos() < file.Package && (strings.HasPrefix(comment.Text, "//go:build ") || strings.HasPrefix(comment.Text, "// +build ")) {
+				return nil
+			}
+		}
+	}
+	var names []string
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Recv != nil || !strings.HasPrefix(fn.Name.Name, "Test") {
+			continue
+		}
+		suffix := strings.TrimPrefix(fn.Name.Name, "Test")
+		if suffix == "" || !unicode.IsLower([]rune(suffix)[0]) {
+			names = append(names, fn.Name.Name)
+		}
+	}
+	return names
 }
 
 func crossTenantStaticRoutes(fset *token.FileSet, file *ast.File, live map[string]bool) []string {
