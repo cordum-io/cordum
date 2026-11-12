@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"go/parser"
 	"go/token"
@@ -13,7 +14,9 @@ import (
 	"time"
 
 	edgecore "github.com/cordum/cordum/core/edge"
+	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/google/uuid"
 )
 
 type crossTenantSweepTenant struct{ tenantID, apiKey, principalID string }
@@ -188,4 +191,32 @@ func TestCrossTenantSweepDefaultTestNames(t *testing.T) {
 			}
 		})
 	}
+}
+
+func seedCrossTenantJob(t *testing.T, sw *crossTenantSweep) (string, string) {
+	t.Helper()
+	marker := "private-" + uuid.NewString()
+	body := fmt.Sprintf(`{"prompt":%q,"topic":%q}`, marker, "job."+marker)
+	rr := sw.as(t, sw.tenantB, http.MethodPost, "/api/v1/jobs", body)
+	assertCrossTenantAbsent(t, rr, "owner submit")
+	var result struct {
+		JobID string `json:"job_id"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &result); err != nil || result.JobID == "" {
+		t.Fatalf("decode owner job: %v; %s", err, rr.Body.String())
+	}
+	if err := sw.server.jobStore.SetSafetyDecision(context.Background(), result.JobID,
+		model.SafetyDecisionRecord{Decision: model.SafetyAllow, Reason: marker}); err != nil {
+		t.Fatal(err)
+	}
+	return result.JobID, marker
+}
+
+func crossTenantJobMeta(t *testing.T, sw *crossTenantSweep, id string) map[string]string {
+	t.Helper()
+	meta, err := sw.server.jobStore.GetAllMeta(context.Background(), id)
+	if err != nil || len(meta) == 0 || meta["tenant"] != sw.tenantB.tenantID {
+		t.Fatalf("B job metadata unavailable: %v, %v", err, meta)
+	}
+	return meta
 }
