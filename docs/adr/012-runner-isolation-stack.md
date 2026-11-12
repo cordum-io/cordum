@@ -196,3 +196,102 @@ storage and verify that copy, rather than bind-mounting a verified path. Failure
 to prove empty teardown quarantines the run/host; it cannot be reported as clean
 completion or reused while survivors may remain. [Sandbox destruction source](https://github.com/google/gvisor/blob/2a653cea7b2054a2dc9c6419337d3de8031275d6/runsc/sandbox/sandbox.go)
 is a mechanism reference, not proof of those lifecycle obligations.
+
+## Mechanism limits
+
+- **gVisor:** Sentry or reachable host-kernel vulnerabilities remain possible.
+  Systrap depends on seccomp; compatibility failures must refuse the workload,
+  not select a weaker runtime. Host resource limits do not imply guest counts.
+- **seccomp:** Seccomp alone is not a sandbox. It filters syscall numbers and
+  argument values, not the meaning of operations on permitted objects. See the
+  [kernel's stated limits](https://docs.kernel.org/userspace-api/seccomp_filter.html).
+  runsc's host filters and guest OCI filters are different layers; the latter
+  require explicit `--oci-seccomp=true` (default false in the
+  [researched source](https://github.com/google/gvisor/blob/2a653cea7b2054a2dc9c6419337d3de8031275d6/runsc/config/flags.go)).
+  M3-08 owns the compatible syscall policy and proof it applies inside S1.
+- **runc:** a container runtime is not a supplied strict profile. The
+  [generated OCI example](https://github.com/opencontainers/runc/blob/d75aa704733ca73da71ca2d2d52bde534b0096c8/libcontainer/specconv/example.go)
+  sets no-new-privileges but supplies no seccomp policy; callers must configure it.
+- **Landlock:** only the selected ABI's handled rights are restricted. ABI1
+  filesystem rights arrived in 5.13, ABI2 REFER in 5.19, ABI3 TRUNCATE in 6.2,
+  ABI4 TCP bind/connect in 6.7, ABI5 device ioctl in 6.10 and ABI6 abstract-socket
+  /signal scoping in 6.12 ([version table](https://man7.org/linux/man-pages/man7/landlock.7.html)).
+  At the [6.8 reference ABI4](https://docs.kernel.org/6.8/userspace-api/landlock.html),
+  TCP rules concern ports, not destination IPs; UDP and later rights are absent.
+  This is not a claim about every newer ABI. S1 does not rely on guest Landlock.
+- **cgroups / namespaces:** resource limits and separated views respectively;
+  neither alone is an arbitrary-code security boundary. Teardown is observed,
+  not inferred from a successful signal request.
+- **nftables / NetworkPolicy:** correctness depends on actual packet paths and
+  complete rules; NetworkPolicy also depends on plugin and initialization timing.
+- **read-only mounts / tmpfs:** private read-only bytes do not establish safe
+  semantics; tmpfs quotas do not validate content or prevent output exfiltration.
+- **microVMs:** guest kernels, VMMs, devices and shared files remain trusted
+  attack surfaces; hardware separation does not supply authorization policy.
+
+## Residual risks
+
+- Runtime/host-kernel defects and hardware side channels remain; host firmware
+  and patching are part of the boundary, not eliminated by a user-space kernel.
+- Work can deny service within permitted limits or through shared host pressure;
+  bounded resources do not promise availability, and blocked teardown needs quarantine.
+- Intentionally allowed APIs, including broker proposal submission, can be
+  misused. Broker policy/credentials and M2B resource authorization remain separate.
+- Allowed outputs can carry secrets or hostile content. M3-09 output scanning
+  is planned defense, not a complete exfiltration guarantee.
+- A compromised runner host, service or administrator defeats this trust model;
+  hostile host administration is outside the boundary, not an adversary it defeats.
+- Image, runtime, kernel and helper supply chains require PR2 qualification.
+  Capability/profile drift between probe and start requires M3-03 rechecking.
+- **Unresolved guest task ceiling:** researched [guest controller source](https://github.com/google/gvisor/blob/2a653cea7b2054a2dc9c6419337d3de8031275d6/pkg/sentry/fsimpl/cgroupfs/pids.go)
+  has an unlimited initial setting. Trusted pre-start configuration and inability
+  of the workload to raise it are not established here. Host pids.max is not a
+  substitute. Q7 and admission stay blocked until M3-07 proves the guest ceiling.
+- No runtime, syscall policy, network path or teardown behavior was executed for
+  this ADR. X1-X6 remain unmeasured pending the corpus and reference-host tests.
+
+## Capability refusal
+
+Before every run, M3-03 must check the actual service identity/environment:
+
+- Exact qualified kernel/profile identity, floor, namespace access and usable
+  systrap; expected runsc release/digest and explicit flags, with no overrides.
+- Unified cgroup v2, delegated CPU/memory/pids controllers, finite limits,
+  memory/swap policy, group OOM handling and a working whole-subtree teardown.
+- A proven guest task ceiling outside workload control, not host PID inference.
+- Private immutable digest-checked inputs, safe materialization, no writable
+  aliases/overlays, and workspace byte/inode quotas covering every writable path.
+- No workload host/control sockets, leaked descriptors, shared host IPC,
+  capabilities, elevated UID or path to production credentials.
+- Default-deny rules on the trusted routed peer, including IPv6 and host-service
+  denial, installed before start; or network=none with no external interface.
+- The required guest syscall restrictions actually applied under the pinned
+  runtime, not merely a seccomp field accepted in an OCI document (M3-08).
+
+Any absent, stale, unknown or unproven required item must produce a typed refusal
+before untrusted code starts. There is no weaker-run fallback. `SandboxProfile`
+fields must map explicitly to compiled isolation, network and mount restrictions;
+unenforced or unknown constraint kinds deny, and `Isolated=false` cannot bypass
+this mandatory managed-runner floor. Probe success alone cannot qualify a release.
+
+## Consequences
+
+The proposed boundary follows arbitrary descendants rather than guessing command
+semantics and separates execution from effect authority. Costs include gVisor
+compatibility/performance limits, a separately operated host fleet and additional
+failure/refusal paths. Performance is not measured. Qualification is Linux-only;
+Windows/macOS clients may eventually submit to the managed plane, while native
+endpoint enforcement remains M6-14. This ADR does not ship either client path.
+
+## Open questions
+
+| Question | Owner / acceptance obligation |
+| --- | --- |
+| Guest task ceiling and complete teardown | M3-07 / M3-03: trusted immutable limit and no surviving effects, or refuse S1. |
+| Kubernetes RuntimeClass packaging | M3-12 / M6: re-qualify the distinct launch/network path. |
+| KVM platform or microVM alternative | M6: assess assurance/operational tradeoffs, no automatic substitution. |
+| ARM64 hosts | M6: independent architecture and platform qualification. |
+| Tenant co-residency | PR2-10 / M6: sharing, side-channel and resource-boundary evidence. |
+| Performance budgets | PR2-09: measure compatibility and overhead on pinned workloads/hosts. |
+| Exact syscall deny policy and layering | M3-08: guest OCI seccomp opt-in and effective restrictions under runsc. |
+| Package mirrors and network policy | M3-06: bounded endpoints, no proxy escape, on-wire negative-effect evidence. |
