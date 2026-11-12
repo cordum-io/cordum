@@ -7,6 +7,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Added `tools/releasequal`: a release qualification record schema and library
+  binding source SHAs to image and binary digests, gates, results and open
+  exceptions (PR2-02, task-fd0efd22). Release workflows do not produce or check
+  the record yet; later rows on `feat/release-qualification-record` wire it in.
+
 - Added the [planned first protected-operation contract](docs/contract/protected-operation.md)
   for Kubernetes manifest apply, with a proposed reference boundary, credential
   inventory and measurable acceptance ideas. Broker/grant enforcement is future

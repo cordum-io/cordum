@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	infraschema "github.com/cordum/cordum/core/infra/schema"
@@ -81,7 +82,7 @@ func Parse(data []byte) (*Record, error) {
 	return &r, nil
 }
 
-func strictDecode[T Record](data []byte, value *T) error {
+func strictDecode[T Record | Fragment](data []byte, value *T) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(value); err != nil {
@@ -154,4 +155,91 @@ func (r *Record) validateExceptions(artifacts map[string]Artifact, covered map[s
 		}
 	}
 	return problems
+}
+
+type Fragment struct {
+	Artifacts  []Artifact  `json:"artifacts"`
+	Gates      []Gate      `json:"gates"`
+	Exceptions []Exception `json:"exceptions"`
+}
+
+// ParseFragment decodes strictly; Assemble checks item formats and references.
+func ParseFragment(data []byte) (Fragment, error) {
+	var f Fragment
+	if err := strictDecode(data, &f); err != nil {
+		return Fragment{}, err
+	}
+	return f, nil
+}
+
+// Assemble combines fragments into one deterministic, validated record.
+func Assemble(release Release, source Source, fragments ...Fragment) (*Record, error) {
+	r := Record{SchemaVersion: SchemaVersion, Release: release, Source: source,
+		Artifacts: []Artifact{}, Gates: []Gate{}, Exceptions: []Exception{}}
+	exceptions := make(map[string]Exception)
+	for _, f := range fragments {
+		r.Artifacts = append(r.Artifacts, f.Artifacts...)
+		r.Gates = append(r.Gates, f.Gates...)
+		if err := mergeExceptions(exceptions, f.Exceptions); err != nil {
+			return nil, err
+		}
+	}
+	for _, e := range exceptions {
+		slices.Sort(e.Artifacts)
+		e.Artifacts = slices.Compact(e.Artifacts)
+		r.Exceptions = append(r.Exceptions, e)
+	}
+	slices.SortFunc(r.Artifacts, func(a, b Artifact) int {
+		if n := strings.Compare(a.Kind, b.Kind); n != 0 {
+			return n
+		}
+		return strings.Compare(a.Name, b.Name)
+	})
+	slices.SortFunc(r.Gates, func(a, b Gate) int {
+		if n := strings.Compare(a.Artifact, b.Artifact); n != 0 {
+			return n
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	slices.SortFunc(r.Exceptions, func(a, b Exception) int { return strings.Compare(a.ID, b.ID) })
+	data, err := json.Marshal(r)
+	if err != nil {
+		return nil, fmt.Errorf("qualification record: marshal: %w", err)
+	}
+	return Parse(data)
+}
+
+func mergeExceptions(dst map[string]Exception, exceptions []Exception) error {
+	for _, e := range exceptions {
+		combined, exists := dst[e.ID]
+		if exists && combined.Reason != e.Reason {
+			return fmt.Errorf("qualification record: exception %q has conflicting reasons", e.ID)
+		}
+		if !exists {
+			combined = Exception{ID: e.ID, Reason: e.Reason, Artifacts: []string{}}
+		}
+		combined.Artifacts = append(combined.Artifacts, e.Artifacts...)
+		dst[e.ID] = combined
+	}
+	return nil
+}
+
+// Check checks an artifact's exact digest and gate results. Call only on records
+// from Parse or Assemble. Exceptions never override failing gates.
+func (r *Record) Check(name, digest string) error {
+	for _, a := range r.Artifacts {
+		if a.Name != name {
+			continue
+		}
+		if a.Digest != digest {
+			return fmt.Errorf("artifact %q: digest %s differs from the qualified digest %s", name, digest, a.Digest)
+		}
+		for _, g := range r.Gates {
+			if g.Artifact == name && g.Result != ResultPass {
+				return fmt.Errorf("artifact %q: gate %q result is %q", name, g.ID, g.Result)
+			}
+		}
+		return nil
+	}
+	return fmt.Errorf("artifact %q is not in the qualification record", name)
 }
