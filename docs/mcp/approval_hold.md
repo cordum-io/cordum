@@ -275,6 +275,10 @@ not run.
     denies the tool refuses the resume, and nothing runs.
   - DENY still wins: if the new evaluation denies the call, the deny
     result is returned and nothing runs.
+  - If the new evaluation allows the call instead, for example because the
+    taint lookup has recovered, the tool runs once as an allowed call. Its
+    `mcp.tool.post` or `mcp.tool.failed` event still carries `approval_ref`
+    (task-74f4c01e).
   - The claim has used the approval up before evaluation, so a DENY, a
     refusal or an upstream error burns it. Another attempt needs a new
     hold and approval.
@@ -379,6 +383,7 @@ auto-retry. A `policy_snapshot_changed` is safe to retry at once.
 | A resume is never answered from the cached pending result | `TestResume_NeverServedFromCachedPending`, `TestResume_DoesNotWaitOnInFlightRefless` |
 | A consumed approval that does not bind the call fails closed | `TestResume_BindingMismatchFailsClosed` |
 | The invariant floor applies on resume | `TestResume_InvariantFloorDenies` |
+| An allowed resume's post or failed event carries `approval_ref` | `TestResume_AllowCarriesConsumedApprovalRef` |
 | An unconsumed `_approval_ref` or a non-authorizing handoff fails closed | `TestResume_UnconsumedApprovalRefArgFailsClosed`, `TestResume_HandoffWithoutAuthorizerFailsClosed` |
 | Scope preapproval is not consulted on an action-gate hold | `TestActionGateHold_PreapprovalNotConsulted` |
 | A preapproved identity's action-gate hold resumes once over HTTP | `TestActionGatePreapproval` |

@@ -36,9 +36,14 @@ surface to the operator.
 LLM → MCP server: tools/call { name: "cordum_install_pack", args: {...} }
 MCP server → LLM: JSON-RPC error -32099
                   { code: -32099,
-                    message: "tool requires human approval",
-                    data: { approval_id: "apr-7f3e…" } }
+                    message: "approval required",
+                    data: { approval_id: "apr-7f3e…",
+                            approval_ref: "apr-7f3e…",
+                            retry_hint: "retry_with_same_args", … } }
 ```
+
+This is the default flow. With the policy gate on, the resume differs: see
+[With the policy gate on](#with-the-policy-gate-on).
 
 The LLM's job is to show the operator the `approval_id` and the dashboard's
 Approvals page, `/approvals` on the configured dashboard base URL (via chat, a
@@ -55,6 +60,23 @@ atomically (CAS) and the handler runs.
 
 If the operator rejects, the retry hits the rejection and returns
 `approval_rejected`. The LLM should stop rather than loop.
+
+### With the policy gate on
+
+With `mcp.policy_gate_enabled=true` the gateway also mints an Edge approval. The
+`-32099` data then carries `retry_hint: "retry_with_approval_ref"` and that
+approval's `approval_ref` (`edge_appr_…`), which differs from `approval_id`.
+Clients branch on `retry_hint`. Under the policy gate the record named by
+`approval_id` is correlation-only, and approving it authorizes nothing.
+
+1. The operator approves the Edge approval named by `approval_ref`: on the
+   Approvals page's Edge lane (`/approvals?lane=edge`), or with
+   `POST /api/v1/edge/approvals/{approval_ref}/approve`.
+2. The LLM resends the identical arguments with
+   `"_approval_ref": "<approval_ref>"` added.
+
+A retry without `_approval_ref` does not resume the approval. See
+[approval_hold.md](./approval_hold.md) for the full resume contract.
 
 ### Retries, expiry, and idempotency
 
@@ -335,10 +357,14 @@ exits cleanly."*
 ```json
 {
   "code": -32099,
-  "message": "tool \"cordum_create_workflow\" matches approval scope \"mcp_write\"",
-  "data": { "approval_id": "apr-1a2b3c", "tool": "cordum_create_workflow" }
+  "message": "approval required",
+  "data": { "approval_id": "apr-1a2b3c", "retry_hint": "retry_with_same_args", "tool": "cordum_create_workflow" }
 }
 ```
+
+This example uses the default flow. With the policy gate on, step 4 approves the
+Edge approval named by `approval_ref`, and step 5 adds `_approval_ref`; see
+[With the policy gate on](#with-the-policy-gate-on).
 
 Claude Code surfaces: *"This tool needs approval. Open
 http://localhost:8081/approvals and approve request apr-1a2b3c"*
