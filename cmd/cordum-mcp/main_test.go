@@ -48,6 +48,19 @@ func TestMCPAuditFallbackNilExporter(t *testing.T) {
 	})
 }
 
+func TestMCPAuditFallbackNilExporterFromEnv(t *testing.T) {
+	for _, mode := range []string{"", "none"} {
+		t.Run("mode_"+mode, func(t *testing.T) {
+			t.Setenv("CORDUM_AUDIT_EXPORT_TYPE", mode)
+			b := newAuditFallback(audit.NewExporterFromEnv)
+			t.Cleanup(func() { closeAuditFallback(t, b) })
+			if _, ok := b.Backend().(stderrAuditExporter); !ok {
+				t.Fatalf("backend = %T, want stderrAuditExporter", b.Backend())
+			}
+		})
+	}
+}
+
 func captureAuditLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	logs := &bytes.Buffer{}

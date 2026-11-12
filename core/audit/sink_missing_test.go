@@ -35,6 +35,24 @@ func TestNATSAuditPublisher_NilFallbackDropsOnPublishFailure(t *testing.T) {
 	}
 }
 
+func TestNATSAuditPublisher_NilFallbackDropsOnMarshalFailure(t *testing.T) {
+	bus := &mockAuditBus{}
+	pub := NewNATSAuditPublisher(bus, nil)
+	event := testEvent()
+	event.Timestamp = time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)
+	before := testutil.ToFloat64(auditEventDrops.WithLabelValues("no_fallback"))
+	pub.Send(event)
+	if len(bus.published) != 0 {
+		t.Fatalf("published %d events, want 0", len(bus.published))
+	}
+	if got := testutil.ToFloat64(auditEventDrops.WithLabelValues("no_fallback")) - before; got != 1 {
+		t.Fatalf("no_fallback drops = %v, want 1", got)
+	}
+	if err := pub.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestBufferedExporter_CountsRejectedEvents(t *testing.T) {
 	for _, reason := range []string{"buffer_full", "closed"} {
 		t.Run(reason, func(t *testing.T) {
@@ -59,6 +77,11 @@ func TestBufferedExporter_NilExporterBatchAndDrain(t *testing.T) {
 		t.Run(fmt.Sprintf("batch_%d", batchSize), func(t *testing.T) {
 			before := testutil.ToFloat64(auditEventDrops.WithLabelValues("no_exporter"))
 			b := NewBufferedExporter(nil, WithBatchSize(batchSize), WithFlushInterval(time.Hour))
+			t.Cleanup(func() {
+				if err := b.Close(); err != nil {
+					t.Error(err)
+				}
+			})
 			b.Send(testEvent())
 			if batchSize == 1 {
 				waitForDropCount(t, "no_exporter", before+1)
