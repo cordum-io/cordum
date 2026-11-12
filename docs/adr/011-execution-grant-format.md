@@ -170,3 +170,140 @@ digest mismatch, unknown version and missing required field. Detailed error
 classification beyond those reasons belongs to that verifier row; no unmatched
 failure becomes an allow. A claim is not proof of completion or exactly-once
 external effects; outcome uncertainty and reconciliation belong to M2A-06/M2B.
+
+## Versioning
+
+Signature construction (the `-V1` domain) and payload `schema_version` are
+separate axes. The initial allowlist is exactly `{(V1, 1)}`. There is no
+algorithm negotiation: the v1 endpoint selects the v1 domain before signature
+verification; payload version is checked only after authenticating its bytes.
+Unknown construction or schema version denies, with no fallback or downgrade.
+Issuers emit only a version declared by the intended executor; no common
+version means no grant (I02).
+
+Any added, removed, retyped, renumbered or semantically changed field requires
+a new schema_version, deliberately unlike CAP additive evolution. Removed
+names and numbers are reserved. Released-version golden vectors never change.
+An implementation must retain the exact historical schema for each accepted
+version, rather than parse old grants permissively with a newer schema.
+
+## Unknown fields
+
+Reject unknown field numbers at every depth, including inside the envelope;
+protobuf-go `ProtoReflect().GetUnknown()` must be checked recursively, not
+discarded. Also reject unknown enum numbers, required enums left UNSPECIFIED,
+missing required oneofs and any unsupported restriction. The canonical check
+rejects multiple oneof members even when a permissive parser keeps the last.
+CAP spec/17's ignore-unknown-fields rule is intentionally not inherited (I02).
+ProtoJSON is for display only: never sign or verify that rendering.
+
+## Key ids
+
+Require `grant-<label>`, where label is nonempty lowercase `[a-z0-9._-]+` and
+the whole id is at most 64 ASCII characters. It must already equal its
+policysign-normalized spelling. Do not normalize wire input to make it valid.
+The envelope key_id and signed issuer_key_id must match exactly. Never reuse
+an id for different key material. Grant keys are distinct from policy keys
+(`CORDUM_POLICY_SIGNING_KEY_ID`, default `default`), delegation keys
+(`CORDUM_DELEGATION_KEY_ID`, default `dlg-1`), service-token and audit keys.
+
+## Trust store
+
+Each executor will use a dedicated `policysign.TrustStore`, with
+`NewTrustStore`, `Add`, `Lookup`, `IDs` and `ParsePublicKey` from
+[keys.go](../../core/policysign/keys.go). Load only operator-controlled executor
+configuration: a proposed `CORDUM_GRANT_PUBLIC_KEY_<ID>` configuration or a
+read-only mounted file. M2A-03 owns the loader, id-to-issuer authorization,
+atomic snapshot publication and configuration-name encoding; shell/env name
+restrictions must not create aliases. Reject duplicate/normalized-colliding
+ids before Add (which otherwise replaces entries). Never mutate a live store
+concurrently with verification.
+
+Never obtain trust from the policy service, grant, bus or agent-reachable
+storage, and never trust a key carried by a grant. Do not reuse
+`LoadTrustStoreFromEnv`: it reads policy-prefixed keys, the legacy
+`SAFETY_POLICY_PUBLIC_KEY`, and the `CORDUM_POLICY_DEV_SIGNING_SEED` fallback.
+Do not use `VerifyRawAny`: it has no key-id binding. There is no grant
+strict-mode knob; `CORDUM_POLICY_STRICT` off/warn behavior does not apply.
+An empty or invalid store denies every grant; production executor startup
+must refuse it, following the fail-closed precedent of
+[`CheckKernelBoot`](../../core/policysign/boot.go) in enforce mode, not its loader.
+Only the issuer holds private signing material (M0-02 inventory); public trust
+material is distributed under operator integrity control. ParsePrivateKey may
+be reused for explicit issuer key loading, never the policy/dev-seed loader.
+
+## Rotation
+
+Planned routine rotation: add the new public key to every executor's store,
+confirm installation using boot-log `IDs()`, switch the issuer's active key,
+then remove the old key no earlier than the last old-key issuance plus maximum
+grant lifetime and allowed skew (M2A-04). No dual signatures in v1.
+
+On compromise, remove the key everywhere, advance authority epochs (M2A-05),
+and re-authorize before re-issuing. Executors must deny further effects under
+removed keys, including already fetched grants, and recheck freshness before
+effect. An Executing record follows M2A-06 recovery rules; key removal cannot
+undo a remote effect already committed. Propagation/freshness bounds require
+M2A-05 qualification; this ADR claims no measured instantaneous revocation.
+KMS/HSM custody and platform-specific file permissions are PR1 questions.
+Delegation's [key loader](../../core/auth/delegation/keys.go) rejects `0o077`
+permission bits on non-Windows systems; that is a precedent, not Windows ACL
+qualification or a grant-key custody implementation.
+
+## Distribution and verification order
+
+M2A-09 will persist immutable envelope bytes by grant_id and execution_id;
+the intended executor fetches them from an authenticated issuer API. M2B-01
+owns channel authentication. No grant travels on the agent bus. A grant is not
+a bearer credential and gives no target access; its operational contents
+still require confidentiality. Executor target credentials stay separate.
+
+Immediately before the protected effect, the planned order is: size cap;
+strict envelope framing; exact algorithm/construction version; local key
+lookup; signature over P; strict canonical payload parsing; schema version;
+required fields and bounds; time; executor; tenant and remaining identities;
+action/approval commitment/input digests; independent M2A-04 ceilings;
+M2A-05 epoch/revocation freshness; then the M2A-06 atomic single-use claim.
+Any unavailable dependency means reject. A delay after verification cannot
+extend validity: M2A-05/M2B-01 must define the last freshness/precondition
+check at the effect boundary, including rotation races. Immutable input bytes
+that passed digest checks are the bytes used, not a later path lookup.
+
+Invariant mapping (requirements, not evidence): I01 requires a valid bound
+grant before any protected effect; I02 denies unsupported restrictions;
+I03 keeps approval subordinate to independent hard ceilings; I04 binds the
+effective-policy identity; I05 binds inputs actually used; I06 separates an
+atomic authorization claim from completion; I07 requires bounded freshness
+and revocation checks. No claim of exactly-once external effects is made.
+
+## Consequences
+
+The proposed format reuses typed protobuf tooling and Ed25519 primitives,
+separates trust domains, and fixes identities for approval, state and evidence.
+Its cost is a strict wire profile and lifecycle machinery still to implement.
+Dependency bumps must rerun unchanged golden vectors; non-Go implementations
+need the same accepted/rejected byte vectors (as CAP-PRODUCTION does).
+Human readability requires a decode tool, every schema change requires a
+version bump, and key rotation requires coordinated operator action.
+
+## Open questions
+
+- Relocation to CAP for out-of-tree/non-Go executors: M2B-01/M6.
+- Kubernetes apply, ownership/conflict and precondition semantics, including
+  mapping immutable manifests to the closed object set: M2B-01.
+- Per-tenant/per-operation issuer keys, custody and executor trust
+  configuration encoding: PR1 with M2A-03.
+- Revocation/freshness bounds and effect-boundary coordination: M2A-05/PR1-13.
+- Maximum lifetime and clock-skew values: M2A-04.
+- Executor identity (SPIFFE or Cordum service identity) and authenticated
+  broker-authority channel: M2B-01.
+- Effective-policy digest definition: M1 hardening plus M2A-09.
+- Usage counts above one, partial multi-object effects and reconciliation:
+  M2A-06/M2B. Single-use v1 does not resolve these questions.
+
+For M0-02's M2A-01 questions: Envelope options, Canonical bytes and Grant fields
+answer encoding and binding; G5/G8, Rotation and Distribution and verification
+order cover epochs, expiry and revocation while assigning bound values to their
+owners; Versioning, Unknown fields, Key ids and Trust store cover compatibility
+and trust. M2A-11 owns integration and full regression evidence. This record
+validates only a written decision, not implementation or deployment behavior.
