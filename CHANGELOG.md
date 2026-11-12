@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Added [failure and partition behavior](docs/contract/failure-behavior.md)
+  (M0-06, task-51b08640): required and current behavior for low-risk,
+  approval-required and protected actions when Redis, NATS, the Safety Kernel,
+  the Gateway as seen from Edge, the approval store, the audit sink, the policy
+  source or the license is unavailable. The contract cites characterization
+  tests and lists unmeasured behavior and gaps with owners. Three new
+  characterization tests accompany it; runtime behavior is unchanged.
+
 - Added the [planned first protected-operation contract](docs/contract/protected-operation.md)
   for Kubernetes manifest apply, with a proposed reference boundary, credential
   inventory and measurable acceptance ideas. Broker/grant enforcement is future
