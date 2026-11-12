@@ -86,12 +86,27 @@ func (s *deleteGateDedupeStore) Store(key string, value any) {
 	s.inner.Store(key, value)
 }
 
-func (s *deleteGateDedupeStore) Delete(key string) {
+func (s *deleteGateDedupeStore) gateDelete() {
 	s.deleteOnce.Do(func() {
 		close(s.deleteEntered)
 		<-s.releaseDelete
 	})
+}
+
+func (s *deleteGateDedupeStore) Delete(key string) {
+	s.gateDelete()
 	s.inner.Delete(key)
+}
+
+func (s *deleteGateDedupeStore) CompareAndSwap(key string, old, new any) bool {
+	return s.inner.CompareAndSwap(key, old, new)
+}
+
+// dedupeFinish's error path deletes its own reservation with
+// CompareAndDelete, so the gate covers it as it covers Delete.
+func (s *deleteGateDedupeStore) CompareAndDelete(key string, old any) bool {
+	s.gateDelete()
+	return s.inner.CompareAndDelete(key, old)
 }
 
 func (s *deleteGateDedupeStore) release() {

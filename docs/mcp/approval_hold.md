@@ -225,6 +225,15 @@ runs. That event carries `input_hash` (the canonical argument hash, with
   after the comparison, including after minting, remains possible: an
   approval with an older snapshot is refused at resume with
   `policy_mismatch`, as before.
+- **Policy change during a resume.** The claim reads the policy snapshot,
+  and the resumed call's `mcp.tool.pre` event is stamped with a second
+  read. When the action gate answers `REQUIRE_HUMAN` and a publish changed
+  the snapshot between those reads, the consumed approval was claimed under
+  the old policy: the resume returns `-32096` `kind=policy_snapshot_changed`
+  before the handoff authorizes anything, and the tool does not run. The
+  claim has used the approval up, so retry the call without `_approval_ref`
+  to get a new hold under the current policy. A blank snapshot on either
+  side is not a confirmed change, as at the mint.
 - **Snapshot.** Gate-on mints need a non-empty policy snapshot. The Edge
   store refuses an approval without one, so a deployment with no policy
   snapshot fails every gate-on mint with `-32096`.
@@ -282,6 +291,11 @@ not run.
   - A call that carries `_approval_ref` is never answered from the
     semantic dedupe cache. It evicts the cached result for the call and
     never waits on another call's slot.
+  - The resume takes the dedupe slot over in one write. An identical
+    ref-less call that arrives while it runs waits for its outcome and does
+    not mint. A ref-less call that was already being evaluated still
+    returns its own `approval pending:` hold to its caller, but cannot
+    cache that result, or delete the slot, over the resumed call's.
   - A successful resume is cached: within the dedupe TTL (10 minutes), an
     identical retry without `_approval_ref`, by the same principal in the
     same session, replays the executed result and does not run the tool
@@ -343,7 +357,7 @@ MCP layer, not `ClaimApproval`:
 | `consumed` | The approval already fired; retry with a fresh ref. |
 | `args_mismatch` | The canonical input hash differs from the minted approval. |
 | `policy_mismatch` | The active policy snapshot differs from the minted approval's snapshot. |
-| `policy_snapshot_changed` | The policy changed while the call was being evaluated, before any approval was minted. Nothing was minted; retry the call. |
+| `policy_snapshot_changed` | The policy changed while the call was being evaluated. On a first call nothing was minted; retry the call. On a resume the change came after the claim: nothing ran and the approval is used up; retry without `_approval_ref`. |
 | `self_approval` | The approving identity matches the requesting agent. |
 | `cross_tenant` | The approval belongs to a different tenant. |
 | `tuple_mismatch` | The action-hash tuple differs. |
@@ -378,6 +392,8 @@ auto-retry. A `policy_snapshot_changed` is safe to retry at once.
 | Action-gate `REQUIRE_HUMAN` resume executes once over HTTP | `TestActionGateResume` |
 | A resume is never answered from the cached pending result | `TestResume_NeverServedFromCachedPending`, `TestResume_DoesNotWaitOnInFlightRefless` |
 | A consumed approval that does not bind the call fails closed | `TestResume_BindingMismatchFailsClosed` |
+| A policy change between the claim and the resumed call's pre-event refuses the resume | `TestResume_PolicyChangedSinceClaimFailsClosed`, `TestJSONRPC_ResumePolicyChangedAfterClaim` |
+| A ref-less call racing the resume never caches a pending hold over the executed call | `TestResume_ReflessRacingReservationNeverCachesPending`, `TestResume_InFlightReflessCannotReplaceExecuted`, `TestDedupe_StaleWinnerCannotTouchResumedSlot` |
 | The invariant floor applies on resume | `TestResume_InvariantFloorDenies` |
 | An unconsumed `_approval_ref` or a non-authorizing handoff fails closed | `TestResume_UnconsumedApprovalRefArgFailsClosed`, `TestResume_HandoffWithoutAuthorizerFailsClosed` |
 | Scope preapproval is not consulted on an action-gate hold | `TestActionGateHold_PreapprovalNotConsulted` |

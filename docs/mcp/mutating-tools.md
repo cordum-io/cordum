@@ -47,7 +47,10 @@ link, and the page does not select or filter by approval ID, so the operator fin
 the request by its `approval_id`, reviews the canonical args in the dashboard's
 approval modal, and clicks **Approve** (or rejects).
 
-The LLM then retries the same tool call with **identical arguments**. The gateway
+The LLM then retries the same tool call with **identical arguments** (when the
+error's `retry_hint` is `retry_with_approval_ref`, it also sends `approval_ref`
+back as `_approval_ref`; see
+[below](#when-retry_hint-is-retry_with_approval_ref)). The gateway
 canonical args hash from task-94b27344 is computed with whitespace / key-order /
 empty-field normalisation (task-2d989055 step 4), so the retry matches even if the
 LLM reformats the JSON. On the retry, the gate consumes the approval record
@@ -55,6 +58,26 @@ atomically (CAS) and the handler runs.
 
 If the operator rejects, the retry hits the rejection and returns
 `approval_rejected`. The LLM should stop rather than loop.
+
+### When `retry_hint` is `retry_with_approval_ref`
+
+The flow above is the default one, where the `-32099` data carries
+`retry_hint: "retry_with_same_args"`. On a gateway that runs with
+`mcp.policy_gate_enabled=true`, the data carries
+`retry_hint: "retry_with_approval_ref"` and an Edge `approval_ref`, and
+identical arguments alone never resume the call:
+
+1. The `approval_id` is correlation-only. Approving that request in the default
+   view of the Approvals page does not resume the call.
+2. The operator approves the Edge approval named by `approval_ref`: on the Edge
+   lane of the Approvals page (`/approvals?lane=edge`), or with
+   `POST /api/v1/edge/approvals/{approval_ref}/approve`.
+3. The LLM retries with the same arguments and sends the `approval_ref` back as
+   the extra argument `_approval_ref`. The server strips it before the handler
+   runs.
+
+See [approval_hold.md](./approval_hold.md) for the full contract and the
+`-32096` errors a refused resume returns.
 
 ### Retries, expiry, and idempotency
 

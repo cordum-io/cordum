@@ -142,16 +142,18 @@ type ApprovalHoldDeps struct {
 // (fail-closed); the caller surfaces the conflict to the client as a
 // JSON-RPC error keyed by ConflictErr.Kind.
 //
-// ActionHash and InputHash are the binding the claim was consumed with,
-// set only when Consumed (task-63400922 E4).
+// ActionHash, InputHash and PolicySnapshot are the binding and the policy
+// snapshot the claim was consumed with, set only when Consumed
+// (task-63400922 E4).
 type ApprovalClaimOutcome struct {
-	Consumed     bool
-	ClaimRef     string
-	Approval     *edge.EdgeApproval
-	ConflictErr  *edge.ApprovalConflictError
-	StrippedArgs json.RawMessage
-	ActionHash   string
-	InputHash    string
+	Consumed       bool
+	ClaimRef       string
+	Approval       *edge.EdgeApproval
+	ConflictErr    *edge.ApprovalConflictError
+	StrippedArgs   json.RawMessage
+	ActionHash     string
+	InputHash      string
+	PolicySnapshot string
 }
 
 // ConsumedApproval records the Edge approval handleToolsCall consumed for
@@ -162,7 +164,11 @@ type ConsumedApproval struct {
 	Tool       string
 	ActionHash string
 	InputHash  string
-	used       atomic.Bool
+	// PolicySnapshot is the snapshot the claim was made under. The action
+	// and input hashes do not cover it, so resumeConsumedApproval compares
+	// it with the resumed call's pre-event stamp.
+	PolicySnapshot string
+	used           atomic.Bool
 }
 
 // Use reports whether the consumed approval authorizes a gate check of
@@ -365,12 +371,13 @@ func ProcessApprovalClaim(ctx context.Context, deps ApprovalHoldDeps, params Too
 		}, nil
 	}
 	return ApprovalClaimOutcome{
-		Consumed:     true,
-		ClaimRef:     approvalRef,
-		Approval:     approval,
-		StrippedArgs: strippedBytes,
-		ActionHash:   actionHash,
-		InputHash:    inputHash,
+		Consumed:       true,
+		ClaimRef:       approvalRef,
+		Approval:       approval,
+		StrippedArgs:   strippedBytes,
+		ActionHash:     actionHash,
+		InputHash:      inputHash,
+		PolicySnapshot: policySnapshot,
 	}, nil
 }
 

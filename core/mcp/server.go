@@ -70,6 +70,8 @@ var (
 	// snapshot would fail the resumed call's current-snapshot claim; a new
 	// one fails the store's event binding. Maps to -32096
 	// kind=policy_snapshot_changed; retrying re-evaluates (task-11b3c5ef).
+	// A resume returns it too, when policy changed between its claim and
+	// its mcp.tool.pre stamp: nothing ran, and the approval is used up.
 	ErrPolicySnapshotChanged = errors.New("policy_snapshot_changed: policy changed during the call")
 )
 
@@ -545,10 +547,11 @@ func (s *MCPServer) handleToolsCall(ctx context.Context, params json.RawMessage)
 			// gate honours this consumption once, for this exact binding
 			// (task-63400922 E4).
 			ctx = withConsumedApproval(ctx, &ConsumedApproval{
-				Ref:        outcome.ClaimRef,
-				Tool:       req.Name,
-				ActionHash: outcome.ActionHash,
-				InputHash:  outcome.InputHash,
+				Ref:            outcome.ClaimRef,
+				Tool:           req.Name,
+				ActionHash:     outcome.ActionHash,
+				InputHash:      outcome.InputHash,
+				PolicySnapshot: outcome.PolicySnapshot,
 			})
 			if len(outcome.StrippedArgs) > 0 {
 				req.Arguments = outcome.StrippedArgs

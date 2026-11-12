@@ -46,6 +46,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- MCP approval resume: a call resumed with `_approval_ref` is refused with
+  `-32096` `policy_snapshot_changed` when policy was published between the
+  approval claim and the call's `mcp.tool.pre` stamp. Nothing runs and the
+  approval is used up, so the client retries without `_approval_ref`.
+- MCP dedupe: a resumed call takes its dedupe slot over in one write, and a call
+  that held the slot before can no longer publish to it or delete it. An
+  identical call without `_approval_ref` used to be able to cache a second
+  pending hold over the executed result. `DedupeStore` gains `CompareAndSwap`
+  and `CompareAndDelete`.
+- The mutating MCP tool descriptions and `docs/mcp/mutating-tools.md` describe
+  the Edge approval flow used when `mcp.policy_gate_enabled=true`: approve the
+  `approval_ref`, then retry with `_approval_ref`.
+- The governed MCP demo worker retries a `429` on the approval poll, and its
+  README lists the MCP, agent identity and endpoint prerequisites.
 - Edge approvals: a held MCP call whose arguments differ from a still-pending
   hold of the same tool in the same session now gets its own approval ref. It
   used to get the first hold's ref, so resuming it failed with `-32096`

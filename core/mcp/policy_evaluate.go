@@ -1012,8 +1012,9 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 // resumeConsumedApproval executes a REQUIRE_HUMAN call resumed with the
 // Edge approval handleToolsCall consumed for it (task-cd9df90a). The
 // approval must bind this exact call (C1), and the handoff re-applies its
-// security floor first (C2). A refusal executes nothing, and the claim has
-// already used the approval up.
+// security floor first (C2). The approval must also have been claimed under
+// the policy snapshot this call was evaluated under. A refusal executes
+// nothing, and the claim has already used the approval up.
 func resumeConsumedApproval(ctx context.Context, deps ToolCallDeps, params ToolCallParams, server string, evalResult EvaluateToolCallResult, consumed *ConsumedApproval, eventID string) (*ToolCallResult, error) {
 	callMeta, _ := CallMetadataFromContext(ctx)
 	actionHash, inputHash := BuildMCPApprovalBinding(callMeta.Tenant, server, params, "")
@@ -1022,6 +1023,16 @@ func resumeConsumedApproval(ctx context.Context, deps ToolCallDeps, params ToolC
 			Kind:   edge.ApprovalConflictKindArgsMismatch,
 			Reason: "consumed approval does not bind this call",
 		}
+	}
+	// The hashes above do not cover the policy snapshot. A publish between
+	// the claim's read and the pre-event stamp means the approval was
+	// claimed under the old policy and this REQUIRE_HUMAN was decided under
+	// the new one. A blank side is not a confirmed change, as at the Edge
+	// mint (gateway edgeMintSnapshotDrift): a real store refuses a blank
+	// claim, and a blank stamp means no snapshot provider stamps events.
+	claimed, stamped := strings.TrimSpace(consumed.PolicySnapshot), strings.TrimSpace(evalResult.PreEvent.PolicySnapshot)
+	if claimed != "" && stamped != "" && claimed != stamped {
+		return nil, fmt.Errorf("%w: policy snapshot %s changed to %s after the approval claim", ErrPolicySnapshotChanged, claimed, stamped)
 	}
 	authorizer, ok := deps.ApprovalHandoff.(ConsumedApprovalAuthorizer)
 	if !ok {
@@ -1438,9 +1449,14 @@ type dedupeOutcome struct {
 // type. A winner from the in-process backend holds the *dedupeEntry
 // whose done channel must be closed when finishing; a Redis-backed
 // winner publishes a completed wire record (or deletes on error).
+//
+// reserved is the pending value the winner put in the store. Finishing
+// compares the slot against it, so a winner whose slot a resume took over
+// (dedupeBeginResume) leaves the new owner's slot alone.
 type dedupeWinner struct {
 	inProcessEntry *dedupeEntry
 	redisBacked    bool
+	reserved       any
 }
 
 // dedupeBegin reserves the singleflight slot for the supplied semantic
@@ -1494,22 +1510,22 @@ func dedupeBegin(ctx context.Context, deps ToolCallDeps, key string) (*dedupeWin
 	}
 }
 
-// dedupeBeginResume reserves the slot for a call resumed with a consumed
+// dedupeBeginResume takes the slot over for a call resumed with a consumed
 // approval (task-cd9df90a C3). The key holds the REQUIRE_HUMAN pending
-// result or a ref-less call in flight, so it is evicted first. If another
-// call takes the slot before our store, the resume runs unslotted: it
-// never waits on or adopts another call's outcome. A nil return means
-// unslotted.
+// result or a ref-less call in flight; one Store replaces either, so the
+// resume never waits on or adopts another call's outcome and there is no
+// moment at which a ref-less call can reserve the key instead. From then
+// on ref-less calls wait for the resume's outcome, and the call that held
+// the slot before can no longer publish to it or delete it: dedupeFinish
+// and dedupeFinishNoCache act only on the winner's own reservation. A nil
+// return means dedupe is off.
 func dedupeBeginResume(deps ToolCallDeps, key string) *dedupeWinner {
 	if deps.DedupeState == nil || key == "" {
 		return nil
 	}
 	_, isRedis := deps.DedupeState.(*RedisDedupeStore)
-	deps.DedupeState.Delete(key)
 	fresh := newPendingDedupeValue(isRedis)
-	if _, loaded := deps.DedupeState.LoadOrStore(key, fresh); loaded {
-		return nil
-	}
+	deps.DedupeState.Store(key, fresh)
 	return makeWinner(fresh, isRedis)
 }
 
@@ -1519,7 +1535,7 @@ func dedupeBeginResume(deps ToolCallDeps, key string) *dedupeWinner {
 // the returned value without a second type-probe round trip.
 func newPendingDedupeValue(isRedis bool) any {
 	if isRedis {
-		return &redisDedupeRecord{State: redisDedupeStatePending}
+		return &redisDedupeRecord{State: redisDedupeStatePending, Owner: defaultEventIDFactory()}
 	}
 	return &dedupeEntry{done: make(chan struct{})}
 }
@@ -1528,10 +1544,10 @@ func newPendingDedupeValue(isRedis bool) any {
 // opaque dedupeWinner handle dedupeFinish consumes.
 func makeWinner(fresh any, isRedis bool) *dedupeWinner {
 	if isRedis {
-		return &dedupeWinner{redisBacked: true}
+		return &dedupeWinner{redisBacked: true, reserved: fresh}
 	}
 	entry, _ := fresh.(*dedupeEntry)
-	return &dedupeWinner{inProcessEntry: entry}
+	return &dedupeWinner{inProcessEntry: entry, reserved: fresh}
 }
 
 // decodeRedisCompletedOutcome reconstructs the safe duplicate
@@ -1773,7 +1789,7 @@ func dedupeFinish(deps ToolCallDeps, key string, winner *dedupeWinner, result *T
 			// Delete before close prevents fresh arrivals from finding
 			// a completed error entry. Existing waiters already hold
 			// entry and still observe result/err via close's happens-before.
-			deps.DedupeState.Delete(key)
+			deps.DedupeState.CompareAndDelete(key, winner.reserved)
 		}
 		close(entry.done)
 		return
@@ -1783,7 +1799,7 @@ func dedupeFinish(deps ToolCallDeps, key string, winner *dedupeWinner, result *T
 			return
 		}
 		if err != nil {
-			deps.DedupeState.Delete(key)
+			deps.DedupeState.CompareAndDelete(key, winner.reserved)
 			return
 		}
 		rec, ok := redisDedupeRecordForResult(result)
@@ -1791,10 +1807,10 @@ func dedupeFinish(deps ToolCallDeps, key string, winner *dedupeWinner, result *T
 			// Cannot persist a usable completed record cross-process;
 			// delete so subsequent retries fire fresh upstream rather
 			// than block on a pending record that will never resolve.
-			deps.DedupeState.Delete(key)
+			deps.DedupeState.CompareAndDelete(key, winner.reserved)
 			return
 		}
-		deps.DedupeState.Store(key, rec)
+		deps.DedupeState.CompareAndSwap(key, winner.reserved, rec)
 	}
 }
 
@@ -1810,7 +1826,7 @@ func dedupeFinishNoCache(deps ToolCallDeps, key string, winner *dedupeWinner, re
 		return
 	}
 	if deps.DedupeState != nil && key != "" {
-		deps.DedupeState.Delete(key)
+		deps.DedupeState.CompareAndDelete(key, winner.reserved)
 	}
 	if winner.inProcessEntry != nil {
 		entry := winner.inProcessEntry

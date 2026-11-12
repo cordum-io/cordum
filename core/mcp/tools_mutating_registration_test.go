@@ -113,6 +113,9 @@ func TestMutatingTools_RegisterAllTools_Includes7Mutators(t *testing.T) {
 // The dashboard Approvals page does not read an `mcp` query parameter,
 // so the advertised hint must point at the supported /approvals page,
 // show approval_id separately and keep the human-before-retry guidance.
+// Under the policy gate the approval_id resumes nothing, so the hint must
+// also name the Edge flow: retry_hint retry_with_approval_ref, the Edge
+// approvals page, and the `_approval_ref` retry argument.
 // Expectations are literal on purpose: they must not be derived from
 // mutatingApprovalHint, or the test would follow the constant wherever
 // it drifts.
@@ -150,6 +153,11 @@ func TestMutatingTools_ApprovalNavigationHint(t *testing.T) {
 			"approval_id",
 			"-32099",
 			"retry the call after they approve",
+			"retry_hint retry_with_approval_ref",
+			"mcp.policy_gate_enabled=true",
+			"approval_id is correlation-only",
+			"(/edge/approvals)",
+			"`_approval_ref` set to the approval_ref",
 		} {
 			if !strings.Contains(desc, want) {
 				t.Errorf("%s: description must contain %q; got %q", name, want, desc)

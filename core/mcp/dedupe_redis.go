@@ -47,8 +47,13 @@ const redisDedupePollInterval = 50 * time.Millisecond
 // `mcp:dedupe:<key>` Redis row. Completed rows store only bounded
 // metadata about the ToolCallResult; Redis never stores raw content
 // text/data, structuredContent, MIME values, or other tool-result bodies.
+//
+// Owner is a random token on a pending row. It makes the row unique to the
+// call that reserved it, so CompareAndSwap and CompareAndDelete can tell
+// that call's reservation from a later one under the same key.
 type redisDedupeRecord struct {
 	State      string                     `json:"state"`
+	Owner      string                     `json:"owner,omitempty"`
 	Result     *redisDedupeResultMetadata `json:"result,omitempty"`
 	ErrorClass string                     `json:"error_class,omitempty"`
 }
@@ -210,6 +215,64 @@ func (s *RedisDedupeStore) Delete(key string) {
 	ctx, cancel := context.WithTimeout(context.Background(), redisDedupeCommandTimeout)
 	defer cancel()
 	_ = s.client.Del(ctx, MCPDedupeKeyPrefix+key).Err()
+}
+
+// redisDedupeCompareAndSetScript replaces the row (ARGV[2], TTL ARGV[3] ms),
+// or deletes it when ARGV[2] is empty, only while it still equals ARGV[1].
+var redisDedupeCompareAndSetScript = redis.NewScript(`
+if redis.call("GET", KEYS[1]) ~= ARGV[1] then return 0 end
+if ARGV[2] == "" then
+  redis.call("DEL", KEYS[1])
+else
+  redis.call("SET", KEYS[1], ARGV[2], "PX", ARGV[3])
+end
+return 1`)
+
+// CompareAndSwap publishes new only while the slot still holds old, the
+// caller's pending record. The check and the write are one Lua script, so
+// a call whose slot was taken over cannot overwrite the new owner's row.
+//
+// A reservation that fail-soft landed in the fallback is finished there.
+// On a Redis error the record goes to the fallback only if that holds no
+// entry for the key, so an outage keeps per-instance dedupe without
+// replacing another call's entry.
+func (s *RedisDedupeStore) CompareAndSwap(key string, old, new any) bool {
+	if s.fallback.CompareAndSwap(key, old, new) {
+		return true
+	}
+	oldEncoded, oldOK := s.encode(old)
+	newEncoded, newOK := s.encode(new)
+	if s.client == nil || !oldOK || !newOK {
+		return false
+	}
+	swapped, err := s.compareAndSet(key, oldEncoded, newEncoded)
+	if err != nil {
+		_, loaded := s.fallback.LoadOrStore(key, new)
+		return !loaded
+	}
+	return swapped
+}
+
+// CompareAndDelete removes the slot only while it still holds old, in the
+// fallback or in Redis. See CompareAndSwap.
+func (s *RedisDedupeStore) CompareAndDelete(key string, old any) bool {
+	if s.fallback.CompareAndDelete(key, old) {
+		return true
+	}
+	oldEncoded, ok := s.encode(old)
+	if s.client == nil || !ok {
+		return false
+	}
+	deleted, _ := s.compareAndSet(key, oldEncoded, nil)
+	return deleted
+}
+
+func (s *RedisDedupeStore) compareAndSet(key string, old, new []byte) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), redisDedupeCommandTimeout)
+	defer cancel()
+	n, err := redisDedupeCompareAndSetScript.Run(ctx, s.client, []string{MCPDedupeKeyPrefix + key},
+		old, new, MCPDedupeTTL.Milliseconds()).Int()
+	return n == 1, err
 }
 
 // encode serializes the caller's value to the wire format the Redis

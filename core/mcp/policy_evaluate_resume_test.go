@@ -22,6 +22,7 @@ import (
 	"github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/infra/config"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -325,7 +326,7 @@ func TestResume_DoesNotWaitOnInFlightRefless(t *testing.T) {
 			t.Fatalf("resume = %+v, %v; want the upstream result", got.res, got.err)
 		}
 	case <-time.After(rsWait):
-		t.Fatal("the resume blocked behind the in-flight ref-less call's dedupe slot; it must run unslotted (C3)")
+		t.Fatal("the resume blocked behind the in-flight ref-less call's dedupe slot; it must take the slot over (C3)")
 	}
 	f.requireCounts(t, 1, 0)
 	select {
@@ -473,6 +474,307 @@ func TestMapHandlerError_ApprovalConflict(t *testing.T) {
 		rpcErr := srv.mapHandlerError(err)
 		if rpcErr == nil || rpcErr.Code != jsonRPCApprovalLifecycleErrorCode || !reflect.DeepEqual(rpcErr.Data, want) {
 			t.Errorf("mapHandlerError(%v) = %+v; want code %d with data %v", err, rpcErr, jsonRPCApprovalLifecycleErrorCode, want)
+		}
+	}
+}
+
+// TestResume_PolicyChangedSinceClaimFailsClosed: the claim read one policy
+// snapshot and the resumed call's pre-event is stamped with another, so the
+// approval was claimed under a policy that no longer applies. Nothing is
+// authorized or executed. A blank side is not a confirmed change, as at the
+// Edge mint (edgeMintSnapshotDrift).
+func TestResume_PolicyChangedSinceClaimFailsClosed(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, claimed, stamped string
+		changed                bool
+	}{
+		{"changed", "policy-v7", "policy-v8", true},
+		{"unchanged", "policy-v8", "policy-v8", false},
+		{"trimmed_equal", " policy-v8 ", "policy-v8", false},
+		{"blank_claimed", "", "policy-v8", false},
+		{"blank_pre_event", "policy-v7", " \t", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newRSFixture(pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN, NewInProcessDedupeStore())
+			f.deps.PolicySnapshot = func(context.Context) string { return tc.stamped }
+			marker := rsMarker(rsTool, rsArgs)
+			marker.PolicySnapshot = tc.claimed
+			res, err := f.invoke(rsResume(marker), rsArgs)
+			if !tc.changed {
+				if err != nil || res != f.upstream.result {
+					t.Fatalf("resume = %+v, %v; want the upstream result", res, err)
+				}
+				f.requireCounts(t, 1, 0)
+				return
+			}
+			if !errors.Is(err, ErrPolicySnapshotChanged) || res != nil {
+				t.Fatalf("resume = %+v, %v; want ErrPolicySnapshotChanged", res, err)
+			}
+			f.requireCounts(t, 0, 0)
+			if n := len(f.handoff.authorized()); n != 0 {
+				t.Errorf("authorizations = %d, want 0: the snapshot check runs before the handoff", n)
+			}
+		})
+	}
+}
+
+// TestJSONRPC_ResumePolicyChangedAfterClaim: over handleToolsCall, a policy
+// publish between the claim's snapshot read and the pre-event stamp answers the
+// resume with -32096 policy_snapshot_changed and runs nothing.
+func TestJSONRPC_ResumePolicyChangedAfterClaim(t *testing.T) {
+	t.Parallel()
+	f := newRSFixture(pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN, NewInProcessDedupeStore())
+	var reads atomic.Int64
+	snapshot := func(context.Context) string {
+		if reads.Add(1) == 1 {
+			return "policy-v7"
+		}
+		return "policy-v8"
+	}
+	f.deps.PolicySnapshot = snapshot
+	store := &fakeApprovalClaimStore{consumed: true, approval: &edge.EdgeApproval{
+		ApprovalRef: "edge_appr_rs_1", TenantID: rsTenant, Status: edge.ApprovalStatusApproved,
+	}}
+	srv := NewServer(newChannelTransport(), NewToolRegistry(), NewResourceRegistry(), ServerConfig{
+		Name: "test", Version: "0.0.0", ProtocolVersion: DefaultProtocolVersion,
+	}).WithPolicyGate(rsServer, f.deps).WithApprovalHold(ApprovalHoldDeps{
+		Store: store, PolicySnapshot: snapshot, ServerName: rsServer,
+	})
+	params, _ := json.Marshal(map[string]any{"name": rsTool, "arguments": map[string]any{
+		"path": "/data/rec-1", "record": "rec-1", "_approval_ref": "edge_appr_rs_1",
+	}})
+	res, rpcErr := srv.handleToolsCall(newAuthedToolCallCtx(), params)
+	want := map[string]any{"kind": "policy_snapshot_changed", "reason": policySnapshotChangedReason}
+	if res != nil || rpcErr == nil || rpcErr.Code != jsonRPCApprovalLifecycleErrorCode || !reflect.DeepEqual(rpcErr.Data, want) {
+		t.Fatalf("resume = %+v, %+v; want code %d with data %v", res, rpcErr, jsonRPCApprovalLifecycleErrorCode, want)
+	}
+	if store.calls != 1 || store.lastReq.PolicySnapshot != "policy-v7" {
+		t.Fatalf("claims = %d with snapshot %q; want 1 with policy-v7", store.calls, store.lastReq.PolicySnapshot)
+	}
+	f.requireCounts(t, 0, 0)
+	if n := len(f.handoff.authorized()); n != 0 {
+		t.Errorf("authorizations = %d, want 0", n)
+	}
+}
+
+// rsRace starts run once, right after the resume's first write to the dedupe
+// slot, and holds that write's caller until run's call has tried to reserve
+// the slot. This is the latest point a ref-less call can race the resume's
+// reservation.
+type rsRace struct {
+	armed, racing   atomic.Bool
+	fire, attempted sync.Once
+	run             func()
+	reserved        chan struct{}
+}
+
+func (r *rsRace) afterWrite(t *testing.T) {
+	if !r.armed.Load() {
+		return
+	}
+	r.fire.Do(func() {
+		r.racing.Store(true)
+		go r.run()
+		select {
+		case <-r.reserved:
+		case <-time.After(rsWait):
+			t.Error("the racing ref-less call never tried to reserve the dedupe slot")
+		}
+	})
+}
+
+func (r *rsRace) afterReserve() {
+	if r.racing.Load() {
+		r.attempted.Do(func() { close(r.reserved) })
+	}
+}
+
+// rsRacingStore reports an in-process store's slot writes to an rsRace.
+type rsRacingStore struct {
+	DedupeStore
+	t    *testing.T
+	race *rsRace
+}
+
+func (s rsRacingStore) LoadOrStore(key string, value any) (any, bool) {
+	actual, loaded := s.DedupeStore.LoadOrStore(key, value)
+	s.race.afterReserve()
+	return actual, loaded
+}
+
+func (s rsRacingStore) Store(key string, value any) {
+	s.DedupeStore.Store(key, value)
+	s.race.afterWrite(s.t)
+}
+
+func (s rsRacingStore) Delete(key string) {
+	s.DedupeStore.Delete(key)
+	s.race.afterWrite(s.t)
+}
+
+// rsRacingRedis does the same for RedisDedupeStore, whose reservation is
+// SETNX and whose unconditional writes are SET and DEL.
+type rsRacingRedis struct {
+	redis.Cmdable
+	t    *testing.T
+	race *rsRace
+}
+
+func (c rsRacingRedis) SetNX(ctx context.Context, key string, value any, ttl time.Duration) *redis.BoolCmd {
+	cmd := c.Cmdable.SetNX(ctx, key, value, ttl)
+	c.race.afterReserve()
+	return cmd
+}
+
+func (c rsRacingRedis) Set(ctx context.Context, key string, value any, ttl time.Duration) *redis.StatusCmd {
+	cmd := c.Cmdable.Set(ctx, key, value, ttl)
+	c.race.afterWrite(c.t)
+	return cmd
+}
+
+func (c rsRacingRedis) Del(ctx context.Context, keys ...string) *redis.IntCmd {
+	cmd := c.Cmdable.Del(ctx, keys...)
+	c.race.afterWrite(c.t)
+	return cmd
+}
+
+// TestResume_ReflessRacingReservationNeverCachesPending: a ref-less call that
+// races the resume's reservation of the dedupe slot must not mint another
+// approval and cache its `approval pending` over the executed call. It and
+// every later identical ref-less call replay the executed result.
+func TestResume_ReflessRacingReservationNeverCachesPending(t *testing.T) {
+	t.Parallel()
+	backends := []struct {
+		name string
+		open func(*testing.T, *rsRace) DedupeStore
+	}{
+		{"in_process", func(t *testing.T, race *rsRace) DedupeStore {
+			return rsRacingStore{DedupeStore: NewInProcessDedupeStore(), t: t, race: race}
+		}},
+		{"redis", func(t *testing.T, race *rsRace) DedupeStore {
+			client, _ := newMiniRedisDedupeBackend(t)
+			return NewRedisDedupeStore(rsRacingRedis{Cmdable: client, t: t, race: race})
+		}},
+	}
+	for _, backend := range backends {
+		t.Run(backend.name, func(t *testing.T) {
+			t.Parallel()
+			race := &rsRace{reserved: make(chan struct{})}
+			store := backend.open(t, race)
+			f := newRSFixture(pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN, store)
+			first, err := f.invoke(newAuthedToolCallCtx(), rsArgs)
+			rsRequirePending(t, first, err, "ref-1")
+			racer := make(chan rsOutcome, 1)
+			race.run = func() {
+				res, err := f.invoke(newAuthedToolCallCtx(), rsArgs)
+				racer <- rsOutcome{res: res, err: err}
+			}
+			race.armed.Store(true)
+			resumed, err := f.invoke(rsResume(rsMarker(rsTool, rsArgs)), rsArgs)
+			if err != nil || resumed != f.upstream.result {
+				t.Fatalf("resume = %+v, %v; want the upstream result", resumed, err)
+			}
+			want := rsReplay(t, store, f.upstream.result)
+			select {
+			case got := <-racer:
+				if got.err != nil || !reflect.DeepEqual(got.res, want) {
+					t.Errorf("racing ref-less call = %+v, %v; want the executed result replayed: %+v", got.res, got.err, want)
+				}
+			case <-time.After(rsWait):
+				t.Fatal("the racing ref-less call never finished")
+			}
+			later, err := f.invoke(newAuthedToolCallCtx(), rsArgs)
+			if err != nil || !reflect.DeepEqual(later, want) {
+				t.Errorf("later ref-less call = %+v, %v; want the executed result replayed: %+v", later, err, want)
+			}
+			f.requireCounts(t, 1, 1)
+		})
+	}
+}
+
+// TestResume_InFlightReflessCannotReplaceExecuted: a ref-less call already in
+// flight when the resume takes the slot still mints its own hold, but that
+// outcome is not cached over the executed call's.
+func TestResume_InFlightReflessCannotReplaceExecuted(t *testing.T) {
+	t.Parallel()
+	for _, backend := range rsBackends {
+		t.Run(backend.name, func(t *testing.T) {
+			t.Parallel()
+			store := backend.open(t)
+			f := newRSFixture(pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN, store)
+			f.pipeline.park, f.pipeline.entered = make(chan struct{}), make(chan struct{})
+			var once sync.Once
+			unpark := func() { once.Do(func() { close(f.pipeline.park) }) }
+			refless := rsGo(t, unpark, func() (*ToolCallResult, error) { return f.invoke(newAuthedToolCallCtx(), rsArgs) })
+			select {
+			case <-f.pipeline.entered:
+			case <-time.After(rsWait):
+				t.Fatal("the ref-less call never reached the pipeline")
+			}
+			resumed := rsGo(t, unpark, func() (*ToolCallResult, error) {
+				return f.invoke(rsResume(rsMarker(rsTool, rsArgs)), rsArgs)
+			})
+			select {
+			case got := <-resumed:
+				if got.err != nil || got.res != f.upstream.result {
+					t.Fatalf("resume = %+v, %v; want the upstream result", got.res, got.err)
+				}
+			case <-time.After(rsWait):
+				t.Fatal("the resume blocked behind the in-flight ref-less call")
+			}
+			unpark()
+			select {
+			case got := <-refless:
+				rsRequirePending(t, got.res, got.err, "ref-1")
+			case <-time.After(rsWait):
+				t.Fatal("the ref-less call never finished after release")
+			}
+			later, err := f.invoke(newAuthedToolCallCtx(), rsArgs)
+			if want := rsReplay(t, store, f.upstream.result); err != nil || !reflect.DeepEqual(later, want) {
+				t.Fatalf("later ref-less call = %+v, %v; want the executed result replayed: %+v", later, err, want)
+			}
+			f.requireCounts(t, 1, 1)
+		})
+	}
+}
+
+// TestDedupe_StaleWinnerCannotTouchResumedSlot: once a resume has taken the
+// slot, the call that held it before can neither publish to it nor delete it,
+// whichever way it finishes.
+func TestDedupe_StaleWinnerCannotTouchResumedSlot(t *testing.T) {
+	t.Parallel()
+	pending := &ToolCallResult{Content: []ContentItem{{Type: "text", Text: "approval pending: ref-2"}}}
+	executed := &ToolCallResult{Content: []ContentItem{{Type: "text", Text: `{"deleted":"rec-1"}`}}}
+	finishes := map[string]func(ToolCallDeps, string, *dedupeWinner){
+		"success": func(d ToolCallDeps, k string, w *dedupeWinner) { dedupeFinish(d, k, w, pending, nil) },
+		"error": func(d ToolCallDeps, k string, w *dedupeWinner) {
+			dedupeFinish(d, k, w, nil, errors.New("rs: mint failed"))
+		},
+		"no_cache": func(d ToolCallDeps, k string, w *dedupeWinner) { dedupeFinishNoCache(d, k, w, pending, nil) },
+	}
+	for _, backend := range rsBackends {
+		for name, finish := range finishes {
+			t.Run(backend.name+"/"+name, func(t *testing.T) {
+				t.Parallel()
+				store := backend.open(t)
+				deps, ctx := ToolCallDeps{DedupeState: store}, context.Background()
+				stale, hit := dedupeBegin(ctx, deps, "rs-key")
+				if stale == nil || hit != nil {
+					t.Fatalf("dedupeBegin = %+v, %+v; want the slot", stale, hit)
+				}
+				resume := dedupeBeginResume(deps, "rs-key")
+				if resume == nil {
+					t.Fatal("dedupeBeginResume = nil; the resume must own the slot")
+				}
+				dedupeFinish(deps, "rs-key", resume, executed, nil)
+				finish(deps, "rs-key", stale)
+				winner, hit := dedupeBegin(ctx, deps, "rs-key")
+				if want := rsReplay(t, store, executed); winner != nil || hit == nil || hit.err != nil || !reflect.DeepEqual(hit.result, want) {
+					t.Fatalf("dedupeBegin after the stale finish = %+v, %+v; want the executed result cached: %+v", winner, hit, want)
+				}
+			})
 		}
 	}
 }
