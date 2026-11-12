@@ -33,7 +33,7 @@ claims:
     enforcement_points: [{"path":"core/edge/agentd/evaluator.go","symbol":"Evaluator.evaluateHook"},{"path":"core/controlplane/gateway/handlers_edge_evaluate.go","symbol":"server.handleEdgeEvaluate"},{"path":"examples/cordum-edge-pack/overlays/policy.fragment.yaml","symbol":"claude-code.deny-secret-reads"}]
     tests: [{"package":"core/edge/agentd","name":"TestEvaluatorCallsGatewayAndRecordsDecisionEvidence"},{"package":"core/edge","name":"TestEdgeDemoPolicyFragmentParsesAndOrdersRules"}]
     evidence: "Hook and gateway evaluation exist and a demo Edge policy rule denies secret-path reads; the wrapper is not a qualified endpoint boundary; open findings R01, R02, R14, R15."
-    public_sources: ["cordum:README.md:14","cordum:README.md:257","cordum:README.md:259","cordum:README.md:260","cordum:README.md:273","cordum:README.md:377","cordum:README.md:381","cordum:README.md:384","cordum:README.md:385","cordum:README.md:386","cordum:README.md:387","cordum:README.md:388","cordum:README.md:438","cordum:docs/edge-claude-code.md:86","cordum:docs/edge-policy.md:77","cordum:docs/edge.md:21"]
+    public_sources: ["cordum:README.md:14","cordum:README.md:257","cordum:README.md:259","cordum:README.md:260","cordum:README.md:273","cordum:README.md:377","cordum:README.md:381","cordum:README.md:384","cordum:README.md:385","cordum:README.md:386","cordum:README.md:387","cordum:README.md:388","cordum:README.md:438","cordum:docs/configuration-reference.md:696","cordum:docs/configuration.md:80","cordum:docs/edge-claude-code.md:86","cordum:docs/edge-policy.md:77","cordum:docs/edge.md:21"]
   - id: CLM-003
     statement: "Quickstart runs TLS-secured Redis and generates secrets and certificate keypairs."
     boundary: "Repository quickstart script and its Docker Compose Redis configuration; not arbitrary operator deployments."
@@ -43,7 +43,7 @@ claims:
     enforcement_points: [{"path":"docker-compose.yml","symbol":"--tls-port"},{"path":"tools/scripts/quickstart.sh","symbol":"cordumctl generate-certs"}]
     tests: []
     evidence: "TLS configuration and certificate generation exist; no current deployment or bypass qualification is recorded."
-    public_sources: ["cordum:README.md:45","cordum:README.md:46","cordum:README.md:47","cordum:README.md:48","cordum:README.md:67"]
+    public_sources: ["cordum:README.md:45","cordum:README.md:46","cordum:README.md:47","cordum:README.md:48","cordum:README.md:67","cordum:docs/redis-security.md:7"]
   - id: CLM-004
     statement: "The post-deploy smoke test demonstrates a working approval-gate workflow."
     boundary: "Quickstart's optional platform smoke run against the installed stack; not every protected action."
@@ -93,7 +93,7 @@ claims:
     enforcement_points: [{"path":"core/edge/export.go","symbol":"SessionExportAssembler.collectArtifacts"},{"path":"core/controlplane/gateway/handlers_edge_export.go","symbol":"server.handleExportEdgeSession"}]
     tests: [{"package":"core/edge","name":"TestSessionExportAssemblerRecordsMissingArtifactsWithoutLeakingContent"},{"package":"core/controlplane/gateway","name":"TestGatewayEdgeRedactionRoundTripAcrossEventsApprovalsAndExport"}]
     evidence: "Metadata-only export exists; complete evidence/redaction protection is not qualified; open findings R08, R12."
-    public_sources: ["cordum:README.md:261","cordum:README.md:280","cordum:README.md:281","cordum:README.md:438","cordum:docs/edge.md:144"]
+    public_sources: ["cordum:README.md:261","cordum:README.md:280","cordum:README.md:281","cordum:README.md:438","cordum:docs/edge.md:144","cordum:docs/system_overview.md:106"]
   - id: CLM-009
     statement: "Destructive Edge retries require a resolved approval audit event matching the tenant, approval reference and action hash."
     boundary: "The configured ProvenanceGate and Edge approval-retry path; requested-only records are not approval proof."
@@ -113,7 +113,7 @@ claims:
     enforcement_points: [{"path":"core/controlplane/gateway/helpers.go","symbol":"server.evaluateSubmitPolicy"},{"path":"core/controlplane/scheduler/engine.go","symbol":"Engine.checkSafetyDecision"},{"path":"core/mcp/policy_evaluate.go","symbol":"EvaluateToolCall"},{"path":"core/controlplane/gateway/handlers_edge_evaluate.go","symbol":"server.handleEdgeEvaluate"}]
     tests: [{"package":"core/mcp","name":"TestInvokeToolWithPolicy_DenyDoesNotForwardUpstream"}]
     evidence: "Gateway submit, scheduler dispatch, MCP tool-call and Edge evaluate policy checks exist; parity and non-bypassable authority are unqualified; open findings R01, R15."
-    public_sources: ["cordum:README.md:288","cordum:README.md:303","cordum:README.md:611","cordum:README.md:616","cordum:README.md:621","cordum:docs/adr/001-safety-before-dispatch.md:1","cordum:docs/adr/005-output-policy-architecture.md:7"]
+    public_sources: ["cordum:README.md:288","cordum:README.md:303","cordum:README.md:611","cordum:README.md:616","cordum:README.md:621","cordum:docs/README.md:89","cordum:docs/adr/001-safety-before-dispatch.md:1","cordum:docs/adr/005-output-policy-architecture.md:7"]
   - id: CLM-011
     statement: "Approval-gated CAP jobs, action descriptors, MCP calls and Edge requests use canonical SHA-256 action hashes."
     boundary: "The respective Cordum normalization paths, not a qualification of every execution input or external artifact."
@@ -153,7 +153,7 @@ claims:
     enforcement_points: [{"path":"config/safety.yaml","symbol":"default_decision: deny"}]
     tests: []
     evidence: "The shipped default is deny; this is configuration evidence, not full policy-path qualification; open finding R07."
-    public_sources: ["cordum:README.md:315","cordum:README.md:316","cordum:README.md:317","cordum:README.md:436"]
+    public_sources: ["cordum:README.md:315","cordum:README.md:316","cordum:README.md:317","cordum:README.md:436","cordum:docs/DOCKER.md:550","cordum:docs/configuration-reference.md:566"]
   - id: CLM-015
     statement: "Lifecycle governance offers pre-execution checks, approvals, timeouts, circuit breakers and aggregate audit."
     boundary: "Integrated Cordum jobs and workflow runs; not continuous control of arbitrary external agent execution."
@@ -183,7 +183,7 @@ claims:
     enforcement_points: [{"path":"core/controlplane/scheduler/engine.go","symbol":"Engine.handleJobResult"},{"path":"core/controlplane/scheduler/output_safety_client.go","symbol":"redactOutputContent"}]
     tests: [{"package":"core/controlplane/scheduler","name":"TestHandleJobResultOutputQuarantined"},{"package":"core/controlplane/scheduler","name":"TestOutputClientContentModeStoresRedactedOutput"}]
     evidence: "Result handling quarantines output the output policy flags, and content mode stores redacted output; universal blocking and hallucination detection are not qualified; open finding R08."
-    public_sources: ["cordum:README.md:432"]
+    public_sources: ["cordum:README.md:432","cordum:docs/output-policy.md:225","cordum:docs/output-safety.md:78"]
   - id: CLM-018
     statement: "Human-in-the-loop approval mandates oversight for high-risk operations."
     boundary: "Policy-selected Cordum approval flows; not every operation an agent can perform."
@@ -233,7 +233,7 @@ claims:
     enforcement_points: [{"path":"core/controlplane/gateway/gateway_handshake_security.go","symbol":"loadGatewayHandshakeSecurity"},{"path":"core/controlplane/gateway/gateway.go","symbol":"RunWithAuth"}]
     tests: [{"package":"core/controlplane/gateway","name":"TestLoadGatewayHandshakeSecurityActiveModeRequiresSigningKey"}]
     evidence: "Control-plane key checks exist; external SDK behavior and deployed worker-trust enforcement are not qualified by this row."
-    public_sources: ["cordum:README.md:529","cordum:README.md:530","cordum:README.md:531","cordum:README.md:532","cordum:README.md:548","cordum:README.md:549","cordum:README.md:550","cordum:README.md:551","cordum:README.md:552","cordum:README.md:553","cordum:README.md:554","cordum:README.md:555"]
+    public_sources: ["cordum:README.md:529","cordum:README.md:530","cordum:README.md:531","cordum:README.md:532","cordum:README.md:548","cordum:README.md:549","cordum:README.md:550","cordum:README.md:551","cordum:README.md:552","cordum:README.md:553","cordum:README.md:554","cordum:README.md:555","cordum:docs/pack.md:639","cordum:docs/sdk-reference.md:302"]
   - id: CLM-023
     statement: "Integration packs provide governed repository, infrastructure, workflow and tool actions and approval notifications."
     boundary: "External cordum-packs integrations invoking Cordum; not all actions available through their provider credentials."
@@ -263,7 +263,7 @@ claims:
     enforcement_points: [{"path":"core/licensing/resolver.go","symbol":"EntitlementResolver.Init"},{"path":"core/licensing/tiers.go","symbol":"DefaultEntitlements"}]
     tests: [{"package":"core/licensing","name":"TestEntitlementResolverInvalidLicenseFallsBackToCommunity"}]
     evidence: "Fallback/default resolution exists; no end-to-end no-effect qualification of every listed limit is attached."
-    public_sources: ["cordum:README.md:658","cordum:README.md:659","cordum:README.md:660","cordum:README.md:661","cordum:README.md:662","cordum:README.md:663","cordum:README.md:664","cordum:README.md:665"]
+    public_sources: ["cordum:README.md:658","cordum:README.md:659","cordum:README.md:660","cordum:README.md:661","cordum:README.md:662","cordum:README.md:663","cordum:README.md:664","cordum:README.md:665","cordum:docs/configuration-reference.md:732"]
   - id: CLM-026
     statement: "Desktop-binary publication requires the signed-manifest gate."
     boundary: "Canonical cordum-io/cordum release.yml publication workflow, not independently distributed binaries."
@@ -323,7 +323,7 @@ claims:
     enforcement_points: [{"path":"core/controlplane/gateway/handlers_policy_bundles_signing.go","symbol":"signPolicyBundleContent"},{"path":"core/controlplane/safetykernel/kernel.go","symbol":"verifyPolicySignature"}]
     tests: [{"package":"core/controlplane/gateway","name":"TestPutPolicyBundle_RefusesWhenEnforceAndNoKey"},{"package":"core/controlplane/safetykernel","name":"TestVerifyPolicySignatureRequiresKeyWhenEnforced"}]
     evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 bundle signing refuses writes without a key outside off mode and the kernel requires a signature when enforced, with unit tests; open finding R13."
-    public_sources: ["cordum:docs/mcp/mutating-tools.md:225"]
+    public_sources: ["cordum:docs/mcp/mutating-tools.md:225","cordum:docs/output-policy.md:377"]
   - id: CLM-053
     statement: "The outbound MCP request verifier rejects requests whose signed timestamp is outside the clock-skew window and, with a nonce store configured, requests that reuse a nonce."
     boundary: "Receivers that call core/mcp/outbound Verifier.VerifyRequest; the signing side does not check the window."
@@ -363,7 +363,7 @@ claims:
     enforcement_points: [{"path":"core/controlplane/gateway/middleware.go","symbol":"rateLimitMiddleware"},{"path":"core/controlplane/gateway/middleware.go","symbol":"redisRateLimiter.Allow"}]
     tests: [{"package":"core/controlplane/gateway","name":"TestRedisRateLimiterMultiReplica"}]
     evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 rateLimitMiddleware applies one API limiter to /api/ and /mcp/, the default is 30 requests per second, and TestRedisRateLimiterMultiReplica covers the shared limiter."
-    public_sources: ["cordum:docs/mcp/_prereqs.md:57"]
+    public_sources: ["cordum:docs/configuration-reference.md:91","cordum:docs/mcp/_prereqs.md:57"]
   - id: CLM-057
     statement: "Audit chain events are SHA-256 hash-chained per tenant and HMAC-tagged, and chain verification detects modified entries."
     boundary: "Events appended through the core/audit Chainer with a signing key configured; which events reach the chain is not covered."
@@ -373,4 +373,124 @@ claims:
     enforcement_points: [{"path":"core/audit/chain.go","symbol":"Chainer.Append"},{"path":"core/audit/chain_verify.go","symbol":"VerifyChain"}]
     tests: [{"package":"core/audit","name":"TestChainer_AppendGenesisEvent"},{"package":"core/audit","name":"TestVerifyChain_CrossWindowLinkageDetectsMutation"}]
     evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 Chainer.Append links each event to its predecessor and VerifyChain detects mutation in tests; completeness is not qualified; open findings R11, R12."
-    public_sources: ["cordum:docs/mcp/scope-preapproval.md:145"]
+    public_sources: ["cordum:docs/audit-chain.md:3","cordum:docs/audit-operations.md:4","cordum:docs/audit.md:376","cordum:docs/mcp/scope-preapproval.md:145"]
+  - id: CLM-058
+    statement: "Cordum maps every audit event type to SOC 2 Trust Services Criteria and a governance or routine category in one default mapping that operators can override."
+    boundary: "The core/audit SOC 2 classification used by audit exports; a mapping is not an attestation or an audit opinion."
+    status: supported
+    invariants: []
+    findings: []
+    enforcement_points: [{"path":"core/audit/soc2.go","symbol":"CategoryFor"}]
+    tests: [{"package":"core/audit","name":"TestDefaultSOC2Mapping_CoversAllEventTypes"}]
+    evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 core/audit/soc2.go holds the default mapping and TestDefaultSOC2Mapping_CoversAllEventTypes checks coverage; no SOC 2 attestation is in the repository."
+    public_sources: ["cordum:docs/audit-chain.md:17","cordum:docs/audit-operations.md:244","cordum:docs/audit.md:134"]
+  - id: CLM-059
+    statement: "Gateway API requests are confined to the caller's authenticated tenant; a request naming another tenant is refused unless the credential allows cross-tenant access."
+    boundary: "Authenticated /api/ routes through tenantMiddleware and handler tenant resolution; partitioning inside shared stores is not covered."
+    status: supported
+    invariants: []
+    findings: []
+    enforcement_points: [{"path":"core/controlplane/gateway/middleware.go","symbol":"tenantMiddleware"},{"path":"core/controlplane/gateway/handlers_auth.go","symbol":"server.resolveTenant"}]
+    tests: [{"package":"core/controlplane/gateway","name":"TestResolveTenantCrossTenantDenied"}]
+    evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 tenantMiddleware and server.resolveTenant refuse a tenant other than the authenticated one, with a unit test; per-handler coverage of every route is not qualified."
+    public_sources: ["cordum:docs/api-reference.md:72"]
+  - id: CLM-060
+    statement: "Admins with the LegalHold entitlement can create, list and release per-tenant legal holds on audit data."
+    boundary: "The gateway legal-hold API and its Redis hold records; enforcement of a hold against retention and deletion is not covered."
+    status: supported
+    invariants: []
+    findings: []
+    enforcement_points: [{"path":"core/controlplane/gateway/handlers_legal_hold.go","symbol":"server.handleCreateLegalHold"},{"path":"core/audit/legal_hold.go","symbol":"LegalHoldStore.CreateHold"}]
+    tests: [{"package":"core/audit","name":"TestCreateHold_StoredInRedis"}]
+    evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 the hold API and store exist with unit tests; enforcement of a hold against retention and deletion is not qualified."
+    public_sources: ["cordum:docs/api-reference.md:721"]
+  - id: CLM-061
+    statement: "In production mode the gateway refuses to start without configured API keys and rejects the insecure no-auth opt-out."
+    boundary: "The gateway basic auth provider started with CORDUM_ENV=production or CORDUM_PRODUCTION=true."
+    status: supported
+    invariants: []
+    findings: []
+    enforcement_points: [{"path":"core/controlplane/gateway/auth/basic.go","symbol":"NewBasicAuthProvider"}]
+    tests: []
+    evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 NewBasicAuthProvider returns an error in production without API keys or with CORDUM_ALLOW_INSECURE_NO_AUTH; no test covers the production refusal."
+    public_sources: ["cordum:docs/DOCKER.md:565"]
+  - id: CLM-062
+    statement: "The scheduler enforces policy budget constraints before dispatch: max_retries fails the job once attempts are exhausted and max_concurrent_jobs defers jobs while the tenant is at its limit."
+    boundary: "Constraints returned with Safety Kernel decisions for scheduler-dispatched jobs; runtime and artifact limits are passed to workers, and other budget types are not enforced."
+    status: supported
+    invariants: []
+    findings: []
+    enforcement_points: [{"path":"core/controlplane/scheduler/engine.go","symbol":"Engine.processJob"}]
+    tests: [{"package":"core/controlplane/scheduler","name":"TestProcessJobBelowMaxRetriesStillRetries"},{"package":"core/controlplane/scheduler","name":"TestEngine_RetryCapPreservedOnGetAttemptsError"}]
+    evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 Engine.processJob checks max_retries and max_concurrent_jobs before dispatch, with retry-cap tests; no test covers the tenant concurrency limit."
+    public_sources: ["cordum:docs/CORE.md:412","cordum:docs/SCHEDULER_POOL_SPEC.md:3"]
+  - id: CLM-063
+    statement: "The scheduler's CAP production profile refuses to start without every readiness dependency, rejects a reused result message ID with a different digest, and resolves context only through its installed resolver with expiry, size and digest checks."
+    boundary: "The scheduler with CORDUM_CAP_PROFILE=production; the API gateway and workflow engine refuse the production profile."
+    status: supported
+    invariants: []
+    findings: []
+    enforcement_points: [{"path":"core/infra/capprofile/profile.go","symbol":"Readiness.Validate"},{"path":"core/infra/store/job_event_store.go","symbol":"RedisJobStore.ApplyJobResult"},{"path":"core/infra/resource/registry.go","symbol":"Registry.Resolve"}]
+    tests: [{"package":"core/infra/capprofile","name":"TestReadinessValidateRejectsEachMissingDependency"},{"package":"core/infra/store","name":"TestApplyJobResultRejectsMessageIDDigestConflict"},{"package":"core/infra/resource","name":"TestRegistryValidatesExpirySizeAndDigestAfterFetch"},{"package":"core/infra/resource","name":"TestRegistryHasNoNetworkOrFileFallback"}]
+    evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 readiness validation, digest-conflict rejection and registry checks exist with unit tests; end-to-end production qualification is not attached."
+    public_sources: ["cordum:docs/cap_production_profile.md:91"]
+  - id: CLM-064
+    statement: "Workflow runs record an ordered timeline of run events in the Redis workflow store."
+    boundary: "The Redis workflow store; the timeline keeps the newest 1000 entries and is deleted with its run."
+    status: supported
+    invariants: []
+    findings: []
+    enforcement_points: [{"path":"core/workflow/store_redis.go","symbol":"RedisStore.AppendTimelineEvent"}]
+    tests: [{"package":"core/workflow","name":"TestRunTimelineAppendAndList"}]
+    evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 RedisStore.AppendTimelineEvent appends and trims to 1000 entries and RedisStore.DeleteRun removes the timeline; no write-once storage is used."
+    public_sources: ["cordum:docs/CORE.md:599","cordum:docs/backend_capabilities.md:55","cordum:docs/backend_feature_matrix.md:12","cordum:docs/system_overview.md:197"]
+  - id: CLM-065
+    statement: "Job submissions with an idempotency key are deduplicated per tenant through a Redis SETNX reservation shared by all gateway replicas."
+    boundary: "Gateway HTTP and gRPC job submission with Redis; delivery of the dispatched job is not deduplicated by this key."
+    status: supported
+    invariants: []
+    findings: []
+    enforcement_points: [{"path":"core/infra/store/job_store.go","symbol":"RedisJobStore.TrySetIdempotencyKeyScoped"}]
+    tests: [{"package":"core/infra/store","name":"TestIdempotencyKeySetNXRace"}]
+    evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 the gateway submit paths reserve the key with RedisJobStore.TrySetIdempotencyKeyScoped and TestIdempotencyKeySetNXRace covers the race; exactly-once execution is not qualified."
+    public_sources: ["cordum:docs/horizontal-scaling.md:305","cordum:docs/sdk-reference.md:834"]
+  - id: CLM-066
+    statement: "When the Safety Kernel is unavailable and the input fail mode is closed, the default, the scheduler requeues the job instead of dispatching it."
+    boundary: "Scheduler input safety evaluation; requeues use the fixed safetyThrottleDelay, and a configured input fail-open mode dispatches the job with an audit event."
+    status: supported
+    invariants: []
+    findings: []
+    enforcement_points: [{"path":"core/controlplane/scheduler/engine.go","symbol":"Engine.processJob"}]
+    tests: [{"package":"core/controlplane/scheduler","name":"TestSafetyUnavailable_FailClosed"}]
+    evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 Engine.processJob returns RetryAfter with safetyThrottleDelay for SafetyUnavailable in closed mode and TestSafetyUnavailable_FailClosed covers it."
+    public_sources: ["cordum:docs/production.md:350","cordum:docs/scheduler-internals.md:411"]
+  - id: CLM-067
+    statement: "The shipped Kubernetes manifests run Cordum pods under a dedicated ServiceAccount with automountServiceAccountToken set to false."
+    boundary: "deploy/k8s/base.yaml and overlays built on it; operator-written manifests and cluster RBAC are not covered."
+    status: supported
+    invariants: []
+    findings: []
+    enforcement_points: []
+    tests: []
+    evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 deploy/k8s/base.yaml sets automountServiceAccountToken: false on the ServiceAccount and each pod spec; no test checks Kubernetes API access from a pod."
+    public_sources: ["cordum:docs/k8s-deployment.md:105"]
+  - id: CLM-068
+    statement: "Audit events identify API-key actors by principal id, key id, key name or a truncated SHA-256 fingerprint, and audit summaries draw only on allowlisted extra fields."
+    boundary: "Gateway audit events and their SIEM form plus core/audit summary labels; log lines and free-text values supplied by producers are not covered."
+    status: supported
+    invariants: []
+    findings: []
+    enforcement_points: [{"path":"core/controlplane/gateway/policybundles/audit.go","symbol":"ActorIdentity"},{"path":"core/audit/humanize.go","symbol":"HumanSummary"}]
+    tests: [{"package":"core/controlplane/gateway/policybundles","name":"TestAuditEntryToSIEM_NeverLeaksRawKey"},{"package":"core/audit","name":"TestAllowedExtra_RejectsNonAllowlistedKeys"}]
+    evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 ActorIdentity emits a fingerprint, not the key, and summaries use an extra-key allowlist, with unit tests; absence of secrets in every audit value is not qualified."
+    public_sources: ["cordum:docs/audit.md:223"]
+  - id: CLM-069
+    statement: "With CORDUM_AGENTD_STRICT_PERMS set, cordum-agentd fails when its state directory permissions are broader than owner-only."
+    boundary: "The cordum-agentd local state store; without the setting it logs a warning and continues."
+    status: supported
+    invariants: []
+    findings: []
+    enforcement_points: [{"path":"core/edge/agentd/state_store.go","symbol":"handleStatePermissionError"}]
+    tests: [{"package":"core/edge/agentd","name":"TestStateDirStrictPermsFailsClosed"}]
+    evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 handleStatePermissionError returns an error in strict mode and the Windows test TestStateDirStrictPermsFailsClosed covers it."
+    public_sources: ["cordum:docs/configuration.md:83"]
