@@ -19,12 +19,14 @@ on:
     branches: [main]
     paths:
       - 'sdk/typescript/**'
+      - 'docs/api/openapi/cordum-api.yaml'
       - '.github/workflows/sdk-typescript.yml'
     tags:
       - 'sdk-ts-v*.*.*'
   pull_request:
     paths:
       - 'sdk/typescript/**'
+      - 'docs/api/openapi/cordum-api.yaml'
       - '.github/workflows/sdk-typescript.yml'
 
 defaults:
@@ -73,6 +75,10 @@ jobs:
         # match that `npm ci` enforces. `npm install` tolerates the
         # platform drift and regenerates only the affected entries.
         run: npm install --no-audit --no-fund
+
+      - name: Check generated schema is current
+        # OpenAPI edits must ship regenerated types; browser and publish need this job.
+        run: npm run check:generated
 
       - name: Typecheck
         run: npm run typecheck
