@@ -158,6 +158,7 @@ func (b *BufferedExporter) logDroppedEvent(event SIEMEvent, reason string) {
 		"event_type", event.EventType,
 		"action", event.Action,
 	)
+	auditEventDrops.WithLabelValues(reason).Inc()
 }
 
 // Backend returns the underlying SIEM exporter wrapped by this buffer.
@@ -253,6 +254,11 @@ func (b *BufferedExporter) effectiveDrainTimeout() time.Duration {
 }
 
 func (b *BufferedExporter) exportWithRetry(ctx context.Context, events []SIEMEvent) {
+	if b.exporter == nil {
+		slog.Warn("audit exporter not configured, dropping batch", "events", len(events))
+		auditEventDrops.WithLabelValues("no_exporter").Add(float64(len(events)))
+		return
+	}
 	backoff := b.retryBackoff
 	if backoff <= 0 {
 		backoff = time.Second

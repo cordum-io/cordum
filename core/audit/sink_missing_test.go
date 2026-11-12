@@ -1,7 +1,10 @@
 package audit
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -9,6 +12,10 @@ import (
 )
 
 func TestNATSAuditPublisher_NilFallbackDropsOnPublishFailure(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
 	bus := &mockAuditBus{publishErr: errors.New("publish unavailable")}
 	pub := NewNATSAuditPublisher(bus, nil)
 	before := testutil.ToFloat64(auditEventDrops.WithLabelValues("no_fallback"))
@@ -22,6 +29,47 @@ func TestNATSAuditPublisher_NilFallbackDropsOnPublishFailure(t *testing.T) {
 	}
 	if err := pub.Close(); err != nil {
 		t.Fatal(err)
+	}
+	if got := bytes.Count(logs.Bytes(), []byte(`"level":"WARN"`)); got != 2 {
+		t.Fatalf("warnings = %d, want one per dropped event", got)
+	}
+}
+
+func TestBufferedExporter_CountsRejectedEvents(t *testing.T) {
+	for _, reason := range []string{"buffer_full", "closed"} {
+		t.Run(reason, func(t *testing.T) {
+			b := &BufferedExporter{ch: make(chan SIEMEvent, 1), done: make(chan struct{})}
+			if reason == "closed" {
+				b.closed = true
+				close(b.done)
+			} else {
+				b.Send(testEvent())
+			}
+			before := testutil.ToFloat64(auditEventDrops.WithLabelValues(reason))
+			b.Send(testEvent())
+			if got := testutil.ToFloat64(auditEventDrops.WithLabelValues(reason)) - before; got != 1 {
+				t.Fatalf("%s drops = %v, want 1", reason, got)
+			}
+		})
+	}
+}
+
+func TestBufferedExporter_NilExporterBatchAndDrain(t *testing.T) {
+	for _, batchSize := range []int{1, 100} {
+		t.Run(fmt.Sprintf("batch_%d", batchSize), func(t *testing.T) {
+			before := testutil.ToFloat64(auditEventDrops.WithLabelValues("no_exporter"))
+			b := NewBufferedExporter(nil, WithBatchSize(batchSize), WithFlushInterval(time.Hour))
+			b.Send(testEvent())
+			if batchSize == 1 {
+				waitForDropCount(t, "no_exporter", before+1)
+			}
+			if err := b.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if got := testutil.ToFloat64(auditEventDrops.WithLabelValues("no_exporter")) - before; got != 1 {
+				t.Fatalf("no_exporter drops = %v, want 1", got)
+			}
+		})
 	}
 }
 
