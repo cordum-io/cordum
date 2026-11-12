@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+
+- The eight required checks also run on `merge_group` events, with OpenAPI
+  Validate comparing each group against its base commit. No check's content
+  changed; enabling the merge queue remains a maintainer change to the Main
+  ruleset (task-fd34e921).
+
 ## [v1.3.1] - 2026-11-11
 
 Changes on main since the v1.3.0 tag (d027ae97, 2026-11-11).

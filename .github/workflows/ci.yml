@@ -7,6 +7,8 @@ on:
   # get full CI instead of only the unfiltered smoke/e2e workflows.
   pull_request:
     branches: [ main, develop, 'moe/**' ]
+  merge_group:
+    types: [checks_requested]
 
 jobs:
   test:
@@ -650,4 +652,4 @@ jobs:
     - name: Validate OpenAPI
       run: make openapi-validate
       env:
-        OPENAPI_BASE_REF: origin/${{ github.base_ref || 'main' }}
+        OPENAPI_BASE_REF: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || format('origin/{0}', github.base_ref || 'main') }}
