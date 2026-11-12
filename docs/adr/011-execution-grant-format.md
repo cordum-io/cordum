@@ -142,8 +142,8 @@ without importing their messages. M2A-02 assigns payload field numbers.
 | G2 | action.kubernetes_manifest_apply.objects | repeated KubernetesObjectRef { string api_group; string api_version; string kind; string namespace; string name; } | Nonempty | Closed object set, sorted/unique by (api_group, api_version, kind, namespace, name); api_group may be empty for core APIs; all others required. Namespace equals target.resource; M2B-01 validates manifest-to-object equality and apply/ownership/conflict semantics. |
 | G3 | action.target.account, action.target.environment, action.target.resource | string each | Yes | Independently established cluster/account identity, not a kube-context alias; resource is the named namespace. Any mismatch: action mismatch (M2A-03); resolution semantics M2B-01. |
 | G3 | action.preconditions | repeated Precondition { string resource; PreconditionKind kind; string expected_version; } | As required by operation | Kind is MUST_EXIST, MUST_NOT_EXIST or VERSION_EQUALS; UNSPECIFIED/unknown denies. Sort by (resource, kind), unique on that key; expected_version required only for VERSION_EQUALS, otherwise empty. Broker evaluates immediately before effect; unsupported or unsatisfied condition denies (M2B-01). |
-| G4 | action.inputs | repeated InputDigest { string name; string media_type; bytes sha256; uint64 size_bytes; } | Nonempty | Sort/unique by name; sha256 exactly 32 bytes; size within bounds. Read immutable bytes by digest from M2A-07, check length and re-hash before use; never reopen a path. M2A-03: digest mismatch. |
-| G4 | action.runtime | RuntimeIdentity { string tool_id; string tool_version; bytes image_sha256; } | Yes; image digest when profile requires | Bind approved tool/version and, when required, 32-byte image identity to actual runtime; missing field or action mismatch (M2A-03); profile interpretation M2A-04/M2B-01. |
+| G4 | action.inputs | repeated InputDigest { string name; string media_type; bytes sha256; uint64 size_bytes; } | Nonempty | Nonempty name/media_type, sorted/unique by name; sha256 exactly 32 bytes; size within bounds. Read immutable bytes by digest from M2A-07, check length and re-hash before use; never reopen a path. M2A-03: digest mismatch. |
+| G4 | action.runtime | RuntimeIdentity { string tool_id; string tool_version; bytes image_sha256; } | Yes; image digest when profile requires | Nonempty tool/version; image_sha256 is absent or exactly 32 bytes, required when profile demands. Bind every provided runtime identifier to actual runtime; missing field or action mismatch (M2A-03); profile interpretation M2A-04/M2B-01. |
 | G5 | policy_digest | bytes(32) | Yes | Identity of effective policy from M1 hardening, not a file label; M2A-09 resolves identity and M2A-03 rejects mismatch. |
 | G5 | authority_epoch | uint64 | Yes, greater than 0 | Match authoritative current epoch; older or unknown future value denies. Freshness and revocation semantics owned by M2A-05. |
 | G6 | approval.state | ApprovalState enum { UNSPECIFIED, NOT_REQUIRED, APPROVED } | Yes | UNSPECIFIED/unknown denies; NOT_REQUIRED only when independently checked policy and M2A-04 ceilings allow no approval; never an issuer-controlled override. |
@@ -181,11 +181,10 @@ Unknown construction or schema version denies, with no fallback or downgrade.
 Issuers emit only a version declared by the intended executor; no common
 version means no grant (I02).
 
-Any added, removed, retyped, renumbered or semantically changed field requires
-a new schema_version, deliberately unlike CAP additive evolution. Removed
-names and numbers are reserved. Released-version golden vectors never change.
-An implementation must retain the exact historical schema for each accepted
-version, rather than parse old grants permissively with a newer schema.
+Any field addition, removal, retyping, renumbering or changed meaning bumps schema_version,
+unlike CAP additive evolution. Reserve removed names/numbers; released vectors never change.
+Retain the exact historical schema for each accepted version; never parse old grants
+permissively with a newer schema.
 
 ## Unknown fields
 
@@ -225,8 +224,7 @@ storage, and never trust a key carried by a grant. Do not reuse
 `SAFETY_POLICY_PUBLIC_KEY`, and the `CORDUM_POLICY_DEV_SIGNING_SEED` fallback.
 Do not use `VerifyRawAny`: it has no key-id binding. There is no grant
 strict-mode knob; `CORDUM_POLICY_STRICT` off/warn behavior does not apply.
-An empty or invalid store denies every grant; production executor startup
-must refuse it, following the fail-closed precedent of
+An empty or invalid store denies every grant; production startup must refuse it, following
 [`CheckKernelBoot`](../../core/policysign/boot.go) in enforce mode, not its loader.
 Only the issuer holds private signing material (M0-02 inventory); public trust
 material is distributed under operator integrity control. ParsePrivateKey may
@@ -278,32 +276,25 @@ and revocation checks. No claim of exactly-once external effects is made.
 
 ## Consequences
 
-The proposed format reuses typed protobuf tooling and Ed25519 primitives,
-separates trust domains, and fixes identities for approval, state and evidence.
-Its cost is a strict wire profile and lifecycle machinery still to implement.
-Dependency bumps must rerun unchanged golden vectors; non-Go implementations
-need the same accepted/rejected byte vectors (as CAP-PRODUCTION does).
-Human readability requires a decode tool, every schema change requires a
-version bump, and key rotation requires coordinated operator action.
+The proposed format reuses protobuf and Ed25519, separates trust domains, and fixes
+approval/state/evidence identities. Strict wire validation and lifecycle machinery remain to build.
+Dependency bumps must rerun unchanged golden vectors; non-Go verifiers need the same
+accepted/rejected byte vectors (as CAP-PRODUCTION does). Readability requires a decode tool;
+schema changes require version bumps, and rotation needs coordinated operator action.
 
 ## Open questions
 
 - Relocation to CAP for out-of-tree/non-Go executors: M2B-01/M6.
-- Kubernetes apply, ownership/conflict and precondition semantics, including
-  mapping immutable manifests to the closed object set: M2B-01.
-- Per-tenant/per-operation issuer keys, custody and executor trust
-  configuration encoding: PR1 with M2A-03.
+- Kubernetes apply, ownership/conflicts, preconditions and manifest-to-object-set equality: M2B-01.
+- Per-tenant/per-operation issuer keys, custody and trust configuration encoding: PR1/M2A-03.
 - Revocation/freshness bounds and effect-boundary coordination: M2A-05/PR1-13.
 - Maximum lifetime and clock-skew values: M2A-04.
-- Executor identity (SPIFFE or Cordum service identity) and authenticated
-  broker-authority channel: M2B-01.
+- Executor identity (SPIFFE or Cordum service identity) and broker-authority channel: M2B-01.
 - Effective-policy digest definition: M1 hardening plus M2A-09.
-- Usage counts above one, partial multi-object effects and reconciliation:
-  M2A-06/M2B. Single-use v1 does not resolve these questions.
+- Usage counts above one, partial effects and reconciliation: M2A-06/M2B; unresolved by single-use v1.
 
-For M0-02's M2A-01 questions: Envelope options, Canonical bytes and Grant fields
-answer encoding and binding; G5/G8, Rotation and Distribution and verification
-order cover epochs, expiry and revocation while assigning bound values to their
-owners; Versioning, Unknown fields, Key ids and Trust store cover compatibility
-and trust. M2A-11 owns integration and full regression evidence. This record
-validates only a written decision, not implementation or deployment behavior.
+For M0-02's questions: Envelope options, Canonical bytes and Grant fields answer encoding/binding;
+G5/G8, Rotation and Distribution and verification order cover epochs, expiry and revocation,
+assigning bound values to their owners; Versioning, Unknown fields, Key ids and Trust store
+cover compatibility/trust. M2A-11 owns integration and full regression evidence.
+This record validates only a written decision, not implementation or deployment behavior.
