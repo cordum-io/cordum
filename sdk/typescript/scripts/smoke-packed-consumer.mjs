@@ -109,7 +109,7 @@ function smokePacked(work) {
     name: "cordum-sdk-packed-consumer", private: true, type: "module",
   }));
   run("offline consumer install", [npmExecPath, "install", "--offline", "--no-audit",
-    "--no-fund", "--ignore-scripts", tarball], consumer);
+    "--no-fund", "--ignore-scripts", "--cache", join(work, "npm-cache"), tarball], consumer);
   writeRuntime(consumer);
   run("consumer ESM/CJS runtime", [join(consumer, "runtime.mjs")], consumer);
   writeTypes(consumer);
