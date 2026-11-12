@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import type { ColumnDef } from "@tanstack/react-table";
+import type { DataTableColumn } from "./DataTable";
 import { DataTable, VIRTUALIZE_THRESHOLD, type DataTableProps, type DecisionTier } from "./DataTable";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -12,7 +12,7 @@ interface Row {
   decision?: DecisionTier;
 }
 
-const baseColumns: ColumnDef<Row, unknown>[] = [
+const baseColumns: DataTableColumn<Row>[] = [
   {
     accessorKey: "name",
     header: "Name",
@@ -129,7 +129,7 @@ describe("primitives/DataTable", () => {
   it("does NOT fire onRowClick when the click originates inside an interactive child", () => {
     const handler = vi.fn();
     const data: Row[] = [{ id: "r1", name: "Alpha" }];
-    const cols: ColumnDef<Row, unknown>[] = [
+    const cols: DataTableColumn<Row>[] = [
       {
         accessorKey: "name",
         header: "Name",
