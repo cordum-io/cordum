@@ -60,7 +60,7 @@ func runClient(ctx context.Context, id int, wg *sync.WaitGroup) {
 
 	apiKey := resolveAPIKey()
 	dialer := websocket.Dialer{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: *flagTLSSkip},
+		TLSClientConfig:  &tls.Config{InsecureSkipVerify: *flagTLSSkip},
 		HandshakeTimeout: 10 * time.Second,
 	}
 	header := http.Header{
