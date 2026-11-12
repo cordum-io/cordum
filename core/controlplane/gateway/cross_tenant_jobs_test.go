@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
@@ -65,13 +64,6 @@ func crossTenantGRPCSubmit(t *testing.T, sw *crossTenantSweep) {
 	if reflect.DeepEqual(lists, crossTenantOwnerLists(t, sw)) || len(sw.publishedSince(mark)) == 0 {
 		t.Fatal("owner gRPC submit did not persist and publish a B job")
 	}
-}
-
-func crossTenantGRPCContext(t *testing.T, who crossTenantSweepTenant) context.Context {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	t.Cleanup(cancel)
-	return context.WithValue(ctx, auth.ContextKey{}, &auth.AuthContext{Tenant: who.tenantID, PrincipalID: who.principalID, Role: "admin"})
 }
 
 func crossTenantGRPCStatus(t *testing.T, sw *crossTenantSweep) {
@@ -189,8 +181,6 @@ func seedCrossTenantRemediation(t *testing.T, sw *crossTenantSweep, id, marker s
 		t.Fatal(err)
 	}
 }
-
-type crossTenantJobSetup func(t *testing.T, sw *crossTenantSweep, id, marker string)
 
 func crossTenantOwnerLists(t *testing.T, sw *crossTenantSweep) map[string]string {
 	t.Helper()

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	edgecore "github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -20,6 +21,8 @@ import (
 )
 
 type crossTenantSweepTenant struct{ tenantID, apiKey, principalID string }
+
+type crossTenantJobSetup func(t *testing.T, sw *crossTenantSweep, id, marker string)
 
 type crossTenantSweep struct {
 	server           *server
@@ -219,4 +222,11 @@ func crossTenantJobMeta(t *testing.T, sw *crossTenantSweep, id string) map[strin
 		t.Fatalf("B job metadata unavailable: %v, %v", err, meta)
 	}
 	return meta
+}
+
+func crossTenantGRPCContext(t *testing.T, who crossTenantSweepTenant) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	t.Cleanup(cancel)
+	return context.WithValue(ctx, auth.ContextKey{}, &auth.AuthContext{Tenant: who.tenantID, PrincipalID: who.principalID, Role: "admin"})
 }
