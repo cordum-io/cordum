@@ -1005,7 +1005,15 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 		skipDedupeCache = true
 		return denyResult, nil
 	}
-	finalResult, finalErr = invokeUpstreamWithEvents(ctx, deps, params, evalResult, "", stableEventID)
+	// An ALLOW can also execute a call whose claim consumed an approval, for
+	// example once the taint lookup has recovered since the hold. Its event
+	// still names that approval (task-74f4c01e). Audit only: nothing is
+	// authorized by it, and the marker stays unused for the registry gate.
+	approvalRef := ""
+	if consumed != nil {
+		approvalRef = consumed.Ref
+	}
+	finalResult, finalErr = invokeUpstreamWithEvents(ctx, deps, params, evalResult, approvalRef, stableEventID)
 	return finalResult, finalErr
 }
 
@@ -1046,7 +1054,8 @@ func resumeConsumedApproval(ctx context.Context, deps ToolCallDeps, params ToolC
 
 // invokeUpstreamWithEvents executes an authorized call (an ALLOW, or a
 // resume whose consumed approval is approvalRef) and emits its post or
-// failed event. The events carry approvalRef, empty for an ALLOW.
+// failed event. The events carry approvalRef, empty unless the call's claim
+// consumed an approval.
 func invokeUpstreamWithEvents(ctx context.Context, deps ToolCallDeps, params ToolCallParams, evalResult EvaluateToolCallResult, approvalRef, eventID string) (*ToolCallResult, error) {
 	if deps.Upstream == nil {
 		return nil, errors.New("deps.Upstream is required for ALLOW decisions")
