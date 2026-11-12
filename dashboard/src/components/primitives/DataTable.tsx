@@ -11,6 +11,11 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+/** Column definition for DataTable; the only place callers name the table library's column type. */
+export type DataTableColumn<T> = ColumnDef<T, unknown>;
+/** Sorting state accepted by `initialSorting`. */
+export type DataTableSorting = SortingState;
+
 export type DecisionTier =
   | "allow"
   | "deny"
@@ -19,14 +24,14 @@ export type DecisionTier =
   | "throttle";
 
 export interface DataTableProps<T> {
-  columns: ColumnDef<T, unknown>[];
+  columns: DataTableColumn<T>[];
   data: T[];
   emptyState: ReactNode;
   onRowClick?: (row: T) => void;
   decisionAccessor?: (row: T) => DecisionTier | undefined;
   className?: string;
   compact?: boolean;
-  initialSorting?: SortingState;
+  initialSorting?: DataTableSorting;
   /** Estimated row pixel height for the virtualizer. Default 44. */
   estimatedRowHeight?: number;
   /** Scrollable container height when virtualization is active. Default 480. */

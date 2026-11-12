@@ -38,13 +38,12 @@ is still alive — see migration story below.
 ### Quick example
 
 ```tsx
-import { type ColumnDef } from "@tanstack/react-table";
-import { DataTable } from "@/components/primitives/DataTable";
+import { DataTable, type DataTableColumn } from "@/components/primitives/DataTable";
 import { EmptyState } from "@/components/ui/EmptyState";
 
 interface JobRow { id: string; agent: string; decision: "allow" | "deny"; }
 
-const columns: ColumnDef<JobRow, unknown>[] = [
+const columns: DataTableColumn<JobRow>[] = [
   { accessorKey: "agent", header: "Agent", enableSorting: true },
   { accessorKey: "id", header: "Job ID" },
 ];
@@ -118,7 +117,7 @@ moved.
 
 When migrating a page from the legacy primitive to the new one:
 
-1. Replace the `Column<T>[]` shape with TanStack `ColumnDef<T, unknown>[]`.
+1. Replace the `Column<T>[]` shape with `DataTableColumn<T>[]` (exported from `DataTable`).
 2. Move sort state out of the parent (the new primitive owns it). If the
    page also pages server-side, keep `LegacyDataTable` for now.
 3. Replace `keyExtractor` with `accessorKey` / `id` on each column.
