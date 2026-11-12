@@ -4,17 +4,20 @@ import (
 	"context"
 	"testing"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 // TestSubmitJobGRPCBindsClientAgentID pins gRPC SubmitJob to the HTTP rule:
-// a client labels.agent_id must equal the agent linked to the principal in
-// the request tenant, or the submit is refused before any policy check.
+// a client labels.agent_id must equal the agent linked to the authenticated
+// principal in the request tenant, or the submit is refused before any
+// policy check. The request's own principal_id never makes a label valid.
 func TestSubmitJobGRPCBindsClientAgentID(t *testing.T) {
 	cases := []struct {
 		name       string
+		caller     string // "" = authenticated as "p"; "anonymous" = no auth context; "keyed" = auth context with no principal
 		linkTenant string // tenant of agent-source, linked to "p"; "" = no link
 		label      string
 		wantCode   codes.Code
@@ -26,6 +29,8 @@ func TestSubmitJobGRPCBindsClientAgentID(t *testing.T) {
 		{name: "own_link_matching_label", linkTenant: "default", label: "agent-source", wantCode: codes.OK, wantAgent: "agent-source"},
 		{name: "own_link_no_label", linkTenant: "default", wantCode: codes.OK, wantAgent: "agent-source"},
 		{name: "unlinked_no_label", wantCode: codes.OK},
+		{name: "anonymous_request_principal_label", caller: "anonymous", linkTenant: "default", label: "agent-source", wantCode: codes.PermissionDenied},
+		{name: "keyed_request_principal_label", caller: "keyed", linkTenant: "default", label: "agent-source", wantCode: codes.PermissionDenied},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -42,7 +47,7 @@ func TestSubmitJobGRPCBindsClientAgentID(t *testing.T) {
 			if tc.label != "" {
 				req.Labels = map[string]string{"agent_id": tc.label}
 			}
-			_, err := s.SubmitJob(context.Background(), req)
+			_, err := s.SubmitJob(grpcAgentBindingCaller(tc.caller), req)
 			if got := status.Code(err); got != tc.wantCode {
 				t.Fatalf("SubmitJob code = %v (err %v), want %v", got, err, tc.wantCode)
 			}
@@ -59,5 +64,16 @@ func TestSubmitJobGRPCBindsClientAgentID(t *testing.T) {
 				t.Fatalf("policy agent_id = %q, want %q", got, tc.wantAgent)
 			}
 		})
+	}
+}
+
+func grpcAgentBindingCaller(caller string) context.Context {
+	switch caller {
+	case "anonymous":
+		return context.Background()
+	case "keyed":
+		return context.WithValue(context.Background(), auth.ContextKey{}, &auth.AuthContext{Tenant: "default", Role: "admin"})
+	default:
+		return context.WithValue(context.Background(), auth.ContextKey{}, &auth.AuthContext{Tenant: "default", PrincipalID: "p", Role: "admin"})
 	}
 }
