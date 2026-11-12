@@ -480,7 +480,7 @@ claims:
     status: supported
     invariants: []
     findings: []
-    enforcement_points: [{"path":"core/controlplane/gateway/policybundles/audit.go","symbol":"ActorIdentity"},{"path":"core/audit/humanize.go","symbol":"HumanSummary"}]
+    enforcement_points: [{"path":"core/controlplane/gateway/policybundles/audit.go","symbol":"ActorIdentity"},{"path":"core/audit/humanize.go","symbol":"allowedExtra"}]
     tests: [{"package":"core/controlplane/gateway/policybundles","name":"TestAuditEntryToSIEM_NeverLeaksRawKey"},{"package":"core/audit","name":"TestAllowedExtra_RejectsNonAllowlistedKeys"}]
     evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 ActorIdentity emits a fingerprint, not the key, and summaries use an extra-key allowlist, with unit tests; absence of secrets in every audit value is not qualified."
     public_sources: ["cordum:docs/audit.md:223"]
