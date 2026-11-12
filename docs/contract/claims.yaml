@@ -33,7 +33,7 @@ claims:
     enforcement_points: [{"path":"core/edge/agentd/evaluator.go","symbol":"Evaluator.evaluateHook"},{"path":"core/controlplane/gateway/handlers_edge_evaluate.go","symbol":"server.handleEdgeEvaluate"},{"path":"examples/cordum-edge-pack/overlays/policy.fragment.yaml","symbol":"claude-code.deny-secret-reads"}]
     tests: [{"package":"core/edge/agentd","name":"TestEvaluatorCallsGatewayAndRecordsDecisionEvidence"},{"package":"core/edge","name":"TestEdgeDemoPolicyFragmentParsesAndOrdersRules"}]
     evidence: "Hook and gateway evaluation exist and a demo Edge policy rule denies secret-path reads; the wrapper is not a qualified endpoint boundary; open findings R01, R02, R14, R15."
-    public_sources: ["cordum:README.md:14","cordum:README.md:257","cordum:README.md:259","cordum:README.md:260","cordum:README.md:273","cordum:README.md:377","cordum:README.md:381","cordum:README.md:384","cordum:README.md:385","cordum:README.md:386","cordum:README.md:387","cordum:README.md:388","cordum:README.md:438","cordum:docs/configuration-reference.md:696","cordum:docs/configuration.md:80","cordum:docs/edge-claude-code.md:86","cordum:docs/edge-policy.md:77","cordum:docs/edge.md:21"]
+    public_sources: ["cordum:README.md:14","cordum:README.md:257","cordum:README.md:259","cordum:README.md:260","cordum:README.md:273","cordum:README.md:377","cordum:README.md:381","cordum:README.md:384","cordum:README.md:385","cordum:README.md:386","cordum:README.md:387","cordum:README.md:388","cordum:README.md:438","cordum:docs/configuration-reference.md:696","cordum:docs/configuration.md:80","cordum:docs/edge-claude-code.md:86","cordum:docs/edge-policy.md:77","cordum:docs/edge.md:21","cordum:docs/edge/README.md:86","cordum:docs/edge/claude-hook-mapper.md:43","cordum:docs/edge/cli.md:122","cordum:docs/edge/configuration.md:58","cordum:docs/edge/cordum-agentd.md:41","cordum:docs/edge/cordum-hook.md:119","cordum:docs/edge/cordumctl-edge-claude.md:63","cordum:docs/edge/cordumctl-edge-doctor.md:116","cordum:docs/edge/runbook.md:83"]
   - id: CLM-003
     statement: "Quickstart runs TLS-secured Redis and generates secrets and certificate keypairs."
     boundary: "Repository quickstart script and its Docker Compose Redis configuration; not arbitrary operator deployments."
@@ -103,7 +103,7 @@ claims:
     enforcement_points: [{"path":"core/policy/actiongates/provenance_gate.go","symbol":"ProvenanceGate.Evaluate"},{"path":"core/policy/actiongates/approval_binding.go","symbol":"validateApprovalBinding"}]
     tests: [{"package":"core/policy/actiongates","name":"TestProvenanceGate_EvidenceGapFailsClosed"}]
     evidence: "Approval lookup and chain checks exist; no full-boundary no-effect qualification is attached; open findings R09, R12."
-    public_sources: ["cordum:README.md:277","cordum:README.md:278","cordum:README.md:279","cordum:README.md:280","cordum:README.md:390","cordum:README.md:391","cordum:README.md:392","cordum:README.md:393","cordum:README.md:438","cordum:docs/edge-api.md:82","cordum:docs/edge.md:144","cordum:docs/mcp/approval_hold.md:12"]
+    public_sources: ["cordum:README.md:277","cordum:README.md:278","cordum:README.md:279","cordum:README.md:280","cordum:README.md:390","cordum:README.md:391","cordum:README.md:392","cordum:README.md:393","cordum:README.md:438","cordum:docs/edge-api.md:82","cordum:docs/edge.md:144","cordum:docs/mcp/approval_hold.md:12","cordum:docs/edge/api.md:84","cordum:docs/edge/cordum-agentd.md:82","cordum:docs/edge/identity-contract.md:146","cordum:docs/edge/mcp-approval-hold.md:133","cordum:docs/edge/mcp-tool-policy.md:198","cordum:docs/edge/observability.md:150","cordum:docs/edge/runbook.md:87"]
   - id: CLM-010
     statement: "Cordum checks actions at submission and dispatch through the gateway, scheduler, MCP pipeline and Edge hook."
     boundary: "Those integrated entry points; not host isolation or control of credentials held outside them."
@@ -113,7 +113,7 @@ claims:
     enforcement_points: [{"path":"core/controlplane/gateway/helpers.go","symbol":"server.evaluateSubmitPolicy"},{"path":"core/controlplane/scheduler/engine.go","symbol":"Engine.checkSafetyDecision"},{"path":"core/mcp/policy_evaluate.go","symbol":"EvaluateToolCall"},{"path":"core/controlplane/gateway/handlers_edge_evaluate.go","symbol":"server.handleEdgeEvaluate"}]
     tests: [{"package":"core/mcp","name":"TestInvokeToolWithPolicy_DenyDoesNotForwardUpstream"}]
     evidence: "Gateway submit, scheduler dispatch, MCP tool-call and Edge evaluate policy checks exist; parity and non-bypassable authority are unqualified; open findings R01, R15."
-    public_sources: ["cordum:README.md:288","cordum:README.md:303","cordum:README.md:611","cordum:README.md:616","cordum:README.md:621","cordum:docs/README.md:89","cordum:docs/adr/001-safety-before-dispatch.md:1","cordum:docs/adr/005-output-policy-architecture.md:7"]
+    public_sources: ["cordum:README.md:288","cordum:README.md:303","cordum:README.md:611","cordum:README.md:616","cordum:README.md:621","cordum:docs/README.md:89","cordum:docs/adr/001-safety-before-dispatch.md:1","cordum:docs/adr/005-output-policy-architecture.md:7","cordum:docs/edge/mcp-tool-policy.md:29"]
   - id: CLM-011
     statement: "Approval-gated CAP jobs, action descriptors, MCP calls and Edge requests use canonical SHA-256 action hashes."
     boundary: "The respective Cordum normalization paths, not a qualification of every execution input or external artifact."
@@ -133,7 +133,7 @@ claims:
     enforcement_points: [{"path":"core/controlplane/gateway/helpers.go","symbol":"server.evaluateSubmitPolicy"},{"path":"core/controlplane/scheduler/engine.go","symbol":"Engine.processJob"},{"path":"core/controlplane/gateway/handlers_edge_evaluate.go","symbol":"edgeEvaluateOutcomeFromSafety"},{"path":"core/edge/claude/agentd_client.go","symbol":"HTTPAgentdClient.EvaluateHook"}]
     tests: [{"package":"core/controlplane/gateway","name":"TestGatewayEdgeEvaluateUnknownDecisionEnumFailsClosedWithoutFalseAllow"}]
     evidence: "Default-deny branches exist; no three-path no-effect qualification is attached; open findings R05, R15."
-    public_sources: ["cordum:README.md:308","cordum:README.md:309","cordum:README.md:310"]
+    public_sources: ["cordum:README.md:308","cordum:README.md:309","cordum:README.md:310","cordum:docs/edge/claude-hook-mapper.md:149"]
   - id: CLM-013
     statement: "Approvals bind tenant, reference and action hash; changed, self-approved, expired or consumed approvals are rejected."
     boundary: "Cordum approval-gated actions and approval stores, not authority outside their declared paths."
@@ -143,7 +143,7 @@ claims:
     enforcement_points: [{"path":"core/policy/actiongates/approval_binding.go","symbol":"validateApprovalBinding"},{"path":"core/policy/actiongates/mutation_gate.go","symbol":"MutationGate.Evaluate"},{"path":"core/controlplane/gateway/handlers_edge_evaluate.go","symbol":"server.consumeEdgeEvaluateApproval"}]
     tests: [{"package":"core/policy/actiongates","name":"TestMutationGate_HashMismatchConflict"},{"package":"core/policy/actiongates","name":"TestMutationGate_SelfApprovalDenied"}]
     evidence: "Approval binding and rejection checks exist; end-to-end enforcement is unqualified; open findings R03, R04, R09."
-    public_sources: ["cordum:README.md:311","cordum:README.md:312","cordum:README.md:313","cordum:README.md:314","cordum:docs/mcp-server.md:118","cordum:docs/mcp-tools-reference.md:62","cordum:docs/mcp/approval_hold.md:18"]
+    public_sources: ["cordum:README.md:311","cordum:README.md:312","cordum:README.md:313","cordum:README.md:314","cordum:docs/mcp-server.md:118","cordum:docs/mcp-tools-reference.md:62","cordum:docs/mcp/approval_hold.md:18","cordum:docs/edge/identity-contract.md:141","cordum:docs/edge/mcp-approval-hold.md:66","cordum:docs/edge/mcp-tool-policy.md:186"]
   - id: CLM-014
     statement: "Declarative YAML rules match action metadata and the shipped policy denies unmatched requests."
     boundary: "The shipped config/safety.yaml when loaded by the Safety Kernel; not every published policy or entry point."
@@ -293,7 +293,7 @@ claims:
     enforcement_points: [{"path":"core/edge/llmingest/adapter.go","symbol":"Adapter.redactInput"},{"path":"core/edge/llmingest/adapter.go","symbol":"Adapter.mapEnvelope"},{"path":"core/controlplane/gateway/handlers_edge_llm_ingest.go","symbol":"server.handleEdgeLLMIngest"}]
     tests: [{"package":"core/edge/llmingest","name":"TestMap_RedactsSecretInContent"}]
     evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 content redaction, advisory responses and event persistence exist; no end-to-end provider-boundary qualification is attached. Open findings R08, R12, R14, R15."
-    public_sources: ["cordum:ROADMAP.md:60"]
+    public_sources: ["cordum:ROADMAP.md:60","cordum:docs/edge/llm-proxy-governance.md:7"]
   - id: CLM-050
     statement: "The API gateway sets a Content-Security-Policy of default-src 'none' with frame-ancestors 'none' and related security headers on its HTTP responses."
     boundary: "Gateway HTTP responses that pass through corsMiddleware; pages served by the dashboard nginx configuration carry their own policy and are not covered."
@@ -393,7 +393,7 @@ claims:
     enforcement_points: [{"path":"core/controlplane/gateway/auth/basic.go","symbol":"BasicAuthProvider.ResolveTenant"}]
     tests: [{"package":"core/controlplane/gateway","name":"TestResolveTenantCrossTenantDenied"}]
     evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 the gateway's default auth provider decides this in BasicAuthProvider.ResolveTenant: it refuses a requested tenant other than the authenticated one unless the credential allows cross-tenant access, and TestResolveTenantCrossTenantDenied covers it; per-handler coverage of every route is not qualified."
-    public_sources: ["cordum:docs/api-reference.md:72"]
+    public_sources: ["cordum:docs/api-reference.md:72","cordum:docs/edge/cross-tenant-isolation.md:36"]
   - id: CLM-060
     statement: "Admins with the LegalHold entitlement can create, list and release per-tenant legal holds on audit data."
     boundary: "The gateway legal-hold API and its Redis hold records; enforcement of a hold against retention and deletion is not covered."
@@ -493,4 +493,94 @@ claims:
     enforcement_points: [{"path":"core/edge/agentd/state_store.go","symbol":"handleStatePermissionError"}]
     tests: [{"package":"core/edge/agentd","name":"TestStateDirStrictPermsFailsClosed"}]
     evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 handleStatePermissionError returns an error in strict mode and the Windows test TestStateDirStrictPermsFailsClosed covers it."
-    public_sources: ["cordum:docs/configuration.md:83"]
+    public_sources: ["cordum:docs/configuration.md:83","cordum:docs/edge/configuration.md:153","cordum:docs/edge/cordum-agentd.md:164"]
+  - id: CLM-070
+    statement: "Edge idempotency records are capped at seven days: reservation and completion refuse a record older than the cap."
+    boundary: "Edge API idempotency keys in the Redis-backed Edge store; job-submission idempotency is a separate mechanism."
+    status: supported
+    invariants: []
+    findings: []
+    enforcement_points: [{"path":"core/edge/store_redis.go","symbol":"RedisStore.ReserveIdempotency"},{"path":"core/edge/store_redis.go","symbol":"RedisStore.CompleteIdempotency"}]
+    tests: [{"package":"core/edge","name":"TestRedisStoreIdempotencyReserveRejects7DayCappedRecord"},{"package":"core/edge","name":"TestRedisStoreIdempotencyCompleteRejects7DayCappedRecord"}]
+    evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 RedisStore.ReserveIdempotency and RedisStore.CompleteIdempotency reject a record older than maxIdempotencyAge, and the two 7DayCappedRecord tests cover both paths."
+    public_sources: ["cordum:docs/edge/api.md:111"]
+  - id: CLM-071
+    statement: "Edge policy labels in classifier-owned namespaces come only from the classifier: request-supplied labels in those namespaces are dropped, and classification completeness is surfaced as classifier-owned labels."
+    boundary: "Edge events mapped to policy labels in core/edge; acting on an incomplete classification is left to the loaded policy."
+    status: supported
+    invariants: []
+    findings: []
+    enforcement_points: [{"path":"core/edge/policy_mapper.go","symbol":"putPolicyLabel"},{"path":"core/edge/classifier.go","symbol":"computeClassificationCompleteness"}]
+    tests: [{"package":"core/edge","name":"TestClassifier_ReservedLabelsCannotBePoisonedByRequest"},{"package":"core/edge","name":"TestClassifier_PartialClassificationDenied"}]
+    evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 putPolicyLabel drops untrusted labels with a reserved prefix and computeClassificationCompleteness reports missing fields, and both tests cover them; no shipped policy rule reads classifier.complete."
+    public_sources: ["cordum:docs/edge/classifier-trust-boundary.md:80"]
+  - id: CLM-072
+    statement: "The agentd hook nonce stays runtime-only: it travels in CORDUM_AGENTD_HOOK_NONCE and the X-Cordum-Agentd-Nonce header, stays out of generated settings and persisted agentd state, and a nonce embedded in the agentd URL without that variable is refused."
+    boundary: "cordum-hook's agentd client, generated Claude settings and the agentd file state store; other agentd outputs are not covered."
+    status: supported
+    invariants: []
+    findings: []
+    enforcement_points: [{"path":"core/edge/claude/agentd_client.go","symbol":"NewHTTPAgentdClientWithNonce"},{"path":"core/edge/agentd/state_store.go","symbol":"sanitizeMetadata"}]
+    tests: [{"package":"core/edge/claude","name":"TestRunLegacyNonceURLWithoutEnvFailsClosedClearly"},{"package":"core/edge/claude","name":"TestDevSettingsOmitsAgentdNonceVariants"},{"package":"core/edge/agentd","name":"TestFileStateStoreDropsSecretLikeMetadataKeys"}]
+    evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 NewHTTPAgentdClientWithNonce refuses a URL nonce without the environment variable and sanitizeMetadata drops nonce-like keys before persistence, and the three tests cover them."
+    public_sources: ["cordum:docs/edge/cordum-agentd.md:230","cordum:docs/edge/cordum-hook.md:51"]
+  - id: CLM-073
+    statement: "Edge ingestion binds events to the authenticated source: an LLM-proxy execution accepts events only from the proxy that owns it, and a runtime batch's source id must match the authenticated collector."
+    boundary: "Authenticated gateway LLM-proxy and runtime event ingestion; the deployment of the proxy and collectors is not covered."
+    status: supported
+    invariants: []
+    findings: []
+    enforcement_points: [{"path":"core/controlplane/gateway/handlers_edge_llm_ingest.go","symbol":"llmIngestParentValidator.validate"},{"path":"core/controlplane/gateway/handlers_edge_runtime_ingest.go","symbol":"validateRuntimeIngestSourceID"}]
+    tests: [{"package":"core/controlplane/gateway","name":"TestLLMIngest_RejectsCrossProxyExecution"},{"package":"core/controlplane/gateway","name":"TestRuntimeIngest_RejectsMismatchedSourceID"}]
+    evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 llmIngestParentValidator.validate rejects an execution owned by another proxy and validateRuntimeIngestSourceID rejects a missing or mismatched source id, and both tests cover them."
+    public_sources: ["cordum:docs/edge/llm-proxy-governance.md:218","cordum:docs/edge/runtime-ingestion.md:181"]
+  - id: CLM-074
+    statement: "cordumctl edge managed-settings verify reports drift of a managed-settings.json from the template's seventeen production invariants."
+    boundary: "The local managed-settings file checked by cordumctl edge managed-settings verify or cordumctl edge doctor; MDM delivery and Claude Code's enforcement of the settings are not covered."
+    status: supported
+    invariants: []
+    findings: []
+    enforcement_points: [{"path":"core/edge/claude/managed_settings_verify.go","symbol":"collectManagedSettingsDrifts"}]
+    tests: [{"package":"core/edge/claude","name":"TestVerifyManagedSettingsDetectsAllInvariantViolations"}]
+    evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 collectManagedSettingsDrifts checks the documented invariants with no settings-file bypass, and TestVerifyManagedSettingsDetectsAllInvariantViolations covers it."
+    public_sources: ["cordum:docs/edge/managed-settings-deploy.md:269"]
+  - id: CLM-075
+    statement: "Shadow agent detection collects minimized metadata: environment-variable names or presence rather than values, a fixed field catalogue for network log records, and principal identifiers under the configured PII mode."
+    boundary: "The shadow scanner and the CI, Kubernetes and network detectors in core/edge/shadow; values a detector holds in memory before discarding them are not covered."
+    status: supported
+    invariants: []
+    findings: []
+    enforcement_points: [{"path":"core/edge/shadow/network/catalog.go","symbol":"enforceCatalog"},{"path":"core/edge/shadow/network/pii.go","symbol":"applyPIIMode"}]
+    tests: [{"package":"core/edge/shadow/network","name":"TestNetworkDetector_LawfulMetadata_CatalogEnforced"},{"package":"core/edge/shadow/network","name":"TestNetworkDetector_PIIMode_Drop"},{"package":"core/edge/shadow/k8s","name":"TestK8sDetector_DataMinimization_NeverCapturesSecrets"}]
+    evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 enforceCatalog copies only catalogue fields and applyPIIMode drops, hashes or pseudonymizes principal ids, and the three tests cover them; the scanner and CI providers record names or presence only."
+    public_sources: ["cordum:docs/edge/managed-settings-deploy.md:412","cordum:docs/edge/shadow-scanner.md:74"]
+  - id: CLM-076
+    statement: "Edge structured log attributes carry only bounded identifiers and metadata, and Edge API error details are redacted before they are returned."
+    boundary: "The core/edge log attribute builders and the gateway's Edge error envelope details; log lines written without these builders and envelope message strings are not covered."
+    status: supported
+    invariants: []
+    findings: []
+    enforcement_points: [{"path":"core/edge/observability.go","symbol":"EventLogAttrs"},{"path":"core/controlplane/gateway/handlers_edge_errors.go","symbol":"sanitizeEdgeErrorDetails"}]
+    tests: [{"package":"core/edge","name":"TestEventLogAttrsEmitsOnlyBoundedFields"},{"package":"core/controlplane/gateway","name":"TestWriteEdgeErrorRedactsSecretDetails"}]
+    evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 EventLogAttrs emits bounded fields and sanitizeEdgeErrorDetails runs details through RedactValue with a redacted fallback, and both tests cover them."
+    public_sources: ["cordum:docs/edge/observability.md:137"]
+  - id: CLM-077
+    statement: "Shadow agent detection is observe-only: scanners and detectors record findings without mutating the observed systems, and generated remediation is advisory with destructive steps marked preview-only."
+    boundary: "The core/edge/shadow scanner, CI, Kubernetes and network detectors and the remediation generator; remediation an operator applies is not covered."
+    status: supported
+    invariants: []
+    findings: []
+    enforcement_points: [{"path":"core/edge/shadow/remediation_generator.go","symbol":"generateFromFeatures"}]
+    tests: [{"package":"core/edge/shadow","name":"TestGenerateForFinding_DisableStepsAlwaysPreviewOnly"},{"package":"core/edge/shadow","name":"TestScannerRefusesEnforcement"},{"package":"core/edge/shadow/ci","name":"TestAllProviders_NoMutationCalls"},{"package":"core/edge/shadow/k8s","name":"TestK8sDetector_ObserveMode_NoMutation"}]
+    evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 generateFromFeatures marks remediation advisory-only, and the four tests check preview-only steps, absent mutation calls and forbidden write imports; the property rests on code shape and tests, not the type system."
+    public_sources: ["cordum:docs/edge/shadow-remediation.md:194","cordum:docs/edge/shadow-scanner.md:507"]
+  - id: CLM-078
+    statement: "Shadow agent findings are tenant-scoped: each finding gets a resolved or quarantine tenant, and a tenant's reads skip other tenants' entries in shared indexes."
+    boundary: "The Redis shadow finding store and the CI tenant resolver in core/edge/shadow."
+    status: supported
+    invariants: []
+    findings: []
+    enforcement_points: [{"path":"core/edge/shadow/finding_store_redis.go","symbol":"RedisStore.ListFindings"},{"path":"core/edge/shadow/ci/mapping.go","symbol":"DefaultResolver.ResolveTenant"}]
+    tests: [{"package":"core/edge/shadow","name":"TestListFindings_FiltersAndTenantIsolation"},{"package":"core/edge/shadow/ci","name":"TestResolver_TenantPrecedence_QuarantineUnknownRepo"}]
+    evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 RedisStore.ListFindings skips index members of another tenant and DefaultResolver.ResolveTenant falls back to the quarantine tenant, and both tests cover them."
+    public_sources: ["cordum:docs/edge/shadow-scanner.md:194"]
