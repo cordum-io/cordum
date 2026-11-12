@@ -155,17 +155,22 @@ func checkFinalStageUpgradesAlpine(dockerfile string) error {
 var (
 	quotedShellText = regexp.MustCompile(`'[^']*'|"[^"]*"`)
 	shellComment    = regexp.MustCompile(`(^|\s)#.*$`)
-	shellCommandSep = regexp.MustCompile(`&&|\|\||[;|&]`)
+	shellCommandSep = regexp.MustCompile(`&&|[;|&]`)
 )
 
 // runExecutesApkUpgrade reports whether the shell form of a RUN instruction
 // (continuation lines already joined) runs `apk upgrade --no-cache` as a
-// command. The text does not count when it sits in a shell comment or in a
-// quoted argument such as `echo 'apk upgrade --no-cache'`. Exec-form and
-// heredoc RUNs are not recognised, so they fail closed.
+// command that cannot be skipped. The text does not count when it sits in a
+// shell comment or in a quoted argument such as `echo 'apk upgrade --no-cache'`.
+// An `||` list can skip the command (`true || apk upgrade`) or swallow its
+// failure (`apk upgrade || true`), so any `||` fails closed, as do exec-form
+// and heredoc RUNs, which are not recognised.
 func runExecutesApkUpgrade(script string) bool {
 	script = quotedShellText.ReplaceAllString(script, "Q")
 	script = shellComment.ReplaceAllString(script, "")
+	if strings.Contains(script, "||") {
+		return false
+	}
 	for _, command := range shellCommandSep.Split(script, -1) {
 		words := strings.Fields(command)
 		if len(words) >= 3 && words[0] == "apk" && words[1] == "upgrade" && slices.Contains(words[2:], "--no-cache") {
@@ -217,6 +222,21 @@ func TestReleaseFinalStageUpgradeFixtures(t *testing.T) {
 		{
 			name:       "upgrade after a continued line that opens a comment",
 			dockerfile: "FROM alpine:3.24\nRUN apk add --no-cache ca-certificates # then \\\n    && apk upgrade --no-cache\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade skipped by a short-circuit or list",
+			dockerfile: "FROM alpine:3.24\nRUN true || apk upgrade --no-cache\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade behind a failing and list that an or list rescues",
+			dockerfile: "FROM alpine:3.24\nRUN false && apk upgrade --no-cache || true\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade failure swallowed by an or list",
+			dockerfile: "FROM alpine:3.24\nRUN apk upgrade --no-cache || true\n",
 			wantErr:    true,
 		},
 		{
