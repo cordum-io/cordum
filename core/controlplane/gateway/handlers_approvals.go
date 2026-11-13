@@ -1021,8 +1021,13 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 	var result handlerResult
 	lockErr := s.withApprovalLock(r.Context(), jobID, func(ctx context.Context) error {
 		state, err := s.jobStore.GetState(ctx, jobID)
-		if err != nil {
+		if errors.Is(err, redis.Nil) {
 			result = handlerResult{http.StatusNotFound, "job not found"}
+			return nil
+		}
+		if err != nil {
+			slog.Error("approve: job state lookup failed, denying approval", "job_id", jobID, "error", err)
+			result = handlerResult{http.StatusServiceUnavailable, "job state unavailable"}
 			return nil
 		}
 
@@ -1093,8 +1098,13 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		req, err := s.jobStore.GetJobRequest(ctx, jobID)
-		if err != nil {
+		if errors.Is(err, redis.Nil) {
 			result = handlerResult{http.StatusNotFound, "job request not found"}
+			return nil
+		}
+		if err != nil {
+			slog.Error("approve: job request lookup failed, denying approval", "job_id", jobID, "error", err)
+			result = handlerResult{http.StatusServiceUnavailable, "job request unavailable"}
 			return nil
 		}
 		req, err = s.normalizeStoredJobRequest(req)
@@ -1111,7 +1121,9 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 		if approverIdentity != "" {
 			submittedBy, sbErr := s.jobStore.GetSubmittedBy(ctx, jobID)
 			if sbErr != nil {
-				slog.Error("self-approval check: failed to read submitter", "job_id", jobID, "error", sbErr)
+				slog.Error("approve: submitter lookup failed, denying approval", "job_id", jobID, "error", sbErr)
+				result = handlerResult{http.StatusServiceUnavailable, "submitter lookup unavailable"}
+				return nil
 			}
 			if submittedBy != "" && identitiesOverlap(submittedBy, approverIdentity) {
 				slog.Warn("self-approval denied",
@@ -1130,17 +1142,17 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Check if workflow run is terminal (under lock to prevent TOCTOU).
-		if req.Labels != nil {
-			if runID := strings.TrimSpace(req.Labels["run_id"]); runID != "" && s.workflowStore != nil {
-				if run, runErr := s.workflowStore.GetRun(ctx, runID); runErr == nil && run != nil {
-					if wf.IsTerminalRunStatus(run.Status) {
-						msg := fmt.Sprintf("workflow run %s — approval no longer valid", run.Status)
-						s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policybundles.PolicyActorID(r), policybundles.PolicyRole(r), msg)
-						result = handlerResult{http.StatusConflict, approvalConflictPayload(http.StatusConflict, model.ApprovalConflictTerminalRun, msg)}
-						return nil
-					}
-				}
-			}
+		runStatus, runErr := s.approvalRunTerminalStatus(ctx, req)
+		if runErr != nil {
+			slog.Error("approve: workflow run lookup failed, denying approval", "job_id", jobID, "error", runErr)
+			result = handlerResult{http.StatusServiceUnavailable, "workflow run lookup unavailable"}
+			return nil
+		}
+		if runStatus != "" {
+			msg := fmt.Sprintf("workflow run %s — approval no longer valid", runStatus)
+			s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policybundles.PolicyActorID(r), policybundles.PolicyRole(r), msg)
+			result = handlerResult{http.StatusConflict, approvalConflictPayload(http.StatusConflict, model.ApprovalConflictTerminalRun, msg)}
+			return nil
 		}
 
 		safetyRecord, err := s.jobStore.GetSafetyDecision(ctx, jobID)
@@ -1350,17 +1362,17 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 
 		// Re-check workflow run terminal status under lock right before
 		// the state transition to prevent approving dead workflow runs.
-		if req.Labels != nil {
-			if runID := strings.TrimSpace(req.Labels["run_id"]); runID != "" && s.workflowStore != nil {
-				if run, runErr := s.workflowStore.GetRun(ctx, runID); runErr == nil && run != nil {
-					if wf.IsTerminalRunStatus(run.Status) {
-						msg := fmt.Sprintf("workflow run %s — approval no longer valid", run.Status)
-						s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policybundles.PolicyActorID(r), policybundles.PolicyRole(r), msg)
-						result = handlerResult{http.StatusConflict, approvalConflictPayload(http.StatusConflict, model.ApprovalConflictTerminalRun, msg)}
-						return nil
-					}
-				}
-			}
+		runStatus, runErr = s.approvalRunTerminalStatus(ctx, req)
+		if runErr != nil {
+			slog.Error("approve: workflow run re-check failed, denying approval", "job_id", jobID, "error", runErr)
+			result = handlerResult{http.StatusServiceUnavailable, "workflow run lookup unavailable"}
+			return nil
+		}
+		if runStatus != "" {
+			msg := fmt.Sprintf("workflow run %s — approval no longer valid", runStatus)
+			s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policybundles.PolicyActorID(r), policybundles.PolicyRole(r), msg)
+			result = handlerResult{http.StatusConflict, approvalConflictPayload(http.StatusConflict, model.ApprovalConflictTerminalRun, msg)}
+			return nil
 		}
 
 		// approval_snapshot binds the resubmitted JobRequest to the exact
@@ -1443,6 +1455,28 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 	writeApprovalHandlerResult(w, result.status, result.body, "json encode approval error failed")
 }
 
+// approvalRunTerminalStatus returns the status of the job's workflow run when
+// that run is terminal, and "" when the job names no run, no workflow store is
+// wired, the run does not exist, or it is still active. Any other read error
+// is returned.
+func (s *server) approvalRunTerminalStatus(ctx context.Context, req *pb.JobRequest) (wf.RunStatus, error) {
+	runID := strings.TrimSpace(req.GetLabels()["run_id"])
+	if runID == "" || s.workflowStore == nil {
+		return "", nil
+	}
+	run, err := s.workflowStore.GetRun(ctx, runID)
+	if errors.Is(err, redis.Nil) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if run != nil && wf.IsTerminalRunStatus(run.Status) {
+		return run.Status, nil
+	}
+	return "", nil
+}
+
 func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermJobsApprove, []string{"admin"}, s.jobStore, s.bus) {
 		return
@@ -1465,8 +1499,13 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 	var result handlerResult
 	lockErr := s.withApprovalLock(r.Context(), jobID, func(ctx context.Context) error {
 		state, err := s.jobStore.GetState(ctx, jobID)
-		if err != nil {
+		if errors.Is(err, redis.Nil) {
 			result = handlerResult{http.StatusNotFound, "job not found"}
+			return nil
+		}
+		if err != nil {
+			slog.Error("reject: job state lookup failed, denying rejection", "job_id", jobID, "error", err)
+			result = handlerResult{http.StatusServiceUnavailable, "job state unavailable"}
 			return nil
 		}
 		if state != model.JobStateApproval {
@@ -1515,8 +1554,13 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		req, reqErr := s.jobStore.GetJobRequest(ctx, jobID)
-		if reqErr != nil {
+		if errors.Is(reqErr, redis.Nil) {
 			result = handlerResult{http.StatusNotFound, "job request not found"}
+			return nil
+		}
+		if reqErr != nil {
+			slog.Error("reject: job request lookup failed, denying rejection", "job_id", jobID, "error", reqErr)
+			result = handlerResult{http.StatusServiceUnavailable, "job request unavailable"}
 			return nil
 		}
 		req, reqErr = s.normalizeStoredJobRequest(req)
@@ -1532,7 +1576,9 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 		if rejecterIdentity != "" {
 			submittedBy, sbErr := s.jobStore.GetSubmittedBy(ctx, jobID)
 			if sbErr != nil {
-				slog.Error("self-rejection check: failed to read submitter", "job_id", jobID, "error", sbErr)
+				slog.Error("reject: submitter lookup failed, denying rejection", "job_id", jobID, "error", sbErr)
+				result = handlerResult{http.StatusServiceUnavailable, "submitter lookup unavailable"}
+				return nil
 			}
 			if submittedBy != "" && identitiesOverlap(submittedBy, rejecterIdentity) {
 				slog.Warn("self-rejection denied",
@@ -1550,17 +1596,17 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		if req.Labels != nil {
-			if runID := strings.TrimSpace(req.Labels["run_id"]); runID != "" && s.workflowStore != nil {
-				if run, runErr := s.workflowStore.GetRun(ctx, runID); runErr == nil && run != nil {
-					if wf.IsTerminalRunStatus(run.Status) {
-						msg := fmt.Sprintf("workflow run %s — approval no longer valid", run.Status)
-						s.appendAuditEntryNamed(ctx, "reject_failed", "job", jobID, "", policybundles.PolicyActorID(r), policybundles.PolicyRole(r), msg)
-						result = handlerResult{http.StatusConflict, approvalConflictPayload(http.StatusConflict, model.ApprovalConflictTerminalRun, msg)}
-						return nil
-					}
-				}
-			}
+		runStatus, runErr := s.approvalRunTerminalStatus(ctx, req)
+		if runErr != nil {
+			slog.Error("reject: workflow run lookup failed, denying rejection", "job_id", jobID, "error", runErr)
+			result = handlerResult{http.StatusServiceUnavailable, "workflow run lookup unavailable"}
+			return nil
+		}
+		if runStatus != "" {
+			msg := fmt.Sprintf("workflow run %s — approval no longer valid", runStatus)
+			s.appendAuditEntryNamed(ctx, "reject_failed", "job", jobID, "", policybundles.PolicyActorID(r), policybundles.PolicyRole(r), msg)
+			result = handlerResult{http.StatusConflict, approvalConflictPayload(http.StatusConflict, model.ApprovalConflictTerminalRun, msg)}
+			return nil
 		}
 		safetyRecord, safetyErr := s.jobStore.GetSafetyDecision(ctx, jobID)
 		if safetyErr != nil {

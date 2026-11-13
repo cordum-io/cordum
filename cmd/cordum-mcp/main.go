@@ -275,6 +275,28 @@ func resolveTransportConfig() (mode string, httpAddr string, err error) {
 // needing a second audit transport in this process.
 type stderrAuditSender struct{}
 
+type stderrAuditExporter struct{}
+
+func (stderrAuditExporter) Export(_ context.Context, events []audit.SIEMEvent) error {
+	for _, event := range events {
+		stderrAuditSender{}.Send(event)
+	}
+	return nil
+}
+
+func (stderrAuditExporter) Close() error { return nil }
+
+func newAuditFallback(fromEnv func() (*audit.BufferedExporter, error)) *audit.BufferedExporter {
+	fallback, err := fromEnv()
+	if err != nil {
+		slog.Warn("cordum-mcp: audit exporter configuration unavailable", "error", err)
+	}
+	if fallback != nil {
+		return fallback
+	}
+	return audit.NewBufferedExporter(stderrAuditExporter{})
+}
+
 func newStderrAuditSender() audit.AuditSender {
 	return stderrAuditSender{}
 }
@@ -296,12 +318,9 @@ func resolveAuditSender(natsURL string) audit.AuditSender {
 			"error", err, "nats_url", natsURL)
 		return newStderrAuditSender()
 	}
-	// Fallback buffers events when NATS publish fails mid-run so the
-	// audit trail degrades gracefully rather than silently dropping.
-	fallback, _ := audit.NewExporterFromEnv()
-	if fallback == nil {
-		fallback = audit.NewBufferedExporter(nil)
-	}
+	// On publish failure, buffer events for the configured SIEM exporter,
+	// or write them to stderr when no exporter is configured.
+	fallback := newAuditFallback(audit.NewExporterFromEnv)
 	slog.Info("cordum-mcp: NATS audit sender enabled",
 		"subject", "sys.audit.export", "nats_url", natsURL)
 	return audit.NewNATSAuditPublisher(natsBus, fallback)

@@ -1,0 +1,165 @@
+# Enforcement support matrix: one row per entry point, one column per control or
+# PolicyConstraints field. Each cell is enforced, advisory, ignored or not_applicable,
+# with the code line it was read from. Statuses and refs were read at reviewed_at.
+schema_version: 1
+reviewed_at: 549772371995b9eb5a95a2c6c8685551e0231724
+columns:
+  [deny, require_approval, throttle, output_scanning, budgets.max_runtime_ms, budgets.max_retries, budgets.max_artifact_bytes, budgets.max_concurrent_jobs,
+   sandbox.isolated, sandbox.network_allowlist, sandbox.fs_read_only, sandbox.fs_read_write, toolchain.allowed_tools, toolchain.allowed_commands,
+   diff.max_files, diff.max_lines, diff.deny_path_globs, redaction_level]
+rows:
+  - id: edge-hook-observe
+    anchors: [{path: core/edge/agentd/evaluator.go, symbol: Evaluator.EvaluateHook}, {path: core/controlplane/gateway/handlers_edge_evaluate.go, symbol: server.handleEdgeEvaluate}]
+    cells:
+      - {status: enforced, ref: core/edge/agentd/approval_waiter.go:89, finding: R05, cols: [deny]}
+      - {status: enforced, ref: core/edge/agentd/approval_waiter.go:91, cols: [require_approval]}
+      - {status: enforced, ref: core/edge/agentd/approval_waiter.go:93, cols: [throttle]}
+      - {status: ignored, ref: core/controlplane/gateway/handlers_edge_evaluate.go:167, finding: R15, cols: [output_scanning]}
+      - {status: ignored, ref: core/edge/agentd/approval_waiter.go:99, finding: R01, cols: [budgets.max_runtime_ms, budgets.max_retries, budgets.max_artifact_bytes, budgets.max_concurrent_jobs, sandbox.isolated, sandbox.network_allowlist, sandbox.fs_read_only, sandbox.fs_read_write, toolchain.allowed_tools, toolchain.allowed_commands, diff.max_files, diff.max_lines, diff.deny_path_globs, redaction_level]}
+  - id: edge-hook-enforce
+    anchors: [{path: core/edge/agentd/evaluator.go, symbol: Evaluator.EvaluateHook}, {path: core/controlplane/gateway/handlers_edge_evaluate.go, symbol: server.handleEdgeEvaluate}]
+    cells:
+      - {status: enforced, ref: core/edge/agentd/approval_waiter.go:89, finding: R05, cols: [deny]}
+      - {status: enforced, ref: core/edge/agentd/approval_waiter.go:91, cols: [require_approval]}
+      - {status: enforced, ref: core/edge/agentd/approval_waiter.go:93, cols: [throttle]}
+      - {status: ignored, ref: core/controlplane/gateway/handlers_edge_evaluate.go:167, finding: R15, cols: [output_scanning]}
+      - {status: ignored, ref: core/edge/agentd/approval_waiter.go:99, finding: R01, cols: [budgets.max_runtime_ms, budgets.max_retries, budgets.max_artifact_bytes, budgets.max_concurrent_jobs, sandbox.isolated, sandbox.network_allowlist, sandbox.fs_read_only, sandbox.fs_read_write, toolchain.allowed_tools, toolchain.allowed_commands, diff.max_files, diff.max_lines, diff.deny_path_globs, redaction_level]}
+  - id: edge-hook-enterprise-strict
+    anchors: [{path: core/edge/agentd/evaluator.go, symbol: Evaluator.EvaluateHook}, {path: core/controlplane/gateway/handlers_edge_evaluate.go, symbol: server.handleEdgeEvaluate}]
+    cells:
+      - {status: enforced, ref: core/edge/agentd/approval_waiter.go:89, finding: R05, cols: [deny]}
+      - {status: enforced, ref: core/edge/agentd/approval_waiter.go:91, cols: [require_approval]}
+      - {status: enforced, ref: core/edge/agentd/approval_waiter.go:93, cols: [throttle]}
+      - {status: ignored, ref: core/controlplane/gateway/handlers_edge_evaluate.go:167, finding: R15, cols: [output_scanning]}
+      - {status: ignored, ref: core/edge/agentd/approval_waiter.go:99, finding: R01, cols: [budgets.max_runtime_ms, budgets.max_retries, budgets.max_artifact_bytes, budgets.max_concurrent_jobs, sandbox.isolated, sandbox.network_allowlist, sandbox.fs_read_only, sandbox.fs_read_write, toolchain.allowed_tools, toolchain.allowed_commands, diff.max_files, diff.max_lines, diff.deny_path_globs, redaction_level]}
+  - id: mcp-tool-call
+    anchors: [{path: core/mcp/server.go, symbol: MCPServer.handleToolsCall}, {path: core/policy/actiongates/mcp_gate.go, symbol: MCPGate.Evaluate}]
+    cells:
+      - {status: enforced, ref: core/mcp/policy_evaluate.go:944, cols: [deny, throttle]}
+      - {status: enforced, ref: core/mcp/policy_evaluate.go:895, cols: [require_approval]}
+      - {status: ignored, ref: core/mcp/policy_evaluate.go:1002, finding: R15, cols: [output_scanning]}
+      - {status: ignored, ref: core/mcp/policy_evaluate.go:607, finding: R15, cols: [budgets.max_runtime_ms, budgets.max_retries, budgets.max_artifact_bytes, budgets.max_concurrent_jobs, sandbox.isolated, sandbox.network_allowlist, sandbox.fs_read_only, sandbox.fs_read_write, toolchain.allowed_tools, toolchain.allowed_commands, diff.max_files, diff.max_lines, diff.deny_path_globs, redaction_level]}
+  - id: mcp-approval-gate
+    anchors: [{path: core/controlplane/gateway/mcp_gate.go, symbol: gatewayApprovalGate.Check}]
+    cells:
+      - {status: enforced, ref: core/controlplane/gateway/mcp_gate.go:211, finding: R15, cols: [deny]}
+      - {status: enforced, ref: core/controlplane/gateway/mcp_gate.go:284, cols: [require_approval]}
+      - {status: ignored, ref: core/controlplane/gateway/mcp_gate.go:180, finding: R15, cols: [throttle, output_scanning, budgets.max_runtime_ms, budgets.max_retries, budgets.max_artifact_bytes, budgets.max_concurrent_jobs, sandbox.isolated, sandbox.network_allowlist, sandbox.fs_read_only, sandbox.fs_read_write, toolchain.allowed_tools, toolchain.allowed_commands, diff.max_files, diff.max_lines, diff.deny_path_globs, redaction_level]}
+  - id: job-submit-http
+    anchors: [{path: core/controlplane/gateway/handlers_jobs.go, symbol: server.handleSubmitJobHTTP}]
+    cells:
+      - {status: enforced, ref: core/controlplane/gateway/handlers_jobs.go:1591, finding: R05, cols: [deny]}
+      - {status: enforced, ref: core/controlplane/gateway/handlers_jobs.go:1648, cols: [throttle]}
+      - {status: enforced, ref: core/controlplane/gateway/handlers_jobs.go:1663, cols: [require_approval]}
+      - {status: not_applicable, ref: core/controlplane/gateway/handlers_jobs.go:1255, cols: [output_scanning]}
+      - {status: advisory, ref: core/controlplane/gateway/handlers_jobs.go:1993, cols: [budgets.max_runtime_ms, budgets.max_retries, budgets.max_artifact_bytes, budgets.max_concurrent_jobs, sandbox.isolated, sandbox.network_allowlist, sandbox.fs_read_only, sandbox.fs_read_write, toolchain.allowed_tools, toolchain.allowed_commands, diff.max_files, diff.max_lines, diff.deny_path_globs, redaction_level]}
+  - id: job-submit-grpc
+    anchors: [{path: core/controlplane/gateway/handlers_grpc.go, symbol: server.SubmitJob}]
+    cells:
+      - {status: enforced, ref: core/controlplane/gateway/handlers_grpc.go:240, finding: R05, cols: [deny]}
+      - {status: enforced, ref: core/controlplane/gateway/handlers_grpc.go:248, cols: [throttle]}
+      - {status: enforced, ref: core/controlplane/gateway/handlers_grpc.go:256, cols: [require_approval]}
+      - {status: not_applicable, ref: core/controlplane/gateway/handlers_grpc.go:44, cols: [output_scanning]}
+      - {status: advisory, ref: core/controlplane/gateway/handlers_grpc.go:507, cols: [budgets.max_runtime_ms, budgets.max_retries, budgets.max_artifact_bytes, budgets.max_concurrent_jobs, sandbox.isolated, sandbox.network_allowlist, sandbox.fs_read_only, sandbox.fs_read_write, toolchain.allowed_tools, toolchain.allowed_commands, diff.max_files, diff.max_lines, diff.deny_path_globs, redaction_level]}
+  - id: scheduler-dispatch
+    anchors: [{path: core/controlplane/scheduler/engine.go, symbol: Engine.processJob}]
+    cells:
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1755, finding: R05, cols: [deny]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1743, cols: [require_approval]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1696, cols: [throttle]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:2590, finding: R08, cols: [output_scanning]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1791, cols: [budgets.max_retries]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1823, cols: [budgets.max_concurrent_jobs]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3116, finding: R01, cols: [budgets.max_runtime_ms]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3120, finding: R01, cols: [budgets.max_artifact_bytes]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3099, finding: R01, cols: [sandbox.isolated, sandbox.network_allowlist, sandbox.fs_read_only, sandbox.fs_read_write, toolchain.allowed_tools, toolchain.allowed_commands, diff.max_files, diff.max_lines, diff.deny_path_globs]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3108, finding: R01, cols: [redaction_level]}
+  - id: scheduler-approval-fast-path
+    anchors: [{path: core/controlplane/scheduler/engine.go, symbol: Engine.checkSafetyDecision}]
+    cells:
+      - {status: ignored, ref: core/controlplane/scheduler/engine.go:2319, finding: R09, cols: [deny, throttle]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:2287, cols: [require_approval]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:2590, finding: R08, cols: [output_scanning]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1791, cols: [budgets.max_retries]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1823, cols: [budgets.max_concurrent_jobs]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3116, finding: R01, cols: [budgets.max_runtime_ms]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3120, finding: R01, cols: [budgets.max_artifact_bytes]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3099, finding: R01, cols: [sandbox.isolated, sandbox.network_allowlist, sandbox.fs_read_only, sandbox.fs_read_write, toolchain.allowed_tools, toolchain.allowed_commands, diff.max_files, diff.max_lines, diff.deny_path_globs]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3108, finding: R01, cols: [redaction_level]}
+  - id: workflow-step
+    anchors: [{path: core/workflow/engine_job.go, symbol: Engine.buildJobRequest}]
+    cells:
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1755, finding: R05, cols: [deny]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1743, cols: [require_approval]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1696, cols: [throttle]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:2590, finding: R08, cols: [output_scanning]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1791, cols: [budgets.max_retries]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1823, cols: [budgets.max_concurrent_jobs]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3116, finding: R01, cols: [budgets.max_runtime_ms]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3120, finding: R01, cols: [budgets.max_artifact_bytes]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3099, finding: R01, cols: [sandbox.isolated, sandbox.network_allowlist, sandbox.fs_read_only, sandbox.fs_read_write, toolchain.allowed_tools, toolchain.allowed_commands, diff.max_files, diff.max_lines, diff.deny_path_globs]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3108, finding: R01, cols: [redaction_level]}
+  - id: dlq-retry
+    anchors: [{path: core/controlplane/gateway/handlers_dlq.go, symbol: server.handleRetryDLQ}]
+    cells:
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1755, finding: R05, cols: [deny]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1743, cols: [require_approval]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1696, cols: [throttle]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:2590, finding: R08, cols: [output_scanning]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1791, cols: [budgets.max_retries]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1823, cols: [budgets.max_concurrent_jobs]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3116, finding: R01, cols: [budgets.max_runtime_ms]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3120, finding: R01, cols: [budgets.max_artifact_bytes]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3099, finding: R01, cols: [sandbox.isolated, sandbox.network_allowlist, sandbox.fs_read_only, sandbox.fs_read_write, toolchain.allowed_tools, toolchain.allowed_commands, diff.max_files, diff.max_lines, diff.deny_path_globs]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3108, finding: R01, cols: [redaction_level]}
+  - id: workflow-rerun
+    anchors: [{path: core/controlplane/gateway/handlers_workflows.go, symbol: server.handleRerunRun}]
+    cells:
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1755, finding: R05, cols: [deny]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1743, cols: [require_approval]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1696, cols: [throttle]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:2590, finding: R08, cols: [output_scanning]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1791, cols: [budgets.max_retries]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1823, cols: [budgets.max_concurrent_jobs]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3116, finding: R01, cols: [budgets.max_runtime_ms]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3120, finding: R01, cols: [budgets.max_artifact_bytes]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3099, finding: R01, cols: [sandbox.isolated, sandbox.network_allowlist, sandbox.fs_read_only, sandbox.fs_read_write, toolchain.allowed_tools, toolchain.allowed_commands, diff.max_files, diff.max_lines, diff.deny_path_globs]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3108, finding: R01, cols: [redaction_level]}
+  - id: pending-replay
+    anchors: [{path: core/controlplane/scheduler/pending_replayer.go, symbol: PendingReplayer.replayApproved}]
+    cells:
+      - {status: ignored, ref: core/controlplane/scheduler/engine.go:2319, finding: R09, cols: [deny, throttle]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:2287, cols: [require_approval]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:2590, finding: R08, cols: [output_scanning]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1791, cols: [budgets.max_retries]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1823, cols: [budgets.max_concurrent_jobs]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3116, finding: R01, cols: [budgets.max_runtime_ms]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3120, finding: R01, cols: [budgets.max_artifact_bytes]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3099, finding: R01, cols: [sandbox.isolated, sandbox.network_allowlist, sandbox.fs_read_only, sandbox.fs_read_write, toolchain.allowed_tools, toolchain.allowed_commands, diff.max_files, diff.max_lines, diff.deny_path_globs]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3108, finding: R01, cols: [redaction_level]}
+  - id: orphan-replay
+    anchors: [{path: core/controlplane/scheduler/pending_replayer.go, symbol: PendingReplayer.replayPending}, {path: core/controlplane/scheduler/pending_replayer.go, symbol: PendingReplayer.replayScheduled}]
+    cells:
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1755, finding: R05, cols: [deny]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1743, cols: [require_approval]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1696, cols: [throttle]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:2590, finding: R08, cols: [output_scanning]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1791, cols: [budgets.max_retries]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1823, cols: [budgets.max_concurrent_jobs]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3116, finding: R01, cols: [budgets.max_runtime_ms]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3120, finding: R01, cols: [budgets.max_artifact_bytes]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3099, finding: R01, cols: [sandbox.isolated, sandbox.network_allowlist, sandbox.fs_read_only, sandbox.fs_read_write, toolchain.allowed_tools, toolchain.allowed_commands, diff.max_files, diff.max_lines, diff.deny_path_globs]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3108, finding: R01, cols: [redaction_level]}
+  - id: saga-compensation
+    anchors: [{path: core/controlplane/scheduler/saga.go, symbol: SagaManager.dispatchCompensation}]
+    cells:
+      - {status: enforced, ref: core/controlplane/scheduler/saga.go:373, finding: R05, cols: [deny]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1743, cols: [require_approval]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1696, cols: [throttle]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:2590, finding: R08, cols: [output_scanning]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1791, cols: [budgets.max_retries]}
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1823, cols: [budgets.max_concurrent_jobs]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3116, finding: R01, cols: [budgets.max_runtime_ms]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3120, finding: R01, cols: [budgets.max_artifact_bytes]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3099, finding: R01, cols: [sandbox.isolated, sandbox.network_allowlist, sandbox.fs_read_only, sandbox.fs_read_write, toolchain.allowed_tools, toolchain.allowed_commands, diff.max_files, diff.max_lines, diff.deny_path_globs]}
+      - {status: advisory, ref: core/controlplane/scheduler/engine.go:3108, finding: R01, cols: [redaction_level]}
