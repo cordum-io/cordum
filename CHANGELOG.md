@@ -64,6 +64,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+#### core/controlplane/gateway — production pack trust (2026-11-13, task-a9787d2f)
+- In the production profile (`CORDUM_ENV=production` or `CORDUM_PRODUCTION=true`),
+  upload and marketplace installs default to requiring a pack signature verified
+  against a trusted publisher key. With no trusted publisher key, every pack is
+  refused. The development profile is unchanged.
+- Explicit downgrade: `CORDUM_GATEWAY_PACK_STRICT=false` or Redis
+  `cfg:packs:strict_mode=false` disables pack enforcement unless either setting
+  is explicitly true. The gateway logs the downgrade at startup and on every
+  unsigned install. The release compose sets this downgrade until official packs
+  are signed; production deployments without an override remain strict.
+- Pack policy fragments are signed with the configured usable policy signing key.
+  Enforced policy-store mode refuses an install before any write when its fragment
+  cannot be signed under the policy trust store (`pack.policy_unsigned`). An
+  undetermined mode is enforced. Explicit `CORDUM_POLICY_STRICT=warn` or `off`
+  permits unsigned storage with a warning when no usable signing key is available.
+
 - Safety kernel: one signature rule now covers every policy source (file, URL
   and config store), and `policysign.ResolveMode` exposes it. In the production
   profile (`CORDUM_ENV=production` or `CORDUM_PRODUCTION=true`) with
