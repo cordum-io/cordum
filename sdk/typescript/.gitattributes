@@ -1,0 +1,3 @@
+# scripts/check-generated.mjs byte-compares this file with LF generator output;
+# Windows checkouts (core.autocrlf=true, incl. GitHub windows runners) would otherwise report false drift.
+src/_generated/schema.d.ts text eol=lf
