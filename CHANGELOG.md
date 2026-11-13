@@ -81,6 +81,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+#### core/controlplane/gateway — Edge LLM and runtime ingest accept only an authenticated proxy or collector identity (2026-11-13, task-3b633938)
+
+- **Behavior change** for `POST /api/v1/edge/llm/events` and
+  `POST /api/v1/edge/runtime/events`. The LLM proxy or runtime collector
+  identity now comes only from an authenticated principal. A principal named
+  only by the `X-Principal-Id` header is refused with 403, like a missing
+  one, in every profile, and nothing is ingested. Callers notice this where
+  the header is read as a principal: development, and production with
+  `CORDUM_ALLOW_HEADER_PRINCIPAL=true`. Principals bound by an API key, a
+  session, or JWT/OIDC ingest as before.
+- Migration: authenticate each proxy and collector with a static API key
+  bound to its principal (`principal_id` in `CORDUM_API_KEYS`, equal to its
+  `source.source_id`), or with a session or OIDC login. Managed API keys
+  carry no principal and cannot name one.
+
+#### core/controlplane/gateway — copilot session detail is returned only to its authenticated owner (2026-11-13, task-3b633938)
+
+- **Behavior change** for `GET /api/v1/copilot/sessions/{sessionId}`. The
+  session owner now comes only from an authenticated principal. A principal
+  named only by the `X-Principal-Id` header gets 401 and no session data, in
+  every profile. Callers notice this where the header is read as a
+  principal: development, and production with
+  `CORDUM_ALLOW_HEADER_PRINCIPAL=true`. Principals bound by an API key, a
+  session, or JWT/OIDC read their own sessions as before.
+- Migration: sign in to the dashboard with a session or OIDC login, or use a
+  static API key bound to the owning principal.
+
 #### core/controlplane/gateway — delegation tokens are issued only to an authenticated caller's linked agent (2026-11-14, task-fe3faf16)
 
 - **Behavior change.** A non-admin caller of
