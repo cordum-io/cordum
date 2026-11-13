@@ -90,6 +90,7 @@ func (e *PackVerificationError) Unwrap() error { return e.Err }
 // PackVerification error codes.
 const (
 	PackVerificationCodeUnsigned          = "pack.unsigned"
+	PackVerificationCodePolicyUnsigned    = "pack.policy_unsigned"
 	PackVerificationCodeBadSignature      = "pack.bad_signature"
 	PackVerificationCodeTampered          = "pack.tampered"
 	PackVerificationCodeUnknownKID        = "pack.unknown_kid"

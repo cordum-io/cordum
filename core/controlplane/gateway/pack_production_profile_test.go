@@ -6,15 +6,19 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"log/slog"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/packs/signing"
+	"github.com/cordum/cordum/core/policysign"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
@@ -259,4 +263,114 @@ func TestPackInstallDevelopmentProfile_InstallsUnsignedAsBefore(t *testing.T) {
 			require.NotContains(t, packMatrixFragment(t, h.s), "_signature")
 		})
 	}
+}
+
+func TestPackPolicyFragment_StoredSignatureVerifiesUnderTrustStore(t *testing.T) {
+	for _, profile := range []bool{true, false} {
+		for _, source := range []string{"upload", "marketplace"} {
+			t.Run(source+map[bool]string{true: "-production", false: "-development"}[profile], func(t *testing.T) {
+				key := prodPackEnv(t, profile)
+				prodPackPolicyKey(t, true)
+				h := prodPackPrepare(t, key, "signed", source)
+				assertPackAccepted(t, h.s, h.before, h.drive(), packSignatureWant{status: 200, signed: true}, h.bundle.content, source)
+				fragment := packMatrixFragment(t, h.s)
+				var sig policysign.Signature
+				require.NoError(t, json.Unmarshal(fragment["_signature"], &sig))
+				require.Equal(t, "prod-policy", sig.KeyID)
+				var content string
+				require.NoError(t, json.Unmarshal(fragment["content"], &content))
+				trust, err := policysign.LoadTrustStoreFromEnv()
+				require.NoError(t, err)
+				pub, found := trust.Lookup(sig.KeyID)
+				require.True(t, found)
+				require.NoError(t, policysign.Verify(pub, []byte(content), sig))
+				require.Error(t, policysign.Verify(pub, []byte(content+"x"), sig))
+				signer, err := resolvePolicyStoreSigner("test pack")
+				require.NoError(t, err)
+				empty, err := signer.sign(nil)
+				require.ErrorIs(t, err, policysign.ErrEmptyPayload)
+				require.Nil(t, empty)
+			})
+		}
+	}
+}
+
+func TestPackPolicyFragment_EnforceRefusesWithoutSigningKeyBeforeAnyWrite(t *testing.T) {
+	for _, source := range []string{"upload", "marketplace"} {
+		t.Run(source, func(t *testing.T) {
+			key := prodPackEnv(t, true)
+			prodPackRefused(t, prodPackPrepare(t, key, "signed", source), "pack.policy_unsigned: ")
+		})
+	}
+}
+
+func TestPackPolicyFragment_EnforceRefusesUntrustedSigningKey(t *testing.T) {
+	for _, reason := range []string{"absent", "other", "malformed-trust", "malformed-key", "inconsistent-key"} {
+		t.Run(reason, func(t *testing.T) {
+			key := prodPackEnv(t, true)
+			prodPackPolicyKey(t, false)
+			switch reason {
+			case "other":
+				t.Setenv("CORDUM_POLICY_PUBLIC_KEY_PROD-POLICY", base64.StdEncoding.EncodeToString(key.Public().(ed25519.PublicKey)))
+			case "malformed-trust":
+				t.Setenv("CORDUM_POLICY_PUBLIC_KEY_PROD-POLICY", "not-a-key")
+			case "malformed-key":
+				t.Setenv("CORDUM_POLICY_SIGNING_KEY", "not-a-key")
+			case "inconsistent-key":
+				prodPackPolicyKey(t, true)
+				raw, err := base64.StdEncoding.DecodeString(os.Getenv("CORDUM_POLICY_SIGNING_KEY"))
+				require.NoError(t, err)
+				raw[0] ^= 1
+				t.Setenv("CORDUM_POLICY_SIGNING_KEY", base64.StdEncoding.EncodeToString(raw))
+			}
+			prodPackRefused(t, prodPackPrepare(t, key, "signed", "upload"), "pack.policy_unsigned: ")
+		})
+	}
+}
+
+func TestPackPolicyFragment_UndeterminedModeTreatedAsEnforce(t *testing.T) {
+	for _, profile := range []bool{true, false} {
+		t.Run(map[bool]string{true: "production", false: "development"}[profile], func(t *testing.T) {
+			key := prodPackEnv(t, profile)
+			t.Setenv("CORDUM_POLICY_STRICT", "bogus")
+			prodPackRefused(t, prodPackPrepare(t, key, "signed", "upload"), "pack.policy_unsigned: ")
+		})
+	}
+}
+
+func TestPackPolicyFragment_ExplicitWarnStoresUnsignedFragment(t *testing.T) {
+	for _, mode := range []string{"warn", "off"} {
+		t.Run(mode, func(t *testing.T) {
+			key := prodPackEnv(t, true)
+			t.Setenv("CORDUM_POLICY_STRICT", mode)
+			h := prodPackPrepare(t, key, "signed", "upload")
+			logs := prodPackLogs(t)
+			assertPackAccepted(t, h.s, h.before, h.drive(), packSignatureWant{status: 200, signed: true}, h.bundle.content, "upload")
+			require.NotContains(t, packMatrixFragment(t, h.s), "_signature")
+			require.Equal(t, 1, strings.Count(logs.String(), "level=WARN"))
+			require.Contains(t, logs.String(), "policy_mode="+mode)
+			require.Contains(t, logs.String(), matrixPackID)
+		})
+	}
+}
+
+func TestPackPolicyFragment_PackWithoutPolicyOverlayNeedsNoSigningKey(t *testing.T) {
+	key := prodPackEnv(t, true)
+	h := prodPackPrepare(t, key, "signed", "upload")
+	files := packMatrixFiles()
+	files["pack.yaml"] = strings.Split(files["pack.yaml"], "  policy:\n")[0]
+	for name, content := range files {
+		require.NoError(t, os.WriteFile(filepath.Join(h.bundle.dir, filepath.FromSlash(name)), []byte(content), 0600))
+	}
+	manifest, err := signing.BuildManifest(h.bundle.dir)
+	require.NoError(t, err)
+	envelope, err := signing.SignManifest(manifest, key, "matrix-pub")
+	require.NoError(t, err)
+	raw, err := signing.EncodeEnvelopeYAML(envelope)
+	require.NoError(t, err)
+	files["pack.yaml.sig"] = string(raw)
+	h.bundle.tgz = buildTarGz(t, files)
+	response := uploadPackSignatureBundle(t, h.s, h.bundle)
+	require.Equal(t, 200, response.Code, response.Body.String())
+	require.Nil(t, packMatrixFragment(t, h.s))
 }
