@@ -212,7 +212,7 @@ func (w *Workload) validateMix() error {
 		captured := make(map[string]bool)
 		for j, request := range sequence.Requests {
 			requestField := fmt.Sprintf("%s.requests[%d]", field, j)
-			if !slices.Contains([]string{"jobs.submit", "jobs.approve", "edge.hook.evaluate", "mcp.tools.call"}, request.Kind) {
+			if !slices.Contains(KnownRequestKinds[:], request.Kind) {
 				return w.invalid(requestField+".kind", "unknown request kind")
 			}
 			data, err := json.Marshal(request)
