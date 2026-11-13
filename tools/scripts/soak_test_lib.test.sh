@@ -57,9 +57,7 @@ assert_eq "log storm analysis returns at most five lines" "5" \
 assert_eq "log storm analysis ranks the most repeated line first" "repeated-01" \
   "$(printf '%s\n' "${top_lines}" | sed -n '1p' | awk '{$1=""; sub(/^ /, ""); print}')"
 
-# ---------------------------------------------------------------------------
 # Memory drift: windowed medians over synthetic metrics files
-# ---------------------------------------------------------------------------
 T=$'\t'
 RUN="${tmpdir}/metrics.log"
 
@@ -222,9 +220,7 @@ FAIL${T}${NOT_EVALUATED}: no valid post-warm-up container samples" "$(analyse)"
 { echo "# baseline 100"; echo "garbage"; cat "${RUN}.ok"; } >"${RUN}"
 assert_eq "a malformed cold pre-load record is diagnostic only" "" "$(analyse)"
 
-# ---------------------------------------------------------------------------
 # Load, docker metrics source and restart findings
-# ---------------------------------------------------------------------------
 assert_eq "load with batches and requests passes" "" "$(load_findings 12 36)"
 assert_eq "zero batches fails" "FAIL${T}Load phase sent zero request batches" "$(load_findings 0 36)"
 assert_eq "zero HTTP requests fails (not a warning)" "FAIL${T}No HTTP requests were recorded" "$(load_findings 12 0)"
@@ -261,9 +257,7 @@ assert_eq "a new healthy container is not a restart" "" "$(restart_findings 'a:0
 assert_eq "a malformed restart count fails" \
   "FAIL${T}Container a reported a malformed restart count 'x'" "$(restart_findings 'a:0' 'a:x')"
 
-# ---------------------------------------------------------------------------
 # soak_test.sh wiring and behavior (stubbed curl/docker, zero-minute load)
-# ---------------------------------------------------------------------------
 assert_eq "soak script loads analysis helpers" "1" \
   "$(grep -cF 'source "${SCRIPT_DIR}/soak_test_lib.sh"' "${SOAK}" || true)"
 assert_eq "soak script records the intentional 400 expectation" "1" \

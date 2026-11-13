@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 
-# Count responses that violate their declared expectation. Lines without an
-# expectation retain the soak test's default contract: every 4xx/5xx response
-# is an error. Malformed curl status output is always unexpected.
+# Count expectation violations; without an expectation, every 4xx/5xx is an
+# error. Malformed curl status output is always unexpected.
 count_unexpected_http_responses() {
   local http_log="$1"
   awk '
@@ -24,8 +23,7 @@ count_unexpected_http_responses() {
   ' "${http_log}"
 }
 
-# Emit endpoints whose unexpected 4xx responses should participate in retry-
-# storm detection. Expected negative probes are deliberately excluded.
+# Retry-storm endpoints: unexpected 4xx only, excluding expected negative probes.
 unexpected_client_error_endpoints() {
   local http_log="$1"
   awk '
@@ -43,9 +41,8 @@ unexpected_client_error_endpoints() {
   ' "${http_log}"
 }
 
-# Rank repeated Compose log messages without an early-closing `head` stage.
-# Under `set -o pipefail`, head caused upstream sort to receive SIGPIPE and
-# abort the entire soak analysis before it could write its JSON result.
+# Rank repeated Compose messages without `head`: its SIGPIPE under pipefail
+# aborted analysis before the JSON result could be written.
 top_repeated_log_lines() {
   sed -E 's/^[^[:space:]]+[[:space:]]+\|[[:space:]]*//' |
     LC_ALL=C sort |
@@ -54,17 +51,10 @@ top_repeated_log_lines() {
     sed -n '1,5p'
 }
 
-# ---------------------------------------------------------------------------
 # Memory drift analysis
-# ---------------------------------------------------------------------------
-# docker stats reports memory as a share of host RAM, and idle Go services
-# legitimately double their heap under load, so single percentage samples fail
-# healthy runs and hide real leaks. The analysis works on MiB and compares
-# per-container MEDIANS of two non-overlapping windows of K post-warm-up
-# snapshots (the first K against the last K). It fails closed whenever it
-# cannot evaluate a container. Only POSIX awk is used (no asort, gensub,
-# PROCINFO, length(array) or {n} intervals) so mawk (Ubuntu runners) and gawk
-# behave identically; LC_ALL=C keeps the decimal point a dot.
+# Host-memory percentages and cold heaps distort growth. Compare MiB medians
+# over the first/last K non-overlapping post-warm-up snapshots; fail closed.
+# POSIX awk (no extensions or {n} intervals) and LC_ALL=C keep mawk/gawk parity.
 
 # size_mib("1.5GiB"): the size in MiB, or -1 when it cannot be parsed. Numbers
 # are limited to 15 digits so the arithmetic cannot overflow a double.
@@ -92,14 +82,11 @@ function size_mib(raw,   num, unit, mult) {
 # Prefix every stdin line with "TAG<TAB>" so two texts can share one awk input.
 _tag() { LC_ALL=C awk -v t="$1" '{ print t "\t" $0 }'; }
 
-# Parse the "# snapshot" blocks at or after START_TS in a metrics file into
-#   S<TAB>block<TAB>container<TAB>mib<TAB>pct   one per valid record
-#   N<TAB>blocks                                  valid snapshots seen
-#   X<TAB>count<TAB>first                         malformed lines, if any
-# A snapshot counts once it holds a valid record. "# drift-baseline" blocks
-# are validated but are never samples; the cold "# baseline" block is ignored.
-# BINMODE=3 stops gawk on Git Bash/MSYS from silently dropping a CR, so a CRLF
-# file is reported instead of mis-parsed (other awks treat it as a plain variable).
+# Parse snapshots >= START_TS into tab-separated S/block/container/mib/pct,
+# N/valid-snapshot-count, and X/malformed-count/first-error records.
+# A snapshot needs a valid record; drift-baseline is validated, not sampled;
+# cold baseline is ignored. BINMODE=3 preserves CR on Git Bash gawk so CRLF
+# fails visibly (other awks treat BINMODE as an ordinary variable).
 _memory_samples() {
   LC_ALL=C awk -v BINMODE=3 -v start="$2" "${_SOAK_AWK_SIZE}"'
     function bad(msg) { nbad++; if (nbad == 1) first = "line " NR ": " msg }
@@ -135,14 +122,10 @@ _memory_samples() {
   ' "$1"
 }
 
-# Median MiB and median host-memory percent per container over one window of
-# the valid snapshots at or after START_TS: "first" is snapshots 1..K, "last"
-# is the final K snapshots that do not overlap the first window. Prints
-#   container<TAB>median_mib<TAB>median_pct<TAB>samples<TAB>window_snapshots
-# For odd n the median is the middle value, for even n the decimal mean of the
-# two middle values. samples counts the container's records inside the window
-# and window_snapshots how many snapshots the window holds, so a run shorter
-# than 2K snapshots always shows window_snapshots < K for the "last" window.
+# First/last K valid snapshots >= START_TS, without overlap. Output columns:
+# container<TAB>median_mib<TAB>median_pct<TAB>samples<TAB>window_snapshots.
+# Median = middle value (odd n) or mean of middle pair (even n). samples counts
+# container records; last window_snapshots < K exposes runs shorter than 2K.
 memory_window_medians() {
   local file="$1" start="$2" k="$3" which="$4"
   _memory_samples "${file}" "${start}" | LC_ALL=C awk -F'\t' -v k="${k}" -v which="${which}" '
@@ -175,13 +158,9 @@ memory_window_medians() {
     }'
 }
 
-# FAIL/WARN lines comparing the BASE and FINAL window medians (the output of
-# memory_window_medians). Growth fails only when it exceeds BOTH the relative
-# limit and the absolute MiB floor; relative-only growth is a WARN, because a
-# small service that doubles from 15 to 30MiB is warm-up, not a leak. Every
-# case that cannot be evaluated is a FAIL: too few snapshots for the two
-# windows, a container missing from the final window, a container with no
-# baseline, or a container missing from part of a window.
+# Compare memory_window_medians outputs: FAIL above BOTH limits, WARN for
+# relative-only growth (small heaps can double during warm-up). FAIL if either
+# window is short, a container has no baseline, disappears or misses samples.
 memory_window_findings() {
   local base="$1" final="$2" limit="$3" floor="$4" k="$5"
   { printf '%s\n' "${base}" | _tag B; printf '%s\n' "${final}" | _tag F; } |
@@ -215,17 +194,14 @@ memory_window_findings() {
       }'
 }
 
-# The timestamp of the "# drift-baseline" marker soak_test.sh writes once the
-# warm-up has elapsed, or nothing when that capture never succeeded.
+# Warm-up drift-baseline timestamp, or nothing if the capture never succeeded.
 memory_drift_baseline_ts() {
   LC_ALL=C awk -v BINMODE=3 '/^# drift-baseline [0-9]+\r?$/ { print $3 + 0; exit }' "$1"
 }
 
-# Full memory drift analysis of a metrics file: FAIL/WARN lines on stdout.
-#   $1 metrics file   $2 relative limit %   $3 absolute floor MiB   $4 window K
-# A missing marker, malformed records or too few snapshots are FAILs that all
-# start with "Memory drift not evaluated"; the cold pre-load sample is never
-# used as the baseline.
+# Args: metrics file, relative limit %, absolute floor MiB, window K.
+# Emit FAIL/WARN lines; missing marker, malformed records or short windows
+# FAIL as "Memory drift not evaluated". Never fall back to the cold sample.
 memory_drift_analysis() {
   local file="$1" limit="$2" floor="$3" k="$4" start base final
   if [[ ! "${k}" =~ ^[0-9]{1,6}$ ]] || [[ $((10#${k})) -lt 3 ]]; then
@@ -245,12 +221,9 @@ memory_drift_analysis() {
   memory_window_findings "${base}" "${final}" "${limit}" "${floor}" "${k}"
 }
 
-# ---------------------------------------------------------------------------
 # Load, metrics source and restart checks
-# ---------------------------------------------------------------------------
 
-# FAIL lines when the load phase proved nothing: zero batches, zero HTTP
-# requests, or counters that are not integers.
+# FAIL on zero batches/requests or non-integer load counters.
 load_findings() {
   local batches="${1:-}" requests="${2:-}"
   batches="${batches//[[:space:]]/}"
@@ -263,8 +236,7 @@ load_findings() {
   if [[ $((10#${requests})) -eq 0 ]]; then printf 'FAIL\t%s\n' "No HTTP requests were recorded"; fi
 }
 
-# FAIL when a docker stats collection (label, exit status, stdout) failed or
-# returned no container record. Used when docker is the declared metrics source.
+# Docker source: FAIL on nonzero exit or no records (args: label, status, stdout).
 docker_collection_findings() {
   local label="$1" rc="$2" text="$3"
   if [[ "${rc}" != 0 ]]; then
@@ -274,9 +246,8 @@ docker_collection_findings() {
   fi
 }
 
-# FAIL lines comparing two "name:restart-count" lists (start, end): a count that
-# grew, a container that disappeared, a malformed count, or an empty start list
-# (the check would be vacuous).
+# Compare start/end name:restart-count lists: FAIL on growth, disappearance,
+# malformed counts or an empty start list (a vacuous check).
 restart_findings() {
   local base="$1" final="$2"
   { printf '%s\n' "${base}" | _tag B; printf '%s\n' "${final}" | _tag F; } |

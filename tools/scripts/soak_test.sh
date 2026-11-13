@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# =============================================================================
 # Cordum Soak Test
 # Long-running test to detect retry storms, log floods, and resource drift.
 #
@@ -18,30 +17,22 @@
 #                             warns even when the % limit is exceeded (default: 32)
 #   SOAK_WARMUP_SECONDS       Load time before the memory-drift baseline is
 #                             captured; capped at half the run (default: 300)
-#   SOAK_MEMORY_WINDOW_SAMPLES  K: drift compares the median of the first K
-#                             post-warm-up snapshots with the median of the last K
-#                             (default: 5, minimum: 3). A run is only evaluable
-#                             with the warm-up plus 2*K one-minute snapshots.
-#   SOAK_METRICS_SOURCE       docker (default): per-container memory from docker
-#                             stats, and a missing, failing or empty docker stats
-#                             fails the run. none: no container metrics (the Helm
-#                             wrapper); memory drift and restarts are then reported
-#                             as not evaluated, never as passing.
+#   SOAK_MEMORY_WINDOW_SAMPLES  Median window K (default 5, minimum 3); needs
+#                             warm-up plus 2*K one-minute snapshots.
+#   SOAK_METRICS_SOURCE       docker (default): missing/failed/empty stats FAIL.
+#                             none (Helm): drift/restarts not evaluated, not PASS.
 #   SOAK_LOG_STORM_THRESHOLD  Max identical log lines per 60s window (default: 100)
 #   SOAK_ERROR_RATE_PCT       Max allowed 4xx/5xx rate % (default: 1)
 #   SOAK_RESULTS_FILE         Output JSON file (default: soak_results.json)
 #   SOAK_METRICS_FILE         Metrics log file (default: soak_metrics.log)
 #   SOAK_HTTP_LOG             HTTP status log (default: soak_http.log)
-# =============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=tools/scripts/soak_test_lib.sh
 source "${SCRIPT_DIR}/soak_test_lib.sh"
 
-# ---------------------------------------------------------------------------
 # Configuration
-# ---------------------------------------------------------------------------
 API_BASE="${CORDUM_API_BASE:-http://localhost:8081/api/v1}"
 API_KEY="${CORDUM_API_KEY:-}"
 TENANT_ID="${CORDUM_TENANT_ID:-default}"
@@ -68,9 +59,7 @@ WARNINGS=()
 DRIFT_EVALUATED=false
 DRIFT_BASELINE_SOURCE="none"
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 require() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "[soak] missing dependency: $1" >&2
@@ -125,9 +114,7 @@ record_status() {
   echo "$(date +%s) ${endpoint} ${status}" >> "${HTTP_LOG}"
 }
 
-# ---------------------------------------------------------------------------
 # Preflight
-# ---------------------------------------------------------------------------
 require curl
 
 if [[ -z "${API_KEY}" ]]; then
@@ -171,9 +158,7 @@ log "Duration: ${DURATION_MINUTES}m | Interval: ${INTERVAL_SECONDS}s | Metrics s
 log "Memory drift limit: ${MEMORY_DRIFT_PCT}% and ${MEMORY_DRIFT_MIN_MIB}MiB, median of ${MEMORY_WINDOW_SAMPLES} snapshots after ${WARMUP_SECONDS}s warm-up vs the last ${MEMORY_WINDOW_SAMPLES} | Log storm limit: ${LOG_STORM_THRESHOLD}"
 log "Error rate limit: ${ERROR_RATE_PCT}%"
 
-# ---------------------------------------------------------------------------
 # Health check
-# ---------------------------------------------------------------------------
 log "Checking gateway health..."
 health_status=$(api GET /health)
 if [[ "${health_status}" != "200" ]]; then
@@ -181,9 +166,7 @@ if [[ "${health_status}" != "200" ]]; then
 fi
 log "Gateway healthy"
 
-# ---------------------------------------------------------------------------
 # Baseline metrics
-# ---------------------------------------------------------------------------
 # One docker stats sample on stdout. A docker failure is returned to the caller
 # (never swallowed); `timeout` keeps a hung daemon from stalling the soak.
 collect_docker_metrics() {
@@ -205,10 +188,8 @@ add_findings() {
   done <<< "$1"
 }
 
-# Append one "# KIND <ts>" docker stats block to the metrics file. A failed or
-# empty collection appends nothing and is recorded as a FAIL (severity fail) or
-# as a WARN for a mid-run gap; memory_drift_analysis then decides whether the
-# gap leaves enough snapshots. Returns non-zero when nothing was appended.
+# Append a "# KIND <ts>" block, or return nonzero and record FAIL (severity fail)
+# or WARN (mid-run gap). The window check determines whether enough samples remain.
 sample_metrics() {
   local kind="$1" label="$2" severity="$3" ts out rc=0 findings
   if [[ "${METRICS_SOURCE}" != "docker" ]]; then return 0; fi
@@ -242,9 +223,7 @@ log "Collecting baseline metrics..."
 # baseline window starts at the "# drift-baseline" marker written after warm-up.
 sample_metrics baseline "pre-load baseline" fail || true
 
-# ---------------------------------------------------------------------------
 # Check for container restarts (baseline)
-# ---------------------------------------------------------------------------
 get_restart_counts() {
   if command -v docker >/dev/null 2>&1; then
     docker compose ps --format '{{.Name}} {{.Status}}' 2>/dev/null | while read -r name status; do
@@ -259,9 +238,7 @@ if [[ "${METRICS_SOURCE}" == "docker" ]]; then
   BASELINE_RESTARTS=$(get_restart_counts || true)
 fi
 
-# ---------------------------------------------------------------------------
 # Cleanup trap
-# ---------------------------------------------------------------------------
 SOAK_PIDS=()
 cleanup() {
   log "Cleaning up..."
@@ -272,9 +249,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# ---------------------------------------------------------------------------
 # Load phase
-# ---------------------------------------------------------------------------
 LOAD_START=$(date +%s)
 END_TIME=$(( LOAD_START + DURATION_MINUTES * 60 ))
 BATCH=0
@@ -318,9 +293,8 @@ while [[ $(date +%s) -lt ${END_TIME} ]]; do
     record_status "POST:/approvals/approve" "${status}"
   done
 
-  # --- Mark the start of the drift baseline window once the warm-up has elapsed ---
-  # One attempt: a failed capture is a FAIL and leaves no marker, so the analysis
-  # reports "not evaluated" instead of falling back to the cold pre-load sample.
+  # After warm-up, attempt one marker capture. Failure means "not evaluated",
+  # never a fallback to the cold pre-load sample.
   if [[ "${METRICS_SOURCE}" == "docker" && ${DRIFT_MARKER_TRIED} -eq 0 \
         && $((NOW - LOAD_START)) -ge ${WARMUP_SECONDS} ]]; then
     DRIFT_MARKER_TRIED=1
@@ -354,9 +328,7 @@ log "Load phase complete. ${BATCH} batches sent."
 # The end-of-run state always belongs to the final window.
 sample_metrics snapshot "final" fail || true
 
-# ---------------------------------------------------------------------------
 # Analysis phase
-# ---------------------------------------------------------------------------
 log "Analysing results..."
 
 # --- 1. HTTP error rate ---
@@ -391,10 +363,8 @@ while IFS= read -r line; do
 done <<< "${STORM_ENDPOINTS}"
 
 # --- 3. Memory drift ---
-# Median of the first K post-warm-up snapshots against the median of the last K;
-# fails only when both the relative limit and the absolute MiB floor are
-# exceeded, and fails whenever it cannot evaluate (see memory_drift_analysis in
-# soak_test_lib.sh).
+# First/last K post-warm-up medians: FAIL above both limits or when not evaluable
+# (see memory_drift_analysis in soak_test_lib.sh).
 if [[ "${METRICS_SOURCE}" == "docker" ]]; then
   drift_findings=$(memory_drift_analysis "${METRICS_FILE}" "${MEMORY_DRIFT_PCT}" "${MEMORY_DRIFT_MIN_MIB}" "${MEMORY_WINDOW_SAMPLES}")
   add_findings "${drift_findings}"
@@ -423,16 +393,13 @@ if command -v docker >/dev/null 2>&1; then
 fi
 
 # --- 5. Container restart detection ---
-# A grown restart count, or a container that was running at the start and is
-# gone at the end, fails (see restart_findings in soak_test_lib.sh).
+# FAIL on restart-count growth or disappearance (restart_findings in the lib).
 if [[ "${METRICS_SOURCE}" == "docker" ]]; then
   FINAL_RESTARTS=$(get_restart_counts || true)
   add_findings "$(restart_findings "${BASELINE_RESTARTS}" "${FINAL_RESTARTS}")"
 fi
 
-# ---------------------------------------------------------------------------
 # Results
-# ---------------------------------------------------------------------------
 FAIL_COUNT=${#FAILURES[@]}
 WARN_COUNT=${#WARNINGS[@]}
 
@@ -469,9 +436,7 @@ WARN_COUNT=${#WARNINGS[@]}
   echo "}"
 } > "${RESULTS_FILE}"
 
-# ---------------------------------------------------------------------------
 # Summary
-# ---------------------------------------------------------------------------
 echo ""
 echo "============================================"
 echo "  Soak Test Results: ${SOAK_ID}"

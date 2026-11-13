@@ -75,13 +75,10 @@ Helm-specific:
 
 The check never trusts a single sample. `docker stats` is sampled once a minute per container; the reported usage (B, kB, KiB, MB, MiB, GB, GiB, TB or TiB, at most 15 digits) is converted to MiB with locale-independent decimal arithmetic, never truncated to integer percent. After the warm-up, one `# drift-baseline` marker opens the baseline window. The check compares, per container, the **median** of the first K snapshots from that marker with the median of the last K snapshots (K = `SOAK_MEMORY_WINDOW_SAMPLES`, default 5, minimum 3). One spike in either window does not change the verdict; sustained growth does. The cold pre-load sample is diagnostic only and is never the baseline.
 
-- **FAIL**: median growth above both `SOAK_MEMORY_DRIFT_PCT` (50%) and `SOAK_MEMORY_DRIFT_MIN_MIB` (32 MiB).
-- **WARN**: growth above the relative limit only, under the MiB floor.
+**Limits:** FAIL only above both `SOAK_MEMORY_DRIFT_PCT` (50%) and `SOAK_MEMORY_DRIFT_MIN_MIB` (32 MiB); relative-only growth is a WARN.
+**Minimum:** warm-up plus 2K snapshot-minutes (defaults: 5 minutes plus 10 snapshots). Use 20 minutes for margin over the roughly 15-minute minimum. Shorter runs FAIL as "not evaluated", never pass.
 
-**An evaluable run needs the warm-up plus at least 2K snapshot-minutes.** With the defaults that is 5 min of warm-up plus 10 snapshots, so `SOAK_DURATION_MINUTES` must be at least about 15; use 20 for a margin. A shorter run fails as "not evaluated"; it never passes.
-
-These are hard FAILs, each with its own message, never a WARN or a skip:
-
+**Hard FAILs**, each with its own message, never a WARN or skip:
 - fewer than 2K valid post-warm-up snapshots for a container, or no `# drift-baseline` marker (`Memory drift not evaluated`);
 - a container in the baseline window that is absent at the end, or an end container with no baseline;
 - a container restart, or a container that was running at the start and is gone at the end;
@@ -89,9 +86,7 @@ These are hard FAILs, each with its own message, never a WARN or a skip:
 - zero request batches or zero HTTP requests;
 - `docker stats` unavailable, failing or empty when `SOAK_METRICS_SOURCE=docker` (an empty mid-run sample is only a gap, which the snapshot-count check then catches).
 
-With `SOAK_METRICS_SOURCE=none` (set by `soak_test_helm.sh` for Kubernetes, which has no `docker stats`) the run records a WARN, `memory_drift_evaluated` is `false`, and restarts are not checked. That is "not evaluated", never a passing leak check.
-
-`soak_results.json` reports `memory_drift_evaluated`, `memory_window_samples` and `memory_baseline_source`.
+With `SOAK_METRICS_SOURCE=none` (the Helm/Kubernetes default), drift and restarts are not evaluated: WARN, never a passing leak check. `soak_results.json` reports `memory_drift_evaluated:false`, `memory_window_samples` and `memory_baseline_source`.
 
 The analysis lives in `tools/scripts/soak_test_lib.sh` and uses POSIX awk only, so mawk and gawk must agree. Its contract tests run in CI and on a developer machine, including Windows with Git Bash (`bash tools/scripts/soak_test_lib.test.sh`); there, run them under both awks where available (for example `mawk` through WSL), because Git Bash ships only gawk.
 
