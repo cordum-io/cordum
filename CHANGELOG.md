@@ -225,6 +225,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Qualified three platform security-posture statements against `docs/contract/threat-model.md` (task-d056042e): ADR-001's "Zero-trust guarantee" bullet is now marked as design intent with a dated status note, and `docs/mcp/scope-filtering.md` no longer labels the MCP controls a "zero-trust stack" or "zero-trust controls". The threat model rates these mechanisms `supported`, not `enforced` or `verified`. Clarified that qualification requires protected transport on every Gateway client/proxy hop; deployment remains unverified.
 - Nightly soak bounds (task-a7c48ad2): compare post-warm-up memory medians over first/last K snapshots (default 5, minimum 3), retaining the 50% relative limit and 32 MiB floor. Missing/malformed metrics, insufficient samples, missing containers and zero load now fail explicitly. Helm reports drift/restarts as not evaluated rather than passing. Results include evaluation/window/baseline fields; the wiki documents the 20-minute example and metrics-source controls. All 83 contract assertions are retained.
 
+### Added
+
+- Invariant catalog `docs/contract/invariants.yaml` (I01-I10) with entry points, linked tests and a finding-to-invariant map, checked by `go test ./tests/contract/... -run Invariants` (part of `make test`). Contract artifact only; runtime behavior is unchanged.
+- Claim register schema and validator: `docs/contract/claims.yaml` and the Go
+  package `tests/contract`, run by `go test ./...`. The register lists protection
+  claims in README.md and SECURITY.md. Runtime behavior is unchanged.
+- Enforcement support matrix: `docs/contract/enforcement-matrix.yaml` records,
+  for each entry point and each control, whether the control is enforced,
+  advisory, ignored or not applicable, with a code reference. A validator in
+  `tests/contract` keeps its columns in step with the policy constraint model.
+  Runtime behavior is unchanged.
+
+### Changed
+
+- Docs: DESIGN.md, docs/CORE.md and docs/mcp-server.md now state which policy
+  constraints the scheduler enforces and which are advisory or planned, and link
+  to `docs/contract/enforcement-matrix.yaml`.
+
 ## [v1.3.1] - 2026-11-11
 
 Changes on main since the v1.3.0 tag (d027ae97, 2026-11-11).

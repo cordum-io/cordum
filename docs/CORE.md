@@ -194,7 +194,8 @@ Safety kernel config-service source can be tuned via `SAFETY_POLICY_CONFIG_SCOPE
 - Admins install policy overlays that:
   - allow/deny specific capabilities
   - require approvals for risky actions (prod writes, PR creation, shell exec)
-  - impose constraints (max diff size, deny-paths, network restrictions)
+  - attach constraints (max diff size, deny-paths, network restrictions); enforcing
+    them is planned (see the [enforcement support matrix](contract/enforcement-matrix.yaml))
 - Kernel gates every job/run/tool call **before execution**.
 - When policy provides remediations, the gateway can apply them to create a new job without hand-editing inputs.
 
@@ -389,7 +390,8 @@ Core must support:
 ### Package usage model
 - Workers never read raw secrets unless policy allows and runner profile permits.
 - Evidence is redacted before it becomes an artifact or LLM input.
-- Kernel constraints enforce “no secret material to LLM”.
+- Planned: kernel constraints that keep secret material out of LLM input (see the
+  [enforcement support matrix](contract/enforcement-matrix.yaml)).
 
 ---
 
@@ -409,9 +411,9 @@ Extend scheduler mapping to support constraints:
 
 ---
 
-## 11) Budgets + quotas (enforced by kernel + scheduler)
+## 11) Budgets + quotas
 
-**Status:** Partially implemented: safety constraints for max runtime/retries/artifact bytes/concurrency; gateway enforces max concurrent runs.
+**Status:** Partially implemented: the scheduler enforces the `max_retries` and `max_concurrent_jobs` constraints; `max_runtime_ms`, `max_artifact_bytes` and the diff limits are advisory (see the [enforcement support matrix](contract/enforcement-matrix.yaml)); gateway enforces max concurrent runs.
 
 Per tenant / per actor:
 - max concurrent runs
@@ -425,7 +427,9 @@ Per tenant / per actor:
 ### Package usage model
 - SRE package PR creation step is constrained:
   - max files, max lines, deny paths, require approval in prod
-- Kernel returns `ALLOW_WITH_CONSTRAINTS` that the workflow engine/scheduler must honor.
+- Kernel returns `ALLOW_WITH_CONSTRAINTS`; the scheduler enforces its retry and concurrency
+  limits, and the file, line and path limits above are planned (see the
+  [enforcement support matrix](contract/enforcement-matrix.yaml)).
 
 ---
 
@@ -570,7 +574,7 @@ Even if core ships zero workers, define **execution profiles** packages can requ
 
 Scheduler routes based on `requires[]`.
 
-**Why:** lets you enforce “this job can’t touch network” at the platform level.
+**Why (planned):** lets you enforce “this job can’t touch network” at the platform level.
 
 **Status:** Partially implemented: scheduler routes by `requires` and constraints are passed via env; sandbox enforcement is up to workers/runners.
 
@@ -611,7 +615,7 @@ Maintain an append-only timeline:
 
 ---
 
-## 7) First‑class budgets enforced by kernel + scheduler
+## 7) First‑class budgets
 
 Budgets are safety:
 - max runtime, max retries, max artifact bytes, max concurrent runs
@@ -619,10 +623,10 @@ Budgets are safety:
 
 **Why:** keeps early packages safe and sellable.
 
-**Status:** Partially implemented (policy constraints for runtime/retries/artifacts/concurrency).
+**Status:** Partially implemented: the scheduler enforces the `max_retries` and `max_concurrent_jobs` constraints; the runtime, artifact and diff budgets are advisory (see the [enforcement support matrix](contract/enforcement-matrix.yaml)).
 
 ### Package integration
-- SRE patch generation constrained to `max_files_changed`, `max_lines_changed`.
+- Planned: SRE patch generation constrained to `max_files_changed`, `max_lines_changed`.
 - Kernel can auto-rewrite budgets per environment (prod stricter than dev).
 
 ---
