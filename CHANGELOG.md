@@ -64,6 +64,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- The dashboard image's build stage runs on the build host's platform. Its
+  linux/arm64 image copies the same static dist/ as linux/amd64 instead of
+  running pnpm, tsc and Vite under QEMU emulation, where a release dry run's
+  arm64 Vite build stalled (task-efd2850d).
+
 - MCP approval resume: a call resumed with `_approval_ref` is refused with
   `-32096` `policy_snapshot_changed` when policy was published between the
   approval claim and the call's `mcp.tool.pre` stamp. Nothing runs and the
