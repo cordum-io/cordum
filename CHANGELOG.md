@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- `cordumctl pack install`, upgrades and uninstall use the gateway pack API,
+  applying the gateway's checks to every install. Install requires `packs.install`
+  (`auth.PermPacksInstall`) or admin, and prints the returned pack worker credential
+  to stdout. `/api/v1/config` preserves server-managed `system/policy` bundles and
+  the `system/packs` registry, returning `CONFIG_KEY_FORBIDDEN` for changes; use
+  the policy bundle API or the pack API instead. Older cordumctl versions must
+  be upgraded to install or uninstall packs against this gateway.
 - Migrated the shared dashboard DataTable to TanStack React Table 9.3.1 with
   explicit sorting, sizing and visibility features, preserving its existing
   rendering and interaction contracts (task-fa2b4cef).

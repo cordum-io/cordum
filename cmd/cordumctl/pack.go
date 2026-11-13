@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
@@ -10,7 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
@@ -21,7 +22,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordum/cordum/core/infra/config"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	sdk "github.com/cordum/cordum/sdk/client"
 	"gopkg.in/yaml.v3"
@@ -30,10 +30,6 @@ import (
 const (
 	packRegistryScope = "system"
 	packRegistryID    = "packs"
-
-	policyConfigScope = "system"
-	policyConfigID    = "policy"
-	policyConfigKey   = "bundles"
 
 	maxPackFiles             = 2048
 	maxPackFileBytes         = 32 << 20
@@ -155,11 +151,7 @@ type packRecord struct {
 	Verification *packRecordVerification `json:"verification,omitempty"`
 }
 
-// packRecordVerification is the on-the-wire shape the gateway persists
-// alongside an installed pack. Server-side verification in
-// handleInstallPack (task step 3) overwrites any client-supplied
-// fields — cordumctl attaches this for diagnostic + client-side
-// audit, but the gateway is the source of truth.
+// packRecordVerification is the gateway's verification result for an installed pack.
 type packRecordVerification struct {
 	Signed              bool     `json:"signed"`
 	PublisherID         string   `json:"publisher_id,omitempty"`
@@ -203,6 +195,77 @@ type packAppliedPolicyOverlay struct {
 type packBundle struct {
 	Dir     string
 	cleanup func()
+}
+
+type packInstallResult struct {
+	packRecord
+	WorkerCredential *struct {
+		WorkerID      string   `json:"worker_id"`
+		Token         string   `json:"token"`
+		AllowedPools  []string `json:"allowed_pools"`
+		AllowedTopics []string `json:"allowed_topics"`
+	} `json:"worker_credential"`
+}
+
+func packArchive(dir string) ([]byte, error) {
+	var body bytes.Buffer
+	gz := gzip.NewWriter(&body)
+	tw := tar.NewWriter(gz)
+	files, total := 0, int64(0)
+	err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && !info.Mode().IsRegular() {
+			return fmt.Errorf("unsupported pack entry %s", path)
+		}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil || rel == "." {
+			return err
+		}
+		files++
+		if !info.IsDir() {
+			total += info.Size()
+		}
+		if files > maxPackFiles || info.Size() > maxPackFileBytes || total > maxPackUncompressedBytes {
+			return fmt.Errorf("pack archive limit exceeded at %s", path)
+		}
+		return writePackArchiveEntry(tw, path, filepath.ToSlash(rel), info)
+	})
+	if err := errors.Join(err, tw.Close(), gz.Close()); err != nil {
+		return nil, fmt.Errorf("archive pack: %w", err)
+	}
+	return body.Bytes(), nil
+}
+
+func writePackArchiveEntry(tw *tar.Writer, path, name string, info os.FileInfo) error {
+	header := &tar.Header{Name: name, Mode: int64(info.Mode().Perm()), Typeflag: tar.TypeDir}
+	if info.IsDir() {
+		header.Name += "/"
+		return tw.WriteHeader(header)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = file.Close() }()
+	current, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	if !current.Mode().IsRegular() || !os.SameFile(info, current) {
+		return fmt.Errorf("pack entry changed: %s", path)
+	}
+	header.Typeflag, header.Size = tar.TypeReg, info.Size()
+	if err := tw.WriteHeader(header); err != nil {
+		return err
+	}
+	_, err = io.Copy(tw, io.LimitReader(file, maxPackFileBytes+1))
+	return err
 }
 
 func (b *packBundle) Cleanup() {
@@ -259,7 +322,7 @@ func runPackInstall(args []string) error {
 	strict := fs.Bool("strict", false, "refuse to install unsigned packs (also: CORDUM_PACK_STRICT=true)")
 	requireCordumSig := fs.Bool("require-cordum-sig", false, "require Cordum counter-signature in addition to publisher signature")
 	trustedKeys := fs.String("trusted-keys", "", "directory of trusted publisher public keys (*.pub)")
-	noVerify := fs.Bool("no-verify", false, "skip signature verification (DANGEROUS; requires --force in strict mode)")
+	noVerify := fs.Bool("no-verify", false, "skip only client signature check; gateway still verifies (requires --force in strict mode)")
 	fs.ParseArgs(args)
 	if fs.NArg() < 1 {
 		return errors.New("pack path or url required")
@@ -287,10 +350,8 @@ func runPackInstall(args []string) error {
 		return err
 	}
 
-	// Verify gate — runs BEFORE any state-changing step so a failed
-	// verify never leaves partial install state behind. Strict mode
-	// is the union of --strict and CORDUM_PACK_STRICT.
-	verifyResult, err := VerifyInstallBundle(bundle.Dir, manifest.Metadata.ID, PackVerificationOptions{
+	// Client verification is an early check; the gateway remains authoritative.
+	_, err = VerifyInstallBundle(bundle.Dir, manifest.Metadata.ID, PackVerificationOptions{
 		Strict:           resolvePackStrict(*strict),
 		RequireCordumSig: *requireCordumSig,
 		NoVerify:         *noVerify,
@@ -309,145 +370,28 @@ func runPackInstall(args []string) error {
 			return err
 		}
 	}
-	owner := lockOwner()
-	release, err := acquirePackLocks(ctx, client, manifest.Metadata.ID, owner)
-	if err != nil {
-		release()
-		return err
-	}
-	defer release()
-
-	schemaPlans, err := planSchemas(ctx, client, bundle.Dir, manifest, *upgrade)
-	if err != nil {
-		return err
-	}
-	workflowPlans, err := planWorkflows(ctx, client, bundle.Dir, manifest, *upgrade)
-	if err != nil {
-		return err
-	}
-
-	appliedConfig := []packAppliedConfigOverlay{}
-	appliedPolicy := []packAppliedPolicyOverlay{}
-	appliedConfigChanges := []appliedConfigChange{}
-	appliedPolicyChanges := []appliedPolicyChange{}
-	appliedTopics := []topicRegistration{}
-	appliedSchemas := []schemaPlan{}
-	appliedWorkflows := []workflowPlan{}
-	schemaDigests := map[string]string{}
-	workflowDigests := map[string]string{}
-	for _, plan := range schemaPlans {
-		schemaDigests[plan.ID] = plan.Digest
-	}
-	for _, plan := range workflowPlans {
-		workflowDigests[plan.ID] = plan.Digest
-	}
-
 	if *dryRun {
+		if _, err := planSchemas(ctx, client, bundle.Dir, manifest, *upgrade); err != nil {
+			return err
+		}
+		if _, err := planWorkflows(ctx, client, bundle.Dir, manifest, *upgrade); err != nil {
+			return err
+		}
 		fmt.Printf("pack %s %s: dry-run\n", manifest.Metadata.ID, manifest.Metadata.Version)
 		return nil
 	}
-
-	installed, _, err := loadPackRegistry(ctx, client)
+	archive, err := packArchive(bundle.Dir)
 	if err != nil {
-		return fmt.Errorf("load pack registry: %w", err)
-	}
-	if err := validatePackAliasOwnership(manifest.Metadata.ID, manifest.Metadata.Aliases, manifest.Topics, installed); err != nil {
 		return err
 	}
-
-	rollback := func(installErr error) error {
-		rollbackErr := rollbackPackInstall(ctx, client, appliedTopics, appliedPolicyChanges, appliedConfigChanges, appliedWorkflows, appliedSchemas)
-		if rollbackErr == nil {
-			return installErr
-		}
-		fmt.Fprintf(os.Stderr, "WARNING: pack install rollback encountered errors: %v\n", rollbackErr)
-		return errors.Join(installErr, fmt.Errorf("rollback cleanup failed: %w", rollbackErr))
-	}
-
-	for _, plan := range schemaPlans {
-		if plan.Noop {
-			continue
-		}
-		if err := client.registerSchema(ctx, plan.ID, plan.Schema); err != nil {
-			return rollback(err)
-		}
-		appliedSchemas = append(appliedSchemas, plan)
-	}
-	for _, plan := range workflowPlans {
-		if plan.Noop {
-			continue
-		}
-		if err := client.createWorkflow(ctx, plan.Workflow); err != nil {
-			return rollback(err)
-		}
-		appliedWorkflows = append(appliedWorkflows, plan)
-	}
-
-	for _, overlay := range manifest.Overlays.Config {
-		if shouldSkipConfigOverlay(*inactive, overlay) {
-			continue
-		}
-		applied, err := applyConfigOverlay(ctx, client, overlay, manifest.Metadata.ID, manifest.Metadata.Aliases, bundle.Dir)
-		if err != nil {
-			return rollback(err)
-		}
-		if applied.Overlay.Name != "" {
-			appliedConfig = append(appliedConfig, applied.Overlay)
-			appliedConfigChanges = append(appliedConfigChanges, applied)
-		}
-	}
-	for _, overlay := range manifest.Overlays.Policy {
-		applied, err := applyPolicyOverlay(ctx, client, overlay, manifest.Metadata.ID, manifest.Metadata.Version, bundle.Dir)
-		if err != nil {
-			return rollback(err)
-		}
-		if applied.Overlay.Name != "" {
-			appliedPolicy = append(appliedPolicy, applied.Overlay)
-			appliedPolicyChanges = append(appliedPolicyChanges, applied)
-		}
-	}
-
-	status := "ACTIVE"
-	if *inactive || !hasPoolOverlay(appliedConfig) {
-		status = "INACTIVE"
-	}
-	topicRegistrations, err := packTopicRegistrations(ctx, client, manifest, status)
+	result, err := client.installPack(ctx, archive, *force, *upgrade, *inactive)
 	if err != nil {
-		return rollback(err)
+		return err
 	}
-	for _, topic := range topicRegistrations {
-		if err := client.registerTopic(ctx, topic); err != nil {
-			return rollback(fmt.Errorf("register topic %s: %w", topic.Name, err))
-		}
-		appliedTopics = append(appliedTopics, topic)
+	fmt.Printf("installed pack %s %s (%s)\n", result.ID, result.Version, result.Status)
+	if credential := result.WorkerCredential; credential != nil {
+		fmt.Printf("worker_id: %s\nworker_token: %s\n", credential.WorkerID, credential.Token)
 	}
-
-	record := packRecord{
-		ID:          manifest.Metadata.ID,
-		Version:     manifest.Metadata.Version,
-		Status:      status,
-		InstalledAt: time.Now().UTC().Format(time.RFC3339),
-		Manifest: packRecordManifest{
-			Metadata:      manifest.Metadata,
-			Compatibility: manifest.Compatibility,
-			Topics:        manifest.Topics,
-		},
-		Resources: packRecordResources{
-			Schemas:   schemaDigests,
-			Workflows: workflowDigests,
-		},
-		Overlays: packRecordOverlays{
-			Config: appliedConfig,
-			Policy: appliedPolicy,
-		},
-		Tests:        manifest.Tests,
-		Verification: verificationFromResult(verifyResult),
-	}
-
-	if err := updatePackRegistry(ctx, client, record); err != nil {
-		return rollback(err)
-	}
-	fmt.Printf("installed pack %s %s (%s)\n", record.ID, record.Version, record.Status)
 	return nil
 }
 
@@ -465,59 +409,10 @@ func runPackUninstall(args []string) error {
 	}
 	client := newRestClient(*fs.gateway, *fs.apiKey, *fs.tenant, tlsTransport)
 	ctx := context.Background()
-	owner := lockOwner()
-	release, err := acquirePackLocks(ctx, client, packID, owner)
-	if err != nil {
-		release()
+	if err := client.uninstallPack(ctx, packID, *purge); err != nil {
 		return err
 	}
-	defer release()
-
-	record, err := getPackRecord(ctx, client, packID)
-	if err != nil {
-		return err
-	}
-	if record == nil {
-		return errors.New("pack not installed")
-	}
-
-	for i := len(record.Overlays.Config) - 1; i >= 0; i-- {
-		overlay := record.Overlays.Config[i]
-		if err := removeConfigOverlay(ctx, client, overlay); err != nil {
-			return err
-		}
-	}
-	for _, overlay := range record.Overlays.Policy {
-		if err := removePolicyOverlay(ctx, client, overlay); err != nil {
-			return err
-		}
-	}
-	for _, topic := range record.Manifest.Topics {
-		if err := client.removeTopic(ctx, topic.Name); err != nil {
-			if isNotFound(err) {
-				continue
-			}
-			return fmt.Errorf("remove topic %s: %w", topic.Name, err)
-		}
-	}
-	if *purge {
-		for wfID := range record.Resources.Workflows {
-			if err := client.deleteWorkflow(ctx, wfID); err != nil {
-				slog.Warn("purge: failed to delete workflow", "workflow_id", wfID, "error", err)
-			}
-		}
-		for schemaID := range record.Resources.Schemas {
-			if err := client.deleteSchema(ctx, schemaID); err != nil {
-				slog.Warn("purge: failed to delete schema", "schema_id", schemaID, "error", err)
-			}
-		}
-	}
-
-	record.Status = "DISABLED"
-	if err := updatePackRegistry(ctx, client, *record); err != nil {
-		return err
-	}
-	fmt.Printf("uninstalled pack %s (%s)\n", record.ID, record.Status)
+	fmt.Printf("uninstalled pack %s\n", packID)
 	return nil
 }
 
@@ -608,102 +503,6 @@ type workflowPlan struct {
 	Existing    map[string]any
 	HadExisting bool
 	Noop        bool
-}
-
-type appliedConfigChange struct {
-	Overlay  packAppliedConfigOverlay
-	Previous any
-}
-
-type appliedPolicyChange struct {
-	Overlay     packAppliedPolicyOverlay
-	Previous    any
-	HadPrevious bool
-}
-
-type packInstallRollbackHooks struct {
-	rollbackTopic        func(context.Context, *restClient, topicRegistration) error
-	restorePolicyOverlay func(context.Context, *restClient, appliedPolicyChange) error
-	restoreConfigOverlay func(context.Context, *restClient, appliedConfigChange) error
-	rollbackWorkflow     func(context.Context, *restClient, workflowPlan) error
-	rollbackSchema       func(context.Context, *restClient, schemaPlan) error
-}
-
-func rollbackPackInstall(
-	ctx context.Context,
-	client *restClient,
-	appliedTopics []topicRegistration,
-	appliedPolicyChanges []appliedPolicyChange,
-	appliedConfigChanges []appliedConfigChange,
-	appliedWorkflows []workflowPlan,
-	appliedSchemas []schemaPlan,
-) error {
-	return rollbackPackInstallWithHooks(
-		ctx,
-		client,
-		appliedTopics,
-		appliedPolicyChanges,
-		appliedConfigChanges,
-		appliedWorkflows,
-		appliedSchemas,
-		packInstallRollbackHooks{
-			rollbackTopic:        rollbackTopic,
-			restorePolicyOverlay: restorePolicyOverlay,
-			restoreConfigOverlay: restoreConfigOverlay,
-			rollbackWorkflow:     rollbackWorkflow,
-			rollbackSchema:       rollbackSchema,
-		},
-	)
-}
-
-func rollbackPackInstallWithHooks(
-	ctx context.Context,
-	client *restClient,
-	appliedTopics []topicRegistration,
-	appliedPolicyChanges []appliedPolicyChange,
-	appliedConfigChanges []appliedConfigChange,
-	appliedWorkflows []workflowPlan,
-	appliedSchemas []schemaPlan,
-	hooks packInstallRollbackHooks,
-) error {
-	var errs []error
-	for i := len(appliedTopics) - 1; i >= 0; i-- {
-		if hooks.rollbackTopic == nil {
-			continue
-		}
-		if err := hooks.rollbackTopic(ctx, client, appliedTopics[i]); err != nil {
-			slog.Warn("pack install rollback: remove topic failed", "error", err, "topic", appliedTopics[i].Name, "index", i)
-			errs = append(errs, fmt.Errorf("remove topic %s: %w", appliedTopics[i].Name, err))
-		}
-	}
-	for i := len(appliedPolicyChanges) - 1; i >= 0; i-- {
-		if err := hooks.restorePolicyOverlay(ctx, client, appliedPolicyChanges[i]); err != nil {
-			slog.Warn("pack install rollback: restore policy overlay failed", "error", err, "index", i)
-			errs = append(errs, fmt.Errorf("restore policy overlay %s: %w", appliedPolicyChanges[i].Overlay.Name, err))
-		}
-	}
-	for i := len(appliedConfigChanges) - 1; i >= 0; i-- {
-		if err := hooks.restoreConfigOverlay(ctx, client, appliedConfigChanges[i]); err != nil {
-			slog.Warn("pack install rollback: restore config overlay failed", "error", err, "index", i)
-			errs = append(errs, fmt.Errorf("restore config overlay %s: %w", appliedConfigChanges[i].Overlay.Name, err))
-		}
-	}
-	for i := len(appliedWorkflows) - 1; i >= 0; i-- {
-		if err := hooks.rollbackWorkflow(ctx, client, appliedWorkflows[i]); err != nil {
-			slog.Warn("pack install rollback: rollback workflow failed", "error", err, "index", i)
-			errs = append(errs, fmt.Errorf("rollback workflow %s: %w", appliedWorkflows[i].ID, err))
-		}
-	}
-	for i := len(appliedSchemas) - 1; i >= 0; i-- {
-		if err := hooks.rollbackSchema(ctx, client, appliedSchemas[i]); err != nil {
-			slog.Warn("pack install rollback: rollback schema failed", "error", err, "index", i)
-			errs = append(errs, fmt.Errorf("rollback schema %s: %w", appliedSchemas[i].ID, err))
-		}
-	}
-	if len(errs) > 0 {
-		return fmt.Errorf("rollback completed with %d errors: %w", len(errs), errors.Join(errs...))
-	}
-	return nil
 }
 
 func planSchemas(ctx context.Context, client *restClient, dir string, manifest *packManifest, upgrade bool) ([]schemaPlan, error) {
@@ -870,95 +669,6 @@ func validatePackAliases(aliases []string) error {
 		seen[alias] = struct{}{}
 	}
 	return nil
-}
-
-// validatePackAliasOwnership rejects namespace hijacks before install. Alias
-// syntax alone is insufficient because an alias grants authority over
-// job.<alias>.* topics; it must not collide with another installed pack id,
-// another installed alias, or topics that another pack already registered.
-func validatePackAliasOwnership(packID string, aliases []string, topics []packTopic, installed map[string]packRecord) error {
-	packID = strings.TrimSpace(packID)
-	if packID == "" {
-		return errors.New("metadata.id required")
-	}
-	candidateNamespaces := map[string]struct{}{packID: {}}
-	for _, alias := range aliases {
-		alias = strings.TrimSpace(alias)
-		if alias == "" {
-			continue
-		}
-		if alias == packID {
-			return fmt.Errorf("metadata.aliases: %q duplicates metadata.id", alias)
-		}
-		candidateNamespaces[alias] = struct{}{}
-	}
-
-	for namespace, owner := range installedPackNamespaceOwners(installed, packID) {
-		if _, requested := candidateNamespaces[namespace]; requested {
-			return fmt.Errorf("metadata.aliases: namespace %q is already owned by installed pack %q", namespace, owner)
-		}
-	}
-
-	prefixes := packTopicPrefixes(packID, aliases)
-	candidateTopics := make(map[string]struct{}, len(topics))
-	for _, topic := range topics {
-		name := strings.TrimSpace(topic.Name)
-		if name != "" {
-			candidateTopics[name] = struct{}{}
-		}
-	}
-	for key, record := range installed {
-		owner := packRecordOwnerID(key, record)
-		if owner == "" || owner == packID {
-			continue
-		}
-		for _, topic := range record.Manifest.Topics {
-			name := strings.TrimSpace(topic.Name)
-			if name == "" {
-				continue
-			}
-			if _, exact := candidateTopics[name]; exact || hasAnyPrefix(name, prefixes) {
-				return fmt.Errorf("topic %q is already owned by installed pack %q", name, owner)
-			}
-		}
-	}
-	return nil
-}
-
-func installedPackNamespaceOwners(installed map[string]packRecord, currentPackID string) map[string]string {
-	owners := map[string]string{}
-	for key, record := range installed {
-		owner := packRecordOwnerID(key, record)
-		if owner == "" || owner == currentPackID {
-			continue
-		}
-		addNamespaceOwner(owners, strings.TrimSpace(key), owner)
-		addNamespaceOwner(owners, strings.TrimSpace(record.ID), owner)
-		addNamespaceOwner(owners, strings.TrimSpace(record.Manifest.Metadata.ID), owner)
-		for _, alias := range record.Manifest.Metadata.Aliases {
-			addNamespaceOwner(owners, strings.TrimSpace(alias), owner)
-		}
-	}
-	return owners
-}
-
-func packRecordOwnerID(key string, record packRecord) string {
-	if id := strings.TrimSpace(record.ID); id != "" {
-		return id
-	}
-	if id := strings.TrimSpace(record.Manifest.Metadata.ID); id != "" {
-		return id
-	}
-	return strings.TrimSpace(key)
-}
-
-func addNamespaceOwner(owners map[string]string, namespace, owner string) {
-	if namespace == "" || owner == "" {
-		return
-	}
-	if _, exists := owners[namespace]; !exists {
-		owners[namespace] = owner
-	}
 }
 
 // packTopicPrefixes returns the set of "job.<x>." prefixes a pack may use
@@ -1235,333 +945,6 @@ func compareSemver(left, right semver) int {
 	return 0
 }
 
-func shouldSkipConfigOverlay(inactive bool, overlay packConfigOverlay) bool {
-	if !inactive {
-		return false
-	}
-	return strings.EqualFold(strings.TrimSpace(overlay.Key), "pools")
-}
-
-func hasPoolOverlay(overlays []packAppliedConfigOverlay) bool {
-	for _, overlay := range overlays {
-		if strings.EqualFold(overlay.Key, "pools") {
-			return true
-		}
-	}
-	return false
-}
-
-func packTopicRegistrations(ctx context.Context, client *restClient, manifest *packManifest, packStatus string) ([]topicRegistration, error) {
-	if manifest == nil {
-		return nil, errors.New("pack manifest required")
-	}
-	if len(manifest.Topics) == 0 {
-		return []topicRegistration{}, nil
-	}
-
-	topicToPool, err := loadTopicPoolMappings(ctx, client)
-	if err != nil {
-		return nil, err
-	}
-
-	status := "active"
-	if strings.EqualFold(packStatus, "INACTIVE") {
-		status = "disabled"
-	}
-
-	out := make([]topicRegistration, 0, len(manifest.Topics))
-	for _, topic := range manifest.Topics {
-		out = append(out, topicRegistration{
-			Name:           topic.Name,
-			Pool:           strings.TrimSpace(topicToPool[topic.Name]),
-			InputSchemaID:  strings.TrimSpace(topic.InputSchemaID),
-			OutputSchemaID: strings.TrimSpace(topic.OutputSchemaID),
-			PackID:         manifest.Metadata.ID,
-			Requires:       topic.Requires,
-			RiskTags:       topic.RiskTags,
-			Status:         status,
-		})
-	}
-	return out, nil
-}
-
-func loadTopicPoolMappings(ctx context.Context, client *restClient) (map[string]string, error) {
-	if client == nil {
-		return map[string]string{}, nil
-	}
-	doc, err := client.getConfig(ctx, "system", "default")
-	if err != nil {
-		if isNotFound(err) {
-			return map[string]string{}, nil
-		}
-		return nil, fmt.Errorf("load pool mappings: %w", err)
-	}
-	return topicPoolMappingsFromConfig(doc)
-}
-
-func topicPoolMappingsFromConfig(doc *configDoc) (map[string]string, error) {
-	if doc == nil || doc.Data == nil {
-		return map[string]string{}, nil
-	}
-	raw, ok := doc.Data["pools"]
-	if !ok || raw == nil {
-		return map[string]string{}, nil
-	}
-	if rawMap, ok := raw.(map[string]any); ok {
-		if rawTopics, ok := rawMap["topics"].(map[string]any); (!ok || len(rawTopics) == 0) && rawMap["pools"] != nil {
-			return map[string]string{}, nil
-		}
-	}
-	data, err := json.Marshal(raw)
-	if err != nil {
-		return nil, fmt.Errorf("load pool mappings: %w", err)
-	}
-	poolsCfg, err := config.ParsePoolsConfig(data)
-	if err != nil {
-		return nil, fmt.Errorf("load pool mappings: %w", err)
-	}
-	if poolsCfg == nil {
-		return map[string]string{}, nil
-	}
-	return poolsCfg.TopicToPool(), nil
-}
-
-func applyConfigOverlay(ctx context.Context, client *restClient, overlay packConfigOverlay, packID string, packAliases []string, dir string) (appliedConfigChange, error) {
-	key := strings.TrimSpace(overlay.Key)
-	if key == "" {
-		return appliedConfigChange{}, errors.New("config overlay key required")
-	}
-	strategy := strings.TrimSpace(overlay.Strategy)
-	if strategy != "" && strategy != "json_merge_patch" {
-		return appliedConfigChange{}, fmt.Errorf("unsupported config overlay strategy %q", strategy)
-	}
-	patch, err := loadPatchFile(dir, overlay.Path)
-	if err != nil {
-		return appliedConfigChange{}, fmt.Errorf("apply config overlay %s: %w", overlay.Name, err)
-	}
-	patchMap, ok := patch.(map[string]any)
-	if !ok {
-		return appliedConfigChange{}, errors.New("config overlay patch must be a map")
-	}
-	scope := strings.TrimSpace(overlay.Scope)
-	if scope == "" {
-		scope = "system"
-	}
-	scopeID := strings.TrimSpace(overlay.ScopeID)
-	if scope == "system" && scopeID == "" {
-		scopeID = "default"
-	}
-	doc, err := client.getConfig(ctx, scope, scopeID)
-	if err != nil {
-		if !isNotFound(err) {
-			return appliedConfigChange{}, fmt.Errorf("apply config overlay %s: %w", overlay.Name, err)
-		}
-		doc = &configDoc{Scope: scope, ScopeID: scopeID, Data: map[string]any{}}
-	}
-	if doc.Data == nil {
-		doc.Data = map[string]any{}
-	}
-	current := normalizeJSON(doc.Data[key])
-	if err := validateConfigPatch(key, patchMap, packID, packAliases, current); err != nil {
-		return appliedConfigChange{}, fmt.Errorf("apply config overlay %s: %w", overlay.Name, err)
-	}
-	before := deepCopy(current)
-	updated := mergePatch(current, patchMap)
-	doc.Data[key] = updated
-	if err := client.setConfig(ctx, doc); err != nil {
-		return appliedConfigChange{}, fmt.Errorf("apply config overlay %s: %w", overlay.Name, err)
-	}
-	return appliedConfigChange{
-		Overlay: packAppliedConfigOverlay{
-			Name:    overlay.Name,
-			Scope:   scope,
-			ScopeID: scopeID,
-			Key:     key,
-			Patch:   patchMap,
-		},
-		Previous: before,
-	}, nil
-}
-
-func removeConfigOverlay(ctx context.Context, client *restClient, overlay packAppliedConfigOverlay) error {
-	doc, err := client.getConfig(ctx, overlay.Scope, overlay.ScopeID)
-	if err != nil {
-		if isNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("remove config overlay %s: %w", overlay.Name, err)
-	}
-	if doc.Data == nil {
-		return nil
-	}
-	current := normalizeJSON(doc.Data[overlay.Key])
-	if current == nil {
-		return nil
-	}
-	deletePatch := buildDeletePatch(overlay.Patch)
-	updated := mergePatch(current, deletePatch)
-	doc.Data[overlay.Key] = updated
-	if err := client.setConfig(ctx, doc); err != nil {
-		return fmt.Errorf("remove config overlay %s: %w", overlay.Name, err)
-	}
-	return nil
-}
-
-func restoreConfigOverlay(ctx context.Context, client *restClient, change appliedConfigChange) error {
-	overlay := change.Overlay
-	doc, err := client.getConfig(ctx, overlay.Scope, overlay.ScopeID)
-	if err != nil {
-		if !isNotFound(err) {
-			return fmt.Errorf("restore config overlay %s: %w", overlay.Name, err)
-		}
-		doc = &configDoc{Scope: overlay.Scope, ScopeID: overlay.ScopeID, Data: map[string]any{}}
-	}
-	if doc.Data == nil {
-		doc.Data = map[string]any{}
-	}
-	if change.Previous == nil {
-		delete(doc.Data, overlay.Key)
-	} else {
-		doc.Data[overlay.Key] = deepCopy(change.Previous)
-	}
-	if err := client.setConfig(ctx, doc); err != nil {
-		return fmt.Errorf("restore config overlay %s: %w", overlay.Name, err)
-	}
-	return nil
-}
-
-func applyPolicyOverlay(ctx context.Context, client *restClient, overlay packPolicyOverlay, packID, packVersion, dir string) (appliedPolicyChange, error) {
-	strategy := strings.TrimSpace(overlay.Strategy)
-	if strategy != "" && strategy != "bundle_fragment" {
-		return appliedPolicyChange{}, fmt.Errorf("unsupported policy overlay strategy %q", strategy)
-	}
-	path, err := safeJoin(dir, overlay.Path)
-	if err != nil {
-		return appliedPolicyChange{}, fmt.Errorf("apply policy overlay %s: %w", overlay.Name, err)
-	}
-	// #nosec G304 -- path is validated within the pack directory.
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return appliedPolicyChange{}, fmt.Errorf("apply policy overlay %s: %w", overlay.Name, err)
-	}
-	fragmentID := policyFragmentID(packID, overlay.Name)
-	doc, err := client.getConfig(ctx, policyConfigScope, policyConfigID)
-	if err != nil {
-		if !isNotFound(err) {
-			return appliedPolicyChange{}, fmt.Errorf("apply policy overlay %s: %w", overlay.Name, err)
-		}
-		doc = &configDoc{Scope: policyConfigScope, ScopeID: policyConfigID, Data: map[string]any{}}
-	}
-	if doc.Data == nil {
-		doc.Data = map[string]any{}
-	}
-	rawBundles := normalizeJSON(doc.Data[policyConfigKey])
-	bundles, _ := rawBundles.(map[string]any)
-	if bundles == nil {
-		bundles = map[string]any{}
-	}
-	previous, hadPrevious := bundles[fragmentID]
-	installedAt := time.Now().UTC().Format(time.RFC3339)
-	sum := sha256.Sum256(content)
-	bundles[fragmentID] = map[string]any{
-		"content":      string(content),
-		"version":      packVersion,
-		"sha256":       hex.EncodeToString(sum[:]),
-		"installed_at": installedAt,
-	}
-	doc.Data[policyConfigKey] = bundles
-	if err := client.setConfig(ctx, doc); err != nil {
-		return appliedPolicyChange{}, fmt.Errorf("apply policy overlay %s: %w", overlay.Name, err)
-	}
-	return appliedPolicyChange{
-		Overlay: packAppliedPolicyOverlay{
-			Name:       overlay.Name,
-			FragmentID: fragmentID,
-		},
-		Previous:    deepCopy(previous),
-		HadPrevious: hadPrevious,
-	}, nil
-}
-
-func removePolicyOverlay(ctx context.Context, client *restClient, overlay packAppliedPolicyOverlay) error {
-	doc, err := client.getConfig(ctx, policyConfigScope, policyConfigID)
-	if err != nil {
-		if isNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("remove policy overlay %s: %w", overlay.Name, err)
-	}
-	rawBundles := normalizeJSON(doc.Data[policyConfigKey])
-	bundles, ok := rawBundles.(map[string]any)
-	if !ok || bundles == nil {
-		return nil
-	}
-	delete(bundles, overlay.FragmentID)
-	doc.Data[policyConfigKey] = bundles
-	if err := client.setConfig(ctx, doc); err != nil {
-		return fmt.Errorf("remove policy overlay %s: %w", overlay.Name, err)
-	}
-	return nil
-}
-
-func restorePolicyOverlay(ctx context.Context, client *restClient, change appliedPolicyChange) error {
-	doc, err := client.getConfig(ctx, policyConfigScope, policyConfigID)
-	if err != nil {
-		if !isNotFound(err) {
-			return fmt.Errorf("restore policy overlay %s: %w", change.Overlay.Name, err)
-		}
-		doc = &configDoc{Scope: policyConfigScope, ScopeID: policyConfigID, Data: map[string]any{}}
-	}
-	if doc.Data == nil {
-		doc.Data = map[string]any{}
-	}
-	rawBundles := normalizeJSON(doc.Data[policyConfigKey])
-	bundles, _ := rawBundles.(map[string]any)
-	if bundles == nil {
-		bundles = map[string]any{}
-	}
-	if !change.HadPrevious {
-		delete(bundles, change.Overlay.FragmentID)
-	} else {
-		bundles[change.Overlay.FragmentID] = deepCopy(change.Previous)
-	}
-	doc.Data[policyConfigKey] = bundles
-	if err := client.setConfig(ctx, doc); err != nil {
-		return fmt.Errorf("restore policy overlay %s: %w", change.Overlay.Name, err)
-	}
-	return nil
-}
-
-func policyFragmentID(packID, name string) string {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		name = "default"
-	}
-	return fmt.Sprintf("%s/%s", packID, name)
-}
-
-func rollbackSchema(ctx context.Context, client *restClient, plan schemaPlan) error {
-	if plan.HadExisting && plan.Existing != nil {
-		return client.registerSchema(ctx, plan.ID, plan.Existing)
-	}
-	return client.deleteSchema(ctx, plan.ID)
-}
-
-func rollbackWorkflow(ctx context.Context, client *restClient, plan workflowPlan) error {
-	if plan.HadExisting && plan.Existing != nil {
-		return client.createWorkflow(ctx, plan.Existing)
-	}
-	return client.deleteWorkflow(ctx, plan.ID)
-}
-
-func rollbackTopic(ctx context.Context, client *restClient, topic topicRegistration) error {
-	err := client.removeTopic(ctx, topic.Name)
-	if isNotFound(err) {
-		return nil
-	}
-	return err
-}
-
 func runPolicySimulation(ctx context.Context, client *restClient, test packPolicySimulation, packID string) error {
 	if test.Request.Topic == "" {
 		return fmt.Errorf("policy simulation %q missing topic", test.Name)
@@ -1620,27 +1003,6 @@ func normalizeDecision(raw string) string {
 	}
 }
 
-func updatePackRegistry(ctx context.Context, client *restClient, record packRecord) error {
-	records, doc, err := loadPackRegistry(ctx, client)
-	if err != nil {
-		return fmt.Errorf("update pack registry: %w", err)
-	}
-	records[record.ID] = record
-	if doc == nil {
-		doc = &configDoc{Scope: packRegistryScope, ScopeID: packRegistryID, Data: map[string]any{}}
-	}
-	// doc.Data may be nil when the config document exists in Redis
-	// but was stored with an empty/missing data field.
-	if doc.Data == nil {
-		doc.Data = map[string]any{}
-	}
-	doc.Data["installed"] = recordsToAny(records)
-	if err := client.setConfig(ctx, doc); err != nil {
-		return fmt.Errorf("update pack registry: %w", err)
-	}
-	return nil
-}
-
 func listPackRecords(ctx context.Context, client *restClient) (map[string]packRecord, error) {
 	records, _, err := loadPackRegistry(ctx, client)
 	return records, err
@@ -1682,66 +1044,6 @@ func loadPackRegistry(ctx context.Context, client *restClient) (map[string]packR
 		return nil, nil, fmt.Errorf("load pack registry: %w", err)
 	}
 	return records, doc, nil
-}
-
-func recordsToAny(records map[string]packRecord) map[string]any {
-	data, err := json.Marshal(records)
-	if err != nil {
-		slog.Warn("recordsToAny: marshal failed", "error", err)
-		return map[string]any{}
-	}
-	var out map[string]any
-	if err := json.Unmarshal(data, &out); err != nil {
-		slog.Warn("recordsToAny: unmarshal failed", "error", err)
-		return map[string]any{}
-	}
-	return out
-}
-
-func acquirePackLocks(ctx context.Context, client *restClient, packID, owner string) (func(), error) {
-	global := "packs:global"
-	if err := client.acquireLock(ctx, global, owner, 60*time.Second); err != nil {
-		return func() {}, fmt.Errorf("acquire pack locks: %w", err)
-	}
-	globalReleased := false
-	releaseGlobal := func() {
-		if globalReleased {
-			return
-		}
-		if err := client.releaseLock(ctx, global, owner); err != nil {
-			slog.Warn("pack: failed to release lock", "lock", global, "owner", owner, "error", err)
-			return
-		}
-		globalReleased = true
-	}
-	packLock := "pack:" + packID
-	if err := client.acquireLock(ctx, packLock, owner, 60*time.Second); err != nil {
-		releaseGlobal()
-		return releaseGlobal, fmt.Errorf("acquire pack locks: %w", err)
-	}
-	packReleased := false
-	releasePack := func() {
-		if packReleased {
-			return
-		}
-		if err := client.releaseLock(ctx, packLock, owner); err != nil {
-			slog.Warn("pack: failed to release lock", "lock", packLock, "owner", owner, "error", err)
-			return
-		}
-		packReleased = true
-	}
-	return func() {
-		releasePack()
-		releaseGlobal()
-	}, nil
-}
-
-func lockOwner() string {
-	host, _ := os.Hostname()
-	if host == "" {
-		host = "local"
-	}
-	return fmt.Sprintf("cordumctl:%s:%d", host, os.Getpid())
 }
 
 func loadSchemaFile(dir, relPath string) (map[string]any, string, error) {
@@ -1821,175 +1123,6 @@ func loadDataFile(path string) (any, error) {
 	return normalizeJSON(payload), nil
 }
 
-func loadPatchFile(dir, relPath string) (any, error) {
-	path, err := safeJoin(dir, relPath)
-	if err != nil {
-		return nil, fmt.Errorf("load patch file %s: %w", relPath, err)
-	}
-	data, err := loadDataFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("load patch file %s: %w", relPath, err)
-	}
-	return data, nil
-}
-
-func validateConfigPatch(key string, patch map[string]any, packID string, packAliases []string, current any) error {
-	switch strings.ToLower(key) {
-	case "pools":
-		return validatePoolsPatch(patch, packID, packAliases, current)
-	case "timeouts":
-		return validateTimeoutsPatch(patch, packID, packAliases)
-	default:
-		return fmt.Errorf("unsupported config overlay key %q", key)
-	}
-}
-
-func validatePoolsPatch(patch map[string]any, packID string, packAliases []string, current any) error {
-	topicPrefixes := packTopicPrefixes(packID, packAliases)
-	rawTopics := normalizeJSON(patch["topics"])
-	if rawTopics != nil {
-		topics, ok := rawTopics.(map[string]any)
-		if !ok {
-			return errors.New("pools.topics must be a map")
-		}
-		for topic := range topics {
-			if !hasAnyPrefix(topic, topicPrefixes) {
-				return fmt.Errorf("pools topic %q must be namespaced under %s", topic, formatPrefixList(topicPrefixes))
-			}
-		}
-	}
-	rawPools := normalizeJSON(patch["pools"])
-	if rawPools != nil {
-		pools, ok := rawPools.(map[string]any)
-		if !ok {
-			return errors.New("pools.pools must be a map")
-		}
-		existingPools := extractPools(current)
-		for pool := range pools {
-			if _, ok := existingPools[pool]; ok {
-				continue
-			}
-			if !strings.HasPrefix(pool, packID) {
-				return fmt.Errorf("pool %q must be namespaced under %s", pool, packID)
-			}
-		}
-	}
-	for key := range patch {
-		if key != "topics" && key != "pools" {
-			return fmt.Errorf("unsupported pools overlay key %q", key)
-		}
-	}
-	return nil
-}
-
-func extractPools(current any) map[string]struct{} {
-	out := map[string]struct{}{}
-	currentMap, ok := normalizeJSON(current).(map[string]any)
-	if !ok || currentMap == nil {
-		return out
-	}
-	rawPools := normalizeJSON(currentMap["pools"])
-	pools, ok := rawPools.(map[string]any)
-	if !ok || pools == nil {
-		return out
-	}
-	for name := range pools {
-		out[name] = struct{}{}
-	}
-	return out
-}
-
-func validateTimeoutsPatch(patch map[string]any, packID string, packAliases []string) error {
-	topicPrefixes := packTopicPrefixes(packID, packAliases)
-	rawTopics := normalizeJSON(patch["topics"])
-	if rawTopics != nil {
-		topics, ok := rawTopics.(map[string]any)
-		if !ok {
-			return errors.New("timeouts.topics must be a map")
-		}
-		for topic := range topics {
-			if !hasAnyPrefix(topic, topicPrefixes) {
-				return fmt.Errorf("timeouts topic %q must be namespaced under %s", topic, formatPrefixList(topicPrefixes))
-			}
-		}
-	}
-	rawWorkflows := normalizeJSON(patch["workflows"])
-	if rawWorkflows != nil {
-		workflows, ok := rawWorkflows.(map[string]any)
-		if !ok {
-			return errors.New("timeouts.workflows must be a map")
-		}
-		for wf := range workflows {
-			if !strings.HasPrefix(wf, packID+".") {
-				return fmt.Errorf("timeout workflow %q must be namespaced under %s", wf, packID)
-			}
-		}
-	}
-	for key := range patch {
-		if key != "topics" && key != "workflows" {
-			return fmt.Errorf("unsupported timeouts overlay key %q", key)
-		}
-	}
-	return nil
-}
-
-func buildDeletePatch(patch map[string]any) map[string]any {
-	out := map[string]any{}
-	for k, v := range patch {
-		out[k] = deletePatchValue(v)
-	}
-	return out
-}
-
-func deletePatchValue(value any) any {
-	switch v := value.(type) {
-	case map[string]any:
-		out := map[string]any{}
-		for k, child := range v {
-			out[k] = deletePatchValue(child)
-		}
-		return out
-	default:
-		return nil
-	}
-}
-
-func mergePatch(target any, patch any) any {
-	if patch == nil {
-		return nil
-	}
-	patchMap, ok := patch.(map[string]any)
-	if !ok {
-		return patch
-	}
-	targetMap, _ := normalizeJSON(target).(map[string]any)
-	if targetMap == nil {
-		targetMap = map[string]any{}
-	} else {
-		targetMap = cloneMap(targetMap)
-	}
-	for k, v := range patchMap {
-		if v == nil {
-			delete(targetMap, k)
-			continue
-		}
-		if childMap, ok := v.(map[string]any); ok {
-			targetMap[k] = mergePatch(targetMap[k], childMap)
-			continue
-		}
-		targetMap[k] = v
-	}
-	return targetMap
-}
-
-func cloneMap(in map[string]any) map[string]any {
-	out := make(map[string]any, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
-}
-
 func normalizeJSON(value any) any {
 	switch v := value.(type) {
 	case map[string]any:
@@ -2014,23 +1147,6 @@ func normalizeJSON(value any) any {
 	default:
 		return v
 	}
-}
-
-func deepCopy(value any) any {
-	if value == nil {
-		return nil
-	}
-	data, err := json.Marshal(value)
-	if err != nil {
-		slog.Warn("deepCopy: marshal failed, returning original", "error", err)
-		return value
-	}
-	var out any
-	if err := json.Unmarshal(data, &out); err != nil {
-		slog.Warn("deepCopy: unmarshal failed, returning original", "error", err)
-		return value
-	}
-	return out
 }
 
 func hashValue(value any) (string, error) {
@@ -2132,6 +1248,38 @@ func (c *restClient) endpoint(path string) string {
 	return c.baseURL + path
 }
 
+func (c *restClient) installPack(ctx context.Context, archive []byte, force, upgrade, inactive bool) (*packInstallResult, error) {
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	part, err := mw.CreateFormFile("bundle", "bundle.tgz")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := part.Write(archive); err != nil {
+		return nil, err
+	}
+	for _, field := range []struct {
+		name  string
+		value bool
+	}{{"force", force}, {"upgrade", upgrade}, {"inactive", inactive}} {
+		if err := mw.WriteField(field.name, strconv.FormatBool(field.value)); err != nil {
+			return nil, err
+		}
+	}
+	if err := mw.Close(); err != nil {
+		return nil, err
+	}
+	var result packInstallResult
+	if err := c.do(ctx, http.MethodPost, "/api/v1/packs/install", mw.FormDataContentType(), &body, &result, 2*time.Minute); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (c *restClient) uninstallPack(ctx context.Context, packID string, purge bool) error {
+	return c.doJSON(ctx, http.MethodPost, "/api/v1/packs/"+url.PathEscape(packID)+"/uninstall", map[string]bool{"purge": purge}, nil)
+}
+
 type httpError struct {
 	Status  int
 	Message string
@@ -2155,12 +1303,16 @@ func (c *restClient) doJSON(ctx context.Context, method, path string, body any, 
 		}
 		payload = strings.NewReader(buf.String())
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.endpoint(path), payload)
+	return c.do(ctx, method, path, "application/json", payload, out, 20*time.Second)
+}
+
+func (c *restClient) do(ctx context.Context, method, path, contentType string, body io.Reader, out any, timeout time.Duration) error {
+	req, err := http.NewRequestWithContext(ctx, method, c.endpoint(path), body)
 	if err != nil {
 		return fmt.Errorf("rest %s %s: %w", method, path, err)
 	}
 	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", contentType)
 	}
 	if c.apiKey != "" {
 		req.Header.Set("X-API-Key", c.apiKey)
@@ -2168,7 +1320,9 @@ func (c *restClient) doJSON(ctx context.Context, method, path string, body any, 
 	if c.tenantID != "" {
 		req.Header.Set("X-Tenant-ID", c.tenantID)
 	}
-	resp, err := c.httpClient.Do(req) // #nosec -- base URL is operator-provided via CLI.
+	client := *c.httpClient
+	client.Timeout = timeout
+	resp, err := client.Do(req) // #nosec -- base URL is operator-provided via CLI.
 	if err != nil {
 		return fmt.Errorf("rest %s %s: %w", method, path, err)
 	}
@@ -2207,19 +1361,6 @@ func (c *restClient) getConfig(ctx context.Context, scope, scopeID string) (*con
 	return &doc, nil
 }
 
-func (c *restClient) setConfig(ctx context.Context, doc *configDoc) error {
-	if doc == nil {
-		return errors.New("config doc required")
-	}
-	req := map[string]any{
-		"scope":    doc.Scope,
-		"scope_id": doc.ScopeID,
-		"data":     doc.Data,
-		"meta":     doc.Meta,
-	}
-	return c.doJSON(ctx, http.MethodPost, "/api/v1/config", req, nil)
-}
-
 func (c *restClient) getSchema(ctx context.Context, id string) (map[string]any, error) {
 	var resp struct {
 		Schema map[string]any `json:"schema"`
@@ -2230,58 +1371,12 @@ func (c *restClient) getSchema(ctx context.Context, id string) (map[string]any, 
 	return resp.Schema, nil
 }
 
-func (c *restClient) registerSchema(ctx context.Context, id string, schema map[string]any) error {
-	req := map[string]any{
-		"id":     id,
-		"schema": schema,
-	}
-	return c.doJSON(ctx, http.MethodPost, "/api/v1/schemas", req, nil)
-}
-
-func (c *restClient) registerTopic(ctx context.Context, topic topicRegistration) error {
-	return c.doJSON(ctx, http.MethodPost, "/api/v1/topics", topic, nil)
-}
-
-func (c *restClient) removeTopic(ctx context.Context, name string) error {
-	return c.doJSON(ctx, http.MethodDelete, "/api/v1/topics/"+url.PathEscape(name), nil, nil)
-}
-
-func (c *restClient) deleteSchema(ctx context.Context, id string) error {
-	return c.doJSON(ctx, http.MethodDelete, "/api/v1/schemas/"+url.PathEscape(id), nil, nil)
-}
-
 func (c *restClient) getWorkflow(ctx context.Context, id string) (map[string]any, error) {
 	var resp map[string]any
 	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/workflows/"+url.PathEscape(id), nil, &resp); err != nil {
 		return nil, err
 	}
 	return resp, nil
-}
-
-func (c *restClient) createWorkflow(ctx context.Context, workflow map[string]any) error {
-	return c.doJSON(ctx, http.MethodPost, "/api/v1/workflows", workflow, nil)
-}
-
-func (c *restClient) deleteWorkflow(ctx context.Context, id string) error {
-	return c.doJSON(ctx, http.MethodDelete, "/api/v1/workflows/"+url.PathEscape(id), nil, nil)
-}
-
-func (c *restClient) acquireLock(ctx context.Context, resource, owner string, ttl time.Duration) error {
-	req := map[string]any{
-		"resource": resource,
-		"owner":    owner,
-		"mode":     "exclusive",
-		"ttl_ms":   ttl.Milliseconds(),
-	}
-	return c.doJSON(ctx, http.MethodPost, "/api/v1/locks/acquire", req, nil)
-}
-
-func (c *restClient) releaseLock(ctx context.Context, resource, owner string) error {
-	req := map[string]any{
-		"resource": resource,
-		"owner":    owner,
-	}
-	return c.doJSON(ctx, http.MethodPost, "/api/v1/locks/release", req, nil)
 }
 
 func isURL(raw string) bool {
