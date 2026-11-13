@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -45,13 +46,15 @@ Flags come before positional arguments. Write a boolean as --dry-run or
 --dry-run=false, never as a separate word.
 
 exit codes: 0 ok; 1 invalid content (entry, assemble, validate);
-            2 usage error or unreadable input; 3 refused (check, publish)`
+            2 usage error or unreadable input; 3 refused (check, publish)
+publish returns CMD's own exit code once CMD has started; it never starts CMD
+after a refusal.`
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
 func run(args []string, stdout, stderr io.Writer) int {
 	handlers := map[string]func([]string, io.Writer, io.Writer) int{
-		"entry": entry, "assemble": assemble, "validate": validate,
+		"entry": entry, "assemble": assemble, "validate": validate, "check": check, "publish": publish,
 	}
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
 		return usage(stderr, "")
@@ -286,4 +289,90 @@ func validate(args []string, stdout, stderr io.Writer) int {
 		len(record.Artifacts), images, len(record.Artifacts)-images, len(record.Gates), len(record.Exceptions),
 		record.Source.SHA, record.Release.Ref, record.Release.DryRun)
 	return exitOK
+}
+
+type item struct{ name, digest string }
+
+// qualify checks every --artifact and --file item against the record. It
+// returns exitOK only when all of them are the qualified artifacts, exitRefused
+// when any is not (or the record itself fails Parse), and exitUsage for bad
+// flags or unreadable input.
+func qualify(cmd string, args []string, stdout, stderr io.Writer) int {
+	fs := newFlagSet(cmd, stderr)
+	recordPath := fs.String("record", "", "qualification record to check against")
+	var artifacts, files multiFlag
+	fs.Var(&artifacts, "artifact", "NAME=DIGEST (repeatable)")
+	fs.Var(&files, "file", "file whose base name and bytes must be qualified (repeatable)")
+	if err := fs.Parse(args); err != nil {
+		return exitUsage
+	}
+	if *recordPath == "" || fs.NArg() > 0 || len(artifacts)+len(files) == 0 {
+		return usage(stderr, cmd+": --record, no positional argument, and at least one --artifact or --file are required")
+	}
+	var items []item
+	for _, a := range artifacts {
+		name, digest, err := splitPair("artifact", a)
+		if err != nil || digest == "" {
+			return fail(stderr, exitUsage, "%s: --artifact %q: want NAME=DIGEST", cmd, a)
+		}
+		items = append(items, item{name, digest})
+	}
+	for _, file := range files {
+		digest, err := fileDigest(file)
+		if err != nil {
+			return fail(stderr, exitUsage, "%s: %v", cmd, err)
+		}
+		items = append(items, item{filepath.Base(file), digest})
+	}
+	data, err := readJSONFile(*recordPath)
+	if err != nil {
+		return fail(stderr, exitUsage, "%s: %v", cmd, err)
+	}
+	record, err := releasequal.Parse(data)
+	if err != nil {
+		fmt.Fprintf(stderr, "REFUSED record: %v\n", err)
+		return exitRefused
+	}
+	code := exitOK
+	for _, it := range items {
+		if err := record.Check(it.name, it.digest); err != nil {
+			fmt.Fprintf(stderr, "REFUSED %s: %v\n", it.name, err)
+			code = exitRefused
+			continue
+		}
+		fmt.Fprintf(stdout, "QUALIFIED %s %s\n", it.name, it.digest)
+	}
+	return code
+}
+
+func check(args []string, stdout, stderr io.Writer) int {
+	return qualify("check", args, stdout, stderr)
+}
+
+// publish runs CMD only after every item passed. The arguments are split at the
+// first literal "--" before any flag parsing, so no CMD argument can be read as
+// a release-qual flag, and no exec.Cmd exists until every check has passed.
+func publish(args []string, stdout, stderr io.Writer) int {
+	split := slices.Index(args, "--")
+	if split < 0 || split == len(args)-1 {
+		return usage(stderr, "publish: CMD must follow a literal --")
+	}
+	cmdline := args[split+1:]
+	if code := qualify("publish", args[:split], stdout, stderr); code != exitOK {
+		return code
+	}
+	cmd := exec.Command(cmdline[0], cmdline[1:]...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, stdout, stderr
+	err := cmd.Run()
+	var exitErr *exec.ExitError
+	switch {
+	case err == nil:
+		return exitOK
+	case errors.As(err, &exitErr):
+		if code := exitErr.ExitCode(); code > 0 {
+			return code
+		}
+		return fail(stderr, 1, "publish: %s was terminated: %v", cmdline[0], err)
+	}
+	return fail(stderr, exitUsage, "publish: start %s: %v", cmdline[0], err)
 }
