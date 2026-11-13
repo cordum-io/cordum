@@ -129,6 +129,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   has a discard fallback, and cordum-mcp's NATS audit fallback writes to stderr
   when no SIEM exporter is configured.
 
+- cordum-mcp writes its stderr audit events at every `CORDUM_LOG_LEVEL`, and
+  the text log format prints each event as JSON text. cordum-mcp also closes
+  its audit sender before it stops, so events queued in the NATS fallback
+  buffer are exported first (task-aaf54d0e).
+
 - `POST /api/v1/approvals/{job_id}/approve` and `/reject` now return 503 when a
   store read that their checks depend on fails: the job state, the stored
   request, the submitter or the workflow run. The job stays in APPROVAL, no
