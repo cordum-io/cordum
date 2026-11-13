@@ -70,6 +70,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- `POST /api/v1/approvals/{job_id}/approve` and `/reject` now return 503 when a
+  store read that their checks depend on fails: the job state, the stored
+  request, the submitter or the workflow run. The job stays in APPROVAL, no
+  approval is recorded and nothing is published. A job with no recorded
+  submitter, or whose workflow run no longer exists, is handled as before
+  (PR1-17, task-a4da0522).
 - MCP approval resume: a call resumed with `_approval_ref` is refused with
   `-32096` `policy_snapshot_changed` when policy was published between the
   approval claim and the call's `mcp.tool.pre` stamp. Nothing runs and the

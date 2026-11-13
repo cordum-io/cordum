@@ -76,7 +76,7 @@ returns to the agent runtime; whether the runtime honors that decision is outsid
 | Dependency | Class | Required | Current | Evidence | Gap |
 |---|---|---|---|---|---|
 | redis | low | RQ-3, RQ-4 | [a] Scheduler: a failed DISPATCHED-state write leaves SCHEDULED and publishes nothing; a retry after recovery publishes once. [b] Gateway limiter returns false on a Redis error (limiter-only probe). [c] Scheduler: in open and closed input modes, an ALLOW decision whose decision-record write fails returns a retryable error with no publish and no DISPATCHED/RUNNING state. [d] Other gateway, MCP, workflow, configuration and authorization outage paths: not measured. | [a] `TestDuplicateDispatchOnDispatchedStateFailure`; [b] `TestRedisRateLimiterFallback`; [c] `TestDecisionStoreWriteFailureRequeuesInBothInputModes`; [d] not measured | G01 |
-| redis | approval | RQ-2, RQ-4 | [a] Scheduler: an approval-fence read error returns a retryable error with no publish or DISPATCHED/RUNNING state. [b] Workflow approval step: a context-store error leaves the step FAILED with no bus publish. [c] Scheduler: in open and closed input modes, a REQUIRE_APPROVAL decision whose decision-record write fails returns a retryable error with no publish and no DISPATCHED/RUNNING state. [d] Submit, approve and other store-error paths: not measured. | [a] `TestProcessJob_HashFenceReadFailureDoesNotFailOpen`; [b] `TestWorkflowApprovalStepFailsWhenContextStoreUnavailable`; [c] `TestDecisionStoreWriteFailureRequeuesInBothInputModes`; [d] not measured | G01 |
+| redis | approval | RQ-2, RQ-4 | [a] Scheduler: an approval-fence read error returns a retryable error with no publish or DISPATCHED/RUNNING state. [b] Workflow approval step: a context-store error leaves the step FAILED with no bus publish. [c] Gateway approve and reject: a store read error for the job state, tenant, stored request, submitter, workflow run or (approve only) safety decision returns HTTP 503; the job stays in APPROVAL, no approval is recorded and nothing is published. A job with no recorded submitter, or whose workflow run does not exist, is handled as before. [d] Scheduler: in open and closed input modes, a REQUIRE_APPROVAL decision whose decision-record write fails returns a retryable error with no publish and no DISPATCHED/RUNNING state. [e] Submit and other store-error paths: not measured. | [a] `TestProcessJob_HashFenceReadFailureDoesNotFailOpen`; [b] `TestWorkflowApprovalStepFailsWhenContextStoreUnavailable`; [c] `TestApproveRejectMissingRecordsKeepEarlierHandling`, `TestApproveRejectStoreReadErrorsReturn503`; [d] `TestDecisionStoreWriteFailureRequeuesInBothInputModes`; [e] not measured | G01 |
 | redis | protected | RQ-1, RQ-4 | [a] Scheduler: when persisting DENIED fails, it returns an error and publishes nothing, including no DLQ message. [b] Scheduler: in open and closed input modes, a DENY decision whose decision-record write fails returns a retryable error with no publish and no DISPATCHED/RUNNING state. [c] Other entry points and full-outage behavior: not measured. | [a] `TestProcessJob_SetStateDeniedFailure_ReturnsRetryable`; [b] `TestDecisionStoreWriteFailureRequeuesInBothInputModes`; [c] not measured | G01 |
 | nats | low | RQ-3, RQ-4 | [a] Gateway submit: a publish error returns 5xx and the context blob is absent afterward; this does not prove the eventual action outcome. [b] Scheduler: two failed publish attempts return retryable errors and record four scheduling attempts. [c] Delivery, acknowledgement, recovery and partition guarantees: not measured. | [a] `TestSubmitJobHTTP_PublishFails_GCsOrphanedContext`; [b] `TestProcessJobPublishFailureScheduledReplayIncrementsAttempts`; [c] not measured | G02 |
 | nats | approval | RQ-2, RQ-4 | not measured | not measured | G02 |
@@ -103,10 +103,12 @@ returns to the agent runtime; whether the runtime honors that decision is outsid
 ### Scope and operator modes
 
 The class is unknown while the kernel or policy source is unavailable: the common kernel-outage
-probes above do not establish class-specific authorization. The characterization tests exercise the
-unchanged runtime at the source revision above; the PR1-16 tests cited in the redis and safety-kernel
-rows exercise the scoped input fail-open behavior added on this branch. Isolated store errors are not full Redis outages,
-and a decision or status code alone does not prove that a downstream action did not run.
+probes above do not establish class-specific authorization. New tests on this branch exercise the
+unchanged runtime at the source revision above, except the redis/approval [c] statement, which
+describes the Gateway approve and reject handlers as changed by row PR1-17 on this branch, and the
+PR1-16 tests cited in the redis and safety-kernel rows, which exercise the scoped input fail-open
+behavior added on this branch. Isolated store errors are not full Redis outages, and a decision or
+status code alone does not prove that a downstream action did not run.
 
 Edge observe is the default for both the hook and newly created sessions. It is an evidence-recording,
 non-enforcing mode during outages and otherwise, not a guarantee that evidence survives an outage.
@@ -139,11 +141,11 @@ Owner is a finding id (R01-R15) or the board row key that will close or measure 
 
 | Gap | Cells | Owner |
 |---|---|---|
-| G01 | redis/low, redis/approval, redis/protected | M4-01, M4-03, M4-05, M4-07, PR1-13, PR1-15, PR1-17, R10 |
+| G01 | redis/low, redis/approval, redis/protected | M4-01, M4-03, M4-05, M4-07, PR1-13, PR1-15, R10 |
 | G02 | nats/low, nats/approval, nats/protected | M4-01, M4-03, M4-06, M4-07, PR1-13, R10 |
 | G03 | safety-kernel/low, safety-kernel/approval, safety-kernel/protected | PR1-14, M1-R14A, R15 |
 | G04 | gateway-from-edge/low, gateway-from-edge/approval, gateway-from-edge/protected | PR1-14, M1-R14A |
-| G05 | approval-store/low, approval-store/approval, approval-store/protected | PR1-17, R15 |
+| G05 | approval-store/low, approval-store/approval, approval-store/protected | R15 |
 | G06 | audit-sink/low | M4-12 |
 | G07 | audit-sink/approval, audit-sink/protected | R12, R11, M4-12 |
 | G08 | policy-source/low, policy-source/approval, policy-source/protected | PR1-13, R07 |
@@ -155,7 +157,7 @@ Run from the repository root. Every test named in the Evidence column appears in
 
 ```bash
 go test ./core/controlplane/scheduler -run '^(TestDecisionStoreWriteFailureRequeuesInBothInputModes|TestDuplicateDispatchOnDispatchedStateFailure|TestFailOpenEmitsAuditEvent|TestFailOpenLateKernelAnswerKeepsDecision|TestFailOpenScopeRequeuesUnlistedTopic|TestFailOpenScopeRuleLabelsPromMetric|TestFailOpenScopeTenantRulesReplaceSystem|TestFailureBehaviorKernelUnavailableClosedDispatchesNothing|TestProcessJobApprovalGateStoreFailureReturnsRetryableError|TestProcessJobPublishFailureScheduledReplayIncrementsAttempts|TestProcessJob_HashFenceReadFailureDoesNotFailOpen|TestProcessJob_SetStateDeniedFailure_ReturnsRetryable|TestSafetyUnavailable_FailOpen_Metric)$' -count=1
-go test ./core/controlplane/gateway -run '^(TestBreakGlass_GraceStateJobSubmitReturns503|TestFailureBehaviorEdgeEnforceKernelUnavailableDeniesKnownSafe|TestGatewayEdgeEvaluateDoesNotStreamWhenPersistenceFails|TestGatewayEdgeEvaluateSafetyUnavailableByPolicyMode|TestHandleSubmitJobHTTP_PolicyFailClosed|TestHandleSubmitJobHTTP_PolicyFailOpen|TestMCPHTTP_ApprovalStoreOutageReturnsSanitized32096|TestRedisRateLimiterFallback|TestSubmitJobGRPC_PolicyFailClosed|TestSubmitJobHTTP_PublishFails_GCsOrphanedContext)$' -count=1
+go test ./core/controlplane/gateway -run '^(TestApproveRejectMissingRecordsKeepEarlierHandling|TestApproveRejectStoreReadErrorsReturn503|TestBreakGlass_GraceStateJobSubmitReturns503|TestFailureBehaviorEdgeEnforceKernelUnavailableDeniesKnownSafe|TestGatewayEdgeEvaluateDoesNotStreamWhenPersistenceFails|TestGatewayEdgeEvaluateSafetyUnavailableByPolicyMode|TestHandleSubmitJobHTTP_PolicyFailClosed|TestHandleSubmitJobHTTP_PolicyFailOpen|TestMCPHTTP_ApprovalStoreOutageReturnsSanitized32096|TestRedisRateLimiterFallback|TestSubmitJobGRPC_PolicyFailClosed|TestSubmitJobHTTP_PublishFails_GCsOrphanedContext)$' -count=1
 go test ./core/workflow -run '^(TestWorkflowApprovalStepFailsWhenContextStoreUnavailable)$' -count=1
 go test ./core/edge/claude -run '^(TestRunEnforceDeniesDegradedPreToolUse|TestRunEnforceModeDeniesPreToolUseOnAgentdTimeoutWithoutFailClosed|TestRunEnterpriseStrictDeniesMalformedAgentdResponse|TestRunObserveModeAllowsNoopWhenAgentdUnavailable)$' -count=1
 go test ./core/edge/agentd -run '^(TestAgentdDecisionFromEvaluateInlineWaitRejectedTimeoutAndErrorDeny|TestApplyFailModeMatrixCoversObserveEnforceEnterpriseStrict|TestHandleHookEventsAreAtomicAcrossBatchFailure)$' -count=1
