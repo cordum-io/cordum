@@ -108,6 +108,35 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Migration: sign in to the dashboard with a session or OIDC login, or use a
   static API key bound to the owning principal.
 
+#### core/controlplane/gateway — delegation tokens are issued only to an authenticated caller's linked agent (2026-11-14, task-fe3faf16)
+
+- **Behavior change.** A non-admin caller of
+  `POST /api/v1/agents/{id}/delegate` must be authenticated as the worker
+  linked to the delegating agent.
+- A principal named only by the `X-Principal-Id` header no longer identifies
+  that worker, in any profile: the request gets 403 and a denied
+  `delegation.issue` audit event, and no token is issued.
+- Admin callers are unchanged.
+- `Migration:` managed API keys carry no principal, so a managed key with only
+  an operator or write scope can no longer issue delegation tokens. Issue them
+  with an admin credential, or with a session or OIDC login whose principal is
+  the linked worker.
+
+#### core/controlplane/gateway — Edge approvals use only an authenticated principal for access and resolver identity (2026-11-14, task-fe3faf16)
+
+- **Behavior change.** A principal named only by `X-Principal-Id` (an unbound
+  static or managed API key) is no longer the caller's own principal for Edge
+  approvals. A user or viewer caller without an authenticated principal lists
+  no approvals and gets 404 for a single approval and for `POST .../wait`.
+  Admin and operator callers still see every approval in the tenant.
+- When such a caller approves or rejects, `resolver_id` and `resolved_by`
+  record the API key identity and role, not the header value. A caller whose
+  `X-Principal-Id` matches the requester is still refused as self-approval.
+- `Migration:` give each approver, and each `cordum-agentd` that waits on
+  approvals with a user or viewer key, a credential that carries its
+  principal: a static API key with `principal_id` in `CORDUM_API_KEYS`, or a
+  session or OIDC login.
+
 #### Header-asserted principals never authorize a job's agent identity (2026-11-13, task-850216cf)
 
 - **Behavior change** for job submit, in every profile. A principal taken
