@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/packs"
+	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/packs/signing"
 	"github.com/redis/go-redis/v9"
 )
@@ -24,8 +26,8 @@ import (
 // client code can be patched out.
 
 const (
-	// gatewayPackStrictEnv flips the gateway into strict mode at
-	// startup time. Runtime flip via Redis still takes precedence.
+	// gatewayPackStrictEnv overrides the profile default. A true value
+	// here or in Redis always takes precedence over an explicit false.
 	gatewayPackStrictEnv = "CORDUM_GATEWAY_PACK_STRICT"
 	// gatewayPackTrustedKeyEnvPrefix lets deployers bootstrap a few
 	// trusted publisher keys without round-tripping through the admin
@@ -133,19 +135,68 @@ type gatewayTrustKeyring struct {
 // Redis on every request. Flips propagate within TTL seconds.
 type packStrictCache struct {
 	mu        sync.RWMutex
-	value     bool
+	value     packStrictOverride
 	expiresAt time.Time
 }
 
 var packStrictFlag = &packStrictCache{}
 
-// resolveGatewayPackStrict returns the current strict-mode flag.
-// Precedence: env var (truthy → strict always), then Redis cfg key,
-// then default (non-strict). Redis errors fall through to env/default
-// so a Redis outage does not make every install succeed.
+type packStrictOverride uint8
+
+const (
+	packStrictUnset packStrictOverride = iota
+	packStrictOn
+	packStrictOff
+)
+
+func parsePackStrictOverride(raw string) packStrictOverride {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return packStrictOn
+	case "0", "false", "no", "off":
+		return packStrictOff
+	default:
+		return packStrictUnset
+	}
+}
+
+type gatewayPackStrictResolution struct {
+	Strict     bool
+	Downgraded bool
+	Source     string
+}
+
+// resolveGatewayPackStrict is shared with the signature-status report.
 func resolveGatewayPackStrict(ctx context.Context, client redis.UniversalClient) bool {
-	if envStrict := strings.ToLower(strings.TrimSpace(os.Getenv(gatewayPackStrictEnv))); envStrict == "1" || envStrict == "true" || envStrict == "yes" || envStrict == "on" {
-		return true
+	return resolveGatewayPackStrictMode(ctx, client).Strict
+}
+
+func resolveGatewayPackStrictMode(ctx context.Context, client redis.UniversalClient) gatewayPackStrictResolution {
+	override := parsePackStrictOverride(os.Getenv(gatewayPackStrictEnv))
+	if override == packStrictOn {
+		return gatewayPackStrictResolution{Strict: true, Source: gatewayPackStrictEnv}
+	}
+	runtime := readGatewayPackStrictOverride(ctx, client)
+	if runtime == packStrictOn {
+		return gatewayPackStrictResolution{Strict: true, Source: gatewayStrictRedisKey}
+	}
+	production := env.IsProduction()
+	if override == packStrictOff {
+		return gatewayPackStrictResolution{Downgraded: production, Source: gatewayPackStrictEnv}
+	}
+	if runtime == packStrictOff {
+		return gatewayPackStrictResolution{Downgraded: production, Source: gatewayStrictRedisKey}
+	}
+	if production {
+		return gatewayPackStrictResolution{Strict: true, Source: "production-default"}
+	}
+	return gatewayPackStrictResolution{Source: "development-default"}
+}
+
+// Cache only successful Redis reads; env and profile are always resolved live.
+func readGatewayPackStrictOverride(ctx context.Context, client redis.UniversalClient) packStrictOverride {
+	if client == nil {
+		return packStrictUnset
 	}
 	packStrictFlag.mu.RLock()
 	if time.Now().Before(packStrictFlag.expiresAt) {
@@ -155,20 +206,25 @@ func resolveGatewayPackStrict(ctx context.Context, client redis.UniversalClient)
 	}
 	packStrictFlag.mu.RUnlock()
 
-	if client == nil {
-		return false
-	}
 	val, err := client.Get(ctx, gatewayStrictRedisKey).Result()
-	strict := false
-	if err == nil {
-		lower := strings.ToLower(strings.TrimSpace(val))
-		strict = lower == "1" || lower == "true" || lower == "yes" || lower == "on"
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return packStrictUnset
 	}
+	strict := parsePackStrictOverride(val)
 	packStrictFlag.mu.Lock()
 	packStrictFlag.value = strict
 	packStrictFlag.expiresAt = time.Now().Add(gatewayStrictCacheTTL)
 	packStrictFlag.mu.Unlock()
 	return strict
+}
+
+func logGatewayPackStrictPosture(ctx context.Context, client redis.UniversalClient) {
+	mode := resolveGatewayPackStrictMode(ctx, client)
+	if mode.Downgraded {
+		slog.Warn("pack enforcement downgraded: production profile will install unsigned packs", "override", mode.Source)
+		return
+	}
+	slog.Info("gateway pack enforcement", "strict", mode.Strict, "source", mode.Source)
 }
 
 // loadGatewayPackTrustKeyring builds the server-side keyring from env
@@ -315,14 +371,17 @@ func attachPublisherFallback(k *gatewayTrustKeyring) {
 // we never warn-and-proceed — strict mode is binary at the gateway,
 // resolved from env/Redis.
 func verifyPackInstallBundle(ctx context.Context, client redis.UniversalClient, bundleDir, packID string) (*gatewayVerifiedPackInstall, *PackVerificationError) {
-	strict := resolveGatewayPackStrict(ctx, client)
+	mode := resolveGatewayPackStrictMode(ctx, client)
 	sigPath, sigPresent := locateGatewayPackSignature(bundleDir)
 	if !sigPresent {
-		if strict {
+		if mode.Strict {
 			return nil, &PackVerificationError{
 				Code:    PackVerificationCodeUnsigned,
 				Message: fmt.Sprintf("pack %q is unsigned (strict mode)", packID),
 			}
+		}
+		if mode.Downgraded {
+			slog.Warn("unsigned pack accepted with production enforcement downgraded", "pack_id", packID, "override", mode.Source)
 		}
 		return &gatewayVerifiedPackInstall{Signed: false}, nil
 	}
@@ -451,7 +510,7 @@ func packVerifyErrorForSigningErr(err error, packID string) *PackVerificationErr
 // don't leak cached flag state across runs.
 func resetGatewayPackStrictCache() {
 	packStrictFlag.mu.Lock()
-	packStrictFlag.value = false
+	packStrictFlag.value = packStrictUnset
 	packStrictFlag.expiresAt = time.Time{}
 	packStrictFlag.mu.Unlock()
 }

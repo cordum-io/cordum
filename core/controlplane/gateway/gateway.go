@@ -905,6 +905,9 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		TenantID:          tenantID,
 	})
 	s.telemetry.Start(context.Background())
+	packPostureCtx, packPostureCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	logGatewayPackStrictPosture(packPostureCtx, s.redisClient())
+	packPostureCancel()
 	if legacyPolicyBundlesMigrated {
 		s.publishConfigChanged(string(configsvc.ScopeSystem), "default")
 		s.publishConfigChanged(string(configsvc.ScopeSystem), packs.PolicyConfigID)
