@@ -133,7 +133,7 @@ claims:
     enforcement_points: [{"path":"core/controlplane/gateway/helpers.go","symbol":"server.evaluateSubmitPolicy"},{"path":"core/controlplane/scheduler/engine.go","symbol":"Engine.processJob"},{"path":"core/controlplane/gateway/handlers_edge_evaluate.go","symbol":"edgeEvaluateOutcomeFromSafety"},{"path":"core/edge/claude/agentd_client.go","symbol":"HTTPAgentdClient.EvaluateHook"}]
     tests: [{"package":"core/controlplane/gateway","name":"TestGatewayEdgeEvaluateUnknownDecisionEnumFailsClosedWithoutFalseAllow"}]
     evidence: "Default-deny branches exist; no three-path no-effect qualification is attached; open findings R05, R15."
-    public_sources: ["cordum:README.md:308","cordum:README.md:309","cordum:README.md:310","cordum:docs/edge/claude-hook-mapper.md:149","Cordum-site:site/src/app/compare/cordum-vs-guild-ai/page.tsx:81"]
+    public_sources: ["cordum:README.md:308","cordum:README.md:309","cordum:README.md:310","cordum:docs/edge/claude-hook-mapper.md:149","Cordum-site:site/src/app/compare/cordum-vs-guild-ai/page.tsx:81","Cordum-site:site/src/app/blog/ai-agent-project-failure-governance/page.tsx:569"]
   - id: CLM-013
     statement: "Approvals bind tenant, reference and action hash; changed, self-approved, expired or consumed approvals are rejected."
     boundary: "Cordum approval-gated actions and approval stores, not authority outside their declared paths."
@@ -153,7 +153,7 @@ claims:
     enforcement_points: [{"path":"config/safety.yaml","symbol":"default_decision: deny"}]
     tests: []
     evidence: "The shipped default is deny; this is configuration evidence, not full policy-path qualification; open finding R07."
-    public_sources: ["cordum:README.md:315","cordum:README.md:316","cordum:README.md:317","cordum:README.md:436","cordum:docs/DOCKER.md:550","cordum:docs/configuration-reference.md:566","cordum:docs/policy/tiers.md:20","Cordum-site:docs-site/docs/concepts/output-policy.md:125","Cordum-site:docs-site/docs/getting-started/docker.md:582","Cordum-site:docs-site/docs/operations/config-reference.md:570","Cordum-site:site/src/app/compare/cordum-vs-openfga/page.tsx:95","Cordum-site:site/src/app/compare/cordum-vs-permit-io/page.tsx:95","Cordum-site:site/src/app/for/startups/page.tsx:55"]
+    public_sources: ["cordum:README.md:315","cordum:README.md:316","cordum:README.md:317","cordum:README.md:436","cordum:docs/DOCKER.md:550","cordum:docs/configuration-reference.md:566","cordum:docs/policy/tiers.md:20","Cordum-site:docs-site/docs/concepts/output-policy.md:125","Cordum-site:docs-site/docs/getting-started/docker.md:582","Cordum-site:docs-site/docs/operations/config-reference.md:570","Cordum-site:site/src/app/compare/cordum-vs-openfga/page.tsx:95","Cordum-site:site/src/app/compare/cordum-vs-permit-io/page.tsx:95","Cordum-site:site/src/app/for/startups/page.tsx:55","Cordum-site:site/src/app/blog/ai-agent-fail-open-vs-fail-closed/page.tsx:142","Cordum-site:site/src/app/blog/ai-agent-project-failure-governance/page.tsx:569"]
   - id: CLM-015
     statement: "Lifecycle governance offers pre-execution checks, approvals, timeouts, circuit breakers and aggregate audit."
     boundary: "Integrated Cordum jobs and workflow runs; not continuous control of arbitrary external agent execution."
@@ -213,7 +213,7 @@ claims:
     enforcement_points: [{"path":"core/controlplane/scheduler/engine.go","symbol":"Engine.appendDecisionLog"},{"path":"core/audit/chain_verify.go","symbol":"VerifyChain"}]
     tests: [{"package":"core/controlplane/scheduler","name":"TestCheckSafetyDecisionAppendsDecisionLog"}]
     evidence: "Scheduler safety decisions are logged with verdict, rule id, policy version and reason, and audit-chain verification exists; completeness and full reasoning coverage are unqualified; open findings R11, R12."
-    public_sources: ["cordum:README.md:435","Cordum-site:docs-site/docs/concepts/glossary.md:163","Cordum-site:docs-site/docs/cordclaw/threat-model.md:73","Cordum-site:site/src/app/for/compliance-officers/page.tsx:48","Cordum-site:site/src/app/for/page.tsx:55","Cordum-site:site/src/app/product/comparison/page.tsx:61","Cordum-site:site/src/components/home/HomePersonaSection.tsx:32","Cordum-site:site/src/app/blog/ai-agent-compliance-eu-ai-act-2026/page.tsx:123"]
+    public_sources: ["cordum:README.md:435","Cordum-site:docs-site/docs/concepts/glossary.md:163","Cordum-site:docs-site/docs/cordclaw/threat-model.md:73","Cordum-site:site/src/app/for/compliance-officers/page.tsx:48","Cordum-site:site/src/app/for/page.tsx:55","Cordum-site:site/src/app/product/comparison/page.tsx:61","Cordum-site:site/src/components/home/HomePersonaSection.tsx:32","Cordum-site:site/src/app/blog/ai-agent-compliance-eu-ai-act-2026/page.tsx:123","Cordum-site:site/src/app/blog/ai-agent-project-failure-governance/page.tsx:581"]
   - id: CLM-021
     statement: "Policy Simulator tests governance rules against historical data before rollout."
     boundary: "The policy replay API (POST /api/v1/policy/replay) over stored jobs from a bounded time window and a candidate or current policy; not a guarantee of equivalence to every production execution."
@@ -323,7 +323,7 @@ claims:
     enforcement_points: [{"path":"core/controlplane/gateway/handlers_policy_bundles_signing.go","symbol":"signPolicyBundleContent"},{"path":"core/controlplane/safetykernel/kernel.go","symbol":"verifyPolicySignature"}]
     tests: [{"package":"core/controlplane/gateway","name":"TestPutPolicyBundle_RefusesWhenEnforceAndNoKey"},{"package":"core/controlplane/safetykernel","name":"TestVerifyPolicySignatureRequiresKeyWhenEnforced"}]
     evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 bundle signing refuses writes without a key outside off mode and the kernel requires a signature when enforced, with unit tests; open finding R13."
-    public_sources: ["cordum:docs/mcp/mutating-tools.md:225","cordum:docs/output-policy.md:377","cordum:docs/deployment/policy-signing.md:24","cordum:docs/release-notes/v1.3.0.md:42","Cordum-site:docs-site/docs/concepts/glossary.md:112","Cordum-site:docs-site/docs/concepts/output-policy.md:394","Cordum-site:site/src/app/compare/cordum-vs-guild-ai/page.tsx:81","Cordum-site:site/src/app/compare/cordum-vs-microsoft-agt/page.tsx:157","Cordum-site:site/src/app/compare/cordum-vs-openfga/page.tsx:95","Cordum-site:site/src/lib/glossaryData.ts:663"]
+    public_sources: ["cordum:docs/mcp/mutating-tools.md:225","cordum:docs/output-policy.md:377","cordum:docs/deployment/policy-signing.md:24","cordum:docs/release-notes/v1.3.0.md:42","Cordum-site:docs-site/docs/concepts/glossary.md:112","Cordum-site:docs-site/docs/concepts/output-policy.md:394","Cordum-site:site/src/app/compare/cordum-vs-guild-ai/page.tsx:81","Cordum-site:site/src/app/compare/cordum-vs-microsoft-agt/page.tsx:157","Cordum-site:site/src/app/compare/cordum-vs-openfga/page.tsx:95","Cordum-site:site/src/lib/glossaryData.ts:663","Cordum-site:site/src/app/blog/ai-agent-policy-signature-verification-ed25519/page.tsx:123"]
   - id: CLM-053
     statement: "The outbound MCP request verifier rejects requests whose signed timestamp is outside the clock-skew window and, with a nonce store configured, requests that reuse a nonce."
     boundary: "Receivers that call core/mcp/outbound Verifier.VerifyRequest; the signing side does not check the window."
@@ -373,7 +373,7 @@ claims:
     enforcement_points: [{"path":"core/audit/chain.go","symbol":"Chainer.Append"},{"path":"core/audit/chain_verify.go","symbol":"VerifyChain"}]
     tests: [{"package":"core/audit","name":"TestChainer_AppendGenesisEvent"},{"package":"core/audit","name":"TestVerifyChain_CrossWindowLinkageDetectsMutation"}]
     evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 Chainer.Append links each event to its predecessor and VerifyChain detects mutation in tests; completeness is not qualified; open findings R11, R12."
-    public_sources: ["cordum:docs/audit-chain.md:3","cordum:docs/audit-operations.md:4","cordum:docs/audit.md:376","cordum:docs/mcp/scope-preapproval.md:145","cordum:docs/api/audit-verify.md:4","cordum:docs/api/openapi/cordum-api.yaml:6656","cordum:docs/compliance/soc2_mapping.md:3","cordum:docs/deployment/audit-chain-migration.md:4","cordum:docs/deployment/audit-chain.md:1","Cordum-site:docs-site/docs/api-reference/mcp-tools.md:29","Cordum-site:docs-site/docs/concepts/glossary.md:98","Cordum-site:docs-site/docs/edge/audit-evidence.md:4","Cordum-site:docs-site/docs/edge/claude-code.md:101","Cordum-site:docs-site/docs/edge/observability.md:105","Cordum-site:docs-site/docs/index.md:6","Cordum-site:docs-site/docs/tutorials/connect-datadog.md:16","Cordum-site:site/src/app/compare/cordum-vs-galileo-agent-control/page.tsx:164","Cordum-site:site/src/app/compare/cordum-vs-microsoft-agt/page.tsx:382","Cordum-site:site/src/app/compare/cordum-vs-openfga/page.tsx:72","Cordum-site:site/src/app/compare/cordum-vs-permit-io/page.tsx:68","Cordum-site:site/src/app/for/compliance-officers/page.tsx:13","Cordum-site:site/src/app/for/enterprise/page.tsx:149","Cordum-site:site/src/app/for/security-teams/page.tsx:13","Cordum-site:site/src/app/glossary/[term]/page.tsx:130","Cordum-site:site/src/app/solutions/ai-governance/page.tsx:24","Cordum-site:site/src/app/solutions/page.tsx:142","Cordum-site:site/src/app/solutions/regulated-industries/page.tsx:66","Cordum-site:site/src/lib/glossaryData.ts:277","Cordum-site:site/src/lib/protocol-capabilities.ts:315","Cordum-site:site/src/app/blog/ai-agent-audit-trail/page.tsx:371","Cordum-site:site/src/app/blog/ai-agent-canary-shadow-deployment/page.tsx:464","Cordum-site:site/src/app/blog/ai-agent-compliance-eu-ai-act-2026/page.tsx:123"]
+    public_sources: ["cordum:docs/audit-chain.md:3","cordum:docs/audit-operations.md:4","cordum:docs/audit.md:376","cordum:docs/mcp/scope-preapproval.md:145","cordum:docs/api/audit-verify.md:4","cordum:docs/api/openapi/cordum-api.yaml:6656","cordum:docs/compliance/soc2_mapping.md:3","cordum:docs/deployment/audit-chain-migration.md:4","cordum:docs/deployment/audit-chain.md:1","Cordum-site:docs-site/docs/api-reference/mcp-tools.md:29","Cordum-site:docs-site/docs/concepts/glossary.md:98","Cordum-site:docs-site/docs/edge/audit-evidence.md:4","Cordum-site:docs-site/docs/edge/claude-code.md:101","Cordum-site:docs-site/docs/edge/observability.md:105","Cordum-site:docs-site/docs/index.md:6","Cordum-site:docs-site/docs/tutorials/connect-datadog.md:16","Cordum-site:site/src/app/compare/cordum-vs-galileo-agent-control/page.tsx:164","Cordum-site:site/src/app/compare/cordum-vs-microsoft-agt/page.tsx:382","Cordum-site:site/src/app/compare/cordum-vs-openfga/page.tsx:72","Cordum-site:site/src/app/compare/cordum-vs-permit-io/page.tsx:68","Cordum-site:site/src/app/for/compliance-officers/page.tsx:13","Cordum-site:site/src/app/for/enterprise/page.tsx:149","Cordum-site:site/src/app/for/security-teams/page.tsx:13","Cordum-site:site/src/app/glossary/[term]/page.tsx:130","Cordum-site:site/src/app/solutions/ai-governance/page.tsx:24","Cordum-site:site/src/app/solutions/page.tsx:142","Cordum-site:site/src/app/solutions/regulated-industries/page.tsx:66","Cordum-site:site/src/lib/glossaryData.ts:277","Cordum-site:site/src/lib/protocol-capabilities.ts:315","Cordum-site:site/src/app/blog/ai-agent-audit-trail/page.tsx:371","Cordum-site:site/src/app/blog/ai-agent-canary-shadow-deployment/page.tsx:464","Cordum-site:site/src/app/blog/ai-agent-compliance-eu-ai-act-2026/page.tsx:123","Cordum-site:site/src/app/blog/ai-agent-project-failure-governance/page.tsx:581"]
   - id: CLM-058
     statement: "Cordum maps every audit event type to SOC 2 Trust Services Criteria and a governance or routine category in one default mapping that operators can override."
     boundary: "The core/audit SOC 2 classification used by audit exports; a mapping is not an attestation or an audit opinion."
@@ -423,7 +423,7 @@ claims:
     enforcement_points: [{"path":"core/controlplane/scheduler/engine.go","symbol":"Engine.processJob"}]
     tests: [{"package":"core/controlplane/scheduler","name":"TestProcessJobBelowMaxRetriesStillRetries"},{"package":"core/controlplane/scheduler","name":"TestEngine_RetryCapPreservedOnGetAttemptsError"}]
     evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 Engine.processJob checks max_retries and max_concurrent_jobs before dispatch, with retry-cap tests; no test covers the tenant concurrency limit."
-    public_sources: ["cordum:docs/CORE.md:412","cordum:docs/SCHEDULER_POOL_SPEC.md:3","Cordum-site:docs-site/docs/concepts/core.md:622","Cordum-site:docs-site/docs/concepts/safety-kernel.md:24","Cordum-site:docs-site/docs/concepts/scheduler-pool-spec.md:6","Cordum-site:site/src/app/solutions/page.tsx:84"]
+    public_sources: ["cordum:docs/CORE.md:412","cordum:docs/SCHEDULER_POOL_SPEC.md:3","Cordum-site:docs-site/docs/concepts/core.md:622","Cordum-site:docs-site/docs/concepts/safety-kernel.md:24","Cordum-site:docs-site/docs/concepts/scheduler-pool-spec.md:6","Cordum-site:site/src/app/solutions/page.tsx:84","Cordum-site:site/src/app/blog/ai-agent-multi-tenant-isolation/page.tsx:122","Cordum-site:site/src/app/blog/ai-agent-queue-partitioning-strategy/page.tsx:141"]
   - id: CLM-063
     statement: "The scheduler's CAP production profile refuses to start without every readiness dependency, rejects a reused result message ID with a different digest, and resolves context only through its installed resolver with expiry, size and digest checks."
     boundary: "The scheduler with CORDUM_CAP_PROFILE=production; the API gateway and workflow engine refuse the production profile."
@@ -744,3 +744,43 @@ claims:
     tests: [{"package":"core/audit","name":"TestNewExporterFromEnv_DatadogMissingKey"},{"package":"core/audit","name":"TestDatadogExporter_Export"}]
     evidence: "exporterFromEnv rejects a missing Datadog key and DatadogExporter.Export POSTs serialized events to the configured logs endpoint; tests cover the missing key and an HTTP test receiver, not deployed delivery."
     public_sources: ["Cordum-site:docs-site/docs/tutorials/connect-datadog.md:16"]
+  - id: CLM-110
+    statement: "Cordum selects persistent JetStream delivery for designated subjects and uses separate ephemeral consumers for broadcast subscriptions, while queue subscribers share a durable consumer name."
+    boundary: "The configured core/infra/bus NATS transport and its subject and consumer selection; delivery across disconnected broadcast consumers and external side effects are not qualified."
+    status: supported
+    invariants: []
+    findings: []
+    enforcement_points: [{"path":"core/infra/bus/nats.go","symbol":"isDurableSubject"},{"path":"core/infra/bus/nats.go","symbol":"durableName"}]
+    tests: [{"package":"core/infra/bus","name":"TestIsDurableSubject"},{"package":"core/infra/bus","name":"TestDurableName"},{"package":"core/infra/bus","name":"TestBroadcastWithJetStream"}]
+    evidence: "isDurableSubject selects the transport class and durableName returns no durable name for an empty queue; the cited tests cover selection and connected-replica fanout, not lossless delivery across outages."
+    public_sources: ["Cordum-site:site/src/app/blog/ai-agent-jetstream-broadcast-semantics/page.tsx:16","Cordum-site:site/src/app/blog/ai-agent-nats-subject-durability-map/page.tsx:53"]
+  - id: CLM-111
+    statement: "The scheduler abandons a job lock after three consecutive renewal failures and cancels the context supplied to the locked critical section."
+    boundary: "Engine.withJobLock and operations that honor its context; arbitrary worker effects and the workflow engine's lock path are not covered."
+    status: supported
+    invariants: []
+    findings: []
+    enforcement_points: []
+    tests: [{"package":"core/controlplane/scheduler","name":"TestWithJobLock_RenewalAbandonAfterConsecutiveFailures"},{"package":"core/controlplane/scheduler","name":"TestLockFence_StateHelpersHonorFence"}]
+    evidence: "The renewal goroutine closure in Engine.withJobLock in core/controlplane/scheduler/engine.go cancels fenceCtx at the failure threshold; the cited tests cover cancellation and state helpers, not universal external fencing."
+    public_sources: ["Cordum-site:site/src/app/blog/ai-agent-lock-renewal-failure-policy/page.tsx:96"]
+  - id: CLM-112
+    statement: "The Safety Kernel checks a policy URL's host against its configured allowlist and rejects private addresses before fetching the policy."
+    boundary: "Safety Kernel remote policy loading with SAFETY_POLICY_URL_ALLOWLIST configured and SAFETY_POLICY_URL_ALLOW_PRIVATE disabled; not arbitrary agent egress."
+    status: supported
+    invariants: []
+    findings: []
+    enforcement_points: [{"path":"core/controlplane/safetykernel/kernel.go","symbol":"validatePolicyURL"},{"path":"core/controlplane/safetykernel/kernel.go","symbol":"ensurePublicHost"}]
+    tests: [{"package":"core/controlplane/safetykernel","name":"TestValidatePolicyURLAllowlistEnforced"},{"package":"core/controlplane/safetykernel","name":"TestReadPolicySourceHTTPBlocksPrivate"}]
+    evidence: "validatePolicyURL rejects hosts outside a configured allowlist and ensurePublicHost rejects private address results; the cited tests exercise those checks, not deployment-wide network confinement."
+    public_sources: ["Cordum-site:site/src/app/blog/ai-agent-policy-url-security-ssrf/page.tsx:62"]
+  - id: CLM-113
+    statement: "Cordum configures a maximum of one hundred JetStream deliveries per consumer and has a termination path for messages reaching its poison-message threshold."
+    boundary: "JetStream subscriptions configured by core/infra/bus; this attempt limit is not a bound on handler duration or total delivery across recreated consumers."
+    status: supported
+    invariants: []
+    findings: []
+    enforcement_points: [{"path":"core/infra/bus/nats.go","symbol":"NatsBus.SubscribeWithContext"},{"path":"core/infra/bus/nats.go","symbol":"NatsBus.terminateMaxDelivery"}]
+    tests: [{"package":"core/infra/bus","name":"TestMaxJSRedeliveriesConstant"},{"package":"core/infra/bus","name":"TestProcessBusMsgCorruptAtThreshold"}]
+    evidence: "SubscribeWithContext configures MaxDeliver using maxJSRedeliveries and terminateMaxDelivery handles the threshold; the cited tests check the constant and threshold handling, not a universal no-blocking guarantee."
+    public_sources: ["Cordum-site:site/src/app/blog/ai-agent-retry-intent-propagation/page.tsx:202"]
