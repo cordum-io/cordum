@@ -299,6 +299,7 @@ assert_keyless_result() {
     [ "$rc" -ne 0 ] && grep -qF "BINARY-VERIFY-FAIL: $failure" "$log" || return 1
     [ ! -e "$floor" ] || return 1
     [ -z "$(find "$dest" -type f 2>/dev/null || true)" ] || return 1
+    if [ "$label" = prod-signature-stripped ]; then [ ! -e "$args_log" ] || return 1; fi
     return 0
   fi
   [ "$rc" -eq 0 ] && [ -f "$dest/cordum-hook" ] || return 1
@@ -339,6 +340,9 @@ run_keyless_scenario() {
     keyless-precedence)
       gpg --homedir "$GPG_HOME" --batch --yes --quiet --detach-sign --armor \
         --output "$release/SHA256SUMS.asc" "$release/SHA256SUMS" ;;
+    prod-signature-stripped) # No bundle, no .asc: refuse before cosign, even with the override.
+      rm -f "$release/SHA256SUMS.sigstore.json"; failure='unsigned manifest'
+      flags=(--insecure-allow-missing-cosign) ;;
   esac
   case "$label" in
     keyless-*missing*) verifier="$base/not-installed-cosign" ;;
@@ -363,6 +367,8 @@ for scenario in valid one-byte manifest-tampered cosign-missing missing-override
     missing-override-tampered identity-override precedence; do
   if ! run_keyless_scenario "keyless-$scenario"; then failures=$((failures+1)); fi
 done
+# Production mode with the signature stripped: only the "unsigned manifest" branch refuses it.
+if ! run_keyless_scenario prod-signature-stripped; then failures=$((failures+1)); fi
 
 if [ "$failures" -ne 0 ]; then
   echo "install_test.sh: $failures scenario(s) failed" >&2
