@@ -47,6 +47,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   for Kubernetes manifest apply, with a proposed reference boundary, credential
   inventory and measurable acceptance ideas. Broker/grant enforcement is future
   work; runtime acceptance evidence is not measured.
+- `GET /api/v1/status` has a new admin-only `signature_enforcement` field that
+  reports the signature mode in effect at each enforcement point; it changes no
+  mode or default. `policy` gives, per policy source (`file`, `url`, `store`),
+  the weakest mode (`off`, `warn` or `enforce`) among safety kernels with a live
+  report, plus `reporters` and `consistent`, and is `{"status":"unknown"}` when
+  no report is available or one cannot be parsed. Each safety kernel publishes
+  the modes its own policy loaders resolve to the Redis key
+  `cordum:safety:policy_signature:<instance id>`, with a TTL of twice
+  `SAFETY_POLICY_RELOAD_INTERVAL` and at least 60s. `packs.strict` is the
+  gateway's pack-install strictness from `CORDUM_GATEWAY_PACK_STRICT` or
+  `cfg:packs:strict_mode`.
 
 #### demo/cap-mcp-governed — CAP worker calls governed Cordum MCP tools and waits for human approval (2026-11-11, task-ba678d95)
 
