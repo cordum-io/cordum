@@ -17,8 +17,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   the Trivy OS scan run on that pushed digest, and the run uploads a
   `qualification-record` artifact. The Trivy coverage exception records that
   fixed OS-package findings at any severity fail the gate; unfixed findings
-  are ignored and application dependencies are not scanned. Cosign signs that digest, and the release
-  tags are applied to it, only through `release-qual publish`, and the job
+  are ignored and application dependencies are not scanned. Cosign signs that
+  digest, and the release tags are applied to it, only through
+  `release-qual publish`, and the job
   fails unless every tag resolves to it. If a gate fails on a tag push, the
   untagged, unsigned digest stays in GHCR and Docker Hub. A push to a
   `release-dry-run/**` branch runs the same image and record jobs against
