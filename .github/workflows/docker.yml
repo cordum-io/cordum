@@ -55,7 +55,7 @@ permissions:
 env:
   QUAL_REASON_NON_AMD64: "The smoke check and the Trivy OS scan ran on the linux/amd64 variant of this image index only; the linux/arm64 variant was not gated."
   QUAL_REASON_PRODUCTION_GATE: "The production gate (tools/scripts/production_gate.sh) runs against a source-built stack and did not run against these release digests."
-  QUAL_REASON_TRIVY_OS_ONLY: "The Trivy gate scans OS packages only (vuln-type os) and fails only on CRITICAL findings that have a fixed version (severity CRITICAL, ignore-unfixed); lower severities and unfixed findings do not fail it, and application dependencies such as Go modules and npm packages are not scanned by it."
+  QUAL_REASON_TRIVY_OS_ONLY: "The Trivy gate fails on fixed OS-package findings at any severity (SARIF without limit-severities-for-sarif); unfixed findings are ignored (ignore-unfixed), and application dependencies such as Go modules and npm packages are not scanned (vuln-type os)."
 
 jobs:
   control-plane:
@@ -218,10 +218,9 @@ jobs:
           image-ref: ${{ env.IMAGE_PRIMARY }}@${{ steps.build.outputs.digest }}
           format: sarif
           output: trivy-${{ env.IMAGE_NAME }}.sarif
-          # Fail the job only on CRITICAL OS-package vulnerabilities that
-          # already have a fix available. HIGH severities and language-lib
-          # findings still produce SARIF (uploaded below) so they surface in
-          # the Security tab without blocking releases for churning advisories.
+          # SARIF without limit-severities-for-sarif unsets the severity
+          # filter: any fixed OS-package finding fails the job. Unfixed
+          # findings are ignored, and application dependencies are not scanned.
           severity: CRITICAL
           ignore-unfixed: true
           exit-code: "1"

@@ -15,7 +15,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   qualified one (PR2-02-CLI, task-cc3f03b6). `docker.yml` now builds each
   release image once and pushes it by digest without tags; the smoke check and
   the Trivy OS scan run on that pushed digest, and the run uploads a
-  `qualification-record` artifact. Cosign signs that digest, and the release
+  `qualification-record` artifact. The Trivy coverage exception records that
+  fixed OS-package findings at any severity fail the gate; unfixed findings
+  are ignored and application dependencies are not scanned. Cosign signs that digest, and the release
   tags are applied to it, only through `release-qual publish`, and the job
   fails unless every tag resolves to it. If a gate fails on a tag push, the
   untagged, unsigned digest stays in GHCR and Docker Hub. A push to a
