@@ -203,7 +203,7 @@ check_job() {
   jq -e --arg t "$2" --arg w "${5:-}" '.topic == $t and .tenant == "default" and ($w == "" or .workflow_id == $w)' \
     "$f" >/dev/null || fail "job $1 is $(jq -c '{topic, tenant, workflow_id}' "$f"), want topic $2, tenant default ${5:+and workflow_id $5}"
   jq -e --arg r "$3" '.safety_rule_id == $r' "$f" >/dev/null \
-    || fail "job $1 has safety_rule_id $(jq -r '.safety_rule_id // "none"' "$f"), want $3"
+    || fail "job $1 has safety_rule_id $(jq -r 'if (.safety_rule_id // "") == "" then "none" else .safety_rule_id end' "$f"), want $3"
   api GET "/api/v1/jobs/$1/decisions"
   cp "$HTTP_BODY_FILE" "$artifacts/decisions-$1.json"
   [ "$HTTP_STATUS" = 200 ] || fail "GET /api/v1/jobs/$1/decisions returned HTTP $HTTP_STATUS"
