@@ -502,6 +502,20 @@ func main() {
 		resolver := scheduler.NewFailModeResolver(configSvc, 30*time.Second)
 		engine.WithFailModeResolver(resolver)
 	}
+	// This sink carries scheduler SIEM events: safety bypass admission,
+	// heartbeat disagreement, approval revision mismatch, delegation lineage
+	// and delegation dispatch failure.
+	schedulerAuditSink, schedulerAuditSender, err := newHandshakeAuditSink(natsBus)
+	if err != nil {
+		slog.Error("scheduler audit configuration invalid; refusing to start", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := schedulerAuditSender.Close(); err != nil {
+			slog.Warn("scheduler audit sender close failed", "error", err)
+		}
+	}()
+	engine.WithDispatchAuditSink(schedulerAuditSink)
 
 	if handshakeBundle.middleware != nil {
 		engine.WithSessionMiddleware(handshakeBundle.middleware)
