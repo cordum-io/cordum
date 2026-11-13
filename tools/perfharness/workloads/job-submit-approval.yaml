@@ -1,0 +1,27 @@
+# Thresholds are workload inputs, not measured baselines.
+name: job-submit-approval
+description: HTTP submit-then-approve sequence, not worker completion latency.
+latency_scope: http
+target: {base_url_env: PERF_GATEWAY_URL, api_key_env: CORDUM_API_KEY, tenant_env: CORDUM_TENANT_ID}
+prerequisites:
+  - Disposable stack with job.perf.approval registered and a policy requiring approval.
+  - Credential has submit and approval permissions under the configured approval policy.
+  - Approval adapter must await the pending approval state before approving the captured job.
+  - A worker consumes the topic; JetStream and NATS /jsz monitoring are enabled.
+request_mix:
+  - name: submit-approve
+    weight: 1
+    requests:
+      - kind: jobs.submit
+        payload: {topic: job.perf.approval, prompt: 'Synthetic request {{seq}}', idempotency_key: '{{uuid}}'}
+        capture: {job_id: job_id}
+      - kind: jobs.approve
+        path_params: {job_id: '{{capture.job_id}}'}
+        payload: {}
+profiles:
+  smoke: {steps: [{concurrency: 1, duration: 1s}]}
+  standard: {steps: [{concurrency: 4, duration: 10s}]}
+  saturation-search: {steps: [{concurrency: 1, duration: 10s}, {concurrency: 4, duration: 10s}, {concurrency: 16, duration: 10s}]}
+saturation: {p99_ms: 1000, error_rate: 0.01, min_throughput_gain_pct: 5}
+queue_depth: {kind: nats_jsz, url_env: PERF_QUEUE_URL, stream: CORDUM_JOBS, interval_ms: 100}
+tolerance: {throughput_pct: 10, p99_pct: 10}

@@ -68,14 +68,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 func usage(stderr io.Writer, problem string) int {
 	if problem != "" {
-		fmt.Fprintf(stderr, "release-qual: %s\n", problem)
+		_, _ = fmt.Fprintf(stderr, "release-qual: %s\n", problem)
 	}
-	fmt.Fprintln(stderr, usageText)
+	_, _ = fmt.Fprintln(stderr, usageText)
 	return exitUsage
 }
 
 func fail(stderr io.Writer, code int, format string, a ...any) int {
-	fmt.Fprintf(stderr, "release-qual: "+format+"\n", a...)
+	_, _ = fmt.Fprintf(stderr, "release-qual: "+format+"\n", a...)
 	return code
 }
 
@@ -106,7 +106,7 @@ func fileDigest(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
 		return "", err
@@ -120,7 +120,7 @@ func readJSONFile(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	data, err := io.ReadAll(io.LimitReader(f, maxJSONBytes+1))
 	if err != nil {
 		return nil, err
@@ -285,7 +285,7 @@ func validate(args []string, stdout, stderr io.Writer) int {
 			images++
 		}
 	}
-	fmt.Fprintf(stdout, "VALID %d artifacts (%d image, %d binary), %d gates, %d exceptions, source %s, ref %s, dry_run %t\n",
+	_, _ = fmt.Fprintf(stdout, "VALID %d artifacts (%d image, %d binary), %d gates, %d exceptions, source %s, ref %s, dry_run %t\n",
 		len(record.Artifacts), images, len(record.Artifacts)-images, len(record.Gates), len(record.Exceptions),
 		record.Source.SHA, record.Release.Ref, record.Release.DryRun)
 	return exitOK
@@ -330,17 +330,17 @@ func qualify(cmd string, args []string, stdout, stderr io.Writer) int {
 	}
 	record, err := releasequal.Parse(data)
 	if err != nil {
-		fmt.Fprintf(stderr, "REFUSED record: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "REFUSED record: %v\n", err)
 		return exitRefused
 	}
 	code := exitOK
 	for _, it := range items {
 		if err := record.Check(it.name, it.digest); err != nil {
-			fmt.Fprintf(stderr, "REFUSED %s: %v\n", it.name, err)
+			_, _ = fmt.Fprintf(stderr, "REFUSED %s: %v\n", it.name, err)
 			code = exitRefused
 			continue
 		}
-		fmt.Fprintf(stdout, "QUALIFIED %s %s\n", it.name, it.digest)
+		_, _ = fmt.Fprintf(stdout, "QUALIFIED %s %s\n", it.name, it.digest)
 	}
 	return code
 }

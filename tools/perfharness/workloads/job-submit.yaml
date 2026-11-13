@@ -1,0 +1,23 @@
+# Thresholds are workload inputs, not measured baselines.
+# Protected deploy is not defined until the M2B deploy broker exists.
+name: job-submit
+description: HTTP job submission, not worker completion latency.
+latency_scope: http
+target: {base_url_env: PERF_GATEWAY_URL, api_key_env: CORDUM_API_KEY, tenant_env: CORDUM_TENANT_ID}
+prerequisites:
+  - Disposable Cordum stack with job.perf registered and allowed by policy.
+  - A worker consumes job.perf; JetStream and NATS monitoring are enabled.
+  - PERF_QUEUE_URL names the NATS /jsz monitoring endpoint.
+request_mix:
+  - name: submit
+    weight: 1
+    requests:
+      - kind: jobs.submit
+        payload: {topic: job.perf, prompt: 'Synthetic request {{seq}}', idempotency_key: '{{uuid}}'}
+profiles:
+  smoke: {steps: [{concurrency: 1, duration: 1s}]}
+  standard: {steps: [{concurrency: 4, duration: 10s}]}
+  saturation-search: {steps: [{concurrency: 1, duration: 10s}, {concurrency: 4, duration: 10s}, {concurrency: 16, duration: 10s}]}
+saturation: {p99_ms: 1000, error_rate: 0.01, min_throughput_gain_pct: 5}
+queue_depth: {kind: nats_jsz, url_env: PERF_QUEUE_URL, stream: CORDUM_JOBS, interval_ms: 100}
+tolerance: {throughput_pct: 10, p99_pct: 10}
