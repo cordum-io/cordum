@@ -78,10 +78,11 @@ func (r *FailModeResolver) InputFailOpenRule(orgID, topic string) (rule, mode st
 	if orgID != "" && orgID != "default" {
 		entry, loaded := r.loadTenantEntry(orgID)
 		switch {
-		case loaded && (entry.inputMode != "" || entry.hasInputScope):
+		case loaded && (entry.hasInputMode || entry.hasInputScope):
 			// The entry is the provider's effective config, with the system keys
-			// merged in when it was fetched, so it decides alone: a key it lacks
-			// keeps its default instead of taking a newer system value.
+			// merged in when it was fetched, so it decides alone when either key is
+			// present, whatever its value: a mode other than "open" is closed, and
+			// a key it lacks keeps its default instead of taking a newer system value.
 			mode, scope = entry.inputMode, entry.inputScope
 		case !loaded && r.configProvider != nil:
 			// The tenant's config may restrict what the system allows.
@@ -102,6 +103,7 @@ type tenantFailModes struct {
 	inputMode     string // "open", "closed", or "" (inherit system default)
 	asyncMode     string // "open", "closed", or "" (inherit system default)
 	inputScope    failOpenScope
+	hasInputMode  bool // input_fail_mode is present, whatever its value
 	hasInputScope bool
 	fetchedAt     time.Time
 }
@@ -200,8 +202,9 @@ func (r *FailModeResolver) RefreshTenant(ctx context.Context, orgID string) {
 			entry.inputScope = parseFailOpenScope(raw)
 			entry.hasInputScope = true
 		}
-		if mode, ok := schedulerCfg["input_fail_mode"].(string); ok {
-			entry.inputMode = mode
+		if raw, ok := schedulerCfg["input_fail_mode"]; ok {
+			entry.inputMode, _ = raw.(string)
+			entry.hasInputMode = true
 		}
 		if mode, ok := schedulerCfg["output_fail_mode"].(string); ok {
 			entry.asyncMode = mode

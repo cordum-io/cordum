@@ -448,23 +448,35 @@ func TestFailOpenTenantEntryNeverMixesWithNewerSystem(t *testing.T) {
 	provider := newMockFailModeProvider()
 	provider.configs["mode-only"] = map[string]any{"scheduler": map[string]any{"input_fail_mode": "open"}}
 	provider.configs["scope-only"] = map[string]any{"scheduler": map[string]any{"input_fail_open_scope": failOpenRules("old", "job.a")}}
+	// A present mode key decides with the entry whatever its value; any value but "open" is closed.
+	for tenant, mode := range map[string]any{"mode-empty": "", "mode-null": nil, "mode-number": 17} {
+		provider.configs[tenant] = map[string]any{"scheduler": map[string]any{"input_fail_mode": mode}}
+	}
 	r := NewFailModeResolver(provider, time.Hour)
-	r.RefreshTenant(testCtx(t), "mode-only")
-	r.RefreshTenant(testCtx(t), "scope-only")
+	for tenant := range provider.configs {
+		r.RefreshTenant(testCtx(t), tenant)
+	}
 	for _, tc := range []struct{ tenant, systemMode, topic string }{
 		{"mode-only", "closed", "job.b"}, // entry mode + system scope would admit job.b
 		{"scope-only", "open", "job.a"},  // system mode + entry scope would admit job.a
+		{"mode-empty", "open", "job.b"},  // the system snapshot alone would admit job.b
+		{"mode-null", "open", "job.b"},
+		{"mode-number", "open", "job.b"},
 	} {
 		t.Run(tc.tenant, func(t *testing.T) {
 			r.SetSystemInput(tc.systemMode, failOpenRules("new", "job.b"))
-			bus, store, sink := &fakeBus{}, newFakeJobStore(), &recordingSink{}
-			e := NewEngine(bus, unavailableSafety{}, newTestRegistry(t), NewNaiveStrategy(), store, nil).
+			bus, store, sink, spy := &fakeBus{}, newFakeJobStore(), &recordingSink{}, newInputFailOpenSpy()
+			e := NewEngine(bus, unavailableSafety{}, newTestRegistry(t), NewNaiveStrategy(), store, spy).
 				WithFailModeResolver(r).WithDispatchAuditSink(sink)
 			req := &pb.JobRequest{JobId: t.Name(), Topic: tc.topic, TenantId: tc.tenant}
-			assert.ErrorContains(t, e.processJob(testCtx(t), req, "mixed"), "safety unavailable")
+			err := e.processJob(testCtx(t), req, "mixed")
+			var retry *retryableError
+			require.ErrorAs(t, err, &retry)
+			assert.ErrorContains(t, err, "safety unavailable")
 			assert.Empty(t, bus.published)
 			assert.Empty(t, store.states[req.JobId])
 			assert.Empty(t, bypassEvents(sink))
+			assert.Zero(t, spy.getFailOpenCount(req.Topic))
 		})
 	}
 }

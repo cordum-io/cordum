@@ -87,10 +87,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   tenant's jobs are decided once its config has loaded.
 - Each fail-open decision takes the input mode and scope from one configuration:
   the tenant's effective config as last loaded (system and tenant settings merged)
-  when it sets either key, otherwise the current system config. A reload publishes
-  the system mode and scope together, and removing `scheduler.input_fail_mode` or
-  `scheduler.input_fail_open_scope` from the system config now publishes that key's
-  default (closed mode, no topics) instead of keeping the previous value.
+  when either key is present in it, otherwise the current system config. A present
+  mode other than `open`, including an empty, null or non-string value, is closed.
+  A reload publishes the system mode and scope together, and removing
+  `scheduler.input_fail_mode` or `scheduler.input_fail_open_scope` from the system
+  config now publishes that key's default (closed mode, no topics) instead of
+  keeping the previous value.
 
 - `tools/scripts/install.sh` and `install.ps1` verify `SHA256SUMS.sigstore.json`,
   a keyless Sigstore signature, with cosign before checking checksums and
