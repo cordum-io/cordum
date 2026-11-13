@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"log/slog"
+	"net"
 	"strings"
 	"sync"
 	"testing"
@@ -206,5 +207,43 @@ func TestPolicySignatureReport_NilClientStartsNothing(t *testing.T) {
 	psrWait(t, &wg, 200*time.Millisecond)
 	if strings.Count(buf.String(), "level=WARN") != 1 || !strings.Contains(buf.String(), "policy signature report") {
 		t.Fatalf("expected one report warning, got %q", buf.String())
+	}
+}
+
+func TestPolicySignatureReport_StartupBoundedWhenRedisStalls(t *testing.T) {
+	psrEnv(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop := make(chan struct{})
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() { <-stop; conn.Close() }()
+		}
+	}()
+	// The client's own timeouts exceed the bound, so the test measures the reporter's wait alone.
+	client := redis.NewClient(&redis.Options{Addr: ln.Addr().String(), ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, MaxRetries: -1})
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	began := time.Now()
+	startPolicySignatureReporter(ctx, &wg, client)
+	elapsed := time.Since(began)
+	cancel()
+	close(stop)
+	if err := ln.Close(); err != nil {
+		t.Error(err)
+	}
+	psrWait(t, &wg, 5*time.Second)
+	if err := client.Close(); err != nil {
+		t.Error(err)
+	}
+	const bound = 2 * time.Second
+	if elapsed < bound || elapsed > bound+time.Second {
+		t.Fatalf("startup waited %v, want the %v bound", elapsed, bound)
 	}
 }
