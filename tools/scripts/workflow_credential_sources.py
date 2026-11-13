@@ -243,8 +243,10 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
         return facts("", 0, errexit, ([c._replace(sets=sets.get(k, "")) for k, c in enumerate(unit[0])], unit[1])) if sets or errexit != unit[5] else unit
     def effect(self, key: str, env: dict, argv: list, chain: tuple, quiet: bool) -> str:  # what a file run in its caller's shell may leave set there: e, x, or both if unparsable; a refused, cyclic or too-deep file leaves nothing (its edge reports it)
         if not isinstance(unit := "CYCLE" if key in chain else "LIMIT" if len(chain) >= MAX_DEPTH else self.load(key), tuple): return ""
+        request = ("effect-input", key, tuple(sorted(env.items())), tuple(argv), chain, quiet)  # cache before descending; chain preserves cycle/depth context
+        if request in self.cache: return self.cache[request]
         if (memo := ("effect", key, tuple(sorted(self.walk(key, unit, env, argv, chain + (key,), quiet, ".", True).items())))) not in self.cache: flags = facts("", 0, True, ([c._replace(sets=dict(memo[2]).get(k, "")) for k, c in enumerate(unit[0])], unit[1]))[4]; self.cache[memo] = "ex" if unit[1] else ("" if flags[-1][0] else "e") + ("x" if flags[-1][1] else "")  # noqa: E702
-        return self.cache[memo]
+        self.cache[request] = self.cache[memo]; return self.cache[memo]  # noqa: E702
     def track(self, words: list, table: dict, env: dict, here: str) -> None:  # a pure assignment, export, declaration or unset
         keyword = words[0] if words[:1] and words[0] in ("export", "local", "declare", "typeset", "readonly", "unset") else ""
         items = [w for w in words[bool(keyword):] if not w.startswith("-")]

@@ -331,5 +331,9 @@ else
   record FAIL "inventory: rc=${inv_rc}: ${inv}"
 fi
 
+if python - "${WORK}" "${SOURCES}" <<'PY'
+import pathlib, runpy, sys; ns = runpy.run_path(sys.argv[2]); root = pathlib.Path(sys.argv[1]) / "source-fanout"; root.mkdir(); [(root / f"n{i}.sh").write_text(f"source n{i + 1}.sh\n" * 5 if i < 5 else "true\n") for i in range(6)]; scan = ns["Scan"](root); calls = []; effect = getattr(scan, "effect", None); setattr(scan, "effect", lambda *args: (calls.append(None), effect(*args))[1]) if effect else None; scan.run_job("probe.yml", "job", {"steps": [{"run": "source n0.sh"}]}, {}, {}, True); assert len(calls) <= ns["MAX_VISITS"] and not scan.issues, (len(calls), scan.issues)
+PY
+then record PASS "repeated sources reuse option effects"; else record FAIL "repeated sources reuse option effects"; fi
 echo "SUMMARY: ${PASS} pass, ${FAIL} fail, ${SKIP} skip"
 [[ "${FAIL}" -eq 0 ]]
