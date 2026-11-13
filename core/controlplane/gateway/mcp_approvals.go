@@ -680,7 +680,7 @@ func (s *MCPApprovalStore) SweepExpired(ctx context.Context, now time.Time) (int
 				continue
 			}
 			id := strings.TrimPrefix(key, mcpApprovalKeyPrefix)
-			expired, rec := s.expireOne(ctx, id, deadline)
+			expired, rec := s.expireOne(ctx, id, deadline, false)
 			if expired && rec != nil {
 				matched++
 				s.pruneIndexFor(ctx, rec)
@@ -695,11 +695,30 @@ func (s *MCPApprovalStore) SweepExpired(ctx context.Context, now time.Time) (int
 	return matched, nil
 }
 
+// WithdrawPending expires a PENDING record now, whatever its deadline. The
+// registry gate calls it when the Edge mint fails after the correlation
+// record was enqueued (task-fbe79532), so approvers see no orphan row. A
+// record that is no longer PENDING is left alone, and the sweeper stays the
+// backstop. Reports whether this call expired the record.
+func (s *MCPApprovalStore) WithdrawPending(ctx context.Context, id string, now time.Time) bool {
+	if s == nil || s.client == nil || strings.TrimSpace(id) == "" {
+		return false
+	}
+	expired, rec := s.expireOne(ctx, id, now.UnixMicro(), true)
+	if !expired || rec == nil {
+		return false
+	}
+	s.pruneIndexFor(ctx, rec)
+	s.emitAudit(rec, "expired", "", audit.SeverityMedium)
+	return true
+}
+
 // expireOne CAS-transitions a single PENDING record to EXPIRED if its
-// ExpiresAt has passed. Returns (true, rec) on transition, (false, nil)
-// otherwise. Shared by SweepExpired; kept on the store so unit tests
-// can exercise the CAS directly if needed.
-func (s *MCPApprovalStore) expireOne(ctx context.Context, id string, deadline int64) (bool, *MCPApprovalRecord) {
+// ExpiresAt has passed, or at once when force is set. Returns (true, rec) on
+// transition, (false, nil) otherwise. Shared by SweepExpired (force=false)
+// and WithdrawPending (force=true); kept on the store so unit tests can
+// exercise the CAS directly if needed.
+func (s *MCPApprovalStore) expireOne(ctx context.Context, id string, deadline int64, force bool) (bool, *MCPApprovalRecord) {
 	key := mcpApprovalKey(id)
 	var (
 		expired bool
@@ -717,7 +736,7 @@ func (s *MCPApprovalStore) expireOne(ctx context.Context, id string, deadline in
 		if rec.Status != model.ApprovalStatusPending {
 			return nil
 		}
-		if rec.ExpiresAt > deadline {
+		if !force && rec.ExpiresAt > deadline {
 			return nil
 		}
 		next := rec

@@ -152,7 +152,8 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 		// passes a stub invariant lookup, the production path passes the
 		// bundle-reading closure below.
 		invariantLookup := MCPInvariantLookupFunc(func(ctx context.Context) []config.PolicyRule {
-			bundles, _, err := s.loadPolicyBundles(ctx)
+			// Workflow bundles cannot hold secops/invariants; one config GET suffices.
+			bundles, _, err := s.loadPolicyBundlesWithDoc(ctx)
 			if err != nil {
 				slog.Warn("mcp gate invariant lookup: load policy bundles failed", "err", err)
 				return nil

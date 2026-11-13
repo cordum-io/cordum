@@ -38,11 +38,12 @@ core/mcp.EvaluateToolCall
    │  6. emit mcp.tool.pre OR mcp.tool.failed (deny/throttle) event
    ▼
 decision branch
-   ├── ALLOW                           ───►  upstream tool handler  ───►  mcp.tool.post
+   ├── ALLOW                           ───►  ApprovalHandoff.AuthorizeAllowedCall (invariant check) ➜ upstream ➜ mcp.tool.post
    ├── DENY / THROTTLE                  ───►  short-circuit (no upstream call)
    ├── REQUIRE_HUMAN                    ───►  ApprovalHandoff.ConsumeActionGateDecision
    │                                            ├── invariant check
    │                                            └── Edge approval mint ➜ approval pending: <approval_ref>
+   │   └── consumed _approval_ref       ───►  AuthorizeConsumedApproval (invariant check) ➜ upstream ➜ mcp.tool.post
    └── upstream error                   ───►  mcp.tool.failed (with sanitized error)
 ```
 
@@ -171,7 +172,14 @@ the same logical file converge on a single approval lifecycle key.
 
 Precedence at the approval-handoff site:
 
-1. **MCP invariants** — `ErrMCPInvariantDeny` always wins.
+1. **MCP invariants** — `ErrMCPInvariantDeny` always wins, at the mint,
+   on a consumed `_approval_ref` resume, and before every policy-gate ALLOW
+   reaches upstream (including tools without `RequiresApproval` and fronted
+   upstreams). `deny_servers` matches either the serving registry's effective
+   `ApprovalScope` (including runtime `mcp_policy` overrides) or the MCP server
+   name (`cordum.builtin` or the fronted upstream's name). A server-wide deny
+   therefore covers scoped tools too. Scope and server come from the serving
+   tool service and server configuration, never from client arguments.
 2. **Edge approval mint** — the Edge approval is bound to the call's
    policy pre-event (`mcp.tool.pre`), and its reference reaches the
    client as `approval pending: <approval_ref>`. After a human approves

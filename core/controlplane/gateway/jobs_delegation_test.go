@@ -605,7 +605,9 @@ func TestSubmitJobGRPCIgnoresOtherTenantsWorkerLink(t *testing.T) {
 			if err := s.agentIdentityStore.LinkWorker(context.Background(), "agent-source", "p"); err != nil {
 				t.Fatalf("link worker: %v", err)
 			}
-			_, err := s.SubmitJob(context.Background(), &pb.SubmitJobRequest{
+			// Submit as the authenticated principal "p": a principal named only by
+			// the request gets no inferred agent (TestSubmitJobGRPCBindsClientAgentID).
+			_, err := s.SubmitJob(grpcAgentBindingCaller(""), &pb.SubmitJobRequest{
 				Prompt: "hello", Topic: "job.default", OrgId: "default", PrincipalId: "p",
 			})
 			if err != nil {

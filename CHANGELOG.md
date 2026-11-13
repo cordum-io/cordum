@@ -47,6 +47,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   for Kubernetes manifest apply, with a proposed reference boundary, credential
   inventory and measurable acceptance ideas. Broker/grant enforcement is future
   work; runtime acceptance evidence is not measured.
+- `GET /api/v1/status` has a new admin-only `signature_enforcement` field that
+  reports the signature mode in effect at each enforcement point; it changes no
+  mode or default. `policy` gives, per policy source (`file`, `url`, `store`),
+  the weakest mode (`off`, `warn` or `enforce`) among safety kernels with a live
+  report, plus `reporters` and `consistent`, and is `{"status":"unknown"}` when
+  no report is available or one cannot be parsed. Each safety kernel publishes
+  the modes its own policy loaders resolve to the Redis key
+  `cordum:safety:policy_signature:<instance id>`, with a TTL of twice
+  `SAFETY_POLICY_RELOAD_INTERVAL` and at least 60s. `packs.strict` is the
+  gateway's pack-install strictness from `CORDUM_GATEWAY_PACK_STRICT` or
+  `cfg:packs:strict_mode`.
 
 #### demo/cap-mcp-governed — CAP worker calls governed Cordum MCP tools and waits for human approval (2026-11-11, task-ba678d95)
 
@@ -85,6 +96,46 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   credential with `agent_id`), then send the bound `id` in `X-Agent-Id` or drop
   the header. See "Agent identity binding" in `docs/mcp-server.md`.
 
+#### core/controlplane/gateway — production gateways hold destructive MCP calls when the session-taint lookup fails (2026-11-13, task-dddb761f)
+
+- **Production default change.** With `mcp.policy_gate_enabled=true` and
+  `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` unset, a gateway running with
+  `CORDUM_ENV=production` or `prod`, or `CORDUM_PRODUCTION=true`, now fails
+  closed: a destructive MCP call (by default a tool matching `*delete*`,
+  `*remove*` or `*archive*`, or GraphQL arguments carrying such a mutation)
+  whose session-taint lookup fails is held for Edge approval
+  (`REQUIRE_HUMAN`, `taint_lookup_unavailable_failclosed`) instead of
+  running. Dev and demo profiles keep the fail-open default. An explicit
+  `true` or `false` always wins, and an unrecognized value falls back to the
+  profile default with a warning.
+- **Operational impact:** during a session-taint store outage, production
+  holds every destructive MCP call for an Edge approval, for every identity,
+  including scope-preapproved CI bots. Scope preapproval does not waive this
+  hold. To keep the previous fail-open behavior, set
+  `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE=false`.
+- The gateway now reads the flag through
+  `actiongates.ResolveFailClosedDestructiveOnTaintLookupError`, which had no
+  caller, and its own default-off parser is removed. A tainted destructive
+  call is still denied in every profile, and the safety kernel is unchanged.
+
+#### Integration batch 2 review fixes (2026-11-13, #579)
+
+- `GET /api/v1/status` caches its response per caller role and tenant. A
+  cached entry is served only to the role and tenant it was built for, so
+  admin-only infrastructure fields and per-tenant pipeline counts stay with
+  their audience. The cache holds at most 256 entries.
+- The gateway's pack strict-mode resolver no longer caches a failed Redis read.
+  The failing call still returns the default, but the next call reads Redis
+  again. An unset key is still cached for the TTL.
+- The workflow credential scanner carries tracing from a `bash -i --rcfile`
+  (or `--init-file`) rcfile into the program or script that shell runs. An
+  rcfile that leaves `set -x` on makes later credential registrations count
+  as used before registration.
+- An MCP call that policy allows but the invariant floor refuses now closes its
+  allowed `mcp.tool.pre` event with a blocked `mcp.tool.failed` event, as a
+  policy deny does, so the Edge event stream never keeps an allowed call with
+  no outcome.
+
 #### Scheduler input outage exceptions use named topic scopes (2026-11-13, task-7803f261)
 
 - `scheduler.input_fail_mode=open` admits only topics named in
@@ -101,6 +152,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   with the topics they class as low risk. Without a scope, open mode requeues every job
   while the kernel is unavailable.
 
+#### Scheduler fail-open admission reads one config snapshot (2026-11-13, task-5ef67585)
+
+- A tenant whose fail-mode config has not loaded is requeued instead of inheriting
+  the system fail-open scope. The lookup starts a background refresh, and the
+  tenant's jobs are decided once its config has loaded.
+- Each fail-open decision takes the input mode and scope from one configuration:
+  the tenant's effective config as last loaded (system and tenant settings merged)
+  when either key is present in it, otherwise the current system config. A present
+  mode other than `open`, including an empty, null or non-string value, is closed.
+  A reload publishes the system mode and scope together, and removing
+  `scheduler.input_fail_mode` or `scheduler.input_fail_open_scope` from the system
+  config now publishes that key's default (closed mode, no topics) instead of
+  keeping the previous value.
+
 - `tools/scripts/install.sh` and `install.ps1` verify `SHA256SUMS.sigstore.json`,
   a keyless Sigstore signature, with cosign before checking checksums and
   installing binaries. `verify-blob` pins the identity to `release.yml` at a
@@ -110,6 +175,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `binary-signature-unverified` audit event and still enforces checksums.
   The release workflow does not publish this signature yet (PR2-03-PIPELINE).
   (PR2-03, task-83a43ecf)
+
+- HTTP job submit (task-ed8bd5e2): a client `labels.agent_id` is honored only when the request's principal is the authenticated principal; naming another worker's `principal_id` to validate the label is now refused with 403 before the policy check, matching gRPC SubmitJob. Requests without the label are unchanged.
+
+- MCP invariants match `deny_servers` against both the serving registry's
+  effective `ApprovalScope` (including runtime `mcp_policy` overrides) and the
+  MCP server name (`cordum.builtin` or a fronted upstream's name). The floor
+  applies at action-gate approval mint, `_approval_ref` resume, and every
+  policy-gate ALLOW, including tools without `RequiresApproval` that previously
+  skipped it. The action-gate handoff previously matched by tool name only;
+  invariant lookups now read only the policy config document (task-b81f0840;
+  PR #541 review thread).
 
 - Release images move off Alpine 3.21, which alpinelinux.org/releases.json lists
   as end-of-life on 2026-11-01. The control-plane and `demo-quickstart-worker`
@@ -131,6 +207,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Pre-existing global `agent:by-worker:<worker>` links keep resolving for the tenant that owns the linked agent, and that tenant's next unlink retires them. Nothing writes them any more.
 - Go API: `AgentIdentityStore.GetByWorkerID` is removed (use `GetByWorkerIDForTenant`); `UnlinkWorker` takes the tenant ID; `LinkWorker` rejects unknown or untenanted agents.
 - gRPC `SubmitJob` now binds `labels.agent_id` the same way HTTP job submit does. A client `agent_id` that differs from the agent linked to the principal in the request tenant, that is sent with no link, or whose principal comes from the request's `principal_id` instead of the authenticated identity, is refused with `PermissionDenied` before the policy check. Before this change, the label went unchecked into the policy check and the audit trail. This was CodeRabbit's finding on #537.
+- With `labels.agent_id` omitted, gRPC `SubmitJob` now infers the linked agent only for the authenticated principal. A request with no authenticated principal (no auth context, or a credential without a principal ID) that names a worker in `principal_id` gets no `agent_id`. Before this change, outside the production profile, it got that worker's linked agent in the policy check and the audit trail. This was CodeRabbit's finding on #548.
 - Slices: task-76c90c6e, task-283f2317.
 
 #### TypeScript SDK — dev-only minimatch advisory GHSA-g3hv-75wg-m249 (2026-11-11, task-f09d31be)
@@ -153,12 +230,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   has a discard fallback, and cordum-mcp's NATS audit fallback writes to stderr
   when no SIEM exporter is configured.
 
+- cordum-mcp writes its stderr audit events at every `CORDUM_LOG_LEVEL`, and
+  the text log format prints each event as JSON text. cordum-mcp also closes
+  its audit sender before it stops, so events queued in the NATS fallback
+  buffer are exported first (task-aaf54d0e).
+
 - `POST /api/v1/approvals/{job_id}/approve` and `/reject` now return 503 when a
   store read that their checks depend on fails: the job state, the stored
   request, the submitter or the workflow run. The job stays in APPROVAL, no
   approval is recorded and nothing is published. A job with no recorded
   submitter, or whose workflow run no longer exists, is handled as before
   (PR1-17, task-a4da0522).
+
+- MCP approval gate: with `mcp.policy_gate_enabled=true`, when the registry
+  gate's Edge approval mint fails (a policy snapshot changed during the call, a
+  missing pre-event, or an Edge store error), the dual-written MCP approval
+  record is expired at once instead of staying PENDING until its TTL, so
+  approvers see no orphan row. The call's `mcp.tool_invocation` no longer
+  reports `approval_status=required` for it. (task-fbe79532; PR #541 review
+  thread)
 - MCP approval resume: a call resumed with `_approval_ref` is refused with
   `-32096` `policy_snapshot_changed` when policy was published between the
   approval claim and the call's `mcp.tool.pre` stamp. Nothing runs and the
@@ -202,7 +292,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - MCP (`mcp.policy_gate_enabled=true`): scope preapproval no longer
   short-circuits an action-gate REQUIRE_HUMAN hold. Today that is the
   destructive-call hold when the session-taint store is unavailable and
-  `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` is on (default off). A
+  `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` is on (by default in production
+  profiles; see task-dddb761f under Security). A
   preapproved identity now receives the same resumable
   `approval pending: <approval_ref>` as any identity, instead of an empty,
   cached `approval pending: ` that could never execute or resume.
@@ -266,6 +357,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Docs: DESIGN.md, docs/CORE.md and docs/mcp-server.md now state which policy
   constraints the scheduler enforces and which are advisory or planned, and link
   to `docs/contract/enforcement-matrix.yaml`.
+
+- Aligned the `SAFETY_KERNEL_TLS_CA` description in `docs/configuration-reference.md` and `docs/safety-kernel.md` with `docs/contract/threat-model.md`: it is the CA bundle the scheduler and gateway use to verify the Safety Kernel's TLS server certificate. Documentation only; no behavior changes.
 
 ## [v1.3.1] - 2026-11-11
 
