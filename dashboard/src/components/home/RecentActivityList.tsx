@@ -1,5 +1,4 @@
 import { motion } from "framer-motion";
-import type { ColumnDef } from "@tanstack/react-table";
 import { ArrowRight } from "lucide-react";
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
@@ -7,7 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SafetyDecisionBadge } from "@/components/ui/SafetyDecisionBadge";
 import { StatusBadge, type BadgeVariant } from "@/components/ui/StatusBadge";
-import { DataTable, type DecisionTier } from "@/components/primitives/DataTable";
+import { DataTable, type DataTableColumn, type DecisionTier } from "@/components/primitives/DataTable";
 import { SafetyDecisionFeed } from "@/components/home/SafetyDecisionFeed";
 import { formatRelativeTime } from "@/lib/utils";
 import type { Job } from "@/api/types";
@@ -49,7 +48,7 @@ export function RecentActivityList({ jobs }: RecentActivityListProps) {
   const navigate = useNavigate();
   const rows = useMemo(() => jobs.slice(0, RECENT_LIMIT), [jobs]);
 
-  const columns = useMemo<ColumnDef<Job>[]>(
+  const columns = useMemo<DataTableColumn<Job>[]>(
     () => [
       {
         id: "id",

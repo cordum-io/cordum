@@ -1,15 +1,34 @@
 import { useMemo, useRef, useState, type ReactNode, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
 import {
   flexRender,
-  getCoreRowModel,
-  getSortedRowModel,
-  useReactTable,
+  columnSizingFeature,
+  columnVisibilityFeature,
+  createSortedRowModel,
+  rowSortingFeature,
+  sortFns,
+  tableFeatures,
+  useTable,
   type ColumnDef,
+  type Row,
   type SortingState,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+const dataTableFeatures = tableFeatures({
+  rowSortingFeature,
+  columnSizingFeature,
+  columnVisibilityFeature,
+  sortedRowModel: createSortedRowModel(),
+  sortFns,
+});
+
+/** v9 requires object rows; intersect rather than widen T or constrain generic wrapper helpers. */
+export type DataTableColumn<T> = ColumnDef<typeof dataTableFeatures, T & object, unknown>;
+type DataTableRow<T> = Row<typeof dataTableFeatures, T & object>;
+/** Sorting state accepted by `initialSorting`. */
+export type DataTableSorting = SortingState;
 
 export type DecisionTier =
   | "allow"
@@ -19,14 +38,14 @@ export type DecisionTier =
   | "throttle";
 
 export interface DataTableProps<T> {
-  columns: ColumnDef<T, unknown>[];
-  data: T[];
+  columns: DataTableColumn<T>[];
+  data: (T & object)[];
   emptyState: ReactNode;
   onRowClick?: (row: T) => void;
   decisionAccessor?: (row: T) => DecisionTier | undefined;
   className?: string;
   compact?: boolean;
-  initialSorting?: SortingState;
+  initialSorting?: DataTableSorting;
   /** Estimated row pixel height for the virtualizer. Default 44. */
   estimatedRowHeight?: number;
   /** Scrollable container height when virtualization is active. Default 480. */
@@ -71,13 +90,12 @@ export function DataTable<T>({
 }: DataTableProps<T>) {
   const [sorting, setSorting] = useState<SortingState>(initialSorting ?? []);
 
-  const table = useReactTable({
+  const table = useTable({
+    features: dataTableFeatures,
     data,
     columns,
     state: { sorting },
     onSortingChange: setSorting,
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
   });
 
   const rows = table.getRowModel().rows;
@@ -218,10 +236,10 @@ export function DataTable<T>({
 }
 
 interface VirtualizedBodyProps<T> {
-  rows: ReturnType<ReturnType<typeof useReactTable<T>>["getRowModel"]>["rows"];
+  rows: DataTableRow<T>[];
   columnsCount: number;
   headerRow: ReactNode;
-  renderCells: (row: ReturnType<ReturnType<typeof useReactTable<T>>["getRowModel"]>["rows"][number]) => ReactNode;
+  renderCells: (row: DataTableRow<T>) => ReactNode;
   onRowClick?: (row: T, event: ReactMouseEvent<HTMLTableRowElement>) => void;
   decisionAccessor?: (row: T) => DecisionTier | undefined;
   estimatedRowHeight: number;
