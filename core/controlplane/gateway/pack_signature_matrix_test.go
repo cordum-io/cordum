@@ -10,6 +10,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -552,6 +555,103 @@ func packMatrixOK(t *testing.T, err error) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+var packSignatureExclusions = map[string]string{
+	"handleUninstallPack": "removes a pack; installs nothing",
+}
+
+func TestPackSignatureSourceInventory(t *testing.T) {
+	files, err := os.ReadDir(".")
+	packMatrixOK(t, err)
+	functions, discovered := map[string]*ast.FuncDecl{}, map[string]bool{}
+	for _, entry := range files {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), entry.Name(), nil, 0)
+		packMatrixOK(t, err)
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok {
+				continue
+			}
+			functions[fn.Name.Name] = fn
+			if packMatrixRegistryWriter(fn) {
+				discovered[fn.Name.Name] = true
+			}
+		}
+	}
+	covered := map[string]bool{}
+	for source, entries := range packSignatureSources {
+		if len(entries) == 0 {
+			t.Errorf("source %s has no entry points", source)
+		}
+		for _, name := range entries {
+			covered[name] = true
+		}
+	}
+	for name, reason := range packSignatureExclusions {
+		if strings.TrimSpace(reason) == "" {
+			t.Errorf("exclusion %s has no reason", name)
+		}
+		covered[name] = true
+	}
+	for name := range discovered {
+		if !covered[name] {
+			t.Errorf("unmapped pack install/registry writer: %s", name)
+		}
+	}
+	for name := range covered {
+		if functions[name] == nil {
+			t.Errorf("source entry no longer exists: %s", name)
+		}
+	}
+	fn := functions["handleSetConfig"]
+	if !packMatrixServerMethod(fn) || !slices.Contains(packSignatureSources["cordumctl"], "handleSetConfig") {
+		t.Error("cordumctl must inventory the generic config *server method")
+	}
+}
+
+func packMatrixRegistryWriter(fn *ast.FuncDecl) bool {
+	var coreCall, registryID, set bool
+	ast.Inspect(fn.Body, func(node ast.Node) bool {
+		if selector, ok := node.(*ast.SelectorExpr); ok && selector.Sel.Name == "PackRegistryID" {
+			pkg, ok := selector.X.(*ast.Ident)
+			registryID = registryID || (ok && pkg.Name == "packs")
+		}
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		var name string
+		switch fun := call.Fun.(type) {
+		case *ast.Ident:
+			name = fun.Name
+		case *ast.SelectorExpr:
+			name = fun.Sel.Name
+		}
+		switch name {
+		case "installPackFromDir", "updatePackRegistry", "savePackRegistry":
+			coreCall = true
+		case "Set", "SetWithRetry":
+			set = true
+		}
+		return true
+	})
+	return coreCall || (registryID && set)
+}
+
+func packMatrixServerMethod(fn *ast.FuncDecl) bool {
+	if fn == nil || fn.Recv == nil || len(fn.Recv.List) != 1 {
+		return false
+	}
+	star, ok := fn.Recv.List[0].Type.(*ast.StarExpr)
+	if !ok {
+		return false
+	}
+	name, ok := star.X.(*ast.Ident)
+	return ok && name.Name == "server"
 }
 func packMatrixJSON[T any](t *testing.T, value T) []byte {
 	t.Helper()
