@@ -1,0 +1,107 @@
+# Contract catalog: I01-I10, with findings listed by id only.
+# violated: an open finding maps here; holds: no open finding and linked tests;
+# untested: no open finding and the property is not proven.
+# Checked by go test ./tests/contract/... -run Invariants, part of make test.
+# Renaming an anchored symbol or linked test requires updating this file.
+schema_version: 1
+entry_points:
+  - {id: edge-hook, anchors: [{path: core/edge/agentd/evaluator.go, symbol: Evaluator.EvaluateHook}, {path: core/controlplane/gateway/handlers_edge_evaluate.go, symbol: server.handleEdgeEvaluate}]}
+  - {id: mcp-tool-call, anchors: [{path: core/mcp/server.go, symbol: MCPServer.handleToolsCall}, {path: core/policy/actiongates/mcp_gate.go, symbol: MCPGate.Evaluate}]}
+  - {id: mcp-approval-gate, anchors: [{path: core/controlplane/gateway/mcp_gate.go, symbol: gatewayApprovalGate.Check}]}
+  - {id: job-submit-http, anchors: [{path: core/controlplane/gateway/handlers_jobs.go, symbol: server.handleSubmitJobHTTP}]}
+  - {id: job-submit-grpc, anchors: [{path: core/controlplane/gateway/handlers_grpc.go, symbol: server.SubmitJob}]}
+  - {id: scheduler-dispatch, anchors: [{path: core/controlplane/scheduler/engine.go, symbol: Engine.checkSafetyDecision}]}
+  - {id: scheduler-output, anchors: [{path: core/controlplane/scheduler/output_safety_client.go, symbol: redactOutputContent}]}
+  - {id: workflow-step, anchors: [{path: core/workflow/engine_job.go, symbol: Engine.buildJobRequest}]}
+  - {id: workflow-rerun, anchors: [{path: core/controlplane/gateway/handlers_workflows.go, symbol: server.handleRerunRun}]}
+  - {id: saga-compensation, anchors: [{path: core/controlplane/scheduler/saga.go, symbol: SagaManager.dispatchCompensation}]}
+  - {id: bus-replay, anchors: [{path: core/infra/bus/raw_admission.go, symbol: evaluateRawAdmission}, {path: core/infra/replay/redis_store.go, symbol: RedisReplayStore.Admit}]}
+  - {id: policy-publish, anchors: [{path: core/controlplane/gateway/handlers_policy_bundles.go, symbol: server.handlePublishPolicyBundles}]}
+  - {id: audit-verify, anchors: [{path: core/audit/chain_verify.go, symbol: VerifyChain}]}
+  - {id: edge-session, anchors: [{path: core/controlplane/gateway/handlers_edge_sessions.go, symbol: server.handleGetEdgeSession}]}
+invariants:
+  - id: I01
+    statement: No authority, no protected effect.
+    testable_form: 'A protected effect (process start, file write, API mutation or released bytes) happens only while a valid Cordum authorization for that exact action exists. Test: drive the action without one and assert the effect is absent.'
+    entry_points: [edge-hook, mcp-tool-call, mcp-approval-gate, job-submit-http, job-submit-grpc, scheduler-dispatch, workflow-step, workflow-rerun, saga-compensation, bus-replay, policy-publish]
+    findings: [R02, R13]
+    status: violated
+  - id: I02
+    statement: Unsupported restriction means deny, not unrestricted allow.
+    testable_form: 'If an entry point cannot enforce a restriction the decision attaches (a constraint field, an output scan or a redaction level), it denies before any effect. Test: attach an unenforceable restriction and assert deny with no effect.'
+    entry_points: [edge-hook, mcp-tool-call, scheduler-dispatch, scheduler-output, policy-publish]
+    findings: [R01, R07, R08]
+    status: violated
+  - id: I03
+    statement: Approval never overrides a hard prohibition.
+    testable_form: 'An input that matches a hard-deny rule is denied whether an approval is required, pending or granted. Test: approve an action that also matches a hard deny and assert no effect.'
+    entry_points: [edge-hook, mcp-tool-call, mcp-approval-gate, scheduler-dispatch, workflow-step]
+    findings: [R05, R09]
+    tests: [{package: core/controlplane/safetykernel, name: TestKernelInvariants_DenyBlocksOtherwiseAllowedInput}, {package: core/controlplane/safetykernel, name: TestKernelInvariants_OutputDenyBlocksOtherwiseAllowed}, {package: core/controlplane/gateway, name: TestInvariantDenyBeatsMCPAllow}, {package: core/controlplane/gateway, name: TestInvariantAllowToolsImplicitDeny}, {package: core/controlplane/gateway, name: TestInvariantTenantScopedDeny}, {package: core/controlplane/gateway/policybundles, name: TestInvariantDenyBeatsPackAllow}, {package: core/controlplane/gateway/policybundles, name: TestPackUninstallRemovesPackRulesPreservesInvariants}]
+    test_scope: 'SecOps invariant DENY precedence over ALLOW and over the MCP approval path, in the kernel evaluator, the MCP gate and the pack merge; not approval refresh, and not every entry point.'
+    suites: [core/controlplane/safetykernel/kernel_invariants.go, core/controlplane/safetykernel/kernel_invariants_test.go, core/controlplane/gateway/mcp_gate_invariants.go, core/controlplane/gateway/mcp_gate_invariants_test.go, core/controlplane/gateway/policybundles/invariants.go, core/controlplane/gateway/policybundles/invariants_test.go]
+    status: violated
+  - id: I04
+    statement: Different effective policy means different policy identity.
+    testable_form: 'Two policy states that decide some input differently have different policy identities. Test: change a rule, default or precedence that alters a decision and assert the identity changes.'
+    entry_points: [policy-publish, edge-hook, mcp-tool-call, scheduler-dispatch]
+    findings: [R06]
+    tests: [{package: core/controlplane/gateway/policybundles, name: TestInvariantSnapshotChangeBumpsCfgHash}]
+    test_scope: 'A change to the SecOps invariants bundle changes the config hash; not every change to effective semantics.'
+    suites: [core/controlplane/gateway/policybundles/invariants.go, core/controlplane/gateway/policybundles/invariants_test.go]
+    status: violated
+  - id: I05
+    statement: The authorized inputs are the inputs actually used.
+    testable_form: 'The arguments, referenced artifacts, target and execution context used at execution equal those the authorization covered. Test: change one after authorization and assert no effect.'
+    entry_points: [edge-hook, mcp-tool-call, mcp-approval-gate, job-submit-http, job-submit-grpc, scheduler-dispatch, workflow-step]
+    findings: [R02, R03, R04]
+    status: violated
+  - id: I06
+    statement: Duplicate delivery does not imply completed processing.
+    testable_form: 'Work is recorded as completed only after its processing finished; redelivered unfinished work is processed or reconciled. Test: assert completion is never recorded for unfinished work.'
+    entry_points: [bus-replay, scheduler-dispatch, saga-compensation]
+    findings: [R10]
+    status: violated
+  - id: I07
+    statement: Revocation prevents future authorized effects within a published bound.
+    testable_form: 'After a revocation, no effect it covers starts later than the published bound. Test: revoke an unused authorization and assert no effect after the bound.'
+    entry_points: [edge-hook, mcp-approval-gate, scheduler-dispatch, workflow-step]
+    findings: [R09]
+    status: violated
+  - id: I08
+    statement: Unknown outcome is never reported as success.
+    testable_form: 'An operation whose outcome is not confirmed is reported as unknown and reconciled, never as success. Test: leave an outcome unconfirmed and assert the reported state is not success.'
+    entry_points: [bus-replay, scheduler-dispatch, saga-compensation, workflow-rerun]
+    findings: [R10]
+    status: violated
+  - id: I09
+    statement: Missing required evidence is never reported as verified.
+    testable_form: 'A result reports verified only when every required piece of evidence is present and valid. Test: remove one required piece and assert the result is not verified.'
+    entry_points: [audit-verify, policy-publish, edge-session]
+    findings: [R11, R12, R14]
+    status: violated
+  - id: I10
+    statement: A new execution path cannot weaken existing authorization.
+    testable_form: 'No entry point applies weaker checks than the strongest existing path for the same action. Test: drive one hard-denied action through every entry point and assert no effect on any.'
+    entry_points: [edge-hook, mcp-tool-call, mcp-approval-gate, job-submit-http, job-submit-grpc, scheduler-dispatch, workflow-step, workflow-rerun, saga-compensation, bus-replay]
+    findings: [R15]
+    tests: [{package: core/controlplane/safetykernel, name: TestEDGE052_OneInvariantBlocksAllFourSurfaces}, {package: core/controlplane/gateway, name: TestInvariantDenyBlocksEdgeEvaluate}, {package: core/controlplane/gateway, name: TestWireMCPApprovalGateAttachesInvariantLookupWithoutManualInjection}, {package: core/controlplane/gateway, name: TestLoadMCPInvariantsFromBundles}]
+    test_scope: "One SecOps invariant DENY blocks the same action in the kernel's job, Edge, MCP-rule and output-scan evaluators (integration tag); the gateway forwards a kernel deny on Edge evaluate (stubbed kernel) and wires the MCP gate lookup. Job submit, workflow, saga and replay paths are not covered."
+    suites: [core/controlplane/safetykernel/global_invariants_integration_test.go, core/controlplane/gateway/edge_evaluate_invariants_test.go, core/controlplane/gateway/mcp_gate_invariants.go, core/controlplane/gateway/mcp_gate_invariants_test.go]
+    status: violated
+findings:
+  - {id: R01, status: open, invariants: [I02]}
+  - {id: R02, status: open, invariants: [I01, I05]}
+  - {id: R03, status: open, invariants: [I05]}
+  - {id: R04, status: open, invariants: [I05]}
+  - {id: R05, status: open, invariants: [I03]}
+  - {id: R06, status: open, invariants: [I04]}
+  - {id: R07, status: open, invariants: [I02]}
+  - {id: R08, status: open, invariants: [I02]}
+  - {id: R09, status: open, invariants: [I03, I07]}
+  - {id: R10, status: open, invariants: [I06, I08]}
+  - {id: R11, status: open, invariants: [I09]}
+  - {id: R12, status: open, invariants: [I09]}
+  - {id: R13, status: open, invariants: [I01]}
+  - {id: R14, status: open, invariants: [I09]}
+  - {id: R15, status: open, invariants: [I10]}

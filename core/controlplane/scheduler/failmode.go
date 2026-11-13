@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -14,11 +15,67 @@ type FailModeConfigProvider interface {
 	Effective(ctx context.Context, orgID, teamID, workflowID, stepID string) (map[string]any, error)
 }
 
+type failOpenScope map[string]string
+
+func parseFailOpenScope(raw any) failOpenScope {
+	scope := make(failOpenScope)
+	entries, _ := raw.([]any)
+	for i, rawEntry := range entries {
+		entry, _ := rawEntry.(map[string]any)
+		rule, _ := entry["rule"].(string)
+		rule = strings.TrimSpace(rule)
+		if rule == "" {
+			slog.Warn("failmode: scope entry skipped", "index", i, "reason", "missing rule name")
+			continue
+		}
+		topics, _ := entry["topics"].([]any)
+		if len(topics) == 0 {
+			slog.Warn("failmode: scope entry skipped", "index", i, "reason", "topics must be a non-empty list")
+			continue
+		}
+		for _, rawTopic := range topics {
+			topic, _ := rawTopic.(string)
+			topic = strings.TrimSpace(topic)
+			if topic == "" || strings.ContainsAny(topic, "*>") || isApprovalGateTopic(topic) {
+				continue
+			}
+			if _, exists := scope[topic]; !exists {
+				scope[topic] = rule
+			}
+		}
+	}
+	return scope
+}
+
+// SetSystemInputScope replaces the system's exact-topic outage exception rules.
+func (r *FailModeResolver) SetSystemInputScope(raw any) {
+	if r != nil {
+		r.systemInputScope.Store(parseFailOpenScope(raw))
+	}
+}
+
+// InputFailOpenScopeRule looks up scope independently of the input fail mode.
+func (r *FailModeResolver) InputFailOpenScopeRule(orgID, topic string) (string, bool) {
+	if r == nil {
+		return "", false
+	}
+	scope, _ := r.systemInputScope.Load().(failOpenScope)
+	if orgID != "" && orgID != "default" {
+		if entry, ok := r.loadTenantEntry(orgID); ok && entry.hasInputScope {
+			scope = entry.inputScope
+		}
+	}
+	rule, ok := scope[topic]
+	return rule, ok
+}
+
 // tenantFailModes caches the resolved fail-mode overrides for a single org.
 type tenantFailModes struct {
-	inputMode string // "open", "closed", or "" (inherit system default)
-	asyncMode string // "open", "closed", or "" (inherit system default)
-	fetchedAt time.Time
+	inputMode     string // "open", "closed", or "" (inherit system default)
+	asyncMode     string // "open", "closed", or "" (inherit system default)
+	inputScope    failOpenScope
+	hasInputScope bool
+	fetchedAt     time.Time
 }
 
 // FailModeResolver resolves per-tenant fail modes with a sync.Map cache.
@@ -30,8 +87,9 @@ type FailModeResolver struct {
 	cacheTTL       time.Duration
 
 	// System-wide defaults, updated by the reload loop.
-	systemInput atomic.Value // string
-	systemAsync atomic.Value // string
+	systemInput      atomic.Value // string
+	systemAsync      atomic.Value // string
+	systemInputScope atomic.Value // failOpenScope; immutable after publication
 
 	// Per-tenant cache: orgID → *tenantFailModes
 	tenants sync.Map
@@ -53,6 +111,7 @@ func NewFailModeResolver(provider FailModeConfigProvider, ttl time.Duration) *Fa
 	}
 	r.systemInput.Store("")
 	r.systemAsync.Store("")
+	r.systemInputScope.Store(failOpenScope(nil))
 	return r
 }
 
@@ -118,6 +177,10 @@ func (r *FailModeResolver) RefreshTenant(ctx context.Context, orgID string) {
 		fetchedAt: time.Now(),
 	}
 	if schedulerCfg, ok := data["scheduler"].(map[string]any); ok {
+		if raw, ok := schedulerCfg["input_fail_open_scope"]; ok {
+			entry.inputScope = parseFailOpenScope(raw)
+			entry.hasInputScope = true
+		}
 		if mode, ok := schedulerCfg["input_fail_mode"].(string); ok {
 			entry.inputMode = mode
 		}
