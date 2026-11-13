@@ -40,6 +40,7 @@ is still alive — see migration story below.
 ```tsx
 import { DataTable, type DataTableColumn } from "@/components/primitives/DataTable";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { useNavigate } from "react-router-dom";
 
 interface JobRow { id: string; agent: string; decision: "allow" | "deny"; }
 
@@ -48,13 +49,19 @@ const columns: DataTableColumn<JobRow>[] = [
   { accessorKey: "id", header: "Job ID" },
 ];
 
-<DataTable<JobRow>
-  columns={columns}
-  data={rows}
-  emptyState={<EmptyState title="No recent jobs" />}
-  decisionAccessor={(row) => row.decision}
-  onRowClick={(row) => navigate(`/jobs/${row.id}`)}
-/>
+// The host page passes its rows; row clicks navigate with react-router.
+export function RecentJobsTable({ rows }: { rows: JobRow[] }) {
+  const navigate = useNavigate();
+  return (
+    <DataTable<JobRow>
+      columns={columns}
+      data={rows}
+      emptyState={<EmptyState title="No recent jobs" />}
+      decisionAccessor={(row) => row.decision}
+      onRowClick={(row) => navigate(`/jobs/${row.id}`)}
+    />
+  );
+}
 ```
 
 ### Variants
