@@ -269,7 +269,12 @@ func walkFiles(root string, fn func(string) error) error {
 	})
 }
 
+// addText indexes the words of a text source. Markdown is documentation, so
+// it never counts as product source.
 func (idx codeIndex) addText(path string) error {
+	if strings.EqualFold(filepath.Ext(path), ".md") {
+		return nil
+	}
 	data, err := os.ReadFile(path)
 	for _, w := range wordRe.FindAll(data, -1) {
 		idx.names[string(w)] = true

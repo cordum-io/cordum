@@ -222,6 +222,7 @@ func TestCheckFixture(t *testing.T) {
 	t.Run("names come from code roots or text sources", func(t *testing.T) {
 		cfg := fixtureConfig()
 		cfg.CodeRoots = nil
+		cfg.TextSources = []string{"docs"} // markdown is never product source
 		r, err := Check(cfg)
 		if err != nil {
 			t.Fatal(err)
@@ -285,4 +286,47 @@ func hasKind(issues []Issue, kind string) bool {
 		}
 	}
 	return false
+}
+
+// repoRoot walks up from the test's directory to the directory holding go.mod.
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("go.mod not found above the test directory")
+		}
+		dir = parent
+	}
+}
+
+// TestDocsMatchProduct is the CI check: the marked blocks of the real docs
+// and the whole contract docs against the product source and OpenAPI file.
+func TestDocsMatchProduct(t *testing.T) {
+	r, err := Check(Config{
+		Root:         repoRoot(t),
+		Docs:         []string{"docs/configuration-reference.md", "docs/quickstart.md"},
+		ContractGlob: "docs/contract/*.md",
+		OpenAPI:      "docs/api/openapi/cordum-api.yaml",
+		CodeRoots:    []string{"cmd", "core", "sdk", "tools"},
+		TextSources:  []string{"docker-compose*.yml", "deploy", "tools/scripts"},
+		Baseline:     "tools/docscheck/known-mismatches.yaml",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Log(r.Summary())
+	for _, f := range r.Failures {
+		t.Errorf("%s:%d: %s", f.File, f.Line, f.Detail)
+	}
+	if r.Checked["env-name"] == 0 || r.Checked["endpoint"] == 0 {
+		t.Errorf("no marked env or endpoint checks ran; are the docscheck markers missing?")
+	}
 }

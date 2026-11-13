@@ -670,6 +670,7 @@ scanners:
 
 ### Global / Shared
 
+<!-- docscheck: env endpoints -->
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
 | `CORDUM_ENV` | — | No | Set to `production` or `prod` for strict security defaults |
@@ -722,6 +723,7 @@ signed URLs, IDs, or token values. See [edge-observability.md](edge-observabilit
 
 ### Licensing
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_LICENSE_FILE` | — | Path to license JSON file. If not set, checks `~/.cordum/license.json` and `/etc/cordum/license.json` |
@@ -747,6 +749,7 @@ No license = Community tier (3 workers, 3 concurrent jobs, 500 RPS, 7-day audit 
 > restore fully local, zero-outbound-call telemetry. `local_only` no longer
 > means "no remote calls"; it now means "no *ongoing* remote reporting."
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_TELEMETRY_MODE` | `local_only` | Telemetry mode: `off` (no collection, no pings — the only mode with zero outbound calls), `local_only` (collect to Redis; no ongoing reporting, but the two one-time pings below still fire), `anonymous` (collect and report aggregate stats every 24h, in addition to the two one-time pings) |
@@ -765,6 +768,7 @@ Telemetry is independent from licensing. It never collects PII, prompts, secrets
 
 ### NATS TLS
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `NATS_TLS_CA` | — | CA certificate path for NATS TLS |
@@ -775,6 +779,7 @@ Telemetry is independent from licensing. It never collects PII, prompts, secrets
 
 ### NATS JetStream
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `NATS_JS_ACK_WAIT` | `10m` | JetStream ack wait duration |
@@ -783,6 +788,7 @@ Telemetry is independent from licensing. It never collects PII, prompts, secrets
 
 ### Redis TLS
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `REDIS_TLS_CA` | — | CA certificate path for Redis TLS |
@@ -794,6 +800,7 @@ Telemetry is independent from licensing. It never collects PII, prompts, secrets
 
 ### Redis Data TTL
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `REDIS_DATA_TTL_SECONDS` | — | Data TTL in seconds (takes precedence) |
@@ -801,6 +808,7 @@ Telemetry is independent from licensing. It never collects PII, prompts, secrets
 
 ### Redis Connection Pool
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `REDIS_POOL_SIZE` | `20` | Max connections per Redis node. Each service replica opens up to this many connections. |
@@ -812,6 +820,7 @@ Invalid values (non-numeric, zero, negative) are silently replaced with defaults
 
 ### Gateway
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GATEWAY_GRPC_ADDR` | `:8080` | gRPC listen address (the dev `docker-compose.yml` host-maps this to `9080`; the release compose maps `8080:8080`) |
@@ -831,6 +840,7 @@ Invalid values (non-numeric, zero, negative) are silently replaced with defaults
 
 ### Gateway — API Keys
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_API_KEY` | — | Single API key |
@@ -842,6 +852,7 @@ Invalid values (non-numeric, zero, negative) are silently replaced with defaults
 
 ### Gateway — Rate Limiting
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `API_RATE_LIMIT_RPS` | `30` | Per-tenant rate limit (requests/sec) |
@@ -857,6 +868,7 @@ Invalid values (non-numeric, zero, negative) are silently replaced with defaults
 
 ### Gateway — CORS
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_ALLOWED_ORIGINS` | — | Allowed CORS origins |
@@ -865,6 +877,7 @@ Invalid values (non-numeric, zero, negative) are silently replaced with defaults
 
 ### Gateway — JWT Authentication
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_JWT_HMAC_SECRET` | — | HMAC secret for JWT signing |
@@ -878,6 +891,7 @@ Invalid values (non-numeric, zero, negative) are silently replaced with defaults
 
 ### Gateway — OIDC Authentication
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_OIDC_ISSUER` | — | OIDC issuer URL |
@@ -899,6 +913,7 @@ If Redis is unavailable, replicas fall back to direct IdP fetches (same behavior
 
 ### Gateway — OIDC Authentication
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_OIDC_ENABLED` | `false` | Enable OIDC JWT validation for bearer tokens |
@@ -924,6 +939,7 @@ If Redis is unavailable, replicas fall back to direct IdP fetches (same behavior
 
 ### Gateway — SAML Authentication
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_SAML_ENABLED` | `false` | Enable the SAML service-provider endpoints on the gateway |
@@ -944,6 +960,7 @@ If Redis is unavailable, replicas fall back to direct IdP fetches (same behavior
 
 ### Gateway — SCIM Provisioning
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_SCIM_BEARER_TOKEN` | — | Shared bearer token required by all SCIM 2.0 provisioning endpoints under `/api/v1/scim/v2/*` |
@@ -962,6 +979,7 @@ Advanced RBAC provides role hierarchy with permission-based access control, gate
 
 RBAC roles are stored in Redis (key prefix `rbac:role:`). Default roles (admin, operator, viewer) are bootstrapped on startup if not present.
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_RBAC_ROLE_DEFS` | — | JSON array of custom role definitions to seed on startup (optional) |
@@ -972,6 +990,7 @@ RBAC roles are stored in Redis (key prefix `rbac:role:`). Default roles (admin, 
 
 ### Gateway — User Authentication
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_USER_AUTH_ENABLED` | `false` | Enable user/password auth (Redis-backed) |
@@ -981,6 +1000,7 @@ RBAC roles are stored in Redis (key prefix `rbac:role:`). Default roles (admin, 
 
 ### Gateway — Pack Marketplace
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_PACK_CATALOG_URL` | (built-in) | Official catalog URL |
@@ -992,6 +1012,7 @@ RBAC roles are stored in Redis (key prefix `rbac:role:`). Default roles (admin, 
 
 ### Scheduler
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SCHEDULER_METRICS_ADDR` | `:9090` | Metrics listen address |
@@ -1010,6 +1031,7 @@ identity, and readiness gating described in
 [ADR 009](adr/009-control-plane-boundary-hardening.md). The authenticated
 worker protocol is documented in [SDK handshake](sdk/handshake.md).
 
+<!-- docscheck: env endpoints -->
 | Variable | Default | Type | Service | Description |
 |----------|---------|------|---------|-------------|
 | `SCHEMA_ENFORCEMENT` | `warn` | string (`off`, `warn`, `enforce`) | gateway + scheduler | Controls how registered topic schemas are enforced. The gateway uses it at submit time for `POST /api/v1/jobs`; the scheduler uses the same mode before dispatch. `warn` logs violations and continues, `enforce` rejects/failed-jobs on schema mismatch, `off` skips schema validation. |
@@ -1027,6 +1049,7 @@ worker protocol is documented in [SDK handshake](sdk/handshake.md).
 
 Recommended rollout pairs:
 
+<!-- docscheck: skip reason="rollout pair matrix of values, not an env variable table" -->
 | Rollout phase | `CORDUM_SDK_HANDSHAKE` | `CORDUM_HEARTBEAT_MODE` |
 |---|---|---|
 | Compatibility/default | `off` | `authority` |
@@ -1056,6 +1079,7 @@ that authority. Tokenless JobRequest traffic is rejected in enforce mode.
 
 ### Workflow Engine
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `WORKFLOW_ENGINE_HTTP_ADDR` | — | HTTP listen address |
@@ -1065,6 +1089,7 @@ that authority. Tokenless JobRequest traffic is rejected in enforce mode.
 
 ### Safety Kernel
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SAFETY_KERNEL_ADDR` | `localhost:50051` | gRPC listen address |
@@ -1083,6 +1108,7 @@ that authority. Tokenless JobRequest traffic is rejected in enforce mode.
 
 ### Safety Kernel — Policy Signature Verification
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SAFETY_POLICY_PUBLIC_KEY` | — | Public key for signature verification (PEM) |
@@ -1092,6 +1118,7 @@ that authority. Tokenless JobRequest traffic is rejected in enforce mode.
 
 ### Safety Kernel — Policy Reload / Overlays
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SAFETY_POLICY_RELOAD_INTERVAL` | — | Policy file reload interval |
@@ -1102,6 +1129,7 @@ that authority. Tokenless JobRequest traffic is rejected in enforce mode.
 
 ### Context Engine
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CONTEXT_ENGINE_ADDR` | `:50070` | gRPC listen address |
@@ -1115,6 +1143,7 @@ that authority. Tokenless JobRequest traffic is rejected in enforce mode.
 
 ### MCP Server
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_API_KEY` | — | API key for gateway-backed MCP handlers |
@@ -1129,6 +1158,7 @@ instance and is intended for local CLI integrations.
 
 ### Audit Export
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_AUDIT_EXPORT_TYPE` | — | Export type: `webhook`, `syslog`, `datadog`, `cloudwatch` |
@@ -1161,12 +1191,14 @@ The consumer calls the configured SIEM exporter (`CORDUM_AUDIT_EXPORT_TYPE`) for
 
 ### DLQ
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_DLQ_ENTRY_TTL_DAYS` | — | DLQ entry TTL in days |
 
 ### Worker SDK
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `NATS_URL` | `nats://localhost:4222` | NATS URL for worker connections |
@@ -1174,6 +1206,7 @@ The consumer calls the configured SIEM exporter (`CORDUM_AUDIT_EXPORT_TYPE`) for
 
 ### CLI TLS
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_TLS_CA` | — | CA certificate path for CLI TLS verification |
@@ -1181,6 +1214,7 @@ The consumer calls the configured SIEM exporter (`CORDUM_AUDIT_EXPORT_TYPE`) for
 
 ### Dashboard
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_API_UPSTREAM_SCHEME` | `http` | Set to `https` when gateway serves TLS |
@@ -1188,6 +1222,7 @@ The consumer calls the configured SIEM exporter (`CORDUM_AUDIT_EXPORT_TYPE`) for
 
 ### Docker Compose Helpers
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `COMPOSE_HTTP_TIMEOUT` | — | Docker Compose HTTP timeout |
