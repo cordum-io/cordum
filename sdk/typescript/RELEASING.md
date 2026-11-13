@@ -29,6 +29,7 @@ From `sdk/typescript/`:
 
 ```bash
 npm ci
+npm run check:generated
 npm run typecheck
 npm run lint
 npm test
@@ -37,9 +38,10 @@ npm run check:no-node-builtins
 npm run size
 npm run test:browser
 npm pack --dry-run
+npm run smoke:packed
 ```
 
-All seven commands must be green before tagging.
+Every command above must be green before tagging.
 
 ## 3. Push the release tag
 
@@ -50,9 +52,11 @@ git push origin sdk-ts-v0.1.0
 
 The GitHub Actions workflow `.github/workflows/sdk-typescript.yml` will:
 
-1. validate the SDK on Node 18 / 20 / 22 across Ubuntu and Windows
+1. validate the SDK on Node 20 / 22 across Ubuntu and Windows, including the generated-drift check and packed-consumer smoke test on each leg
 2. run the browser smoke harness in Chromium, Firefox, and WebKit
 3. publish `@cordum/sdk` with npm Trusted Publishing (`npm publish --provenance --access public`)
+
+The workflow also triggers on changes to `docs/api/openapi/cordum-api.yaml`.
 
 ## 4. Verify the release
 

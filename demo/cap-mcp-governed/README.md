@@ -120,7 +120,7 @@ INFO approval required job_id=<job_id> ... approval_id=<approval_id>
 
 ```bash
 export CORDUM_GATEWAY_URL=http://localhost:8081
-export CORDUM_API_KEY=<worker key with workflows.write>
+export CORDUM_API_KEY='replace-with-worker-key'  # worker key with workflows.write
 export CORDUM_TENANT_ID=default
 go run ./demo/cap-mcp-governed/worker
 ```
