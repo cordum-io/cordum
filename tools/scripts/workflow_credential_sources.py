@@ -255,7 +255,7 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
         if name == "eval": return dynamic()
         if name in ("make", "gmake"): return self.make([expand(w, table, env, here) for w in words[1:]], rel, cmd.line, child, chain, quiet)
         if name in ("source", "."): target, rest, kind = (words + [""])[1], words[2:], "source"  # no literal operand (<(...)) is dynamic
-        elif posixpath.basename(name) in ("bash", "sh"): (target, rest, program, traced, rc), kind = shell_operand(words[1:]), "shell"; child.update({"SHELLOPTS": "xtrace"} if traced else {}); self.edge(cmd._replace(words=[name, rc]), rel, table, child, argv, chain, quiet, cwd) if rc else None  # noqa: E702  # an interactive shell runs its rcfile first, in that same shell
+        elif posixpath.basename(name) in ("bash", "sh"): (target, rest, program, traced, rc), kind = shell_operand(words[1:]), "shell"; child.update({"SHELLOPTS": "xtrace"} if traced else {}); self.edge(cmd._replace(words=[name, expand(rc, table, env, here)]), rel, table, child, argv, chain, quiet, cwd) if rc else None  # noqa: E702  # an interactive shell runs its rcfile first, in that same shell; the caller expands its name, as for the script
         elif "/" in name: target, rest, kind = words[0], words[1:], "exec"
         else: return dynamic() if any(w.strip("\"'").endswith(".sh") for w in words[1:]) and ("$" in name or any(posixpath.basename(w.strip("\"'")) in ("bash", "sh") for w in words[1:])) else None  # a wrapper or variable command runs a script
         if program:  # a literal -c program is scanned inline; one whose command word (after assignments, redirections and prefix words) expands is dynamic
