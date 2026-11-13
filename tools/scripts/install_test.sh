@@ -267,6 +267,102 @@ else
   echo "PASS [rollback-no-reason]: install.sh refused rollback without reason"
 fi
 
+# The stand-in tests argv and signed-byte binding, not Sigstore cryptography.
+DEFAULT_IDENTITY='^https://github\.com/cordum-io/cordum/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
+mkdir -p "$WORK/fakebin"
+cat >"$WORK/fakebin/cosign" <<'FAKE'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$@" >"$FAKE_COSIGN_ARGS"
+[ "$#" -eq 8 ] && [ "$1" = verify-blob ] && [ "$2" = --bundle ] \
+  && [ "$4" = --certificate-identity-regexp ] \
+  && [ "$6" = --certificate-oidc-issuer ] || exit 64
+[ "$5" = "$FAKE_COSIGN_EXPECT_IDENTITY" ] \
+  && [ "$7" = https://token.actions.githubusercontent.com ] || exit 1
+[ "$(cat "$3")" = "$(sha256sum --text "$8" | awk '{print $1}')" ] || exit 1
+FAKE
+chmod +x "$WORK/fakebin/cosign"
+
+build_keyless_release_dir() {
+  local dest="$1" version="${2:-}"
+  mkdir -p "$dest"
+  printf '#!/bin/sh\nexit 0\n' >"$dest/cordum-hook"
+  {
+    if [ -n "$version" ]; then printf '# version: %s\n' "$version"; fi
+    (cd "$dest" && sha256sum --text cordum-hook)
+  } >"$dest/SHA256SUMS"
+  sha256sum --text "$dest/SHA256SUMS" | awk '{print $1}' >"$dest/SHA256SUMS.sigstore.json"
+}
+
+assert_keyless_result() {
+  if [ -n "$failure" ]; then
+    [ "$rc" -ne 0 ] && grep -qF "BINARY-VERIFY-FAIL: $failure" "$log" || return 1
+    [ ! -e "$floor" ] || return 1
+    [ -z "$(find "$dest" -type f 2>/dev/null || true)" ] || return 1
+    return 0
+  fi
+  [ "$rc" -eq 0 ] && [ -f "$dest/cordum-hook" ] || return 1
+  [ "$(sha256sum --text "$dest/cordum-hook" | awk '{print $1}')" = "$hash" ] || return 1
+  grep '"event":"binary-verify-ok"' "$log" | grep -qF "\"sig_scheme\":\"$scheme\"" || return 1
+  grep -qF "\"sig_scheme\":\"$scheme\"" "$floor" || return 1
+  if [ "$scheme" = unverified ]; then
+    grep '"event":"binary-signature-unverified"' "$log" | grep -qF -- '--insecure-allow-missing-cosign' || return 1
+    grep -qF WARNING "$log" && [ ! -e "$args_log" ] || return 1
+  else
+    printf '%s\n' verify-blob --bundle "$release/SHA256SUMS.sigstore.json" \
+      --certificate-identity-regexp "$identity" --certificate-oidc-issuer \
+      https://token.actions.githubusercontent.com "$release/SHA256SUMS" >"$base/expected.args"
+    cmp -s "$base/expected.args" "$args_log" || return 1
+  fi
+  if [ "$label" = keyless-identity-override ]; then
+    grep -qF '"event":"binary-signer-identity-override"' "$log" || return 1
+  fi
+}
+
+run_keyless_scenario() {
+  local label="$1" base="$WORK/$1" failure="" scheme=cosign-keyless
+  local release="$base/release" dest="$base/install" floor="$base/floor.json"
+  local log="$base/output" args_log="$base/cosign.args" rc hash
+  local verifier="$WORK/fakebin/cosign" identity="$DEFAULT_IDENTITY" override_identity=""
+  local flags=()
+  build_keyless_release_dir "$release" v1.3.0
+  hash=$(sha256sum --text "$release/cordum-hook" | awk '{print $1}')
+  case "$label" in
+    keyless-one-byte|keyless-missing-override-tampered)
+      printf X | dd of="$release/cordum-hook" bs=1 count=1 conv=notrunc 2>/dev/null
+      failure='hash mismatch cordum-hook' ;;
+    keyless-manifest-tampered)
+      printf '# changed\n' >>"$release/SHA256SUMS"; failure='cosign signature invalid' ;;
+    keyless-cosign-missing) failure='cosign required' ;;
+    keyless-identity-override) identity='^https://example\.invalid/release$'; override_identity="$identity" ;;
+    keyless-precedence)
+      gpg --homedir "$GPG_HOME" --batch --yes --quiet --detach-sign --armor \
+        --output "$release/SHA256SUMS.asc" "$release/SHA256SUMS" ;;
+  esac
+  case "$label" in
+    keyless-*missing*) verifier="$base/not-installed-cosign" ;;
+  esac
+  case "$label" in
+    keyless-missing-override*) flags=(--insecure-allow-missing-cosign); scheme=unverified ;;
+  esac
+  if FAKE_COSIGN_ARGS="$args_log" FAKE_COSIGN_EXPECT_IDENTITY="$identity" \
+      CORDUM_COSIGN_BIN="$verifier" CORDUM_COSIGN_IDENTITY_REGEXP="$override_identity" \
+      CORDUM_BINARY_FLOOR_FILE="$floor" "$INSTALL_SH" --release-dir "$release" \
+      --install-dir "$dest" "${flags[@]}" >"$log" 2>&1; then rc=0; else rc=$?; fi
+  if assert_keyless_result; then
+    echo "PASS [$label]: signature, checksum and activation effects checked"
+  else
+    echo "FAIL [$label]: exit=$rc; message, argv or activation assertion failed" >&2
+    cat "$log" >&2
+    return 1
+  fi
+}
+
+for scenario in valid one-byte manifest-tampered cosign-missing missing-override \
+    missing-override-tampered identity-override precedence; do
+  if ! run_keyless_scenario "keyless-$scenario"; then failures=$((failures+1)); fi
+done
+
 if [ "$failures" -ne 0 ]; then
   echo "install_test.sh: $failures scenario(s) failed" >&2
   exit 1
