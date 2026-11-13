@@ -5,7 +5,9 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"mime/multipart"
@@ -17,8 +19,10 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 	"github.com/cordum/cordum/core/packs/signing"
 	"github.com/cordum/cordum/core/policysign"
 	"github.com/redis/go-redis/v9"
@@ -45,7 +49,9 @@ type packSignatureBundle struct {
 }
 
 var packSignatureSources = map[string][]string{
-	"upload": {"handleInstallPack", "installPackFromDir", "updatePackRegistry", "savePackRegistry"},
+	"upload":      {"handleInstallPack", "installPackFromDir", "updatePackRegistry", "savePackRegistry"},
+	"marketplace": {"handleMarketplaceInstall", "installPackFromDir", "updatePackRegistry", "savePackRegistry"},
+	"cordumctl":   {"handleSetConfig"},
 }
 
 func packMatrixRefusal(code, prefix string) packSignatureWant {
@@ -55,6 +61,20 @@ func packMatrixRefusal(code, prefix string) packSignatureWant {
 
 func TestPackSignatureMatrix(t *testing.T) {
 	cells := []packSignatureCell{
+		{"production", "marketplace", "signed", packSignatureWant{status: 200, signed: true}},
+		{"production", "marketplace", "unknown-kid", packMatrixRefusal("PACK_INSTALL_INVALID", "pack.unknown_kid: ")},
+		{"production", "marketplace", "wrong-key", packMatrixRefusal("PACK_INVALID_SIGNATURE", "pack.bad_signature: ")},
+		{"production", "marketplace", "tampered", packMatrixRefusal("PACK_INSTALL_INVALID", "pack.tampered: ")},
+		{"production", "marketplace", "malformed", packMatrixRefusal("PACK_INVALID_SIGNATURE", "pack.malformed: ")},
+		{"development", "marketplace", "signed", packSignatureWant{status: 200, signed: true}},
+		{"development", "marketplace", "unsigned", packSignatureWant{status: 200}},
+		{"development", "marketplace", "unknown-kid", packMatrixRefusal("PACK_INSTALL_INVALID", "pack.unknown_kid: ")},
+		{"development", "marketplace", "wrong-key", packMatrixRefusal("PACK_INVALID_SIGNATURE", "pack.bad_signature: ")},
+		{"development", "marketplace", "tampered", packMatrixRefusal("PACK_INSTALL_INVALID", "pack.tampered: ")},
+		{"development", "marketplace", "malformed", packMatrixRefusal("PACK_INVALID_SIGNATURE", "pack.malformed: ")},
+		{"production", "cordumctl", "signed", packSignatureWant{status: 204, signed: true}},
+		{"development", "cordumctl", "signed", packSignatureWant{status: 204, signed: true}},
+		{"development", "cordumctl", "unsigned", packSignatureWant{status: 204}},
 		{"production", "upload", "signed", packSignatureWant{status: 200, signed: true}},
 		{"production", "upload", "unknown-kid", packMatrixRefusal("PACK_INSTALL_INVALID", "pack.unknown_kid: ")},
 		{"production", "upload", "wrong-key", packMatrixRefusal("PACK_INVALID_SIGNATURE", "pack.bad_signature: ")},
@@ -83,8 +103,18 @@ func runPackSignatureCell(t *testing.T, cell packSignatureCell) {
 	}
 	packMatrixOK(t, s.configSvc.Set(ctx, &configsvc.Document{Scope: "system", ScopeID: "default", Data: map[string]any{"pools": map[string]any{}}}))
 	bundle := buildPackSignatureBundle(t, cell.state, key)
+	drive := func() *httptest.ResponseRecorder { return uploadPackSignatureBundle(t, s, bundle) }
+	switch cell.source {
+	case "upload":
+	case "marketplace":
+		drive = preparePackMarketplace(t, s, bundle)
+	case "cordumctl":
+		drive = func() *httptest.ResponseRecorder { return replayPackConfig(t, s, bundle, cell.state) }
+	default:
+		t.Fatalf("unknown source %q", cell.source)
+	}
 	before := snapshotPackKeyspace(t, s)
-	resp := uploadPackSignatureBundle(t, s, bundle)
+	resp := drive()
 	if cell.want.status == 400 {
 		assertPackRefused(t, s, before, resp, cell.want)
 	} else {
@@ -227,6 +257,115 @@ func uploadPackSignatureBundle(t *testing.T, s *server, bundle packSignatureBund
 	return resp
 }
 
+func preparePackMarketplace(t *testing.T, s *server, bundle packSignatureBundle) func() *httptest.ResponseRecorder {
+	t.Helper()
+	// Allow HTTP for the loopback catalog transport, unrelated to signatures.
+	t.Setenv("CORDUM_MARKETPLACE_ALLOW_HTTP", "1")
+	sum := sha256.Sum256(bundle.tgz)
+	catalog := packs.MarketplaceCatalogFile{Packs: []packs.MarketplaceCatalogPack{{ID: matrixPackID, Version: "0.1.0", Sha256: hex.EncodeToString(sum[:])}}}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/catalog.json":
+			if err := json.NewEncoder(w).Encode(catalog); err != nil {
+				t.Error(err)
+			}
+		case "/pack.tgz":
+			if _, err := w.Write(bundle.tgz); err != nil {
+				t.Error(err)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(ts.Close)
+	catalog.Packs[0].URL = ts.URL + "/pack.tgz"
+	packMatrixOK(t, s.configSvc.Set(context.Background(), &configsvc.Document{Scope: "system", ScopeID: packs.PackCatalogID, Data: map[string]any{
+		"catalogs": []map[string]any{{"id": "matrix", "url": ts.URL + "/catalog.json", "enabled": true}},
+	}}))
+	_, err := s.marketplaceSnapshot(context.Background(), false)
+	packMatrixOK(t, err)
+	return func() *httptest.ResponseRecorder {
+		return packMatrixRequest(s.handleMarketplaceInstall, "POST", "/api/v1/marketplace/install", []byte(`{"catalog_id":"matrix","pack_id":"matrix-pack"}`))
+	}
+}
+
+func packMatrixRequest(handler http.HandlerFunc, method, path string, body []byte) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	handler(resp, req)
+	return resp
+}
+
+// Replay cmd/cordumctl/pack.go applyPolicyOverlay, updatePackRegistry,
+// restClient.getConfig and restClient.setConfig, without client rollback.
+func replayPackConfig(t *testing.T, s *server, bundle packSignatureBundle, state string) *httptest.ResponseRecorder {
+	t.Helper()
+	content, err := os.ReadFile(filepath.Join(bundle.dir, matrixFragmentPath))
+	packMatrixOK(t, err)
+	manifest, err := packs.LoadPackManifest(bundle.dir)
+	packMatrixOK(t, err)
+	sum := sha256.Sum256(content)
+	record := packs.PackRecord{ID: manifest.Metadata.ID, Version: manifest.Metadata.Version, Status: "ACTIVE", InstalledAt: time.Now().UTC().Format(time.RFC3339),
+		Manifest: packs.PackRecordManifest{Metadata: manifest.Metadata, Compatibility: manifest.Compatibility, Topics: manifest.Topics}, Verification: packMatrixClientVerification(state)}
+	documents := []struct {
+		id, key, entry string
+		value          json.RawMessage
+	}{
+		{"policy", "bundles", matrixPackID + "/safety", packMatrixJSON(t, map[string]string{"content": string(content), "version": record.Version, "sha256": hex.EncodeToString(sum[:]), "installed_at": record.InstalledAt})},
+		{"packs", "installed", matrixPackID, packMatrixJSON(t, record)},
+	}
+	var resp *httptest.ResponseRecorder
+	for _, item := range documents {
+		resp = packMatrixRequest(s.handleGetConfig, "GET", "/api/v1/config?scope=system&scope_id="+item.id+"&envelope=true", nil)
+		var doc struct {
+			Data map[string]json.RawMessage `json:"data"`
+			Meta map[string]string          `json:"meta"`
+		}
+		if resp.Code == 200 {
+			packMatrixOK(t, json.Unmarshal(resp.Body.Bytes(), &doc))
+		} else if resp.Code != 404 {
+			return resp
+		}
+		if doc.Data == nil {
+			doc.Data = map[string]json.RawMessage{}
+		}
+		entries := map[string]json.RawMessage{}
+		if raw := doc.Data[item.key]; len(raw) != 0 {
+			packMatrixOK(t, json.Unmarshal(raw, &entries))
+		}
+		entries[item.entry] = item.value
+		doc.Data[item.key] = packMatrixJSON(t, entries)
+		payload := struct {
+			Scope string                     `json:"scope"`
+			ID    string                     `json:"scope_id"`
+			Data  map[string]json.RawMessage `json:"data"`
+			Meta  map[string]string          `json:"meta"`
+		}{"system", item.id, doc.Data, doc.Meta}
+		resp = packMatrixRequest(s.handleSetConfig, "POST", "/api/v1/config", packMatrixJSON(t, payload))
+		if resp.Code < 200 || resp.Code >= 300 {
+			return resp
+		}
+	}
+	return resp
+}
+
+// The PackRecord JSON tags match cordumctl's packRecord and packRecordVerification.
+// Values mirror VerifyInstallBundle and verificationFromResult in that command.
+func packMatrixClientVerification(state string) *packs.PackRecordVerification {
+	v := &packs.PackRecordVerification{SignatureAlgorithm: "ed25519", PackSignatureVer: 1}
+	switch state {
+	case "signed", "signed-fragment":
+		v.Signed, v.KID, v.VerifiedAt = true, "matrix-pub", time.Now().UTC().Format(time.RFC3339)
+	case "unsigned":
+		v.Warnings = []string{"pack installed unsigned in non-strict mode"}
+	default:
+		v.Warnings = []string{"verify skipped via --no-verify"}
+	}
+	return v
+}
+
 func snapshotPackKeyspace(t *testing.T, s *server) map[string]string {
 	t.Helper()
 	ctx, client, result := context.Background(), s.redisClient(), map[string]string{}
@@ -293,7 +432,9 @@ func assertPackRefused(t *testing.T, s *server, before map[string]string, resp *
 		Code  string `json:"code"`
 		Error string `json:"error"`
 	}
-	packMatrixOK(t, json.Unmarshal(resp.Body.Bytes(), &body))
+	if resp.Body.Len() != 0 {
+		packMatrixOK(t, json.Unmarshal(resp.Body.Bytes(), &body))
+	}
 	if body.Code != want.code || !strings.HasPrefix(body.Error, want.prefix) {
 		t.Errorf("error response=%+v want code=%s prefix=%q", body, want.code, want.prefix)
 	}
@@ -334,7 +475,11 @@ func assertPackAbsent(t *testing.T, s *server) {
 
 func assertPackAccepted(t *testing.T, s *server, before map[string]string, resp *httptest.ResponseRecorder, signed bool, content, source string) {
 	t.Helper()
-	if resp.Code != http.StatusOK {
+	wantStatus := http.StatusOK
+	if source == "cordumctl" {
+		wantStatus = http.StatusNoContent
+	}
+	if resp.Code != wantStatus {
 		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
 	}
 	records, _, err := s.loadPackRegistry(context.Background())
