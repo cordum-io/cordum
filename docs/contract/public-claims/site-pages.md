@@ -3,10 +3,66 @@
 Repo: Cordum-site. Pin: `fd06b5f131c89c1edd3f004f51ada3340125fb05`.
 Generator: `site_pages` in [the method](../public-claims-baseline.md). Owner: M0-07-SITE-1.
 Generic educational and external-system text is not a Cordum claim. Accurate means no stronger than the scoped entry, not execution proof.
-Counts: 210 hits; accurate 26, overstated 89, unverifiable 13, not-a-claim 115.
+Counts: 390 hits; accurate 71, overstated 142, unverifiable 21, not-a-claim 196.
 
 | File | Entries |
 | --- | --- |
+| docs-site/docs/api-reference/api-overview.md | 589 CLM-060 overstated ev:code; 2249 not-a-claim code; 2632 not-a-claim code |
+| docs-site/docs/api-reference/grpc-services.md | 416 not-a-claim code |
+| docs-site/docs/api-reference/mcp-tools.md | 29 CLM-057 accurate |
+| docs-site/docs/api-reference/sdk-reference.md | 558 not-a-claim code; 842 CLM-065 accurate |
+| docs-site/docs/concepts/adr/adr-001-safety-before-dispatch.md | 8 CLM-010 overstated R01 R15; 20 not-a-claim plan; 27 CLM-010 overstated R01 R15; 35 CLM-016 overstated R01 R02 R05 R09 R15 ev:code; 37 none:bench unverifiable ev:bench; 50 CLM-016 overstated R01 R02 R05 R09 R15; 57 not-a-claim limit |
+| docs-site/docs/concepts/adr/adr-003-redis-nats-split.md | 33 not-a-claim ext |
+| docs-site/docs/concepts/adr/adr-005-output-policy-architecture.md | 14 CLM-010 overstated R01 R15; 39 not-a-claim plan; 45 not-a-claim limit |
+| docs-site/docs/concepts/adr/adr-006-circuit-breaker-safety.md | 56 CLM-066 accurate; 65 CLM-017 accurate; 65 CLM-066 accurate; 81 not-a-claim code; 92 CLM-066 accurate |
+| docs-site/docs/concepts/adr/adr-008-spa-auth-localstorage.md | 45 CLM-050 overstated ev:code; 61 not-a-claim ext |
+| docs-site/docs/concepts/adr/adr-009-boundary-hardening.md | 36 not-a-claim plan; 280 not-a-claim plan; 336 not-a-claim plan; 347 not-a-claim plan |
+| docs-site/docs/concepts/agent-protocol.md | 44 not-a-claim limit; 59 not-a-claim limit |
+| docs-site/docs/concepts/audit.md | 149 not-a-claim nav |
+| docs-site/docs/concepts/backend-capabilities.md | 63 CLM-064 overstated ev:code |
+| docs-site/docs/concepts/backend-feature-matrix.md | 20 CLM-064 overstated ev:code |
+| docs-site/docs/concepts/core.md | 176 not-a-claim plan; 245 CLM-064 overstated ev:code; 247 not-a-claim plan; 600 not-a-claim plan; 622 CLM-062 overstated ev:code; 648 not-a-claim plan; 809 CLM-064 overstated ev:code; 811 not-a-claim plan; 824 CLM-062 overstated ev:code |
+| docs-site/docs/concepts/dashboard-dev.md | 42 not-a-claim code; 55 not-a-claim code |
+| docs-site/docs/concepts/glossary.md | 98 CLM-057 overstated R11 R12; 112 CLM-052 accurate; 130 CLM-051 overstated R15; 163 CLM-020 overstated R11 R12 |
+| docs-site/docs/concepts/output-policy.md | 125 CLM-014 accurate; 394 CLM-052 accurate |
+| docs-site/docs/concepts/output-safety.md | 84 not-a-claim limit; 85 CLM-017 accurate; 94 not-a-claim instr; 117 not-a-claim limit |
+| docs-site/docs/concepts/overview.md | 93 CLM-010 overstated R01 R15; 93 none:bench unverifiable ev:bench |
+| docs-site/docs/concepts/packs.md | 214 not-a-claim nav; 381 not-a-claim code; 382 not-a-claim limit; 645 not-a-claim code |
+| docs-site/docs/concepts/safety-kernel.md | 24 CLM-062 overstated ev:code; 188 CLM-010 overstated R01 R15; 255 not-a-claim code |
+| docs-site/docs/concepts/scheduler-internals.md | 98 none:bench unverifiable ev:bench; 328 not-a-claim code; 334 not-a-claim code; 419 CLM-066 overstated ev:code; 424 not-a-claim limit; 450 not-a-claim code; 483 not-a-claim code; 767 not-a-claim code |
+| docs-site/docs/concepts/scheduler-pool-spec.md | 6 CLM-062 accurate; 11 CLM-062 accurate; 69 CLM-062 accurate; 70 CLM-062 accurate |
+| docs-site/docs/concepts/system-overview.md | 39 CLM-010 overstated R01 R15; 84 CLM-010 overstated R01 R15; 187 CLM-064 overstated ev:code; 215 not-a-claim limit |
+| docs-site/docs/cordclaw/architecture.md | 36 CLM-092 unverifiable ev:code |
+| docs-site/docs/cordclaw/threat-model.md | 31 CLM-092 overstated ev:test; 54 not-a-claim limit; 55 CLM-092 unverifiable ev:code; 73 CLM-020 overstated R11 R12 |
+| docs-site/docs/edge/action-gates.md | 31 CLM-010 overstated R15 ev:test; 43 CLM-010 overstated R01 R15; 45 CLM-010 overstated R01 R15; 49 CLM-013 overstated ev:code; 51 CLM-009 accurate; 58 not-a-claim plan |
+| docs-site/docs/edge/architecture.md | 81 CLM-008 overstated R08 R12 |
+| docs-site/docs/edge/audit-evidence.md | 4 CLM-009 accurate; 4 CLM-057 accurate; 9 CLM-057 overstated R11 R12 ev:attest; 17 CLM-057 overstated R11 R12; 18 CLM-009 overstated R09 R12; 19 CLM-013 overstated R03 R04 R09; 24 CLM-009 overstated R09 R12; 24 CLM-057 overstated R11 R12; 36 CLM-009 accurate; 40 CLM-057 overstated ev:code R11 R12 |
+| docs-site/docs/edge/audit-evidence.md | 49 CLM-009 overstated R09 R12; 60 CLM-009 overstated ev:code; 61 CLM-009 accurate |
+| docs-site/docs/edge/claude-code.md | 100 CLM-013 overstated R03 R04 R09; 101 CLM-057 accurate; 114 CLM-002 accurate; 116 CLM-002 accurate; 118 CLM-002 accurate |
+| docs-site/docs/edge/configuration.md | 76 CLM-002 accurate; 98 CLM-069 accurate |
+| docs-site/docs/edge/managed-settings.md | 4 not-a-claim limit; 9 not-a-claim limit; 17 CLM-002 overstated R14; 59 not-a-claim instr |
+| docs-site/docs/edge/observability.md | 33 not-a-claim code; 87 not-a-claim code; 100 CLM-009 accurate; 105 CLM-057 overstated ev:code R11 R12; 116 CLM-009 accurate |
+| docs-site/docs/edge/overview.md | 51 CLM-002 overstated R01 R02 R14 R15; 109 not-a-claim limit; 120 not-a-claim nav |
+| docs-site/docs/edge/policy-and-modes.md | 53 CLM-002 accurate; 64 CLM-002 accurate; 65 CLM-002 accurate; 70 CLM-002 accurate; 84 CLM-055 accurate; 138 CLM-009 accurate |
+| docs-site/docs/getting-started/docker.md | 416 not-a-claim code; 566 not-a-claim code; 582 CLM-014 overstated R07; 597 CLM-061 accurate |
+| docs-site/docs/index.md | 6 CLM-057 accurate |
+| docs-site/docs/operations/config-reference.md | 97 CLM-056 accurate; 164 not-a-claim code; 570 CLM-014 overstated R07; 573 CLM-014 overstated R07; 603 CLM-010 accurate; 604 CLM-010 accurate; 714 CLM-025 overstated ev:test; 810 CLM-056 overstated ev:code; 972 not-a-claim code; 1001 not-a-claim code |
+| docs-site/docs/operations/config-reference.md | 1080 not-a-claim limit |
+| docs-site/docs/operations/configuration-guide.md | 131 not-a-claim code |
+| docs-site/docs/operations/enterprise.md | 39 CLM-025 accurate |
+| docs-site/docs/operations/horizontal-scaling.md | 315 CLM-065 unverifiable ev:test; 326 CLM-065 overstated ev:code |
+| docs-site/docs/operations/k8s-deployment.md | 146 CLM-067 overstated ev:test; 827 not-a-claim code |
+| docs-site/docs/operations/performance-tuning.md | 68 none:bench unverifiable ev:bench |
+| docs-site/docs/operations/production-gate.md | 48 not-a-claim process; 131 not-a-claim code |
+| docs-site/docs/operations/production.md | 390 not-a-claim code; 562 CLM-066 overstated ev:code; 680 not-a-claim limit; 737 not-a-claim code; 754 none:bench unverifiable ev:bench; 771 not-a-claim instr; 772 not-a-claim instr; 819 not-a-claim instr; 871 not-a-claim code; 873 not-a-claim code |
+| docs-site/docs/operations/production.md | 925 not-a-claim code |
+| docs-site/docs/operations/redis-operations.md | 18 not-a-claim code; 93 not-a-claim code; 166 not-a-claim code |
+| docs-site/docs/operations/redis-security.md | 13 CLM-003 overstated ev:code; 95 not-a-claim instr |
+| docs-site/docs/operations/scheduler-bug-hunt.md | 121 not-a-claim process |
+| docs-site/docs/operations/tls-setup.md | 309 not-a-claim instr |
+| docs-site/docs/operations/troubleshooting.md | 202 not-a-claim code; 625 not-a-claim code; 637 not-a-claim nav; 643 not-a-claim code; 988 not-a-claim code; 1120 not-a-claim code |
+| docs-site/docs/tutorials/connect-datadog.md | 16 CLM-057 accurate; 16 CLM-094 accurate; 188 CLM-057 accurate; 188 CLM-094 accurate; 202 CLM-057 accurate; 202 CLM-094 accurate |
+| docs-site/docs/tutorials/langchain-guard.md | 26 CLM-016 overstated R01 R02 R05 R09 R15; 74 not-a-claim code |
 | site/public/llms-full.txt | 149 CLM-064 overstated ev:code; 192 CLM-064 overstated ev:code; 396 not-a-claim ext; 430 CLM-066 accurate; 434 not-a-claim ext; 645 CLM-090 overstated ev:code; 651 CLM-064 overstated ev:code; 829 not-a-claim code; 1007 CLM-064 overstated ev:code; 1209 CLM-010 overstated R01 R15 |
 | site/public/llms-full.txt | 1209 CLM-064 overstated ev:code; 1209 CLM-093 accurate; 1273 not-a-claim nav; 1274 not-a-claim ext; 1275 not-a-claim nav; 1282 not-a-claim ext |
 | site/src/app/ai-agent-security-guide/page.tsx | 51 not-a-claim ext; 63 not-a-claim ext; 82 not-a-claim ext; 91 not-a-claim ext; 104 not-a-claim ext; 106 not-a-claim ext; 111 not-a-claim instr; 114 not-a-claim ext; 123 not-a-claim ext; 125 not-a-claim ext |
