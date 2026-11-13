@@ -160,13 +160,13 @@ def expand(word: str, table: dict, env: dict, here: str) -> str:  # script-dir a
     for _ in range(12):
         if word == (word := VAR.sub(lookup, TOPLEVEL.sub(".", CDPWD.sub(r"\1", DIRNAME.sub(here, word))))): break
     return word.replace('"', "").replace("'", "")
-def shell_operand(args: list) -> tuple:  # bash/sh: (script, argv, False, traced) or (-c program, [], True, traced); "" is stdin; -c takes the first operand after all options, over -s
-    i, traced, program, stdin = 0, False, False, False
+def shell_operand(args: list) -> tuple:  # bash/sh: (script, argv, False, traced, rc) or (-c program, [], True, traced, rc); "" is stdin; -c takes the first operand after all options, over -s; rc: the --rcfile/--init-file operand, kept only with -i
+    i, traced, program, stdin, rc, interactive = 0, False, False, False, "", False
     while i < len(args) and args[i][:1] in ("-", "+") and args[i] != "--":
-        short, traced = not args[i].startswith("--"), traced or bool(re.fullmatch(r"-[a-zA-Z]*x[a-zA-Z]*", args[i]) or re.fullmatch(r"-[a-zA-Z]*o", args[i]) and args[i + 1:i + 2] == ["xtrace"])
-        program, stdin, i = program or short and "c" in args[i], stdin or short and "s" in args[i], i + (2 if short and args[i][-1] in "oO" or args[i] in ("--rcfile", "--init-file") else 1)  # -o and -O take an option name, --rcfile and --init-file a file; bash 5.2 and 5.3 refuse the --rcfile=F form
-    i += args[i:i + 1] == ["--"]
-    return (args[i], [], True, traced) if program and i < len(args) else ("", [], False, traced) if program or stdin or i >= len(args) else (args[i], args[i + 1:], False, traced)
+        short, rc, traced = not args[i].startswith("--"), (args[i + 1:i + 2] or [""])[0] if args[i] in ("--rcfile", "--init-file") else rc, traced or bool(re.fullmatch(r"-[a-zA-Z]*x[a-zA-Z]*", args[i]) or re.fullmatch(r"-[a-zA-Z]*o", args[i]) and args[i + 1:i + 2] == ["xtrace"])
+        program, stdin, interactive, i = program or short and "c" in args[i], stdin or short and "s" in args[i], interactive or short and "i" in args[i], i + (2 if short and args[i][-1] in "oO" or args[i] in ("--rcfile", "--init-file") else 1)  # -o and -O take an option name, --rcfile and --init-file a file; bash 5.2 and 5.3 refuse the --rcfile=F form
+    i, rc = i + (args[i:i + 1] == ["--"]), rc if interactive else ""  # -i: bash runs the rcfile first; --norc, a login shell, --posix, +i and sh skip it, and scanning it there too fails closed
+    return (args[i], [], True, traced, rc) if program and i < len(args) else ("", [], False, traced, rc) if program or stdin or i >= len(args) else (args[i], args[i + 1:], False, traced, rc)
 def literal_env(node: object) -> dict: return {str(k): "" if v is None else str(v) for k, v in node.items()} if isinstance(node, dict) else {}
 def github_env_names(run: str) -> set: return set(re.findall(r"(?m)^\s*gha_mask_env\s+([A-Za-z_]\w*)", run)) | set(re.findall(r"(?m)^\s*(?:echo|printf)\s+(?:'[^']*'\s+)?[\"']?([A-Za-z_]\w*)=.*>>\s*[\"']?\$\{?GITHUB_ENV\b", run)) | {n for args in re.findall(r"(?m)^\s*gha_mask_env_from_command\s+(.+?)\s+--\s", run) for n in re.findall(r"[A-Za-z_]\w*", args)}  # names a run step writes to GITHUB_ENV (masked or plain)
 def run_lines(text: str) -> dict:  # (job id, step index) -> file line just before the step's run script, or of its uses
@@ -255,7 +255,7 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
         if name == "eval": return dynamic()
         if name in ("make", "gmake"): return self.make([expand(w, table, env, here) for w in words[1:]], rel, cmd.line, child, chain, quiet)
         if name in ("source", "."): target, rest, kind = (words + [""])[1], words[2:], "source"  # no literal operand (<(...)) is dynamic
-        elif posixpath.basename(name) in ("bash", "sh"): (target, rest, program, traced), kind = shell_operand(words[1:]), "shell"; child.update({"SHELLOPTS": "xtrace"} if traced else {})  # noqa: E702
+        elif posixpath.basename(name) in ("bash", "sh"): (target, rest, program, traced, rc), kind = shell_operand(words[1:]), "shell"; child.update({"SHELLOPTS": "xtrace"} if traced else {}); self.edge(cmd._replace(words=[name, rc]), rel, table, child, argv, chain, quiet, cwd) if rc else None  # noqa: E702  # an interactive shell runs its rcfile first, in that same shell
         elif "/" in name: target, rest, kind = words[0], words[1:], "exec"
         else: return dynamic() if any(w.strip("\"'").endswith(".sh") for w in words[1:]) and ("$" in name or any(posixpath.basename(w.strip("\"'")) in ("bash", "sh") for w in words[1:])) else None  # a wrapper or variable command runs a script
         if program:  # a literal -c program is scanned inline; one whose command word (after assignments, redirections and prefix words) expands is dynamic
