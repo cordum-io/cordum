@@ -175,7 +175,7 @@ func TestEntryRefusesInvalidFragment(t *testing.T) {
 	for name, args := range cases {
 		t.Run(name, func(t *testing.T) {
 			out := filepath.Join(t.TempDir(), "frag.json")
-			mustRun(t, 1, append(args, "--out", out)...)
+			mustRun(t, 1, append([]string{"entry"}, append(args, "--out", out)...)...)
 			absent(t, out)
 		})
 	}
@@ -408,4 +408,24 @@ func TestPublishUsageErrors(t *testing.T) {
 			absent(t, filepath.Join(f.dir, "marker"))
 		})
 	}
+}
+
+// The CLI is the file boundary: it must bound what it hands the library. A valid
+// record padded with whitespace parses fine, so only the size cap can refuse it.
+func TestJSONInputsAreSizeBounded(t *testing.T) {
+	f := newFixture(t, "pass")
+	pad := bytes.Repeat([]byte(" "), 5<<20)
+	padded := func(name string) string {
+		data, err := os.ReadFile(filepath.Join(f.dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return writeFile(t, filepath.Join(f.dir, "big-"+name), append(data, pad...))
+	}
+	bigRec, bigFrag := padded("rec.json"), padded("img.json")
+	mustRun(t, 2, "validate", bigRec)
+	mustRun(t, 2, "check", "--record", bigRec, "--artifact", "api-gateway="+imgDigest)
+	mustRun(t, 2, "assemble", "--out", filepath.Join(f.dir, "o.json"), "--ref", "refs/tags/v9.9.9", "--run-url", runURL,
+		"--repository", "cordum-io/cordum", "--sha", sourceSHA, bigFrag)
+	absent(t, filepath.Join(f.dir, "o.json"))
 }
