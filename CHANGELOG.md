@@ -64,6 +64,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+#### core/controlplane/gateway — production gateways hold destructive MCP calls when the session-taint lookup fails (2026-11-13, task-dddb761f)
+
+- **Production default change.** With `mcp.policy_gate_enabled=true` and
+  `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` unset, a gateway running with
+  `CORDUM_ENV=production` or `prod`, or `CORDUM_PRODUCTION=true`, now fails
+  closed: a destructive MCP call (by default a tool matching `*delete*`,
+  `*remove*` or `*archive*`, or GraphQL arguments carrying such a mutation)
+  whose session-taint lookup fails is held for Edge approval
+  (`REQUIRE_HUMAN`, `taint_lookup_unavailable_failclosed`) instead of
+  running. Dev and demo profiles keep the fail-open default. An explicit
+  `true` or `false` always wins, and an unrecognized value falls back to the
+  profile default with a warning.
+- **Operational impact:** during a session-taint store outage, production
+  holds every destructive MCP call for an Edge approval, for every identity,
+  including scope-preapproved CI bots. Scope preapproval does not waive this
+  hold. To keep the previous fail-open behavior, set
+  `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE=false`.
+- The gateway now reads the flag through
+  `actiongates.ResolveFailClosedDestructiveOnTaintLookupError`, which had no
+  caller, and its own default-off parser is removed. A tainted destructive
+  call is still denied in every profile, and the safety kernel is unchanged.
+
 #### Scheduler input outage exceptions use named topic scopes (2026-11-13, task-7803f261)
 
 - `scheduler.input_fail_mode=open` admits only topics named in
@@ -181,7 +203,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - MCP (`mcp.policy_gate_enabled=true`): scope preapproval no longer
   short-circuits an action-gate REQUIRE_HUMAN hold. Today that is the
   destructive-call hold when the session-taint store is unavailable and
-  `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` is on (default off). A
+  `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` is on (by default in production
+  profiles; see task-dddb761f under Security). A
   preapproved identity now receives the same resumable
   `approval pending: <approval_ref>` as any identity, instead of an empty,
   cached `approval pending: ` that could never execute or resume.

@@ -258,8 +258,10 @@ not run.
   its fail-closed taint hold (sub-reason
   `taint_lookup_unavailable_failclosed`). It holds a call when all three
   apply:
-  1. `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` is set to a true value. The
-     gateway reads it once at boot; unset means off.
+  1. `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` is on: by default in
+     production profiles (`CORDUM_ENV=production` or `prod`, or
+     `CORDUM_PRODUCTION=true`), or explicitly `true`. An explicit `false`
+     turns it off in every profile. The gateway reads it once at boot.
   2. The tool is destructive (default globs `*delete*`, `*remove*`,
      `*archive*`).
   3. The session-taint lookup failed.
