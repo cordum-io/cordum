@@ -362,7 +362,7 @@ spec:
           type: RuntimeDefault
       initContainers:
       - name: validate-secrets
-        image: alpine:3.19
+        image: alpine:3.24
         command: ["sh", "-c"]
         args:
         - |
@@ -445,7 +445,7 @@ spec:
           type: RuntimeDefault
       initContainers:
       - name: validate-secrets
-        image: alpine:3.19
+        image: alpine:3.24
         command: ["sh", "-c"]
         args:
         - |
@@ -577,7 +577,7 @@ spec:
           type: RuntimeDefault
       initContainers:
       - name: validate-secrets
-        image: alpine:3.19
+        image: alpine:3.24
         command: ["sh", "-c"]
         args:
         - |
@@ -716,7 +716,7 @@ spec:
           type: RuntimeDefault
       initContainers:
       - name: validate-secrets
-        image: alpine:3.19
+        image: alpine:3.24
         command: ["sh", "-c"]
         args:
         - |
@@ -890,7 +890,7 @@ spec:
           type: RuntimeDefault
       initContainers:
       - name: validate-secrets
-        image: alpine:3.19
+        image: alpine:3.24
         command: ["sh", "-c"]
         args:
         - |
@@ -1099,7 +1099,7 @@ spec:
           type: RuntimeDefault
       initContainers:
       - name: validate-secrets
-        image: alpine:3.19
+        image: alpine:3.24
         command: ["sh", "-c"]
         args:
         - |
@@ -1250,7 +1250,7 @@ spec:
           type: RuntimeDefault
       initContainers:
       - name: validate-secrets
-        image: alpine:3.19
+        image: alpine:3.24
         command: ["sh", "-c"]
         args:
         - |
