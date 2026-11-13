@@ -64,6 +64,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- Safety kernel: one signature rule now covers every policy source (file, URL
+  and config store), and `policysign.ResolveMode` exposes it. In the production
+  profile (`CORDUM_ENV=production` or `CORDUM_PRODUCTION=true`) with
+  `CORDUM_POLICY_STRICT` unset, a config-store policy bundle becomes active only
+  when its signature verifies against the policy trust store
+  (`CORDUM_POLICY_PUBLIC_KEY_<ID>`); a refused bundle leaves the active policy in
+  place. With `CORDUM_POLICY_STRICT` unset, `SAFETY_POLICY_SIGNATURE_REQUIRED=true`
+  also enforces for every source. Signature metadata with a missing or
+  unsupported algorithm, or a missing, undecodable or wrong-length value, is
+  refused as malformed for every source. An explicit `CORDUM_POLICY_STRICT` still
+  wins: `warn` logs signature failures and keeps loading, and `off` skips
+  verification. The development profile is unchanged.
+
 #### Scheduler input outage exceptions use named topic scopes (2026-11-13, task-7803f261)
 
 - `scheduler.input_fail_mode=open` admits only topics named in
