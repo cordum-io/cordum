@@ -46,6 +46,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- MCP approval gate: with `mcp.policy_gate_enabled=true`, when the registry
+  gate's Edge approval mint fails (a policy snapshot changed during the call, a
+  missing pre-event, or an Edge store error), the dual-written MCP approval
+  record is expired at once instead of staying PENDING until its TTL, so
+  approvers see no orphan row. The call's `mcp.tool_invocation` no longer
+  reports `approval_status=required` for it. (task-fbe79532; PR #541 review
+  thread)
 - MCP approval resume: a call resumed with `_approval_ref` is refused with
   `-32096` `policy_snapshot_changed` when policy was published between the
   approval claim and the call's `mcp.tool.pre` stamp. Nothing runs and the
