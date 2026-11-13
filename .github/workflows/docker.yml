@@ -55,7 +55,7 @@ permissions:
 env:
   QUAL_REASON_NON_AMD64: "The smoke check and the Trivy OS scan ran on the linux/amd64 variant of this image index only; the linux/arm64 variant was not gated."
   QUAL_REASON_PRODUCTION_GATE: "The production gate (tools/scripts/production_gate.sh) runs against a source-built stack and did not run against these release digests."
-  QUAL_REASON_TRIVY_OS_ONLY: "The Trivy gate scans OS packages only (vuln-type os) and fails only on CRITICAL findings that have a fixed version (severity CRITICAL, ignore-unfixed); lower severities and unfixed findings do not fail it, and application dependencies such as Go modules and npm packages are not scanned by it."
+  QUAL_REASON_TRIVY_OS_ONLY: "The Trivy gate fails on fixed OS-package findings at any severity (SARIF without limit-severities-for-sarif); unfixed findings are ignored (ignore-unfixed), and application dependencies such as Go modules and npm packages are not scanned (vuln-type os)."
 
 jobs:
   control-plane:
@@ -218,10 +218,9 @@ jobs:
           image-ref: ${{ env.IMAGE_PRIMARY }}@${{ steps.build.outputs.digest }}
           format: sarif
           output: trivy-${{ env.IMAGE_NAME }}.sarif
-          # Fail the job only on CRITICAL OS-package vulnerabilities that
-          # already have a fix available. HIGH severities and language-lib
-          # findings still produce SARIF (uploaded below) so they surface in
-          # the Security tab without blocking releases for churning advisories.
+          # SARIF without limit-severities-for-sarif unsets the severity
+          # filter: any fixed OS-package finding fails the job. Unfixed
+          # findings are ignored, and application dependencies are not scanned.
           severity: CRITICAL
           ignore-unfixed: true
           exit-code: "1"
@@ -470,12 +469,32 @@ jobs:
       - *publish-tags
       - *verify-tags
 
-  # One record for the run: every image job's entry, assembled and validated.
+  binaries:
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release.yml
+    secrets: inherit
+
+  binaries-dry-run:
+    if: startsWith(github.ref, 'refs/heads/release-dry-run/')
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release.yml
+
+  # One record for the run: image and binary entries, assembled and validated.
   qualification-record:
-    needs: [control-plane, dashboard, demo-quickstart-worker]
+    needs: [control-plane, dashboard, demo-quickstart-worker, binaries, binaries-dry-run]
+    if: ${{ !cancelled() && !failure() }}
     runs-on: ubuntu-latest
     env:
       EXPECTED_IMAGES: "api-gateway context-engine dashboard demo-quickstart-worker mcp safety-kernel scheduler workflow-engine"
+      EXPECTED_BINARIES: >-
+        cordum-agentd-darwin-amd64 cordum-agentd-darwin-arm64 cordum-agentd-linux-amd64
+        cordum-agentd-linux-arm64 cordum-agentd-windows-amd64.exe cordum-claude-darwin-amd64
+        cordum-claude-darwin-arm64 cordum-claude-linux-amd64 cordum-claude-linux-arm64
+        cordum-claude-windows-amd64.exe cordum-hook-darwin-amd64 cordum-hook-darwin-arm64
+        cordum-hook-linux-amd64 cordum-hook-linux-arm64 cordum-hook-windows-amd64.exe
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -516,6 +535,8 @@ jobs:
           "$RELEASE_QUAL" validate "$record"
           got="$(jq -r '[.artifacts[] | select(.kind == "image") | .name] | sort | join(" ")' "$record")"
           [[ "$got" == "$EXPECTED_IMAGES" ]] || { echo "::error::record images [${got}] are not EXPECTED_IMAGES [${EXPECTED_IMAGES}]"; exit 1; }
+          got="$(jq -r '[.artifacts[] | select(.kind == "binary") | .name] | sort | join(" ")' "$record")"
+          [[ "$got" == "$EXPECTED_BINARIES" ]] || { echo "::error::record binaries [${got}] are not EXPECTED_BINARIES [${EXPECTED_BINARIES}]"; exit 1; }
           jq -r '.artifacts[] | "\(.kind) \(.name) \(.digest)"' "$record"
 
       - name: Upload qualification record
@@ -525,6 +546,72 @@ jobs:
           path: ${{ runner.temp }}/qualification-record.json
           if-no-files-found: error
           overwrite: true
+
+  publish-binaries:
+    name: Publish Edge binaries
+    needs: [binaries, qualification-record]
+    if: ${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-rc') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Build release-qual
+        run: |
+          go build -trimpath -o "$RUNNER_TEMP/release-qual" ./tools/releasequal/cmd/release-qual
+          echo "RELEASE_QUAL=$RUNNER_TEMP/release-qual" >> "$GITHUB_ENV"
+      - name: Download staged binaries
+        uses: actions/download-artifact@v8
+        with:
+          name: release-bundle
+          path: release/
+      - name: Download qualification record
+        uses: actions/download-artifact@v8
+        with:
+          name: qualification-record
+          path: ${{ runner.temp }}
+      - name: Require signed manifest on canonical release
+        if: github.repository == 'cordum-io/cordum'
+        run: |
+          set -euo pipefail
+          if [ ! -f release/SHA256SUMS.asc ]; then
+            echo "::error::canonical release tag ${GITHUB_REF#refs/tags/} requires a signed SHA256SUMS.asc; sign-manifest job did not produce one (GPG_RELEASE_KEY_PRIVATE missing or signing failed). Refusing to publish an unsigned release."
+            exit 1
+          fi
+          if [ ! -f release/SHA256SUMS ]; then
+            echo "::error::release/SHA256SUMS missing"
+            exit 1
+          fi
+      - name: Create release
+        id: create-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          shopt -s nullglob
+          assets=()
+          files=()
+          for f in release/cordum-*; do
+            [[ -f "$f" && ! -L "$f" ]] || { echo "::error::not a regular binary: $f"; exit 1; }
+            files+=(--file "$f")
+            assets+=("$f")
+          done
+          (( ${#files[@]} > 0 )) || { echo "::error::no binaries staged"; exit 1; }
+          for f in release/SHA256SUMS release/SHA256SUMS.asc; do
+            [ ! -f "$f" ] || assets+=("$f")
+          done
+          "$RELEASE_QUAL" publish --record "$RUNNER_TEMP/qualification-record.json" "${files[@]}" -- gh release create "$tag" \
+            --title "$tag" \
+            --notes "Cordum desktop binaries for $tag. Verify via SHA256SUMS + SHA256SUMS.asc — see docs/security/binary-signing.md." \
+            "${assets[@]}"
 
   smoke-published-images:
     if: startsWith(github.ref, 'refs/tags/v')
