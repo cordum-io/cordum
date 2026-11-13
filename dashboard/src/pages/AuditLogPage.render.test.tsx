@@ -247,6 +247,71 @@ describe("AuditLogPage Block B — DataTable rendering", () => {
     expect(requestedCursors.filter((cursor) => cursor === "cursor-2")).toHaveLength(1);
     expect(container.textContent).toContain("End of audit trail.");
   });
+
+  // Held-out characterization (task-722f3b29): header order, one row per
+  // event, and a sortable-header reorder must survive the TanStack v9 slice.
+  it("characterizes the table: header order, one row per event, Agent sort reorders rows", async () => {
+    // Input order deliberately unsorted by agent label.
+    const labels = ["agent-charlie", "agent-alpha", "agent-bravo"];
+    const items = labels.map((agent_label, i) => ({
+      ...makeEntry(i + 1),
+      agent_label,
+    }));
+    server.use(
+      http.get("*/api/v1/audit/events", () =>
+        HttpResponse.json({
+          items,
+          total: items.length,
+          next_cursor: "",
+          returned: items.length,
+        }),
+      ),
+    );
+
+    const { container } = renderWithProviders(
+      <NuqsTestingAdapter searchParams="">
+        <AuditLogPage />
+      </NuqsTestingAdapter>,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelectorAll("tbody tr").length).toBe(3);
+    });
+
+    const headers = Array.from(
+      container.querySelectorAll<HTMLTableCellElement>("thead th"),
+    );
+    expect(headers.map((th) => th.textContent?.trim())).toEqual([
+      "Time",
+      "Summary",
+      "Agent",
+      "Severity",
+      "Decision",
+    ]);
+    const summaryHeader = headers[1];
+    expect(summaryHeader.hasAttribute("aria-sort")).toBe(false);
+    expect(summaryHeader.hasAttribute("tabindex")).toBe(false);
+
+    const agentColumn = (): string[] =>
+      Array.from(container.querySelectorAll("tbody tr")).map(
+        (tr) => tr.querySelectorAll("td")[2]?.textContent?.trim() ?? "",
+      );
+    expect(agentColumn()).toEqual(labels);
+
+    const agentHeader = headers[2];
+    expect(agentHeader.getAttribute("aria-sort")).toBe("none");
+    fireEvent.click(agentHeader);
+    await waitFor(() => {
+      expect(agentColumn()).toEqual(["agent-alpha", "agent-bravo", "agent-charlie"]);
+    });
+    expect(agentHeader.getAttribute("aria-sort")).toBe("ascending");
+
+    fireEvent.click(agentHeader);
+    await waitFor(() => {
+      expect(agentColumn()).toEqual(["agent-charlie", "agent-bravo", "agent-alpha"]);
+    });
+    expect(agentHeader.getAttribute("aria-sort")).toBe("descending");
+  });
 });
 
 describe("AuditLogPage Block C — page states", () => {
