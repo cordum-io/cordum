@@ -324,6 +324,7 @@ exit 0
         if ($failure) {
             if ($rc -eq 0 -or -not $text.Contains("BINARY-VERIFY-FAIL: $failure")) { return $false }
             if (Test-Path -LiteralPath $floor) { return $false }
+            if ($Label -eq 'prod-signature-stripped' -and (Test-Path -LiteralPath $argsLog)) { return $false }
             return -not (Test-Path -LiteralPath $dest) -or
                 @(Get-ChildItem -LiteralPath $dest -File -Recurse).Count -eq 0
         }
@@ -376,6 +377,10 @@ exit 0
                 & $gpgCmd.Source --homedir $gpgHomeArg --batch --yes --quiet --detach-sign --armor --output $sigArg $manifestArg
                 if ($LASTEXITCODE -ne 0) { throw 'keyless precedence fixture signing failed' }
             }
+            'prod-signature-stripped' { # No bundle, no .asc: refuse before cosign, even with the override.
+                Remove-Item -LiteralPath "$release\SHA256SUMS.sigstore.json"; $failure = 'unsigned manifest'
+                $flags += '-InsecureAllowMissingCosign'
+            }
         }
         if ($Label -like '*missing*') { $verifier = Join-Path $base 'not-installed-cosign.exe' }
         if ($Label -like 'keyless-missing-override*') { $flags += '-InsecureAllowMissingCosign'; $scheme = 'unverified' }
@@ -396,6 +401,8 @@ exit 0
         'missing-override', 'missing-override-tampered', 'identity-override', 'precedence')) {
         if (-not (Invoke-KeylessScenario "keyless-$scenario")) { $failures++ }
     }
+    # Production mode with the signature stripped: only the 'unsigned manifest' branch refuses it.
+    if (-not (Invoke-KeylessScenario 'prod-signature-stripped')) { $failures++ }
 
     if ($failures -ne 0) {
         Write-Error "install_test.ps1: $failures scenario(s) failed"
