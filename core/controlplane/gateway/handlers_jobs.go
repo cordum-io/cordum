@@ -204,9 +204,19 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The response carries admin-only fields and per-tenant pipeline counts,
+	// so the role and tenant are resolved before the cache lookup and form
+	// its key: a cached response is only served to the same role and tenant.
+	isAdmin := s.requireRole(r, "admin") == nil
+	tenantID := tenantFromRequest(r)
+	if resolvedTenant, err := s.resolveTenant(r, ""); err == nil {
+		tenantID = resolvedTenant
+	}
+	cacheKey := statusCacheKey(isAdmin, tenantID)
+
 	// Check cache first — avoids repeated Redis PING + snapshot reads on
 	// every dashboard poll (dashboard polls /api/v1/status every 5-10s).
-	if cached := s.statusCacheObj.Get(); cached != nil {
+	if cached := s.statusCacheObj.Get(cacheKey); cached != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Cache", "HIT")
 		writeJSON(w, cached)
@@ -245,8 +255,6 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	cancel()
 	redisPoolStats := redisPoolStatsResponse(s.redisClient())
 
-	isAdmin := s.requireRole(r, "admin") == nil
-
 	natsInfo := map[string]any{
 		"connected": natsConnected,
 		"status":    natsStatus,
@@ -261,11 +269,6 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	if isAdmin && redisErr != "" {
 		redisInfo["error"] = redisErr
-	}
-
-	tenantID := tenantFromRequest(r)
-	if resolvedTenant, err := s.resolveTenant(r, ""); err == nil {
-		tenantID = resolvedTenant
 	}
 
 	resp := map[string]any{
@@ -336,8 +339,8 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Cache the response for subsequent requests
-	s.statusCacheObj.Set(resp)
+	// Cache the response for subsequent requests from the same role and tenant.
+	s.statusCacheObj.Set(cacheKey, resp)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Cache", "MISS")

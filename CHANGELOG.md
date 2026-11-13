@@ -75,6 +75,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+#### Integration batch 2 review fixes (2026-11-13, #579)
+
+- `GET /api/v1/status` caches its response per caller role and tenant. A
+  cached entry is served only to the role and tenant it was built for, so
+  admin-only infrastructure fields and per-tenant pipeline counts stay with
+  their audience. The cache holds at most 256 entries.
+- The gateway's pack strict-mode resolver no longer caches a failed Redis read.
+  The failing call still returns the default, but the next call reads Redis
+  again. An unset key is still cached for the TTL.
+- The workflow credential scanner carries tracing from a `bash -i --rcfile`
+  (or `--init-file`) rcfile into the program or script that shell runs. An
+  rcfile that leaves `set -x` on makes later credential registrations count
+  as used before registration.
+
 #### Scheduler input outage exceptions use named topic scopes (2026-11-13, task-7803f261)
 
 - `scheduler.input_fail_mode=open` admits only topics named in

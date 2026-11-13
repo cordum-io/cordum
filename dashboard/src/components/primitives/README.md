@@ -40,16 +40,24 @@ is still alive — see migration story below.
 ```tsx
 import { DataTable, type DataTableColumn } from "@/components/primitives/DataTable";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 interface JobRow { id: string; agent: string; decision: "allow" | "deny"; }
 
 const columns: DataTableColumn<JobRow>[] = [
   { accessorKey: "agent", header: "Agent", enableSorting: true },
-  { accessorKey: "id", header: "Job ID" },
+  {
+    accessorKey: "id",
+    header: "Job ID",
+    // Rows have no keyboard handler, so give each row a real link: keyboard
+    // and screen-reader users open the job from it. DataTable ignores row
+    // clicks that start on a link, so the link and onRowClick never both fire.
+    cell: ({ row }) => <Link to={`/jobs/${row.original.id}`}>{row.original.id}</Link>,
+  },
 ];
 
-// The host page passes its rows; row clicks navigate with react-router.
+// The host page passes its rows; a mouse click anywhere on a row also
+// navigates, with react-router.
 export function RecentJobsTable({ rows }: { rows: JobRow[] }) {
   const navigate = useNavigate();
   return (

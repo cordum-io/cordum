@@ -244,6 +244,13 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
             if keyword == "unset": table.pop(name, None); env.pop(name, None); continue  # noqa: E702
             if m: table[name] = expand(m.group(2), table, env, here)
             if keyword == "export" or (keyword == "declare" and "-x" in words) or (m and name in env and keyword != "local"): env[name] = table.get(name, env.get(name, ""))
+    def rc_traced(self, rcpath: str, cwd: str) -> bool:  # tracing on at the rcfile's top level after its last command (an unparsable rcfile counts as traced); this only ever turns tracing on
+        key = posixpath.normpath(posixpath.join(cwd, rcpath))
+        if posixpath.isabs(key) or key == ".." or key.startswith("../"): return False  # an absolute or escaping rcfile is reported by its own edge, or is outside the repo
+        text, refusal = self.read(key)
+        if refusal or "\x00" in text: return False  # its own edge reports the refusal
+        _, error, _, _, flags = facts(text + "\n:")  # the appended no-op reads the state after the last command
+        return bool(error) or bool(flags) and flags[-1][1]
     def edge(self, cmd: Cmd, rel: str, table: dict, env: dict, argv: list, chain: tuple, quiet: bool, cwd: str) -> None:
         here, words, child = posixpath.dirname(rel) or ".", list(cmd.words), dict(env)
         while words and (words[0] in PREFIX_WORDS or WORD_ASSIGN.fullmatch(words[0])):
@@ -255,7 +262,7 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
         if name == "eval": return dynamic()
         if name in ("make", "gmake"): return self.make([expand(w, table, env, here) for w in words[1:]], rel, cmd.line, child, chain, quiet)
         if name in ("source", "."): target, rest, kind = (words + [""])[1], words[2:], "source"  # no literal operand (<(...)) is dynamic
-        elif posixpath.basename(name) in ("bash", "sh"): (target, rest, program, traced, rc), kind = shell_operand(words[1:]), "shell"; child.update({"SHELLOPTS": "xtrace"} if traced else {}); (dynamic() if "$" in (rcpath := expand(rc, table, env, here)) else self.edge(cmd._replace(words=[name, rcpath]), rel, table, child, argv, chain, quiet, cwd)) if rc else None  # noqa: E702  # an interactive shell runs its rcfile first, in that same shell; the caller expands its name, as for the script, so one it cannot resolve is dynamic
+        elif posixpath.basename(name) in ("bash", "sh"): (target, rest, program, traced, rc), kind = shell_operand(words[1:]), "shell"; child.update({"SHELLOPTS": "xtrace"} if traced else {}); (dynamic() if "$" in (rcpath := expand(rc, table, env, here)) else (self.edge(cmd._replace(words=[name, rcpath]), rel, table, child, argv, chain, quiet, cwd), child.update({"SHELLOPTS": "xtrace"} if self.rc_traced(rcpath, cwd) else {}))) if rc else None  # noqa: E702  # an interactive shell runs its rcfile first, in that same shell, so tracing the rcfile leaves on traces the program too; the caller expands its name, as for the script, so one it cannot resolve is dynamic
         elif "/" in name: target, rest, kind = words[0], words[1:], "exec"
         else: return dynamic() if any(w.strip("\"'").endswith(".sh") for w in words[1:]) and ("$" in name or any(posixpath.basename(w.strip("\"'")) in ("bash", "sh") for w in words[1:])) else None  # a wrapper or variable command runs a script
         if program:  # a literal -c program is scanned inline; one whose command word (after assignments, redirections and prefix words) expands is dynamic
