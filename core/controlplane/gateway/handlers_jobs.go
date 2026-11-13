@@ -1483,8 +1483,8 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// resolvePrincipal may return a request-chosen principal_id. Honor a
-	// client agent_id label only for the authenticated principal, as in gRPC
-	// SubmitJob. Injection without a label is unchanged here (task-491f974b).
+	// client agent_id label only for a credential-backed principal, never a
+	// caller-asserted X-Principal-Id, as in gRPC SubmitJob. Injection without a label is unchanged here (task-491f974b).
 	var authDerivedAgentID string
 	if s.agentIdentityStore != nil {
 		if agent, err := s.agentIdentityStore.GetByWorkerIDForTenant(r.Context(), orgID, principalID); err == nil && agent != nil {
@@ -1492,8 +1492,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if clientAgentID := req.Labels["agent_id"]; clientAgentID != "" {
-		ac := auth.FromRequest(r)
-		if ac == nil || strings.TrimSpace(ac.PrincipalID) == "" || strings.TrimSpace(ac.PrincipalID) != strings.TrimSpace(principalID) {
+		if ap := auth.FromRequest(r).AuthenticatedPrincipal(); ap == "" || ap != strings.TrimSpace(principalID) {
 			writeErrorJSON(w, http.StatusForbidden, "client-supplied agent_id requires an authenticated principal")
 			return
 		}
