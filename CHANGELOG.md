@@ -16,6 +16,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Added `docs/contract/data-inventory.yaml` (PR2-07): data classes with storage,
+  content, retention, deletion-path and legal-hold fields, separating local
+  endpoint copies from control-plane data. `tests/contract` checks its setting
+  and code references; complete key/stream coverage and cleanup guarantees
+  are not claimed by this inventory.
+
 - Added [failure and partition behavior](docs/contract/failure-behavior.md)
   (M0-06, task-51b08640): required and current behavior for low-risk,
   approval-required and protected actions when Redis, NATS, the Safety Kernel,
