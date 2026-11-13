@@ -16,6 +16,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Added `docs/contract/data-inventory.yaml` (PR2-07): data classes with storage,
+  content, retention, deletion-path and legal-hold fields, separating local
+  endpoint copies from control-plane data. `tests/contract` checks its setting
+  and code references; complete key/stream coverage and cleanup guarantees
+  are not claimed by this inventory.
+
 - Added [failure and partition behavior](docs/contract/failure-behavior.md)
   (M0-06, task-51b08640): required and current behavior for low-risk,
   approval-required and protected actions when Redis, NATS, the Safety Kernel,
@@ -81,6 +87,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   ruleset (task-fd34e921).
 
 ### Security
+
+#### MCP `X-Agent-Id` can only confirm the principal-bound agent identity (2026-10-26, task-eb2d6f28)
+
+- **Behavior change** for MCP clients that select an agent identity with the
+  `X-Agent-Id` header. HTTP MCP requests now run as the agent identity linked
+  to the authenticated principal in the request tenant. No header, or a header
+  equal to that identity's `id`, resolves to it. Any other header value, an
+  unlinked principal, or a link to another tenant resolves to no identity:
+  `tools/list` is empty and `tools/call` is refused (`-32098` `no_identity`,
+  or `-32603` `missing_mcp_metadata` when `mcp.policy_gate_enabled` is on).
+- Approval records, preapproval checks, policy-gate call metadata and Edge
+  trace labels now carry the bound identity `id` (empty when there is none),
+  never the header value. The principal no longer stands in for a missing
+  agent ID, and the header no longer stands in for a missing principal.
+- Why: any caller in a tenant could previously act as any agent identity in
+  that tenant, including its `allowed_tools` and `preapproved_mutating_tools`,
+  by naming it in the header.
+- Migration: link each MCP client's principal to its identity
+  (`POST /api/v1/agents` with `"agent_id": "<principal id>"`, or a worker
+  credential with `agent_id`), then send the bound `id` in `X-Agent-Id` or drop
+  the header. See "Agent identity binding" in `docs/mcp-server.md`.
 
 #### core/controlplane/gateway — production gateways hold destructive MCP calls when the session-taint lookup fails (2026-11-13, task-dddb761f)
 
