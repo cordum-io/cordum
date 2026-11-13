@@ -364,7 +364,10 @@ exit 0
                 $bytes = [IO.File]::ReadAllBytes($binary); $bytes[0] = 88; [IO.File]::WriteAllBytes($binary, $bytes)
                 $failure = 'hash mismatch cordum-hook'
             }
-            'keyless-manifest-tampered' { Add-Content "$release\SHA256SUMS" '# changed'; $failure = 'cosign signature invalid' }
+            'keyless-manifest-tampered' {
+                Add-Content "$release\SHA256SUMS" '# changed'; $failure = 'cosign signature invalid'
+                $flags += '-InsecureAllowMissingCosign' # Never override a failed verification.
+            }
             'keyless-cosign-missing' { $failure = 'cosign required' }
             'keyless-identity-override' { $identity = '^https://example\.invalid/release$'; $flags += @('-CosignIdentityRegexp', $identity) }
             'keyless-precedence' {

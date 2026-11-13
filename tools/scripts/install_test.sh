@@ -332,7 +332,8 @@ run_keyless_scenario() {
       printf X | dd of="$release/cordum-hook" bs=1 count=1 conv=notrunc 2>/dev/null
       failure='hash mismatch cordum-hook' ;;
     keyless-manifest-tampered)
-      printf '# changed\n' >>"$release/SHA256SUMS"; failure='cosign signature invalid' ;;
+      printf '# changed\n' >>"$release/SHA256SUMS"; failure='cosign signature invalid'
+      flags=(--insecure-allow-missing-cosign) ;; # Never override a failed verification.
     keyless-cosign-missing) failure='cosign required' ;;
     keyless-identity-override) identity='^https://example\.invalid/release$'; override_identity="$identity" ;;
     keyless-precedence)

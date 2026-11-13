@@ -5,9 +5,10 @@ set -euo pipefail
 # EDGE-151 — binary integrity pre-activation gate
 # ----------------------------------------------------------------------------
 # Production release pubkey fingerprint pinned here at script-edit-time.
-# Empty means production signing has not yet been provisioned, in which case
-# only `--dev-allow-unsigned` is accepted (with a TEST-ONLY-* key under
-# tools/test-keys/). When the production GPG key is provisioned the value
+# Empty means production GPG signing has not yet been provisioned, so GPG
+# manifests require `--dev-allow-unsigned` (with a TEST-ONLY-* key under
+# tools/test-keys/). Sigstore bundles use the workflow identity below instead.
+# When the production GPG key is provisioned the value
 # below MUST be filled in AND the matching public key committed at
 # tools/keys/cordum-release.pub.asc. See docs/security/binary-signing.md
 # for the threat model and rotation procedure.
