@@ -179,6 +179,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   Alpine 3.21). Every runtime stage still runs `apk upgrade --no-cache`;
   builder stages are unchanged.
 
+- Non-release images also move off end-of-life Alpine 3.19, 3.20 and 3.21 to
+  `alpine:3.24`, the branch the release images use: the seven
+  `validate-secrets` init containers in `deploy/k8s/base.yaml`, and the runtime
+  stages of `Dockerfile.localcap`, `demo/mock-bank` and the Go example workers
+  (`demo-guardrails`, `hello-worker-go`, `multi-topic-worker-go`). The init
+  scripts, builder stages and Helm chart are unchanged (task-7abb1816).
+
 #### core/controlplane/gateway — gateway worker-link readers resolve within the request tenant (2026-11-11, task-283f2317)
 
 - `POST /api/v1/agents`: the `agent_id` worker-conflict check (409 `AGENT_WORKER_CONFLICT`) now considers only the caller's tenant. Another tenant's link for the same worker ID neither blocks registration nor reveals that it exists.
