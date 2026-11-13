@@ -3,7 +3,7 @@
 Repo: Cordum-site. Pin: `fd06b5f131c89c1edd3f004f51ada3340125fb05`.
 Generator: `site_pages` in [the method](../public-claims-baseline.md). Owner: M0-07-SITE-1.
 Generic educational and external-system text is not a Cordum claim. Accurate means no stronger than the scoped entry, not execution proof.
-Counts: 390 hits; accurate 71, overstated 142, unverifiable 21, not-a-claim 196.
+Counts: 390 hits; accurate 71, overstated 147, unverifiable 21, not-a-claim 191.
 
 | File | Entries |
 | --- | --- |
