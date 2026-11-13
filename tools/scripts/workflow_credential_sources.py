@@ -126,7 +126,7 @@ def shallow(text: str) -> str:  # the text without command substitutions nested 
 def callers(cmds: list, flags: list, prev: tuple, ign: set = frozenset()) -> tuple:  # names of functions called where bash ignores errexit (also in an ign block), called with errexit off, called inside a $(...); or called from such a function
     defs, found = {c.func for c in cmds} - {""}, (set(), set(), set())
     for i, c in enumerate(cmds):  # bash ignores errexit for a tested status, in the whole pipeline: in an && or || list but its last command, in an if, elif, while or until condition, or after `!`
-        if (name := (c.words + [""])[(lead := next((n for n, w in enumerate(c.words) if w not in PREFIX_WORDS and not WORD_ASSIGN.fullmatch(w)), len(c.words)))]) in defs:
+        if (name := (c.words + [""])[(lead := next((n for n, w in enumerate(c.words) if w not in PREFIX_WORDS and not WORD_ASSIGN.fullmatch(w) and not RWORD.match(w)), len(c.words)))]) in defs:  # a redirection word (</dev/null main) is not the command name
             for names, hit in zip(found, (ends(cmds, i) in ("&&", "||") or not {"if", "elif", "while", "until", "!"}.isdisjoint(c.words[:lead]) or cond(cmds, i) or c.func in prev[0] or not ign.isdisjoint(c.stack), not flags[i][0], c.sub or c.func in prev[2])): names.add(name) if hit else None
     return found
 def options(cmds: list, errexit: bool, quiet: set = frozenset(), cold: set = frozenset(), ign: set = frozenset()) -> list:  # [k]: (errexit, xtrace) at cmds[k]; a set applies in text order within its scope: top level, function body or subshell; quiet functions and ign blocks ignore errexit, cold functions start without it
@@ -164,7 +164,7 @@ def shell_operand(args: list) -> tuple:  # bash/sh: (script, argv, False, traced
     i, traced, program, stdin = 0, False, False, False
     while i < len(args) and args[i][:1] in ("-", "+") and args[i] != "--":
         short, traced = not args[i].startswith("--"), traced or bool(re.fullmatch(r"-[a-zA-Z]*x[a-zA-Z]*", args[i]) or re.fullmatch(r"-[a-zA-Z]*o", args[i]) and args[i + 1:i + 2] == ["xtrace"])
-        program, stdin, i = program or short and "c" in args[i], stdin or short and "s" in args[i], i + (2 if short and args[i][-1] in "oO" else 1)
+        program, stdin, i = program or short and "c" in args[i], stdin or short and "s" in args[i], i + (2 if short and args[i][-1] in "oO" or args[i] in ("--rcfile", "--init-file") else 1)  # -o and -O take an option name, --rcfile and --init-file a file; bash 5.2 and 5.3 refuse the --rcfile=F form
     i += args[i:i + 1] == ["--"]
     return (args[i], [], True, traced) if program and i < len(args) else ("", [], False, traced) if program or stdin or i >= len(args) else (args[i], args[i + 1:], False, traced)
 def literal_env(node: object) -> dict: return {str(k): "" if v is None else str(v) for k, v in node.items()} if isinstance(node, dict) else {}

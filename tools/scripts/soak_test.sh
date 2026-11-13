@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# =============================================================================
 # Cordum Soak Test
 # Long-running test to detect retry storms, log floods, and resource drift.
 #
@@ -18,21 +17,22 @@
 #                             warns even when the % limit is exceeded (default: 32)
 #   SOAK_WARMUP_SECONDS       Load time before the memory-drift baseline is
 #                             captured; capped at half the run (default: 300)
+#   SOAK_MEMORY_WINDOW_SAMPLES  Median window K (default 5, minimum 3); needs
+#                             warm-up plus 2*K one-minute snapshots.
+#   SOAK_METRICS_SOURCE       docker (default): missing/failed/empty stats FAIL.
+#                             none (Helm): drift/restarts not evaluated, not PASS.
 #   SOAK_LOG_STORM_THRESHOLD  Max identical log lines per 60s window (default: 100)
 #   SOAK_ERROR_RATE_PCT       Max allowed 4xx/5xx rate % (default: 1)
 #   SOAK_RESULTS_FILE         Output JSON file (default: soak_results.json)
 #   SOAK_METRICS_FILE         Metrics log file (default: soak_metrics.log)
 #   SOAK_HTTP_LOG             HTTP status log (default: soak_http.log)
-# =============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=tools/scripts/soak_test_lib.sh
 source "${SCRIPT_DIR}/soak_test_lib.sh"
 
-# ---------------------------------------------------------------------------
 # Configuration
-# ---------------------------------------------------------------------------
 API_BASE="${CORDUM_API_BASE:-http://localhost:8081/api/v1}"
 API_KEY="${CORDUM_API_KEY:-}"
 TENANT_ID="${CORDUM_TENANT_ID:-default}"
@@ -41,6 +41,8 @@ INTERVAL_SECONDS="${SOAK_INTERVAL_SECONDS:-5}"
 MEMORY_DRIFT_PCT="${SOAK_MEMORY_DRIFT_PCT:-50}"
 MEMORY_DRIFT_MIN_MIB="${SOAK_MEMORY_DRIFT_MIN_MIB:-32}"
 WARMUP_SECONDS="${SOAK_WARMUP_SECONDS:-300}"
+MEMORY_WINDOW_SAMPLES="${SOAK_MEMORY_WINDOW_SAMPLES:-5}"
+METRICS_SOURCE="${SOAK_METRICS_SOURCE:-docker}"
 LOG_STORM_THRESHOLD="${SOAK_LOG_STORM_THRESHOLD:-100}"
 ERROR_RATE_PCT="${SOAK_ERROR_RATE_PCT:-1}"
 RESULTS_FILE="${SOAK_RESULTS_FILE:-soak_results.json}"
@@ -51,9 +53,13 @@ CURL_TLS_OPTS=()
 
 SOAK_ID="soak-$(date +%s)"
 
-# ---------------------------------------------------------------------------
+# Findings are collected from the first docker stats sample onward.
+FAILURES=()
+WARNINGS=()
+DRIFT_EVALUATED=false
+DRIFT_BASELINE_SOURCE="none"
+
 # Helpers
-# ---------------------------------------------------------------------------
 require() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "[soak] missing dependency: $1" >&2
@@ -108,9 +114,7 @@ record_status() {
   echo "$(date +%s) ${endpoint} ${status}" >> "${HTTP_LOG}"
 }
 
-# ---------------------------------------------------------------------------
 # Preflight
-# ---------------------------------------------------------------------------
 require curl
 
 if [[ -z "${API_KEY}" ]]; then
@@ -138,15 +142,23 @@ MAX_WARMUP_SECONDS=$(( DURATION_MINUTES * 30 ))
 if [[ ${WARMUP_SECONDS} -gt ${MAX_WARMUP_SECONDS} ]]; then
   WARMUP_SECONDS=${MAX_WARMUP_SECONDS}
 fi
+if [[ "${METRICS_SOURCE}" != "docker" && "${METRICS_SOURCE}" != "none" ]]; then
+  die "SOAK_METRICS_SOURCE must be docker or none (got '${METRICS_SOURCE}')"
+fi
+if [[ ! "${MEMORY_WINDOW_SAMPLES}" =~ ^[0-9]{1,6}$ ]] || [[ $((10#${MEMORY_WINDOW_SAMPLES})) -lt 3 ]]; then
+  die "SOAK_MEMORY_WINDOW_SAMPLES must be an integer of at least 3 (got '${MEMORY_WINDOW_SAMPLES}')"
+fi
+MEMORY_WINDOW_SAMPLES=$((10#${MEMORY_WINDOW_SAMPLES}))
+if [[ "${METRICS_SOURCE}" == "docker" ]]; then
+  require docker
+fi
 
 log "Soak test ${SOAK_ID} starting"
-log "Duration: ${DURATION_MINUTES}m | Interval: ${INTERVAL_SECONDS}s"
-log "Memory drift limit: ${MEMORY_DRIFT_PCT}% and ${MEMORY_DRIFT_MIN_MIB}MiB (baseline after ${WARMUP_SECONDS}s warm-up) | Log storm limit: ${LOG_STORM_THRESHOLD}"
+log "Duration: ${DURATION_MINUTES}m | Interval: ${INTERVAL_SECONDS}s | Metrics source: ${METRICS_SOURCE}"
+log "Memory drift limit: ${MEMORY_DRIFT_PCT}% and ${MEMORY_DRIFT_MIN_MIB}MiB, median of ${MEMORY_WINDOW_SAMPLES} snapshots after ${WARMUP_SECONDS}s warm-up vs the last ${MEMORY_WINDOW_SAMPLES} | Log storm limit: ${LOG_STORM_THRESHOLD}"
 log "Error rate limit: ${ERROR_RATE_PCT}%"
 
-# ---------------------------------------------------------------------------
 # Health check
-# ---------------------------------------------------------------------------
 log "Checking gateway health..."
 health_status=$(api GET /health)
 if [[ "${health_status}" != "200" ]]; then
@@ -154,15 +166,46 @@ if [[ "${health_status}" != "200" ]]; then
 fi
 log "Gateway healthy"
 
-# ---------------------------------------------------------------------------
 # Baseline metrics
-# ---------------------------------------------------------------------------
+# One docker stats sample on stdout. A docker failure is returned to the caller
+# (never swallowed); `timeout` keeps a hung daemon from stalling the soak.
 collect_docker_metrics() {
-  if command -v docker >/dev/null 2>&1; then
-    docker stats --no-stream --format \
-      '{"container":"{{.Name}}","cpu":"{{.CPUPerc}}","mem_usage":"{{.MemUsage}}","mem_pct":"{{.MemPerc}}","ts":"'"$(date +%s)"'"}' \
-      2>/dev/null || true
+  local fmt cmd=(docker stats --no-stream)
+  if [[ "${METRICS_SOURCE}" != "docker" ]]; then return 0; fi
+  fmt='{"container":"{{.Name}}","cpu":"{{.CPUPerc}}","mem_usage":"{{.MemUsage}}","mem_pct":"{{.MemPerc}}","ts":"'"$(date +%s)"'"}'
+  if command -v timeout >/dev/null 2>&1; then cmd=(timeout 30 "${cmd[@]}"); fi
+  "${cmd[@]}" --format "${fmt}"
+}
+
+# Record every "FAIL<TAB>msg" / "WARN<TAB>msg" line of $1 in FAILURES / WARNINGS.
+add_findings() {
+  local kind msg
+  while IFS=$'\t' read -r kind msg; do
+    case "${kind}" in
+      FAIL) FAILURES+=("${msg}") ;;
+      WARN) WARNINGS+=("${msg}") ;;
+    esac
+  done <<< "$1"
+}
+
+# Append a "# KIND <ts>" block, or return nonzero and record FAIL (severity fail)
+# or WARN (mid-run gap). The window check determines whether enough samples remain.
+sample_metrics() {
+  local kind="$1" label="$2" severity="$3" ts out rc=0 findings
+  if [[ "${METRICS_SOURCE}" != "docker" ]]; then return 0; fi
+  ts=$(date +%s)
+  out=$(collect_docker_metrics) || rc=$?
+  findings=$(docker_collection_findings "${label}" "${rc}" "${out}")
+  if [[ -z "${findings}" ]]; then
+    { echo "# ${kind} ${ts}"; echo "${out}"; } >> "${METRICS_FILE}"
+    return 0
   fi
+  if [[ "${severity}" == "fail" ]]; then
+    add_findings "${findings}"
+  else
+    add_findings "${findings//FAIL/WARN}"
+  fi
+  return 1
 }
 
 collect_log_counts() {
@@ -175,21 +218,12 @@ collect_log_counts() {
 }
 
 log "Collecting baseline metrics..."
-baseline_metrics=$(collect_docker_metrics)
-if [[ -n "${baseline_metrics}" ]]; then
-  echo "# baseline $(date +%s)" >> "${METRICS_FILE}"
-  echo "${baseline_metrics}" >> "${METRICS_FILE}"
-fi
+# The cold pre-load sample is diagnostic only: idle Go services sit at ~15MiB and
+# legitimately double under load, so it is never the drift baseline. The real
+# baseline window starts at the "# drift-baseline" marker written after warm-up.
+sample_metrics baseline "pre-load baseline" fail || true
 
-# The pre-load sample is only a fallback for the drift comparison: idle Go
-# services sit at ~15MiB and legitimately double under load, so the real
-# baseline is re-captured after the warm-up window inside the load loop.
-load_memory_baseline "${baseline_metrics}"
-DRIFT_BASELINE_SOURCE="pre-load"
-
-# ---------------------------------------------------------------------------
 # Check for container restarts (baseline)
-# ---------------------------------------------------------------------------
 get_restart_counts() {
   if command -v docker >/dev/null 2>&1; then
     docker compose ps --format '{{.Name}} {{.Status}}' 2>/dev/null | while read -r name status; do
@@ -199,11 +233,12 @@ get_restart_counts() {
   fi
 }
 
-BASELINE_RESTARTS=$(get_restart_counts)
+BASELINE_RESTARTS=""
+if [[ "${METRICS_SOURCE}" == "docker" ]]; then
+  BASELINE_RESTARTS=$(get_restart_counts || true)
+fi
 
-# ---------------------------------------------------------------------------
 # Cleanup trap
-# ---------------------------------------------------------------------------
 SOAK_PIDS=()
 cleanup() {
   log "Cleaning up..."
@@ -214,14 +249,13 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# ---------------------------------------------------------------------------
 # Load phase
-# ---------------------------------------------------------------------------
 LOAD_START=$(date +%s)
 END_TIME=$(( LOAD_START + DURATION_MINUTES * 60 ))
 BATCH=0
 LAST_METRICS_TS=0
 LAST_LOG_CHECK_TS=0
+DRIFT_MARKER_TRIED=0
 
 # Fixed job payloads for determinism
 JOB_PAYLOADS=(
@@ -259,24 +293,20 @@ while [[ $(date +%s) -lt ${END_TIME} ]]; do
     record_status "POST:/approvals/approve" "${status}"
   done
 
-  # --- Re-baseline memory once the warm-up window has elapsed ---
-  if [[ "${DRIFT_BASELINE_SOURCE}" == "pre-load" && ${WARMUP_SECONDS} -gt 0 \
+  # After warm-up, attempt one marker capture. Failure means "not evaluated",
+  # never a fallback to the cold pre-load sample.
+  if [[ "${METRICS_SOURCE}" == "docker" && ${DRIFT_MARKER_TRIED} -eq 0 \
         && $((NOW - LOAD_START)) -ge ${WARMUP_SECONDS} ]]; then
-    warm_metrics=$(collect_docker_metrics)
-    if [[ -n "${warm_metrics}" ]]; then
-      load_memory_baseline "${warm_metrics}"
-      DRIFT_BASELINE_SOURCE="post-warm-up (${WARMUP_SECONDS}s)"
-      echo "# drift-baseline ${NOW}" >> "${METRICS_FILE}"
-      echo "${warm_metrics}" >> "${METRICS_FILE}"
-      log "Memory drift baseline captured after ${WARMUP_SECONDS}s of load"
+    DRIFT_MARKER_TRIED=1
+    if sample_metrics drift-baseline "warm-up baseline" fail; then
+      log "Memory drift baseline window opened after ${WARMUP_SECONDS}s of load"
     fi
   fi
 
-  # --- Collect metrics every 60 seconds ---
+  # --- Collect metrics every 60 seconds (a failed sample is a gap, not a skip) ---
   if [[ $((NOW - LAST_METRICS_TS)) -ge 60 ]]; then
     LAST_METRICS_TS=${NOW}
-    echo "# snapshot ${NOW}" >> "${METRICS_FILE}"
-    collect_docker_metrics >> "${METRICS_FILE}"
+    sample_metrics snapshot "mid-run snapshot" warn || true
 
     elapsed=$(( (NOW - LOAD_START) / 60 ))
     remaining=$(( (END_TIME - NOW) / 60 ))
@@ -295,13 +325,11 @@ done
 
 log "Load phase complete. ${BATCH} batches sent."
 
-# ---------------------------------------------------------------------------
-# Analysis phase
-# ---------------------------------------------------------------------------
-log "Analysing results..."
+# The end-of-run state always belongs to the final window.
+sample_metrics snapshot "final" fail || true
 
-FAILURES=()
-WARNINGS=()
+# Analysis phase
+log "Analysing results..."
 
 # --- 1. HTTP error rate ---
 TOTAL_REQUESTS=$(wc -l < "${HTTP_LOG}" || echo "0")
@@ -316,9 +344,9 @@ if [[ ${TOTAL_REQUESTS} -gt 0 ]]; then
     FAILURES+=("HTTP error rate ${ACTUAL_RATE}% exceeds threshold ${ERROR_RATE_PCT}% (${ERROR_REQUESTS}/${TOTAL_REQUESTS} requests)")
   fi
   log "HTTP error rate: ${ACTUAL_RATE}% (${ERROR_REQUESTS}/${TOTAL_REQUESTS})"
-else
-  WARNINGS+=("No HTTP requests recorded")
 fi
+# A run that sent no batches or recorded no requests proves nothing.
+add_findings "$(load_findings "${BATCH}" "${TOTAL_REQUESTS}")"
 
 # --- 2. 4xx retry storm detection ---
 # Check if any endpoint has >50% of its requests returning 4xx in succession
@@ -335,17 +363,15 @@ while IFS= read -r line; do
 done <<< "${STORM_ENDPOINTS}"
 
 # --- 3. Memory drift ---
-# Floating-point growth against the post-warm-up baseline; fails only when
-# both the relative limit and the absolute MiB floor are exceeded (see
-# memory_drift_findings in soak_test_lib.sh).
-if command -v docker >/dev/null 2>&1; then
-  final_metrics=$(collect_docker_metrics)
-  while IFS=$'\t' read -r kind msg; do
-    case "${kind}" in
-      FAIL) FAILURES+=("${msg}") ;;
-      WARN) WARNINGS+=("${msg}") ;;
-    esac
-  done < <(memory_drift_findings "${final_metrics}" "${MEMORY_DRIFT_PCT}" "${MEMORY_DRIFT_MIN_MIB}" "${DRIFT_BASELINE_SOURCE}")
+# First/last K post-warm-up medians: FAIL above both limits or when not evaluable
+# (see memory_drift_analysis in soak_test_lib.sh).
+if [[ "${METRICS_SOURCE}" == "docker" ]]; then
+  drift_findings=$(memory_drift_analysis "${METRICS_FILE}" "${MEMORY_DRIFT_PCT}" "${MEMORY_DRIFT_MIN_MIB}" "${MEMORY_WINDOW_SAMPLES}")
+  add_findings "${drift_findings}"
+  if [[ -n "$(memory_drift_baseline_ts "${METRICS_FILE}")" ]]; then DRIFT_BASELINE_SOURCE="post-warm-up"; fi
+  if ! grep -q $'^FAIL\tMemory drift not evaluated' <<< "${drift_findings}"; then DRIFT_EVALUATED=true; fi
+else
+  WARNINGS+=("Memory drift and restart checks not evaluated (SOAK_METRICS_SOURCE=none)")
 fi
 
 # --- 4. Log storm detection ---
@@ -367,30 +393,13 @@ if command -v docker >/dev/null 2>&1; then
 fi
 
 # --- 5. Container restart detection ---
-if command -v docker >/dev/null 2>&1; then
-  FINAL_RESTARTS=$(get_restart_counts)
-  while IFS= read -r entry; do
-    if [[ -z "${entry}" ]]; then continue; fi
-    name=$(echo "${entry}" | cut -d: -f1)
-    final_count=$(echo "${entry}" | cut -d: -f2)
-    baseline_count=0
-    while IFS= read -r bl; do
-      bl_name=$(echo "${bl}" | cut -d: -f1)
-      if [[ "${bl_name}" == "${name}" ]]; then
-        baseline_count=$(echo "${bl}" | cut -d: -f2)
-        break
-      fi
-    done <<< "${BASELINE_RESTARTS}"
-    if [[ ${final_count} -gt ${baseline_count} ]]; then
-      FAILURES+=("Container ${name} restarted during soak (${baseline_count} -> ${final_count})")
-    fi
-  done <<< "${FINAL_RESTARTS}"
+# FAIL on restart-count growth or disappearance (restart_findings in the lib).
+if [[ "${METRICS_SOURCE}" == "docker" ]]; then
+  FINAL_RESTARTS=$(get_restart_counts || true)
+  add_findings "$(restart_findings "${BASELINE_RESTARTS}" "${FINAL_RESTARTS}")"
 fi
 
-# ---------------------------------------------------------------------------
 # Results
-# ---------------------------------------------------------------------------
-PASS_COUNT=0
 FAIL_COUNT=${#FAILURES[@]}
 WARN_COUNT=${#WARNINGS[@]}
 
@@ -402,6 +411,9 @@ WARN_COUNT=${#WARNINGS[@]}
   echo "  \"batches\": ${BATCH},"
   echo "  \"total_requests\": ${TOTAL_REQUESTS},"
   echo "  \"error_requests\": ${ERROR_REQUESTS},"
+  echo "  \"memory_drift_evaluated\": ${DRIFT_EVALUATED},"
+  echo "  \"memory_window_samples\": ${MEMORY_WINDOW_SAMPLES},"
+  echo "  \"memory_baseline_source\": \"${DRIFT_BASELINE_SOURCE}\","
   echo "  \"pass\": $(( FAIL_COUNT == 0 ? 1 : 0 )),"
   echo "  \"failures\": ["
   for i in "${!FAILURES[@]}"; do
@@ -424,9 +436,7 @@ WARN_COUNT=${#WARNINGS[@]}
   echo "}"
 } > "${RESULTS_FILE}"
 
-# ---------------------------------------------------------------------------
 # Summary
-# ---------------------------------------------------------------------------
 echo ""
 echo "============================================"
 echo "  Soak Test Results: ${SOAK_ID}"

@@ -38,13 +38,12 @@ is still alive — see migration story below.
 ### Quick example
 
 ```tsx
-import { type ColumnDef } from "@tanstack/react-table";
-import { DataTable } from "@/components/primitives/DataTable";
+import { DataTable, type DataTableColumn } from "@/components/primitives/DataTable";
 import { EmptyState } from "@/components/ui/EmptyState";
 
 interface JobRow { id: string; agent: string; decision: "allow" | "deny"; }
 
-const columns: ColumnDef<JobRow, unknown>[] = [
+const columns: DataTableColumn<JobRow>[] = [
   { accessorKey: "agent", header: "Agent", enableSorting: true },
   { accessorKey: "id", header: "Job ID" },
 ];
@@ -90,11 +89,13 @@ the primitive does not stretch to fill the page; it owns its own scroll.
 
 ### Sort
 
-Client-side via TanStack `getSortedRowModel`. Toggle order is
+Client-side via TanStack `createSortedRowModel()` and the stock `sortFns`,
+both registered in DataTable's module-level `tableFeatures`. Toggle order is
 **asc → desc → unsorted** on repeated header clicks. Headers expose
 `aria-sort`, are keyboard-focusable when sortable, and respond to Enter or
 Space. The default sorting function places `undefined` at the end ascending
-and the beginning descending — override via `columnDef.sortingFn` /
+and the beginning descending — override via `columnDef.sortFn` (a comparator
+function or a registered stock name such as `text` or `alphanumeric`) /
 `columnDef.sortUndefined` when this is wrong for your data.
 
 For server-side sort + paging (e.g. an admin audit list with a backend
@@ -118,7 +119,7 @@ moved.
 
 When migrating a page from the legacy primitive to the new one:
 
-1. Replace the `Column<T>[]` shape with TanStack `ColumnDef<T, unknown>[]`.
+1. Replace the `Column<T>[]` shape with `DataTableColumn<T>[]` (exported from `DataTable`).
 2. Move sort state out of the parent (the new primitive owns it). If the
    page also pages server-side, keep `LegacyDataTable` for now.
 3. Replace `keyExtractor` with `accessorKey` / `id` on each column.

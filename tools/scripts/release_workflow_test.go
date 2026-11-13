@@ -780,11 +780,39 @@ func checkFinalStageUpgradesAlpine(dockerfile string) error {
 		return nil
 	}
 	for _, instruction := range instructions[last+1:] {
-		if strings.HasPrefix(strings.ToUpper(instruction), "RUN ") && strings.Contains(instruction, "apk upgrade --no-cache") {
+		if strings.HasPrefix(strings.ToUpper(instruction), "RUN ") && runExecutesApkUpgrade(instruction[len("RUN "):]) {
 			return nil
 		}
 	}
 	return fmt.Errorf("final stage %s does not run `apk upgrade --no-cache`", base)
+}
+
+var (
+	quotedShellText = regexp.MustCompile(`'[^']*'|"[^"]*"`)
+	shellComment    = regexp.MustCompile(`(^|\s)#.*$`)
+	shellCommandSep = regexp.MustCompile(`&&|[;|&]`)
+)
+
+// runExecutesApkUpgrade reports whether the shell form of a RUN instruction
+// (continuation lines already joined) runs `apk upgrade --no-cache` as a
+// command that cannot be skipped. The text does not count when it sits in a
+// shell comment or in a quoted argument such as `echo 'apk upgrade --no-cache'`.
+// An `||` list can skip the command (`true || apk upgrade`) or swallow its
+// failure (`apk upgrade || true`), so any `||` fails closed, as do exec-form
+// and heredoc RUNs, which are not recognised.
+func runExecutesApkUpgrade(script string) bool {
+	script = quotedShellText.ReplaceAllString(script, "Q")
+	script = shellComment.ReplaceAllString(script, "")
+	if strings.Contains(script, "||") {
+		return false
+	}
+	for _, command := range shellCommandSep.Split(script, -1) {
+		words := strings.Fields(command)
+		if len(words) >= 3 && words[0] == "apk" && words[1] == "upgrade" && slices.Contains(words[2:], "--no-cache") {
+			return true
+		}
+	}
+	return false
 }
 
 func TestReleaseFinalStageUpgradeFixtures(t *testing.T) {
@@ -810,6 +838,45 @@ func TestReleaseFinalStageUpgradeFixtures(t *testing.T) {
 			dockerfile: "FROM alpine:3.24\n# RUN apk upgrade --no-cache && apk add --no-cache ca-certificates\n" +
 				"RUN apk add --no-cache ca-certificates\n",
 			wantErr: true,
+		},
+		{
+			name:       "upgrade only in a trailing shell comment",
+			dockerfile: "FROM alpine:3.24\nRUN apk add --no-cache ca-certificates # apk upgrade --no-cache\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade only as an echo argument",
+			dockerfile: "FROM alpine:3.24\nRUN echo 'apk upgrade --no-cache'\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade only in a double-quoted argument",
+			dockerfile: "FROM alpine:3.24\nRUN apk add --no-cache ca-certificates && echo \"apk upgrade --no-cache\"\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade after a continued line that opens a comment",
+			dockerfile: "FROM alpine:3.24\nRUN apk add --no-cache ca-certificates # then \\\n    && apk upgrade --no-cache\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade skipped by a short-circuit or list",
+			dockerfile: "FROM alpine:3.24\nRUN true || apk upgrade --no-cache\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade behind a failing and list that an or list rescues",
+			dockerfile: "FROM alpine:3.24\nRUN false && apk upgrade --no-cache || true\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade failure swallowed by an or list",
+			dockerfile: "FROM alpine:3.24\nRUN apk upgrade --no-cache || true\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade chained after another command",
+			dockerfile: "FROM alpine:3.24\nRUN apk add --no-cache ca-certificates && apk upgrade --no-cache\n",
 		},
 		{
 			name:       "root Dockerfile style",

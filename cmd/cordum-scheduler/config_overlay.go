@@ -312,6 +312,11 @@ func reloadFailModes(ctx context.Context, svc *configsvc.Service, engine *schedu
 		return
 	}
 	schedulerCfg, ok := doc.Data["scheduler"].(map[string]any)
+	if r := engine.FailModeResolver(); r != nil {
+		r.SetSystemInputScope(schedulerCfg["input_fail_open_scope"])
+		rules, _ := schedulerCfg["input_fail_open_scope"].([]any)
+		slog.Info("scheduler input fail-open scope updated", "configured_rules", len(rules), "trigger", trigger)
+	}
 	if !ok {
 		return
 	}
