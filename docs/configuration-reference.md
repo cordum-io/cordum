@@ -1100,7 +1100,7 @@ that authority. Tokenless JobRequest traffic is rejected in enforce mode.
 | `SAFETY_POLICY_MAX_BYTES` | — | Max policy file size |
 | `SAFETY_KERNEL_TLS_CERT` | — | TLS server certificate |
 | `SAFETY_KERNEL_TLS_KEY` | — | TLS server private key |
-| `SAFETY_KERNEL_TLS_CA` | — | Client TLS CA (for mTLS) |
+| `SAFETY_KERNEL_TLS_CA` | — | CA bundle the scheduler and gateway use to verify the Safety Kernel's TLS server certificate |
 | `SAFETY_KERNEL_TLS_REQUIRED` | — | Require TLS for kernel connections |
 | `SAFETY_KERNEL_INSECURE` | — | Skip TLS verification (dev only) |
 | `SAFETY_DECISION_CACHE_TTL` | — | Decision cache TTL (e.g., `5s`, `250ms`) |

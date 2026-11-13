@@ -13,7 +13,8 @@ import (
 // TestSubmitJobGRPCBindsClientAgentID pins gRPC SubmitJob to the HTTP rule:
 // a client labels.agent_id must equal the agent linked to the authenticated
 // principal in the request tenant, or the submit is refused before any
-// policy check. The request's own principal_id never makes a label valid.
+// policy check. The request's own principal_id never makes a label valid,
+// and with the label omitted it never yields an inferred agent.
 func TestSubmitJobGRPCBindsClientAgentID(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -31,6 +32,8 @@ func TestSubmitJobGRPCBindsClientAgentID(t *testing.T) {
 		{name: "unlinked_no_label", wantCode: codes.OK},
 		{name: "anonymous_request_principal_label", caller: "anonymous", linkTenant: "default", label: "agent-source", wantCode: codes.PermissionDenied},
 		{name: "keyed_request_principal_label", caller: "keyed", linkTenant: "default", label: "agent-source", wantCode: codes.PermissionDenied},
+		{name: "anonymous_request_principal_no_label", caller: "anonymous", linkTenant: "default", wantCode: codes.OK},
+		{name: "keyed_request_principal_no_label", caller: "keyed", linkTenant: "default", wantCode: codes.OK},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

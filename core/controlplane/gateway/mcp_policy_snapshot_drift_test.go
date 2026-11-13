@@ -8,8 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/mcp"
+	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -190,4 +192,244 @@ func TestEdgeMintPolicySnapshotDrift_BlankSnapshotsKeepTodaysOutcome(t *testing.
 			})
 		}
 	}
+}
+
+// task-fbe79532: when the registry gate's Edge mint fails after the
+// correlation record was enqueued, the record must not stay PENDING and the
+// invocation event must not report approval_status=required for it.
+
+// mgAudit is the invocation auditor the MCP server installs per tools/call,
+// wired to a recording sink.
+type mgAudit struct {
+	sink    *rpaAuditSink
+	auditor mcp.ToolInvocationAuditor
+}
+
+func newMGAudit() *mgAudit {
+	sink := &rpaAuditSink{}
+	return &mgAudit{sink: sink, auditor: mcp.NewToolInvocationAuditor(sink, nil)}
+}
+
+func (a *mgAudit) start(ctx context.Context) (context.Context, *mcp.InvocationHandle) {
+	return a.auditor.StartInbound(ctx, holdAgent, holdTenant, holdTool, holdArgs)
+}
+
+// finish emits the call's mcp.tool_invocation event and returns it.
+func (a *mgAudit) finish(t *testing.T, handle *mcp.InvocationHandle, result *mcp.ToolCallResult, err error) audit.SIEMEvent {
+	t.Helper()
+	a.auditor.FinishInbound(handle, result, err)
+	events := a.sink.rpaInvocations(holdTool)
+	if len(events) != 1 {
+		t.Fatalf("invocation events = %d; want 1", len(events))
+	}
+	return events[0]
+}
+
+func mgRecords(t *testing.T, h *holdHarness, status model.ApprovalStatus) []*MCPApprovalRecord {
+	t.Helper()
+	recs, _, err := h.gate.store.ListByStatus(h.ctx, string(status), 0, 50)
+	if err != nil {
+		t.Fatalf("ListByStatus(%s): %v", status, err)
+	}
+	return recs
+}
+
+func mgRegistryDeps(h *holdHarness) mcp.ToolCallDeps {
+	return h.pgPolicyDeps(pb.DecisionType_DECISION_TYPE_ALLOW, pgGateUpstream{gate: h.gate, args: holdArgs})
+}
+
+// cancelOnMintStore cancels the call's context mid-mint, as a client that
+// hangs up while the Edge store is slow does.
+type cancelOnMintStore struct {
+	edge.Store
+	cancel context.CancelFunc
+}
+
+func (s *cancelOnMintStore) EnqueueApproval(ctx context.Context, _ edge.EdgeApprovalRequest) (*edge.EdgeApproval, error) {
+	s.cancel()
+	return nil, ctx.Err()
+}
+
+func TestRegistryGateMintError_WithdrawsCorrelationRecord(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		wantErr error
+		arm     func(h *holdHarness, cancel context.CancelFunc) mcp.ToolCallDeps
+	}{
+		{"policy_snapshot_changed", mcp.ErrPolicySnapshotChanged, func(h *holdHarness, _ context.CancelFunc) mcp.ToolCallDeps {
+			deps, _ := driftPolicyDeps(h, "registry_dual_write", &driftSnapshot{stamp: "policy-v7", mint: "policy-v8"})
+			return deps
+		}},
+		{"edge_store_error", mcp.ErrApprovalStoreUnavailable, func(h *holdHarness, _ context.CancelFunc) mcp.ToolCallDeps {
+			down := &pgEdgeStore{Store: h.edgeStore}
+			down.failMint.Store(true)
+			h.gate.edgeStore = down
+			return mgRegistryDeps(h)
+		}},
+		// The evaluator reports the cancellation itself when it cannot emit its failed
+		// event, so the error is not the gate's: this row pins the record state.
+		{"call_canceled_mid_mint", context.Canceled, func(h *holdHarness, cancel context.CancelFunc) mcp.ToolCallDeps {
+			h.gate.edgeStore = &cancelOnMintStore{Store: h.edgeStore, cancel: cancel}
+			return mgRegistryDeps(h)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := newHoldHarness(t, "policy-v7", 0)
+			callCtx, cancel := context.WithCancel(h.ctx)
+			defer cancel()
+			deps := tc.arm(h, cancel)
+			call := seedUnpinnedCall(t, h, "sess_mint_err", "exec_mint_err")
+			a := newMGAudit()
+			ctx, handle := a.start(call.ctx(callCtx))
+			result, err := mcp.InvokeToolWithPolicy(ctx, deps, mcp.ToolCallParams{Name: holdTool, Arguments: holdArgs}, holdServer)
+			event := a.finish(t, handle, result, err)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("error = %v; want %v", err, tc.wantErr)
+			}
+			if result != nil {
+				t.Fatalf("result = %+v; the upstream must not execute", result)
+			}
+			if n := pgApprovalCount(t, h.edgeStore, holdTenant); n != 0 {
+				t.Fatalf("Edge approvals minted = %d; want 0", n)
+			}
+			pending, expired := mgRecords(t, h, model.ApprovalStatusPending), mgRecords(t, h, model.ApprovalStatusExpired)
+			if len(pending) != 0 || len(expired) != 1 {
+				t.Errorf("legacy records: %d pending, %d expired; want 0 pending, 1 withdrawn (expired)", len(pending), len(expired))
+			}
+			if got := event.Extra["approval_status"]; got == "required" {
+				t.Errorf("approval_status = %q; the failed mint must not report required", got)
+			}
+			for _, rec := range append(pending, expired...) {
+				if got := event.Extra["approval_id"]; got == rec.ID {
+					t.Errorf("approval_id = %q; it names the orphaned correlation record", got)
+				}
+			}
+		})
+	}
+	t.Run("gate_off_unchanged", func(t *testing.T) {
+		t.Parallel()
+		h := newHoldHarness(t, "policy-v7", 0)
+		h.gate.edgeStore = nil // gate off: the legacy record is the resume authority
+		a := newMGAudit()
+		ctx, handle := a.start(holdCall{tenant: holdTenant, principal: holdMinter, agent: holdAgent}.ctx(h.ctx))
+		required, err := h.gate.Check(ctx, mcp.Tool{Name: holdTool, RequiresApproval: true}, holdArgs)
+		pending := mgRecords(t, h, model.ApprovalStatusPending)
+		if err != nil || required == nil || len(pending) != 1 {
+			t.Fatalf("Check = %+v, %v with %d pending records; want ApprovalRequired and 1 pending", required, err, len(pending))
+		}
+		if required.ApprovalID != pending[0].ID || required.ApprovalRef != pending[0].ID || required.RetryHint != mcp.RetryHintSameArgs {
+			t.Errorf("ApprovalRequired = %+v; want the pending record %q and retry_with_same_args", required, pending[0].ID)
+		}
+		// A nil error: the ApprovalRequired branch of the auditor stamps
+		// "required" itself, so only the gate's own mark can show here.
+		event := a.finish(t, handle, nil, nil)
+		if event.Extra["approval_status"] != "required" || event.Extra["approval_id"] != pending[0].ID {
+			t.Errorf("event approval_status=%q approval_id=%q; want required and %q",
+				event.Extra["approval_status"], event.Extra["approval_id"], pending[0].ID)
+		}
+	})
+	t.Run("edge_mint_success_keeps_mark", func(t *testing.T) {
+		t.Parallel()
+		h := newHoldHarness(t, "policy-v7", 0)
+		deps := mgRegistryDeps(h)
+		call := seedUnpinnedCall(t, h, "sess_mint_ok", "exec_mint_ok")
+		a := newMGAudit()
+		ctx, handle := a.start(call.ctx(h.ctx))
+		_, err := mcp.InvokeToolWithPolicy(ctx, deps, mcp.ToolCallParams{Name: holdTool, Arguments: holdArgs}, holdServer)
+		var required *mcp.ApprovalRequired
+		pending := mgRecords(t, h, model.ApprovalStatusPending)
+		if !errors.As(err, &required) || required.RetryHint != mcp.RetryHintApprovalRef || len(pending) != 1 {
+			t.Fatalf("mint = %v with %d pending records; want an Edge-ref ApprovalRequired and 1 correlation record", err, len(pending))
+		}
+		if n := pgApprovalCount(t, h.edgeStore, holdTenant); n != 1 {
+			t.Fatalf("Edge approvals = %d; want 1", n)
+		}
+		event := a.finish(t, handle, nil, nil) // nil error: only the gate's own mark can show
+		if event.Extra["approval_status"] != "required" || event.Extra["approval_id"] != pending[0].ID {
+			t.Errorf("event approval_status=%q approval_id=%q; want required and %q",
+				event.Extra["approval_status"], event.Extra["approval_id"], pending[0].ID)
+		}
+	})
+}
+
+func TestMCPApprovalStore_WithdrawPending(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	newStore := func(t *testing.T) (*MCPApprovalStore, *[]audit.SIEMEvent) {
+		t.Helper()
+		var events []audit.SIEMEvent
+		return newTestMCPStore(t).WithAuditHook(func(e audit.SIEMEvent) { events = append(events, e) }), &events
+	}
+	t.Run("pending_expires_now", func(t *testing.T) {
+		t.Parallel()
+		s, events := newStore(t)
+		rec, err := s.EnqueueMCPApproval(ctx, testReq())
+		if err != nil {
+			t.Fatalf("enqueue: %v", err)
+		}
+		now := time.Now()
+		if rec.ExpiresAt <= now.UnixMicro() {
+			t.Fatalf("record deadline %d is not in the future of %d", rec.ExpiresAt, now.UnixMicro())
+		}
+		ttlBefore := s.client.PTTL(ctx, mcpApprovalKey(rec.ID)).Val()
+		if !s.WithdrawPending(ctx, rec.ID, now) {
+			t.Fatal("WithdrawPending = false; want a PENDING record withdrawn before its deadline")
+		}
+		got, err := s.Get(ctx, rec.ID)
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		if got.Status != model.ApprovalStatusExpired || got.Decision != model.ApprovalDecisionExpire || got.ResolvedAt != now.UnixMicro() {
+			t.Errorf("record = status %q decision %q resolved_at %d; want expired, expire, %d", got.Status, got.Decision, got.ResolvedAt, now.UnixMicro())
+		}
+		idx := mcpApprovalIndexKey(rec.Tenant, rec.AgentID, rec.ToolName, rec.ArgsHash)
+		if s.client.SIsMember(ctx, idx, rec.ID).Val() {
+			t.Error("tuple index still lists the withdrawn record")
+		}
+		if ttl := s.client.PTTL(ctx, mcpApprovalKey(rec.ID)).Val(); ttl <= 0 || ttl > ttlBefore {
+			t.Errorf("record TTL = %v after the withdraw, %v before; want it preserved", ttl, ttlBefore)
+		}
+		if n := len(*events); n != 2 || (*events)[1].Extra["outcome"] != "expired" || (*events)[1].Extra["approval_id"] != rec.ID {
+			t.Errorf("audit events = %d, last %+v; want the enqueue, then one expired event for %s", n, (*events)[n-1].Extra, rec.ID)
+		}
+	})
+	t.Run("non_pending_untouched", func(t *testing.T) {
+		t.Parallel()
+		s, events := newStore(t)
+		rec, err := s.EnqueueMCPApproval(ctx, testReq())
+		if err != nil {
+			t.Fatalf("enqueue: %v", err)
+		}
+		if _, err := s.Resolve(ctx, rec.ID, model.ApprovalDecisionApprove, "admin-1", "ok"); err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		before := s.client.Get(ctx, mcpApprovalKey(rec.ID)).Val()
+		eventsBefore := len(*events)
+		if s.WithdrawPending(ctx, rec.ID, time.Now()) {
+			t.Error("WithdrawPending = true for an APPROVED record")
+		}
+		if after := s.client.Get(ctx, mcpApprovalKey(rec.ID)).Val(); after != before {
+			t.Errorf("approved record changed:\nbefore %s\nafter  %s", before, after)
+		}
+		if len(*events) != eventsBefore {
+			t.Errorf("a refused withdraw emitted %d audit events", len(*events)-eventsBefore)
+		}
+	})
+	t.Run("blank_id_and_nil_store", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newStore(t)
+		var nilStore *MCPApprovalStore
+		for name, store := range map[string]*MCPApprovalStore{"nil store": nilStore, "nil client": {}} {
+			if store.WithdrawPending(ctx, "id", time.Now()) {
+				t.Errorf("%s: WithdrawPending = true", name)
+			}
+		}
+		for _, id := range []string{"", " \t"} {
+			if s.WithdrawPending(ctx, id, time.Now()) {
+				t.Errorf("WithdrawPending(%q) = true", id)
+			}
+		}
+	})
 }

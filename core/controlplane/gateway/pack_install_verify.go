@@ -160,9 +160,17 @@ func resolveGatewayPackStrict(ctx context.Context, client redis.UniversalClient)
 	}
 	val, err := client.Get(ctx, gatewayStrictRedisKey).Result()
 	strict := false
-	if err == nil {
+	switch {
+	case err == nil:
 		lower := strings.ToLower(strings.TrimSpace(val))
 		strict = lower == "1" || lower == "true" || lower == "yes" || lower == "on"
+	case errors.Is(err, redis.Nil):
+		// The key is unset: the default is a real answer, so it is cached.
+	default:
+		// A failed read is not an answer. Return the default for this call
+		// only; caching it would pin a transient error for the whole TTL,
+		// for every caller, after Redis has recovered.
+		return false
 	}
 	packStrictFlag.mu.Lock()
 	packStrictFlag.value = strict

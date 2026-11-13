@@ -75,9 +75,12 @@ type SaturationResult struct {
 	Reason    string `json:"reason"`
 }
 
+// resultsIndent is WriteResults' indent; LoadWorkload sizes recorded configurations with it.
+const resultsIndent = "  "
+
 // WriteResults releases no bytes unless both schema and semantic checks pass.
 func WriteResults(r Results) ([]byte, error) {
-	data, err := json.MarshalIndent(r, "", "  ")
+	data, err := json.MarshalIndent(r, "", resultsIndent)
 	if err != nil {
 		return nil, fmt.Errorf("results: encode: %w", err)
 	}
