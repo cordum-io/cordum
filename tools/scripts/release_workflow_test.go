@@ -555,8 +555,35 @@ func checkRecordJob(wf releaseWorkflow) []string {
 
 func allReleaseViolations(wf releaseWorkflow) []string {
 	var out []string
-	for _, check := range []func(releaseWorkflow) []string{checkImageJobs, checkPublishGate, checkDryRunIsolation, checkJobGraph, checkRecordJob} {
+	for _, check := range []func(releaseWorkflow) []string{checkImageJobs, checkPublishGate, checkDryRunIsolation, checkJobGraph, checkRecordJob, checkTrivyCoverageReason} {
 		out = append(out, check(wf)...)
+	}
+	return out
+}
+
+// Keep the record's coverage claim bound to the SARIF gate described above
+// checkTrivyStep. Any change to the claim or these inputs needs a joint review.
+func checkTrivyCoverageReason(wf releaseWorkflow) []string {
+	const want = "The Trivy gate fails on fixed OS-package findings at any severity " +
+		"(SARIF without limit-severities-for-sarif); unfixed findings are ignored " +
+		"(ignore-unfixed), and application dependencies such as Go modules and npm " +
+		"packages are not scanned (vuln-type os)."
+	var out []string
+	if wf.Env["QUAL_REASON_TRIVY_OS_ONLY"] != want {
+		out = append(out, violation("TRIVY_COVERAGE", "env", nil, "QUAL_REASON_TRIVY_OS_ONLY must describe fixed OS findings at any severity, not a CRITICAL-only gate"))
+	}
+	for _, name := range releaseImageJobs {
+		for i := range wf.Jobs[name].Steps {
+			step := &wf.Jobs[name].Steps[i]
+			if !strings.HasPrefix(step.Uses, trivyAction) {
+				continue
+			}
+			for key, value := range map[string]string{"format": "sarif", "ignore-unfixed": "true", "vuln-type": "os"} {
+				if step.With[key].Value != value {
+					out = append(out, violation("TRIVY_COVERAGE", name, step, "%s must be %q to match the coverage reason", key, value))
+				}
+			}
+		}
 	}
 	return out
 }
@@ -591,6 +618,11 @@ func TestReleaseDryRunCannotReachRealServices(t *testing.T) {
 func TestReleaseQualificationRecordCoversEveryImage(t *testing.T) {
 	_, wf := loadReleaseWorkflow(t)
 	assertNoReleaseViolations(t, checkRecordJob(wf))
+}
+
+func TestReleaseTrivyCoverageReasonMatchesGate(t *testing.T) {
+	_, wf := loadReleaseWorkflow(t)
+	assertNoReleaseViolations(t, checkTrivyCoverageReason(wf))
 }
 
 func TestReleaseConditionAndCommandHelpers(t *testing.T) {
@@ -707,6 +739,18 @@ func TestReleaseWorkflowMutationsAreCaught(t *testing.T) {
 		}},
 		{"Trivy scans the :verify rebuild (dashboard)", "GATE_NOT_ON_DIGEST", func(t *testing.T, wf *releaseWorkflow) {
 			mutableStep(t, wf, "dashboard", "trivy").With["image-ref"] = scalar("cordum/dashboard:verify")
+		}},
+		{"Trivy reason claims CRITICAL only", "TRIVY_COVERAGE", func(t *testing.T, wf *releaseWorkflow) {
+			wf.Env["QUAL_REASON_TRIVY_OS_ONLY"] = "The Trivy gate fails only on CRITICAL findings; lower severities do not fail it."
+		}},
+		{"Trivy no longer uses SARIF", "TRIVY_COVERAGE", func(t *testing.T, wf *releaseWorkflow) {
+			mutableStep(t, wf, "dashboard", "trivy").With["format"] = scalar("table")
+		}},
+		{"Trivy includes unfixed findings", "TRIVY_COVERAGE", func(t *testing.T, wf *releaseWorkflow) {
+			mutableStep(t, wf, "dashboard", "trivy").With["ignore-unfixed"] = scalar("false")
+		}},
+		{"Trivy includes application dependencies", "TRIVY_COVERAGE", func(t *testing.T, wf *releaseWorkflow) {
+			mutableStep(t, wf, "dashboard", "trivy").With["vuln-type"] = scalar("os,library")
 		}},
 		{"mcp dropped from EXPECTED_IMAGES", "RECORD_JOB", func(t *testing.T, wf *releaseWorkflow) {
 			env := wf.Jobs[recordJob].Env
