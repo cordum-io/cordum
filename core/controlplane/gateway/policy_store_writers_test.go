@@ -580,6 +580,27 @@ func TestLegacyPolicyBundleMigration_EnforceLeavesUnverifiedBundlesInPlace(t *te
 		{storeWriterCase{name: "raw string bundle", production: true}, func(*testing.T) map[string]any {
 			return map[string]any{"legacy/raw": storeWriterAllow}
 		}},
+		{storeWriterCase{name: "signature fields read as text only", production: true}, func(t *testing.T) map[string]any {
+			// The store source reads every _signature field as text only, so a
+			// key id of any other type names no trusted key.
+			pub, key, err := ed25519.GenerateKey(rand.Reader)
+			require.NoError(t, err)
+			t.Setenv(policysign.EnvPublicKeyPrefix+"7", base64.StdEncoding.EncodeToString(pub))
+			sig, err := policysign.Sign(key, "7", []byte(storeWriterAllow))
+			require.NoError(t, err)
+			signature := signatureToMap(sig)
+			signature["key_id"] = 7
+			return map[string]any{"legacy/keyid": map[string]any{"content": storeWriterAllow, "enabled": true, policyBundleSignatureKey: signature}}
+		}},
+		{storeWriterCase{name: "unsigned text in the policy field", production: true}, func(*testing.T) map[string]any {
+			return map[string]any{"legacy/policy": map[string]any{"policy": storeWriterAllow, "enabled": true}}
+		}},
+		{storeWriterCase{name: "unsigned text in the data field", production: true}, func(*testing.T) map[string]any {
+			return map[string]any{"legacy/data": map[string]any{"data": storeWriterAllow, "enabled": true}}
+		}},
+		{storeWriterCase{name: "unsigned policy text after content that is not text", production: true}, func(*testing.T) map[string]any {
+			return map[string]any{"legacy/mixed": map[string]any{"content": 5, "policy": storeWriterAllow, "enabled": true}}
+		}},
 		{storeWriterCase{name: "development with an unrecognised mode", strict: "bogus"}, func(*testing.T) map[string]any {
 			return map[string]any{"legacy/unsigned": unsigned(true)}
 		}},

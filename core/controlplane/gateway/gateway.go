@@ -2088,7 +2088,8 @@ func countUnverifiedLegacyPolicyBundles(legacyBundles map[string]any) int {
 
 // legacyPolicyBundleVerifies mirrors the store source's content selection: a
 // string bundle is its own content, a map bundle uses the first string among
-// content, policy and data, and empty content needs no signature.
+// content, policy and data, and empty content needs no signature. The
+// signature is read as the store source reads it (storeSourceSignature).
 func legacyPolicyBundleVerifies(raw any, trust *policysign.TrustStore) bool {
 	content, _ := raw.(string)
 	var rawSig any
@@ -2104,12 +2105,37 @@ func legacyPolicyBundleVerifies(raw any, trust *policysign.TrustStore) bool {
 	if strings.TrimSpace(content) == "" {
 		return true
 	}
-	sig, ok := signatureFromMap(rawSig)
+	sig, ok := storeSourceSignature(rawSig)
 	if !ok {
 		return false
 	}
 	pub, found := trust.Lookup(sig.KeyID)
 	return found && policysign.Verify(pub, []byte(content), sig) == nil
+}
+
+// storeSourceSignature reads a stored _signature the way the safety kernel's
+// store source does: each field counts only as trimmed text, so a value of
+// any other type reads as empty. Verify refuses an empty algorithm or value,
+// and an empty key id names no trusted key.
+func storeSourceSignature(raw any) (policysign.Signature, bool) {
+	fields, ok := raw.(map[string]any)
+	if !ok || len(fields) == 0 {
+		return policysign.Signature{}, false
+	}
+	text := func(name string) string {
+		value, _ := fields[name].(string)
+		return strings.TrimSpace(value)
+	}
+	sig := policysign.Signature{Algorithm: text("algorithm"), KeyID: text("key_id"), Value: text("value"), Hash: text("hash")}
+	switch n := fields["signed_bytes"].(type) {
+	case int:
+		sig.SignedBytes = n
+	case int64:
+		sig.SignedBytes = int(n)
+	case float64:
+		sig.SignedBytes = int(n)
+	}
+	return sig, true
 }
 
 func deleteSystemDefaultKeyWithRetry(ctx context.Context, svc *configsvc.Service, key string, maxAttempts int) error {
