@@ -166,6 +166,102 @@ func TestCreateAgent_WorkerConflictIsTenantScoped(t *testing.T) {
 	}
 }
 
+func TestCreateAgent_WorkerLookupFailureFailsClosed(t *testing.T) {
+	for _, source := range []string{"tenant_hash", "legacy_fallback"} {
+		t.Run(source, func(t *testing.T) {
+			s, _, _ := newTestGateway(t)
+			enableAgentIdentityEntitlement(t, s)
+			ctx := context.Background()
+			client := s.jobStore.Client() // Also passed to agentIdentityStore by newTestGateway.
+			const workerID = "lookup-failure-worker"
+			keys := [2]string{"agent:worker-links:default", "agent:by-worker:" + workerID}
+			if source == "tenant_hash" {
+				if err := client.Set(ctx, keys[0], "not-a-hash", 0).Err(); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := client.HSet(ctx, keys[1], "not-a-string", "sentinel").Err(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.agentIdentityStore.GetByWorkerIDForTenant(ctx, "default", workerID); err == nil || !strings.Contains(err.Error(), "WRONGTYPE") {
+				t.Fatalf("expected actual WRONGTYPE lookup failure, got %v", err)
+			}
+			before := workerLookupFailureLinkSnapshot(t, client, keys)
+			requireNoWorkerLookupFailureWrites(t, s)
+			req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents",
+				strings.NewReader(`{"agent_id":"lookup-failure-worker","name":"lookup-test","owner":"admin","risk_tier":"low"}`)),
+				&auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin-user"})
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+			s.handleCreateAgent(rr, req)
+			requireNoWorkerLookupFailureWrites(t, s)
+			if after := workerLookupFailureLinkSnapshot(t, client, keys); after != before {
+				t.Error("worker-link keys changed after a failed lookup")
+			}
+			requireStableErrorCode(t, rr, http.StatusInternalServerError, "internal_error")
+			var body codedErrorBody
+			if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if body.Error != "internal error" || strings.Contains(rr.Body.String(), "WRONGTYPE") || strings.Contains(rr.Body.String(), "agent:") {
+				t.Errorf("expected generic error without Redis details, got %s", rr.Body.String())
+			}
+		})
+	}
+}
+
+func workerLookupFailureLinkSnapshot(t *testing.T, client redis.UniversalClient, keys [2]string) [2]string {
+	t.Helper()
+	var snapshot [2]string
+	for i, key := range keys {
+		ctx := context.Background()
+		kind, err := client.Type(ctx, key).Result()
+		if err != nil {
+			t.Fatalf("type %s: %v", key, err)
+		}
+		snapshot[i] = kind
+		switch kind {
+		case "string":
+			value, err := client.Get(ctx, key).Result()
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshot[i] += value
+		case "hash":
+			values, err := client.HGetAll(ctx, key).Result()
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := json.Marshal(values)
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshot[i] += string(encoded)
+		case "none":
+		default:
+			t.Fatalf("unexpected worker-link type %q", kind)
+		}
+	}
+	return snapshot
+}
+
+func requireNoWorkerLookupFailureWrites(t *testing.T, s *server) {
+	t.Helper()
+	agents, _, err := s.agentIdentityStore.List(context.Background(), "default", "", 10, store.AgentIdentityFilter{})
+	if err != nil {
+		t.Fatalf("list identities: %v", err)
+	}
+	if len(agents) != 0 {
+		t.Errorf("lookup failure created %d agent identities", len(agents))
+	}
+	entries, err := s.loadPolicyAudit(context.Background())
+	if err != nil {
+		t.Fatalf("load audit: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("lookup failure created audit entries: %+v", entries)
+	}
+}
+
 func TestGetAgent_WorkerFallbackIsTenantScoped(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	enableAgentIdentityEntitlement(t, s)
