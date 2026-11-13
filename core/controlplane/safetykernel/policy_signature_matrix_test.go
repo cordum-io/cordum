@@ -261,31 +261,45 @@ func TestPolicySignatureSourceInventory(t *testing.T) {
 			}
 		}
 	}
-	packages, err := parser.ParseDir(token.NewFileSet(), ".", func(f os.FileInfo) bool { return !strings.HasSuffix(f.Name(), "_test.go") }, 0)
-	require.NoError(t, err)
-	for _, pkg := range packages {
-		for _, file := range pkg.Files {
-			imports := signatureInventoryImports(t, file)
-			for _, decl := range file.Decls {
-				name := "<package>"
-				if fn, ok := decl.(*ast.FuncDecl); ok {
-					name = fn.Name.Name
-					if fn.Recv != nil {
-						typ := fn.Recv.List[0].Type
-						if ptr, ok := typ.(*ast.StarExpr); ok {
-							typ = ptr.X
-						}
-						receiver, ok := typ.(*ast.Ident)
-						require.True(t, ok, "receiver needs an inventory entry: %s", name)
-						name = receiver.Name + "." + name
+	for _, file := range signatureInventoryFiles(t) {
+		imports := signatureInventoryImports(t, file)
+		for _, decl := range file.Decls {
+			name := "<package>"
+			if fn, ok := decl.(*ast.FuncDecl); ok {
+				name = fn.Name.Name
+				if fn.Recv != nil {
+					typ := fn.Recv.List[0].Type
+					if ptr, ok := typ.(*ast.StarExpr); ok {
+						typ = ptr.X
 					}
+					receiver, ok := typ.(*ast.Ident)
+					require.True(t, ok, "receiver needs an inventory entry: %s", name)
+					name = receiver.Name + "." + name
 				}
-				ast.Inspect(decl, func(n ast.Node) bool { signatureInventoryCall(t, n, name, imports, calls, schemes); return true })
 			}
+			ast.Inspect(decl, func(n ast.Node) bool { signatureInventoryCall(t, n, name, imports, calls, schemes); return true })
 		}
 	}
 	require.Equal(t, wantCalls, calls, "policy parser call inventory")
 	require.Equal(t, wantSchemes, schemes, "policy source scheme inventory")
+}
+
+func signatureInventoryFiles(t *testing.T) []*ast.File {
+	t.Helper()
+	entries, err := os.ReadDir(".")
+	require.NoError(t, err)
+	fset := token.NewFileSet()
+	var files []*ast.File
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, name, nil, 0)
+		require.NoError(t, err, "parse %s", name)
+		files = append(files, file)
+	}
+	return files
 }
 
 func signatureInventoryImports(t *testing.T, file *ast.File) map[string]string {
