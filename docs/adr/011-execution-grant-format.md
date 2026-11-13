@@ -65,6 +65,9 @@ These are normative requirements for the planned implementation:
    `delegation_chain`, which preserves root-to-leaf order. No unknown fields.
    The schema forbids maps, float/double, Any/Struct/Value, groups, proto3
    optional and imported message types (including CAP and well-known types).
+   protobuf-go marshals oneof members after a message's ordinary fields, so
+   every oneof member is numbered higher than every ordinary field in its
+   message; otherwise the reference encoder's output breaks ascending order.
    Required message/oneof presence is validated; an empty message cannot stand
    in for missing required content. Identifiers are printable ASCII and compared
    byte-exactly: no trimming, case folding or default identity fallback.
@@ -91,7 +94,11 @@ These are normative requirements for the planned implementation:
 6. Action commitment is `SHA-256(ASCII("CORDUM-EXECUTION-GRANT-ACTION-V1") ||
    0x00 || canonical_action_bytes)`. This fixes the commitment contract;
    M2A-08 will implement it and its approval-record field. The action sub-message
-   uses the same canonical profile as the grant.
+   uses the same canonical profile as the grant. The commitment does not cover
+   `schema_version`, so the approval record also stores the `schema_version`
+   the action was approved under, and an approval matches only when both the
+   commitment and that version are equal. The same action bytes under a later
+   schema version need a new approval.
 7. The envelope is `SignedExecutionGrant { bytes grant = 1; string key_id = 2;
    string algorithm = 3; bytes signature = 4; }`. All four fields are required;
    `grant` is `B`, algorithm is exactly `ed25519`, and signature is exactly 64

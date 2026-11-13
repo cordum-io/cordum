@@ -28,6 +28,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Failed jobs report one of 10 documented codes (`invalid_input`, `mcp_unavailable`, `mcp_protocol_error`, `mcp_call_failed`, `mcp_approval_rejected`, `mcp_approval_expired`, `mcp_approval_not_found`, `mcp_approval_timeout`, `mcp_approval_invalid`, `worker_shutdown`), never server text or the API key.
 - Unsigned agent, so compat CAP profile only. It needs the default `mcp.policy_gate_enabled=false`, because it does not send `_approval_ref`. `demo/cap-mcp-governed/README.md` covers setup.
 
+### Changed
+
+- The eight required checks also run on `merge_group` events, with OpenAPI
+  Validate comparing each group against its base commit. No check's content
+  changed; enabling the merge queue remains a maintainer change to the Main
+  ruleset (task-fd34e921).
+
 ### Security
 
 - Release images move off Alpine 3.21, which alpinelinux.org/releases.json lists
@@ -49,6 +56,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Another tenant's agent registration (`POST /api/v1/agents` with `agent_id`), or its worker-credential issue, rotate or revoke for the same worker or principal ID, can no longer replace or delete a tenant's link, so it no longer changes that tenant's MCP identity binding. This was CodeRabbit's outside-diff finding on #490, and it removes the interim limitation noted in the task-283f2317 entry above.
 - Pre-existing global `agent:by-worker:<worker>` links keep resolving for the tenant that owns the linked agent, and that tenant's next unlink retires them. Nothing writes them any more.
 - Go API: `AgentIdentityStore.GetByWorkerID` is removed (use `GetByWorkerIDForTenant`); `UnlinkWorker` takes the tenant ID; `LinkWorker` rejects unknown or untenanted agents.
+- gRPC `SubmitJob` now binds `labels.agent_id` the same way HTTP job submit does. A client `agent_id` that differs from the agent linked to the principal in the request tenant, that is sent with no link, or whose principal comes from the request's `principal_id` instead of the authenticated identity, is refused with `PermissionDenied` before the policy check. Before this change, the label went unchecked into the policy check and the audit trail. This was CodeRabbit's finding on #537.
 - Slices: task-76c90c6e, task-283f2317.
 
 #### TypeScript SDK — dev-only minimatch advisory GHSA-g3hv-75wg-m249 (2026-11-11, task-f09d31be)
@@ -100,6 +108,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `mcp.policy_gate_enabled=true`, when an identity whose
   `PreapprovedMutatingTools` covers a `RequiresApproval` tool resumes an
   action-gate hold with `_approval_ref`. Authorization is unchanged.
+- MCP audit: an `_approval_ref` resume whose new evaluation allows the call,
+  for example after the session-taint lookup recovers, now records that
+  `approval_ref` on its `mcp.tool.post` or `mcp.tool.failed` event, as a
+  `REQUIRE_HUMAN` resume already did. Authorization is unchanged.
 
 #### core/mcp, core/controlplane/gateway — a preapproved identity's action-gate MCP hold returns a resumable approval ref (2026-11-12, task-06784e6d)
 

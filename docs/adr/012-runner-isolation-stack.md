@@ -263,6 +263,8 @@ Before every run, M3-03 must check the actual service identity/environment:
 - A proven guest task ceiling outside workload control, not host PID inference.
 - Private immutable digest-checked inputs, safe materialization, no writable
   aliases/overlays, and workspace byte/inode quotas covering every writable path.
+- A finite per-run byte budget for workload stdout and stderr, enforced by the
+  trusted collector before output is stored.
 - No workload host/control sockets, leaked descriptors, shared host IPC,
   capabilities, elevated UID or path to production credentials.
 - Default-deny rules on the trusted routed peer, including IPv6 and host-service
