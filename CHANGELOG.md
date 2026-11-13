@@ -38,15 +38,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   qualified one (PR2-02-CLI, task-cc3f03b6). `docker.yml` now builds each
   release image once and pushes it by digest without tags; the smoke check and
   the Trivy OS scan run on that pushed digest, and the run uploads a
-  `qualification-record` artifact. Cosign signs that digest, and the release
-  tags are applied to it, only through `release-qual publish`, and the job
+  `qualification-record` artifact. The Trivy coverage exception records that
+  fixed OS-package findings at any severity fail the gate; unfixed findings
+  are ignored and application dependencies are not scanned. Cosign signs that
+  digest, and the release tags are applied to it, only through
+  `release-qual publish`, and the job
   fails unless every tag resolves to it. If a gate fails on a tag push, the
   untagged, unsigned digest stays in GHCR and Docker Hub. A push to a
   `release-dry-run/**` branch runs the same image and record jobs against
   job-local registries and skips the registry logins, Docker Hub, signing, the
   SARIF upload, issue creation, the published-image smoke and the Helm chart
-  (PR2-02-IMAGES, task-f393ecf3). Release binaries are not in the record yet
-  (PR2-02-BINARIES).
+  (PR2-02-IMAGES, task-f393ecf3). `release.yml` runs inside the `docker.yml`
+  release run, so one run writes one qualification record with the 8 images
+  and 15 Edge binaries (sha256 of the staged bytes). Edge binaries are published
+  only through `release-qual publish` against that record; the record explicitly
+  states that no release-time test or scan runs against the binaries
+  (PR2-02-BINARIES, task-151c9d78).
 
 - License-state behavior contract (`docs/contract/license-behavior.md`): one row per license state and capability class, checked by `TestLicenseBehaviorContract`; a cell not yet tested names the row that will test it.
 - Added the [planned first protected-operation contract](docs/contract/protected-operation.md)
@@ -244,6 +251,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - typedoc, typedoc-plugin-coverage and typedoc-plugin-markdown are removed from the install with pnpm `-` overrides. typedoc 0.28 calls `Minimatch#matchOne`, which 11.x removed. orval 8.31.0 loads typedoc only for its `docs` output, which the dashboard does not configure. Until typedoc supports minimatch 11, enabling that output fails at import. orval stays at 8.31.0.
 
 ### Fixed
+
+- The dashboard image's build stage runs on the build host's platform. Its
+  linux/arm64 image copies the same static dist/ as linux/amd64 instead of
+  running pnpm, tsc and Vite under QEMU emulation, where a release dry run's
+  arm64 Vite build stalled (task-efd2850d).
 
 - `POST /api/v1/agents` fails closed with 500 when the worker-link lookup
   fails, instead of creating an agent identity or link it could not check.
