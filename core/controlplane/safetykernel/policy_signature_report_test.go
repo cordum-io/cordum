@@ -223,7 +223,7 @@ func TestPolicySignatureReport_StartupBoundedWhenRedisStalls(t *testing.T) {
 			if err != nil {
 				return
 			}
-			go func() { <-stop; conn.Close() }()
+			go func() { <-stop; _ = conn.Close() }()
 		}
 	}()
 	// The client's own timeouts exceed the bound, so the test measures the reporter's wait alone.
