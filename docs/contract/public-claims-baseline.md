@@ -61,10 +61,10 @@ site_blog_2() { git -C "$SITE" grep -n -I -i -E "${ASSURANCE[@]}" "$PIN_S" -- si
 | cordum-docs-2 | cordum | remaining docs | 262 | 70 | M0-07-CORE-2 | 113 | 39 | 4 | 113 |
 | site-pages | Cordum-site | src except blog/tests, llms-full, docs-site | 390 | 101 | M0-07-SITE-1 | 71 | 147 | 21 | 191 |
 | site-blog-1 | Cordum-site | numbered and ai-agent-[a-r] blogs | 301 | 57 | M0-07-SITE-2 | 20 | 23 | 2 | 272 |
-| site-blog-2 | Cordum-site | remaining blogs except tests | 376 | 62 | M0-07-SITE-3 | 31 | 44 | 4 | 316 |
+| site-blog-2 | Cordum-site | remaining blogs except tests | 376 | 62 | M0-07-SITE-3 | 28 | 47 | 4 | 316 |
 | total | cordum | cordum-top, cordum-docs-1, cordum-docs-2 | 685 | 133 | M0-07-SITE-3 | 211 | 140 | 66 | 283 |
-| total | Cordum-site | site-pages, site-blog-1, site-blog-2 | 1067 | 220 | M0-07-SITE-3 | 122 | 214 | 27 | 779 |
-| total | all | all six surfaces | 1752 | 353 | M0-07-SITE-3 | 333 | 354 | 93 | 1062 |
+| total | Cordum-site | site-pages, site-blog-1, site-blog-2 | 1067 | 220 | M0-07-SITE-3 | 119 | 217 | 27 | 779 |
+| total | all | all six surfaces | 1752 | 353 | M0-07-SITE-3 | 330 | 357 | 93 | 1062 |
 
 Other root *.md files (CHANGELOG.md, CONTRIBUTING.md and the like) and site test files are outside the epic's surface list.
 

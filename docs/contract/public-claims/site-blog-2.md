@@ -3,7 +3,7 @@
 Repo: Cordum-site. Pin: `fd06b5f131c89c1edd3f004f51ada3340125fb05`.
 Generator: `site_blog_2` in [the method](../public-claims-baseline.md). Owner: M0-07-SITE-3.
 Generic engineering and external-system text is not a Cordum claim. Accurate means no stronger than the scoped entry, not execution proof.
-Counts: 376 hits; accurate 31, overstated 44, unverifiable 4, not-a-claim 316.
+Counts: 376 hits; accurate 28, overstated 47, unverifiable 4, not-a-claim 316.
 
 | File | Entries |
 | --- | --- |
@@ -71,10 +71,10 @@ Counts: 376 hits; accurate 31, overstated 44, unverifiable 4, not-a-claim 316.
 | site/src/app/blog/posts.ts | 122 not-a-claim instr; 320 not-a-claim nav; 321 CLM-130 accurate; 323 CLM-130 accurate; 377 not-a-claim limit; 379 not-a-claim code; 405 not-a-claim ext; 407 not-a-claim code; 447 not-a-claim nav; 531 not-a-claim nav |
 | site/src/app/blog/posts.ts | 771 CLM-110 overstated ev:test; 1314 not-a-claim nav; 1315 not-a-claim nav; 1317 not-a-claim instr; 1322 not-a-claim nav; 1342 not-a-claim nav; 1343 not-a-claim ext; 1345 not-a-claim ext; 1510 not-a-claim nav; 1511 not-a-claim nav |
 | site/src/app/blog/posts.ts | 1513 not-a-claim instr; 1518 not-a-claim nav; 1884 not-a-claim instr; 1954 not-a-claim ext |
-| site/src/app/blog/pre-dispatch-governance-ai-agents/page.tsx | 45 not-a-claim instr; 77 not-a-claim instr; 217 not-a-claim ext; 234 not-a-claim nav; 276 not-a-claim code; 277 not-a-claim code; 281 not-a-claim code; 558 CLM-010 accurate; 668 not-a-claim nav; 696 not-a-claim instr |
+| site/src/app/blog/pre-dispatch-governance-ai-agents/page.tsx | 45 not-a-claim instr; 77 not-a-claim instr; 217 not-a-claim ext; 234 not-a-claim nav; 276 not-a-claim code; 277 not-a-claim code; 281 not-a-claim code; 558 CLM-010 overstated R01 R15; 668 not-a-claim nav; 696 not-a-claim instr |
 | site/src/app/blog/pre-dispatch-governance-ai-agents/page.tsx | 831 not-a-claim instr; 857 not-a-claim limit |
-| site/src/app/blog/pre-dispatch-vs-post-hoc-agent-safety/page.tsx | 59 CLM-010 accurate; 124 not-a-claim code; 370 not-a-claim instr; 383 not-a-claim instr; 396 not-a-claim instr |
-| site/src/app/blog/prompt-injection-vs-out-of-process-governance/page.tsx | 20 not-a-claim code; 54 CLM-010 accurate; 54 CLM-066 accurate; 157 not-a-claim code; 158 not-a-claim code; 165 not-a-claim code; 195 not-a-claim limit |
+| site/src/app/blog/pre-dispatch-vs-post-hoc-agent-safety/page.tsx | 59 CLM-010 overstated R01 R15; 124 not-a-claim code; 370 not-a-claim instr; 383 not-a-claim instr; 396 not-a-claim instr |
+| site/src/app/blog/prompt-injection-vs-out-of-process-governance/page.tsx | 20 not-a-claim code; 54 CLM-010 overstated R01 R15; 54 CLM-066 accurate; 157 not-a-claim code; 158 not-a-claim code; 165 not-a-claim code; 195 not-a-claim limit |
 | site/src/app/blog/temporal-vs-cordum/page.tsx | 317 not-a-claim ext |
 | site/src/app/blog/temporal-vs-langchain/page.tsx | 127 not-a-claim ext; 819 not-a-claim ext |
 | site/src/app/blog/v0-1-0-release/page.tsx | 225 not-a-claim limit |
