@@ -16,6 +16,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Added [failure and partition behavior](docs/contract/failure-behavior.md)
+  (M0-06, task-51b08640): required and current behavior for low-risk,
+  approval-required and protected actions when Redis, NATS, the Safety Kernel,
+  the Gateway as seen from Edge, the approval store, the audit sink, the policy
+  source or the license is unavailable. The contract cites characterization
+  tests and lists unmeasured behavior and gaps with owners. Three new
+  characterization tests accompany it; runtime behavior is unchanged.
+
 - Added the [planned first protected-operation contract](docs/contract/protected-operation.md)
   for Kubernetes manifest apply, with a proposed reference boundary, credential
   inventory and measurable acceptance ideas. Broker/grant enforcement is future
@@ -36,6 +44,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   ruleset (task-fd34e921).
 
 ### Security
+
+#### Scheduler input outage exceptions use named topic scopes (2026-11-13, task-7803f261)
+
+- `scheduler.input_fail_mode=open` admits only topics named in
+  `scheduler.input_fail_open_scope`, a system- or tenant-level list such as
+  `[{"rule":"reports-read","topics":["job.reports.read"]}]`. Topics match exactly;
+  a tenant list replaces the system list, and approval-gate subjects are excluded.
+- Errors after a kernel answer, including a failed decision-record write, requeue
+  the job in both input modes. A kernel decision returned at the check deadline is kept.
+- The `safety.bypass_admit` audit event carries `scope_rule`, and
+  `cordum_scheduler_input_fail_open_total` gains a `scope_rule` label alongside `topic`.
+- The scheduler publishes its audit events on `sys.audit.export`. A gateway with
+  an active exporter and `AUDIT_TRANSPORT=nats` exports events when it consumes that subject.
+- **Upgrade:** deployments using `input_fail_mode=open` must add `input_fail_open_scope`
+  with the topics they class as low risk. Without a scope, open mode requeues every job
+  while the kernel is unavailable.
 
 - Release images move off Alpine 3.21, which alpinelinux.org/releases.json lists
   as end-of-life on 2026-11-01. The control-plane and `demo-quickstart-worker`
@@ -75,6 +99,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `cordum_audit_events_dropped_total{reason}`. The Safety Kernel's shadow sender
   has a discard fallback, and cordum-mcp's NATS audit fallback writes to stderr
   when no SIEM exporter is configured.
+
+- `POST /api/v1/approvals/{job_id}/approve` and `/reject` now return 503 when a
+  store read that their checks depend on fails: the job state, the stored
+  request, the submitter or the workflow run. The job stays in APPROVAL, no
+  approval is recorded and nothing is published. A job with no recorded
+  submitter, or whose workflow run no longer exists, is handled as before
+  (PR1-17, task-a4da0522).
 - MCP approval resume: a call resumed with `_approval_ref` is refused with
   `-32096` `policy_snapshot_changed` when policy was published between the
   approval claim and the call's `mcp.tool.pre` stamp. Nothing runs and the
