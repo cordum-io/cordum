@@ -280,6 +280,11 @@ func (s *server) handlePutPolicyOutputRule(w http.ResponseWriter, r *http.Reques
 		writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, "enabled is required")
 		return
 	}
+	signer, err := resolvePolicyStoreSigner("output rule " + ruleID)
+	if err != nil {
+		writeJSONError(w, http.StatusServiceUnavailable, errorCodePolicySigningRequired, err.Error())
+		return
+	}
 
 	bundles, doc, err := s.loadPolicyBundlesWithDoc(r.Context())
 	if err != nil {
@@ -331,6 +336,10 @@ func (s *server) handlePutPolicyOutputRule(w http.ResponseWriter, r *http.Reques
 			bundle = map[string]any{}
 		}
 		bundle["content"] = string(payload)
+		if err := signPolicyStoreBundle(signer, bundle); err != nil {
+			writeErrorJSON(w, http.StatusInternalServerError, "failed to sign policy bundle")
+			return
+		}
 		bundle["updated_at"] = now
 		bundles[key] = bundle
 		updatedBundleID = key

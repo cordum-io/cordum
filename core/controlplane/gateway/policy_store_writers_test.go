@@ -392,3 +392,108 @@ func TestSignedStoreCheck_KernelRefusesUnsignedVelocityBundle(t *testing.T) {
 	_, err := storeWriterKernelLoad(t, s)
 	require.ErrorIs(t, err, safetykernel.ErrBundleUnsigned)
 }
+
+// storeWriterOutputBundle sits outside secops/, so the community-plan kernel
+// verifies it rather than skipping it by tier limit.
+const storeWriterOutputBundle = "storewriter/output"
+
+// storeWriterSeedOutput stores a bundle holding the output rules, signed by the
+// configured key, or by a throwaway key when none is configured.
+func storeWriterSeedOutput(t *testing.T, s *server) map[string]any {
+	t.Helper()
+	key, keyID, err := policysign.LoadPrivateKeyFromEnv()
+	if err != nil {
+		_, key, err = ed25519.GenerateKey(rand.Reader)
+		require.NoError(t, err)
+		keyID = storeWriterKeyID
+	}
+	sig, err := policysign.Sign(key, keyID, []byte(outputPolicyContent))
+	require.NoError(t, err)
+	storeWriterSeed(t, s, map[string]any{storeWriterOutputBundle: map[string]any{
+		"content": outputPolicyContent, "enabled": true, policyBundleSignatureKey: signatureToMap(sig),
+	}})
+	return storeWriterBundle(t, s, storeWriterOutputBundle)
+}
+
+func storeWriterToggle(t *testing.T, s *server) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/policy/output/rules/out-secret", strings.NewReader(`{"enabled":true}`))
+	req.Header.Set("X-Tenant-ID", "default")
+	req.Header.Set("X-Principal-Role", "admin")
+	req.SetPathValue("id", "out-secret")
+	rec := httptest.NewRecorder()
+	s.handlePutPolicyOutputRule(rec, req)
+	return rec
+}
+
+func storeWriterOutputEnabled(t *testing.T, bundle map[string]any) bool {
+	t.Helper()
+	content, _ := bundle["content"].(string)
+	policy, err := runtimeconfig.ParseSafetyPolicy([]byte(content))
+	require.NoError(t, err)
+	for _, rule := range policy.OutputRules {
+		if rule.ID == "out-secret" {
+			return rule.Enabled != nil && *rule.Enabled
+		}
+	}
+	t.Fatalf("out-secret is not in the stored content")
+	return false
+}
+
+func TestOutputRuleToggle_EnforceResignsRewrittenContent(t *testing.T) {
+	storeWriterEnv(t, true, "")
+	storeWriterKey(t, "trusted")
+	s, _, _ := newTestGateway(t)
+	seeded := storeWriterSeedOutput(t, s)
+	require.NoError(t, storeWriterVerify(t, seeded))
+	require.False(t, storeWriterOutputEnabled(t, seeded))
+
+	rec := storeWriterToggle(t, s)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	stored := storeWriterBundle(t, s, storeWriterOutputBundle)
+	require.True(t, storeWriterOutputEnabled(t, stored))
+	require.NoError(t, storeWriterVerify(t, stored))
+	stale := map[string]any{"content": stored["content"], policyBundleSignatureKey: seeded[policyBundleSignatureKey]}
+	require.Error(t, storeWriterVerify(t, stale))
+	storeWriterRequireLoads(t, s)
+}
+
+func TestOutputRuleToggle_EnforceRefusesWithoutSigningKeyBeforeAnyWrite(t *testing.T) {
+	for _, tc := range storeWriterRefusals {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.setup(t)
+			s, _, _ := newTestGateway(t)
+			seeded := storeWriterSeedOutput(t, s)
+			before := storeWriterKeyspace(t, s)
+
+			storeWriterRefused(t, storeWriterToggle(t, s))
+
+			require.Equal(t, seeded, storeWriterBundle(t, s, storeWriterOutputBundle))
+			require.Equal(t, before, storeWriterKeyspace(t, s))
+		})
+	}
+}
+
+func TestOutputRuleToggle_ExplicitWarnRewritesAsBefore(t *testing.T) {
+	for _, strict := range []string{"warn", "off"} {
+		t.Run(strict, func(t *testing.T) {
+			storeWriterEnv(t, true, strict)
+			logs := storeWriterLogs(t)
+			s, _, _ := newTestGateway(t)
+			seeded := storeWriterSeedOutput(t, s)
+
+			rec := storeWriterToggle(t, s)
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			stored := storeWriterBundle(t, s, storeWriterOutputBundle)
+			require.True(t, storeWriterOutputEnabled(t, stored))
+			want := map[string]any{"content": stored["content"], "updated_at": stored["updated_at"]}
+			for key, value := range seeded {
+				if key != "content" {
+					want[key] = value
+				}
+			}
+			require.Equal(t, want, stored)
+			require.True(t, logs.warned("output rule out-secret"))
+		})
+	}
+}
