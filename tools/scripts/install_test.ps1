@@ -292,6 +292,111 @@ try {
         Write-Host "PASS [rollback-no-reason]: install.ps1 refused rollback without reason" -ForegroundColor Green
     }
 
+    # This stand-in checks argv and signed-byte binding, not cryptography.
+    $defaultIdentity = '^https://github\.com/cordum-io/cordum/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
+    $fakeCosign = Join-Path $work.FullName 'fake-cosign.ps1'
+    Set-Content -LiteralPath $fakeCosign -Encoding ASCII -Value @'
+[IO.File]::WriteAllLines($env:FAKE_COSIGN_ARGS, [string[]]$args)
+if ($args.Count -ne 8 -or $args[0] -cne 'verify-blob' -or $args[1] -cne '--bundle' -or
+    $args[3] -cne '--certificate-identity-regexp' -or $args[5] -cne '--certificate-oidc-issuer') { exit 64 }
+if ($args[4] -cne $env:FAKE_COSIGN_EXPECT_IDENTITY -or
+    $args[6] -cne 'https://token.actions.githubusercontent.com') { exit 1 }
+if ((Get-Content -LiteralPath $args[2] -Raw).Trim() -cne
+    (Get-FileHash -LiteralPath $args[7] -Algorithm SHA256).Hash.ToLower()) { exit 1 }
+exit 0
+'@
+
+    function Build-KeylessReleaseDir {
+        param([string]$Dest, [string]$Version = '')
+        New-Item -ItemType Directory -Path $Dest -Force | Out-Null
+        $bin = Join-Path $Dest 'cordum-hook'
+        Set-Content -LiteralPath $bin -Value 'placeholder' -NoNewline -Encoding ASCII
+        $hash = (Get-FileHash -LiteralPath $bin -Algorithm SHA256).Hash.ToLower()
+        $manifest = Join-Path $Dest 'SHA256SUMS'
+        $text = "$hash  cordum-hook`n"
+        if ($Version) { $text = "# version: $Version`n$text" }
+        [IO.File]::WriteAllText($manifest, $text, [Text.UTF8Encoding]::new($false))
+        $digest = (Get-FileHash -LiteralPath $manifest -Algorithm SHA256).Hash.ToLower()
+        Set-Content -LiteralPath "$manifest.sigstore.json" -Value $digest -Encoding ASCII
+    }
+
+    function Assert-KeylessResult {
+        if ($failure) {
+            if ($rc -eq 0 -or -not $text.Contains("BINARY-VERIFY-FAIL: $failure")) { return $false }
+            if (Test-Path -LiteralPath $floor) { return $false }
+            return -not (Test-Path -LiteralPath $dest) -or
+                @(Get-ChildItem -LiteralPath $dest -File -Recurse).Count -eq 0
+        }
+        $installed = Join-Path $dest 'cordum-hook'
+        if ($rc -ne 0 -or -not (Test-Path -LiteralPath $installed)) { return $false }
+        if ((Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash -ne $hash) { return $false }
+        $events = @($out | Where-Object { "$_".StartsWith('{') } | ForEach-Object { "$_" | ConvertFrom-Json })
+        if (-not ($events | Where-Object { $_.event -eq 'binary-verify-ok' -and $_.sig_scheme -eq $scheme })) { return $false }
+        if ((Get-Content -LiteralPath $floor -Raw | ConvertFrom-Json).sig_scheme -ne $scheme) { return $false }
+        if ($scheme -eq 'unverified') {
+            if (-not ($events | Where-Object { $_.event -eq 'binary-signature-unverified' -and
+                $_.reason.Contains('-InsecureAllowMissingCosign') })) { return $false }
+            if (-not $text.Contains('WARNING') -or (Test-Path -LiteralPath $argsLog)) { return $false }
+        } else {
+            $expected = @('verify-blob', '--bundle', "$release\SHA256SUMS.sigstore.json",
+                '--certificate-identity-regexp', $identity, '--certificate-oidc-issuer',
+                'https://token.actions.githubusercontent.com', "$release\SHA256SUMS")
+            if (-not (Test-Path -LiteralPath $argsLog)) { return $false }
+            if ((Get-Content -LiteralPath $argsLog) -join "`n" -cne ($expected -join "`n")) { return $false }
+        }
+        if ($Label -eq 'keyless-identity-override' -and
+            -not ($events | Where-Object { $_.event -eq 'binary-signer-identity-override' })) { return $false }
+        return $true
+    }
+
+    function Invoke-KeylessScenario {
+        param([string]$Label)
+        $base = Join-Path $work.FullName $Label
+        $release = Join-Path $base 'release'; $dest = Join-Path $base 'install'
+        $floor = Join-Path $base 'floor.json'; $argsLog = Join-Path $base 'cosign.args'
+        Build-KeylessReleaseDir $release 'v1.3.0'
+        $binary = Join-Path $release 'cordum-hook'
+        $hash = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash
+        $identity = $defaultIdentity; $verifier = $fakeCosign; $scheme = 'cosign-keyless'; $failure = ''
+        $flags = @()
+        switch ($Label) {
+            { $_ -in 'keyless-one-byte', 'keyless-missing-override-tampered' } {
+                $bytes = [IO.File]::ReadAllBytes($binary); $bytes[0] = 88; [IO.File]::WriteAllBytes($binary, $bytes)
+                $failure = 'hash mismatch cordum-hook'
+            }
+            'keyless-manifest-tampered' {
+                Add-Content "$release\SHA256SUMS" '# changed'; $failure = 'cosign signature invalid'
+                $flags += '-InsecureAllowMissingCosign' # Never override a failed verification.
+            }
+            'keyless-cosign-missing' { $failure = 'cosign required' }
+            'keyless-identity-override' { $identity = '^https://example\.invalid/release$'; $flags += @('-CosignIdentityRegexp', $identity) }
+            'keyless-precedence' {
+                $sigArg = ConvertTo-CordumGpgArgPath -Path "$release\SHA256SUMS.asc" -Mode $gpgMode
+                $manifestArg = ConvertTo-CordumGpgArgPath -Path "$release\SHA256SUMS" -Mode $gpgMode
+                & $gpgCmd.Source --homedir $gpgHomeArg --batch --yes --quiet --detach-sign --armor --output $sigArg $manifestArg
+                if ($LASTEXITCODE -ne 0) { throw 'keyless precedence fixture signing failed' }
+            }
+        }
+        if ($Label -like '*missing*') { $verifier = Join-Path $base 'not-installed-cosign.exe' }
+        if ($Label -like 'keyless-missing-override*') { $flags += '-InsecureAllowMissingCosign'; $scheme = 'unverified' }
+        $env:FAKE_COSIGN_ARGS = $argsLog; $env:FAKE_COSIGN_EXPECT_IDENTITY = $identity
+        $env:CORDUM_COSIGN_IDENTITY_REGEXP = ''
+        $out = & pwsh -NoProfile -File $installPs1 -ReleaseDir $release -InstallDir $dest -FloorFile $floor -CosignExe $verifier @flags 2>&1
+        $rc = $LASTEXITCODE; $text = $out | Out-String
+        if (Assert-KeylessResult) {
+            Write-Host "PASS [$Label]: signature, checksum and activation effects checked"
+            return $true
+        }
+        Write-Host "FAIL [$Label]: exit=$rc; message, argv or activation assertion failed"
+        Write-Host $text
+        return $false
+    }
+
+    foreach ($scenario in @('valid', 'one-byte', 'manifest-tampered', 'cosign-missing',
+        'missing-override', 'missing-override-tampered', 'identity-override', 'precedence')) {
+        if (-not (Invoke-KeylessScenario "keyless-$scenario")) { $failures++ }
+    }
+
     if ($failures -ne 0) {
         Write-Error "install_test.ps1: $failures scenario(s) failed"
         exit 1
