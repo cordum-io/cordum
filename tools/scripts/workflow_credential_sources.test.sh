@@ -80,6 +80,9 @@ OPTS = {  # mint() keywords, before defaulting to SAFE: a set applies in its own
     "return_and_unset": dict(before=SAFE + " || { false && unset minted; return 1; }", head=STRICT + "main() {\n", tail="}\nmain || true\n"),  # so does the exit or return itself:
     "exit_skipped": dict(before=SAFE + " || { true || exit 1; :; }"), "exit_captured": dict(before=SAFE + ' || { echo "$(exit 1)"; }'), "return_skipped": dict(before=SAFE + " || { true || return 1; :; }", head=STRICT + "main() {\nlocal minted\n", tail="}\nmain\n"),
     "return_nested": dict(before=SAFE + " || { if true; then return 1; fi; unset minted; return 1; }", head=STRICT + "main() {\n", tail="}\nmain || true\n")}
+OPTS.update({  # a redirection before the command name is not the name: bash runs main as a tested call (errexit ignored); an untested one holds errexit
+    "errexit_redirect_tested": dict(head=STRICT + "main() {\n", tail="}\n</dev/null main || true\n"), "errexit_redirect_assign": dict(head=STRICT + "main() {\n", tail="}\nFOO=1 </dev/null main || true\n"),
+    "errexit_redirect_spaced": dict(head=STRICT + "main() {\n", tail="}\n< /dev/null main || true\n"), "errexit_redirect_plain": dict(head=STRICT + "main() {\n", tail="}\n</dev/null main\n")})
 GEN = {
     "gen_openssl": "$(openssl rand -hex 16)", "gen_uuidgen": "$(uuidgen)",
     "gen_urandom": "$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \\n')", "gen_random": "syn-${RANDOM}${RANDOM}",
@@ -99,6 +102,7 @@ DYNAMIC = {
 }
 SHELLS, PROG = {"shell_env_bash": "/usr/bin/env bash {0}", "shell_pwsh": "pwsh"}, ' \'synthetic_key="$(openssl rand -hex 16)"; curl -fsS -u "synthetic:${synthetic_key}" https://127.0.0.1:9/ >/dev/null\''
 INLINE = {"shell_c_stdin": "bash -s -c" + PROG, "shell_c_option": "bash -c -e" + PROG, "shell_c_dashdash": "bash -c --" + PROG, "inline_redirect_first": "bash -c '> /dev/null " + RUN_MINT + "'", "inline_redirect": "bash -c 'exec >\"${SYNTHETIC_LOG:-/dev/null}\" 2>&1; true'"}  # bash runs the -c program after any later option, over -s; a redirection is not its command word
+INLINE.update({"shell_c_rcfile": "bash --rcfile /dev/null -c" + PROG, "shell_c_initfile": "bash --init-file /dev/null -c" + PROG, "shell_c_norc": "bash --norc -c" + PROG})  # --rcfile and --init-file take a file operand, never the program; --norc takes none
 TRACE = {  # (shell, run[, job]): xtrace on at a fail-closed registration; run-text tracing in a job the guard leaves open
     "trace_shell": ("bash -x {0}", "source " + MINT_SH), "trace_env": ("", "SHELLOPTS=xtrace " + RUN_MINT),
     "trace_bash_x": ("", "bash -x " + MINT_SH, *LINK), "trace_set_x": ("", "set -x\nsource " + MINT_SH, *LINK),
@@ -261,6 +265,9 @@ make_errexit make_line_errexit e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@Makefile
 inline_redirect_first e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 mint_untracked_job docs-linkcheck.yml:link-check:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 mint_inline shell_c_stdin shell_c_option shell_c_dashdash e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED
+errexit_redirect_tested errexit_redirect_assign errexit_redirect_spaced e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
+shell_c_rcfile shell_c_initfile shell_c_norc e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED
+errexit_redirect_plain clean
 gen_openssl gen_uuidgen gen_urandom gen_random gen_date gen_python gen_quoted_paren errexit_substitution mask_captured mask_env_captured e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_gen.sh
 gen_nested mask_fd_captured clean
 nonce_bypass_removed edge-fake-hook-e2e.yml:edge-fake-hook-e2e:CREDENTIAL_UNREGISTERED@tools/scripts/edge_fake_hook_e2e.sh
