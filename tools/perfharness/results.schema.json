@@ -1,0 +1,72 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "run", "workload", "environment", "steps", "queue_depth", "saturation"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "run": {"type":"object", "additionalProperties":false, "required":["id","started_at","finished_at","profile"], "properties":{
+      "id":{"$ref":"#/definitions/text"}, "profile":{"$ref":"#/definitions/text"},
+      "started_at":{"type":"string","format":"date-time"}, "finished_at":{"type":"string","format":"date-time"}
+    }},
+    "workload":{"type":"object","additionalProperties":false,"required":["name","file","sha256"],"properties":{
+      "name":{"$ref":"#/definitions/text"},"file":{"$ref":"#/definitions/text"},"sha256":{"$ref":"#/definitions/sha256"}
+    }},
+    "environment":{"type":"object","additionalProperties":false,"required":["hardware","versions","configuration"],"properties":{
+      "hardware":{"type":"object","additionalProperties":false,"required":["os","arch","cpu_model","logical_cpus","memory_bytes","fingerprint"],"properties":{
+        "os":{"$ref":"#/definitions/text"},"arch":{"$ref":"#/definitions/text"},"cpu_model":{"$ref":"#/definitions/text"},
+        "logical_cpus":{"type":"integer","minimum":1},"memory_bytes":{"type":["integer","null"],"minimum":1},"fingerprint":{"$ref":"#/definitions/sha256"}
+      }},
+      "versions":{"type":"object","additionalProperties":false,"required":["harness_revision","go_version","target"],"properties":{
+        "harness_revision":{"$ref":"#/definitions/text"},"go_version":{"$ref":"#/definitions/text"},
+        "target":{"type":"object","additionalProperties":false,"required":["version","source"],"properties":{
+          "version":{"$ref":"#/definitions/text"},"source":{"enum":["status_endpoint","unknown"]}
+        }}
+      }},
+      "configuration":{"type":"object","additionalProperties":false,"required":["target_base_url","request_mix","profile_steps","saturation","queue_depth","env_vars_read"],"properties":{
+        "target_base_url":{"$ref":"#/definitions/text"},"request_mix":{"type":"array","minItems":1,"items":{"$ref":"#/definitions/sequence"}},
+        "profile_steps":{"type":"array","minItems":1,"items":{"type":"object","additionalProperties":false,"required":["concurrency","duration"],"properties":{
+          "concurrency":{"type":"integer","minimum":1},"duration":{"$ref":"#/definitions/text"}
+        }}},
+        "saturation":{"$ref":"#/definitions/thresholds"},"queue_depth":{"$ref":"#/definitions/queue_source"},
+        "env_vars_read":{"type":"array","uniqueItems":true,"items":{"type":"string","pattern":"^[A-Za-z_][A-Za-z0-9_]*$"}}
+      }}
+    }},
+    "steps":{"type":"array","minItems":1,"items":{"type":"object","additionalProperties":false,"required":["index","concurrency","duration_ms","requests","errors","throughput_rps","latency_ms"],"properties":{
+      "index":{"type":"integer","minimum":0},"concurrency":{"type":"integer","minimum":1},"duration_ms":{"$ref":"#/definitions/positive"},
+      "requests":{"type":"integer","minimum":0},"errors":{"type":"integer","minimum":0},"throughput_rps":{"$ref":"#/definitions/nonnegative"},
+      "latency_ms":{"type":"object","additionalProperties":false,"required":["p50","p90","p95","p99","max"],"properties":{
+        "p50":{"$ref":"#/definitions/nonnegative"},"p90":{"$ref":"#/definitions/nonnegative"},"p95":{"$ref":"#/definitions/nonnegative"},"p99":{"$ref":"#/definitions/nonnegative"},"max":{"$ref":"#/definitions/nonnegative"}
+      }}
+    }}},
+    "queue_depth":{"type":"object","additionalProperties":false,"required":["source","interval_ms","samples"],"properties":{
+      "source":{"enum":["prometheus","nats_jsz"]},"interval_ms":{"type":"integer","minimum":1},
+      "samples":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["t_ms","value"],"properties":{
+        "t_ms":{"$ref":"#/definitions/nonnegative"},"value":{"type":["number","null"],"minimum":0}
+      }}}
+    }},
+    "saturation":{"type":"object","additionalProperties":false,"required":["rule","reached","step_index","reason"],"properties":{
+      "rule":{"$ref":"#/definitions/text"},"reached":{"type":"boolean"},"step_index":{"type":["integer","null"],"minimum":0},"reason":{"$ref":"#/definitions/text"}
+    }}
+  },
+  "definitions": {
+    "text":{"type":"string","minLength":1},"sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "positive":{"type":"number","exclusiveMinimum":0},"nonnegative":{"type":"number","minimum":0},
+    "sequence":{"type":"object","additionalProperties":false,"required":["name","weight","requests"],"properties":{
+      "name":{"$ref":"#/definitions/text"},"weight":{"type":"integer","minimum":1},
+      "requests":{"type":"array","minItems":1,"items":{"type":"object","additionalProperties":false,"required":["kind","payload"],"properties":{
+        "kind":{"enum":["jobs.submit","jobs.approve","edge.hook.evaluate","mcp.tools.call"]},"payload":{"type":"object"},
+        "path_params":{"type":"object","additionalProperties":{"type":"string"}},"capture":{"type":"object","additionalProperties":{"type":"string"}}
+      }}}
+    }},
+    "thresholds":{"type":"object","additionalProperties":false,"required":["p99_ms","error_rate","min_throughput_gain_pct"],"properties":{
+      "p99_ms":{"$ref":"#/definitions/positive"},"error_rate":{"type":"number","exclusiveMinimum":0,"maximum":1},"min_throughput_gain_pct":{"$ref":"#/definitions/positive"}
+    }},
+    "queue_source":{"type":"object","additionalProperties":false,"required":["kind","url_env","interval_ms"],"properties":{
+      "kind":{"enum":["prometheus","nats_jsz"]},"url_env":{"type":"string","pattern":"^[A-Za-z_][A-Za-z0-9_]*$"},
+      "interval_ms":{"type":"integer","minimum":1},"metric":{"$ref":"#/definitions/text"},"stream":{"$ref":"#/definitions/text"}
+    },"allOf":[
+      {"if":{"properties":{"kind":{"const":"prometheus"}}},"then":{"required":["metric"]}},
+      {"if":{"properties":{"kind":{"const":"nats_jsz"}}},"then":{"required":["stream"]}}
+    ]}
+  }
+}
