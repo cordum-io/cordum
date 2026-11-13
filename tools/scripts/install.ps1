@@ -7,6 +7,7 @@
 #
 # Usage:
 #   pwsh -NoProfile -File install.ps1 -ReleaseDir <dir> [-DevAllowUnsigned] [-InstallDir <dir>]
+#   Keyless bundles: [-CosignExe <path>] [-CosignIdentityRegexp <regexp>] [-InsecureAllowMissingCosign]
 #
 # See docs/security/binary-signing.md for the threat model.
 
@@ -18,6 +19,9 @@ param(
     [switch]$DevAllowUnsigned,
     [string]$InstallDir = $env:CORDUM_INSTALL_DIR,
     [string]$GpgExe = 'gpg.exe',
+    [string]$CosignExe = $env:CORDUM_COSIGN_BIN,
+    [string]$CosignIdentityRegexp = $env:CORDUM_COSIGN_IDENTITY_REGEXP,
+    [switch]$InsecureAllowMissingCosign,
     [string]$FloorFile = $env:CORDUM_BINARY_FLOOR_FILE,
     [switch]$RollbackOperatorOverride,
     [string]$RollbackReason = ''
@@ -25,6 +29,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $ProdFingerprintPin = $env:CORDUM_RELEASE_FINGERPRINT
+$CosignIssuer = 'https://token.actions.githubusercontent.com'
+$CosignDefaultIdentityRegexp = '^https://github\.com/cordum-io/cordum/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
+if (-not $CosignExe) { $CosignExe = 'cosign' }
+if (-not $CosignIdentityRegexp) { $CosignIdentityRegexp = $CosignDefaultIdentityRegexp }
 
 . (Join-Path $PSScriptRoot 'windows\gpg-path.ps1')
 
@@ -188,19 +196,8 @@ function Reject-Path {
     return $false
 }
 
-function Invoke-BinaryVerify {
-    param(
-        [string]$ReleaseDir,
-        [bool]$Dev,
-        [string]$InstallTo
-    )
-
-    if (-not (Test-Path -LiteralPath $ReleaseDir -PathType Container)) {
-        Verify-Fail "release-dir not found: $ReleaseDir"
-    }
-    $manifest = Join-Path $ReleaseDir 'SHA256SUMS'
-    $sig = Join-Path $ReleaseDir 'SHA256SUMS.asc'
-    if (-not (Test-Path -LiteralPath $manifest)) { Verify-Fail 'manifest not found' }
+function Verify-ManifestGpg {
+    param([string]$manifest, [string]$sig, [bool]$Dev)
     if (-not (Test-Path -LiteralPath $sig)) { Verify-Fail 'unsigned manifest' }
 
     try {
@@ -292,139 +289,204 @@ function Invoke-BinaryVerify {
         & $gpg.Source --homedir $tmpHomeArg --batch --quiet --verify $sigArg $manifestArg 2>$null
         if ($LASTEXITCODE -ne 0) { Verify-Fail 'gpg signature invalid' }
 
-        # EDGE-151-DOWNGRADE: enforce monotonic version floor.
-        $candidateVersion = ''
-        $firstLine = (Get-Content -LiteralPath $manifest -TotalCount 1).TrimEnd("`r")
-        if ($firstLine -match '^#\s*version:\s*(\S+)\s*$') {
-            $candidateVersion = $matches[1]
-        }
-        $floorPath = Resolve-FloorPath -Override $FloorFile
-        $persistedFloor = Read-FloorVersion -Path $floorPath
-        if ($persistedFloor -and -not $candidateVersion) {
-            Verify-Fail "downgrade attempt: candidate manifest has no embedded version but floor is $persistedFloor"
-        }
-        # Validate parseability of BOTH the candidate version AND the floor
-        # before comparing — Test-SemverLt throws on garbage; the catch
-        # converts that to a Verify-Fail so a malformed `# version:` line
-        # never silently slips through the gate.
-        if ($candidateVersion) {
-            try {
-                Test-SemverLt -A 'v0.0.0' -B $candidateVersion | Out-Null
-            } catch {
-                Verify-Fail "invalid manifest version: $candidateVersion"
-            }
-        }
-        if ($candidateVersion -and $persistedFloor) {
-            try {
-                Test-SemverLt -A 'v0.0.0' -B $persistedFloor | Out-Null
-            } catch {
-                Verify-Fail "malformed floor file: persisted version $persistedFloor"
-            }
-            $isDowngrade = $false
-            try {
-                $isDowngrade = (Test-SemverLt -A $candidateVersion -B $persistedFloor)
-            } catch {
-                Verify-Fail "invalid version metadata: $_"
-            }
-            if ($isDowngrade) {
-                if ($RollbackOperatorOverride.IsPresent) {
-                    if ([string]::IsNullOrWhiteSpace($RollbackReason)) {
-                        Verify-Fail "-RollbackOperatorOverride requires -RollbackReason <text>"
-                    }
-                } else {
-                    Verify-Fail "downgrade attempt $candidateVersion < $persistedFloor"
-                }
-            }
-        }
-
-        $lines = Get-Content -LiteralPath $manifest
-        $entries = New-Object System.Collections.Generic.List[hashtable]
-        foreach ($raw in $lines) {
-            $line = $raw.TrimEnd("`r")
-            if ([string]::IsNullOrWhiteSpace($line)) { continue }
-            # EDGE-151-DOWNGRADE: skip `# version:` metadata + future comments.
-            if ($line.StartsWith('#')) { continue }
-            $parts = $line -split ' ', 2
-            if ($parts.Count -lt 2) { Verify-Fail "malformed manifest line: $line" }
-            $hash = $parts[0]
-            $rel = $parts[1].TrimStart(@(' ', '*'))
-            if ([string]::IsNullOrEmpty($hash) -or [string]::IsNullOrEmpty($rel)) {
-                Verify-Fail "malformed manifest line: $line"
-            }
-            if (Reject-Path $rel) { Verify-Fail "manifest path traversal: $rel" }
-            $target = Join-Path $ReleaseDir $rel
-            if (-not (Test-Path -LiteralPath $target)) { Verify-Fail "binary missing $rel" }
-            $got = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLower()
-            if ($got -ne $hash.ToLower()) { Verify-Fail "hash mismatch $rel" }
-
-            # Get-AuthenticodeSignature is a Windows-only convenience check.
-            # Status `NotSigned` is permissible for Tier 1-only (GPG-signed
-            # manifest); Tier 2 enforcement against `Valid` happens on the
-            # Windows runner via binaries-pr-validation.yml when the
-            # workflow's signtool step has executed.
-            if ($target -match '\.exe$' -and (Get-Command 'Get-AuthenticodeSignature' -ErrorAction SilentlyContinue)) {
-                $auth = Get-AuthenticodeSignature -LiteralPath $target
-                if ($auth.Status -ne 'NotSigned' -and $auth.Status -ne 'Valid') {
-                    Verify-Fail "authenticode verify failed $rel (status=$($auth.Status))"
-                }
-                if ($auth.Status -eq 'Valid') {
-                    $prevScheme = $script:AuditSigScheme
-                    $script:AuditSigScheme = 'authenticode'
-                    Emit-Audit -Event 'binary-verify-ok' -Hash $hash -Rel $rel
-                    $script:AuditSigScheme = $prevScheme
-                }
-            }
-            Emit-Audit -Event 'binary-verify-ok' -Hash $hash -Rel $rel
-            $entries.Add(@{ Hash = $hash; Rel = $rel; Target = $target }) | Out-Null
-        }
-
-        if ($InstallTo) {
-            New-Item -ItemType Directory -Path $InstallTo -Force | Out-Null
-            foreach ($e in $entries) {
-                $dst = Join-Path $InstallTo $e.Rel
-                New-Item -ItemType Directory -Path (Split-Path -Parent $dst) -Force | Out-Null
-                Move-Item -LiteralPath $e.Target -Destination $dst -Force
-                # Recompute SHA-256 AFTER the move — defence-in-depth
-                # against sig-then-swap race.
-                $post = (Get-FileHash -LiteralPath $dst -Algorithm SHA256).Hash.ToLower()
-                if ($post -ne $e.Hash.ToLower()) {
-                    Verify-Fail "post-activation hash mismatch $($e.Rel)"
-                }
-                Emit-Audit -Event 'binary-verify-ok' -Hash $post -Rel $e.Rel
-            }
-            Write-Host "[install] activated $($entries.Count) binaries under $InstallTo"
-
-            # EDGE-151-DOWNGRADE: advance the persisted floor on success.
-            if ($candidateVersion) {
-                $operator = $env:USERNAME
-                if (-not $operator) { $operator = 'unknown' }
-                $isRollback = $false
-                if ($persistedFloor) {
-                    try {
-                        $isRollback = (Test-SemverLt -A $candidateVersion -B $persistedFloor)
-                    } catch {
-                        $isRollback = $false
-                    }
-                }
-                if ($RollbackOperatorOverride.IsPresent -and $isRollback) {
-                    Write-FloorAtomic -Path $floorPath -Version $candidateVersion `
-                        -SigScheme $script:AuditSigScheme -Fingerprint $script:AuditFingerprint `
-                        -Operator $operator -Reason $RollbackReason
-                    Emit-FloorAudit -Event 'binary-floor-rollback' -From $persistedFloor `
-                        -To $candidateVersion -Operator $operator -Reason $RollbackReason
-                } else {
-                    Write-FloorAtomic -Path $floorPath -Version $candidateVersion `
-                        -SigScheme $script:AuditSigScheme -Fingerprint $script:AuditFingerprint `
-                        -Operator $operator -Reason ''
-                    Emit-FloorAudit -Event 'binary-floor-advance' -From $persistedFloor `
-                        -To $candidateVersion -Operator $operator
-                }
-            }
-        } else {
-            Write-Host "[install] release-dir verified: $ReleaseDir ($($entries.Count) binaries match manifest)"
-        }
     } finally {
         Remove-Item -Recurse -Force -LiteralPath $tmpHome.FullName -ErrorAction SilentlyContinue
+    }
+}
+
+function Verify-ManifestCosign {
+    param([string]$Manifest, [string]$Bundle)
+    $script:AuditSigScheme = 'cosign-keyless'
+    $script:AuditFingerprint = ''
+    if ($CosignIdentityRegexp -cne $CosignDefaultIdentityRegexp) {
+        Emit-Audit -Event 'binary-signer-identity-override' -Reason 'signer identity overridden by CORDUM_COSIGN_IDENTITY_REGEXP'
+        [Console]::Error.WriteLine("[install] WARNING: signer identity overridden: $CosignIdentityRegexp")
+    }
+    $cosign = Get-Command $CosignExe -CommandType Application,ExternalScript -ErrorAction SilentlyContinue
+    if (-not $cosign) {
+        if ($InsecureAllowMissingCosign.IsPresent) {
+            $script:AuditSigScheme = 'unverified'
+            Emit-Audit -Event 'binary-signature-unverified' -Reason 'cosign not found; -InsecureAllowMissingCosign'
+            [Console]::Error.WriteLine('[install] WARNING: signature was not verified; checksums are still required')
+            return
+        }
+        Verify-Fail 'cosign required for signature verification; install cosign or pass -InsecureAllowMissingCosign'
+    }
+    $previousPreference = $ErrorActionPreference
+    try {
+        # Windows PowerShell can turn native stderr into errors even at exit 0.
+        $ErrorActionPreference = 'Continue'
+        $global:LASTEXITCODE = $null
+        $output = & $cosign.Source verify-blob --bundle $Bundle `
+            --certificate-identity-regexp $CosignIdentityRegexp `
+            --certificate-oidc-issuer $CosignIssuer $Manifest 2>&1
+        $code = $global:LASTEXITCODE
+    } catch {
+        $output = $_
+        $code = 1
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ($null -eq $code -or $code -ne 0) {
+        $output | ForEach-Object { [Console]::Error.WriteLine("$_") }
+        Verify-Fail 'cosign signature invalid'
+    }
+}
+
+function Invoke-BinaryVerify {
+    param(
+        [string]$ReleaseDir,
+        [bool]$Dev,
+        [string]$InstallTo
+    )
+
+    if (-not (Test-Path -LiteralPath $ReleaseDir -PathType Container)) {
+        Verify-Fail "release-dir not found: $ReleaseDir"
+    }
+    $manifest = Join-Path $ReleaseDir 'SHA256SUMS'
+    $sig = Join-Path $ReleaseDir 'SHA256SUMS.asc'
+    if (-not (Test-Path -LiteralPath $manifest)) { Verify-Fail 'manifest not found' }
+    $bundle = Join-Path $ReleaseDir 'SHA256SUMS.sigstore.json'
+    if ($Dev) {
+        Verify-ManifestGpg $manifest $sig $Dev
+    } elseif (Test-Path -LiteralPath $bundle -PathType Leaf) {
+        Verify-ManifestCosign $manifest $bundle
+    } elseif (Test-Path -LiteralPath $sig -PathType Leaf) {
+        Verify-ManifestGpg $manifest $sig $Dev
+    } else {
+        Verify-Fail 'unsigned manifest'
+    }
+
+    # EDGE-151-DOWNGRADE: enforce monotonic version floor.
+    $candidateVersion = ''
+    $firstLine = (Get-Content -LiteralPath $manifest -TotalCount 1).TrimEnd("`r")
+    if ($firstLine -match '^#\s*version:\s*(\S+)\s*$') {
+        $candidateVersion = $matches[1]
+    }
+    $floorPath = Resolve-FloorPath -Override $FloorFile
+    $persistedFloor = Read-FloorVersion -Path $floorPath
+    if ($persistedFloor -and -not $candidateVersion) {
+        Verify-Fail "downgrade attempt: candidate manifest has no embedded version but floor is $persistedFloor"
+    }
+    # Validate parseability of BOTH the candidate version AND the floor
+    # before comparing — Test-SemverLt throws on garbage; the catch
+    # converts that to a Verify-Fail so a malformed `# version:` line
+    # never silently slips through the gate.
+    if ($candidateVersion) {
+        try {
+            Test-SemverLt -A 'v0.0.0' -B $candidateVersion | Out-Null
+        } catch {
+            Verify-Fail "invalid manifest version: $candidateVersion"
+        }
+    }
+    if ($candidateVersion -and $persistedFloor) {
+        try {
+            Test-SemverLt -A 'v0.0.0' -B $persistedFloor | Out-Null
+        } catch {
+            Verify-Fail "malformed floor file: persisted version $persistedFloor"
+        }
+        $isDowngrade = $false
+        try {
+            $isDowngrade = (Test-SemverLt -A $candidateVersion -B $persistedFloor)
+        } catch {
+            Verify-Fail "invalid version metadata: $_"
+        }
+        if ($isDowngrade) {
+            if ($RollbackOperatorOverride.IsPresent) {
+                if ([string]::IsNullOrWhiteSpace($RollbackReason)) {
+                    Verify-Fail "-RollbackOperatorOverride requires -RollbackReason <text>"
+                }
+            } else {
+                Verify-Fail "downgrade attempt $candidateVersion < $persistedFloor"
+            }
+        }
+    }
+
+    $lines = Get-Content -LiteralPath $manifest
+    $entries = New-Object System.Collections.Generic.List[hashtable]
+    foreach ($raw in $lines) {
+        $line = $raw.TrimEnd("`r")
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        # EDGE-151-DOWNGRADE: skip `# version:` metadata + future comments.
+        if ($line.StartsWith('#')) { continue }
+        $parts = $line -split ' ', 2
+        if ($parts.Count -lt 2) { Verify-Fail "malformed manifest line: $line" }
+        $hash = $parts[0]
+        $rel = $parts[1].TrimStart(@(' ', '*'))
+        if ([string]::IsNullOrEmpty($hash) -or [string]::IsNullOrEmpty($rel)) {
+            Verify-Fail "malformed manifest line: $line"
+        }
+        if (Reject-Path $rel) { Verify-Fail "manifest path traversal: $rel" }
+        $target = Join-Path $ReleaseDir $rel
+        if (-not (Test-Path -LiteralPath $target)) { Verify-Fail "binary missing $rel" }
+        $got = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLower()
+        if ($got -ne $hash.ToLower()) { Verify-Fail "hash mismatch $rel" }
+
+        # Get-AuthenticodeSignature is a Windows-only convenience check.
+        # Status `NotSigned` is permissible for Tier 1-only (GPG-signed
+        # manifest); Tier 2 enforcement against `Valid` happens on the
+        # Windows runner via binaries-pr-validation.yml when the
+        # workflow's signtool step has executed.
+        if ($target -match '\.exe$' -and (Get-Command 'Get-AuthenticodeSignature' -ErrorAction SilentlyContinue)) {
+            $auth = Get-AuthenticodeSignature -LiteralPath $target
+            if ($auth.Status -ne 'NotSigned' -and $auth.Status -ne 'Valid') {
+                Verify-Fail "authenticode verify failed $rel (status=$($auth.Status))"
+            }
+            if ($auth.Status -eq 'Valid') {
+                $prevScheme = $script:AuditSigScheme
+                $script:AuditSigScheme = 'authenticode'
+                Emit-Audit -Event 'binary-verify-ok' -Hash $hash -Rel $rel
+                $script:AuditSigScheme = $prevScheme
+            }
+        }
+        Emit-Audit -Event 'binary-verify-ok' -Hash $hash -Rel $rel
+        $entries.Add(@{ Hash = $hash; Rel = $rel; Target = $target }) | Out-Null
+    }
+
+    if ($InstallTo) {
+        New-Item -ItemType Directory -Path $InstallTo -Force | Out-Null
+        foreach ($e in $entries) {
+            $dst = Join-Path $InstallTo $e.Rel
+            New-Item -ItemType Directory -Path (Split-Path -Parent $dst) -Force | Out-Null
+            Move-Item -LiteralPath $e.Target -Destination $dst -Force
+            # Recompute SHA-256 AFTER the move — defence-in-depth
+            # against sig-then-swap race.
+            $post = (Get-FileHash -LiteralPath $dst -Algorithm SHA256).Hash.ToLower()
+            if ($post -ne $e.Hash.ToLower()) {
+                Verify-Fail "post-activation hash mismatch $($e.Rel)"
+            }
+            Emit-Audit -Event 'binary-verify-ok' -Hash $post -Rel $e.Rel
+        }
+        Write-Host "[install] activated $($entries.Count) binaries under $InstallTo"
+
+        # EDGE-151-DOWNGRADE: advance the persisted floor on success.
+        if ($candidateVersion) {
+            $operator = $env:USERNAME
+            if (-not $operator) { $operator = 'unknown' }
+            $isRollback = $false
+            if ($persistedFloor) {
+                try {
+                    $isRollback = (Test-SemverLt -A $candidateVersion -B $persistedFloor)
+                } catch {
+                    $isRollback = $false
+                }
+            }
+            if ($RollbackOperatorOverride.IsPresent -and $isRollback) {
+                Write-FloorAtomic -Path $floorPath -Version $candidateVersion `
+                    -SigScheme $script:AuditSigScheme -Fingerprint $script:AuditFingerprint `
+                    -Operator $operator -Reason $RollbackReason
+                Emit-FloorAudit -Event 'binary-floor-rollback' -From $persistedFloor `
+                    -To $candidateVersion -Operator $operator -Reason $RollbackReason
+            } else {
+                Write-FloorAtomic -Path $floorPath -Version $candidateVersion `
+                    -SigScheme $script:AuditSigScheme -Fingerprint $script:AuditFingerprint `
+                    -Operator $operator -Reason ''
+                Emit-FloorAudit -Event 'binary-floor-advance' -From $persistedFloor `
+                    -To $candidateVersion -Operator $operator
+            }
+        }
+    } else {
+        Write-Host "[install] release-dir verified: $ReleaseDir ($($entries.Count) binaries match manifest)"
     }
 }
 
