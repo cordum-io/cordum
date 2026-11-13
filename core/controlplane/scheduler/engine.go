@@ -539,11 +539,14 @@ func (e *Engine) isInputFailOpen() bool {
 	return e.inputFailOpen.Load()
 }
 
-func (e *Engine) inputFailOpenRule(orgID, topic string) (string, bool) {
-	if !e.isInputFailOpenForTenant(orgID) || e.failModeResolver == nil {
-		return "", false
+// inputFailOpenRule is the only fail-open admission decision: one resolver
+// call reads the mode and scope from a single config snapshot. Production
+// identity and a missing resolver never admit.
+func (e *Engine) inputFailOpenRule(orgID, topic string) (rule, mode string, ok bool) {
+	if e.productionIdentity.Load() || e.failModeResolver == nil {
+		return "", "closed", false
 	}
-	return e.failModeResolver.InputFailOpenScopeRule(orgID, topic)
+	return e.failModeResolver.InputFailOpenRule(orgID, topic)
 }
 
 func (e *Engine) incInputFailOpen(topic, rule string) {
@@ -573,19 +576,6 @@ func (e *Engine) WithFailModeResolver(r *FailModeResolver) *Engine {
 // configured. Used by the config reload loop to update system defaults.
 func (e *Engine) FailModeResolver() *FailModeResolver {
 	return e.failModeResolver
-}
-
-// isInputFailOpenForTenant returns the input fail mode for a specific tenant.
-// If a FailModeResolver is configured, the per-tenant override is used.
-// Otherwise, the global atomic flag is returned.
-func (e *Engine) isInputFailOpenForTenant(orgID string) bool {
-	if e.productionIdentity.Load() {
-		return false
-	}
-	if e.failModeResolver != nil {
-		return e.failModeResolver.InputFailOpen(orgID)
-	}
-	return e.inputFailOpen.Load()
 }
 
 // isAsyncFailOpenForTenant returns the async output fail mode for a specific
@@ -1739,7 +1729,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 		if e.metrics != nil {
 			e.metrics.IncSafetyUnavailable(topic)
 		}
-		if rule, ok := e.inputFailOpenRule(req.GetTenantId(), topic); ok {
+		if rule, mode, ok := e.inputFailOpenRule(req.GetTenantId(), topic); ok {
 			slog.Warn("safety kernel unavailable — FAIL-OPEN: allowing job",
 				"job_id", jobID, "topic", topic, "reason", record.Reason,
 				"trace_id", traceID, "input_fail_mode", "open", "scope_rule", rule)
@@ -1762,9 +1752,12 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			req.Labels["safety_bypass_reason"] = record.Reason
 			// Fall through to allow
 		} else {
-			mode, reason := "closed", record.Reason
-			if e.isInputFailOpenForTenant(req.GetTenantId()) {
-				mode, reason = "open", "topic not in input fail-open scope"
+			reason := record.Reason
+			switch mode {
+			case "open":
+				reason = "topic not in input fail-open scope"
+			case "unloaded":
+				reason = "tenant fail-mode config not loaded"
 			}
 			slog.Warn("safety kernel unavailable, requeueing job",
 				"job_id", jobID, "topic", topic, "reason", reason,

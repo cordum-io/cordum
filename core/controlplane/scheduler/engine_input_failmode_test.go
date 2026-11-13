@@ -212,10 +212,12 @@ func TestInputFailMode_PerTenant(t *testing.T) {
 	provider := newMockFailModeProvider()
 	provider.setTenantConfig("prod", "closed", "closed")
 	provider.setTenantConfig("sandbox", "open", "open")
+	for _, org := range []string{"prod", "sandbox"} { // effective configs carry the system scope
+		provider.configs[org]["scheduler"].(map[string]any)["input_fail_open_scope"] = failOpenRules("system-low-risk", "sys.unavailable")
+	}
 
 	resolver := NewFailModeResolver(provider, 1*time.Hour)
-	resolver.SetSystemInputMode("closed")
-	resolver.SetSystemInputScope(failOpenRules("system-low-risk", "sys.unavailable"))
+	resolver.SetSystemInput("closed", failOpenRules("system-low-risk", "sys.unavailable"))
 	resolver.RefreshTenant(context.Background(), "prod")
 	resolver.RefreshTenant(context.Background(), "sandbox")
 	engine.WithFailModeResolver(resolver)
@@ -266,8 +268,7 @@ func failOpenRules(rule string, topics ...any) []any {
 func newFailOpenScopeResolver(t *testing.T, mode string, scope any) *FailModeResolver {
 	t.Helper()
 	r := NewFailModeResolver(nil, time.Hour)
-	r.SetSystemInputMode(mode)
-	r.SetSystemInputScope(scope)
+	r.SetSystemInput(mode, scope)
 	return r
 }
 
@@ -297,7 +298,7 @@ func TestFailOpenScopeRequeuesUnlistedTopic(t *testing.T) {
 	assert.Empty(t, store.states[req.JobId])
 	assert.Empty(t, bypassEvents(sink))
 	assert.Zero(t, spy.getFailOpenCount(req.Topic))
-	r.SetSystemInputScope(failOpenRules("default-low-risk", "job.default"))
+	r.SetSystemInput("open", failOpenRules("default-low-risk", "job.default"))
 	req = &pb.JobRequest{JobId: "listed", Topic: "job.default", TenantId: "tenant-x"}
 	require.NoError(t, e.processJob(testCtx(t), req, "scope"))
 	require.Len(t, bus.published, 1)
@@ -320,14 +321,18 @@ func TestFailOpenScopeTenantRulesReplaceSystem(t *testing.T) {
 	provider.configs["tenant-c"] = map[string]any{"scheduler": map[string]any{
 		"input_fail_mode": "open", "input_fail_open_scope": []any{},
 	}}
+	provider.configs["tenant-closed"] = map[string]any{"scheduler": map[string]any{
+		"input_fail_mode": "closed", "input_fail_open_scope": failOpenRules("tenant-default", "job.default"),
+	}}
 	r := NewFailModeResolver(provider, time.Hour)
-	r.SetSystemInputMode("open")
-	r.SetSystemInputScope(failOpenRules("system-default", "job.default"))
-	r.RefreshTenant(testCtx(t), "tenant-a")
-	r.RefreshTenant(testCtx(t), "tenant-c")
+	r.SetSystemInput("open", failOpenRules("system-default", "job.default"))
+	for _, tenant := range []string{"tenant-a", "tenant-b", "tenant-c", "tenant-closed"} {
+		r.RefreshTenant(testCtx(t), tenant) // tenant-b loads an entry with no overrides
+	}
 	for _, tc := range []struct{ tenant, topic, rule string }{
 		{"tenant-a", "job.default", ""}, {"tenant-a", "job.reports.read", "tenant-reports"},
 		{"tenant-c", "job.default", ""}, {"tenant-b", "job.default", "system-default"},
+		{"tenant-closed", "job.default", ""},
 	} {
 		t.Run(tc.tenant+"/"+tc.topic, func(t *testing.T) {
 			bus, store, sink := &fakeBus{}, newFakeJobStore(), &recordingSink{}
@@ -427,14 +432,79 @@ func TestFailOpenScopeRequiresResolverAndNonProduction(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			e := NewEngine(nil, nil, nil, nil, nil, nil).WithInputFailMode("open").
 				WithFailModeResolver(tc.resolver).WithProductionIdentityEnforcement(tc.production)
-			_, ok := e.inputFailOpenRule("", "job.default")
+			_, _, ok := e.inputFailOpenRule("", "job.default")
 			assert.False(t, ok)
 		})
 	}
 	var nilResolver *FailModeResolver
-	nilResolver.SetSystemInputScope(nil)
-	_, ok := nilResolver.InputFailOpenScopeRule("", "job.default")
+	nilResolver.SetSystemInput("open", nil)
+	_, _, ok := nilResolver.InputFailOpenRule("", "job.default")
 	assert.False(t, ok)
+}
+
+// A cached entry was fetched while the system set only one key; a newer system
+// snapshot must not supply the other key.
+func TestFailOpenTenantEntryNeverMixesWithNewerSystem(t *testing.T) {
+	provider := newMockFailModeProvider()
+	provider.configs["mode-only"] = map[string]any{"scheduler": map[string]any{"input_fail_mode": "open"}}
+	provider.configs["scope-only"] = map[string]any{"scheduler": map[string]any{"input_fail_open_scope": failOpenRules("old", "job.a")}}
+	r := NewFailModeResolver(provider, time.Hour)
+	r.RefreshTenant(testCtx(t), "mode-only")
+	r.RefreshTenant(testCtx(t), "scope-only")
+	for _, tc := range []struct{ tenant, systemMode, topic string }{
+		{"mode-only", "closed", "job.b"}, // entry mode + system scope would admit job.b
+		{"scope-only", "open", "job.a"},  // system mode + entry scope would admit job.a
+	} {
+		t.Run(tc.tenant, func(t *testing.T) {
+			r.SetSystemInput(tc.systemMode, failOpenRules("new", "job.b"))
+			bus, store, sink := &fakeBus{}, newFakeJobStore(), &recordingSink{}
+			e := NewEngine(bus, unavailableSafety{}, newTestRegistry(t), NewNaiveStrategy(), store, nil).
+				WithFailModeResolver(r).WithDispatchAuditSink(sink)
+			req := &pb.JobRequest{JobId: t.Name(), Topic: tc.topic, TenantId: tc.tenant}
+			assert.ErrorContains(t, e.processJob(testCtx(t), req, "mixed"), "safety unavailable")
+			assert.Empty(t, bus.published)
+			assert.Empty(t, store.states[req.JobId])
+			assert.Empty(t, bypassEvents(sink))
+		})
+	}
+}
+
+func TestFailOpenColdTenantCacheRequeuesUntilLoaded(t *testing.T) {
+	provider := newMockFailModeProvider() // tenant-cold has no overrides
+	r := NewFailModeResolver(provider, time.Hour)
+	r.SetSystemInput("open", failOpenRules("default-low-risk", "job.default"))
+	bus, store, sink, spy := &fakeBus{}, newFakeJobStore(), &recordingSink{}, newInputFailOpenSpy()
+	e := NewEngine(bus, unavailableSafety{}, newTestRegistry(t), NewNaiveStrategy(), store, spy).
+		WithFailModeResolver(r).WithDispatchAuditSink(sink)
+
+	cold := &pb.JobRequest{JobId: "cold", Topic: "job.default", TenantId: "tenant-cold"}
+	err := e.processJob(testCtx(t), cold, "cold-cache")
+	var retry *retryableError
+	require.ErrorAs(t, err, &retry)
+	assert.Equal(t, safetyThrottleDelay, retry.RetryDelay())
+	assert.ErrorContains(t, err, "safety unavailable")
+	assert.Empty(t, bus.published)
+	assert.Empty(t, store.states[cold.JobId])
+	assert.Empty(t, bypassEvents(sink))
+	assert.Zero(t, spy.getFailOpenCount(cold.Topic))
+
+	require.Eventually(t, func() bool {
+		_, loaded := r.tenants.Load("tenant-cold")
+		return loaded
+	}, 5*time.Second, 10*time.Millisecond, "the cold lookup must start a background refresh")
+	assert.Equal(t, int64(1), provider.calls.Load())
+
+	warm := &pb.JobRequest{JobId: "warm", Topic: "job.default", TenantId: "tenant-cold"}
+	require.NoError(t, e.processJob(testCtx(t), warm, "loaded"))
+	require.Len(t, bus.published, 1)
+	assert.Equal(t, warm.Topic, bus.published[0].subject)
+	assert.Equal(t, JobStateRunning, store.states[warm.JobId])
+	assert.Empty(t, store.states[cold.JobId])
+	events := bypassEvents(sink)
+	require.Len(t, events, 1)
+	assert.Equal(t, warm.JobId, events[0].JobID)
+	assert.Equal(t, "default-low-risk", events[0].Extra["scope_rule"])
+	assert.Equal(t, 1, spy.getFailOpenCount(warm.Topic))
 }
 
 func TestDecisionStoreWriteFailureRequeuesInBothInputModes(t *testing.T) {

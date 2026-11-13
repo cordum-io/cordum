@@ -47,26 +47,54 @@ func parseFailOpenScope(raw any) failOpenScope {
 	return scope
 }
 
-// SetSystemInputScope replaces the system's exact-topic outage exception rules.
-func (r *FailModeResolver) SetSystemInputScope(raw any) {
+// systemInputConfig is the system input fail mode and scope. It is published
+// as one immutable value, so a reader never pairs one reload's mode with
+// another reload's scope.
+type systemInputConfig struct {
+	mode  string // "open" admits scoped topics; anything else is closed
+	scope failOpenScope
+}
+
+// SetSystemInput publishes the system input fail mode and exact-topic scope
+// in one store. An empty mode means closed, and a nil scope admits no topic.
+func (r *FailModeResolver) SetSystemInput(mode string, rawScope any) {
 	if r != nil {
-		r.systemInputScope.Store(parseFailOpenScope(raw))
+		r.systemInputCfg.Store(&systemInputConfig{mode: mode, scope: parseFailOpenScope(rawScope)})
 	}
 }
 
-// InputFailOpenScopeRule looks up scope independently of the input fail mode.
-func (r *FailModeResolver) InputFailOpenScopeRule(orgID, topic string) (string, bool) {
+// InputFailOpenRule decides fail-open admission for one job from one
+// configuration: the tenant's cached entry or the system snapshot, never a mix.
+// ok is true only when that mode is "open" and the topic is in that scope.
+// mode is "open", "closed", or "unloaded" while a tenant's config has not
+// loaded: an unloaded tenant is never admitted, and the lookup starts its
+// background refresh.
+func (r *FailModeResolver) InputFailOpenRule(orgID, topic string) (rule, mode string, ok bool) {
 	if r == nil {
-		return "", false
+		return "", "closed", false
 	}
-	scope, _ := r.systemInputScope.Load().(failOpenScope)
+	sys := r.systemInputSnapshot()
+	mode, scope := sys.mode, sys.scope
 	if orgID != "" && orgID != "default" {
-		if entry, ok := r.loadTenantEntry(orgID); ok && entry.hasInputScope {
-			scope = entry.inputScope
+		entry, loaded := r.loadTenantEntry(orgID)
+		switch {
+		case loaded && (entry.inputMode != "" || entry.hasInputScope):
+			// The entry is the provider's effective config, with the system keys
+			// merged in when it was fetched, so it decides alone: a key it lacks
+			// keeps its default instead of taking a newer system value.
+			mode, scope = entry.inputMode, entry.inputScope
+		case !loaded && r.configProvider != nil:
+			// The tenant's config may restrict what the system allows.
+			return "", "unloaded", false
 		}
+		// A loaded entry that sets neither key, or no provider: the system
+		// snapshot decides alone.
 	}
-	rule, ok := scope[topic]
-	return rule, ok
+	if mode != "open" {
+		return "", "closed", false
+	}
+	rule, ok = scope[topic]
+	return rule, "open", ok
 }
 
 // tenantFailModes caches the resolved fail-mode overrides for a single org.
@@ -87,9 +115,8 @@ type FailModeResolver struct {
 	cacheTTL       time.Duration
 
 	// System-wide defaults, updated by the reload loop.
-	systemInput      atomic.Value // string
-	systemAsync      atomic.Value // string
-	systemInputScope atomic.Value // failOpenScope; immutable after publication
+	systemInputCfg atomic.Pointer[systemInputConfig]
+	systemAsync    atomic.Value // string
 
 	// Per-tenant cache: orgID → *tenantFailModes
 	tenants sync.Map
@@ -109,18 +136,9 @@ func NewFailModeResolver(provider FailModeConfigProvider, ttl time.Duration) *Fa
 		configProvider: provider,
 		cacheTTL:       ttl,
 	}
-	r.systemInput.Store("")
+	r.systemInputCfg.Store(&systemInputConfig{})
 	r.systemAsync.Store("")
-	r.systemInputScope.Store(failOpenScope(nil))
 	return r
-}
-
-// SetSystemInputMode updates the system-wide input fail mode default.
-func (r *FailModeResolver) SetSystemInputMode(mode string) {
-	if r == nil {
-		return
-	}
-	r.systemInput.Store(mode)
 }
 
 // SetSystemAsyncMode updates the system-wide async fail mode default.
@@ -133,7 +151,8 @@ func (r *FailModeResolver) SetSystemAsyncMode(mode string) {
 
 // InputFailOpen returns true if the given tenant's input fail mode is "open".
 // If no per-tenant override exists or the cache is stale, the system default
-// is returned immediately and a background refresh is kicked off.
+// is returned immediately and a background refresh is kicked off. It reports
+// the mode only and never decides admission; see InputFailOpenRule.
 func (r *FailModeResolver) InputFailOpen(orgID string) bool {
 	if r == nil {
 		return false
@@ -260,10 +279,16 @@ func (r *FailModeResolver) triggerBackgroundRefresh(orgID string) {
 }
 
 func (r *FailModeResolver) systemInputMode() string {
-	if v, ok := r.systemInput.Load().(string); ok {
-		return v
+	return r.systemInputSnapshot().mode
+}
+
+// systemInputSnapshot returns the published system input config; a resolver
+// that was never initialised reads as closed with no scope.
+func (r *FailModeResolver) systemInputSnapshot() systemInputConfig {
+	if c := r.systemInputCfg.Load(); c != nil {
+		return *c
 	}
-	return ""
+	return systemInputConfig{}
 }
 
 func (r *FailModeResolver) systemAsyncMode() string {
