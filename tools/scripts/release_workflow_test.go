@@ -737,28 +737,7 @@ func TestReleaseWorkflowMutationsAreCaught(t *testing.T) {
 // packages as they were when the base was published (task-278cbdd7: the
 // demo image shipped alpine:3.21's zlib 1.3.2-r1, CVE-2026-4738).
 func checkFinalStageUpgradesAlpine(dockerfile string) error {
-	text := strings.ReplaceAll(dockerfile, "\r\n", "\n")
-	var instructions []string
-	var pending strings.Builder
-	for _, line := range strings.Split(text, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		if strings.HasSuffix(trimmed, "\\") {
-			pending.WriteString(strings.TrimSuffix(trimmed, "\\"))
-			pending.WriteString(" ")
-			continue
-		}
-		pending.WriteString(trimmed)
-		if instruction := strings.Join(strings.Fields(pending.String()), " "); instruction != "" {
-			instructions = append(instructions, instruction)
-		}
-		pending.Reset()
-	}
-	if rest := strings.Join(strings.Fields(pending.String()), " "); rest != "" {
-		instructions = append(instructions, rest)
-	}
+	instructions := dockerfileInstructions(dockerfile)
 
 	last := -1
 	for i, instruction := range instructions {

@@ -123,6 +123,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- The dashboard image's build stage runs on the build host's platform. Its
+  linux/arm64 image copies the same static dist/ as linux/amd64 instead of
+  running pnpm, tsc and Vite under QEMU emulation, where a release dry run's
+  arm64 Vite build stalled (task-efd2850d).
+
 - Audit publishing tolerates a missing fallback or exporter: events without a
   usable sink are dropped, logged and counted in
   `cordum_audit_events_dropped_total{reason}`. The Safety Kernel's shadow sender
