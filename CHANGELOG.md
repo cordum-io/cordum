@@ -9,8 +9,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 - Added `tools/releasequal`: a release qualification record schema and library
   binding source SHAs to image and binary digests, gates, results and open
-  exceptions (PR2-02, task-fd0efd22). Release workflows do not produce or check
-  the record yet; later rows on `feat/release-qualification-record` wire it in.
+  exceptions (PR2-02, task-fd0efd22). `go run ./tools/releasequal/cmd/release-qual`
+  writes entries, assembles, validates and checks records, and
+  `release-qual publish -- CMD` starts CMD only when every named digest is the
+  qualified one (PR2-02-CLI, task-cc3f03b6). Release workflows do not produce or
+  check the record yet; later rows on `feat/release-qualification-record` wire
+  it in.
 
 - Added the [planned first protected-operation contract](docs/contract/protected-operation.md)
   for Kubernetes manifest apply, with a proposed reference boundary, credential
