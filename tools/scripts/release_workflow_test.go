@@ -988,6 +988,12 @@ func checkBinaryWiring(docker, binary releaseWorkflow) []string {
 			add(name + " must require a real tag")
 		}
 	}
+	return append(out, checkBinaryCallers(docker)...)
+}
+
+func checkBinaryCallers(docker releaseWorkflow) []string {
+	var out []string
+	add := func(message string) { out = append(out, "BINARY_WIRING "+message) }
 	callers := 0
 	for name, job := range docker.Jobs {
 		if job.Uses != "./.github/workflows/release.yml" {
@@ -1048,7 +1054,27 @@ func checkBinaryRecord(docker, binary releaseWorkflow) []string {
 			add("EXPECTED_BINARIES differs from build matrix")
 		}
 	}
-	job := binary.Jobs["sign-manifest"]
+	out = append(out, checkBinaryEntry(binary.Jobs["sign-manifest"])...)
+	record := docker.Jobs[recordJob]
+	if record.If != "${{ !cancelled() && !failure() }}" {
+		add("record must tolerate the skipped caller without ignoring failure")
+	}
+	for _, need := range append(slices.Clone(releaseImageJobs), "binaries", "binaries-dry-run") {
+		if !slices.Contains(jobNeeds(record), need) {
+			add("record must need " + need)
+		}
+	}
+	if !slices.ContainsFunc(record.Steps, func(s releaseWorkflowStep) bool {
+		return strings.Contains(s.Run, `select(.kind == "binary")`) && strings.Contains(s.Run, `"$EXPECTED_BINARIES"`)
+	}) {
+		add("record must check binary names")
+	}
+	return out
+}
+
+func checkBinaryEntry(job releaseWorkflowJob) []string {
+	var out []string
+	add := func(message string) { out = append(out, "BINARY_RECORD "+message) }
 	stage, qualify, bundle := findStep(job, "Stage binaries"), findStep(job, "qualify-binaries"), artifactStep(job, uploadAction, "release-bundle")
 	if stage < 0 || qualify <= stage || bundle <= qualify {
 		add("qualification must follow staging and precede bundle upload")
@@ -1067,20 +1093,6 @@ func checkBinaryRecord(docker, binary releaseWorkflow) []string {
 	upload := artifactStep(job, uploadAction, "qual-entry-binaries")
 	if upload <= qualify || upload < 0 || job.Steps[upload].With["overwrite"].Value != "true" || job.Steps[upload].With["if-no-files-found"].Value != "error" {
 		add("entry upload must follow qualification and replace its artifact")
-	}
-	record := docker.Jobs[recordJob]
-	if record.If != "${{ !cancelled() && !failure() }}" {
-		add("record must tolerate the skipped caller without ignoring failure")
-	}
-	for _, need := range append(slices.Clone(releaseImageJobs), "binaries", "binaries-dry-run") {
-		if !slices.Contains(jobNeeds(record), need) {
-			add("record must need " + need)
-		}
-	}
-	if !slices.ContainsFunc(record.Steps, func(s releaseWorkflowStep) bool {
-		return strings.Contains(s.Run, `select(.kind == "binary")`) && strings.Contains(s.Run, `"$EXPECTED_BINARIES"`)
-	}) {
-		add("record must check binary names")
 	}
 	return out
 }
@@ -1118,7 +1130,12 @@ func checkBinaryPublish(docker releaseWorkflow) []string {
 			add("publication must download " + name)
 		}
 	}
-	step := job.Steps[create]
+	return append(out, checkBinaryCreateCommand(job.Steps[create])...)
+}
+
+func checkBinaryCreateCommand(step releaseWorkflowStep) []string {
+	var out []string
+	add := func(message string) { out = append(out, "BINARY_PUBLISH "+message) }
 	if strings.Contains(step.Run, "${{") {
 		add("expressions belong in env")
 	}
@@ -1484,11 +1501,11 @@ func TestReleaseBinaryPublishRefusesChangedBytes(t *testing.T) {
 			}
 			code, output := w.run(t, publish)
 			if name != "positive control" {
+				if _, err := os.Stat(w.marker); !errors.Is(err, fs.ErrNotExist) {
+					t.Errorf("gh marker exists or inaccessible: %v", err)
+				}
 				if code != 3 {
 					t.Fatalf("rc=%d, want3: %s", code, output)
-				}
-				if _, err := os.Stat(w.marker); !errors.Is(err, fs.ErrNotExist) {
-					t.Fatalf("gh marker exists or inaccessible: %v", err)
 				}
 				return
 			}
