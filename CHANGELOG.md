@@ -7,6 +7,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Migrated the shared dashboard DataTable to TanStack React Table 9.3.1 with
+  explicit sorting, sizing and visibility features, preserving its existing
+  rendering and interaction contracts (task-fa2b4cef).
 - The dashboard DataTable primitive exports `DataTableColumn` and
   `DataTableSorting` aliases; callers import column types from the primitive
   instead of TanStack, without changing table behavior (task-fc8b600a).
