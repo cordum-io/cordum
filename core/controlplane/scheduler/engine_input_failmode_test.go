@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -434,4 +435,54 @@ func TestFailOpenScopeRequiresResolverAndNonProduction(t *testing.T) {
 	nilResolver.SetSystemInputScope(nil)
 	_, ok := nilResolver.InputFailOpenScopeRule("", "job.default")
 	assert.False(t, ok)
+}
+
+func TestDecisionStoreWriteFailureRequeuesInBothInputModes(t *testing.T) {
+	for _, decision := range []SafetyDecision{SafetyAllow, SafetyRequireApproval, SafetyDeny} {
+		for _, mode := range []string{"closed", "open"} {
+			t.Run(string(decision)+"/"+mode, func(t *testing.T) {
+				writeErr := errors.New("decision write unavailable")
+				bus, base, sink, spy := &fakeBus{}, newFakeJobStore(), &recordingSink{}, newInputFailOpenSpy()
+				store := &failingSafetyDecisionStore{fakeJobStore: base, err: writeErr}
+				checker := &fixedSafetyRecordChecker{record: SafetyDecisionRecord{
+					Decision: decision, ApprovalRequired: decision == SafetyRequireApproval,
+				}}
+				e := NewEngine(bus, checker, newTestRegistry(t), NewNaiveStrategy(), store, spy).
+					WithFailModeResolver(newFailOpenScopeResolver(t, mode, failOpenRules("default-low-risk", "job.default"))).
+					WithDispatchAuditSink(sink)
+				req := &pb.JobRequest{JobId: t.Name(), Topic: "job.default"}
+				err := e.processJob(testCtx(t), req, "decision-store")
+				assert.ErrorIs(t, err, writeErr)
+				var retry *retryableError
+				if assert.ErrorAs(t, err, &retry) {
+					assert.Equal(t, safetyThrottleDelay, retry.RetryDelay())
+				}
+				assert.Empty(t, bus.published)
+				assert.Empty(t, base.states[req.JobId])
+				assert.Empty(t, bypassEvents(sink))
+				assert.Zero(t, spy.getFailOpenCount(req.Topic))
+			})
+		}
+	}
+}
+
+type lateDenySafety struct{}
+
+func (lateDenySafety) Check(ctx context.Context, _ *pb.JobRequest) (SafetyDecisionRecord, error) {
+	<-ctx.Done()
+	return SafetyDecisionRecord{Decision: SafetyDeny, Reason: "late deny"}, nil
+}
+
+func TestFailOpenLateKernelAnswerKeepsDecision(t *testing.T) {
+	bus, store, sink := &fakeBus{}, newFakeJobStore(), &recordingSink{}
+	e := NewEngine(bus, lateDenySafety{}, newTestRegistry(t), NewNaiveStrategy(), store, nil).
+		WithFailModeResolver(newFailOpenScopeResolver(t, "open", failOpenRules("default-low-risk", "job.default"))).
+		WithDispatchAuditSink(sink)
+	req := &pb.JobRequest{JobId: "late-answer", Topic: "job.default"}
+	require.NoError(t, e.processJob(testCtx(t), req, "late-answer"))
+	assert.Equal(t, JobStateDenied, store.states[req.JobId])
+	for _, published := range bus.published {
+		assert.NotEqual(t, req.Topic, published.subject)
+	}
+	assert.Empty(t, bypassEvents(sink))
 }

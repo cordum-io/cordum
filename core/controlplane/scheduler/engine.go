@@ -70,6 +70,7 @@ const (
 )
 
 var errApprovalHashFenceRead = errors.New("approval hash fence read failed")
+var errSafetyCheckTimeout = errors.New("safety check timeout")
 
 // otelMetricsBridge is an optional interface for OTEL metrics dual-emission.
 // Implemented by cordumotel.SchedulerMetricsBridge.
@@ -1676,6 +1677,14 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 				"job_id", jobID, "topic", topic, "error", err, "trace_id", traceID)
 			return RetryAfter(err, retryDelayStore)
 		}
+		// Only a kernel that did not answer may reach the fail-open branch.
+		// Other errors requeue in both input modes, including decision writes,
+		// identity normalization and engine shutdown.
+		if !errors.Is(err, errSafetyCheckTimeout) {
+			slog.Error("safety decision not recorded, retrying",
+				"job_id", jobID, "topic", topic, "trace_id", traceID, "error", err)
+			return RetryAfter(fmt.Errorf("safety unavailable: %w", err), safetyThrottleDelay)
+		}
 		slog.Error("safety check failed", "job_id", jobID, "error", err)
 		record.Decision = SafetyUnavailable
 	}
@@ -2391,9 +2400,9 @@ func (e *Engine) checkSafetyDecision(ctx context.Context, req *pb.JobRequest) (S
 	if e.ctx.Err() != nil {
 		return record, e.ctx.Err()
 	}
-	if safetyCtx.Err() != nil {
+	if safetyCtx.Err() != nil && (record.Decision == "" || record.Decision == SafetyUnavailable) {
 		record.Decision = SafetyUnavailable
-		err = fmt.Errorf("safety check timeout (defense-in-depth, %s)", safetyCheckTimeout)
+		err = fmt.Errorf("%w (defense-in-depth, %s)", errSafetyCheckTimeout, safetyCheckTimeout)
 		slog.Warn("safety check timed out", "job_id", jobID, "timeout", safetyCheckTimeout)
 	}
 	if record.CheckedAt == 0 {
