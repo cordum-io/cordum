@@ -178,3 +178,111 @@ func TestPathMatches(t *testing.T) {
 		}
 	}
 }
+
+const fixtureDoc = "docs/contract/fixture.md"
+
+func fixtureConfig() Config {
+	return Config{
+		Root:         filepath.Join("testdata", "fixture"),
+		Docs:         []string{fixtureDoc},
+		ContractGlob: "docs/contract/*.md",
+		OpenAPI:      "openapi.yaml",
+		CodeRoots:    []string{"core"},
+	}
+}
+
+func TestCheckFixture(t *testing.T) {
+	r, err := Check(fixtureConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Issue{
+		{File: fixtureDoc, Line: 6, Kind: "env-default", Key: "FIX_VAR", Detail: "FIX_VAR: documented default `b`, code default \"a\""},
+		{File: fixtureDoc, Line: 15, Kind: "endpoint", Key: "GET /api/v1/missing", Detail: "GET /api/v1/missing not in the OpenAPI description"},
+	}
+	if !reflect.DeepEqual(r.Failures, want) {
+		t.Fatalf("failures =\n%#v\nwant\n%#v", r.Failures, want)
+	}
+	// Exact counts pin the passes: FIX_OK and FIX_NONE are the two passing
+	// defaults (FIX_OK stays single-valued although firstEnv names it), and
+	// GET /api/v1/things/{id} is the passing endpoint.
+	checked := map[string]int{"env-name": 6, "env-default": 3, "endpoint": 2}
+	unchecked := map[string]int{
+		"default cell is prose":                 1,
+		"code default not in a recognized form": 1,
+		"ambiguous code default":                1,
+		reasonCommand:                           1,
+		"skip: needs a live cluster to run":     1,
+	}
+	if r.Blocks != 3 || r.Passed != 9 || len(r.Known) != 0 ||
+		!reflect.DeepEqual(r.Checked, checked) || !reflect.DeepEqual(r.Unchecked, unchecked) {
+		t.Fatalf("report = %s", r.Summary())
+	}
+
+	t.Run("names come from code roots or text sources", func(t *testing.T) {
+		cfg := fixtureConfig()
+		cfg.CodeRoots = nil
+		r, err := Check(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		miss := Issue{File: fixtureDoc, Line: 6, Kind: "env-name", Key: "FIX_VAR", Detail: "FIX_VAR is not named anywhere in the product source"}
+		if len(r.Failures) == 0 || r.Failures[0] != miss {
+			t.Fatalf("failures = %#v, want first %#v", r.Failures, miss)
+		}
+		cfg.TextSources = []string{"co*"}
+		if r, err = Check(cfg); err != nil || r.Checked["env-name"] != 6 || hasKind(r.Failures, "env-name") {
+			t.Fatalf("with text sources: err = %v, %s", err, r.Summary())
+		}
+	})
+
+	t.Run("baseline entry makes the wrong default KNOWN", func(t *testing.T) {
+		cfg := fixtureConfig()
+		cfg.Baseline = writeDoc(t, "b.yaml", "- {file: docs/contract/fixture.md, kind: env-default, key: FIX_VAR, reason: doc says b, owner: PR2-15-DOCS}\n"+
+			"- {file: docs/contract/fixture.md, kind: endpoint, key: GET /api/v1/missing, reason: removed route, owner: PR2-15-DOCS}\n")
+		r, err := Check(cfg)
+		if err != nil || len(r.Failures) != 0 || len(r.Known) != 2 || r.Known[0].Key != "FIX_VAR" {
+			t.Fatalf("err = %v, failures = %#v, known = %#v", err, r.Failures, r.Known)
+		}
+	})
+
+	t.Run("baseline entry with no failure is STALE", func(t *testing.T) {
+		cfg := fixtureConfig()
+		cfg.Baseline = writeDoc(t, "b.yaml", "# header\n- {file: docs/contract/fixture.md, kind: env-default, key: FIX_OK, reason: was wrong, owner: PR2-15-DOCS}\n")
+		r, err := Check(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stale := Issue{File: filepath.ToSlash(cfg.Baseline), Line: 2, Kind: "baseline-stale", Key: "env-default FIX_OK",
+			Detail: "STALE baseline entry: no env-default failure for \"FIX_OK\" in docs/contract/fixture.md"}
+		if len(r.Failures) != 3 || r.Failures[2] != stale {
+			t.Fatalf("failures = %#v, want third %#v", r.Failures, stale)
+		}
+	})
+
+	t.Run("baseline entry without a reason is an error", func(t *testing.T) {
+		cfg := fixtureConfig()
+		cfg.Baseline = writeDoc(t, "b.yaml", "- {file: x.md, kind: endpoint, key: GET /x, owner: PR2-15-DOCS}\n")
+		if _, err := Check(cfg); err == nil || err.Error() != cfg.Baseline+":1: a baseline entry needs file, kind, key, reason and owner" {
+			t.Fatalf("err = %v", err)
+		}
+	})
+
+	t.Run("skip marker without a reason fails", func(t *testing.T) {
+		cfg := fixtureConfig()
+		doc := writeDoc(t, "skip.md", "<!-- docscheck: skip -->\n```\nx\n```\n")
+		cfg.Docs = []string{doc}
+		if _, err := Check(cfg); err == nil || err.Error() != doc+`:1: skip needs reason="..." of at least 10 characters` {
+			t.Fatalf("err = %v", err)
+		}
+	})
+}
+
+func hasKind(issues []Issue, kind string) bool {
+	for _, i := range issues {
+		if i.Kind == kind {
+			return true
+		}
+	}
+	return false
+}

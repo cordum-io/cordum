@@ -53,6 +53,14 @@ var (
 	tickRe       = regexp.MustCompile("^`([^`]*)`$")
 )
 
+// path resolves p against Root unless it is absolute.
+func (c Config) path(p string) string {
+	if filepath.IsAbs(p) {
+		return p
+	}
+	return filepath.Join(c.Root, p)
+}
+
 type codeIndex struct {
 	names    map[string]bool
 	defaults map[string]map[string]bool
@@ -66,12 +74,12 @@ func Check(cfg Config) (Report, error) {
 	if err != nil {
 		return r, err
 	}
-	ops, err := loadOpenAPI(filepath.Join(cfg.Root, cfg.OpenAPI))
+	ops, err := loadOpenAPI(cfg.path(cfg.OpenAPI))
 	if err != nil {
 		return r, err
 	}
 	for _, doc := range cfg.Docs {
-		blocks, err := Parse(filepath.Join(cfg.Root, doc))
+		blocks, err := Parse(cfg.path(doc))
 		if err != nil {
 			return r, err
 		}
@@ -80,7 +88,7 @@ func Check(cfg Config) (Report, error) {
 			r.checkBlock(b, idx, ops)
 		}
 	}
-	contracts, err := filepath.Glob(filepath.Join(cfg.Root, cfg.ContractGlob))
+	contracts, err := filepath.Glob(cfg.path(cfg.ContractGlob))
 	if err != nil {
 		return r, err
 	}
@@ -217,7 +225,7 @@ func indexProduct(cfg Config) (codeIndex, error) {
 	idx := codeIndex{names: map[string]bool{}, defaults: map[string]map[string]bool{}}
 	fset := token.NewFileSet()
 	for _, root := range cfg.CodeRoots {
-		err := walkFiles(filepath.Join(cfg.Root, root), func(path string) error {
+		err := walkFiles(cfg.path(root), func(path string) error {
 			if !strings.HasSuffix(path, ".go") {
 				return nil
 			}
@@ -232,7 +240,7 @@ func indexProduct(cfg Config) (codeIndex, error) {
 		}
 	}
 	for _, pattern := range cfg.TextSources {
-		matches, err := filepath.Glob(filepath.Join(cfg.Root, pattern))
+		matches, err := filepath.Glob(cfg.path(pattern))
 		if err != nil {
 			return idx, err
 		}
@@ -372,7 +380,7 @@ func loadBaseline(cfg Config) ([]baselineEntry, error) {
 	if cfg.Baseline == "" {
 		return nil, nil
 	}
-	path := filepath.Join(cfg.Root, cfg.Baseline)
+	path := cfg.path(cfg.Baseline)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
