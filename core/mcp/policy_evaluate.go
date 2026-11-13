@@ -1047,6 +1047,15 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 			Args: params.Arguments, EventID: evalResult.PreEvent.EventID,
 		}); err != nil {
 			finalErr = fmt.Errorf("policy floor: %w", err)
+			// EvaluateToolCall already emitted an allowed pre-event. Close it
+			// with a blocked terminal event, as a policy deny is closed, so
+			// the Edge stream never keeps an allowed call with no outcome.
+			blocked := newPostEvent(evalResult.PreEvent, deps.Clock, edge.EventKindMCPToolFailed, dec)
+			blocked.Status = edge.ActionStatusBlocked
+			blocked.ErrorMessage = sanitizeUpstreamError(finalErr)
+			if emitErr := deps.EventEmitter.Emit(ctx, blocked); emitErr != nil {
+				finalErr = errors.Join(finalErr, fmt.Errorf("emit blocked event: %w", emitErr))
+			}
 			return nil, finalErr
 		}
 	}

@@ -88,6 +88,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   (or `--init-file`) rcfile into the program or script that shell runs. An
   rcfile that leaves `set -x` on makes later credential registrations count
   as used before registration.
+- An MCP call that policy allows but the invariant floor refuses now closes its
+  allowed `mcp.tool.pre` event with a blocked `mcp.tool.failed` event, as a
+  policy deny does, so the Edge event stream never keeps an allowed call with
+  no outcome.
 
 #### Scheduler input outage exceptions use named topic scopes (2026-11-13, task-7803f261)
 

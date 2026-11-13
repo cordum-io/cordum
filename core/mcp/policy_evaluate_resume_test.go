@@ -135,6 +135,24 @@ func TestAllowFloor_ErrorIsNotCached(t *testing.T) {
 	}
 }
 
+// A floor refusal comes after EvaluateToolCall emitted the allowed pre-event,
+// so it must close that event with a blocked terminal event of the same id.
+func TestAllowFloor_DenialEmitsBlockedTerminalEvent(t *testing.T) {
+	f := newRSFixture(pb.DecisionType_DECISION_TYPE_ALLOW, nil)
+	f.deps.ApprovalHandoff = &rsFloorHandoff{floorErr: errors.New("invariant denies")}
+	if _, err := f.invoke(newAuthedToolCallCtx(), rsArgs); err == nil {
+		t.Fatal("floor denial returned no error")
+	}
+	pres, failed := f.emitter.ofKind(edge.EventKindMCPToolPre), f.emitter.ofKind(edge.EventKindMCPToolFailed)
+	if len(pres) != 1 || len(failed) != 1 || len(f.emitter.ofKind(edge.EventKindMCPToolPost)) != 0 {
+		t.Fatalf("events: %d pre, %d failed, %d post; want 1, 1, 0", len(pres), len(failed), len(f.emitter.ofKind(edge.EventKindMCPToolPost)))
+	}
+	if failed[0].EventID != pres[0].EventID || failed[0].Status != edge.ActionStatusBlocked || failed[0].ErrorMessage == "" {
+		t.Fatalf("terminal event = id %q status %q message %q; want id %q, status blocked, a message",
+			failed[0].EventID, failed[0].Status, failed[0].ErrorMessage, pres[0].EventID)
+	}
+}
+
 func TestAllowFloor_OptionalCapability(t *testing.T) {
 	for _, handoff := range []ApprovalHandoff{nil, &rsMinter{}} {
 		f := newRSFixture(pb.DecisionType_DECISION_TYPE_ALLOW, nil)
