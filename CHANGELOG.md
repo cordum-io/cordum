@@ -5,14 +5,90 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+
+- Migrated the shared dashboard DataTable to TanStack React Table 9.3.1 with
+  explicit sorting, sizing and visibility features, preserving its existing
+  rendering and interaction contracts (task-fa2b4cef).
+- The dashboard DataTable primitive exports `DataTableColumn` and
+  `DataTableSorting` aliases; callers import column types from the primitive
+  instead of TanStack, without changing table behavior (task-fc8b600a).
+
 ### Added
 
+- Added [failure and partition behavior](docs/contract/failure-behavior.md)
+  (M0-06, task-51b08640): required and current behavior for low-risk,
+  approval-required and protected actions when Redis, NATS, the Safety Kernel,
+  the Gateway as seen from Edge, the approval store, the audit sink, the policy
+  source or the license is unavailable. The contract cites characterization
+  tests and lists unmeasured behavior and gaps with owners. Three new
+  characterization tests accompany it; runtime behavior is unchanged.
+
+- Added `tools/releasequal`: a release qualification record schema and library
+  binding source SHAs to image and binary digests, gates, results and open
+  exceptions (PR2-02, task-fd0efd22). `go run ./tools/releasequal/cmd/release-qual`
+  writes entries, assembles, validates and checks records, and
+  `release-qual publish -- CMD` starts CMD only when every named digest is the
+  qualified one (PR2-02-CLI, task-cc3f03b6). `docker.yml` now builds each
+  release image once and pushes it by digest without tags; the smoke check and
+  the Trivy OS scan run on that pushed digest, and the run uploads a
+  `qualification-record` artifact. Cosign signs that digest, and the release
+  tags are applied to it, only through `release-qual publish`, and the job
+  fails unless every tag resolves to it. If a gate fails on a tag push, the
+  untagged, unsigned digest stays in GHCR and Docker Hub. A push to a
+  `release-dry-run/**` branch runs the same image and record jobs against
+  job-local registries and skips the registry logins, Docker Hub, signing, the
+  SARIF upload, issue creation, the published-image smoke and the Helm chart
+  (PR2-02-IMAGES, task-f393ecf3). Release binaries are not in the record yet
+  (PR2-02-BINARIES).
+
+- License-state behavior contract (`docs/contract/license-behavior.md`): one row per license state and capability class, checked by `TestLicenseBehaviorContract`; a cell not yet tested names the row that will test it.
 - Added the [planned first protected-operation contract](docs/contract/protected-operation.md)
   for Kubernetes manifest apply, with a proposed reference boundary, credential
   inventory and measurable acceptance ideas. Broker/grant enforcement is future
   work; runtime acceptance evidence is not measured.
 
+#### demo/cap-mcp-governed — CAP worker calls governed Cordum MCP tools and waits for human approval (2026-11-11, task-ba678d95)
+
+- New CAP v2.17.0 demo worker on `job.cap-mcp-governed.create-workflow` and `worker.cap-mcp-governed.jobs`. Each job opens an MCP session on the gateway's `/mcp/message`, then runs `initialize`, `resources/read cordum://jobs/<job_id>`, `cordum_status` and `cordum_create_workflow`, in that order.
+- On JSON-RPC `-32099` it polls `GET /api/v1/mcp/approvals/{id}` until a human decides. After approval it retries with byte-identical arguments exactly once. It never calls approve or reject.
+- Failed jobs report one of 10 documented codes (`invalid_input`, `mcp_unavailable`, `mcp_protocol_error`, `mcp_call_failed`, `mcp_approval_rejected`, `mcp_approval_expired`, `mcp_approval_not_found`, `mcp_approval_timeout`, `mcp_approval_invalid`, `worker_shutdown`), never server text or the API key.
+- Unsigned agent, so compat CAP profile only. It needs the default `mcp.policy_gate_enabled=false`, because it does not send `_approval_ref`. `demo/cap-mcp-governed/README.md` covers setup.
+
+### Changed
+
+- The eight required checks also run on `merge_group` events, with OpenAPI
+  Validate comparing each group against its base commit. No check's content
+  changed; enabling the merge queue remains a maintainer change to the Main
+  ruleset (task-fd34e921).
+
 ### Security
+
+#### Scheduler input outage exceptions use named topic scopes (2026-11-13, task-7803f261)
+
+- `scheduler.input_fail_mode=open` admits only topics named in
+  `scheduler.input_fail_open_scope`, a system- or tenant-level list such as
+  `[{"rule":"reports-read","topics":["job.reports.read"]}]`. Topics match exactly;
+  a tenant list replaces the system list, and approval-gate subjects are excluded.
+- Errors after a kernel answer, including a failed decision-record write, requeue
+  the job in both input modes. A kernel decision returned at the check deadline is kept.
+- The `safety.bypass_admit` audit event carries `scope_rule`, and
+  `cordum_scheduler_input_fail_open_total` gains a `scope_rule` label alongside `topic`.
+- The scheduler publishes its audit events on `sys.audit.export`. A gateway with
+  an active exporter and `AUDIT_TRANSPORT=nats` exports events when it consumes that subject.
+- **Upgrade:** deployments using `input_fail_mode=open` must add `input_fail_open_scope`
+  with the topics they class as low risk. Without a scope, open mode requeues every job
+  while the kernel is unavailable.
+
+- `tools/scripts/install.sh` and `install.ps1` verify `SHA256SUMS.sigstore.json`,
+  a keyless Sigstore signature, with cosign before checking checksums and
+  installing binaries. `verify-blob` pins the identity to `release.yml` at a
+  `v<semver>` tag of `cordum-io/cordum`, with the GitHub Actions OIDC issuer.
+  Missing cosign is refused unless `--insecure-allow-missing-cosign` /
+  `-InsecureAllowMissingCosign` is passed; that flag logs a
+  `binary-signature-unverified` audit event and still enforces checksums.
+  The release workflow does not publish this signature yet (PR2-03-PIPELINE).
+  (PR2-03, task-83a43ecf)
 
 - Release images move off Alpine 3.21, which alpinelinux.org/releases.json lists
   as end-of-life on 2026-11-01. The control-plane and `demo-quickstart-worker`
@@ -33,6 +109,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Another tenant's agent registration (`POST /api/v1/agents` with `agent_id`), or its worker-credential issue, rotate or revoke for the same worker or principal ID, can no longer replace or delete a tenant's link, so it no longer changes that tenant's MCP identity binding. This was CodeRabbit's outside-diff finding on #490, and it removes the interim limitation noted in the task-283f2317 entry above.
 - Pre-existing global `agent:by-worker:<worker>` links keep resolving for the tenant that owns the linked agent, and that tenant's next unlink retires them. Nothing writes them any more.
 - Go API: `AgentIdentityStore.GetByWorkerID` is removed (use `GetByWorkerIDForTenant`); `UnlinkWorker` takes the tenant ID; `LinkWorker` rejects unknown or untenanted agents.
+- gRPC `SubmitJob` now binds `labels.agent_id` the same way HTTP job submit does. A client `agent_id` that differs from the agent linked to the principal in the request tenant, that is sent with no link, or whose principal comes from the request's `principal_id` instead of the authenticated identity, is refused with `PermissionDenied` before the policy check. Before this change, the label went unchecked into the policy check and the audit trail. This was CodeRabbit's finding on #537.
 - Slices: task-76c90c6e, task-283f2317.
 
 #### TypeScript SDK — dev-only minimatch advisory GHSA-g3hv-75wg-m249 (2026-11-11, task-f09d31be)
@@ -46,6 +123,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Audit publishing tolerates a missing fallback or exporter: events without a
+  usable sink are dropped, logged and counted in
+  `cordum_audit_events_dropped_total{reason}`. The Safety Kernel's shadow sender
+  has a discard fallback, and cordum-mcp's NATS audit fallback writes to stderr
+  when no SIEM exporter is configured.
+
+- `POST /api/v1/approvals/{job_id}/approve` and `/reject` now return 503 when a
+  store read that their checks depend on fails: the job state, the stored
+  request, the submitter or the workflow run. The job stays in APPROVAL, no
+  approval is recorded and nothing is published. A job with no recorded
+  submitter, or whose workflow run no longer exists, is handled as before
+  (PR1-17, task-a4da0522).
 - MCP approval resume: a call resumed with `_approval_ref` is refused with
   `-32096` `policy_snapshot_changed` when policy was published between the
   approval claim and the call's `mcp.tool.pre` stamp. Nothing runs and the
@@ -79,6 +168,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `mcp.policy_gate_enabled=true`, when an identity whose
   `PreapprovedMutatingTools` covers a `RequiresApproval` tool resumes an
   action-gate hold with `_approval_ref`. Authorization is unchanged.
+- MCP audit: an `_approval_ref` resume whose new evaluation allows the call,
+  for example after the session-taint lookup recovers, now records that
+  `approval_ref` on its `mcp.tool.post` or `mcp.tool.failed` event, as a
+  `REQUIRE_HUMAN` resume already did. Authorization is unchanged.
 
 #### core/mcp, core/controlplane/gateway — a preapproved identity's action-gate MCP hold returns a resumable approval ref (2026-11-12, task-06784e6d)
 
@@ -120,10 +213,35 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `docs/mcp-tools-reference.md` and `docs/mcp/mutating-tools.md` match. Approval
   behaviour and the `-32099` error are unchanged.
 
+- Dashboard tables: clicking the icon inside a row's button, link or
+  `data-row-action` control no longer also runs the row's click action, such as
+  opening the job. `DataTable` skipped its interactive-child check when the
+  click landed on the icon's SVG element, because the check accepted only HTML
+  elements (task-30740b03).
+
 ### CI and documentation
 
 - Added `docs/contract/threat-model.md`, the platform threat model for the M0 security contract: assets, adversaries, trust boundaries, a trusted-component inventory covering every `cmd/` service, reference-monitor properties with their current status, five explicit non-promises and the deployment boundary. Documentation only; no behavior changes.
 - Qualified three platform security-posture statements against `docs/contract/threat-model.md` (task-d056042e): ADR-001's "Zero-trust guarantee" bullet is now marked as design intent with a dated status note, and `docs/mcp/scope-filtering.md` no longer labels the MCP controls a "zero-trust stack" or "zero-trust controls". The threat model rates these mechanisms `supported`, not `enforced` or `verified`. Clarified that qualification requires protected transport on every Gateway client/proxy hop; deployment remains unverified.
+- Nightly soak bounds (task-a7c48ad2): compare post-warm-up memory medians over first/last K snapshots (default 5, minimum 3), retaining the 50% relative limit and 32 MiB floor. Missing/malformed metrics, insufficient samples, missing containers and zero load now fail explicitly. Helm reports drift/restarts as not evaluated rather than passing. Results include evaluation/window/baseline fields; the wiki documents the 20-minute example and metrics-source controls. All 83 contract assertions are retained.
+
+### Added
+
+- Invariant catalog `docs/contract/invariants.yaml` (I01-I10) with entry points, linked tests and a finding-to-invariant map, checked by `go test ./tests/contract/... -run Invariants` (part of `make test`). Contract artifact only; runtime behavior is unchanged.
+- Claim register schema and validator: `docs/contract/claims.yaml` and the Go
+  package `tests/contract`, run by `go test ./...`. The register lists protection
+  claims in README.md and SECURITY.md. Runtime behavior is unchanged.
+- Enforcement support matrix: `docs/contract/enforcement-matrix.yaml` records,
+  for each entry point and each control, whether the control is enforced,
+  advisory, ignored or not applicable, with a code reference. A validator in
+  `tests/contract` keeps its columns in step with the policy constraint model.
+  Runtime behavior is unchanged.
+
+### Changed
+
+- Docs: DESIGN.md, docs/CORE.md and docs/mcp-server.md now state which policy
+  constraints the scheduler enforces and which are advisory or planned, and link
+  to `docs/contract/enforcement-matrix.yaml`.
 
 ## [v1.3.1] - 2026-11-11
 
@@ -148,15 +266,6 @@ Changes on main since the v1.3.0 tag (d027ae97, 2026-11-11).
 - The Edge-mint `-32096` `reason` no longer echoes the store error either.
   Operators find the cause in the gateway log
   (`mcp approval store unavailable`).
-
-### Added
-
-#### demo/cap-mcp-governed — CAP worker calls governed Cordum MCP tools and waits for human approval (2026-11-11, task-ba678d95)
-
-- New CAP v2.17.0 demo worker on `job.cap-mcp-governed.create-workflow` and `worker.cap-mcp-governed.jobs`. Each job opens an MCP session on the gateway's `/mcp/message`, then runs `initialize`, `resources/read cordum://jobs/<job_id>`, `cordum_status` and `cordum_create_workflow`, in that order.
-- On JSON-RPC `-32099` it polls `GET /api/v1/mcp/approvals/{id}` until a human decides. After approval it retries with byte-identical arguments exactly once. It never calls approve or reject.
-- Failed jobs report one of 10 documented codes (`invalid_input`, `mcp_unavailable`, `mcp_protocol_error`, `mcp_call_failed`, `mcp_approval_rejected`, `mcp_approval_expired`, `mcp_approval_not_found`, `mcp_approval_timeout`, `mcp_approval_invalid`, `worker_shutdown`), never server text or the API key.
-- Unsigned agent, so compat CAP profile only. It needs the default `mcp.policy_gate_enabled=false`, because it does not send `_approval_ref`. `demo/cap-mcp-governed/README.md` covers setup.
 
 ### Fixed
 

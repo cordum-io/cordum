@@ -7,6 +7,8 @@ on:
   # get full CI instead of only the unfiltered smoke/e2e workflows.
   pull_request:
     branches: [ main, develop, 'moe/**' ]
+  merge_group:
+    types: [checks_requested]
 
 jobs:
   test:
@@ -648,6 +650,10 @@ jobs:
       # so `git log -1` reads the merge message rather than the contributor's
       # commit. Inspect the contributor commit (HEAD^2 on PR merges, HEAD
       # otherwise) so the allow-breaking-openapi marker actually takes effect.
+      # On merge_group events HEAD is the queue's squash commit. The repo's
+      # squash message setting is COMMIT_MESSAGES, so that commit carries the
+      # queued PR's commit messages and the marker is read from HEAD. If the
+      # setting changes, put the marker in the PR description instead.
       run: |
         TARGET_REF="HEAD"
         if [[ "${{ github.event_name }}" == "pull_request" ]] && git rev-parse --verify HEAD^2 >/dev/null 2>&1; then
@@ -661,4 +667,4 @@ jobs:
     - name: Validate OpenAPI
       run: make openapi-validate
       env:
-        OPENAPI_BASE_REF: origin/${{ github.base_ref || 'main' }}
+        OPENAPI_BASE_REF: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || format('origin/{0}', github.base_ref || 'main') }}

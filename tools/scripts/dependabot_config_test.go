@@ -36,12 +36,21 @@ func TestDependabotDefersKnownIncompatibleMigrations(t *testing.T) {
 	dashboard := findUpdate(t, config, "npm", "/dashboard")
 	for _, dependency := range []string{
 		"orval", "zod", "recharts", "typescript",
-		"@tanstack/react-table", "vitest", "jsdom", "msw",
+		"vitest", "jsdom", "msw",
 	} {
 		entry := findIgnore(t, dashboard, dependency)
 		assertContains(t, entry.UpdateTypes, "version-update:semver-major")
 	}
 	assertContains(t, findIgnore(t, dashboard, "orval").UpdateTypes, "version-update:semver-minor")
+}
+
+func TestDependabotAllowsReactTableUpdates(t *testing.T) {
+	dashboard := findUpdate(t, loadDependabotConfig(t), "npm", "/dashboard")
+	for _, entry := range dashboard.Ignore {
+		if entry.Dependency == "@tanstack/react-table" {
+			t.Fatal("react-table migration is complete; dependency updates must not be ignored")
+		}
+	}
 }
 
 func loadDependabotConfig(t *testing.T) dependabotConfig {

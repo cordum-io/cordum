@@ -27,7 +27,8 @@ type AuditBus interface {
 
 // NATSAuditPublisher publishes audit events to NATS for durable cross-replica
 // delivery. If NATS publish fails, the event is forwarded to the fallback
-// in-memory BufferedExporter so no audit data is silently lost.
+// in-memory BufferedExporter. With a nil fallback, events that cannot be
+// published are dropped, logged and counted.
 type NATSAuditPublisher struct {
 	bus      AuditBus
 	fallback *BufferedExporter
@@ -35,18 +36,19 @@ type NATSAuditPublisher struct {
 
 // NewNATSAuditPublisher creates a publisher that sends audit events via NATS
 // subject sys.audit.export. The fallback BufferedExporter handles events when
-// NATS is unavailable.
+// NATS is unavailable. A nil fallback drops, logs and counts those events.
 func NewNATSAuditPublisher(bus AuditBus, fallback *BufferedExporter) *NATSAuditPublisher {
 	return &NATSAuditPublisher{bus: bus, fallback: fallback}
 }
 
 // Send marshals the event to JSON and publishes it to NATS. On failure the
-// event is forwarded to the fallback in-memory buffer.
+// event is forwarded to the fallback in-memory buffer, or dropped and counted
+// when no fallback is configured.
 func (p *NATSAuditPublisher) Send(event SIEMEvent) {
 	payload, err := json.Marshal(event)
 	if err != nil {
 		slog.Error("audit nats publisher: marshal failed, using fallback", "error", err)
-		p.fallback.Send(event)
+		p.sendFallback(event)
 		return
 	}
 
@@ -73,13 +75,24 @@ func (p *NATSAuditPublisher) Send(event SIEMEvent) {
 	}
 
 	if err := p.bus.Publish(capsdk.SubjectAuditExport, packet); err != nil {
-		slog.Warn("audit nats publish failed, using fallback buffer",
-			"error", err,
-			"event_type", event.EventType,
-		)
-		p.fallback.Send(event)
+		if p.fallback != nil {
+			slog.Warn("audit nats publish failed, using fallback buffer",
+				"error", err,
+				"event_type", event.EventType,
+			)
+		}
+		p.sendFallback(event)
 		return
 	}
+}
+
+func (p *NATSAuditPublisher) sendFallback(event SIEMEvent) {
+	if p.fallback == nil {
+		slog.Warn("audit fallback not configured, dropping event", "event_type", event.EventType)
+		auditEventDrops.WithLabelValues("no_fallback").Inc()
+		return
+	}
+	p.fallback.Send(event)
 }
 
 // auditExportTraceID returns a guaranteed non-empty, non-whitespace trace id
@@ -99,5 +112,8 @@ func auditExportTraceID(event SIEMEvent) string {
 
 // Close shuts down the fallback exporter.
 func (p *NATSAuditPublisher) Close() error {
+	if p.fallback == nil {
+		return nil
+	}
 	return p.fallback.Close()
 }
