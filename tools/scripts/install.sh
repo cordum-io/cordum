@@ -5,14 +5,20 @@ set -euo pipefail
 # EDGE-151 — binary integrity pre-activation gate
 # ----------------------------------------------------------------------------
 # Production release pubkey fingerprint pinned here at script-edit-time.
-# Empty means production signing has not yet been provisioned, in which case
-# only `--dev-allow-unsigned` is accepted (with a TEST-ONLY-* key under
-# tools/test-keys/). When the production GPG key is provisioned the value
+# Empty means production GPG signing has not yet been provisioned, so GPG
+# manifests require `--dev-allow-unsigned` (with a TEST-ONLY-* key under
+# tools/test-keys/). Sigstore bundles use the workflow identity below instead.
+# When the production GPG key is provisioned the value
 # below MUST be filled in AND the matching public key committed at
 # tools/keys/cordum-release.pub.asc. See docs/security/binary-signing.md
 # for the threat model and rotation procedure.
 # ============================================================================
 CORDUM_PROD_FINGERPRINT_PIN="${CORDUM_RELEASE_FINGERPRINT:-}"
+# Expected signer for keyless SHA256SUMS bundles from the release workflow.
+CORDUM_COSIGN_ISSUER="https://token.actions.githubusercontent.com"
+CORDUM_COSIGN_DEFAULT_IDENTITY_REGEXP='^https://github\.com/cordum-io/cordum/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
+CORDUM_COSIGN_BIN="${CORDUM_COSIGN_BIN:-cosign}"
+CORDUM_COSIGN_IDENTITY_REGEXP="${CORDUM_COSIGN_IDENTITY_REGEXP:-$CORDUM_COSIGN_DEFAULT_IDENTITY_REGEXP}"
 
 # Audit-log context — populated as the verify flow progresses; consumed by
 # emit_audit so each event line carries the signing scheme + signer fingerprint
@@ -160,18 +166,11 @@ reject_path() {
   return 1
 }
 
-run_binary_verify() {
-  local rdir="$1" dev="$2" install_to="$3"
-  local rollback_override="${4:-0}" rollback_reason="${5:-}"
-  [ -d "$rdir" ] || verify_fail "release-dir not found: $rdir"
-
-  local manifest="$rdir/SHA256SUMS"
-  local sig="$rdir/SHA256SUMS.asc"
-  [ -f "$manifest" ] || verify_fail "manifest not found"
+verify_manifest_gpg() {
+  local manifest="$1" sig="$2" dev="$3"
   [ -f "$sig" ]      || verify_fail "unsigned manifest"
 
   command -v gpg       >/dev/null 2>&1 || verify_fail "gpg required for signature verification"
-  command -v sha256sum >/dev/null 2>&1 || verify_fail "sha256sum required for binary verification"
 
   local script_dir repo_root
   script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
@@ -233,6 +232,56 @@ run_binary_verify() {
 
   gpg --homedir "$tmp_home" --batch --quiet --verify "$sig" "$manifest" 2>/dev/null \
     || verify_fail "gpg signature invalid"
+}
+
+verify_manifest_cosign() {
+  local manifest="$1" bundle="$2"
+  CORDUM_AUDIT_SIG_SCHEME="cosign-keyless"
+  CORDUM_AUDIT_FINGERPRINT=""
+  if [ "$CORDUM_COSIGN_IDENTITY_REGEXP" != "$CORDUM_COSIGN_DEFAULT_IDENTITY_REGEXP" ]; then
+    emit_audit "binary-signer-identity-override" "signer identity overridden by CORDUM_COSIGN_IDENTITY_REGEXP"
+    echo "[install] WARNING: signer identity overridden: $CORDUM_COSIGN_IDENTITY_REGEXP" >&2
+  fi
+  if ! command -v "$CORDUM_COSIGN_BIN" >/dev/null 2>&1; then
+    if [ "$ALLOW_MISSING_COSIGN" = "1" ]; then
+      CORDUM_AUDIT_SIG_SCHEME="unverified"
+      emit_audit "binary-signature-unverified" "cosign not found; --insecure-allow-missing-cosign"
+      echo "[install] WARNING: signature was not verified; checksums are still required" >&2
+      return
+    fi
+    verify_fail "cosign required for signature verification; install cosign or pass --insecure-allow-missing-cosign"
+  fi
+  local output cleanup_path
+  output="$(mktemp -t cordum-install-cosign-XXXXXX)"
+  printf -v cleanup_path '%q' "$output"
+  trap "rm -f -- $cleanup_path" EXIT
+  if ! "$CORDUM_COSIGN_BIN" verify-blob --bundle "$bundle" \
+      --certificate-identity-regexp "$CORDUM_COSIGN_IDENTITY_REGEXP" \
+      --certificate-oidc-issuer "$CORDUM_COSIGN_ISSUER" "$manifest" >"$output" 2>&1; then
+    cat "$output" >&2
+    verify_fail "cosign signature invalid"
+  fi
+  rm -f -- "$output"
+  trap - EXIT
+}
+
+run_binary_verify() {
+  local rdir="$1" dev="$2" install_to="$3"
+  local rollback_override="${4:-0}" rollback_reason="${5:-}"
+  [ -d "$rdir" ] || verify_fail "release-dir not found: $rdir"
+  local manifest="$rdir/SHA256SUMS" sig="$rdir/SHA256SUMS.asc"
+  local bundle="$rdir/SHA256SUMS.sigstore.json"
+  [ -f "$manifest" ] || verify_fail "manifest not found"
+  command -v sha256sum >/dev/null 2>&1 || verify_fail "sha256sum required for binary verification"
+  if [ "$dev" = "1" ]; then
+    verify_manifest_gpg "$manifest" "$sig" "$dev"
+  elif [ -f "$bundle" ]; then
+    verify_manifest_cosign "$manifest" "$bundle"
+  elif [ -f "$sig" ]; then
+    verify_manifest_gpg "$manifest" "$sig" "$dev"
+  else
+    verify_fail "unsigned manifest"
+  fi
 
   # EDGE-151-DOWNGRADE: parse the embedded `# version: vN.N.N` line (if
   # present) and enforce the persisted version floor. Missing version line
@@ -389,6 +438,7 @@ run_binary_verify() {
 # ============================================================================
 RELEASE_DIR=""
 DEV_ALLOW_UNSIGNED=0
+ALLOW_MISSING_COSIGN=0
 INSTALL_TO="${CORDUM_INSTALL_DIR:-}"
 ROLLBACK_OVERRIDE=0
 ROLLBACK_REASON=""
@@ -397,6 +447,7 @@ while [ $# -gt 0 ]; do
     --release-dir)               RELEASE_DIR="$2"; shift 2 ;;
     --release-dir=*)             RELEASE_DIR="${1#--release-dir=}"; shift ;;
     --dev-allow-unsigned)        DEV_ALLOW_UNSIGNED=1; shift ;;
+    --insecure-allow-missing-cosign) ALLOW_MISSING_COSIGN=1; shift ;;
     --install-dir)               INSTALL_TO="$2"; shift 2 ;;
     --install-dir=*)             INSTALL_TO="${1#--install-dir=}"; shift ;;
     --rollback-operator-override) ROLLBACK_OVERRIDE=1; shift ;;

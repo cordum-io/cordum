@@ -79,6 +79,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   with the topics they class as low risk. Without a scope, open mode requeues every job
   while the kernel is unavailable.
 
+- `tools/scripts/install.sh` and `install.ps1` verify `SHA256SUMS.sigstore.json`,
+  a keyless Sigstore signature, with cosign before checking checksums and
+  installing binaries. `verify-blob` pins the identity to `release.yml` at a
+  `v<semver>` tag of `cordum-io/cordum`, with the GitHub Actions OIDC issuer.
+  Missing cosign is refused unless `--insecure-allow-missing-cosign` /
+  `-InsecureAllowMissingCosign` is passed; that flag logs a
+  `binary-signature-unverified` audit event and still enforces checksums.
+  The release workflow does not publish this signature yet (PR2-03-PIPELINE).
+  (PR2-03, task-83a43ecf)
+
 - Release images move off Alpine 3.21, which alpinelinux.org/releases.json lists
   as end-of-life on 2026-11-01. The control-plane and `demo-quickstart-worker`
   runtime stages use `alpine:3.24`, and the dashboard uses
