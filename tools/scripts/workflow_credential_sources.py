@@ -223,7 +223,7 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
             self.seen.add(memo); self.visits += 1  # noqa: E702
             for part in unit if isinstance(unit, list) else [unit]: self.visit(key.split("#")[0], part, env, argv, chain + (key,), quiet, ".")  # each shell of a make recipe starts from make's environment
     def visit(self, rel: str, unit: tuple, env: dict, argv: list, chain: tuple, quiet: bool, cwd: str) -> None:
-        cmds, error, acqs, prefixes, flags, _ = unit
+        cmds, error, acqs, prefixes, flags, _ = unit = self.settle(rel, unit, env, argv, chain, quiet, cwd, unit[5])
         if error: self.report("SOURCE_DYNAMIC", rel, error, True)
         for k, var, kind, status in acqs:
             status = "late" if status == "registered" and "xtrace" in env.get("SHELLOPTS", "") else "exempt" if status != "registered" and (exempt := EXEMPT.get((rel, var))) and exempt[1](env) and guarded(cmds, k, exempt[0]) else status
@@ -231,10 +231,20 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
             if status in ("unregistered", "late"): self.report("CREDENTIAL_UNREGISTERED" if status == "unregistered" else "CREDENTIAL_USE_BEFORE_REGISTRATION", rel, cmds[k].line)
         for k, var, need in prefixes:
             if not ((allowed := PREFIX_EXEMPT.get((rel, var))) and allowed(env, quiet and ">&2" not in cmds[k].text, need)): self.report("CREDENTIAL_PREFIX_PRINT", rel, cmds[k].line)
-        table, env, traced = {}, dict(env), "xtrace" in env.get("SHELLOPTS", "")
-        for cmd, (_, on) in zip(cmds, flags):  # xtrace in force at an edge reaches its child, as if SHELLOPTS were exported
+        self.walk(rel, unit, env, argv, chain, quiet, cwd, False)
+    def walk(self, rel: str, unit: tuple, env: dict, argv: list, chain: tuple, quiet: bool, cwd: str, dry: bool) -> dict:  # follows every edge; dry: only {k: what the file sourced at cmds[k] leaves set}
+        table, env, traced, sets = {}, dict(env), "xtrace" in env.get("SHELLOPTS", ""), {}
+        for k, (cmd, (_, on)) in enumerate(zip(unit[0], unit[4])):  # xtrace in force at an edge reaches its child, as if SHELLOPTS were exported
             if not traced and on != ("xtrace" in env.get("SHELLOPTS", "")): env["SHELLOPTS"] = "xtrace" * on
-            self.track(cmd.words, table, env, posixpath.dirname(rel) or "."); self.edge(cmd, rel, table, env, argv, chain, quiet, cwd)  # noqa: E702
+            self.track(cmd.words, table, env, posixpath.dirname(rel) or "."); sets[k] = self.edge(cmd, rel, table, env, argv, chain, quiet, cwd, dry) if not dry or {"source", "."} & {w.strip("\"'") for w in cmd.words} or "$" in cmd.text else ""  # noqa: E702  # dry: only a source or . word, or an expansion, can name a source
+        return {k: s for k, s in sets.items() if s}
+    def settle(self, rel: str, unit: tuple, env: dict, argv: list, chain: tuple, quiet: bool, cwd: str, errexit: bool) -> tuple:  # the unit with each sourced file's leftover options applied at its source command, as a set there is
+        sets = self.walk(rel, unit, env, argv, chain, quiet, cwd, True)
+        return facts("", 0, errexit, ([c._replace(sets=sets.get(k, "")) for k, c in enumerate(unit[0])], unit[1])) if sets or errexit != unit[5] else unit
+    def effect(self, key: str, env: dict, argv: list, chain: tuple, quiet: bool) -> str:  # what a file run in its caller's shell may leave set there: e, x, or both if unparsable; a refused, cyclic or too-deep file leaves nothing (its edge reports it)
+        if not isinstance(unit := "CYCLE" if key in chain else "LIMIT" if len(chain) >= MAX_DEPTH else self.load(key), tuple): return ""
+        if (memo := ("effect", key, tuple(sorted(self.walk(key, unit, env, argv, chain + (key,), quiet, ".", True).items())))) not in self.cache: flags = facts("", 0, True, ([c._replace(sets=dict(memo[2]).get(k, "")) for k, c in enumerate(unit[0])], unit[1]))[4]; self.cache[memo] = "ex" if unit[1] else ("" if flags[-1][0] else "e") + ("x" if flags[-1][1] else "")  # noqa: E702
+        return self.cache[memo]
     def track(self, words: list, table: dict, env: dict, here: str) -> None:  # a pure assignment, export, declaration or unset
         keyword = words[0] if words[:1] and words[0] in ("export", "local", "declare", "typeset", "readonly", "unset") else ""
         items = [w for w in words[bool(keyword):] if not w.startswith("-")]
@@ -244,25 +254,19 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
             if keyword == "unset": table.pop(name, None); env.pop(name, None); continue  # noqa: E702
             if m: table[name] = expand(m.group(2), table, env, here)
             if keyword == "export" or (keyword == "declare" and "-x" in words) or (m and name in env and keyword != "local"): env[name] = table.get(name, env.get(name, ""))
-    def rc_traced(self, rcpath: str, cwd: str) -> bool:  # tracing on at the rcfile's top level after its last command (an unparsable rcfile counts as traced); this only ever turns tracing on
-        key = posixpath.normpath(posixpath.join(cwd, rcpath))
-        if posixpath.isabs(key) or key == ".." or key.startswith("../"): return False  # an absolute or escaping rcfile is reported by its own edge, or is outside the repo
-        text, refusal = self.read(key)
-        if refusal or "\x00" in text: return False  # its own edge reports the refusal
-        _, error, _, _, flags, _ = facts(text + "\n:")  # the appended no-op reads the state after the last command
-        return bool(error) or bool(flags) and flags[-1][1]
-    def edge(self, cmd: Cmd, rel: str, table: dict, env: dict, argv: list, chain: tuple, quiet: bool, cwd: str) -> None:
+    def edge(self, cmd: Cmd, rel: str, table: dict, env: dict, argv: list, chain: tuple, quiet: bool, cwd: str, dry: bool = False) -> object:
         here, words, child = posixpath.dirname(rel) or ".", list(cmd.words), dict(env)
         while words and (words[0] in PREFIX_WORDS or WORD_ASSIGN.fullmatch(words[0])):
             if m := WORD_ASSIGN.fullmatch(word := words.pop(0)): child[m.group(1)] = expand(m.group(2), table, env, here)
             while word in ("env", "sudo", "timeout") and words and (words[0][:1] == "-" or (word == "timeout" and re.fullmatch(r"[\d.]+[smhd]?", words[0]))):
                 if words.pop(0) in ("-u", "--unset") and words: child.pop(words.pop(0), None)
         quiet, words = quiet or any(re.fullmatch(r"(?:1|&)?>>?/dev/null", w) for w in words), [w for w in words if not RWORD.match(w)]
-        name, program, dynamic = expand(words[0], table, env, here) if words else "", False, lambda: self.report("SOURCE_DYNAMIC", rel, cmd.line, True)
+        name, program, dynamic = expand(words[0], table, env, here) if words else "", False, lambda: None if dry else self.report("SOURCE_DYNAMIC", rel, cmd.line, True)
+        if dry and name not in ("source", "."): return ""
         if name == "eval": return dynamic()
         if name in ("make", "gmake"): return self.make([expand(w, table, env, here) for w in words[1:]], rel, cmd.line, child, chain, quiet)
         if name in ("source", "."): target, rest, kind = (words + [""])[1], words[2:], "source"  # no literal operand (<(...)) is dynamic
-        elif posixpath.basename(name) in ("bash", "sh"): (target, rest, program, traced, rc), kind = shell_operand(words[1:]), "shell"; child.update({"SHELLOPTS": "xtrace"} if traced else {}); (dynamic() if "$" in (rcpath := expand(rc, table, env, here)) else (self.edge(cmd._replace(words=[name, rcpath]), rel, table, child, argv, chain, quiet, cwd), child.update({"SHELLOPTS": "xtrace"} if self.rc_traced(rcpath, cwd) else {}))) if rc else None  # noqa: E702  # an interactive shell runs its rcfile first, in that same shell, so tracing the rcfile leaves on traces the program too; the caller expands its name, as for the script, so one it cannot resolve is dynamic
+        elif posixpath.basename(name) in ("bash", "sh"): (target, rest, program, traced, rc), kind = shell_operand(words[1:]), "shell"; child.update({"SHELLOPTS": "xtrace"} if traced else {}); (dynamic() if "$" in (rcpath := expand(rc, table, env, here)) else (self.edge(cmd._replace(words=[name, rcpath]), rel, table, child, argv, chain, quiet, cwd), child.update({"SHELLOPTS": "xtrace"} if "x" in self.effect(posixpath.normpath(posixpath.join(cwd, rcpath)), child, [], chain, quiet) else {}))) if rc else None  # noqa: E702  # an interactive shell runs its rcfile first, in that same shell, so tracing the rcfile leaves on traces the program too; the caller expands its name, as for the script, so one it cannot resolve is dynamic
         elif "/" in name: target, rest, kind = words[0], words[1:], "exec"
         else: return dynamic() if any(w.strip("\"'").endswith(".sh") for w in words[1:]) and ("$" in name or any(posixpath.basename(w.strip("\"'")) in ("bash", "sh") for w in words[1:])) else None  # a wrapper or variable command runs a script
         if program:  # a literal -c program is scanned inline; one whose command word (after assignments, redirections and prefix words) expands is dynamic
@@ -272,8 +276,8 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
         if not target or re.search(r"[$`\x00]", path): return dynamic() if kind != "exec" or path.endswith(".sh") else None
         key = posixpath.normpath(posixpath.join(cwd, path))
         if kind == "exec" and posixpath.isabs(path) and not path.endswith(".sh"): return None
-        if posixpath.isabs(key) or key == ".." or key.startswith("../"): return self.report("SOURCE_ESCAPE", rel, cmd.line, True)
-        if GATES.get((rel, cmd.func, key), lambda _: True)(argv): self.follow(key, child, [expand(w, table, env, here) for w in rest], chain, quiet, rel, cmd.line, kind == "exec" and not key.endswith(".sh"))
+        if posixpath.isabs(key) or key == ".." or key.startswith("../"): return None if dry else self.report("SOURCE_ESCAPE", rel, cmd.line, True)
+        if GATES.get((rel, cmd.func, key), lambda _: True)(argv): return self.effect(key, child, [expand(w, table, env, here) for w in rest], chain, quiet) if dry else self.follow(key, child, [expand(w, table, env, here) for w in rest], chain, quiet, rel, cmd.line, kind == "exec" and not key.endswith(".sh"))
         return None
     def make(self, args: list, rel: str, line: int, env: dict, chain: tuple, quiet: bool) -> None:
         targets, skip, rules = [], False, self.rules()
