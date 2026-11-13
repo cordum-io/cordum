@@ -153,3 +153,28 @@ func TestScanContract(t *testing.T) {
 		t.Fatalf("endpoints =\n%#v\nwant\n%#v", got, want)
 	}
 }
+
+func TestPathMatches(t *testing.T) {
+	const tmpl = "/api/v1/things/{id}"
+	cases := []struct {
+		doc, tmpl string
+		want      bool
+	}{
+		{"/api/v1/things/abc", tmpl, true},
+		{"/api/v1/things/{thing_id}", tmpl, true},
+		{"/api/v1/things/<id>", tmpl, true},
+		{"/api/v1/things/:id", tmpl, true},
+		{"/api/v1/things/$ID", tmpl, true},
+		{"/api/v1/things/{id}", "/api/v1/things/list", false},
+		{"/api/v1/things/<id>", "/api/v1/things/list", false},
+		{"/api/v1/things", tmpl, false},
+		{"/api/v1/things/a/b", tmpl, false},
+		{"/api/v1/other/abc", tmpl, false},
+		{"/api/v1/things//", tmpl, false},
+	}
+	for _, tc := range cases {
+		if got := pathMatches(tc.doc, tc.tmpl); got != tc.want {
+			t.Errorf("pathMatches(%q, %q) = %v, want %v", tc.doc, tc.tmpl, got, tc.want)
+		}
+	}
+}

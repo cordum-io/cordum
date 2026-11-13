@@ -1,0 +1,5 @@
+# Known mismatches between the cordum docs and the product, found by
+# tools/docscheck. Each entry is owned by PR2-15-DOCS, which corrects the doc
+# and deletes the entry; an entry that no longer matches a failure fails the
+# check (STALE).
+[]

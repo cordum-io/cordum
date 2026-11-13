@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -40,14 +41,7 @@ type Block struct {
 }
 
 // Has reports whether the block's marker names kind.
-func (b Block) Has(kind string) bool {
-	for _, k := range b.Kinds {
-		if k == kind {
-			return true
-		}
-	}
-	return false
-}
+func (b Block) Has(kind string) bool { return slices.Contains(b.Kinds, kind) }
 
 const minReasonLen = 10
 
