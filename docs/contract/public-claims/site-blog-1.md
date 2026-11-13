@@ -3,12 +3,12 @@
 Repo: Cordum-site. Pin: `fd06b5f131c89c1edd3f004f51ada3340125fb05`.
 Generator: `site_blog_1` in [the method](../public-claims-baseline.md). Owner: M0-07-SITE-2.
 Generic engineering and external-system text is not a Cordum claim. Accurate means no stronger than the scoped entry, not execution proof.
-Counts: 301 hits; accurate 20, overstated 22, unverifiable 2, not-a-claim 272.
+Counts: 301 hits; accurate 20, overstated 23, unverifiable 2, not-a-claim 272.
 
 | File | Entries |
 | --- | --- |
 | site/src/app/blog/2026-agentic-control-plane-buying-guide/page.tsx | 123 not-a-claim ext; 138 not-a-claim ext; 202 not-a-claim ext; 338 not-a-claim ext |
-| site/src/app/blog/5-decision-types-every-ai-agent-needs/page.tsx | 188 not-a-claim instr |
+| site/src/app/blog/5-decision-types-every-ai-agent-needs/page.tsx | 188 not-a-claim ext |
 | site/src/app/blog/ai-agent-ackwait-dedup-ttl-alignment/page.tsx | 213 not-a-claim nav; 439 not-a-claim nav; 440 not-a-claim nav |
 | site/src/app/blog/ai-agent-approval-idempotency-already-approved/page.tsx | 54 not-a-claim code |
 | site/src/app/blog/ai-agent-approval-lock-contention-409-vs-423/page.tsx | 53 not-a-claim code; 104 not-a-claim code; 177 not-a-claim code |
@@ -68,7 +68,7 @@ Counts: 301 hits; accurate 20, overstated 22, unverifiable 2, not-a-claim 272.
 | site/src/app/blog/ai-agent-preferred-worker-routing-hints/page.tsx | 452 not-a-claim instr |
 | site/src/app/blog/ai-agent-priority-fair-scheduling/page.tsx | 107 not-a-claim plan; 320 not-a-claim ext |
 | site/src/app/blog/ai-agent-production-deployment-checklist/page.tsx | 89 not-a-claim code; 106 not-a-claim instr; 111 not-a-claim instr; 115 not-a-claim instr; 126 not-a-claim code; 176 not-a-claim code; 181 not-a-claim code; 182 not-a-claim code; 192 not-a-claim instr; 256 not-a-claim ext |
-| site/src/app/blog/ai-agent-project-failure-governance/page.tsx | 389 not-a-claim ext; 432 not-a-claim instr; 451 not-a-claim instr; 452 not-a-claim instr; 569 CLM-012 accurate; 569 CLM-014 accurate; 581 CLM-020 overstated R11 R12; 581 CLM-057 overstated R11 R12 |
+| site/src/app/blog/ai-agent-project-failure-governance/page.tsx | 389 not-a-claim ext; 432 not-a-claim instr; 451 not-a-claim instr; 452 not-a-claim instr; 569 CLM-010 overstated R01 R15; 569 CLM-012 accurate; 569 CLM-014 accurate; 581 CLM-020 overstated R11 R12; 581 CLM-057 overstated R11 R12 |
 | site/src/app/blog/ai-agent-queue-partitioning-strategy/page.tsx | 37 not-a-claim instr; 100 not-a-claim ext; 131 not-a-claim code; 141 CLM-062 accurate; 177 not-a-claim code; 238 not-a-claim instr; 411 not-a-claim instr; 445 not-a-claim ext |
 | site/src/app/blog/ai-agent-retry-intent-propagation/page.tsx | 202 CLM-113 overstated ev:test |
 | site/src/app/blog/ai-agent-rolling-restart-playbook/page.tsx | 61 not-a-claim instr; 234 not-a-claim code; 464 not-a-claim ext |

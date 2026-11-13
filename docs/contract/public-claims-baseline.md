@@ -60,7 +60,7 @@ site_blog_2() { git -C "$SITE" grep -n -I -i -E "${ASSURANCE[@]}" "$PIN_S" -- si
 | cordum-docs-1 | cordum | docs root, mcp, adr | 230 | 59 | M0-07-CORE-1 | 60 | 49 | 8 | 115 |
 | cordum-docs-2 | cordum | remaining docs | 262 | 70 | M0-07-CORE-2 | 113 | 39 | 4 | 113 |
 | site-pages | Cordum-site | src except blog/tests, llms-full, docs-site | 390 | 101 | M0-07-SITE-1 | 71 | 147 | 21 | 191 |
-| site-blog-1 | Cordum-site | numbered and ai-agent-[a-r] blogs | 301 | 57 | M0-07-SITE-2 | 20 | 22 | 2 | 272 |
+| site-blog-1 | Cordum-site | numbered and ai-agent-[a-r] blogs | 301 | 57 | M0-07-SITE-2 | 20 | 23 | 2 | 272 |
 | site-blog-2 | Cordum-site | remaining blogs except tests | 376 | 62 | M0-07-SITE-3 | pending | pending | pending | pending |
 | Total (M0-07-SITE-3 to fill per repo and class) | both | all surfaces | 1752 | 353 | M0-07-SITE-3 | pending | pending | pending | pending |
 
