@@ -141,6 +141,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `docs/mcp-tools-reference.md` and `docs/mcp/mutating-tools.md` match. Approval
   behaviour and the `-32099` error are unchanged.
 
+- Dashboard tables: clicking the icon inside a row's button, link or
+  `data-row-action` control no longer also runs the row's click action, such as
+  opening the job. `DataTable` skipped its interactive-child check when the
+  click landed on the icon's SVG element, because the check accepted only HTML
+  elements (task-30740b03).
+
 ### CI and documentation
 
 - Added `docs/contract/threat-model.md`, the platform threat model for the M0 security contract: assets, adversaries, trust boundaries, a trusted-component inventory covering every `cmd/` service, reference-monitor properties with their current status, five explicit non-promises and the deployment boundary. Documentation only; no behavior changes.

@@ -65,7 +65,8 @@ const DECISION_EDGE: Record<DecisionTier, string> = {
 };
 
 function isInteractiveTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
+  // Element, not HTMLElement: an icon's <svg>/<path> inside a button or link is an SVGElement (task-30740b03).
+  if (!(target instanceof Element)) return false;
   return target.closest("button, a, input, select, textarea, [role='button'], [data-row-action]") !== null;
 }
 
