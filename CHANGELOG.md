@@ -81,6 +81,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+#### Header-asserted principals never authorize a job's agent identity (2026-11-13, task-850216cf)
+
+- **Behavior change** for job submit, in every profile. A principal taken
+  from the `X-Principal-Id` header or `x-principal-id` gRPC metadata is
+  caller-asserted: it is still recorded for attribution, but it never
+  authorizes a client `labels.agent_id`. Such a submit is refused (HTTP 403,
+  gRPC `PermissionDenied`) before the policy check and publish, and gRPC
+  `SubmitJob` infers no agent for it. Principals bound by an API key, a
+  session, or JWT/OIDC bind as before.
+- **Production default change.** Managed API keys now ignore
+  `X-Principal-Id` in the production profile, as static keys do, unless
+  `CORDUM_ALLOW_HEADER_PRINCIPAL=true`. When that flag is set in production,
+  the gateway logs a startup warning naming it.
+- Migration: callers that send `labels.agent_id` authenticate as the worker,
+  with a worker credential (an API key bound to the worker principal), a
+  session, OIDC or a delegation token. Production dashboard or edge
+  deployments that sent `X-Principal-Id` with a managed key move to a session
+  or OIDC login or a principal-bound key, or set
+  `CORDUM_ALLOW_HEADER_PRINCIPAL=true` for attribution only.
+
 #### MCP `X-Agent-Id` can only confirm the principal-bound agent identity (2026-10-26, task-eb2d6f28)
 
 - **Behavior change** for MCP clients that select an agent identity with the
