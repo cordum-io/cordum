@@ -24,6 +24,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   tests and lists unmeasured behavior and gaps with owners. Three new
   characterization tests accompany it; runtime behavior is unchanged.
 
+- Added `tools/releasequal`: a release qualification record schema and library
+  binding source SHAs to image and binary digests, gates, results and open
+  exceptions (PR2-02, task-fd0efd22). `go run ./tools/releasequal/cmd/release-qual`
+  writes entries, assembles, validates and checks records, and
+  `release-qual publish -- CMD` starts CMD only when every named digest is the
+  qualified one (PR2-02-CLI, task-cc3f03b6). `docker.yml` now builds each
+  release image once and pushes it by digest without tags; the smoke check and
+  the Trivy OS scan run on that pushed digest, and the run uploads a
+  `qualification-record` artifact. Cosign signs that digest, and the release
+  tags are applied to it, only through `release-qual publish`, and the job
+  fails unless every tag resolves to it. If a gate fails on a tag push, the
+  untagged, unsigned digest stays in GHCR and Docker Hub. A push to a
+  `release-dry-run/**` branch runs the same image and record jobs against
+  job-local registries and skips the registry logins, Docker Hub, signing, the
+  SARIF upload, issue creation, the published-image smoke and the Helm chart
+  (PR2-02-IMAGES, task-f393ecf3). Release binaries are not in the record yet
+  (PR2-02-BINARIES).
+
 - Added the [planned first protected-operation contract](docs/contract/protected-operation.md)
   for Kubernetes manifest apply, with a proposed reference boundary, credential
   inventory and measurable acceptance ideas. Broker/grant enforcement is future
