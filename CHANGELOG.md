@@ -42,6 +42,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   (PR2-02-IMAGES, task-f393ecf3). Release binaries are not in the record yet
   (PR2-02-BINARIES).
 
+- License-state behavior contract (`docs/contract/license-behavior.md`): one row per license state and capability class, checked by `TestLicenseBehaviorContract`; a cell not yet tested names the row that will test it.
 - Added the [planned first protected-operation contract](docs/contract/protected-operation.md)
   for Kubernetes manifest apply, with a proposed reference boundary, credential
   inventory and measurable acceptance ideas. Broker/grant enforcement is future
