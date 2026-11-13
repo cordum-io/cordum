@@ -8,10 +8,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -77,6 +81,7 @@ var policySignatureCells = []signatureCell{
 func TestPolicySignatureMatrix(t *testing.T) {
 	for _, cell := range policySignatureCells {
 		t.Run(cell.source+"/"+cell.profile+"/"+cell.state, func(t *testing.T) {
+			require.Contains(t, policySignatureSources, cell.source)
 			h := newSignatureHarness(t, cell)
 			h.publish(t, "allow", "signed")
 			require.NoError(t, h.server.reloadPolicy(t.Context(), h.loader, "notification"))
@@ -235,4 +240,74 @@ func (h *signatureHarness) identity(t *testing.T) signatureIdentity {
 	require.NoError(t, err)
 	id.decision = response.GetDecision()
 	return id
+}
+
+func TestPolicySignatureSourceInventory(t *testing.T) {
+	wantCalls, calls := map[string]int{}, map[string]int{}
+	wantSchemes, schemes := map[string]int{}, map[string]int{}
+	for id, source := range policySignatureSources {
+		wantCalls[source.parser] = 1
+		if source.exclusion != "" {
+			continue
+		}
+		covered := false
+		for _, cell := range policySignatureCells {
+			covered = covered || cell.source == id
+		}
+		require.True(t, covered, "source %s needs matrix entries", id)
+		for _, scheme := range strings.Split(source.schemes, ",") {
+			if scheme != "" {
+				wantSchemes[scheme] = 1
+			}
+		}
+	}
+	packages, err := parser.ParseDir(token.NewFileSet(), ".", func(f os.FileInfo) bool { return !strings.HasSuffix(f.Name(), "_test.go") }, 0)
+	require.NoError(t, err)
+	for _, pkg := range packages {
+		for _, file := range pkg.Files {
+			for _, decl := range file.Decls {
+				name := "<package>"
+				if fn, ok := decl.(*ast.FuncDecl); ok {
+					name = fn.Name.Name
+					if fn.Recv != nil {
+						typ := fn.Recv.List[0].Type
+						if ptr, ok := typ.(*ast.StarExpr); ok {
+							typ = ptr.X
+						}
+						receiver, ok := typ.(*ast.Ident)
+						require.True(t, ok, "receiver needs an inventory entry: %s", name)
+						name = receiver.Name + "." + name
+					}
+				}
+				ast.Inspect(decl, func(n ast.Node) bool { signatureInventoryCall(t, n, name, calls, schemes); return true })
+			}
+		}
+	}
+	require.Equal(t, wantCalls, calls, "policy parser call inventory")
+	require.Equal(t, wantSchemes, schemes, "policy source scheme inventory")
+}
+
+func signatureInventoryCall(t *testing.T, n ast.Node, name string, calls, schemes map[string]int) {
+	t.Helper()
+	call, ok := n.(*ast.CallExpr)
+	if !ok {
+		return
+	}
+	if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+		owner, _ := sel.X.(*ast.Ident)
+		if owner != nil && owner.Name == "config" && sel.Sel.Name == "ParseSafetyPolicy" {
+			calls[name]++
+		}
+		if name == "readPolicySource" && owner != nil && owner.Name == "strings" && sel.Sel.Name == "HasPrefix" {
+			require.Len(t, call.Args, 2)
+			literal, ok := call.Args[1].(*ast.BasicLit)
+			require.True(t, ok, "source prefix must have an inventory entry")
+			prefix, err := strconv.Unquote(literal.Value)
+			require.NoError(t, err)
+			schemes[prefix]++
+		}
+	}
+	if fun, ok := call.Fun.(*ast.Ident); ok && name == "readPolicySource" && fun.Name == "readPolicyFile" {
+		schemes["file"]++
+	}
 }
