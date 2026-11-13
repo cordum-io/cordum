@@ -17,6 +17,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 	"github.com/cordum/cordum/core/packs/signing"
 	"github.com/cordum/cordum/core/policysign"
 	"github.com/redis/go-redis/v9"
@@ -127,12 +128,13 @@ func TestGatewayPackStrictResolution_ProductionDefaultsToStrict(t *testing.T) {
 		t.Run(setting, func(t *testing.T) {
 			prodPackEnv(t, true)
 			raw := ""
-			if setting == "flag" {
+			switch setting {
+			case "flag":
 				t.Setenv("CORDUM_ENV", "")
 				t.Setenv("CORDUM_PRODUCTION", "true")
-			} else if setting == "invalid-env" {
+			case "invalid-env":
 				t.Setenv(gatewayPackStrictEnv, "invalid")
-			} else if setting == "invalid-redis" || setting == "closed" {
+			case "invalid-redis", "closed":
 				raw = setting
 			}
 			var client redis.UniversalClient
@@ -140,6 +142,9 @@ func TestGatewayPackStrictResolution_ProductionDefaultsToStrict(t *testing.T) {
 				client = prodPackRedis(t, raw)
 			}
 			prodPackResolution(t, client, true, false, "production-default")
+			if setting == "closed" {
+				prodPackResolution(t, prodPackRedis(t, "true"), true, false, gatewayStrictRedisKey)
+			}
 		})
 	}
 }
@@ -156,6 +161,9 @@ func TestGatewayPackStrictResolution_ExplicitFalseDowngradesProduction(t *testin
 				t.Setenv(gatewayPackStrictEnv, raw)
 			}
 			prodPackResolution(t, client, false, true, source)
+			if raw == "redis" {
+				prodPackResolution(t, nil, true, false, "production-default")
+			}
 		})
 	}
 }
@@ -205,9 +213,10 @@ func TestGatewayPackStrictResolution_DowngradeIsLogged(t *testing.T) {
 			key := prodPackEnv(t, source != "development")
 			client := prodPackRedis(t, "")
 			downgraded := source == gatewayPackStrictEnv || source == gatewayStrictRedisKey
-			if source == gatewayPackStrictEnv {
+			switch source {
+			case gatewayPackStrictEnv:
 				t.Setenv(gatewayPackStrictEnv, "false")
-			} else if source == gatewayStrictRedisKey {
+			case gatewayStrictRedisKey:
 				require.NoError(t, client.Set(context.Background(), gatewayStrictRedisKey, "false", 0).Err())
 			}
 			logs := prodPackLogs(t)
@@ -340,18 +349,53 @@ func TestPackPolicyFragment_UndeterminedModeTreatedAsEnforce(t *testing.T) {
 
 func TestPackPolicyFragment_ExplicitWarnStoresUnsignedFragment(t *testing.T) {
 	for _, mode := range []string{"warn", "off"} {
-		t.Run(mode, func(t *testing.T) {
-			key := prodPackEnv(t, true)
-			t.Setenv("CORDUM_POLICY_STRICT", mode)
-			h := prodPackPrepare(t, key, "signed", "upload")
-			logs := prodPackLogs(t)
-			assertPackAccepted(t, h.s, h.before, h.drive(), packSignatureWant{status: 200, signed: true}, h.bundle.content, "upload")
-			require.NotContains(t, packMatrixFragment(t, h.s), "_signature")
-			require.Equal(t, 1, strings.Count(logs.String(), "level=WARN"))
-			require.Contains(t, logs.String(), "policy_mode="+mode)
-			require.Contains(t, logs.String(), matrixPackID)
-		})
+		for _, keyState := range []string{"none", "malformed", "untrusted"} {
+			t.Run(mode+"-"+keyState, func(t *testing.T) {
+				key := prodPackEnv(t, true)
+				t.Setenv("CORDUM_POLICY_STRICT", mode)
+				switch keyState {
+				case "untrusted":
+					prodPackPolicyKey(t, false)
+				case "malformed":
+					t.Setenv("CORDUM_POLICY_SIGNING_KEY", "private-invalid-marker")
+				}
+				h := prodPackPrepare(t, key, "signed", "upload")
+				logs := prodPackLogs(t)
+				assertPackAccepted(t, h.s, h.before, h.drive(), packSignatureWant{status: 200, signed: true}, h.bundle.content, "upload")
+				fragment := packMatrixFragment(t, h.s)
+				if keyState == "untrusted" {
+					var sig policysign.Signature
+					require.NoError(t, json.Unmarshal(fragment["_signature"], &sig))
+					policyKey, _, err := policysign.LoadPrivateKeyFromEnv()
+					require.NoError(t, err)
+					require.NoError(t, policysign.Verify(policyKey.Public().(ed25519.PublicKey), []byte(h.bundle.content), sig))
+				} else {
+					require.NotContains(t, fragment, "_signature")
+				}
+				require.Equal(t, 1, strings.Count(logs.String(), "level=WARN"))
+				require.Contains(t, logs.String(), "policy_mode="+mode)
+				require.Contains(t, logs.String(), matrixPackID)
+				if material := os.Getenv("CORDUM_POLICY_SIGNING_KEY"); material != "" {
+					require.NotContains(t, logs.String(), material)
+				}
+			})
+		}
 	}
+}
+
+func TestPackPolicyFragment_EmptyContentSkipsSigning(t *testing.T) {
+	prodPackEnv(t, true)
+	prodPackPolicyKey(t, true)
+	s, _, _ := newTestGateway(t)
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "empty.yaml"), nil, 0600))
+	signer, err := resolvePolicyStoreSigner("test pack")
+	require.NoError(t, err)
+	_, err = s.applyPolicyOverlay(context.Background(), packs.PackPolicyOverlay{Name: "safety", Path: "empty.yaml"}, matrixPackID, "0.1.0", dir, signer)
+	require.NoError(t, err)
+	fragment := packMatrixFragment(t, s)
+	require.Equal(t, json.RawMessage(`""`), fragment["content"])
+	require.NotContains(t, fragment, "_signature")
 }
 
 func TestPackPolicyFragment_PackWithoutPolicyOverlayNeedsNoSigningKey(t *testing.T) {
