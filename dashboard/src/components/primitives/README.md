@@ -89,11 +89,13 @@ the primitive does not stretch to fill the page; it owns its own scroll.
 
 ### Sort
 
-Client-side via TanStack `getSortedRowModel`. Toggle order is
+Client-side via TanStack `createSortedRowModel()` and the stock `sortFns`,
+both registered in DataTable's module-level `tableFeatures`. Toggle order is
 **asc → desc → unsorted** on repeated header clicks. Headers expose
 `aria-sort`, are keyboard-focusable when sortable, and respond to Enter or
 Space. The default sorting function places `undefined` at the end ascending
-and the beginning descending — override via `columnDef.sortingFn` /
+and the beginning descending — override via `columnDef.sortFn` (a comparator
+function or a registered stock name such as `text` or `alphanumeric`) /
 `columnDef.sortUndefined` when this is wrong for your data.
 
 For server-side sort + paging (e.g. an admin audit list with a backend
