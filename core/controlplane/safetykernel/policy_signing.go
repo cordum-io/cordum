@@ -19,8 +19,10 @@ const policySignatureFieldKey = "_signature"
 // (enforce mode).
 var ErrBundleUnsigned = errors.New("safetykernel: bundle is unsigned")
 
-// ErrBundleSignatureMalformed is returned when a bundle carries a
-// _signature entry but it cannot be decoded into a policysign.Signature.
+// ErrBundleSignatureMalformed is returned, for every policy source, when
+// signature metadata is present but unusable: no or an unsupported
+// algorithm, or a value that is missing, undecodable or the wrong length.
+// The matching policysign error stays in the chain for errors.Is.
 var ErrBundleSignatureMalformed = errors.New("safetykernel: bundle signature is malformed")
 
 // ErrUntrustedKeyID is returned when the signature's key_id is not
@@ -76,7 +78,12 @@ func verifyBundleSignature(bundleID string, content []byte, rawSig any, mode pol
 				"audit_event", "policy_signature_rejected",
 				"reason", "malformed",
 			)
-			return fmt.Errorf("%w: %s", ErrBundleSignatureMalformed, bundleID)
+			// The policysign error Verify returns for the same field, in Verify's order.
+			cause := policysign.ErrInvalidSignature
+			if strings.TrimSpace(sig.Algorithm) == "" {
+				cause = policysign.ErrUnsupportedAlgo
+			}
+			return fmt.Errorf("%w: %s: %w", ErrBundleSignatureMalformed, bundleID, cause)
 		}
 		slog.Warn("safety-kernel: policy bundle signature malformed", "bundle_id", bundleID)
 		return nil
@@ -126,7 +133,7 @@ func verifyBundleSignature(bundleID string, content []byte, rawSig any, mode pol
 				"reason", "invalid_signature",
 				"err", err,
 			)
-			return fmt.Errorf("bundle %s: %w", bundleID, err)
+			return fmt.Errorf("bundle %s: %w", bundleID, malformedSignature(err))
 		}
 		slog.Warn("safety-kernel: policy bundle signature verification failed",
 			"bundle_id", bundleID,
@@ -207,6 +214,17 @@ func resolveStoreBundleMode() policysign.Mode {
 		})
 	}
 	return mode
+}
+
+// malformedSignature classifies a policysign.Verify failure the same way for
+// every policy source: unusable signature metadata (an unsupported algorithm,
+// or a value that is missing, undecodable or the wrong length) becomes
+// ErrBundleSignatureMalformed, and the policysign error stays matchable.
+func malformedSignature(err error) error {
+	if errors.Is(err, policysign.ErrUnsupportedAlgo) || errors.Is(err, policysign.ErrInvalidSignature) {
+		return fmt.Errorf("%w: %w", ErrBundleSignatureMalformed, err)
+	}
+	return err
 }
 
 // newBundleVerifier snapshots the policy-signing config from the

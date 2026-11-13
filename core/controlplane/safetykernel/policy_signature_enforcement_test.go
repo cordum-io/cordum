@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -144,6 +145,20 @@ func (h *pseStore) activateSigned(t *testing.T, key ed25519.PrivateKey) pseIdent
 }
 
 var pseOtherKey = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{8}, ed25519.SeedSize))
+
+// pseMalformed are signature edits that leave the metadata unusable, with the
+// policysign error each one maps to.
+var pseMalformed = []struct {
+	name  string
+	edit  func(*policysign.Signature)
+	cause error
+}{
+	{"no algorithm", func(s *policysign.Signature) { s.Algorithm = "" }, policysign.ErrUnsupportedAlgo},
+	{"unsupported algorithm", func(s *policysign.Signature) { s.Algorithm = "rsa" }, policysign.ErrUnsupportedAlgo},
+	{"no value", func(s *policysign.Signature) { s.Value = "" }, policysign.ErrInvalidSignature},
+	{"undecodable value", func(s *policysign.Signature) { s.Value = "!" }, policysign.ErrInvalidSignature},
+	{"wrong-length value", func(s *policysign.Signature) { s.Value = base64.StdEncoding.EncodeToString([]byte("short")) }, policysign.ErrInvalidSignature},
+}
 
 func TestPolicySignatureMode_EverySourceSharesOneRule(t *testing.T) {
 	for _, tc := range []struct {
@@ -308,6 +323,73 @@ func TestStorePolicySignature_DevelopmentKeepsWarnMode(t *testing.T) {
 			after := h.identity(t)
 			if after.snapshot == before.snapshot || after.history != before.history+1 || after.decision != pb.DecisionType_DECISION_TYPE_DENY {
 				t.Fatalf("development bundle did not activate: before=%+v after=%+v", before, after)
+			}
+		})
+	}
+}
+
+func TestStorePolicySignature_MalformedMetadataUsesContractSentinel(t *testing.T) {
+	for _, tc := range pseMalformed {
+		t.Run(tc.name, func(t *testing.T) {
+			key := pseEnv(t, true)
+			h := newPSEStore(t)
+			before := h.activateSigned(t, key)
+			content := pseContent("deny")
+			h.publish(t, map[string]any{"pse": map[string]any{"content": content, "_signature": pseSignature(t, key, pseKeyID, content, tc.edit)}})
+			err := h.reload()
+			if after := h.identity(t); after != before {
+				t.Fatalf("active policy changed: before=%+v after=%+v", before, after)
+			}
+			if !errors.Is(err, ErrBundleSignatureMalformed) || !errors.Is(err, tc.cause) {
+				t.Fatalf("reload error = %v, want %v and %v", err, ErrBundleSignatureMalformed, tc.cause)
+			}
+		})
+	}
+}
+
+func pseFilePolicy(t *testing.T, key ed25519.PrivateKey, edit func(*policysign.Signature)) ([]byte, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "policy.yaml")
+	data := []byte(pseContent("deny"))
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sig, err := json.Marshal(pseSignature(t, key, pseKeyID, string(data), edit))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path+".sig", sig, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return data, path
+}
+
+func TestFilePolicySignature_MalformedMetadataUsesContractSentinel(t *testing.T) {
+	for _, tc := range pseMalformed {
+		t.Run(tc.name, func(t *testing.T) {
+			key := pseEnv(t, true)
+			data, path := pseFilePolicy(t, key, tc.edit)
+			err := verifyFilePolicySignature(data, path)
+			if !errors.Is(err, ErrBundleSignatureMalformed) || !errors.Is(err, tc.cause) {
+				t.Fatalf("file verify error = %v, want %v and %v", err, ErrBundleSignatureMalformed, tc.cause)
+			}
+			if policy, snapshot, err := loadPolicyBundle(path); policy != nil || snapshot != "" || !errors.Is(err, ErrBundleSignatureMalformed) {
+				t.Fatalf("file loader returned policy=%v snapshot=%q err=%v, want a refusal", policy, snapshot, err)
+			}
+		})
+	}
+}
+
+func TestFilePolicySignature_DevelopmentKeepsWarnModeForMalformedMetadata(t *testing.T) {
+	for _, tc := range pseMalformed {
+		t.Run(tc.name, func(t *testing.T) {
+			key := pseEnv(t, false)
+			data, path := pseFilePolicy(t, key, tc.edit)
+			if err := verifyFilePolicySignature(data, path); err != nil {
+				t.Fatalf("development file verify error = %v, want nil", err)
+			}
+			if policy, _, err := loadPolicyBundle(path); err != nil || policy == nil {
+				t.Fatalf("development file loader returned policy=%v err=%v, want the policy", policy, err)
 			}
 		})
 	}

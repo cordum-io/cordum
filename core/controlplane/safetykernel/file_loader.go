@@ -163,7 +163,7 @@ func verifyFileSigStructured(data []byte, sig policysign.Signature, mode policys
 				"reason", "invalid_signature",
 				"err", err,
 			)
-			return err
+			return malformedSignature(err)
 		}
 		slog.Warn("safety-kernel: file policy signature invalid", "key_id", sig.KeyID, "err", err)
 		return nil
