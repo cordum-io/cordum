@@ -109,6 +109,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   with the topics they class as low risk. Without a scope, open mode requeues every job
   while the kernel is unavailable.
 
+#### Scheduler fail-open admission reads one config snapshot (2026-11-13, task-5ef67585)
+
+- A tenant whose fail-mode config has not loaded is requeued instead of inheriting
+  the system fail-open scope. The lookup starts a background refresh, and the
+  tenant's jobs are decided once its config has loaded.
+- Each fail-open decision takes the input mode and scope from one configuration:
+  the tenant's effective config as last loaded (system and tenant settings merged)
+  when either key is present in it, otherwise the current system config. A present
+  mode other than `open`, including an empty, null or non-string value, is closed.
+  A reload publishes the system mode and scope together, and removing
+  `scheduler.input_fail_mode` or `scheduler.input_fail_open_scope` from the system
+  config now publishes that key's default (closed mode, no topics) instead of
+  keeping the previous value.
+
 - `tools/scripts/install.sh` and `install.ps1` verify `SHA256SUMS.sigstore.json`,
   a keyless Sigstore signature, with cosign before checking checksums and
   installing binaries. `verify-blob` pins the identity to `release.yml` at a
