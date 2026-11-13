@@ -395,6 +395,26 @@ func (r *ToolRegistry) isToolEnabled(name string) bool {
 	return enabled
 }
 
+// EffectiveApprovalScope returns the registered tool's effective ApprovalScope,
+// including runtime overrides. The MCP invariant floor matches deny_servers
+// against this scope, as handed to the registry's approval gate.
+func (r *ToolRegistry) EffectiveApprovalScope(name string) (string, bool) {
+	if r == nil {
+		return "", false
+	}
+	r.mu.RLock()
+	entry, ok := r.tools[strings.TrimSpace(name)]
+	r.mu.RUnlock()
+	if !ok {
+		return "", false
+	}
+	_, scope := r.effectiveApprovalForTool(entry.tool)
+	if scope == "" {
+		scope = entry.tool.ApprovalScope
+	}
+	return scope, true
+}
+
 // effectiveApprovalForTool returns the RequiresApproval/ApprovalScope
 // values that should apply to a tool after merging the registered code
 // metadata with runtime config. Runtime config WINS over code.
