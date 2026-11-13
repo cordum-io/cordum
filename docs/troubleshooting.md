@@ -926,7 +926,7 @@ redis-cli GET "cordum:replayer:pending"
 
 **Symptoms**: Combined request rate exceeds the configured limit. Each gateway allows the full limit independently.
 
-**Cause**: Redis-backed rate limiting is disabled or Redis is unreachable (each replica falls back to in-memory token bucket).
+**Cause**: Redis-backed rate limiting is disabled (`REDIS_RATE_LIMIT=false`), so each replica uses an in-memory token bucket. While Redis is unreachable, the Redis-backed limiter denies requests instead (measured at the limiter only; see the [failure and partition behavior contract](contract/failure-behavior.md)).
 
 **Diagnostic**:
 ```bash
@@ -938,7 +938,7 @@ redis-cli KEYS "cordum:rl:*"
 docker compose exec api-gateway env | grep REDIS_RATE_LIMIT
 ```
 
-**Fix**: Ensure `REDIS_RATE_LIMIT` is not set to `false`/`0`/`no`. If Redis is unreachable, the effective rate limit = N × configured limit (where N = replica count).
+**Fix**: Ensure `REDIS_RATE_LIMIT` is not set to `false`/`0`/`no`. With it disabled, the effective rate limit = N × configured limit (where N = replica count).
 
 ### Worker snapshot mismatch across gateways
 
