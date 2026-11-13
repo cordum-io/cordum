@@ -33,7 +33,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
       -ldflags "-s -w" \
       -o /out/mock-bank-worker ./demo/mock-bank/worker
 
-FROM alpine:3.19
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates
 RUN adduser -D -u 65532 cordum
 USER cordum

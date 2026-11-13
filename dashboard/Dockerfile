@@ -1,5 +1,8 @@
 # syntax=docker/dockerfile:1
-FROM node:22-alpine AS builder
+# dist/ is static HTML, JS and CSS: one native build serves every target platform.
+# Keep pnpm, tsc and Vite out of QEMU, where an arm64 Vite build stalled (task-efd2850d).
+# Only /app/dist may cross from this builder into the target-platform runtime.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS builder
 WORKDIR /app
 ARG PNPM_VERSION=9.15.9
 

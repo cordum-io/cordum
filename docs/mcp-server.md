@@ -1017,14 +1017,19 @@ The header is compared exactly after trimming surrounding whitespace, so IDs
 are case-sensitive. A suspended or revoked bound identity also resolves to no
 identity.
 
-With no identity, the built-in tool registry lists no tools and refuses every
-`tools/call`:
+With no identity, the built-in tool registry lists no tools, and every
+`tools/call` fails with `-32098` and `error.data.sub_reason` `no_identity`,
+whether `mcp.policy_gate_enabled` is off or on:
 
-- With `mcp.policy_gate_enabled` off, the call fails with `-32098`
-  `no_identity`.
-- With `mcp.policy_gate_enabled` on, the policy gate refuses the call first
-  because it carries no agent ID. Today that surfaces as a `-32603` error whose
-  `error.data` starts with `missing_mcp_metadata`.
+- With the gate on, the server refuses the call before it looks at any
+  approval. A call that carries an `_approval_ref` therefore neither claims nor
+  consumes that approval, and gets the same `-32098` instead of a `-32097`
+  error.
+- With the gate on, a request that is missing its tenant, session or execution
+  metadata still fails closed with its own error: `-32603` for a plain call, or
+  `-32097` for one that carries an `_approval_ref`, both with
+  `missing_mcp_metadata`. The `-32098` answer applies only when that metadata
+  is present and the agent ID is blank.
 
 When `/mcp` fronts a registered upstream (EDGE-101), the upstream catalog is
 not scope-filtered, and the bound ID only feeds the policy gate.
@@ -1138,8 +1143,7 @@ See [Dashboard Guide](dashboard-guide.md#how-to-configure-mcp-server) for the fu
 - `tools/list` or `resources/list` empty: entries are disabled by config
   (`mcp.tools.<tool_id>.enabled=false`,
   `mcp.resources.<resource_name>.enabled=false`).
-- `tools/list` empty, or `tools/call` fails with `-32098` `no_identity` (or
-  `-32603` `missing_mcp_metadata` with the policy gate on), while
+- `tools/list` empty, or `tools/call` fails with `-32098` `no_identity`, while
   `X-Agent-Id` is set: the header does not match the identity bound to the
   authenticated principal, or the principal is not linked to an identity in
   the request tenant. Look for `mcp X-Agent-Id does not match the principal's

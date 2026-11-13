@@ -38,15 +38,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   qualified one (PR2-02-CLI, task-cc3f03b6). `docker.yml` now builds each
   release image once and pushes it by digest without tags; the smoke check and
   the Trivy OS scan run on that pushed digest, and the run uploads a
-  `qualification-record` artifact. Cosign signs that digest, and the release
-  tags are applied to it, only through `release-qual publish`, and the job
+  `qualification-record` artifact. The Trivy coverage exception records that
+  fixed OS-package findings at any severity fail the gate; unfixed findings
+  are ignored and application dependencies are not scanned. Cosign signs that
+  digest, and the release tags are applied to it, only through
+  `release-qual publish`, and the job
   fails unless every tag resolves to it. If a gate fails on a tag push, the
   untagged, unsigned digest stays in GHCR and Docker Hub. A push to a
   `release-dry-run/**` branch runs the same image and record jobs against
   job-local registries and skips the registry logins, Docker Hub, signing, the
   SARIF upload, issue creation, the published-image smoke and the Helm chart
-  (PR2-02-IMAGES, task-f393ecf3). Release binaries are not in the record yet
-  (PR2-02-BINARIES).
+  (PR2-02-IMAGES, task-f393ecf3). `release.yml` runs inside the `docker.yml`
+  release run, so one run writes one qualification record with the 8 images
+  and 15 Edge binaries (sha256 of the staged bytes). Edge binaries are published
+  only through `release-qual publish` against that record; the record explicitly
+  states that no release-time test or scan runs against the binaries
+  (PR2-02-BINARIES, task-151c9d78).
 
 - License-state behavior contract (`docs/contract/license-behavior.md`): one row per license state and capability class, checked by `TestLicenseBehaviorContract`; a cell not yet tested names the row that will test it.
 - Added the [planned first protected-operation contract](docs/contract/protected-operation.md)
@@ -80,6 +87,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   ruleset (task-fd34e921).
 
 ### Security
+
+- Job submit and delegation token issue fail closed when the agent identity
+  store cannot be read (task-7ded46ca). HTTP job submit and gRPC `SubmitJob`
+  return 503 / `Unavailable` with a generic message when the worker-link lookup
+  for the submit's principal fails, before the policy check, job persistence
+  and publish. Before, the failure was read as "no linked agent": the policy
+  check and the audit trail ran without the agent, so a deny or approval rule
+  keyed on that agent did not apply. Delegation issue by a non-admin caller
+  returns 503 and audits outcome `error` instead of a 403 `denied`. An absent
+  or dangling link and an empty principal behave as before. This was
+  CodeRabbit's finding on #570.
 
 #### core/controlplane/gateway — Edge LLM and runtime ingest accept only an authenticated proxy or collector identity (2026-11-13, task-3b633938)
 
@@ -164,8 +182,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   to the authenticated principal in the request tenant. No header, or a header
   equal to that identity's `id`, resolves to it. Any other header value, an
   unlinked principal, or a link to another tenant resolves to no identity:
-  `tools/list` is empty and `tools/call` is refused (`-32098` `no_identity`,
-  or `-32603` `missing_mcp_metadata` when `mcp.policy_gate_enabled` is on).
+  `tools/list` is empty and `tools/call` is refused with `-32098`
+  `no_identity`, with `mcp.policy_gate_enabled` on or off (task-f6d83860).
 - Approval records, preapproval checks, policy-gate call metadata and Edge
   trace labels now carry the bound identity `id` (empty when there is none),
   never the header value. The principal no longer stands in for a missing
@@ -276,6 +294,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   Alpine 3.21). Every runtime stage still runs `apk upgrade --no-cache`;
   builder stages are unchanged.
 
+- Non-release images also move off end-of-life Alpine 3.19, 3.20 and 3.21 to
+  `alpine:3.24`, the branch the release images use: the seven
+  `validate-secrets` init containers in `deploy/k8s/base.yaml`, and the runtime
+  stages of `Dockerfile.localcap`, `demo/mock-bank` and the Go example workers
+  (`demo-guardrails`, `hello-worker-go`, `multi-topic-worker-go`). The init
+  scripts, builder stages and Helm chart are unchanged (task-7abb1816).
+
 #### core/controlplane/gateway — gateway worker-link readers resolve within the request tenant (2026-11-11, task-283f2317)
 
 - `POST /api/v1/agents`: the `agent_id` worker-conflict check (409 `AGENT_WORKER_CONFLICT`) now considers only the caller's tenant. Another tenant's link for the same worker ID neither blocks registration nor reveals that it exists.
@@ -302,6 +327,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - typedoc, typedoc-plugin-coverage and typedoc-plugin-markdown are removed from the install with pnpm `-` overrides. typedoc 0.28 calls `Minimatch#matchOne`, which 11.x removed. orval 8.31.0 loads typedoc only for its `docs` output, which the dashboard does not configure. Until typedoc supports minimatch 11, enabling that output fails at import. orval stays at 8.31.0.
 
 ### Fixed
+
+- The dashboard image's build stage runs on the build host's platform. Its
+  linux/arm64 image copies the same static dist/ as linux/amd64 instead of
+  running pnpm, tsc and Vite under QEMU emulation, where a release dry run's
+  arm64 Vite build stalled (task-efd2850d).
 
 - `POST /api/v1/agents` fails closed with 500 when the worker-link lookup
   fails, instead of creating an agent identity or link it could not check.
@@ -415,6 +445,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   opening the job. `DataTable` skipped its interactive-child check when the
   click landed on the icon's SVG element, because the check accepted only HTML
   elements (task-30740b03).
+
+- MCP over HTTP with `mcp.policy_gate_enabled=true`: a `tools/call` without a
+  bound agent identity now returns `-32098` `no_identity`, matching the
+  gate-off path, instead of `-32603` or `-32097` `missing_mcp_metadata`
+  (task-f6d83860). The server refuses it before any approval is read, so a call
+  that carries an `_approval_ref` no longer touches that approval. A request
+  missing its tenant, session or execution metadata still fails closed with its
+  old error.
 
 ### CI and documentation
 

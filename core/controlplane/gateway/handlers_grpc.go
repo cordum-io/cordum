@@ -561,11 +561,10 @@ func (s *server) bindGRPCSubmitAgentID(ctx context.Context, orgID, principalID, 
 		}
 		return "", nil
 	}
-	var linked string
-	if s.agentIdentityStore != nil {
-		if agent, err := s.agentIdentityStore.GetByWorkerIDForTenant(ctx, orgID, principalID); err == nil && agent != nil {
-			linked = agent.ID
-		}
+	linked, err := s.linkedAgentID(ctx, orgID, principalID)
+	if err != nil {
+		slog.Error("submit agent link lookup unavailable", "tenant", orgID, "error", err)
+		return "", status.Error(codes.Unavailable, errAgentLinkUnavailable.Error())
 	}
 	if clientAgentID == "" || clientAgentID == linked {
 		return linked, nil

@@ -117,11 +117,11 @@ func (s *server) handleDelegateAgent(w http.ResponseWriter, r *http.Request) {
 	// check; everyone else must prove they are the delegating agent via their
 	// linked credential.
 	if !strings.EqualFold(strings.TrimSpace(authCtx.Role), "admin") {
-		callerAgentID := ""
-		if principal := authCtx.AuthenticatedPrincipal(); principal != "" && s.agentIdentityStore != nil {
-			if agent, err := s.agentIdentityStore.GetByWorkerIDForTenant(r.Context(), tenantFromRequest(r), principal); err == nil && agent != nil {
-				callerAgentID = agent.ID
-			}
+		callerAgentID, err := s.linkedAgentID(r.Context(), tenantFromRequest(r), authCtx.AuthenticatedPrincipal())
+		if err != nil {
+			writeServiceUnavailable(w, r, "delegation caller agent link lookup", err)
+			s.emitDelegationAudit(r, "issue", tenantFromRequest(r), delegatingAgentID, "", "", 0, "error", errAgentLinkUnavailable)
+			return
 		}
 		if callerAgentID == "" || callerAgentID != delegatingAgentID {
 			writeForbidden(w, r, errors.New("principal access denied"))
