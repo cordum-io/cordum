@@ -243,17 +243,18 @@ func (b *storeWriterLogBuffer) Write(p []byte) (int, error) {
 	return b.buf.Write(p)
 }
 
-// warned reports whether a WARN record names subject.
-func (b *storeWriterLogBuffer) warned(subject string) bool {
+// records returns the captured records at level whose attribute key is value.
+func (b *storeWriterLogBuffer) records(level, key, value string) []map[string]any {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	var out []map[string]any
 	for line := range strings.Lines(b.buf.String()) {
 		var rec map[string]any
-		if json.Unmarshal([]byte(line), &rec) == nil && rec["level"] == "WARN" && rec["subject"] == subject {
-			return true
+		if json.Unmarshal([]byte(line), &rec) == nil && rec["level"] == level && rec[key] == value {
+			out = append(out, rec)
 		}
 	}
-	return false
+	return out
 }
 
 func storeWriterLogs(t *testing.T) *storeWriterLogBuffer {
@@ -379,7 +380,7 @@ func TestVelocityRuleWrite_ExplicitWarnStoresAsBefore(t *testing.T) {
 			updated := storeWriterBundle(t, s, velocityRuleBundleID(storeWriterRuleID))
 			require.Equal(t, storeWriterVelocityBundle(t, payload, updated), updated)
 			require.NotEqual(t, created["content"], updated["content"])
-			require.True(t, logs.warned("velocity rule "+storeWriterRuleID))
+			require.NotEmpty(t, logs.records("WARN", "subject", "velocity rule "+storeWriterRuleID))
 		})
 	}
 }
@@ -397,9 +398,9 @@ func TestSignedStoreCheck_KernelRefusesUnsignedVelocityBundle(t *testing.T) {
 // verifies it rather than skipping it by tier limit.
 const storeWriterOutputBundle = "storewriter/output"
 
-// storeWriterSeedOutput stores a bundle holding the output rules, signed by the
-// configured key, or by a throwaway key when none is configured.
-func storeWriterSeedOutput(t *testing.T, s *server) map[string]any {
+// storeWriterSigned is a bundle holding content signed by the configured key,
+// or by a throwaway key when none is configured.
+func storeWriterSigned(t *testing.T, content string, enabled bool) map[string]any {
 	t.Helper()
 	key, keyID, err := policysign.LoadPrivateKeyFromEnv()
 	if err != nil {
@@ -407,11 +408,14 @@ func storeWriterSeedOutput(t *testing.T, s *server) map[string]any {
 		require.NoError(t, err)
 		keyID = storeWriterKeyID
 	}
-	sig, err := policysign.Sign(key, keyID, []byte(outputPolicyContent))
+	sig, err := policysign.Sign(key, keyID, []byte(content))
 	require.NoError(t, err)
-	storeWriterSeed(t, s, map[string]any{storeWriterOutputBundle: map[string]any{
-		"content": outputPolicyContent, "enabled": true, policyBundleSignatureKey: signatureToMap(sig),
-	}})
+	return map[string]any{"content": content, "enabled": enabled, policyBundleSignatureKey: signatureToMap(sig)}
+}
+
+func storeWriterSeedOutput(t *testing.T, s *server) map[string]any {
+	t.Helper()
+	storeWriterSeed(t, s, map[string]any{storeWriterOutputBundle: storeWriterSigned(t, outputPolicyContent, true)})
 	return storeWriterBundle(t, s, storeWriterOutputBundle)
 }
 
@@ -493,7 +497,131 @@ func TestOutputRuleToggle_ExplicitWarnRewritesAsBefore(t *testing.T) {
 				}
 			}
 			require.Equal(t, want, stored)
-			require.True(t, logs.warned("output rule out-secret"))
+			require.NotEmpty(t, logs.records("WARN", "subject", "output rule out-secret"))
+		})
+	}
+}
+
+const storeWriterAllow = "default_decision: allow\n"
+
+// storeWriterSeedLegacy stores bundles in system/default beside sibling data,
+// and returns them as read back from the store.
+func storeWriterSeedLegacy(t *testing.T, s *server, bundles map[string]any) map[string]any {
+	t.Helper()
+	require.NoError(t, s.configSvc.Set(context.Background(), &configsvc.Document{
+		Scope: configsvc.ScopeSystem, ScopeID: "default",
+		Data: map[string]any{"pools": map[string]any{"topics": map[string]any{}}, packs.PolicyConfigKey: bundles},
+	}))
+	legacy, ok := storeWriterDefault(t, s)[packs.PolicyConfigKey].(map[string]any)
+	require.True(t, ok)
+	return legacy
+}
+
+func storeWriterDefault(t *testing.T, s *server) map[string]any {
+	t.Helper()
+	doc, err := s.configSvc.Get(context.Background(), configsvc.ScopeSystem, "default")
+	require.NoError(t, err)
+	return doc.Data
+}
+
+func storeWriterMigrate(t *testing.T, s *server) (bool, int) {
+	t.Helper()
+	migrated, count, err := migrateLegacyPolicyBundles(context.Background(), s.configSvc)
+	require.NoError(t, err)
+	return migrated, count
+}
+
+func storeWriterRequireUnverified(t *testing.T, logs *storeWriterLogBuffer, level string, unverified, total int) {
+	t.Helper()
+	records := logs.records(level, "code", "policy.legacy_migration_unverified")
+	require.Len(t, records, 1)
+	require.EqualValues(t, unverified, records[0]["unverified"])
+	require.EqualValues(t, total, records[0]["legacy_bundles"])
+}
+
+func TestLegacyPolicyBundleMigration_EnforceCopiesVerifiedBundlesUnchanged(t *testing.T) {
+	storeWriterEnv(t, true, "")
+	storeWriterKey(t, "trusted")
+	s, _, _ := newTestGateway(t)
+	seeded := storeWriterSeedLegacy(t, s, map[string]any{
+		"legacy/enabled":  storeWriterSigned(t, outputPolicyContent, true),
+		"legacy/disabled": storeWriterSigned(t, storeWriterAllow, false),
+	})
+
+	migrated, count := storeWriterMigrate(t, s)
+	require.True(t, migrated)
+	require.Equal(t, 2, count)
+	for id, bundle := range seeded {
+		require.Equal(t, bundle, storeWriterBundle(t, s, id))
+	}
+	require.NotContains(t, storeWriterDefault(t, s), packs.PolicyConfigKey)
+	storeWriterRequireLoads(t, s)
+}
+
+func TestLegacyPolicyBundleMigration_EnforceLeavesUnverifiedBundlesInPlace(t *testing.T) {
+	unsigned := func(enabled bool) map[string]any {
+		return map[string]any{"content": storeWriterAllow, "enabled": enabled}
+	}
+	cases := []struct {
+		storeWriterCase
+		legacy func(t *testing.T) map[string]any
+	}{
+		{storeWriterCase{name: "unsigned enabled bundle beside a signed one", production: true}, func(t *testing.T) map[string]any {
+			return map[string]any{"legacy/signed": storeWriterSigned(t, outputPolicyContent, true), "legacy/unsigned": unsigned(true)}
+		}},
+		{storeWriterCase{name: "unsigned disabled bundle", production: true}, func(*testing.T) map[string]any {
+			return map[string]any{"legacy/unsigned": unsigned(false)}
+		}},
+		{storeWriterCase{name: "content changed after signing", production: true}, func(t *testing.T) map[string]any {
+			changed := storeWriterSigned(t, storeWriterAllow, true)
+			changed["content"] = storeWriterAllow + "default_decision: deny\n"
+			return map[string]any{"legacy/changed": changed}
+		}},
+		{storeWriterCase{name: "raw string bundle", production: true}, func(*testing.T) map[string]any {
+			return map[string]any{"legacy/raw": storeWriterAllow}
+		}},
+		{storeWriterCase{name: "development with an unrecognised mode", strict: "bogus"}, func(*testing.T) map[string]any {
+			return map[string]any{"legacy/unsigned": unsigned(true)}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.trust = "trusted"
+			tc.setup(t)
+			logs := storeWriterLogs(t)
+			s, _, _ := newTestGateway(t)
+			legacy := tc.legacy(t)
+			storeWriterSeedLegacy(t, s, legacy)
+			before := storeWriterKeyspace(t, s)
+
+			migrated, count := storeWriterMigrate(t, s)
+
+			require.False(t, migrated)
+			require.Zero(t, count)
+			require.Equal(t, before, storeWriterKeyspace(t, s))
+			storeWriterRequireUnverified(t, logs, "ERROR", 1, len(legacy))
+		})
+	}
+}
+
+func TestLegacyPolicyBundleMigration_ExplicitWarnMigratesAsBefore(t *testing.T) {
+	for _, strict := range []string{"warn", "off"} {
+		t.Run(strict, func(t *testing.T) {
+			storeWriterEnv(t, true, strict)
+			storeWriterKey(t, "trusted")
+			logs := storeWriterLogs(t)
+			s, _, _ := newTestGateway(t)
+			seeded := storeWriterSeedLegacy(t, s, map[string]any{"legacy/unsigned": map[string]any{"content": storeWriterAllow, "enabled": true}})
+
+			migrated, count := storeWriterMigrate(t, s)
+
+			require.True(t, migrated)
+			require.Equal(t, 1, count)
+			stored := storeWriterBundle(t, s, "legacy/unsigned")
+			require.Equal(t, seeded["legacy/unsigned"], stored)
+			require.NotContains(t, stored, policyBundleSignatureKey)
+			require.NotContains(t, storeWriterDefault(t, s), packs.PolicyConfigKey)
+			storeWriterRequireUnverified(t, logs, "WARN", 1, 1)
 		})
 	}
 }
