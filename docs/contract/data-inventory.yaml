@@ -46,10 +46,10 @@ control_plane:
      deletion: {paths: [{path: core/edge/sweeper.go, symbol: SessionSweeper.SweepOnce}, {path: core/edge/store_redis.go, symbol: RedisStore.DeleteSession}]},
      legal_hold: {applies: false, reason: Session cleanup does not consult LegalHoldStore}}
   - {id: DI-C02, class: redacted-events,
-     storage: {kind: redis_key, location: Edge approval records and status indexes, writers: [{path: core/edge/approval_store_redis.go, symbol: RedisStore.ExpireApprovals}]},
+     storage: {kind: redis_key, location: Edge approval records and their tenant/status/principal/tuple/hash indexes, redis_keys: [{pattern: 'edge:approvals:{ref}', path: core/edge/approval_store_redis.go}, {pattern: 'edge:approvals:index:{suffix}', path: core/edge/approval_store_redis.go}], writers: [{path: core/edge/approval_store_redis.go, symbol: RedisStore.EnqueueApproval}, {path: core/edge/approval_store_redis.go, symbol: RedisStore.ExpireApprovals}, {path: core/edge/sweeper.go, symbol: ApprovalSweeper.SweepOnce}]},
      content: {description: Approval identity/action facts and lifecycle state, personal_data: possible},
-     retention: {settings: [{name: CORDUM_EDGE_APPROVAL_MAX_TTL, path: core/controlplane/gateway/gateway.go}], default: '30m authority cap, NOT record retention; expired approvals remain records until session cleanup'},
-     deletion: {paths: [{path: core/edge/store_redis.go, symbol: RedisStore.DeleteSession}, {path: core/edge/sweeper.go, symbol: ApprovalSweeper.SweepOnce}]},
+     retention: {settings: [{name: CORDUM_EDGE_APPROVAL_MAX_TTL, path: core/controlplane/gateway/gateway.go}], default: '30m caps approval authority (ExpiresAt) only, NOT record retention; approval records and indexes have no TTL and session cleanup does not remove them'},
+     deletion: {none: 'No code path deletes approval records at reviewed_at; transitions rewrite records and drop some index refs, while status/principal index refs remain; ApprovalSweeper.SweepOnce only marks past-deadline pending approvals expired; DeleteSession skips approval keys'},
      legal_hold: {applies: false, reason: Approval sweeper changes status rather than erasing records and does not consult legal holds}}
   - {id: DI-C03, class: redacted-events,
      storage: {kind: redis_key, location: Shadow finding records and secondary indexes, writers: [{path: core/edge/shadow/finding_store_redis.go, symbol: RedisStore.commitTransitionFinding}]},
