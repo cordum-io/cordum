@@ -71,6 +71,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- Gateway: policy audit entries are stored independently of the client
+  request's lifetime. A concurrent change to the audit log is retried, and an
+  entry that still cannot be stored is logged at ERROR. Policy writes that need
+  an atomic audit record can commit the policy document and its audit entry in
+  one Redis transaction. A co-located audit document keeps both keys in one
+  Redis Cluster slot, and the policy audit API (`GET /api/v1/policy/audit`)
+  returns entries from both audit documents.
+
 - Gateway: velocity-rule create and update, and the output-rule enable toggle,
   store their policy bundle with a signature from the configured policy signing
   key (`CORDUM_POLICY_SIGNING_KEY`). When the policy store's signature mode is
