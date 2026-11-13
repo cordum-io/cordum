@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import type { DataTableColumn } from "./DataTable";
+import type { DataTableColumn, DataTableSorting } from "./DataTable";
 import { DataTable, VIRTUALIZE_THRESHOLD, type DataTableProps, type DecisionTier } from "./DataTable";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -215,5 +215,147 @@ describe("primitives/DataTable", () => {
 
     expect(container.querySelector('[data-virtualized="true"]')).toBeNull();
     expect(bodyRows().length).toBe(100);
+  });
+});
+
+// Held-out characterization tests (task-722f3b29): pin user-visible v8 behavior
+// that the TanStack v9 migration (task-fa2b4cef) must preserve unchanged.
+describe("primitives/DataTable characterization", () => {
+  const unsorted: Row[] = [
+    { id: "r1", name: "Bravo" },
+    { id: "r2", name: "Alpha" },
+    { id: "r3", name: "Charlie" },
+  ];
+
+  const headers = (): HTMLTableCellElement[] =>
+    Array.from(container.querySelectorAll<HTMLTableCellElement>("thead th"));
+
+  const firstColumnText = (): string[] =>
+    Array.from(bodyRows()).map((tr) => tr.querySelector("td")?.textContent ?? "");
+
+  const click = (el: HTMLElement) =>
+    act(() => {
+      el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+  const press = (el: HTMLElement, key: string): KeyboardEvent => {
+    const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+    act(() => {
+      el.dispatchEvent(event);
+    });
+    return event;
+  };
+
+  it("cycles aria-sort none → ascending → descending → none on header clicks, with matching row order", () => {
+    render<Row>({ columns: baseColumns, data: unsorted, emptyState: <div>empty</div> });
+    const nameHeader = headers()[0];
+
+    expect(nameHeader.getAttribute("aria-sort")).toBe("none");
+    expect(firstColumnText()).toEqual(["Bravo", "Alpha", "Charlie"]);
+
+    click(nameHeader);
+    expect(nameHeader.getAttribute("aria-sort")).toBe("ascending");
+    expect(firstColumnText()).toEqual(["Alpha", "Bravo", "Charlie"]);
+
+    click(nameHeader);
+    expect(nameHeader.getAttribute("aria-sort")).toBe("descending");
+    expect(firstColumnText()).toEqual(["Charlie", "Bravo", "Alpha"]);
+
+    click(nameHeader);
+    expect(nameHeader.getAttribute("aria-sort")).toBe("none");
+    expect(firstColumnText()).toEqual(["Bravo", "Alpha", "Charlie"]);
+  });
+
+  it("toggles sorting identically with Enter and Space on a focusable sortable header", () => {
+    render<Row>({ columns: baseColumns, data: unsorted, emptyState: <div>empty</div> });
+    const nameHeader = headers()[0];
+    expect(nameHeader.tabIndex).toBe(0);
+    expect(nameHeader.getAttribute("tabindex")).toBe("0");
+
+    const enter = press(nameHeader, "Enter");
+    expect(enter.defaultPrevented).toBe(true);
+    expect(nameHeader.getAttribute("aria-sort")).toBe("ascending");
+    expect(firstColumnText()).toEqual(["Alpha", "Bravo", "Charlie"]);
+
+    const space = press(nameHeader, " ");
+    expect(space.defaultPrevented).toBe(true);
+    expect(nameHeader.getAttribute("aria-sort")).toBe("descending");
+    expect(firstColumnText()).toEqual(["Charlie", "Bravo", "Alpha"]);
+
+    press(nameHeader, "Enter");
+    expect(nameHeader.getAttribute("aria-sort")).toBe("none");
+    expect(firstColumnText()).toEqual(["Bravo", "Alpha", "Charlie"]);
+
+    const other = press(nameHeader, "a");
+    expect(other.defaultPrevented).toBe(false);
+    expect(nameHeader.getAttribute("aria-sort")).toBe("none");
+  });
+
+  it("gives an enableSorting:false column no aria-sort, no tabIndex, and no reorder on click or key", () => {
+    render<Row>({ columns: baseColumns, data: unsorted, emptyState: <div>empty</div> });
+    const idHeader = headers()[1];
+    expect(idHeader.textContent).toBe("ID");
+    expect(idHeader.hasAttribute("aria-sort")).toBe(false);
+    expect(idHeader.hasAttribute("tabindex")).toBe(false);
+
+    click(idHeader);
+    press(idHeader, "Enter");
+    expect(idHeader.hasAttribute("aria-sort")).toBe(false);
+    expect(firstColumnText()).toEqual(["Bravo", "Alpha", "Charlie"]);
+  });
+
+  it("applies initialSorting on first paint with the matching aria-sort", () => {
+    const initialSorting: DataTableSorting = [{ id: "name", desc: true }];
+    render<Row>({ columns: baseColumns, data: unsorted, emptyState: <div>empty</div>, initialSorting });
+    const nameHeader = headers()[0];
+
+    expect(nameHeader.getAttribute("aria-sort")).toBe("descending");
+    expect(firstColumnText()).toEqual(["Charlie", "Bravo", "Alpha"]);
+  });
+
+  it("right-aligns both the header and the cells of a meta.align:right column", () => {
+    const cols: DataTableColumn<Row>[] = [
+      { accessorKey: "name", header: "Name" },
+      { accessorKey: "id", header: "ID", meta: { align: "right" } },
+    ];
+    render<Row>({ columns: cols, data: unsorted, emptyState: <div>empty</div> });
+    const [nameHeader, idHeader] = headers();
+
+    expect(idHeader.classList.contains("text-right")).toBe(true);
+    expect(nameHeader.classList.contains("text-right")).toBe(false);
+    for (const tr of Array.from(bodyRows())) {
+      const [nameCell, idCell] = Array.from(tr.querySelectorAll("td"));
+      expect(idCell.classList.contains("text-right")).toBe(true);
+      expect(nameCell.classList.contains("text-right")).toBe(false);
+    }
+  });
+
+  it("renders a size:200 column header at width 200px and leaves default-size headers unstyled", () => {
+    const cols: DataTableColumn<Row>[] = [
+      { accessorKey: "name", header: "Name", size: 200 },
+      { accessorKey: "id", header: "ID" },
+    ];
+    render<Row>({ columns: cols, data: unsorted, emptyState: <div>empty</div> });
+    const [sizedHeader, defaultHeader] = headers();
+
+    expect(sizedHeader.style.width).toBe("200px");
+    expect(defaultHeader.style.width).toBe("");
+  });
+
+  it("renders function header and cell renderers with row.original values", () => {
+    const cols: DataTableColumn<Row>[] = [
+      {
+        id: "combined",
+        header: () => <span data-testid="fn-header">H</span>,
+        cell: ({ row }) => <span data-testid="fn-cell">{`${row.original.id}:${row.original.name}`}</span>,
+      },
+    ];
+    render<Row>({ columns: cols, data: unsorted, emptyState: <div>empty</div> });
+
+    const header = container.querySelector('[data-testid="fn-header"]');
+    expect(header?.textContent).toBe("H");
+    expect(headers()[0].contains(header)).toBe(true);
+    const cells = Array.from(container.querySelectorAll('[data-testid="fn-cell"]')).map((el) => el.textContent);
+    expect(cells).toEqual(["r1:Bravo", "r2:Alpha", "r3:Charlie"]);
   });
 });
