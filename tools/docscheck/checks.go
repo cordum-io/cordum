@@ -123,7 +123,11 @@ func (r *Report) checkBlock(b Block, idx codeIndex, ops map[string]map[string]bo
 		r.Unchecked[reasonCommand]++
 	}
 	if b.Has("endpoints") {
-		for _, ep := range endpointsIn(b.File, b.Lines) {
+		eps := endpointsIn(b.File, b.Lines)
+		if len(eps) == 0 {
+			r.Unchecked["endpoints block holds no recognized example"]++
+		}
+		for _, ep := range eps {
 			r.checkEndpoint(ep, ops)
 		}
 	}

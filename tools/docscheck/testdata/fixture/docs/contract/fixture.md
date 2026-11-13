@@ -23,3 +23,8 @@ cordumctl status
 ```bash
 kubectl apply -f deploy.yaml
 ```
+
+<!-- docscheck: endpoints -->
+```text
+See the API reference for every route.
+```

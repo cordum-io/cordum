@@ -208,13 +208,14 @@ func TestCheckFixture(t *testing.T) {
 	// GET /api/v1/things/{id} is the passing endpoint.
 	checked := map[string]int{"env-name": 6, "env-default": 3, "endpoint": 2}
 	unchecked := map[string]int{
-		"default cell is prose":                 1,
-		"code default not in a recognized form": 1,
-		"ambiguous code default":                1,
-		reasonCommand:                           1,
-		"skip: needs a live cluster to run":     1,
+		"default cell is prose":                       1,
+		"code default not in a recognized form":       1,
+		"ambiguous code default":                      1,
+		reasonCommand:                                 1,
+		"skip: needs a live cluster to run":           1,
+		"endpoints block holds no recognized example": 1,
 	}
-	if r.Blocks != 3 || r.Passed != 9 || len(r.Known) != 0 ||
+	if r.Blocks != 4 || r.Passed != 9 || len(r.Known) != 0 ||
 		!reflect.DeepEqual(r.Checked, checked) || !reflect.DeepEqual(r.Unchecked, unchecked) {
 		t.Fatalf("report = %s", r.Summary())
 	}
