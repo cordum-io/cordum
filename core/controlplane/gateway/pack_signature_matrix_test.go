@@ -90,8 +90,27 @@ func TestPackSignatureMatrix(t *testing.T) {
 		{"development", "upload", "tampered", packMatrixRefusal("PACK_INSTALL_INVALID", "pack.tampered: ")},
 		{"development", "upload", "malformed", packMatrixRefusal("PACK_INVALID_SIGNATURE", "pack.malformed: ")},
 	}
+	assertPackMatrixSources(t, cells)
 	for _, cell := range cells {
 		t.Run(cell.profile+"/"+cell.source+"/"+cell.state, func(t *testing.T) { runPackSignatureCell(t, cell) })
+	}
+}
+
+func assertPackMatrixSources(t *testing.T, cells []packSignatureCell) {
+	t.Helper()
+	covered := map[string]bool{}
+	for _, cell := range cells {
+		if _, ok := packSignatureSources[cell.source]; !ok {
+			t.Errorf("unlisted source %s", cell.source)
+		}
+		covered[cell.source+"/"+cell.profile] = true
+	}
+	for source := range packSignatureSources {
+		for _, profile := range []string{"production", "development"} {
+			if !covered[source+"/"+profile] {
+				t.Errorf("source %s has no %s case", source, profile)
+			}
+		}
 	}
 }
 
@@ -118,10 +137,10 @@ func runPackSignatureCell(t *testing.T, cell packSignatureCell) {
 	}
 	before := snapshotPackKeyspace(t, s)
 	resp := drive()
-	if cell.want.status == 400 {
+	if cell.want.status >= 400 {
 		assertPackRefused(t, s, before, resp, cell.want)
 	} else {
-		assertPackAccepted(t, s, before, resp, cell.want.signed, bundle.content, cell.source)
+		assertPackAccepted(t, s, before, resp, cell.want, bundle.content, cell.source)
 		if cell.want.fragment {
 			assertPackFragmentSignatureVerifies(t, s, matrixPackID, "safety")
 		}
@@ -476,13 +495,9 @@ func assertPackAbsent(t *testing.T, s *server) {
 	}
 }
 
-func assertPackAccepted(t *testing.T, s *server, before map[string]string, resp *httptest.ResponseRecorder, signed bool, content, source string) {
+func assertPackAccepted(t *testing.T, s *server, before map[string]string, resp *httptest.ResponseRecorder, want packSignatureWant, content, source string) {
 	t.Helper()
-	wantStatus := http.StatusOK
-	if source == "cordumctl" {
-		wantStatus = http.StatusNoContent
-	}
-	if resp.Code != wantStatus {
+	if resp.Code != want.status {
 		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
 	}
 	records, _, err := s.loadPackRegistry(context.Background())
@@ -491,13 +506,13 @@ func assertPackAccepted(t *testing.T, s *server, before map[string]string, resp 
 	if !ok || record.Verification == nil {
 		t.Fatal("registry record or verification absent")
 	}
-	if record.Verification.Signed != signed {
-		t.Errorf("Signed=%v want=%v", record.Verification.Signed, signed)
+	if record.Verification.Signed != want.signed {
+		t.Errorf("Signed=%v want=%v", record.Verification.Signed, want.signed)
 	}
-	if signed && record.Verification.KID != "matrix-pub" {
+	if want.signed && record.Verification.KID != "matrix-pub" {
 		t.Errorf("kid=%q", record.Verification.KID)
 	}
-	if !signed && len(record.Verification.Warnings) == 0 {
+	if !want.signed && len(record.Verification.Warnings) == 0 {
 		t.Error("unsigned warning absent")
 	}
 	fragment := packMatrixFragment(t, s)
@@ -561,7 +576,8 @@ var packSignatureExclusions = map[string]string{
 	"handleUninstallPack": "removes a pack; installs nothing",
 }
 
-func TestPackSignatureSourceInventory(t *testing.T) {
+func packMatrixInventoryFunctions(t *testing.T) (map[string]*ast.FuncDecl, map[string]bool) {
+	t.Helper()
 	files, err := os.ReadDir(".")
 	packMatrixOK(t, err)
 	functions, discovered := map[string]*ast.FuncDecl{}, map[string]bool{}
@@ -582,6 +598,11 @@ func TestPackSignatureSourceInventory(t *testing.T) {
 			}
 		}
 	}
+	return functions, discovered
+}
+
+func TestPackSignatureSourceInventory(t *testing.T) {
+	functions, discovered := packMatrixInventoryFunctions(t)
 	covered := map[string]bool{}
 	for source, entries := range packSignatureSources {
 		if len(entries) == 0 {
