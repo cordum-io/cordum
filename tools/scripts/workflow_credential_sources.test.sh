@@ -105,6 +105,16 @@ INLINE = {"shell_c_stdin": "bash -s -c" + PROG, "shell_c_option": "bash -c -e" +
 INLINE.update({"shell_c_rcfile": "bash --rcfile /dev/null -c" + PROG, "shell_c_initfile": "bash --init-file /dev/null -c" + PROG, "shell_c_norc": "bash --norc -c" + PROG})  # --rcfile and --init-file take a file operand, never the program; --norc takes none
 INLINE.update({"shell_ic_rcfile": "bash --rcfile " + MINT_SH + " -ic" + PROG, "shell_i_initfile": "bash --init-file " + MINT_SH + " -i -c" + PROG, "shell_i_rcfile_script": "bash --rcfile " + MINT_SH + " -i tools/scripts/github_actions_mask_env.sh", "shell_c_rcfile_unread": "bash --rcfile " + MINT_SH + " -c true", "shell_i_rcfile_shadowed": "SYNTH_RC=" + MINT_SH + " bash -c 'SYNTH_RC=tools/scripts/github_actions_mask_env.sh bash --rcfile ${SYNTH_RC} -ic true'", "shell_i_rcfile_unknown": "SYNTH_RC=tools/scripts/github_actions_mask_env.sh bash --rcfile ${SYNTH_RC} -ic true"})  # -i: bash runs the rcfile first, then the program or script; without -i it never reads it; the caller, not the prefix, names it
 RCTRACE = {"shell_i_rcfile_traced": "set -x\n", "shell_i_rcfile_untraced": "set -x\nset +x\n"}  # bash runs the -i rcfile in the shell that then runs the program: tracing the rcfile leaves on traces it
+X, XE, XG = "tools/scripts/zz_synthetic_set.sh", "tools/scripts/zz_synthetic_set_e.sh", "tools/scripts/zz_synthetic_outer.sh"
+SOURCED = {  # (run, {sourced file: text}, mint() keywords[, workflow, anchor]): source and . leave options in the caller, as a set at that line would; a subshell keeps them
+    "sourced_trace": ("source " + X + "\n" + RUN_MINT, {X: "set -x\n"}, {}), "sourced_dot_trace": (". " + X + "\n" + RUN_MINT, {X: "set -x\n"}, {}),
+    "sourced_nested_trace": ("source " + XG + "\n" + RUN_MINT, {XG: "source " + X + "\n", X: "set -x\n"}, {}), "sourced_function_trace": ("source " + X + "\n" + RUN_MINT, {X: "trace_on() { set -x; }\n"}, {}),
+    "sourced_in_function": ("load() { source " + X + "; }\nload\n" + RUN_MINT, {X: "set -x\n"}, {}), "sourced_unparsable": ("source " + X + "\n" + RUN_MINT, {X: "echo 'unterminated\n"}, {}),
+    "sourced_own_trace": (RUN_MINT, {X: "set -x\n"}, {"head": STRICT + "source " + X + "\n"}), "sourced_own_errexit": (RUN_MINT, {XE: "set +e\n"}, {"head": STRICT + "source " + XE + "\n"}),
+    "rc_sources_trace": ("bash --rcfile " + XG + " -ic '" + RUN_MINT + "'", {XG: "source " + X + "\n", X: "set -x\n"}, {}), "rc_trace_script": ("bash --rcfile " + X + " -ic '" + RUN_MINT + "'", {X: "set -x\n"}, {}),
+    "sourced_trace_off": ("source " + X + "\n" + RUN_MINT, {X: "set -x\nset +x\n"}, {}), "sourced_subshell": ("( source " + X + " )\n" + RUN_MINT, {X: "set -x\n"}, {}),
+    "sourced_after_registration": (RUN_MINT, {X: "set -x\n"}, {"before": SAFE + "\nsource " + X}), "sourced_errexit_restored": (RUN_MINT, {XE: "set +e\n"}, {"head": STRICT + "source " + XE + "\nset -e\n"}),
+    "sourced_errexit_window": (RUN_MINT, {XE: "probe() {\nset +e\nfalse\nset -e\n}\n"}, {"head": STRICT + "source " + XE + "\n"}), "sourced_caller_untraces": ("source " + X + "\nset +x\n" + RUN_MINT, {X: "set -x\n"}, {}, *LINK)}
 TRACE = {  # (shell, run[, job]): xtrace on at a fail-closed registration; run-text tracing in a job the guard leaves open
     "trace_shell": ("bash -x {0}", "source " + MINT_SH), "trace_env": ("", "SHELLOPTS=xtrace " + RUN_MINT),
     "trace_bash_x": ("", "bash -x " + MINT_SH, *LINK), "trace_set_x": ("", "set -x\nsource " + MINT_SH, *LINK),
@@ -154,6 +164,9 @@ elif case == "nonce_bypass_overridden":
     edit(EDGE, "run: bash tools/scripts/edge_fake_hook_e2e.sh", "run: CORDUM_EDGE_E2E_BYPASS_HOOK=0 bash tools/scripts/edge_fake_hook_e2e.sh")
 elif case == "quickstart_unseeded":
     step("bash tools/scripts/quickstart.sh --skip-build", *LINK)
+elif case in SOURCED:
+    mint(**{"before": SAFE, **SOURCED[case][2]}); [write(rel, body) for rel, body in SOURCED[case][1].items()]  # noqa: E702
+    step(SOURCED[case][0], *SOURCED[case][3:])
 elif case in RCTRACE:
     write("tools/scripts/zz_synthetic_trace_rc.sh", RCTRACE[case])
     step("bash --rcfile tools/scripts/zz_synthetic_trace_rc.sh -ic" + PROG.replace('"; curl', '"; gha_mask_value "${synthetic_key}" || exit 1; curl', 1))
@@ -279,6 +292,9 @@ shell_c_rcfile_unread clean
 shell_i_rcfile_unknown e2e.yml:e2e-tls:SOURCE_DYNAMIC@.github/workflows/e2e.yml
 shell_i_rcfile_untraced clean
 shell_i_rcfile_traced e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@.github/workflows/e2e.yml
+sourced_trace sourced_dot_trace sourced_nested_trace sourced_function_trace sourced_in_function sourced_unparsable sourced_own_trace rc_sources_trace rc_trace_script e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
+sourced_own_errexit e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
+sourced_trace_off sourced_subshell sourced_after_registration sourced_errexit_restored sourced_errexit_window sourced_caller_untraces clean
 gen_openssl gen_uuidgen gen_urandom gen_random gen_date gen_python gen_quoted_paren errexit_substitution mask_captured mask_env_captured e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_gen.sh
 gen_nested mask_fd_captured clean
 nonce_bypass_removed edge-fake-hook-e2e.yml:edge-fake-hook-e2e:CREDENTIAL_UNREGISTERED@tools/scripts/edge_fake_hook_e2e.sh
