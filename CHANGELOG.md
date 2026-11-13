@@ -21,6 +21,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   inventory and measurable acceptance ideas. Broker/grant enforcement is future
   work; runtime acceptance evidence is not measured.
 
+#### demo/cap-mcp-governed — CAP worker calls governed Cordum MCP tools and waits for human approval (2026-11-11, task-ba678d95)
+
+- New CAP v2.17.0 demo worker on `job.cap-mcp-governed.create-workflow` and `worker.cap-mcp-governed.jobs`. Each job opens an MCP session on the gateway's `/mcp/message`, then runs `initialize`, `resources/read cordum://jobs/<job_id>`, `cordum_status` and `cordum_create_workflow`, in that order.
+- On JSON-RPC `-32099` it polls `GET /api/v1/mcp/approvals/{id}` until a human decides. After approval it retries with byte-identical arguments exactly once. It never calls approve or reject.
+- Failed jobs report one of 10 documented codes (`invalid_input`, `mcp_unavailable`, `mcp_protocol_error`, `mcp_call_failed`, `mcp_approval_rejected`, `mcp_approval_expired`, `mcp_approval_not_found`, `mcp_approval_timeout`, `mcp_approval_invalid`, `worker_shutdown`), never server text or the API key.
+- Unsigned agent, so compat CAP profile only. It needs the default `mcp.policy_gate_enabled=false`, because it does not send `_approval_ref`. `demo/cap-mcp-governed/README.md` covers setup.
+
 ### Security
 
 - Release images move off Alpine 3.21, which alpinelinux.org/releases.json lists
@@ -162,15 +169,6 @@ Changes on main since the v1.3.0 tag (d027ae97, 2026-11-11).
 - The Edge-mint `-32096` `reason` no longer echoes the store error either.
   Operators find the cause in the gateway log
   (`mcp approval store unavailable`).
-
-### Added
-
-#### demo/cap-mcp-governed — CAP worker calls governed Cordum MCP tools and waits for human approval (2026-11-11, task-ba678d95)
-
-- New CAP v2.17.0 demo worker on `job.cap-mcp-governed.create-workflow` and `worker.cap-mcp-governed.jobs`. Each job opens an MCP session on the gateway's `/mcp/message`, then runs `initialize`, `resources/read cordum://jobs/<job_id>`, `cordum_status` and `cordum_create_workflow`, in that order.
-- On JSON-RPC `-32099` it polls `GET /api/v1/mcp/approvals/{id}` until a human decides. After approval it retries with byte-identical arguments exactly once. It never calls approve or reject.
-- Failed jobs report one of 10 documented codes (`invalid_input`, `mcp_unavailable`, `mcp_protocol_error`, `mcp_call_failed`, `mcp_approval_rejected`, `mcp_approval_expired`, `mcp_approval_not_found`, `mcp_approval_timeout`, `mcp_approval_invalid`, `worker_shutdown`), never server text or the API key.
-- Unsigned agent, so compat CAP profile only. It needs the default `mcp.policy_gate_enabled=false`, because it does not send `_approval_ref`. `demo/cap-mcp-governed/README.md` covers setup.
 
 ### Fixed
 
