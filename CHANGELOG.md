@@ -90,6 +90,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   The release workflow does not publish this signature yet (PR2-03-PIPELINE).
   (PR2-03, task-83a43ecf)
 
+- HTTP job submit (task-ed8bd5e2): a client `labels.agent_id` is honored only when the request's principal is the authenticated principal; naming another worker's `principal_id` to validate the label is now refused with 403 before the policy check, matching gRPC SubmitJob. Requests without the label are unchanged.
 - Release images move off Alpine 3.21, which alpinelinux.org/releases.json lists
   as end-of-life on 2026-11-01. The control-plane and `demo-quickstart-worker`
   runtime stages use `alpine:3.24`, and the dashboard uses
