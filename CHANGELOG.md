@@ -164,6 +164,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- `POST /api/v1/agents` fails closed with 500 when the worker-link lookup
+  fails, instead of creating an agent identity or link it could not check.
+
 - Audit publishing tolerates a missing fallback or exporter: events without a
   usable sink are dropped, logged and counted in
   `cordum_audit_events_dropped_total{reason}`. The Safety Kernel's shadow sender
