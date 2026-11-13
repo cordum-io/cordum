@@ -1,10 +1,13 @@
 package scripts_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -12,7 +15,9 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -29,6 +34,9 @@ type releaseWorkflowStep struct {
 }
 
 type releaseWorkflowJob struct {
+	Uses            string            `yaml:"uses"`
+	With            yaml.Node         `yaml:"with"`
+	Permissions     yaml.Node         `yaml:"permissions"`
 	Needs           yaml.Node         `yaml:"needs"`
 	If              string            `yaml:"if"`
 	ContinueOnError yaml.Node         `yaml:"continue-on-error"`
@@ -37,15 +45,18 @@ type releaseWorkflowJob struct {
 	Strategy        struct {
 		Matrix struct {
 			Include []map[string]string `yaml:"include"`
+			Binary  []string            `yaml:"binary"`
+			Target  []map[string]string `yaml:"target"`
 		} `yaml:"matrix"`
 	} `yaml:"strategy"`
 	Steps []releaseWorkflowStep `yaml:"steps"`
 }
 
 type releaseWorkflow struct {
-	On   map[string]yaml.Node          `yaml:"on"`
-	Env  map[string]string             `yaml:"env"`
-	Jobs map[string]releaseWorkflowJob `yaml:"jobs"`
+	Permissions yaml.Node                     `yaml:"permissions"`
+	On          map[string]yaml.Node          `yaml:"on"`
+	Env         map[string]string             `yaml:"env"`
+	Jobs        map[string]releaseWorkflowJob `yaml:"jobs"`
 }
 
 const (
@@ -478,7 +489,7 @@ func checkDryRunIsolation(wf releaseWorkflow) []string {
 // waits for the smoke and the record.
 func checkJobGraph(wf releaseWorkflow) []string {
 	var out []string
-	for _, name := range append(slices.Clone(releaseImageJobs), recordJob) {
+	for _, name := range releaseImageJobs {
 		if job, ok := wf.Jobs[name]; ok && job.If != "" {
 			out = append(out, violation("JOB_CONDITION", name, nil, "must keep the default success condition, got if: %q", job.If))
 		}
@@ -698,6 +709,7 @@ func stripPublishWrapper(t *testing.T, wf *releaseWorkflow, job, key string) {
 }
 
 func TestReleaseWorkflowMutationsAreCaught(t *testing.T) {
+	testBinaryWorkflowMutations(t)
 	scalar := func(v string) yaml.Node { return yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: v} }
 	for _, tc := range []struct {
 		name   string
@@ -917,6 +929,624 @@ func TestReleaseFinalStageUpgradeFixtures(t *testing.T) {
 			}
 			if !tc.wantErr && err != nil {
 				t.Fatalf("expected nil, got %v", err)
+			}
+		})
+	}
+}
+
+const dryReleaseCondition = "startsWith(github.ref, 'refs/heads/release-dry-run/')"
+
+func loadBinaryWorkflow(t *testing.T) (string, releaseWorkflow, releaseWorkflow) {
+	t.Helper()
+	root, docker := loadReleaseWorkflow(t)
+	return root, docker, readWorkflow(t, filepath.Join(root, ".github/workflows/release.yml"))
+}
+
+func readWorkflow(t *testing.T, file string) releaseWorkflow {
+	t.Helper()
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wf releaseWorkflow
+	if err := yaml.Unmarshal(data, &wf); err != nil {
+		t.Fatal(err)
+	}
+	return wf
+}
+
+func contentsPermission(node yaml.Node, value string) bool {
+	var perms map[string]string
+	return node.Kind == yaml.MappingNode && node.Decode(&perms) == nil && maps.Equal(perms, map[string]string{"contents": value})
+}
+
+func checkBinaryWiring(docker, binary releaseWorkflow) []string {
+	var out []string
+	add := func(message string) { out = append(out, "BINARY_WIRING "+message) }
+	if _, ok := binary.On["workflow_call"]; !ok || len(binary.On) != 1 {
+		add("release.yml must only accept workflow_call")
+	}
+	if !contentsPermission(binary.Permissions, "read") {
+		add("called workflow must grant only contents read")
+	}
+	for name, job := range binary.Jobs {
+		if job.Permissions.Kind != 0 {
+			add(name + " declares job permissions")
+		}
+		for _, step := range job.Steps {
+			for _, command := range []string{"gh release", "gh api", "git push", "docker login", "docker push", "cosign", "helm push"} {
+				if strings.Contains(step.Run, command) {
+					add(name + " contains " + command)
+				}
+			}
+		}
+	}
+	for _, name := range []string{"Resolve pushed and prior tags", "Enforce monotonicity"} {
+		job := binary.Jobs["version-monotonicity"]
+		i := findStep(job, name)
+		if i < 0 || normalizeCondition(job.Steps[i].If.Value) != realReleaseCondition {
+			add(name + " must require a real tag")
+		}
+	}
+	return append(out, checkBinaryCallers(docker)...)
+}
+
+func checkBinaryCallers(docker releaseWorkflow) []string {
+	var out []string
+	add := func(message string) { out = append(out, "BINARY_WIRING "+message) }
+	callers := 0
+	for name, job := range docker.Jobs {
+		if job.Uses != "./.github/workflows/release.yml" {
+			continue
+		}
+		callers++
+		want := realReleaseCondition
+		if name == "binaries-dry-run" {
+			want = dryReleaseCondition
+		} else if name != "binaries" {
+			add("unexpected caller " + name)
+		}
+		if normalizeCondition(job.If) != want || !contentsPermission(job.Permissions, "read") || job.With.Kind != 0 {
+			add(name + " caller configuration")
+		}
+		if name == "binaries-dry-run" && job.Secrets.Kind != 0 {
+			add("dry caller passes secrets")
+		}
+		if name == "binaries" && (job.Secrets.Kind != yaml.ScalarNode || job.Secrets.Value != "inherit") {
+			add("real caller must inherit secrets")
+		}
+	}
+	if callers != 2 {
+		add("want exactly two callers")
+	}
+	return out
+}
+
+func binaryNames(wf releaseWorkflow) []string {
+	var names []string
+	matrix := wf.Jobs["build"].Strategy.Matrix
+	for _, bin := range matrix.Binary {
+		for _, target := range matrix.Target {
+			names = append(names, bin+"-"+target["goos"]+"-"+target["goarch"]+target["ext"])
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+func artifactStep(job releaseWorkflowJob, action, name string) int {
+	return slices.IndexFunc(job.Steps, func(s releaseWorkflowStep) bool {
+		return strings.HasPrefix(s.Uses, action) && s.With["name"].Value == name
+	})
+}
+
+func checkBinaryRecord(docker, binary releaseWorkflow) []string {
+	var out []string
+	add := func(message string) { out = append(out, "BINARY_RECORD "+message) }
+	want := binaryNames(binary)
+	if len(want) != 15 || len(slices.Compact(slices.Clone(want))) != 15 {
+		add("matrix must build 15 distinct binaries")
+	}
+	for _, names := range []string{binary.Env["EXPECTED_BINARIES"], docker.Jobs[recordJob].Env["EXPECTED_BINARIES"]} {
+		got := strings.Fields(names)
+		sort.Strings(got)
+		if !slices.Equal(got, want) {
+			add("EXPECTED_BINARIES differs from build matrix")
+		}
+	}
+	out = append(out, checkBinaryEntry(binary.Jobs["sign-manifest"])...)
+	record := docker.Jobs[recordJob]
+	if record.If != "${{ !cancelled() && !failure() }}" {
+		add("record must tolerate the skipped caller without ignoring failure")
+	}
+	for _, need := range append(slices.Clone(releaseImageJobs), "binaries", "binaries-dry-run") {
+		if !slices.Contains(jobNeeds(record), need) {
+			add("record must need " + need)
+		}
+	}
+	if !slices.ContainsFunc(record.Steps, func(s releaseWorkflowStep) bool {
+		return strings.Contains(s.Run, `select(.kind == "binary")`) && strings.Contains(s.Run, `"$EXPECTED_BINARIES"`)
+	}) {
+		add("record must check binary names")
+	}
+	return out
+}
+
+func checkBinaryEntry(job releaseWorkflowJob) []string {
+	var out []string
+	add := func(message string) { out = append(out, "BINARY_RECORD "+message) }
+	stage, qualify, bundle := findStep(job, "Stage binaries"), findStep(job, "qualify-binaries"), artifactStep(job, uploadAction, "release-bundle")
+	if stage < 0 || qualify <= stage || bundle <= qualify {
+		add("qualification must follow staging and precede bundle upload")
+	}
+	if qualify >= 0 {
+		step := job.Steps[qualify]
+		if step.If.Kind != 0 || ignoresFailure(step.ContinueOnError) {
+			add("qualification must run and succeed")
+		}
+		for _, text := range []string{`"$RELEASE_QUAL" entry --kind binary`, `--exception "binary-no-release-gate=`} {
+			if !strings.Contains(step.Run, text) {
+				add("entry missing " + text)
+			}
+		}
+	}
+	upload := artifactStep(job, uploadAction, "qual-entry-binaries")
+	if upload <= qualify || upload < 0 || job.Steps[upload].With["overwrite"].Value != "true" || job.Steps[upload].With["if-no-files-found"].Value != "error" {
+		add("entry upload must follow qualification and replace its artifact")
+	}
+	return out
+}
+
+var createReleasePattern = regexp.MustCompile(`\bgh\s+release\s+create\b`)
+
+func checkBinaryPublish(docker releaseWorkflow) []string {
+	var out []string
+	add := func(message string) { out = append(out, "BINARY_PUBLISH "+message) }
+	job, ok := docker.Jobs["publish-binaries"]
+	if !ok {
+		return []string{"BINARY_PUBLISH missing job"}
+	}
+	if !requiresRealRelease(job.If) || !slices.Contains(topLevelConjuncts(normalizeCondition(job.If)), "!contains(github.ref, '-rc')") {
+		add("publication must require a non-rc real tag")
+	}
+	if !contentsPermission(job.Permissions, "write") {
+		add("publication needs contents write only")
+	}
+	for _, need := range []string{"binaries", recordJob} {
+		if !slices.Contains(jobNeeds(job), need) {
+			add("publication must need " + need)
+		}
+	}
+	create, manifest := findStep(job, "create-release"), findStep(job, "Require signed manifest on canonical release")
+	if create < 0 {
+		return append(out, "BINARY_PUBLISH missing create-release")
+	}
+	if manifest < 0 || manifest >= create {
+		add("signed manifest check must precede publication")
+	}
+	for _, name := range []string{"release-bundle", recordJob} {
+		i := artifactStep(job, downloadAction, name)
+		if i < 0 || i >= create {
+			add("publication must download " + name)
+		}
+	}
+	return append(out, checkBinaryCreateCommand(job.Steps[create])...)
+}
+
+func checkBinaryCreateCommand(step releaseWorkflowStep) []string {
+	var out []string
+	add := func(message string) { out = append(out, "BINARY_PUBLISH "+message) }
+	if strings.Contains(step.Run, "${{") {
+		add("expressions belong in env")
+	}
+	commands := 0
+	for _, line := range logicalLines(step.Run) {
+		for _, loc := range createReleasePattern.FindAllStringIndex(line, -1) {
+			commands++
+			if !isPublishCommand(line, loc[0]) || !strings.Contains(line[:loc[0]], `--record "$RUNNER_TEMP/qualification-record.json"`) {
+				add("create must be the record gate's command")
+			}
+		}
+	}
+	if commands != 1 {
+		add("expected one create command")
+	}
+	return out
+}
+
+func TestReleaseBinariesRunOnlyFromDockerWorkflow(t *testing.T) {
+	root, docker, binary := loadBinaryWorkflow(t)
+	assertNoReleaseViolations(t, checkBinaryWiring(docker, binary))
+	files, err := filepath.Glob(filepath.Join(root, ".github/workflows/*.y*ml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range files {
+		if filepath.Base(file) == "docker.yml" {
+			continue
+		}
+		for name, job := range readWorkflow(t, file).Jobs {
+			if strings.Contains(job.Uses, "/release.yml") {
+				t.Errorf("unexpected caller %s/%s", file, name)
+			}
+		}
+	}
+}
+
+func TestReleaseQualificationRecordCoversEveryBinary(t *testing.T) {
+	_, docker, binary := loadBinaryWorkflow(t)
+	assertNoReleaseViolations(t, checkBinaryRecord(docker, binary))
+}
+
+func TestReleaseBinaryPublishGoesThroughGate(t *testing.T) {
+	root, docker, _ := loadBinaryWorkflow(t)
+	assertNoReleaseViolations(t, checkBinaryPublish(docker))
+	files, err := filepath.Glob(filepath.Join(root, ".github/workflows/*.y*ml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, file := range files {
+		for name, job := range readWorkflow(t, file).Jobs {
+			for _, step := range job.Steps {
+				if !stepRunMatches(step, createReleasePattern) {
+					continue
+				}
+				count++
+				if filepath.Base(file) != "docker.yml" || name != "publish-binaries" || step.ID != "create-release" {
+					t.Errorf("unexpected publication %s/%s/%s", file, name, step.ID)
+				}
+			}
+		}
+	}
+	if count != 1 {
+		t.Errorf("create steps = %d, want 1", count)
+	}
+}
+
+func binaryViolations(docker, binary releaseWorkflow) []string {
+	out := checkBinaryWiring(docker, binary)
+	out = append(out, checkBinaryRecord(docker, binary)...)
+	return append(out, checkBinaryPublish(docker)...)
+}
+
+func mutateBinaryJob(t *testing.T, wf *releaseWorkflow, name string, change func(*releaseWorkflowJob)) {
+	t.Helper()
+	job, ok := wf.Jobs[name]
+	if !ok {
+		t.Fatalf("missing mutation target %s", name)
+	}
+	change(&job)
+	wf.Jobs[name] = job
+}
+
+func removeBinaryNeed(t *testing.T, wf *releaseWorkflow, name, need string) {
+	t.Helper()
+	mutateBinaryJob(t, wf, name, func(job *releaseWorkflowJob) {
+		needs := jobNeeds(*job)
+		if !slices.Contains(needs, need) {
+			t.Fatalf("%s does not need %s", name, need)
+		}
+		needs = slices.DeleteFunc(needs, func(n string) bool { return n == need })
+		if err := job.Needs.Encode(needs); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func testBinaryWorkflowMutations(t *testing.T) {
+	t.Helper()
+	scalar := func(v string) yaml.Node { return yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: v} }
+	write := yaml.Node{}
+	if err := write.Encode(map[string]string{"contents": "write"}); err != nil {
+		t.Fatal(err)
+	}
+	mutations := []struct {
+		name   string
+		mutate func(*testing.T, *releaseWorkflow, *releaseWorkflow)
+	}{
+		{"dry caller secrets", func(t *testing.T, d, b *releaseWorkflow) {
+			mutateBinaryJob(t, d, "binaries-dry-run", func(j *releaseWorkflowJob) { j.Secrets = scalar("inherit") })
+		}},
+		{"dry caller write token", func(t *testing.T, d, b *releaseWorkflow) {
+			mutateBinaryJob(t, d, "binaries-dry-run", func(j *releaseWorkflowJob) { j.Permissions = write })
+		}},
+		{"real caller dry predicate", func(t *testing.T, d, b *releaseWorkflow) {
+			mutateBinaryJob(t, d, "binaries", func(j *releaseWorkflowJob) { j.If = dryReleaseCondition })
+		}},
+		{"called workflow tag trigger", func(t *testing.T, d, b *releaseWorkflow) { b.On["push"] = scalar("tags: [v*]") }},
+		{"called workflow write token", func(t *testing.T, d, b *releaseWorkflow) { b.Permissions = write }},
+		{"binary create wrapper removed", func(t *testing.T, d, b *releaseWorkflow) {
+			stripPublishWrapper(t, d, "publish-binaries", "create-release")
+		}},
+		{"binary publish predicate removed", func(t *testing.T, d, b *releaseWorkflow) {
+			mutateBinaryJob(t, d, "publish-binaries", func(j *releaseWorkflowJob) { j.If = "!contains(github.ref, '-rc')" })
+		}},
+		{"binary publish record dependency removed", func(t *testing.T, d, b *releaseWorkflow) { removeBinaryNeed(t, d, "publish-binaries", recordJob) }},
+		{"record dry caller dependency removed", func(t *testing.T, d, b *releaseWorkflow) { removeBinaryNeed(t, d, recordJob, "binaries-dry-run") }},
+		{"record binary omitted", func(t *testing.T, d, b *releaseWorkflow) {
+			names := strings.Fields(d.Jobs[recordJob].Env["EXPECTED_BINARIES"])
+			if len(names) != 15 {
+				t.Fatal("missing names")
+			}
+			d.Jobs[recordJob].Env["EXPECTED_BINARIES"] = strings.Join(names[1:], " ")
+		}},
+		{"binary entry removed", func(t *testing.T, d, b *releaseWorkflow) {
+			mutateBinaryJob(t, b, "sign-manifest", func(j *releaseWorkflowJob) {
+				i := findStep(*j, "qualify-binaries")
+				if i < 0 {
+					t.Fatal("missing entry")
+				}
+				j.Steps = slices.Delete(j.Steps, i, i+1)
+			})
+		}},
+	}
+	for _, mutation := range mutations {
+		t.Run(mutation.name, func(t *testing.T) {
+			_, docker, binary := loadBinaryWorkflow(t)
+			if got := binaryViolations(docker, binary); len(got) > 0 {
+				t.Fatalf("baseline: %v", got)
+			}
+			mutation.mutate(t, &docker, &binary)
+			if got := binaryViolations(docker, binary); len(got) == 0 {
+				t.Fatal("mutation not caught")
+			}
+		})
+	}
+}
+
+var releaseHarnessBuild struct {
+	once     sync.Once
+	dir, bin string
+	err      error
+}
+
+func TestMain(m *testing.M) {
+	if marker := os.Getenv("RELEASE_WORKFLOW_FAKE_GH_MARKER"); marker != "" {
+		if err := os.WriteFile(marker, []byte(strings.Join(os.Args[1:], "\n")), 0600); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+	code := m.Run()
+	if releaseHarnessBuild.dir != "" {
+		if err := os.RemoveAll(releaseHarnessBuild.dir); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			code = 1
+		}
+	}
+	os.Exit(code)
+}
+
+func releaseHarnessBinary(t *testing.T, root string) string {
+	t.Helper()
+	releaseHarnessBuild.once.Do(func() {
+		releaseHarnessBuild.dir, releaseHarnessBuild.err = os.MkdirTemp("", "release-workflow-build-")
+		if releaseHarnessBuild.err != nil {
+			return
+		}
+		releaseHarnessBuild.bin = filepath.Join(releaseHarnessBuild.dir, "release-qual"+testExecutableExtension())
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "go", "build", "-o", releaseHarnessBuild.bin, "./tools/releasequal/cmd/release-qual")
+		cmd.Dir = root
+		if output, err := cmd.CombinedOutput(); err != nil {
+			releaseHarnessBuild.err = fmt.Errorf("build release-qual: %w\n%s", err, output)
+		}
+	})
+	if releaseHarnessBuild.err != nil {
+		t.Fatal(releaseHarnessBuild.err)
+	}
+	return releaseHarnessBuild.bin
+}
+
+func testExecutableExtension() string {
+	if runtime.GOOS == "windows" {
+		return ".exe"
+	}
+	return ""
+}
+
+func releaseHarnessBash(t *testing.T) string {
+	t.Helper()
+	bash := os.Getenv("RELEASE_WORKFLOW_TEST_BASH")
+	if bash == "" && runtime.GOOS == "windows" {
+		bash = filepath.Join(os.Getenv("ProgramFiles"), "Git", "bin", "bash.exe")
+	}
+	if bash == "" {
+		bash = "bash"
+	}
+	resolved, err := exec.LookPath(bash)
+	if err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("Git Bash unavailable: %v", err)
+		}
+		t.Fatal(err)
+	}
+	return resolved
+}
+
+type binaryWorkspace struct {
+	dir, bash, bin, marker string
+	values                 map[string]string
+}
+
+func writeHarnessFile(t *testing.T, file string, content []byte, mode fs.FileMode) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(file), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, content, mode); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func newBinaryWorkspace(t *testing.T, root string, binary releaseWorkflow) binaryWorkspace {
+	t.Helper()
+	w := binaryWorkspace{dir: t.TempDir(), bash: releaseHarnessBash(t), bin: releaseHarnessBinary(t, root)}
+	w.marker = filepath.Join(w.dir, "gh-marker")
+	for i, name := range binaryNames(binary) {
+		writeHarnessFile(t, filepath.Join(w.dir, "release", name), []byte(fmt.Sprintf("binary %d %s", i, name)), 0600)
+	}
+	for _, name := range []string{"SHA256SUMS", "SHA256SUMS.asc"} {
+		writeHarnessFile(t, filepath.Join(w.dir, "release", name), []byte(name), 0600)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeHarnessFile(t, filepath.Join(w.dir, "fakebin", "gh"+testExecutableExtension()), data, 0755)
+	if err := os.Mkdir(filepath.Join(w.dir, "gh-config"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	w.values = map[string]string{
+		"RELEASE_QUAL": filepath.ToSlash(w.bin), "RUNNER_TEMP": filepath.ToSlash(w.dir),
+		"GITHUB_REF": "refs/tags/v0.0.0-qualtest", "GITHUB_SHA": strings.Repeat("a", 40), "GITHUB_REPOSITORY": "cordum-io/cordum",
+		"DRY_RUN": "false", "RUN_URL": "https://example.invalid/run/1", "GH_TOKEN": "", "GITHUB_TOKEN": "",
+		"GH_CONFIG_DIR": filepath.ToSlash(filepath.Join(w.dir, "gh-config")), "GH_HOST": "example.invalid", "GH_REPO": "example.invalid/none/none",
+		"RELEASE_WORKFLOW_FAKE_GH_MARKER": w.marker,
+	}
+	for key, value := range binary.Env {
+		if key != "EXPECTED_BINARIES" && key != "BINARY_NO_RELEASE_GATE_REASON" {
+			t.Fatalf("unknown workflow env %s", key)
+		}
+		w.values[key] = value
+	}
+	return w
+}
+
+func (w binaryWorkspace) run(t *testing.T, step releaseWorkflowStep) (int, string) {
+	t.Helper()
+	for key := range step.Env {
+		if _, ok := w.values[key]; !ok {
+			t.Fatalf("unknown step env %s", key)
+		}
+	}
+	script := filepath.Join(w.dir, "step.sh")
+	writeHarnessFile(t, script, []byte(strings.ReplaceAll(step.Run, "\r\n", "\n")), 0600)
+	values := maps.Clone(w.values)
+	values["PATH"] = filepath.Join(w.dir, "fakebin") + ":/usr/bin:/bin"
+	if runtime.GOOS == "windows" {
+		values["PATH"] = filepath.Join(w.dir, "fakebin") + ";" + filepath.Join(filepath.Dir(filepath.Dir(w.bash)), "usr", "bin")
+		for _, key := range []string{"SystemRoot", "TEMP", "TMP"} {
+			values[key] = os.Getenv(key)
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, w.bash, "--noprofile", "--norc", "-eo", "pipefail", filepath.ToSlash(script))
+	cmd.Dir = w.dir
+	for _, key := range slices.Sorted(maps.Keys(values)) {
+		cmd.Env = append(cmd.Env, key+"="+values[key])
+	}
+	output, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("step timed out: %s", output)
+	}
+	if err == nil {
+		return 0, string(output)
+	}
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) {
+		t.Fatalf("start bash: %v", err)
+	}
+	return exit.ExitCode(), string(output)
+}
+
+func requiredBinaryStep(t *testing.T, wf releaseWorkflow, job, key string) releaseWorkflowStep {
+	t.Helper()
+	i := findStep(wf.Jobs[job], key)
+	if i < 0 {
+		t.Fatalf("missing %s/%s", job, key)
+	}
+	return wf.Jobs[job].Steps[i]
+}
+
+func (w binaryWorkspace) qualify(t *testing.T, step releaseWorkflowStep) {
+	t.Helper()
+	if code, output := w.run(t, step); code != 0 {
+		t.Fatalf("qualification rc=%d: %s", code, output)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, w.bin, "assemble", "--out", filepath.Join(w.dir, "qualification-record.json"), "--ref", w.values["GITHUB_REF"], "--run-url", w.values["RUN_URL"], "--repository", w.values["GITHUB_REPOSITORY"], "--sha", w.values["GITHUB_SHA"], filepath.Join(w.dir, "qual", "entry-binaries.json"))
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("assemble: %v\n%s", err, output)
+	}
+}
+
+func TestReleaseBinaryPublishRefusesChangedBytes(t *testing.T) {
+	root, docker, binary := loadBinaryWorkflow(t)
+	qualify := requiredBinaryStep(t, binary, "sign-manifest", "qualify-binaries")
+	publish := requiredBinaryStep(t, docker, "publish-binaries", "create-release")
+	for _, name := range []string{"changed bytes", "unrecorded file", "positive control"} {
+		t.Run(name, func(t *testing.T) {
+			w := newBinaryWorkspace(t, root, binary)
+			w.qualify(t, qualify)
+			if name == "changed bytes" {
+				file := filepath.Join(w.dir, "release", "cordum-hook-linux-amd64")
+				data, err := os.ReadFile(file)
+				if err != nil {
+					t.Fatal(err)
+				}
+				writeHarnessFile(t, file, append(data, 'x'), 0600)
+			}
+			if name == "unrecorded file" {
+				writeHarnessFile(t, filepath.Join(w.dir, "release", "cordum-zz-unrecorded"), []byte("extra"), 0600)
+			}
+			code, output := w.run(t, publish)
+			if name != "positive control" {
+				if _, err := os.Stat(w.marker); !errors.Is(err, fs.ErrNotExist) {
+					t.Errorf("gh marker exists or inaccessible: %v", err)
+				}
+				if code != 3 {
+					t.Fatalf("rc=%d, want3: %s", code, output)
+				}
+				return
+			}
+			if code != 0 {
+				t.Fatalf("rc=%d: %s", code, output)
+			}
+			data, err := os.ReadFile(w.marker)
+			if err != nil {
+				t.Fatal(err)
+			}
+			args := strings.Split(string(data), "\n")
+			if len(args) < 3 || !slices.Equal(args[:3], []string{"release", "create", "v0.0.0-qualtest"}) {
+				t.Fatalf("gh args: %q", args)
+			}
+			for _, asset := range append(binaryNames(binary), "SHA256SUMS", "SHA256SUMS.asc") {
+				if !slices.Contains(args, "release/"+asset) {
+					t.Errorf("missing asset %s: %q", asset, args)
+				}
+			}
+		})
+	}
+}
+
+func TestReleaseBinaryEntryRequiresEveryExpectedBinary(t *testing.T) {
+	root, _, binary := loadBinaryWorkflow(t)
+	step := requiredBinaryStep(t, binary, "sign-manifest", "qualify-binaries")
+	for _, name := range []string{"missing binary", "extra binary"} {
+		t.Run(name, func(t *testing.T) {
+			w := newBinaryWorkspace(t, root, binary)
+			if name == "missing binary" {
+				if err := os.Remove(filepath.Join(w.dir, "release", "cordum-hook-linux-amd64")); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				writeHarnessFile(t, filepath.Join(w.dir, "release", "cordum-zz-extra"), []byte("extra"), 0600)
+			}
+			if code, output := w.run(t, step); code == 0 {
+				t.Fatalf("accepted incomplete set: %s", output)
+			}
+			if _, err := os.Stat(filepath.Join(w.dir, "qual", "entry-binaries.json")); !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("fragment exists or inaccessible: %v", err)
 			}
 		})
 	}

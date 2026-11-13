@@ -42,8 +42,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `release-dry-run/**` branch runs the same image and record jobs against
   job-local registries and skips the registry logins, Docker Hub, signing, the
   SARIF upload, issue creation, the published-image smoke and the Helm chart
-  (PR2-02-IMAGES, task-f393ecf3). Release binaries are not in the record yet
-  (PR2-02-BINARIES).
+  (PR2-02-IMAGES, task-f393ecf3). `release.yml` runs inside the `docker.yml`
+  release run, so one run writes one qualification record with the 8 images
+  and 15 Edge binaries (sha256 of the staged bytes). Edge binaries are published
+  only through `release-qual publish` against that record; the record explicitly
+  states that no release-time test or scan runs against the binaries
+  (PR2-02-BINARIES, task-151c9d78).
 
 - License-state behavior contract (`docs/contract/license-behavior.md`): one row per license state and capability class, checked by `TestLicenseBehaviorContract`; a cell not yet tested names the row that will test it.
 - Added the [planned first protected-operation contract](docs/contract/protected-operation.md)
