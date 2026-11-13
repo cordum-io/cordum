@@ -148,6 +148,7 @@ func main() {
 				slog.Error("cordum-mcp: agent identity not found or revoked, refusing to start",
 					"agent_id", id)
 				shutdown.exit(1)
+				return // exit does not return in main; this lets staticcheck see identity is non-nil below
 			}
 			stdio.SetDefaultIdentity(identity)
 			slog.Info("cordum-mcp: bound to agent identity",
