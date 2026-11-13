@@ -37,6 +37,134 @@ const (
 
 var rsArgs = json.RawMessage(`{"path":"/data/rec-1","record":"rec-1"}`)
 
+func TestEffectiveApprovalScope(t *testing.T) {
+	r := NewToolRegistry()
+	for _, tool := range []Tool{{Name: rsTool, ApprovalScope: "code_scope"}, {Name: "plain"}} {
+		if err := r.Register(tool, func(context.Context, json.RawMessage) (*ToolCallResult, error) { return nil, nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name, tool, override, want string
+		found                      bool
+	}{
+		{"code", rsTool, "", "code_scope", true},
+		{"runtime", rsTool, "runtime_scope", "runtime_scope", true},
+		{"none", "plain", "", "", true},
+		{"unknown", "missing", "", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r.SetConfig(nil)
+			if tc.override != "" {
+				r.SetConfig(map[string]any{"mcp_policy": map[string]any{"tools": []any{map[string]any{
+					"tool_name_pattern": rsTool, "approval_scope": tc.override,
+				}}}})
+			}
+			if scope, found := r.EffectiveApprovalScope(tc.tool); scope != tc.want || found != tc.found {
+				t.Errorf("scope = %q, %t; want %q, %t", scope, found, tc.want, tc.found)
+			}
+		})
+	}
+	if scope, found := (*ToolRegistry)(nil).EffectiveApprovalScope(rsTool); scope != "" || found {
+		t.Errorf("nil registry = %q, %t", scope, found)
+	}
+}
+
+type rsFloorHandoff struct {
+	rsHandoff
+	allowed, minted []ToolCallApprovalContext
+	floorErr        error
+}
+
+func (h *rsFloorHandoff) AuthorizeAllowedCall(_ context.Context, c ToolCallApprovalContext) error {
+	h.allowed = append(h.allowed, c)
+	return h.floorErr
+}
+
+func (h *rsFloorHandoff) ConsumeActionGateDecision(ctx context.Context, dec PolicyDecision, c ToolCallApprovalContext) (string, error) {
+	h.minted = append(h.minted, c)
+	return h.rsMinter.ConsumeActionGateDecision(ctx, dec, c)
+}
+
+func rsScopedUpstream(t *testing.T, f *rsFixture) {
+	t.Helper()
+	r := NewToolRegistry()
+	if err := r.Register(Tool{Name: rsTool, ApprovalScope: " records "}, func(ctx context.Context, args json.RawMessage) (*ToolCallResult, error) {
+		return f.upstream.Invoke(ctx, ToolCallParams{Name: rsTool, Arguments: args})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f.deps.Upstream = toolServiceAdapter{tools: r}
+}
+
+func TestAllowFloor_Context(t *testing.T) {
+	f := newRSFixture(pb.DecisionType_DECISION_TYPE_ALLOW, nil)
+	rsScopedUpstream(t, f)
+	h := &rsFloorHandoff{}
+	f.deps.ApprovalHandoff = h
+	res, err := f.invoke(newAuthedToolCallCtx(), rsArgs)
+	if err != nil || res != f.upstream.result || f.upstream.calls.Load() != 1 || len(h.allowed) != 1 {
+		t.Fatalf("ALLOW = %+v, %v; executions %d, floor calls %d", res, err, f.upstream.calls.Load(), len(h.allowed))
+	}
+	actionHash, _ := BuildMCPApprovalBinding(rsTenant, rsServer, ToolCallParams{Name: rsTool, Arguments: rsArgs}, "")
+	pres := f.emitter.ofKind(edge.EventKindMCPToolPre)
+	want := ToolCallApprovalContext{Tenant: rsTenant, AgentID: rsAgent, Server: rsServer, Tool: rsTool,
+		Scope: "records", ActionHash: actionHash, Args: rsArgs, EventID: pres[0].EventID}
+	if !reflect.DeepEqual(h.allowed[0], want) {
+		t.Errorf("floor context = %+v; want %+v", h.allowed[0], want)
+	}
+}
+
+func TestAllowFloor_ErrorIsNotCached(t *testing.T) {
+	for _, backend := range rsBackends {
+		t.Run(backend.name, func(t *testing.T) {
+			f := newRSFixture(pb.DecisionType_DECISION_TYPE_ALLOW, backend.open(t))
+			denied := errors.New("invariant denies")
+			h := &rsFloorHandoff{floorErr: denied}
+			f.deps.ApprovalHandoff = h
+			res, err := f.invoke(newAuthedToolCallCtx(), rsArgs)
+			if !errors.Is(err, denied) || res != nil || f.upstream.calls.Load() != 0 || len(h.allowed) != 1 {
+				t.Fatalf("floor denial = %+v, %v; executions %d, floor calls %d", res, err, f.upstream.calls.Load(), len(h.allowed))
+			}
+			h.floorErr = nil
+			res, err = f.invoke(newAuthedToolCallCtx(), rsArgs)
+			if err != nil || res != f.upstream.result || f.upstream.calls.Load() != 1 || len(h.allowed) != 2 {
+				t.Fatalf("retry = %+v, %v; executions %d, floor calls %d", res, err, f.upstream.calls.Load(), len(h.allowed))
+			}
+		})
+	}
+}
+
+func TestAllowFloor_OptionalCapability(t *testing.T) {
+	for _, handoff := range []ApprovalHandoff{nil, &rsMinter{}} {
+		f := newRSFixture(pb.DecisionType_DECISION_TYPE_ALLOW, nil)
+		f.deps.ApprovalHandoff = handoff
+		if res, err := f.invoke(newAuthedToolCallCtx(), rsArgs); err != nil || res != f.upstream.result || f.upstream.calls.Load() != 1 {
+			t.Errorf("handoff %T: result %+v, err %v, executions %d", handoff, res, err, f.upstream.calls.Load())
+		}
+	}
+}
+
+func TestAllowFloor_MintScope(t *testing.T) {
+	f := newRSFixture(pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN, nil)
+	rsScopedUpstream(t, f)
+	h := &rsFloorHandoff{}
+	f.deps.ApprovalHandoff = h
+	res, err := f.invoke(newAuthedToolCallCtx(), rsArgs)
+	rsRequirePending(t, res, err, "ref-1")
+	if len(h.minted) != 1 || h.minted[0].Scope != "records" || len(h.allowed) != 0 || f.upstream.calls.Load() != 0 {
+		t.Fatalf("mint contexts %+v; ALLOW calls %d, executions %d", h.minted, len(h.allowed), f.upstream.calls.Load())
+	}
+}
+
+func TestApprovalScopeFor_AbsentResolver(t *testing.T) {
+	for _, upstream := range []UpstreamToolCaller{nil, &rsUpstream{}, toolServiceAdapter{}, toolServiceAdapter{tools: (*ToolRegistry)(nil)}} {
+		if got := approvalScopeFor(upstream, rsTool); got != "" {
+			t.Errorf("%T scope = %q, want empty", upstream, got)
+		}
+	}
+}
+
 // rsPipeline returns one configured decision. With park set, the FIRST
 // dispatch closes entered and blocks until park is closed, so that call holds
 // its dedupe slot while the test runs another call.
