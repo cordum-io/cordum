@@ -70,8 +70,10 @@ With `mcp.policy_gate_enabled=true`, it never waives an action-gate
 MCP gate's destructive-call hold: a destructive call (by default a tool name
 matching `*delete*`, `*remove*` or `*archive*`, or GraphQL arguments carrying
 a delete, remove or archive mutation) while the session-taint store is
-unavailable and `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` is on. That flag
-defaults to off.
+unavailable and `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` is on. When that
+flag is unset, it is on in production profiles (`CORDUM_ENV=production` or
+`prod`, or `CORDUM_PRODUCTION=true`) and off otherwise. An explicit `true` or
+`false` always wins, so `false` opts a production gateway out of the hold.
 
 A preapproved bot that hits the hold is treated like any other identity:
 

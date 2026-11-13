@@ -586,9 +586,11 @@ func EvaluateToolCall(ctx context.Context, deps ToolCallDeps, params ToolCallPar
 	//
 	// LOOKUP-ERROR POSTURE: record lookup failures on the descriptor so MCPGate
 	// can fail-closed for DESTRUCTIVE tools only when
-	// CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE is enabled. The flag defaults OFF,
-	// preserving today's fail-open behavior; the read-side persist path remains
-	// fail-open by design. Decision captured in
+	// CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE is enabled. Unset, the flag is ON in
+	// production profiles (CORDUM_ENV=production|prod or CORDUM_PRODUCTION=true)
+	// and OFF in dev/demo; an explicit true/false always wins
+	// (actiongates.ResolveFailClosedDestructiveOnTaintLookupError). The read-side
+	// persist path remains fail-open by design. Decision captured in
 	// Monday-demo/artifacts/taint-fail-open-decision.md (task-098b8d02).
 	if deps.TaintStore != nil {
 		if t, ok, terr := deps.TaintStore.GetTaint(ctx, meta.Tenant, meta.SessionID); terr != nil {
