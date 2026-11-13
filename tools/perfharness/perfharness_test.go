@@ -259,6 +259,10 @@ func TestWorkloadRejects(t *testing.T) {
 		{"unknown kind", "jobs.submit", "jobs.unknown", "kind"},
 		{"weight", "weight: 1", "weight: 0", "weight"},
 		{"fractional weight", "weight: 1", "weight: 1.5", "weight"},
+		{"missing sequence name", "- name: submit-approve\n    weight: 1", "- weight: 1", "request_mix[0].name: must not be empty"},
+		{"null payload", "payload: {}", "payload: null", "request_mix[0].requests[1].payload: must be an object"},
+		{"missing payload", "\n        payload: {}", "", "request_mix[0].requests[1].payload: must be an object"},
+		{"empty profile name", "standard:", "'':", "profiles: names must not be empty"},
 		{"forward capture", "{{uuid}}-{{seq}}", "{{capture.job_id}}", "earlier"},
 		{"missing capture", "{{capture.job_id}}", "{{capture.missing}}", "earlier"},
 		{"unknown token", "{{uuid}}-{{seq}}", "{{password}}", "token"},
@@ -283,7 +287,7 @@ func TestWorkloadRejects(t *testing.T) {
 		{"fractional interval", "interval_ms: 100", "interval_ms: 100.5", "interval_ms"},
 		{"secret payload", "prompt:", "Password:", "secret"},
 		{"nested secret", "topic: job.perf", "nested: [{ToKeN: forbidden}]", "secret"},
-		{"deep payload", "topic: job.perf", "nested: " + strings.Repeat("[", 65) + "0" + strings.Repeat("]", 65), "nesting"},
+		{"deep payload", "topic: job.perf", "nested: " + strings.Repeat("[", 57) + "0" + strings.Repeat("]", 57), "nesting"},
 		{"secret path", "path_params: {job_id:", "path_params: {AUTHORIZATION:", "secret"},
 		{"env value", "api_key_env: PERF_KEY", "api_key_env: secret-value", "api_key_env"},
 		{"trailing yaml", "p99_pct: 10}", "p99_pct: 10}\n---\nname: second", "trailing"},
@@ -304,6 +308,7 @@ func TestWorkloadEmptyCollections(t *testing.T) {
 		change func(*Workload)
 		field  string
 	}{
+		{"empty name", func(w *Workload) { w.Name = "" }, "name: must not be empty"},
 		{"empty mix", func(w *Workload) { w.RequestMix = nil }, "request_mix"},
 		{"empty requests", func(w *Workload) { w.RequestMix[0].Requests = nil }, "requests"},
 		{"empty profile", func(w *Workload) { w.Profiles["smoke"] = Profile{} }, "steps"},
