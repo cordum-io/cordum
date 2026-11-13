@@ -79,6 +79,10 @@ type otelMetricsBridge interface {
 	RecordSafetyDenied(ctx context.Context, topic string)
 }
 
+type inputFailOpenRuleMetrics interface {
+	IncInputFailOpenRule(topic, rule string)
+}
+
 // Engine wires together bus interactions, safety checks, and scheduling decisions.
 type Engine struct {
 	bus                     Bus
@@ -513,7 +517,8 @@ func (e *Engine) isAsyncFailOpen() bool {
 }
 
 // WithInputFailMode sets the behavior when the safety kernel is unreachable.
-// "closed" (default) requeues the job; "open" allows the job through with a warning.
+// "closed" (default) requeues the job; "open" admits only topics named by a
+// scheduler.input_fail_open_scope rule and requires a FailModeResolver.
 func (e *Engine) WithInputFailMode(mode string) *Engine {
 	e.inputFailOpen.Store(mode == "open")
 	return e
@@ -531,6 +536,21 @@ func (e *Engine) WithFlushDispatchFn(fn func(ctx context.Context, pool, traceID 
 
 func (e *Engine) isInputFailOpen() bool {
 	return e.inputFailOpen.Load()
+}
+
+func (e *Engine) inputFailOpenRule(orgID, topic string) (string, bool) {
+	if !e.isInputFailOpenForTenant(orgID) || e.failModeResolver == nil {
+		return "", false
+	}
+	return e.failModeResolver.InputFailOpenScopeRule(orgID, topic)
+}
+
+func (e *Engine) incInputFailOpen(topic, rule string) {
+	if metrics, ok := e.metrics.(inputFailOpenRuleMetrics); ok {
+		metrics.IncInputFailOpenRule(topic, rule)
+	} else if e.metrics != nil {
+		e.metrics.IncInputFailOpen(topic)
+	}
 }
 
 // WithOTELMetrics wires an optional OTEL metrics bridge for dual-emission
@@ -1710,13 +1730,11 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 		if e.metrics != nil {
 			e.metrics.IncSafetyUnavailable(topic)
 		}
-		if e.isInputFailOpenForTenant(req.GetTenantId()) {
+		if rule, ok := e.inputFailOpenRule(req.GetTenantId(), topic); ok {
 			slog.Warn("safety kernel unavailable — FAIL-OPEN: allowing job",
 				"job_id", jobID, "topic", topic, "reason", record.Reason,
-				"trace_id", traceID, "input_fail_mode", "open")
-			if e.metrics != nil {
-				e.metrics.IncInputFailOpen(topic)
-			}
+				"trace_id", traceID, "input_fail_mode", "open", "scope_rule", rule)
+			e.incInputFailOpen(topic, rule)
 			if e.counterClient != nil {
 				e.counterClient.Incr(lockCtx, "cordum:scheduler:input_fail_open_total")
 			}
@@ -1724,7 +1742,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			// without inferring it from WARN logs. The event carries fail_mode_origin
 			// so reviewers can distinguish global-default fail-open (env var) from
 			// per-tenant fail-open (FailModeResolver). Audit-fix task-2a52e7da #11.
-			e.emitSafetyBypassAuditEvent(lockCtx, req, topic, record.Reason)
+			e.emitSafetyBypassAuditEvent(lockCtx, req, topic, record.Reason, rule)
 			record.Decision = SafetyAllow
 			record.Reason = "fail-open: safety unavailable — " + record.Reason
 			// Tag job so dashboard can show bypass warning
@@ -1735,9 +1753,13 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			req.Labels["safety_bypass_reason"] = record.Reason
 			// Fall through to allow
 		} else {
+			mode, reason := "closed", record.Reason
+			if e.isInputFailOpenForTenant(req.GetTenantId()) {
+				mode, reason = "open", "topic not in input fail-open scope"
+			}
 			slog.Warn("safety kernel unavailable, requeueing job",
-				"job_id", jobID, "topic", topic, "reason", record.Reason,
-				"trace_id", traceID, "input_fail_mode", "closed")
+				"job_id", jobID, "topic", topic, "reason", reason,
+				"trace_id", traceID, "input_fail_mode", mode)
 			return RetryAfter(fmt.Errorf("safety unavailable: %s", record.Reason), safetyThrottleDelay)
 		}
 	case SafetyRequireApproval:
@@ -3506,7 +3528,7 @@ func mapStringToErrorCode(code string) pb.ErrorCode {
 // admit path so reviewers can correlate bypassed jobs without inferring from
 // WARN logs. Carries fail_mode_origin to distinguish global-default fail-open
 // from a per-tenant override. Audit-fix task-2a52e7da finding #11.
-func (e *Engine) emitSafetyBypassAuditEvent(ctx context.Context, req *pb.JobRequest, topic, reason string) {
+func (e *Engine) emitSafetyBypassAuditEvent(ctx context.Context, req *pb.JobRequest, topic, reason, rule string) {
 	if e == nil || e.dispatchAuditSink == nil || req == nil {
 		return
 	}
@@ -3516,6 +3538,7 @@ func (e *Engine) emitSafetyBypassAuditEvent(ctx context.Context, req *pb.JobRequ
 	}
 	extra := map[string]string{
 		"fail_mode_origin": origin,
+		"scope_rule":       rule,
 	}
 	if topic != "" {
 		extra["topic"] = topic
