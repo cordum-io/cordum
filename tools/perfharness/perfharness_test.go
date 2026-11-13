@@ -120,36 +120,67 @@ func TestResultsRejects(t *testing.T) {
 		})
 	}
 	for _, key := range []string{"hardware", "versions", "configuration", "unknown"} {
-		t.Run(key, func(t *testing.T) {
-			data, err := json.Marshal(syntheticResults(t))
-			if err != nil {
-				t.Fatal(err)
+		t.Run(key, func(t *testing.T) { rejectResultsShape(t, key) })
+	}
+}
+
+func rejectResultsShape(t *testing.T, key string) {
+	t.Helper()
+	data, err := json.Marshal(syntheticResults(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatal(err)
+	}
+	var env map[string]json.RawMessage
+	if err := json.Unmarshal(document["environment"], &env); err != nil {
+		t.Fatal(err)
+	}
+	if key == "unknown" {
+		env[key] = json.RawMessage(`1`)
+	} else {
+		delete(env, key)
+	}
+	document["environment"], err = json.Marshal(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err = json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ParseResults(data); got != nil || err == nil {
+		t.Fatal("invalid schema accepted")
+	}
+}
+
+func TestWorkloadFilesLoad(t *testing.T) {
+	files, err := filepath.Glob("workloads/*.yaml")
+	if err != nil || len(files) < 4 {
+		t.Fatalf("need four workload files: %v, %v", files, err)
+	}
+	names, kinds := make(map[string]bool), make(map[string]bool)
+	for _, file := range files {
+		w, err := LoadWorkload(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if names[w.Name] || len(w.RequestMix) == 0 || len(w.Prerequisites) == 0 {
+			t.Fatalf("invalid workload %s", file)
+		}
+		names[w.Name] = true
+		for _, sequence := range w.RequestMix {
+			for _, request := range sequence.Requests {
+				kinds[request.Kind] = true
 			}
-			var document map[string]json.RawMessage
-			if err := json.Unmarshal(data, &document); err != nil {
-				t.Fatal(err)
-			}
-			var env map[string]json.RawMessage
-			if err := json.Unmarshal(document["environment"], &env); err != nil {
-				t.Fatal(err)
-			}
-			if key == "unknown" {
-				env[key] = json.RawMessage(`1`)
-			} else {
-				delete(env, key)
-			}
-			document["environment"], err = json.Marshal(env)
-			if err != nil {
-				t.Fatal(err)
-			}
-			data, err = json.Marshal(document)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got, err := ParseResults(data); got != nil || err == nil {
-				t.Fatal("invalid schema accepted")
-			}
-		})
+		}
+	}
+	for _, kind := range []string{"jobs.submit", "jobs.approve", "edge.hook.evaluate", "mcp.tools.call"} {
+		if !kinds[kind] {
+			t.Fatalf("missing request kind %s", kind)
+		}
 	}
 }
 
