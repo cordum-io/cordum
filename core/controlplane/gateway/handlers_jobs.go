@@ -1256,6 +1256,30 @@ func (s *server) handleRemediateJob(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"job_id": newJobID, "trace_id": traceID})
 }
 
+// errAgentLinkUnavailable is the client-safe description of a failed
+// worker-link lookup. The store error itself is only logged.
+var errAgentLinkUnavailable = errors.New("agent identity store unavailable")
+
+// linkedAgentID returns the ID of the agent linked to principalID in tenant,
+// or "" when there is no agent store, no link, a dangling link, or a blank
+// tenant or principal. A store failure is returned as an error and must never
+// be read as "no link": the submit and delegation paths that bind an agent
+// fail closed with 503 / Unavailable instead of running policy and audit
+// without the agent.
+func (s *server) linkedAgentID(ctx context.Context, tenant, principalID string) (string, error) {
+	if s.agentIdentityStore == nil || strings.TrimSpace(tenant) == "" || strings.TrimSpace(principalID) == "" {
+		return "", nil
+	}
+	agent, err := s.agentIdentityStore.GetByWorkerIDForTenant(ctx, tenant, principalID)
+	if err != nil {
+		return "", err
+	}
+	if agent == nil {
+		return "", nil
+	}
+	return agent.ID, nil
+}
+
 func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	// RBAC: custom roles may submit when they hold jobs.write. When advanced
 	// RBAC is disabled, preserve the historical admin/user fallback.
@@ -1485,11 +1509,10 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	// resolvePrincipal may return a request-chosen principal_id. Honor a
 	// client agent_id label only for the authenticated principal, as in gRPC
 	// SubmitJob. Injection without a label is unchanged here (task-491f974b).
-	var authDerivedAgentID string
-	if s.agentIdentityStore != nil {
-		if agent, err := s.agentIdentityStore.GetByWorkerIDForTenant(r.Context(), orgID, principalID); err == nil && agent != nil {
-			authDerivedAgentID = agent.ID
-		}
+	authDerivedAgentID, err := s.linkedAgentID(r.Context(), orgID, principalID)
+	if err != nil {
+		writeServiceUnavailable(w, r, "submit agent link lookup", err)
+		return
 	}
 	if clientAgentID := req.Labels["agent_id"]; clientAgentID != "" {
 		ac := auth.FromRequest(r)
