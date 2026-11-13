@@ -243,6 +243,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   constraints the scheduler enforces and which are advisory or planned, and link
   to `docs/contract/enforcement-matrix.yaml`.
 
+- Aligned the `SAFETY_KERNEL_TLS_CA` description in `docs/configuration-reference.md` and `docs/safety-kernel.md` with `docs/contract/threat-model.md`: it is the CA bundle the scheduler and gateway use to verify the Safety Kernel's TLS server certificate. Documentation only; no behavior changes.
+
 ## [v1.3.1] - 2026-11-11
 
 Changes on main since the v1.3.0 tag (d027ae97, 2026-11-11).
