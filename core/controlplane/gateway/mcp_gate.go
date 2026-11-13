@@ -314,10 +314,7 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 	if mintErr != nil {
 		// The record is correlation-only under the policy gate and nothing
 		// will ever reference it, so withdraw it (task-fbe79532).
-		if !g.store.WithdrawPending(ctx, rec.ID, time.Now()) {
-			slog.Warn("mcp gate: correlation approval record not withdrawn after edge mint failure",
-				"approval_id", rec.ID, "tenant", rec.Tenant)
-		}
+		g.withdrawCorrelationRecord(ctx, rec)
 		// A policy change is retryable, not a store outage.
 		if errors.Is(mintErr, mcp.ErrPolicySnapshotChanged) {
 			return nil, mintErr
@@ -349,6 +346,19 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 		Reason:         rec.Reason,
 		Tool:           tool.Name,
 	}, nil
+}
+
+// withdrawCorrelationRecord expires rec after a failed Edge mint. The cleanup
+// outlives a cancelled call (a client that hung up mid-mint is exactly when an
+// Edge store is slow or down) but is bounded. It is best-effort: on failure the
+// record is logged, never the arguments, and the sweeper stays the backstop.
+func (g *gatewayApprovalGate) withdrawCorrelationRecord(ctx context.Context, rec *MCPApprovalRecord) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	if !g.store.WithdrawPending(ctx, rec.ID, time.Now()) {
+		slog.Warn("mcp gate: correlation approval record not withdrawn after edge mint failure",
+			"approval_id", rec.ID, "tenant", rec.Tenant)
+	}
 }
 
 // useConsumedEdgeApproval reports whether this call carries the Edge

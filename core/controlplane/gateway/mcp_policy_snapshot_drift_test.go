@@ -238,31 +238,51 @@ func mgRegistryDeps(h *holdHarness) mcp.ToolCallDeps {
 	return h.pgPolicyDeps(pb.DecisionType_DECISION_TYPE_ALLOW, pgGateUpstream{gate: h.gate, args: holdArgs})
 }
 
+// cancelOnMintStore cancels the call's context mid-mint, as a client that
+// hangs up while the Edge store is slow does.
+type cancelOnMintStore struct {
+	edge.Store
+	cancel context.CancelFunc
+}
+
+func (s *cancelOnMintStore) EnqueueApproval(ctx context.Context, _ edge.EdgeApprovalRequest) (*edge.EdgeApproval, error) {
+	s.cancel()
+	return nil, ctx.Err()
+}
+
 func TestRegistryGateMintError_WithdrawsCorrelationRecord(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		wantErr error
-		arm     func(h *holdHarness) mcp.ToolCallDeps
+		arm     func(h *holdHarness, cancel context.CancelFunc) mcp.ToolCallDeps
 	}{
-		{"policy_snapshot_changed", mcp.ErrPolicySnapshotChanged, func(h *holdHarness) mcp.ToolCallDeps {
+		{"policy_snapshot_changed", mcp.ErrPolicySnapshotChanged, func(h *holdHarness, _ context.CancelFunc) mcp.ToolCallDeps {
 			deps, _ := driftPolicyDeps(h, "registry_dual_write", &driftSnapshot{stamp: "policy-v7", mint: "policy-v8"})
 			return deps
 		}},
-		{"edge_store_error", mcp.ErrApprovalStoreUnavailable, func(h *holdHarness) mcp.ToolCallDeps {
+		{"edge_store_error", mcp.ErrApprovalStoreUnavailable, func(h *holdHarness, _ context.CancelFunc) mcp.ToolCallDeps {
 			down := &pgEdgeStore{Store: h.edgeStore}
 			down.failMint.Store(true)
 			h.gate.edgeStore = down
+			return mgRegistryDeps(h)
+		}},
+		// The evaluator reports the cancellation itself when it cannot emit its failed
+		// event, so the error is not the gate's: this row pins the record state.
+		{"call_canceled_mid_mint", context.Canceled, func(h *holdHarness, cancel context.CancelFunc) mcp.ToolCallDeps {
+			h.gate.edgeStore = &cancelOnMintStore{Store: h.edgeStore, cancel: cancel}
 			return mgRegistryDeps(h)
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			h := newHoldHarness(t, "policy-v7", 0)
-			deps := tc.arm(h)
+			callCtx, cancel := context.WithCancel(h.ctx)
+			defer cancel()
+			deps := tc.arm(h, cancel)
 			call := seedUnpinnedCall(t, h, "sess_mint_err", "exec_mint_err")
 			a := newMGAudit()
-			ctx, handle := a.start(call.ctx(h.ctx))
+			ctx, handle := a.start(call.ctx(callCtx))
 			result, err := mcp.InvokeToolWithPolicy(ctx, deps, mcp.ToolCallParams{Name: holdTool, Arguments: holdArgs}, holdServer)
 			event := a.finish(t, handle, result, err)
 			if !errors.Is(err, tc.wantErr) {
