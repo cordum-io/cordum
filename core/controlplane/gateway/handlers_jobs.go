@@ -1478,12 +1478,9 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		meta.Labels = req.Labels
 	}
 
-	// Bind agent_id to the authenticated principal. Never trust
-	// client-supplied labels.agent_id: a client that can reach this
-	// handler already has a worker credential, and that credential's
-	// agent identity is the only authoritative one. A mismatch between
-	// client-asserted and credential-derived agent_id is an
-	// impersonation attempt and rejects 403.
+	// resolvePrincipal may return a request-chosen principal_id. Honor a
+	// client agent_id label only for the authenticated principal, as in gRPC
+	// SubmitJob. Injection without a label is unchanged here (task-491f974b).
 	var authDerivedAgentID string
 	if s.agentIdentityStore != nil {
 		if agent, err := s.agentIdentityStore.GetByWorkerIDForTenant(r.Context(), orgID, principalID); err == nil && agent != nil {
@@ -1491,6 +1488,11 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if clientAgentID := req.Labels["agent_id"]; clientAgentID != "" {
+		ac := auth.FromRequest(r)
+		if ac == nil || strings.TrimSpace(ac.PrincipalID) == "" || strings.TrimSpace(ac.PrincipalID) != strings.TrimSpace(principalID) {
+			writeErrorJSON(w, http.StatusForbidden, "client-supplied agent_id requires an authenticated principal")
+			return
+		}
 		if authDerivedAgentID == "" {
 			writeErrorJSON(w, http.StatusForbidden, "client-supplied agent_id requires an authenticated worker credential")
 			return
