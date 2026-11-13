@@ -153,25 +153,37 @@ func checkFinalStageUpgradesAlpine(dockerfile string) error {
 }
 
 var (
-	quotedShellText = regexp.MustCompile(`'[^']*'|"[^"]*"`)
+	// quotedShellText masks a single-quoted argument, a double-quoted argument
+	// (in which a backslash escapes the next character) and a backslash-escaped
+	// character outside quotes, as sh reads them.
+	quotedShellText = regexp.MustCompile(`'[^']*'|"(?:[^"\\]|\\.)*"|\\.`)
 	shellComment    = regexp.MustCompile(`(^|\s)#.*$`)
-	shellCommandSep = regexp.MustCompile(`&&|[;|&]`)
 )
 
 // runExecutesApkUpgrade reports whether the shell form of a RUN instruction
-// (continuation lines already joined) runs `apk upgrade --no-cache` as a
-// command that cannot be skipped. The text does not count when it sits in a
-// shell comment or in a quoted argument such as `echo 'apk upgrade --no-cache'`.
-// An `||` list can skip the command (`true || apk upgrade`) or swallow its
-// failure (`apk upgrade || true`), so any `||` fails closed, as do exec-form
-// and heredoc RUNs, which are not recognised.
+// (continuation lines already joined) runs `apk upgrade --no-cache` so that
+// the RUN can succeed only if the upgrade ran and succeeded. The text does not
+// count when it sits in a shell comment or in a quoted argument such as
+// `echo 'apk upgrade --no-cache'` or `echo "\"; apk upgrade --no-cache; #"`;
+// a quote left unbalanced after masking fails closed. Only a plain `&&` list
+// is recognised: any `;`, `|`, `||` or `&` left after masking fails closed,
+// because those forms can skip the upgrade (`true || apk upgrade`,
+// `false && apk upgrade; true`), swallow its failure (`apk upgrade || true`,
+// `apk upgrade | cat`) or run it in the background. Exec-form and heredoc
+// RUNs are not recognised either.
 func runExecutesApkUpgrade(script string) bool {
 	script = quotedShellText.ReplaceAllString(script, "Q")
 	script = shellComment.ReplaceAllString(script, "")
-	if strings.Contains(script, "||") {
+	if strings.ContainsAny(script, `'"`) {
 		return false
 	}
-	for _, command := range shellCommandSep.Split(script, -1) {
+	commands := strings.Split(script, "&&")
+	for _, command := range commands {
+		if strings.ContainsAny(command, ";|&") {
+			return false
+		}
+	}
+	for _, command := range commands {
 		words := strings.Fields(command)
 		if len(words) >= 3 && words[0] == "apk" && words[1] == "upgrade" && slices.Contains(words[2:], "--no-cache") {
 			return true
@@ -238,6 +250,49 @@ func TestReleaseFinalStageUpgradeFixtures(t *testing.T) {
 			name:       "upgrade failure swallowed by an or list",
 			dockerfile: "FROM alpine:3.24\nRUN apk upgrade --no-cache || true\n",
 			wantErr:    true,
+		},
+		{
+			name:       "upgrade only in a double-quoted argument with an escaped quote",
+			dockerfile: "FROM alpine:3.24\nRUN echo \"\\\"; apk upgrade --no-cache; #\"\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade only in a double-quoted and list with escaped quotes",
+			dockerfile: "FROM alpine:3.24\nRUN echo \"\\\" && apk upgrade --no-cache && echo \\\"\"\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade after an unbalanced quote",
+			dockerfile: "FROM alpine:3.24\nRUN echo \"unterminated && apk upgrade --no-cache\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade skipped by an and list that a later command rescues",
+			dockerfile: "FROM alpine:3.24\nRUN false && apk upgrade --no-cache; true\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade failure swallowed by a later command",
+			dockerfile: "FROM alpine:3.24\nRUN apk upgrade --no-cache ; apk add --no-cache ca-certificates\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade failure hidden by a pipeline",
+			dockerfile: "FROM alpine:3.24\nRUN apk upgrade --no-cache | cat\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade run in the background",
+			dockerfile: "FROM alpine:3.24\nRUN apk upgrade --no-cache & wait\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade after an escaped quote outside quotes",
+			dockerfile: "FROM alpine:3.24\nRUN echo \\\" && apk upgrade --no-cache\n",
+		},
+		{
+			name:       "upgrade before an echo with escaped quotes",
+			dockerfile: "FROM alpine:3.24\nRUN apk upgrade --no-cache && echo \"say \\\"hi\\\"\"\n",
 		},
 		{
 			name:       "upgrade chained after another command",
