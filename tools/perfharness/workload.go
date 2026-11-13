@@ -23,6 +23,10 @@ var templateToken = regexp.MustCompile(`\{\{([^{}]*)\}\}`)
 
 const maxContractBytes = 4 << 20
 
+// maxRecordedConfigBytes bounds environment.configuration as WriteResults encodes it, leaving a run
+// maxContractBytes-maxRecordedConfigBytes of its results document for steps, samples and environment.
+const maxRecordedConfigBytes = 1 << 20
+
 // requestDepth is a request's depth in a results document (environment.configuration.request_mix[i].requests[j]),
 // so the loader applies the nesting limit that ParseResults applies to the recorded configuration.
 const requestDepth = 6
@@ -166,7 +170,7 @@ func (w *Workload) Validate() error {
 		return w.invalid("queue_depth.interval_ms", "must be above zero")
 	}
 	if q.Kind == "prometheus" && q.Metric != "" || q.Kind == "nats_jsz" && q.Stream != "" {
-		return nil
+		return w.validateRecordedSize()
 	}
 	return w.invalid("queue_depth", "kind must be prometheus with metric or nats_jsz with stream")
 }
@@ -202,6 +206,19 @@ func (w *Workload) validateProfiles() error {
 	for _, cost := range costs {
 		if cost < smoke {
 			return w.invalid("profiles.smoke", "must have the smallest concurrency-seconds")
+		}
+	}
+	return nil
+}
+
+// validateRecordedSize encodes each profile's recorded configuration, aliases expanded, at its
+// depth in a results document (environment.configuration), as WriteResults does.
+func (w *Workload) validateRecordedSize() error {
+	for name, profile := range w.Profiles {
+		config := Configuration{RequestMix: w.RequestMix, ProfileSteps: profile.Steps, Saturation: w.Saturation, QueueDepth: w.QueueDepth}
+		data, err := json.MarshalIndent(config, resultsIndent+resultsIndent, resultsIndent)
+		if err != nil || len(data) > maxRecordedConfigBytes {
+			return w.invalid("profiles."+name, fmt.Sprintf("recorded configuration exceeds %d bytes", maxRecordedConfigBytes))
 		}
 	}
 	return nil
