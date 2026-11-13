@@ -55,8 +55,8 @@ type Profile struct {
 	Steps []ProfileStep `yaml:"steps" json:"steps"`
 }
 type ProfileStep struct {
-	Concurrency int    `yaml:"concurrency" json:"concurrency"`
-	Duration    string `yaml:"duration" json:"duration"`
+	Concurrency Concurrency `yaml:"concurrency" json:"concurrency"`
+	Duration    string      `yaml:"duration" json:"duration"`
 }
 type Thresholds struct {
 	P99MS                float64 `yaml:"p99_ms" json:"p99_ms"`
@@ -64,29 +64,37 @@ type Thresholds struct {
 	MinThroughputGainPct float64 `yaml:"min_throughput_gain_pct" json:"min_throughput_gain_pct"`
 }
 type QueueSource struct {
-	Kind       string `yaml:"kind" json:"kind"`
-	URLEnv     string `yaml:"url_env" json:"url_env"`
-	Metric     string `yaml:"metric,omitempty" json:"metric,omitempty"`
-	Stream     string `yaml:"stream,omitempty" json:"stream,omitempty"`
-	IntervalMS int    `yaml:"interval_ms" json:"interval_ms"`
+	Kind       string       `yaml:"kind" json:"kind"`
+	URLEnv     string       `yaml:"url_env" json:"url_env"`
+	Metric     string       `yaml:"metric,omitempty" json:"metric,omitempty"`
+	Stream     string       `yaml:"stream,omitempty" json:"stream,omitempty"`
+	IntervalMS Milliseconds `yaml:"interval_ms" json:"interval_ms"`
 }
 type Tolerance struct {
 	ThroughputPct float64 `yaml:"throughput_pct" json:"throughput_pct"`
 	P99Pct        float64 `yaml:"p99_pct" json:"p99_pct"`
 }
 
-// Weight rejects YAML floats instead of allowing yaml.v3's integer truncation.
+// Integer fields reject YAML floats instead of allowing yaml.v3's truncation.
 type Weight int
+type Concurrency int
+type Milliseconds int
 
-func (w *Weight) UnmarshalYAML(node *yaml.Node) error {
+func (w *Weight) UnmarshalYAML(n *yaml.Node) error { return decodeInteger(n, (*int)(w), "weight") }
+func (c *Concurrency) UnmarshalYAML(n *yaml.Node) error {
+	return decodeInteger(n, (*int)(c), "concurrency")
+}
+func (m *Milliseconds) UnmarshalYAML(n *yaml.Node) error {
+	return decodeInteger(n, (*int)(m), "interval_ms")
+}
+
+func decodeInteger(node *yaml.Node, out *int, field string) error {
 	if node.Tag != "!!int" {
-		return fmt.Errorf("weight: must be an integer")
+		return fmt.Errorf("%s: must be an integer", field)
 	}
-	var value int
-	if err := node.Decode(&value); err != nil {
-		return fmt.Errorf("weight: %w", err)
+	if err := node.Decode(out); err != nil {
+		return fmt.Errorf("%s: %w", field, err)
 	}
-	*w = Weight(value)
 	return nil
 }
 
