@@ -118,19 +118,42 @@ func (g *gatewayApprovalGate) AuthorizeConsumedApproval(ctx context.Context, ctx
 	return g.actionGateInvariantDeny(ctx, ctxData)
 }
 
-// actionGateInvariantDeny is the SecOps invariant DENY floor of the
-// action-gate handoff. It synthesizes a minimal mcp.Tool/CallMetadata view
-// from the context payload so matchMCPInvariantDeny can run.
+var _ mcp.AllowedCallAuthorizer = (*gatewayApprovalGate)(nil)
+
+// AuthorizeAllowedCall floors every policy-gate ALLOW. The registry's Check
+// floors only RequiresApproval tools, and fronted upstreams have no registry
+// gate. The invariant floor needs no approval store.
+func (g *gatewayApprovalGate) AuthorizeAllowedCall(ctx context.Context, ctxData mcp.ToolCallApprovalContext) error {
+	if g == nil {
+		return nil
+	}
+	return g.actionGateInvariantDeny(ctx, ctxData)
+}
+
+// actionGateInvariantDeny matches deny_servers against both the serving
+// registry's effective ApprovalScope and the MCP server name (cordum.builtin
+// or the fronted upstream's name). Tool-name rules apply even without a scope.
 func (g *gatewayApprovalGate) actionGateInvariantDeny(ctx context.Context, ctxData mcp.ToolCallApprovalContext) error {
 	if g.invariants == nil {
 		return nil
 	}
 	rules := g.invariants.InvariantsForMCPTool(ctx)
-	tool := mcp.Tool{Name: ctxData.Tool}
 	meta := MCPCallMetadata{Tenant: ctxData.Tenant, AgentID: ctxData.AgentID}
-	if rule, denied := matchMCPInvariantDeny(rules, tool, meta); denied {
-		return fmt.Errorf("%w: tool %q denied by invariant %q",
-			ErrMCPInvariantDeny, ctxData.Tool, rule.ID)
+	scope, server := strings.TrimSpace(ctxData.Scope), strings.TrimSpace(ctxData.Server)
+	scopes := []string{scope}
+	if server != "" && !strings.EqualFold(server, scope) {
+		if scope == "" {
+			scopes[0] = server
+		} else {
+			scopes = append(scopes, server)
+		}
+	}
+	for _, candidate := range scopes {
+		tool := mcp.Tool{Name: ctxData.Tool, ApprovalScope: candidate}
+		if rule, denied := matchMCPInvariantDeny(rules, tool, meta); denied {
+			return fmt.Errorf("%w: tool %q denied by invariant %q",
+				ErrMCPInvariantDeny, ctxData.Tool, rule.ID)
+		}
 	}
 	return nil
 }

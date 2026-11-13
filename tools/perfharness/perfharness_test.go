@@ -206,8 +206,13 @@ func assertRecordable(t *testing.T, w *Workload) {
 		if err != nil {
 			t.Fatalf("%s/%s: %v", w.Name, name, err)
 		}
-		if got, err := ParseResults(data); err != nil || !reflect.DeepEqual(&want, got) {
+		got, err := ParseResults(data)
+		if err != nil {
 			t.Fatalf("%s/%s round trip: %v", w.Name, name, err)
+		}
+		// Compare encodings: YAML decodes payload integers as int, ParseResults as float64.
+		if again, err := WriteResults(*got); err != nil || string(again) != string(data) {
+			t.Fatalf("%s/%s round trip changed the document: %v", w.Name, name, err)
 		}
 	}
 }
@@ -262,7 +267,8 @@ func TestCaptureEnvironmentLive(t *testing.T) {
 func TestWorkloadLoadValid(t *testing.T) {
 	// The deepest payload a results document holds; TestWorkloadRejects/deep_payload pins one level deeper.
 	deep := strings.Replace(workloadFixture, "topic: job.perf", "nested: "+strings.Repeat("[", 56)+"x"+strings.Repeat("]", 56), 1)
-	for _, content := range []string{workloadFixture, strings.ReplaceAll(workloadFixture, "\n", "\r\n"), deep} {
+	nearBudget := strings.Replace(workloadFixture, "topic: job.perf", "topic: "+strings.Repeat("x", 1<<20-4096)+", n: 5", 1)
+	for _, content := range []string{workloadFixture, strings.ReplaceAll(workloadFixture, "\n", "\r\n"), deep, nearBudget} {
 		w, err := loadFixture(t, content)
 		if err != nil {
 			t.Fatal(err)
@@ -318,6 +324,11 @@ func TestWorkloadRejects(t *testing.T) {
 		{"nested secret", "topic: job.perf", "nested: [{ToKeN: forbidden}]", "secret"},
 		{"deep payload", "topic: job.perf", "nested: " + strings.Repeat("[", 57) + "0" + strings.Repeat("]", 57), "nesting"},
 		{"secret path", "path_params: {job_id:", "path_params: {AUTHORIZATION:", "secret"},
+		{"recorded size", "topic: job.perf", "topic: " + strings.Repeat("x", 1<<20), "recorded configuration exceeds 1048576 bytes"},
+		{"recorded size indented", "topic: job.perf", "nested: " + strings.Repeat("[", 41) + strings.Repeat("1,", 44999) + "1" + strings.Repeat("]", 41), "recorded configuration"},
+		{"recorded size at depth", "topic: job.perf", "nested: [" + strings.Repeat("1,", 49999) + "1]", "recorded configuration"},
+		{"recorded size escaped", "topic: job.perf", "topic: '" + strings.Repeat("<", 800000) + "'", "recorded configuration"},
+		{"recorded size aliases", "topic: job.perf", "nested: [&a " + strings.Repeat("x", 100000) + strings.Repeat(", *a", 45) + "]", "recorded configuration"},
 		{"env value", "api_key_env: PERF_KEY", "api_key_env: secret-value", "api_key_env"},
 		{"trailing yaml", "p99_pct: 10}", "p99_pct: 10}\n---\nname: second", "trailing"},
 	}

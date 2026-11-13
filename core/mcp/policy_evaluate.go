@@ -244,6 +244,34 @@ type ConsumedApprovalAuthorizer interface {
 	AuthorizeConsumedApproval(ctx context.Context, ctxData ToolCallApprovalContext) error
 }
 
+// ApprovalScopeResolver reports a serving tool service's effective scope.
+type ApprovalScopeResolver interface {
+	EffectiveApprovalScope(name string) (string, bool)
+}
+
+func (a toolServiceAdapter) EffectiveApprovalScope(name string) (string, bool) {
+	if resolver, ok := a.tools.(ApprovalScopeResolver); ok {
+		return resolver.EffectiveApprovalScope(name)
+	}
+	return "", false
+}
+
+func approvalScopeFor(upstream UpstreamToolCaller, name string) string {
+	if resolver, ok := upstream.(ApprovalScopeResolver); ok {
+		if scope, found := resolver.EffectiveApprovalScope(name); found {
+			return strings.TrimSpace(scope)
+		}
+	}
+	return ""
+}
+
+// AllowedCallAuthorizer is an optional ApprovalHandoff capability that
+// re-applies its security floor to a policy-gate ALLOW before upstream
+// execution (task-b81f0840).
+type AllowedCallAuthorizer interface {
+	AuthorizeAllowedCall(ctx context.Context, ctxData ToolCallApprovalContext) error
+}
+
 // ToolCallApprovalContext carries the non-descriptor metadata the
 // approval-store adapter needs to find or create the pending
 // EdgeApproval. The ActionHash is the canonical hash the gate
@@ -261,10 +289,13 @@ type ConsumedApprovalAuthorizer interface {
 // to: EnqueueApproval requires it to name an existing event whose
 // InputHash and PolicySnapshot match the mint (task-63400922).
 type ToolCallApprovalContext struct {
-	Tenant     string
-	AgentID    string
-	Server     string
-	Tool       string
+	Tenant  string
+	AgentID string
+	Server  string
+	Tool    string
+	// Scope is the serving registry's effective ApprovalScope; empty when
+	// the tool service reports none.
+	Scope      string
 	ActionHash string
 	Args       json.RawMessage
 	EventID    string
@@ -916,6 +947,7 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 		finalErr = err
 		return nil, err
 	}
+	scope := approvalScopeFor(deps.Upstream, params.Name)
 	dec := evalResult.Decision
 	switch {
 	case dec.requiresHuman():
@@ -923,7 +955,7 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 		// executes; a ref the server never consumed fails closed instead
 		// of minting again.
 		if consumed != nil {
-			finalResult, finalErr = resumeConsumedApproval(ctx, deps, params, server, evalResult, consumed, stableEventID)
+			finalResult, finalErr = resumeConsumedApproval(ctx, deps, params, server, scope, evalResult, consumed, stableEventID)
 			return finalResult, finalErr
 		}
 		if carriesApprovalRef(params.Arguments) {
@@ -956,6 +988,7 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 			AgentID:    callMeta.AgentID,
 			Server:     server,
 			Tool:       params.Name,
+			Scope:      scope,
 			ActionHash: actionHash,
 			// EDGE-103 reopen #1: plumb raw args through so the gate's
 			// mint side can compute the same InputHash that
@@ -1005,6 +1038,27 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 		skipDedupeCache = true
 		return denyResult, nil
 	}
+	if authorizer, ok := deps.ApprovalHandoff.(AllowedCallAuthorizer); ok {
+		callMeta, _ := CallMetadataFromContext(ctx)
+		actionHash, _ := BuildMCPApprovalBinding(callMeta.Tenant, server, params, "")
+		if err := authorizer.AuthorizeAllowedCall(ctx, ToolCallApprovalContext{
+			Tenant: evalResult.PreEvent.TenantID, AgentID: callMeta.AgentID,
+			Server: server, Tool: params.Name, Scope: scope, ActionHash: actionHash,
+			Args: params.Arguments, EventID: evalResult.PreEvent.EventID,
+		}); err != nil {
+			finalErr = fmt.Errorf("policy floor: %w", err)
+			// EvaluateToolCall already emitted an allowed pre-event. Close it
+			// with a blocked terminal event, as a policy deny is closed, so
+			// the Edge stream never keeps an allowed call with no outcome.
+			blocked := newPostEvent(evalResult.PreEvent, deps.Clock, edge.EventKindMCPToolFailed, dec)
+			blocked.Status = edge.ActionStatusBlocked
+			blocked.ErrorMessage = sanitizeUpstreamError(finalErr)
+			if emitErr := deps.EventEmitter.Emit(ctx, blocked); emitErr != nil {
+				finalErr = errors.Join(finalErr, fmt.Errorf("emit blocked event: %w", emitErr))
+			}
+			return nil, finalErr
+		}
+	}
 	// An ALLOW can also execute a call whose claim consumed an approval, for
 	// example once the taint lookup has recovered since the hold. Its event
 	// still names that approval (task-74f4c01e). Audit only: nothing is
@@ -1023,7 +1077,7 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 // security floor first (C2). The approval must also have been claimed under
 // the policy snapshot this call was evaluated under. A refusal executes
 // nothing, and the claim has already used the approval up.
-func resumeConsumedApproval(ctx context.Context, deps ToolCallDeps, params ToolCallParams, server string, evalResult EvaluateToolCallResult, consumed *ConsumedApproval, eventID string) (*ToolCallResult, error) {
+func resumeConsumedApproval(ctx context.Context, deps ToolCallDeps, params ToolCallParams, server, scope string, evalResult EvaluateToolCallResult, consumed *ConsumedApproval, eventID string) (*ToolCallResult, error) {
 	callMeta, _ := CallMetadataFromContext(ctx)
 	actionHash, inputHash := BuildMCPApprovalBinding(callMeta.Tenant, server, params, "")
 	if !consumed.Binds(params.Name, actionHash, inputHash) {
@@ -1051,6 +1105,7 @@ func resumeConsumedApproval(ctx context.Context, deps ToolCallDeps, params ToolC
 		AgentID:    callMeta.AgentID,
 		Server:     server,
 		Tool:       params.Name,
+		Scope:      scope,
 		ActionHash: actionHash,
 		Args:       params.Arguments,
 		EventID:    evalResult.PreEvent.EventID,
