@@ -88,6 +88,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- Job submit and delegation token issue fail closed when the agent identity
+  store cannot be read (task-7ded46ca). HTTP job submit and gRPC `SubmitJob`
+  return 503 / `Unavailable` with a generic message when the worker-link lookup
+  for the submit's principal fails, before the policy check, job persistence
+  and publish. Before, the failure was read as "no linked agent": the policy
+  check and the audit trail ran without the agent, so a deny or approval rule
+  keyed on that agent did not apply. Delegation issue by a non-admin caller
+  returns 503 and audits outcome `error` instead of a 403 `denied`. An absent
+  or dangling link and an empty principal behave as before. This was
+  CodeRabbit's finding on #570.
+
 #### MCP `X-Agent-Id` can only confirm the principal-bound agent identity (2026-10-26, task-eb2d6f28)
 
 - **Behavior change** for MCP clients that select an agent identity with the
