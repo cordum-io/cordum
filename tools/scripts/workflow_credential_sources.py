@@ -14,10 +14,10 @@ NAME, PREFIX = re.compile(r"(?i)^(?!.*idem).*(?:passw|secret|token|key|nonce)"),
 DEVNULL, TESTCMD, TOPLEVEL = re.compile(r"(?:^|\s)(?:1|&)?>>?\s*/dev/null(?=\s|$)"), re.compile(r"(?:(?:if|elif|while|until|then|do|else|!) )*(?:\[\[?|test) "), re.compile(r"\$\(\s*(?:pwd(?:\s+-P)?|git\s+rev-parse\s+--show-toplevel)\s*\)")
 DIRNAME, VAR = re.compile(r"\$\(\s*dirname\s+(?:--\s+)?\"?\$\{?(?:BASH_SOURCE(?:\[0\])?|0)\}?\"?\s*\)|\$\{BASH_SOURCE(?:\[0\])?%/\*\}"), re.compile(r"\$\{([A-Za-z_]\w*)(?:(:?[-=])((?:[^{}]|\{[^{}]*\})*))?\}|\$([A-Za-z_]\w*)")
 CDPWD, PREFIX_WORDS = re.compile(r"\$\(\s*cd\s+(?:--\s+)?(\"[^\"$]*\"|'[^']*'|[^\s;&|)$\"']+)\s*(?:>\s*/dev/null\s*)?(?:2>&1\s*)?&&\s*pwd(?:\s+-P)?\s*\)"), {"if", "then", "else", "elif", "do", "while", "until", "!", "time", "exec", "command", "builtin", "nohup", "env", "sudo", "timeout"}
-Cmd = collections.namedtuple("Cmd", "line words op sub stack func text", defaults=((), "", ""))
+Cmd = collections.namedtuple("Cmd", "line words op sub stack func text sets", defaults=((), "", "", ""))  # sets: what a file sourced here leaves set, e (errexit off) and x (tracing on)
 def seeded(env: dict, name: str) -> bool: return (value := env.get(name, "")) != "" and (value[0] != "$" or value.startswith("$("))
 def literal(value: str) -> int: return len(re.match(r"[^$\x00]*", value).group())
-def flag(cmd: Cmd, on: bool, short: str, name: str) -> bool: return next((sign == "-" for sign in reversed(re.findall(r"(?<!\S)([-+])(?:[a-zA-Z]*" + short + r"[a-zA-Z]*|o\s+" + name + r")(?!\S)", cmd.text))), on) if cmd.words[cmd.words[:1] in (["then"], ["do"], ["else"]):][:1] == ["set"] else on  # after a `set`
+def flag(cmd: Cmd, on: bool, short: str, name: str) -> bool: return short == "x" if short in cmd.sets else next((sign == "-" for sign in reversed(re.findall(r"(?<!\S)([-+])(?:[a-zA-Z]*" + short + r"[a-zA-Z]*|o\s+" + name + r")(?!\S)", cmd.text))), on) if cmd.words[cmd.words[:1] in (["then"], ["do"], ["else"]):][:1] == ["set"] else on  # after a `set`
 def pg_runs_gate_1(argv: list) -> bool: return "--skip-rebuild" not in argv and (not (gates := [v for f, v in zip(argv, argv[1:]) if f == "--gate"]) or not gates[-1].isdigit() or gates[-1] == "1")
 EXEMPT = {  # reviewed exemptions: the source, a block around it, or every call site of its function matches the guard; the entry env holds the condition
     ("tools/scripts/edge_fake_hook_e2e.sh", "AGENTD_NONCE"): ("if ! want_bypass_hook", lambda env: env.get("CORDUM_EDGE_E2E_BYPASS_HOOK", "").lower() in ("1", "true", "yes", "on")),
@@ -140,9 +140,9 @@ def options(cmds: list, errexit: bool, quiet: set = frozenset(), cold: set = fro
     for i, c in enumerate(cmds):
         e, x = now[s] if (s := scope(c)) in now else now.setdefault(s, ((p := now[scope(cmds[s])])[0] and not (cmds[s].op == "{" and c.func in cold), p[1])); out.append((e and not c.sub and not off & shells(c) and c.func not in quiet and ign.isdisjoint(c.stack), x or bool(on & shells(c)) or bool(c.sub) and traced))  # noqa: E702  # a subshell or function body starts from its parent; bash clears errexit in a $(...)
         if not c.sub: now[s] = (flag(c, e, *ERREXIT), flag(c, x, *XTRACE)) if flat(i) else (e and flag(c, True, *ERREXIT), x or flag(c, False, *XTRACE))  # one that may not run, or runs in another shell, only disables errexit or starts tracing
-    return out
-def facts(text: str, line: int = 1, errexit: bool = False) -> tuple:  # (cmds, unparsable line, [(k, var, kind, state)], [(k, var, bytes)], options)
-    cmds, error = parse(text, line)
+    return out + [(now[-1][0] and -1 not in off, now[-1][1] or -1 in on)]  # then the top level after the last command
+def facts(text: str, line: int = 1, errexit: bool = False, parsed: tuple = ()) -> tuple:  # (cmds, unparsable line, [(k, var, kind, state)], [(k, var, bytes)], options, errexit)
+    cmds, error = parsed or parse(text, line)
     ctx, seen, acqs, ign = (set(), set(), set()), None, [], hot(cmds)
     while ctx != seen: seen, flags = ctx, options(cmds, errexit, *ctx[:2], ign); ctx = callers(cmds, flags, ctx, ign)  # noqa: E702  # each round only adds names, so it ends
     for k, cmd in enumerate(cmds):
@@ -152,7 +152,7 @@ def facts(text: str, line: int = 1, errexit: bool = False) -> tuple:  # (cmds, u
             acqs.append((k, var, kind or "auth-response", state(cmds, k, var, flags, ctx[2]) if kind else "unregistered"))
         helper = re.fullmatch(r"gha_mask_env(?:_from_command((?: [A-Z][A-Z0-9_]*)+) --| ([A-Z][A-Z0-9_]*)) .+", cmd.text, re.S)  # fail-closed: masks, then exports
         acqs += [(k, name, "masked-env", "unregistered" if cmd.sub or cmd.func in ctx[2] else "late" if flags[k][1] else "registered") for name in (helper.group(1) or helper.group(2)).split()] if helper else []  # in a $(...), the mask is captured but the GITHUB_ENV write still lands
-    return cmds, error, acqs, [(k, m.group(1), int(m.group(2)) + int(m.group(3)) if m.group(2) else 10 ** 6) for k, c in enumerate(cmds) for m in PREFIX.finditer(c.text) if m.group(1) in {a[1] for a in acqs} or NAME.search(m.group(1))], flags
+    return cmds, error, acqs, [(k, m.group(1), int(m.group(2)) + int(m.group(3)) if m.group(2) else 10 ** 6) for k, c in enumerate(cmds) for m in PREFIX.finditer(c.text) if m.group(1) in {a[1] for a in acqs} or NAME.search(m.group(1))], flags, errexit
 def expand(word: str, table: dict, env: dict, here: str) -> str:  # script-dir and cd/pwd idioms, known variables, defaults; drops quotes
     def lookup(m: re.Match) -> str:
         name, op, default = m.group(1) or m.group(4), m.group(2), m.group(3); value = table[name] if name in table else env[name] if name in env else "." if name in ("GITHUB_WORKSPACE", "PWD") else None  # noqa: E702
@@ -223,7 +223,7 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
             self.seen.add(memo); self.visits += 1  # noqa: E702
             for part in unit if isinstance(unit, list) else [unit]: self.visit(key.split("#")[0], part, env, argv, chain + (key,), quiet, ".")  # each shell of a make recipe starts from make's environment
     def visit(self, rel: str, unit: tuple, env: dict, argv: list, chain: tuple, quiet: bool, cwd: str) -> None:
-        cmds, error, acqs, prefixes, flags = unit
+        cmds, error, acqs, prefixes, flags, _ = unit
         if error: self.report("SOURCE_DYNAMIC", rel, error, True)
         for k, var, kind, status in acqs:
             status = "late" if status == "registered" and "xtrace" in env.get("SHELLOPTS", "") else "exempt" if status != "registered" and (exempt := EXEMPT.get((rel, var))) and exempt[1](env) and guarded(cmds, k, exempt[0]) else status
@@ -249,7 +249,7 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
         if posixpath.isabs(key) or key == ".." or key.startswith("../"): return False  # an absolute or escaping rcfile is reported by its own edge, or is outside the repo
         text, refusal = self.read(key)
         if refusal or "\x00" in text: return False  # its own edge reports the refusal
-        _, error, _, _, flags = facts(text + "\n:")  # the appended no-op reads the state after the last command
+        _, error, _, _, flags, _ = facts(text + "\n:")  # the appended no-op reads the state after the last command
         return bool(error) or bool(flags) and flags[-1][1]
     def edge(self, cmd: Cmd, rel: str, table: dict, env: dict, argv: list, chain: tuple, quiet: bool, cwd: str) -> None:
         here, words, child = posixpath.dirname(rel) or ".", list(cmd.words), dict(env)
