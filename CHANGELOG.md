@@ -14,6 +14,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- MCP invariants match `deny_servers` against both the serving registry's
+  effective `ApprovalScope` (including runtime `mcp_policy` overrides) and the
+  MCP server name (`cordum.builtin` or a fronted upstream's name). The floor
+  applies at action-gate approval mint, `_approval_ref` resume, and every
+  policy-gate ALLOW, including tools without `RequiresApproval` that previously
+  skipped it. The action-gate handoff previously matched by tool name only;
+  invariant lookups now read only the policy config document (task-b81f0840;
+  PR #541 review thread).
+
 - Release images move off Alpine 3.21, which alpinelinux.org/releases.json lists
   as end-of-life on 2026-11-01. The control-plane and `demo-quickstart-worker`
   runtime stages use `alpine:3.24`, and the dashboard uses
