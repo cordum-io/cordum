@@ -306,6 +306,7 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			"input":  readCircuitBreakerStatus(r.Context(), cbRedis, "cordum:cb:safety"),
 			"output": readCircuitBreakerStatus(r.Context(), cbRedis, "cordum:cb:safety:output"),
 		}
+		resp["signature_enforcement"] = s.signatureEnforcementStatus(r.Context())
 
 		if cbRedis != nil {
 			if val, err := cbRedis.Get(r.Context(), "cordum:scheduler:input_fail_open_total").Int64(); err == nil {
