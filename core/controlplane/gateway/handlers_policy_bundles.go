@@ -1209,48 +1209,31 @@ func (s *server) capturePolicyBundleSnapshotWithBundles(ctx context.Context, bun
 	return id, nil
 }
 
+const (
+	// policyAuditAttempts caps how often a policy audit write re-reads its
+	// documents after a concurrent change before it gives up.
+	policyAuditAttempts = 8
+	// policyAuditTimeout only stops new attempts. Each Redis command is
+	// bounded by the client's own dial, read and write timeouts.
+	policyAuditTimeout = 10 * time.Second
+)
+
 func (s *server) loadPolicyAudit(ctx context.Context) ([]policybundles.PolicyAuditEntry, error) {
 	doc, err := s.configSvc.Get(ctx, configsvc.Scope(policybundles.PolicyAuditScope), policybundles.PolicyAuditID)
-	if err != nil {
-		if errors.Is(err, redis.Nil) {
-			return []policybundles.PolicyAuditEntry{}, nil
-		}
+	if err != nil && !errors.Is(err, redis.Nil) {
 		return nil, err
 	}
-	raw := packs.NormalizeJSON(doc.Data[policybundles.PolicyAuditKey])
-	if raw == nil {
-		return []policybundles.PolicyAuditEntry{}, nil
-	}
-	data, err := json.Marshal(raw)
+	entries, err := policyAuditEntriesFromDoc(doc)
 	if err != nil {
-		return nil, err
-	}
-	var entries []policybundles.PolicyAuditEntry
-	if err := json.Unmarshal(data, &entries); err != nil {
 		return nil, err
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].CreatedAt > entries[j].CreatedAt })
 	return entries, nil
 }
 
-func (s *server) appendPolicyAudit(ctx context.Context, entry policybundles.PolicyAuditEntry) error {
-	doc, err := s.configSvc.Get(ctx, configsvc.Scope(policybundles.PolicyAuditScope), policybundles.PolicyAuditID)
-	if err != nil {
-		if !errors.Is(err, redis.Nil) {
-			return fmt.Errorf("policy bundle append audit get document: %w", err)
-		}
-		doc = &configsvc.Document{Scope: configsvc.Scope(policybundles.PolicyAuditScope), ScopeID: policybundles.PolicyAuditID, Data: map[string]any{}}
-	}
-	if doc.Data == nil {
-		doc.Data = map[string]any{}
-	}
-	entries := []policybundles.PolicyAuditEntry{}
-	raw := packs.NormalizeJSON(doc.Data[policybundles.PolicyAuditKey])
-	if raw != nil {
-		if data, err := json.Marshal(raw); err == nil {
-			_ = json.Unmarshal(data, &entries)
-		}
-	}
+// normalizePolicyAuditEntry fills an empty CreatedAt and ID. It runs once per
+// entry, so every retry stores the same ID.
+func normalizePolicyAuditEntry(entry policybundles.PolicyAuditEntry) policybundles.PolicyAuditEntry {
 	if entry.CreatedAt == "" {
 		entry.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	}
@@ -1259,21 +1242,68 @@ func (s *server) appendPolicyAudit(ctx context.Context, entry policybundles.Poli
 		sum := sha256.Sum256([]byte(payload))
 		entry.ID = entry.CreatedAt + "-" + hex.EncodeToString(sum[:6])
 	}
+	return entry
+}
+
+// policyAuditEntriesFromDoc parses an audit document's entries list. A
+// missing document or list is empty; a list that does not parse is an error.
+func policyAuditEntriesFromDoc(doc *configsvc.Document) ([]policybundles.PolicyAuditEntry, error) {
+	entries := []policybundles.PolicyAuditEntry{}
+	if doc == nil {
+		return entries, nil
+	}
+	raw := packs.NormalizeJSON(doc.Data[policybundles.PolicyAuditKey])
+	if raw == nil {
+		return entries, nil
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return nil, fmt.Errorf("policy audit entries: %w", err)
+	}
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil, fmt.Errorf("policy audit entries: %w", err)
+	}
+	return entries, nil
+}
+
+// prependPolicyAuditEntry puts entry first in doc's entries list and keeps
+// the newest 500. A list that does not parse leaves doc unchanged.
+func prependPolicyAuditEntry(doc *configsvc.Document, entry policybundles.PolicyAuditEntry) error {
+	entries, err := policyAuditEntriesFromDoc(doc)
+	if err != nil {
+		return err
+	}
 	entries = append([]policybundles.PolicyAuditEntry{entry}, entries...)
 	if len(entries) > 500 {
 		entries = entries[:500]
 	}
 	payload, err := json.Marshal(entries)
 	if err != nil {
-		return fmt.Errorf("policy bundle append audit marshal entries: %w", err)
+		return fmt.Errorf("policy audit marshal entries: %w", err)
 	}
 	var data any
 	if err := json.Unmarshal(payload, &data); err != nil {
-		return fmt.Errorf("policy bundle append audit unmarshal entries: %w", err)
+		return fmt.Errorf("policy audit unmarshal entries: %w", err)
+	}
+	if doc.Data == nil {
+		doc.Data = map[string]any{}
 	}
 	doc.Data[policybundles.PolicyAuditKey] = data
-	if err := s.configSvc.Set(ctx, doc); err != nil {
-		return fmt.Errorf("policy bundle append audit save document: %w", err)
+	return nil
+}
+
+// appendPolicyAudit stores entry in the policy audit log whatever happens to
+// the request context. It retries a concurrent change to the log, refuses to
+// replace an entries list it cannot parse, and logs and returns a failure.
+func (s *server) appendPolicyAudit(ctx context.Context, entry policybundles.PolicyAuditEntry) error {
+	entry = normalizePolicyAuditEntry(entry)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), policyAuditTimeout)
+	defer cancel()
+	err := s.configSvc.SetWithRetry(ctx, configsvc.Scope(policybundles.PolicyAuditScope), policybundles.PolicyAuditID, policyAuditAttempts,
+		func(doc *configsvc.Document) error { return prependPolicyAuditEntry(doc, entry) })
+	if err != nil {
+		slog.Error("policy audit entry not persisted", "action", entry.Action, "resource_type", entry.ResourceType, "resource_id", entry.ResourceID, "error", err)
+		return fmt.Errorf("policy bundle append audit: %w", err)
 	}
 
 	// Fan-out to SIEM exporter (non-blocking) after persistence.
