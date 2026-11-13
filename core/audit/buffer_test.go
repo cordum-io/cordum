@@ -95,25 +95,6 @@ func (m *contextCheckingMockExporter) cancelledContextCalls() int {
 	return n
 }
 
-type blockingExporter struct {
-	calls chan struct{}
-}
-
-func newBlockingExporter() *blockingExporter {
-	return &blockingExporter{calls: make(chan struct{}, 1)}
-}
-
-func (b *blockingExporter) Export(ctx context.Context, _ []SIEMEvent) error {
-	select {
-	case b.calls <- struct{}{}:
-	default:
-	}
-	<-ctx.Done()
-	return ctx.Err()
-}
-
-func (b *blockingExporter) Close() error { return nil }
-
 func TestBufferedExporter_FlushOnBatchSize(t *testing.T) {
 	mock := &mockExporter{}
 	buf := NewBufferedExporter(mock, WithBatchSize(5), WithFlushInterval(10*time.Second))
@@ -185,8 +166,38 @@ func TestBufferedExporter_DrainOnClose_ContextAware(t *testing.T) {
 	}
 }
 
+// deadlineRecordingExporter blocks until its context ends and records the
+// first call's start time and context deadline plus the total call count.
+type deadlineRecordingExporter struct {
+	mu       sync.Mutex
+	calls    int
+	callAt   time.Time
+	deadline time.Time
+	ok       bool
+}
+
+func (d *deadlineRecordingExporter) Export(ctx context.Context, _ []SIEMEvent) error {
+	d.mu.Lock()
+	d.calls++
+	if d.calls == 1 {
+		d.callAt = time.Now()
+		d.deadline, d.ok = ctx.Deadline()
+	}
+	d.mu.Unlock()
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (d *deadlineRecordingExporter) Close() error { return nil }
+
+func (d *deadlineRecordingExporter) snapshot() (callAt, deadline time.Time, ok bool, calls int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.callAt, d.deadline, d.ok, d.calls
+}
+
 func TestBufferedExporter_CloseLatencyBounded(t *testing.T) {
-	exporter := newBlockingExporter()
+	exporter := &deadlineRecordingExporter{}
 	drainTimeout := 300 * time.Millisecond
 	buf := NewBufferedExporter(exporter,
 		WithBatchSize(100),
@@ -197,27 +208,42 @@ func TestBufferedExporter_CloseLatencyBounded(t *testing.T) {
 		buf.Send(SIEMEvent{Action: "blocked-drain"})
 	}
 
-	start := time.Now()
-	err := buf.Close()
-	elapsed := time.Since(start)
-	if err != nil {
+	// The bounds below are deterministic under CPU load: the deadline gap is
+	// computed from the export context (it can only shrink when the scheduler
+	// stalls), the call count is checked after Close returned, and the liveness
+	// bound is half an export timeout. A drain that ignores WithDrainTimeout, or
+	// retries that ignore the drain context, break the gap, the count or the bound.
+	closeWithin := func(label string) error {
+		t.Helper()
+		done := make(chan error, 1)
+		go func() { done <- buf.Close() }()
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(defaultExportTimeout / 2):
+			t.Fatalf("%s still blocked after %s: drain is not bounded by WithDrainTimeout", label, defaultExportTimeout/2)
+			return nil
+		}
+	}
+	if err := closeWithin("Close"); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	if elapsed > 2*drainTimeout+200*time.Millisecond {
-		t.Fatalf("Close elapsed %s, want <= %s", elapsed, 2*drainTimeout+200*time.Millisecond)
+	callAt, deadline, ok, calls := exporter.snapshot()
+	if calls == 0 || !ok {
+		t.Fatalf("expected a deadline-bound Export call during drain, calls=%d deadline ok=%v", calls, ok)
 	}
-	select {
-	case <-exporter.calls:
-	default:
-		t.Fatal("expected exporter to be called during bounded drain")
+	if gap := deadline.Sub(callAt); gap > drainTimeout {
+		t.Fatalf("first Export deadline is %s after the call, want <= WithDrainTimeout %s", gap, drainTimeout)
+	}
+	if calls != 1 {
+		t.Fatalf("Export calls = %d, want 1: retries must not reach the exporter after the drain context expires", calls)
 	}
 
-	secondStart := time.Now()
-	if err := buf.Close(); err != nil {
+	if err := closeWithin("second Close"); err != nil {
 		t.Fatalf("second Close: %v", err)
 	}
-	if secondElapsed := time.Since(secondStart); secondElapsed > 100*time.Millisecond {
-		t.Fatalf("second Close elapsed %s, want <= 100ms", secondElapsed)
+	if _, _, _, after := exporter.snapshot(); after != calls {
+		t.Fatalf("second Close changed Export calls from %d to %d", calls, after)
 	}
 }
 
