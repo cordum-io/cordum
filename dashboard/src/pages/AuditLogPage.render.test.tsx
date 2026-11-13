@@ -248,54 +248,33 @@ describe("AuditLogPage Block B — DataTable rendering", () => {
     expect(container.textContent).toContain("End of audit trail.");
   });
 
-  // Held-out characterization (task-722f3b29): header order, one row per
-  // event, and a sortable-header reorder must survive the TanStack v9 slice.
+  // Held-out characterization (task-722f3b29): the TanStack v9 slice (task-fa2b4cef) must pass it unchanged.
   it("characterizes the table: header order, one row per event, Agent sort reorders rows", async () => {
     // Input order deliberately unsorted by agent label.
     const labels = ["agent-charlie", "agent-alpha", "agent-bravo"];
-    const items = labels.map((agent_label, i) => ({
-      ...makeEntry(i + 1),
-      agent_label,
-    }));
+    const items = labels.map((agent_label, i) => ({ ...makeEntry(i + 1), agent_label }));
     server.use(
       http.get("*/api/v1/audit/events", () =>
-        HttpResponse.json({
-          items,
-          total: items.length,
-          next_cursor: "",
-          returned: items.length,
-        }),
+        HttpResponse.json({ items, total: items.length, next_cursor: "", returned: items.length }),
       ),
     );
-
     const { container } = renderWithProviders(
       <NuqsTestingAdapter searchParams="">
         <AuditLogPage />
       </NuqsTestingAdapter>,
     );
-
     await waitFor(() => {
       expect(container.querySelectorAll("tbody tr").length).toBe(3);
     });
 
-    const headers = Array.from(
-      container.querySelectorAll<HTMLTableCellElement>("thead th"),
-    );
-    expect(headers.map((th) => th.textContent?.trim())).toEqual([
-      "Time",
-      "Summary",
-      "Agent",
-      "Severity",
-      "Decision",
-    ]);
+    const headers = Array.from(container.querySelectorAll<HTMLTableCellElement>("thead th"));
+    expect(headers.map((th) => th.textContent?.trim())).toEqual(["Time", "Summary", "Agent", "Severity", "Decision"]);
     const summaryHeader = headers[1];
     expect(summaryHeader.hasAttribute("aria-sort")).toBe(false);
     expect(summaryHeader.hasAttribute("tabindex")).toBe(false);
 
     const agentColumn = (): string[] =>
-      Array.from(container.querySelectorAll("tbody tr")).map(
-        (tr) => tr.querySelectorAll("td")[2]?.textContent?.trim() ?? "",
-      );
+      Array.from(container.querySelectorAll("tbody tr")).map((tr) => tr.querySelectorAll("td")[2]?.textContent?.trim() ?? "");
     expect(agentColumn()).toEqual(labels);
 
     const agentHeader = headers[2];
@@ -305,7 +284,6 @@ describe("AuditLogPage Block B — DataTable rendering", () => {
       expect(agentColumn()).toEqual(["agent-alpha", "agent-bravo", "agent-charlie"]);
     });
     expect(agentHeader.getAttribute("aria-sort")).toBe("ascending");
-
     fireEvent.click(agentHeader);
     await waitFor(() => {
       expect(agentColumn()).toEqual(["agent-charlie", "agent-bravo", "agent-alpha"]);

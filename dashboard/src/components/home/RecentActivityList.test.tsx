@@ -1,5 +1,4 @@
-// Held-out characterization tests (task-722f3b29): pin the RecentActivityList
-// table behavior that the TanStack v9 migration (task-fa2b4cef) must preserve.
+// Held-out characterization (task-722f3b29): the TanStack v9 slice (task-fa2b4cef) must pass it unchanged.
 import { describe, expect, it, vi } from "vitest";
 import { Route, Routes, useParams } from "react-router-dom";
 import type { Job } from "@/api/types";
@@ -10,20 +9,11 @@ vi.mock("@/components/home/SafetyDecisionFeed", () => ({
   SafetyDecisionFeed: () => <div data-testid="safety-feed-stub" />,
 }));
 
-function makeJob(id: string, topic: string, status: Job["status"]): Job {
-  return {
-    id,
-    type: "job",
-    topic,
-    status,
-    pool: "default",
-    capabilities: [],
-    riskTags: [],
-    metadata: {},
-    createdAt: "2026-01-01T00:00:00Z",
-    updatedAt: "2026-01-01T00:00:00Z",
-  };
-}
+const T0 = "2026-01-01T00:00:00Z";
+const makeJob = (id: string, topic: string, status: Job["status"]): Job => ({
+  id, type: "job", topic, status, pool: "default",
+  capabilities: [], riskTags: [], metadata: {}, createdAt: T0, updatedAt: T0,
+});
 
 // Deliberately not sorted by any column, so any reorder is visible.
 const jobs: Job[] = [
@@ -52,23 +42,14 @@ function renderList(list: Job[]) {
 
 const headerCells = (): HTMLTableCellElement[] =>
   Array.from(document.querySelectorAll<HTMLTableCellElement>("thead th"));
-
 const bodyRows = (): HTMLTableRowElement[] =>
   Array.from(document.querySelectorAll<HTMLTableRowElement>("tbody > tr"));
-
-const topicColumn = (): string[] =>
-  bodyRows().map((tr) => tr.querySelectorAll("td")[1]?.textContent ?? "");
+const topicColumn = (): string[] => bodyRows().map((tr) => tr.querySelectorAll("td")[1]?.textContent ?? "");
 
 describe("RecentActivityList table characterization", () => {
   it("renders the Job ID, Topic, Status, Safety, Time headers in order, none sortable", () => {
     renderList(jobs);
-    expect(headerCells().map((th) => th.textContent?.trim())).toEqual([
-      "Job ID",
-      "Topic",
-      "Status",
-      "Safety",
-      "Time",
-    ]);
+    expect(headerCells().map((th) => th.textContent?.trim())).toEqual(["Job ID", "Topic", "Status", "Safety", "Time"]);
     for (const th of headerCells()) {
       expect(th.hasAttribute("aria-sort")).toBe(false);
       expect(th.hasAttribute("tabindex")).toBe(false);
@@ -78,13 +59,7 @@ describe("RecentActivityList table characterization", () => {
   it("renders at most 5 rows, in input order, with the truncated job id cell", () => {
     renderList(jobs);
     expect(bodyRows()).toHaveLength(5);
-    expect(topicColumn()).toEqual([
-      "topic.charlie",
-      "topic.alpha",
-      "topic.echo",
-      "topic.bravo",
-      "topic.delta",
-    ]);
+    expect(topicColumn()).toEqual(["topic.charlie", "topic.alpha", "topic.echo", "topic.bravo", "topic.delta"]);
     expect(bodyRows()[0].querySelector("td")?.textContent).toBe("job-charlie-");
     expect(screen.queryByText("topic.foxtrot")).toBeNull();
   });
