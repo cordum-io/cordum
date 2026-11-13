@@ -82,7 +82,13 @@ api() {
     *) fail 'invalid API role' ;;
   esac
 }
-status() { [[ "$HTTP_STATUS" == "$1" ]] || fail "HTTP $HTTP_STATUS, want $1"; }
+status() {
+  local code
+  [[ "$HTTP_STATUS" != "$1" ]] || return 0
+  code=$(jq -r '.code // "unspecified"' "$HTTP_BODY_FILE" 2>/dev/null) || code=invalid_json
+  [[ "$code" =~ ^[A-Za-z_]{1,48}$ ]] || code=invalid_code
+  fail "HTTP $HTTP_STATUS, want $1 (code=$code)"
+}
 json() { jq -e "$@" "$HTTP_BODY_FILE" || fail "invalid JSON/assertion (HTTP $HTTP_STATUS)"; }
 get() { api admin GET "$1"; status 200; }
 identifier() { json -r "$1 | select(type == \"string\" and test(\"^[A-Za-z0-9_-]+$\"))"; }
@@ -187,7 +193,7 @@ W0=$(workflow_count)
 ((W0<=98)) || prereq 'workflow list is capped at 100; use a fresh stack'
 run_tag="$(date -u +%Y%m%d%H%M%S)-$$"
 name="cap-mcp-governed-$run_tag"
-jq -n --arg topic "$topic" --arg name "$name" '{topic:$topic,context:{workflow:{name:$name,description:"governed demo",steps:{greet:{name:"Greet",type:"transform",input:{message:"governed demo"}}}}}}' > "$tmp/job.json"
+jq -n --arg topic "$topic" --arg name "$name" '{topic:$topic,prompt:"Create the governed demo workflow",context:{workflow:{name:$name,description:"governed demo",steps:{greet:{name:"Greet",type:"transform",input:{message:"governed demo"}}}}}}' > "$tmp/job.json"
 phase=P6
 jq '.risk_tags=["cap-mcp-governed-denied"] | .context.workflow.name += "-denied"' "$tmp/job.json" > "$tmp/denied-job.json"
 api admin POST /api/v1/jobs "$tmp/denied-job.json"; status 403
