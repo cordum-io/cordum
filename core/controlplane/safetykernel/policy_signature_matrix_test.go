@@ -265,6 +265,7 @@ func TestPolicySignatureSourceInventory(t *testing.T) {
 	require.NoError(t, err)
 	for _, pkg := range packages {
 		for _, file := range pkg.Files {
+			imports := signatureInventoryImports(t, file)
 			for _, decl := range file.Decls {
 				name := "<package>"
 				if fn, ok := decl.(*ast.FuncDecl); ok {
@@ -279,7 +280,7 @@ func TestPolicySignatureSourceInventory(t *testing.T) {
 						name = receiver.Name + "." + name
 					}
 				}
-				ast.Inspect(decl, func(n ast.Node) bool { signatureInventoryCall(t, n, name, calls, schemes); return true })
+				ast.Inspect(decl, func(n ast.Node) bool { signatureInventoryCall(t, n, name, imports, calls, schemes); return true })
 			}
 		}
 	}
@@ -287,7 +288,23 @@ func TestPolicySignatureSourceInventory(t *testing.T) {
 	require.Equal(t, wantSchemes, schemes, "policy source scheme inventory")
 }
 
-func signatureInventoryCall(t *testing.T, n ast.Node, name string, calls, schemes map[string]int) {
+func signatureInventoryImports(t *testing.T, file *ast.File) map[string]string {
+	t.Helper()
+	imports := map[string]string{}
+	for _, spec := range file.Imports {
+		path, err := strconv.Unquote(spec.Path.Value)
+		require.NoError(t, err)
+		name := filepath.Base(path)
+		if spec.Name != nil {
+			name = spec.Name.Name
+		}
+		require.NotEqual(t, ".", name, "dot import needs explicit source inventory support")
+		imports[name] = path
+	}
+	return imports
+}
+
+func signatureInventoryCall(t *testing.T, n ast.Node, name string, imports map[string]string, calls, schemes map[string]int) {
 	t.Helper()
 	call, ok := n.(*ast.CallExpr)
 	if !ok {
@@ -295,10 +312,10 @@ func signatureInventoryCall(t *testing.T, n ast.Node, name string, calls, scheme
 	}
 	if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
 		owner, _ := sel.X.(*ast.Ident)
-		if owner != nil && owner.Name == "config" && sel.Sel.Name == "ParseSafetyPolicy" {
+		if owner != nil && imports[owner.Name] == "github.com/cordum/cordum/core/infra/config" && sel.Sel.Name == "ParseSafetyPolicy" {
 			calls[name]++
 		}
-		if name == "readPolicySource" && owner != nil && owner.Name == "strings" && sel.Sel.Name == "HasPrefix" {
+		if name == "readPolicySource" && owner != nil && imports[owner.Name] == "strings" && sel.Sel.Name == "HasPrefix" {
 			require.Len(t, call.Args, 2)
 			literal, ok := call.Args[1].(*ast.BasicLit)
 			require.True(t, ok, "source prefix must have an inventory entry")
