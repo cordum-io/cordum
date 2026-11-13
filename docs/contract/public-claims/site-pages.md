@@ -3,7 +3,7 @@
 Repo: Cordum-site. Pin: `fd06b5f131c89c1edd3f004f51ada3340125fb05`.
 Generator: `site_pages` in [the method](../public-claims-baseline.md). Owner: M0-07-SITE-1.
 Generic educational and external-system text is not a Cordum claim. Accurate means no stronger than the scoped entry, not execution proof.
-Counts: 390 hits; accurate 71, overstated 142, unverifiable 21, not-a-claim 196.
+Counts: 390 hits; accurate 71, overstated 147, unverifiable 21, not-a-claim 191.
 
 | File | Entries |
 | --- | --- |
@@ -63,7 +63,7 @@ Counts: 390 hits; accurate 71, overstated 142, unverifiable 21, not-a-claim 196.
 | docs-site/docs/operations/troubleshooting.md | 202 not-a-claim code; 625 not-a-claim code; 637 not-a-claim nav; 643 not-a-claim code; 988 not-a-claim code; 1120 not-a-claim code |
 | docs-site/docs/tutorials/connect-datadog.md | 16 CLM-057 accurate; 16 CLM-094 accurate; 188 CLM-057 accurate; 188 CLM-094 accurate; 202 CLM-057 accurate; 202 CLM-094 accurate |
 | docs-site/docs/tutorials/langchain-guard.md | 26 CLM-016 overstated R01 R02 R05 R09 R15; 74 not-a-claim code |
-| site/public/llms-full.txt | 149 CLM-064 overstated ev:code; 192 CLM-064 overstated ev:code; 396 not-a-claim ext; 430 CLM-066 accurate; 434 not-a-claim ext; 645 CLM-090 overstated ev:code; 651 CLM-064 overstated ev:code; 829 not-a-claim code; 1007 CLM-064 overstated ev:code; 1209 CLM-010 overstated R01 R15 |
+| site/public/llms-full.txt | 149 CLM-064 overstated ev:code; 192 CLM-064 overstated ev:code; 396 CLM-090 overstated ev:code; 430 CLM-066 accurate; 434 CLM-001 overstated R15; 645 CLM-090 overstated ev:code; 651 CLM-064 overstated ev:code; 829 not-a-claim code; 1007 CLM-064 overstated ev:code; 1209 CLM-010 overstated R01 R15 |
 | site/public/llms-full.txt | 1209 CLM-064 overstated ev:code; 1209 CLM-093 accurate; 1273 not-a-claim nav; 1274 not-a-claim ext; 1275 not-a-claim nav; 1282 not-a-claim ext |
 | site/src/app/ai-agent-security-guide/page.tsx | 51 not-a-claim ext; 63 not-a-claim ext; 82 not-a-claim ext; 91 not-a-claim ext; 104 not-a-claim ext; 106 not-a-claim ext; 111 not-a-claim instr; 114 not-a-claim ext; 123 not-a-claim ext; 125 not-a-claim ext |
 | site/src/app/ai-agent-security-guide/page.tsx | 157 not-a-claim ext; 167 not-a-claim ext; 174 not-a-claim ext; 181 not-a-claim instr; 194 not-a-claim ext; 238 not-a-claim ext; 257 not-a-claim instr; 289 not-a-claim ext; 314 not-a-claim ext; 339 not-a-claim ext |
@@ -101,7 +101,7 @@ Counts: 390 hits; accurate 71, overstated 142, unverifiable 21, not-a-claim 196.
 | site/src/app/page.tsx | 32 CLM-016 overstated R01 R02 R05 R09 R15 |
 | site/src/app/product/comparison/page.tsx | 61 CLM-020 overstated R11 R12 ev:code; 61 CLM-064 overstated ev:code; 112 not-a-claim ext |
 | site/src/app/product/page.tsx | 204 CLM-064 overstated ev:code |
-| site/src/app/protocol/page.tsx | 145 not-a-claim ext; 167 not-a-claim ext; 548 not-a-claim ext |
+| site/src/app/protocol/page.tsx | 145 CLM-001 overstated R15; 167 not-a-claim ext; 548 not-a-claim ext |
 | site/src/app/solutions/ai-governance/page.tsx | 24 CLM-016 overstated R01 R02 R05 R09 R15; 24 CLM-057 overstated R11 R12; 28 CLM-016 overstated R01 R02 R05 R09 R15; 28 CLM-057 overstated R11 R12; 38 CLM-016 overstated R01 R02 R05 R09 R15; 38 CLM-057 overstated R11 R12 |
 | site/src/app/solutions/infrastructure-automation/page.tsx | 41 CLM-023 overstated R15 |
 | site/src/app/solutions/page.tsx | 84 CLM-018 overstated R05 R09 R13; 84 CLM-023 overstated R15; 84 CLM-062 overstated ev:code; 91 CLM-023 overstated R15; 142 CLM-057 accurate; 157 CLM-057 overstated R11 R12 |
@@ -118,4 +118,4 @@ Counts: 390 hits; accurate 71, overstated 142, unverifiable 21, not-a-claim 196.
 | site/src/lib/governData.ts | 716 not-a-claim ext |
 | site/src/lib/integrationsData.ts | 73 CLM-023 overstated R15; 116 CLM-023 overstated R15; 122 CLM-023 unverifiable ev:code; 132 not-a-claim instr; 143 not-a-claim nav; 145 CLM-023 overstated R15; 150 CLM-023 overstated R15; 155 CLM-023 overstated R15; 367 CLM-023 overstated R15; 404 CLM-023 overstated R15 |
 | site/src/lib/integrationsData.ts | 408 CLM-023 overstated R15; 415 CLM-023 overstated R15; 511 CLM-023 overstated R15; 577 CLM-023 overstated R15 |
-| site/src/lib/protocol-capabilities.ts | 276 not-a-claim nav; 315 not-a-claim ext; 335 not-a-claim ext; 345 not-a-claim ext |
+| site/src/lib/protocol-capabilities.ts | 276 not-a-claim nav; 315 CLM-057 overstated R11 R12 ev:code; 335 CLM-001 overstated R15; 345 not-a-claim ext |
