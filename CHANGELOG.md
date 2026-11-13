@@ -175,6 +175,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   or OIDC login or a principal-bound key, or set
   `CORDUM_ALLOW_HEADER_PRINCIPAL=true` for attribution only.
 
+#### core/controlplane/gateway — MCP requests take identity only from an authenticated principal (2026-11-14, task-e3562f91)
+
+- **Behavior change** for HTTP MCP clients (`/mcp/sse` and `/mcp/message`).
+  The agent identity, and the principal that MCP approvals and the policy
+  gate use, now come only from an authenticated principal. A principal named
+  only by the `X-Principal-Id` header resolves no agent identity, in every
+  profile: `tools/list` is empty and `tools/call` is refused with `-32098`
+  `no_identity`, so no approval is requested for it. Callers notice this
+  where the header is read as a principal: development, and production with
+  `CORDUM_ALLOW_HEADER_PRINCIPAL=true`. Principals bound by an API key, a
+  session, or JWT/OIDC resolve their identity as before.
+- The self-approval check still compares the approver with the requesting
+  API key and any principal the request named, so a header principal can
+  only make it refuse more.
+- Migration: give each MCP client a credential that carries the principal
+  linked to its agent identity: a static API key with `principal_id` in
+  `CORDUM_API_KEYS`, or a session or OIDC login. Managed API keys carry no
+  principal and cannot bind an MCP client.
+
 #### MCP `X-Agent-Id` can only confirm the principal-bound agent identity (2026-10-26, task-eb2d6f28)
 
 - **Behavior change** for MCP clients that select an agent identity with the
