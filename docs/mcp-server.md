@@ -989,18 +989,22 @@ curl -sS http://localhost:8081/mcp/status \
 ### Agent identity binding (`X-Agent-Id`)
 
 HTTP MCP requests run as the agent identity linked to the authenticated
-principal (the `agent:by-worker` link), and only when that identity belongs to
-the request tenant. The optional `X-Agent-Id` header may confirm that identity;
-it never selects a different one.
+principal (its worker link in the request tenant), and only when that identity
+belongs to the request tenant. The optional `X-Agent-Id` header may confirm
+that identity; it never selects a different one.
 
 Create the link in either of two ways:
 
 - `POST /api/v1/agents` with `"agent_id": "<principal id>"` in the body creates
   the identity and links that principal to it. A principal that is already
-  linked gets `409`.
+  linked in the tenant gets `409`.
 - `POST /api/v1/workers/credentials` with `"worker_id": "<principal id>"` and
   `"agent_id": "<identity id>"` links the principal to an existing active
   identity in the tenant.
+
+Links are per tenant: a link created in one tenant never changes another
+tenant's binding for the same principal. Rotating a worker credential without
+`agent_id`, or revoking it, removes only the caller's tenant link.
 
 | Authenticated principal | `X-Agent-Id` | Result |
 |---|---|---|

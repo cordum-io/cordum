@@ -93,10 +93,9 @@ func TestResolveMCPIdentity_NoTenantReturnsNil(t *testing.T) {
 	assertNoMCPIdentity(t, agentID, identity)
 }
 
-// TestResolveMCPIdentity_WorkerIDPathRejectsCrossTenant: GetByWorkerID
-// looks the agent up with an empty tenant, so the resolved identity's
-// tenant must be checked against the request tenant — a worker credential
-// bound to another tenant's agent must not apply that agent's scope.
+// TestResolveMCPIdentity_WorkerIDPathRejectsCrossTenant: links are per
+// tenant, so a worker credential bound to another tenant's agent resolves no
+// identity in this tenant and must not apply that agent's scope.
 func TestResolveMCPIdentity_WorkerIDPathRejectsCrossTenant(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	ctx := context.Background()
