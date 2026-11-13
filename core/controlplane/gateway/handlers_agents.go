@@ -135,7 +135,13 @@ func (s *server) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 	// LinkWorker writes only into this tenant's links.
 	workerID := strings.TrimSpace(req.AgentID)
 	if workerID != "" {
-		if existing, lookupErr := s.agentIdentityStore.GetByWorkerIDForTenant(r.Context(), tenant, workerID); lookupErr == nil && existing != nil {
+		existing, lookupErr := s.agentIdentityStore.GetByWorkerIDForTenant(r.Context(), tenant, workerID)
+		if lookupErr != nil {
+			// A failed read is not a confirmed missing link.
+			writeInternalError(w, r, "look up worker link", lookupErr)
+			return
+		}
+		if existing != nil {
 			writeJSONError(w, http.StatusConflict, errorCodeAgentWorkerConflict, "worker is already linked to an agent identity")
 			return
 		}

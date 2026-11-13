@@ -131,6 +131,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   running pnpm, tsc and Vite under QEMU emulation, where a release dry run's
   arm64 Vite build stalled (task-efd2850d).
 
+- `POST /api/v1/agents` fails closed with 500 when the worker-link lookup
+  fails, instead of creating an agent identity or link it could not check.
+
 - Audit publishing tolerates a missing fallback or exporter: events without a
   usable sink are dropped, logged and counted in
   `cordum_audit_events_dropped_total{reason}`. The Safety Kernel's shadow sender
