@@ -104,7 +104,7 @@ func ParseResults(data []byte) (*Results, error) {
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		return nil, fmt.Errorf("results: trailing data")
 	}
-	if err := checkJSON(data, nil); err != nil {
+	if err := checkJSON(data, nil, 0); err != nil {
 		return nil, fmt.Errorf("results: %w", err)
 	}
 	if err := r.validate(); err != nil {

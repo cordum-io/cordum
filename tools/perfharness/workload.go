@@ -23,6 +23,10 @@ var templateToken = regexp.MustCompile(`\{\{([^{}]*)\}\}`)
 
 const maxContractBytes = 4 << 20
 
+// requestDepth is a request's depth in a results document (environment.configuration.request_mix[i].requests[j]),
+// so the loader applies the nesting limit that ParseResults applies to the recorded configuration.
+const requestDepth = 6
+
 type Workload struct {
 	Name          string             `yaml:"name" json:"name"`
 	Description   string             `yaml:"description" json:"description"`
@@ -132,6 +136,9 @@ func (w *Workload) Validate() error {
 	if w == nil {
 		return fmt.Errorf("workload: must not be null")
 	}
+	if w.Name == "" {
+		return w.invalid("name", "must not be empty")
+	}
 	if w.LatencyScope != "http" {
 		return w.invalid("latency_scope", "unsupported; only http is accepted")
 	}
@@ -171,6 +178,9 @@ func (w *Workload) invalid(field, rule string) error {
 func (w *Workload) validateProfiles() error {
 	costs := make(map[string]float64)
 	for name, profile := range w.Profiles {
+		if name == "" {
+			return w.invalid("profiles", "names must not be empty")
+		}
 		if len(profile.Steps) == 0 {
 			return w.invalid("profiles."+name+".steps", "must not be empty")
 		}
@@ -203,6 +213,9 @@ func (w *Workload) validateMix() error {
 	}
 	for i, sequence := range w.RequestMix {
 		field := fmt.Sprintf("request_mix[%d]", i)
+		if sequence.Name == "" {
+			return w.invalid(field+".name", "must not be empty")
+		}
 		if sequence.Weight < 1 {
 			return w.invalid(field+".weight", "must be an integer of at least one")
 		}
@@ -215,11 +228,14 @@ func (w *Workload) validateMix() error {
 			if !slices.Contains(KnownRequestKinds[:], request.Kind) {
 				return w.invalid(requestField+".kind", "unknown request kind")
 			}
+			if request.Payload == nil {
+				return w.invalid(requestField+".payload", "must be an object")
+			}
 			data, err := json.Marshal(request)
 			if err != nil {
 				return w.invalid(requestField, "payload and path_params must be JSON compatible")
 			}
-			if err := checkJSON(data, captured); err != nil {
+			if err := checkJSON(data, captured, requestDepth); err != nil {
 				return w.invalid(requestField, err.Error())
 			}
 			for name := range request.Capture {
@@ -235,10 +251,10 @@ func (w *Workload) validateMix() error {
 
 // checkJSON walks unstructured payload tokens without converting numbers to floats.
 // A nil captures map disables template checking for result documents.
-func checkJSON(data []byte, captures map[string]bool) error {
+func checkJSON(data []byte, captures map[string]bool, depth int) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
-	return checkValue(decoder, captures, 0)
+	return checkValue(decoder, captures, depth)
 }
 
 func checkValue(decoder *json.Decoder, captures map[string]bool, depth int) error {

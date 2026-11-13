@@ -28,7 +28,7 @@
           "concurrency":{"type":"integer","minimum":1},"duration":{"$ref":"#/definitions/text"}
         }}},
         "saturation":{"$ref":"#/definitions/thresholds"},"queue_depth":{"$ref":"#/definitions/queue_source"},
-        "env_vars_read":{"type":"array","uniqueItems":true,"items":{"type":"string","pattern":"^[A-Za-z_][A-Za-z0-9_]*$"}}
+        "env_vars_read":{"type":["array","null"],"uniqueItems":true,"items":{"type":"string","pattern":"^[A-Za-z_][A-Za-z0-9_]*$"}}
       }}
     }},
     "steps":{"type":"array","minItems":1,"items":{"type":"object","additionalProperties":false,"required":["index","concurrency","duration_ms","requests","errors","throughput_rps","latency_ms"],"properties":{
@@ -40,7 +40,7 @@
     }}},
     "queue_depth":{"type":"object","additionalProperties":false,"required":["source","interval_ms","samples"],"properties":{
       "source":{"enum":["prometheus","nats_jsz"]},"interval_ms":{"type":"integer","minimum":1},
-      "samples":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["t_ms","value"],"properties":{
+      "samples":{"type":["array","null"],"items":{"type":"object","additionalProperties":false,"required":["t_ms","value"],"properties":{
         "t_ms":{"$ref":"#/definitions/nonnegative"},"value":{"type":["number","null"],"minimum":0}
       }}}
     }},

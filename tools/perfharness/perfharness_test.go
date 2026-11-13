@@ -73,6 +73,8 @@ func TestResultsRoundTrip(t *testing.T) {
 		if reached {
 			index := 0
 			want.Saturation.Reached, want.Saturation.StepIndex = true, &index
+			// The second pass also writes the nil slices a driver may leave unset.
+			want.Environment.Configuration.EnvVarsRead, want.QueueDepth.Samples = nil, nil
 		}
 		data, err := WriteResults(want)
 		if err != nil {
@@ -178,10 +180,34 @@ func TestWorkloadFilesLoad(t *testing.T) {
 				kinds[request.Kind] = true
 			}
 		}
+		assertRecordable(t, w)
 	}
 	for _, kind := range []string{"jobs.submit", "jobs.approve", "edge.hook.evaluate", "mcp.tools.call"} {
 		if !kinds[kind] {
 			t.Fatalf("missing request kind %s", kind)
+		}
+	}
+	if enum, err := json.Marshal(KnownRequestKinds); err != nil || !strings.Contains(string(resultsSchema), `"kind":{"enum":`+string(enum)+"}") {
+		t.Fatalf("results schema kind enum must equal KnownRequestKinds %s", enum)
+	}
+}
+
+// assertRecordable is the cross-contract check: every profile of a loaded workload
+// must record into a results file that validates and parses back unchanged.
+func assertRecordable(t *testing.T, w *Workload) {
+	t.Helper()
+	for name, profile := range w.Profiles {
+		want := syntheticResults(t)
+		want.Run.Profile, want.Workload.Name, want.Steps[0].Concurrency = name, w.Name, int(profile.Steps[0].Concurrency)
+		want.QueueDepth.Source, want.QueueDepth.IntervalMS = w.QueueDepth.Kind, int(w.QueueDepth.IntervalMS)
+		c := &want.Environment.Configuration
+		c.RequestMix, c.ProfileSteps, c.Saturation, c.QueueDepth = w.RequestMix, profile.Steps, w.Saturation, w.QueueDepth
+		data, err := WriteResults(want)
+		if err != nil {
+			t.Fatalf("%s/%s: %v", w.Name, name, err)
+		}
+		if got, err := ParseResults(data); err != nil || !reflect.DeepEqual(&want, got) {
+			t.Fatalf("%s/%s round trip: %v", w.Name, name, err)
 		}
 	}
 }
@@ -234,7 +260,9 @@ func TestCaptureEnvironmentLive(t *testing.T) {
 }
 
 func TestWorkloadLoadValid(t *testing.T) {
-	for _, content := range []string{workloadFixture, strings.ReplaceAll(workloadFixture, "\n", "\r\n")} {
+	// The deepest payload a results document holds; TestWorkloadRejects/deep_payload pins one level deeper.
+	deep := strings.Replace(workloadFixture, "topic: job.perf", "nested: "+strings.Repeat("[", 56)+"x"+strings.Repeat("]", 56), 1)
+	for _, content := range []string{workloadFixture, strings.ReplaceAll(workloadFixture, "\n", "\r\n"), deep} {
 		w, err := loadFixture(t, content)
 		if err != nil {
 			t.Fatal(err)
@@ -248,6 +276,7 @@ func TestWorkloadLoadValid(t *testing.T) {
 		if w.RequestMix[0].Requests[0].Payload["prompt"] != "{{uuid}}-{{seq}}" || w.RequestMix[0].Requests[1].PathParams["job_id"] != "{{capture.job_id}}" {
 			t.Fatal("payload/capture templates changed")
 		}
+		assertRecordable(t, w)
 	}
 }
 
@@ -259,6 +288,10 @@ func TestWorkloadRejects(t *testing.T) {
 		{"unknown kind", "jobs.submit", "jobs.unknown", "kind"},
 		{"weight", "weight: 1", "weight: 0", "weight"},
 		{"fractional weight", "weight: 1", "weight: 1.5", "weight"},
+		{"missing sequence name", "- name: submit-approve\n    weight: 1", "- weight: 1", "request_mix[0].name: must not be empty"},
+		{"null payload", "payload: {}", "payload: null", "request_mix[0].requests[1].payload: must be an object"},
+		{"missing payload", "\n        payload: {}", "", "request_mix[0].requests[1].payload: must be an object"},
+		{"empty profile name", "standard:", "'':", "profiles: names must not be empty"},
 		{"forward capture", "{{uuid}}-{{seq}}", "{{capture.job_id}}", "earlier"},
 		{"missing capture", "{{capture.job_id}}", "{{capture.missing}}", "earlier"},
 		{"unknown token", "{{uuid}}-{{seq}}", "{{password}}", "token"},
@@ -283,7 +316,7 @@ func TestWorkloadRejects(t *testing.T) {
 		{"fractional interval", "interval_ms: 100", "interval_ms: 100.5", "interval_ms"},
 		{"secret payload", "prompt:", "Password:", "secret"},
 		{"nested secret", "topic: job.perf", "nested: [{ToKeN: forbidden}]", "secret"},
-		{"deep payload", "topic: job.perf", "nested: " + strings.Repeat("[", 65) + "0" + strings.Repeat("]", 65), "nesting"},
+		{"deep payload", "topic: job.perf", "nested: " + strings.Repeat("[", 57) + "0" + strings.Repeat("]", 57), "nesting"},
 		{"secret path", "path_params: {job_id:", "path_params: {AUTHORIZATION:", "secret"},
 		{"env value", "api_key_env: PERF_KEY", "api_key_env: secret-value", "api_key_env"},
 		{"trailing yaml", "p99_pct: 10}", "p99_pct: 10}\n---\nname: second", "trailing"},
@@ -304,6 +337,7 @@ func TestWorkloadEmptyCollections(t *testing.T) {
 		change func(*Workload)
 		field  string
 	}{
+		{"empty name", func(w *Workload) { w.Name = "" }, "name: must not be empty"},
 		{"empty mix", func(w *Workload) { w.RequestMix = nil }, "request_mix"},
 		{"empty requests", func(w *Workload) { w.RequestMix[0].Requests = nil }, "requests"},
 		{"empty profile", func(w *Workload) { w.Profiles["smoke"] = Profile{} }, "steps"},
