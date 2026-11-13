@@ -146,6 +146,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Pre-existing global `agent:by-worker:<worker>` links keep resolving for the tenant that owns the linked agent, and that tenant's next unlink retires them. Nothing writes them any more.
 - Go API: `AgentIdentityStore.GetByWorkerID` is removed (use `GetByWorkerIDForTenant`); `UnlinkWorker` takes the tenant ID; `LinkWorker` rejects unknown or untenanted agents.
 - gRPC `SubmitJob` now binds `labels.agent_id` the same way HTTP job submit does. A client `agent_id` that differs from the agent linked to the principal in the request tenant, that is sent with no link, or whose principal comes from the request's `principal_id` instead of the authenticated identity, is refused with `PermissionDenied` before the policy check. Before this change, the label went unchecked into the policy check and the audit trail. This was CodeRabbit's finding on #537.
+- With `labels.agent_id` omitted, gRPC `SubmitJob` now infers the linked agent only for the authenticated principal. A request with no authenticated principal (no auth context, or a credential without a principal ID) that names a worker in `principal_id` gets no `agent_id`. Before this change, outside the production profile, it got that worker's linked agent in the policy check and the audit trail. This was CodeRabbit's finding on #548.
 - Slices: task-76c90c6e, task-283f2317.
 
 #### TypeScript SDK — dev-only minimatch advisory GHSA-g3hv-75wg-m249 (2026-11-11, task-f09d31be)
