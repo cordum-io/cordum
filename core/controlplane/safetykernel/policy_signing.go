@@ -7,7 +7,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/policysign"
 )
 
@@ -194,20 +193,26 @@ var (
 	modeWarnOnceOnErr sync.Once
 )
 
+// resolveStoreBundleMode is the store loader's mode resolution:
+// policysign.ResolveMode, the rule every policy source shares, logging an
+// invalid CORDUM_POLICY_STRICT once per process.
+func resolveStoreBundleMode() policysign.Mode {
+	mode, err := policysign.ResolveMode()
+	if err != nil {
+		modeWarnOnceOnErr.Do(func() {
+			slog.Warn("safety-kernel: CORDUM_POLICY_STRICT is not a recognised value; falling back",
+				"err", err,
+				"mode", mode.String(),
+			)
+		})
+	}
+	return mode
+}
+
 // newBundleVerifier snapshots the policy-signing config from the
 // environment once per reload.
 func newBundleVerifier() *bundleVerifier {
-	mode, err := policysign.ModeFromEnv()
-	if err != nil {
-		modeWarnOnceOnErr.Do(func() {
-			slog.Warn("safety-kernel: CORDUM_POLICY_STRICT is not a recognised value; defaulting to warn",
-				"err", err,
-			)
-		})
-		if env.IsProduction() {
-			mode = policysign.ModeEnforce
-		}
-	}
+	mode := resolveStoreBundleMode()
 	store, err := policysign.LoadTrustStoreFromEnv()
 	if err != nil {
 		slog.Error("safety-kernel: trust store load failed", "err", err)
