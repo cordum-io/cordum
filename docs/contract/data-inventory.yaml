@@ -1,0 +1,167 @@
+# Source-reviewed data classes; reviewed_at pins the reviewed tree.
+# TestDataInventoryFile checks references, not deletion or legal-hold behavior.
+# Redis key/stream completeness is NOT claimed here; PR2-07-KEYS adds that guard.
+# endpoint_only describes local copies/raw bytes; derived metadata may be sent separately.
+schema_version: 1
+reviewed_at: 23abfc0a8f698a1d16589f09e1f9ba18479fc629
+classes:
+  - {id: raw-local-inputs, title: Endpoint inputs and local state}
+  - {id: redacted-events, title: Redacted Edge records}
+  - {id: evidence-audit, title: Evidence and audit records}
+  - {id: hashes-commitments, title: Hashes and commitments}
+  - {id: artifacts, title: Stored payloads and artifacts}
+  - {id: telemetry, title: Telemetry and metrics}
+  - {id: backups, title: Persistence and backup copies}
+  - {id: exports, title: Export buffers and downloaded evidence}
+endpoint_only:
+  - {id: DI-E01, class: raw-local-inputs,
+     storage: {kind: file, location: 'CORDUM_AGENTD_STATE_DIR; default ~/.cordum/edge/sessions/<session>/state.json (temp-dir fallback)', writers: [{path: core/edge/agentd/state_store.go, symbol: FileStateStore.Save}, {path: core/edge/agentd/config.go, symbol: LoadConfig}]},
+     content: {description: 'Local session-state copy and scrubbed metadata, not raw prompts; some session metadata also goes to Gateway', personal_data: possible},
+     retention: {none: 'No age setting for local state files; the state-dir setting controls location only'},
+     deletion: {none: 'No session-state cleanup API; Save replaces a file and removes its temporary file only'},
+     legal_hold: {applies: false, reason: Local file writer does not consult legal holds}}
+  - {id: DI-E02, class: raw-local-inputs,
+     storage: {kind: process_memory, location: cordum-hook stdin and decoded request buffers, writers: [{path: cmd/cordum-hook/main.go, symbol: dispatchClaude}, {path: cmd/cordum-hook/main.go, symbol: dispatchCopilot}]},
+     content: {description: 'Raw tool inputs/prompts before transformation; derived action facts are forwarded to agentd', personal_data: possible},
+     retention: {none: 'No retention setting; buffers live for the hook process/request lifetime'},
+     deletion: {none: 'Process termination and garbage collection; no explicit secure erasure routine'},
+     legal_hold: {applies: false, reason: Hook memory has no legal-hold integration}}
+  - {id: DI-E03, class: raw-local-inputs,
+     storage: {kind: process_memory, location: agentd safe-allow cache, writers: [{path: core/edge/agentd/cache.go, symbol: SafeAllowCache.Put}]},
+     content: {description: Local cache keys and filtered decision responses derived from action/policy/identity facts, personal_data: possible},
+     retention: {settings: [{name: CORDUM_AGENTD_SAFE_ALLOW_CACHE_TTL, path: core/edge/agentd/config.go}], default: '5m; cache disabled by default; expiration checked on Get and overflow evicted on Put'},
+     deletion: {paths: [{path: core/edge/agentd/cache.go, symbol: SafeAllowCache.Get}, {path: core/edge/agentd/cache.go, symbol: SafeAllowCache.evictOverflowLocked}]},
+     legal_hold: {applies: false, reason: Local cache does not consult legal holds}}
+  - {id: DI-E04, class: raw-local-inputs,
+     storage: {kind: process_memory, location: opt-in shadow scanner raw configuration buffers and local process/environment reads, writers: [{path: core/edge/shadow/scanner.go, symbol: Scanner.scanOneConfig}, {path: core/edge/shadow/scanner.go, symbol: Scanner.scanEnvVars}]},
+     content: {description: 'Raw config bytes stay in the scan; redacted summaries/path metadata become findings, not raw config or environment values', personal_data: possible},
+     retention: {none: 'No raw-buffer retention setting; source config files remain owned by their applications'},
+     deletion: {none: 'Garbage collection of scan buffers; scanner does not delete source configuration files'},
+     legal_hold: {applies: false, reason: Scanner does not consult legal holds}}
+control_plane:
+  - {id: DI-C01, class: redacted-events,
+     storage: {kind: redis_key, location: Edge sessions/executions/events and indexes, redis_keys: [{pattern: 'edge:session:{id}', path: core/edge/store_redis.go}, {pattern: 'edge:events:{execution}', path: core/edge/store_redis.go}], writers: [{path: core/edge/store_redis.go, symbol: RedisStore.AppendEvents}]},
+     content: {description: Principal/session metadata and redacted action-event facts; redaction is not anonymity, personal_data: possible},
+     retention: {settings: [{name: CORDUM_EDGE_SESSION_RETENTION_TTL, path: core/controlplane/gateway/gateway.go}], default: '30d; session sweeper uses the session lifecycle anchor'},
+     deletion: {paths: [{path: core/edge/sweeper.go, symbol: SessionSweeper.SweepOnce}, {path: core/edge/store_redis.go, symbol: RedisStore.DeleteSession}]},
+     legal_hold: {applies: false, reason: Session cleanup does not consult LegalHoldStore}}
+  - {id: DI-C02, class: redacted-events,
+     storage: {kind: redis_key, location: Edge approval records and status indexes, writers: [{path: core/edge/approval_store_redis.go, symbol: RedisStore.ExpireApprovals}]},
+     content: {description: Approval identity/action facts and lifecycle state, personal_data: possible},
+     retention: {settings: [{name: CORDUM_EDGE_APPROVAL_MAX_TTL, path: core/controlplane/gateway/gateway.go}], default: '30m authority cap, NOT record retention; expired approvals remain records until session cleanup'},
+     deletion: {paths: [{path: core/edge/store_redis.go, symbol: RedisStore.DeleteSession}, {path: core/edge/sweeper.go, symbol: ApprovalSweeper.SweepOnce}]},
+     legal_hold: {applies: false, reason: Approval sweeper changes status rather than erasing records and does not consult legal holds}}
+  - {id: DI-C03, class: redacted-events,
+     storage: {kind: redis_key, location: Shadow finding records and secondary indexes, writers: [{path: core/edge/shadow/finding_store_redis.go, symbol: RedisStore.commitTransitionFinding}]},
+     content: {description: Redacted config summaries and paths with tenant/principal/hostname metadata, personal_data: possible},
+     retention: {settings: [{name: CORDUM_EDGE_SHADOW_RETENTION_SHORT, path: core/edge/shadow/finding_store_redis.go}, {name: CORDUM_EDGE_SHADOW_RETENTION_DEFAULT, path: core/edge/shadow/finding_store_redis.go}, {name: CORDUM_EDGE_SHADOW_RETENTION_LONG, path: core/edge/shadow/finding_store_redis.go}], default: 'Terminal classes 7d/90d/365d; active findings are not TTL-expired'},
+     deletion: {paths: [{path: core/edge/shadow/finding_store_redis.go, symbol: RedisStore.commitTransitionFinding}, {path: core/edge/shadow/finding_store_redis.go, symbol: RedisStore.purgeExpired}]},
+     legal_hold: {applies: false, reason: Terminal TTL and best-effort index cleanup do not consult legal holds}}
+  - {id: DI-C04, class: evidence-audit,
+     storage: {kind: redis_stream, location: Tenant audit chain, redis_keys: [{pattern: 'audit:chain:{tenant}', path: core/audit/chain.go}], writers: [{path: core/audit/chain.go, symbol: Chainer.Append}]},
+     content: {description: SIEM event payloads with actor/resource metadata and chain hashes/HMACs, personal_data: possible},
+     retention: {settings: [{name: CORDUM_AUDIT_RETENTION_HOURS, path: core/controlplane/gateway/handlers_audit_verify.go}], default: '168h verification/export window; this setting does not itself trim stored events'},
+     deletion: {none: 'No automatic audit-stream trimmer found at reviewed_at; storage deletion is operator-managed'},
+     legal_hold: {applies: false, reason: 'Hold records/API exist but no stream cleanup consults IsUnderHold at reviewed_at', refs: [{path: core/audit/legal_hold.go, symbol: LegalHoldStore.IsUnderHold}]}}
+  - {id: DI-C05, class: evidence-audit,
+     storage: {kind: redis_key, location: system policy_audit config document, redis_keys: [{pattern: 'cfg:{scope}:{id}', path: core/configsvc/service.go}], writers: [{path: core/controlplane/gateway/handlers_policy_bundles.go, symbol: server.appendPolicyAudit}]},
+     content: {description: Policy changes with actors/resource ids and timestamps, personal_data: possible},
+     retention: {none: 'No retention setting; appendPolicyAudit keeps only the newest 500 entries'},
+     deletion: {paths: [{path: core/controlplane/gateway/handlers_policy_bundles.go, symbol: server.appendPolicyAudit}]},
+     legal_hold: {applies: false, reason: The 500-entry cap does not consult legal holds}}
+  - {id: DI-C06, class: evidence-audit,
+     storage: {kind: redis_key, location: Governance decision records and indexes, redis_keys: [{pattern: 'gov:dec:{suffix}', path: core/infra/store/decision_log_store.go}], writers: [{path: core/infra/store/decision_log_store.go, symbol: RedisDecisionLogStore.AppendDecision}]},
+     content: {description: Decisions with tenant/agent/job/rule identifiers and reasons, personal_data: possible},
+     retention: {settings: [{name: CORDUM_DECISION_LOG_TTL_SECONDS, path: core/infra/store/decision_log_store.go}], default: 30d},
+     deletion: {paths: [{path: core/infra/store/decision_log_store.go, symbol: RedisDecisionLogStore.AppendDecision}, {path: core/infra/store/decision_log_store.go, symbol: RedisDecisionLogStore.cleanupStaleDecisionIDs}]},
+     legal_hold: {applies: false, reason: Record TTL and index cleanup do not consult legal holds}}
+  - {id: DI-C07, class: hashes-commitments,
+     storage: {kind: redis_key, location: Audit-chain head per tenant, writers: [{path: core/audit/chain.go, symbol: Chainer.Append}, {path: core/audit/chain.go, symbol: Chainer.HeadKey}]},
+     content: {description: Sequence and event hash; links to tenant events and is not proof of anonymization, personal_data: possible},
+     retention: {none: 'No head-key retention setting; current sequence/hash is replaced on append'},
+     deletion: {none: 'No automatic head-key deletion path found; operator-managed storage deletion'},
+     legal_hold: {applies: false, reason: Chain-head writes do not consult legal holds}}
+  - {id: DI-C08, class: hashes-commitments,
+     storage: {kind: redis_key, location: Safety-kernel snapshot history, redis_keys: [{pattern: 'cordum:safety:snapshots', path: core/controlplane/safetykernel/kernel.go}], writers: [{path: core/controlplane/safetykernel/kernel.go, symbol: server.setPolicyWithInvariants}]},
+     content: {description: Effective policy snapshot identifiers, personal_data: possible},
+     retention: {none: 'No retention setting; snapshotHistoryMax bounds history to 10 entries'},
+     deletion: {paths: [{path: core/controlplane/safetykernel/kernel.go, symbol: server.setPolicyWithInvariants}]},
+     legal_hold: {applies: false, reason: Snapshot-list trimming does not consult legal holds}}
+  - {id: DI-C09, class: hashes-commitments,
+     storage: {kind: redis_key, location: Pending workflow audit hash, redis_keys: [{pattern: 'wf:run:pending_audit_hash:{job}', path: core/workflow/store_redis.go}], writers: [{path: core/workflow/store_redis.go, symbol: RedisStore.UpdateAuditHash}]},
+     content: {description: Job-linked event hash waiting for the workflow run update, personal_data: possible},
+     retention: {none: 'No configurable setting; pendingAuditHashTTL is a fixed 24 hours'},
+     deletion: {paths: [{path: core/workflow/store_redis.go, symbol: RedisStore.UpdateAuditHash}, {path: core/workflow/store_redis.go, symbol: enqueuePendingAuditDeletes}]},
+     legal_hold: {applies: false, reason: Pending-hash TTL and consumption do not consult legal holds}}
+  - {id: DI-C10, class: artifacts,
+     storage: {kind: redis_key, location: Artifact bytes and metadata, writers: [{path: core/infra/artifacts/redis_store.go, symbol: RedisStore.Put}]},
+     content: {description: Uploaded artifact content and metadata; content can include personal data or secrets, personal_data: possible},
+     retention: {settings: [{name: ARTIFACT_TTL_SHORT, path: core/infra/artifacts/redis_store.go}, {name: ARTIFACT_TTL_STANDARD, path: core/infra/artifacts/redis_store.go}, {name: ARTIFACT_TTL_AUDIT, path: core/infra/artifacts/redis_store.go}], default: 'short 24h; standard 7d; audit 30d'},
+     deletion: {paths: [{path: core/infra/artifacts/redis_store.go, symbol: RedisStore.Put}, {path: core/infra/artifacts/redis_store.go, symbol: RedisStore.ttlFor}]},
+     legal_hold: {applies: false, reason: Put assigns Redis expiry without consulting legal holds}}
+  - {id: DI-C11, class: artifacts,
+     storage: {kind: redis_key, location: Job context and result payloads, redis_keys: [{pattern: 'ctx:{job}', path: core/infra/store/redis_store.go}, {pattern: 'res:{job}', path: core/infra/store/redis_store.go}], writers: [{path: core/infra/store/redis_store.go, symbol: RedisStore.PutContext}, {path: core/infra/store/redis_store.go, symbol: RedisStore.PutResult}]},
+     content: {description: Job inputs and worker outputs including user-supplied content, personal_data: possible},
+     retention: {settings: [{name: REDIS_DATA_TTL_SECONDS, path: core/infra/store/redis_store.go}, {name: REDIS_DATA_TTL, path: core/infra/store/redis_store.go}], default: '24h; valid REDIS_DATA_TTL duration overrides the seconds setting'},
+     deletion: {paths: [{path: core/infra/store/redis_store.go, symbol: RedisStore.DeleteContext}, {path: core/infra/store/redis_store.go, symbol: RedisStore.PutResult}]},
+     legal_hold: {applies: false, reason: Context deletion and payload TTL do not consult legal holds}}
+  - {id: DI-C12, class: artifacts,
+     storage: {kind: redis_key, location: Context-engine history/chunks/summary, redis_keys: [{pattern: 'mem:{memory}:events', path: core/contextwindow/engine/service.go}, {pattern: 'mem:{memory}:chunks', path: core/contextwindow/engine/service.go}, {pattern: 'mem:{memory}:summary', path: core/contextwindow/engine/service.go}], writers: [{path: core/contextwindow/engine/service.go, symbol: Service.UpdateMemory}]},
+     content: {description: User/assistant history and retrieved source chunks or summaries, personal_data: possible},
+     retention: {none: 'No TTL setting; history trims to 20 events on write; chunks/summary have no cleanup here; REDIS_DATA_TTL does not apply'},
+     deletion: {paths: [{path: core/contextwindow/engine/service.go, symbol: Service.UpdateMemory}]},
+     legal_hold: {applies: false, reason: History trimming does not consult legal holds; no whole-memory erasure is claimed}}
+  - {id: DI-C13, class: telemetry,
+     storage: {kind: redis_key, location: Dated telemetry snapshots and history index, redis_keys: [{pattern: 'cordum:telemetry:snapshot:{time}', path: core/telemetry/store.go}], writers: [{path: core/telemetry/store.go, symbol: Store.SaveSnapshot}]},
+     content: {description: Installation id/platform/version and aggregated usage/feature signals, personal_data: possible},
+     retention: {none: 'No retention env setting; dated snapshots expire after 30d and history caps at 180; latest snapshot is separate'},
+     deletion: {paths: [{path: core/telemetry/store.go, symbol: Store.SaveSnapshot}, {path: core/telemetry/store.go, symbol: Store.trimHistory}]},
+     legal_hold: {applies: false, reason: Telemetry expiry and trimming do not consult legal holds}}
+  - {id: DI-C14, class: telemetry,
+     storage: {kind: redis_key, location: Latest telemetry snapshot/report status plus consent and installation markers, redis_keys: [{pattern: 'cordum:telemetry:{suffix}', path: core/telemetry/store.go}], writers: [{path: core/telemetry/store.go, symbol: Store.SetConsentMode}, {path: core/telemetry/privacy.go, symbol: GetInstallID}]},
+     content: {description: 'Persistent installation metadata; consent modes control reporting, not erasure of stored data', personal_data: possible},
+     retention: {none: 'No expiry on latest snapshot/consent/install id; one-time in-flight ping claims have a separate 15m TTL'},
+     deletion: {none: 'No automatic deletion of persistent telemetry metadata; operator-managed removal'},
+     legal_hold: {applies: false, reason: Telemetry metadata does not consult legal holds}}
+  - {id: DI-C15, class: telemetry,
+     storage: {kind: external, location: Operator Prometheus/metrics or telemetry-report destinations},
+     content: {description: Scraped metrics/labels and opted-in telemetry reports; destination policies determine stored content, personal_data: possible},
+     retention: {none: 'External collector retention is operator/destination-managed, not set by Cordum'},
+     deletion: {none: 'No Cordum deletion path for already exported metrics or telemetry copies'},
+     legal_hold: {applies: false, reason: No Cordum-managed legal hold on external collector storage}}
+  - {id: DI-C16, class: backups,
+     storage: {kind: external, location: Redis persistence volume and operator backups, writers: [{path: docker-compose.yml, symbol: '--appendonly'}]},
+     content: {description: Copies of Redis data including tenant inputs/evidence and identifiers, personal_data: possible},
+     retention: {none: 'Persistence/backup retention is operator-managed; logical key TTL is not backup erasure'},
+     deletion: {none: 'No Cordum backup-deletion path; operators manage persistence files and backup copies'},
+     legal_hold: {applies: false, reason: External backup hold policy is not enforced by Cordum}}
+  - {id: DI-C17, class: backups,
+     storage: {kind: external, location: NATS JetStream file-store snapshots and operator backup copies, writers: [{path: config/nats.conf, symbol: 'store_dir: /data/jetstream'}]},
+     content: {description: Persisted bus payload copies and stream/consumer state, personal_data: possible},
+     retention: {none: 'Backup lifetime is operator-managed; live-stream MaxAge does not expire copied backups'},
+     deletion: {none: 'No Cordum deletion path for NATS snapshot files or external backup copies'},
+     legal_hold: {applies: false, reason: External backup holds are not enforced by Cordum}}
+  - {id: DI-C18, class: backups,
+     storage: {kind: redis_key, location: Previous MCP upstream configurations, redis_keys: [{pattern: 'edge:mcp:upstream:bak:{tenant}:{name}:{timestamp}', path: core/edge/mcp_upstream_store_redis.go}], writers: [{path: core/edge/mcp_upstream_store_redis.go, symbol: RedisMCPUpstreamRegistry.updateExisting}]},
+     content: {description: Previous upstream records including tenant/name/URLs and secret references, personal_data: possible},
+     retention: {none: 'No configurable setting; mcpUpstreamBackupTTL assigns a fixed 30d expiry'},
+     deletion: {paths: [{path: core/edge/mcp_upstream_store_redis.go, symbol: RedisMCPUpstreamRegistry.updateExisting}]},
+     legal_hold: {applies: false, reason: Backup TTL does not consult legal holds}}
+  - {id: DI-C19, class: exports,
+     storage: {kind: process_memory, location: SIEM BufferedExporter queue/batches, writers: [{path: core/audit/buffer.go, symbol: BufferedExporter.Send}, {path: core/audit/buffer.go, symbol: WithRetentionTTL}, {path: core/audit/exporter.go, symbol: RetentionTTLFromEntitlements}]},
+     content: {description: SIEM events awaiting export/retry; successful external copies live at the configured destination, personal_data: possible},
+     retention: {none: 'Entitlement TTL is recorded metadata, not a queue expiry timer; queue drains/flushes and can drop on overflow or retry exhaustion'},
+     deletion: {paths: [{path: core/audit/buffer.go, symbol: BufferedExporter.loop}, {path: core/audit/buffer.go, symbol: BufferedExporter.Close}]},
+     legal_hold: {applies: false, reason: Queue flushing does not consult legal holds; destination holds are external}}
+  - {id: DI-C20, class: exports,
+     storage: {kind: external, location: Downloaded audit evidence bundles and CSV/JSON exports, writers: [{path: core/controlplane/gateway/audit_bundles.go, symbol: server.listSignedBundleSnapshots}, {path: core/controlplane/gateway/handlers_audit_compliance.go, symbol: server.handleAuditExport}]},
+     content: {description: Audit events and selected signed-policy snapshots/manifest metadata; recipient can retain independent copies, personal_data: possible},
+     retention: {none: 'No Cordum retention setting for recipient-owned downloads; source stores retain their own policies'},
+     deletion: {none: 'No Cordum remote deletion of downloaded evidence; recipient must remove its copies'},
+     legal_hold: {applies: false, reason: Recipient storage and legal holds are outside Cordum control}}
+  - {id: DI-C21, class: artifacts,
+     storage: {kind: jetstream, location: Live NATS file-backed streams, streams: [{name: CORDUM_SYS, path: core/infra/bus/nats.go}, {name: CORDUM_JOBS, path: core/infra/bus/nats.go}], writers: [{path: core/infra/bus/nats.go, symbol: NatsBus.initJetStreamFromEnv}]},
+     content: {description: CAP bus packets with job/workflow/worker identifiers and payload pointers, personal_data: possible},
+     retention: {settings: [{name: NATS_JS_MAX_AGE, path: core/infra/bus/nats.go}], default: '7d live-message MaxAge when JetStream is enabled; not a backup policy'},
+     deletion: {paths: [{path: core/infra/bus/nats.go, symbol: NatsBus.initJetStreamFromEnv}]},
+     legal_hold: {applies: false, reason: Stream MaxAge is delegated to NATS and does not consult legal holds}}
