@@ -333,3 +333,83 @@ func TestRegistryGateMintError_WithdrawsCorrelationRecord(t *testing.T) {
 		}
 	})
 }
+
+func TestMCPApprovalStore_WithdrawPending(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	newStore := func(t *testing.T) (*MCPApprovalStore, *[]audit.SIEMEvent) {
+		t.Helper()
+		var events []audit.SIEMEvent
+		return newTestMCPStore(t).WithAuditHook(func(e audit.SIEMEvent) { events = append(events, e) }), &events
+	}
+	t.Run("pending_expires_now", func(t *testing.T) {
+		t.Parallel()
+		s, events := newStore(t)
+		rec, err := s.EnqueueMCPApproval(ctx, testReq())
+		if err != nil {
+			t.Fatalf("enqueue: %v", err)
+		}
+		now := time.Now()
+		if rec.ExpiresAt <= now.UnixMicro() {
+			t.Fatalf("record deadline %d is not in the future of %d", rec.ExpiresAt, now.UnixMicro())
+		}
+		ttlBefore := s.client.PTTL(ctx, mcpApprovalKey(rec.ID)).Val()
+		if !s.WithdrawPending(ctx, rec.ID, now) {
+			t.Fatal("WithdrawPending = false; want a PENDING record withdrawn before its deadline")
+		}
+		got, err := s.Get(ctx, rec.ID)
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		if got.Status != model.ApprovalStatusExpired || got.Decision != model.ApprovalDecisionExpire || got.ResolvedAt != now.UnixMicro() {
+			t.Errorf("record = status %q decision %q resolved_at %d; want expired, expire, %d", got.Status, got.Decision, got.ResolvedAt, now.UnixMicro())
+		}
+		idx := mcpApprovalIndexKey(rec.Tenant, rec.AgentID, rec.ToolName, rec.ArgsHash)
+		if s.client.SIsMember(ctx, idx, rec.ID).Val() {
+			t.Error("tuple index still lists the withdrawn record")
+		}
+		if ttl := s.client.PTTL(ctx, mcpApprovalKey(rec.ID)).Val(); ttl <= 0 || ttl > ttlBefore {
+			t.Errorf("record TTL = %v after the withdraw, %v before; want it preserved", ttl, ttlBefore)
+		}
+		if n := len(*events); n != 2 || (*events)[1].Extra["outcome"] != "expired" || (*events)[1].Extra["approval_id"] != rec.ID {
+			t.Errorf("audit events = %d, last %+v; want the enqueue, then one expired event for %s", n, (*events)[n-1].Extra, rec.ID)
+		}
+	})
+	t.Run("non_pending_untouched", func(t *testing.T) {
+		t.Parallel()
+		s, events := newStore(t)
+		rec, err := s.EnqueueMCPApproval(ctx, testReq())
+		if err != nil {
+			t.Fatalf("enqueue: %v", err)
+		}
+		if _, err := s.Resolve(ctx, rec.ID, model.ApprovalDecisionApprove, "admin-1", "ok"); err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		before := s.client.Get(ctx, mcpApprovalKey(rec.ID)).Val()
+		eventsBefore := len(*events)
+		if s.WithdrawPending(ctx, rec.ID, time.Now()) {
+			t.Error("WithdrawPending = true for an APPROVED record")
+		}
+		if after := s.client.Get(ctx, mcpApprovalKey(rec.ID)).Val(); after != before {
+			t.Errorf("approved record changed:\nbefore %s\nafter  %s", before, after)
+		}
+		if len(*events) != eventsBefore {
+			t.Errorf("a refused withdraw emitted %d audit events", len(*events)-eventsBefore)
+		}
+	})
+	t.Run("blank_id_and_nil_store", func(t *testing.T) {
+		t.Parallel()
+		s, _ := newStore(t)
+		var nilStore *MCPApprovalStore
+		for name, store := range map[string]*MCPApprovalStore{"nil store": nilStore, "nil client": {}} {
+			if store.WithdrawPending(ctx, "id", time.Now()) {
+				t.Errorf("%s: WithdrawPending = true", name)
+			}
+		}
+		for _, id := range []string{"", " \t"} {
+			if s.WithdrawPending(ctx, id, time.Now()) {
+				t.Errorf("WithdrawPending(%q) = true", id)
+			}
+		}
+	})
+}
