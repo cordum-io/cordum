@@ -2,19 +2,27 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
 
-const auditPersistLogKey = "cfg:system:policy_audit"
+const (
+	auditPersistLogKey    = "cfg:system:policy_audit"
+	auditPersistPolicyKey = "cfg:system:policy"
+	auditPersistWriteKey  = "cfg:system:policy_write_audit{cfg:system:policy}"
+)
 
 // auditPersistHook calls afterGet once, right after the first GET of getKey,
 // and fails every pipeline with a command naming failKey. go-redis also sends
@@ -148,4 +156,156 @@ func TestAppendPolicyAudit_RefusesToOverwriteUnreadableEntries(t *testing.T) {
 
 	require.Error(t, s.appendPolicyAudit(context.Background(), auditPersistEntry("policy.dropped")))
 	require.Equal(t, before, auditPersistRaw(t, mr, auditPersistLogKey))
+}
+
+// auditPersistKeyspace returns every stored key with its raw value.
+func auditPersistKeyspace(t *testing.T, mr *miniredis.Miniredis) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for _, key := range mr.Keys() {
+		out[key] = auditPersistRaw(t, mr, key)
+	}
+	return out
+}
+
+// auditPersistSeedPolicy stores system/policy with one bundle through plain
+// and returns the keyspace afterwards.
+func auditPersistSeedPolicy(t *testing.T, mr *miniredis.Miniredis, plain *redis.Client) map[string]string {
+	t.Helper()
+	require.NoError(t, configsvc.NewFromClient(plain).Set(context.Background(), &configsvc.Document{
+		Scope: configsvc.ScopeSystem, ScopeID: packs.PolicyConfigID,
+		Data: map[string]any{packs.PolicyConfigKey: map[string]any{"secops/seed": map[string]any{"enabled": true}}},
+	}))
+	return auditPersistKeyspace(t, mr)
+}
+
+// auditPersistAddBundle returns an apply that adds bundle id to system/policy
+// and counts its runs.
+func auditPersistAddBundle(id string, runs *atomic.Int32) func(*configsvc.Document) error {
+	return func(doc *configsvc.Document) error {
+		runs.Add(1)
+		bundles, _ := doc.Data[packs.PolicyConfigKey].(map[string]any)
+		if bundles == nil {
+			bundles = map[string]any{}
+		}
+		bundles[id] = map[string]any{"enabled": true}
+		if doc.Data == nil {
+			doc.Data = map[string]any{}
+		}
+		doc.Data[packs.PolicyConfigKey] = bundles
+		return nil
+	}
+}
+
+// auditPersistCommitted returns the bundle ids and revision of system/policy
+// and the actions stored in the co-located audit document.
+func auditPersistCommitted(t *testing.T, plain *redis.Client) ([]string, int64, []string) {
+	t.Helper()
+	svc := configsvc.NewFromClient(plain)
+	policy, err := svc.Get(context.Background(), configsvc.ScopeSystem, packs.PolicyConfigID)
+	require.NoError(t, err)
+	bundles, _ := policy.Data[packs.PolicyConfigKey].(map[string]any)
+	ids := make([]string, 0, len(bundles))
+	for id := range bundles {
+		ids = append(ids, id)
+	}
+	audit, err := svc.Get(context.Background(), configsvc.ScopeSystem, policybundles.PolicyWriteAuditID)
+	require.NoError(t, err)
+	entries, err := policyAuditEntriesFromDoc(audit)
+	require.NoError(t, err)
+	actions := make([]string, len(entries))
+	for i, entry := range entries {
+		actions[i] = entry.Action
+	}
+	return ids, policy.Revision, actions
+}
+
+func TestCommitPolicyWithAudit_CommitsPolicyAndAuditTogether(t *testing.T) {
+	s, mr, _, plain := auditPersistServer(t)
+	auditPersistSeedPolicy(t, mr, plain)
+	var runs atomic.Int32
+
+	require.NoError(t, s.commitPolicyWithAudit(context.Background(), auditPersistAddBundle("secops/new", &runs), auditPersistEntry("policy.commit")))
+	ids, revision, actions := auditPersistCommitted(t, plain)
+	require.ElementsMatch(t, []string{"secops/seed", "secops/new"}, ids)
+	require.Equal(t, int64(2), revision)
+	require.Equal(t, []string{"policy.commit"}, actions)
+	require.False(t, mr.Exists(auditPersistLogKey), "the commit also wrote the shared audit log")
+}
+
+func TestCommitPolicyWithAudit_WritesNothingWhenTheAuditWriteFails(t *testing.T) {
+	s, mr, hooked, plain := auditPersistServer(t)
+	before := auditPersistSeedPolicy(t, mr, plain)
+	hooked.AddHook(auditPersistHook{failKey: auditPersistWriteKey})
+	logs := storeWriterLogs(t)
+	var runs atomic.Int32
+
+	require.Error(t, s.commitPolicyWithAudit(context.Background(), auditPersistAddBundle("secops/new", &runs), auditPersistEntry("policy.commit")))
+	require.Equal(t, before, auditPersistKeyspace(t, mr))
+	require.Len(t, logs.records("ERROR", "msg", "policy write and audit entry not committed"), 1)
+}
+
+func TestCommitPolicyWithAudit_WritesNothingWhenApplyRefuses(t *testing.T) {
+	s, mr, _, plain := auditPersistServer(t)
+	before := auditPersistSeedPolicy(t, mr, plain)
+	refused := errors.New("apply refused")
+
+	err := s.commitPolicyWithAudit(context.Background(), func(*configsvc.Document) error { return refused }, auditPersistEntry("policy.commit"))
+	require.ErrorIs(t, err, refused)
+	require.Equal(t, before, auditPersistKeyspace(t, mr))
+}
+
+func TestCommitPolicyWithAudit_RetriesAndKeepsAConcurrentPolicyChange(t *testing.T) {
+	s, mr, hooked, plain := auditPersistServer(t)
+	auditPersistSeedPolicy(t, mr, plain)
+	var fired atomic.Bool
+	var runs, otherRuns atomic.Int32
+	hooked.AddHook(auditPersistHook{getKey: auditPersistPolicyKey, fired: &fired, afterGet: func() {
+		require.NoError(t, configsvc.NewFromClient(plain).SetWithRetry(context.Background(), configsvc.ScopeSystem, packs.PolicyConfigID, 1, auditPersistAddBundle("secops/concurrent", &otherRuns)))
+	}})
+
+	require.NoError(t, s.commitPolicyWithAudit(context.Background(), auditPersistAddBundle("secops/new", &runs), auditPersistEntry("policy.commit")))
+	require.True(t, fired.Load(), "the concurrent writer never ran")
+	require.Equal(t, int32(2), runs.Load())
+	ids, _, actions := auditPersistCommitted(t, plain)
+	require.ElementsMatch(t, []string{"secops/seed", "secops/concurrent", "secops/new"}, ids)
+	require.Equal(t, []string{"policy.commit"}, actions)
+}
+
+func TestCommitPolicyWithAudit_CompletesAfterRequestContextIsCanceled(t *testing.T) {
+	s, mr, _, plain := auditPersistServer(t)
+	auditPersistSeedPolicy(t, mr, plain)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var runs atomic.Int32
+
+	require.NoError(t, s.commitPolicyWithAudit(ctx, auditPersistAddBundle("secops/new", &runs), auditPersistEntry("policy.commit")))
+	ids, _, actions := auditPersistCommitted(t, plain)
+	require.ElementsMatch(t, []string{"secops/seed", "secops/new"}, ids)
+	require.Equal(t, []string{"policy.commit"}, actions)
+}
+
+func TestPolicyAuditRead_IncludesEntriesCommittedWithThePolicy(t *testing.T) {
+	s, mr, _, plain := auditPersistServer(t)
+	auditPersistSeedPolicy(t, mr, plain)
+	logged, committed := auditPersistEntry("policy.logged"), auditPersistEntry("policy.committed")
+	logged.CreatedAt, committed.CreatedAt = "2026-01-01T00:00:00Z", "2026-01-01T00:00:01Z"
+	var runs atomic.Int32
+	require.NoError(t, s.appendPolicyAudit(context.Background(), logged))
+	require.NoError(t, s.commitPolicyWithAudit(context.Background(), auditPersistAddBundle("secops/new", &runs), committed))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/policy/audit", nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	req.Header.Set("X-Principal-Role", "admin")
+	rec := httptest.NewRecorder()
+	s.handleListPolicyAudit(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var body struct {
+		Items []policybundles.PolicyAuditEntry `json:"items"`
+		Total int64                            `json:"total"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, int64(2), body.Total)
+	require.Len(t, body.Items, 2)
+	require.Equal(t, []string{"policy.committed", "policy.logged"}, []string{body.Items[0].Action, body.Items[1].Action})
 }
