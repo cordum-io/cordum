@@ -199,3 +199,24 @@ func TestDataInventoryExplicitAbsence(t *testing.T) {
 		t.Fatalf("nil inventory accepted: %+v", got)
 	}
 }
+
+func TestDataInventoryFile(t *testing.T) {
+	root, err := repoRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := LoadDataInventory(filepath.Join(root, "docs/contract/data-inventory.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, issue := range doc.Validate(root) {
+		t.Errorf("%s %s: %s", issue.Rule, issue.ClaimID, issue.Detail)
+	}
+	counts := map[string]int{}
+	for _, entries := range [][]DataEntry{doc.EndpointOnly, doc.ControlPlane} {
+		for _, e := range entries {
+			counts[e.Class]++
+		}
+	}
+	t.Logf("endpoint_only=%d control_plane=%d classes=%v", len(doc.EndpointOnly), len(doc.ControlPlane), counts)
+}
