@@ -73,6 +73,8 @@ func TestResultsRoundTrip(t *testing.T) {
 		if reached {
 			index := 0
 			want.Saturation.Reached, want.Saturation.StepIndex = true, &index
+			// The second pass also writes the nil slices a driver may leave unset.
+			want.Environment.Configuration.EnvVarsRead, want.QueueDepth.Samples = nil, nil
 		}
 		data, err := WriteResults(want)
 		if err != nil {
@@ -178,10 +180,34 @@ func TestWorkloadFilesLoad(t *testing.T) {
 				kinds[request.Kind] = true
 			}
 		}
+		assertRecordable(t, w)
 	}
 	for _, kind := range []string{"jobs.submit", "jobs.approve", "edge.hook.evaluate", "mcp.tools.call"} {
 		if !kinds[kind] {
 			t.Fatalf("missing request kind %s", kind)
+		}
+	}
+	if enum, err := json.Marshal(KnownRequestKinds); err != nil || !strings.Contains(string(resultsSchema), `"kind":{"enum":`+string(enum)+"}") {
+		t.Fatalf("results schema kind enum must equal KnownRequestKinds %s", enum)
+	}
+}
+
+// assertRecordable is the cross-contract check: every profile of a loaded workload
+// must record into a results file that validates and parses back unchanged.
+func assertRecordable(t *testing.T, w *Workload) {
+	t.Helper()
+	for name, profile := range w.Profiles {
+		want := syntheticResults(t)
+		want.Run.Profile, want.Workload.Name, want.Steps[0].Concurrency = name, w.Name, int(profile.Steps[0].Concurrency)
+		want.QueueDepth.Source, want.QueueDepth.IntervalMS = w.QueueDepth.Kind, int(w.QueueDepth.IntervalMS)
+		c := &want.Environment.Configuration
+		c.RequestMix, c.ProfileSteps, c.Saturation, c.QueueDepth = w.RequestMix, profile.Steps, w.Saturation, w.QueueDepth
+		data, err := WriteResults(want)
+		if err != nil {
+			t.Fatalf("%s/%s: %v", w.Name, name, err)
+		}
+		if got, err := ParseResults(data); err != nil || !reflect.DeepEqual(&want, got) {
+			t.Fatalf("%s/%s round trip: %v", w.Name, name, err)
 		}
 	}
 }
@@ -234,7 +260,9 @@ func TestCaptureEnvironmentLive(t *testing.T) {
 }
 
 func TestWorkloadLoadValid(t *testing.T) {
-	for _, content := range []string{workloadFixture, strings.ReplaceAll(workloadFixture, "\n", "\r\n")} {
+	// The deepest payload a results document holds; TestWorkloadRejects/deep_payload pins one level deeper.
+	deep := strings.Replace(workloadFixture, "topic: job.perf", "nested: "+strings.Repeat("[", 56)+"x"+strings.Repeat("]", 56), 1)
+	for _, content := range []string{workloadFixture, strings.ReplaceAll(workloadFixture, "\n", "\r\n"), deep} {
 		w, err := loadFixture(t, content)
 		if err != nil {
 			t.Fatal(err)
@@ -248,6 +276,7 @@ func TestWorkloadLoadValid(t *testing.T) {
 		if w.RequestMix[0].Requests[0].Payload["prompt"] != "{{uuid}}-{{seq}}" || w.RequestMix[0].Requests[1].PathParams["job_id"] != "{{capture.job_id}}" {
 			t.Fatal("payload/capture templates changed")
 		}
+		assertRecordable(t, w)
 	}
 }
 
