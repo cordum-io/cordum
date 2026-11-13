@@ -64,6 +64,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- Gateway: velocity-rule create and update, and the output-rule enable toggle,
+  store their policy bundle with a signature from the configured policy signing
+  key (`CORDUM_POLICY_SIGNING_KEY`). When the policy store's signature mode is
+  enforce, these writes are refused before any change with 503
+  `POLICY_SIGNING_REQUIRED` unless a signing key whose public half the policy
+  trust store holds (`CORDUM_POLICY_PUBLIC_KEY_<ID>`) is configured. Enforce
+  means `policysign.ResolveMode` resolves enforce (for example the production
+  profile with `CORDUM_POLICY_STRICT` unset, or an explicit `enforce`) or the
+  value is unrecognised. Under an explicit `CORDUM_POLICY_STRICT=warn` or `off`,
+  a write that cannot be signed with a trusted key still proceeds, with a
+  warning. The gateway's boot-time move of legacy policy bundles from
+  `system/default` to `system/policy` never signs content. Under enforce it moves
+  them only when every legacy bundle with content already carries a signature
+  that verifies under the policy trust store; otherwise it leaves them in place
+  and logs `policy.legacy_migration_unverified` with the count.
+
 #### core/controlplane/gateway — production pack trust (2026-11-13, task-a9787d2f)
 - In the production profile (`CORDUM_ENV=production` or `CORDUM_PRODUCTION=true`),
   upload and marketplace installs default to requiring a pack signature verified
