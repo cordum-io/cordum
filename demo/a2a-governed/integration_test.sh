@@ -47,9 +47,12 @@ if [ "${CORDUM_INTEGRATION:-0}" != "1" ]; then
   exit 0
 fi
 
-prereq() { printf 'PREREQ: %s\n' "$*" >&2; exit 2; }
-fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+# Every FAIL and PREREQ line names the phase it happened in.
+PHASE=inputs
+prereq() { printf 'PREREQ [%s]: %s\n' "$PHASE" "$*" >&2; exit 2; }
+fail() { printf 'FAIL [%s]: %s\n' "$PHASE" "$*" >&2; exit 1; }
 say() { printf '[a2a-governed] %s\n' "$*"; }
+phase() { PHASE="$1"; say "$*"; }
 
 # --- inputs: failures name the variable, never its value ---------------------
 for name in CORDUM_API_KEY CAP_A2A_CLIENT_API_KEY REDIS_PASSWORD; do
@@ -134,6 +137,7 @@ api() {
 # card. The bearer reaches curl only on stdin; errors show code and message.
 a2a() {
   local url="$rpc_turns" status
+  all_alive
   [ "$1" = "$port_turns" ] || url="$rpc_denied"
   status="$(curl -sS --cacert "$certs_dir/ca/ca.crt" --connect-timeout 2 --max-time 40 -o "$3" \
     -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H "A2A-Version: ${A2A_VERSION}" \
@@ -177,6 +181,7 @@ wait_task() {
 # job_is ID WANT: 0 once the Cordum job is WANT; fails at once on another
 # terminal state; 1 while it is missing or running.
 job_is() {
+  all_alive
   api GET "/api/v1/jobs/$1"
   [ "$HTTP_STATUS" = 200 ] || return 1
   cp "$HTTP_BODY_FILE" "$artifacts/job-$1.json"
@@ -239,6 +244,12 @@ alive() {
   tail -n 20 "$2" >&2 || true
   fail "$3 exited"
 }
+# all_alive: once P4 has started them, the worker and both bridges still run.
+all_alive() {
+  alive "$worker_pid" "$artifacts/worker.log" "the worker"
+  alive "$turns_pid" "$artifacts/bridge-turns.log" "the turns bridge"
+  alive "$denied_pid" "$artifacts/bridge-denied.log" "the denied bridge"
+}
 worker_ready() {
   alive "$worker_pid" "$artifacts/worker.log" "the worker"
   api GET /api/v1/workers
@@ -251,7 +262,8 @@ worker_ready() {
 # inside CAP_REDIS_URL, and is then unset.
 start() {
   (
-    unset CORDUM_API_KEY CAP_A2A_CLIENT_API_KEY CAP_A2A_DEV_INSECURE CAP_A2A_RESULT_KEYS_DIR
+    unset CORDUM_API_KEY CAP_A2A_CLIENT_API_KEY CAP_A2A_DEV_INSECURE CAP_A2A_RESULT_KEYS_DIR \
+      NATS_TLS_INSECURE REDIS_TLS_INSECURE
     export CAP_NATS_URL=tls://localhost:4222 NATS_TLS_CA="$certs_dir/ca/ca.crt" NATS_TLS_SERVER_NAME=nats \
       NATS_TLS_CERT="$certs_dir/client/tls.crt" NATS_TLS_KEY="$certs_dir/client/tls.key"
     export CAP_REDIS_URL="rediss://:${REDIS_PASSWORD}@localhost:6379" REDIS_TLS_CA="$certs_dir/ca/ca.crt" \
@@ -287,9 +299,9 @@ card_field() {
 }
 
 # --- P0-P2: gateway, pack and policy, bridge material ------------------------
-say "P0 waiting for ${api_base}/api/v1/status (up to ${WAIT_GATEWAY_SEC}s)"
+phase P0 "waiting for ${api_base}/api/v1/status (up to ${WAIT_GATEWAY_SEC}s)"
 poll "$WAIT_GATEWAY_SEC" 2 gateway_ready || prereq "the gateway status is HTTP $HTTP_STATUS after ${WAIT_GATEWAY_SEC}s"
-say "P1 installing demo/a2a-governed/pack"
+phase P1 "installing demo/a2a-governed/pack"
 if ! (
   export CORDUM_GATEWAY="$api_base" CORDUM_TENANT_ID=default CORDUM_TLS_CA
   exec "$CORDUMCTL_BIN" pack install "$repo_root/demo/a2a-governed/pack" --upgrade
@@ -298,18 +310,18 @@ if ! (
   fail "cordumctl pack install failed"
 fi
 poll "$WAIT_POLICY_SEC" 1 policy_ready || fail "policy/evaluate lacks the pack's allow and deny rules after ${WAIT_POLICY_SEC}s"
-say "P2 writing the client digest and a signing key to a private temp dir"
+phase P2 "writing the client digest and a signing key to a private temp dir"
 digest="$(printf '%s' "$CAP_A2A_CLIENT_API_KEY" | sha256sum | cut -d' ' -f1)"
 [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || prereq "sha256sum did not produce a digest"
 jq -n --arg d "$digest" '[{sha256: $d, tenant: "default", principal: "a2a-demo-client"}]' >"$tmp/a2a-clients.json"
 openssl ecparam -name prime256v1 -genkey -noout | openssl pkcs8 -topk8 -nocrypt >"$tmp/bridge-signing.pem"
 
 # --- P3-P4: worker and bridges -----------------------------------------------
-say "P3 starting the worker in pool a2a-governed"
+phase P3 "starting the worker in pool a2a-governed"
 start worker
 worker_pid=$!
 poll "$WAIT_WORKER_SEC" 1 worker_ready || fail "a2a-demo-worker has no fresh heartbeat in pool a2a-governed after ${WAIT_WORKER_SEC}s"
-say "P4 starting the turns bridge on :$port_turns and the denied bridge on :$port_denied"
+phase P4 "starting the turns bridge on :$port_turns and the denied bridge on :$port_denied"
 start turns "$port_turns" job.a2a-governed.turns
 turns_pid=$!
 start denied "$port_denied" job.a2a-governed.denied
@@ -325,7 +337,7 @@ fi
 
 # --- P5: allowed turn 1 -------------------------------------------------------
 run_tag="$(date -u +%Y%m%d%H%M%S)-$$"
-say "P5 allowed turn 1 (run $run_tag)"
+phase P5 "allowed turn 1 (run $run_tag)"
 send "$port_turns" 1 "Plan a trip"
 m1="$MSG"
 task_id="$(jq -r '.id // empty' "$artifacts/task-1.json")"
@@ -341,7 +353,7 @@ check_job "$job1" job.a2a-governed.turns a2a-governed-allow ALLOW "$task_id"
 echo "PASS allowed_turn_input_required_cordum_allow"
 
 # --- P6: resume ---------------------------------------------------------------
-say "P6 resuming task $task_id"
+phase P6 "resuming task $task_id"
 send "$port_turns" 2 "Lisbon" "$task_id" "$context_id"
 m2="$MSG"
 [ "$(jq -r '.id' "$artifacts/task-2.json")" = "$task_id" ] || fail "the resumed turn answered another task"
@@ -355,7 +367,7 @@ check_job "$job2" job.a2a-governed.turns a2a-governed-allow ALLOW "$task_id"
 echo "PASS resumed_turn_completed_cordum_allow"
 
 # --- P7: denied topic ---------------------------------------------------------
-say "P7 sending to the denied topic"
+phase P7 "sending to the denied topic"
 send "$port_denied" 3 "Plan a trip"
 m3="$MSG"
 settle "$port_denied" 3 TASK_STATE_REJECTED
@@ -374,9 +386,8 @@ fi
 echo "PASS denied_topic_rejected_cordum_denied"
 
 # --- P8: final invariants -----------------------------------------------------
-alive "$worker_pid" "$artifacts/worker.log" "the worker"
-alive "$turns_pid" "$artifacts/bridge-turns.log" "the turns bridge"
-alive "$denied_pid" "$artifacts/bridge-denied.log" "the denied bridge"
+phase P8 "checking the final invariants"
+all_alive
 wait_task "$port_turns" "$task_id" TASK_STATE_COMPLETED "$artifacts/task-final.json"
 for name in CORDUM_API_KEY CAP_A2A_CLIENT_API_KEY REDIS_PASSWORD; do
   if grep -rFq -f - "$artifacts" <<<"${!name}"; then
