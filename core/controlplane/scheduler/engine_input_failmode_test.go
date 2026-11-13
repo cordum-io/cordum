@@ -441,7 +441,7 @@ func TestDecisionStoreWriteFailureRequeuesInBothInputModes(t *testing.T) {
 	for _, decision := range []SafetyDecision{SafetyAllow, SafetyRequireApproval, SafetyDeny} {
 		for _, mode := range []string{"closed", "open"} {
 			t.Run(string(decision)+"/"+mode, func(t *testing.T) {
-				writeErr := errors.New("decision write unavailable")
+				writeErr := errors.New("record unavailable")
 				bus, base, sink, spy := &fakeBus{}, newFakeJobStore(), &recordingSink{}, newInputFailOpenSpy()
 				store := &failingSafetyDecisionStore{fakeJobStore: base, err: writeErr}
 				checker := &fixedSafetyRecordChecker{record: SafetyDecisionRecord{

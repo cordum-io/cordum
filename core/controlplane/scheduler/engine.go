@@ -1678,7 +1678,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			return RetryAfter(err, retryDelayStore)
 		}
 		// Only a kernel that did not answer may reach the fail-open branch.
-		// Other errors requeue in both input modes, including decision writes,
+		// Other check errors requeue in both input modes, including persistence,
 		// identity normalization and engine shutdown.
 		if !errors.Is(err, errSafetyCheckTimeout) {
 			slog.Error("safety decision not recorded, retrying",
