@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# =============================================================================
 # Cordum Helm Soak Test Wrapper
 # Thin wrapper around soak_test.sh for Kubernetes/Helm deployments.
 # Sets up port-forwards, resolves secrets, and delegates to the main script.
@@ -18,7 +17,6 @@
 #   SOAK_METRICS_SOURCE       Defaults to none here (no docker stats on Kubernetes)
 #
 # All other SOAK_* env vars are passed through to soak_test.sh.
-# =============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -28,15 +26,11 @@ GATEWAY_PORT="${CORDUM_GATEWAY_PORT:-8081}"
 SECRET_NAME="${CORDUM_SECRET_NAME:-cordum-api-key}"
 LOCAL_PORT="${SOAK_LOCAL_PORT:-18081}"
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 log() { echo "[soak-helm] $(date +%H:%M:%S) $*"; }
 die() { echo "[soak-helm] ERROR: $*" >&2; exit 1; }
 
-# ---------------------------------------------------------------------------
 # Preflight
-# ---------------------------------------------------------------------------
 command -v kubectl >/dev/null 2>&1 || die "kubectl not found in PATH"
 kubectl cluster-info >/dev/null 2>&1 || die "Cannot connect to K8s cluster"
 
@@ -55,9 +49,7 @@ if [[ "${READY_PODS}" -eq 0 ]]; then
   log "Warning: Could not verify running gateway pods (label selectors may differ)"
 fi
 
-# ---------------------------------------------------------------------------
 # Resolve API key from K8s secret
-# ---------------------------------------------------------------------------
 if [[ -z "${CORDUM_API_KEY:-}" ]]; then
   log "Resolving API key from secret '${SECRET_NAME}' in namespace '${NAMESPACE}'..."
   CORDUM_API_KEY=$(kubectl get secret "${SECRET_NAME}" -n "${NAMESPACE}" \
@@ -74,9 +66,7 @@ if [[ -z "${CORDUM_API_KEY:-}" ]]; then
   log "API key resolved from secret"
 fi
 
-# ---------------------------------------------------------------------------
 # Set up port-forward
-# ---------------------------------------------------------------------------
 log "Setting up port-forward: localhost:${LOCAL_PORT} -> ${GATEWAY_SVC}:${GATEWAY_PORT}..."
 kubectl port-forward -n "${NAMESPACE}" "svc/${GATEWAY_SVC}" "${LOCAL_PORT}:${GATEWAY_PORT}" &
 PF_PID=$!
@@ -108,14 +98,11 @@ if [[ "${HEALTH_STATUS}" != "200" ]]; then
 fi
 log "Gateway reachable through port-forward"
 
-# ---------------------------------------------------------------------------
 # Run soak test
-# ---------------------------------------------------------------------------
 export CORDUM_API_BASE="http://localhost:${LOCAL_PORT}/api/v1"
 export CORDUM_API_KEY
-# Kubernetes has no docker stats: the memory drift and restart checks are then
-# reported as not evaluated (a WARN and memory_drift_evaluated=false), never as a
-# passing leak check. Override only where docker stats really covers the stack.
+# Kubernetes: no docker stats means WARN and memory_drift_evaluated=false, not
+# a passing leak check. Override only if docker stats covers the actual stack.
 export SOAK_METRICS_SOURCE="${SOAK_METRICS_SOURCE:-none}"
 
 log "Delegating to soak_test.sh..."
