@@ -41,8 +41,9 @@ type ProductionPipelineOptions struct {
 	// DestructiveMutationFieldGlobs lists GraphQL mutation field globs treated as
 	// destructive. Unset => the gate's built-in defaults.
 	DestructiveMutationFieldGlobs []string
-	// FailClosedDestructiveOnTaintLookupError forwards the default-off rollout
-	// flag for requiring human approval when a destructive MCP call cannot prove
+	// FailClosedDestructiveOnTaintLookupError forwards the
+	// ResolveFailClosedDestructiveOnTaintLookupError value (production-default
+	// ON) for requiring human approval when a destructive MCP call cannot prove
 	// the session is clean because the taint lookup errored.
 	FailClosedDestructiveOnTaintLookupError bool
 }
