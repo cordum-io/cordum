@@ -216,4 +216,10 @@ func TestNoIdentity_GateOffUnchanged(t *testing.T) {
 	if ran != 0 {
 		t.Errorf("tool executions = %d, want 0", ran)
 	}
+	// The registry still looks the tool up first, so an unknown name stays
+	// -32601: the identity check belongs to the gate-on path only.
+	unknown, _ := json.Marshal(map[string]any{"name": "rs.no_such_tool", "arguments": idArgs})
+	if res, rpcErr = srv.handleToolsCall(idCtx(nil), unknown); res != nil || rpcErr == nil || rpcErr.Code != jsonRPCMethodNotFoundCode {
+		t.Fatalf("unknown tool without identity = %+v, %+v; want code %d", res, rpcErr, jsonRPCMethodNotFoundCode)
+	}
 }

@@ -106,8 +106,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   to the authenticated principal in the request tenant. No header, or a header
   equal to that identity's `id`, resolves to it. Any other header value, an
   unlinked principal, or a link to another tenant resolves to no identity:
-  `tools/list` is empty and `tools/call` is refused (`-32098` `no_identity`,
-  or `-32603` `missing_mcp_metadata` when `mcp.policy_gate_enabled` is on).
+  `tools/list` is empty and `tools/call` is refused with `-32098`
+  `no_identity`, with `mcp.policy_gate_enabled` on or off (task-f6d83860).
 - Approval records, preapproval checks, policy-gate call metadata and Edge
   trace labels now carry the bound identity `id` (empty when there is none),
   never the header value. The principal no longer stands in for a missing
@@ -369,6 +369,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   opening the job. `DataTable` skipped its interactive-child check when the
   click landed on the icon's SVG element, because the check accepted only HTML
   elements (task-30740b03).
+
+- MCP over HTTP with `mcp.policy_gate_enabled=true`: a `tools/call` without a
+  bound agent identity now returns `-32098` `no_identity`, matching the
+  gate-off path, instead of `-32603` or `-32097` `missing_mcp_metadata`
+  (task-f6d83860). The server refuses it before any approval is read, so a call
+  that carries an `_approval_ref` no longer touches that approval. A request
+  missing its tenant, session or execution metadata still fails closed with its
+  old error.
 
 ### CI and documentation
 
