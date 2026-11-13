@@ -194,9 +194,9 @@ var (
 	modeWarnOnceOnErr sync.Once
 )
 
-// newBundleVerifier snapshots the policy-signing config from the
-// environment once per reload.
-func newBundleVerifier() *bundleVerifier {
+// resolveStoreBundleMode is the store loader's mode resolution, also used
+// by the policy signature report.
+func resolveStoreBundleMode() policysign.Mode {
 	mode, err := policysign.ModeFromEnv()
 	if err != nil {
 		modeWarnOnceOnErr.Do(func() {
@@ -208,6 +208,13 @@ func newBundleVerifier() *bundleVerifier {
 			mode = policysign.ModeEnforce
 		}
 	}
+	return mode
+}
+
+// newBundleVerifier snapshots the policy-signing config from the
+// environment once per reload.
+func newBundleVerifier() *bundleVerifier {
+	mode := resolveStoreBundleMode()
 	store, err := policysign.LoadTrustStoreFromEnv()
 	if err != nil {
 		slog.Error("safety-kernel: trust store load failed", "err", err)

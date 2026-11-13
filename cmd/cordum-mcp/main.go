@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
@@ -94,6 +95,8 @@ func main() {
 	// is out of reach. See handlers_mcp_outbound_integration_test.go
 	// for the end-to-end wiring proof.
 	auditSender := resolveAuditSender(os.Getenv("CORDUM_NATS_URL"))
+	shutdown := &auditShutdown{sender: auditSender, osExit: os.Exit}
+	defer shutdown.close()
 	invocationAuditor := mcp.NewToolInvocationAuditor(auditSender, mcp.DefaultRedactor())
 	outboundAuditor := mcp.NewToolInvocationOutboundAuditor(
 		invocationAuditor,
@@ -109,7 +112,7 @@ func main() {
 		WithOutboundAuditor(outboundAuditor)
 	if err := mcptools.Register(toolRegistry, toolClient); err != nil {
 		slog.Error("register mcp tools failed", "error", err)
-		os.Exit(1)
+		shutdown.exit(1)
 	}
 	resourceClient := mcpresources.NewGatewayClient(*gatewayAddr, *apiKey, httpClient).
 		WithAllowedHosts(allowedHosts).
@@ -118,7 +121,7 @@ func main() {
 		WithOutboundAuditor(outboundAuditor)
 	if err := mcpresources.Register(resourceRegistry, resourceClient); err != nil {
 		slog.Error("register mcp resources failed", "error", err)
-		os.Exit(1)
+		shutdown.exit(1)
 	}
 	slog.Info("mcp outbound invocation auditor enabled",
 		"event_type", "mcp.tool_outbound_invocation",
@@ -139,12 +142,13 @@ func main() {
 			if err != nil {
 				slog.Error("cordum-mcp: resolve agent identity failed, refusing to start",
 					"agent_id", id, "error", err)
-				os.Exit(1)
+				shutdown.exit(1)
 			}
 			if identity == nil {
 				slog.Error("cordum-mcp: agent identity not found or revoked, refusing to start",
 					"agent_id", id)
-				os.Exit(1)
+				shutdown.exit(1)
+				return // exit does not return in main; this lets staticcheck see identity is non-nil below
 			}
 			stdio.SetDefaultIdentity(identity)
 			slog.Info("cordum-mcp: bound to agent identity",
@@ -185,7 +189,7 @@ func main() {
 			slog.Info("cordum-mcp listening", "transport", "http", "addr", httpAddr, "gateway", strings.TrimSpace(*gatewayAddr))
 			if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				slog.Error("mcp http server failed", "error", err)
-				os.Exit(1)
+				shutdown.exit(1)
 			}
 		}()
 	} else {
@@ -194,7 +198,7 @@ func main() {
 
 	if err := server.Serve(); err != nil {
 		slog.Error("mcp server failed", "error", err)
-		os.Exit(1)
+		shutdown.exit(1)
 	}
 }
 
@@ -326,16 +330,57 @@ func resolveAuditSender(natsURL string) audit.AuditSender {
 	return audit.NewNATSAuditPublisher(natsBus, fallback)
 }
 
+// Send writes the event as one "audit.event" record at INFO through the
+// process log handler. It calls the handler directly rather than slog.Info:
+// CORDUM_LOG_LEVEL selects diagnostic output, and audit events are written at
+// every level. The record keeps the handler's text or JSON format.
 func (stderrAuditSender) Send(event audit.SIEMEvent) {
 	payload, err := json.Marshal(event)
 	if err != nil {
 		slog.Warn("audit event marshal failed", "error", err, "event_type", event.EventType)
 		return
 	}
-	slog.Info("audit.event", "event", json.RawMessage(payload))
+	record := slog.NewRecord(time.Now(), slog.LevelInfo, "audit.event", 0)
+	record.AddAttrs(slog.Any("event", auditEventJSON(payload)))
+	// A failed stderr write has nowhere else to be reported.
+	_ = slog.Default().Handler().Handle(context.Background(), record)
 }
 
+// auditEventJSON is a marshalled SIEMEvent. The JSON log format embeds it as
+// an object, and the text log format prints it as JSON text.
+type auditEventJSON []byte
+
+func (e auditEventJSON) MarshalJSON() ([]byte, error) { return e, nil }
+
+func (e auditEventJSON) String() string { return string(e) }
+
 func (stderrAuditSender) Close() error { return nil }
+
+// auditShutdown closes the process audit sender exactly once, so events
+// queued in the NATS publisher's fallback buffer are exported before
+// cordum-mcp stops. main defers close for a normal return, and every later
+// exit path calls exit, because os.Exit does not run deferred calls.
+type auditShutdown struct {
+	sender audit.AuditSender
+	osExit func(int) // os.Exit in main; tests record the code instead
+	once   sync.Once
+}
+
+func (s *auditShutdown) close() {
+	s.once.Do(func() {
+		if s.sender == nil {
+			return
+		}
+		if err := s.sender.Close(); err != nil {
+			slog.Error("cordum-mcp: audit sender close failed", "error", err)
+		}
+	})
+}
+
+func (s *auditShutdown) exit(code int) {
+	s.close()
+	s.osExit(code)
+}
 
 func splitCSV(raw string) []string {
 	if strings.TrimSpace(raw) == "" {
