@@ -46,18 +46,20 @@ func loadFixture(t *testing.T, content string) (*Workload, error) {
 
 func syntheticResults(t *testing.T) Results {
 	t.Helper()
-	w, err := loadFixture(t, workloadFixture)
-	if err != nil {
-		t.Fatal(err)
-	}
 	return Results{
 		SchemaVersion: 1,
 		Run:           RunInfo{ID: "fixture", StartedAt: "2026-01-01T00:00:00Z", FinishedAt: "2026-01-01T00:00:01Z", Profile: "smoke"},
 		Workload:      WorkloadInfo{Name: "fixture", File: "fixture.yaml", SHA256: strings.Repeat("a", 64)},
 		Environment: Environment{
-			Hardware:      Hardware{OS: "linux", Arch: "amd64", CPUModel: "fixture", LogicalCPUs: 4, Fingerprint: "235e525443d822e61f5c16adb8857aa242196837925d58b9d32cf5e0886761e8"},
-			Versions:      Versions{HarnessRevision: "unknown", GoVersion: "fixture", Target: TargetVersion{Version: "unknown", Source: "unknown"}},
-			Configuration: Configuration{TargetBaseURL: "http://localhost:8081", RequestMix: w.RequestMix, ProfileSteps: w.Profiles["smoke"].Steps, Saturation: w.Saturation, QueueDepth: w.QueueDepth, EnvVarsRead: []string{"PERF_KEY"}},
+			Hardware: Hardware{OS: "linux", Arch: "amd64", CPUModel: "fixture", LogicalCPUs: 4, Fingerprint: "235e525443d822e61f5c16adb8857aa242196837925d58b9d32cf5e0886761e8"},
+			Versions: Versions{HarnessRevision: "unknown", GoVersion: "fixture", Target: TargetVersion{Version: "unknown", Source: "unknown"}},
+			Configuration: Configuration{
+				TargetBaseURL: "http://localhost:8081", EnvVarsRead: []string{"PERF_KEY"},
+				RequestMix:   []Sequence{{Name: "submit", Weight: 1, Requests: []Request{{Kind: "jobs.submit", Payload: map[string]any{"prompt": "fixture"}}}}},
+				ProfileSteps: []ProfileStep{{Concurrency: 1, Duration: "1s"}},
+				Saturation:   Thresholds{P99MS: 1000, ErrorRate: 0.01, MinThroughputGainPct: 5},
+				QueueDepth:   QueueSource{Kind: "nats_jsz", URLEnv: "PERF_QUEUE_URL", Stream: "CORDUM_JOBS", IntervalMS: 100},
+			},
 		},
 		Steps:      []StepResult{{Index: 0, Concurrency: 1, DurationMS: 1000, Requests: 10, Errors: 1, ThroughputRPS: 10, LatencyMS: Latency{P50: 1, P90: 2, P95: 3, P99: 4, Max: 5}}},
 		QueueDepth: QueueDepth{Source: "nats_jsz", IntervalMS: 100, Samples: []QueueSample{{TMS: 0, Value: nil}}},
@@ -242,6 +244,9 @@ func TestWorkloadLoadValid(t *testing.T) {
 		}
 		if w.Profiles["smoke"].Steps[0].Concurrency != 1 {
 			t.Fatal("smoke concurrency changed")
+		}
+		if w.RequestMix[0].Requests[0].Payload["prompt"] != "{{uuid}}-{{seq}}" || w.RequestMix[0].Requests[1].PathParams["job_id"] != "{{capture.job_id}}" {
+			t.Fatal("payload/capture templates changed")
 		}
 	}
 }
