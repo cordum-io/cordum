@@ -79,6 +79,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Failed jobs report one of 10 documented codes (`invalid_input`, `mcp_unavailable`, `mcp_protocol_error`, `mcp_call_failed`, `mcp_approval_rejected`, `mcp_approval_expired`, `mcp_approval_not_found`, `mcp_approval_timeout`, `mcp_approval_invalid`, `worker_shutdown`), never server text or the API key.
 - Unsigned agent, so compat CAP profile only. It needs the default `mcp.policy_gate_enabled=false`, because it does not send `_approval_ref`. `demo/cap-mcp-governed/README.md` covers setup.
 
+#### demo/a2a-governed — governed A2A end-to-end test in CI: input-required resume, Cordum safety decisions and policy deny (2026-11-13, task-171d7f02)
+
+- New `demo/a2a-governed`. Its pack registers `job.a2a-governed.turns` and `job.a2a-governed.denied`, routes both to pool `a2a-governed`, and adds the rules `a2a-governed-denied` and `a2a-governed-allow`. It also has `integration_test.sh` and the `demo-a2a-governed-e2e` workflow. The workflow builds `cap-a2a-bridge` and the example worker from cordum-io/cap at pinned commit `3216b280`, then runs them on the host against the default compose stack, with TLS on HTTP, NATS and Redis.
+- The test asserts four outcomes. An allowed A2A turn ends `INPUT_REQUIRED`, and its resume ends `COMPLETED`. Each of those jobs is `SUCCEEDED`, with an `ALLOW` decision by `a2a-governed-allow`. A turn on the denied topic ends `REJECTED`, and its job is `DENIED` by `a2a-governed-denied` and never dispatched. On success it prints `A2A GOVERNED DEMO OK` once.
+- Compat profile only. Cordum admits the bridge's raw, unsigned `sys.job.submit` only while handshake is `off` or `warn`, so the bridge and the worker run with `CAP_A2A_DEV_UNSIGNED=1`. The A2A result does not reflect Cordum's output-safety verdict. `demo/a2a-governed/README.md` lists the limitations.
+- `tools/scripts/workflow_credential_guard.py` adds an inventory row for the new workflow and its three generated credentials.
+
 ### Changed
 
 - The eight required checks also run on `merge_group` events, with OpenAPI
