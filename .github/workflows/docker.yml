@@ -55,7 +55,7 @@ permissions:
 env:
   QUAL_REASON_NON_AMD64: "The smoke check and the Trivy OS scan ran on the linux/amd64 variant of this image index only; the linux/arm64 variant was not gated."
   QUAL_REASON_PRODUCTION_GATE: "The production gate (tools/scripts/production_gate.sh) runs against a source-built stack and did not run against these release digests."
-  QUAL_REASON_TRIVY_OS_ONLY: "The Trivy gate scans OS packages only (vuln-type os) and ignores findings that have no fixed version (ignore-unfixed); application dependencies such as Go modules and npm packages are not scanned by it."
+  QUAL_REASON_TRIVY_OS_ONLY: "The Trivy gate scans OS packages only (vuln-type os) and fails only on CRITICAL findings that have a fixed version (severity CRITICAL, ignore-unfixed); lower severities and unfixed findings do not fail it, and application dependencies such as Go modules and npm packages are not scanned by it."
 
 jobs:
   control-plane:
