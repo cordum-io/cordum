@@ -128,7 +128,8 @@ post events:
 - `event.Constraints = {...}` (same shape as
   `agentd EvaluateResponse.Constraints` — single canonical wire shape
   across hook + MCP surfaces)
-- `event.ErrorMessage` empty (AWC is an allow, just bounded)
+- `event.ErrorMessage` empty (AWC is an allow that carries constraints; the
+  [enforcement support matrix](contract/enforcement-matrix.yaml) records which entry points enforce them)
 
 If upstream fails after that compatibility/future-typed verdict, the resulting
 `mcp.tool.failed` event still records `Decision=constrain` +

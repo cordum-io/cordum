@@ -50,7 +50,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
       -ldflags "-s -w -X github.com/cordum/cordum/core/infra/buildinfo.Version=${VERSION} -X github.com/cordum/cordum/core/infra/buildinfo.Commit=${COMMIT} -X github.com/cordum/cordum/core/infra/buildinfo.Date=${BUILD_DATE}" \
       -o /out/${SERVICE} ./cmd/${SERVICE}
 
-FROM alpine:3.21
+FROM alpine:3.24
 # Refresh Alpine packages so fixed OS CVEs in the base image do not block
 # release scans for control-plane images.
 RUN apk upgrade --no-cache && apk add --no-cache ca-certificates

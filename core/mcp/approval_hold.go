@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/cordum/cordum/core/edge"
@@ -103,6 +104,15 @@ type ApprovalClaimStore interface {
 	ClaimApproval(ctx context.Context, req edge.ApprovalClaimRequest) (*edge.EdgeApproval, bool, error)
 }
 
+// approvalLookup is the optional store capability ProcessApprovalClaim
+// uses to bind a claim to the approval's stored parent event
+// (task-63400922 E3). edge.Store has it; narrow test doubles may not.
+type approvalLookup interface {
+	GetApproval(ctx context.Context, tenantID, approvalRef string) (*edge.EdgeApproval, bool, error)
+}
+
+var _ approvalLookup = edge.Store(nil)
+
 // ApprovalHoldDeps bundles the production wiring an approval-claim
 // check consumes. Every field is optional so a server without the
 // approval store wired short-circuits to "no claim presented"
@@ -131,12 +141,85 @@ type ApprovalHoldDeps struct {
 // Consumed=false + non-nil ConflictErr means the store refused the claim
 // (fail-closed); the caller surfaces the conflict to the client as a
 // JSON-RPC error keyed by ConflictErr.Kind.
+//
+// ActionHash, InputHash and PolicySnapshot are the binding and the policy
+// snapshot the claim was consumed with, set only when Consumed
+// (task-63400922 E4).
 type ApprovalClaimOutcome struct {
-	Consumed     bool
-	ClaimRef     string
-	Approval     *edge.EdgeApproval
-	ConflictErr  *edge.ApprovalConflictError
-	StrippedArgs json.RawMessage
+	Consumed       bool
+	ClaimRef       string
+	Approval       *edge.EdgeApproval
+	ConflictErr    *edge.ApprovalConflictError
+	StrippedArgs   json.RawMessage
+	ActionHash     string
+	InputHash      string
+	PolicySnapshot string
+}
+
+// ConsumedApproval records the Edge approval handleToolsCall consumed for
+// one request (task-63400922 E4). Under the policy gate it is the only
+// resume authority the registry approval gate honours.
+type ConsumedApproval struct {
+	Ref        string
+	Tool       string
+	ActionHash string
+	InputHash  string
+	// PolicySnapshot is the snapshot the claim was made under. The action
+	// and input hashes do not cover it, so resumeConsumedApproval compares
+	// it with the resumed call's pre-event stamp.
+	PolicySnapshot string
+	used           atomic.Bool
+}
+
+// Use reports whether the consumed approval authorizes a gate check of
+// (tool, actionHash, inputHash). It returns true at most once, and only for
+// a complete binding equal to the claimed one; a refused mismatch does not
+// use it up. Nil-safe.
+func (c *ConsumedApproval) Use(tool, actionHash, inputHash string) bool {
+	if !c.Binds(tool, actionHash, inputHash) {
+		return false
+	}
+	return c.used.CompareAndSwap(false, true)
+}
+
+// Binds reports whether the consumed approval authorizes the action-gate
+// REQUIRE_HUMAN check of (tool, actionHash, inputHash): a complete binding
+// equal to the claimed one (task-cd9df90a C1). It never uses the approval
+// up. Use stays the single-use registry-gate authority, so one approval
+// covers both gates of a dual-gated tool. Nil-safe.
+func (c *ConsumedApproval) Binds(tool, actionHash, inputHash string) bool {
+	if c == nil || c.Tool == "" || c.ActionHash == "" || c.InputHash == "" {
+		return false
+	}
+	return tool == c.Tool && actionHash == c.ActionHash && inputHash == c.InputHash
+}
+
+// carriesApprovalRef reports whether args still hold `_approval_ref`.
+// handleToolsCall strips it after a successful claim, so a REQUIRE_HUMAN
+// call that still carries one was never consumed: it fails closed rather
+// than minting again (task-cd9df90a C4).
+func carriesApprovalRef(args json.RawMessage) bool {
+	var parsed map[string]json.RawMessage
+	if json.Unmarshal(args, &parsed) != nil {
+		return false
+	}
+	_, ok := parsed[approvalRefArgKey]
+	return ok
+}
+
+type consumedApprovalKey struct{}
+
+// withConsumedApproval stays unexported so only the server, after a
+// successful claim, can record a consumption.
+func withConsumedApproval(ctx context.Context, c *ConsumedApproval) context.Context {
+	return context.WithValue(ctx, consumedApprovalKey{}, c)
+}
+
+// ConsumedApprovalFromContext returns the Edge approval consumed for this
+// request, or nil.
+func ConsumedApprovalFromContext(ctx context.Context) *ConsumedApproval {
+	c, _ := ctx.Value(consumedApprovalKey{}).(*ConsumedApproval)
+	return c
 }
 
 // ProcessApprovalClaim inspects the tool-call arguments for an
@@ -220,18 +303,35 @@ func ProcessApprovalClaim(ctx context.Context, deps ApprovalHoldDeps, params Too
 	resumeParams := ToolCallParams{Name: params.Name, Arguments: strippedBytes}
 	actionHash, inputHash := BuildMCPApprovalBinding(meta.Tenant, deps.ServerName, resumeParams, policySnapshot)
 
+	// EventID comes from the stored approval, as Edge evaluate retries do
+	// (gateway consumeEdgeEvaluateApproval, handlers_edge_evaluate.go). Both
+	// mint sites bind the approval to the policy evaluator's per-call
+	// mcp.tool.pre event, which the resumed call cannot know. Session,
+	// execution, hashes, snapshot and caller still come from the resumed
+	// call, so the store's tuple, args and policy checks bind the claim as
+	// before (task-63400922 E3). Only narrow test doubles lack GetApproval;
+	// they send an empty EventID, which a real store refuses.
+	var eventID string
+	if lookup, ok := deps.Store.(approvalLookup); ok {
+		stored, found, err := lookup.GetApproval(ctx, meta.Tenant, approvalRef)
+		if err != nil {
+			return ApprovalClaimOutcome{}, fmt.Errorf("%w: approval lookup: %w", ErrApprovalStoreUnavailable, err)
+		}
+		if !found || stored == nil {
+			return ApprovalClaimOutcome{
+				ClaimRef:    approvalRef,
+				ConflictErr: &edge.ApprovalConflictError{Kind: edge.ApprovalConflictKindNotFound, Reason: "approval not found"},
+			}, nil
+		}
+		eventID = strings.TrimSpace(stored.EventID)
+	}
+
 	claim := edge.ApprovalClaimRequest{
-		TenantID:    meta.Tenant,
-		ApprovalRef: approvalRef,
-		SessionID:   meta.SessionID,
-		ExecutionID: meta.ExecutionID,
-		// EventID binds the claim to the AgentActionEvent the mint
-		// side recorded. For the policy-gate handoff path the mint
-		// side stamps PreEvent.EventID; for transports without a
-		// pre-event (legacy registry-gate path), AgentID is the
-		// closest available stable identity. The same source MUST be
-		// used on both sides — see ConsumeActionGateDecision.
-		EventID:        meta.AgentID,
+		TenantID:       meta.Tenant,
+		ApprovalRef:    approvalRef,
+		SessionID:      meta.SessionID,
+		ExecutionID:    meta.ExecutionID,
+		EventID:        eventID,
 		ActionHash:     actionHash,
 		InputHash:      inputHash,
 		PolicySnapshot: policySnapshot,
@@ -260,7 +360,9 @@ func ProcessApprovalClaim(ctx context.Context, deps ApprovalHoldDeps, params Too
 				ConflictErr: &edge.ApprovalConflictError{Kind: edge.ApprovalConflictKindNotFound, Reason: "approval not found"},
 			}, nil
 		}
-		return ApprovalClaimOutcome{}, claimErr
+		// Anything else is the store failing, not the caller: fail closed
+		// as -32096 approval_store_unavailable, like the mint.
+		return ApprovalClaimOutcome{}, fmt.Errorf("%w: approval claim: %w", ErrApprovalStoreUnavailable, claimErr)
 	}
 	if !consumed || approval == nil {
 		return ApprovalClaimOutcome{
@@ -269,10 +371,13 @@ func ProcessApprovalClaim(ctx context.Context, deps ApprovalHoldDeps, params Too
 		}, nil
 	}
 	return ApprovalClaimOutcome{
-		Consumed:     true,
-		ClaimRef:     approvalRef,
-		Approval:     approval,
-		StrippedArgs: strippedBytes,
+		Consumed:       true,
+		ClaimRef:       approvalRef,
+		Approval:       approval,
+		StrippedArgs:   strippedBytes,
+		ActionHash:     actionHash,
+		InputHash:      inputHash,
+		PolicySnapshot: policySnapshot,
 	}, nil
 }
 

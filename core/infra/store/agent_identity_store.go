@@ -18,9 +18,22 @@ import (
 const (
 	agentIdentityKeyPrefix = "agent:identity:"
 	agentIdentityIndexKey  = "agent:identity:index"
+	// agentByWorkerKeyPrefix is the LEGACY global worker link
+	// (agent:by-worker:<worker> = agent ID), written before links were
+	// tenant-qualified. Nothing writes it any more: GetByWorkerIDForTenant reads
+	// it as a fallback, and UnlinkWorker retires it per tenant.
 	agentByWorkerKeyPrefix = "agent:by-worker:"
 	defaultAgentListLimit  = 50
 	maxAgentListLimit      = 200
+
+	// agentWorkerLinksKeyPrefix keys one Redis hash per tenant
+	// (agent:worker-links:<tenantID>), with field = worker or principal ID and
+	// value = agent identity ID. It is deliberately NOT under
+	// agentByWorkerKeyPrefix: worker IDs are only whitespace-validated and the
+	// POST /api/v1/agents agent_id is not validated, so either can contain ':'.
+	// A "agent:by-worker:<tenant>:<worker>" string key would therefore be
+	// ambiguous across tenants and could collide with legacy keys.
+	agentWorkerLinksKeyPrefix = "agent:worker-links:"
 )
 
 var validRiskTiers = map[string]bool{
@@ -437,27 +450,51 @@ func (s *AgentIdentityStore) Delete(ctx context.Context, tenantID, id string) er
 	return nil
 }
 
-// GetByWorkerID returns the agent identity linked to the given worker ID, or nil if unlinked.
-func (s *AgentIdentityStore) GetByWorkerID(ctx context.Context, workerID string) (*AgentIdentity, error) {
+// GetByWorkerIDForTenant returns the agent identity linked to workerID within
+// tenantID, or nil when there is none. The per-tenant hash
+// agent:worker-links:<tenant> is authoritative for its tenant; only when it
+// has no entry does the read fall back to the legacy global
+// agent:by-worker:<worker> key, written before tenant qualification. Either
+// way the identity must belong to tenantID, so a link naming another tenant's
+// agent, or an agent with no tenant, resolves to nil.
+func (s *AgentIdentityStore) GetByWorkerIDForTenant(ctx context.Context, tenantID, workerID string) (*AgentIdentity, error) {
 	if s == nil || s.client == nil {
 		return nil, fmt.Errorf("agent_identity_store: redis client not initialized")
+	}
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		return nil, fmt.Errorf("tenant id required")
 	}
 	workerID = strings.TrimSpace(workerID)
 	if workerID == "" {
 		return nil, fmt.Errorf("worker id required")
 	}
-
-	agentID, err := s.client.Get(ctx, agentByWorkerKeyPrefix+workerID).Result()
-	if err != nil {
+	agentID, err := s.client.HGet(ctx, agentWorkerLinksKeyPrefix+tenantID, workerID).Result()
+	if err == redis.Nil {
+		agentID, err = s.client.Get(ctx, agentByWorkerKeyPrefix+workerID).Result()
 		if err == redis.Nil {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("get agent by worker %s: %w", workerID, err)
 	}
-	return s.Get(ctx, "", agentID)
+	if err != nil {
+		return nil, fmt.Errorf("get agent by worker %s in tenant %s: %w", workerID, tenantID, err)
+	}
+	return s.Get(ctx, tenantID, agentID)
 }
 
-// LinkWorker creates a reverse-lookup mapping from worker ID to agent identity ID.
+// agentLegacyLinkDeleteScript deletes KEYS[1] only while it still holds
+// ARGV[1], so a legacy link re-pointed concurrently (for example by a
+// pre-upgrade replica) is left alone.
+var agentLegacyLinkDeleteScript = redis.NewScript(`if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("DEL", KEYS[1]) end return 0`)
+
+// LinkWorker links workerID to agentID in the linked agent's OWN tenant
+// (hash agent:worker-links:<agent.TenantID>, field = worker ID). The tenant is
+// always derived from the stored agent, so no caller can write into another
+// tenant's links and one tenant's link never replaces another's. Unknown or
+// untenanted agents are rejected. Both production callers already prove the
+// agent is in the request tenant: handleCreateAgent links the identity it just
+// created, and handleCreateWorkerCredential validates it through
+// resolveWorkerCredentialAgent. The legacy global key is never written.
 func (s *AgentIdentityStore) LinkWorker(ctx context.Context, agentID, workerID string) error {
 	if s == nil || s.client == nil {
 		return fmt.Errorf("agent_identity_store: redis client not initialized")
@@ -467,23 +504,60 @@ func (s *AgentIdentityStore) LinkWorker(ctx context.Context, agentID, workerID s
 	if agentID == "" || workerID == "" {
 		return fmt.Errorf("agent id and worker id required")
 	}
-	if err := s.client.Set(ctx, agentByWorkerKeyPrefix+workerID, agentID, 0).Err(); err != nil {
+	agent, err := s.Get(ctx, "", agentID)
+	if err != nil {
+		return fmt.Errorf("link worker %s: %w", workerID, err)
+	}
+	if agent == nil {
+		return fmt.Errorf("agent identity %s not found", agentID)
+	}
+	tenantID := strings.TrimSpace(agent.TenantID)
+	if tenantID == "" {
+		return fmt.Errorf("agent identity %s has no tenant", agentID)
+	}
+	if err := s.client.HSet(ctx, agentWorkerLinksKeyPrefix+tenantID, workerID, agentID).Err(); err != nil {
 		return fmt.Errorf("link worker %s -> %s: %w", workerID, agentID, err)
 	}
 	return nil
 }
 
-// UnlinkWorker removes the reverse-lookup mapping for a worker ID.
-func (s *AgentIdentityStore) UnlinkWorker(ctx context.Context, workerID string) error {
+// UnlinkWorker removes workerID's link in tenantID only. It also retires the
+// legacy global agent:by-worker:<worker> key, but only while that key names an
+// agent of tenantID (compare-and-delete): another tenant's pre-migration link
+// is never removed, and a same-tenant one cannot reappear through
+// GetByWorkerIDForTenant's fallback after this unlink.
+func (s *AgentIdentityStore) UnlinkWorker(ctx context.Context, tenantID, workerID string) error {
 	if s == nil || s.client == nil {
 		return fmt.Errorf("agent_identity_store: redis client not initialized")
+	}
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		return fmt.Errorf("tenant id required")
 	}
 	workerID = strings.TrimSpace(workerID)
 	if workerID == "" {
 		return fmt.Errorf("worker id required")
 	}
-	if err := s.client.Del(ctx, agentByWorkerKeyPrefix+workerID).Err(); err != nil {
-		return fmt.Errorf("unlink worker %s: %w", workerID, err)
+	if err := s.client.HDel(ctx, agentWorkerLinksKeyPrefix+tenantID, workerID).Err(); err != nil {
+		return fmt.Errorf("unlink worker %s in tenant %s: %w", workerID, tenantID, err)
+	}
+	legacyKey := agentByWorkerKeyPrefix + workerID
+	legacyAgentID, err := s.client.Get(ctx, legacyKey).Result()
+	if err == redis.Nil {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read legacy link for worker %s: %w", workerID, err)
+	}
+	owner, err := s.Get(ctx, tenantID, legacyAgentID)
+	if err != nil {
+		return fmt.Errorf("check legacy link owner for worker %s: %w", workerID, err)
+	}
+	if owner == nil {
+		return nil
+	}
+	if err := agentLegacyLinkDeleteScript.Run(ctx, s.client, []string{legacyKey}, legacyAgentID).Err(); err != nil {
+		return fmt.Errorf("retire legacy link for worker %s: %w", workerID, err)
 	}
 	return nil
 }

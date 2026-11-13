@@ -18,6 +18,18 @@ Thanks for helping improve Cordum.
 4. Run tests locally (`go test ./...`).
 5. Open a PR with a clear description and test results.
 
+## Merge queue
+
+Required checks run on `pull_request` and `merge_group` events so `main` can
+use a GitHub merge queue. The queue is not enabled until a maintainer adds
+it to the Main ruleset. Once enabled with the squash merge method, add an
+approved PR to the queue instead of updating and re-approving it as `main`
+advances. The queue re-runs required checks on the PR combined with `main`
+and the PRs ahead of it, then squash-merges it when they pass. Pushing to a
+queued PR removes it from the queue. Adding a PR to the queue needs write
+access; if you contribute from a fork, ask a maintainer to queue your
+approved PR.
+
 ## Collaborator requests
 
 If you'd like to collaborate regularly, open a GitHub Issue titled

@@ -27,7 +27,7 @@ const (
 
 var (
 	globalMeterProvider otelmetric.MeterProvider = noop.NewMeterProvider()
-	metricsShutdown                             = func(context.Context) error { return nil }
+	metricsShutdown                              = func(context.Context) error { return nil }
 	metricsInitOnce     sync.Once
 )
 

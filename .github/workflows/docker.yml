@@ -1,7 +1,21 @@
-# Build and push Docker images + Helm chart to GHCR and Docker Hub.
-# Triggered automatically on git tag push: git tag v0.9.3 && git push --tags
+# Build, gate and publish the release images, then the Helm chart.
 #
-# Required GitHub Secrets:
+# Triggers:
+#   - A v* tag push publishes the release: git tag v0.9.3 && git push --tags
+#   - A push to a release-dry-run/** branch runs the same image and record
+#     jobs against a registry local to each job (localhost:5000). It skips the
+#     registry logins, Docker Hub, cosign, the SARIF upload, issue creation,
+#     the published-image smoke and the Helm chart push.
+#
+# Each image job builds its multi-arch image once and pushes it by digest,
+# without tags. The smoke check and the Trivy OS scan run against that pushed
+# digest. The job then writes a release-qual entry for the digest, signs it
+# (v* tags only) and applies the release tags, each through
+# `release-qual publish`, and fails unless every tag resolves to the digest.
+# The qualification-record job assembles the entries into one record and
+# uploads it as the `qualification-record` workflow artifact.
+#
+# Required GitHub Secrets (v* tags only):
 #   DOCKERHUB_USERNAME  — Docker Hub username
 #   DOCKERHUB_TOKEN     — Docker Hub access token (PAT)
 #
@@ -16,6 +30,8 @@ on:
   push:
     tags:
       - "v*"
+    branches:
+      - "release-dry-run/**"
 
 # Serialize tag-triggered runs per ref so two concurrent pushes (or a
 # re-run while the previous run is still finishing) cannot race on the
@@ -31,6 +47,15 @@ permissions:
   id-token: write  # cosign keyless signing
   security-events: write  # Trivy SARIF upload
   issues: write           # smoke-test failure auto-issue
+
+# Exception reasons for the qualification record. They live here because
+# release-qual assemble refuses one exception id with two different reasons.
+# The image jobs share their steps through YAML anchors (&name) and aliases
+# (*name), so the three jobs cannot drift apart.
+env:
+  QUAL_REASON_NON_AMD64: "The smoke check and the Trivy OS scan ran on the linux/amd64 variant of this image index only; the linux/arm64 variant was not gated."
+  QUAL_REASON_PRODUCTION_GATE: "The production gate (tools/scripts/production_gate.sh) runs against a source-built stack and did not run against these release digests."
+  QUAL_REASON_TRIVY_OS_ONLY: "The Trivy gate scans OS packages only (vuln-type os) and fails only on CRITICAL findings that have a fixed version (severity CRITICAL, ignore-unfixed); lower severities and unfixed findings do not fail it, and application dependencies such as Go modules and npm packages are not scanned by it."
 
 jobs:
   control-plane:
@@ -51,6 +76,10 @@ jobs:
             service: cordum-context-engine
           - name: mcp
             service: cordum-mcp
+    env:
+      IMAGE_NAME: ${{ matrix.name }}
+      # Only the control-plane entries carry this exception.
+      QUAL_REASON_CONTROL_PLANE_SMOKE: "The control-plane smoke check tolerates a failing service binary; it fails only when the image cannot be pulled or cannot run a shell."
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -58,69 +87,137 @@ jobs:
       - name: Set build metadata
         run: echo "BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
 
+      - &select-registries
+        name: Select release registries
+        id: registries
+        run: |
+          set -euo pipefail
+          case "$GITHUB_REF" in
+            refs/tags/v*)
+              primary="ghcr.io/cordum-io/cordum/${IMAGE_NAME}"
+              mirror="docker.io/cordum/${IMAGE_NAME}" ;;
+            refs/heads/release-dry-run/*)
+              primary="localhost:5000/cordum-io/cordum/${IMAGE_NAME}"
+              mirror="localhost:5000/cordum/${IMAGE_NAME}" ;;
+            *)
+              echo "::error::docker.yml publishes only from v* tags and release-dry-run/** branches, not ${GITHUB_REF}"
+              exit 1 ;;
+          esac
+          echo "IMAGE_PRIMARY=${primary}" >> "$GITHUB_ENV"
+          echo "IMAGE_MIRROR=${mirror}" >> "$GITHUB_ENV"
+          echo "IMAGE_PRIMARY=${primary} IMAGE_MIRROR=${mirror}"
+
+      - &dry-run-registry
+        name: Start job-local registry (dry run)
+        if: startsWith(github.ref, 'refs/heads/release-dry-run/')
+        run: |
+          set -euo pipefail
+          docker run -d --name release-dry-run-registry -p 5000:5000 registry:3@sha256:82f6ff4a7f982960c8aa51617fea3aabc485df6e55cce80d22deb1de36f1bc3c
+          for _ in $(seq 1 30); do
+            if curl -fsS -o /dev/null http://localhost:5000/v2/; then echo "job-local registry is up"; exit 0; fi
+            sleep 1
+          done
+          docker logs release-dry-run-registry || true
+          echo "::error::job-local registry did not answer on localhost:5000 within 30 s"
+          exit 1
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
-      - name: Set up Docker Buildx
+      - &setup-buildx
+        name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          # Lets BuildKit reach the dry-run registry on localhost:5000; the
+          # release builder is the same, and registry pushes are unaffected.
+          driver-opts: network=host
 
-      - name: Login to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+      - &login-ghcr
+        name: Login to GHCR
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Login to Docker Hub
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+      - &login-dockerhub
+        name: Login to Docker Hub
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Docker meta
+      - &setup-go
+        name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - &build-release-qual
+        name: Build release-qual
+        run: |
+          go build -o "$RUNNER_TEMP/release-qual" ./tools/releasequal/cmd/release-qual
+          echo "RELEASE_QUAL=$RUNNER_TEMP/release-qual" >> "$GITHUB_ENV"
+
+      - &docker-meta
+        name: Docker meta
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: |
-            ghcr.io/cordum-io/cordum/${{ matrix.name }}
-            cordum/${{ matrix.name }}
+            ${{ env.IMAGE_PRIMARY }}
+            ${{ env.IMAGE_MIRROR }}
           # :latest only moves on final release tags. Pre-release suffixes
           # (v1.0.0-rc.1, -beta, -alpha) must NEVER overwrite :latest —
           # that's the single most common way to ship a production-unsafe
-          # image by accident.
+          # image by accident. A dry run also gets dry-run-<run id>.
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable=${{ !contains(github.ref_name, '-rc') && !contains(github.ref_name, '-beta') && !contains(github.ref_name, '-alpha') }}
+            type=raw,value=dry-run-${{ github.run_id }},enable=${{ startsWith(github.ref, 'refs/heads/release-dry-run/') }}
 
-      - name: Build image (verify)
+      - name: Build and push by digest
+        id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: Dockerfile
-          load: true
-          push: false
-          tags: cordum/${{ matrix.name }}:verify
+          platforms: linux/amd64,linux/arm64
+          sbom: true
+          provenance: true
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,"name=${{ env.IMAGE_PRIMARY }},${{ env.IMAGE_MIRROR }}",push-by-digest=true,name-canonical=true,push=true
           build-args: |
             SERVICE=${{ matrix.service }}
             VERSION=${{ github.ref_name }}
             COMMIT=${{ github.sha }}
             BUILD_DATE=${{ env.BUILD_DATE }}
 
-      - name: Verify image
+      - name: Smoke-check the pushed digest
+        id: smoke
+        env:
+          IMAGE_REF: ${{ env.IMAGE_PRIMARY }}@${{ steps.build.outputs.digest }}
         run: |
-          IMAGE="cordum/${{ matrix.name }}:verify"
-          echo "Verifying $IMAGE..."
-          docker run --rm "$IMAGE" --version || docker run --rm "$IMAGE" version || echo "No --version flag"
-          docker run --rm --entrypoint sh "$IMAGE" -c "ls -la /usr/local/bin/${{ matrix.service }} 2>/dev/null || ls -la /app/${{ matrix.service }} 2>/dev/null || echo 'binary ok'"
+          [[ "${IMAGE_REF##*@}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no pushed digest in ${IMAGE_REF}"; exit 1; }
+          echo "GATE image-smoke START ${IMAGE_REF}"
+          docker run --rm "$IMAGE_REF" --version || docker run --rm "$IMAGE_REF" version || echo "No --version flag"
+          docker run --rm --entrypoint sh "$IMAGE_REF" -c "ls -la /usr/local/bin/${{ matrix.service }} 2>/dev/null || ls -la /app/${{ matrix.service }} 2>/dev/null || echo 'binary ok'"
+          echo "GATE image-smoke PASS ${IMAGE_REF}"
 
-      - name: Scan image for vulnerabilities (Trivy)
+      - &trivy
+        name: Scan the pushed digest (Trivy)
         id: trivy
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/amd64
         with:
-          image-ref: cordum/${{ matrix.name }}:verify
+          image-ref: ${{ env.IMAGE_PRIMARY }}@${{ steps.build.outputs.digest }}
           format: sarif
-          output: trivy-${{ matrix.name }}.sarif
+          output: trivy-${{ env.IMAGE_NAME }}.sarif
           # Fail the job only on CRITICAL OS-package vulnerabilities that
           # already have a fix available. HIGH severities and language-lib
           # findings still produce SARIF (uploaded below) so they surface in
@@ -130,92 +227,161 @@ jobs:
           exit-code: "1"
           vuln-type: os
 
-      - name: Upload Trivy SARIF
-        if: always() && hashFiles(format('trivy-{0}.sarif', matrix.name)) != ''
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
+      - &upload-sarif
+        name: Upload Trivy SARIF
+        if: always() && startsWith(github.ref, 'refs/tags/v') && hashFiles(format('trivy-{0}.sarif', env.IMAGE_NAME)) != ''
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
         with:
-          sarif_file: trivy-${{ matrix.name }}.sarif
-          category: trivy-${{ matrix.name }}
+          sarif_file: trivy-${{ env.IMAGE_NAME }}.sarif
+          category: trivy-${{ env.IMAGE_NAME }}
 
-      - name: Push image
-        id: push
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      - &write-entry
+        name: Write qualification entry
+        id: entry
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          JOB_LOG_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/job/${{ job.check_run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$JOB_LOG_URL" =~ /job/[0-9]+$ ]] || { echo "::error::job log URL ${JOB_LOG_URL} names no job"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/qual"
+          smoke_exception=()
+          if [[ -n "${QUAL_REASON_CONTROL_PLANE_SMOKE:-}" ]]; then
+            smoke_exception=(--exception control-plane-smoke-shell-only="$QUAL_REASON_CONTROL_PLANE_SMOKE")
+          fi
+          "$RELEASE_QUAL" entry --kind image --name "$IMAGE_NAME" --ref "$IMAGE_PRIMARY" --digest "$DIGEST" \
+            --gate image-smoke=pass --gate trivy-os-linux-amd64=pass --log "$JOB_LOG_URL" \
+            --exception non-amd64-variant-not-gated="$QUAL_REASON_NON_AMD64" \
+            --exception production-gate-not-digest-bound="$QUAL_REASON_PRODUCTION_GATE" \
+            --exception trivy-os-packages-only="$QUAL_REASON_TRIVY_OS_ONLY" \
+            "${smoke_exception[@]}" \
+            --out "$RUNNER_TEMP/qual/entry-$IMAGE_NAME.json"
+          dry_run=()
+          if [[ "$GITHUB_REF" == refs/heads/release-dry-run/* ]]; then
+            dry_run=(--dry-run)
+          fi
+          "$RELEASE_QUAL" assemble --out "$RUNNER_TEMP/qual/job-record.json" --ref "$GITHUB_REF" --run-url "$RUN_URL" \
+            --repository "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA" "${dry_run[@]}" "$RUNNER_TEMP/qual/entry-$IMAGE_NAME.json"
+          "$RELEASE_QUAL" validate "$RUNNER_TEMP/qual/job-record.json"
+
+      - &upload-entry
+        name: Upload qualification entry
+        uses: actions/upload-artifact@v7
         with:
-          context: .
-          file: Dockerfile
-          push: true
-          platforms: linux/amd64,linux/arm64
-          sbom: true
-          provenance: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            SERVICE=${{ matrix.service }}
-            VERSION=${{ github.ref_name }}
-            COMMIT=${{ github.sha }}
-            BUILD_DATE=${{ env.BUILD_DATE }}
+          name: qual-entry-${{ env.IMAGE_NAME }}
+          path: ${{ runner.temp }}/qual/entry-${{ env.IMAGE_NAME }}.json
+          if-no-files-found: error
+          overwrite: true
 
-      - name: Install cosign
+      - &install-cosign
+        name: Install cosign
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
-      - name: Sign images
+      # Signing precedes tagging, so no release tag points at an unsigned digest.
+      - &sign
+        name: Sign the qualified digest
+        id: sign
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
-          DIGEST: ${{ steps.push.outputs.digest }}
+          DIGEST: ${{ steps.build.outputs.digest }}
         run: |
-          cosign sign --yes ghcr.io/cordum-io/cordum/${{ matrix.name }}@${DIGEST}
-          cosign sign --yes docker.io/cordum/${{ matrix.name }}@${DIGEST}
+          set -euo pipefail
+          for repo in "$IMAGE_PRIMARY" "$IMAGE_MIRROR"; do
+            "$RELEASE_QUAL" publish --record "$RUNNER_TEMP/qual/job-record.json" --artifact "${IMAGE_NAME}=${DIGEST}" -- cosign sign --yes "${repo}@${DIGEST}"
+          done
+
+      - &publish-tags
+        name: Publish release tags
+        id: publish
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/heads/release-dry-run/* ]]; then
+            for repo in "$IMAGE_PRIMARY" "$IMAGE_MIRROR"; do
+              code="$(curl -sS -o "$RUNNER_TEMP/tags.json" -w '%{http_code}' "http://localhost:5000/v2/${repo#localhost:5000/}/tags/list")"
+              tags='[]'
+              if [[ "$code" == 200 ]]; then tags="$(jq -c '.tags // []' "$RUNNER_TEMP/tags.json")"; elif [[ "$code" != 404 ]]; then exit 1; fi
+              echo "PRE_PUBLISH_TAGS ${repo} ${tags}"
+              [[ "$tags" == '[]' ]] || { echo "::error::${repo} has tags before release-qual publish"; exit 1; }
+            done
+          fi
+          mapfile -t tags <<< "$TAGS"
+          published=0
+          for tag in "${tags[@]}"; do
+            [[ -n "$tag" ]] || continue
+            "$RELEASE_QUAL" publish --record "$RUNNER_TEMP/qual/job-record.json" --artifact "${IMAGE_NAME}=${DIGEST}" -- docker buildx imagetools create --tag "$tag" "${tag%:*}@${DIGEST}"
+            published=$((published + 1))
+          done
+          (( published > 0 )) || { echo "::error::docker/metadata-action rendered no tag"; exit 1; }
+
+      - &verify-tags
+        name: Verify published tags
+        id: verify-tags
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          mapfile -t tags <<< "$TAGS"
+          for tag in "${tags[@]}"; do
+            [[ -n "$tag" ]] || continue
+            got="$(docker buildx imagetools inspect "$tag" --format '{{json .Manifest}}' | jq -r .digest)"
+            [[ "$got" == "$DIGEST" ]] || { echo "::error::${tag} resolves to ${got}, not the qualified ${DIGEST}"; exit 1; }
+            echo "TAG_OK ${tag} ${got}"
+          done
 
   dashboard:
     runs-on: ubuntu-latest
+    env:
+      IMAGE_NAME: dashboard
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - *select-registries
+      - *dry-run-registry
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - *setup-buildx
+      - *login-ghcr
+      - *login-dockerhub
+      - *setup-go
+      - *build-release-qual
+      - *docker-meta
 
-      - name: Login to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        with:
-          images: |
-            ghcr.io/cordum-io/cordum/dashboard
-            cordum/dashboard
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-rc') && !contains(github.ref_name, '-beta') && !contains(github.ref_name, '-alpha') }}
-
-      - name: Build dashboard image (verify)
+      - name: Build and push by digest
+        id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: ./dashboard
           file: ./dashboard/Dockerfile
-          load: true
-          push: false
-          tags: cordum/dashboard:verify
+          # Multi-arch for parity with the control-plane images. The
+          # upstream node and nginx-unprivileged alpine bases are both
+          # multi-arch so no Dockerfile changes are required. The smoke check
+          # below runs the amd64 variant on the amd64 runner — cross-arch
+          # docker run needs QEMU *execution* support which we don't
+          # install, so it stays amd64-only by design.
+          platforms: linux/amd64,linux/arm64
+          sbom: true
+          provenance: true
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,"name=${{ env.IMAGE_PRIMARY }},${{ env.IMAGE_MIRROR }}",push-by-digest=true,name-canonical=true,push=true
 
-      - name: Verify dashboard image
+      - name: Smoke-check the pushed digest
+        id: smoke
+        env:
+          IMAGE_REF: ${{ env.IMAGE_PRIMARY }}@${{ steps.build.outputs.digest }}
         run: |
-          IMAGE="cordum/dashboard:verify"
-          echo "Verifying $IMAGE responds on port 8080..."
-          docker run -d --name dash-verify -p 18080:8080 --add-host cordum-api-gateway:127.0.0.1 "$IMAGE"
+          [[ "${IMAGE_REF##*@}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no pushed digest in ${IMAGE_REF}"; exit 1; }
+          echo "GATE image-smoke START ${IMAGE_REF}"
+          echo "Verifying $IMAGE_REF responds on port 8080..."
+          docker run -d --name dash-verify -p 18080:8080 --add-host cordum-api-gateway:127.0.0.1 "$IMAGE_REF"
           sleep 3
           if curl -sf http://localhost:18080/healthz > /dev/null 2>&1; then
             echo "Dashboard image verified"
@@ -226,54 +392,16 @@ jobs:
             exit 1
           fi
           docker stop dash-verify && docker rm dash-verify
+          echo "GATE image-smoke PASS ${IMAGE_REF}"
 
-      - name: Scan dashboard image for vulnerabilities (Trivy)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: cordum/dashboard:verify
-          format: sarif
-          output: trivy-dashboard.sarif
-          severity: CRITICAL
-          ignore-unfixed: true
-          exit-code: "1"
-          vuln-type: os
-
-      - name: Upload Trivy SARIF (dashboard)
-        if: always() && hashFiles('trivy-dashboard.sarif') != ''
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
-        with:
-          sarif_file: trivy-dashboard.sarif
-          category: trivy-dashboard
-
-      - name: Push dashboard image
-        id: push
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: ./dashboard
-          file: ./dashboard/Dockerfile
-          push: true
-          # Multi-arch for parity with the control-plane images. The
-          # upstream node:20-alpine and nginx:alpine bases are both
-          # multi-arch so no Dockerfile changes are required. The preceding
-          # verify step loads the amd64 image locally and runs it via
-          # `docker run` on the amd64 runner — cross-arch docker run needs
-          # QEMU *execution* support which we don't install, so verify
-          # stays amd64-only by design.
-          platforms: linux/amd64,linux/arm64
-          sbom: true
-          provenance: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-
-      - name: Install cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-
-      - name: Sign images
-        env:
-          DIGEST: ${{ steps.push.outputs.digest }}
-        run: |
-          cosign sign --yes ghcr.io/cordum-io/cordum/dashboard@${DIGEST}
-          cosign sign --yes docker.io/cordum/dashboard@${DIGEST}
+      - *trivy
+      - *upload-sarif
+      - *write-entry
+      - *upload-entry
+      - *install-cosign
+      - *sign
+      - *publish-tags
+      - *verify-tags
 
   # Greeter for the demo-quickstart pack. Built from a dedicated Dockerfile
   # under demo/quickstart/, hence its own job rather than a control-plane
@@ -281,6 +409,8 @@ jobs:
   # cosign-signed, SBOM + provenance.
   demo-quickstart-worker:
     runs-on: ubuntu-latest
+    env:
+      IMAGE_NAME: demo-quickstart-worker
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -288,104 +418,116 @@ jobs:
       - name: Set build metadata
         run: echo "BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
 
+      - *select-registries
+      - *dry-run-registry
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - *setup-buildx
+      - *login-ghcr
+      - *login-dockerhub
+      - *setup-go
+      - *build-release-qual
+      - *docker-meta
 
-      - name: Login to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        with:
-          images: |
-            ghcr.io/cordum-io/cordum/demo-quickstart-worker
-            cordum/demo-quickstart-worker
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-rc') && !contains(github.ref_name, '-beta') && !contains(github.ref_name, '-alpha') }}
-
-      - name: Build image (verify)
+      - name: Build and push by digest
+        id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: demo/quickstart/Dockerfile
-          load: true
-          push: false
-          tags: cordum/demo-quickstart-worker:verify
-          build-args: |
-            VERSION=${{ github.ref_name }}
-            COMMIT=${{ github.sha }}
-            BUILD_DATE=${{ env.BUILD_DATE }}
-
-      - name: Verify image boots
-        run: |
-          set -euo pipefail
-          # The greeter exits with no work to do when no NATS server is
-          # reachable; log inspection is the right boot probe here.
-          docker run --rm --entrypoint sh cordum/demo-quickstart-worker:verify -c \
-            "test -x /usr/local/bin/demo-quickstart-worker && echo 'binary ok'"
-
-      - name: Scan demo-quickstart-worker image for vulnerabilities (Trivy)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: cordum/demo-quickstart-worker:verify
-          format: sarif
-          output: trivy-demo-quickstart-worker.sarif
-          severity: CRITICAL
-          ignore-unfixed: true
-          exit-code: "1"
-          vuln-type: os
-
-      - name: Upload Trivy SARIF (demo-quickstart-worker)
-        if: always() && hashFiles('trivy-demo-quickstart-worker.sarif') != ''
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
-        with:
-          sarif_file: trivy-demo-quickstart-worker.sarif
-          category: trivy-demo-quickstart-worker
-
-      - name: Push image
-        id: push
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: demo/quickstart/Dockerfile
-          push: true
           platforms: linux/amd64,linux/arm64
           sbom: true
           provenance: true
-          tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,"name=${{ env.IMAGE_PRIMARY }},${{ env.IMAGE_MIRROR }}",push-by-digest=true,name-canonical=true,push=true
           build-args: |
             VERSION=${{ github.ref_name }}
             COMMIT=${{ github.sha }}
             BUILD_DATE=${{ env.BUILD_DATE }}
 
-      - name: Install cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-
-      - name: Sign images
+      - name: Smoke-check the pushed digest
+        id: smoke
         env:
-          DIGEST: ${{ steps.push.outputs.digest }}
+          IMAGE_REF: ${{ env.IMAGE_PRIMARY }}@${{ steps.build.outputs.digest }}
         run: |
-          cosign sign --yes "ghcr.io/cordum-io/cordum/demo-quickstart-worker@${DIGEST}"
-          cosign sign --yes "docker.io/cordum/demo-quickstart-worker@${DIGEST}"
+          set -euo pipefail
+          [[ "${IMAGE_REF##*@}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no pushed digest in ${IMAGE_REF}"; exit 1; }
+          echo "GATE image-smoke START ${IMAGE_REF}"
+          # The greeter exits with no work to do when no NATS server is
+          # reachable; log inspection is the right boot probe here.
+          docker run --rm --entrypoint sh "$IMAGE_REF" -c \
+            "test -x /usr/local/bin/demo-quickstart-worker && echo 'binary ok'"
+          echo "GATE image-smoke PASS ${IMAGE_REF}"
+
+      - *trivy
+      - *upload-sarif
+      - *write-entry
+      - *upload-entry
+      - *install-cosign
+      - *sign
+      - *publish-tags
+      - *verify-tags
+
+  # One record for the run: every image job's entry, assembled and validated.
+  qualification-record:
+    needs: [control-plane, dashboard, demo-quickstart-worker]
+    runs-on: ubuntu-latest
+    env:
+      EXPECTED_IMAGES: "api-gateway context-engine dashboard demo-quickstart-worker mcp safety-kernel scheduler workflow-engine"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build release-qual
+        run: |
+          go build -o "$RUNNER_TEMP/release-qual" ./tools/releasequal/cmd/release-qual
+          echo "RELEASE_QUAL=$RUNNER_TEMP/release-qual" >> "$GITHUB_ENV"
+
+      - name: Download qualification entries
+        uses: actions/download-artifact@v8
+        with:
+          pattern: qual-entry-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/qual-entries
+
+      - name: Assemble and validate the record
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          entries=("$RUNNER_TEMP"/qual-entries/entry-*.json)
+          (( ${#entries[@]} > 0 )) || { echo "::error::no qualification entries were downloaded"; exit 1; }
+          dry_run=()
+          if [[ "$GITHUB_REF" == refs/heads/release-dry-run/* ]]; then
+            dry_run=(--dry-run)
+          fi
+          record="$RUNNER_TEMP/qualification-record.json"
+          "$RELEASE_QUAL" assemble --out "$record" --ref "$GITHUB_REF" --run-url "$RUN_URL" \
+            --repository "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA" "${dry_run[@]}" "${entries[@]}"
+          "$RELEASE_QUAL" validate "$record"
+          got="$(jq -r '[.artifacts[] | select(.kind == "image") | .name] | sort | join(" ")' "$record")"
+          [[ "$got" == "$EXPECTED_IMAGES" ]] || { echo "::error::record images [${got}] are not EXPECTED_IMAGES [${EXPECTED_IMAGES}]"; exit 1; }
+          jq -r '.artifacts[] | "\(.kind) \(.name) \(.digest)"' "$record"
+
+      - name: Upload qualification record
+        uses: actions/upload-artifact@v7
+        with:
+          name: qualification-record
+          path: ${{ runner.temp }}/qualification-record.json
+          if-no-files-found: error
+          overwrite: true
 
   smoke-published-images:
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: [control-plane, dashboard, demo-quickstart-worker]
     runs-on: ubuntu-latest
     steps:
@@ -445,8 +587,9 @@ jobs:
               # /usr/local/bin/app. They are not CLI tools and may correctly
               # reject --help/version without their runtime config. A post-pull
               # smoke should verify that the image starts a shell and contains
-              # the expected executable; service boot is covered by the earlier
-              # per-image verify step before push.
+              # the expected executable. Service boot is not covered here, nor
+              # by the image job's smoke check; the qualification record lists
+              # that as the control-plane-smoke-shell-only exception.
               if ! docker run --rm --entrypoint sh "${image}" -c "test -x /usr/local/bin/app"; then
                 failed+=("${name}: /usr/local/bin/app missing or not executable")
               fi
@@ -492,7 +635,8 @@ jobs:
             --body "${body}"
 
   helm-chart:
-    needs: smoke-published-images
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [smoke-published-images, qualification-record]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

@@ -90,8 +90,8 @@ func Policies(mux *http.ServeMux, eng *engine.Engine) {
 			return
 		}
 		var req struct {
-			ID             string `json:"id"`
-			TargetVersion  int    `json:"target_version"`
+			ID            string `json:"id"`
+			TargetVersion int    `json:"target_version"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		if req.ID == "" {

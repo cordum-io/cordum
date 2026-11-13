@@ -29,7 +29,9 @@ type vscodeAdapter struct {
 	configPath string
 }
 
-func newVSCodeAdapter(configPath string) *vscodeAdapter { return &vscodeAdapter{configPath: configPath} }
+func newVSCodeAdapter(configPath string) *vscodeAdapter {
+	return &vscodeAdapter{configPath: configPath}
+}
 
 func (a *vscodeAdapter) ClientName() string { return "vscode" }
 func (a *vscodeAdapter) ConfigPath() string { return a.configPath }

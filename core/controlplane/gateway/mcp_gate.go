@@ -114,6 +114,32 @@ func (g *gatewayApprovalGate) WithEdgeApprovalMint(store edge.Store, snapshot fu
 	return g
 }
 
+// policySnapshotForEvents is the policy snapshot the gate's Edge mints
+// bind to, or "" when no snapshot provider is wired. The policy
+// evaluator stamps it on the mcp.tool.pre event the mint binds to
+// (task-63400922 E2). Nil-safe so it can be handed out as a method value
+// before WithEdgeApprovalMint runs.
+func (g *gatewayApprovalGate) policySnapshotForEvents(ctx context.Context) string {
+	if g == nil || g.policySnapshot == nil {
+		return ""
+	}
+	return g.policySnapshot(ctx)
+}
+
+// edgeMintSnapshotDrift detects a change between the policy pre-event stamp
+// (evaluated) and the Edge mint (current). Neither snapshot can bind an
+// approval: the store refuses a different pre-event snapshot, and the resumed
+// call's current-snapshot claim refuses a stale one (task-11b3c5ef).
+// A blank side is not a confirmed change: preserve the store's blank-event
+// allowance and blank-approval refusal.
+func edgeMintSnapshotDrift(evaluated, current string) error {
+	evaluated, current = strings.TrimSpace(evaluated), strings.TrimSpace(current)
+	if evaluated == "" || current == "" || evaluated == current {
+		return nil
+	}
+	return fmt.Errorf("%w: policy snapshot %s changed to %s before the Edge mint", mcp.ErrPolicySnapshotChanged, evaluated, current)
+}
+
 // WithPreapprovalLookup attaches a preapproval resolver. Exposed as a
 // chaining helper so existing call sites don't need to change; wire
 // from registerMCPRoutes via:
@@ -157,9 +183,15 @@ func (g *gatewayApprovalGate) WithInvariantLookup(lookup MCPInvariantLookup) *ga
 //     approval; differing args re-gate.
 //  3. ClaimPreApproved against (tenant, agent, tool, args_hash) — an
 //     atomic find-and-consume. On hit, return (nil, nil) → handler runs.
-//     Consume-once is guaranteed by CAS inside the store.
+//     Consume-once is guaranteed by CAS inside the store. With the Edge
+//     mint wired (policy gate on) the Edge approval is the only resume
+//     authority instead: see useConsumedEdgeApproval.
 //  4. On miss, EnqueueMCPApproval (persisting the canonical args blob)
 //     and return *ApprovalRequired → JSON-RPC -32099.
+//
+// Store failures in steps 3-4 wrap mcp.ErrApprovalStoreUnavailable and
+// surface as -32096 approval_store_unavailable (fixed reason; the cause
+// is logged, never returned). Request-shape failures do not.
 func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params json.RawMessage) (*mcp.ApprovalRequired, error) {
 	if g == nil || g.store == nil {
 		return nil, nil
@@ -217,8 +249,17 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 		}
 	}
 
-	if rec, err := g.store.ClaimPreApproved(ctx, meta.Tenant, meta.AgentID, tool.Name, argsHash); err != nil {
-		return nil, fmt.Errorf("mcp gate: pre-approval claim: %w", err)
+	// Under the policy gate (Edge mint wired, task-f44be149) the Edge
+	// approval is the single resume authority and the MCP record
+	// dual-written below is correlation-only: ClaimPreApproved is never
+	// consulted (task-63400922 E4). The invariant floor above still wins,
+	// and gate-off behaviour is unchanged.
+	if g.edgeStore != nil {
+		if g.useConsumedEdgeApproval(ctx, meta, tool, params) {
+			return nil, nil
+		}
+	} else if rec, err := g.store.ClaimPreApproved(ctx, meta.Tenant, meta.AgentID, tool.Name, argsHash); err != nil {
+		return nil, fmt.Errorf("%w: mcp gate: pre-approval claim: %w", mcp.ErrApprovalStoreUnavailable, err)
 	} else if rec != nil {
 		// Stamp the consumed approval onto the in-flight invocation
 		// handle so the eventual mcp.tool_invocation event carries
@@ -248,9 +289,16 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 		Requester: requester,
 		Reason:    approvalReasonFor(tool),
 	}
+	// Validate before enqueueing so a request-shape failure (e.g. an
+	// empty agent_id once X-Agent-Id binding leaves AgentID unset) stays
+	// a gateway wiring error, not a retryable approval_store_unavailable:
+	// retrying a call that can never succeed helps nobody.
+	if err := validateMCPApprovalRequest(req); err != nil {
+		return nil, fmt.Errorf("mcp gate: enqueue: %w", err)
+	}
 	rec, err := g.store.EnqueueMCPApproval(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("mcp gate: enqueue: %w", err)
+		return nil, fmt.Errorf("%w: mcp gate: enqueue: %w", mcp.ErrApprovalStoreUnavailable, err)
 	}
 	// Mark the handle so the invocation event records
 	// approval_status=required + approval_id=<rec.ID> — lets SIEM
@@ -271,6 +319,10 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 	// legacy approval_id.
 	approvalRef, policySnapshot, expiresAt, mintErr := g.dualWriteEdgeApproval(ctx, meta, tool, params, rec)
 	if mintErr != nil {
+		// A policy change is retryable, not a store outage.
+		if errors.Is(mintErr, mcp.ErrPolicySnapshotChanged) {
+			return nil, mintErr
+		}
 		return nil, fmt.Errorf("%w: edge approval mint failed: %w", mcp.ErrApprovalStoreUnavailable, mintErr)
 	}
 	// Advertise `_approval_ref` only for a minted Edge ref; the legacy
@@ -291,6 +343,32 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 	}, nil
 }
 
+// useConsumedEdgeApproval reports whether this call carries the Edge
+// approval ProcessApprovalClaim consumed for this request, bound to the
+// same tool, action hash and input hash. Each consumption lets exactly
+// one call through; on success the invocation is stamped with the Edge
+// ref so SIEM can join it to the approval.
+func (g *gatewayApprovalGate) useConsumedEdgeApproval(ctx context.Context, meta MCPCallMetadata, tool mcp.Tool, params json.RawMessage) bool {
+	consumed := mcp.ConsumedApprovalFromContext(ctx)
+	if consumed == nil {
+		return false
+	}
+	// Hash with the tenant the claim used (mcp.CallMetadata) so the
+	// binding matches ProcessApprovalClaim byte for byte.
+	tenant := meta.Tenant
+	if edgeMeta, ok := mcp.CallMetadataFromContext(ctx); ok {
+		tenant = edgeMeta.Tenant
+	}
+	actionHash, inputHash := mcp.BuildMCPApprovalBinding(tenant, g.serverName, mcp.ToolCallParams{Name: tool.Name, Arguments: params}, "")
+	if !consumed.Use(tool.Name, actionHash, inputHash) {
+		return false
+	}
+	if h := mcp.InvocationHandleFromContext(ctx); h != nil {
+		h.MarkApprovalConsumed(consumed.Ref)
+	}
+	return true
+}
+
 // dualWriteEdgeApproval mints an EdgeApproval alongside the legacy
 // MCPApprovalStore record when the gate has been wired for Edge mint
 // AND mcp.CallMetadata carries SessionID + ExecutionID. The Edge
@@ -300,9 +378,15 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 //
 // Returns a four-tuple — the last field is non-nil when Edge mint was
 // ATTEMPTED (transport metadata present) and FAILED. Caller surfaces
-// approval_store_unavailable per DoD #5 in that case. nil errors include
+// approval_store_unavailable per DoD #5, or policy_snapshot_changed if policy
+// changed since evaluation. nil errors include
 // both the success path and the legitimate-fallback path where Edge mint
 // was skipped (no edgeStore wired, or no CallMetadata in ctx).
+//
+// The Edge approval binds to the policy gate's mcp.tool.pre event, which
+// the policy evaluator hands down the upstream ctx. A wired mint without
+// it fails closed rather than binding to a non-event (task-63400922 E1).
+// A confirmed snapshot change refuses the mint before EnqueueApproval.
 func (g *gatewayApprovalGate) dualWriteEdgeApproval(ctx context.Context, meta MCPCallMetadata, tool mcp.Tool, params json.RawMessage, rec *MCPApprovalRecord) (approvalRef, policySnapshot string, expiresAt time.Time, mintErr error) {
 	approvalRef = rec.ID
 	if rec.ExpiresAt > 0 {
@@ -316,8 +400,13 @@ func (g *gatewayApprovalGate) dualWriteEdgeApproval(ctx context.Context, meta MC
 	if !ok || edgeMeta.SessionID == "" || edgeMeta.ExecutionID == "" {
 		return approvalRef, "", expiresAt, nil
 	}
-	if g.policySnapshot != nil {
-		policySnapshot = g.policySnapshot(ctx)
+	policySnapshot = g.policySnapshotForEvents(ctx)
+	pre, ok := mcp.PolicyPreEventFromContext(ctx)
+	if !ok || pre.EventID == "" {
+		return "", policySnapshot, expiresAt, errors.New("policy pre-event missing: the Edge mint requires the policy gate's pre-event")
+	}
+	if err := edgeMintSnapshotDrift(pre.PolicySnapshot, policySnapshot); err != nil {
+		return "", policySnapshot, expiresAt, err
 	}
 	actionHash, inputHash := mcp.BuildMCPApprovalBinding(
 		edgeMeta.Tenant,
@@ -329,7 +418,7 @@ func (g *gatewayApprovalGate) dualWriteEdgeApproval(ctx context.Context, meta MC
 		TenantID:       edgeMeta.Tenant,
 		SessionID:      edgeMeta.SessionID,
 		ExecutionID:    edgeMeta.ExecutionID,
-		EventID:        edgeMeta.AgentID,
+		EventID:        pre.EventID,
 		PrincipalID:    edgeMeta.Principal,
 		Requester:      mcpRequesterIdentity(meta),
 		Reason:         rec.Reason,

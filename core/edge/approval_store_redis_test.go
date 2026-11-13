@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -823,6 +824,175 @@ func TestFirstLiveTupleApproval_ExcludesExpired(t *testing.T) {
 	if second.ApprovalRef == first.ApprovalRef {
 		t.Fatalf("EnqueueApproval reused expired approval %q; want a fresh live tuple approval", first.ApprovalRef)
 	}
+}
+
+// task-29afcbe9: every request below shares ONE action hash, as MCP holds of one
+// tool do (ActionTupleHash leaves out non-path args and the policy snapshot), so
+// only the input hash and policy snapshot can tell two live approvals apart.
+const reuseTupleActionHash = "actionhash-shared-tuple"
+
+// appendApprovalEvent appends an approval-requested event with the given input
+// hash and policy snapshot, as createApprovalParents does for its seed event.
+func appendApprovalEvent(t *testing.T, ctx context.Context, store *RedisStore, tenantID, sessionID, executionID, eventID, inputHash, policySnapshot string, at time.Time) {
+	t.Helper()
+	event := validStoreEvent(tenantID, sessionID, executionID, eventID, 0, at, EventKindApprovalRequested, DecisionRequireApproval)
+	event.InputHash = inputHash
+	event.PolicySnapshot = policySnapshot
+	event.Status = ActionStatusBlocked
+	if _, err := store.AppendEvent(ctx, event); err != nil {
+		t.Fatalf("AppendEvent %s: %v", eventID, err)
+	}
+}
+
+func reuseTupleRequest(tenantID, sessionID, executionID, eventID, inputHash, policySnapshot string, base time.Time) EdgeApprovalRequest {
+	req := validApprovalRequest(tenantID, sessionID, executionID, eventID, base)
+	req.ActionHash = reuseTupleActionHash
+	req.InputHash = inputHash
+	req.PolicySnapshot = policySnapshot
+	return req
+}
+
+func mustEnqueueApproval(t *testing.T, ctx context.Context, store *RedisStore, req EdgeApprovalRequest) *EdgeApproval {
+	t.Helper()
+	approval, err := store.EnqueueApproval(ctx, req)
+	if err != nil {
+		t.Fatalf("EnqueueApproval %s: %v", req.EventID, err)
+	}
+	return approval
+}
+
+func mustApproveApproval(t *testing.T, ctx context.Context, store *RedisStore, tenantID, ref string, at time.Time) {
+	t.Helper()
+	if _, err := store.ApproveApproval(ctx, ApprovalResolution{
+		TenantID:    tenantID,
+		ApprovalRef: ref,
+		ResolverID:  "reviewer",
+		ResolvedBy:  "reviewer@example.invalid",
+		Reason:      "approve for reuse binding",
+		ResolvedAt:  at,
+	}); err != nil {
+		t.Fatalf("ApproveApproval %s: %v", ref, err)
+	}
+}
+
+// mustClaimWithBinding claims ref with the binding req carries, the way the MCP
+// resume path does, and fails unless that exact ref is consumed.
+func mustClaimWithBinding(t *testing.T, ctx context.Context, store *RedisStore, ref string, req EdgeApprovalRequest, at time.Time) {
+	t.Helper()
+	claimed, ok, err := store.ClaimApproval(ctx, ApprovalClaimRequest{
+		TenantID:       req.TenantID,
+		ApprovalRef:    ref,
+		SessionID:      req.SessionID,
+		ExecutionID:    req.ExecutionID,
+		EventID:        req.EventID,
+		ActionHash:     req.ActionHash,
+		InputHash:      req.InputHash,
+		PolicySnapshot: req.PolicySnapshot,
+		ConsumedAt:     at,
+	})
+	if err != nil || !ok || claimed == nil || claimed.ApprovalRef != ref {
+		t.Fatalf("ClaimApproval %s with event %s = (%#v,%v,%v), want that ref consumed", ref, req.EventID, claimed, ok, err)
+	}
+}
+
+func TestFirstLiveTupleApproval_ReusesOnlySameInputHash(t *testing.T) {
+	ctx := context.Background()
+	base := time.Date(2026, 5, 1, 20, 0, 0, 0, time.UTC)
+	store, client, _, cleanup := newRedisEdgeStore(t, WithClock(func() time.Time { return base }))
+	defer cleanup()
+
+	const tenant, sess, exec = "tenant-a", "sess-reuse-input", "exec-reuse-input"
+	createApprovalParents(t, ctx, store, tenant, sess, exec, "event-in-a", base)
+	events := []struct{ id, input string }{
+		{"event-in-b", "sha256:event-in-b"},
+		{"event-in-a2", "sha256:event-in-a"},
+		{"event-in-c", "sha256:event-in-c"},
+		{"event-in-a3", "sha256:event-in-a"},
+	}
+	for i, ev := range events {
+		appendApprovalEvent(t, ctx, store, tenant, sess, exec, ev.id, ev.input, "policy-v1", base.Add(time.Duration(3+i)*time.Second))
+	}
+	reqFor := func(eventID, input string) EdgeApprovalRequest {
+		return reuseTupleRequest(tenant, sess, exec, eventID, input, "policy-v1", base)
+	}
+
+	reqA := reqFor("event-in-a", "sha256:event-in-a")
+	refA := mustEnqueueApproval(t, ctx, store, reqA).ApprovalRef
+
+	reqB := reqFor("event-in-b", "sha256:event-in-b")
+	approvalB := mustEnqueueApproval(t, ctx, store, reqB)
+	refB := approvalB.ApprovalRef
+	if refB == refA {
+		t.Fatalf("EnqueueApproval handed the pending approval %q for input A to a request with input B (task-29afcbe9); want a fresh approval", refA)
+	}
+	if approvalB.EventID != "event-in-b" || approvalB.InputHash != "sha256:event-in-b" || approvalB.Status != ApprovalStatusPending {
+		t.Fatalf("approval B = event %q input %q status %q, want event-in-b sha256:event-in-b pending", approvalB.EventID, approvalB.InputHash, approvalB.Status)
+	}
+
+	if got := mustEnqueueApproval(t, ctx, store, reqFor("event-in-a2", "sha256:event-in-a")).ApprovalRef; got != refA {
+		t.Fatalf("same input, new EventID, pending approval: ref = %q, want reuse of %q", got, refA)
+	}
+
+	mustApproveApproval(t, ctx, store, tenant, refA, base.Add(time.Minute))
+	approvalC := mustEnqueueApproval(t, ctx, store, reqFor("event-in-c", "sha256:event-in-c"))
+	refC := approvalC.ApprovalRef
+	if refC == refA || refC == refB {
+		t.Fatalf("approved-but-unconsumed approval %q was handed to other args: ref C = %q (refB %q)", refA, refC, refB)
+	}
+	if got := mustEnqueueApproval(t, ctx, store, reqFor("event-in-a3", "sha256:event-in-a")).ApprovalRef; got != refA {
+		t.Fatalf("same input, new EventID, approved-unconsumed approval: ref = %q, want reuse of %q", got, refA)
+	}
+
+	members, err := client.SMembers(ctx, edgeApprovalTupleIndexKey(tenant, sess, exec, reuseTupleActionHash)).Result()
+	if err != nil {
+		t.Fatalf("SMembers tuple index: %v", err)
+	}
+	want := []string{refA, refB, refC}
+	sort.Strings(members)
+	sort.Strings(want)
+	if !reflect.DeepEqual(members, want) {
+		t.Fatalf("tuple index = %#v, want exactly the three approvals %#v", members, want)
+	}
+
+	mustApproveApproval(t, ctx, store, tenant, refB, base.Add(time.Minute))
+	mustClaimWithBinding(t, ctx, store, refB, reqB, base.Add(2*time.Minute))
+	mustClaimWithBinding(t, ctx, store, refA, reqA, base.Add(2*time.Minute))
+}
+
+func TestFirstLiveTupleApproval_ReusesOnlySamePolicySnapshot(t *testing.T) {
+	ctx := context.Background()
+	base := time.Date(2026, 5, 1, 20, 30, 0, 0, time.UTC)
+	store, _, _, cleanup := newRedisEdgeStore(t, WithClock(func() time.Time { return base }))
+	defer cleanup()
+
+	// Production MCP sessions and executions carry no policy snapshot
+	// (ensureMCPHTTPTraceParents), so parent validation does not pin one.
+	const tenant, sess, exec = "tenant-a", "sess-reuse-snapshot", "exec-reuse-snapshot"
+	session := validStoreSession(tenant, sess, "principal-a", base)
+	session.PolicySnapshot = ""
+	if err := store.CreateSession(ctx, session); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	execution := validStoreExecution(tenant, sess, exec, base.Add(time.Second), func(e *AgentExecution) { e.PolicySnapshot = "" })
+	if err := store.CreateExecution(ctx, execution); err != nil {
+		t.Fatalf("CreateExecution: %v", err)
+	}
+	appendApprovalEvent(t, ctx, store, tenant, sess, exec, "event-snap-1", "sha256:same-input", "policy-v1", base.Add(3*time.Second))
+	appendApprovalEvent(t, ctx, store, tenant, sess, exec, "event-snap-2", "sha256:same-input", "policy-v2", base.Add(4*time.Second))
+
+	req1 := reuseTupleRequest(tenant, sess, exec, "event-snap-1", "sha256:same-input", "policy-v1", base)
+	req2 := reuseTupleRequest(tenant, sess, exec, "event-snap-2", "sha256:same-input", "policy-v2", base)
+	ref1 := mustEnqueueApproval(t, ctx, store, req1).ApprovalRef
+	approval2 := mustEnqueueApproval(t, ctx, store, req2)
+	if approval2.ApprovalRef == ref1 {
+		t.Fatalf("EnqueueApproval handed the policy-v1 approval %q to a policy-v2 request (task-29afcbe9); want a fresh approval", ref1)
+	}
+	if approval2.PolicySnapshot != "policy-v2" || approval2.EventID != "event-snap-2" {
+		t.Fatalf("approval 2 = snapshot %q event %q, want policy-v2 event-snap-2", approval2.PolicySnapshot, approval2.EventID)
+	}
+
+	mustApproveApproval(t, ctx, store, tenant, approval2.ApprovalRef, base.Add(time.Minute))
+	mustClaimWithBinding(t, ctx, store, approval2.ApprovalRef, req2, base.Add(2*time.Minute))
 }
 
 func TestRedisStoreApprovalRejectedAndExpiredCannotBeClaimed(t *testing.T) {

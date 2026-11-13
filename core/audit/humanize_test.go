@@ -91,9 +91,9 @@ func TestHumanSummary_RepresentativeRows(t *testing.T) {
 				AgentName: "Claude Code",
 				Extra: map[string]string{
 					"tool_name":     "Bash",
-					"api_key":       secretCanary,                 // not allowlisted → never read
-					"authorization": "Bearer " + secretCanary,     // not allowlisted
-					"password":      "hunter2",                    // not allowlisted
+					"api_key":       secretCanary,             // not allowlisted → never read
+					"authorization": "Bearer " + secretCanary, // not allowlisted
+					"password":      "hunter2",                // not allowlisted
 				},
 			},
 			mustContain: []string{"Claude Code", "Bash"},

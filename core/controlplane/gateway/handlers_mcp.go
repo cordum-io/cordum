@@ -127,9 +127,10 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 	resourceRegistry.SetConfig(cfg.Raw)
 
 	// Per-tool approval gate. Requires a working Redis client — on dev
-	// deploys without one we skip wiring and the registry falls back to
-	// permissive behaviour. Production refuses to start without Redis
-	// elsewhere, so reaching this path in prod means degraded mode.
+	// deploys without one the gate is not wired and the registry fails
+	// closed: every RequiresApproval tool returns ErrApprovalGateUnavailable
+	// (-32097). Production refuses to start without Redis elsewhere, so
+	// reaching this path in prod means degraded mode.
 	var approvalStore *MCPApprovalStore
 	var approvalHandler *mcpApprovalHandler
 	// approvalGate is hoisted to function scope so the EDGE-102 boot
@@ -178,7 +179,7 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 			slog.Warn("mcp approval gate enabled but preapproval+invariant lookup unavailable: unexpected concrete type")
 		}
 	} else {
-		slog.Warn("mcp approval gate disabled: redis client unavailable — RequiresApproval tools will not be gated")
+		slog.Warn("mcp approval gate unavailable: redis client unavailable — RequiresApproval tools are DISABLED (fail closed)")
 	}
 
 	serviceBridge := s.newMCPServiceBridge()
@@ -510,9 +511,9 @@ func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentI
 }
 
 // resolveMCPIdentity resolves the agent identity bound to the request's
-// authenticated principal (agent:by-worker link), scoped to the request
-// tenant. Per ruling Q4, X-Agent-Id may confirm that identity but never
-// select one: a header that names any other ID resolves to nothing.
+// authenticated principal (its worker link in the request tenant). Per
+// ruling Q4, X-Agent-Id may confirm that identity but never select one: a
+// header that names any other ID resolves to nothing.
 //
 // agentID is the bound identity ID, or "" when the principal is unbound,
 // bound to another tenant, or contradicted by the header. It is the only
@@ -536,15 +537,14 @@ func (s *server) resolveMCPIdentity(r *http.Request) (agentID string, identity *
 	if principal == "" {
 		return "", nil
 	}
-	bound, err := s.agentIdentityStore.GetByWorkerID(ctx, principal)
+	bound, err := s.agentIdentityStore.GetByWorkerIDForTenant(ctx, tenant, principal)
 	if err != nil {
 		slog.Warn("mcp identity lookup failed", "tenant", tenant, "err", err)
 		return "", nil
 	}
-	// GetByWorkerID uses an empty-tenant store lookup internally (the
-	// system-level bypass that skips the tenant check); enforce tenant
-	// isolation here so a worker credential bound to another tenant's agent
-	// cannot apply that agent's AllowedTools / AllowedServers / RiskTier.
+	// The store resolves only within the request tenant. Keep this check as
+	// defense in depth so a store regression cannot apply another tenant's
+	// AllowedTools / AllowedServers / RiskTier to this request.
 	if bound == nil || strings.TrimSpace(bound.TenantID) != tenant {
 		return "", nil
 	}
@@ -1100,6 +1100,9 @@ func (s *server) newMCPServiceBridge() mcp.ServiceBridge {
 		return mcp.NewDirectServiceBridge(mcp.DirectServiceBridgeConfig{})
 	}
 	return mcp.NewDirectServiceBridge(mcp.DirectServiceBridgeConfig{
+		// Only create_workflow is wired among the 7 mutating hooks; the
+		// others stay nil and return mcp.ErrBridgeUnavailable.
+		CreateWorkflowFunc: s.mcpCreateWorkflow,
 		SubmitJobFunc: func(ctx context.Context, req mcp.SubmitJobInput) (*mcp.SubmitJobOutput, error) {
 			body := map[string]any{
 				"prompt":   req.Prompt,
@@ -1292,6 +1295,48 @@ func (s *server) newMCPServiceBridge() mcp.ServiceBridge {
 			return out, nil
 		},
 	})
+}
+
+// mcpCreateWorkflow backs cordum_create_workflow. It runs the real
+// POST /api/v1/workflows handler under the caller's ctx, so permission
+// (workflows-write or admin), tenant resolution and validation are
+// identical to the REST endpoint. The registry's approval gate has
+// already admitted the call before this runs. Idempotency-Key is not
+// forwarded: handleCreateWorkflow does not honor it.
+func (s *server) mcpCreateWorkflow(ctx context.Context, req mcp.CreateWorkflowInput) (*mcp.CreateWorkflowOutput, error) {
+	body := map[string]any{"steps": req.Steps}
+	for key, value := range map[string]string{
+		"id": req.ID, "name": req.Name, "description": req.Description,
+		"org_id": req.OrgID, "team_id": req.TeamID, "version": req.Version,
+	} {
+		if strings.TrimSpace(value) != "" {
+			body[key] = strings.TrimSpace(value)
+		}
+	}
+	if req.TimeoutSec != 0 {
+		body["timeout_sec"] = req.TimeoutSec
+	}
+	if req.Config != nil {
+		body["config"] = req.Config
+	}
+	if req.Parameters != nil {
+		body["parameters"] = req.Parameters
+	}
+	if req.InputSchema != nil {
+		body["input_schema"] = req.InputSchema
+	}
+	status, payload, raw, err := s.invokeMCPJSONHandler(ctx, http.MethodPost, "/api/v1/workflows", nil, nil, body, s.handleCreateWorkflow)
+	if err != nil {
+		return nil, err
+	}
+	if status < 200 || status >= 300 {
+		return nil, mcp.NewBridgeErrorFromHTTP(status, raw)
+	}
+	id := strings.TrimSpace(mcpBridgeString(payload["id"]))
+	if id == "" {
+		return nil, mcp.NewBridgeError(http.StatusBadGateway, "invalid_response", "missing id in create-workflow response", payload)
+	}
+	return &mcp.CreateWorkflowOutput{WorkflowID: id, Version: strings.TrimSpace(req.Version)}, nil
 }
 
 func (s *server) invokeMCPJSONHandler(

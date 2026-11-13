@@ -33,8 +33,8 @@ A denied call produces:
 | `result_count` | Length of `result.Content`. |
 | `result_hash` | SHA-256 of the full result JSON — proves result integrity without logging the body. |
 | `latency_ms` | Wall-clock time from Start to Finish, in milliseconds. |
-| `approval_status` | `consumed` when an approval_id was present on ctx; `none` otherwise. |
-| `approval_id` | Correlates to the matching `mcp.tool_approval(outcome=consume)` event. Present only when an approval was consumed. |
+| `approval_status` | `required` when the call enqueued a pending approval; `consumed` when a gate recorded a consumed human approval for the call; `preapproved` when `PreapprovedMutatingTools` waived the registry gate's approval and no consumed approval was recorded; `none` otherwise. When both consumed and preapproved apply, `consumed` wins. |
+| `approval_id` | With `consumed`, the consumed approval: an MCP approval record id (correlates to the matching `mcp.tool_approval(outcome=consume)` event), or the Edge `approval_ref` on an `_approval_ref` resume. With `required`, the pending approval's id. Absent for `preapproved` and `none`. |
 | `server_id` | Outbound only — the external MCP server's identifier. |
 | `error_code` | Present only when `result_type=error`; truncated to 512 bytes. |
 | `identity_missing` | `true` when the call ran with an empty agent_id. Flag legacy call paths for cleanup. |

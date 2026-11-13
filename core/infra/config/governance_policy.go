@@ -46,14 +46,14 @@ const (
 // audit/SIEM and HTTP error envelopes; changing them is a breaking
 // change.
 const (
-	GovernanceRuleUnverifiedIssuer            = "ma_unverified_issuer"
-	GovernanceRuleUnverifiedTrustAssertion    = "ma_unverified_trust_assertion"
-	GovernanceRuleChildBypass                 = "ma_child_bypass"
-	GovernanceRuleApprovalBypassMissingRecord = "ma_approval_bypass_missing_record"
-	GovernanceRuleIssuerChainStale            = "ma_issuer_chain_stale"
-	GovernanceRuleCrossTenant                 = "ma_cross_tenant"
-	GovernanceRuleScopeEscalation             = "ma_scope_escalation"
-	GovernanceRuleResourceEscalation          = "ma_resource_escalation"
+	GovernanceRuleUnverifiedIssuer              = "ma_unverified_issuer"
+	GovernanceRuleUnverifiedTrustAssertion      = "ma_unverified_trust_assertion"
+	GovernanceRuleChildBypass                   = "ma_child_bypass"
+	GovernanceRuleApprovalBypassMissingRecord   = "ma_approval_bypass_missing_record"
+	GovernanceRuleIssuerChainStale              = "ma_issuer_chain_stale"
+	GovernanceRuleCrossTenant                   = "ma_cross_tenant"
+	GovernanceRuleScopeEscalation               = "ma_scope_escalation"
+	GovernanceRuleResourceEscalation            = "ma_resource_escalation"
 	GovernanceRuleSharedContextUnverifiedWriter = "ma_shared_context_unverified_writer"
 	// GovernanceRuleIssuerRootNotAllowed denies an issuer chain whose
 	// root is not in the operator-configured allowlist. Distinct from

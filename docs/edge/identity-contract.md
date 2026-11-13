@@ -95,12 +95,26 @@ evidence record.
 
 ### The (tenant, session, execution, action_hash) tuple
 
-`core/edge/approval_store_redis.go:68`
 `edgeApprovalTupleIndexKey(TenantID, SessionID, ExecutionID, ActionHash)`
-is the SMembers-indexed key for approval reusability per EDGE-042. An
-approval enqueued under the tuple is reusable IFF a subsequent
-evaluate produces the SAME tuple AND the approval is not yet
-terminal-resolved.
+in `core/edge/approval_store_redis.go` is the SMembers-indexed key for
+approval reusability per EDGE-042. `EnqueueApproval` scans that index
+(`firstLiveTupleApproval`) and returns an existing approval only when it is:
+
+- pending, or approved and not yet consumed;
+- unexpired; and
+- carrying the request's `input_hash` and `policy_snapshot`.
+
+Otherwise it mints a new pending approval bound to the request's own event.
+`event_id` is not compared, so an identical retry that emits a new event
+keeps getting the existing ref. Reuse therefore matches the binding
+`ClaimApproval` enforces: a returned ref is one the caller can claim.
+
+Edge evaluate's `action_hash` (`edgeEvaluateActionHash`) already folds in
+`input_hash` and `policy_snapshot`, so evaluate behaves as before. An MCP
+`action_hash` (`ActionTupleHash`) leaves out the non-path arguments, so
+overlapping MCP holds of one tool with different arguments, or a hold made
+after a policy change, each get their own approval, while an identical
+retry keeps the existing ref.
 
 ### Why action_hash alone is NOT enough for reuse
 

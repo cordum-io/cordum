@@ -1,0 +1,23 @@
+# Thresholds are workload inputs, not measured baselines.
+name: mcp-tool-call
+description: Read-only cordum_status JSON-RPC tools/call over MCP HTTP.
+latency_scope: http
+target: {base_url_env: PERF_MCP_URL, api_key_env: CORDUM_API_KEY, tenant_env: CORDUM_TENANT_ID}
+prerequisites:
+  - Disposable cordum-mcp with MCP_TRANSPORT=http; PERF_MCP_URL points to MCP_HTTP_ADDR with an HTTP scheme.
+  - Adapter initializes an authenticated MCP session; policy allows cordum_status.
+  - JetStream and NATS /jsz monitoring enabled for contextual CORDUM_JOBS depth only.
+  - cordum_status enqueues no jobs; this depth is not an MCP request-queue measurement.
+request_mix:
+  - name: status
+    weight: 1
+    requests:
+      - kind: mcp.tools.call
+        payload: {jsonrpc: '2.0', id: '{{seq}}', method: tools/call, params: {name: cordum_status, arguments: {}}}
+profiles:
+  smoke: {steps: [{concurrency: 1, duration: 1s}]}
+  standard: {steps: [{concurrency: 4, duration: 10s}]}
+  saturation-search: {steps: [{concurrency: 1, duration: 10s}, {concurrency: 4, duration: 10s}, {concurrency: 16, duration: 10s}]}
+saturation: {p99_ms: 1000, error_rate: 0.01, min_throughput_gain_pct: 5}
+queue_depth: {kind: nats_jsz, url_env: PERF_QUEUE_URL, stream: CORDUM_JOBS, interval_ms: 100}
+tolerance: {throughput_pct: 10, p99_pct: 10}

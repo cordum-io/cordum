@@ -738,7 +738,12 @@ func (s *RedisStore) firstLiveTupleApproval(ctx context.Context, tx *redis.Tx, t
 			}
 			return nil, err
 		}
-		if approval.TenantID != req.TenantID || approval.SessionID != req.SessionID || approval.ExecutionID != req.ExecutionID || approval.ActionHash != req.ActionHash {
+		// Reuse only what ClaimApproval would accept (classifyApprovalClaimMismatch). MCP's
+		// ActionHash leaves out non-path args and the snapshot, so a weaker match hands back
+		// a ref the caller can never claim (task-29afcbe9). EventID is deliberately not
+		// compared: an identical retry emits a new pre-event and must keep the same ref.
+		if approval.TenantID != req.TenantID || approval.SessionID != req.SessionID || approval.ExecutionID != req.ExecutionID || approval.ActionHash != req.ActionHash ||
+			approval.InputHash != req.InputHash || approval.PolicySnapshot != req.PolicySnapshot {
 			continue
 		}
 		if approval.ExpiresAt != nil && !approval.ExpiresAt.After(s.now().UTC()) {

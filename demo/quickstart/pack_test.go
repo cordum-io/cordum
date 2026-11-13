@@ -82,9 +82,9 @@ func TestPolicyFragmentParses(t *testing.T) {
 		t.Fatalf("expected 3 rules, got %d", len(policy.Rules))
 	}
 	want := map[string]string{
-		"demo-quickstart-greet-allow":    "allow",
-		"demo-quickstart-delete-deny":    "deny",
-		"demo-quickstart-admin-approve":  "require_approval",
+		"demo-quickstart-greet-allow":   "allow",
+		"demo-quickstart-delete-deny":   "deny",
+		"demo-quickstart-admin-approve": "require_approval",
 	}
 	got := map[string]string{}
 	for _, rule := range policy.Rules {
@@ -195,4 +195,3 @@ func stringIndex(haystack, needle string) int {
 	}
 	return -1
 }
-

@@ -91,7 +91,7 @@ func TestWorkerCredentialAPIRotationPreservesOrReplacesProofKey(t *testing.T) {
 	if err != nil || record == nil || record.ProofKeyID != "key-a" || record.AgentID != agent.ID {
 		t.Fatalf("preserving rotation record=%+v err=%v", record, err)
 	}
-	linked, err := s.agentIdentityStore.GetByWorkerID(context.Background(), "worker-proof")
+	linked, err := s.agentIdentityStore.GetByWorkerIDForTenant(context.Background(), "default", "worker-proof")
 	if err != nil || linked == nil || linked.ID != agent.ID {
 		t.Fatalf("preserving rotation lost agent link: agent=%+v err=%v", linked, err)
 	}
@@ -118,7 +118,7 @@ func TestWorkerCredentialAPIRotationRejectsMissingAuthoritativeLink(t *testing.T
 	if rec := createProofCredentialRequest(t, s, "default", body); rec.Code != http.StatusCreated {
 		t.Fatalf("create status = %d: %s", rec.Code, rec.Body.String())
 	}
-	if err := s.agentIdentityStore.UnlinkWorker(context.Background(), "worker-proof"); err != nil {
+	if err := s.agentIdentityStore.UnlinkWorker(context.Background(), "default", "worker-proof"); err != nil {
 		t.Fatalf("UnlinkWorker: %v", err)
 	}
 	rotation, err := json.Marshal(map[string]any{"worker_id": "worker-proof"})

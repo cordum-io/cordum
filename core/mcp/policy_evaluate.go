@@ -224,12 +224,24 @@ type UpstreamToolCaller interface {
 	Invoke(ctx context.Context, params ToolCallParams) (*ToolCallResult, error)
 }
 
-// ApprovalHandoff routes a REQUIRE_HUMAN gate decision into the
-// gateway's existing MCPApprovalStore lifecycle. The gateway-side
-// adapter (gatewayApprovalGate.ConsumeActionGateDecision) returns
-// the approval reference the caller surfaces to the client.
+// ApprovalHandoff routes a REQUIRE_HUMAN gate decision into the approval
+// lifecycle: under the policy gate, the Edge approval mint. The
+// gateway-side adapter (gatewayApprovalGate.ConsumeActionGateDecision)
+// returns the approval reference the caller surfaces to the client.
+// The contract is a non-empty approval reference or an error: an empty
+// or blank reference fails closed with ErrApprovalGateMisconfigured
+// (-32097) and is never cached (task-06784e6d).
 type ApprovalHandoff interface {
 	ConsumeActionGateDecision(ctx context.Context, dec PolicyDecision, ctxData ToolCallApprovalContext) (string, error)
+}
+
+// ConsumedApprovalAuthorizer is the optional ApprovalHandoff capability
+// that authorizes a REQUIRE_HUMAN call resumed with the Edge approval the
+// server consumed for it (task-cd9df90a C2). It re-applies the handoff's
+// security floor and never mints. A handoff without it cannot resume a
+// call: the call fails closed with ErrApprovalGateMisconfigured.
+type ConsumedApprovalAuthorizer interface {
+	AuthorizeConsumedApproval(ctx context.Context, ctxData ToolCallApprovalContext) error
 }
 
 // ToolCallApprovalContext carries the non-descriptor metadata the
@@ -244,6 +256,10 @@ type ApprovalHandoff interface {
 // derives. Without this field the mint had no way to compute the
 // args hash and was storing ActionHash in its place — surfacing as
 // ApprovalConflictKindArgsMismatch on every legitimate retry.
+//
+// EventID is the policy pre-event (mcp.tool.pre) the Edge approval binds
+// to: EnqueueApproval requires it to name an existing event whose
+// InputHash and PolicySnapshot match the mint (task-63400922).
 type ToolCallApprovalContext struct {
 	Tenant     string
 	AgentID    string
@@ -251,6 +267,11 @@ type ToolCallApprovalContext struct {
 	Tool       string
 	ActionHash string
 	Args       json.RawMessage
+	EventID    string
+	// PolicySnapshot is the pre-event's stamp, compared with the current
+	// snapshot at Edge mint time (task-11b3c5ef). Optional: blank keeps
+	// today's mint behavior.
+	PolicySnapshot string
 }
 
 // ToolCallDeps bundles the production wiring EvaluateToolCall and
@@ -269,6 +290,10 @@ type ToolCallDeps struct {
 	ApprovalHandoff ApprovalHandoff
 	Clock           func() time.Time
 	EventIDFactory  func() string
+	// PolicySnapshot, when set, stamps the pre-event with the policy
+	// snapshot an Edge approval minted for the call binds to
+	// (task-63400922). Optional: nil leaves the event's snapshot empty.
+	PolicySnapshot func(context.Context) string
 	// DedupeState scopes retry dedupe to a single caller (HTTP server,
 	// test fixture) instead of a global map. Production wires this to
 	// either a NewInProcessDedupeStore (single-instance gateway) or a
@@ -302,6 +327,29 @@ type EvaluateToolCallResult struct {
 	Decision    PolicyDecision
 	PreEvent    *edge.AgentActionEvent
 	ArtifactPtr *edge.ArtifactPointer
+}
+
+// PolicyPreEvent identifies the mcp.tool.pre event the policy evaluator
+// emitted for the in-flight tool call. InvokeToolWithPolicy places it on
+// the ctx it hands upstream, so the registry approval gate can bind an
+// Edge approval to that real parent event (task-63400922 E1).
+type PolicyPreEvent struct {
+	EventID        string
+	InputHash      string
+	PolicySnapshot string
+}
+
+type policyPreEventKey struct{}
+
+func withPolicyPreEvent(ctx context.Context, pre PolicyPreEvent) context.Context {
+	return context.WithValue(ctx, policyPreEventKey{}, pre)
+}
+
+// PolicyPreEventFromContext returns the policy pre-event of the in-flight
+// tool call; ok is false when the policy gate did not evaluate it.
+func PolicyPreEventFromContext(ctx context.Context) (PolicyPreEvent, bool) {
+	pre, ok := ctx.Value(policyPreEventKey{}).(PolicyPreEvent)
+	return pre, ok
 }
 
 // errMissingMCPMetadata is returned when the calling middleware did
@@ -540,6 +588,14 @@ func EvaluateToolCall(ctx context.Context, deps ToolCallDeps, params ToolCallPar
 		ToolName:    params.Name,
 		ActionName:  params.Name,
 	}
+	// Approval binding (task-63400922 E2): EnqueueApproval checks an Edge
+	// approval's InputHash and PolicySnapshot against its parent event, so
+	// stamp both. Hash the RAW params, as the mint and the consume do,
+	// never redactedArgs.
+	_, event.InputHash = BuildMCPApprovalBinding(meta.Tenant, server, params, "")
+	if deps.PolicySnapshot != nil {
+		event.PolicySnapshot = deps.PolicySnapshot(ctx)
+	}
 
 	inlineRedacted, artifactPtr, err := materializeRedactedPayload(ctx, deps, redactedArgs, event, edge.ArtifactTypeMCPRequest)
 	if err != nil {
@@ -771,7 +827,9 @@ func defaultEventIDFactory() string {
 //  2. On DENY: return early with IsError result; failed event already
 //     emitted (EvaluateToolCall flipped kind to mcp.tool.failed).
 //  3. On REQUIRE_HUMAN: hand off to ApprovalHandoff; return
-//     approval-pending result; NO upstream call yet.
+//     approval-pending result; NO upstream call yet. A call that
+//     presents its consumed Edge approval instead proceeds as in 4
+//     (task-cd9df90a).
 //  4. On ALLOW/ALLOW_WITH_CONSTRAINTS: forward to deps.Upstream; emit
 //     post event on success, failed event on upstream error. Both
 //     paths redact the result before emission to preserve the
@@ -810,9 +868,17 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 	// not stashed; dedupeBegin then short-circuits and EvaluateToolCall
 	// surfaces the real missing_mcp_metadata error below.
 	dedupeID := semanticDedupeKeyForCall(ctx, params, server)
-	winner, hit := dedupeBegin(ctx, deps, dedupeID)
-	if hit != nil {
-		return hit.result, hit.err
+	consumed := ConsumedApprovalFromContext(ctx)
+	var winner *dedupeWinner
+	if consumed != nil {
+		// task-cd9df90a C3: a resume executes. It never replays the cached
+		// pending result and never waits on another call's slot.
+		winner = dedupeBeginResume(deps, dedupeID)
+	} else {
+		var hit *dedupeOutcome
+		if winner, hit = dedupeBegin(ctx, deps, dedupeID); hit != nil {
+			return hit.result, hit.err
+		}
 	}
 	// dedupeFinish must run on every return path below when we won the
 	// slot. Use a named return + deferred publisher so the singleflight
@@ -853,6 +919,17 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 	dec := evalResult.Decision
 	switch {
 	case dec.requiresHuman():
+		// task-cd9df90a: a call resumed with its consumed Edge approval
+		// executes; a ref the server never consumed fails closed instead
+		// of minting again.
+		if consumed != nil {
+			finalResult, finalErr = resumeConsumedApproval(ctx, deps, params, server, evalResult, consumed, stableEventID)
+			return finalResult, finalErr
+		}
+		if carriesApprovalRef(params.Arguments) {
+			finalErr = fmt.Errorf("%w: approval ref not consumed", ErrApprovalGateMisconfigured)
+			return nil, finalErr
+		}
 		// Require deps.ApprovalHandoff: without it we cannot mint an
 		// approval reference, so returning "approval pending: " with an
 		// empty ref leaves the caller no way to resume — the only safe
@@ -884,9 +961,19 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 			// mint side can compute the same InputHash that
 			// ProcessApprovalClaim's BuildMCPApprovalBinding produces.
 			Args: params.Arguments,
+			// task-63400922: the Edge approval binds to this call's
+			// pre-event, never to the agent id.
+			EventID:        evalResult.PreEvent.EventID,
+			PolicySnapshot: evalResult.PreEvent.PolicySnapshot,
 		})
 		if herr != nil {
 			finalErr = fmt.Errorf("approval handoff: %w", herr)
+			return nil, finalErr
+		}
+		// task-06784e6d R3: "approval pending: " with no ref leaves the
+		// caller nothing to resume. Fail closed; as an error it is never cached.
+		if strings.TrimSpace(ref) == "" {
+			finalErr = fmt.Errorf("%w: approval handoff returned no approval reference", ErrApprovalGateMisconfigured)
 			return nil, finalErr
 		}
 		approvalPending := &ToolCallResult{
@@ -918,25 +1005,95 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 		skipDedupeCache = true
 		return denyResult, nil
 	}
-	if deps.Upstream == nil {
-		finalErr = errors.New("deps.Upstream is required for ALLOW decisions")
-		return nil, finalErr
+	// An ALLOW can also execute a call whose claim consumed an approval, for
+	// example once the taint lookup has recovered since the hold. Its event
+	// still names that approval (task-74f4c01e). Audit only: nothing is
+	// authorized by it, and the marker stays unused for the registry gate.
+	approvalRef := ""
+	if consumed != nil {
+		approvalRef = consumed.Ref
 	}
-	upstreamResult, upstreamErr := deps.Upstream.Invoke(ctx, params)
+	finalResult, finalErr = invokeUpstreamWithEvents(ctx, deps, params, evalResult, approvalRef, stableEventID)
+	return finalResult, finalErr
+}
+
+// resumeConsumedApproval executes a REQUIRE_HUMAN call resumed with the
+// Edge approval handleToolsCall consumed for it (task-cd9df90a). The
+// approval must bind this exact call (C1), and the handoff re-applies its
+// security floor first (C2). The approval must also have been claimed under
+// the policy snapshot this call was evaluated under. A refusal executes
+// nothing, and the claim has already used the approval up.
+func resumeConsumedApproval(ctx context.Context, deps ToolCallDeps, params ToolCallParams, server string, evalResult EvaluateToolCallResult, consumed *ConsumedApproval, eventID string) (*ToolCallResult, error) {
+	callMeta, _ := CallMetadataFromContext(ctx)
+	actionHash, inputHash := BuildMCPApprovalBinding(callMeta.Tenant, server, params, "")
+	if !consumed.Binds(params.Name, actionHash, inputHash) {
+		return nil, &edge.ApprovalConflictError{
+			Kind:   edge.ApprovalConflictKindArgsMismatch,
+			Reason: "consumed approval does not bind this call",
+		}
+	}
+	// The hashes above do not cover the policy snapshot. A publish between
+	// the claim's read and the pre-event stamp means the approval was
+	// claimed under the old policy and this REQUIRE_HUMAN was decided under
+	// the new one. A blank side is not a confirmed change, as at the Edge
+	// mint (gateway edgeMintSnapshotDrift): a real store refuses a blank
+	// claim, and a blank stamp means no snapshot provider stamps events.
+	claimed, stamped := strings.TrimSpace(consumed.PolicySnapshot), strings.TrimSpace(evalResult.PreEvent.PolicySnapshot)
+	if claimed != "" && stamped != "" && claimed != stamped {
+		return nil, fmt.Errorf("%w: policy snapshot %s changed to %s after the approval claim", ErrPolicySnapshotChanged, claimed, stamped)
+	}
+	authorizer, ok := deps.ApprovalHandoff.(ConsumedApprovalAuthorizer)
+	if !ok {
+		return nil, fmt.Errorf("%w: handoff cannot authorize a consumed approval", ErrApprovalGateMisconfigured)
+	}
+	if err := authorizer.AuthorizeConsumedApproval(ctx, ToolCallApprovalContext{
+		Tenant:     evalResult.PreEvent.TenantID,
+		AgentID:    callMeta.AgentID,
+		Server:     server,
+		Tool:       params.Name,
+		ActionHash: actionHash,
+		Args:       params.Arguments,
+		EventID:    evalResult.PreEvent.EventID,
+	}); err != nil {
+		return nil, fmt.Errorf("approval handoff: %w", err)
+	}
+	if h := InvocationHandleFromContext(ctx); h != nil {
+		h.MarkApprovalConsumed(consumed.Ref)
+	}
+	return invokeUpstreamWithEvents(ctx, deps, params, evalResult, consumed.Ref, eventID)
+}
+
+// invokeUpstreamWithEvents executes an authorized call (an ALLOW, or a
+// resume whose consumed approval is approvalRef) and emits its post or
+// failed event. The events carry approvalRef, empty unless the call's claim
+// consumed an approval.
+func invokeUpstreamWithEvents(ctx context.Context, deps ToolCallDeps, params ToolCallParams, evalResult EvaluateToolCallResult, approvalRef, eventID string) (*ToolCallResult, error) {
+	if deps.Upstream == nil {
+		return nil, errors.New("deps.Upstream is required for ALLOW decisions")
+	}
+	dec := evalResult.Decision
+	// Only the upstream call sees the pre-event: the registry approval gate
+	// binds its Edge mint to it (task-63400922 E1). Events and dedupe keep
+	// ctx.
+	upstreamCtx := withPolicyPreEvent(ctx, PolicyPreEvent{
+		EventID:        evalResult.PreEvent.EventID,
+		InputHash:      evalResult.PreEvent.InputHash,
+		PolicySnapshot: evalResult.PreEvent.PolicySnapshot,
+	})
+	upstreamResult, upstreamErr := deps.Upstream.Invoke(upstreamCtx, params)
 	if upstreamErr != nil {
 		failed := newPostEvent(evalResult.PreEvent, deps.Clock, edge.EventKindMCPToolFailed, dec)
 		failed.ErrorMessage = sanitizeUpstreamError(upstreamErr)
+		failed.ApprovalRef = approvalRef
 		if emitErr := deps.EventEmitter.Emit(ctx, failed); emitErr != nil {
-			finalErr = fmt.Errorf("emit failed event: %w", emitErr)
-			return nil, finalErr
+			return nil, fmt.Errorf("emit failed event: %w", emitErr)
 		}
-		finalErr = upstreamErr
 		return nil, upstreamErr
 	}
 	post := newPostEvent(evalResult.PreEvent, deps.Clock, edge.EventKindMCPToolPost, dec)
+	post.ApprovalRef = approvalRef
 	if err := deps.EventEmitter.Emit(ctx, post); err != nil {
-		finalErr = fmt.Errorf("emit post event: %w", err)
-		return nil, finalErr
+		return nil, fmt.Errorf("emit post event: %w", err)
 	}
 	// Best-effort content session-taint (DoD#1): scan the read RESULT for a
 	// prompt injection and, on a hit, persist a taint keyed by (tenant, session)
@@ -946,8 +1103,7 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 	// inside is logged and never alters this read's result or decision. A dedupe
 	// cache-hit read returns via dedupeBegin without re-invoking upstream and so
 	// won't re-scan — fine: the call that won the slot already persisted the taint.
-	scanResultForSessionTaint(ctx, deps, params.Name, upstreamResult, stableEventID)
-	finalResult = upstreamResult
+	scanResultForSessionTaint(ctx, deps, params.Name, upstreamResult, eventID)
 	return upstreamResult, nil
 }
 
@@ -1302,9 +1458,14 @@ type dedupeOutcome struct {
 // type. A winner from the in-process backend holds the *dedupeEntry
 // whose done channel must be closed when finishing; a Redis-backed
 // winner publishes a completed wire record (or deletes on error).
+//
+// reserved is the pending value the winner put in the store. Finishing
+// compares the slot against it, so a winner whose slot a resume took over
+// (dedupeBeginResume) leaves the new owner's slot alone.
 type dedupeWinner struct {
 	inProcessEntry *dedupeEntry
 	redisBacked    bool
+	reserved       any
 }
 
 // dedupeBegin reserves the singleflight slot for the supplied semantic
@@ -1358,13 +1519,32 @@ func dedupeBegin(ctx context.Context, deps ToolCallDeps, key string) (*dedupeWin
 	}
 }
 
+// dedupeBeginResume takes the slot over for a call resumed with a consumed
+// approval (task-cd9df90a C3). The key holds the REQUIRE_HUMAN pending
+// result or a ref-less call in flight; one Store replaces either, so the
+// resume never waits on or adopts another call's outcome and there is no
+// moment at which a ref-less call can reserve the key instead. From then
+// on ref-less calls wait for the resume's outcome, and the call that held
+// the slot before can no longer publish to it or delete it: dedupeFinish
+// and dedupeFinishNoCache act only on the winner's own reservation. A nil
+// return means dedupe is off.
+func dedupeBeginResume(deps ToolCallDeps, key string) *dedupeWinner {
+	if deps.DedupeState == nil || key == "" {
+		return nil
+	}
+	_, isRedis := deps.DedupeState.(*RedisDedupeStore)
+	fresh := newPendingDedupeValue(isRedis)
+	deps.DedupeState.Store(key, fresh)
+	return makeWinner(fresh, isRedis)
+}
+
 // newPendingDedupeValue returns the value the winner-selection LoadOrStore
 // passes to the backing store. The two backends accept distinct wire
 // types so the loser-side type switch in dedupeBegin can dispatch on
 // the returned value without a second type-probe round trip.
 func newPendingDedupeValue(isRedis bool) any {
 	if isRedis {
-		return &redisDedupeRecord{State: redisDedupeStatePending}
+		return &redisDedupeRecord{State: redisDedupeStatePending, Owner: defaultEventIDFactory()}
 	}
 	return &dedupeEntry{done: make(chan struct{})}
 }
@@ -1373,10 +1553,10 @@ func newPendingDedupeValue(isRedis bool) any {
 // opaque dedupeWinner handle dedupeFinish consumes.
 func makeWinner(fresh any, isRedis bool) *dedupeWinner {
 	if isRedis {
-		return &dedupeWinner{redisBacked: true}
+		return &dedupeWinner{redisBacked: true, reserved: fresh}
 	}
 	entry, _ := fresh.(*dedupeEntry)
-	return &dedupeWinner{inProcessEntry: entry}
+	return &dedupeWinner{inProcessEntry: entry, reserved: fresh}
 }
 
 // decodeRedisCompletedOutcome reconstructs the safe duplicate
@@ -1618,7 +1798,7 @@ func dedupeFinish(deps ToolCallDeps, key string, winner *dedupeWinner, result *T
 			// Delete before close prevents fresh arrivals from finding
 			// a completed error entry. Existing waiters already hold
 			// entry and still observe result/err via close's happens-before.
-			deps.DedupeState.Delete(key)
+			deps.DedupeState.CompareAndDelete(key, winner.reserved)
 		}
 		close(entry.done)
 		return
@@ -1628,7 +1808,7 @@ func dedupeFinish(deps ToolCallDeps, key string, winner *dedupeWinner, result *T
 			return
 		}
 		if err != nil {
-			deps.DedupeState.Delete(key)
+			deps.DedupeState.CompareAndDelete(key, winner.reserved)
 			return
 		}
 		rec, ok := redisDedupeRecordForResult(result)
@@ -1636,10 +1816,10 @@ func dedupeFinish(deps ToolCallDeps, key string, winner *dedupeWinner, result *T
 			// Cannot persist a usable completed record cross-process;
 			// delete so subsequent retries fire fresh upstream rather
 			// than block on a pending record that will never resolve.
-			deps.DedupeState.Delete(key)
+			deps.DedupeState.CompareAndDelete(key, winner.reserved)
 			return
 		}
-		deps.DedupeState.Store(key, rec)
+		deps.DedupeState.CompareAndSwap(key, winner.reserved, rec)
 	}
 }
 
@@ -1655,7 +1835,7 @@ func dedupeFinishNoCache(deps ToolCallDeps, key string, winner *dedupeWinner, re
 		return
 	}
 	if deps.DedupeState != nil && key != "" {
-		deps.DedupeState.Delete(key)
+		deps.DedupeState.CompareAndDelete(key, winner.reserved)
 	}
 	if winner.inProcessEntry != nil {
 		entry := winner.inProcessEntry

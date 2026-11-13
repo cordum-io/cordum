@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -165,22 +166,48 @@ func TestNewHTTPServerRejectsMismatchedInheritedListenerAndClosesIt(t *testing.T
 	_ = attacker.Close()
 }
 
-func TestNewHTTPServerRejectsNonLoopbackInheritedListener(t *testing.T) {
-	ln, err := net.Listen("tcp", "0.0.0.0:0")
-	if err != nil {
-		t.Fatalf("listen non-loopback inherited listener: %v", err)
-	}
-	_, port, err := net.SplitHostPort(ln.Addr().String())
-	if err != nil {
-		_ = ln.Close()
-		t.Fatalf("split listener addr: %v", err)
-	}
-	bindURL := "http://127.0.0.1:" + port + "/v1/edge/hooks/claude"
-	local := testLocalServerForBind(t, bindURL)
+// nonLoopbackStubListener reports a fixed address and opens no socket, so the
+// rejection test never binds a non-loopback interface (a real one makes
+// Windows Firewall prompt on every local run). validateInheritedHTTPListener
+// only reads Addr, and newHTTPServer only calls Close on a rejected listener.
+type nonLoopbackStubListener struct {
+	addr   *net.TCPAddr
+	closes int
+}
 
-	_, _, err = newHTTPServer(testRunConfig(t, bindURL), local, ln)
-	if err == nil || !strings.Contains(err.Error(), "inherited agentd listener must be bound to loopback") {
-		t.Fatalf("error = %v, want non-loopback inherited listener rejection", err)
+func (l *nonLoopbackStubListener) Addr() net.Addr { return l.addr }
+
+func (l *nonLoopbackStubListener) Accept() (net.Conn, error) { return nil, net.ErrClosed }
+
+func (l *nonLoopbackStubListener) Close() error {
+	l.closes++
+	return nil
+}
+
+func TestNewHTTPServerRejectsNonLoopbackInheritedListener(t *testing.T) {
+	const port = 18089
+	cases := []struct {
+		name string
+		ip   net.IP
+	}{
+		{name: "ipv4 unspecified", ip: net.IPv4zero},
+		{name: "ipv6 unspecified", ip: net.IPv6unspecified},
+		{name: "nil ip", ip: nil},
+	}
+	bindURL := "http://127.0.0.1:" + strconv.Itoa(port) + "/v1/edge/hooks/claude"
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ln := &nonLoopbackStubListener{addr: &net.TCPAddr{IP: tc.ip, Port: port}}
+			local := testLocalServerForBind(t, bindURL)
+
+			_, _, err := newHTTPServer(testRunConfig(t, bindURL), local, ln)
+			if err == nil || !strings.Contains(err.Error(), "inherited agentd listener must be bound to loopback") {
+				t.Fatalf("error = %v, want non-loopback inherited listener rejection", err)
+			}
+			if ln.closes != 1 {
+				t.Fatalf("rejected inherited listener closed %d times, want 1", ln.closes)
+			}
+		})
 	}
 }
 

@@ -696,7 +696,7 @@ func TestProcessedKeyTTLMatchesAckWait(t *testing.T) {
 // startTestNATSServer starts an in-process NATS server for testing.
 func startTestNATSServer(t *testing.T, enableJS bool) *natsserver.Server {
 	t.Helper()
-	opts := &natsserver.Options{Port: -1, NoLog: true, NoSigs: true}
+	opts := &natsserver.Options{Host: "127.0.0.1", Port: -1, NoLog: true, NoSigs: true}
 	if enableJS {
 		storeDir := t.TempDir()
 		opts.JetStream = true

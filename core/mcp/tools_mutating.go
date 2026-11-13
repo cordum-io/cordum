@@ -25,9 +25,11 @@ import (
 // tools/call BEFORE the handler runs. When an approval is required
 // and missing, the gate returns -32099 with the approval_id; the
 // handlers below only execute AFTER a human approves and the MCP
-// client retries.
+// client retries. Under the policy gate the resume authority is the
+// Edge approval_ref instead (retry_hint retry_with_approval_ref); see
+// docs/mcp/approval_hold.md. mutatingApprovalHint describes both flows.
 
-const mutatingApprovalHint = "This tool requires human approval by default. On first call, expect a JSON-RPC -32099 error with an approval_id in the data — surface the dashboard link (/approvals?mcp=<id>) to the operator and retry the call after they approve."
+const mutatingApprovalHint = "This tool requires human approval by default. On first call, expect a JSON-RPC -32099 error with an approval_id in the data — surface the dashboard link (/approvals) and the approval_id to the operator, ask them to locate that request, and retry the call after they approve. Exception: when the error data has retry_hint retry_with_approval_ref (the gateway runs with mcp.policy_gate_enabled=true), the approval_id is correlation-only and approving it does not resume the call. Surface the approval_ref and the Edge approvals page (/edge/approvals) instead, and after the operator approves that request, retry the same call with `_approval_ref` set to the approval_ref in the arguments."
 
 // mutatingTags is the common tag set applied to every mutating tool
 // so runtime scope-filter rules can refer to the family as a whole.

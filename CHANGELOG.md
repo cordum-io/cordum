@@ -5,6 +5,312 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+
+- Migrated the shared dashboard DataTable to TanStack React Table 9.3.1 with
+  explicit sorting, sizing and visibility features, preserving its existing
+  rendering and interaction contracts (task-fa2b4cef).
+- The dashboard DataTable primitive exports `DataTableColumn` and
+  `DataTableSorting` aliases; callers import column types from the primitive
+  instead of TanStack, without changing table behavior (task-fc8b600a).
+
+### Added
+
+- Added [failure and partition behavior](docs/contract/failure-behavior.md)
+  (M0-06, task-51b08640): required and current behavior for low-risk,
+  approval-required and protected actions when Redis, NATS, the Safety Kernel,
+  the Gateway as seen from Edge, the approval store, the audit sink, the policy
+  source or the license is unavailable. The contract cites characterization
+  tests and lists unmeasured behavior and gaps with owners. Three new
+  characterization tests accompany it; runtime behavior is unchanged.
+
+- Added `tools/releasequal`: a release qualification record schema and library
+  binding source SHAs to image and binary digests, gates, results and open
+  exceptions (PR2-02, task-fd0efd22). `go run ./tools/releasequal/cmd/release-qual`
+  writes entries, assembles, validates and checks records, and
+  `release-qual publish -- CMD` starts CMD only when every named digest is the
+  qualified one (PR2-02-CLI, task-cc3f03b6). `docker.yml` now builds each
+  release image once and pushes it by digest without tags; the smoke check and
+  the Trivy OS scan run on that pushed digest, and the run uploads a
+  `qualification-record` artifact. Cosign signs that digest, and the release
+  tags are applied to it, only through `release-qual publish`, and the job
+  fails unless every tag resolves to it. If a gate fails on a tag push, the
+  untagged, unsigned digest stays in GHCR and Docker Hub. A push to a
+  `release-dry-run/**` branch runs the same image and record jobs against
+  job-local registries and skips the registry logins, Docker Hub, signing, the
+  SARIF upload, issue creation, the published-image smoke and the Helm chart
+  (PR2-02-IMAGES, task-f393ecf3). Release binaries are not in the record yet
+  (PR2-02-BINARIES).
+
+- License-state behavior contract (`docs/contract/license-behavior.md`): one row per license state and capability class, checked by `TestLicenseBehaviorContract`; a cell not yet tested names the row that will test it.
+- Added the [planned first protected-operation contract](docs/contract/protected-operation.md)
+  for Kubernetes manifest apply, with a proposed reference boundary, credential
+  inventory and measurable acceptance ideas. Broker/grant enforcement is future
+  work; runtime acceptance evidence is not measured.
+
+#### demo/cap-mcp-governed — CAP worker calls governed Cordum MCP tools and waits for human approval (2026-11-11, task-ba678d95)
+
+- New CAP v2.17.0 demo worker on `job.cap-mcp-governed.create-workflow` and `worker.cap-mcp-governed.jobs`. Each job opens an MCP session on the gateway's `/mcp/message`, then runs `initialize`, `resources/read cordum://jobs/<job_id>`, `cordum_status` and `cordum_create_workflow`, in that order.
+- On JSON-RPC `-32099` it polls `GET /api/v1/mcp/approvals/{id}` until a human decides. After approval it retries with byte-identical arguments exactly once. It never calls approve or reject.
+- Failed jobs report one of 10 documented codes (`invalid_input`, `mcp_unavailable`, `mcp_protocol_error`, `mcp_call_failed`, `mcp_approval_rejected`, `mcp_approval_expired`, `mcp_approval_not_found`, `mcp_approval_timeout`, `mcp_approval_invalid`, `worker_shutdown`), never server text or the API key.
+- Unsigned agent, so compat CAP profile only. It needs the default `mcp.policy_gate_enabled=false`, because it does not send `_approval_ref`. `demo/cap-mcp-governed/README.md` covers setup.
+
+### Changed
+
+- The eight required checks also run on `merge_group` events, with OpenAPI
+  Validate comparing each group against its base commit. No check's content
+  changed; enabling the merge queue remains a maintainer change to the Main
+  ruleset (task-fd34e921).
+
+### Security
+
+#### MCP `X-Agent-Id` can only confirm the principal-bound agent identity (2026-10-26, task-eb2d6f28)
+
+- **Behavior change** for MCP clients that select an agent identity with the
+  `X-Agent-Id` header. HTTP MCP requests now run as the agent identity linked
+  to the authenticated principal in the request tenant. No header, or a header
+  equal to that identity's `id`, resolves to it. Any other header value, an
+  unlinked principal, or a link to another tenant resolves to no identity:
+  `tools/list` is empty and `tools/call` is refused (`-32098` `no_identity`,
+  or `-32603` `missing_mcp_metadata` when `mcp.policy_gate_enabled` is on).
+- Approval records, preapproval checks, policy-gate call metadata and Edge
+  trace labels now carry the bound identity `id` (empty when there is none),
+  never the header value. The principal no longer stands in for a missing
+  agent ID, and the header no longer stands in for a missing principal.
+- Why: any caller in a tenant could previously act as any agent identity in
+  that tenant, including its `allowed_tools` and `preapproved_mutating_tools`,
+  by naming it in the header.
+- Migration: link each MCP client's principal to its identity
+  (`POST /api/v1/agents` with `"agent_id": "<principal id>"`, or a worker
+  credential with `agent_id`), then send the bound `id` in `X-Agent-Id` or drop
+  the header. See "Agent identity binding" in `docs/mcp-server.md`.
+
+#### Scheduler input outage exceptions use named topic scopes (2026-11-13, task-7803f261)
+
+- `scheduler.input_fail_mode=open` admits only topics named in
+  `scheduler.input_fail_open_scope`, a system- or tenant-level list such as
+  `[{"rule":"reports-read","topics":["job.reports.read"]}]`. Topics match exactly;
+  a tenant list replaces the system list, and approval-gate subjects are excluded.
+- Errors after a kernel answer, including a failed decision-record write, requeue
+  the job in both input modes. A kernel decision returned at the check deadline is kept.
+- The `safety.bypass_admit` audit event carries `scope_rule`, and
+  `cordum_scheduler_input_fail_open_total` gains a `scope_rule` label alongside `topic`.
+- The scheduler publishes its audit events on `sys.audit.export`. A gateway with
+  an active exporter and `AUDIT_TRANSPORT=nats` exports events when it consumes that subject.
+- **Upgrade:** deployments using `input_fail_mode=open` must add `input_fail_open_scope`
+  with the topics they class as low risk. Without a scope, open mode requeues every job
+  while the kernel is unavailable.
+
+- `tools/scripts/install.sh` and `install.ps1` verify `SHA256SUMS.sigstore.json`,
+  a keyless Sigstore signature, with cosign before checking checksums and
+  installing binaries. `verify-blob` pins the identity to `release.yml` at a
+  `v<semver>` tag of `cordum-io/cordum`, with the GitHub Actions OIDC issuer.
+  Missing cosign is refused unless `--insecure-allow-missing-cosign` /
+  `-InsecureAllowMissingCosign` is passed; that flag logs a
+  `binary-signature-unverified` audit event and still enforces checksums.
+  The release workflow does not publish this signature yet (PR2-03-PIPELINE).
+  (PR2-03, task-83a43ecf)
+
+- Release images move off Alpine 3.21, which alpinelinux.org/releases.json lists
+  as end-of-life on 2026-11-01. The control-plane and `demo-quickstart-worker`
+  runtime stages use `alpine:3.24`, and the dashboard uses
+  `nginxinc/nginx-unprivileged:1.30-alpine3.24` (was `1.27-alpine`, which is on
+  Alpine 3.21). Every runtime stage still runs `apk upgrade --no-cache`;
+  builder stages are unchanged.
+
+#### core/controlplane/gateway — gateway worker-link readers resolve within the request tenant (2026-11-11, task-283f2317)
+
+- `POST /api/v1/agents`: the `agent_id` worker-conflict check (409 `AGENT_WORKER_CONFLICT`) now considers only the caller's tenant. Another tenant's link for the same worker ID neither blocks registration nor reveals that it exists.
+- HTTP and gRPC job submit, `POST /api/v1/agents/{id}/delegate`, the agent GET worker-id fallback, worker-credential proof preservation and MCP principal-fallback identity resolution now look up the worker link in the request tenant. A principal whose only link points at another tenant's agent gets no auth-derived `agent_id`: on HTTP job submit, a client `labels.agent_id` is refused with 403; it also fails the non-admin delegation principal check with 403.
+- Slice 2 of 3 of task-c1effd5b. Writers still write the legacy global key, so registering the same worker ID in a second tenant still replaces the first tenant's link. That tenant's readers then resolve nothing (fail closed) until the capstone moves writers to per-tenant links.
+
+#### Worker→agent identity links are tenant-qualified (2026-11-11, task-c1effd5b)
+
+- Worker and principal links to agent identities now live per tenant, in the Redis hash `agent:worker-links:<tenant>`.
+- Another tenant's agent registration (`POST /api/v1/agents` with `agent_id`), or its worker-credential issue, rotate or revoke for the same worker or principal ID, can no longer replace or delete a tenant's link, so it no longer changes that tenant's MCP identity binding. This was CodeRabbit's outside-diff finding on #490, and it removes the interim limitation noted in the task-283f2317 entry above.
+- Pre-existing global `agent:by-worker:<worker>` links keep resolving for the tenant that owns the linked agent, and that tenant's next unlink retires them. Nothing writes them any more.
+- Go API: `AgentIdentityStore.GetByWorkerID` is removed (use `GetByWorkerIDForTenant`); `UnlinkWorker` takes the tenant ID; `LinkWorker` rejects unknown or untenanted agents.
+- gRPC `SubmitJob` now binds `labels.agent_id` the same way HTTP job submit does. A client `agent_id` that differs from the agent linked to the principal in the request tenant, that is sent with no link, or whose principal comes from the request's `principal_id` instead of the authenticated identity, is refused with `PermissionDenied` before the policy check. Before this change, the label went unchecked into the policy check and the audit trail. This was CodeRabbit's finding on #537.
+- Slices: task-76c90c6e, task-283f2317.
+
+#### TypeScript SDK — dev-only minimatch advisory GHSA-g3hv-75wg-m249 (2026-11-11, task-f09d31be)
+
+- Scope `minimatch` overrides to `@typescript-eslint/typescript-estree` and `@ts-morph/common`, using `^11.0.1` while both parents still require the vulnerable 10.x line. Remove these overrides when both parents support the patched line. This changes SDK development tooling, not the published SDK runtime.
+
+#### dashboard — dev-only minimatch advisory GHSA-g3hv-75wg-m249 (2026-11-11, task-3c2704b3)
+
+- `dashboard/package.json` overrides `minimatch@^10.0.0` to `^11.0.1`, in `pnpm.overrides` and in the npm `overrides` mirror. No minimatch 10.x release carries the fix. eslint, `@eslint/config-array` and `@typescript-eslint/typescript-estree` still declare `^10`, and they call only `Minimatch#match` and `minimatch()`, which 11.x keeps.
+- typedoc, typedoc-plugin-coverage and typedoc-plugin-markdown are removed from the install with pnpm `-` overrides. typedoc 0.28 calls `Minimatch#matchOne`, which 11.x removed. orval 8.31.0 loads typedoc only for its `docs` output, which the dashboard does not configure. Until typedoc supports minimatch 11, enabling that output fails at import. orval stays at 8.31.0.
+
+### Fixed
+
+- `POST /api/v1/agents` fails closed with 500 when the worker-link lookup
+  fails, instead of creating an agent identity or link it could not check.
+
+- Audit publishing tolerates a missing fallback or exporter: events without a
+  usable sink are dropped, logged and counted in
+  `cordum_audit_events_dropped_total{reason}`. The Safety Kernel's shadow sender
+  has a discard fallback, and cordum-mcp's NATS audit fallback writes to stderr
+  when no SIEM exporter is configured.
+
+- `POST /api/v1/approvals/{job_id}/approve` and `/reject` now return 503 when a
+  store read that their checks depend on fails: the job state, the stored
+  request, the submitter or the workflow run. The job stays in APPROVAL, no
+  approval is recorded and nothing is published. A job with no recorded
+  submitter, or whose workflow run no longer exists, is handled as before
+  (PR1-17, task-a4da0522).
+- MCP approval resume: a call resumed with `_approval_ref` is refused with
+  `-32096` `policy_snapshot_changed` when policy was published between the
+  approval claim and the call's `mcp.tool.pre` stamp. Nothing runs and the
+  approval is used up, so the client retries without `_approval_ref`.
+- MCP dedupe: a resumed call takes its dedupe slot over in one write, and a call
+  that held the slot before can no longer publish to it or delete it. An
+  identical call without `_approval_ref` used to be able to cache a second
+  pending hold over the executed result. `DedupeStore` gains `CompareAndSwap`
+  and `CompareAndDelete`.
+- The mutating MCP tool descriptions and `docs/mcp/mutating-tools.md` describe
+  the Edge approval flow used when `mcp.policy_gate_enabled=true`: approve the
+  `approval_ref`, then retry with `_approval_ref`.
+- The governed MCP demo worker retries a `429` on the approval poll, and its
+  README lists the MCP, agent identity and endpoint prerequisites.
+- Edge approvals: a held MCP call whose arguments differ from a still-pending
+  hold of the same tool in the same session now gets its own approval ref. It
+  used to get the first hold's ref, so resuming it failed with `-32096`
+  `args_mismatch` until that approval was used or expired. A hold made after a
+  policy change likewise gets a new approval instead of one that fails
+  `policy_mismatch`. An identical retry still returns the existing ref
+  (task-29afcbe9).
+
+- The dashboard test run no longer fails after every test passes when a console line, written by work that outlived its test file, is still being delivered as the Vitest worker shuts down (`EnvironmentTeardownError: Closing rpc while "onUserConsoleLog" was pending`). `dashboard/vitest.config.ts` ignores exactly that error, so every other unhandled error still fails the run. `KeyboardShortcutsHelp.test.tsx`, which produced it, now answers the AppShell's requests in-process and waits for them to settle (task-04eef2b3).
+
+#### core/mcp — the MCP invocation audit keeps a consumed human approval when scope preapproval also applies (2026-11-12, task-74f4c01e)
+
+- MCP audit: when a tool call both consumes a human approval and passes a
+  scope preapproval, the `mcp.tool_invocation` event now records
+  `approval_status=consumed` with that approval's `approval_id`, instead of
+  `preapproved` with no `approval_id`. This happens under
+  `mcp.policy_gate_enabled=true`, when an identity whose
+  `PreapprovedMutatingTools` covers a `RequiresApproval` tool resumes an
+  action-gate hold with `_approval_ref`. Authorization is unchanged.
+- MCP audit: an `_approval_ref` resume whose new evaluation allows the call,
+  for example after the session-taint lookup recovers, now records that
+  `approval_ref` on its `mcp.tool.post` or `mcp.tool.failed` event, as a
+  `REQUIRE_HUMAN` resume already did. Authorization is unchanged.
+
+#### core/mcp, core/controlplane/gateway — a preapproved identity's action-gate MCP hold returns a resumable approval ref (2026-11-12, task-06784e6d)
+
+- MCP (`mcp.policy_gate_enabled=true`): scope preapproval no longer
+  short-circuits an action-gate REQUIRE_HUMAN hold. Today that is the
+  destructive-call hold when the session-taint store is unavailable and
+  `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` is on (default off). A
+  preapproved identity now receives the same resumable
+  `approval pending: <approval_ref>` as any identity, instead of an empty,
+  cached `approval pending: ` that could never execute or resume.
+  Preapproval still waives the per-tool approval of `RequiresApproval`
+  tools.
+- The action-gate handoff no longer falls back to the legacy MCP approval
+  store. Without an Edge approval mint or Edge session metadata, or when a
+  handoff returns no approval reference, the call fails closed with
+  `-32097` and nothing is cached. A policy gate wired by hand without an
+  Edge store now returns `-32097` here instead of a legacy approval id.
+
+#### core/mcp, core/controlplane/gateway — a policy publish during a policy-gated MCP call is retryable, not a store outage (2026-11-11, task-11b3c5ef)
+
+- With `mcp.policy_gate_enabled=true`, a call whose policy changed between
+  its `mcp.tool.pre` event and the Edge approval mint returns `-32096`
+  `kind=policy_snapshot_changed` (retry the call) instead of
+  `approval_store_unavailable`. Nothing is minted in that case. Genuine
+  Edge store outages still return `approval_store_unavailable`.
+
+#### core/mcp, core/controlplane/gateway — an action-gate REQUIRE_HUMAN MCP call resumes with its `_approval_ref` (2026-11-11, task-cd9df90a)
+
+- MCP (`mcp.policy_gate_enabled=true`): a tool call held REQUIRE_HUMAN by
+  the action-gate pipeline can now be resumed with its Edge
+  `_approval_ref` and executes exactly once. The resume is no longer
+  answered from the cached `approval pending` result, and it never mints a
+  fresh approval. SecOps invariants still deny on resume (task-cd9df90a).
+
+- The seven mutating MCP tools' descriptions no longer tell clients to surface
+  `/approvals?mcp=<id>`; the dashboard Approvals page ignores that parameter, so
+  the link never selected the approval. They now point to `/approvals` and ask
+  the client to show the `approval_id` so the operator can find the request.
+  `docs/mcp-tools-reference.md` and `docs/mcp/mutating-tools.md` match. Approval
+  behaviour and the `-32099` error are unchanged.
+
+- Dashboard tables: clicking the icon inside a row's button, link or
+  `data-row-action` control no longer also runs the row's click action, such as
+  opening the job. `DataTable` skipped its interactive-child check when the
+  click landed on the icon's SVG element, because the check accepted only HTML
+  elements (task-30740b03).
+
+### CI and documentation
+
+- Added `docs/contract/threat-model.md`, the platform threat model for the M0 security contract: assets, adversaries, trust boundaries, a trusted-component inventory covering every `cmd/` service, reference-monitor properties with their current status, five explicit non-promises and the deployment boundary. Documentation only; no behavior changes.
+- Qualified three platform security-posture statements against `docs/contract/threat-model.md` (task-d056042e): ADR-001's "Zero-trust guarantee" bullet is now marked as design intent with a dated status note, and `docs/mcp/scope-filtering.md` no longer labels the MCP controls a "zero-trust stack" or "zero-trust controls". The threat model rates these mechanisms `supported`, not `enforced` or `verified`. Clarified that qualification requires protected transport on every Gateway client/proxy hop; deployment remains unverified.
+- Nightly soak bounds (task-a7c48ad2): compare post-warm-up memory medians over first/last K snapshots (default 5, minimum 3), retaining the 50% relative limit and 32 MiB floor. Missing/malformed metrics, insufficient samples, missing containers and zero load now fail explicitly. Helm reports drift/restarts as not evaluated rather than passing. Results include evaluation/window/baseline fields; the wiki documents the 20-minute example and metrics-source controls. All 83 contract assertions are retained.
+
+### Added
+
+- Invariant catalog `docs/contract/invariants.yaml` (I01-I10) with entry points, linked tests and a finding-to-invariant map, checked by `go test ./tests/contract/... -run Invariants` (part of `make test`). Contract artifact only; runtime behavior is unchanged.
+- Claim register schema and validator: `docs/contract/claims.yaml` and the Go
+  package `tests/contract`, run by `go test ./...`. The register lists protection
+  claims in README.md and SECURITY.md. Runtime behavior is unchanged.
+- Enforcement support matrix: `docs/contract/enforcement-matrix.yaml` records,
+  for each entry point and each control, whether the control is enforced,
+  advisory, ignored or not applicable, with a code reference. A validator in
+  `tests/contract` keeps its columns in step with the policy constraint model.
+  Runtime behavior is unchanged.
+
+### Changed
+
+- Docs: DESIGN.md, docs/CORE.md and docs/mcp-server.md now state which policy
+  constraints the scheduler enforces and which are advisory or planned, and link
+  to `docs/contract/enforcement-matrix.yaml`.
+
+## [v1.3.1] - 2026-11-11
+
+Changes on main since the v1.3.0 tag (d027ae97, 2026-11-11).
+
+### Changed
+
+- Dependency updates (#528, from #525 and #526): crewjam/saml 0.6.1 -> 0.6.3
+  (root Go module) and the dashboard dev dependency rollup-plugin-visualizer
+  7.1.2 -> 7.1.3.
+
+### Security
+
+#### MCP approval-store outage errors no longer leak the Redis address (2026-11-11, task-66234a92)
+
+- Landed in #528 (from #523).
+- When the MCP approval store is unreachable, an approval-required HTTP MCP
+  `tools/call` now returns `-32096` with `error.data` =
+  `{"kind": "approval_store_unavailable", "reason": "approval store unavailable"}`
+  and runs nothing. It used to return `-32603`, and its `error.data` echoed
+  the raw Redis error, internal host:port included.
+- The Edge-mint `-32096` `reason` no longer echoes the store error either.
+  Operators find the cause in the gateway log
+  (`mcp approval store unavailable`).
+
+### Fixed
+
+- `demo/quickstart/Dockerfile` runs `apk upgrade` in its runtime stage, as the
+  control-plane Dockerfile already does. The v1.3.0 publish run failed the
+  `demo-quickstart-worker` Trivy gate on zlib 1.3.2-r1 from the `alpine:3.21`
+  base (CVE-2026-4738, fixed in zlib 1.4-r0), which also skipped the
+  published-image smoke test and the Helm chart for that tag (#531).
+
+### CI and documentation
+
+- The Lighthouse CI (`/login`) PR comment shows the category scores again. The
+  comment read `dashboard/.lighthouseci/manifest.json`, but the
+  `temporary-public-storage` upload never writes a manifest, so every PR showed
+  "artifacts unavailable: ENOENT". The job now also writes LHCI's filesystem
+  manifest, and when results are missing the comment states the lhci and
+  manifest step outcomes. Assertions and thresholds are unchanged
+  (#528, from #522).
+
+## [v1.3.0] - 2026-11-11
+
 Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
 
 ### Changed
@@ -30,7 +336,7 @@ Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
   (TraceContext, WorkflowEvent, A2A bridge, governed MCP demo) — none of these
   are part of CAP v2.17.0.
 
-#### Dependency updates (#400, #401, #402, #404, #408, #441, c7d33432, #467)
+#### Dependency updates (#400, #401, #402, #404, #408, #441, c7d33432, #467, #482, #483, #484, #494, #497, #499, #524)
 
 - CAP: `github.com/cordum-io/cap/v2` moved from v2.15.1 (at the v1.2.0 tag),
   through the interim pseudo-version pinned by #394, to the published v2.16.1
@@ -56,29 +362,68 @@ Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
   #448, #449); `test-browser` source-map-js 1.2.2 (c7d33432: #454). The
   generated `sdk/typescript/src/_generated/schema.d.ts` was regenerated
   (233 operations) in #441.
+- Go modules (root): go-deps group bump in #497 (go-jose/v4 4.1.5 -> 4.1.6,
+  nats.go 1.54.0 -> 1.55.0).
+- Go modules (`sdk`): github.com/klauspost/compress 1.18.4 -> 1.18.7 (#482).
+- `sdk/typescript`: vitest and @vitest/mocker 4.1.11 -> 4.1.12, with the SDK
+  browser smoke job pinned to a supported Ubuntu runner (#483), and vite
+  8.0.16 -> 8.3.5 (#484).
+- Dashboard: typed forms migrated to Zod 4 (zod 3.25.76 -> 4.6.6,
+  @hookform/resolvers 5.9.2); React Hook Form tracks raw input and parsed
+  output separately (#494). Then the dashboard-deps group with 14 updates
+  (#499): @dagrejs/dagre 3.1.3, @dagrejs/graphlib 4.0.7, @hookform/resolvers
+  6.0.0, @tanstack/react-query 5.104.5, @tanstack/react-virtual 3.14.22,
+  framer-motion 14.6.0, lucide-react 1.61.0, react-hook-form 7.91.0,
+  zod 4.6.7, zustand 5.0.16, @typescript-eslint/parser 8.72.0, knip 6.43.0,
+  postcss 8.5.31 and vite 8.3.5.
+- `sdk/typescript` (#524, from #513): the remaining Dependabot alerts are closed
+  by `test-browser` vite 8.3.7 and an npm `overrides` entry that lifts `tsup`'s
+  esbuild to 0.28.2 (GHSA-g7r4-m6w7-qqqr; tsup 8.5.1 pins esbuild ^0.27.0 and
+  tsup 9 needs Node 22.18+).
+- Go modules (root) (#524, from #508): crewjam/saml 0.5.1 -> 0.6.1, go-jose/v4
+  4.1.6 -> 4.1.9, nats-server 2.15.1 -> 2.15.2, grpc 1.84.0 -> 1.85.0,
+  x/oauth2 0.38.0, x/sync 0.25.0, x/sys 0.50.0 and k8s.io api, apimachinery
+  and client-go 0.35.9 -> 0.35.10.
+- Dashboard (#524, from #509): the dashboard-deps group with 18 updates,
+  including @hookform/resolvers 6 -> 7.0.3, @tanstack/react-query 5.107.1,
+  @tanstack/react-virtual 3.14.26, framer-motion 14.10.1, lucide-react 1.70.0,
+  react-router-dom 7.18.5, zustand 5.1.0, @lhci/cli 0.16.0, eslint 10.14.0,
+  tailwindcss 4.3.5, postcss 8.5.32 and vite 8.3.6. Then 14 patched transitive
+  packages pinned through pnpm `overrides`, listed in `dashboard/CHANGELOG.md`
+  (#524, from #510).
+- GitHub Actions pins (#524, from #503, #505, #506, #507):
+  pypa/gh-action-pypi-publish 1.14.3, github/codeql-action 4.39.3,
+  docker/login-action 4.8.0 and pnpm/action-setup 6.1.1.
 
 ### Security
 
-#### MCP `X-Agent-Id` can only confirm the principal-bound agent identity (2026-10-26, task-eb2d6f28)
+#### core/infra/store, core/controlplane/scheduler — worker-to-agent links resolve only within the worker's tenant (2026-11-11, task-76c90c6e)
 
-- **Behavior change** for MCP clients that select an agent identity with the
-  `X-Agent-Id` header. HTTP MCP requests now run as the agent identity linked
-  to the authenticated principal in the request tenant. No header, or a header
-  equal to that identity's `id`, resolves to it. Any other header value, an
-  unlinked principal, or a link to another tenant resolves to no identity:
-  `tools/list` is empty and `tools/call` is refused (`-32098` `no_identity`,
-  or `-32603` `missing_mcp_metadata` when `mcp.policy_gate_enabled` is on).
-- Approval records, preapproval checks, policy-gate call metadata and Edge
-  trace labels now carry the bound identity `id` (empty when there is none),
-  never the header value. The principal no longer stands in for a missing
-  agent ID, and the header no longer stands in for a missing principal.
-- Why: any caller in a tenant could previously act as any agent identity in
-  that tenant, including its `allowed_tools` and `preapproved_mutating_tools`,
-  by naming it in the header.
-- Migration: link each MCP client's principal to its identity
-  (`POST /api/v1/agents` with `"agent_id": "<principal id>"`, or a worker
-  credential with `agent_id`), then send the bound `id` in `X-Agent-Id` or drop
-  the header. See "Agent identity binding" in `docs/mcp-server.md`.
+- Landed in #524 (from #518).
+- Added `AgentIdentityStore.GetByWorkerIDForTenant(ctx, tenantID, workerID)`.
+  It reads the per-tenant link hash `agent:worker-links:<tenant>` first, then
+  falls back, read-only, to the legacy global `agent:by-worker:<worker>` key.
+  It returns an identity only when that identity belongs to `tenantID`, and a
+  per-tenant entry never falls back.
+- The scheduler's worker-handshake trust resolver looks the link up in the
+  tenant of the worker's credential. The `AgentResolver` scopes store links to
+  the tenant of the worker's cached credential, and a worker with no cached
+  tenant gets no store-link label.
+- Slice 1 of 3 of task-c1effd5b. Links are still written only to the legacy
+  global key, so existing links keep resolving for their owning tenant.
+  Gateway readers move in slice 2. The capstone moves the writers and retires
+  the global read.
+
+#### core/mcp + gateway — approval-required MCP tools fail closed when no approval gate is wired; `cordum_create_workflow` executes after approval (2026-11-10, task-b62ae307)
+
+- Landed in #524 (from #511).
+- **Behavior change.** Before, a tool that required approval ran ungated when no approval gate was wired. Now `ToolRegistry.Call` refuses it with `ErrApprovalGateUnavailable`, returns JSON-RPC `-32097 gateway misconfigured`, and never runs the handler. This covers built-in `RequiresApproval` tools and `mcp_policy` tools rules. It affects:
+  - an API gateway that has no Redis client;
+  - the standalone `cordum-mcp` binary (stdio and HTTP), which wires no gate and until now executed all 7 mutating tools without approval.
+
+  Tools that do not require approval are unchanged.
+- `cordum_create_workflow` on the API gateway's HTTP MCP endpoint now creates the workflow when, after a distinct operator approves, the client retries with byte-identical arguments. It runs the `POST /api/v1/workflows` handler under the caller's auth context, so permission (`workflows-write` or admin), tenant and validation are identical. Approvals are consume-once.
+- The other 6 mutating tools are still not wired on the gateway; after approval they return an `isError` result with `mcp service bridge unavailable`. `docs/mcp-tools-reference.md` documents the flow.
 
 #### CAP-PRODUCTION — fail-closed exact-wire trust, attempt fencing, durable effects, and structured resources (2026-07-21, task-a13f83fa)
 
@@ -116,14 +461,36 @@ Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
   not yet a full-stack activation claim. The operator guide documents that
   boundary, key rotation, compatibility telemetry, and migration.
 
+#### dashboard — vulnerable dependency refresh (2026-10-28)
+
+- Landed in #494.
+- Production transitive dependencies: fast-uri 3.1.2 -> 3.1.9, and the
+  optional jsPDF DOMPurify reference consolidated on the existing patched
+  3.4.17 (the DOMPurify 3.4.2 lock entry is gone).
+- Undici 7.29.1 -> 7.30.1 within the existing jsdom range, and Vitest with
+  its exact companion packages aligned on 4.1.12, for the Undici and Vitest
+  security advisories the commit names; qs 6.15.2 -> 6.16.1.
+
 ### Fixed
+
+#### core/controlplane/gateway — the MCP policy snapshot is read with one Redis GET, however many workflows exist (2026-11-11, task-2688feeb)
+
+- Landed in #524 (from #517).
+- Every read of the MCP policy snapshot went through `loadPolicyBundles`. The snapshot is the policy config doc's updated-at, which EDGE-103 approval mints and `_approval_ref` consumes bind to. That call also listed every workflow (a `ZREVRANGE` of up to 10000 ids plus one pipelined `GET` per workflow), only to discard the result. The provider now reads just the policy config doc. The value is unchanged, and a missing doc or a read error still yields an empty snapshot, which fails closed.
+
+#### core/mcp, core/controlplane/gateway — policy-gate MCP approvals resume exactly once (2026-11-11, task-63400922)
+
+- Landed in #524 (from #519).
+- MCP (`mcp.policy_gate_enabled=true`): approval-required tools now mint an Edge `_approval_ref` bound to the real policy pre-event, and resuming with it executes exactly once. The Edge approval is the single authority under the policy gate. Approval-store outages on resume now return -32096 instead of -32602 (task-63400922).
 
 #### core/controlplane/gateway — HTTP MCP approval-required tools return -32099 again on production gateways (2026-10-26, task-f44be149)
 
+- Landed in #496.
 - With `mcp.policy_gate_enabled=false` (the default), every approval-required HTTP MCP tool call failed with `-32096 approval_store_unavailable`. The gateway always builds an Edge store, so the approval gate tried to mint an Edge approval that had no parent action event and no `_approval_ref` consumer. The Edge approval mint is now wired only together with the policy gate's approval hold, with the same server name. With the policy gate off, the legacy MCP approval store is the sole authority: approve as a distinct operator, then retry with byte-identical arguments, which executes once. Wherever a mint is attempted, an Edge store outage still fails closed with -32096. The -32099 `retry_hint` now matches the resume path: `retry_with_same_args` for legacy approvals, and `retry_with_approval_ref` only when an Edge `approval_ref` was minted.
 
 #### core/controlplane/gateway — MCP approval-required (-32099) responses no longer fail to encode on the legacy path (2026-10-26, task-ff988dfa)
 
+- Landed in #491.
 - Legacy MCP approval expiry was decoded as Unix seconds instead of microseconds, so without an Edge store (or without Edge session metadata) HTTP MCP answered `500 encode response` for any approval-required tool call. `expires_at` in the -32099 payload now reflects the approval TTL.
 
 #### tools/scripts/soak_test.sh — memory-drift gate stops failing the nightly soak on integer truncation and warm-up heap growth (2026-10-17)
@@ -153,6 +520,13 @@ Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
 
 ### CI and documentation
 
+- Folded in #524: the compliance-export leak-check test no longer flakes on
+  timestamps that contain forbidden digit runs (#514); the MCP consume-once
+  claim test detects a lost WATCH (#520); the workflow credential guard
+  follows transitive credential sources and checks redaction bindings
+  (#516); gofmt drift is cleared in `core/` (#515, #521); and the Grafana
+  overview dashboard shows real approval and dispatch panels, checked by a
+  dashboard contract workflow (#500).
 - Helm chart publication now waits for successful published-image smoke tests
   (#493). A failed, cancelled or skipped image job prevents the chart from
   being published with missing images.
@@ -185,6 +559,32 @@ Changes on main since the v1.2.0 tag (3244b541, 2026-07-21).
   link, and SDK links pointing at the published PyPI/npm packages (#405).
 - Line endings renormalized to match `.gitattributes`; content-identical
   (#407).
+- CI masks runtime-minted credentials before first use (#487): production
+  gates 9 and 16 and the e2e admin login register every runtime-minted
+  password, session and API key with `::add-mask::` right after it is
+  generated or received, fail the run when registration fails, and print
+  only the status of credential-endpoint responses. The contract test
+  `tools/scripts/runtime_credential_masking.test.sh` runs in the Lint job.
+- `.github/workflows/recover-dashboard-v1.2.0.yml` stays on main as a
+  read-only check that verifies the recovered dashboard 1.2.0 digest
+  without registry writes, and the dashboard Vitest step keeps console
+  diagnostics alongside the JUnit report (#495).
+- GitHub Actions bumps: the codeql-action group (upload-sarif, init,
+  autobuild, analyze) 4.38.3 -> 4.39.1 (#477), codecov-action 7.1.1 (#478),
+  docker/build-push-action 7.4.0 (#479), github-action-benchmark 1.22.2
+  (#480) and docker/setup-buildx-action 4.4.1 (#481).
+- The handshake interop test derives the embedded NATS server version from
+  build information instead of a hand-edited literal, with a `go list -m`
+  fallback for Go releases before 1.27 whose test binaries record no
+  dependencies; the bus reconnect test waits for the restored subscription
+  (#486).
+- README rewritten: unsourced analyst statistics and the integration-pack
+  count removed, the comparison matrix replaced with an agent-stack layer
+  map, and the per-repository license split and versioning streams stated
+  (#488).
+- Release history reconciled (#489): the `[v1.2.0]` section split out of
+  `[Unreleased]`, older entries moved under "Earlier changes", and
+  `docs/release-notes/v1.3.0.md` added.
 
 Direct commits without PR numbers: c7d33432 (dependency consolidation),
 dda9f0aa (Dependabot deferrals), 832236ad (compat memory pointer reads) and

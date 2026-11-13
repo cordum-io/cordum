@@ -30,9 +30,14 @@ func (s *fakeHandshakeCredentialStore) GetByWorkerID(context.Context, string) (*
 type fakeHandshakeAgentStore struct {
 	identity *store.AgentIdentity
 	err      error
+	calls    int
+	tenantID string
+	workerID string
 }
 
-func (s *fakeHandshakeAgentStore) GetByWorkerID(context.Context, string) (*store.AgentIdentity, error) {
+func (s *fakeHandshakeAgentStore) GetByWorkerIDForTenant(_ context.Context, tenantID, workerID string) (*store.AgentIdentity, error) {
+	s.calls++
+	s.tenantID, s.workerID = tenantID, workerID
 	return s.identity, s.err
 }
 
@@ -80,6 +85,35 @@ func TestCredentialHandshakeTrustResolverDoesNotInventMissingCredentialAgentID(t
 	}
 	if identity == nil || identity.AgentID != "" {
 		t.Fatalf("resolved identity = %+v, want no unasserted agent authority", identity)
+	}
+}
+
+func TestCredentialHandshakeTrustResolverScopesAgentLookupToCredentialTenant(t *testing.T) {
+	credentials, agents := validHandshakeAuthority(t)
+	resolver, err := NewCredentialHandshakeTrustResolver(credentials, agents)
+	if err != nil {
+		t.Fatalf("new resolver: %v", err)
+	}
+	if _, err := resolver.Resolve(context.Background(), "worker-victim", "worker-key-v1"); err != nil {
+		t.Fatalf("resolve authority: %v", err)
+	}
+	if agents.calls != 1 || agents.tenantID != "tenant-victim" || agents.workerID != "worker-victim" {
+		t.Fatalf("agent lookup calls=%d tenant=%q worker=%q, want 1 tenant-victim worker-victim",
+			agents.calls, agents.tenantID, agents.workerID)
+	}
+}
+
+func TestCredentialHandshakeTrustResolverSkipsAgentLookupWithoutCredentialTenant(t *testing.T) {
+	credentials, agents := validHandshakeAuthority(t)
+	credentials.credential.TenantID = "  "
+	resolver, _ := NewCredentialHandshakeTrustResolver(credentials, agents)
+	identity, err := resolver.Resolve(context.Background(), "worker-victim", "worker-key-v1")
+	failure := resolutionFailure(err)
+	if identity != nil || failure.reason != authenticationFailedReason() || !containsFold(failure.detail, "binding") {
+		t.Fatalf("identity=%+v failure=%+v", identity, failure)
+	}
+	if agents.calls != 0 {
+		t.Fatalf("agent store called %d times without a credential tenant, want 0", agents.calls)
 	}
 }
 

@@ -117,4 +117,3 @@ func indexFilesByPath(files []FileEntry) map[string]FileEntry {
 	}
 	return out
 }
-

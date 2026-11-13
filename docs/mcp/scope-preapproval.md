@@ -18,6 +18,7 @@ how to revoke it.
 
 - [When to use it](#when-to-use-it)
 - [When NOT to use it](#when-not-to-use-it)
+- [What preapproval does not waive](#what-preapproval-does-not-waive)
 - [Configuring preapproval](#configuring-preapproval)
 - [Glob semantics](#glob-semantics)
 - [Audit trail](#audit-trail)
@@ -58,6 +59,32 @@ Examples that fit:
 - **Pre-emptively, "just in case".** Every additional entry on the preapproval
   list is a line item the post-incident reviewer must justify. Start empty and
   add an entry only when a specific bot's flow is blocked by the approval step.
+
+## What preapproval does not waive
+
+Preapproval waives exactly one check: the registry gate's per-tool approval
+for tools marked `RequiresApproval` (the `-32099` flow described above).
+
+With `mcp.policy_gate_enabled=true`, it never waives an action-gate
+`REQUIRE_HUMAN` hold. Today the only production source of that hold is the
+MCP gate's destructive-call hold: a destructive call (by default a tool name
+matching `*delete*`, `*remove*` or `*archive*`, or GraphQL arguments carrying
+a delete, remove or archive mutation) while the session-taint store is
+unavailable and `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` is on. That flag
+defaults to off.
+
+A preapproved bot that hits the hold is treated like any other identity:
+
+1. The call returns `approval pending: <approval_ref>`, and the tool does not
+   run.
+2. A human approves the Edge approval
+   (`POST /api/v1/edge/approvals/{approval_ref}/approve`).
+3. The bot resumes once by re-sending the identical call with
+   `_approval_ref` set to that reference.
+
+The hold exists because the gate cannot confirm that the session is free of
+prompt injection from earlier tool results, and a static per-tool grant
+cannot vouch for what the session has read.
 
 ## Configuring preapproval
 
@@ -135,6 +162,16 @@ extra:
 Note the **absence of `approval_id`** — no approval record was created, so
 there's nothing to correlate against. The `approval_status=preapproved` field
 is the definitive signal for forensics and alerting.
+
+Under `mcp.policy_gate_enabled=true`, preapproval does not waive an
+action-gate hold (see
+[What preapproval does not waive](#what-preapproval-does-not-waive)). When a
+human approves such a hold and the bot resumes with `_approval_ref`, a tool
+that is also `RequiresApproval` still passes the registry gate's preapproval
+bypass. That invocation event nevertheless records
+`approval_status: consumed` with `approval_id: <approval_ref>`, because a
+consumed human approval recorded for the call outranks the scope-bypass label
+(task-74f4c01e).
 
 Compare with the normal human-approved flow, which emits FOUR events per call
 (enqueue, approve, consume, invocation). The preapproved path writes 1 event —

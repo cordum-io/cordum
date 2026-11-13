@@ -117,7 +117,7 @@ func (s *server) handleDelegateAgent(w http.ResponseWriter, r *http.Request) {
 	if !strings.EqualFold(strings.TrimSpace(authCtx.Role), "admin") {
 		callerAgentID := ""
 		if s.agentIdentityStore != nil {
-			if agent, err := s.agentIdentityStore.GetByWorkerID(r.Context(), strings.TrimSpace(authCtx.PrincipalID)); err == nil && agent != nil {
+			if agent, err := s.agentIdentityStore.GetByWorkerIDForTenant(r.Context(), tenantFromRequest(r), strings.TrimSpace(authCtx.PrincipalID)); err == nil && agent != nil {
 				callerAgentID = agent.ID
 			}
 		}

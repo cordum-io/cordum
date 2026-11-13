@@ -14,7 +14,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQueryState, parseAsString } from "nuqs";
 import { parseAsSearchTerm } from "@/lib/url-state";
-import type { ColumnDef } from "@tanstack/react-table";
 import { get } from "@/api/client";
 import {
   useInfiniteAuditEvents,
@@ -33,6 +32,7 @@ import { Drawer } from "@/components/ui/Drawer";
 import { ChainIntegrityWidget } from "@/components/ChainIntegrityWidget";
 import {
   DataTable,
+  type DataTableColumn,
   type DecisionTier,
 } from "@/components/primitives/DataTable";
 import {
@@ -378,7 +378,7 @@ export default function AuditLogPage() {
     }
   };
 
-  const columns = useMemo<ColumnDef<AuditEntry>[]>(
+  const columns = useMemo<DataTableColumn<AuditEntry>[]>(
     () => [
       {
         id: "time",

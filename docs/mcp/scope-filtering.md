@@ -31,9 +31,11 @@ What this does NOT defend against:
 - An agent misusing a tool it IS allowed to use. That's the job of the
   safety kernel and audit chain.
 
-Scope filtering is one layer in the MCP zero-trust stack; it sits alongside
+Scope filtering is one layer in the MCP governance controls; it sits alongside
 per-tool approval gates (this epic) and signed outbound MCP calls
-(epic-level, tracked separately) to form defence-in-depth.
+(epic-level, tracked separately) to form defence-in-depth. The platform threat
+model rates the components involved `supported`, not `enforced` or `verified`;
+see [Trusted components](../contract/threat-model.md#trusted-components).
 
 ## The three gates
 
@@ -204,8 +206,10 @@ cordumctl mcp tools list --agent-id <X> --json   # machine-readable
 
 ## Relationship to sibling MCP controls
 
-Scope filtering is one of three zero-trust controls shipped under
-Phase 1: MCP Zero-Trust Governance.
+Scope filtering is one of three access controls shipped under
+Phase 1: MCP Zero-Trust Governance (the name of that phase; see
+[Trusted components](../contract/threat-model.md#trusted-components) for the
+status of the components involved).
 
 - **Per-tool approval gates.** When a tool has `RequiresApproval=true`
   (or matches an `mcp_policy` runtime rule), a call must wait for

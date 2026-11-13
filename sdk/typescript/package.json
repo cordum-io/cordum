@@ -27,6 +27,7 @@
     "test": "vitest run",
     "generate": "node ./scripts/generate.mjs",
     "check:generated": "node ./scripts/check-generated.mjs",
+    "smoke:packed": "node ./scripts/smoke-packed-consumer.mjs",
     "prepare": "npm run build",
     "size": "size-limit",
     "check:no-node-builtins": "node ./scripts/check-no-node-builtins.mjs",
@@ -70,6 +71,17 @@
     "typescript": "^5.8.3",
     "vite": "^8.3.5",
     "vitest": "^4.1.12"
+  },
+  "overrides": {
+    "tsup": {
+      "esbuild": "^0.28.1"
+    },
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "^11.0.1"
+    },
+    "@ts-morph/common": {
+      "minimatch": "^11.0.1"
+    }
   },
   "msw": {
     "workerDirectory": [

@@ -31,10 +31,18 @@ const MCPDedupeTTL = 10 * time.Minute
 // responsibility for publishing the completed record; subsequent
 // callers observe (existing, true) and short-circuit on the cached
 // outcome.
+//
+// CompareAndSwap and CompareAndDelete act only while key still holds old,
+// the pending value the caller reserved the slot with, and report whether
+// they did. A winner finishes through them, so a call whose slot another
+// call took over (dedupeBeginResume) can no longer publish to it or
+// delete it.
 type DedupeStore interface {
 	LoadOrStore(key string, value any) (actual any, loaded bool)
 	Store(key string, value any)
 	Delete(key string)
+	CompareAndSwap(key string, old, new any) bool
+	CompareAndDelete(key string, old any) bool
 }
 
 // NewInProcessDedupeStore returns the default in-process dedupe store
@@ -67,4 +75,12 @@ func (s *inProcessDedupeStore) Store(key string, value any) {
 
 func (s *inProcessDedupeStore) Delete(key string) {
 	s.m.Delete(key)
+}
+
+func (s *inProcessDedupeStore) CompareAndSwap(key string, old, new any) bool {
+	return s.m.CompareAndSwap(key, old, new)
+}
+
+func (s *inProcessDedupeStore) CompareAndDelete(key string, old any) bool {
+	return s.m.CompareAndDelete(key, old)
 }

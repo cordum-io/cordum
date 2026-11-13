@@ -258,4 +258,5 @@ else
 fi
 run_quiet "workflow guard detects all unsafe mutations" python "${GUARD}" --self-test
 run_quiet "all active workflows satisfy masking and redaction contract" python "${GUARD}" "${ROOT}"
+run_quiet "transitive workflow credential sources are registered" bash "${ROOT}/tools/scripts/workflow_credential_sources.test.sh"
 echo "SUMMARY: ${PASS} pass, ${FAIL} fail"; [[ "${FAIL}" -eq 0 ]]
