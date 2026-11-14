@@ -39,7 +39,7 @@ Our response times are targets, not service-level agreements. Investigation, rem
 | Version | Security support |
 | --- | --- |
 | 1.1.x | Active |
-| 1.0.x | Security fixes only |
+| 1.0.x | Not supported |
 | Earlier than 1.0 | Not supported |
 
 Install the latest available patch release in a supported line before reporting an issue that may already be fixed.
