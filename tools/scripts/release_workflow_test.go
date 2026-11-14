@@ -830,6 +830,11 @@ var (
 	shellComment    = regexp.MustCompile(`(^|\s)#.*$`)
 )
 
+// shellLeavers are words that let a command end the shell with status 0
+// before a later command in the same && list runs (`exit 0`, `exec true`,
+// `return 0`), or run text this check cannot see (`.`, source, eval).
+var shellLeavers = []string{"exit", "exec", "return", ".", "source", "eval"}
+
 // runExecutesApkUpgrade reports whether the shell form of a RUN instruction
 // (continuation lines already joined) runs `apk upgrade --no-cache` so that
 // the RUN can succeed only if the upgrade ran and succeeded. The text does not
@@ -841,6 +846,13 @@ var (
 // `false && apk upgrade; true`), swallow its failure (`apk upgrade || true`,
 // `apk upgrade | cat`) or run it in the background. Exec-form and heredoc
 // RUNs are not recognised either.
+//
+// The upgrade command must be exactly `apk upgrade --no-cache`: another
+// argument can make it change nothing (`--simulate`, `-s`) or upgrade only
+// some packages. A command before it in the list that has a shellLeavers word
+// anywhere fails closed, so a prefix such as `X=1 exit 0` cannot hide one.
+// This is a token check, not a shell parser: keep the release Dockerfiles in
+// the plain `RUN apk upgrade --no-cache && apk add ...` form.
 func runExecutesApkUpgrade(script string) bool {
 	script = quotedShellText.ReplaceAllString(script, "Q")
 	script = shellComment.ReplaceAllString(script, "")
@@ -855,8 +867,13 @@ func runExecutesApkUpgrade(script string) bool {
 	}
 	for _, command := range commands {
 		words := strings.Fields(command)
-		if len(words) >= 3 && words[0] == "apk" && words[1] == "upgrade" && slices.Contains(words[2:], "--no-cache") {
+		if slices.Equal(words, []string{"apk", "upgrade", "--no-cache"}) {
 			return true
+		}
+		for _, word := range words {
+			if slices.Contains(shellLeavers, word) {
+				return false
+			}
 		}
 	}
 	return false
