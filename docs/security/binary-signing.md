@@ -174,9 +174,9 @@ Three guardrails:
 * The imported pubkey's UID must contain the literal string
   `TEST-ONLY`, defeating a "rename a production key into
   tools/test-keys/" bypass.
-* The imported fingerprint is asserted **not equal** to
-  `CORDUM_PROD_FINGERPRINT_PIN` (when set), so a cross-signed manifest
-  cannot ride the dev path.
+* When `CORDUM_PROD_FINGERPRINT_PIN` is set, `install.sh` refuses the
+  dev path for a key with that fingerprint. No test covers this check yet;
+  see CLM-088 in the [claim register](../contract/claims.yaml).
 
 Forked CI runners exercise the gate via
 `.github/workflows/binaries-pr-validation.yml` on `ubuntu-latest` only.
@@ -289,11 +289,12 @@ CVE — cannot ride the signature path through the install.
 
 ### Manifest version embedding
 
-Every signed release manifest produced after EDGE-151-DOWNGRADE carries a
-`# version: vN.N.N` line as its first line. The line is covered by the
-detached GPG signature over `SHA256SUMS`, so an attacker cannot remove or
-edit it without invalidating the signature. The release CI runs the same
-embed via `.github/workflows/release.yml`'s sign-manifest job:
+The release workflow's sign-manifest job (`.github/workflows/release.yml`)
+writes a `# version: vN.N.N` line as the first line of `SHA256SUMS` before
+the file is signed, so the detached GPG signature covers that line and
+removing or editing it invalidates the signature. Release evidence for the
+line is not recorded yet (see CLM-088 in the
+[claim register](../contract/claims.yaml)). The manifest then begins:
 
 ```
 # version: v1.5.0

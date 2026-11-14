@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Docs: the audit-verify API page, two OpenAPI operation descriptions, and the audit-chain,
+  image-tag, policy-signing, pack-signing, binary-signing and agentd-keychain pages now qualify
+  their integrity, signing and key-handling statements against the claim register (CLM-052,
+  CLM-057, CLM-059, CLM-083, CLM-087, CLM-088). The audit-verify latency figures are labelled as
+  an April 2026 dev-stack measurement that was not re-measured for the current release and is
+  not a performance commitment (M0-07-DOCS-AUDIT, task-39319cd9).
+
 - Docs: the MCP approval pages (docs/mcp-server.md, docs/mcp-tools-reference.md and, under docs/mcp,
   approval_hold.md, mutating-tools.md, per-tool-approval.md and quickstart-vscode-copilot.md) now
   state approval, single-use, provenance and scope claims at the status recorded in

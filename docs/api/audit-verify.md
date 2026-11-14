@@ -87,15 +87,17 @@ surface, not an audit-event export surface.
 ## Performance characteristics
 
 `GET /api/v1/audit/verify` deliberately re-walks the requested audit
-chain window on every call. That full re-hash is the tamper-evidence
-guarantee: a caller gets a fresh verification of the bytes currently in
-Redis instead of trusting a cached attestation that could be stale or
-mutated between checks.
+chain window on every call, so a caller gets a fresh check of the bytes
+currently in Redis rather than a cached result that could be stale.
+Chain verification is rated `supported`, not `verified`: see CLM-057 in
+the [claim register](../contract/claims.yaml).
 
-Latency therefore scales roughly linearly with events scanned. The
-llm-chat governance probe 4 measured a 10,000-event chain at roughly
-199-241 ms for serial full-window calls (about 25 μs/event on that dev
-stack) and 2.3s p99 when 20 identical callers each forced their own walk.
+Latency therefore scales roughly linearly with events scanned. One dev
+stack measurement (llm-chat governance probe 4, written into this page in
+April 2026) put a 10,000-event chain at roughly 199-241 ms for serial
+full-window calls (about 25 μs/event) and 2.3s p99 when 20 identical
+callers each forced their own walk. These figures were not re-measured for
+the current release and are not a performance commitment.
 Current builds coalesce concurrent identical requests with `singleflight`,
 so the 20 callers share one leader walk when their tenant, `since`,
 `until`, effective `limit`, retention boundary, and effective HMAC
