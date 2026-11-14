@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/cordum/cordum/core/edge/claude"
+	"github.com/cordum/cordum/core/edge/copilot"
 )
 
 var edgeDemoPolicyRequiredRules = []string{
@@ -265,6 +266,39 @@ func edgeCheckManagedSettings(_ context.Context, env *edgeDoctorEnv) checkResult
 		State:  stateFail,
 		Detail: "managed settings drift: " + summariseManagedSettingsDrifts(res.Drifts, 3),
 		Fix:    "regenerate with cordumctl edge managed-settings export",
+	}
+}
+
+// edgeCheckCopilotHooks checks the GitHub Copilot hooks file named by
+// --copilot-hooks-path. It warns only on problems a corrected file fixes
+// (see copilot.VerifyHookSettings). The Copilot harness limits that no file or
+// setting fixes are reported in the ok detail instead, in every policy mode,
+// so they do not hold edge doctor at exit 2 on every run.
+func edgeCheckCopilotHooks(_ context.Context, env *edgeDoctorEnv) checkResult {
+	path := strings.TrimSpace(env.copilotHooksPath)
+	if path == "" {
+		return checkResult{State: stateSkip, Detail: "copilot-hooks-path not configured; skip unless Copilot runs cordum-hook"}
+	}
+	data, err := env.readFile(path)
+	if err != nil {
+		return checkResult{
+			State:  stateWarn,
+			Detail: "read Copilot hooks file failed: " + edgeDoctorRedact(err.Error(), env.base.apiKey),
+			Fix:    "pass the hooks file Copilot loads, for example .github/hooks/cordum.json",
+		}
+	}
+	if err := copilot.VerifyHookSettings(data); err != nil {
+		return checkResult{
+			State:  stateWarn,
+			Detail: path + ": " + edgeDoctorRedact(err.Error(), env.base.apiKey),
+			Fix:    "rewrite the Copilot hooks file from docs/edge/cordum-hook.md#write-the-hooks-file",
+		}
+	}
+	return checkResult{
+		State: stateOK,
+		Detail: "Copilot hooks run cordum-hook copilot for prompts and tool calls. Harness limits that no setting fixes: " +
+			"a timed-out hook lets the action through, the Copilot harness records prompts but never blocks them, " +
+			"and other events log a failed hook and continue; see docs/edge/cordum-hook.md#github-copilot",
 	}
 }
 

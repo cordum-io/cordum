@@ -709,6 +709,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Copilot hooks: the generated file has `"version": 1`; denies exit 2, with a
+  top-level `permissionDecision`, so they block in both the Copilot CLI and
+  VS Code harnesses; the approval URL stays in the deny reason; the doctor
+  warns only on problems a corrected file fixes; the docs explain how to write
+  the file by hand and list what Copilot hooks cannot enforce. None of this
+  has been verified in a live Copilot session yet (#492, task-1fdbc65a).
+
 - A DLQ retry drops the original job's server-owned labels. With
   `cordum.bus_msg_id`, a retried approved job went out with the approval
   republish's JetStream msg-id and could be dropped as a duplicate. The

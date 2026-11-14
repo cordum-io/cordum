@@ -212,3 +212,158 @@ Use command hooks. HTTP hooks are permitted only for the EDGE-000 spike.
 ```
 
 Use `/hooks` in Claude Code to confirm the command hooks are active and `/status` to confirm which settings source (local project/user or enterprise managed settings) provided them. HTTP hooks are forbidden for production enforcement because Claude Code treats HTTP connection failures, timeouts, and non-2xx responses as non-blocking. For Claude Code hook JSON semantics, see the official Claude Code hooks documentation: <https://docs.anthropic.com/en/docs/claude-code/hooks>.
+
+## GitHub Copilot
+
+`cordum-hook copilot user-prompt-submit`, `pre-tool-use`, and `post-tool-use`
+run the same runner for GitHub Copilot agent hooks and tag events with
+`CORDUM_AGENT_PRODUCT=github-copilot`. Copilot lifecycle events
+(`session-start`, `stop`, `pre-compact`, `subagent-start`, `subagent-stop`) are
+no-ops that exit `0`.
+
+Copilot runs hooks in one of two harnesses, and both read the same file: the
+Copilot harness (the VS Code "Copilot" session target and Copilot CLI) and the
+Local harness (older VS Code hooks). Everything in this section follows their
+published docs as of 2026-10-26 and has not been verified in a live Copilot
+session. Sources:
+[GitHub Copilot hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference#exit-codes-for-command-hooks),
+[VS Code agent hooks](https://code.visualstudio.com/docs/copilot/customization/hooks),
+and the [VS Code Local hooks reference](https://code.visualstudio.com/docs/agents/reference/hooks-reference).
+
+### Write the hooks file
+
+No `cordumctl` command writes the Copilot hooks file. `cordumctl edge` has no
+Copilot subcommand, and `core/edge/copilot.GenerateHookSettings` is a Go API
+only. Write the file by hand. This is what `GenerateHookSettings` produces for
+`enforce` with fail-closed on:
+
+```json
+{
+  "version": 1,
+  "hooks": {
+    "PostToolUse": [
+      {
+        "type": "command",
+        "command": "cordum-hook copilot post-tool-use",
+        "timeout": 5,
+        "env": {
+          "CORDUM_AGENTD_FAIL_CLOSED": "true",
+          "CORDUM_AGENTD_URL": "http://127.0.0.1:8765/v1/edge/hooks/claude",
+          "CORDUM_AGENT_PRODUCT": "github-copilot",
+          "CORDUM_EDGE_POLICY_MODE": "enforce"
+        }
+      }
+    ],
+    "PreToolUse": [
+      {
+        "type": "command",
+        "command": "cordum-hook copilot pre-tool-use",
+        "timeout": 5,
+        "env": {
+          "CORDUM_AGENTD_FAIL_CLOSED": "true",
+          "CORDUM_AGENTD_URL": "http://127.0.0.1:8765/v1/edge/hooks/claude",
+          "CORDUM_AGENT_PRODUCT": "github-copilot",
+          "CORDUM_EDGE_POLICY_MODE": "enforce"
+        }
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "type": "command",
+        "command": "cordum-hook copilot user-prompt-submit",
+        "timeout": 5,
+        "env": {
+          "CORDUM_AGENTD_FAIL_CLOSED": "true",
+          "CORDUM_AGENTD_URL": "http://127.0.0.1:8765/v1/edge/hooks/claude",
+          "CORDUM_AGENT_PRODUCT": "github-copilot",
+          "CORDUM_EDGE_POLICY_MODE": "enforce"
+        }
+      }
+    ]
+  }
+}
+```
+
+Save it where your harness loads hooks:
+
+- Copilot harness: `.github/hooks/cordum.json` in the repository, or the user
+  hooks directory, `~/.copilot/hooks/` (`%USERPROFILE%\.copilot\hooks\` on
+  Windows, `$COPILOT_HOME/hooks/` when `COPILOT_HOME` is set).
+- Local harness: a repository or user hook file, or a folder listed in
+  `chat.hookFilesLocations`. Local runs hooks only when `chat.useHooks` is on.
+
+Keep `"version": 1`, the PascalCase event names, and a `timeout` of at least
+`5`; the doctor check below tests all three. A camelCase event name such as
+`preToolUse` makes the Copilot harness send a payload `cordum-hook` cannot
+read. Set `timeout` only, not `timeoutSec` as well: the two harnesses give them
+opposite precedence. `CORDUM_AGENTD_URL` is the same agentd endpoint Claude
+Code uses. For `observe`, set `CORDUM_EDGE_POLICY_MODE` to `observe` and
+`CORDUM_AGENTD_FAIL_CLOSED` to `false`. Put `cordum-hook` on `PATH` and keep
+the bare name: on Windows the Copilot harness runs `command` in PowerShell,
+which cannot run a quoted path without `&`.
+
+The file holds no secret, but agentd still requires its nonce on every hook
+call. Start [`cordum-agentd`](cordum-agentd.md) with `CORDUM_AGENTD_NONCE`,
+and start VS Code or the Copilot CLI with the same value in
+`CORDUM_AGENTD_HOOK_NONCE`, so the hook processes Copilot starts inherit it.
+Never put the nonce in the file. Without it agentd rejects every hook call,
+which fail-closed modes turn into denies.
+
+The Copilot harness also reads hooks from a repository's
+`.claude/settings.json` and `.claude/settings.local.json`. If Cordum's Claude
+Code hooks are there, Copilot can run them too, so an event can be evaluated
+twice, once attributed to Claude Code.
+
+### How cordum-hook answers Copilot
+
+The two harnesses read different hook output, and neither documents Claude
+Code's top-level `decision: "block"` for prompts or tool calls, so
+`cordum-hook copilot` re-encodes each answer and signals a deny with its exit
+code:
+
+| Cordum answer | `cordum-hook copilot` output | Copilot harness | Local harness |
+| --- | --- | --- | --- |
+| Deny, approval required, or a fail-closed deny | Exit `2` with the reason on stderr. `pre-tool-use` also prints `{"permissionDecision": "deny", "permissionDecisionReason": "<reason>"}`. | `preToolUse`: the tool call is denied. Other events: a warning, and the run continues. | The prompt or tool call is blocked, and the model gets the reason. |
+| Allow | Exit `0` and no output. | Copilot's own permission rules decide. | Copilot's own permission rules decide. |
+| Allow with rewritten tool input | Exit `0` with `permissionDecision: "allow"`, the new input as `modifiedArgs`, and the same input as `hookSpecificOutput.updatedInput`. | The tool runs with `modifiedArgs`. | The tool runs with `updatedInput`, unless it does not match the tool's schema, in which case Local ignores it. |
+
+`cordum-hook` decides within its `4.5s` budget. The generated `timeout` is `5`
+seconds and is never set lower, and it replaces Copilot's 30-second default.
+So in fail-closed modes an agentd error or timeout becomes a deny before
+Copilot stops waiting for the hook.
+
+### What Copilot hooks cannot enforce
+
+Copilot has no equivalent of Claude Code's `"onFailure": "block"`, so Cordum's
+fail-closed modes cover only what `cordum-hook` handles itself: agentd errors,
+agentd timeouts within the hook's budget, and malformed input. These limits
+remain, and no setting changes them:
+
+- **Prompts are audit-only in the Copilot harness.** It drops command-hook
+  output for `userPromptSubmitted` and treats exit `2` there as a warning, so
+  Cordum records the prompt and shows the reason, but the prompt still runs.
+  The Local harness blocks it.
+- **Harness timeouts are always fail-open.** When a hook runs past its
+  `timeout`, the Copilot harness lets the action through the normal permission
+  flow, for every event including `preToolUse`. The Local reference does not
+  say; treat it as fail-open too.
+- **Other events are logged and skipped.** In the Copilot harness, a hook that
+  fails on any event except `preToolUse` is logged and the run continues. A
+  `preToolUse` hook that crashes or exits non-zero denies the call. The Local
+  harness treats any exit code other than `0` or `2` as a non-blocking warning
+  on every event, so there a hook that cannot start or crashes lets the action
+  through.
+- **`postToolUse` cannot undo a tool call.** The tool has already run. A deny
+  there only passes the reason to the user (Copilot harness) or the model
+  (Local).
+
+For a control that holds when a hook fails, add a mandatory layer such as the
+[LLM proxy](llm-proxy-governance.md).
+
+`cordumctl edge doctor --copilot-hooks-path <file>` runs the `copilot_hooks`
+check. It warns only on problems a corrected file fixes: the file is missing
+or not JSON, `version` is not `1`, an event has no
+`cordum-hook copilot <event>` command, or a `timeout` or `timeoutSec` is under
+`5`. Otherwise it reports `ok` in every policy mode and lists the limits above
+in its detail, because no setting fixes them and a permanent `warn` would keep
+the doctor at exit `2`.

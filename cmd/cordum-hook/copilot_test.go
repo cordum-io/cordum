@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -26,10 +27,12 @@ func (c *cliCapturingAgentd) EvaluateHook(_ context.Context, req claude.AgentdRe
 	return claude.AgentdDecision{Decision: claude.DecisionAllow}, nil
 }
 
-// TestRunCLICopilotPreToolUseGovernsAndBlocks proves a Copilot tool action
-// routes through the same Edge runner as Claude and is blockable: the fake
-// agentd denies, and the hook emits Copilot's permissionDecision:"deny".
-func TestRunCLICopilotPreToolUseGovernsAndBlocks(t *testing.T) {
+// A Copilot deny must block in both harnesses: exit 2 with the reason on
+// stderr (VS Code Local: "Treat stderr as a blocking error"; Copilot harness:
+// any non-zero preToolUse exit denies), plus the Copilot harness's documented
+// top-level permissionDecision JSON for pre-tool-use. Claude's nested
+// hookSpecificOutput is not used.
+func TestRunCLICopilotPreToolUseDenyExitsTwoWithTopLevelDecision(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := runCLI(context.Background(), cliOptions{
 		Args:   []string{"copilot", "pre-tool-use"},
@@ -38,24 +41,29 @@ func TestRunCLICopilotPreToolUseGovernsAndBlocks(t *testing.T) {
 		Stderr: &stderr,
 		Agentd: cliFakeAgentd{},
 	})
-	if code != 0 {
-		t.Fatalf("exit code=%d stderr=%q", code, stderr.String())
+	if code != 2 {
+		t.Fatalf("exit code=%d, want 2; stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "blocked by cli fake") {
+		t.Fatalf("stderr = %q, want the deny reason", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "rm -rf") {
+		t.Fatalf("stderr leaked raw command: %q", stderr.String())
 	}
 	var parsed map[string]any
 	if err := json.Unmarshal(stdout.Bytes(), &parsed); err != nil {
 		t.Fatalf("stdout must be valid JSON, got %q: %v", stdout.String(), err)
 	}
-	if !strings.Contains(stdout.String(), `"permissionDecision":"deny"`) {
-		t.Fatalf("stdout missing deny decision: %q", stdout.String())
-	}
-	if strings.Contains(stderr.String(), "rm -rf") {
-		t.Fatalf("stderr leaked raw command: %q", stderr.String())
+	want := map[string]any{"permissionDecision": "deny", "permissionDecisionReason": "blocked by cli fake"}
+	if !reflect.DeepEqual(parsed, want) {
+		t.Fatalf("stdout = %v, want only the top-level Copilot decision %v", parsed, want)
 	}
 }
 
-// TestRunCLICopilotUserPromptSubmitGoverned proves every chat is governed: a
-// UserPromptSubmit hook routes through the runner and a deny becomes a block.
-func TestRunCLICopilotUserPromptSubmitGoverned(t *testing.T) {
+// Every chat is governed: a UserPromptSubmit deny exits 2 with the reason on
+// stderr, which blocks the prompt in the Local harness. The Copilot harness
+// drops userPromptSubmitted output, so there it is audit-only.
+func TestRunCLICopilotUserPromptSubmitDenyExitsTwo(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := runCLI(context.Background(), cliOptions{
 		Args:   []string{"copilot", "user-prompt-submit"},
@@ -64,15 +72,84 @@ func TestRunCLICopilotUserPromptSubmitGoverned(t *testing.T) {
 		Stderr: &stderr,
 		Agentd: cliFakeAgentd{},
 	})
+	if code != 2 || !strings.Contains(stderr.String(), "blocked by cli fake") {
+		t.Fatalf("exit=%d stderr=%q, want exit 2 with the deny reason", code, stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want none for a prompt deny", stdout.String())
+	}
+}
+
+// With agentd down in a fail-closed session the hook itself denies; that deny
+// must take the same exit-2 path, not Claude's exit-0 JSON.
+func TestRunCLICopilotFailClosedAgentdErrorExitsTwo(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runCLI(context.Background(), cliOptions{
+		Args:   []string{"copilot", "pre-tool-use"},
+		Stdin:  strings.NewReader(`{"hook_event_name":"PreToolUse","tool_name":"run_in_terminal","tool_input":{"command":"ls"}}`),
+		Stdout: &stdout,
+		Stderr: &stderr,
+		Env:    map[string]string{"CORDUM_AGENTD_FAIL_CLOSED": "true"},
+		Agentd: cliFailingAgentd{},
+	})
+	if code != 2 || !strings.Contains(stdout.String(), `"permissionDecision":"deny"`) {
+		t.Fatalf("exit=%d stdout=%q, want exit 2 with a top-level deny", code, stdout.String())
+	}
+	if strings.Contains(stdout.String()+stderr.String(), "sk-test-secret") {
+		t.Fatalf("agentd error secret leaked: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
+// An allow prints nothing, so Copilot's own permission rules still apply.
+func TestRunCLICopilotAllowPrintsNothing(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runCLI(context.Background(), cliOptions{
+		Args:   []string{"copilot", "pre-tool-use"},
+		Stdin:  strings.NewReader(`{"hook_event_name":"PreToolUse","tool_name":"read_file","tool_input":{"filePath":"README.md"}}`),
+		Stdout: &stdout,
+		Stderr: &stderr,
+		Agentd: &cliCapturingAgentd{},
+	})
+	if code != 0 || stdout.Len() != 0 {
+		t.Fatalf("exit=%d stdout=%q, want exit 0 and no output", code, stdout.String())
+	}
+}
+
+// A CONSTRAIN rewrite must reach both harnesses: Copilot reads top-level
+// modifiedArgs, Local reads hookSpecificOutput.updatedInput.
+func TestRunCLICopilotConstrainSendsRewriteInBothFormats(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runCLI(context.Background(), cliOptions{
+		Args:   []string{"copilot", "pre-tool-use"},
+		Stdin:  strings.NewReader(`{"hook_event_name":"PreToolUse","tool_name":"run_in_terminal","tool_input":{"command":"npm test"}}`),
+		Stdout: &stdout,
+		Stderr: &stderr,
+		Agentd: cliConstrainAgentd{},
+	})
 	if code != 0 {
-		t.Fatalf("exit code=%d stderr=%q", code, stderr.String())
+		t.Fatalf("exit=%d stderr=%q", code, stderr.String())
 	}
-	if err := json.Unmarshal(stdout.Bytes(), new(map[string]any)); err != nil {
-		t.Fatalf("stdout must be valid JSON, got %q: %v", stdout.String(), err)
+	var parsed struct {
+		PermissionDecision string         `json:"permissionDecision"`
+		ModifiedArgs       map[string]any `json:"modifiedArgs"`
+		HookSpecificOutput struct {
+			PermissionDecision string         `json:"permissionDecision"`
+			UpdatedInput       map[string]any `json:"updatedInput"`
+		} `json:"hookSpecificOutput"`
 	}
-	if !strings.Contains(stdout.String(), "block") {
-		t.Fatalf("expected the denied prompt to be blocked, got %q", stdout.String())
+	if err := json.Unmarshal(stdout.Bytes(), &parsed); err != nil {
+		t.Fatalf("stdout %q: %v", stdout.String(), err)
 	}
+	if parsed.PermissionDecision != "allow" || parsed.ModifiedArgs["command"] != "npm test -- --ci" ||
+		parsed.HookSpecificOutput.PermissionDecision != "allow" || parsed.HookSpecificOutput.UpdatedInput["command"] != "npm test -- --ci" {
+		t.Fatalf("stdout = %s, want the rewrite in modifiedArgs and hookSpecificOutput.updatedInput", stdout.String())
+	}
+}
+
+type cliConstrainAgentd struct{}
+
+func (cliConstrainAgentd) EvaluateHook(context.Context, claude.AgentdRequest) (claude.AgentdDecision, error) {
+	return claude.AgentdDecision{Decision: claude.DecisionAllow, UpdatedInput: map[string]any{"command": "npm test -- --ci"}}, nil
 }
 
 // TestRunCLICopilotLifecycleIsNoOp proves lifecycle events never call agentd
@@ -187,5 +264,41 @@ func TestCopilotEnvDefaultsProduct(t *testing.T) {
 	got2 := copilotEnv(map[string]string{"CORDUM_AGENT_PRODUCT": "custom"})
 	if got2["CORDUM_AGENT_PRODUCT"] != "custom" {
 		t.Fatalf("explicit product overridden: %v", got2)
+	}
+}
+
+type cliApprovalAgentd struct{}
+
+func (cliApprovalAgentd) EvaluateHook(context.Context, claude.AgentdRequest) (claude.AgentdDecision, error) {
+	return claude.AgentdDecision{
+		Decision:          claude.DecisionRequireApproval,
+		Reason:            "approval required",
+		ApprovalRef:       "apr-1",
+		AdditionalContext: "Cordum approval URL: https://cordum.example/approvals/apr-1",
+	}, nil
+}
+
+// The Copilot harness shows the agent only permissionDecisionReason, so an
+// approval-required deny must carry the approval reference and URL there.
+func TestRunCLICopilotApprovalDenyKeepsApprovalURL(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runCLI(context.Background(), cliOptions{
+		Args:   []string{"copilot", "pre-tool-use"},
+		Stdin:  strings.NewReader(`{"hook_event_name":"PreToolUse","tool_name":"run_in_terminal","tool_input":{"command":"git push"}}`),
+		Stdout: &stdout,
+		Stderr: &stderr,
+		Agentd: cliApprovalAgentd{},
+	})
+	if code != 2 {
+		t.Fatalf("exit code=%d, want 2; stderr=%q", code, stderr.String())
+	}
+	var got map[string]string
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("stdout must be valid JSON, got %q: %v", stdout.String(), err)
+	}
+	for _, want := range []string{"approval_ref=apr-1", "https://cordum.example/approvals/apr-1"} {
+		if !strings.Contains(got["permissionDecisionReason"], want) || !strings.Contains(stderr.String(), want) {
+			t.Fatalf("reason %q / stderr %q missing %q", got["permissionDecisionReason"], stderr.String(), want)
+		}
 	}
 }

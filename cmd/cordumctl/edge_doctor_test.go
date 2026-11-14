@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/edge/claude"
+	"github.com/cordum/cordum/core/edge/copilot"
 )
 
 func TestEdgeDoctorSuccessJSON(t *testing.T) {
@@ -67,6 +69,69 @@ func TestEdgeDoctorMissingClaudeFailsWithoutRealClaude(t *testing.T) {
 	assertEdgeDoctorCheck(t, decodeEdgeDoctorJSON(t, stdout), "claude_binary", stateFail)
 }
 
+// The copilot_hooks check warns only on what a regenerated file fixes. The
+// harness limits no file fixes are ok detail in every policy mode, so they do
+// not hold edge doctor at exit 2.
+func TestEdgeCheckCopilotHooks(t *testing.T) {
+	dir := t.TempDir()
+	generated, err := copilot.GenerateHookSettings(copilot.HookSettingsOptions{HookCommand: "cordum-hook", PolicyMode: "enforce", FailClosed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hooksFile := filepath.Join(dir, "cordum.json")
+	otherFile := filepath.Join(dir, "other.json")
+	oldFile := filepath.Join(dir, "old.json")
+	for path, data := range map[string]string{
+		hooksFile: string(generated),
+		otherFile: `{"version":1,"hooks":{"PreToolUse":[{"type":"command","command":"./lint.sh"}]}}`,
+		// Files generated before the version field was added.
+		oldFile: strings.Replace(string(generated), `"version": 1,`, "", 1),
+	} {
+		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cases := []struct {
+		name, path, mode string
+		want             checkState
+		detail           string
+	}{
+		{"not configured", "", "enforce", stateSkip, "copilot-hooks-path not configured"},
+		{"missing file", filepath.Join(dir, "missing.json"), "enforce", stateWarn, "read Copilot hooks file failed"},
+		{"no cordum hook", otherFile, "enforce", stateWarn, "has no hook that runs cordum-hook copilot"},
+		{"no version", oldFile, "enforce", stateWarn, `"version" is not 1`},
+		{"observe", hooksFile, "observe", stateOK, "a timed-out hook lets the action through"},
+		{"enforce", hooksFile, "enforce", stateOK, "never blocks them"},
+		{"enterprise-strict", hooksFile, "enterprise-strict", stateOK, "other events log a failed hook"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := &edgeDoctorEnv{base: &doctorEnv{}, policyMode: tc.mode, copilotHooksPath: tc.path, readFile: os.ReadFile}
+			res := edgeCheckCopilotHooks(context.Background(), env)
+			if res.State != tc.want || !strings.Contains(res.Detail, tc.detail) {
+				t.Fatalf("got %s %q, want %s containing %q", res.State, res.Detail, tc.want, tc.detail)
+			}
+		})
+	}
+}
+
+func TestEdgeDoctorCopilotHooksFlagPassesGeneratedFile(t *testing.T) {
+	fx := newEdgeDoctorFixture(t)
+	generated, err := copilot.GenerateHookSettings(copilot.HookSettingsOptions{PolicyMode: "enforce", FailClosed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "cordum.json")
+	if err := os.WriteFile(path, generated, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, _ := runEdgeDoctorForTest(t, fx.args("--json", "--copilot-hooks-path", path)...)
+	if code != 0 {
+		t.Fatalf("exit=%d stdout=%s", code, stdout)
+	}
+	assertEdgeDoctorCheck(t, decodeEdgeDoctorJSON(t, stdout), "copilot_hooks", stateOK)
+}
+
 func TestEdgeDoctorMissingHookFails(t *testing.T) {
 	fx := newEdgeDoctorFixture(t)
 	args := replaceFlag(fx.args("--json"), "--hook-command", filepath.Join(t.TempDir(), "missing-hook"))
@@ -117,6 +182,9 @@ type edgeDoctorFixture struct {
 func newEdgeDoctorFixture(t *testing.T) edgeDoctorFixture {
 	t.Helper()
 	apiKey := "edge-doctor-secret-token"
+	// An inherited value would turn on the copilot_hooks check, which warns
+	// (exit 2) when the file it names is missing or out of date.
+	t.Setenv("CORDUM_EDGE_COPILOT_HOOKS_PATH", "")
 	agentdURL := newEdgeDoctorAgentdURL(t)
 	settings := writeEdgeDoctorSettings(t, agentdURL)
 	return edgeDoctorFixture{
