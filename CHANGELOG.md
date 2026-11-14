@@ -7,6 +7,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Docs: the Safety Kernel guide, scheduler internals, configuration reference, production
+  runbook, threat model and dashboard page spec now name the settings that select each fail
+  mode. The scheduler's input and output modes are the config-service keys
+  `scheduler.input_fail_mode` and `scheduler.output_fail_mode`, closed when unset;
+  `POLICY_CHECK_FAIL_MODE` selects the Gateway submit pre-check; and open input mode admits
+  only topics listed in `scheduler.input_fail_open_scope`. The rate-limit pages no longer say
+  that a Redis outage falls back to in-memory limits: the Redis-backed limiter denies while
+  Redis is unreachable. The failure and partition behavior contract records that its cited
+  tests pass at `da5f9bda` (task-ca72211e).
 - `cordumctl pack install`, upgrades and uninstall use the gateway pack API,
   applying the gateway's checks to every install. Install requires `packs.install`
   (`auth.PermPacksInstall`) or admin, and prints the returned pack worker credential

@@ -490,7 +490,7 @@ rules:
 
 output_policy:
   enabled: false
-  fail_mode: open          # open = allow on scanner error, closed = deny
+  fail_mode: open          # does not select the scheduler's output fail mode (scheduler.output_fail_mode)
 
 output_rules:
   - id: secret_leak
@@ -575,7 +575,7 @@ default_decision: deny
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `output_policy.enabled` | bool | `false` | Enable output scanning |
-| `output_policy.fail_mode` | string | `"closed"` | `open` = allow on scanner error, `closed` = quarantine on scanner error (recommended for production) |
+| `output_policy.fail_mode` | string | `"closed"` | Does not select the scheduler's output fail mode: the asynchronous output check follows the config-service key `scheduler.output_fail_mode`, which is closed when unset (see [output safety](output-safety.md)). |
 
 ### Output Rules Section
 
@@ -836,7 +836,7 @@ Invalid values (non-numeric, zero, negative) are silently replaced with defaults
 | `TENANT_ID` | — | Single-tenant default ID |
 | `ARTIFACT_MAX_BYTES` | — | Max artifact upload/download size |
 | `WORKFLOW_FOREACH_MAX_ITEMS` | — | Max items in workflow for-each expansion |
-| `POLICY_CHECK_FAIL_MODE` | `closed` | Behavior when Safety Kernel is unreachable during policy evaluation (both gateway submit-time and scheduler dispatch-time). `closed` (default): reject the job. `open`: allow with warning log. |
+| `POLICY_CHECK_FAIL_MODE` | `closed` | Gateway submit-time pre-check behavior when the Safety Kernel is unreachable. `closed` (default): reject the submit. `open`: accept it. The scheduler's dispatch-time mode is the config-service key `scheduler.input_fail_mode` ([safety-kernel.md](safety-kernel.md#10-input-policy-fail-mode)). |
 
 ### Gateway — API Keys
 
@@ -859,7 +859,7 @@ Invalid values (non-numeric, zero, negative) are silently replaced with defaults
 | `API_RATE_LIMIT_BURST` | `50` | Per-tenant burst size |
 | `API_PUBLIC_RATE_LIMIT_RPS` | `20` | Public (unauthenticated) rate limit |
 | `API_PUBLIC_RATE_LIMIT_BURST` | `40` | Public burst size |
-| `REDIS_RATE_LIMIT` | `true` | Enable Redis-backed distributed rate limiting. When `true`, rate limits are enforced globally across all gateway replicas via Redis sliding-window counters (key format: `cordum:rl:{key}:{unix_second}`). When `false` or Redis unavailable, falls back to per-process in-memory token buckets (effective limit = N × configured limit with N replicas). |
+| `REDIS_RATE_LIMIT` | `true` | Enable Redis-backed distributed rate limiting. When `true`, rate limits are enforced globally across all gateway replicas via Redis sliding-window counters (key format: `cordum:rl:{key}:{unix_second}`). When `false`, the gateway uses per-process in-memory token buckets (effective limit = N × configured limit with N replicas). While Redis is unreachable, the Redis-backed limiter denies requests (measured at the limiter only; see the [failure and partition behavior contract](contract/failure-behavior.md)). |
 
 > **Horizontal scaling note**: With multiple gateway replicas, Redis-backed rate
 > limiting (`REDIS_RATE_LIMIT=true`) is strongly recommended. Without it, each
@@ -1022,7 +1022,7 @@ RBAC roles are stored in Redis (key prefix `rbac:role:`). Default roles (admin, 
 | `JOB_META_TTL_SECONDS` | — | Job metadata TTL in seconds (takes precedence) |
 | `WORKER_SNAPSHOT_INTERVAL` | — | Worker state snapshot interval |
 | `OUTPUT_POLICY_ENABLED` | `false` | Enable output policy: `true`, `1` |
-| `POLICY_CHECK_FAIL_MODE` | `closed` | Behavior when safety kernel is unreachable during pre-dispatch input policy checks. `closed` (default): requeue with backoff. `open`: allow through with warning log and metric. See [safety-kernel.md](safety-kernel.md) for risk implications. |
+| `POLICY_CHECK_FAIL_MODE` | `closed` | Does not select the scheduler's input fail mode. That mode is the config-service key `scheduler.input_fail_mode`: closed when unset, and `open` admits only topics listed in `scheduler.input_fail_open_scope`. See [safety-kernel.md](safety-kernel.md#10-input-policy-fail-mode) for the risk implications. |
 
 ### Gateway + Scheduler — Boundary Hardening
 
