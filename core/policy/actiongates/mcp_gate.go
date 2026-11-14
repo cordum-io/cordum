@@ -53,10 +53,16 @@ type MCPGateOptions struct {
 	// field names treated as destructive. Unset => defaults.
 	// This is a SCOPING predicate only -- it never denies on its own.
 	DestructiveMutationFieldGlobs []string
-	// FailClosedDestructiveOnTaintLookupError requires human approval for a
-	// destructive MCP call when the session-taint lookup errored. Default false
-	// preserves the historical fail-open path.
+	// FailClosedDestructiveOnTaintLookupError fails a destructive MCP call
+	// closed when the session-taint lookup errored, since the session cannot be
+	// confirmed clean. False keeps the fail-open path. Production callers
+	// resolve it with ResolveFailClosedDestructiveOnTaintLookupError.
 	FailClosedDestructiveOnTaintLookupError bool
+	// TaintFailClosedApprover reports that an approver acts on REQUIRE_HUMAN
+	// holds (ApproverConfiguredForTaintFailClosed). With it, a call failed
+	// closed above is held for approval; without it, the call is denied rather
+	// than parked in a hold nobody resolves.
+	TaintFailClosedApprover bool
 }
 
 // MCPGate enforces MCP/tool-call admission. It converges on the same
@@ -71,6 +77,7 @@ type MCPGate struct {
 	destructiveMutArgKeys    []string
 	destructiveMutFieldGlobs []string
 	failClosedTaintLookup    bool
+	taintFailClosedApprover  bool
 }
 
 // NewMCPGate returns a gate bound to the resolver/probe in opts. Rule
@@ -89,6 +96,7 @@ func NewMCPGate(opts MCPGateOptions) *MCPGate {
 		destructiveMutArgKeys:    normalizeStringList(opts.DestructiveMutationArgKeys, defaultDestructiveMutationArgKeys),
 		destructiveMutFieldGlobs: normalizeStringList(opts.DestructiveMutationFieldGlobs, defaultDestructiveMutationFieldGlobs),
 		failClosedTaintLookup:    opts.FailClosedDestructiveOnTaintLookupError,
+		taintFailClosedApprover:  opts.TaintFailClosedApprover,
 	}
 }
 
@@ -284,9 +292,16 @@ func (g *MCPGate) Evaluate(ctx context.Context, in *config.PolicyInput) ActionGa
 				dec.Extra["taint_destructive_match"] = match
 				return dec
 			}
-			dec := mcpDecision(pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN, act, CodeRequireHuman,
-				"destructive action held: session taint store unavailable, cannot confirm session is clean",
+			// Fail closed: hold for an approver when one acts on holds,
+			// otherwise deny.
+			dec := mcpDecision(pb.DecisionType_DECISION_TYPE_DENY, act, CodeServiceUnavailable,
+				"destructive action blocked: session taint store unavailable, cannot confirm session is clean",
 				"taint_lookup_unavailable_failclosed")
+			if g.taintFailClosedApprover {
+				dec = mcpDecision(pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN, act, CodeRequireHuman,
+					"destructive action held: session taint store unavailable, cannot confirm session is clean",
+					"taint_lookup_unavailable_failclosed")
+			}
 			dec.Extra["taint_destructive_match"] = match
 			return dec
 		}
