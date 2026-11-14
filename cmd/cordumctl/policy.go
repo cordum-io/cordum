@@ -266,7 +266,8 @@ func policyStoreCheck(client *restClient, pubEnv string) ([]storeBundleRefusal, 
 		exitPolicyVerify(2, "no trusted policy keys: export the safety kernel's CORDUM_POLICY_PUBLIC_KEY_<ID> values; "+err.Error())
 	}
 	doc, err := client.getConfig(context.Background(), "system", "policy")
-	if isNotFound(err) {
+	// The gateway's 404 CONFIG_NOT_FOUND means no policy document: the kernel loads zero bundles.
+	if isNotFound(err) && strings.Contains(err.Error(), "CONFIG_NOT_FOUND") {
 		doc, err = &configDoc{}, nil
 	}
 	if err != nil {
