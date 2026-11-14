@@ -864,7 +864,17 @@ var shellLeavers = []string{"exit", "exec", "return", ".", "source", "eval"}
 // anywhere fails closed, so a prefix such as `X=1 exit 0` cannot hide one.
 // This is a token check, not a shell parser: keep the release Dockerfiles in
 // the plain `RUN apk upgrade --no-cache && apk add ...` form.
+//
+// Any `$`, backtick or `(` in the text fails closed, even inside quotes or a
+// comment. A command, process or parameter substitution, a subshell or a
+// `$'...'` string can hold an && list that splitting on && reads as top
+// level: `echo $(false && apk upgrade --no-cache && true)` succeeds without
+// upgrading. The check reads the raw text, because quotes nested in a
+// substitution inside double quotes defeat the masking.
 func runExecutesApkUpgrade(script string) bool {
+	if strings.ContainsAny(script, "$`(") {
+		return false
+	}
 	script = quotedShellText.ReplaceAllString(script, "Q")
 	script = shellComment.ReplaceAllString(script, "")
 	if strings.ContainsAny(script, `'"`) {
