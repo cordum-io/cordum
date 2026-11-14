@@ -22,6 +22,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   and code references; complete key/stream coverage and cleanup guarantees
   are not claimed by this inventory.
 
+- Added `TestDataInventoryKeyCoverage` (PR2-07-KEYS): `tests/contract` parses
+  the non-test Go files under `core/` and `cmd/` and requires every key-shaped
+  string literal and JetStream stream name to map to a data-inventory entry or
+  a `not_tenant_data` classification, and every Redis stream writer to a
+  `redis_stream` entry. It fails on an unmapped item and on a classification
+  that no longer matches the code. The validator refuses classification
+  patterns that use identity placeholders such as `{tenant}` or `{user}`.
+  Entries DI-C22 to DI-C53 add the job, workflow, identity, session, edge,
+  evaluation and coordination key families. The guard checks mapping only and
+  adds no deletion or legal-hold behavior.
+
 - Added [failure and partition behavior](docs/contract/failure-behavior.md)
   (M0-06, task-51b08640): required and current behavior for low-risk,
   approval-required and protected actions when Redis, NATS, the Safety Kernel,
