@@ -24,6 +24,7 @@ actual decision.
 Runtime state:
 - `cordum_shadow_eval_total{decision,diff}` — number of shadow events emitted, labelled by diff class.
 - `cordum_shadow_eval_dropped_total{reason}` — dropped submissions (queue full, closed evaluator).
+- `cordum_audit_events_dropped_total{reason="no_fallback"}` — shadow_eval audit events that failed to publish to NATS (counted by core/audit; the kernel's only NATS audit publisher is the shadow sender).
 - `cordum_shadow_eval_queue_depth` — live queue depth gauge.
 - `cordum_shadow_eval_duration_seconds` — shadow-evaluate latency histogram.
 
