@@ -131,6 +131,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- `PUT /api/v1/agents/{id}` accepts `agent_id` to link a worker, with the same
+  checks as create (#492, task-bc7181da).
+
 - `cordum-mcp --cacert` / `CORDUM_TLS_CA` trusts the gateway's private CA, and
   the pinned-IP transport keeps the caller's TLS config (#492, task-9a3e9e6c).
 
