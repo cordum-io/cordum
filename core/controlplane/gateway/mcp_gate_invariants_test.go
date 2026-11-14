@@ -346,3 +346,11 @@ func TestMCPGateMatchesKernelRuleSemantics(t *testing.T) {
 		}
 	}
 }
+
+func TestMCPInvariantBlockDecisionDenies(t *testing.T) {
+	rule := config.PolicyRule{ID: "inv-block-fs", Decision: "block",
+		Match: config.PolicyMatch{MCP: config.MCPPolicy{DenyTools: []string{"fs.read"}}}}
+	if _, denied := matchMCPInvariantDeny([]config.PolicyRule{rule}, mcp.Tool{Name: "fs.read"}, MCPCallMetadata{Tenant: "default"}); !denied {
+		t.Fatal("a block invariant must deny like a deny invariant")
+	}
+}

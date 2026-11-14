@@ -46,7 +46,8 @@ func (f MCPInvariantLookupFunc) InvariantsForMCPTool(ctx context.Context) []conf
 }
 
 // matchMCPInvariantDeny iterates invariant rules looking for a DENY-class
-// rule whose MCP matchers cover the candidate tool call. Returns the
+// rule (any decision config.IsAllowClassDecision rejects) whose MCP
+// matchers cover the candidate tool call. Returns the
 // matching rule and true when a hard deny applies; (zero rule, false)
 // otherwise. Only Match.Tenants and Match.MCP are consulted; see
 // mcpMatchHits for the list semantics.
@@ -55,7 +56,7 @@ func (f MCPInvariantLookupFunc) InvariantsForMCPTool(ctx context.Context) []conf
 // for the matching tenant. Empty Match.Tenants means "all tenants".
 func matchMCPInvariantDeny(rules []config.PolicyRule, tool mcp.Tool, meta MCPCallMetadata) (config.PolicyRule, bool) {
 	for _, rule := range rules {
-		if !isMCPInvariantDenyDecision(rule.Decision) {
+		if config.IsAllowClassDecision(rule.Decision) {
 			continue
 		}
 		if !matchTenantScope(rule.Match.Tenants, meta.Tenant) {
@@ -66,19 +67,6 @@ func matchMCPInvariantDeny(rules []config.PolicyRule, tool mcp.Tool, meta MCPCal
 		}
 	}
 	return config.PolicyRule{}, false
-}
-
-// isMCPInvariantDenyDecision returns true for the decision strings that
-// represent a DENY-class outcome (block + escalate). Mirrors
-// policybundles.isInvariantDeny but lives gateway-side to avoid a
-// cross-package call from the MCP gate hot path.
-func isMCPInvariantDenyDecision(decision string) bool {
-	switch strings.ToLower(strings.TrimSpace(decision)) {
-	case "deny", "require_approval", "require-approval", "require_human", "throttle":
-		return true
-	default:
-		return false
-	}
 }
 
 // matchTenantScope reports whether the invariant rule applies to the
