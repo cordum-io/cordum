@@ -401,9 +401,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 - Audit publishing tolerates a missing fallback or exporter: events without a
   usable sink are dropped, logged and counted in
-  `cordum_audit_events_dropped_total{reason}`. The Safety Kernel's shadow sender
-  has a discard fallback, and cordum-mcp's NATS audit fallback writes to stderr
-  when no SIEM exporter is configured.
+  `cordum_audit_events_dropped_total{reason}`. cordum-mcp's NATS audit fallback
+  writes to stderr when no SIEM exporter is configured.
+
+- The Safety Kernel now counts shadow_eval audit events that fail to publish to
+  NATS in `cordum_audit_events_dropped_total{reason="no_fallback"}`. They were
+  discarded uncounted before. Shadow events are diagnostic, so this is an
+  observability fix; failed events are still never republished.
 
 - cordum-mcp writes its stderr audit events at every `CORDUM_LOG_LEVEL`, and
   the text log format prints each event as JSON text. cordum-mcp also closes
