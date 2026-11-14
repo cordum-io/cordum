@@ -7,6 +7,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- MCP gate: invariant `match.mcp` lists are read the way the Safety Kernel
+  reads them (`config.MCPRuleMatch`), so `allow_servers`, `allow_resources`
+  and `allow_actions` now apply. The gate has no resource or action, so a
+  non-empty `allow_resources` or `allow_actions` list blocks every gated call
+  (#492, task-780cf46a).
+
 - Edge managed settings: `cordumctl edge managed-settings verify` and the
   doctor's compliance check flag managed files exported before this release:
   4 critical drifts until they are re-exported (#492, task-514d2456).
@@ -216,6 +222,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   ruleset (task-fd34e921).
 
 ### Security
+
+- Gateway: a `block` invariant, like every invariant whose decision is not
+  allow-class (`config.IsAllowClassDecision`), now denies at the MCP gate,
+  and `policybundles.ApplyInvariants` prepends it like `deny`, so a tenant
+  allow for the same jobs no longer wins over it (#492, task-780cf46a).
 
 - Edge: a broken `cordum-hook` now blocks. Fail-closed sessions (every mode
   except observe) and the managed template set `"onFailure": "block"` on
