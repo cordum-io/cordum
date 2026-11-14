@@ -197,6 +197,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `SubmitJob` rejects `_governance.*` and `_ma.*` labels with
   `InvalidArgument`, as HTTP submit answers 400 (#492, task-5e03cb28).
 
+- Scheduler: the reconciler's approval auto-repair requires the job's stored
+  approval record; a legacy label-only approval also needs its recorded
+  approver (`approval_by`) (#492, task-211fb5da).
+
 - Upgrade note, production signed-content enforcement. In the production
   profile (`CORDUM_ENV=production` or `CORDUM_PRODUCTION=true`) with no
   override, the safety kernel activates config-store policy only when its
