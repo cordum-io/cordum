@@ -64,8 +64,10 @@ func (a policyDispatcherAdapter) Dispatch(ctx context.Context, in *config.Policy
 //  3. Otherwise -32097 (mcp.ErrApprovalGateMisconfigured): without the
 //     Edge mint and Edge session metadata no resumable approval exists.
 //
-// It returns a non-empty Edge ref or an error. Scope preapproval and the
-// legacy MCP approval store's records are not consulted (task-06784e6d).
+// It returns a non-empty Edge ref or an error. On invariant DENY the error
+// is invariantDenied's *mcp.PolicyDenied, which the MCP server answers like
+// an action-gate DENY. Scope preapproval and the legacy MCP approval
+// store's records are not consulted (task-06784e6d).
 func (g *gatewayApprovalGate) ConsumeActionGateDecision(ctx context.Context, _ mcp.PolicyDecision, ctxData mcp.ToolCallApprovalContext) (string, error) {
 	if g == nil || g.store == nil {
 		return "", fmt.Errorf("mcp gate: approval store unavailable")
@@ -151,8 +153,7 @@ func (g *gatewayApprovalGate) actionGateInvariantDeny(ctx context.Context, ctxDa
 	for _, candidate := range scopes {
 		tool := mcp.Tool{Name: ctxData.Tool, ApprovalScope: candidate}
 		if rule, denied := matchMCPInvariantDeny(rules, tool, meta); denied {
-			return fmt.Errorf("%w: tool %q denied by invariant %q",
-				ErrMCPInvariantDeny, ctxData.Tool, rule.ID)
+			return invariantDenied(ctxData.Tool, rule)
 		}
 	}
 	return nil
