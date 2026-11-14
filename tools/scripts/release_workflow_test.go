@@ -792,7 +792,18 @@ func TestReleaseWorkflowMutationsAreCaught(t *testing.T) {
 // `apk upgrade --no-cache`. Without it the image ships the base layer's
 // packages as they were when the base was published (task-278cbdd7: the
 // demo image shipped alpine:3.21's zlib 1.3.2-r1, CVE-2026-4738).
+//
+// Any `<` in the Dockerfile fails closed (task-0a00a0dd). dockerfileInstructions
+// knows nothing of heredocs, so it would read heredoc data as instructions:
+// after `RUN cat <<'EOF'`, a data line `RUN apk upgrade --no-cache` would
+// count as the upgrade, and a data line `FROM scratch` would hide the Alpine
+// final stage. Rejecting only `<<` is not enough, because BuildKit joins
+// continuation lines before it looks for a heredoc: `RUN cat <\` followed by
+// a line `<'EOF'` opens one too.
 func checkFinalStageUpgradesAlpine(dockerfile string) error {
+	if i := strings.IndexByte(dockerfile, '<'); i >= 0 {
+		return fmt.Errorf("line %d has `<`: heredoc data cannot be told apart from instructions, so keep `<` out of this Dockerfile", strings.Count(dockerfile[:i], "\n")+1)
+	}
 	instructions := dockerfileInstructions(dockerfile)
 
 	last := -1
@@ -921,6 +932,21 @@ func TestReleaseFinalStageUpgradeFixtures(t *testing.T) {
 		{
 			name:       "upgrade after a continued line that opens a comment",
 			dockerfile: "FROM alpine:3.24\nRUN apk add --no-cache ca-certificates # then \\\n    && apk upgrade --no-cache\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade only as a RUN line in heredoc data",
+			dockerfile: "FROM alpine:3.24\nRUN cat <<'EOF'\nRUN apk upgrade --no-cache\nEOF\n",
+			wantErr:    true,
+		},
+		{
+			name:       "Alpine final stage hidden by a FROM line in heredoc data",
+			dockerfile: "FROM alpine:3.24\nRUN cat <<'EOF'\nFROM scratch\nEOF\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade only in heredoc data opened across a continued line",
+			dockerfile: "FROM alpine:3.24\nRUN cat <\\\n<'EOF'\nRUN apk upgrade --no-cache\nEOF\n",
 			wantErr:    true,
 		},
 		{
