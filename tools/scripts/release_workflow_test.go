@@ -924,6 +924,21 @@ func TestReleaseFinalStageUpgradeFixtures(t *testing.T) {
 			wantErr:    true,
 		},
 		{
+			name:       "upgrade only as a RUN line in heredoc data",
+			dockerfile: "FROM alpine:3.24\nRUN cat <<'EOF'\nRUN apk upgrade --no-cache\nEOF\n",
+			wantErr:    true,
+		},
+		{
+			name:       "Alpine final stage hidden by a FROM line in heredoc data",
+			dockerfile: "FROM alpine:3.24\nRUN cat <<'EOF'\nFROM scratch\nEOF\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade only in heredoc data opened across a continued line",
+			dockerfile: "FROM alpine:3.24\nRUN cat <\\\n<'EOF'\nRUN apk upgrade --no-cache\nEOF\n",
+			wantErr:    true,
+		},
+		{
 			name:       "upgrade skipped by a short-circuit or list",
 			dockerfile: "FROM alpine:3.24\nRUN true || apk upgrade --no-cache\n",
 			wantErr:    true,
