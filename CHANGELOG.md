@@ -393,6 +393,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   bound to the worker principal), a session or an OIDC login, or use a
   delegation token.
 
+#### core/controlplane/gateway — HTTP MCP trace parents and fronted upstreams act only for an authenticated, bound caller (2026-11-14, task-d78b4830)
+
+- The Edge session and execution that the gateway creates for an HTTP MCP
+  session are owned by the authenticated principal. A principal named only by
+  the `X-Principal-Id` header owns neither and is kept as the
+  `asserted_principal_id` label for attribution.
+- A fronted MCP upstream serves only a caller with an active bound agent
+  identity, like the built-in tool registry. With no identity, or a suspended
+  or revoked binding, `tools/list` is empty and `tools/call` is refused with
+  `-32098` `no_identity` before the upstream is called, whether
+  `mcp.policy_gate_enabled` is off or on.
+
 #### core/controlplane/gateway — MCP requests take identity only from an authenticated principal (2026-11-14, task-e3562f91)
 
 - **Behavior change** for HTTP MCP clients (`/mcp/sse` and `/mcp/message`).
