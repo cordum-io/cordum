@@ -354,3 +354,93 @@ control_plane:
      retention: {none: 'No Cordum writer or TTL; operators manage these keys'},
      deletion: {none: 'No Cordum deletion path; operators manage these keys'},
      legal_hold: {applies: false, reason: Operator-managed keys are outside Cordum cleanup}}
+  - {id: DI-C53, class: control-records,
+     storage: {kind: redis_key, location: Worker registry snapshot and live worker id set, redis_keys: [{pattern: 'sys:workers:snapshot', path: core/infra/registry/snapshot.go}, {pattern: 'cordum:workers:count', path: core/controlplane/scheduler/engine.go}], writers: [{path: core/infra/store/redis_store.go, symbol: RedisStore.PutResult}, {path: core/controlplane/scheduler/engine.go, symbol: Engine.persistWorkerCount}]},
+     content: {description: 'Worker ids, pools, capabilities, load, region and free-form worker labels', personal_data: possible},
+     retention: {settings: [{name: REDIS_DATA_TTL_SECONDS, path: core/infra/store/redis_store.go}, {name: REDIS_DATA_TTL, path: core/infra/store/redis_store.go}], default: '24h snapshot; the worker id set expires after a fixed 2m'},
+     deletion: {paths: [{path: core/infra/store/redis_store.go, symbol: RedisStore.PutResult}, {path: core/controlplane/scheduler/engine.go, symbol: Engine.persistWorkerCount}]},
+     legal_hold: {applies: false, reason: Snapshot TTLs do not consult legal holds}}
+not_tenant_data:
+  - {path: cmd/cordum-scheduler/main.go, patterns: ['cordum:scheduler:snapshot:writer'], reason: 'Leader lock for the worker-snapshot writer; no tenant data'}
+  - {path: cmd/cordumctl/doctor.go, patterns: ['doctor:{message}'], reason: 'CLI stderr message prefix, not a Redis key'}
+  - {path: cmd/cordumctl/evals.go, patterns: ['warnings:{text}'], reason: 'CLI output heading, not a Redis key'}
+  - {path: cmd/cordumctl/mcp.go, patterns: ['note:{text}'], reason: 'CLI output label, not a Redis key'}
+  - {path: cmd/cordumctl/pack.go, patterns: ['cordumctl:{host}', 'pack:{pack}', 'packs:global'], reason: 'Pack-install lock resource names and the CLI owner label; the lock keys are lock:{resource} (DI-C49)'}
+  - {path: cmd/cordumctl/pack_trust.go, patterns: ['env:{kid}'], reason: 'Publisher id and display-name label for trust keys loaded from the environment, not a Redis key'}
+  - {path: core/audit/datadog.go, patterns: ['service:cordum-gateway'], reason: 'Datadog tag string sent with exported events, not a Redis key'}
+  - {path: core/auth/delegation/keys.go, patterns: ['ed25519:{key}'], reason: 'Key-encoding scheme prefix stripped when parsing configured keys, not a Redis key'}
+  - {path: core/controlplane/gateway/actiongate_chain_verifier.go, patterns: ['approval_evidence_missing:{ref}'], reason: 'Action-gate outcome detail code, not a Redis key'}
+  - {path: core/controlplane/gateway/auth/basic.go, patterns: ['static:{fingerprint}'], reason: 'Key-id label built from a static API key fingerprint, not a Redis key'}
+  - {path: core/controlplane/gateway/auth/jwt.go, patterns: ['base64:{secret}'], reason: 'Encoding prefix of a configured JWT secret value, not a Redis key'}
+  - {path: core/controlplane/gateway/auth/oidc.go, patterns: ['cordum:auth:jwks:{hash}'], reason: 'OIDC provider JWKS cache keyed by issuer hash; public signing keys only'}
+  - {path: core/controlplane/gateway/auth/rbac.go, patterns: ['rbac:role:{role}', 'rbac:roles'], reason: 'Global RBAC role definitions (names, permissions, inheritance); no tenant or user content'}
+  - {path: core/controlplane/gateway/auth/scim.go, patterns: ['urn:ietf:params:scim:{urn}'], reason: 'SCIM protocol schema and message URNs, not Redis keys'}
+  - {path: core/controlplane/gateway/handler_admin_locks.go, patterns: ['cordum:auth:jwks:{hash}', 'cordum:cache:marketplace', 'cordum:cb:{breaker}', 'cordum:dlq:cleanup', 'cordum:reconciler:{name}', 'cordum:replayer:{name}', 'cordum:scheduler:snapshot:{name}', 'cordum:wf:delay:poller', 'cordum:workflow-engine:reconciler:{name}'], reason: 'Admin lock-inspection prefixes for infrastructure locks, breakers and caches with no tenant data'}
+  - {path: core/controlplane/gateway/handlers_approvals.go, patterns: ['approval:{ref}', 'namespace:{name}', 'resource:{name}', 'system:{name}'], reason: 'JetStream message-id label for approval republish and blast-radius label prefixes, not Redis keys'}
+  - {path: core/controlplane/gateway/handlers_auth.go, patterns: ['approvals:{action}', 'audit:read', 'audit:write', 'delegations:{action}', 'jobs:{action}', 'packs:{action}', 'policy:{action}', 'schemas:{action}', 'topics:{action}', 'workflows:{action}'], reason: 'API-key and role scope names, not Redis keys'}
+  - {path: core/controlplane/gateway/handlers_edge_approvals.go, patterns: ['principal:{name}', 'role:{name}'], reason: 'Resolver identity label parts compared in memory, not Redis keys'}
+  - {path: core/controlplane/gateway/handlers_edge_evaluate.go, patterns: ['principal:{name}', 'sha256:{digest}'], reason: 'Requester identity label and digest string prefix, not Redis keys'}
+  - {path: core/controlplane/gateway/handlers_edge_llm_ingest.go, patterns: ['llm:{proxy}'], reason: 'Collector name the runtime replay window hashes into edge:rt:nonce keys (DI-C34); not a key itself'}
+  - {path: core/controlplane/gateway/handlers_jobs.go, patterns: ['cordum:cb:safety', 'cordum:scheduler:input_fail_open_total'], reason: 'Safety circuit-breaker state and a global fail-open counter read for status; no tenant data'}
+  - {path: core/controlplane/gateway/handlers_packs.go, patterns: ['api-gateway:{nanos}', 'pack:{pack}', 'packs:global'], reason: 'Pack-install lock resource names and the gateway owner label; the lock keys are lock:{resource} (DI-C49)'}
+  - {path: core/controlplane/gateway/handlers_policy_bundles.go, patterns: ['output:{entry}'], reason: 'Entry id inside an output-quarantine rule document, not a Redis key'}
+  - {path: core/controlplane/gateway/helpers.go, patterns: ['principal:{name}'], reason: 'Identity label part compared in memory, not a Redis key'}
+  - {path: core/controlplane/gateway/mcp_approval_handlers.go, patterns: ['principal:{name}'], reason: 'Identity label part compared in memory, not a Redis key'}
+  - {path: core/controlplane/gateway/pack_install_verify.go, patterns: ['packs:publishers:{kid}', 'packs:trusted_keys:{kid}'], reason: 'Global pack-signing public keys and publisher records read for trust checks; no tenant content'}
+  - {path: core/controlplane/gateway/packs/constants.go, patterns: ['cordum:cache:marketplace'], reason: 'Global marketplace catalog cache; no tenant content'}
+  - {path: core/controlplane/gateway/policybundles/audit.go, patterns: ['api_key:{key}'], reason: 'identity_source label recorded in policy audit entries, not a Redis key'}
+  - {path: core/controlplane/gateway/policybundles/rules.go, patterns: ['legacy:{rule}'], reason: 'Generated rule id inside policy bundle documents, not a Redis key'}
+  - {path: core/controlplane/safetykernel/output_resource.go, patterns: ['sha256:{digest}'], reason: 'Digest string prefix, not a Redis key'}
+  - {path: core/controlplane/safetykernel/policy_signature_report.go, patterns: ['cordum:safety:policy_signature:{instance}'], reason: 'Per-instance policy signature report (sources, key count, mode); no tenant data'}
+  - {path: core/controlplane/scheduler/engine.go, patterns: ['cordum:scheduler:input_fail_open_total'], reason: 'Global counter of safety fail-open decisions; no tenant data'}
+  - {path: core/controlplane/scheduler/output_safety_client.go, patterns: ['cordum:cb:safety:output', 'sha256:{digest}'], reason: 'Output-safety circuit-breaker state and a digest prefix; no tenant data'}
+  - {path: core/controlplane/scheduler/pending_replayer.go, patterns: ['cordum:replayer:pending'], reason: 'Leader lock for the pending-job replayer; no tenant data'}
+  - {path: core/controlplane/scheduler/reconciler.go, patterns: ['cordum:reconciler:default'], reason: 'Leader lock for the job reconciler; no tenant data'}
+  - {path: core/controlplane/scheduler/safety_client.go, patterns: ['cordum:cb:safety'], reason: 'Input-safety circuit-breaker state; no tenant data'}
+  - {path: core/controlplane/scheduler/session_token.go, patterns: ['legacy:'], reason: 'Constant version tag inside session:worker keys (DI-C45), not a key or tenant value'}
+  - {path: core/controlplane/scheduler/session_token_store.go, patterns: ['v2:'], reason: 'Constant version tag inside session:worker keys (DI-C45), not a key or tenant value'}
+  - {path: core/controlplane/topicregistry/service.go, patterns: ['tenant:{field}'], reason: 'Map key inside the cfg:system:topics config document (DI-C05 cfg: keys), not a Redis key'}
+  - {path: core/edge/agentd/evaluator.go, patterns: ['edge-evaluate:{hash}'], reason: 'In-process safe-allow cache key (DI-E03), not a Redis key'}
+  - {path: core/edge/claude/mapper.go, patterns: ['sha256:{digest}'], reason: 'Digest string prefix, not a Redis key'}
+  - {path: core/edge/copilot/hooksettings.go, patterns: ['authorization:{text}'], reason: 'Secret-marker substring used to refuse hook settings, not a Redis key'}
+  - {path: core/edge/observability.go, patterns: ['file:{label}', 'runtime:{label}', 'shell:{label}'], reason: 'Human-readable action summary labels, not Redis keys'}
+  - {path: core/edge/redaction.go, patterns: ['sha256:{digest}'], reason: 'Digest string prefix, not a Redis key'}
+  - {path: core/edge/shadow/ci/buildkite.go, patterns: ['command:{text}'], reason: 'Pipeline YAML field name matched while scanning CI config, not a Redis key'}
+  - {path: core/edge/shadow/ci/circleci.go, patterns: ['image:{text}', 'run:{text}'], reason: 'Pipeline YAML field names matched while scanning CI config, not Redis keys'}
+  - {path: core/edge/shadow/ci/detector.go, patterns: ['managed-by:{text}'], reason: 'Config marker matched while scanning CI config, not a Redis key'}
+  - {path: core/edge/shadow/ci/gitlab.go, patterns: ['image:{text}'], reason: 'Pipeline YAML field name matched while scanning CI config, not a Redis key'}
+  - {path: core/edge/shadow/ci/jenkins.go, patterns: ['image:{text}'], reason: 'Pipeline field name matched while scanning CI config, not a Redis key'}
+  - {path: core/edge/shadow/ci/oidc.go, patterns: ['organization:{text}', 'pipeline:{text}', 'project_path:{text}'], reason: 'OIDC subject-claim segments parsed in memory, not Redis keys'}
+  - {path: core/edge/shadow/ci_templates.go, patterns: ['env:{text}', 'include:{text}', 'jobs:{text}', 'orbs:{text}', 'steps:{text}', 'variables:{text}'], reason: 'CI config template field names, not Redis keys'}
+  - {path: core/edge/shadow/github/mapping.go, patterns: ['repo:{text}'], reason: 'OIDC subject-claim prefix parsed in memory, not a Redis key'}
+  - {path: core/edge/shadow/github/signals.go, patterns: ['github_actions:{repo}', 'managed-by:{text}'], reason: 'Finding source-id label and config marker, not Redis keys'}
+  - {path: core/edge/shadow/k8s/mapping.go, patterns: ['sa:{namespace}'], reason: 'Service-account principal label for findings, not a Redis key'}
+  - {path: core/edge/shadow/k8s_templates.go, patterns: ['spec:{text}'], reason: 'Kubernetes manifest template field name, not a Redis key'}
+  - {path: core/edge/shadow/network/detector.go, patterns: ['network:{text}'], reason: 'Error message prefix, not a Redis key'}
+  - {path: core/edge/shadow/scanner.go, patterns: ['env:{name}', 'process:{name}'], reason: 'Finding source-id labels for environment variables and processes, not Redis keys'}
+  - {path: core/evals/extraction/pipeline.go, patterns: ['re:{pattern}'], reason: 'Regular-expression marker in extraction patterns, not a Redis key'}
+  - {path: core/infra/bus/nats.go, patterns: ['handshake:{component}', 'jobreq:{subject}', 'jobresult:{subject}'], reason: 'JetStream Nats-Msg-Id dedupe header values on DI-C21 stream messages, not Redis keys'}
+  - {path: core/infra/config/config.go, patterns: ['localhost:{port}'], reason: 'Default safety-kernel address, not a Redis key'}
+  - {path: core/infra/config/safety_policy.go, patterns: ['legacy:{rule}'], reason: 'Generated rule id prefix inside safety policy documents, not a Redis key'}
+  - {path: core/infra/otel/metrics.go, patterns: ['localhost:{port}'], reason: 'Default OTLP endpoint address, not a Redis key'}
+  - {path: core/infra/otel/tracer.go, patterns: ['localhost:{port}'], reason: 'Default OTLP endpoint address, not a Redis key'}
+  - {path: core/infra/registry/instance.go, patterns: ['cordum:instance:{service}'], reason: 'Service instance heartbeat (id, service, version, commit, start time); no tenant data'}
+  - {path: core/infra/schema/registry.go, patterns: ['schema:{schema}'], reason: 'Global JSON schemas registered by packs, their URL map and index; no tenant content'}
+  - {path: core/infra/store/dlq_store.go, patterns: ['cordum:dlq:cleanup'], reason: 'Leader lock for DLQ cleanup; no tenant data'}
+  - {path: core/infra/store/job_event_store.go, patterns: ['effect:{field}', 'event:{field}'], reason: 'Field-name prefixes inside the job runtime hash (DI-C22), not keys'}
+  - {path: core/infra/store/job_store.go, patterns: ['approval:{ref}'], reason: 'JetStream message-id label set on approval republish, not a Redis key'}
+  - {path: core/licensing/license.go, patterns: ['ed25519:{key}'], reason: 'Key-encoding scheme prefix stripped when parsing license keys, not a Redis key'}
+  - {path: core/mcp/upstream_remote.go, patterns: ['data:{line}', 'event:{line}'], reason: 'Server-sent-event field names parsed from upstream responses, not Redis keys'}
+  - {path: core/policy/actiongates/approval_binding.go, patterns: ['approval_lookup_failed:{detail}'], reason: 'Action-gate sub-reason code, not a Redis key'}
+  - {path: core/policy/actiongates/file_gate.go, patterns: ['credential:{code}', 'sensitive_path:{code}'], reason: 'Action-gate reason codes for file rules, not Redis keys'}
+  - {path: core/policy/actiongates/mcp_gate.go, patterns: ['dangerous_param:{code}', 'identity_lookup_failed:{detail}', 'mutation:{field}', 'reachability_probe_failed:{detail}'], reason: 'Action-gate reason codes for MCP rules, not Redis keys'}
+  - {path: core/policy/actiongates/mutation_gate.go, patterns: ['resource_lookup_failed:{detail}'], reason: 'Action-gate sub-reason code, not a Redis key'}
+  - {path: core/policy/actiongates/provenance_gate.go, patterns: ['approval_lookup_failed:{detail}', 'audit_chain_compromised:{detail}', 'audit_chain_verify_failed:{detail}', 'audit_evidence_missing:{detail}', 'provenance_ok:{detail}'], reason: 'Action-gate reason codes for provenance rules, not Redis keys'}
+  - {path: core/policy/actiongates/tenant_gate.go, patterns: ['archived_bypass:{code}', 'cross_tenant:{code}', 'large_enumeration:{code}', 'wildcard_owner:{field}'], reason: 'Action-gate reason codes for row-scope rules, not Redis keys'}
+  - {path: core/policy/actiongates/url_gate.go, patterns: ['data:pii', 'exfil_host:{code}', 'fd00:{addr}', 'fe80:{addr}', 'metadata_service:{code}', 'paste:{code}', 'pii_post:{code}'], reason: 'Action-gate reason codes and metadata-service IPv6 literals, not Redis keys'}
+  - {path: core/policysign/keys.go, patterns: ['ed25519:{key}'], reason: 'Key-encoding scheme prefix stripped when parsing policy keys, not a Redis key'}
+  - {path: core/policysign/policysign.go, patterns: ['ed25519:{key}'], reason: 'Key-encoding scheme prefix stripped when parsing policy keys, not a Redis key'}
+  - {path: core/workflow/engine_events.go, patterns: ['cordum:wf:delay:poller'], reason: 'Leader lock for the workflow delay poller; no tenant data'}
+  - {path: core/workflow/engine_output_evaluation.go, patterns: ['sha256:{digest}'], reason: 'Digest string prefix, not a Redis key'}
+  - {path: core/workflow/eval.go, patterns: ['undefined:{name}'], reason: 'Expression-evaluator error text matched in memory, not a Redis key'}
+  - {path: core/workflow/reconciler.go, patterns: ['cordum:workflow-engine:reconciler:{name}'], reason: 'Leader lock for the workflow reconciler; no tenant data'}
