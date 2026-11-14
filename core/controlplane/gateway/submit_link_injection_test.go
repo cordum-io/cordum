@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +13,10 @@ import (
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/capprofile"
 	"github.com/cordum/cordum/core/licensing"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 const linkInjectionUnboundKey = "link-injection-unbound-static-key-000000"
@@ -102,11 +107,12 @@ func (f linkInjectionFixture) submitHTTP(t *testing.T, key, header string, body 
 }
 
 // assertPolicy checks an accepted submit reached the policy check attributed
-// to principal and carrying agent as labels.agent_id ("" for none).
-func (f linkInjectionFixture) assertPolicy(t *testing.T, rec *httptest.ResponseRecorder, principal, agent string) {
+// to principal and carrying agent as labels.agent_id ("" for none). detail is
+// the HTTP body or the gRPC error.
+func (f linkInjectionFixture) assertPolicy(t *testing.T, accepted bool, detail, principal, agent string) {
 	t.Helper()
-	if rec.Code != http.StatusOK || f.safety.lastReq == nil {
-		t.Fatalf("status = %d, policy captured = %v; want 200 and a policy check; body=%s", rec.Code, f.safety.lastReq != nil, rec.Body.String())
+	if !accepted || f.safety.lastReq == nil {
+		t.Fatalf("accepted = %v, policy captured = %v; want both; detail=%s", accepted, f.safety.lastReq != nil, detail)
 	}
 	if got, ok := f.safety.lastReq.GetLabels()["agent_id"]; got != agent || (agent == "" && ok) {
 		t.Errorf("policy agent_id = %q (present %v), want %q", got, ok, agent)
@@ -114,6 +120,26 @@ func (f linkInjectionFixture) assertPolicy(t *testing.T, rec *httptest.ResponseR
 	if got := f.safety.lastReq.GetPrincipalId(); got != principal {
 		t.Errorf("policy principal = %q, want %q (attribution unchanged)", got, principal)
 	}
+}
+
+// submitGRPC authenticates x-api-key and, when non-empty, x-principal-id
+// metadata as the gateway interceptor does, then runs SubmitJob with
+// principal as the request's PrincipalId and no labels.agent_id.
+func (f linkInjectionFixture) submitGRPC(t *testing.T, key, header, principal string) error {
+	t.Helper()
+	pairs := []string{"x-api-key", key}
+	if header != "" {
+		pairs = append(pairs, "x-principal-id", header)
+	}
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(pairs...))
+	ac, err := f.provider.AuthenticateGRPC(ctx)
+	if err != nil {
+		t.Fatalf("AuthenticateGRPC() error = %v, want nil", err)
+	}
+	f.safety.recordReq(nil)
+	req := &pb.SubmitJobRequest{Prompt: "hello", Topic: "job.test", OrgId: "default", PrincipalId: principal}
+	_, err = f.s.SubmitJob(context.WithValue(ctx, auth.ContextKey{}, ac), req)
+	return err
 }
 
 // audienceDenials counts the delegation-audience gate's audit entries.
@@ -162,7 +188,7 @@ func TestSubmitLinkInjection_HTTPFollowsAuthenticatedPrincipal(t *testing.T) {
 					}
 					return
 				}
-				f.assertPolicy(t, rec, tc.principal, tc.agent)
+				f.assertPolicy(t, rec.Code == http.StatusOK, rec.Body.String(), tc.principal, tc.agent)
 			})
 		}
 	})
@@ -189,7 +215,7 @@ func TestSubmitLinkInjection_HTTPDelegationAudienceGateSeesNoRequestPrincipal(t 
 				published, denials := len(f.bus.published), f.audienceDenials(t)
 				rec := f.submitHTTP(t, tc.key, tc.header, submitJobRequest{PrincipalId: tc.body, DelegationAudienceAgentID: "agent-b"})
 				if tc.allowed {
-					f.assertPolicy(t, rec, "worker-b", "agent-b")
+					f.assertPolicy(t, rec.Code == http.StatusOK, rec.Body.String(), "worker-b", "agent-b")
 					if got := f.audienceDenials(t); got != denials {
 						t.Errorf("audience gate denials = %d, want %d", got, denials)
 					}
@@ -204,6 +230,39 @@ func TestSubmitLinkInjection_HTTPDelegationAudienceGateSeesNoRequestPrincipal(t 
 				if f.safety.lastReq != nil || len(f.bus.published) != published {
 					t.Errorf("refused submit reached policy = %v, publishes %d -> %d", f.safety.lastReq != nil, published, len(f.bus.published))
 				}
+			})
+		}
+	})
+}
+
+func TestSubmitLinkInjection_GRPCFollowsAuthenticatedPrincipal(t *testing.T) {
+	linkInjectionEachProfile(t, func(t *testing.T, f linkInjectionFixture) {
+		for _, tc := range []struct {
+			name, key, header, request, principal, agent string
+			// prodRefused: production refuses a request PrincipalId that
+			// differs from the credential's before any policy check.
+			prodRefused bool
+		}{
+			// A worker credential still gets its own agent (DoD 3).
+			{"bound_worker_credential", linkInjectionWorkerBKey, "", "", "worker-b", "agent-b", false},
+			// The credential's principal overrides the request field.
+			{"bound_key_overrides_request_principal", linkInjectionWorkerAKey, "", "worker-b", "worker-a", "agent-a", false},
+			{"unbound_key_metadata_principal", linkInjectionUnboundKey, "worker-b", "", "worker-b", "", false},
+			{"unbound_key_request_principal", linkInjectionUnboundKey, "", "worker-b", "worker-b", "", true},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				published := len(f.bus.published)
+				err := f.submitGRPC(t, tc.key, tc.header, tc.request)
+				if tc.prodRefused && f.s.capProfile.IsProduction() {
+					if status.Code(err) != codes.PermissionDenied || !strings.Contains(status.Convert(err).Message(), "authenticated job identity mismatch") {
+						t.Fatalf("SubmitJob() error = %v, want PermissionDenied identity mismatch", err)
+					}
+					if f.safety.lastReq != nil || len(f.bus.published) != published {
+						t.Errorf("refused submit reached policy = %v, publishes %d -> %d", f.safety.lastReq != nil, published, len(f.bus.published))
+					}
+					return
+				}
+				f.assertPolicy(t, err == nil, fmt.Sprint(err), tc.principal, tc.agent)
 			})
 		}
 	})
