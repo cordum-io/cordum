@@ -709,6 +709,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- MCP server: a policy-gate call without metadata gets `-32097`, as
+  documented (#492, task-11710a81).
+
 - The MCP gateway policy fields `tenants.<tenant>.mcp.gateway_enabled`,
   `upstream_servers` and `allowed_upstreams` are flagged as reserved, not
   enforced. The Safety Kernel logs one warning, naming the tenants, whenever
