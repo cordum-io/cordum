@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/cordum/cordum/core/infra/env"
 )
 
 // EnvStrictMode controls how aggressively verifiers treat signature
@@ -64,6 +66,33 @@ func ParseMode(raw string) (Mode, error) {
 // an error so callers can decide whether to log, abort, or ignore.
 func ModeFromEnv() (Mode, error) {
 	return ParseMode(os.Getenv(EnvStrictMode))
+}
+
+// EnvLegacyRequireSig is the first-generation policy signature flag. When
+// EnvStrictMode is unset, a true value resolves to enforce.
+const EnvLegacyRequireSig = "SAFETY_POLICY_SIGNATURE_REQUIRED"
+
+// ResolveMode returns the policy signature mode the safety kernel applies to
+// every policy source: file, URL and config store. An explicit EnvStrictMode
+// wins. An invalid value falls back to enforce in the production profile and
+// to warn otherwise, and the parse error is returned so callers can log it.
+// When EnvStrictMode is unset, a true EnvLegacyRequireSig or the production
+// profile resolves to enforce, and anything else to warn.
+func ResolveMode() (Mode, error) {
+	if raw := strings.TrimSpace(os.Getenv(EnvStrictMode)); raw != "" {
+		mode, err := ParseMode(raw)
+		if err != nil {
+			if env.IsProduction() {
+				return ModeEnforce, err
+			}
+			return ModeWarn, err
+		}
+		return mode, nil
+	}
+	if env.Bool(EnvLegacyRequireSig) || env.IsProduction() {
+		return ModeEnforce, nil
+	}
+	return ModeWarn, nil
 }
 
 // String implements fmt.Stringer for logs.

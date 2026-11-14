@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -352,10 +353,21 @@ func (s *MCPServer) Serve() error {
 	}
 }
 
-func (s *MCPServer) handleMessage(msg *JSONRPCMessage) *JSONRPCMessage {
+func (s *MCPServer) handleMessage(msg *JSONRPCMessage) (resp *JSONRPCMessage) {
 	if msg == nil {
 		return nil
 	}
+	// A handler panic is answered on this request with a fixed -32603
+	// that carries no panic detail, and is logged once with its stack.
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("mcp: recovered handler panic", "method", msg.Method, "panic", fmt.Sprint(r), "stack", string(debug.Stack()))
+			resp = nil
+			if messageHasID(msg.ID) {
+				resp = &JSONRPCMessage{JSONRPC: JSONRPCVersion, ID: msg.ID, Error: s.rpcError(jsonRPCInternalErrorCode, "internal error", nil)}
+			}
+		}
+	}()
 	// Derive the dispatch ctx from the ORIGINAL request ctx when the
 	// transport attached one. This preserves tenant (mcp.WithTenant),
 	// MCPCallMetadata (approval gate key), and any request-scoped
@@ -513,6 +525,9 @@ func (s *MCPServer) handleToolsCall(ctx context.Context, params json.RawMessage)
 	if strings.TrimSpace(req.Name) == "" {
 		return nil, s.rpcError(jsonRPCInvalidParamsCode, "invalid params", "name is required")
 	}
+	if rpcErr, denied := s.denyMissingAgentIdentity(ctx, req); denied {
+		return nil, rpcErr
+	}
 	// EDGE-103: when an `_approval_ref` is present in args, consume the
 	// stored approval BEFORE handing off to invokeTool. On a fail-closed
 	// lifecycle conflict we surface JSON-RPC -32096 with typed
@@ -576,6 +591,46 @@ func (s *MCPServer) handleToolsCall(ctx context.Context, params json.RawMessage)
 		return nil, s.mapHandlerError(err)
 	}
 	return result, nil
+}
+
+// denyMissingAgentIdentity answers a tools/call that carries no bound agent
+// identity with -32098 no_identity when the policy gate is wired (task-f6d83860).
+//
+// Under the gate the policy wrapper (EvaluateToolCall) and the approval claim
+// (ProcessApprovalClaim) both refuse a blank AgentID before the registry's scope
+// filter ever runs, so an unbound or contradicted caller used to see -32603
+// (plain call) or -32097 (call with `_approval_ref`), both naming
+// missing_mcp_metadata, where the gate-off path answers -32098 no_identity.
+//
+// It stays fail-closed on purpose and never routes the call around the policy
+// wrapper to the registry scope filter: that filter admits a nil identity
+// wherever scope enforcement is off. The check runs BEFORE the approval claim,
+// so an unidentified caller never consumes or even reads an approval, and it
+// records the denial on the invocation audit chain like a scope denial.
+//
+// It fires only when tenant, session and execution metadata are all present, so
+// a request missing any of those still fails closed with its existing code.
+// EvaluateToolCall and ProcessApprovalClaim keep their errMissingMCPMetadata
+// for direct callers. The check holds no state, so concurrent calls are
+// unaffected.
+func (s *MCPServer) denyMissingAgentIdentity(ctx context.Context, req ToolCallParams) (*JSONRPCError, bool) {
+	if s.policyDeps == nil {
+		return nil, false
+	}
+	meta, ok := CallMetadataFromContext(ctx)
+	if !ok ||
+		strings.TrimSpace(meta.Tenant) == "" ||
+		strings.TrimSpace(meta.SessionID) == "" ||
+		strings.TrimSpace(meta.ExecutionID) == "" ||
+		strings.TrimSpace(meta.AgentID) != "" {
+		return nil, false
+	}
+	err := &NotAuthorized{Tool: req.Name, SubReason: DenyReasonNoIdentity}
+	if s.auditor != nil {
+		_, h := s.auditor.StartInbound(ctx, "", meta.Tenant, req.Name, req.Arguments)
+		s.auditor.FinishInbound(h, nil, err)
+	}
+	return s.mapHandlerError(err), true
 }
 
 // invokeTool routes the tools/call through the action-gate policy

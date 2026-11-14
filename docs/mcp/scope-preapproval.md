@@ -70,8 +70,10 @@ With `mcp.policy_gate_enabled=true`, it never waives an action-gate
 MCP gate's destructive-call hold: a destructive call (by default a tool name
 matching `*delete*`, `*remove*` or `*archive*`, or GraphQL arguments carrying
 a delete, remove or archive mutation) while the session-taint store is
-unavailable and `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` is on. That flag
-defaults to off.
+unavailable and `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` is on. When that
+flag is unset, it is on in production profiles (`CORDUM_ENV=production` or
+`prod`, or `CORDUM_PRODUCTION=true`) and off otherwise. An explicit `true` or
+`false` always wins, so `false` opts a production gateway out of the hold.
 
 A preapproved bot that hits the hold is treated like any other identity:
 
@@ -112,8 +114,7 @@ curl -X PUT https://gateway.example/api/v1/agents/release-bot \
 ### Via the MCP tool (admin-approved)
 
 A human admin can use `cordum_set_agent_scope` to grant preapproval — but that
-MCP call ITSELF requires a human approval (the write path is admin-gated). This
-closes the loop: no bot can escalate its own privileges.
+MCP call ITSELF requires a human approval (the write path is admin-gated).
 
 ```json
 {
@@ -123,9 +124,10 @@ closes the loop: no bot can escalate its own privileges.
 }
 ```
 
-Writes to `preapproved_mutating_tools` are **admin-only**. The
-`handlers_agents.go` path enforces the admin role check before accepting the
-field.
+Writes to `preapproved_mutating_tools` are **admin-only**. The agent
+create and update handlers in `handlers_agents.go` require the
+caller's admin role before they store an identity, this field
+included; see CLM-024 in the [claim register](../contract/claims.yaml).
 
 ## Glob semantics
 
@@ -178,8 +180,10 @@ Compare with the normal human-approved flow, which emits FOUR events per call
 faster and cheaper, but with less human-visible scrutiny. That trade-off is
 why the default is human-in-the-loop.
 
-All events land on the per-tenant Merkle audit chain (task-2497391e), so
-preapproved-bypass activity is tamper-evident.
+With the audit chain configured, these events are appended to the
+tenant's hash-chained audit log (task-2497391e). That chain is rated
+`supported`, not `verified`: see CLM-057 in the
+[claim register](../contract/claims.yaml).
 
 ## Alerting on preapproved abuse
 

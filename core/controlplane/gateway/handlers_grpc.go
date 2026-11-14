@@ -140,7 +140,11 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	// Strip reserved labels from client input (same as HTTP path).
+	// Same label handling as the HTTP path: loud reject for spoofed
+	// governance/multi-agent labels, then strip the rest of the reserved set.
+	if err := rejectReservedGovernanceLabels(payloadReq.Labels); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
 	payloadReq.Labels = stripReservedLabels(payloadReq.Labels)
 
 	// Inject request source for policy rules.
@@ -548,23 +552,23 @@ func (s *server) requireRoleGRPC(ctx context.Context, roles ...string) error {
 // "" when there is none. Like handleSubmitJobHTTP, it refuses a client
 // labels.agent_id that does not equal that agent: resolveAgentForAudit reads
 // the label without a tenant check, so an unchecked label could name any
-// tenant's agent in the policy check and the audit trail. Only the
-// authenticated principal binds an agent: SubmitJob falls back to the
-// request's principal_id when the auth context has none, and a caller must
-// not get another worker's agent by naming that worker there, whether it
-// sends the label or omits it and lets the agent be inferred.
+// tenant's agent in the policy check and the audit trail. Binding needs a
+// credential-backed principal (AuthenticatedPrincipal): SubmitJob attributes
+// the job to the request's principal_id when the auth context has none, and
+// to a caller-asserted x-principal-id, but a caller must not get another
+// worker's agent by naming that worker in either place, whether it sends the
+// label or omits it and lets the agent be inferred.
 func (s *server) bindGRPCSubmitAgentID(ctx context.Context, orgID, principalID, clientAgentID string) (string, error) {
-	if ac := auth.FromContext(ctx); ac == nil || ac.PrincipalID == "" || ac.PrincipalID != principalID {
+	if ap := auth.FromContext(ctx).AuthenticatedPrincipal(); ap == "" || ap != strings.TrimSpace(principalID) {
 		if clientAgentID != "" {
 			return "", status.Error(codes.PermissionDenied, "client-supplied agent_id requires an authenticated principal")
 		}
 		return "", nil
 	}
-	var linked string
-	if s.agentIdentityStore != nil {
-		if agent, err := s.agentIdentityStore.GetByWorkerIDForTenant(ctx, orgID, principalID); err == nil && agent != nil {
-			linked = agent.ID
-		}
+	linked, err := s.linkedAgentID(ctx, orgID, principalID)
+	if err != nil {
+		slog.Error("submit agent link lookup unavailable", "tenant", orgID, "error", err)
+		return "", status.Error(codes.Unavailable, errAgentLinkUnavailable.Error())
 	}
 	if clientAgentID == "" || clientAgentID == linked {
 		return linked, nil

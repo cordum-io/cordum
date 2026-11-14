@@ -1026,9 +1026,9 @@ paths:
         original requester principal (`auth.PrincipalID` matches the approval
         `principal_id`) or hold an admin/operator role. The server clamps
         `timeout_ms` to a 5 minute maximum and uses a 30 second default when
-        omitted or non-positive. Tenant isolation is enforced; cross-tenant
-        references and same-tenant callers that fail the principal binding return
-        404 with no metadata leakage. This endpoint is not required by the
+        omitted or non-positive. Cross-tenant references are refused with 403 or
+        404, and same-tenant callers that fail the principal binding get 404.
+        This endpoint is not required by the
         dashboard approve/reject UX — callers there should use the standard
         list/detail/approve/reject flow.
       tags:
@@ -4125,6 +4125,45 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /api/v1/policy/bundles/{id}/resign:
+    post:
+      operationId: resignPolicyBundle
+      summary: Explicitly re-sign a stored policy bundle (admin only)
+      tags: [Policy]
+      parameters:
+      - name: id
+        in: path
+        required: true
+        description: Bundle ID; '/' may be sent as '~'. Pack fragments require reinstalling the pack.
+        schema: {type: string}
+      - $ref: '#/components/parameters/TenantID'
+      responses:
+        '200':
+          description: Current content signed with a trusted key and one audit entry stored atomically
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, key_id, hash, updated_at]
+                properties:
+                  id: {type: string}
+                  key_id: {type: string}
+                  hash: {type: string}
+                  updated_at: {type: string, format: date-time}
+        '400':
+          description: 'POLICY_VALIDATION_FAILED: empty content or pack-owned fragment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 'POLICY_VERSION_CONFLICT: concurrent change, or a pack install or uninstall in progress'
+        '503':
+          description: 'POLICY_SIGNING_REQUIRED: no trusted policy signing key configured'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /api/v1/policy/bundles/snapshots:
     get:
       operationId: listBundleSnapshots
@@ -6653,7 +6692,8 @@ paths:
       operationId: verifyAuditChain
       summary: Verify audit chain integrity
       description: |
-        Walks the tenant's audit stream and attests integrity of the hash chain. Reports
+        Walks the tenant's audit stream and checks its hash links and sequence numbers;
+        chain verification is rated supported in docs/contract/claims.yaml (CLM-057). Reports
         `status=ok` on a contiguous chain, `status=partial` when gaps are below the
         retention boundary, and `status=compromised` for missing sequence numbers or a
         broken hash link. Admin-only and entitlement-gated; NEVER returns raw event bodies — this is an

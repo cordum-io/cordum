@@ -38,7 +38,7 @@ Common options:
 | `CORDUM_AGENTD_GATEWAY_TIMEOUT` | Per-call Gateway timeout |
 | `CORDUM_EDGE_HEARTBEAT_TTL` | Gateway heartbeat TTL |
 | `CORDUM_EDGE_HEARTBEAT_INTERVAL` | Heartbeat interval; must be <= TTL/2 |
-| `CORDUM_AGENTD_FAIL_CLOSED` | Treat startup/Gateway failure as fail-closed |
+| `CORDUM_AGENTD_FAIL_CLOSED` | When true, agentd fails closed instead of continuing degraded: a Gateway timeout while it creates its Edge session at startup stops it, and so do three consecutive Gateway heartbeat failures, which also mark the session failed. `cordum-hook` reads the same variable; see [cordum-hook fail modes](cordum-hook.md#fail-modes) |
 | `CORDUM_AGENTD_SAFE_ALLOW_CACHE` | Optional in-memory cache for low-risk Gateway `ALLOW` responses; default off |
 | `CORDUM_AGENTD_SAFE_ALLOW_CACHE_TTL` | Safe-allow cache TTL when enabled |
 | `CORDUM_AGENTD_SAFE_ALLOW_CACHE_MAX_ENTRIES` | Safe-allow cache entry cap when enabled |
@@ -71,7 +71,7 @@ suffixed keys and strips bare ones as defense-in-depth.
 Gateway decisions map to the hook result as follows:
 
 - `ALLOW` returns a quiet allow so safe actions are not noisy.
-- `DENY`, `THROTTLE`, malformed responses, and fail-closed degraded paths return
+- `DENY`, `THROTTLE`, and fail-closed degraded paths (see the outage modes below) return
   concise deny copy. The action is not run.
 - `CONSTRAIN` returns allow with `updated_input` from Gateway.
 - `REQUIRE_APPROVAL` defaults to an immediate retry flow: agentd returns the
@@ -113,17 +113,27 @@ finishes, the next caller with the same key issues a fresh Gateway evaluate call
 Requests missing stable tenant/policy/hash identity skip coalescing rather than
 sharing a decision too broadly.
 
-Gateway outage behavior follows the PRD modes:
+Gateway outage behavior depends on the session policy mode. A Gateway miss is an
+evaluate call that errors, times out, returns a malformed body or reports the
+policy as unavailable. What is measured is recorded in the
+[failure and partition behavior contract](../contract/failure-behavior.md#behavior-table):
 
-- `observe`: allow degraded and write evidence.
-- `enforce`: allow only locally known-safe actions during a degraded miss; risky
-  or unknown actions deny/fail closed **only when `CORDUM_AGENTD_FAIL_CLOSED` is
-  enabled**. `CORDUM_AGENTD_FAIL_CLOSED` defaults to `false`, so an `enforce`
-  session that does not set it fails **open** on a degraded miss (agentd error or
-  timeout).
-- `enterprise-strict`: deny/fail closed when Cordum governance is unavailable.
+- `observe`: allow degraded and write evidence where possible. Observe does not
+  enforce, and evidence is not guaranteed to survive an outage. While the Safety
+  Kernel is unavailable, Gateway evaluate returns allow marked degraded for
+  observe sessions.
+- `enforce`: while the Safety Kernel is unavailable, Gateway evaluate returns
+  deny for enforce sessions. agentd's decision on a Gateway miss in this mode is
+  not measured. `CORDUM_AGENTD_FAIL_CLOSED` is not needed for `cordum-hook` to
+  deny `PreToolUse` in this mode when agentd times out; see
+  [cordum-hook fail modes](cordum-hook.md#fail-modes).
+- `enterprise-strict`: deny when Cordum governance is unavailable. agentd returns
+  deny when the Gateway or the policy is unavailable, an inline approval wait
+  that fails or times out returns deny, and while the Safety Kernel is
+  unavailable Gateway evaluate returns deny for enterprise-strict sessions.
 - Workflow actions tagged `requires-edge-governance` fail closed on a Gateway
   miss even if the session policy mode is observe.
+  This is not measured.
 
 Agentd records hook/evaluate/decision/degraded evidence using Edge session/action
 events and the shared observability recorder when supplied. Hook events are
@@ -254,6 +264,8 @@ Consecutive Gateway failures mark persisted local status degraded and, when the
 Gateway is reachable for evidence writes, emit a session-degraded event. In
 `enterprise-strict`/fail-closed mode, repeated heartbeat or startup failures are
 reported as fail-closed instead of silently allowing the session to proceed.
+These session outcomes are not measured by the
+[failure and partition behavior contract](../contract/failure-behavior.md#behavior-table).
 State persistence failures are returned as runtime errors instead of being
 reported as success with stale or missing local evidence.
 

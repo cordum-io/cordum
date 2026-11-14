@@ -64,6 +64,10 @@ Routes:
 
 `/mcp/sse` returns `X-MCP-Session-ID`. Clients can send `X-MCP-Session-ID` on
 `/mcp/message` to correlate session responses.
+Each session is bound to the authenticated caller that opened it (tenant and
+principal, plus the API key or login session used), so a `/mcp/message` naming
+an unknown session or another caller's session gets HTTP `404` with JSON-RPC
+error `-32001` (`session not found`); reconnect to `/mcp/sse` for a new id.
 
 ### Policy Gate + Approval Hold (EDGE-102 / EDGE-103)
 
@@ -115,7 +119,9 @@ The production action-gate pipeline is a blockers/approval path: gates
 allow, deny, throttle, or mint/consume approval holds, but they do not
 emit enforceable generic runtime constraints. Do not rely on an
 action-gate `_constraints` map for single-use approval or other runtime
-limits; those semantics are enforced by the approval store consume path.
+limits. Single-use approval is handled by the approval store consume path; the
+[claims register](contract/claims.yaml) records it as CLM-013, status supported
+(the checks exist, and their end-to-end qualification is open).
 
 `ALLOW_WITH_CONSTRAINTS` remains a compatibility/future-typed dispatcher
 shape for policy-bundle/SafetyKernel constraints and fake-dispatcher
@@ -986,6 +992,75 @@ curl -sS http://localhost:8081/mcp/status \
   -H "X-Tenant-ID: default"
 ```
 
+### Agent identity binding (`X-Agent-Id`)
+
+HTTP MCP requests run as the agent identity linked to the authenticated
+principal (its worker link in the request tenant), and only when that identity
+belongs to the request tenant. The optional `X-Agent-Id` header may confirm
+that identity; it never selects a different one.
+
+Create the link in either of two ways:
+
+- `POST /api/v1/agents` with `"agent_id": "<principal id>"` in the body creates
+  the identity and links that principal to it. A principal that is already
+  linked in the tenant gets `409`.
+- `POST /api/v1/workers/credentials` with `"worker_id": "<principal id>"` and
+  `"agent_id": "<identity id>"` links the principal to an existing active
+  identity in the tenant.
+
+Links are per tenant: a link created in one tenant never changes another
+tenant's binding for the same principal. Rotating a worker credential without
+`agent_id`, or revoking it, removes only the caller's tenant link.
+
+| Authenticated principal | `X-Agent-Id` | Result |
+|---|---|---|
+| Linked to an identity in the request tenant | absent or blank | The bound identity |
+| Linked to an identity in the request tenant | equal to the bound identity `id` | The bound identity |
+| Linked to an identity in the request tenant | any other value | No identity, and the gateway logs `mcp X-Agent-Id does not match the principal's bound agent identity` |
+| Not linked, or linked to another tenant's identity | any | No identity |
+| None, or one named only by `X-Principal-Id` | any | No identity |
+
+The header is compared exactly after trimming surrounding whitespace, so IDs
+are case-sensitive. A suspended or revoked bound identity also resolves to no
+identity.
+
+With no identity, the built-in tool registry lists no tools, and every
+`tools/call` fails with `-32098` and `error.data.sub_reason` `no_identity`,
+whether `mcp.policy_gate_enabled` is off or on:
+
+- With the gate on, the server refuses the call before it looks at any
+  approval. A call that carries an `_approval_ref` therefore neither claims nor
+  consumes that approval, and gets the same `-32098` instead of a `-32097`
+  error.
+- With the gate on, a request that is missing its tenant, session or execution
+  metadata still fails closed with its own error: `-32603` for a plain call, or
+  `-32097` for one that carries an `_approval_ref`, both with
+  `missing_mcp_metadata`. The `-32098` answer applies only when that metadata
+  is present and the agent ID is blank.
+
+When `/mcp` fronts a registered upstream (EDGE-101), the upstream catalog is
+not scope-filtered, and the bound ID only feeds the policy gate.
+
+Approval records, preapproval checks (`preapproved_mutating_tools`),
+policy-gate call metadata and Edge trace labels carry the bound identity `id`,
+or an empty value when the principal is not linked or the header disagrees.
+They never carry the header value.
+
+> **Behavior change:** `X-Agent-Id` used to select any agent identity in the
+> request tenant, and the gateway recorded the raw header as the agent ID.
+> Clients that select an identity by header must link their principal to that
+> identity, then send the bound `id` or drop the header.
+
+The binding is only as strong as the credential's principal. Use a static API
+key with a configured principal (`<tenant>:<key>:<role>:<principal>` in
+`CORDUM_API_KEYS`, or `principal_id` in its JSON form), or a session, JWT or
+SSO login, whose subject becomes the principal. Runtime-created API keys carry
+no principal of their own and are not a supported way to bind an MCP client.
+A principal named only by the `X-Principal-Id` header, which development
+accepts by default and production only with `CORDUM_ALLOW_HEADER_PRINCIPAL=true`,
+is kept for attribution only: it binds no identity, so the caller gets no tools
+and requests no approvals.
+
 ## Integration Examples
 
 ### Claude Desktop (`claude_desktop_config.json`)
@@ -1079,6 +1154,13 @@ See [Dashboard Guide](dashboard-guide.md#how-to-configure-mcp-server) for the fu
 - `tools/list` or `resources/list` empty: entries are disabled by config
   (`mcp.tools.<tool_id>.enabled=false`,
   `mcp.resources.<resource_name>.enabled=false`).
+- `tools/list` empty, or `tools/call` fails with `-32098` `no_identity`, while
+  `X-Agent-Id` is set: the header does not match the identity bound to the
+  authenticated principal, or the principal is not linked to an identity in
+  the request tenant. Look for `mcp X-Agent-Id does not match the principal's
+  bound agent identity` in the gateway log, then send the bound `id` or drop
+  the header. See
+  [Agent identity binding](#agent-identity-binding-x-agent-id).
 
 ## MCP Gateway (multi-upstream mode) — EDGE-100 skeleton
 

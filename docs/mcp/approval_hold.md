@@ -15,7 +15,8 @@ Production action gates are blockers/approval gates only: they allow,
 deny, throttle, or require human approval. They do not emit enforceable
 generic runtime constraints. Typed `ALLOW_WITH_CONSTRAINTS` limits are
 owned by policy bundles and SafetyKernel `PolicyConstraints`, while
-approval single-use is enforced by the Edge approval store claim path.
+approval single-use is handled by the Edge approval store claim path
+(CLM-013 in the [claims register](../contract/claims.yaml), status supported).
 
 This document is the contract for the EDGE-103 lifecycle. For the
 broader threat model and human approval flow see
@@ -62,8 +63,9 @@ future drift is impossible.
 The resolved audit event must match the same `ActionHash` and tenant/ref used
 by the approval store. Wrong tenant/ref/hash, malformed event JSON,
 rejected/expired outcomes, missing Redis/audit verifier dependencies, or
-compromised hash/HMAC/linkage are treated as fail-closed evidence gaps rather
-than as recoverable client retries.
+audit chain checks that report the chain as compromised make the configured
+ProvenanceGate deny the retry instead of treating it as recoverable (CLM-009 in the
+[claims register](../contract/claims.yaml), status supported).
 
 ## `_approval_ref` retry argument
 
@@ -263,8 +265,10 @@ not run.
   its fail-closed taint hold (sub-reason
   `taint_lookup_unavailable_failclosed`). It holds a call when all three
   apply:
-  1. `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` is set to a true value. The
-     gateway reads it once at boot; unset means off.
+  1. `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` is on: by default in
+     production profiles (`CORDUM_ENV=production` or `prod`, or
+     `CORDUM_PRODUCTION=true`), or explicitly `true`. An explicit `false`
+     turns it off in every profile. The gateway reads it once at boot.
   2. The tool is destructive (default globs `*delete*`, `*remove*`,
      `*archive*`).
   3. The session-taint lookup failed.
@@ -393,7 +397,7 @@ auto-retry. A `policy_snapshot_changed` is safe to retry at once.
 | Gate-on mint binds the policy pre-event | `TestApprovalHold_MintBindsRealPreEvent` |
 | Gate-on mint without a pre-event fails closed | `TestApprovalHold_DualWriteFailsClosedWithoutPreEvent`, `TestGate_EdgeMintOutageFailsClosed` |
 | Claim binds the stored `event_id` | `TestApprovalHold_ClaimUsesStoredEventID` |
-| Gate-on HTTP resume executes exactly once | `TestPolicyGateEdgeResume_HTTPExecutesExactlyOnce` |
+| Gate-on HTTP resume makes one handler call per approved ref, and a replay of the ref is refused | `TestPolicyGateEdgeResume_HTTPExecutesExactlyOnce` |
 | Legacy MCP approval cannot resume under the gate | `TestPolicyGateEdgeResume_HTTPLegacyApprovalCannotResume` |
 | Gate-on mint and claim outages return `-32096` | `TestPolicyGateEdgeResume_HTTPMintOutageFailsClosed`, `TestPolicyGateEdgeResume_HTTPClaimOutageFailsClosed` |
 | Mid-call policy change mints nothing; retry binds the current snapshot | `TestEdgeMintPolicySnapshotDrift_IsRetryable`, `TestJSONRPC_PolicySnapshotChangedWiresTo32096` |

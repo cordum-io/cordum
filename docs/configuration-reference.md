@@ -490,7 +490,7 @@ rules:
 
 output_policy:
   enabled: false
-  fail_mode: open          # open = allow on scanner error, closed = deny
+  fail_mode: open          # does not select the scheduler's output fail mode (scheduler.output_fail_mode)
 
 output_rules:
   - id: secret_leak
@@ -575,7 +575,7 @@ default_decision: deny
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `output_policy.enabled` | bool | `false` | Enable output scanning |
-| `output_policy.fail_mode` | string | `"closed"` | `open` = allow on scanner error, `closed` = quarantine on scanner error (recommended for production) |
+| `output_policy.fail_mode` | string | `"closed"` | Does not select the scheduler's output fail mode: the asynchronous output check follows the config-service key `scheduler.output_fail_mode`, which is closed when unset (see [output safety](output-safety.md)). |
 
 ### Output Rules Section
 
@@ -694,7 +694,7 @@ scanners:
 | `CORDUM_AGENTD_GATEWAY_TIMEOUT` | `5s` | No | Per-call timeout for `cordum-agentd` Gateway lifecycle/evaluate/approval/evidence requests. |
 | `CORDUM_AGENTD_URL` | `http://127.0.0.1:8765/v1/edge/hooks/claude` | No | Loopback-only local agentd decision endpoint used by `cordum-hook`; remote hosts are rejected. |
 | `CORDUM_AGENTD_SOCKET` | `http://127.0.0.1:8765/v1/edge/hooks/claude` | No | `cordum-agentd` local bind URL. P0 accepts loopback HTTP only; Unix socket / named-pipe paths fail fast instead of silently disabling enforcement. |
-| `CORDUM_AGENTD_FAIL_CLOSED` | `false` | No | When true, `cordum-hook` blocks/fails closed if local agentd is unavailable or returns an invalid response. |
+| `CORDUM_AGENTD_FAIL_CLOSED` | `false` | No | When true, `cordum-hook` fails closed for every hook event except `FileChanged` if local agentd is unavailable, times out or returns an invalid response, and `cordum-agentd` fails closed instead of continuing degraded when the Gateway times out during its startup session or heartbeats keep failing. `enforce` mode denies `PreToolUse` in those cases without it. See [cordum-hook fail modes](edge/cordum-hook.md#fail-modes). |
 | `CORDUM_AGENTD_STATE_DIR` | `~/.cordum/edge/sessions` | No | Root directory for small local agentd state files; never stores API keys, hook nonces, raw hook payloads, transcripts, or authorization headers. |
 | `CORDUM_EDGE_POLICY_MODE` | `observe` | No | `cordum-agentd` session/evaluate policy mode: `observe`, `enforce`, or `enterprise-strict`. Enterprise-strict denies/fails closed when Cordum governance is unavailable. |
 | `CORDUM_EDGE_MODE` | `observe` | No | Edge local hook mode: `observe`, `local-dev-enforce`, or `enterprise-strict`. |
@@ -836,7 +836,7 @@ Invalid values (non-numeric, zero, negative) are silently replaced with defaults
 | `TENANT_ID` | — | Single-tenant default ID |
 | `ARTIFACT_MAX_BYTES` | — | Max artifact upload/download size |
 | `WORKFLOW_FOREACH_MAX_ITEMS` | — | Max items in workflow for-each expansion |
-| `POLICY_CHECK_FAIL_MODE` | `closed` | Behavior when Safety Kernel is unreachable during policy evaluation (both gateway submit-time and scheduler dispatch-time). `closed` (default): reject the job. `open`: allow with warning log. |
+| `POLICY_CHECK_FAIL_MODE` | `closed` | Gateway submit-time pre-check behavior when the Safety Kernel is unreachable. `closed` (default): reject the submit. `open`: accept it. The scheduler's dispatch-time mode is the config-service key `scheduler.input_fail_mode` ([safety-kernel.md](safety-kernel.md#10-input-policy-fail-mode)). |
 
 ### Gateway — API Keys
 
@@ -859,7 +859,7 @@ Invalid values (non-numeric, zero, negative) are silently replaced with defaults
 | `API_RATE_LIMIT_BURST` | `50` | Per-tenant burst size |
 | `API_PUBLIC_RATE_LIMIT_RPS` | `20` | Public (unauthenticated) rate limit |
 | `API_PUBLIC_RATE_LIMIT_BURST` | `40` | Public burst size |
-| `REDIS_RATE_LIMIT` | `true` | Enable Redis-backed distributed rate limiting. When `true`, rate limits are enforced globally across all gateway replicas via Redis sliding-window counters (key format: `cordum:rl:{key}:{unix_second}`). When `false` or Redis unavailable, falls back to per-process in-memory token buckets (effective limit = N × configured limit with N replicas). |
+| `REDIS_RATE_LIMIT` | `true` | Enable Redis-backed distributed rate limiting. When `true`, rate limits are enforced globally across all gateway replicas via Redis sliding-window counters (key format: `cordum:rl:{key}:{unix_second}`). When `false`, the gateway uses per-process in-memory token buckets (effective limit = N × configured limit with N replicas). While Redis is unreachable, the Redis-backed limiter denies requests (measured at the limiter only; see the [failure and partition behavior contract](contract/failure-behavior.md)). |
 
 > **Horizontal scaling note**: With multiple gateway replicas, Redis-backed rate
 > limiting (`REDIS_RATE_LIMIT=true`) is strongly recommended. Without it, each
@@ -1022,7 +1022,7 @@ RBAC roles are stored in Redis (key prefix `rbac:role:`). Default roles (admin, 
 | `JOB_META_TTL_SECONDS` | — | Job metadata TTL in seconds (takes precedence) |
 | `WORKER_SNAPSHOT_INTERVAL` | — | Worker state snapshot interval |
 | `OUTPUT_POLICY_ENABLED` | `false` | Enable output policy: `true`, `1` |
-| `POLICY_CHECK_FAIL_MODE` | `closed` | Behavior when safety kernel is unreachable during pre-dispatch input policy checks. `closed` (default): requeue with backoff. `open`: allow through with warning log and metric. See [safety-kernel.md](safety-kernel.md) for risk implications. |
+| `POLICY_CHECK_FAIL_MODE` | `closed` | Does not select the scheduler's input fail mode. That mode is the config-service key `scheduler.input_fail_mode`: closed when unset, and `open` admits only topics listed in `scheduler.input_fail_open_scope`. Under the CAP-PRODUCTION profile, `open` here makes the scheduler refuse to start (exit 1): the scheduler sets its input fail-open flag from this variable, and the production startup check (`ValidateProductionStartup`) rejects that flag. A `scheduler.input_fail_mode` value overrides the flag only on config reloads, which start after that check, so it cannot avoid the refusal. See [safety-kernel.md](safety-kernel.md#10-input-policy-fail-mode) for the risk implications. |
 
 ### Gateway + Scheduler — Boundary Hardening
 

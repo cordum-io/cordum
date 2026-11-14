@@ -1,0 +1,6 @@
+topics:
+  job.a2a-governed.turns: a2a-governed
+  job.a2a-governed.denied: a2a-governed
+pools:
+  a2a-governed:
+    requires: []

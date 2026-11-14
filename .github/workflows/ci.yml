@@ -32,6 +32,13 @@ on:
     - cron: '41 2 * * *'
   workflow_dispatch:
 
+# Cancel superseded runs of the same pull request. Every other event (push,
+# merge_group, schedule, workflow_dispatch) gets its own group, so no run on
+# main or in the merge queue is ever cancelled or replaced.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   changes:
     name: Detect changed areas
@@ -228,7 +235,7 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
 
     steps:
     - uses: actions/checkout@v7

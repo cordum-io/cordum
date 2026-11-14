@@ -55,6 +55,7 @@ import type {
   PolicyShadowUpsertRequest,
   PolicySnapshot,
   PublishPolicyRequest,
+  ResignPolicyBundle200,
   RollbackPolicyRequest,
   ServiceUnavailableResponse,
   ShadowComparisonsResponse,
@@ -1777,6 +1778,106 @@ export const useSimulatePolicyBundle = <
 > => {
   return useMutation(
     getSimulatePolicyBundleMutationOptions(options),
+    queryClient,
+  );
+};
+/**
+ * @summary Explicitly re-sign a stored policy bundle (admin only)
+ */
+export const resignPolicyBundle = (id: string, signal?: AbortSignal) => {
+  return apiClient<ResignPolicyBundle200>({
+    url: `/api/v1/policy/bundles/${id}/resign`,
+    method: "POST",
+    signal,
+  });
+};
+
+export const getResignPolicyBundleMutationKey = () =>
+  ["resignPolicyBundle"] as const;
+
+export const getResignPolicyBundleMutationOptions = <
+  TError =
+    | void
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof resignPolicyBundle>>,
+    TError,
+    ResignPolicyBundleMutationVariables,
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof resignPolicyBundle>>,
+  TError,
+  ResignPolicyBundleMutationVariables,
+  TContext
+> => {
+  const mutationKey = getResignPolicyBundleMutationKey();
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof resignPolicyBundle>>,
+    ResignPolicyBundleMutationVariables
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return resignPolicyBundle(id);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ResignPolicyBundleMutationResult = NonNullable<
+  Awaited<ReturnType<typeof resignPolicyBundle>>
+>;
+
+export type ResignPolicyBundleMutationError =
+  | void
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse
+  | InternalServerErrorResponse;
+export type ResignPolicyBundleMutationVariables = { id: string };
+
+/**
+ * @summary Explicitly re-sign a stored policy bundle (admin only)
+ */
+export const useResignPolicyBundle = <
+  TError =
+    | void
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof resignPolicyBundle>>,
+      TError,
+      ResignPolicyBundleMutationVariables,
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof resignPolicyBundle>>,
+  TError,
+  ResignPolicyBundleMutationVariables,
+  TContext
+> => {
+  return useMutation(
+    getResignPolicyBundleMutationOptions(options),
     queryClient,
   );
 };

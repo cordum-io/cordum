@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,9 +28,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// mcpAgentIDHeader is the request header that identifies the calling
-// MCP agent. The gateway uses it (with a principal-ID fallback) to
-// populate MCPCallMetadata so the approval gate can log who is asking.
+// mcpAgentIDHeader is the optional request header naming the calling MCP
+// agent. It may only confirm the agent identity bound to the authenticated
+// principal, never select one (ruling Q4); see resolveMCPIdentity.
 const mcpAgentIDHeader = "X-Agent-Id"
 
 // mcpCopilotSessionIDHeader optionally groups a client's tool calls into a
@@ -120,7 +121,8 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 		return nil
 	}
 
-	transport := mcp.NewHTTPTransport(mcp.DefaultMaxMessageBytes, mcp.DefaultHTTPResponseTimeout)
+	transport := mcp.NewHTTPTransport(mcp.DefaultMaxMessageBytes, mcp.DefaultHTTPResponseTimeout).
+		WithSessionOwner(mcpSessionOwner)
 	toolRegistry := mcp.NewToolRegistry()
 	resourceRegistry := mcp.NewResourceRegistry()
 	toolRegistry.SetConfig(cfg.Raw)
@@ -195,7 +197,8 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 	// MCP clients dereference Cordum records by stable URI. Must run on
 	// the production bootstrap (not just in tests) or resources/list
 	// omits the templates and dereference returns 404 — QA reopen fix
-	// for task-466b6a6a.
+	// for task-466b6a6a. Its cordum://jobs/{id} replaces the data bridge's
+	// template of the same name, so serviceBridge must serve GetJob.
 	if err := mcp.RegisterCordumURIResources(resourceRegistry, serviceBridge); err != nil {
 		return fmt.Errorf("register cordum:// resources: %w", err)
 	}
@@ -404,22 +407,24 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		}
 		// Stash MCP call metadata so the approval gate (wired into the
 		// ToolRegistry) can evaluate per-tool approval policy without
-		// knowing about gateway identity types. Tenant + principal come
-		// from the auth context; agent_id prefers the X-Agent-Id header
-		// and falls back to the principal so the self-approval guard
-		// has something to compare against.
-		agentID := strings.TrimSpace(r.Header.Get(mcpAgentIDHeader))
-		if agentID == "" {
-			agentID = strings.TrimSpace(authCtx.PrincipalID)
-		}
-		principalID := strings.TrimSpace(authCtx.PrincipalID)
-		if principalID == "" {
-			principalID = agentID
-		}
+		// knowing about gateway identity types. agentID and identity come
+		// from ONE resolveMCPIdentity lookup: agentID is the agent identity
+		// ID bound to the authenticated principal ("" when there is none or
+		// X-Agent-Id disagrees), never the raw header, and it is the only
+		// agent value any metadata sink below records.
+		agentID, identity := s.resolveMCPIdentity(r)
+		// The principal the approval and policy gates act on, and the owner
+		// of the Edge trace parents below, come only from a credential: one
+		// the caller merely asserted with X-Principal-Id is "" here, exactly
+		// as for identity. ensureMCPHTTPTraceParents keeps an asserted
+		// principal as an attribution label only, and RequesterIdentity
+		// stays the composite submitter identity, so the self-approval guard
+		// still counts an asserted principal and can only refuse more.
+		authenticatedPrincipal := authCtx.AuthenticatedPrincipal()
 		mcpCtx := WithMCPCallMetadata(r.Context(), MCPCallMetadata{
 			Tenant:            tenantID,
 			AgentID:           agentID,
-			Principal:         principalID,
+			Principal:         authenticatedPrincipal,
 			RequesterIdentity: submitterIdentity(r),
 		})
 		// Resolve the transport session id exactly as the HTTP transport
@@ -428,28 +433,42 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		if transportSessionID == "" {
 			transportSessionID = strings.TrimSpace(r.URL.Query().Get("session_id"))
 		}
+		// Trust a client-supplied session id only once the transport vouches
+		// that this caller opened it, so an unknown or foreign id never feeds
+		// the trace parents, approval tuple, or Copilot session below. A POST
+		// naming one is handed to the transport untouched, which answers its
+		// usual "session not found" 404; the SSE GET and status routes ignore
+		// client session ids anyway. mcpHTTPTransport is resolved per request
+		// and nil-safe (no transport: not vouched, and the handler answers 503).
+		if transportSessionID != "" && !s.mcpHTTPTransport().OwnsSession(r, transportSessionID) {
+			if r.Method == http.MethodPost {
+				next(w, r)
+				return
+			}
+			transportSessionID = ""
+		}
 		// VS Code's type:"http" config POSTs neither X-MCP-Session-ID nor
-		// X-Copilot-Session-Id. The HTTP transport would otherwise mint a
-		// "direct-<uuid>" session id only *after* this middleware builds
-		// mcpCtx, leaving copilot_session_id empty — so the transcript is
-		// dropped and cordum_submit_job misses its session_id label. Mint the
-		// id here in the transport's own format and write it back onto the
-		// request so the transport reuses the same id, keeping the audit
-		// session, trace parents, and spawned-job label consistent. Scoped to
-		// POST so the SSE GET keeps its server-assigned session id.
+		// X-Copilot-Session-Id, which would leave copilot_session_id empty —
+		// so the transcript is dropped and cordum_submit_job misses its
+		// session_id label. Mint the id here in the transport's own format so
+		// the audit session, trace parents, and spawned-job label agree. It is
+		// deliberately NOT written back onto the request: the transport only
+		// accepts session ids it issued to this caller over SSE (anything else
+		// is "session not found") and routes a session-less POST under its own
+		// one-shot id. Scoped to POST so the SSE GET keeps its server-assigned
+		// session id.
 		if transportSessionID == "" && r.Method == http.MethodPost {
 			transportSessionID = "direct-" + uuid.NewString()
-			r.Header.Set("X-MCP-Session-ID", transportSessionID)
 		}
 		if transportSessionID != "" {
 			executionID := "mcp-" + transportSessionID
-			if err := s.ensureMCPHTTPTraceParents(r.Context(), tenantID, agentID, principalID, transportSessionID, executionID); err != nil {
+			if err := s.ensureMCPHTTPTraceParents(r.Context(), tenantID, agentID, authenticatedPrincipal, transportSessionID, executionID); err != nil {
 				writeErrorJSON(w, http.StatusInternalServerError, "mcp trace unavailable")
 				return
 			}
 			mcpCtx = mcp.WithCallMetadata(mcpCtx, mcp.CallMetadata{
 				Tenant:      tenantID,
-				Principal:   principalID,
+				Principal:   authenticatedPrincipal,
 				AgentID:     agentID,
 				SessionID:   transportSessionID,
 				ExecutionID: executionID,
@@ -473,14 +492,27 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		r = r.WithContext(mcpCtx)
 		// Attach *mcp.AgentIdentity so ToolRegistry.ListTools and the
 		// scope filter can evaluate the caller's AllowedTools /
-		// RiskTier / DataClassifications. Without this the HTTP
-		// transport sees msg.identity=nil and every tool list comes
-		// back empty — which is the fail-closed outcome QA flagged.
-		if identity := s.resolveMCPIdentity(r); identity != nil {
+		// RiskTier / DataClassifications. A nil identity is the
+		// fail-closed outcome: zero tools listed, every call denied.
+		if identity != nil {
 			r = r.WithContext(mcp.ContextWithIdentity(r.Context(), identity))
 		}
 		next(w, r)
 	}
+}
+
+// mcpSessionOwner is the owner key MCP HTTP/SSE sessions are bound to: the
+// request's tenant, auth source, and submitterIdentity (credential hash +
+// principal, the caller identity the self-approval guard compares). The auth
+// source keeps a header-asserted principal on an anonymous request from
+// matching the same verified principal. Requests without an auth context (no
+// auth provider configured) all share the anonymous owner "".
+func mcpSessionOwner(r *http.Request) string {
+	ac := auth.FromRequest(r)
+	if ac == nil {
+		return ""
+	}
+	return fmt.Sprintf("%q %q %q", tenantFromRequest(r), ac.AuthSource, submitterIdentity(r))
 }
 
 func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentID, principalID, sessionID, executionID string) error {
@@ -498,7 +530,7 @@ func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentI
 			PolicyMode: edge.PolicyModeEnforce, Status: edge.SessionStatusRunning,
 			StartedAt: now, EnforcementLayers: edge.EnforcementLayers{"mcp": true},
 			RiskSummary: edge.RiskSummary{MaxRisk: edge.RiskLevelLow},
-			Labels:      edge.Labels{"agent_id": agentID},
+			Labels:      mcpTraceParentLabels(ctx, agentID),
 		}); err != nil {
 			return err
 		}
@@ -509,64 +541,75 @@ func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentI
 		return s.edgeStore.CreateExecution(ctx, edge.AgentExecution{
 			ExecutionID: executionID, SessionID: sessionID, TenantID: tenantID,
 			Adapter: edge.AdapterMCPGateway, Mode: edge.ExecutionModeLocalDev,
-			WorkerID: agentID, Status: edge.ExecutionStatusRunning,
-			StartedAt: now, Labels: edge.Labels{"agent_id": agentID},
+			WorkerID: principalID, Status: edge.ExecutionStatusRunning,
+			StartedAt: now, Labels: mcpTraceParentLabels(ctx, agentID),
 		})
 	}
 	return nil
 }
 
-// resolveMCPIdentity looks up the agent identity for this MCP request.
-// Resolution order:
-//  1. X-Agent-Id header (explicit — matches the documented contract).
-//  2. auth-principal fallback via its worker link in the request tenant, so
-//     credentialled workers inherit their linked identity without
-//     needing to send the header explicitly.
+// mcpTraceParentLabels returns the labels of a new MCP trace parent. A
+// principal the caller only asserted with X-Principal-Id is kept as
+// asserted_principal_id for attribution; it never owns the parent. A value
+// longer than an Edge label allows is left out rather than failing the request.
+func mcpTraceParentLabels(ctx context.Context, agentID string) edge.Labels {
+	labels := edge.Labels{"agent_id": agentID}
+	if ac := auth.FromContext(ctx); ac != nil && ac.PrincipalAsserted {
+		if asserted := strings.TrimSpace(ac.PrincipalID); asserted != "" && len(asserted) <= edge.MaxLabelValueBytes {
+			labels["asserted_principal_id"] = asserted
+		}
+	}
+	return labels
+}
+
+// resolveMCPIdentity resolves the agent identity bound to the request's
+// authenticated principal (its worker link in the request tenant). Only a
+// principal that a credential vouches for counts, per
+// AuthContext.AuthenticatedPrincipal: one the caller merely asserted with
+// X-Principal-Id resolves nothing. Per ruling Q4, X-Agent-Id may confirm that
+// identity but never select one: a header that names any other ID resolves
+// to nothing.
 //
-// Returns nil when no identity could be resolved; ToolRegistry treats
-// a nil identity as fail-closed (zero tools visible, all calls denied).
-// Revoked/suspended identities also resolve to nil.
-func (s *server) resolveMCPIdentity(r *http.Request) *mcp.AgentIdentity {
+// agentID is the bound identity ID, or "" when the principal is asserted,
+// unbound, bound to another tenant, or contradicted by the header. It is the only
+// agent value request metadata may record. identity is nil whenever agentID
+// is "", and also for a revoked/suspended binding; ToolRegistry treats a nil
+// identity as fail-closed (zero tools visible, all calls denied).
+func (s *server) resolveMCPIdentity(r *http.Request) (agentID string, identity *mcp.AgentIdentity) {
 	if s == nil || s.agentIdentityStore == nil {
-		return nil
+		return "", nil
 	}
 	ctx := r.Context()
-	// Both lookup paths must be scoped to the request's tenant (authenticated
-	// and validated by mcpAuth). The store's empty-tenant lookup is a
-	// system-level bypass that skips the tenant check, so resolving an
-	// identity from another tenant — by a guessed X-Agent-Id OR via a worker
-	// credential mapped to another tenant's agent — would apply the wrong
-	// AllowedTools / AllowedServers / RiskTier. Fail closed if tenant absent.
 	tenant := tenantFromRequest(r)
 	if tenant == "" {
-		return nil
-	}
-	if id := strings.TrimSpace(r.Header.Get(mcpAgentIDHeader)); id != "" {
-		identity, err := s.agentIdentityStore.Get(ctx, tenant, id)
-		if err != nil || identity == nil {
-			return nil
-		}
-		return mcpIdentityFromStore(identity)
+		return "", nil
 	}
 	authCtx := auth.FromContext(ctx)
 	if authCtx == nil {
-		return nil
+		return "", nil
 	}
-	principal := strings.TrimSpace(authCtx.PrincipalID)
+	principal := authCtx.AuthenticatedPrincipal()
 	if principal == "" {
-		return nil
+		return "", nil
 	}
-	identity, err := s.agentIdentityStore.GetByWorkerIDForTenant(ctx, tenant, principal)
-	if err != nil || identity == nil {
-		return nil
+	bound, err := s.agentIdentityStore.GetByWorkerIDForTenant(ctx, tenant, principal)
+	if err != nil {
+		slog.Warn("mcp identity lookup failed", "tenant", tenant, "err", err)
+		return "", nil
 	}
 	// The store resolves only within the request tenant. Keep this check as
 	// defense in depth so a store regression cannot apply another tenant's
 	// AllowedTools / AllowedServers / RiskTier to this request.
-	if strings.TrimSpace(identity.TenantID) != tenant {
-		return nil
+	if bound == nil || strings.TrimSpace(bound.TenantID) != tenant {
+		return "", nil
 	}
-	return mcpIdentityFromStore(identity)
+	// The header is client-controlled: compare it, never log or store it.
+	if header := strings.TrimSpace(r.Header.Get(mcpAgentIDHeader)); header != "" && header != bound.ID {
+		slog.Warn("mcp X-Agent-Id does not match the principal's bound agent identity",
+			"tenant", tenant, "principal", principal, "bound_agent_id", bound.ID)
+		return "", nil
+	}
+	return bound.ID, mcpIdentityFromStore(bound)
 }
 
 // runMCPApprovalSweeper expires PENDING MCP approvals whose TTL has
@@ -1161,7 +1204,7 @@ func (s *server) newMCPServiceBridge() mcp.ServiceBridge {
 			status, payload, raw, err := s.invokeMCPJSONHandler(
 				ctx,
 				http.MethodPost,
-				"/api/v1/jobs/"+jobID+"/cancel",
+				"/api/v1/jobs/"+url.PathEscape(jobID)+"/cancel",
 				nil,
 				map[string]string{"id": jobID},
 				body,
@@ -1179,7 +1222,7 @@ func (s *server) newMCPServiceBridge() mcp.ServiceBridge {
 			return nil
 		},
 		TriggerWorkflowFunc: func(ctx context.Context, req mcp.TriggerWorkflowInput) (*mcp.TriggerOutput, error) {
-			target := "/api/v1/workflows/" + req.WorkflowID + "/runs"
+			target := "/api/v1/workflows/" + url.PathEscape(req.WorkflowID) + "/runs"
 			if req.DryRun {
 				target += "?dry_run=true"
 			}
@@ -1227,7 +1270,7 @@ func (s *server) newMCPServiceBridge() mcp.ServiceBridge {
 			status, _, raw, err := s.invokeMCPJSONHandler(
 				ctx,
 				http.MethodPost,
-				"/api/v1/approvals/"+jobID+"/approve",
+				"/api/v1/approvals/"+url.PathEscape(jobID)+"/approve",
 				nil,
 				map[string]string{"job_id": jobID},
 				body,
@@ -1246,7 +1289,7 @@ func (s *server) newMCPServiceBridge() mcp.ServiceBridge {
 			status, _, raw, err := s.invokeMCPJSONHandler(
 				ctx,
 				http.MethodPost,
-				"/api/v1/approvals/"+jobID+"/reject",
+				"/api/v1/approvals/"+url.PathEscape(jobID)+"/reject",
 				nil,
 				map[string]string{"job_id": jobID},
 				body,
@@ -1306,7 +1349,57 @@ func (s *server) newMCPServiceBridge() mcp.ServiceBridge {
 			}
 			return out, nil
 		},
+		GetJobFunc: func(ctx context.Context, jobID string) (*mcp.ResourceItem, error) {
+			payload, err := s.mcpGetJobPayload(ctx, jobID)
+			if err != nil {
+				return nil, err
+			}
+			return &mcp.ResourceItem{ID: jobID, Kind: "job", Data: payload}, nil
+		},
+		GetStatusFunc: func(ctx context.Context) (*mcp.ResourceItem, error) {
+			payload, err := s.mcpGetStatusPayload(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return &mcp.ResourceItem{Kind: "status", Data: payload}, nil
+		},
 	})
+}
+
+// mcpGetJobPayload reads one job through handleGetJob for both MCP bridges.
+// The handler reads the raw ID from the path value; the request target
+// carries it path-escaped, as HTTPServiceBridge.GetJob does.
+func (s *server) mcpGetJobPayload(ctx context.Context, id string) (map[string]any, error) {
+	id = strings.TrimSpace(id)
+	status, payload, raw, err := s.invokeMCPJSONHandler(
+		ctx,
+		http.MethodGet,
+		"/api/v1/jobs/"+url.PathEscape(id),
+		nil,
+		map[string]string{"id": id},
+		nil,
+		s.handleGetJob,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if status < 200 || status >= 300 {
+		return nil, mcp.NewBridgeErrorFromHTTP(status, raw)
+	}
+	return payload, nil
+}
+
+// mcpGetStatusPayload reads the system status through handleStatus for
+// both MCP bridges.
+func (s *server) mcpGetStatusPayload(ctx context.Context) (map[string]any, error) {
+	status, payload, raw, err := s.invokeMCPJSONHandler(ctx, http.MethodGet, "/api/v1/status", nil, nil, nil, s.handleStatus)
+	if err != nil {
+		return nil, err
+	}
+	if status < 200 || status >= 300 {
+		return nil, mcp.NewBridgeErrorFromHTTP(status, raw)
+	}
+	return payload, nil
 }
 
 // mcpCreateWorkflow backs cordum_create_workflow. It runs the real
@@ -1376,8 +1469,10 @@ func (s *server) invokeMCPJSONHandler(
 		payload = encoded
 	}
 
-	req := httptest.NewRequest(method, target, bytes.NewReader(payload))
-	req = req.WithContext(ctx)
+	req, err := newMCPBridgeRequest(ctx, method, target, payload)
+	if err != nil {
+		return 0, nil, nil, err
+	}
 	if len(payload) > 0 {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -1432,8 +1527,10 @@ func (s *server) invokeMCPAnyHandler(
 		payload = encoded
 	}
 
-	req := httptest.NewRequest(method, target, bytes.NewReader(payload))
-	req = req.WithContext(ctx)
+	req, err := newMCPBridgeRequest(ctx, method, target, payload)
+	if err != nil {
+		return 0, nil, nil, err
+	}
 	if len(payload) > 0 {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -1461,6 +1558,30 @@ func (s *server) invokeMCPAnyHandler(
 		_ = json.Unmarshal(raw, &decoded)
 	}
 	return rr.Code, decoded, raw, nil
+}
+
+// newMCPBridgeRequest builds the in-process request for one bridge call.
+// The target must be an origin-form request URI with no space or control
+// byte; any other target is refused with a 400 invalid_request
+// BridgeError, so no handler runs for it.
+func newMCPBridgeRequest(ctx context.Context, method, target string, payload []byte) (*http.Request, error) {
+	if !validMCPBridgeTarget(target) {
+		return nil, mcp.NewBridgeError(http.StatusBadRequest, "invalid_request", "invalid bridge request target", nil)
+	}
+	return httptest.NewRequestWithContext(ctx, method, target, bytes.NewReader(payload)), nil
+}
+
+func validMCPBridgeTarget(target string) bool {
+	if !strings.HasPrefix(target, "/") {
+		return false
+	}
+	for i := 0; i < len(target); i++ {
+		if c := target[i]; c <= ' ' || c == 0x7f {
+			return false
+		}
+	}
+	_, err := url.ParseRequestURI(target)
+	return err == nil
 }
 
 func (s *server) stampMCPBridgeTenant(req *http.Request, ctx context.Context) (int, map[string]any, []byte, bool) {
@@ -1533,20 +1654,9 @@ func (s *server) newMCPDataBridge() mcp.DataBridge {
 	}
 	return mcp.NewDirectDataBridge(mcp.DirectDataBridgeConfig{
 		GetJobFunc: func(ctx context.Context, id string) (*mcp.JobDetail, error) {
-			status, payload, raw, err := s.invokeMCPJSONHandler(
-				ctx,
-				http.MethodGet,
-				"/api/v1/jobs/"+strings.TrimSpace(id),
-				nil,
-				map[string]string{"id": strings.TrimSpace(id)},
-				nil,
-				s.handleGetJob,
-			)
+			payload, err := s.mcpGetJobPayload(ctx, id)
 			if err != nil {
 				return nil, err
-			}
-			if status < 200 || status >= 300 {
-				return nil, mcp.NewBridgeErrorFromHTTP(status, raw)
 			}
 			out := mcp.JobDetail(payload)
 			return &out, nil
@@ -1557,7 +1667,7 @@ func (s *server) newMCPDataBridge() mcp.DataBridge {
 				values = append(values, "limit="+strconv.Itoa(opts.Limit))
 			}
 			if status := strings.TrimSpace(opts.Status); status != "" {
-				values = append(values, "state="+status)
+				values = append(values, "state="+url.QueryEscape(status))
 			}
 			if opts.Cursor > 0 {
 				values = append(values, "cursor="+strconv.FormatInt(opts.Cursor, 10))
@@ -1582,7 +1692,7 @@ func (s *server) newMCPDataBridge() mcp.DataBridge {
 			return out, nil
 		},
 		ListWorkflowRunsFunc: func(ctx context.Context, wfID string, limit int) (*mcp.RunList, error) {
-			target := "/api/v1/workflows/" + strings.TrimSpace(wfID) + "/runs"
+			target := "/api/v1/workflows/" + url.PathEscape(strings.TrimSpace(wfID)) + "/runs"
 			if limit > 0 {
 				target += "?limit=" + strconv.Itoa(limit)
 			}
@@ -1617,7 +1727,7 @@ func (s *server) newMCPDataBridge() mcp.DataBridge {
 			status, payload, raw, err := s.invokeMCPJSONHandler(
 				ctx,
 				http.MethodGet,
-				"/api/v1/workflow-runs/"+strings.TrimSpace(runID),
+				"/api/v1/workflow-runs/"+url.PathEscape(strings.TrimSpace(runID)),
 				nil,
 				map[string]string{"id": strings.TrimSpace(runID)},
 				nil,
@@ -1659,12 +1769,9 @@ func (s *server) newMCPDataBridge() mcp.DataBridge {
 			return out, nil
 		},
 		GetSystemHealthFunc: func(ctx context.Context) (*mcp.HealthStatus, error) {
-			status, payload, raw, err := s.invokeMCPJSONHandler(ctx, http.MethodGet, "/api/v1/status", nil, nil, nil, s.handleStatus)
+			payload, err := s.mcpGetStatusPayload(ctx)
 			if err != nil {
 				return nil, err
-			}
-			if status < 200 || status >= 300 {
-				return nil, mcp.NewBridgeErrorFromHTTP(status, raw)
 			}
 			out := mcp.HealthStatus(payload)
 			return &out, nil

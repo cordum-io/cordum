@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -681,10 +682,15 @@ func TestMCPAuthStashesCoreCallMetadataForHTTPTransport(t *testing.T) {
 		if !ok {
 			t.Fatal("mcp.CallMetadata missing from request context")
 		}
-		if meta.Tenant != "default" || meta.Principal != "tester" || meta.AgentID != "agent-alpha" {
+		// No identity store, so nothing is bound: the raw X-Agent-Id must
+		// not be recorded (ruling Q4).
+		if meta.Tenant != "default" || meta.Principal != "tester" || meta.AgentID != "" {
 			t.Fatalf("unexpected call metadata: %+v", meta)
 		}
-		if meta.SessionID != "sess-alpha" || meta.ExecutionID != "mcp-sess-alpha" {
+		// Session-less POST: a minted one-shot id. A client-supplied id is only
+		// used once the transport vouches for it (see
+		// TestMCPAuthUnverifiedSessionIDCreatesNoEdgeRecords).
+		if !strings.HasPrefix(meta.SessionID, "direct-") || meta.ExecutionID != "mcp-"+meta.SessionID {
 			t.Fatalf("unexpected session/execution metadata: %+v", meta)
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -693,12 +699,143 @@ func TestMCPAuthStashesCoreCallMetadataForHTTPTransport(t *testing.T) {
 	req.Header.Set("X-API-Key", "test-key")
 	req.Header.Set("X-Tenant-ID", "default")
 	req.Header.Set("X-Agent-Id", "agent-alpha")
-	req.Header.Set("X-MCP-Session-ID", "sess-alpha")
 	rr := httptest.NewRecorder()
 	handler(rr, req)
 
 	if rr.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestMCPSessionOwnerSeparatesCallers(t *testing.T) {
+	t.Parallel()
+	owner := func(tenant string, ac *auth.AuthContext) string {
+		req := httptest.NewRequest(http.MethodPost, "/mcp/message", nil)
+		req.Header.Set("X-Tenant-ID", tenant)
+		if ac != nil {
+			req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, ac))
+		}
+		return mcpSessionOwner(req)
+	}
+	keyAlice := &auth.AuthContext{APIKey: "key-a", PrincipalID: "alice", AuthSource: auth.AuthSourceAPIKey}
+	jwtAlice := &auth.AuthContext{PrincipalID: "alice", AuthSource: auth.AuthSourceJWT}
+	if a, b := owner("t1", keyAlice), owner("t1", &auth.AuthContext{APIKey: "key-a", PrincipalID: "alice", AuthSource: auth.AuthSourceAPIKey}); a == "" || a != b {
+		t.Fatalf("same caller must map to one non-empty owner key: %q vs %q", a, b)
+	}
+	for name, pair := range map[string][2]string{
+		"same principal, other tenant":   {owner("t1", jwtAlice), owner("t2", jwtAlice)},
+		"same principal, other api key":  {owner("t1", keyAlice), owner("t1", &auth.AuthContext{APIKey: "key-b", PrincipalID: "alice", AuthSource: auth.AuthSourceAPIKey})},
+		"same api key, other principal":  {owner("t1", keyAlice), owner("t1", &auth.AuthContext{APIKey: "key-a", PrincipalID: "bob", AuthSource: auth.AuthSourceAPIKey})},
+		"verified vs header-only (anon)": {owner("t1", jwtAlice), owner("t1", &auth.AuthContext{PrincipalID: "alice"})},
+	} {
+		if pair[0] == pair[1] {
+			t.Errorf("%s: callers share owner key %q", name, pair[0])
+		}
+	}
+	if got := owner("t1", nil); got != "" {
+		t.Fatalf("no auth context: owner key %q, want the anonymous owner \"\"", got)
+	}
+}
+
+// newMCPTwoKeyGateway serves the real MCP routes behind static API keys for
+// alice and bob (tenant default) with a Redis-backed edge store.
+func newMCPTwoKeyGateway(t *testing.T) (*server, string) {
+	t.Helper()
+	s, _, _ := newTestGateway(t)
+	s.auth = newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"key-alice","tenant":"default","principal_id":"alice","role":"admin"},` +
+			`{"key":"key-bob","tenant":"default","principal_id":"bob","role":"admin"}]`,
+	})
+	s.edgeStore = edge.NewRedisStoreFromClient(newSharedTestRedisClient(t, newTestRedisBackend(t)))
+	s.shutdownCh = make(chan struct{})
+	t.Cleanup(func() { close(s.shutdownCh) })
+	if err := s.configSvc.Set(context.Background(), &configsvc.Document{
+		Scope:   configsvc.ScopeSystem,
+		ScopeID: "default",
+		Data:    map[string]any{"mcp": map[string]any{"enabled": true, "transport": "http"}},
+	}); err != nil {
+		t.Fatalf("set config: %v", err)
+	}
+	mux := http.NewServeMux()
+	if err := s.registerMCPRoutes(mux); err != nil {
+		t.Fatalf("register mcp routes: %v", err)
+	}
+	httpSrv := httptest.NewServer(mux)
+	t.Cleanup(httpSrv.Close)
+	return s, httpSrv.URL
+}
+
+// postMCPPing POSTs a ping to /mcp/message as key, naming sessionID.
+func postMCPPing(t *testing.T, baseURL, key, sessionID string) (int, string) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, baseURL+"/mcp/message", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", key)
+	req.Header.Set("X-Tenant-ID", "default")
+	req.Header.Set("X-MCP-Session-ID", sessionID)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("post message: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read message response: %v", err)
+	}
+	return resp.StatusCode, string(raw)
+}
+
+// TestMCPHTTPSessionBoundToAuthenticatedCaller drives the real gateway wiring:
+// a second API key naming the first key's SSE session id gets the same 404 an
+// unknown session id gets, while the owner keeps using its session.
+func TestMCPHTTPSessionBoundToAuthenticatedCaller(t *testing.T) {
+	_, baseURL := newMCPTwoKeyGateway(t)
+	aliceSession := openMCPSSE(t, baseURL, "key-alice", "")
+
+	foreignStatus, foreign := postMCPPing(t, baseURL, "key-bob", aliceSession)
+	if foreignStatus != http.StatusNotFound {
+		t.Fatalf("bob naming alice's session: status %d body %s, want 404", foreignStatus, foreign)
+	}
+	if status, body := postMCPPing(t, baseURL, "key-bob", "no-such-session"); status != foreignStatus || body != foreign {
+		t.Fatalf("foreign vs unknown session answers differ: %d %s / %d %s", foreignStatus, foreign, status, body)
+	}
+	if status, body := postMCPPing(t, baseURL, "key-alice", aliceSession); status != http.StatusOK || !strings.Contains(body, `"result"`) {
+		t.Fatalf("alice using her own session: status %d body %s, want 200 with result", status, body)
+	}
+}
+
+// TestMCPAuthUnverifiedSessionIDCreatesNoEdgeRecords: a session id the
+// transport does not vouch for (foreign, unknown, or sent on the SSE GET)
+// must never reach ensureMCPHTTPTraceParents, so a caller can neither create
+// edge records for arbitrary ids nor pre-create a leaked session's record
+// under its own principal.
+func TestMCPAuthUnverifiedSessionIDCreatesNoEdgeRecords(t *testing.T) {
+	s, baseURL := newMCPTwoKeyGateway(t)
+	aliceSession := openMCPSSE(t, baseURL, "key-alice", "")
+	openMCPSSE(t, baseURL, "key-bob", "session_id=spoofed-on-get")
+	for _, id := range []string{aliceSession, "no-such-session"} {
+		if status, body := postMCPPing(t, baseURL, "key-bob", id); status != http.StatusNotFound {
+			t.Fatalf("bob naming session %q: status %d body %s, want 404", id, status, body)
+		}
+	}
+
+	ctx := context.Background()
+	for _, id := range []string{aliceSession, "no-such-session", "spoofed-on-get"} {
+		if _, ok, err := s.edgeStore.GetSession(ctx, "default", id); err != nil || ok {
+			t.Fatalf("edge session for unverified id %q: ok=%v err=%v, want none", id, ok, err)
+		}
+		if _, ok, err := s.edgeStore.GetExecution(ctx, "default", "mcp-"+id); err != nil || ok {
+			t.Fatalf("edge execution for unverified id %q: ok=%v err=%v, want none", id, ok, err)
+		}
+	}
+
+	// The owner's own first POST still creates the trace parents, as alice.
+	if status, body := postMCPPing(t, baseURL, "key-alice", aliceSession); status != http.StatusOK {
+		t.Fatalf("alice using her own session: status %d body %s, want 200", status, body)
+	}
+	got, ok, err := s.edgeStore.GetSession(ctx, "default", aliceSession)
+	if err != nil || !ok || got.PrincipalID != "alice" {
+		t.Fatalf("alice's edge session = %+v ok=%v err=%v, want principal alice", got, ok, err)
 	}
 }
 
@@ -716,6 +853,48 @@ func TestEnsureMCPHTTPTraceParentsCreatesEdgeParents(t *testing.T) {
 	}
 	if got, ok, err := s.edgeStore.GetExecution(context.Background(), "default", "mcp-sess-alpha"); err != nil || !ok || got.SessionID != "sess-alpha" {
 		t.Fatalf("GetExecution got=%+v ok=%v err=%v", got, ok, err)
+	}
+}
+
+func TestMCPAuthRuntimeCollectorOwnsTraceParents(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.auth = mcpTestAuth{apiKey: "test-key", tenant: "default"}
+	s.edgeStore = edge.NewRedisStoreFromClient(s.redisClient())
+	seedMCPBindingAgent(t, s, "default", "agent-trace")
+	if err := s.agentIdentityStore.LinkWorker(context.Background(), "agent-trace", "tester"); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/mcp/message", nil)
+	req.Header.Set("X-API-Key", "test-key")
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+	var callMeta mcp.CallMetadata
+	s.mcpAuth(func(w http.ResponseWriter, r *http.Request) {
+		callMeta, _ = mcp.CallMetadataFromContext(r.Context())
+		identity := mcp.IdentityFromContext(r.Context())
+		if identity == nil || identity.ID != "agent-trace" {
+			t.Fatalf("bound MCP identity=%+v", identity)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("MCP auth: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.HasPrefix(callMeta.SessionID, "direct-") || callMeta.ExecutionID != "mcp-"+callMeta.SessionID {
+		t.Fatalf("call metadata session=%q execution=%q, want the minted direct- session", callMeta.SessionID, callMeta.ExecutionID)
+	}
+	execution, found, err := s.edgeStore.GetExecution(context.Background(), "default", callMeta.ExecutionID)
+	if err != nil || !found {
+		t.Fatalf("GetExecution: found=%v err=%v", found, err)
+	}
+	if execution.WorkerID != "tester" || execution.Labels["agent_id"] != "agent-trace" {
+		t.Fatalf("execution ownership/identity: %+v", execution)
+	}
+	validator := newRuntimeIngestParentValidator(s.edgeStore)
+	if err := validator.validate(context.Background(), edge.AgentActionEvent{
+		TenantID: "default", SessionID: callMeta.SessionID, ExecutionID: callMeta.ExecutionID,
+	}, "tester"); err != nil {
+		t.Fatalf("authenticated principal cannot ingest its MCP trace: %v", err)
 	}
 }
 
@@ -754,4 +933,23 @@ func TestLoadMCPConfigDefaultsAndOverrides(t *testing.T) {
 	if cfg.Port != 8089 {
 		t.Fatalf("expected mcp.port=8089, got %d", cfg.Port)
 	}
+}
+
+// openMCPSSE opens /mcp/sse as key (query is an optional raw query string) and
+// returns the server-assigned session id; the stream closes at test cleanup.
+func openMCPSSE(t *testing.T, baseURL, key, query string) string {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, baseURL+"/mcp/sse?"+query, nil)
+	req.Header.Set("X-API-Key", key)
+	req.Header.Set("X-Tenant-ID", "default")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("open sse: %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	sessionID := resp.Header.Get("X-MCP-Session-ID")
+	if resp.StatusCode != http.StatusOK || sessionID == "" {
+		t.Fatalf("open sse: status %d session %q", resp.StatusCode, sessionID)
+	}
+	return sessionID
 }

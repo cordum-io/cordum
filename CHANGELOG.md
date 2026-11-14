@@ -7,6 +7,84 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Docs: the cordum-agentd, cordum-hook, Edge configuration and edge doctor pages and the
+  configuration references now state Edge outage behavior as the failure and partition
+  behavior contract records it. In enforce mode the hook denies `PreToolUse` when agentd times
+  out or returns a degraded answer, without needing `CORDUM_AGENTD_FAIL_CLOSED`; that flag also
+  fails the other hook events closed and makes agentd stop instead of running degraded when the
+  Gateway times out at startup or heartbeats keep failing. Outcomes the contract does not
+  measure are written as not measured (M0-06-DOCS-EDGE, task-911d525a).
+- Docs: the output-policy, output-safety, gRPC services and Docker pages and ADR-005 now state
+  the output checks' fail modes as the failure and partition behavior contract records them. The
+  synchronous metadata check is fail-open. The asynchronous content check follows the
+  config-service key `scheduler.output_fail_mode`, closed when unset and forced closed by the
+  production identity profile; `output_policy.fail_mode` in `config/safety.yaml` and
+  `OUTPUT_POLICY_FAIL_MODE` do not select it. Output-check outage outcomes are not measured
+  (M0-06-DOCS-OUTPUT, task-5bf25656).
+- Docs: the eval dataset, extraction and runner pages describe dataset versions as write-once
+  through the API (CLM-080) instead of immutable. The LangChain tutorial, the Edge P0 threat
+  model and the Edge P0 acceptance evidence record now state their safety-gating,
+  destructive-command, invariant-floor and approval statements at the status recorded in
+  docs/contract/claims.yaml (CLM-002, CLM-013, CLM-016, CLM-084). The decision-log page labels
+  its 500 ms figure as a nightly benchmark threshold, not a measured result or a performance
+  commitment (M0-07-DOCS-INTERNAL, task-18dca3ee).
+- Docs: the policy-authority pages (docs/policy/global-authority.md, docs/policy/tiers.md,
+  docs/safety/decision-thresholds.md, docs/topics/registry.md and
+  docs/operations/safetykernel-constraints.md) now state the invariants floor, the decision
+  threshold, pack-install rollback and the constraint extension fields at the status recorded
+  in docs/contract/claims.yaml and docs/contract/invariants.yaml. The floor is described as rule
+  order inside the four evaluators, and enforcement of the three constraint extension fields as
+  not measured (M0-07-DOCS-POLICY, task-a961d583).
+- Docs: the audit-verify API page, two OpenAPI operation descriptions, and the audit-chain,
+  image-tag, policy-signing, pack-signing, binary-signing and agentd-keychain pages now qualify
+  their integrity, signing and key-handling statements against the claim register (CLM-052,
+  CLM-057, CLM-059, CLM-083, CLM-087, CLM-088). The audit-verify latency figures are labelled as
+  an April 2026 dev-stack measurement that was not re-measured for the current release and is
+  not a performance commitment (M0-07-DOCS-AUDIT, task-39319cd9).
+
+- Docs: the MCP approval pages (docs/mcp-server.md, docs/mcp-tools-reference.md and, under docs/mcp,
+  approval_hold.md, mutating-tools.md, per-tool-approval.md and quickstart-vscode-copilot.md) now
+  state approval, single-use, provenance and scope claims at the status recorded in
+  docs/contract/claims.yaml. They name the preapproval exemption, the six mutating tools not yet
+  wired on the gateway's HTTP MCP endpoint and the cross-tenant access rule of the MCP approve
+  call, and no longer use `cordum_submit_job` as an approval example (M0-07-DOCS-MCP-APPROVAL,
+  task-3adad44c).
+- Docs: corrected overstated statements in the MCP prerequisites, outbound-signing, prompts and
+  scope-preapproval pages. The prerequisites page drops the 100 req/s per API key figure, the
+  `Retry-After` header and a `cordumctl` command that does not exist, and says the MCP endpoints
+  share the gateway's API rate limiter, whose default rate comes from the license tier. The
+  outbound-signing page says only the verifying side checks the clock-skew window, the prompts
+  page says no test checks prompt output for secrets, and the scope-preapproval page names the
+  admin-role check on agent-identity writes and links the claim register entries for it and for
+  the audit chain (M0-07-DOCS-MCP-SCOPE, task-768d5fdd).
+
+- Docs: README.md, SECURITY.md and ROADMAP.md now state protection, support and release
+  claims at the status recorded in docs/contract/claims.yaml: scoped Edge, approval,
+  provenance, quarantine, audit and plan-limit statements; a three-class demo without
+  a timing claim; qualified Copilot phases.
+- Docs: BENCHMARKS.md now says its figures are dated January 2026, have not been re-measured for
+  the current release and are not a performance commitment or SLA, and that the benchmarks and
+  scripts it named are not in this repository. It drops the production-grade, production-ready
+  and battle-tested wording, three summary lines that went beyond the file's own figures and the
+  commands that called the missing scripts, and qualifies the competitor comparison and the
+  anonymized deployment figures (M0-07-DOCS-BENCH, task-4290ac28).
+
+- Docs: the Safety Kernel guide, scheduler internals, configuration reference, production
+  runbook, threat model and dashboard page spec now name the settings that select each fail
+  mode. The scheduler's input and output modes are the config-service keys
+  `scheduler.input_fail_mode` and `scheduler.output_fail_mode`, closed when unset;
+  `POLICY_CHECK_FAIL_MODE` selects the Gateway submit pre-check; and open input mode admits
+  only topics listed in `scheduler.input_fail_open_scope`. The rate-limit pages no longer say
+  that a Redis outage falls back to in-memory limits: the Redis-backed limiter denies while
+  Redis is unreachable. The failure and partition behavior contract records that its cited
+  tests pass at `da5f9bda` (task-ca72211e).
+- `cordumctl pack install`, upgrades and uninstall use the gateway pack API,
+  applying the gateway's checks to every install. Install requires `packs.install`
+  (`auth.PermPacksInstall`) or admin, and prints the returned pack worker credential
+  to stdout. `/api/v1/config` preserves server-managed `system/policy` bundles and
+  the `system/packs` registry, returning `CONFIG_KEY_FORBIDDEN` for changes; use
+  the policy bundle API or the pack API instead. Older cordumctl versions must
+  be upgraded to install or uninstall packs against this gateway.
 - Migrated the shared dashboard DataTable to TanStack React Table 9.3.1 with
   explicit sorting, sizing and visibility features, preserving its existing
   rendering and interaction contracts (task-fa2b4cef).
@@ -15,6 +93,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   instead of TanStack, without changing table behavior (task-fc8b600a).
 
 ### Added
+
+- Added `docs/contract/data-inventory.yaml` (PR2-07): data classes with storage,
+  content, retention, deletion-path and legal-hold fields, separating local
+  endpoint copies from control-plane data. `tests/contract` checks its setting
+  and code references; complete key/stream coverage and cleanup guarantees
+  are not claimed by this inventory.
+
+- Added `TestDataInventoryKeyCoverage` (PR2-07-KEYS): `tests/contract` parses
+  the non-test Go files under `core/` and `cmd/` and requires every key-shaped
+  string literal and JetStream stream name to map to a data-inventory entry or
+  a `not_tenant_data` classification, and every Redis stream writer to a
+  `redis_stream` entry. It fails on an unmapped item and on a classification
+  that no longer matches the code. The validator refuses classification
+  patterns that use identity placeholders such as `{tenant}` or `{user}`.
+  Entries DI-C22 to DI-C53 add the job, workflow, identity, session, edge,
+  evaluation and coordination key families. The guard checks mapping only and
+  adds no deletion or legal-hold behavior.
 
 - Added [failure and partition behavior](docs/contract/failure-behavior.md)
   (M0-06, task-51b08640): required and current behavior for low-risk,
@@ -32,15 +127,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   qualified one (PR2-02-CLI, task-cc3f03b6). `docker.yml` now builds each
   release image once and pushes it by digest without tags; the smoke check and
   the Trivy OS scan run on that pushed digest, and the run uploads a
-  `qualification-record` artifact. Cosign signs that digest, and the release
-  tags are applied to it, only through `release-qual publish`, and the job
+  `qualification-record` artifact. The Trivy coverage exception records that
+  fixed OS-package findings at any severity fail the gate; unfixed findings
+  are ignored and application dependencies are not scanned. Cosign signs that
+  digest, and the release tags are applied to it, only through
+  `release-qual publish`, and the job
   fails unless every tag resolves to it. If a gate fails on a tag push, the
   untagged, unsigned digest stays in GHCR and Docker Hub. A push to a
   `release-dry-run/**` branch runs the same image and record jobs against
   job-local registries and skips the registry logins, Docker Hub, signing, the
   SARIF upload, issue creation, the published-image smoke and the Helm chart
-  (PR2-02-IMAGES, task-f393ecf3). Release binaries are not in the record yet
-  (PR2-02-BINARIES).
+  (PR2-02-IMAGES, task-f393ecf3). `release.yml` runs inside the `docker.yml`
+  release run, so one run writes one qualification record with the 8 images
+  and 15 Edge binaries (sha256 of the staged bytes). Edge binaries are published
+  only through `release-qual publish` against that record; the record explicitly
+  states that no release-time test or scan runs against the binaries
+  (PR2-02-BINARIES, task-151c9d78).
 
 - License-state behavior contract (`docs/contract/license-behavior.md`): one row per license state and capability class, checked by `TestLicenseBehaviorContract`; a cell not yet tested names the row that will test it.
 - Added the [planned first protected-operation contract](docs/contract/protected-operation.md)
@@ -66,6 +168,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Failed jobs report one of 10 documented codes (`invalid_input`, `mcp_unavailable`, `mcp_protocol_error`, `mcp_call_failed`, `mcp_approval_rejected`, `mcp_approval_expired`, `mcp_approval_not_found`, `mcp_approval_timeout`, `mcp_approval_invalid`, `worker_shutdown`), never server text or the API key.
 - Unsigned agent, so compat CAP profile only. It needs the default `mcp.policy_gate_enabled=false`, because it does not send `_approval_ref`. `demo/cap-mcp-governed/README.md` covers setup.
 
+#### demo/cap-mcp-governed — governed end-to-end test in CI: operator approval, self-approval refusal and policy deny (2026-11-14, task-4ec9af00)
+
+- New `demo/cap-mcp-governed/pack` (topic route plus a deny and an allow rule), `demo/cap-mcp-governed/integration_test.sh`, and the `demo-cap-mcp-governed-e2e` workflow, which runs the demo worker against the source-built compose demo stack nightly, on dispatch and on pull requests that change the demo.
+- The test asserts that a policy-denied job creates no approval and no workflow, that the worker cannot approve its own request (403 `self_approval_denied`), that an operator approval runs the call once and adds exactly one workflow, and that no credential reaches the artifacts. It prints `CAP-MCP GOVERNED DEMO OK` once.
+- Limits: unsigned worker on the compat CAP profile, and MCP with `policy_gate_enabled=false`.
+- `tools/scripts/workflow_credential_guard.py` registers the new workflow and its six masked credentials. Failure artifacts are redacted before upload.
+
+#### demo/a2a-governed — governed A2A end-to-end test in CI: input-required resume, Cordum safety decisions and policy deny (2026-11-13, task-171d7f02)
+
+- New `demo/a2a-governed`. Its pack registers `job.a2a-governed.turns` and `job.a2a-governed.denied`, routes both to pool `a2a-governed`, and adds the rules `a2a-governed-denied` and `a2a-governed-allow`. It also has `integration_test.sh` and the `demo-a2a-governed-e2e` workflow. The workflow builds `cap-a2a-bridge` and the example worker from cordum-io/cap at pinned commit `3216b280`, then runs them on the host against the default compose stack, with TLS on HTTP, NATS and Redis.
+- The test asserts four outcomes. An allowed A2A turn ends `INPUT_REQUIRED`, and its resume ends `COMPLETED`. Each of those jobs is `SUCCEEDED`, with an `ALLOW` decision by `a2a-governed-allow`. A turn on the denied topic ends `REJECTED`, and its job is `DENIED` by `a2a-governed-denied` and never dispatched. On success it prints `A2A GOVERNED DEMO OK` once.
+- Compat profile only. Cordum admits the bridge's raw, unsigned `sys.job.submit` only while handshake is `off` or `warn`, so the bridge and the worker run with `CAP_A2A_DEV_UNSIGNED=1`. The A2A result does not reflect Cordum's output-safety verdict. `demo/a2a-governed/README.md` lists the limitations.
+- `tools/scripts/workflow_credential_guard.py` adds an inventory row for the new workflow and its three generated credentials.
+
 ### Changed
 
 - The eight required checks also run on `merge_group` events, with OpenAPI
@@ -74,6 +190,298 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   ruleset (task-fd34e921).
 
 ### Security
+
+- Gateway: job submit over HTTP, gRPC and MCP drops client `approval_*`,
+  `gate_type`, `cordum.bus_msg_id` and `policy.attachment_id` labels and logs
+  the dropped keys, and a workflow step's `route_labels` can't set them. gRPC
+  `SubmitJob` rejects `_governance.*` and `_ma.*` labels with
+  `InvalidArgument`, as HTTP submit answers 400 (#492, task-5e03cb28).
+
+- Upgrade note, production signed-content enforcement. In the production
+  profile (`CORDUM_ENV=production` or `CORDUM_PRODUCTION=true`) with no
+  override, the safety kernel activates config-store policy only when its
+  signature verifies, and the gateway refuses unsigned packs and stores signed
+  pack policy fragments.
+  - `deploy/k8s/production`, and any deployment with `CORDUM_ENV=production`
+    and no explicit override, now refuses unsigned packs.
+  - The packs in the official catalog are not yet signed. Until they are,
+    production refuses them unless `CORDUM_GATEWAY_PACK_STRICT=false` is set.
+    That override restores the previous pack behavior, and the admin-only
+    `signature_enforcement.packs.strict` field of `GET /api/v1/status`
+    reports it.
+  - `CORDUM_POLICY_STRICT=warn` explicitly restores the previous policy-store
+    behavior.
+  - A production gateway with no policy signing key boots, then refuses policy
+    writes with 503 `POLICY_SIGNING_REQUIRED`. Configure a policy signing key
+    whose public half the policy trust store holds
+    (`CORDUM_POLICY_PUBLIC_KEY_<ID>`), or set an explicit
+    `CORDUM_POLICY_STRICT=warn` to restore the previous write behavior.
+  - Before upgrading, export the safety kernel's
+    `CORDUM_POLICY_PUBLIC_KEY_<ID>` and run
+    `cordumctl policy verify-store --gateway <url> --api-key <admin key>`.
+    It exits 0 when the store is clean, 1 when it lists bundles that would be
+    refused, and 2 on a configuration error. Against a gateway at v1.0.0 or
+    older that has no policy document, it exits 2.
+  - Re-sign the listed bundles that no pack owns with
+    `cordumctl policy resign --bundle <id> [--bundle <id> ...]` or
+    `cordumctl policy resign --all`. Both need an admin key, and the gateway
+    needs a policy signing key its trust store holds.
+  - Fix pack-owned policy fragments by reinstalling the pack.
+
+- Policy signing upgrade tools: the safety kernel's boot check uses
+  `policysign.ResolveMode`, reporting `enforce` in production when
+  `CORDUM_POLICY_STRICT` is unset and refusing startup without a trusted
+  `CORDUM_POLICY_PUBLIC_KEY_<ID>`. `cordumctl policy verify-store` lists unsigned,
+  malformed, untrusted-key, stale-signature and bad-signature store bundles,
+  reports pack reinstallation remedies, exits nonzero on refusals and writes
+  nothing. `cordumctl policy resign --bundle <id>` (or explicit `--all`) signs
+  current stored content through `POST /api/v1/policy/bundles/{id}/resign` using
+  the gateway's trusted signing key. This admin-role action stores one audit
+  entry per bundle, never runs automatically and refuses pack-owned fragments
+  or a missing or untrusted signing key.
+
+- Gateway: policy audit entries are stored independently of the client
+  request's lifetime. A concurrent change to the audit log is retried, and an
+  entry that still cannot be stored is logged at ERROR. Policy writes that need
+  an atomic audit record can commit the policy document and its audit entry in
+  one Redis transaction. A co-located audit document keeps both keys in one
+  Redis Cluster slot, and the policy audit API (`GET /api/v1/policy/audit`)
+  returns entries from both audit documents.
+
+- Gateway: velocity-rule create and update, and the output-rule enable toggle,
+  store their policy bundle with a signature from the configured policy signing
+  key (`CORDUM_POLICY_SIGNING_KEY`). When the policy store's signature mode is
+  enforce, these writes are refused before any change with 503
+  `POLICY_SIGNING_REQUIRED` unless a signing key whose public half the policy
+  trust store holds (`CORDUM_POLICY_PUBLIC_KEY_<ID>`) is configured. Enforce
+  means `policysign.ResolveMode` resolves enforce (for example the production
+  profile with `CORDUM_POLICY_STRICT` unset, or an explicit `enforce`) or the
+  value is unrecognised. Under an explicit `CORDUM_POLICY_STRICT=warn` or `off`,
+  a write that cannot be signed with a trusted key still proceeds, with a
+  warning. The gateway's boot-time move of legacy policy bundles from
+  `system/default` to `system/policy` never signs content. Under enforce it moves
+  them only when every legacy bundle with content already carries a signature
+  that verifies under the policy trust store; otherwise it moves nothing and
+  refuses to start with `policy.legacy_migration_unverified`, the count, and the
+  re-sign steps in `docs/deployment/policy-signing.md`.
+
+- Job submit and delegation token issue fail closed when the agent identity
+  store cannot be read (task-7ded46ca). HTTP job submit and gRPC `SubmitJob`
+  return 503 / `Unavailable` with a generic message when the worker-link lookup
+  for the submit's principal fails, before the policy check, job persistence
+  and publish. Before, the failure was read as "no linked agent": the policy
+  check and the audit trail ran without the agent, so a deny or approval rule
+  keyed on that agent did not apply. Delegation issue by a non-admin caller
+  returns 503 and audits outcome `error` instead of a 403 `denied`. An absent
+  or dangling link and an empty principal behave as before. This was
+  CodeRabbit's finding on #570.
+
+#### core/controlplane/gateway — production pack trust (2026-11-13, task-a9787d2f)
+- In the production profile (`CORDUM_ENV=production` or `CORDUM_PRODUCTION=true`),
+  upload and marketplace installs default to requiring a pack signature verified
+  against a trusted publisher key. With no trusted publisher key, every pack is
+  refused. The development profile is unchanged.
+- Explicit downgrade: `CORDUM_GATEWAY_PACK_STRICT=false` or Redis
+  `cfg:packs:strict_mode=false` disables pack enforcement unless either setting
+  is explicitly true. The gateway logs the downgrade at startup and on every
+  unsigned install. The release compose sets this downgrade until official packs
+  are signed; production deployments without an override remain strict.
+- Pack policy fragments are signed with the configured usable policy signing key.
+  Enforced policy-store mode refuses an install before any write when its fragment
+  cannot be signed under the policy trust store (`pack.policy_unsigned`). An
+  undetermined mode is enforced. Explicit `CORDUM_POLICY_STRICT=warn` or `off`
+  permits unsigned storage with a warning when no usable signing key is available.
+
+- Safety kernel: one signature rule now covers every policy source (file, URL
+  and config store), and `policysign.ResolveMode` exposes it. In the production
+  profile (`CORDUM_ENV=production` or `CORDUM_PRODUCTION=true`) with
+  `CORDUM_POLICY_STRICT` unset, a config-store policy bundle becomes active only
+  when its signature verifies against the policy trust store
+  (`CORDUM_POLICY_PUBLIC_KEY_<ID>`); a refused bundle leaves the active policy in
+  place. With `CORDUM_POLICY_STRICT` unset, `SAFETY_POLICY_SIGNATURE_REQUIRED=true`
+  also enforces for every source. Signature metadata with a missing or
+  unsupported algorithm, or a missing, undecodable or wrong-length value, is
+  refused as malformed for every source. An explicit `CORDUM_POLICY_STRICT` still
+  wins: `warn` logs signature failures and keeps loading, and `off` skips
+  verification. The development profile is unchanged.
+
+#### core/controlplane/gateway — Edge LLM and runtime ingest accept only an authenticated proxy or collector identity (2026-11-13, task-3b633938)
+
+- **Behavior change** for `POST /api/v1/edge/llm/events` and
+  `POST /api/v1/edge/runtime/events`. The LLM proxy or runtime collector
+  identity now comes only from an authenticated principal. A principal named
+  only by the `X-Principal-Id` header is refused with 403, like a missing
+  one, in every profile, and nothing is ingested. Callers notice this where
+  the header is read as a principal: development, and production with
+  `CORDUM_ALLOW_HEADER_PRINCIPAL=true`. Principals bound by an API key, a
+  session, or JWT/OIDC ingest as before.
+- Migration: authenticate each proxy and collector with a static API key
+  bound to its principal (`principal_id` in `CORDUM_API_KEYS`, equal to its
+  `source.source_id`), or with a session or OIDC login. Managed API keys
+  carry no principal and cannot name one.
+
+#### core/controlplane/gateway — copilot session detail is returned only to its authenticated owner (2026-11-13, task-3b633938)
+
+- **Behavior change** for `GET /api/v1/copilot/sessions/{sessionId}`. The
+  session owner now comes only from an authenticated principal. A principal
+  named only by the `X-Principal-Id` header gets 401 and no session data, in
+  every profile. Callers notice this where the header is read as a
+  principal: development, and production with
+  `CORDUM_ALLOW_HEADER_PRINCIPAL=true`. Principals bound by an API key, a
+  session, or JWT/OIDC read their own sessions as before.
+- Migration: sign in to the dashboard with a session or OIDC login, or use a
+  static API key bound to the owning principal.
+
+#### core/controlplane/gateway — delegation tokens are issued only to an authenticated caller's linked agent (2026-11-14, task-fe3faf16)
+
+- **Behavior change.** A non-admin caller of
+  `POST /api/v1/agents/{id}/delegate` must be authenticated as the worker
+  linked to the delegating agent.
+- A principal named only by the `X-Principal-Id` header no longer identifies
+  that worker, in any profile: the request gets 403 and a denied
+  `delegation.issue` audit event, and no token is issued.
+- Admin callers are unchanged.
+- `Migration:` managed API keys carry no principal, so a managed key with only
+  an operator or write scope can no longer issue delegation tokens. Issue them
+  with an admin credential, or with a session or OIDC login whose principal is
+  the linked worker.
+
+#### core/controlplane/gateway — Edge approvals use only an authenticated principal for access and resolver identity (2026-11-14, task-fe3faf16)
+
+- **Behavior change.** A principal named only by `X-Principal-Id` (an unbound
+  static or managed API key) is no longer the caller's own principal for Edge
+  approvals. A user or viewer caller without an authenticated principal lists
+  no approvals and gets 404 for a single approval and for `POST .../wait`.
+  Admin and operator callers still see every approval in the tenant.
+- When such a caller approves or rejects, `resolver_id` and `resolved_by`
+  record the API key identity and role, not the header value. A caller whose
+  `X-Principal-Id` matches the requester is still refused as self-approval.
+- `Migration:` give each approver, and each `cordum-agentd` that waits on
+  approvals with a user or viewer key, a credential that carries its
+  principal: a static API key with `principal_id` in `CORDUM_API_KEYS`, or a
+  session or OIDC login.
+
+#### Header-asserted principals never authorize a job's agent identity (2026-11-13, task-850216cf)
+
+- **Behavior change** for job submit, in every profile. A principal taken
+  from the `X-Principal-Id` header or `x-principal-id` gRPC metadata is
+  caller-asserted: it is still recorded for attribution, but it never
+  authorizes a client `labels.agent_id`. Such a submit is refused (HTTP 403,
+  gRPC `PermissionDenied`) before the policy check and publish, and gRPC
+  `SubmitJob` infers no agent for it. Principals bound by an API key, a
+  session, or JWT/OIDC bind as before.
+- **Production default change.** Managed API keys now ignore
+  `X-Principal-Id` in the production profile, as static keys do, unless
+  `CORDUM_ALLOW_HEADER_PRINCIPAL=true`. When that flag is set in production,
+  the gateway logs a startup warning naming it.
+- Migration: callers that send `labels.agent_id` authenticate as the worker,
+  with a worker credential (an API key bound to the worker principal), a
+  session, OIDC or a delegation token. Production dashboard or edge
+  deployments that sent `X-Principal-Id` with a managed key move to a session
+  or OIDC login or a principal-bound key, or set
+  `CORDUM_ALLOW_HEADER_PRINCIPAL=true` for attribution only.
+
+#### core/controlplane/gateway — job submit infers an agent only from the authenticated principal (2026-11-14, task-491f974b)
+
+- **Behavior change** for job submit on HTTP and gRPC, in every profile. A
+  submit without `labels.agent_id` gets the agent linked to its principal
+  only when that principal is authenticated (by an API key bound to it, a
+  session, or JWT/OIDC) and the job is attributed to it.
+- A principal named by the request (`principal_id` in the HTTP body or the
+  gRPC request, or the `X-Principal-Id` header) never selects a worker link.
+  Such a job carries no inferred `agent_id`, so policy rules keyed on that
+  agent no longer match it, and allow rules fail closed. A
+  `delegation_audience_agent_id` override on such a submit now requires the
+  `delegation.impersonate` permission.
+- This is a behavior change for static API keys whose callers name a
+  `principal_id`.
+- Migration: authenticate as the worker with a worker credential (an API key
+  bound to the worker principal), a session or an OIDC login, or use a
+  delegation token.
+
+#### core/controlplane/gateway — HTTP MCP trace parents and fronted upstreams act only for an authenticated, bound caller (2026-11-14, task-d78b4830)
+
+- The Edge session and execution that the gateway creates for an HTTP MCP
+  session are owned by the authenticated principal. A principal named only by
+  the `X-Principal-Id` header owns neither and is kept as the
+  `asserted_principal_id` label for attribution.
+- A fronted MCP upstream serves only a caller with an active bound agent
+  identity, like the built-in tool registry. With no identity, or a suspended
+  or revoked binding, `tools/list` is empty and `tools/call` is refused with
+  `-32098` `no_identity` before the upstream is called, whether
+  `mcp.policy_gate_enabled` is off or on.
+
+#### core/controlplane/gateway — MCP requests take identity only from an authenticated principal (2026-11-14, task-e3562f91)
+
+- **Behavior change** for HTTP MCP clients (`/mcp/sse` and `/mcp/message`).
+  The agent identity, and the principal that MCP approvals and the policy
+  gate use, now come only from an authenticated principal. A principal named
+  only by the `X-Principal-Id` header resolves no agent identity, in every
+  profile: `tools/list` is empty and `tools/call` is refused with `-32098`
+  `no_identity`, so no approval is requested for it. Callers notice this
+  where the header is read as a principal: development, and production with
+  `CORDUM_ALLOW_HEADER_PRINCIPAL=true`. Principals bound by an API key, a
+  session, or JWT/OIDC resolve their identity as before.
+- The self-approval check still compares the approver with the requesting
+  API key and any principal the request named, so a header principal can
+  only make it refuse more.
+- Migration: give each MCP client a credential that carries the principal
+  linked to its agent identity: a static API key with `principal_id` in
+  `CORDUM_API_KEYS`, or a session or OIDC login. Managed API keys carry no
+  principal and cannot bind an MCP client.
+
+#### core/mcp, core/controlplane/gateway — MCP HTTP/SSE sessions are bound to the caller that opened them (2026-11-14, task-2ec67dc4)
+
+- **Behavior change** for HTTP MCP clients: a `/mcp/message` with an unknown
+  or foreign session id gets HTTP 404 with JSON-RPC error `-32001`
+  (`session not found`); reconnect to `/mcp/sse` for a new id. The SSE stream
+  and its POSTs must use the same tenant, credential and principal.
+- The gateway uses a client-supplied session id for Edge trace parents and
+  call metadata only after the transport confirms that the caller owns the
+  session. See the `/mcp/sse` notes in `docs/mcp-server.md`.
+
+#### MCP `X-Agent-Id` can only confirm the principal-bound agent identity (2026-10-26, task-eb2d6f28)
+
+- **Behavior change** for MCP clients that select an agent identity with the
+  `X-Agent-Id` header. HTTP MCP requests now run as the agent identity linked
+  to the authenticated principal in the request tenant. No header, or a header
+  equal to that identity's `id`, resolves to it. Any other header value, an
+  unlinked principal, or a link to another tenant resolves to no identity:
+  `tools/list` is empty and `tools/call` is refused with `-32098`
+  `no_identity`, with `mcp.policy_gate_enabled` on or off (task-f6d83860).
+- Approval records, preapproval checks, policy-gate call metadata and Edge
+  trace labels now carry the bound identity `id` (empty when there is none),
+  never the header value. The principal no longer stands in for a missing
+  agent ID, and the header no longer stands in for a missing principal.
+- Why: any caller in a tenant could previously act as any agent identity in
+  that tenant, including its `allowed_tools` and `preapproved_mutating_tools`,
+  by naming it in the header.
+- Migration: link each MCP client's principal to its identity
+  (`POST /api/v1/agents` with `"agent_id": "<principal id>"`, or a worker
+  credential with `agent_id`), then send the bound `id` in `X-Agent-Id` or drop
+  the header. See "Agent identity binding" in `docs/mcp-server.md`.
+
+#### core/controlplane/gateway — production gateways hold destructive MCP calls when the session-taint lookup fails (2026-11-13, task-dddb761f)
+
+- **Production default change.** With `mcp.policy_gate_enabled=true` and
+  `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` unset, a gateway running with
+  `CORDUM_ENV=production` or `prod`, or `CORDUM_PRODUCTION=true`, now fails
+  closed: a destructive MCP call (by default a tool matching `*delete*`,
+  `*remove*` or `*archive*`, or GraphQL arguments carrying such a mutation)
+  whose session-taint lookup fails is held for Edge approval
+  (`REQUIRE_HUMAN`, `taint_lookup_unavailable_failclosed`) instead of
+  running. Dev and demo profiles keep the fail-open default. An explicit
+  `true` or `false` always wins, and an unrecognized value falls back to the
+  profile default with a warning.
+- **Operational impact:** during a session-taint store outage, production
+  holds every destructive MCP call for an Edge approval, for every identity,
+  including scope-preapproved CI bots. Scope preapproval does not waive this
+  hold. To keep the previous fail-open behavior, set
+  `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE=false`.
+- The gateway now reads the flag through
+  `actiongates.ResolveFailClosedDestructiveOnTaintLookupError`, which had no
+  caller, and its own default-off parser is removed. A tainted destructive
+  call is still denied in every profile, and the safety kernel is unchanged.
 
 #### Integration batch 2 review fixes (2026-11-13, #579)
 
@@ -109,6 +517,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   with the topics they class as low risk. Without a scope, open mode requeues every job
   while the kernel is unavailable.
 
+#### Scheduler fail-open admission reads one config snapshot (2026-11-13, task-5ef67585)
+
+- A tenant whose fail-mode config has not loaded is requeued instead of inheriting
+  the system fail-open scope. The lookup starts a background refresh, and the
+  tenant's jobs are decided once its config has loaded.
+- Each fail-open decision takes the input mode and scope from one configuration:
+  the tenant's effective config as last loaded (system and tenant settings merged)
+  when either key is present in it, otherwise the current system config. A present
+  mode other than `open`, including an empty, null or non-string value, is closed.
+  A reload publishes the system mode and scope together, and removing
+  `scheduler.input_fail_mode` or `scheduler.input_fail_open_scope` from the system
+  config now publishes that key's default (closed mode, no topics) instead of
+  keeping the previous value.
+
 - `tools/scripts/install.sh` and `install.ps1` verify `SHA256SUMS.sigstore.json`,
   a keyless Sigstore signature, with cosign before checking checksums and
   installing binaries. `verify-blob` pins the identity to `release.yml` at a
@@ -137,6 +559,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   Alpine 3.21). Every runtime stage still runs `apk upgrade --no-cache`;
   builder stages are unchanged.
 
+- Non-release images also move off end-of-life Alpine 3.19, 3.20 and 3.21 to
+  `alpine:3.24`, the branch the release images use: the seven
+  `validate-secrets` init containers in `deploy/k8s/base.yaml`, and the runtime
+  stages of `Dockerfile.localcap`, `demo/mock-bank` and the Go example workers
+  (`demo-guardrails`, `hello-worker-go`, `multi-topic-worker-go`). The init
+  scripts, builder stages and Helm chart are unchanged (task-7abb1816).
+
 #### core/controlplane/gateway — gateway worker-link readers resolve within the request tenant (2026-11-11, task-283f2317)
 
 - `POST /api/v1/agents`: the `agent_id` worker-conflict check (409 `AGENT_WORKER_CONFLICT`) now considers only the caller's tenant. Another tenant's link for the same worker ID neither blocks registration nor reveals that it exists.
@@ -164,14 +593,46 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- On the gateway's HTTP MCP transport, the job, workflow and run ids that
+  `cordum_cancel_job`, `cordum_trigger_workflow`, `cordum_approve_job`,
+  `cordum_reject_job` and the `cordum://workflows/{id}/runs` and
+  `cordum://workflows/{id}/runs/{runId}` resources send to the REST handlers
+  are path-escaped in the gateway's in-process requests, and the
+  `cordum://jobs` status filter is query-escaped, so a value that contains
+  reserved URL characters is looked up as itself. A tool or resource handler
+  that fails unexpectedly returns JSON-RPC `-32603` with a fixed message
+  (task-7efdf077).
+
+- On the gateway's HTTP MCP transport (`/mcp/sse` and `/mcp/message`),
+  `resources/read` of `cordum://jobs/{id}` and the `cordum_get_job` and
+  `cordum_status` tools return the job and the system status instead of a
+  `read_only_unsupported` error. They run the checks of
+  `GET /api/v1/jobs/{id}` and `GET /api/v1/status`, so a job in another
+  tenant, or a missing job, returns an error and no job data
+  (task-43c69929).
+
+- The dashboard image's build stage runs on the build host's platform. Its
+  linux/arm64 image copies the same static dist/ as linux/amd64 instead of
+  running pnpm, tsc and Vite under QEMU emulation, where a release dry run's
+  arm64 Vite build stalled (task-efd2850d).
+
 - `POST /api/v1/agents` fails closed with 500 when the worker-link lookup
   fails, instead of creating an agent identity or link it could not check.
 
 - Audit publishing tolerates a missing fallback or exporter: events without a
   usable sink are dropped, logged and counted in
-  `cordum_audit_events_dropped_total{reason}`. The Safety Kernel's shadow sender
-  has a discard fallback, and cordum-mcp's NATS audit fallback writes to stderr
-  when no SIEM exporter is configured.
+  `cordum_audit_events_dropped_total{reason}`. cordum-mcp's NATS audit fallback
+  writes to stderr when no SIEM exporter is configured.
+
+- The Safety Kernel now counts shadow_eval audit events that fail to publish to
+  NATS in `cordum_audit_events_dropped_total{reason="no_fallback"}`. They were
+  discarded uncounted before. Shadow events are diagnostic, so this is an
+  observability fix; failed events are still never republished.
+
+- cordum-mcp writes its stderr audit events at every `CORDUM_LOG_LEVEL`, and
+  the text log format prints each event as JSON text. cordum-mcp also closes
+  its audit sender before it stops, so events queued in the NATS fallback
+  buffer are exported first (task-aaf54d0e).
 
 - `POST /api/v1/approvals/{job_id}/approve` and `/reject` now return 503 when a
   store read that their checks depend on fails: the job state, the stored
@@ -230,7 +691,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - MCP (`mcp.policy_gate_enabled=true`): scope preapproval no longer
   short-circuits an action-gate REQUIRE_HUMAN hold. Today that is the
   destructive-call hold when the session-taint store is unavailable and
-  `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` is on (default off). A
+  `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` is on (by default in production
+  profiles; see task-dddb761f under Security). A
   preapproved identity now receives the same resumable
   `approval pending: <approval_ref>` as any identity, instead of an empty,
   cached `approval pending: ` that could never execute or resume.
@@ -271,11 +733,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   click landed on the icon's SVG element, because the check accepted only HTML
   elements (task-30740b03).
 
+- MCP over HTTP with `mcp.policy_gate_enabled=true`: a `tools/call` without a
+  bound agent identity now returns `-32098` `no_identity`, matching the
+  gate-off path, instead of `-32603` or `-32097` `missing_mcp_metadata`
+  (task-f6d83860). The server refuses it before any approval is read, so a call
+  that carries an `_approval_ref` no longer touches that approval. A request
+  missing its tenant, session or execution metadata still fails closed with its
+  old error.
+
 ### CI and documentation
 
+- Five review corrections (task-127a7dba). The VS Code Copilot MCP quickstart asks for a static API key with a configured principal, because the generated `mcp.json` carries the credential only in `X-API-Key`. The data-inventory contract test binds a JetStream stream name to the innermost function parameter that declares it, so a parameter that shadows a file-level const no longer reads as that const's value. The A2A governed demo fails whenever the worker log names the denied job. The configuration reference states that `POLICY_CHECK_FAIL_MODE=open` makes the scheduler refuse to start under CAP-PRODUCTION. The release Alpine upgrade guard reads each word before `apk upgrade --no-cache` after removing quotes and backslashes, so `"exit" 0`, `\exit 0` and `e"xi"t 0` fail closed.
+- The workflow credential scanner no longer reports `SOURCE_OVERSIZE` for a locally built native binary that a workflow runs, such as the `bin/cordumctl` that three demo workflows run for `generate-certs`, so a clean checkout and a built one scan the same. A file over the 256 KiB source bound counts as a program on an exec edge only when it starts with an ELF, PE or Mach-O header and has a NUL byte in its first line. An oversized script, and a `source` or `bash` edge to any oversized file, still report `SOURCE_OVERSIZE` (task-13b4b48c).
 - Added `docs/contract/threat-model.md`, the platform threat model for the M0 security contract: assets, adversaries, trust boundaries, a trusted-component inventory covering every `cmd/` service, reference-monitor properties with their current status, five explicit non-promises and the deployment boundary. Documentation only; no behavior changes.
 - Qualified three platform security-posture statements against `docs/contract/threat-model.md` (task-d056042e): ADR-001's "Zero-trust guarantee" bullet is now marked as design intent with a dated status note, and `docs/mcp/scope-filtering.md` no longer labels the MCP controls a "zero-trust stack" or "zero-trust controls". The threat model rates these mechanisms `supported`, not `enforced` or `verified`. Clarified that qualification requires protected transport on every Gateway client/proxy hop; deployment remains unverified.
 - Nightly soak bounds (task-a7c48ad2): compare post-warm-up memory medians over first/last K snapshots (default 5, minimum 3), retaining the 50% relative limit and 32 MiB floor. Missing/malformed metrics, insufficient samples, missing containers and zero load now fail explicitly. Helm reports drift/restarts as not evaluated rather than passing. Results include evaluation/window/baseline fields; the wiki documents the 20-minute example and metrics-source controls. All 83 contract assertions are retained.
+- Nightly soak restart check (task-14c37ef5): restart counts now come from `docker inspect` RestartCount instead of the `docker compose ps` Status text, which only shows an exit code, so a container that restarted and is Up again now fails the soak; an unreadable count fails instead of reading as 0.
+- The workflow credential scanner carries options that a file run with `source` or `.` leaves set (tracing on, errexit off) into the shell that ran it, as a `set` at that line would. This includes nested sources, functions a sourced file defines, and an rcfile that sources such a file. The analysis is bounded per job at 1000 distinct sourced-file analyses: past that bound each further sourced file counts as leaving tracing on and errexit off, and a credential job reports `SOURCE_LIMIT` (task-3d6be9e2).
 
 ### Added
 
