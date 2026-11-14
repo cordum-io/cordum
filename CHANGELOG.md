@@ -634,6 +634,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   going back to `APPROVAL_REQUIRED` with its approval reset to pending
   (#492, task-7717cb4e).
 
+- Scheduler: jobs on `job.guard`, where cap's Python `@guard` files approval
+  requests, are completed once allowed or approved instead of being
+  dispatched to a topic no worker serves. `config/pools.yaml` registers
+  `job.guard` (#492, task-6fe90276).
+
 - On the gateway's HTTP MCP transport, the job, workflow and run ids that
   `cordum_cancel_job`, `cordum_trigger_workflow`, `cordum_approve_job`,
   `cordum_reject_job` and the `cordum://workflows/{id}/runs` and

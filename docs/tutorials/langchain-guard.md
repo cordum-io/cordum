@@ -236,7 +236,12 @@ def execute_transfer(amount: float, to_account: str):
     bank_api.transfer(amount, to_account)
 ```
 
-Works with both sync and async functions.
+Works with both sync and async functions. When a call needs approval,
+`@guard` files an approval job on the `job.guard` topic and waits for a
+human. The shipped pools config registers `job.guard`; if your topic
+registry predates that, register it by hand or the gateway rejects the
+job with `unknown_topic` (see
+[Approval-only topics](../topics/registry.md#approval-only-topics)).
 
 ## Advanced: Async Agents
 
