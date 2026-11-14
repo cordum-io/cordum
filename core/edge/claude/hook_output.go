@@ -118,20 +118,18 @@ func postToolUseOutput(eventName string, d AgentdDecision) ClaudeHookOutput {
 	return out
 }
 
+// configChangeOutput emits only top-level decision/reason: ConfigChange defines
+// no hookSpecificOutput, and output that fails Claude Code's schema validation
+// is a non-blocking error by default, so the block would be dropped.
 func configChangeOutput(d AgentdDecision) ClaudeHookOutput {
-	out := ClaudeHookOutput{HookSpecificOutput: &HookSpecificOutput{HookEventName: "ConfigChange"}}
 	switch d.Decision {
 	case DecisionDeny, DecisionRequireApproval:
-		out.Decision = "block"
-		if d.Reason != "" {
-			out.Reason = d.Reason
-		} else {
-			out.Reason = "configuration change blocked by Cordum policy"
+		reason := d.Reason
+		if reason == "" {
+			reason = "configuration change blocked by Cordum policy"
 		}
-	case DecisionAllow:
-		return ClaudeHookOutput{}
+		return ClaudeHookOutput{Decision: "block", Reason: reason}
 	default:
 		return ClaudeHookOutput{}
 	}
-	return out
 }

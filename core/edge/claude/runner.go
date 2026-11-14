@@ -37,8 +37,8 @@ func Run(ctx context.Context, opts RunOptions) int {
 		warnf(stderr, "invalid_hook_timeout error=%s", redactDiagnostic(err.Error()))
 		return 2
 	}
-	// One outer budget keeps the whole hook under Claude's 5s command-hook
-	// deadline. The agentd POST gets a shorter child budget below so a slow
+	// One outer budget keeps the whole hook under the generated 5s command-hook
+	// timeout. The agentd POST gets a shorter child budget below so a slow
 	// local daemon cannot consume the response-write reserve.
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
