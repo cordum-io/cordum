@@ -30,6 +30,11 @@ type MCPPolicy struct {
 	AllowedUpstreams []string `json:"allowed_upstreams,omitempty" yaml:"allowed_upstreams,omitempty"`
 }
 
+// setsGatewayFields reports whether the reserved MCP gateway fields are set.
+func (p MCPPolicy) setsGatewayFields() bool {
+	return p.GatewayEnabled || len(p.UpstreamServers) > 0 || len(p.AllowedUpstreams) > 0
+}
+
 // HasLists reports whether any allow_*/deny_* list is set.
 func (p MCPPolicy) HasLists() bool {
 	return len(p.AllowServers) > 0 || len(p.DenyServers) > 0 ||

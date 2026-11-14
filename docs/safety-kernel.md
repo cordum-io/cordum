@@ -68,6 +68,11 @@ MCP policy fields:
 - `allow_resources`, `deny_resources`
 - `allow_actions`, `deny_actions`
 
+The schema also accepts `gateway_enabled`, `upstream_servers` and
+`allowed_upstreams` under `tenants.<tenant>.mcp`. They are reserved for the
+MCP gateway (EDGE-101) and not enforced yet; the kernel logs a warning when a
+loaded policy sets them.
+
 A value is forbidden by a set of lists when (deny takes precedence):
 
 1. it is in the deny list, or
