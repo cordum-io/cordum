@@ -434,6 +434,8 @@ Usage:
   cordumctl pack create <pack_id> [--dir path] [--force]
   cordumctl policy sign --in <path> [--out <path>.sig] [--key-env NAME] [--key-id ID]
   cordumctl policy verify --in <path> [--sig <path>] [--public-key-env NAME]
+  cordumctl policy verify-store [--public-key-env NAME]
+  cordumctl policy resign (--bundle ID ... | --all) [--public-key-env NAME]
   cordumctl audit verify [tenant] [--since ms] [--until ms] [--limit N] [--json]
   cordumctl evals extract --name <dataset> [--dry-run]
   cordumctl evals run --dataset <id> [--use-current] [--wait]
