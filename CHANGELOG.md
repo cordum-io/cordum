@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Edge managed settings: `cordumctl edge managed-settings verify` and the
+  doctor's compliance check flag managed files exported before this release:
+  4 critical drifts until they are re-exported (#492, task-514d2456).
+
 - MCP upstream validation rejects `0.0.0.0/8` and carrier-grade NAT
   (`100.64.0.0/10`) endpoints at registration and at use, the same as
   `url_guard`. There is no opt-in for private upstreams, so an upstream hosted
@@ -212,6 +216,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   ruleset (task-fd34e921).
 
 ### Security
+
+- Edge: a broken `cordum-hook` now blocks. Fail-closed sessions (every mode
+  except observe) and the managed template set `"onFailure": "block"` on
+  `PreToolUse`, `UserPromptSubmit` and `ConfigChange`, which needs Claude Code
+  v2.1.295 or later. The managed MCP allowlist matches the Cordum MCP gateway
+  by `serverUrl` instead of `serverName` (#492, task-514d2456).
 
 - Safety Kernel: `block`, and every alias `normalizeDecision` maps to deny, is
   now deny-class. In the Safety Kernel and its GlobalPolicy view, a `block`
