@@ -255,8 +255,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   warning. The gateway's boot-time move of legacy policy bundles from
   `system/default` to `system/policy` never signs content. Under enforce it moves
   them only when every legacy bundle with content already carries a signature
-  that verifies under the policy trust store; otherwise it leaves them in place
-  and logs `policy.legacy_migration_unverified` with the count.
+  that verifies under the policy trust store; otherwise it moves nothing and
+  refuses to start with `policy.legacy_migration_unverified`, the count, and the
+  re-sign steps in `docs/deployment/policy-signing.md`.
 
 - Job submit and delegation token issue fail closed when the agent identity
   store cannot be read (task-7ded46ca). HTTP job submit and gRPC `SubmitJob`

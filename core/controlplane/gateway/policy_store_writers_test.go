@@ -560,7 +560,7 @@ func TestLegacyPolicyBundleMigration_EnforceCopiesVerifiedBundlesUnchanged(t *te
 	storeWriterRequireLoads(t, s)
 }
 
-func TestLegacyPolicyBundleMigration_EnforceLeavesUnverifiedBundlesInPlace(t *testing.T) {
+func TestLegacyPolicyBundleMigration_EnforceRefusesToStartOnUnverifiedBundles(t *testing.T) {
 	unsigned := func(enabled bool) map[string]any {
 		return map[string]any{"content": storeWriterAllow, "enabled": enabled}
 	}
@@ -617,8 +617,17 @@ func TestLegacyPolicyBundleMigration_EnforceLeavesUnverifiedBundlesInPlace(t *te
 			storeWriterSeedLegacy(t, s, legacy)
 			before := storeWriterKeyspace(t, s)
 
-			migrated, count := storeWriterMigrate(t, s)
+			migrated, count, err := migrateLegacyPolicyBundles(context.Background(), s.configSvc)
 
+			require.Error(t, err)
+			for _, want := range []string{
+				"policy.legacy_migration_unverified",
+				fmt.Sprintf("1 of %d", len(legacy)),
+				"CORDUM_POLICY_STRICT=warn",
+				"cordumctl policy resign --all",
+			} {
+				require.ErrorContains(t, err, want)
+			}
 			require.False(t, migrated)
 			require.Zero(t, count)
 			require.Equal(t, before, storeWriterKeyspace(t, s))
@@ -628,10 +637,14 @@ func TestLegacyPolicyBundleMigration_EnforceLeavesUnverifiedBundlesInPlace(t *te
 }
 
 func TestLegacyPolicyBundleMigration_ExplicitWarnMigratesAsBefore(t *testing.T) {
-	for _, strict := range []string{"warn", "off"} {
-		t.Run(strict, func(t *testing.T) {
-			storeWriterEnv(t, true, strict)
-			storeWriterKey(t, "trusted")
+	for _, tc := range []storeWriterCase{
+		{name: "warn", strict: "warn", production: true},
+		{name: "off", strict: "off", production: true},
+		{name: "development default"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.trust = "trusted"
+			tc.setup(t)
 			logs := storeWriterLogs(t)
 			s, _, _ := newTestGateway(t)
 			seeded := storeWriterSeedLegacy(t, s, map[string]any{"legacy/unsigned": map[string]any{"content": storeWriterAllow, "enabled": true}})
@@ -647,4 +660,22 @@ func TestLegacyPolicyBundleMigration_ExplicitWarnMigratesAsBefore(t *testing.T) 
 			storeWriterRequireUnverified(t, logs, "WARN", 1, 1)
 		})
 	}
+}
+
+func TestLegacyPolicyBundleMigration_EnforceWithoutLegacyBundlesIsNoop(t *testing.T) {
+	storeWriterEnv(t, true, "")
+	storeWriterKey(t, "trusted")
+	s, _, _ := newTestGateway(t)
+	require.NoError(t, s.configSvc.Set(context.Background(), &configsvc.Document{
+		Scope: configsvc.ScopeSystem, ScopeID: "default",
+		Data: map[string]any{"pools": map[string]any{"topics": map[string]any{}}},
+	}))
+	before := storeWriterKeyspace(t, s)
+
+	migrated, count, err := migrateLegacyPolicyBundles(context.Background(), s.configSvc)
+
+	require.NoError(t, err)
+	require.False(t, migrated)
+	require.Zero(t, count)
+	require.Equal(t, before, storeWriterKeyspace(t, s))
 }
