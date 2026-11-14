@@ -548,7 +548,7 @@ docker compose down -v --rmi local
 Before deploying to production, verify these critical configuration settings:
 
 - [ ] `config/safety.yaml` has `default_decision: deny` (fail-closed — unmatched jobs are denied)
-- [ ] `config/safety.yaml` has `output_policy.fail_mode: closed` (quarantine on scanner error)
+- [ ] The config-service key `scheduler.output_fail_mode` is unset or `closed`. It selects the asynchronous output check's mode: unset is closed, and the production identity profile forces closed. `output_policy.fail_mode` in `config/safety.yaml` does not select it ([failure and partition behavior](contract/failure-behavior.md#scope-and-operator-modes)).
 - [ ] `config/timeouts.yaml` has `running_timeout_seconds` set appropriately for your workload (default: 900s / 15 min)
 - [ ] Timeout values are consistent across `config/timeouts.yaml`, K8s ConfigMaps, and Helm values
 - [ ] `CORDUM_ENV=production` is set (enforces TLS, disables no-auth mode)

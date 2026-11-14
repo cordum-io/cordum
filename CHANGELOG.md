@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Docs: the output-policy, output-safety, gRPC services and Docker pages and ADR-005 now state
+  the output checks' fail modes as the failure and partition behavior contract records them. The
+  synchronous metadata check is fail-open. The asynchronous content check follows the
+  config-service key `scheduler.output_fail_mode`, closed when unset and forced closed by the
+  production identity profile; `output_policy.fail_mode` in `config/safety.yaml` and
+  `OUTPUT_POLICY_FAIL_MODE` do not select it. Output-check outage outcomes are not measured
+  (M0-06-DOCS-OUTPUT, task-5bf25656).
 - Docs: the eval dataset, extraction and runner pages describe dataset versions as write-once
   through the API (CLM-080) instead of immutable. The LangChain tutorial, the Edge P0 threat
   model and the Edge P0 acceptance evidence record now state their safety-gating,
@@ -549,6 +556,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - typedoc, typedoc-plugin-coverage and typedoc-plugin-markdown are removed from the install with pnpm `-` overrides. typedoc 0.28 calls `Minimatch#matchOne`, which 11.x removed. orval 8.31.0 loads typedoc only for its `docs` output, which the dashboard does not configure. Until typedoc supports minimatch 11, enabling that output fails at import. orval stays at 8.31.0.
 
 ### Fixed
+
+- On the gateway's HTTP MCP transport, the job, workflow and run ids that
+  `cordum_cancel_job`, `cordum_trigger_workflow`, `cordum_approve_job`,
+  `cordum_reject_job` and the `cordum://workflows/{id}/runs` and
+  `cordum://workflows/{id}/runs/{runId}` resources send to the REST handlers
+  are path-escaped in the gateway's in-process requests, and the
+  `cordum://jobs` status filter is query-escaped, so a value that contains
+  reserved URL characters is looked up as itself. A tool or resource handler
+  that fails unexpectedly returns JSON-RPC `-32603` with a fixed message
+  (task-7efdf077).
 
 - On the gateway's HTTP MCP transport (`/mcp/sse` and `/mcp/message`),
   `resources/read` of `cordum://jobs/{id}` and the `cordum_get_job` and
