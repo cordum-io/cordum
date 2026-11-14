@@ -115,7 +115,9 @@ The production action-gate pipeline is a blockers/approval path: gates
 allow, deny, throttle, or mint/consume approval holds, but they do not
 emit enforceable generic runtime constraints. Do not rely on an
 action-gate `_constraints` map for single-use approval or other runtime
-limits; those semantics are enforced by the approval store consume path.
+limits. Single-use approval is handled by the approval store consume path; the
+[claims register](contract/claims.yaml) records it as CLM-013, status supported
+(the checks exist, and their end-to-end qualification is open).
 
 `ALLOW_WITH_CONSTRAINTS` remains a compatibility/future-typed dispatcher
 shape for policy-bundle/SafetyKernel constraints and fake-dispatcher

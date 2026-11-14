@@ -51,8 +51,8 @@ principal configured (`<tenant>:<key>:<role>:<principal-id>` in
 `CORDUM_API_KEYS`) or a JWT/SSO subject. Runtime-created API keys carry no
 principal of their own, so they cannot bind Copilot to this identity. See
 [Agent identity binding](../mcp-server.md#agent-identity-binding-x-agent-id).
-Keep `preapproved_mutating_tools` empty so `cordum_submit_job` and other
-mutations hit human approval.
+Keep `preapproved_mutating_tools` empty so that none of the seven
+[mutating tools](mutating-tools.md) skips human approval if you later allow one.
 
 In step 3, `--gateway-agent-id` (sent as `X-Agent-Id`) must equal the returned
 `id`, or be omitted. Any other value leaves Copilot with no tools.
@@ -120,7 +120,8 @@ agent id are non-secret literals.
    `mcp.tool.pre`/`.post` + `mcp.tool_invocation` to the audit chain.
 4. **Deny:** a tool outside the allow-list returns a JSON-RPC error + a deny
    audit event.
-5. **Approval:** a mutating tool (e.g. `cordum_submit_job`) returns
+5. **Approval:** a tool that requires approval, if the identity allows one (see
+   [Approval-Required Tools](../mcp-tools-reference.md#approval-required-tools)), returns
    **"approval pending"**. A human approves in the dashboard approvals queue or
    via `cordumctl mcp pending` / `cordumctl mcp approve <id> --reason "..."`,
    then you re-ask Copilot.
@@ -139,8 +140,11 @@ the governance decisions for those jobs (decisions require `governance.read`).
 
 ## Security notes
 
-- Least-privilege identity (read-first, empty preapproved-mutating list) means
-  any state change requires explicit human approval.
+- The step 2 identity allows only the read tools it lists and preapproves no mutating
+  tool. The scope filter refuses any tool outside that list (step 4), and a tool that
+  requires approval ([Approval-Required Tools](../mcp-tools-reference.md#approval-required-tools))
+  still needs a per-call human approval if you allow it. CLM-051 and CLM-018 in the
+  [claims register](../contract/claims.yaml) record both as supported.
 - The key only ever exists in VS Code's secret store via `${input:...}`.
 - Fail-closed: a revoked/invalid key disconnects the SSE stream and returns an
   empty tool list.
