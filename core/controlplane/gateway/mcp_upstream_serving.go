@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 
 	edgecore "github.com/cordum/cordum/core/edge"
@@ -48,7 +49,8 @@ func (s *server) selectGatewayMCPUpstream(ctx context.Context, tenantID string) 
 // buildFrontedUpstreamToolService returns a policy-gateable ToolService that
 // proxies tools/list + tools/call to the tenant's registered remote MCP upstream,
 // together with the upstream's name (used verbatim as the gate server-name so the
-// action-gate + audit attribute decisions to e.g. "cordum.monday"). Returns
+// action-gate + audit attribute decisions to e.g. "cordum.monday"). The proxy is
+// served only to a caller with a bound agent identity (frontedIdentityGate). Returns
 // (nil,"") when no usable upstream is configured or the proxy cannot be built —
 // the caller then serves the built-in tool registry unchanged. Fail-closed: a
 // missing secret or unsafe endpoint disables fronting rather than dialing
@@ -69,5 +71,28 @@ func (s *server) buildFrontedUpstreamToolService(ctx context.Context, tenantID s
 		return nil, ""
 	}
 	slog.Info("mcp fronting registered upstream", "name", up.Name, "transport", up.Transport)
-	return remote, up.Name
+	return frontedIdentityGate{upstream: remote}, up.Name
+}
+
+// frontedIdentityGate fails closed like the built-in ToolRegistry: a caller
+// with no bound agent identity (none, or a revoked or suspended binding) sees
+// no tools and every tools/call is refused with no_identity (-32098) before
+// the upstream is dialed. It holds with the policy gate on or off, since the
+// gate forwards allowed calls through this same ToolService.
+type frontedIdentityGate struct {
+	upstream mcp.ToolService
+}
+
+func (g frontedIdentityGate) ListTools(ctx context.Context) []mcp.Tool {
+	if mcp.IdentityFromContext(ctx) == nil {
+		return []mcp.Tool{}
+	}
+	return g.upstream.ListTools(ctx)
+}
+
+func (g frontedIdentityGate) Call(ctx context.Context, name string, params json.RawMessage) (*mcp.ToolCallResult, error) {
+	if mcp.IdentityFromContext(ctx) == nil {
+		return nil, &mcp.NotAuthorized{Tool: name, SubReason: mcp.DenyReasonNoIdentity}
+	}
+	return g.upstream.Call(ctx, name, params)
 }
