@@ -486,7 +486,8 @@ func checkDryRunIsolation(wf releaseWorkflow) []string {
 
 // checkJobGraph (rule h): gated jobs keep GitHub's default success condition,
 // the published-image smoke and the chart run only on v* tags, and the chart
-// waits for the smoke and the record.
+// waits for the smoke and the record. The rest of the chart's condition is
+// rule j's, because the chart sits below a release.yml caller.
 func checkJobGraph(wf releaseWorkflow) []string {
 	var out []string
 	for _, name := range releaseImageJobs {
@@ -494,10 +495,11 @@ func checkJobGraph(wf releaseWorkflow) []string {
 			out = append(out, violation("JOB_CONDITION", name, nil, "must keep the default success condition, got if: %q", job.If))
 		}
 	}
-	for _, name := range []string{"smoke-published-images", "helm-chart"} {
-		if job, ok := wf.Jobs[name]; ok && normalizeCondition(job.If) != realReleaseCondition {
-			out = append(out, violation("JOB_CONDITION", name, nil, "if must be exactly %s, got %q", realReleaseCondition, job.If))
-		}
+	if job, ok := wf.Jobs["smoke-published-images"]; ok && normalizeCondition(job.If) != realReleaseCondition {
+		out = append(out, violation("JOB_CONDITION", "smoke-published-images", nil, "if must be exactly %s, got %q", realReleaseCondition, job.If))
+	}
+	if job, ok := wf.Jobs["helm-chart"]; ok && !requiresRealRelease(job.If) {
+		out = append(out, violation("JOB_CONDITION", "helm-chart", nil, "if must require %s, got %q", realReleaseCondition, job.If))
 	}
 	for name, required := range map[string][]string{
 		"smoke-published-images": releaseImageJobs,
@@ -524,6 +526,86 @@ func checkJobGraph(wf releaseWorkflow) []string {
 			if ignoresFailure(job.Steps[i].ContinueOnError) {
 				out = append(out, violation("FAILURE_IGNORED", name, &job.Steps[i], "step continue-on-error"))
 			}
+		}
+	}
+	return out
+}
+
+// releaseCallerUses is how docker.yml calls release.yml. The binaries and
+// binaries-dry-run callers are mutually exclusive, so one of them is skipped
+// on every run.
+const releaseCallerUses = "./.github/workflows/release.yml"
+
+// belowReleaseCaller reports whether a release.yml caller is among the
+// transitive needs of job name.
+func belowReleaseCaller(wf releaseWorkflow, name string) bool {
+	seen := map[string]bool{}
+	queue := jobNeeds(wf.Jobs[name])
+	for len(queue) > 0 {
+		need := queue[0]
+		queue = queue[1:]
+		if seen[need] {
+			continue
+		}
+		seen[need] = true
+		if wf.Jobs[need].Uses == releaseCallerUses {
+			return true
+		}
+		queue = append(queue, jobNeeds(wf.Jobs[need])...)
+	}
+	return false
+}
+
+// successCallPattern matches a success() call. Like the default condition, it
+// is false when any job above it in the needs chain was skipped.
+var successCallPattern = regexp.MustCompile(`\bsuccess\s*\(`)
+
+// checkSkippedCaller (rule j): GitHub skips a job when a job anywhere above it
+// in the needs chain was skipped, unless the job's if uses a status function.
+// A job below a release.yml caller therefore has top-level !cancelled() and
+// !failure() with no || and no success(), and requires success from each
+// direct need that can be skipped: a caller, or a job with its own if or
+// needs. Only the record job, when it needs every caller, omits the callers'
+// result checks because one caller is always skipped; it checks the record's
+// content instead.
+func checkSkippedCaller(wf releaseWorkflow, name string) []string {
+	var out []string
+	job := wf.Jobs[name]
+	cond := normalizeCondition(job.If)
+	conjuncts := topLevelConjuncts(cond)
+	if strings.Contains(cond, "||") || !slices.Contains(conjuncts, "!cancelled()") || !slices.Contains(conjuncts, "!failure()") {
+		out = append(out, violation("SKIP_PROPAGATION", name, nil, "if must have top-level !cancelled() && !failure() and no ||, got %q", job.If))
+	}
+	if successCallPattern.MatchString(cond) {
+		out = append(out, violation("SKIP_PROPAGATION", name, nil, "if must not call success(), got %q", job.If))
+	}
+	var callers []string
+	for caller, j := range wf.Jobs {
+		if j.Uses == releaseCallerUses {
+			callers = append(callers, caller)
+		}
+	}
+	needs := jobNeeds(job)
+	merge := name == recordJob && len(callers) > 1 && !slices.ContainsFunc(callers, func(c string) bool { return !slices.Contains(needs, c) })
+	for _, need := range needs {
+		dep := wf.Jobs[need]
+		caller := dep.Uses == releaseCallerUses
+		if (caller && merge) || (!caller && dep.If == "" && len(jobNeeds(dep)) == 0) {
+			continue
+		}
+		if want := "needs." + need + ".result == 'success'"; !slices.Contains(conjuncts, want) {
+			out = append(out, violation("SKIP_PROPAGATION", name, nil, "need %s can be skipped, so if must have top-level %s", need, want))
+		}
+	}
+	return out
+}
+
+// checkSkippedCallerGraph applies rule j to every job below a release.yml caller.
+func checkSkippedCallerGraph(wf releaseWorkflow) []string {
+	var out []string
+	for _, name := range slices.Sorted(maps.Keys(wf.Jobs)) {
+		if belowReleaseCaller(wf, name) {
+			out = append(out, checkSkippedCaller(wf, name)...)
 		}
 	}
 	return out
@@ -566,7 +648,7 @@ func checkRecordJob(wf releaseWorkflow) []string {
 
 func allReleaseViolations(wf releaseWorkflow) []string {
 	var out []string
-	for _, check := range []func(releaseWorkflow) []string{checkImageJobs, checkPublishGate, checkDryRunIsolation, checkJobGraph, checkRecordJob, checkTrivyCoverageReason} {
+	for _, check := range []func(releaseWorkflow) []string{checkImageJobs, checkPublishGate, checkDryRunIsolation, checkJobGraph, checkSkippedCallerGraph, checkRecordJob, checkTrivyCoverageReason} {
 		out = append(out, check(wf)...)
 	}
 	return out
@@ -609,6 +691,22 @@ func assertNoReleaseViolations(t *testing.T, violations []string) {
 func TestReleaseChartWaitsForPublishedImages(t *testing.T) {
 	_, wf := loadReleaseWorkflow(t)
 	assertNoReleaseViolations(t, checkJobGraph(wf))
+}
+
+// On a v* tag the dry-run caller is skipped, and on a dry run the real caller
+// is. The jobs below the callers must still run on the trigger they serve.
+func TestReleaseJobsBelowSkippedCallerStillRun(t *testing.T) {
+	_, wf := loadReleaseWorkflow(t)
+	var below []string
+	for _, name := range slices.Sorted(maps.Keys(wf.Jobs)) {
+		if belowReleaseCaller(wf, name) {
+			below = append(below, name)
+		}
+	}
+	if want := []string{"helm-chart", "publish-binaries", recordJob}; !slices.Equal(below, want) {
+		t.Errorf("jobs below a release.yml caller = %q, want %q", below, want)
+	}
+	assertNoReleaseViolations(t, checkSkippedCallerGraph(wf))
 }
 
 func TestReleaseGatesRunOnPushedDigest(t *testing.T) {
@@ -708,8 +806,94 @@ func stripPublishWrapper(t *testing.T, wf *releaseWorkflow, job, key string) {
 	step.Run = stripped
 }
 
+// dropConjunct removes one top-level conjunct from job name's if, failing the
+// test when the conjunct is missing so no mutation can pass vacuously.
+func dropConjunct(t *testing.T, wf *releaseWorkflow, name, conjunct string) {
+	t.Helper()
+	mutateBinaryJob(t, wf, name, func(job *releaseWorkflowJob) {
+		parts := topLevelConjuncts(normalizeCondition(job.If))
+		i := slices.Index(parts, conjunct)
+		if i < 0 {
+			t.Fatalf("mutation target %s has no conjunct %s", name, conjunct)
+		}
+		job.If = "${{ " + strings.Join(slices.Delete(parts, i, i+1), " && ") + " }}"
+	})
+}
+
+// testSkippedCallerMutations: each change must make rule j report the job.
+func testSkippedCallerMutations(t *testing.T) {
+	t.Helper()
+	type mutation struct {
+		name   string
+		mutate func(*testing.T, *releaseWorkflow)
+	}
+	setIf := func(name, cond string) func(*testing.T, *releaseWorkflow) {
+		return func(t *testing.T, wf *releaseWorkflow) {
+			mutateBinaryJob(t, wf, name, func(job *releaseWorkflowJob) { job.If = cond })
+		}
+	}
+	mutations := []mutation{
+		{"publish-binaries default success condition", setIf("publish-binaries", "${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-rc') }}")},
+		{"helm-chart default success condition", setIf("helm-chart", realReleaseCondition)},
+		{"publish-binaries always()", setIf("publish-binaries", "${{ always() && needs.binaries.result == 'success' && "+
+			"needs.qualification-record.result == 'success' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-rc') }}")},
+		{"record drops !failure()", func(t *testing.T, wf *releaseWorkflow) { dropConjunct(t, wf, recordJob, "!failure()") }},
+		{"only the record job merges callers without result checks", func(t *testing.T, wf *releaseWorkflow) {
+			if _, ok := wf.Jobs["announce"]; ok {
+				t.Fatal("mutation target announce already exists")
+			}
+			job := releaseWorkflowJob{If: "${{ !cancelled() && !failure() && " + realReleaseCondition + " }}"}
+			if err := job.Needs.Encode([]string{"binaries", "binaries-dry-run"}); err != nil {
+				t.Fatal(err)
+			}
+			wf.Jobs["announce"] = job
+		}},
+		{"job below the chart with the default success condition", func(t *testing.T, wf *releaseWorkflow) {
+			if _, ok := wf.Jobs["announce"]; ok {
+				t.Fatal("mutation target announce already exists")
+			}
+			job := releaseWorkflowJob{If: realReleaseCondition}
+			if err := job.Needs.Encode([]string{"helm-chart"}); err != nil {
+				t.Fatal(err)
+			}
+			wf.Jobs["announce"] = job
+		}},
+	}
+	for _, target := range []struct {
+		job       string
+		conjuncts []string
+	}{
+		{"publish-binaries", []string{"!cancelled()", "!failure()", "needs.binaries.result == 'success'", "needs.qualification-record.result == 'success'"}},
+		{"helm-chart", []string{"!cancelled()", "!failure()", "needs.smoke-published-images.result == 'success'", "needs.qualification-record.result == 'success'"}},
+	} {
+		for _, conjunct := range target.conjuncts {
+			mutations = append(mutations, mutation{target.job + " drops " + conjunct, func(t *testing.T, wf *releaseWorkflow) {
+				dropConjunct(t, wf, target.job, conjunct)
+			}})
+		}
+		mutations = append(mutations, mutation{target.job + " adds success()", func(t *testing.T, wf *releaseWorkflow) {
+			mutateBinaryJob(t, wf, target.job, func(job *releaseWorkflowJob) {
+				job.If = "${{ success() && " + normalizeCondition(job.If) + " }}"
+			})
+		}})
+	}
+	for _, m := range mutations {
+		t.Run(m.name, func(t *testing.T) {
+			_, wf := loadReleaseWorkflow(t)
+			if baseline := allReleaseViolations(wf); len(baseline) > 0 {
+				t.Fatalf("unmutated workflow is not clean: %s", strings.Join(baseline, "; "))
+			}
+			m.mutate(t, &wf)
+			if got := allReleaseViolations(wf); !slices.ContainsFunc(got, func(v string) bool { return strings.HasPrefix(v, "SKIP_PROPAGATION ") }) {
+				t.Fatalf("mutation not caught: want SKIP_PROPAGATION, got %q", got)
+			}
+		})
+	}
+}
+
 func TestReleaseWorkflowMutationsAreCaught(t *testing.T) {
 	testBinaryWorkflowMutations(t)
+	testSkippedCallerMutations(t)
 	scalar := func(v string) yaml.Node { return yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: v} }
 	for _, tc := range []struct {
 		name   string
@@ -1314,6 +1498,7 @@ func checkBinaryPublish(docker releaseWorkflow) []string {
 			add("publication must need " + need)
 		}
 	}
+	out = append(out, checkSkippedCaller(docker, "publish-binaries")...)
 	create, manifest := findStep(job, "create-release"), findStep(job, "Require signed manifest on canonical release")
 	if create < 0 {
 		return append(out, "BINARY_PUBLISH missing create-release")
@@ -1460,6 +1645,11 @@ func testBinaryWorkflowMutations(t *testing.T) {
 			mutateBinaryJob(t, d, "publish-binaries", func(j *releaseWorkflowJob) { j.If = "!contains(github.ref, '-rc')" })
 		}},
 		{"binary publish record dependency removed", func(t *testing.T, d, b *releaseWorkflow) { removeBinaryNeed(t, d, "publish-binaries", recordJob) }},
+		{"binary publish default success condition", func(t *testing.T, d, b *releaseWorkflow) {
+			mutateBinaryJob(t, d, "publish-binaries", func(j *releaseWorkflowJob) {
+				j.If = "${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-rc') }}"
+			})
+		}},
 		{"record dry caller dependency removed", func(t *testing.T, d, b *releaseWorkflow) { removeBinaryNeed(t, d, recordJob, "binaries-dry-run") }},
 		{"record binary omitted", func(t *testing.T, d, b *releaseWorkflow) {
 			names := strings.Fields(d.Jobs[recordJob].Env["EXPECTED_BINARIES"])
