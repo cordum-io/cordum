@@ -153,6 +153,45 @@ func TestAllowFloor_DenialEmitsBlockedTerminalEvent(t *testing.T) {
 	}
 }
 
+// rsPolicyDenied is a deny the handoff raises past the action gates (the
+// gateway's invariant floor).
+func rsPolicyDenied() *PolicyDenied {
+	return &PolicyDenied{Reason: "rs: invariant denies", SubReason: "secops_invariant", Err: errors.New("rs: invariant floor")}
+}
+
+// rsRequireBlockedDeny checks a PolicyDenied from the handoff closed the
+// allowed pre-event with ONE blocked mcp.tool.failed deny event, as
+// EvaluateToolCall closes an action-gate deny, and still reaches the caller.
+func rsRequireBlockedDeny(t *testing.T, f *rsFixture, err error, denied *PolicyDenied, approvalRef string) {
+	t.Helper()
+	var got *PolicyDenied
+	if !errors.As(err, &got) || got != denied {
+		t.Fatalf("error = %v; want it to wrap the *PolicyDenied", err)
+	}
+	pres, failed := f.emitter.ofKind(edge.EventKindMCPToolPre), f.emitter.ofKind(edge.EventKindMCPToolFailed)
+	if len(pres) != 1 || len(failed) != 1 || len(f.emitter.ofKind(edge.EventKindMCPToolPost)) != 0 {
+		t.Fatalf("events: %d pre, %d failed, %d post; want 1, 1, 0", len(pres), len(failed), len(f.emitter.ofKind(edge.EventKindMCPToolPost)))
+	}
+	evt := failed[0]
+	if evt.EventID != pres[0].EventID || evt.Status != edge.ActionStatusBlocked || evt.Decision != edge.DecisionDeny ||
+		evt.DecisionReason != denied.Reason || evt.ApprovalRef != approvalRef {
+		t.Fatalf("terminal event = id %q status %q decision %q reason %q approval %q; want id %q, blocked, deny, %q, %q",
+			evt.EventID, evt.Status, evt.Decision, evt.DecisionReason, evt.ApprovalRef, pres[0].EventID, denied.Reason, approvalRef)
+	}
+}
+
+func TestAllowFloor_PolicyDeniedEmitsBlockedDenyEvent(t *testing.T) {
+	f := newRSFixture(pb.DecisionType_DECISION_TYPE_ALLOW, nil)
+	denied := rsPolicyDenied()
+	f.deps.ApprovalHandoff = &rsFloorHandoff{floorErr: denied}
+	res, err := f.invoke(newAuthedToolCallCtx(), rsArgs)
+	if res != nil {
+		t.Fatalf("result = %+v; want none", res)
+	}
+	rsRequireBlockedDeny(t, f, err, denied, "")
+	f.requireCounts(t, 0, 0)
+}
+
 func TestAllowFloor_OptionalCapability(t *testing.T) {
 	for _, handoff := range []ApprovalHandoff{nil, &rsMinter{}} {
 		f := newRSFixture(pb.DecisionType_DECISION_TYPE_ALLOW, nil)
@@ -531,6 +570,22 @@ func TestResume_InvariantFloorDenies(t *testing.T) {
 	if !errors.Is(err, floor) || res != nil {
 		t.Fatalf("resume = %+v, %v; want the authorizer's error %v", res, err, floor)
 	}
+	f.requireCounts(t, 0, 0)
+}
+
+// TestResume_PolicyDeniedEmitsBlockedDenyEvent: the floor's PolicyDenied closes
+// the pre-event with a blocked deny event naming the consumed approval. A plain
+// error (TestResume_InvariantFloorDenies) still writes none.
+func TestResume_PolicyDeniedEmitsBlockedDenyEvent(t *testing.T) {
+	t.Parallel()
+	f := newRSFixture(pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN, NewInProcessDedupeStore())
+	denied := rsPolicyDenied()
+	f.handoff.authzErr = denied
+	res, err := f.invoke(rsResume(rsMarker(rsTool, rsArgs)), rsArgs)
+	if res != nil {
+		t.Fatalf("result = %+v; want none", res)
+	}
+	rsRequireBlockedDeny(t, f, err, denied, "edge_appr_rs_1")
 	f.requireCounts(t, 0, 0)
 }
 
