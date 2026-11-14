@@ -122,10 +122,12 @@ type storeReadJob struct {
 	noRequest  bool   // seed meta and state without the stored request
 	runStatus  wf.RunStatus
 	missingRun bool // label a run_id that names no stored run
+	unlinked   bool // leave WorkflowId empty, so only the labels name the run
 }
 
 // seedStoreReadJob mirrors seedApprovalJob with labels, an optional run and
-// an optional JobHash override. It returns the job ID, run ID and the hash of
+// an optional JobHash override. A job with a run is linked to it through
+// WorkflowId, as the engine links the jobs it dispatches, unless unlinked. It returns the job ID, run ID and the hash of
 // the stored request.
 func seedStoreReadJob(t *testing.T, s *server, fx storeReadJob) (string, string, string) {
 	t.Helper()
@@ -141,6 +143,9 @@ func seedStoreReadJob(t *testing.T, s *server, fx storeReadJob) (string, string,
 	}
 	jobID := uuid.NewString()
 	req := &pb.JobRequest{JobId: jobID, Topic: "job.test", TenantId: "default", Labels: labels}
+	if !fx.unlinked {
+		req.WorkflowId = labels["workflow_id"]
+	}
 	mustNoErr(t, "set job meta", s.jobStore.SetJobMeta(ctx, req))
 	if !fx.noRequest {
 		mustNoErr(t, "set job req", s.jobStore.SetJobRequest(ctx, req))
@@ -417,6 +422,39 @@ func TestApproveRejectMissingRecordsKeepEarlierHandling(t *testing.T) {
 				if got := decodeBody(t, rr)["error"]; got != "job request not found" {
 					t.Fatalf("error = %v, want %q", got, "job request not found")
 				}
+			})
+		}
+	}
+}
+
+// A job the engine did not dispatch has no workflow linkage, whatever its
+// labels claim: a run_id label naming a run that ended does not refuse its
+// approval or rejection. A job the engine dispatched (WorkflowId set) is still
+// refused once its run has ended.
+func TestApproveRejectIgnoreUnlinkedTerminalRun(t *testing.T) {
+	t.Parallel()
+	for _, action := range []string{"approve", "reject"} {
+		for _, unlinked := range []bool{false, true} {
+			name := action + "/linked"
+			if unlinked {
+				name = action + "/unlinked"
+			}
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				s, b, safety := newTestGateway(t)
+				safety.setSnapshots([]string{"snap-test"})
+				jobID, _, _ := seedStoreReadJob(t, s, storeReadJob{
+					submitter: submitterIdentityForTest(storeReadSubmitKey, "alice"),
+					runStatus: wf.RunStatusTimedOut,
+					unlinked:  unlinked,
+				})
+				rr := serveStoreReadDecision(t, s, action, jobID, false)
+				if unlinked {
+					assertDecisionApplied(t, s, b, action, jobID, rr)
+					return
+				}
+				assertErrorCode(t, rr, http.StatusConflict, string(model.ApprovalConflictTerminalRun))
+				assertNoDecisionEffects(t, s, b, jobID)
 			})
 		}
 	}

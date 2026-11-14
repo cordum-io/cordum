@@ -745,78 +745,87 @@ func TestRejectWorkflowGateResultPublishFailureLeavesPendingIntent(t *testing.T)
 }
 
 func TestRepairApprovalDryRunClassifiesTerminalWorkflowRun(t *testing.T) {
-	s, _, safety := newTestGateway(t)
-	safety.setSnapshots([]string{"snap-1"})
+	for _, tc := range []struct{ name, workflowID, wantKind string }{
+		{"engine job", "wf-repair-terminal", "invalidate_terminal_run"},
+		// Its run_id label alone does not tie a job to the ended run.
+		{"job not dispatched by the engine", "", "none"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _, safety := newTestGateway(t)
+			safety.setSnapshots([]string{"snap-1"})
 
-	ctx := context.Background()
-	now := time.Now().UTC()
-	run := &wf.WorkflowRun{
-		ID:         "run-repair-terminal",
-		WorkflowID: "wf-repair-terminal",
-		OrgID:      "default",
-		Status:     wf.RunStatusSucceeded,
-		Steps:      map[string]*wf.StepRun{},
-		CreatedAt:  now,
-		UpdatedAt:  now,
-	}
-	if err := s.workflowStore.CreateRun(ctx, run); err != nil {
-		t.Fatalf("create run: %v", err)
-	}
+			ctx := context.Background()
+			now := time.Now().UTC()
+			run := &wf.WorkflowRun{
+				ID:         "run-repair-terminal",
+				WorkflowID: "wf-repair-terminal",
+				OrgID:      "default",
+				Status:     wf.RunStatusSucceeded,
+				Steps:      map[string]*wf.StepRun{},
+				CreatedAt:  now,
+				UpdatedAt:  now,
+			}
+			if err := s.workflowStore.CreateRun(ctx, run); err != nil {
+				t.Fatalf("create run: %v", err)
+			}
 
-	jobID := "job-repair-terminal"
-	req := &pb.JobRequest{
-		JobId:    jobID,
-		Topic:    "job.test",
-		TenantId: "default",
-		Labels: map[string]string{
-			"run_id":      run.ID,
-			"workflow_id": run.WorkflowID,
-		},
-	}
-	if err := s.jobStore.SetJobMeta(ctx, req); err != nil {
-		t.Fatalf("set job meta: %v", err)
-	}
-	if err := s.jobStore.SetJobRequest(ctx, req); err != nil {
-		t.Fatalf("set job request: %v", err)
-	}
-	if err := s.jobStore.SetState(ctx, jobID, model.JobStateApproval); err != nil {
-		t.Fatalf("set state: %v", err)
-	}
-	hash, err := scheduler.HashJobRequest(req)
-	if err != nil {
-		t.Fatalf("hash job: %v", err)
-	}
-	if err := s.jobStore.SetSafetyDecision(ctx, jobID, model.SafetyDecisionRecord{
-		Decision:         model.SafetyRequireApproval,
-		ApprovalRequired: true,
-		PolicySnapshot:   "snap-1",
-		JobHash:          hash,
-	}); err != nil {
-		t.Fatalf("set safety decision: %v", err)
-	}
+			jobID := "job-repair-terminal"
+			req := &pb.JobRequest{
+				JobId:      jobID,
+				Topic:      "job.test",
+				TenantId:   "default",
+				WorkflowId: tc.workflowID,
+				Labels: map[string]string{
+					"run_id":      run.ID,
+					"workflow_id": run.WorkflowID,
+				},
+			}
+			if err := s.jobStore.SetJobMeta(ctx, req); err != nil {
+				t.Fatalf("set job meta: %v", err)
+			}
+			if err := s.jobStore.SetJobRequest(ctx, req); err != nil {
+				t.Fatalf("set job request: %v", err)
+			}
+			if err := s.jobStore.SetState(ctx, jobID, model.JobStateApproval); err != nil {
+				t.Fatalf("set state: %v", err)
+			}
+			hash, err := scheduler.HashJobRequest(req)
+			if err != nil {
+				t.Fatalf("hash job: %v", err)
+			}
+			if err := s.jobStore.SetSafetyDecision(ctx, jobID, model.SafetyDecisionRecord{
+				Decision:         model.SafetyRequireApproval,
+				ApprovalRequired: true,
+				PolicySnapshot:   "snap-1",
+				JobHash:          hash,
+			}); err != nil {
+				t.Fatalf("set safety decision: %v", err)
+			}
 
-	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/repair", strings.NewReader(`{}`))
-	httpReq.SetPathValue("job_id", jobID)
-	httpReq = withAuth(httpReq, &auth.AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
-	rr := httptest.NewRecorder()
-	s.handleRepairApproval(rr, httpReq)
+			httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/repair", strings.NewReader(`{}`))
+			httpReq.SetPathValue("job_id", jobID)
+			httpReq = withAuth(httpReq, &auth.AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
+			rr := httptest.NewRecorder()
+			s.handleRepairApproval(rr, httpReq)
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200 got %d body=%s", rr.Code, rr.Body.String())
-	}
-	var payload map[string]any
-	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	plan, _ := payload["plan"].(map[string]any)
-	if got, _ := plan["kind"].(string); got != "invalidate_terminal_run" {
-		t.Fatalf("expected terminal run repair plan, got %q", got)
-	}
-	if got, _ := plan["repairable"].(bool); !got {
-		t.Fatalf("expected repairable plan, got %#v", plan)
-	}
-	if applied, _ := payload["applied"].(bool); applied {
-		t.Fatalf("expected dry-run response, got %#v", payload)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("expected 200 got %d body=%s", rr.Code, rr.Body.String())
+			}
+			var payload map[string]any
+			if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			plan, _ := payload["plan"].(map[string]any)
+			if got, _ := plan["kind"].(string); got != tc.wantKind {
+				t.Fatalf("repair plan = %q, want %q", got, tc.wantKind)
+			}
+			if got, _ := plan["repairable"].(bool); got != (tc.wantKind != "none") {
+				t.Fatalf("repairable = %v for plan %#v", got, plan)
+			}
+			if applied, _ := payload["applied"].(bool); applied {
+				t.Fatalf("expected dry-run response, got %#v", payload)
+			}
+		})
 	}
 }
 
@@ -1479,9 +1488,10 @@ func TestApproveJob_RejectsTimedOutRun(t *testing.T) {
 	// Create a job in APPROVAL_REQUIRED state that references the timed-out run.
 	jobID := uuid.NewString()
 	req := &pb.JobRequest{
-		JobId:    jobID,
-		Topic:    "job.test",
-		TenantId: "default",
+		JobId:      jobID,
+		Topic:      "job.test",
+		TenantId:   "default",
+		WorkflowId: wfDef.ID,
 		Labels: map[string]string{
 			"workflow_id": wfDef.ID,
 			"run_id":      run.ID,
@@ -1553,10 +1563,11 @@ func TestListApprovalsExcludesTerminatedRunApprovals(t *testing.T) {
 	// Create a stale approval job (belongs to the terminated run).
 	staleJobID := uuid.NewString()
 	staleReq := &pb.JobRequest{
-		JobId:    staleJobID,
-		Topic:    "job.mkt-authority.approval",
-		TenantId: "default",
-		Labels:   map[string]string{"run_id": runID, "workflow_id": "wf-stale"},
+		JobId:      staleJobID,
+		Topic:      "job.mkt-authority.approval",
+		TenantId:   "default",
+		WorkflowId: "wf-stale",
+		Labels:     map[string]string{"run_id": runID, "workflow_id": "wf-stale"},
 	}
 	if err := s.jobStore.SetJobMeta(ctx, staleReq); err != nil {
 		t.Fatalf("set stale job meta: %v", err)

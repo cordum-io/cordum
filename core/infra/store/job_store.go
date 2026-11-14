@@ -2198,8 +2198,10 @@ func (s *RedisJobStore) InspectApprovalRepair(ctx context.Context, jobID string)
 	runID := ""
 	if req != nil {
 		topic = strings.TrimSpace(req.GetTopic())
-		if req.Labels != nil {
-			runID = strings.TrimSpace(req.Labels["run_id"])
+		// Only a job the workflow engine dispatched (WorkflowId set) belongs
+		// to a run; the run_id label alone links nothing.
+		if strings.TrimSpace(req.GetWorkflowId()) != "" {
+			runID = strings.TrimSpace(req.GetLabels()["run_id"])
 		}
 	}
 	return &ApprovalRepairSnapshot{

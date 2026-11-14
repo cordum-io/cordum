@@ -227,6 +227,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   upstream, with `mcp.policy_gate_enabled` on or off. `deny_servers` and
   `allow_servers` match the upstream's name (#492, task-d41ed620).
 
+- Gateway: approvals and job detail take a job's workflow link from the
+  engine-set `WorkflowId` (#492, task-ab587c37).
+
 - Scheduler: the Safety Kernel check and the saga take a job's workflow link
   from the engine-set `WorkflowId` (#492, task-cb754b80).
 
