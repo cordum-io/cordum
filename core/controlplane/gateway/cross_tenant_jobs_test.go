@@ -90,10 +90,14 @@ func seedCrossTenantRepair(t *testing.T, sw *crossTenantSweep, id, marker string
 		t.Fatal(err)
 	}
 	req.Labels["approval_granted"] = "true"
+	req.Labels["approval_snapshot"] = "snap-test"
 	if err := sw.server.jobStore.SetJobRequest(context.Background(), req); err != nil {
 		t.Fatal(err)
 	}
 	seedCrossTenantApproval(t, sw, id, marker)
+	if err := sw.server.jobStore.SetApprovalRecord(context.Background(), id, model.ApprovalRecord{ApprovedBy: "principal-approver"}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func seedCrossTenantApproval(t *testing.T, sw *crossTenantSweep, id, marker string) {
