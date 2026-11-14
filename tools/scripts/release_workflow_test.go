@@ -957,6 +957,56 @@ func TestReleaseFinalStageUpgradeFixtures(t *testing.T) {
 			wantErr:    true,
 		},
 		{
+			name:       "upgrade after a command that exits the shell",
+			dockerfile: "FROM alpine:3.24\nRUN exit 0 && apk upgrade --no-cache\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade after a command that replaces the shell",
+			dockerfile: "FROM alpine:3.24\nRUN exec true && apk upgrade --no-cache\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade after a top-level return",
+			dockerfile: "FROM alpine:3.24\nRUN return 0 && apk upgrade --no-cache\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade after a dot-sourced file",
+			dockerfile: "FROM alpine:3.24\nRUN . /etc/profile && apk upgrade --no-cache\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade after a sourced file",
+			dockerfile: "FROM alpine:3.24\nRUN source /etc/profile && apk upgrade --no-cache\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade after an eval",
+			dockerfile: "FROM alpine:3.24\nRUN eval true && apk upgrade --no-cache\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade after an exit behind a variable assignment",
+			dockerfile: "FROM alpine:3.24\nRUN X=1 exit 0 && apk upgrade --no-cache\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade only simulated",
+			dockerfile: "FROM alpine:3.24\nRUN apk upgrade --no-cache --simulate\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade only simulated with the short flag",
+			dockerfile: "FROM alpine:3.24\nRUN apk upgrade --no-cache -s\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade limited to one package",
+			dockerfile: "FROM alpine:3.24\nRUN apk upgrade --no-cache zlib\n",
+			wantErr:    true,
+		},
+		{
 			name:       "upgrade after an escaped quote outside quotes",
 			dockerfile: "FROM alpine:3.24\nRUN echo \\\" && apk upgrade --no-cache\n",
 		},
@@ -967,6 +1017,10 @@ func TestReleaseFinalStageUpgradeFixtures(t *testing.T) {
 		{
 			name:       "upgrade chained after another command",
 			dockerfile: "FROM alpine:3.24\nRUN apk add --no-cache ca-certificates && apk upgrade --no-cache\n",
+		},
+		{
+			name:       "upgrade before a command that exits the shell",
+			dockerfile: "FROM alpine:3.24\nRUN apk upgrade --no-cache && exit 0\n",
 		},
 		{
 			name:       "root Dockerfile style",
