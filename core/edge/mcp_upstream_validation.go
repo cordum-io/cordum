@@ -29,6 +29,20 @@ type MCPUpstreamValidationOptions struct {
 	AllowPlainHTTP bool
 }
 
+type mcpUpstreamValidationOptionsKey struct{}
+
+// WithMCPUpstreamValidationOptions returns a context that carries opts to the
+// validation RedisMCPUpstreamRegistry runs again on Create and Update. Set it
+// only from trusted server or tenant config, never from request input.
+func WithMCPUpstreamValidationOptions(ctx context.Context, opts MCPUpstreamValidationOptions) context.Context {
+	return context.WithValue(ctx, mcpUpstreamValidationOptionsKey{}, opts)
+}
+
+func mcpUpstreamValidationOptionsFrom(ctx context.Context) MCPUpstreamValidationOptions {
+	opts, _ := ctx.Value(mcpUpstreamValidationOptionsKey{}).(MCPUpstreamValidationOptions)
+	return opts
+}
+
 func Validate(ctx context.Context, upstream *UpstreamServer, policyMode string, allowlist []string) error {
 	return ValidateMCPUpstream(ctx, upstream, policyMode, allowlist)
 }

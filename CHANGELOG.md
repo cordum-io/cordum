@@ -696,6 +696,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- MCP upstreams: `safety.mcp.allow_plain_http` is honoured by the Redis
+  upstream registry on create and update (#492, task-3bbc0e1d).
+
 - Scheduler: an approved job whose dispatch failed and was retried stays
   approved while its job hash and approval snapshot still match, instead of
   going back to `APPROVAL_REQUIRED` with its approval reset to pending
