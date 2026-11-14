@@ -709,6 +709,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- MCP approvals: rejecting either half of an MCP approval (the Edge approval
+  or the legacy record) resolves both, and the Edge approval is the pair's
+  single consume token, so one approval runs one call (#492, task-1e1f64c7).
+
 - MCP approvals: a re-ask returns the caller's pending approval instead of
   minting another (#492, task-2a9d0a7c).
 
