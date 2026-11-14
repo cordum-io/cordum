@@ -223,6 +223,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- Gateway: job submit over HTTP, gRPC and MCP drops client workflow-context
+  labels (`workflow_id`, `run_id`, `step_id`, `workflow`, `workflow_run_id`
+  and `workflow.*`), and a workflow step's `route_labels` can't set them
+  (#492, task-849e359b).
+
 - Gateway: a `block` invariant, like every invariant whose decision is not
   allow-class (`config.IsAllowClassDecision`), now denies at the MCP gate,
   and `policybundles.ApplyInvariants` prepends it like `deny`, so a tenant
