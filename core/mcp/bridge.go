@@ -534,11 +534,7 @@ func (b *HTTPServiceBridge) doRequest(ctx context.Context, method, path string, 
 	}
 	// Pin DNS resolution to prevent rebinding attacks (TOCTOU).
 	if len(pinnedIPs) > 0 {
-		client = &http.Client{
-			Timeout:       client.Timeout,
-			CheckRedirect: client.CheckRedirect,
-			Transport:     &http.Transport{DialContext: pinnedDialer(pinnedIPs)},
-		}
+		client = pinnedClient(client, pinnedIPs)
 	}
 	// Start the invocation audit BEFORE client.Do so latency is measured
 	// across the full transport. FinishRequest always fires (defer) so
