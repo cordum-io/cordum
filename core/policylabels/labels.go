@@ -25,7 +25,7 @@ func WorkflowContextLabel(key string) bool {
 // Workflow scope labels are dropped first, so a label alone never claims a
 // workflow's policy scope.
 func WithWorkflowScope(labels map[string]string, workflowID string) map[string]string {
-	out := make(map[string]string, len(labels)+1)
+	out := make(map[string]string, len(labels))
 	for k, v := range labels {
 		if !workflowScopeLabel(k) {
 			out[k] = v
