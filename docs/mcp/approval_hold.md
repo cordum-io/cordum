@@ -97,8 +97,9 @@ is the **single** source of truth for both hashes. It:
 1. Strips `_approval_ref` from `params.Arguments` so a retry that
    echoes the ref hashes identically to the original gated call.
 2. Canonicalises the stripped JSON (key order normalised, whitespace
-   stripped) so `{"a":1,"b":2}` and `{"b":2,"a":1}` produce the same
-   `InputHash`.
+   between tokens removed) so `{"a":1,"b":2}` and `{"b":2,"a":1}` produce
+   the same `InputHash`. String values, empty values and nulls are part of
+   the hash, so a retry must send the same values.
 3. Extracts the first matching path-like arg
    (`path`/`file_path`/`target_path`/`filepath`) into the action key.
 4. Returns `(ActionTupleHash(tenant, server, tool, target_path), InputHash)`.

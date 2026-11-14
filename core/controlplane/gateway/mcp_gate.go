@@ -462,20 +462,15 @@ func approvalReasonFor(tool mcp.Tool) string {
 	return fmt.Sprintf("tool %q requires human approval", tool.Name)
 }
 
-// canonicalizeArgs returns the normalised JSON representation of the
+// canonicalizeArgs returns the canonical JSON representation of the
 // tool-call args together with its SHA-256 hex hash.
 //
-// Delegates to mcp.CanonicaliseArgs (task-2d989055) which extends the
-// original behaviour with:
-//   - whitespace trim on every string value
-//   - dropping null / empty-string / empty-array / empty-object keys
-//   - preserving json.Number so big-ints don't collide via float64
-//
-// The net effect is that an LLM retrying a mutating tool call after
-// a human approval lands on the same hash even if it reformatted the
-// JSON or dropped an empty optional field. The old local
-// implementation is gone; this function is now a thin wrapper so
-// existing call sites keep working.
+// Delegates to mcp.CanonicaliseArgs, the same function
+// mcp.BuildMCPApprovalBinding hashes through, so mint and consume
+// agree. Only the encoding is canonical (sorted keys, no whitespace
+// between tokens, numbers as written); every value is kept, so the
+// hash binds the exact arguments the tool handler runs. This function
+// is a thin wrapper so existing call sites keep working.
 func canonicalizeArgs(raw json.RawMessage) (json.RawMessage, string, error) {
 	return mcp.CanonicaliseArgs(raw)
 }
