@@ -47,7 +47,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Docs: README.md, SECURITY.md and ROADMAP.md now state protection, support and release
   claims at the status recorded in docs/contract/claims.yaml: scoped Edge, approval,
   provenance, quarantine, audit and plan-limit statements; a three-class demo without
-  a timing claim; qualified Copilot phases; and 1.0.x listed as not supported.
+  a timing claim; qualified Copilot phases.
 - Docs: BENCHMARKS.md now says its figures are dated January 2026, have not been re-measured for
   the current release and are not a performance commitment or SLA, and that the benchmarks and
   scripts it named are not in this repository. It drops the production-grade, production-ready
