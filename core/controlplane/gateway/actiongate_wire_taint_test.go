@@ -5,7 +5,8 @@ package gateway
 // through the REAL gateway wiring: s.wireActionGatePipeline() on a test
 // gateway, a resolvable MCP identity in s.agentIdentityStore, and a
 // descriptor built by mcp.BuildActionDescriptorFromToolCall, the same way
-// core/mcp.EvaluateToolCall builds its PolicyInput.
+// core/mcp.EvaluateToolCall builds its PolicyInput. Every case unsets
+// CORDUM_MCP_TAINT_FAILCLOSED_APPROVER, so a call that fails closed is denied.
 //
 // Not parallel: t.Setenv, and wireActionGatePipeline reads the env once.
 
@@ -14,9 +15,11 @@ import (
 	"os"
 	"testing"
 
+	miniredis "github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/internal/testredis"
 	"github.com/cordum/cordum/core/mcp"
 	"github.com/cordum/cordum/core/policy/actiongates"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -34,7 +37,7 @@ const (
 func TestWireActionGatePipeline_TaintFailClosedProfileDefault(t *testing.T) {
 	cases := []struct {
 		name, mode, prod, flag string
-		wantHold               bool
+		wantFailClosed         bool
 	}{
 		{"production_flag_unset", "production", taintFCUnset, taintFCUnset, true},
 		{"prod_flag_unset", "prod", taintFCUnset, taintFCUnset, true},
@@ -55,14 +58,15 @@ func TestWireActionGatePipeline_TaintFailClosedProfileDefault(t *testing.T) {
 			setOrUnsetEnv(t, "CORDUM_ENV", tc.mode)
 			setOrUnsetEnv(t, "CORDUM_PRODUCTION", tc.prod)
 			setOrUnsetEnv(t, taintFCFlag, tc.flag)
+			setOrUnsetEnv(t, "CORDUM_MCP_TAINT_FAILCLOSED_APPROVER", taintFCUnset)
 			s.wireActionGatePipeline()
 
 			dec, fired := runTaintFCCall(t, s, "delete_repo", markTaintLookupFailed)
-			if tc.wantHold {
+			if tc.wantFailClosed {
 				assertTaintFCDecision(t, "destructive+lookup-failed", dec, fired,
-					pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN, "taint_lookup_unavailable_failclosed")
+					pb.DecisionType_DECISION_TYPE_DENY, "taint_lookup_unavailable_failclosed")
 			} else if fired {
-				t.Fatalf("destructive+lookup-failed: fired %v/%q, want no hold (fail-open)", dec.Decision, dec.SubReason)
+				t.Fatalf("destructive+lookup-failed: fired %v/%q, want no decision (fail-open)", dec.Decision, dec.SubReason)
 			}
 			// Control: a non-destructive call is never held by this path.
 			if dec, fired := runTaintFCCall(t, s, "list_repos", markTaintLookupFailed); fired {
@@ -137,5 +141,63 @@ func assertTaintFCDecision(t *testing.T, label string, dec actiongates.ActionGat
 	if !fired || dec.Decision != want || dec.GateID != actiongates.GateIDMCP || dec.SubReason != wantSub {
 		t.Fatalf("%s: fired=%v decision=%v gate=%q sub=%q, want %v from %s with %q",
 			label, fired, dec.Decision, dec.GateID, dec.SubReason, want, actiongates.GateIDMCP, wantSub)
+	}
+}
+
+// TestWireActionGatePipeline_TaintLookupFailureDefaults: the gateway parsed
+// CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE itself with a default of off, so in
+// production a destructive MCP call whose session-taint lookup failed ran as if
+// the session were clean. The pipeline now takes the profile-aware default:
+// fail closed in production, fail open elsewhere, and an explicit value wins
+// either way. Failing closed denies the call unless
+// CORDUM_MCP_TAINT_FAILCLOSED_APPROVER says an approver acts on holds.
+func TestWireActionGatePipeline_TaintLookupFailureDefaults(t *testing.T) {
+	ctx := context.Background()
+	identities := store.NewAgentIdentityStoreFromClient(testredis.NewClient(t, miniredis.RunT(t).Addr()))
+	agent, err := identities.Create(ctx, store.AgentIdentity{
+		ID: "agent-taint", TenantID: "tenant-a", Name: "agent-taint", Owner: "platform",
+		RiskTier: "high", AllowedServers: []string{"vault"}, AllowedTools: []string{"delete_*"}, Status: "active",
+	})
+	if err != nil {
+		t.Fatalf("create agent identity: %v", err)
+	}
+	const unset = pb.DecisionType_DECISION_TYPE_UNSPECIFIED // the pipeline lets the call through
+	for _, tc := range []struct {
+		name, mode, flag, approver string
+		want                       pb.DecisionType
+	}{
+		{name: "production, no env", mode: "production", want: pb.DecisionType_DECISION_TYPE_DENY},
+		{name: "production, approver", mode: "production", approver: "true", want: pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN},
+		{name: "development, no env", mode: "development", want: unset},
+		{name: "production, explicit off", mode: "production", flag: "false", want: unset},
+		{name: "development, explicit on", mode: "development", flag: "true", want: pb.DecisionType_DECISION_TYPE_DENY},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CORDUM_ENV", tc.mode)
+			t.Setenv("CORDUM_PRODUCTION", "")
+			t.Setenv("CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE", tc.flag)
+			t.Setenv("CORDUM_MCP_TAINT_FAILCLOSED_APPROVER", tc.approver)
+			s := &server{agentIdentityStore: identities}
+			s.wireActionGatePipeline()
+			in := &config.PolicyInput{
+				Action: &config.ActionDescriptor{
+					Kind: config.ActionKindMCPCall, Verb: config.ActionVerbRead,
+					Server: "vault", Tool: "delete_item", TaintLookupFailed: true,
+				},
+				Labels: map[string]string{"agent_id": agent.ID},
+			}
+			authCtx := context.WithValue(ctx, auth.ContextKey{}, &auth.AuthContext{Tenant: "tenant-a", PrincipalID: "p1", Role: "user"})
+			dec, fired := s.actionGatePipeline.Run(authCtx, in)
+			got := unset
+			if fired {
+				got = dec.Decision
+			}
+			if got != tc.want {
+				t.Fatalf("decision = %v (sub_reason %q), want %v", got, dec.SubReason, tc.want)
+			}
+			if fired && dec.SubReason != "taint_lookup_unavailable_failclosed" {
+				t.Fatalf("sub_reason = %q, want taint_lookup_unavailable_failclosed", dec.SubReason)
+			}
+		})
 	}
 }
