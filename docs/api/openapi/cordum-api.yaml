@@ -4125,6 +4125,45 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /api/v1/policy/bundles/{id}/resign:
+    post:
+      operationId: resignPolicyBundle
+      summary: Explicitly re-sign a stored policy bundle (admin only)
+      tags: [Policy]
+      parameters:
+      - name: id
+        in: path
+        required: true
+        description: Bundle ID; '/' may be sent as '~'. Pack fragments require reinstalling the pack.
+        schema: {type: string}
+      - $ref: '#/components/parameters/TenantID'
+      responses:
+        '200':
+          description: Current content signed with a trusted key and one audit entry stored atomically
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, key_id, hash, updated_at]
+                properties:
+                  id: {type: string}
+                  key_id: {type: string}
+                  hash: {type: string}
+                  updated_at: {type: string, format: date-time}
+        '400':
+          description: 'POLICY_VALIDATION_FAILED: empty content or pack-owned fragment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 'POLICY_VERSION_CONFLICT: concurrent change, or a pack install or uninstall in progress'
+        '503':
+          description: 'POLICY_SIGNING_REQUIRED: no trusted policy signing key configured'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /api/v1/policy/bundles/snapshots:
     get:
       operationId: listBundleSnapshots
