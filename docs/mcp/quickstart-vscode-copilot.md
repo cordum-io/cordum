@@ -29,13 +29,15 @@ With the gate off, tool calls are still scope-filtered but not policy-evaluated.
 
 ## 2. Provision a least-privilege Copilot identity
 
-Create an agent identity for Copilot (read-first; mutations require approval):
+Create an agent identity for Copilot (read-first; mutations require approval),
+linked to the principal Copilot will authenticate as:
 
 ```bash
 curl -sk -X POST https://<gateway>:8081/api/v1/agents \
   -H "X-API-Key: $CORDUM_ADMIN_KEY" -H "X-Tenant-ID: <tenant>" \
   -d '{
     "name": "GitHub Copilot",
+    "agent_id": "<principal-id>",
     "risk_tier": "low",
     "allowed_tools": ["cordum_list_jobs","cordum_get_job","cordum_query_policy","cordum_list_approvals"],
     "data_classifications": ["general"],
@@ -43,10 +45,17 @@ curl -sk -X POST https://<gateway>:8081/api/v1/agents \
   }'
 ```
 
-Note the returned agent `id`. Then mint a scoped API key bound to that identity
-+ tenant with `mcp.read` permission (use your normal key-issuance flow). Keep
-`preapproved_mutating_tools` empty so `cordum_submit_job` and other mutations
-hit human approval.
+Note the returned agent `id`. Then give Copilot a credential that
+authenticates as `<principal-id>` in `<tenant>`: a static API key with that
+principal configured (`<tenant>:<key>:<role>:<principal-id>` in
+`CORDUM_API_KEYS`) or a JWT/SSO subject. Runtime-created API keys carry no
+principal of their own, so they cannot bind Copilot to this identity. See
+[Agent identity binding](../mcp-server.md#agent-identity-binding-x-agent-id).
+Keep `preapproved_mutating_tools` empty so that none of the seven
+[mutating tools](mutating-tools.md) skips human approval if you later allow one.
+
+In step 3, `--gateway-agent-id` (sent as `X-Agent-Id`) must equal the returned
+`id`, or be omitted. Any other value leaves Copilot with no tools.
 
 ## 3. Generate the VS Code `mcp.json`
 
@@ -111,7 +120,8 @@ agent id are non-secret literals.
    `mcp.tool.pre`/`.post` + `mcp.tool_invocation` to the audit chain.
 4. **Deny:** a tool outside the allow-list returns a JSON-RPC error + a deny
    audit event.
-5. **Approval:** a mutating tool (e.g. `cordum_submit_job`) returns
+5. **Approval:** a tool that requires approval, if the identity allows one (see
+   [Approval-Required Tools](../mcp-tools-reference.md#approval-required-tools)), returns
    **"approval pending"**. A human approves in the dashboard approvals queue or
    via `cordumctl mcp pending` / `cordumctl mcp approve <id> --reason "..."`,
    then you re-ask Copilot.
@@ -130,8 +140,11 @@ the governance decisions for those jobs (decisions require `governance.read`).
 
 ## Security notes
 
-- Least-privilege identity (read-first, empty preapproved-mutating list) means
-  any state change requires explicit human approval.
+- The step 2 identity allows only the read tools it lists and preapproves no mutating
+  tool. The scope filter refuses any tool outside that list (step 4), and a tool that
+  requires approval ([Approval-Required Tools](../mcp-tools-reference.md#approval-required-tools))
+  still needs a per-call human approval if you allow it. CLM-051 and CLM-018 in the
+  [claims register](../contract/claims.yaml) record both as supported.
 - The key only ever exists in VS Code's secret store via `${input:...}`.
 - Fail-closed: a revoked/invalid key disconnects the SSE stream and returns an
   empty tool list.

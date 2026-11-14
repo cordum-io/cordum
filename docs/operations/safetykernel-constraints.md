@@ -31,10 +31,8 @@ schema is the single source of truth for the constraint vocabulary.
 
 ## Emission semantics
 
-These constraints fire when the safety kernel emits a Decision with
-`Type = allow_with_constraints`. The unified Decision shape (see
-`core/policy/types.go`) carries the constraints payload to downstream
-enforcement, which:
+These fields are meant for rules whose decision is
+`allow_with_constraints`. A consumer that implements them:
 
 1. Truncates outputs exceeding `max_output_bytes` and tags the
    truncation in the Decision trace.
@@ -42,6 +40,9 @@ enforcement, which:
    (when the list is non-empty).
 3. Applies `redact_patterns` to the output stream before persistence
    and downstream emission.
+
+Enforcement of these three fields is not measured: the
+[enforcement support matrix](../contract/enforcement-matrix.yaml) does not list them.
 
 ## Backward compatibility
 

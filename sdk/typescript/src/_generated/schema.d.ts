@@ -487,7 +487,8 @@ export interface paths {
         };
         /**
          * Verify audit chain integrity
-         * @description Walks the tenant's audit stream and attests integrity of the hash chain. Reports
+         * @description Walks the tenant's audit stream and checks its hash links and sequence numbers;
+         *     chain verification is rated supported in docs/contract/claims.yaml (CLM-057). Reports
          *     `status=ok` on a contiguous chain, `status=partial` when gaps are below the
          *     retention boundary, and `status=compromised` for missing sequence numbers or a
          *     broken hash link. Admin-only and entitlement-gated; NEVER returns raw event bodies — this is an
@@ -941,7 +942,7 @@ export interface paths {
         put?: never;
         /**
          * Bounded blocking wait for an Edge approval to leave Pending
-         * @description Agentd/local-dev affordance that polls the Edge approval store until the approval is non-pending or the bounded timeout elapses, then returns the current EdgeApproval. The wait is principal-bound: the caller must be the original requester principal (`auth.PrincipalID` matches the approval `principal_id`) or hold an admin/operator role. The server clamps `timeout_ms` to a 5 minute maximum and uses a 30 second default when omitted or non-positive. Tenant isolation is enforced; cross-tenant references and same-tenant callers that fail the principal binding return 404 with no metadata leakage. This endpoint is not required by the dashboard approve/reject UX — callers there should use the standard list/detail/approve/reject flow.
+         * @description Agentd/local-dev affordance that polls the Edge approval store until the approval is non-pending or the bounded timeout elapses, then returns the current EdgeApproval. The wait is principal-bound: the caller must be the original requester principal (`auth.PrincipalID` matches the approval `principal_id`) or hold an admin/operator role. The server clamps `timeout_ms` to a 5 minute maximum and uses a 30 second default when omitted or non-positive. Cross-tenant references are refused with 403 or 404, and same-tenant callers that fail the principal binding get 404. This endpoint is not required by the dashboard approve/reject UX — callers there should use the standard list/detail/approve/reject flow.
          */
         post: operations["waitEdgeApproval"];
         delete?: never;
@@ -2551,6 +2552,23 @@ export interface paths {
         post?: never;
         /** Delete a policy bundle */
         delete: operations["deletePolicyBundle"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/policy/bundles/{id}/resign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Explicitly re-sign a stored policy bundle (admin only) */
+        post: operations["resignPolicyBundle"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -12543,6 +12561,63 @@ export interface operations {
             500: components["responses"]["InternalServerError"];
         };
     };
+    resignPolicyBundle: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                /** @description Bundle ID; '/' may be sent as '~'. Pack fragments require reinstalling the pack. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current content signed with a trusted key and one audit entry stored atomically */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        hash: string;
+                        id: string;
+                        key_id: string;
+                        /** Format: date-time */
+                        updated_at: string;
+                    };
+                };
+            };
+            /** @description POLICY_VALIDATION_FAILED: empty content or pack-owned fragment */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description POLICY_VERSION_CONFLICT: concurrent change, or a pack install or uninstall in progress */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            500: components["responses"]["InternalServerError"];
+            /** @description POLICY_SIGNING_REQUIRED: no trusted policy signing key configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     simulatePolicyBundle: {
         parameters: {
             query?: never;
@@ -15443,6 +15518,7 @@ export enum ApiPaths {
     updatePolicyBundle = "/api/v1/policy/bundles/{id}",
     deletePolicyBundle = "/api/v1/policy/bundles/{id}",
     simulatePolicyBundle = "/api/v1/policy/bundles/{id}/simulate",
+    resignPolicyBundle = "/api/v1/policy/bundles/{id}/resign",
     listBundleSnapshots = "/api/v1/policy/bundles/snapshots",
     createBundleSnapshot = "/api/v1/policy/bundles/snapshots",
     getBundleSnapshot = "/api/v1/policy/bundles/snapshots/{id}",

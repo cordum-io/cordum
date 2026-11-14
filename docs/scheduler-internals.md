@@ -121,17 +121,19 @@ Async goroutine (30s timeout)
     │   │   ├─ current state == SUCCEEDED → downgrade to OUTPUT_QUARANTINED
     │   │   ├─ current state != SUCCEEDED → skip (already transitioned)
     │   │   └─ emit DLQ + audit event
-    │   └─ error → skip (fail-open)
+    │   └─ error → per scheduler.output_fail_mode (closed when unset)
     │
     └─ Persist output safety record
 ```
 
 ### Fail-Open Default
 
-If the output safety checker returns an error (e.g., gRPC timeout, circuit
-open), the scheduler defaults to `ALLOW`. This is a deliberate fail-open design
-to avoid blocking the job pipeline when the output policy service is
-unavailable.
+If the synchronous output metadata check returns an error (e.g., gRPC timeout,
+circuit open), the scheduler defaults to `ALLOW`. This is a deliberate fail-open
+design to avoid blocking the job pipeline when the output policy service is
+unavailable. The asynchronous content check instead follows
+`scheduler.output_fail_mode`, which is closed when unset; see
+[Output Safety](output-safety.md) for what each mode does.
 
 ### Configuration
 
@@ -400,26 +402,30 @@ tracking (per-process counters).
 ### Behavior When Circuit Is Open
 
 All safety checks return `SafetyUnavailable` with reason `"safety kernel
-circuit open"`. The scheduler treats `SafetyUnavailable` as a retryable
-condition — the job is requeued with a 5-second delay.
+circuit open"`. In the default closed input mode, the scheduler treats
+`SafetyUnavailable` as a retryable condition — the job is requeued with a
+5-second delay. Open mode admits only listed topics; see Input Policy Fail Mode
+below.
 
 ### Input Policy Fail Mode
 
 The scheduler's behavior when the safety kernel is unreachable (circuit open or
-gRPC timeout) is controlled by the `POLICY_CHECK_FAIL_MODE` setting:
+gRPC timeout) is set by its input fail mode, the config-service key
+`scheduler.input_fail_mode`, system-wide or per tenant:
 
-- **Fail-closed (default)**: The job is requeued with exponential backoff. This
-  is the safe default — no job passes through without a policy decision.
-- **Fail-open**: The job is allowed through with a warning log
-  (`"input policy fail-open: safety kernel unreachable"`) and the
+- **Fail-closed (default)**: The job is requeued and not published. An unset
+  mode is closed, and the production identity profile forces closed.
+- **Fail-open**: A job whose topic a `scheduler.input_fail_open_scope` rule
+  lists is admitted with a warning log, and the
   `cordum_scheduler_input_fail_open_total` Prometheus counter is incremented
-  (labeled by `topic`). This trades safety guarantees for availability.
+  (labeled by `topic` and `scope_rule`). Every other job is requeued as in
+  fail-closed mode. Listed topics trade policy checks for availability.
 
-Configuration:
-- **Env var**: `POLICY_CHECK_FAIL_MODE` — values: `closed` (default), `open`
-- **Config file**: `config/safety.yaml` under `input_policy.fail_mode`
-
-The env var takes precedence over the config file value.
+`POLICY_CHECK_FAIL_MODE` selects the Gateway's submit-time pre-check, not this
+mode, and `input_policy.fail_mode` in `config/safety.yaml` selects neither. See
+[Safety Kernel section 10](safety-kernel.md#10-input-policy-fail-mode) for the
+scope rules and the [failure and partition behavior contract](contract/failure-behavior.md)
+for what is measured.
 
 ---
 

@@ -1,0 +1,29 @@
+apiVersion: cordum.io/v1alpha1
+kind: Pack
+
+metadata:
+  id: cap-mcp-governed
+  version: 0.1.0
+  title: Governed CAP MCP Demo
+  description: Routes the demo worker topic and adds the allow and deny rules used by its end-to-end test.
+
+compatibility:
+  protocolVersion: 1
+  minCoreVersion: 0.6.0
+
+topics:
+  - name: job.cap-mcp-governed.create-workflow
+    capability: cap-mcp-governed.create-workflow
+
+# No workflow resources: only the approved MCP mutation creates a workflow.
+overlays:
+  config:
+    - name: pools
+      scope: system
+      key: pools
+      strategy: json_merge_patch
+      path: overlays/pools.patch.yaml
+  policy:
+    - name: cap-mcp-governed
+      strategy: bundle_fragment
+      path: overlays/policy.fragment.yaml

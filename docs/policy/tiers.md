@@ -13,7 +13,7 @@ compatibility with existing packs and SafetyPolicy YAML.
 
 | Order | Source | Effect |
 | --- | --- | --- |
-| 1 | Global **Invariants** DENY / approval / throttle | Security floor. Cannot be overridden by workflow or job policy. |
+| 1 | Global **Invariants** DENY / approval / throttle | Security floor, first in this order. CLM-084 in the [claims register](../contract/claims.yaml) records it as supported. |
 | 2 | Job-tier matching rule | Most-specific rule wins. |
 | 3 | Workflow-tier matching rule | Wins over global rules. |
 | 4 | Global matching rule | Backward-compatible default behavior. |
@@ -114,7 +114,7 @@ rules:
 The same workflow request with `policy.attachment_id=job/abc/policy` is
 **ALLOW** by `job-allow-read`. Other jobs in `deploy-prod` remain denied.
 
-### Invariant remains uncrossable
+### Invariant DENY outranks the job allow
 
 ```yaml
 # secops/invariants
@@ -161,5 +161,5 @@ The Safety Kernel also records the matched tier in policy-decision telemetry.
   job attachment labels, audit tier field, and safe-allow cache key isolation.
 - Integration coverage:
   `core/controlplane/safetykernel/tier_precedence_integration_test.go`
-  (`//go:build integration`) proves global, workflow, job, invariant, and
+  (`//go:build integration`) covers global, workflow, job, invariant, and
   scoped-default behavior against one Safety Kernel snapshot.
