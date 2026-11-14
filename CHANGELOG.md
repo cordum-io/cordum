@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Docs: the output-policy, output-safety, gRPC services and Docker pages and ADR-005 now state
+  the output checks' fail modes as the failure and partition behavior contract records them. The
+  synchronous metadata check is fail-open. The asynchronous content check follows the
+  config-service key `scheduler.output_fail_mode`, closed when unset and forced closed by the
+  production identity profile; `output_policy.fail_mode` in `config/safety.yaml` and
+  `OUTPUT_POLICY_FAIL_MODE` do not select it. Output-check outage outcomes are not measured
+  (M0-06-DOCS-OUTPUT, task-5bf25656).
 - Docs: the eval dataset, extraction and runner pages describe dataset versions as write-once
   through the API (CLM-080) instead of immutable. The LangChain tutorial, the Edge P0 threat
   model and the Edge P0 acceptance evidence record now state their safety-gating,
