@@ -311,7 +311,7 @@ Cordum puts a policy decision at that dispatch boundary:
 - **Hash-bound approvals.** For Cordum approval-gated actions, lookup uses tenant and
   `approval_ref`; an approval whose SHA-256 `action_hash` differs is rejected as
   `approval_mismatch`. On those paths, self-approved,
-  expired and already-consumed approvals are rejected too.
+  expired and already-consumed approvals also receive a rejection.
 - **Declarative YAML policies.** Rules in [`config/safety.yaml`](config/safety.yaml)
   match on tenant, topic, capability, risk tags, actor and labels; the shipped
   file sets `default_decision: deny`, so the Safety Kernel denies unmatched requests when it loads that file.
