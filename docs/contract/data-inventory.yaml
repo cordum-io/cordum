@@ -182,7 +182,7 @@ control_plane:
      legal_hold: {applies: false, reason: No cleanup exists that could consult legal holds}}
   - {id: DI-C24, class: control-records,
      storage: {kind: redis_key, location: Job id indexes by state/recency/deadline/tenant, redis_keys: [{pattern: 'job:index:{state}', path: core/infra/store/job_store.go}, {pattern: 'job:recent', path: core/infra/store/job_store.go}, {pattern: 'job:deadline', path: core/infra/store/job_store.go}, {pattern: 'job:tenant:active:{tenant}', path: core/infra/store/job_store.go}], writers: [{path: core/infra/store/job_store.go, symbol: RedisJobStore.SetStateWithContext}, {path: core/infra/store/job_store.go, symbol: RedisJobStore.SetDeadline}]},
-     content: {description: Job ids with timestamps per state and tenant, personal_data: no},
+     content: {description: Job ids with timestamps per state and tenant, personal_data: possible},
      retention: {none: 'No TTL on state/recent/deadline indexes; job:recent keeps the newest 1000 and a job id stays in its final state index'},
      deletion: {paths: [{path: core/infra/store/job_store.go, symbol: RedisJobStore.SetStateWithContext}]},
      legal_hold: {applies: false, reason: Index trimming does not consult legal holds}}
