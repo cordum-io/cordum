@@ -1,15 +1,24 @@
 # Cordum Performance Benchmarks
 
-> **Last Updated:** January 2026
+> **Figures dated:** January 2026
 > **Test Environment:** AWS m5.2xlarge (8 vCPU, 32GB RAM)
 > **Go Version:** 1.22
 > **Load Tool:** custom load generator + Prometheus
+
+> **Status:** The figures in this file are dated January 2026. They have not been re-measured
+> for the current release and are not a performance commitment or SLA. Unless a section says
+> otherwise, the file reports them for the test environment above, and it does not record
+> which Cordum commit or version was measured. Section 7's peak load test reports a 32 vCPU,
+> 64 GB RAM configuration, section 8 does not record the hardware or tool versions it
+> compared, and the anonymized deployment figures in section 10 are unverified.
+> [Benchmark Validation](#benchmark-validation) says what can be reproduced from this
+> repository.
 
 ---
 
 ## Executive Summary
 
-Cordum is designed for high-throughput, low-latency workflow orchestration at scale. These benchmarks demonstrate production-grade performance under realistic workloads.
+Cordum is designed for high-throughput, low-latency workflow orchestration. The figures below are dated January 2026, have not been re-measured for the current release and are not a performance commitment or SLA.
 
 ### Key Metrics
 
@@ -24,7 +33,7 @@ Cordum is designed for high-throughput, low-latency workflow orchestration at sc
 
 ## 1. Safety Kernel Performance
 
-The Safety Kernel evaluates every job against policy constraints before dispatch.
+The Safety Kernel evaluates jobs against policy constraints before dispatch.
 
 ### Policy Evaluation Throughput
 
@@ -315,7 +324,7 @@ n8n           | 450      | 120ms       | 800MB
 Airflow       | 180      | 2.1s        | 1.8GB
 ```
 
-*Benchmarks performed on identical hardware with default configurations.*
+*Reported in January 2026 as run on identical hardware with default configurations. The hardware, tool versions, configurations and harness are not recorded, so this comparison cannot be reproduced from this repository and does not describe current versions of these tools.*
 
 ---
 
@@ -338,12 +347,6 @@ go test ./core/infra/store -run '^$' -bench '^BenchmarkQueryDecisions7Day$' -ben
 go test ./core/infra/store -run '^$' -bench '^BenchmarkListEvalDatasets1k$' -benchmem -count=3
 go test ./core/controlplane/scheduler -run '^$' -bench '^BenchmarkReconcilerTick$' -benchmem -count=3
 go test ./core/audit -run '^$' -bench '^BenchmarkChainer_Append$' -benchmem -count=3
-
-# Run integration benchmarks
-./tools/scripts/run_benchmarks.sh
-
-# Run full load test
-./tools/scripts/load_test.sh --duration=60m --workers=1000
 ```
 
 ### Before/After Comparisons
@@ -393,21 +396,15 @@ Remove-Item -Recurse -Force tmp/pprof
 git status --short
 ```
 
-### Generating Reports
-
-```bash
-# Export Prometheus metrics
-./tools/scripts/export_metrics.sh > metrics.txt
-
-# Generate graphs
-./tools/scripts/plot_benchmarks.py metrics.txt
-```
-
 ---
 
 ## 10. Production Deployment Stats
 
 ### Real-World Usage (Anonymized)
+
+These anonymized figures were reported in January 2026 and are unverified: this repository holds no
+evidence for them, they have not been re-confirmed since, and they are not a statement of current
+deployments, uptime or an SLA.
 
 **Customer A (Financial Services)**
 - Workload: 2M transactions/day
@@ -449,11 +446,17 @@ git status --short
 
 ### Benchmark Validation
 
-All benchmarks are:
-- ✅ Reproducible (scripts included in `tools/scripts/`)
-- ✅ Version-controlled (tracked in git with tags)
-- ✅ Peer-reviewed (internal team validation)
-- ✅ Automated (run on every release)
+Status of the figures in this file:
+- Reproducible from this repository: no. The benchmarks named in sections 1 to 4 and the
+  integration benchmark, load-test and report scripts that earlier versions of this file named
+  (`tools/scripts/run_benchmarks.sh`, `load_test.sh`, `export_metrics.sh` and
+  `plot_benchmarks.py`) are not in this repository.
+- Version-controlled: this file is tracked in git, but it does not record the Cordum commit or
+  version measured.
+- Reviewed: the file reported internal team validation; no record of that review is in this
+  repository.
+- Automated: no CI job re-measures these figures. The nightly CI tier runs the repository's Go
+  benchmarks as an advisory step (`.github/workflows/ci.yml`).
 
 ---
 
@@ -475,15 +478,13 @@ All benchmarks are:
 
 ## Conclusion
 
-Cordum is **production-ready** for high-throughput workflow orchestration:
+The January 2026 figures above include:
 
-- ✅ **15k+ ops/sec** policy evaluation
-- ✅ **<5ms p99** end-to-end latency
-- ✅ **99.97%+** uptime in production
-- ✅ **Zero memory leaks** over 72h continuous operation
-- ✅ **Linear scaling** to 1000+ workers
+- **15k+ ops/sec** policy evaluation (section 1)
+- No memory leaks detected over a 72-hour run (section 6)
 
-**Battle-tested.** Ready for your production workloads.
+They have not been re-measured for the current release and are not a performance commitment, an
+SLA or a statement of production readiness.
 
 ---
 
