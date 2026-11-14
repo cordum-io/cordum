@@ -418,6 +418,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `CORDUM_API_KEYS`, or a session or OIDC login. Managed API keys carry no
   principal and cannot bind an MCP client.
 
+#### core/mcp, core/controlplane/gateway — MCP HTTP/SSE sessions are bound to the caller that opened them (2026-11-14, task-2ec67dc4)
+
+- **Behavior change** for HTTP MCP clients: a `/mcp/message` with an unknown
+  or foreign session id gets HTTP 404 with JSON-RPC error `-32001`
+  (`session not found`); reconnect to `/mcp/sse` for a new id. The SSE stream
+  and its POSTs must use the same tenant, credential and principal.
+- The gateway uses a client-supplied session id for Edge trace parents and
+  call metadata only after the transport confirms that the caller owns the
+  session. See the `/mcp/sse` notes in `docs/mcp-server.md`.
+
 #### MCP `X-Agent-Id` can only confirm the principal-bound agent identity (2026-10-26, task-eb2d6f28)
 
 - **Behavior change** for MCP clients that select an agent identity with the
