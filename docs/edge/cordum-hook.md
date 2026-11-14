@@ -129,8 +129,10 @@ Managed policy settings changes cannot be blocked by Claude Code; Cordum still o
 | Mode | Agentd unavailable, timeout, or malformed response | Malformed hook input |
 | --- | --- | --- |
 | `observe` (default) | Allow/no-op, emit a redacted `agentd_unavailable` or `agentd_timeout` warning to stderr. | Exit `2`, empty stdout, redacted stable error. |
-| `local-dev-enforce` | For `PreToolUse`, deny risky or unclassified actions with structured Claude deny JSON. | Exit `2`, empty stdout. |
-| `enterprise-strict` or `CORDUM_AGENTD_FAIL_CLOSED=true` | Fail closed. For parseable `PreToolUse`, emit structured deny JSON. For `ConfigChange`, emit structured `decision:"block"`. `FileChanged` remains non-blocking. Hooks without a safe block JSON exit `2`. | Exit `2`, empty stdout. |
+| `enforce` or `local-dev-enforce` | For `PreToolUse`, emit structured Claude deny JSON, with or without `CORDUM_AGENTD_FAIL_CLOSED`; the contract measures this for `enforce` when agentd times out. Other hook events continue with the redacted warning unless `CORDUM_AGENTD_FAIL_CLOSED=true`. | Exit `2`, empty stdout. |
+| `enterprise-strict` or `CORDUM_AGENTD_FAIL_CLOSED=true` | Fail closed. For parseable `PreToolUse`, emit structured deny JSON. For `ConfigChange`, emit structured `decision:"block"`. `FileChanged` remains non-blocking. Hooks without a safe block JSON exit `2`. The contract measures the `enterprise-strict` deny for a malformed agentd response. | Exit `2`, empty stdout. |
+
+In `enforce` and `enterprise-strict`, a degraded agentd answer to `PreToolUse` also becomes a deny; the contract measures this for `enforce`, and it measures the `observe` allow when agentd is unavailable. The other cases in this section are not measured; see [failure and partition behavior](../contract/failure-behavior.md#behavior-table).
 
 ## Exit codes
 

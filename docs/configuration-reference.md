@@ -694,7 +694,7 @@ scanners:
 | `CORDUM_AGENTD_GATEWAY_TIMEOUT` | `5s` | No | Per-call timeout for `cordum-agentd` Gateway lifecycle/evaluate/approval/evidence requests. |
 | `CORDUM_AGENTD_URL` | `http://127.0.0.1:8765/v1/edge/hooks/claude` | No | Loopback-only local agentd decision endpoint used by `cordum-hook`; remote hosts are rejected. |
 | `CORDUM_AGENTD_SOCKET` | `http://127.0.0.1:8765/v1/edge/hooks/claude` | No | `cordum-agentd` local bind URL. P0 accepts loopback HTTP only; Unix socket / named-pipe paths fail fast instead of silently disabling enforcement. |
-| `CORDUM_AGENTD_FAIL_CLOSED` | `false` | No | When true, `cordum-hook` blocks/fails closed if local agentd is unavailable or returns an invalid response. |
+| `CORDUM_AGENTD_FAIL_CLOSED` | `false` | No | When true, `cordum-hook` fails closed for every hook event except `FileChanged` if local agentd is unavailable, times out or returns an invalid response, and `cordum-agentd` fails closed instead of continuing degraded when the Gateway times out during its startup session or heartbeats keep failing. `enforce` mode denies `PreToolUse` in those cases without it. See [cordum-hook fail modes](edge/cordum-hook.md#fail-modes). |
 | `CORDUM_AGENTD_STATE_DIR` | `~/.cordum/edge/sessions` | No | Root directory for small local agentd state files; never stores API keys, hook nonces, raw hook payloads, transcripts, or authorization headers. |
 | `CORDUM_EDGE_POLICY_MODE` | `observe` | No | `cordum-agentd` session/evaluate policy mode: `observe`, `enforce`, or `enterprise-strict`. Enterprise-strict denies/fails closed when Cordum governance is unavailable. |
 | `CORDUM_EDGE_MODE` | `observe` | No | Edge local hook mode: `observe`, `local-dev-enforce`, or `enterprise-strict`. |

@@ -77,8 +77,13 @@ security notes. The short version:
 - Hook deadline: generated Claude settings use `CORDUM_AGENTD_HOOK_TIMEOUT=4.5s`
   so Cordum stays below Claude Code's 5s command-hook deadline.
 - Modes: `CORDUM_EDGE_POLICY_MODE` accepts `observe`, `enforce`, and
-  `enterprise-strict`; `CORDUM_AGENTD_FAIL_CLOSED=true` forces fail-closed
-  behavior when local governance cannot respond safely.
+  `enterprise-strict`. In `enforce`, `cordum-hook` denies `PreToolUse` when
+  local agentd times out, without any other setting.
+  `CORDUM_AGENTD_FAIL_CLOSED=true` also makes the hook fail closed for its other
+  events except `FileChanged`, and makes agentd stop rather than run degraded
+  when the Gateway times out at startup or heartbeats keep failing. See
+  [Edge configuration](edge/configuration.md) and the
+  [failure and partition behavior contract](contract/failure-behavior.md#behavior-table).
 - State and exports: `CORDUM_AGENTD_STATE_DIR` stores small non-secret state,
   `CORDUM_AGENTD_STRICT_PERMS=1` fails closed on broad Windows ACLs, and
   `CORDUM_EDGE_EXPORT_MAX_BYTES` caps metadata-only evidence bundles.
