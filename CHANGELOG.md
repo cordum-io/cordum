@@ -228,6 +228,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   and `policybundles.ApplyInvariants` prepends it like `deny`, so a tenant
   allow for the same jobs no longer wins over it (#492, task-780cf46a).
 
+- Edge: ConfigChange denies no longer emit an invalid `hookSpecificOutput`.
+  The hook prints only the documented top-level `decision` and `reason`
+  (#492, task-8cb78a96).
+
 - Edge: a broken `cordum-hook` now blocks. Fail-closed sessions (every mode
   except observe) and the managed template set `"onFailure": "block"` on
   `PreToolUse`, `UserPromptSubmit` and `ConfigChange`, which needs Claude Code
