@@ -377,7 +377,7 @@ not_tenant_data:
   - {path: core/controlplane/gateway/auth/scim.go, patterns: ['urn:ietf:params:scim:{urn}'], reason: 'SCIM protocol schema and message URNs, not Redis keys'}
   - {path: core/controlplane/gateway/handler_admin_locks.go, patterns: ['cordum:auth:jwks:{hash}', 'cordum:cache:marketplace', 'cordum:cb:{breaker}', 'cordum:dlq:cleanup', 'cordum:reconciler:{name}', 'cordum:replayer:{name}', 'cordum:scheduler:snapshot:{name}', 'cordum:wf:delay:poller', 'cordum:workflow-engine:reconciler:{name}'], reason: 'Admin lock-inspection prefixes for infrastructure locks, breakers and caches with no tenant data'}
   - {path: core/controlplane/gateway/handlers_approvals.go, patterns: ['approval:{ref}', 'namespace:{name}', 'resource:{name}', 'system:{name}'], reason: 'JetStream message-id label for approval republish and blast-radius label prefixes, not Redis keys'}
-  - {path: core/controlplane/gateway/handlers_auth.go, patterns: ['approvals:{action}', 'audit:read', 'audit:write', 'delegations:{action}', 'jobs:{action}', 'packs:{action}', 'policy:{action}', 'schemas:{action}', 'topics:{action}', 'workflows:{action}'], reason: 'API-key and role scope names, not Redis keys'}
+  - {path: core/controlplane/gateway/handlers_auth.go, patterns: ['approvals:{action}', 'audit:{action}', 'delegations:{action}', 'jobs:{action}', 'packs:{action}', 'policy:{action}', 'schemas:{action}', 'topics:{action}', 'workflows:{action}'], reason: 'API-key and role scope names, not Redis keys'}
   - {path: core/controlplane/gateway/handlers_edge_approvals.go, patterns: ['principal:{name}', 'role:{name}'], reason: 'Resolver identity label parts compared in memory, not Redis keys'}
   - {path: core/controlplane/gateway/handlers_edge_evaluate.go, patterns: ['principal:{name}', 'sha256:{digest}'], reason: 'Requester identity label and digest string prefix, not Redis keys'}
   - {path: core/controlplane/gateway/handlers_edge_llm_ingest.go, patterns: ['llm:{proxy}'], reason: 'Collector name the runtime replay window hashes into edge:rt:nonce keys (DI-C34); not a key itself'}
@@ -403,7 +403,7 @@ not_tenant_data:
   - {path: core/edge/agentd/evaluator.go, patterns: ['edge-evaluate:{hash}'], reason: 'In-process safe-allow cache key (DI-E03), not a Redis key'}
   - {path: core/edge/claude/mapper.go, patterns: ['sha256:{digest}'], reason: 'Digest string prefix, not a Redis key'}
   - {path: core/edge/copilot/hooksettings.go, patterns: ['authorization:{text}'], reason: 'Secret-marker substring used to refuse hook settings, not a Redis key'}
-  - {path: core/edge/observability.go, patterns: ['file:{label}', 'runtime:{label}', 'shell:{label}'], reason: 'Human-readable action summary labels, not Redis keys'}
+  - {path: core/edge/observability.go, patterns: ['file:{label}', 'mcp:{label}', 'runtime:{label}', 'shell:{label}'], reason: 'Human-readable action summary labels, not Redis keys'}
   - {path: core/edge/redaction.go, patterns: ['sha256:{digest}'], reason: 'Digest string prefix, not a Redis key'}
   - {path: core/edge/shadow/ci/buildkite.go, patterns: ['command:{text}'], reason: 'Pipeline YAML field name matched while scanning CI config, not a Redis key'}
   - {path: core/edge/shadow/ci/circleci.go, patterns: ['image:{text}', 'run:{text}'], reason: 'Pipeline YAML field names matched while scanning CI config, not Redis keys'}

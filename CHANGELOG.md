@@ -27,7 +27,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   string literal and JetStream stream name to map to a data-inventory entry or
   a `not_tenant_data` classification, and every Redis stream writer to a
   `redis_stream` entry. It fails on an unmapped item and on a classification
-  that no longer matches the code. The validator refuses `not_tenant_data`
+  that no longer matches the code. The validator refuses classification
   patterns that use identity placeholders such as `{tenant}` or `{user}`.
   Entries DI-C22 to DI-C53 add the job, workflow, identity, session, edge,
   evaluation and coordination key families. The guard checks mapping only and
