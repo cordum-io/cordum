@@ -612,6 +612,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Scheduler: an approved job whose dispatch failed and was retried stays
+  approved while its job hash and approval snapshot still match, instead of
+  going back to `APPROVAL_REQUIRED` with its approval reset to pending
+  (#492, task-7717cb4e).
+
 - On the gateway's HTTP MCP transport, the job, workflow and run ids that
   `cordum_cancel_job`, `cordum_trigger_workflow`, `cordum_approve_job`,
   `cordum_reject_job` and the `cordum://workflows/{id}/runs` and
