@@ -88,6 +88,7 @@ type rpaHarness struct {
 func rpaNewServer(t *testing.T) *rpaHarness {
 	t.Helper()
 	t.Setenv("CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE", "true")
+	t.Setenv("CORDUM_MCP_TAINT_FAILCLOSED_APPROVER", "true")
 	t.Setenv(mcp.TaintBackendEnvVar, "redis")
 	t.Setenv(mcp.DedupeBackendEnvVar, "redis")
 	s, _, _ := newTestGateway(t)

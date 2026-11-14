@@ -7,6 +7,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- MCP gate: in production, a destructive MCP call whose taint lookup fails is
+  denied instead of held. Deployments that want the hold, from the production
+  default or `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE=true`, must also set
+  `CORDUM_MCP_TAINT_FAILCLOSED_APPROVER=true` (#492, task-17c794b6).
+
 - MCP gate: invariant `match.mcp` lists are read the way the Safety Kernel
   reads them (`config.MCPRuleMatch`), so `allow_servers`, `allow_resources`
   and `allow_actions` now apply. The gate has no resource or action, so a

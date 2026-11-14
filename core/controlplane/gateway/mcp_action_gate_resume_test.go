@@ -9,6 +9,8 @@ package gateway
 // production seam is involved:
 //   - CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE=true is set before boot, because
 //     wireActionGatePipeline reads it once;
+//   - CORDUM_MCP_TAINT_FAILCLOSED_APPROVER=true is set before boot too, so the
+//     fail-closed call is held for an approver instead of denied;
 //   - the tool agr_delete_record matches the MCPGate's default destructive glob
 //     *delete*, and RequiresApproval=false keeps the registry approval gate out;
 //   - the session-taint key mcp:taint:default:<session> holds a Redis hash, so
@@ -109,6 +111,7 @@ type agrHarness struct {
 func agrNewServer(t *testing.T) *agrHarness {
 	t.Helper()
 	t.Setenv("CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE", "true")
+	t.Setenv("CORDUM_MCP_TAINT_FAILCLOSED_APPROVER", "true")
 	t.Setenv(mcp.TaintBackendEnvVar, "redis")
 	t.Setenv(mcp.DedupeBackendEnvVar, "redis")
 	s, _, _ := newTestGateway(t)
