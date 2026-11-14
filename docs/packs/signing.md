@@ -158,9 +158,11 @@ go test -cover ./core/packs/signing/...
 Signature verification runs on BOTH sides of `cordumctl pack install`:
 `cordumctl` checks locally for fast feedback, and the gateway
 re-verifies server-side before persisting any install state. The
-server-side check is the zero-trust rail — if `cordumctl` is patched
-or a hand-rolled curl upload bypasses the client, the gateway's
-verify still gates the install.
+server-side check does not depend on the client: if `cordumctl` is
+patched or a hand-rolled upload skips it, the gateway still checks the
+pack's signature when it has one, and in strict mode it refuses an
+unsigned pack. In non-strict mode the gateway accepts an unsigned pack;
+see CLM-083 in the [claim register](../contract/claims.yaml).
 
 ### Strict vs non-strict mode (decision tree)
 
