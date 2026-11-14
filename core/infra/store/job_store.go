@@ -2244,7 +2244,11 @@ func ClassifyApprovalRepair(snapshot ApprovalRepairSnapshot, opts ApprovalRepair
 
 	isApprovedResolution := approval.Decision == model.ApprovalDecisionApprove || approval.Status == model.ApprovalStatusApproved
 	if !isApprovedResolution && snapshot.Request != nil && snapshot.Request.Labels != nil {
-		isApprovedResolution = strings.EqualFold(strings.TrimSpace(snapshot.Request.Labels["approval_granted"]), "true")
+		// Legacy approvals persisted only approval_by plus the label. The
+		// label alone is no evidence of a human decision (the reconciler
+		// auto-applies this plan), so require the server-written approver.
+		isApprovedResolution = strings.TrimSpace(approval.ApprovedBy) != "" &&
+			strings.EqualFold(strings.TrimSpace(snapshot.Request.Labels["approval_granted"]), "true")
 	}
 	if isApprovedResolution {
 		plan.Kind = ApprovalRepairApplyApprovedResolution

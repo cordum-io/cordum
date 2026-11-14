@@ -664,6 +664,10 @@ func TestReconcilerAutoRepairsApprovedLegacyApproval(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("set safety decision: %v", err)
 	}
+	// Legacy approvals persisted only the approver plus the label.
+	if err := store.SetApprovalRecord(ctx, req.GetJobId(), model.ApprovalRecord{ApprovedBy: "alice"}); err != nil {
+		t.Fatalf("set approval record: %v", err)
+	}
 
 	reconciler := NewReconciler(store, time.Hour, time.Hour, time.Hour)
 	reconciler.tick(ctx)
