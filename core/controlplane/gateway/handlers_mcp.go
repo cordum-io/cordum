@@ -1162,7 +1162,7 @@ func (s *server) newMCPServiceBridge() mcp.ServiceBridge {
 			status, payload, raw, err := s.invokeMCPJSONHandler(
 				ctx,
 				http.MethodPost,
-				"/api/v1/jobs/"+jobID+"/cancel",
+				"/api/v1/jobs/"+url.PathEscape(jobID)+"/cancel",
 				nil,
 				map[string]string{"id": jobID},
 				body,
@@ -1180,7 +1180,7 @@ func (s *server) newMCPServiceBridge() mcp.ServiceBridge {
 			return nil
 		},
 		TriggerWorkflowFunc: func(ctx context.Context, req mcp.TriggerWorkflowInput) (*mcp.TriggerOutput, error) {
-			target := "/api/v1/workflows/" + req.WorkflowID + "/runs"
+			target := "/api/v1/workflows/" + url.PathEscape(req.WorkflowID) + "/runs"
 			if req.DryRun {
 				target += "?dry_run=true"
 			}
@@ -1228,7 +1228,7 @@ func (s *server) newMCPServiceBridge() mcp.ServiceBridge {
 			status, _, raw, err := s.invokeMCPJSONHandler(
 				ctx,
 				http.MethodPost,
-				"/api/v1/approvals/"+jobID+"/approve",
+				"/api/v1/approvals/"+url.PathEscape(jobID)+"/approve",
 				nil,
 				map[string]string{"job_id": jobID},
 				body,
@@ -1247,7 +1247,7 @@ func (s *server) newMCPServiceBridge() mcp.ServiceBridge {
 			status, _, raw, err := s.invokeMCPJSONHandler(
 				ctx,
 				http.MethodPost,
-				"/api/v1/approvals/"+jobID+"/reject",
+				"/api/v1/approvals/"+url.PathEscape(jobID)+"/reject",
 				nil,
 				map[string]string{"job_id": jobID},
 				body,
@@ -1427,8 +1427,10 @@ func (s *server) invokeMCPJSONHandler(
 		payload = encoded
 	}
 
-	req := httptest.NewRequest(method, target, bytes.NewReader(payload))
-	req = req.WithContext(ctx)
+	req, err := newMCPBridgeRequest(ctx, method, target, payload)
+	if err != nil {
+		return 0, nil, nil, err
+	}
 	if len(payload) > 0 {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -1483,8 +1485,10 @@ func (s *server) invokeMCPAnyHandler(
 		payload = encoded
 	}
 
-	req := httptest.NewRequest(method, target, bytes.NewReader(payload))
-	req = req.WithContext(ctx)
+	req, err := newMCPBridgeRequest(ctx, method, target, payload)
+	if err != nil {
+		return 0, nil, nil, err
+	}
 	if len(payload) > 0 {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -1512,6 +1516,30 @@ func (s *server) invokeMCPAnyHandler(
 		_ = json.Unmarshal(raw, &decoded)
 	}
 	return rr.Code, decoded, raw, nil
+}
+
+// newMCPBridgeRequest builds the in-process request for one bridge call.
+// The target must be an origin-form request URI with no space or control
+// byte; any other target is refused with a 400 invalid_request
+// BridgeError, so no handler runs for it.
+func newMCPBridgeRequest(ctx context.Context, method, target string, payload []byte) (*http.Request, error) {
+	if !validMCPBridgeTarget(target) {
+		return nil, mcp.NewBridgeError(http.StatusBadRequest, "invalid_request", "invalid bridge request target", nil)
+	}
+	return httptest.NewRequestWithContext(ctx, method, target, bytes.NewReader(payload)), nil
+}
+
+func validMCPBridgeTarget(target string) bool {
+	if !strings.HasPrefix(target, "/") {
+		return false
+	}
+	for i := 0; i < len(target); i++ {
+		if c := target[i]; c <= ' ' || c == 0x7f {
+			return false
+		}
+	}
+	_, err := url.ParseRequestURI(target)
+	return err == nil
 }
 
 func (s *server) stampMCPBridgeTenant(req *http.Request, ctx context.Context) (int, map[string]any, []byte, bool) {
@@ -1597,7 +1625,7 @@ func (s *server) newMCPDataBridge() mcp.DataBridge {
 				values = append(values, "limit="+strconv.Itoa(opts.Limit))
 			}
 			if status := strings.TrimSpace(opts.Status); status != "" {
-				values = append(values, "state="+status)
+				values = append(values, "state="+url.QueryEscape(status))
 			}
 			if opts.Cursor > 0 {
 				values = append(values, "cursor="+strconv.FormatInt(opts.Cursor, 10))
@@ -1622,7 +1650,7 @@ func (s *server) newMCPDataBridge() mcp.DataBridge {
 			return out, nil
 		},
 		ListWorkflowRunsFunc: func(ctx context.Context, wfID string, limit int) (*mcp.RunList, error) {
-			target := "/api/v1/workflows/" + strings.TrimSpace(wfID) + "/runs"
+			target := "/api/v1/workflows/" + url.PathEscape(strings.TrimSpace(wfID)) + "/runs"
 			if limit > 0 {
 				target += "?limit=" + strconv.Itoa(limit)
 			}
@@ -1657,7 +1685,7 @@ func (s *server) newMCPDataBridge() mcp.DataBridge {
 			status, payload, raw, err := s.invokeMCPJSONHandler(
 				ctx,
 				http.MethodGet,
-				"/api/v1/workflow-runs/"+strings.TrimSpace(runID),
+				"/api/v1/workflow-runs/"+url.PathEscape(strings.TrimSpace(runID)),
 				nil,
 				map[string]string{"id": strings.TrimSpace(runID)},
 				nil,

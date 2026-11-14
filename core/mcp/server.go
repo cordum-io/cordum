@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -352,10 +353,21 @@ func (s *MCPServer) Serve() error {
 	}
 }
 
-func (s *MCPServer) handleMessage(msg *JSONRPCMessage) *JSONRPCMessage {
+func (s *MCPServer) handleMessage(msg *JSONRPCMessage) (resp *JSONRPCMessage) {
 	if msg == nil {
 		return nil
 	}
+	// A handler panic is answered on this request with a fixed -32603
+	// that carries no panic detail, and is logged once with its stack.
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("mcp: recovered handler panic", "method", msg.Method, "panic", fmt.Sprint(r), "stack", string(debug.Stack()))
+			resp = nil
+			if messageHasID(msg.ID) {
+				resp = &JSONRPCMessage{JSONRPC: JSONRPCVersion, ID: msg.ID, Error: s.rpcError(jsonRPCInternalErrorCode, "internal error", nil)}
+			}
+		}
+	}()
 	// Derive the dispatch ctx from the ORIGINAL request ctx when the
 	// transport attached one. This preserves tenant (mcp.WithTenant),
 	// MCPCallMetadata (approval gate key), and any request-scoped
