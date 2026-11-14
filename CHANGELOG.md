@@ -709,6 +709,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- A DLQ retry drops the original job's server-owned labels. With
+  `cordum.bus_msg_id`, a retried approved job went out with the approval
+  republish's JetStream msg-id and could be dropped as a duplicate. The
+  retry keeps `WorkflowId` (#492, task-95631c1a).
+
 - MCP approvals: rejecting either half of an MCP approval (the Edge approval
   or the legacy record) resolves both, and the Edge approval is the pair's
   single consume token, so one approval runs one call (#492, task-1e1f64c7).
