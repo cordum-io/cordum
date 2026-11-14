@@ -17,7 +17,7 @@ BEFORE                              AFTER
 ```
 
 **Before Cordum:** Your agent runs `delete_account()` without hesitation.
-**After Cordum:** The Safety Kernel blocks destructive operations and requires human approval for high-risk actions — all without changing your agent's logic.
+**After Cordum:** Each wrapped tool call is checked against your safety policy first, and a deny or approval-required decision stops the call before the tool runs, all without changing your agent's logic. This applies to actions Cordum mediates; safety gating is rated `supported`, not `verified` (see CLM-016 in the [claim register](../contract/claims.yaml)).
 
 ## Prerequisites
 

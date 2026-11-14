@@ -7,12 +7,13 @@ in the same epic) replays these fixtures against current or candidate
 policies to detect regressions: *a previously-denied action is now
 allowed by a new policy*.
 
-## Immutability contract
+## Write-once versions
 
-> **Datasets are immutable. Create a new version to change entries —
-> updates are forbidden by design.**
+> **Each dataset version is write-once through the API. Create a new
+> version to change entries; deleting a version is a separate admin
+> operation (see Retention semantics below).**
 
-The HTTP surface enforces immutability at three layers:
+The API and the store handle versions at three layers:
 
 1. **Routing:** `PUT /api/v1/evals/datasets/{id}` does **not** mutate
    the referenced dataset in place. Instead it creates a **new version**
@@ -24,7 +25,10 @@ The HTTP surface enforces immutability at three layers:
 3. **Hashing:** every dataset carries a `content_hash` (SHA-256 over the
    canonical-JSON `entries` slice, with sorted keys) captured at create
    time. Operators auditing a long-lived dataset can re-compute the
-   hash and compare it against the stored value to detect tampering.
+   hash and compare it against the stored value.
+
+Write-once dataset versions are rated `supported`, not `verified`: see
+CLM-080 in the [claim register](../contract/claims.yaml).
 
 To evolve a dataset, either call `POST /api/v1/evals/datasets` with the
 same `name` and an incremented `version`, or call
