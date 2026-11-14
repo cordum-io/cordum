@@ -732,21 +732,27 @@ Per-tenant immutable retention holds on audit data. All endpoints require admin 
 }
 ```
 
-- `tenant_id` defaults to the server default tenant if omitted
+- `tenant_id` defaults to the caller's tenant if omitted; the caller must have
+  access to it (`403` otherwise)
 - Duplicate hold on same tenant returns `409`
 - Response: `201` with `{"hold": {...}}`
-- Errors: `400` (missing reason), `403` (not entitled), `409` (active hold exists), `500`
+- Errors: `400` (missing reason), `403` (not entitled or no tenant access), `409` (active hold exists), `500`
 
 ### GET `/api/v1/audit/legal-holds`
 
 - Auth: required + admin + LegalHold entitlement
-- Query params: `?tenant=<id>` (optional filter)
+- Query params: `?tenant=<id>` (optional filter; `403` if the caller has no
+  access to that tenant)
+- Returns only holds in tenants the caller can access: its own tenant, or every
+  tenant for a cross-tenant principal
 - Response: `{"holds": [...]}`
 
 ### DELETE `/api/v1/audit/legal-hold/{id}`
 
 - Auth: required + admin + LegalHold entitlement
-- Releases the hold. Does NOT delete retained data — normal TTL resumes.
+- Releases the hold. Does NOT delete retained data — normal retention resumes.
+- A hold in a tenant the caller cannot access returns the same `404` as an
+  unknown ID
 - Response: `{"released": true, "id": "..."}`
 - Errors: `404` (hold not found), `409` (already released), `403`, `500`
 

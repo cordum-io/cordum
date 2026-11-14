@@ -226,7 +226,10 @@ payloads into audit records.
 
 When a legal hold is active (`POST /api/v1/audit/legal-holds`), audit events
 for the affected tenant are **never** retention-trimmed. The hold prevents
-deletion until explicitly released.
+deletion until explicitly released. Holds are tenant-scoped: a caller can only
+create, list or release holds in tenants it can access (all tenants for a
+cross-tenant principal); releasing another tenant's hold answers like an
+unknown ID.
 
 ```bash
 # Create a legal hold

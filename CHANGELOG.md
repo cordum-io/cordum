@@ -7,6 +7,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Legal-hold endpoints check tenant access, and creating a legal hold without
+  `tenant_id` now applies it to the caller's tenant (#492, task-4ab53a76).
+
 - `cordum-mcp` HTTP mode binds `127.0.0.1:8090` by default and needs an
   inbound bearer token (`--http-auth-token` / `CORDUM_MCP_HTTP_AUTH_TOKEN`)
   for any other bind; without one it refuses to start unless
