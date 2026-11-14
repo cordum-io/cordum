@@ -1700,6 +1700,7 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 	s.registerRoute(mux, "PUT /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handlePutPolicyBundle))
 	s.registerRoute(mux, "DELETE /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handleDeletePolicyBundle))
 	s.registerRoute(mux, "POST /api/v1/policy/bundles/{id}/simulate", s.instrumented("/api/v1/policy/bundles/{id}/simulate", s.handleSimulatePolicyBundle))
+	s.registerRoute(mux, "POST /api/v1/policy/bundles/{id}/resign", s.instrumented("/api/v1/policy/bundles/{id}/resign", s.handleResignPolicyBundle))
 	// Policy shadow (task-44807b2c) — shadow-evaluation surface for a bundle.
 	// PUT upserts the shadow policy, GET fetches current status, DELETE removes it.
 	// The three results endpoints expose dashboard analytics (summary counters,
