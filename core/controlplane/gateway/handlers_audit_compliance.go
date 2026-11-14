@@ -123,6 +123,9 @@ func (s *server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	opts.StreamKey = audit.NewChainer(client, "").StreamKey(tenant)
+	if s.auditChainer != nil && s.auditChainer.HMACEnabled() {
+		opts.HMACKey = s.auditChainer.HMACKeyForVerify()
+	}
 	opts.BundleLookup = func(ctx context.Context, _ string, from, to time.Time) ([]audit.SignedBundleSnapshot, error) {
 		return s.listSignedBundleSnapshots(ctx, from, to)
 	}
