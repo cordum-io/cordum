@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
@@ -43,6 +44,31 @@ func (f MCPInvariantLookupFunc) InvariantsForMCPTool(ctx context.Context) []conf
 		return nil
 	}
 	return f(ctx)
+}
+
+// CheckInvariants enforces the SecOps invariant floor on a tools/call,
+// approval-gated or not (mcp.InvariantFloor): ToolRegistry.Call runs it
+// before approval gating, so a deny invariant also blocks tools that never
+// reach Check. A call without MCPCallMetadata is matched with an empty
+// tenant, so tenant-scoped invariants skip it and the rest still apply.
+//
+// ponytail: one configsvc read and invariants YAML parse per tools/call;
+// cache by bundle revision if call volume makes that matter.
+func (g *gatewayApprovalGate) CheckInvariants(ctx context.Context, tool mcp.Tool) error {
+	if g == nil || g.invariants == nil {
+		return nil
+	}
+	meta, _ := MCPCallMetadataFromContext(ctx)
+	rule, denied := matchMCPInvariantDeny(g.invariants.InvariantsForMCPTool(ctx), tool, meta)
+	if !denied {
+		return nil
+	}
+	reason := strings.TrimSpace(rule.Reason)
+	if reason == "" {
+		reason = "denied by SecOps invariant"
+	}
+	return fmt.Errorf("%w: tool %q denied by invariant %q: %s",
+		ErrMCPInvariantDeny, tool.Name, rule.ID, reason)
 }
 
 // matchMCPInvariantDeny iterates invariant rules looking for a DENY-class

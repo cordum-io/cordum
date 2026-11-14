@@ -354,3 +354,50 @@ func TestMCPInvariantBlockDecisionDenies(t *testing.T) {
 		t.Fatal("a block invariant must deny like a deny invariant")
 	}
 }
+
+// TestMCPInvariantFloorCoversNonGatedTools runs tools/call through the
+// production pieces (ToolRegistry plus wireMCPApprovalGate, as
+// registerMCPRoutes wires them). A deny invariant blocks a tool that is not
+// approval-gated before its handler runs, a tool it does not cover still
+// runs, and a gated tool it does not cover still waits for approval.
+func TestMCPInvariantFloorCoversNonGatedTools(t *testing.T) {
+	t.Parallel()
+	srv := &server{}
+	lookup := MCPInvariantLookupFunc(func(context.Context) []config.PolicyRule {
+		return []config.PolicyRule{{
+			ID: "inv-deny-approve", Decision: "deny", Reason: "agents may not approve jobs",
+			Match: config.PolicyMatch{MCP: config.MCPPolicy{DenyTools: []string{mcp.ToolApproveJob}}},
+		}}
+	})
+	rawGate, _ := srv.wireMCPApprovalGate(newTestMCPStore(t), lookup)
+	registry := mcp.NewToolRegistry()
+	registry.SetApprovalGate(rawGate)
+	ran := map[string]bool{}
+	for _, tool := range []mcp.Tool{
+		{Name: mcp.ToolApproveJob},
+		{Name: mcp.ToolListJobs},
+		{Name: mcp.ToolInstallPack, RequiresApproval: true, ApprovalScope: mcp.ApprovalScopeWrite},
+	} {
+		name := tool.Name
+		if err := registry.Register(tool, func(context.Context, json.RawMessage) (*mcp.ToolCallResult, error) {
+			ran[name] = true
+			return &mcp.ToolCallResult{}, nil
+		}); err != nil {
+			t.Fatalf("Register %s: %v", name, err)
+		}
+	}
+	ctx := WithMCPCallMetadata(context.Background(), MCPCallMetadata{Tenant: "t1", AgentID: "agent-a", Principal: "agent-a"})
+	ctx = mcp.WithTenant(mcp.ContextWithIdentity(ctx, &mcp.AgentIdentity{ID: "agent-a"}), "t1")
+
+	if _, err := registry.Call(ctx, mcp.ToolApproveJob, json.RawMessage(`{"job_id":"j1"}`)); !errors.Is(err, ErrMCPInvariantDeny) || ran[mcp.ToolApproveJob] {
+		t.Fatalf("deny invariant must block the non-gated tool before it runs: err=%v ran=%v", err, ran[mcp.ToolApproveJob])
+	}
+	if _, err := registry.Call(ctx, mcp.ToolListJobs, json.RawMessage(`{}`)); err != nil || !ran[mcp.ToolListJobs] {
+		t.Fatalf("uncovered non-gated tool must run: err=%v ran=%v", err, ran[mcp.ToolListJobs])
+	}
+	_, err := registry.Call(ctx, mcp.ToolInstallPack, json.RawMessage(`{"pack_id":"p1"}`))
+	var required *mcp.ApprovalRequired
+	if !errors.As(err, &required) || ran[mcp.ToolInstallPack] {
+		t.Fatalf("uncovered gated tool must still wait for approval: err=%v ran=%v", err, ran[mcp.ToolInstallPack])
+	}
+}
