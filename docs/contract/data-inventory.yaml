@@ -182,7 +182,7 @@ control_plane:
      legal_hold: {applies: false, reason: No cleanup exists that could consult legal holds}}
   - {id: DI-C24, class: control-records,
      storage: {kind: redis_key, location: Job id indexes by state/recency/deadline/tenant, redis_keys: [{pattern: 'job:index:{state}', path: core/infra/store/job_store.go}, {pattern: 'job:recent', path: core/infra/store/job_store.go}, {pattern: 'job:deadline', path: core/infra/store/job_store.go}, {pattern: 'job:tenant:active:{tenant}', path: core/infra/store/job_store.go}], writers: [{path: core/infra/store/job_store.go, symbol: RedisJobStore.SetStateWithContext}, {path: core/infra/store/job_store.go, symbol: RedisJobStore.SetDeadline}]},
-     content: {description: Job ids with timestamps per state and tenant, personal_data: no},
+     content: {description: Job ids with timestamps per state and tenant, personal_data: possible},
      retention: {none: 'No TTL on state/recent/deadline indexes; job:recent keeps the newest 1000 and a job id stays in its final state index'},
      deletion: {paths: [{path: core/infra/store/job_store.go, symbol: RedisJobStore.SetStateWithContext}]},
      legal_hold: {applies: false, reason: Index trimming does not consult legal holds}}
@@ -302,13 +302,13 @@ control_plane:
      legal_hold: {applies: false, reason: Delegation records have no cleanup that consults legal holds}}
   - {id: DI-C44, class: identity-access,
      storage: {kind: redis_key, location: Delegation revocation markers and issue-rate counters, redis_keys: [{pattern: 'delegation:revoked:{jti}', path: core/auth/delegation/revocation.go}, {pattern: 'delegation:issue:{tenant}:{agent}:{minute}', path: core/controlplane/gateway/handlers_delegation.go}], writers: [{path: core/auth/delegation/revocation.go, symbol: RedisRevocationStore.Revoke}, {path: core/auth/delegation/cascade.go, symbol: RedisRevocationStore.CascadeRevoke}, {path: core/controlplane/gateway/handlers_delegation.go, symbol: server.allowDelegationIssue}]},
-     content: {description: Revoked token ids and per-agent issue counts per minute, personal_data: no},
+     content: {description: Revoked token ids and per-agent issue counts per minute, personal_data: possible},
      retention: {none: 'No configurable setting; revocations last until token expiry (cascades 24h) and issue counters 2m'},
      deletion: {paths: [{path: core/auth/delegation/revocation.go, symbol: RedisRevocationStore.Revoke}, {path: core/auth/delegation/cascade.go, symbol: RedisRevocationStore.CascadeRevoke}, {path: core/controlplane/gateway/handlers_delegation.go, symbol: server.allowDelegationIssue}]},
      legal_hold: {applies: false, reason: Marker TTLs do not consult legal holds}}
   - {id: DI-C45, class: identity-access,
      storage: {kind: redis_key, location: 'Worker sessions session:worker:v2:{tenant}:{worker} and legacy session:worker:legacy:{agent}, revocations and handshake challenges', redis_keys: [{pattern: 'session:worker:{version}:{tenant}:{worker}', path: core/controlplane/scheduler/session_token.go}, {pattern: 'session:revoked:{tenant}:{jti}', path: core/controlplane/scheduler/session_token.go}, {pattern: 'session:handshake:{kind}:{worker}:{value}', path: core/controlplane/scheduler/handshake_challenge.go}], writers: [{path: core/controlplane/scheduler/session_token.go, symbol: SessionTokenIssuer.persistIssue}, {path: core/controlplane/scheduler/session_token.go, symbol: SessionTokenIssuer.Revoke}, {path: core/controlplane/scheduler/session_token_store.go, symbol: SessionTokenIssuer.writeRenewTx}, {path: core/controlplane/scheduler/handshake_challenge.go, symbol: RedisHandshakeChallengeStore.Create}]},
-     content: {description: 'Active worker sessions with tenant, worker and agent ids (encoded in keys), revoked token ids and handshake challenges', personal_data: no},
+     content: {description: 'Active worker sessions with tenant, worker and agent ids (encoded in keys), revoked token ids and handshake challenges', personal_data: possible},
      retention: {none: 'No configurable setting; records expire with the token (DefaultSessionTokenLifetime 1h) and challenges after 30s'},
      deletion: {paths: [{path: core/controlplane/scheduler/session_token.go, symbol: SessionTokenIssuer.persistIssue}, {path: core/controlplane/scheduler/handshake_challenge.go, symbol: RedisHandshakeChallengeStore.Consume}]},
      legal_hold: {applies: false, reason: Session TTLs do not consult legal holds}}
@@ -344,7 +344,7 @@ control_plane:
      legal_hold: {applies: false, reason: Saga cleanup does not consult legal holds}}
   - {id: DI-C51, class: evidence-audit,
      storage: {kind: redis_key, location: Delegation lineage audit emission claims, redis_keys: [{pattern: 'cordum:audit:delegation_lineage:{job}:{jti}', path: core/controlplane/scheduler/delegation_dispatch.go}], writers: [{path: core/controlplane/scheduler/delegation_dispatch.go, symbol: Engine.claimDelegationLineageAuditEmission}]},
-     content: {description: Marker values keyed by job id and token id, personal_data: no},
+     content: {description: Marker values keyed by job id and token id, personal_data: possible},
      retention: {none: 'No configurable setting; markers expire after a fixed 30d'},
      deletion: {paths: [{path: core/controlplane/scheduler/delegation_dispatch.go, symbol: Engine.claimDelegationLineageAuditEmission}]},
      legal_hold: {applies: false, reason: Marker TTL does not consult legal holds}}
