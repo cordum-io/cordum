@@ -264,11 +264,11 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
             if keyword == "export" or (keyword == "declare" and "-x" in words) or (m and name in env and keyword != "local"): env[name] = table.get(name, env.get(name, ""))
     def edge(self, cmd: Cmd, rel: str, table: dict, env: dict, argv: list, chain: tuple, quiet: bool, cwd: str, dry: bool = False) -> object:
         here, words, child = posixpath.dirname(rel) or ".", list(cmd.words), dict(env)
+        quiet, words = quiet or any(re.fullmatch(r"(?:1|&)?>>?/dev/null", w) for w in words), [w for w in words if not RWORD.match(w)]  # a redirection word is neither a prefix nor the command name (</dev/null env FOO=1 bash x.sh)
         while words and (words[0] in PREFIX_WORDS or WORD_ASSIGN.fullmatch(words[0])):
             if m := WORD_ASSIGN.fullmatch(word := words.pop(0)): child[m.group(1)] = expand(m.group(2), table, env, here)
             while word in ("env", "sudo", "timeout") and words and (words[0][:1] == "-" or (word == "timeout" and re.fullmatch(r"[\d.]+[smhd]?", words[0]))):
                 if words.pop(0) in ("-u", "--unset") and words: child.pop(words.pop(0), None)
-        quiet, words = quiet or any(re.fullmatch(r"(?:1|&)?>>?/dev/null", w) for w in words), [w for w in words if not RWORD.match(w)]
         name, program, dynamic = expand(words[0], table, env, here) if words else "", False, lambda: None if dry else self.report("SOURCE_DYNAMIC", rel, cmd.line, True)
         if dry and name not in ("source", "."): return ""
         if name == "eval": return dynamic()
