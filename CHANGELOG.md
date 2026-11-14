@@ -213,6 +213,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- Safety Kernel: `block`, and every alias `normalizeDecision` maps to deny, is
+  now deny-class. In the Safety Kernel and its GlobalPolicy view, a `block`
+  invariant, like every invariant whose decision is not allow-class
+  (`config.IsAllowClassDecision`), is prepended like `deny`, so it beats a
+  tenant allow for the same jobs (#492, task-2521c8f2).
+
 - Safety Kernel: `label_threshold` resolves an unreadable label value
   restrictively. A value that does not parse as a number makes a `deny`,
   `require_approval` or `throttle` rule match and an `allow` or
