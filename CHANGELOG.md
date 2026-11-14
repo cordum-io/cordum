@@ -252,6 +252,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- On the gateway's HTTP MCP transport (`/mcp/sse` and `/mcp/message`),
+  `resources/read` of `cordum://jobs/{id}` and the `cordum_get_job` and
+  `cordum_status` tools return the job and the system status instead of a
+  `read_only_unsupported` error. They run the checks of
+  `GET /api/v1/jobs/{id}` and `GET /api/v1/status`, so a job in another
+  tenant, or a missing job, returns an error and no job data
+  (task-43c69929).
+
 - The dashboard image's build stage runs on the build host's platform. Its
   linux/arm64 image copies the same static dist/ as linux/amd64 instead of
   running pnpm, tsc and Vite under QEMU emulation, where a release dry run's
