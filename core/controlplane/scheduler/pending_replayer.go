@@ -148,9 +148,10 @@ func (r *PendingReplayer) replayPending(ctx context.Context, cutoff time.Time) {
 }
 
 // replayApproved replays jobs stuck in APPROVAL_REQUIRED state that a human
-// already approved. This handles the case where a job was approved before a
-// worker was available to process it. The approval_granted label alone is not
-// enough: the stored approval must still bind the request (approvalBinding).
+// already approved. Approved jobs stay PENDING through dispatch retries, so
+// this mostly recovers jobs an older scheduler re-gated after a failed
+// dispatch. The approval_granted label alone is not enough: the stored
+// approval must still bind the request (approvalBinding).
 func (r *PendingReplayer) replayApproved(ctx context.Context, cutoff time.Time) {
 	store, ok := r.store.(interface {
 		GetJobRequest(context.Context, string) (*pb.JobRequest, error)
