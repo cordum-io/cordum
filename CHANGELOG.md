@@ -223,6 +223,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- MCP gateway: invariants run on every built-in `tools/call`, not only on
+  approval-gated tools, with `mcp.policy_gate_enabled` on or off
+  (#492, task-950b90b1).
+
 - Gateway: a `block` invariant, like every invariant whose decision is not
   allow-class (`config.IsAllowClassDecision`), now denies at the MCP gate,
   and `policybundles.ApplyInvariants` prepends it like `deny`, so a tenant
