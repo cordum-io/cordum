@@ -1012,6 +1012,7 @@ tenant's binding for the same principal. Rotating a worker credential without
 | Linked to an identity in the request tenant | equal to the bound identity `id` | The bound identity |
 | Linked to an identity in the request tenant | any other value | No identity, and the gateway logs `mcp X-Agent-Id does not match the principal's bound agent identity` |
 | Not linked, or linked to another tenant's identity | any | No identity |
+| None, or one named only by `X-Principal-Id` | any | No identity |
 
 The header is compared exactly after trimming surrounding whitespace, so IDs
 are case-sensitive. A suspended or revoked bound identity also resolves to no
@@ -1046,9 +1047,13 @@ They never carry the header value.
 
 The binding is only as strong as the credential's principal. Use a static API
 key with a configured principal (`<tenant>:<key>:<role>:<principal>` in
-`CORDUM_API_KEYS`, or `principal_id` in its JSON form), or a JWT or SSO login,
-whose subject becomes the principal. Runtime-created API keys carry no
-principal of their own and are not a supported way to bind an MCP client.
+`CORDUM_API_KEYS`, or `principal_id` in its JSON form), or a session, JWT or
+SSO login, whose subject becomes the principal. Runtime-created API keys carry
+no principal of their own and are not a supported way to bind an MCP client.
+A principal named only by the `X-Principal-Id` header, which development
+accepts by default and production only with `CORDUM_ALLOW_HEADER_PRINCIPAL=true`,
+is kept for attribution only: it binds no identity, so the caller gets no tools
+and requests no approvals.
 
 ## Integration Examples
 

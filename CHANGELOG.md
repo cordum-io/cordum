@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- `cordumctl pack install`, upgrades and uninstall use the gateway pack API,
+  applying the gateway's checks to every install. Install requires `packs.install`
+  (`auth.PermPacksInstall`) or admin, and prints the returned pack worker credential
+  to stdout. `/api/v1/config` preserves server-managed `system/policy` bundles and
+  the `system/packs` registry, returning `CONFIG_KEY_FORBIDDEN` for changes; use
+  the policy bundle API or the pack API instead. Older cordumctl versions must
+  be upgraded to install or uninstall packs against this gateway.
 - Migrated the shared dashboard DataTable to TanStack React Table 9.3.1 with
   explicit sorting, sizing and visibility features, preserving its existing
   rendering and interaction contracts (task-fa2b4cef).
@@ -21,6 +28,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   endpoint copies from control-plane data. `tests/contract` checks its setting
   and code references; complete key/stream coverage and cleanup guarantees
   are not claimed by this inventory.
+
+- Added `TestDataInventoryKeyCoverage` (PR2-07-KEYS): `tests/contract` parses
+  the non-test Go files under `core/` and `cmd/` and requires every key-shaped
+  string literal and JetStream stream name to map to a data-inventory entry or
+  a `not_tenant_data` classification, and every Redis stream writer to a
+  `redis_stream` entry. It fails on an unmapped item and on a classification
+  that no longer matches the code. The validator refuses classification
+  patterns that use identity placeholders such as `{tenant}` or `{user}`.
+  Entries DI-C22 to DI-C53 add the job, workflow, identity, session, edge,
+  evaluation and coordination key families. The guard checks mapping only and
+  adds no deletion or legal-hold behavior.
 
 - Added [failure and partition behavior](docs/contract/failure-behavior.md)
   (M0-06, task-51b08640): required and current behavior for low-risk,
@@ -79,6 +97,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Failed jobs report one of 10 documented codes (`invalid_input`, `mcp_unavailable`, `mcp_protocol_error`, `mcp_call_failed`, `mcp_approval_rejected`, `mcp_approval_expired`, `mcp_approval_not_found`, `mcp_approval_timeout`, `mcp_approval_invalid`, `worker_shutdown`), never server text or the API key.
 - Unsigned agent, so compat CAP profile only. It needs the default `mcp.policy_gate_enabled=false`, because it does not send `_approval_ref`. `demo/cap-mcp-governed/README.md` covers setup.
 
+#### demo/cap-mcp-governed — governed end-to-end test in CI: operator approval, self-approval refusal and policy deny (2026-11-14, task-4ec9af00)
+
+- New `demo/cap-mcp-governed/pack` (topic route plus a deny and an allow rule), `demo/cap-mcp-governed/integration_test.sh`, and the `demo-cap-mcp-governed-e2e` workflow, which runs the demo worker against the source-built compose demo stack nightly, on dispatch and on pull requests that change the demo.
+- The test asserts that a policy-denied job creates no approval and no workflow, that the worker cannot approve its own request (403 `self_approval_denied`), that an operator approval runs the call once and adds exactly one workflow, and that no credential reaches the artifacts. It prints `CAP-MCP GOVERNED DEMO OK` once.
+- Limits: unsigned worker on the compat CAP profile, and MCP with `policy_gate_enabled=false`.
+- `tools/scripts/workflow_credential_guard.py` registers the new workflow and its six masked credentials. Failure artifacts are redacted before upload.
+
 ### Changed
 
 - The eight required checks also run on `merge_group` events, with OpenAPI
@@ -87,6 +112,73 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   ruleset (task-fd34e921).
 
 ### Security
+
+- Upgrade note, production signed-content enforcement. In the production
+  profile (`CORDUM_ENV=production` or `CORDUM_PRODUCTION=true`) with no
+  override, the safety kernel activates config-store policy only when its
+  signature verifies, and the gateway refuses unsigned packs and stores signed
+  pack policy fragments.
+  - `deploy/k8s/production`, and any deployment with `CORDUM_ENV=production`
+    and no explicit override, now refuses unsigned packs.
+  - The packs in the official catalog are not yet signed. Until they are,
+    production refuses them unless `CORDUM_GATEWAY_PACK_STRICT=false` is set.
+    That override restores the previous pack behavior, and the admin-only
+    `signature_enforcement.packs.strict` field of `GET /api/v1/status`
+    reports it.
+  - `CORDUM_POLICY_STRICT=warn` explicitly restores the previous policy-store
+    behavior.
+  - A production gateway with no policy signing key boots, then refuses policy
+    writes with 503 `POLICY_SIGNING_REQUIRED`. Configure a policy signing key
+    whose public half the policy trust store holds
+    (`CORDUM_POLICY_PUBLIC_KEY_<ID>`), or set an explicit
+    `CORDUM_POLICY_STRICT=warn` to restore the previous write behavior.
+  - Before upgrading, export the safety kernel's
+    `CORDUM_POLICY_PUBLIC_KEY_<ID>` and run
+    `cordumctl policy verify-store --gateway <url> --api-key <admin key>`.
+    It exits 0 when the store is clean, 1 when it lists bundles that would be
+    refused, and 2 on a configuration error. Against a gateway at v1.0.0 or
+    older that has no policy document, it exits 2.
+  - Re-sign the listed bundles that no pack owns with
+    `cordumctl policy resign --bundle <id> [--bundle <id> ...]` or
+    `cordumctl policy resign --all`. Both need an admin key, and the gateway
+    needs a policy signing key its trust store holds.
+  - Fix pack-owned policy fragments by reinstalling the pack.
+
+- Policy signing upgrade tools: the safety kernel's boot check uses
+  `policysign.ResolveMode`, reporting `enforce` in production when
+  `CORDUM_POLICY_STRICT` is unset and refusing startup without a trusted
+  `CORDUM_POLICY_PUBLIC_KEY_<ID>`. `cordumctl policy verify-store` lists unsigned,
+  malformed, untrusted-key, stale-signature and bad-signature store bundles,
+  reports pack reinstallation remedies, exits nonzero on refusals and writes
+  nothing. `cordumctl policy resign --bundle <id>` (or explicit `--all`) signs
+  current stored content through `POST /api/v1/policy/bundles/{id}/resign` using
+  the gateway's trusted signing key. This admin-role action stores one audit
+  entry per bundle, never runs automatically and refuses pack-owned fragments
+  or a missing or untrusted signing key.
+
+- Gateway: policy audit entries are stored independently of the client
+  request's lifetime. A concurrent change to the audit log is retried, and an
+  entry that still cannot be stored is logged at ERROR. Policy writes that need
+  an atomic audit record can commit the policy document and its audit entry in
+  one Redis transaction. A co-located audit document keeps both keys in one
+  Redis Cluster slot, and the policy audit API (`GET /api/v1/policy/audit`)
+  returns entries from both audit documents.
+
+- Gateway: velocity-rule create and update, and the output-rule enable toggle,
+  store their policy bundle with a signature from the configured policy signing
+  key (`CORDUM_POLICY_SIGNING_KEY`). When the policy store's signature mode is
+  enforce, these writes are refused before any change with 503
+  `POLICY_SIGNING_REQUIRED` unless a signing key whose public half the policy
+  trust store holds (`CORDUM_POLICY_PUBLIC_KEY_<ID>`) is configured. Enforce
+  means `policysign.ResolveMode` resolves enforce (for example the production
+  profile with `CORDUM_POLICY_STRICT` unset, or an explicit `enforce`) or the
+  value is unrecognised. Under an explicit `CORDUM_POLICY_STRICT=warn` or `off`,
+  a write that cannot be signed with a trusted key still proceeds, with a
+  warning. The gateway's boot-time move of legacy policy bundles from
+  `system/default` to `system/policy` never signs content. Under enforce it moves
+  them only when every legacy bundle with content already carries a signature
+  that verifies under the policy trust store; otherwise it leaves them in place
+  and logs `policy.legacy_migration_unverified` with the count.
 
 - Job submit and delegation token issue fail closed when the agent identity
   store cannot be read (task-7ded46ca). HTTP job submit and gRPC `SubmitJob`
@@ -98,6 +190,148 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   returns 503 and audits outcome `error` instead of a 403 `denied`. An absent
   or dangling link and an empty principal behave as before. This was
   CodeRabbit's finding on #570.
+
+#### core/controlplane/gateway — production pack trust (2026-11-13, task-a9787d2f)
+- In the production profile (`CORDUM_ENV=production` or `CORDUM_PRODUCTION=true`),
+  upload and marketplace installs default to requiring a pack signature verified
+  against a trusted publisher key. With no trusted publisher key, every pack is
+  refused. The development profile is unchanged.
+- Explicit downgrade: `CORDUM_GATEWAY_PACK_STRICT=false` or Redis
+  `cfg:packs:strict_mode=false` disables pack enforcement unless either setting
+  is explicitly true. The gateway logs the downgrade at startup and on every
+  unsigned install. The release compose sets this downgrade until official packs
+  are signed; production deployments without an override remain strict.
+- Pack policy fragments are signed with the configured usable policy signing key.
+  Enforced policy-store mode refuses an install before any write when its fragment
+  cannot be signed under the policy trust store (`pack.policy_unsigned`). An
+  undetermined mode is enforced. Explicit `CORDUM_POLICY_STRICT=warn` or `off`
+  permits unsigned storage with a warning when no usable signing key is available.
+
+- Safety kernel: one signature rule now covers every policy source (file, URL
+  and config store), and `policysign.ResolveMode` exposes it. In the production
+  profile (`CORDUM_ENV=production` or `CORDUM_PRODUCTION=true`) with
+  `CORDUM_POLICY_STRICT` unset, a config-store policy bundle becomes active only
+  when its signature verifies against the policy trust store
+  (`CORDUM_POLICY_PUBLIC_KEY_<ID>`); a refused bundle leaves the active policy in
+  place. With `CORDUM_POLICY_STRICT` unset, `SAFETY_POLICY_SIGNATURE_REQUIRED=true`
+  also enforces for every source. Signature metadata with a missing or
+  unsupported algorithm, or a missing, undecodable or wrong-length value, is
+  refused as malformed for every source. An explicit `CORDUM_POLICY_STRICT` still
+  wins: `warn` logs signature failures and keeps loading, and `off` skips
+  verification. The development profile is unchanged.
+
+#### core/controlplane/gateway — Edge LLM and runtime ingest accept only an authenticated proxy or collector identity (2026-11-13, task-3b633938)
+
+- **Behavior change** for `POST /api/v1/edge/llm/events` and
+  `POST /api/v1/edge/runtime/events`. The LLM proxy or runtime collector
+  identity now comes only from an authenticated principal. A principal named
+  only by the `X-Principal-Id` header is refused with 403, like a missing
+  one, in every profile, and nothing is ingested. Callers notice this where
+  the header is read as a principal: development, and production with
+  `CORDUM_ALLOW_HEADER_PRINCIPAL=true`. Principals bound by an API key, a
+  session, or JWT/OIDC ingest as before.
+- Migration: authenticate each proxy and collector with a static API key
+  bound to its principal (`principal_id` in `CORDUM_API_KEYS`, equal to its
+  `source.source_id`), or with a session or OIDC login. Managed API keys
+  carry no principal and cannot name one.
+
+#### core/controlplane/gateway — copilot session detail is returned only to its authenticated owner (2026-11-13, task-3b633938)
+
+- **Behavior change** for `GET /api/v1/copilot/sessions/{sessionId}`. The
+  session owner now comes only from an authenticated principal. A principal
+  named only by the `X-Principal-Id` header gets 401 and no session data, in
+  every profile. Callers notice this where the header is read as a
+  principal: development, and production with
+  `CORDUM_ALLOW_HEADER_PRINCIPAL=true`. Principals bound by an API key, a
+  session, or JWT/OIDC read their own sessions as before.
+- Migration: sign in to the dashboard with a session or OIDC login, or use a
+  static API key bound to the owning principal.
+
+#### core/controlplane/gateway — delegation tokens are issued only to an authenticated caller's linked agent (2026-11-14, task-fe3faf16)
+
+- **Behavior change.** A non-admin caller of
+  `POST /api/v1/agents/{id}/delegate` must be authenticated as the worker
+  linked to the delegating agent.
+- A principal named only by the `X-Principal-Id` header no longer identifies
+  that worker, in any profile: the request gets 403 and a denied
+  `delegation.issue` audit event, and no token is issued.
+- Admin callers are unchanged.
+- `Migration:` managed API keys carry no principal, so a managed key with only
+  an operator or write scope can no longer issue delegation tokens. Issue them
+  with an admin credential, or with a session or OIDC login whose principal is
+  the linked worker.
+
+#### core/controlplane/gateway — Edge approvals use only an authenticated principal for access and resolver identity (2026-11-14, task-fe3faf16)
+
+- **Behavior change.** A principal named only by `X-Principal-Id` (an unbound
+  static or managed API key) is no longer the caller's own principal for Edge
+  approvals. A user or viewer caller without an authenticated principal lists
+  no approvals and gets 404 for a single approval and for `POST .../wait`.
+  Admin and operator callers still see every approval in the tenant.
+- When such a caller approves or rejects, `resolver_id` and `resolved_by`
+  record the API key identity and role, not the header value. A caller whose
+  `X-Principal-Id` matches the requester is still refused as self-approval.
+- `Migration:` give each approver, and each `cordum-agentd` that waits on
+  approvals with a user or viewer key, a credential that carries its
+  principal: a static API key with `principal_id` in `CORDUM_API_KEYS`, or a
+  session or OIDC login.
+
+#### Header-asserted principals never authorize a job's agent identity (2026-11-13, task-850216cf)
+
+- **Behavior change** for job submit, in every profile. A principal taken
+  from the `X-Principal-Id` header or `x-principal-id` gRPC metadata is
+  caller-asserted: it is still recorded for attribution, but it never
+  authorizes a client `labels.agent_id`. Such a submit is refused (HTTP 403,
+  gRPC `PermissionDenied`) before the policy check and publish, and gRPC
+  `SubmitJob` infers no agent for it. Principals bound by an API key, a
+  session, or JWT/OIDC bind as before.
+- **Production default change.** Managed API keys now ignore
+  `X-Principal-Id` in the production profile, as static keys do, unless
+  `CORDUM_ALLOW_HEADER_PRINCIPAL=true`. When that flag is set in production,
+  the gateway logs a startup warning naming it.
+- Migration: callers that send `labels.agent_id` authenticate as the worker,
+  with a worker credential (an API key bound to the worker principal), a
+  session, OIDC or a delegation token. Production dashboard or edge
+  deployments that sent `X-Principal-Id` with a managed key move to a session
+  or OIDC login or a principal-bound key, or set
+  `CORDUM_ALLOW_HEADER_PRINCIPAL=true` for attribution only.
+
+#### core/controlplane/gateway — job submit infers an agent only from the authenticated principal (2026-11-14, task-491f974b)
+
+- **Behavior change** for job submit on HTTP and gRPC, in every profile. A
+  submit without `labels.agent_id` gets the agent linked to its principal
+  only when that principal is authenticated (by an API key bound to it, a
+  session, or JWT/OIDC) and the job is attributed to it.
+- A principal named by the request (`principal_id` in the HTTP body or the
+  gRPC request, or the `X-Principal-Id` header) never selects a worker link.
+  Such a job carries no inferred `agent_id`, so policy rules keyed on that
+  agent no longer match it, and allow rules fail closed. A
+  `delegation_audience_agent_id` override on such a submit now requires the
+  `delegation.impersonate` permission.
+- This is a behavior change for static API keys whose callers name a
+  `principal_id`.
+- Migration: authenticate as the worker with a worker credential (an API key
+  bound to the worker principal), a session or an OIDC login, or use a
+  delegation token.
+
+#### core/controlplane/gateway — MCP requests take identity only from an authenticated principal (2026-11-14, task-e3562f91)
+
+- **Behavior change** for HTTP MCP clients (`/mcp/sse` and `/mcp/message`).
+  The agent identity, and the principal that MCP approvals and the policy
+  gate use, now come only from an authenticated principal. A principal named
+  only by the `X-Principal-Id` header resolves no agent identity, in every
+  profile: `tools/list` is empty and `tools/call` is refused with `-32098`
+  `no_identity`, so no approval is requested for it. Callers notice this
+  where the header is read as a principal: development, and production with
+  `CORDUM_ALLOW_HEADER_PRINCIPAL=true`. Principals bound by an API key, a
+  session, or JWT/OIDC resolve their identity as before.
+- The self-approval check still compares the approver with the requesting
+  API key and any principal the request named, so a header principal can
+  only make it refuse more.
+- Migration: give each MCP client a credential that carries the principal
+  linked to its agent identity: a static API key with `principal_id` in
+  `CORDUM_API_KEYS`, or a session or OIDC login. Managed API keys carry no
+  principal and cannot bind an MCP client.
 
 #### MCP `X-Agent-Id` can only confirm the principal-bound agent identity (2026-10-26, task-eb2d6f28)
 
@@ -252,6 +486,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- On the gateway's HTTP MCP transport (`/mcp/sse` and `/mcp/message`),
+  `resources/read` of `cordum://jobs/{id}` and the `cordum_get_job` and
+  `cordum_status` tools return the job and the system status instead of a
+  `read_only_unsupported` error. They run the checks of
+  `GET /api/v1/jobs/{id}` and `GET /api/v1/status`, so a job in another
+  tenant, or a missing job, returns an error and no job data
+  (task-43c69929).
+
 - The dashboard image's build stage runs on the build host's platform. Its
   linux/arm64 image copies the same static dist/ as linux/amd64 instead of
   running pnpm, tsc and Vite under QEMU emulation, where a release dry run's
@@ -262,9 +504,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 - Audit publishing tolerates a missing fallback or exporter: events without a
   usable sink are dropped, logged and counted in
-  `cordum_audit_events_dropped_total{reason}`. The Safety Kernel's shadow sender
-  has a discard fallback, and cordum-mcp's NATS audit fallback writes to stderr
-  when no SIEM exporter is configured.
+  `cordum_audit_events_dropped_total{reason}`. cordum-mcp's NATS audit fallback
+  writes to stderr when no SIEM exporter is configured.
+
+- The Safety Kernel now counts shadow_eval audit events that fail to publish to
+  NATS in `cordum_audit_events_dropped_total{reason="no_fallback"}`. They were
+  discarded uncounted before. Shadow events are diagnostic, so this is an
+  observability fix; failed events are still never republished.
 
 - cordum-mcp writes its stderr audit events at every `CORDUM_LOG_LEVEL`, and
   the text log format prints each event as JSON text. cordum-mcp also closes
@@ -383,6 +629,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Added `docs/contract/threat-model.md`, the platform threat model for the M0 security contract: assets, adversaries, trust boundaries, a trusted-component inventory covering every `cmd/` service, reference-monitor properties with their current status, five explicit non-promises and the deployment boundary. Documentation only; no behavior changes.
 - Qualified three platform security-posture statements against `docs/contract/threat-model.md` (task-d056042e): ADR-001's "Zero-trust guarantee" bullet is now marked as design intent with a dated status note, and `docs/mcp/scope-filtering.md` no longer labels the MCP controls a "zero-trust stack" or "zero-trust controls". The threat model rates these mechanisms `supported`, not `enforced` or `verified`. Clarified that qualification requires protected transport on every Gateway client/proxy hop; deployment remains unverified.
 - Nightly soak bounds (task-a7c48ad2): compare post-warm-up memory medians over first/last K snapshots (default 5, minimum 3), retaining the 50% relative limit and 32 MiB floor. Missing/malformed metrics, insufficient samples, missing containers and zero load now fail explicitly. Helm reports drift/restarts as not evaluated rather than passing. Results include evaluation/window/baseline fields; the wiki documents the 20-minute example and metrics-source controls. All 83 contract assertions are retained.
+- The workflow credential scanner carries options that a file run with `source` or `.` leaves set (tracing on, errexit off) into the shell that ran it, as a `set` at that line would. This includes nested sources, functions a sourced file defines, and an rcfile that sources such a file. The analysis is bounded per job at 1000 distinct sourced-file analyses: past that bound each further sourced file counts as leaving tracing on and errexit off, and a credential job reports `SOURCE_LIMIT` (task-3d6be9e2).
 
 ### Added
 

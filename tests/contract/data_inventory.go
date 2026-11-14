@@ -21,8 +21,16 @@ type DataInventory struct {
 	SchemaVersion int    `yaml:"schema_version"`
 	ReviewedAt    string `yaml:"reviewed_at"`
 	Classes       []DataClass
-	EndpointOnly  []DataEntry `yaml:"endpoint_only"`
-	ControlPlane  []DataEntry `yaml:"control_plane"`
+	EndpointOnly  []DataEntry    `yaml:"endpoint_only"`
+	ControlPlane  []DataEntry    `yaml:"control_plane"`
+	NotTenantData []DataKeyClass `yaml:"not_tenant_data"`
+}
+
+// DataKeyClass marks key-shaped literals in one Go file as holding no tenant
+// data. Each pattern's text before its first '{' must prefix a literal there.
+type DataKeyClass struct {
+	Path, Reason string
+	Patterns     []string
 }
 
 type DataClass struct{ ID, Title string }
@@ -124,7 +132,49 @@ func (d *DataInventory) Validate(root string) []Issue {
 			is.add("classes", "", "class has no entry: "+c.ID)
 		}
 	}
+	for _, c := range d.NotTenantData {
+		c.validate(root, &is)
+	}
 	return is
+}
+
+var dataPlaceholderRE = regexp.MustCompile(`\{([^{}]*)\}`)
+var dataTokenRE = regexp.MustCompile(`[A-Z]+[a-z0-9]*|[a-z0-9]+`)
+
+// identityPlaceholders lists the placeholders of a pattern that name a tenant,
+// user, email, session, agent, IP address or job, in any case or plural, alone
+// or with an id/addr/address suffix ({tenantID}, {client_ip}, {jobs}).
+func identityPlaceholders(pattern string) []string {
+	var out []string
+	for _, m := range dataPlaceholderRE.FindAllStringSubmatch(pattern, -1) {
+		if slices.ContainsFunc(dataTokenRE.FindAllString(m[1], -1), isIdentityToken) {
+			out = append(out, m[0])
+		}
+	}
+	return out
+}
+
+func isIdentityToken(tok string) bool {
+	for _, base := range []string{"tenant", "user", "email", "session", "agent", "ip", "job"} {
+		if rest, ok := strings.CutPrefix(strings.ToLower(tok), base); ok && slices.Contains([]string{"", "s", "id", "ids", "addr", "address", "v4", "v6"}, rest) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c DataKeyClass) validate(root string, is *issues) {
+	id := "not_tenant_data:" + c.Path
+	if len(c.Patterns) == 0 || len(strings.TrimSpace(c.Reason)) < 20 {
+		is.add("not-tenant-data", id, "patterns and a reason of at least 20 characters required")
+	}
+	for _, p := range c.Patterns {
+		if ph := identityPlaceholders(p); len(ph) > 0 {
+			is.add("not-tenant-data", id, fmt.Sprintf("%q names %v; keys linked to a tenant, user, email, session, agent, IP or job need an entry", p, ph))
+		}
+		prefix, _, _ := strings.Cut(p, "{")
+		dataReference(is, id, "not_tenant_data.patterns", c.Path, p, prefix != "" && hasStringLiteral(root, c.Path, prefix, true))
+	}
 }
 
 func blank(s string) bool { return strings.TrimSpace(s) == "" }

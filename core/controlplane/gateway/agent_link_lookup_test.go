@@ -172,8 +172,6 @@ func TestSubmitAgentLinkLookupFailureFailsClosed(t *testing.T) {
 		{"grpc_label", "grpc", "", "agent-source", "agent-source"},
 		{"http_no_label", "http", "", "", "agent-b"},
 		{"http_label", "http", "", "agent-b", "agent-b"},
-		// HTTP still looks up a request-named principal; task-491f974b may stop that lookup and flip this case.
-		{"http_request_principal", "http", "request", "", "agent-b"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := linkLookupCase{caller: tc.caller, label: tc.label}
@@ -202,7 +200,8 @@ func TestSubmitAgentLinkLookupFailureFailsClosed(t *testing.T) {
 
 // TestSubmitAgentLinkLookupKeepsNoLinkBehavior pins today's behavior where
 // the store reports no link (absent or dangling), and where the principal is
-// empty or blank, so no lookup runs even while the store is down.
+// empty, blank or only named by the request, so no lookup runs even while the
+// store is down.
 func TestSubmitAgentLinkLookupKeepsNoLinkBehavior(t *testing.T) {
 	const noCredential = "client-supplied agent_id requires an authenticated worker credential"
 	for _, tc := range []struct {
@@ -213,6 +212,8 @@ func TestSubmitAgentLinkLookupKeepsNoLinkBehavior(t *testing.T) {
 		{"grpc_anonymous_failing_store", "grpc", linkLookupCase{caller: "anonymous", failing: true}, ""},
 		{"grpc_blank_principal_failing_store", "grpc", linkLookupCase{caller: "blank", failing: true}, ""},
 		{"http_empty_principal_failing_store", "http", linkLookupCase{caller: "empty", failing: true}, ""},
+		// A request-named principal never selects a worker link.
+		{"http_request_principal_failing_store", "http", linkLookupCase{caller: "request", failing: true}, ""},
 		{"grpc_absent_link_no_label", "grpc", linkLookupCase{unlink: true}, ""},
 		{"grpc_absent_link_label", "grpc", linkLookupCase{unlink: true, label: "agent-other"}, noCredential},
 		{"grpc_dangling_link_no_label", "grpc", linkLookupCase{dangle: true}, ""},

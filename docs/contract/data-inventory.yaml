@@ -1,9 +1,10 @@
 # Source-reviewed data classes; reviewed_at pins the reviewed tree.
 # TestDataInventoryFile checks references, not deletion or legal-hold behavior.
-# Redis key/stream completeness is NOT claimed here; PR2-07-KEYS adds that guard.
+# TestDataInventoryKeyCoverage (PR2-07-KEYS) maps every key-shaped literal, JetStream stream and Redis stream writer
+# in non-test Go under core/ and cmd/ to an entry pattern or a file-scoped not_tenant_data classification.
 # endpoint_only describes local copies/raw bytes; derived metadata may be sent separately.
 schema_version: 1
-reviewed_at: 23abfc0a8f698a1d16589f09e1f9ba18479fc629
+reviewed_at: 469e6284ea6f90209a528b720dcb60715443e0cb
 classes:
   - {id: raw-local-inputs, title: Endpoint inputs and local state}
   - {id: redacted-events, title: Redacted Edge records}
@@ -13,6 +14,8 @@ classes:
   - {id: telemetry, title: Telemetry and metrics}
   - {id: backups, title: Persistence and backup copies}
   - {id: exports, title: Export buffers and downloaded evidence}
+  - {id: identity-access, title: 'Identity, session and credential records'}
+  - {id: control-records, title: 'Job, workflow and coordination records'}
 endpoint_only:
   - {id: DI-E01, class: raw-local-inputs,
      storage: {kind: file, location: 'CORDUM_AGENTD_STATE_DIR; default ~/.cordum/edge/sessions/<session>/state.json (temp-dir fallback)', writers: [{path: core/edge/agentd/state_store.go, symbol: FileStateStore.Save}, {path: core/edge/agentd/config.go, symbol: LoadConfig}]},
@@ -40,7 +43,7 @@ endpoint_only:
      legal_hold: {applies: false, reason: Scanner does not consult legal holds}}
 control_plane:
   - {id: DI-C01, class: redacted-events,
-     storage: {kind: redis_key, location: Edge sessions/executions/events and indexes, redis_keys: [{pattern: 'edge:session:{id}', path: core/edge/store_redis.go}, {pattern: 'edge:events:{execution}', path: core/edge/store_redis.go}], writers: [{path: core/edge/store_redis.go, symbol: RedisStore.AppendEvents}]},
+     storage: {kind: redis_key, location: Edge sessions/executions/events and indexes, redis_keys: [{pattern: 'edge:session:{id}', path: core/edge/store_redis.go}, {pattern: 'edge:events:{execution}', path: core/edge/store_redis.go}, {pattern: 'edge:execution:{execution}', path: core/edge/store_redis.go}, {pattern: 'edge:index:{index}:{id}', path: core/edge/store_redis.go}], writers: [{path: core/edge/store_redis.go, symbol: RedisStore.AppendEvents}, {path: core/edge/store_redis.go, symbol: RedisStore.CreateExecution}]},
      content: {description: Principal/session metadata and redacted action-event facts; redaction is not anonymity, personal_data: possible},
      retention: {settings: [{name: CORDUM_EDGE_SESSION_RETENTION_TTL, path: core/controlplane/gateway/gateway.go}], default: '30d; session sweeper uses the session lifecycle anchor'},
      deletion: {paths: [{path: core/edge/sweeper.go, symbol: SessionSweeper.SweepOnce}, {path: core/edge/store_redis.go, symbol: RedisStore.DeleteSession}]},
@@ -52,7 +55,7 @@ control_plane:
      deletion: {none: 'No code path deletes approval records at reviewed_at; transitions rewrite records and drop some index refs, while status/principal index refs remain; ApprovalSweeper.SweepOnce only marks past-deadline pending approvals expired; DeleteSession skips approval keys'},
      legal_hold: {applies: false, reason: Approval sweeper changes status rather than erasing records and does not consult legal holds}}
   - {id: DI-C03, class: redacted-events,
-     storage: {kind: redis_key, location: Shadow finding records and secondary indexes, writers: [{path: core/edge/shadow/finding_store_redis.go, symbol: RedisStore.commitTransitionFinding}]},
+     storage: {kind: redis_key, location: Shadow finding records and secondary indexes, redis_keys: [{pattern: 'edge:shadow:finding:{finding}', path: core/edge/shadow/finding_store_redis.go}], writers: [{path: core/edge/shadow/finding_store_redis.go, symbol: RedisStore.commitTransitionFinding}]},
      content: {description: Redacted config summaries and paths with tenant/principal/hostname metadata, personal_data: possible},
      retention: {settings: [{name: CORDUM_EDGE_SHADOW_RETENTION_SHORT, path: core/edge/shadow/finding_store_redis.go}, {name: CORDUM_EDGE_SHADOW_RETENTION_DEFAULT, path: core/edge/shadow/finding_store_redis.go}, {name: CORDUM_EDGE_SHADOW_RETENTION_LONG, path: core/edge/shadow/finding_store_redis.go}], default: 'Terminal classes 7d/90d/365d; active findings are not TTL-expired'},
      deletion: {paths: [{path: core/edge/shadow/finding_store_redis.go, symbol: RedisStore.commitTransitionFinding}, {path: core/edge/shadow/finding_store_redis.go, symbol: RedisStore.purgeExpired}]},
@@ -70,13 +73,13 @@ control_plane:
      deletion: {paths: [{path: core/controlplane/gateway/handlers_policy_bundles.go, symbol: server.appendPolicyAudit}]},
      legal_hold: {applies: false, reason: The 500-entry cap does not consult legal holds}}
   - {id: DI-C06, class: evidence-audit,
-     storage: {kind: redis_key, location: Governance decision records and indexes, redis_keys: [{pattern: 'gov:dec:{suffix}', path: core/infra/store/decision_log_store.go}], writers: [{path: core/infra/store/decision_log_store.go, symbol: RedisDecisionLogStore.AppendDecision}]},
+     storage: {kind: redis_key, location: Governance decision records and indexes, redis_keys: [{pattern: 'gov:dec:{suffix}', path: core/infra/store/decision_log_store.go}, {pattern: 'gov:dec:{tenant}:rec:{id}', path: core/infra/store/decision_log_store.go}, {pattern: 'gov:dec:{tenant}:idx:t', path: core/infra/store/decision_log_store.go}, {pattern: 'gov:dec:{tenant}:idx:rule:{rule}', path: core/infra/store/decision_log_store.go}, {pattern: 'gov:dec:{tenant}:idx:agent:{agent}', path: core/infra/store/decision_log_store.go}, {pattern: 'gov:dec:{tenant}:idx:topic:{topic}', path: core/infra/store/decision_log_store.go}, {pattern: 'gov:dec:{tenant}:idx:verdict:{verdict}', path: core/infra/store/decision_log_store.go}, {pattern: 'gov:dec:{tenant}:tmp:{hash}', path: core/infra/store/decision_log_store.go}, {pattern: 'gov:dec:{tenant}:rec:{id}', path: cmd/cordumctl-governance-helper/governance.go}, {pattern: 'gov:dec:{tenant}:idx:t', path: cmd/cordumctl-governance-helper/governance.go}, {pattern: 'gov:dec:{tenant}:idx:rule:{rule}', path: cmd/cordumctl-governance-helper/governance.go}, {pattern: 'gov:dec:{tenant}:idx:agent:{agent}', path: cmd/cordumctl-governance-helper/governance.go}, {pattern: 'gov:dec:{tenant}:idx:topic:{topic}', path: cmd/cordumctl-governance-helper/governance.go}, {pattern: 'gov:dec:{tenant}:idx:verdict:{verdict}', path: cmd/cordumctl-governance-helper/governance.go}], writers: [{path: core/infra/store/decision_log_store.go, symbol: RedisDecisionLogStore.AppendDecision}, {path: cmd/cordumctl-governance-helper/governance.go, symbol: governanceRuntime.appendDecisionRecord}]},
      content: {description: Decisions with tenant/agent/job/rule identifiers and reasons, personal_data: possible},
      retention: {settings: [{name: CORDUM_DECISION_LOG_TTL_SECONDS, path: core/infra/store/decision_log_store.go}], default: 30d},
-     deletion: {paths: [{path: core/infra/store/decision_log_store.go, symbol: RedisDecisionLogStore.AppendDecision}, {path: core/infra/store/decision_log_store.go, symbol: RedisDecisionLogStore.cleanupStaleDecisionIDs}]},
+     deletion: {paths: [{path: core/infra/store/decision_log_store.go, symbol: RedisDecisionLogStore.AppendDecision}, {path: core/infra/store/decision_log_store.go, symbol: RedisDecisionLogStore.cleanupStaleDecisionIDs}, {path: core/infra/store/decision_log_store.go, symbol: RedisDecisionLogStore.QueryDecisions}, {path: cmd/cordumctl-governance-helper/governance.go, symbol: governanceRuntime.appendDecisionRecord}]},
      legal_hold: {applies: false, reason: Record TTL and index cleanup do not consult legal holds}}
   - {id: DI-C07, class: hashes-commitments,
-     storage: {kind: redis_key, location: Audit-chain head per tenant, writers: [{path: core/audit/chain.go, symbol: Chainer.Append}, {path: core/audit/chain.go, symbol: Chainer.HeadKey}]},
+     storage: {kind: redis_key, location: 'Audit-chain head per tenant, key audit:chain:head:{tenant} (key prefix + head: + tenant)', redis_keys: [{pattern: 'head:{tenant}', path: core/audit/chain.go}], writers: [{path: core/audit/chain.go, symbol: Chainer.Append}, {path: core/audit/chain.go, symbol: Chainer.HeadKey}]},
      content: {description: Sequence and event hash; links to tenant events and is not proof of anonymization, personal_data: possible},
      retention: {none: 'No head-key retention setting; current sequence/hash is replaced on append'},
      deletion: {none: 'No automatic head-key deletion path found; operator-managed storage deletion'},
@@ -94,7 +97,7 @@ control_plane:
      deletion: {paths: [{path: core/workflow/store_redis.go, symbol: RedisStore.UpdateAuditHash}, {path: core/workflow/store_redis.go, symbol: enqueuePendingAuditDeletes}]},
      legal_hold: {applies: false, reason: Pending-hash TTL and consumption do not consult legal holds}}
   - {id: DI-C10, class: artifacts,
-     storage: {kind: redis_key, location: Artifact bytes and metadata, writers: [{path: core/infra/artifacts/redis_store.go, symbol: RedisStore.Put}]},
+     storage: {kind: redis_key, location: Artifact bytes and metadata, redis_keys: [{pattern: 'art:{id}', path: core/infra/artifacts/redis_store.go}, {pattern: 'art:meta:{id}', path: core/infra/artifacts/redis_store.go}], writers: [{path: core/infra/artifacts/redis_store.go, symbol: RedisStore.Put}]},
      content: {description: Uploaded artifact content and metadata; content can include personal data or secrets, personal_data: possible},
      retention: {settings: [{name: ARTIFACT_TTL_SHORT, path: core/infra/artifacts/redis_store.go}, {name: ARTIFACT_TTL_STANDARD, path: core/infra/artifacts/redis_store.go}, {name: ARTIFACT_TTL_AUDIT, path: core/infra/artifacts/redis_store.go}], default: 'short 24h; standard 7d; audit 30d'},
      deletion: {paths: [{path: core/infra/artifacts/redis_store.go, symbol: RedisStore.Put}, {path: core/infra/artifacts/redis_store.go, symbol: RedisStore.ttlFor}]},
@@ -106,7 +109,7 @@ control_plane:
      deletion: {paths: [{path: core/infra/store/redis_store.go, symbol: RedisStore.DeleteContext}, {path: core/infra/store/redis_store.go, symbol: RedisStore.PutResult}]},
      legal_hold: {applies: false, reason: Context deletion and payload TTL do not consult legal holds}}
   - {id: DI-C12, class: artifacts,
-     storage: {kind: redis_key, location: Context-engine history/chunks/summary, redis_keys: [{pattern: 'mem:{memory}:events', path: core/contextwindow/engine/service.go}, {pattern: 'mem:{memory}:chunks', path: core/contextwindow/engine/service.go}, {pattern: 'mem:{memory}:summary', path: core/contextwindow/engine/service.go}], writers: [{path: core/contextwindow/engine/service.go, symbol: Service.UpdateMemory}]},
+     storage: {kind: redis_key, location: 'Context-engine history/chunks/summary; workflow and chat runs use memory id run:{run}', redis_keys: [{pattern: 'mem:{memory}:events', path: core/contextwindow/engine/service.go}, {pattern: 'mem:{memory}:chunks', path: core/contextwindow/engine/service.go}, {pattern: 'mem:{memory}:summary', path: core/contextwindow/engine/service.go}, {pattern: 'run:{run}', path: core/workflow/engine_job.go}, {pattern: 'run:{run}', path: core/controlplane/gateway/handlers_chat.go}], writers: [{path: core/contextwindow/engine/service.go, symbol: Service.UpdateMemory}]},
      content: {description: User/assistant history and retrieved source chunks or summaries, personal_data: possible},
      retention: {none: 'No TTL setting; history trims to 20 events on write; chunks/summary have no cleanup here; REDIS_DATA_TTL does not apply'},
      deletion: {paths: [{path: core/contextwindow/engine/service.go, symbol: Service.UpdateMemory}]},
@@ -165,3 +168,280 @@ control_plane:
      retention: {settings: [{name: NATS_JS_MAX_AGE, path: core/infra/bus/nats.go}], default: '7d live-message MaxAge when JetStream is enabled; not a backup policy'},
      deletion: {paths: [{path: core/infra/bus/nats.go, symbol: NatsBus.initJetStreamFromEnv}]},
      legal_hold: {applies: false, reason: Stream MaxAge is delegated to NATS and does not consult legal holds}}
+  - {id: DI-C22, class: control-records,
+     storage: {kind: redis_key, location: 'Job state/meta/request/decision records, runtime hash and per-worker job lists', redis_keys: [{pattern: 'job:state:{job}', path: core/infra/store/job_store.go}, {pattern: 'job:result_ptr:{job}', path: core/infra/store/job_store.go}, {pattern: 'job:meta:{job}', path: core/infra/store/job_store.go}, {pattern: 'job:req:{job}', path: core/infra/store/job_store.go}, {pattern: 'job:decisions:{job}', path: core/infra/store/job_store.go}, {pattern: 'job:{job}:output_decision', path: core/infra/store/job_store.go}, {pattern: 'job:{job}:runtime', path: core/infra/store/job_event_store.go}, {pattern: 'worker:jobs:{worker}', path: core/infra/store/job_store.go}], writers: [{path: core/infra/store/job_store.go, symbol: RedisJobStore.SetStateWithContext}, {path: core/infra/store/job_store.go, symbol: RedisJobStore.SetJobRequest}, {path: core/infra/store/job_store.go, symbol: RedisJobStore.SetJobMeta}, {path: core/infra/store/job_store.go, symbol: RedisJobStore.SetSafetyDecision}, {path: core/infra/store/job_store.go, symbol: RedisJobStore.SetOutputDecision}, {path: core/infra/store/job_store.go, symbol: RedisJobStore.SetWorkerID}, {path: core/infra/store/job_event_store.go, symbol: RedisJobStore.ApplyJobResult}]},
+     content: {description: 'Full JobRequest protobufs with labels and payload pointers, job meta (a delegation dispatch token until consumed), safety/output decisions and worker ids', personal_data: possible},
+     retention: {settings: [{name: JOB_META_TTL_SECONDS, path: core/infra/store/job_store.go}, {name: JOB_META_TTL, path: core/infra/store/job_store.go}], default: '7d, re-applied on writes; worker:jobs keeps the newest 1000 job ids'},
+     deletion: {paths: [{path: core/infra/store/job_store.go, symbol: RedisJobStore.SetStateWithContext}, {path: core/infra/store/job_event_store.go, symbol: RedisJobStore.ApplyJobResult}, {path: core/infra/store/job_store.go, symbol: RedisJobStore.SetWorkerID}]},
+     legal_hold: {applies: false, reason: Job record TTLs do not consult legal holds}}
+  - {id: DI-C23, class: control-records,
+     storage: {kind: redis_key, location: Per-job state-event lists and per-trace job sets, redis_keys: [{pattern: 'job:events:{job}', path: core/infra/store/job_store.go}, {pattern: 'trace:{trace}', path: core/infra/store/job_store.go}], writers: [{path: core/infra/store/job_store.go, symbol: RedisJobStore.SetStateWithContext}, {path: core/infra/store/job_store.go, symbol: RedisJobStore.CancelJob}, {path: core/infra/store/job_store.go, symbol: RedisJobStore.AddJobToTrace}]},
+     content: {description: 'State transitions with rule, reason, worker and approver (approved_by, approval note) context; job ids per trace', personal_data: possible},
+     retention: {none: 'No TTL setting; job:events and trace keys are never given an expiry'},
+     deletion: {none: 'No code path deletes job:events lists or trace sets at reviewed_at'},
+     legal_hold: {applies: false, reason: No cleanup exists that could consult legal holds}}
+  - {id: DI-C24, class: control-records,
+     storage: {kind: redis_key, location: Job id indexes by state/recency/deadline/tenant, redis_keys: [{pattern: 'job:index:{state}', path: core/infra/store/job_store.go}, {pattern: 'job:recent', path: core/infra/store/job_store.go}, {pattern: 'job:deadline', path: core/infra/store/job_store.go}, {pattern: 'job:tenant:active:{tenant}', path: core/infra/store/job_store.go}], writers: [{path: core/infra/store/job_store.go, symbol: RedisJobStore.SetStateWithContext}, {path: core/infra/store/job_store.go, symbol: RedisJobStore.SetDeadline}]},
+     content: {description: Job ids with timestamps per state and tenant, personal_data: no},
+     retention: {none: 'No TTL on state/recent/deadline indexes; job:recent keeps the newest 1000 and a job id stays in its final state index'},
+     deletion: {paths: [{path: core/infra/store/job_store.go, symbol: RedisJobStore.SetStateWithContext}]},
+     legal_hold: {applies: false, reason: Index trimming does not consult legal holds}}
+  - {id: DI-C25, class: control-records,
+     storage: {kind: redis_key, location: 'Idempotency key to job id; workflow steps use keys wf:{run}:{step}:{attempt}', redis_keys: [{pattern: 'job:idempotency:{tenant}:{key}', path: core/infra/store/job_store.go}, {pattern: 'wf:{run}:{step}:{attempt}', path: core/workflow/engine.go}, {pattern: 'wf:{run}:{step}:{attempt}:approval', path: core/workflow/engine_job.go}], writers: [{path: core/infra/store/job_store.go, symbol: RedisJobStore.TrySetIdempotencyKeyScoped}, {path: core/infra/store/job_store.go, symbol: RedisJobStore.SetIdempotencyKeyScoped}]},
+     content: {description: Client-supplied idempotency keys mapped to job ids, personal_data: possible},
+     retention: {settings: [{name: CORDUM_IDEMPOTENCY_TTL, path: core/infra/store/job_store.go}], default: 90d},
+     deletion: {paths: [{path: core/infra/store/job_store.go, symbol: RedisJobStore.TrySetIdempotencyKeyScoped}, {path: core/infra/store/job_store.go, symbol: RedisJobStore.SetIdempotencyKeyScoped}]},
+     legal_hold: {applies: false, reason: Idempotency TTL does not consult legal holds}}
+  - {id: DI-C26, class: control-records,
+     storage: {kind: redis_key, location: Workflow definitions and org indexes, redis_keys: [{pattern: 'wf:def:{workflow}', path: core/workflow/store_redis.go}, {pattern: 'wf:index:all', path: core/workflow/store_redis.go}, {pattern: 'wf:index:org:{org}', path: core/workflow/store_redis.go}], writers: [{path: core/workflow/store_redis.go, symbol: RedisStore.SaveWorkflow}]},
+     content: {description: Workflow definitions with steps and org ids, personal_data: possible},
+     retention: {none: 'No TTL setting; definitions persist until deleted'},
+     deletion: {paths: [{path: core/workflow/store_redis.go, symbol: RedisStore.DeleteWorkflow}]},
+     legal_hold: {applies: false, reason: Workflow deletion does not consult legal holds}}
+  - {id: DI-C27, class: control-records,
+     storage: {kind: redis_key, location: 'Workflow runs, run indexes, timelines, run-job links, run idempotency keys and delay timers', redis_keys: [{pattern: 'wf:run:{run}', path: core/workflow/store_redis.go}, {pattern: 'wf:runs:{workflow}', path: core/workflow/store_redis.go}, {pattern: 'wf:runs:all', path: core/workflow/store_redis.go}, {pattern: 'wf:runs:status:{status}', path: core/workflow/store_redis.go}, {pattern: 'wf:runs:active:{org}', path: core/workflow/store_redis.go}, {pattern: 'wf:run:timeline:{run}', path: core/workflow/store_redis.go}, {pattern: 'wf:run:job:{job}', path: core/workflow/store_redis.go}, {pattern: 'wf:run:idempotency:{key}', path: core/workflow/store_redis.go}, {pattern: 'cordum:wf:delay:timers', path: core/workflow/store_redis.go}], writers: [{path: core/workflow/store_redis.go, symbol: RedisStore.CreateRun}, {path: core/workflow/store_redis.go, symbol: RedisStore.UpdateRun}, {path: core/workflow/store_redis.go, symbol: RedisStore.AppendTimelineEvent}, {path: core/workflow/store_redis.go, symbol: RedisStore.TrySetRunIdempotencyKey}, {path: core/workflow/store_redis.go, symbol: RedisStore.AddDelayTimer}]},
+     content: {description: 'Run inputs, outputs, context and step state; timeline events', personal_data: possible},
+     retention: {none: 'No TTL setting; timelines keep the newest 1000 events and run idempotency keys never expire'},
+     deletion: {paths: [{path: core/workflow/store_redis.go, symbol: RedisStore.DeleteRun}, {path: core/workflow/store_redis.go, symbol: RedisStore.DeleteRunIdempotencyKey}, {path: core/workflow/store_redis.go, symbol: RedisStore.RemoveDelayTimer}, {path: core/workflow/store_redis.go, symbol: RedisStore.PopFiredDelays}, {path: core/workflow/store_redis.go, symbol: RedisStore.CleanStaleDelays}]},
+     legal_hold: {applies: false, reason: Run deletion does not consult legal holds}}
+  - {id: DI-C28, class: control-records,
+     storage: {kind: redis_key, location: Dead-letter entries and index, redis_keys: [{pattern: 'dlq:entry:{job}', path: core/infra/store/dlq_store.go}, {pattern: 'dlq:index', path: core/infra/store/dlq_store.go}], writers: [{path: core/infra/store/dlq_store.go, symbol: DLQStore.Add}]},
+     content: {description: 'Failed job ids, topics, status, reason text and attempts', personal_data: possible},
+     retention: {settings: [{name: CORDUM_DLQ_ENTRY_TTL_DAYS, path: core/infra/store/dlq_store.go}, {name: SCHEDULER_DLQ_MAX_SIZE, path: core/infra/store/dlq_store.go}], default: '30d per entry; index capped at 10000 entries'},
+     deletion: {paths: [{path: core/infra/store/dlq_store.go, symbol: DLQStore.Add}, {path: core/infra/store/dlq_store.go, symbol: DLQStore.Delete}, {path: core/infra/store/dlq_store.go, symbol: DLQStore.CleanupStaleEntries}]},
+     legal_hold: {applies: false, reason: DLQ expiry and eviction do not consult legal holds}}
+  - {id: DI-C29, class: identity-access,
+     storage: {kind: redis_key, location: Agent identity records and worker links, redis_keys: [{pattern: 'agent:identity:{agent}', path: core/infra/store/agent_identity_store.go}, {pattern: 'agent:identity:index', path: core/infra/store/agent_identity_store.go}, {pattern: 'agent:by-worker:{worker}', path: core/infra/store/agent_identity_store.go}, {pattern: 'agent:worker-links:{tenant}', path: core/infra/store/agent_identity_store.go}], writers: [{path: core/infra/store/agent_identity_store.go, symbol: AgentIdentityStore.Create}, {path: core/infra/store/agent_identity_store.go, symbol: AgentIdentityStore.Update}, {path: core/infra/store/agent_identity_store.go, symbol: AgentIdentityStore.Delete}, {path: core/infra/store/agent_identity_store.go, symbol: AgentIdentityStore.LinkWorker}]},
+     content: {description: 'Agent identities with tenant, owner, team, allowed tools/resources and status; worker-to-agent links', personal_data: possible},
+     retention: {none: 'No TTL setting; identity records are written with no expiry'},
+     deletion: {none: 'No identity deletion; Delete rewrites the record as revoked and UnlinkWorker removes only worker links'},
+     legal_hold: {applies: false, reason: Identity records have no cleanup that consults legal holds}}
+  - {id: DI-C30, class: redacted-events,
+     storage: {kind: redis_key, location: Edge write idempotency records, redis_keys: [{pattern: 'edge:idempotency:{hash}', path: core/edge/store_redis.go}], writers: [{path: core/edge/store_redis.go, symbol: RedisStore.ReserveIdempotency}, {path: core/edge/store_redis.go, symbol: RedisStore.CompleteIdempotency}, {path: core/edge/store_redis.go, symbol: RedisStore.commitIdempotentAppend}]},
+     content: {description: 'Tenant id, endpoint, request hash and the cached response body', personal_data: possible},
+     retention: {none: 'No configurable setting; defaultIdempotencyTTL is a fixed 24 hours'},
+     deletion: {paths: [{path: core/edge/store_redis.go, symbol: RedisStore.ReserveIdempotency}, {path: core/edge/store_redis.go, symbol: RedisStore.ReleaseIdempotency}]},
+     legal_hold: {applies: false, reason: Idempotency TTL does not consult legal holds}}
+  - {id: DI-C31, class: redacted-events,
+     storage: {kind: redis_key, location: 'Shadow finding id indexes; source/cluster/repo/signal sets are shared across tenants', redis_keys: [{pattern: 'edge:shadow:index:{tenant}:{segment}:{value}', path: core/edge/shadow/finding_store_redis.go}, {pattern: 'edge:shadow:index:source:{source}', path: core/edge/shadow/finding_store_redis.go}, {pattern: 'edge:shadow:index:cluster:{cluster}', path: core/edge/shadow/finding_store_redis.go}, {pattern: 'edge:shadow:index:repo:{repo}', path: core/edge/shadow/finding_store_redis.go}, {pattern: 'edge:shadow:index:signal:{signal}', path: core/edge/shadow/finding_store_redis.go}], writers: [{path: core/edge/shadow/finding_store_redis.go, symbol: RedisStore.createFindingAtomically}, {path: core/edge/shadow/finding_store_redis.go, symbol: RedisStore.commitTransitionFinding}]},
+     content: {description: 'Finding ids keyed by tenant, status, risk, agent, owner, source, cluster, repo and signal values', personal_data: possible},
+     retention: {none: 'No TTL on index sets; terminal finding TTLs (DI-C03) do not expire them'},
+     deletion: {paths: [{path: core/edge/shadow/finding_store_redis.go, symbol: RedisStore.cleanupStaleIDTx}]},
+     legal_hold: {applies: false, reason: 'Read-time cleanup drops stale ids from tenant/status/risk/source sets only; agent/owner/cluster/repo/signal refs remain; no hold check'}}
+  - {id: DI-C32, class: redacted-events,
+     storage: {kind: redis_key, location: Shadow exceptions and their finding memberships, redis_keys: [{pattern: 'edge:shadow:exception:{exception}', path: core/edge/shadow/exception_redis.go}, {pattern: 'edge:shadow:exception:tenant:{tenant}', path: core/edge/shadow/exception_redis.go}, {pattern: 'edge:shadow:index:exception:{exception}', path: core/edge/shadow/exception_redis.go}], writers: [{path: core/edge/shadow/exception_redis.go, symbol: RedisStore.CreateException}, {path: core/edge/shadow/exception_redis.go, symbol: RedisStore.revokeExceptionTx}, {path: core/edge/shadow/exception_redis.go, symbol: RedisStore.recordExceptionMembership}]},
+     content: {description: 'Exception scope, reason, created_by/revoked_by and matched finding ids', personal_data: possible},
+     retention: {none: 'No TTL setting; expired and revoked exceptions stay stored'},
+     deletion: {none: 'No exception deletion path; revoke drops the id from the tenant index and CreateException deletes only its own failed write'},
+     legal_hold: {applies: false, reason: Exception records have no cleanup that consults legal holds}}
+  - {id: DI-C33, class: control-records,
+     storage: {kind: redis_key, location: Current Edge MCP upstream configurations, redis_keys: [{pattern: 'edge:mcp:upstream:{tenant}:{name}', path: core/edge/mcp_upstream_store_redis.go}, {pattern: 'edge:mcp:upstream:tenant:{tenant}', path: core/edge/mcp_upstream_store_redis.go}], writers: [{path: core/edge/mcp_upstream_store_redis.go, symbol: RedisMCPUpstreamRegistry.Create}, {path: core/edge/mcp_upstream_store_redis.go, symbol: RedisMCPUpstreamRegistry.updateExisting}]},
+     content: {description: 'Upstream endpoints or commands, auth secret references, labels and resolved IPs', personal_data: possible},
+     retention: {none: 'No TTL setting; current configs persist and DI-C18 holds previous versions'},
+     deletion: {none: 'No upstream deletion path at reviewed_at; Disable only flips the enabled flag'},
+     legal_hold: {applies: false, reason: Upstream configs have no cleanup that consults legal holds}}
+  - {id: DI-C34, class: hashes-commitments,
+     storage: {kind: redis_key, location: 'Replay, dedupe, taint and nonce markers', redis_keys: [{pattern: 'mcp:dedupe:{key}', path: core/mcp/dedupe_store.go}, {pattern: 'mcp:taint:{tenant}:{session}', path: core/mcp/taint_store.go}, {pattern: 'mcp:outbound:nonce:{nonce}', path: core/mcp/outbound/nonce.go}, {pattern: 'cap:replay:{hash}', path: core/infra/replay/redis_store.go}, {pattern: 'edge:rt:nonce:{tenant_hash}:{collector_hash}', path: core/edge/runtimeingest/replay.go}, {pattern: 'cordum:bus:inflight:{stream}:{seq}', path: core/infra/bus/nats.go}, {pattern: 'cordum:bus:processed:{stream}:{seq}', path: core/infra/bus/nats.go}], writers: [{path: core/mcp/dedupe_redis.go, symbol: RedisDedupeStore.LoadOrStore}, {path: core/mcp/taint_redis.go, symbol: RedisTaintStore.Taint}, {path: core/mcp/outbound/nonce.go, symbol: RedisNonceStore.SeenAndRecord}, {path: core/infra/replay/redis_store.go, symbol: RedisReplayStore.Admit}, {path: core/edge/runtimeingest/replay.go, symbol: ReplayWindow.Reserve}, {path: core/infra/bus/nats.go, symbol: NatsBus.jsCallbackCtx}]},
+     content: {description: 'Digests, nonces and stream sequence markers; MCP dedupe values cache tool-call results and taint values hold a sanitized finding snippet', personal_data: possible},
+     retention: {settings: [{name: CORDUM_MCP_TAINT_TTL, path: core/mcp/taint_redis.go}], default: '1h taint; fixed TTLs otherwise: dedupe 10m, runtime nonce 1h, bus markers 2m/10m, replay until packet expiry'},
+     deletion: {paths: [{path: core/mcp/dedupe_redis.go, symbol: RedisDedupeStore.Delete}, {path: core/edge/runtimeingest/replay.go, symbol: ReplayWindow.Release}, {path: core/infra/bus/nats.go, symbol: NatsBus.jsCallbackCtx}]},
+     legal_hold: {applies: false, reason: Marker TTLs do not consult legal holds}}
+  - {id: DI-C35, class: evidence-audit,
+     storage: {kind: redis_key, location: Legal hold records and per-tenant hold sets, redis_keys: [{pattern: 'audit:legal_hold:{hold}', path: core/audit/legal_hold.go}, {pattern: 'audit:legal_holds:{tenant}', path: core/audit/legal_hold.go}], writers: [{path: core/audit/legal_hold.go, symbol: LegalHoldStore.CreateHold}, {path: core/audit/legal_hold.go, symbol: LegalHoldStore.ReleaseHold}]},
+     content: {description: 'Hold scope, reason, created_by and released_by', personal_data: possible},
+     retention: {none: 'No TTL setting; released holds stay stored as records'},
+     deletion: {none: 'No hold deletion path; ReleaseHold rewrites the record as released'},
+     legal_hold: {applies: false, reason: Hold records have no cleanup to suspend}}
+  - {id: DI-C36, class: artifacts,
+     storage: {kind: redis_key, location: Eval datasets and name/version indexes, redis_keys: [{pattern: 'eval:dataset:{tenant}:rec:{dataset}', path: core/infra/store/eval_dataset_store.go}, {pattern: 'eval:dataset:{tenant}:byname:{name}:{version}', path: core/infra/store/eval_dataset_store.go}, {pattern: 'eval:dataset:{tenant}:name:{name}', path: core/infra/store/eval_dataset_store.go}, {pattern: 'eval:dataset:{tenant}:index', path: core/infra/store/eval_dataset_store.go}], writers: [{path: core/infra/store/eval_dataset_store.go, symbol: EvalDatasetStore.CreateEvalDataset}]},
+     content: {description: 'Eval dataset entries (inputs and expected outputs) and metadata', personal_data: possible},
+     retention: {none: 'No TTL setting; datasets persist until deleted'},
+     deletion: {paths: [{path: core/infra/store/eval_dataset_store.go, symbol: EvalDatasetStore.DeleteEvalDataset}]},
+     legal_hold: {applies: false, reason: Dataset deletion does not consult legal holds}}
+  - {id: DI-C37, class: artifacts,
+     storage: {kind: redis_key, location: 'Eval run results, indexes and pending markers; run locks use lock:eval:run:lock:{tenant}:{dataset}', redis_keys: [{pattern: 'eval:run:{tenant}:rec:{run}', path: core/infra/store/eval_run_store.go}, {pattern: 'eval:run:{tenant}:idx:t', path: core/infra/store/eval_run_store.go}, {pattern: 'eval:run:{tenant}:idx:ds:{dataset}', path: core/infra/store/eval_run_store.go}, {pattern: 'eval:run:pending:{tenant}:{run}', path: core/controlplane/gateway/handlers_evals_runs.go}], writers: [{path: core/infra/store/eval_run_store.go, symbol: EvalRunStore.CreateRun}, {path: core/controlplane/gateway/handlers_evals_runs.go, symbol: server.saveEvalRunPending}]},
+     content: {description: 'Per-entry eval outputs, verdicts and dataset ids', personal_data: possible},
+     retention: {settings: [{name: CORDUM_EVAL_RUN_TTL_SECONDS, path: core/infra/store/eval_run_store.go}], default: '180d on run records; pending markers fixed 2h'},
+     deletion: {paths: [{path: core/infra/store/eval_run_store.go, symbol: EvalRunStore.DeleteRun}, {path: core/infra/store/eval_run_store.go, symbol: EvalRunStore.GCExpired}, {path: core/controlplane/gateway/handlers_evals_runs.go, symbol: server.deleteEvalRunPending}]},
+     legal_hold: {applies: false, reason: Eval run TTL and GC do not consult legal holds}}
+  - {id: DI-C38, class: identity-access,
+     storage: {kind: redis_key, location: User records and email/id/tenant indexes, redis_keys: [{pattern: 'user:{tenant}:{username}', path: core/controlplane/gateway/auth/userstore_redis.go}, {pattern: 'user:email:{tenant}:{email}', path: core/controlplane/gateway/auth/userstore_redis.go}, {pattern: 'user:id:{user}', path: core/controlplane/gateway/auth/userstore_redis.go}, {pattern: 'user:tenant:{tenant}', path: core/controlplane/gateway/auth/userstore_redis.go}], writers: [{path: core/controlplane/gateway/auth/userstore_redis.go, symbol: RedisUserStore.Create}, {path: core/controlplane/gateway/auth/userstore_redis.go, symbol: RedisUserStore.Update}, {path: core/controlplane/gateway/auth/userstore_redis.go, symbol: RedisUserStore.UpdatePassword}, {path: core/controlplane/gateway/auth/scim.go, symbol: RedisUserStore.upsertUser}]},
+     content: {description: 'Usernames, emails, display names, roles, tenant and password hashes', personal_data: yes},
+     retention: {none: 'No TTL setting; user records are written with no expiry'},
+     deletion: {none: 'No user-record deletion; Delete disables the record and drops its email index, tenant membership and sessions; user:id entries remain'},
+     legal_hold: {applies: false, reason: User records have no cleanup that consults legal holds}}
+  - {id: DI-C39, class: identity-access,
+     storage: {kind: redis_key, location: 'User sessions, login-failure counters and SAML/OIDC request state', redis_keys: [{pattern: 'session:{token}', path: core/controlplane/gateway/auth/userstore_redis.go}, {pattern: 'session:user:{user}', path: core/controlplane/gateway/auth/userstore_redis.go}, {pattern: 'login:failed:{user}:{ip}', path: core/controlplane/gateway/auth/userstore_redis.go}, {pattern: 'login:failed:global:{user}', path: core/controlplane/gateway/auth/userstore_redis.go}, {pattern: 'saml:state:{state}', path: core/controlplane/gateway/auth/userstore_redis.go}, {pattern: 'oidc:state:{state}', path: core/controlplane/gateway/auth/oidc_flow.go}], writers: [{path: core/controlplane/gateway/auth/userstore_redis.go, symbol: RedisUserStore.StoreSession}, {path: core/controlplane/gateway/auth/userstore_redis.go, symbol: RedisUserStore.RecordFailedLogin}, {path: core/controlplane/gateway/auth/userstore_redis.go, symbol: RedisUserStore.PutSAMLState}, {path: core/controlplane/gateway/auth/oidc_flow.go, symbol: redisOIDCStateStore.Put}]},
+     content: {description: 'Raw bearer session tokens (in keys and the per-user index) with user id, username, tenant and role; failure counters keyed by username and client IP; SSO request state', personal_data: yes},
+     retention: {settings: [{name: CORDUM_AUTH_SESSION_TTL, path: core/controlplane/gateway/handlers_auth.go}, {name: CORDUM_SESSION_TTL, path: core/controlplane/gateway/handlers_auth.go}, {name: LOGIN_LOCKOUT_PERIOD, path: core/controlplane/gateway/auth/userstore_redis.go}, {name: CORDUM_SAML_STATE_TTL, path: core/controlplane/gateway/auth/saml.go}, {name: CORDUM_OIDC_STATE_TTL, path: core/controlplane/gateway/auth/oidc_flow.go}], default: '24h sessions; 15m login counters; 10m SAML/OIDC state'},
+     deletion: {paths: [{path: core/controlplane/gateway/auth/userstore_redis.go, symbol: RedisUserStore.DeleteSession}, {path: core/controlplane/gateway/auth/userstore_redis.go, symbol: RedisUserStore.DeleteUserSessions}, {path: core/controlplane/gateway/auth/userstore_redis.go, symbol: RedisUserStore.ClearFailedLogins}, {path: core/controlplane/gateway/auth/userstore_redis.go, symbol: RedisUserStore.DeleteSAMLState}, {path: core/controlplane/gateway/auth/oidc_flow.go, symbol: redisOIDCStateStore.Delete}]},
+     legal_hold: {applies: false, reason: Session and state TTLs do not consult legal holds}}
+  - {id: DI-C40, class: identity-access,
+     storage: {kind: redis_key, location: API key records and prefix/tenant indexes, redis_keys: [{pattern: 'apikey:{key}', path: core/controlplane/gateway/auth/keystore.go}, {pattern: 'apikey:prefix:{prefix}', path: core/controlplane/gateway/auth/keystore.go}, {pattern: 'apikey:tenant:{tenant}', path: core/controlplane/gateway/auth/keystore.go}], writers: [{path: core/controlplane/gateway/auth/keystore_redis.go, symbol: RedisKeyStore.Create}, {path: core/controlplane/gateway/auth/keystore_redis.go, symbol: RedisKeyStore.Revoke}, {path: core/controlplane/gateway/auth/keystore_redis.go, symbol: RedisKeyStore.RecordUsage}]},
+     content: {description: 'Key hashes, display prefixes, names, scopes, tenant, expiry and usage times', personal_data: possible},
+     retention: {none: 'No TTL setting; key records are written with no expiry'},
+     deletion: {none: 'No key-record deletion; Revoke marks the record revoked and drops only its prefix lookup'},
+     legal_hold: {applies: false, reason: API key records have no cleanup that consults legal holds}}
+  - {id: DI-C41, class: identity-access,
+     storage: {kind: redis_key, location: SCIM bearer token and SCIM user metadata, redis_keys: [{pattern: 'auth:scim:bearer_token', path: core/controlplane/gateway/auth/scim.go}, {pattern: 'scim:user:meta:{user}', path: core/controlplane/gateway/auth/scim.go}, {pattern: 'scim:user:tenant:{tenant}', path: core/controlplane/gateway/auth/scim.go}], writers: [{path: core/controlplane/gateway/auth/scim.go, symbol: RedisUserStore.putSCIMBearerToken}, {path: core/controlplane/gateway/auth/scim.go, symbol: RedisUserStore.putSCIMUserMeta}]},
+     content: {description: 'Plaintext SCIM bearer token (one per deployment); SCIM external ids and given/family names', personal_data: yes},
+     retention: {none: 'No TTL setting; token and user metadata are written with no expiry'},
+     deletion: {none: 'No deletion path; the token is overwritten when set again and SCIM user metadata stays after deactivation'},
+     legal_hold: {applies: false, reason: SCIM records have no cleanup that consults legal holds}}
+  - {id: DI-C42, class: identity-access,
+     storage: {kind: redis_key, location: SCIM groups and name/tenant indexes, redis_keys: [{pattern: 'scim:group:id:{group}', path: core/controlplane/gateway/auth/scim.go}, {pattern: 'scim:group:name:{tenant}:{name}', path: core/controlplane/gateway/auth/scim.go}, {pattern: 'scim:group:tenant:{tenant}', path: core/controlplane/gateway/auth/scim.go}], writers: [{path: core/controlplane/gateway/auth/scim.go, symbol: RedisUserStore.putSCIMGroup}]},
+     content: {description: 'Group display names, external ids and member user ids', personal_data: possible},
+     retention: {none: 'No TTL setting; groups persist until deleted'},
+     deletion: {paths: [{path: core/controlplane/gateway/auth/scim.go, symbol: RedisUserStore.deleteSCIMGroup}]},
+     legal_hold: {applies: false, reason: SCIM group deletion does not consult legal holds}}
+  - {id: DI-C43, class: identity-access,
+     storage: {kind: redis_key, location: Issued delegation records and agent/tenant/child indexes, redis_keys: [{pattern: 'delegation:token:{jti}', path: core/auth/delegation/list_store.go}, {pattern: 'delegation:by-agent:{tenant}:{agent}', path: core/auth/delegation/list_store.go}, {pattern: 'delegation:active:{tenant}', path: core/auth/delegation/list_store.go}, {pattern: 'delegation:all:{tenant}', path: core/auth/delegation/list_store.go}, {pattern: 'delegation:children:{jti}', path: core/auth/delegation/list_store.go}], writers: [{path: core/auth/delegation/list_store.go, symbol: RedisListStore.RecordIssuedToken}, {path: core/auth/delegation/list_store.go, symbol: RedisListStore.MarkRevoked}, {path: core/auth/delegation/cascade.go, symbol: RedisRevocationStore.RecordChildDelegation}]},
+     content: {description: 'Issuer, subject agent, delegation chain, allowed actions/topics, expiry and revocation state', personal_data: possible},
+     retention: {none: 'No TTL setting; records and per-agent/all indexes never expire'},
+     deletion: {none: 'No record deletion; revocation rewrites the record and drops the id from the active index only'},
+     legal_hold: {applies: false, reason: Delegation records have no cleanup that consults legal holds}}
+  - {id: DI-C44, class: identity-access,
+     storage: {kind: redis_key, location: Delegation revocation markers and issue-rate counters, redis_keys: [{pattern: 'delegation:revoked:{jti}', path: core/auth/delegation/revocation.go}, {pattern: 'delegation:issue:{tenant}:{agent}:{minute}', path: core/controlplane/gateway/handlers_delegation.go}], writers: [{path: core/auth/delegation/revocation.go, symbol: RedisRevocationStore.Revoke}, {path: core/auth/delegation/cascade.go, symbol: RedisRevocationStore.CascadeRevoke}, {path: core/controlplane/gateway/handlers_delegation.go, symbol: server.allowDelegationIssue}]},
+     content: {description: Revoked token ids and per-agent issue counts per minute, personal_data: no},
+     retention: {none: 'No configurable setting; revocations last until token expiry (cascades 24h) and issue counters 2m'},
+     deletion: {paths: [{path: core/auth/delegation/revocation.go, symbol: RedisRevocationStore.Revoke}, {path: core/auth/delegation/cascade.go, symbol: RedisRevocationStore.CascadeRevoke}, {path: core/controlplane/gateway/handlers_delegation.go, symbol: server.allowDelegationIssue}]},
+     legal_hold: {applies: false, reason: Marker TTLs do not consult legal holds}}
+  - {id: DI-C45, class: identity-access,
+     storage: {kind: redis_key, location: 'Worker sessions session:worker:v2:{tenant}:{worker} and legacy session:worker:legacy:{agent}, revocations and handshake challenges', redis_keys: [{pattern: 'session:worker:{version}:{tenant}:{worker}', path: core/controlplane/scheduler/session_token.go}, {pattern: 'session:revoked:{tenant}:{jti}', path: core/controlplane/scheduler/session_token.go}, {pattern: 'session:handshake:{kind}:{worker}:{value}', path: core/controlplane/scheduler/handshake_challenge.go}], writers: [{path: core/controlplane/scheduler/session_token.go, symbol: SessionTokenIssuer.persistIssue}, {path: core/controlplane/scheduler/session_token.go, symbol: SessionTokenIssuer.Revoke}, {path: core/controlplane/scheduler/session_token_store.go, symbol: SessionTokenIssuer.writeRenewTx}, {path: core/controlplane/scheduler/handshake_challenge.go, symbol: RedisHandshakeChallengeStore.Create}]},
+     content: {description: 'Active worker sessions with tenant, worker and agent ids (encoded in keys), revoked token ids and handshake challenges', personal_data: no},
+     retention: {none: 'No configurable setting; records expire with the token (DefaultSessionTokenLifetime 1h) and challenges after 30s'},
+     deletion: {paths: [{path: core/controlplane/scheduler/session_token.go, symbol: SessionTokenIssuer.persistIssue}, {path: core/controlplane/scheduler/handshake_challenge.go, symbol: RedisHandshakeChallengeStore.Consume}]},
+     legal_hold: {applies: false, reason: Session TTLs do not consult legal holds}}
+  - {id: DI-C46, class: control-records,
+     storage: {kind: redis_key, location: MCP tool-call approval records and tuple indexes, redis_keys: [{pattern: 'mcp:approvals:{approval}', path: core/controlplane/gateway/mcp_approvals.go}, {pattern: 'mcp:approvals:idx:{tenant}:{agent}:{tool}:{args_hash}', path: core/controlplane/gateway/mcp_approvals.go}], writers: [{path: core/controlplane/gateway/mcp_approvals.go, symbol: MCPApprovalStore.EnqueueMCPApproval}, {path: core/controlplane/gateway/mcp_approvals.go, symbol: MCPApprovalStore.Resolve}]},
+     content: {description: 'Tenant, agent, tool, tool arguments JSON, status and resolver', personal_data: possible},
+     retention: {none: 'No configurable setting; records and indexes expire 1m after the request TTL (default 5m)'},
+     deletion: {paths: [{path: core/controlplane/gateway/mcp_approvals.go, symbol: MCPApprovalStore.EnqueueMCPApproval}, {path: core/controlplane/gateway/mcp_approvals.go, symbol: MCPApprovalStore.pruneIndexFor}]},
+     legal_hold: {applies: false, reason: Approval TTLs do not consult legal holds}}
+  - {id: DI-C47, class: artifacts,
+     storage: {kind: redis_key, location: Copilot chat sessions and per-user indexes, redis_keys: [{pattern: 'copilot:session:{tenant}:{session}', path: core/controlplane/copilot/store_redis.go}, {pattern: 'copilot:sessions:{tenant}:{user}', path: core/controlplane/copilot/store_redis.go}], writers: [{path: core/controlplane/copilot/store_redis.go, symbol: RedisStore.AppendMessage}]},
+     content: {description: User and assistant chat messages, personal_data: possible},
+     retention: {settings: [{name: COPILOT_SESSION_TTL_HOURS, path: core/controlplane/copilot/store_redis.go}, {name: COPILOT_SESSION_MAX_MESSAGES, path: core/controlplane/copilot/store_redis.go}], default: '90d, re-applied on append; 1000 messages per session'},
+     deletion: {paths: [{path: core/controlplane/copilot/store_redis.go, symbol: RedisStore.AppendMessage}]},
+     legal_hold: {applies: false, reason: Session TTL does not consult legal holds}}
+  - {id: DI-C48, class: control-records,
+     storage: {kind: redis_key, location: 'Rate-limit counters cordum:rl:{scope}:{second} with scope tenant:{tenant}, ip:{ip} or ip:unknown; velocity windows', redis_keys: [{pattern: 'cordum:rl:{scope}:{second}', path: core/controlplane/gateway/middleware.go}, {pattern: 'ip:{ip}', path: core/controlplane/gateway/middleware.go}, {pattern: 'tenant:{tenant}', path: core/controlplane/gateway/middleware.go}, {pattern: 'cordum:velocity:{rule}:{key}', path: core/controlplane/safetykernel/velocity.go}], writers: [{path: core/controlplane/gateway/middleware.go, symbol: redisRateLimiter.Allow}, {path: core/controlplane/safetykernel/velocity.go, symbol: velocityChecker.CheckAndRecord}]},
+     content: {description: 'Request counts keyed by tenant or client IP; request ids per velocity rule and key value', personal_data: yes},
+     retention: {none: 'No configurable setting; rate-limit counters expire after 2s and velocity windows after the rule window plus 60s'},
+     deletion: {paths: [{path: core/controlplane/gateway/middleware.go, symbol: redisRateLimiter.Allow}, {path: core/controlplane/safetykernel/velocity.go, symbol: velocityChecker.CheckAndRecord}]},
+     legal_hold: {applies: false, reason: Counter TTLs do not consult legal holds}}
+  - {id: DI-C49, class: control-records,
+     storage: {kind: redis_key, location: 'Locks keyed by job, run, org or resource; tenant lock resources are tenant:{tenant}:{resource}', redis_keys: [{pattern: 'cordum:scheduler:job:{job}', path: core/controlplane/scheduler/engine.go}, {pattern: 'cordum:wf:run:lock:{run}', path: core/workflow/reconciler.go}, {pattern: 'cordum:wf:run:admission:{org}', path: core/controlplane/gateway/handlers_workflows.go}, {pattern: 'lock:{resource}', path: core/infra/locks/redis_store.go}, {pattern: 'tenant:{tenant}:{resource}', path: core/controlplane/gateway/handlers_locks.go}], writers: [{path: core/infra/store/job_store.go, symbol: RedisJobStore.TryAcquireLock}, {path: core/controlplane/gateway/handlers_workflows.go, symbol: server.acquireWorkflowAdmissionLock}, {path: core/infra/locks/redis_store.go, symbol: RedisStore.Acquire}]},
+     content: {description: 'Owner tokens; lock:{resource} payloads list owner ids and modes', personal_data: possible},
+     retention: {none: 'No retention setting; locks carry short caller-chosen TTLs (seconds to minutes)'},
+     deletion: {paths: [{path: core/infra/store/job_store.go, symbol: RedisJobStore.ReleaseLock}, {path: core/infra/locks/redis_store.go, symbol: RedisStore.Release}]},
+     legal_hold: {applies: false, reason: Lock TTLs do not consult legal holds}}
+  - {id: DI-C50, class: control-records,
+     storage: {kind: redis_key, location: Saga compensation stacks and recorded-step sets, redis_keys: [{pattern: 'saga:{workflow}:stack', path: core/controlplane/scheduler/saga.go}, {pattern: 'saga:{workflow}:recorded', path: core/controlplane/scheduler/saga.go}, {pattern: 'saga:{workflow}:lock', path: core/controlplane/scheduler/saga.go}], writers: [{path: core/controlplane/scheduler/saga.go, symbol: SagaManager.RecordCompensation}, {path: core/controlplane/scheduler/saga.go, symbol: SagaManager.Rollback}]},
+     content: {description: Compensation JobRequests per workflow and recorded-step markers, personal_data: possible},
+     retention: {none: 'No TTL setting; stacks drain as Rollback pops entries, recorded sets never expire, the rollback lock holds 2m'},
+     deletion: {paths: [{path: core/controlplane/scheduler/saga.go, symbol: SagaManager.popCompensation}, {path: core/controlplane/scheduler/saga.go, symbol: SagaManager.Rollback}]},
+     legal_hold: {applies: false, reason: Saga cleanup does not consult legal holds}}
+  - {id: DI-C51, class: evidence-audit,
+     storage: {kind: redis_key, location: Delegation lineage audit emission claims, redis_keys: [{pattern: 'cordum:audit:delegation_lineage:{job}:{jti}', path: core/controlplane/scheduler/delegation_dispatch.go}], writers: [{path: core/controlplane/scheduler/delegation_dispatch.go, symbol: Engine.claimDelegationLineageAuditEmission}]},
+     content: {description: Marker values keyed by job id and token id, personal_data: no},
+     retention: {none: 'No configurable setting; markers expire after a fixed 30d'},
+     deletion: {paths: [{path: core/controlplane/scheduler/delegation_dispatch.go, symbol: Engine.claimDelegationLineageAuditEmission}]},
+     legal_hold: {applies: false, reason: Marker TTL does not consult legal holds}}
+  - {id: DI-C52, class: artifacts,
+     storage: {kind: redis_key, location: 'Operator-written CAP resource payloads read by the scheduler and safety-kernel resolvers', redis_keys: [{pattern: 'cap:resource:{tenant}:{job}:{resource}', path: cmd/cordum-scheduler/cap_profile.go}, {pattern: 'cap:resource:{tenant}:{job}:{resource}', path: core/controlplane/safetykernel/kernel.go}]},
+     content: {description: 'JSON, text or binary payloads that jobs reference by tenant and job id', personal_data: possible},
+     retention: {none: 'No Cordum writer or TTL; operators manage these keys'},
+     deletion: {none: 'No Cordum deletion path; operators manage these keys'},
+     legal_hold: {applies: false, reason: Operator-managed keys are outside Cordum cleanup}}
+  - {id: DI-C53, class: control-records,
+     storage: {kind: redis_key, location: Worker registry snapshot and live worker id set, redis_keys: [{pattern: 'sys:workers:snapshot', path: core/infra/registry/snapshot.go}, {pattern: 'cordum:workers:count', path: core/controlplane/scheduler/engine.go}], writers: [{path: core/infra/store/redis_store.go, symbol: RedisStore.PutResult}, {path: core/controlplane/scheduler/engine.go, symbol: Engine.persistWorkerCount}]},
+     content: {description: 'Worker ids, pools, capabilities, load, region and free-form worker labels', personal_data: possible},
+     retention: {settings: [{name: REDIS_DATA_TTL_SECONDS, path: core/infra/store/redis_store.go}, {name: REDIS_DATA_TTL, path: core/infra/store/redis_store.go}], default: '24h snapshot; the worker id set expires after a fixed 2m'},
+     deletion: {paths: [{path: core/infra/store/redis_store.go, symbol: RedisStore.PutResult}, {path: core/controlplane/scheduler/engine.go, symbol: Engine.persistWorkerCount}]},
+     legal_hold: {applies: false, reason: Snapshot TTLs do not consult legal holds}}
+not_tenant_data:
+  - {path: cmd/cordum-scheduler/main.go, patterns: ['cordum:scheduler:snapshot:writer'], reason: 'Leader lock for the worker-snapshot writer; no tenant data'}
+  - {path: cmd/cordumctl/doctor.go, patterns: ['doctor:{message}'], reason: 'CLI stderr message prefix, not a Redis key'}
+  - {path: cmd/cordumctl/evals.go, patterns: ['warnings:{text}'], reason: 'CLI output heading, not a Redis key'}
+  - {path: cmd/cordumctl/mcp.go, patterns: ['note:{text}'], reason: 'CLI output label, not a Redis key'}
+  - {path: cmd/cordumctl/pack_trust.go, patterns: ['env:{kid}'], reason: 'Publisher id and display-name label for trust keys loaded from the environment, not a Redis key'}
+  - {path: cmd/cordumctl/policy.go, patterns: ['reinstall-pack:{pack}'], reason: 'verify-store remedy label printed by the CLI, not a Redis key'}
+  - {path: core/audit/datadog.go, patterns: ['service:cordum-gateway'], reason: 'Datadog tag string sent with exported events, not a Redis key'}
+  - {path: core/auth/delegation/keys.go, patterns: ['ed25519:{key}'], reason: 'Key-encoding scheme prefix stripped when parsing configured keys, not a Redis key'}
+  - {path: core/controlplane/gateway/actiongate_chain_verifier.go, patterns: ['approval_evidence_missing:{ref}'], reason: 'Action-gate outcome detail code, not a Redis key'}
+  - {path: core/controlplane/gateway/auth/basic.go, patterns: ['static:{fingerprint}'], reason: 'Key-id label built from a static API key fingerprint, not a Redis key'}
+  - {path: core/controlplane/gateway/auth/jwt.go, patterns: ['base64:{secret}'], reason: 'Encoding prefix of a configured JWT secret value, not a Redis key'}
+  - {path: core/controlplane/gateway/auth/oidc.go, patterns: ['cordum:auth:jwks:{hash}'], reason: 'OIDC provider JWKS cache keyed by issuer hash; public signing keys only'}
+  - {path: core/controlplane/gateway/auth/rbac.go, patterns: ['rbac:role:{role}', 'rbac:roles'], reason: 'Global RBAC role definitions (names, permissions, inheritance); no tenant or user content'}
+  - {path: core/controlplane/gateway/auth/scim.go, patterns: ['urn:ietf:params:scim:{urn}'], reason: 'SCIM protocol schema and message URNs, not Redis keys'}
+  - {path: core/controlplane/gateway/handler_admin_locks.go, patterns: ['cordum:auth:jwks:{hash}', 'cordum:cache:marketplace', 'cordum:cb:{breaker}', 'cordum:dlq:cleanup', 'cordum:reconciler:{name}', 'cordum:replayer:{name}', 'cordum:scheduler:snapshot:{name}', 'cordum:wf:delay:poller', 'cordum:workflow-engine:reconciler:{name}'], reason: 'Admin lock-inspection prefixes for infrastructure locks, breakers and caches with no tenant data'}
+  - {path: core/controlplane/gateway/handlers_approvals.go, patterns: ['approval:{ref}', 'namespace:{name}', 'resource:{name}', 'system:{name}'], reason: 'JetStream message-id label for approval republish and blast-radius label prefixes, not Redis keys'}
+  - {path: core/controlplane/gateway/handlers_auth.go, patterns: ['approvals:{action}', 'audit:{action}', 'delegations:{action}', 'jobs:{action}', 'packs:{action}', 'policy:{action}', 'schemas:{action}', 'topics:{action}', 'workflows:{action}'], reason: 'API-key and role scope names, not Redis keys'}
+  - {path: core/controlplane/gateway/handlers_edge_approvals.go, patterns: ['principal:{name}', 'role:{name}'], reason: 'Resolver identity label parts compared in memory, not Redis keys'}
+  - {path: core/controlplane/gateway/handlers_edge_evaluate.go, patterns: ['principal:{name}', 'sha256:{digest}'], reason: 'Requester identity label and digest string prefix, not Redis keys'}
+  - {path: core/controlplane/gateway/handlers_edge_llm_ingest.go, patterns: ['llm:{proxy}'], reason: 'Collector name the runtime replay window hashes into edge:rt:nonce keys (DI-C34); not a key itself'}
+  - {path: core/controlplane/gateway/handlers_jobs.go, patterns: ['cordum:cb:safety', 'cordum:scheduler:input_fail_open_total'], reason: 'Safety circuit-breaker state and a global fail-open counter read for status; no tenant data'}
+  - {path: core/controlplane/gateway/handlers_packs.go, patterns: ['api-gateway:{nanos}', 'pack:{pack}', 'packs:global'], reason: 'Pack-install lock resource names and the gateway owner label; the lock keys are lock:{resource} (DI-C49)'}
+  - {path: core/controlplane/gateway/handlers_policy_bundles.go, patterns: ['output:{entry}'], reason: 'Entry id inside an output-quarantine rule document, not a Redis key'}
+  - {path: core/controlplane/gateway/handlers_policy_resign.go, patterns: ['packs:global'], reason: 'Pack-install lock resource name taken by the re-sign handler; the lock key is lock:{resource} (DI-C49)'}
+  - {path: core/controlplane/gateway/helpers.go, patterns: ['principal:{name}'], reason: 'Identity label part compared in memory, not a Redis key'}
+  - {path: core/controlplane/gateway/mcp_approval_handlers.go, patterns: ['principal:{name}'], reason: 'Identity label part compared in memory, not a Redis key'}
+  - {path: core/controlplane/gateway/pack_install_verify.go, patterns: ['packs:publishers:{kid}', 'packs:trusted_keys:{kid}'], reason: 'Global pack-signing public keys and publisher records read for trust checks; no tenant content'}
+  - {path: core/controlplane/gateway/packs/constants.go, patterns: ['cordum:cache:marketplace'], reason: 'Global marketplace catalog cache; no tenant content'}
+  - {path: core/controlplane/gateway/policybundles/audit.go, patterns: ['api_key:{key}'], reason: 'identity_source label recorded in policy audit entries, not a Redis key'}
+  - {path: core/controlplane/gateway/policybundles/rules.go, patterns: ['legacy:{rule}'], reason: 'Generated rule id inside policy bundle documents, not a Redis key'}
+  - {path: core/controlplane/safetykernel/output_resource.go, patterns: ['sha256:{digest}'], reason: 'Digest string prefix, not a Redis key'}
+  - {path: core/controlplane/safetykernel/policy_signature_report.go, patterns: ['cordum:safety:policy_signature:{instance}'], reason: 'Per-instance policy signature report (sources, key count, mode); no tenant data'}
+  - {path: core/controlplane/scheduler/engine.go, patterns: ['cordum:scheduler:input_fail_open_total'], reason: 'Global counter of safety fail-open decisions; no tenant data'}
+  - {path: core/controlplane/scheduler/output_safety_client.go, patterns: ['cordum:cb:safety:output', 'sha256:{digest}'], reason: 'Output-safety circuit-breaker state and a digest prefix; no tenant data'}
+  - {path: core/controlplane/scheduler/pending_replayer.go, patterns: ['cordum:replayer:pending'], reason: 'Leader lock for the pending-job replayer; no tenant data'}
+  - {path: core/controlplane/scheduler/reconciler.go, patterns: ['cordum:reconciler:default'], reason: 'Leader lock for the job reconciler; no tenant data'}
+  - {path: core/controlplane/scheduler/safety_client.go, patterns: ['cordum:cb:safety'], reason: 'Input-safety circuit-breaker state; no tenant data'}
+  - {path: core/controlplane/scheduler/session_token.go, patterns: ['legacy:'], reason: 'Constant version tag inside session:worker keys (DI-C45), not a key or tenant value'}
+  - {path: core/controlplane/scheduler/session_token_store.go, patterns: ['v2:'], reason: 'Constant version tag inside session:worker keys (DI-C45), not a key or tenant value'}
+  - {path: core/controlplane/topicregistry/service.go, patterns: ['tenant:{field}'], reason: 'Map key inside the cfg:system:topics config document (DI-C05 cfg: keys), not a Redis key'}
+  - {path: core/edge/agentd/evaluator.go, patterns: ['edge-evaluate:{hash}'], reason: 'In-process safe-allow cache key (DI-E03), not a Redis key'}
+  - {path: core/edge/claude/mapper.go, patterns: ['sha256:{digest}'], reason: 'Digest string prefix, not a Redis key'}
+  - {path: core/edge/copilot/hooksettings.go, patterns: ['authorization:{text}'], reason: 'Secret-marker substring used to refuse hook settings, not a Redis key'}
+  - {path: core/edge/observability.go, patterns: ['file:{label}', 'mcp:{label}', 'runtime:{label}', 'shell:{label}'], reason: 'Human-readable action summary labels, not Redis keys'}
+  - {path: core/edge/redaction.go, patterns: ['sha256:{digest}'], reason: 'Digest string prefix, not a Redis key'}
+  - {path: core/edge/shadow/ci/buildkite.go, patterns: ['command:{text}'], reason: 'Pipeline YAML field name matched while scanning CI config, not a Redis key'}
+  - {path: core/edge/shadow/ci/circleci.go, patterns: ['image:{text}', 'run:{text}'], reason: 'Pipeline YAML field names matched while scanning CI config, not Redis keys'}
+  - {path: core/edge/shadow/ci/detector.go, patterns: ['managed-by:{text}'], reason: 'Config marker matched while scanning CI config, not a Redis key'}
+  - {path: core/edge/shadow/ci/gitlab.go, patterns: ['image:{text}'], reason: 'Pipeline YAML field name matched while scanning CI config, not a Redis key'}
+  - {path: core/edge/shadow/ci/jenkins.go, patterns: ['image:{text}'], reason: 'Pipeline field name matched while scanning CI config, not a Redis key'}
+  - {path: core/edge/shadow/ci/oidc.go, patterns: ['organization:{text}', 'pipeline:{text}', 'project_path:{text}'], reason: 'OIDC subject-claim segments parsed in memory, not Redis keys'}
+  - {path: core/edge/shadow/ci_templates.go, patterns: ['env:{text}', 'include:{text}', 'jobs:{text}', 'orbs:{text}', 'steps:{text}', 'variables:{text}'], reason: 'CI config template field names, not Redis keys'}
+  - {path: core/edge/shadow/github/mapping.go, patterns: ['repo:{text}'], reason: 'OIDC subject-claim prefix parsed in memory, not a Redis key'}
+  - {path: core/edge/shadow/github/signals.go, patterns: ['github_actions:{repo}', 'managed-by:{text}'], reason: 'Finding source-id label and config marker, not Redis keys'}
+  - {path: core/edge/shadow/k8s/mapping.go, patterns: ['sa:{namespace}'], reason: 'Service-account principal label for findings, not a Redis key'}
+  - {path: core/edge/shadow/k8s_templates.go, patterns: ['spec:{text}'], reason: 'Kubernetes manifest template field name, not a Redis key'}
+  - {path: core/edge/shadow/network/detector.go, patterns: ['network:{text}'], reason: 'Error message prefix, not a Redis key'}
+  - {path: core/edge/shadow/scanner.go, patterns: ['env:{name}', 'process:{name}'], reason: 'Finding source-id labels for environment variables and processes, not Redis keys'}
+  - {path: core/evals/extraction/pipeline.go, patterns: ['re:{pattern}'], reason: 'Regular-expression marker in extraction patterns, not a Redis key'}
+  - {path: core/infra/bus/nats.go, patterns: ['handshake:{component}', 'jobreq:{subject}', 'jobresult:{subject}'], reason: 'JetStream Nats-Msg-Id dedupe header values on DI-C21 stream messages, not Redis keys'}
+  - {path: core/infra/config/config.go, patterns: ['localhost:{port}'], reason: 'Default safety-kernel address, not a Redis key'}
+  - {path: core/infra/config/safety_policy.go, patterns: ['legacy:{rule}'], reason: 'Generated rule id prefix inside safety policy documents, not a Redis key'}
+  - {path: core/infra/otel/metrics.go, patterns: ['localhost:{port}'], reason: 'Default OTLP endpoint address, not a Redis key'}
+  - {path: core/infra/otel/tracer.go, patterns: ['localhost:{port}'], reason: 'Default OTLP endpoint address, not a Redis key'}
+  - {path: core/infra/registry/instance.go, patterns: ['cordum:instance:{service}'], reason: 'Service instance heartbeat (id, service, version, commit, start time); no tenant data'}
+  - {path: core/infra/schema/registry.go, patterns: ['schema:{schema}'], reason: 'Global JSON schemas registered by packs, their URL map and index; no tenant content'}
+  - {path: core/infra/store/dlq_store.go, patterns: ['cordum:dlq:cleanup'], reason: 'Leader lock for DLQ cleanup; no tenant data'}
+  - {path: core/infra/store/job_event_store.go, patterns: ['effect:{field}', 'event:{field}'], reason: 'Field-name prefixes inside the job runtime hash (DI-C22), not keys'}
+  - {path: core/infra/store/job_store.go, patterns: ['approval:{ref}'], reason: 'JetStream message-id label set on approval republish, not a Redis key'}
+  - {path: core/licensing/license.go, patterns: ['ed25519:{key}'], reason: 'Key-encoding scheme prefix stripped when parsing license keys, not a Redis key'}
+  - {path: core/mcp/upstream_remote.go, patterns: ['data:{line}', 'event:{line}'], reason: 'Server-sent-event field names parsed from upstream responses, not Redis keys'}
+  - {path: core/policy/actiongates/approval_binding.go, patterns: ['approval_lookup_failed:{detail}'], reason: 'Action-gate sub-reason code, not a Redis key'}
+  - {path: core/policy/actiongates/file_gate.go, patterns: ['credential:{code}', 'sensitive_path:{code}'], reason: 'Action-gate reason codes for file rules, not Redis keys'}
+  - {path: core/policy/actiongates/mcp_gate.go, patterns: ['dangerous_param:{code}', 'identity_lookup_failed:{detail}', 'mutation:{field}', 'reachability_probe_failed:{detail}'], reason: 'Action-gate reason codes for MCP rules, not Redis keys'}
+  - {path: core/policy/actiongates/mutation_gate.go, patterns: ['resource_lookup_failed:{detail}'], reason: 'Action-gate sub-reason code, not a Redis key'}
+  - {path: core/policy/actiongates/provenance_gate.go, patterns: ['approval_lookup_failed:{detail}', 'audit_chain_compromised:{detail}', 'audit_chain_verify_failed:{detail}', 'audit_evidence_missing:{detail}', 'provenance_ok:{detail}'], reason: 'Action-gate reason codes for provenance rules, not Redis keys'}
+  - {path: core/policy/actiongates/tenant_gate.go, patterns: ['archived_bypass:{code}', 'cross_tenant:{code}', 'large_enumeration:{code}', 'wildcard_owner:{field}'], reason: 'Action-gate reason codes for row-scope rules, not Redis keys'}
+  - {path: core/policy/actiongates/url_gate.go, patterns: ['data:pii', 'exfil_host:{code}', 'fd00:{addr}', 'fe80:{addr}', 'metadata_service:{code}', 'paste:{code}', 'pii_post:{code}'], reason: 'Action-gate reason codes and metadata-service IPv6 literals, not Redis keys'}
+  - {path: core/policysign/keys.go, patterns: ['ed25519:{key}'], reason: 'Key-encoding scheme prefix stripped when parsing policy keys, not a Redis key'}
+  - {path: core/policysign/policysign.go, patterns: ['ed25519:{key}'], reason: 'Key-encoding scheme prefix stripped when parsing policy keys, not a Redis key'}
+  - {path: core/workflow/engine_events.go, patterns: ['cordum:wf:delay:poller'], reason: 'Leader lock for the workflow delay poller; no tenant data'}
+  - {path: core/workflow/engine_output_evaluation.go, patterns: ['sha256:{digest}'], reason: 'Digest string prefix, not a Redis key'}
+  - {path: core/workflow/eval.go, patterns: ['undefined:{name}'], reason: 'Expression-evaluator error text matched in memory, not a Redis key'}
+  - {path: core/workflow/reconciler.go, patterns: ['cordum:workflow-engine:reconciler:{name}'], reason: 'Leader lock for the workflow reconciler; no tenant data'}

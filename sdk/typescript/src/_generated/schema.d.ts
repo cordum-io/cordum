@@ -2556,6 +2556,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/policy/bundles/{id}/resign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Explicitly re-sign a stored policy bundle (admin only) */
+        post: operations["resignPolicyBundle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/policy/bundles/{id}/simulate": {
         parameters: {
             query?: never;
@@ -12543,6 +12560,63 @@ export interface operations {
             500: components["responses"]["InternalServerError"];
         };
     };
+    resignPolicyBundle: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                /** @description Bundle ID; '/' may be sent as '~'. Pack fragments require reinstalling the pack. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current content signed with a trusted key and one audit entry stored atomically */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        hash: string;
+                        id: string;
+                        key_id: string;
+                        /** Format: date-time */
+                        updated_at: string;
+                    };
+                };
+            };
+            /** @description POLICY_VALIDATION_FAILED: empty content or pack-owned fragment */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description POLICY_VERSION_CONFLICT: concurrent change, or a pack install or uninstall in progress */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            500: components["responses"]["InternalServerError"];
+            /** @description POLICY_SIGNING_REQUIRED: no trusted policy signing key configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     simulatePolicyBundle: {
         parameters: {
             query?: never;
@@ -15443,6 +15517,7 @@ export enum ApiPaths {
     updatePolicyBundle = "/api/v1/policy/bundles/{id}",
     deletePolicyBundle = "/api/v1/policy/bundles/{id}",
     simulatePolicyBundle = "/api/v1/policy/bundles/{id}/simulate",
+    resignPolicyBundle = "/api/v1/policy/bundles/{id}/resign",
     listBundleSnapshots = "/api/v1/policy/bundles/snapshots",
     createBundleSnapshot = "/api/v1/policy/bundles/snapshots",
     getBundleSnapshot = "/api/v1/policy/bundles/snapshots/{id}",
