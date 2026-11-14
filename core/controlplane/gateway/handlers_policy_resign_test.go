@@ -75,7 +75,7 @@ func TestResignPolicyBundle_SignsCurrentContentAndKernelLoads(t *testing.T) {
 }
 
 func TestResignPolicyBundle_RefusesWithoutTrustedSigningKeyBeforeAnyWrite(t *testing.T) {
-	for _, tc := range []struct{ mode, trust string }{{"", ""}, {"warn", ""}, {"off", ""}, {"warn", "absent"}, {"enforce", "other"}} {
+	for _, tc := range []struct{ mode, trust string }{{"", ""}, {"warn", ""}, {"off", ""}, {"warn", "absent"}, {"warn", "other"}, {"off", "other"}, {"enforce", "other"}} {
 		t.Run(tc.mode+"/"+tc.trust, func(t *testing.T) {
 			storeWriterEnv(t, true, tc.mode)
 			if tc.trust != "" {

@@ -219,6 +219,8 @@ type policyStoreTestGateway struct {
 	docs     map[string]configDoc
 	requests []string
 	refusal  int
+	missing  int
+	body     string
 }
 
 func (g *policyStoreTestGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -227,7 +229,13 @@ func (g *policyStoreTestGateway) ServeHTTP(w http.ResponseWriter, r *http.Reques
 	g.requests = append(g.requests, r.Method+" "+r.URL.EscapedPath())
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method == http.MethodGet && r.URL.Path == "/api/v1/config" {
-		_ = json.NewEncoder(w).Encode(g.docs[r.URL.Query().Get("scope_id")])
+		if doc, ok := g.docs[r.URL.Query().Get("scope_id")]; ok {
+			_ = json.NewEncoder(w).Encode(doc)
+			return
+		}
+		// A missing document gets g.missing and g.body: by default the gateway's 404 CONFIG_NOT_FOUND.
+		w.WriteHeader(g.missing)
+		_, _ = w.Write([]byte(g.body))
 		return
 	}
 	if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/resign") {
@@ -261,7 +269,7 @@ func policyStoreTestSetup(t *testing.T, bundles map[string]any) (*policyStoreTes
 			t.Setenv(key, "")
 		}
 	}
-	g := &policyStoreTestGateway{docs: map[string]configDoc{
+	g := &policyStoreTestGateway{missing: http.StatusNotFound, body: `{"code":"CONFIG_NOT_FOUND","error":"config not found","status":404}`, docs: map[string]configDoc{
 		"policy": {Data: map[string]any{"bundles": bundles}},
 		"packs": {Data: map[string]any{"installed": map[string]any{"demo": map[string]any{
 			"overlays": map[string]any{"policy": []any{map[string]any{"fragment_id": "demo/default"}}},
@@ -343,6 +351,23 @@ func TestPolicyVerifyStore_CleanStoreExitsZero(t *testing.T) {
 		after, final := g.snapshot(t)
 		require.Equal(t, before, after)
 		require.Equal(t, docs, final)
+	})
+	t.Run("missing-policy-document", func(t *testing.T) {
+		// Only the gateway's 404 CONFIG_NOT_FOUND means zero bundles; a 404 from another route or any other read error stays a configuration error.
+		delete(g.docs, "policy")
+		for _, tc := range []struct {
+			status, exit, gets int
+			body, out          string
+		}{{http.StatusNotFound, 0, 2, g.body, "all 0 enabled policy bundles verify\n"}, {http.StatusInternalServerError, 2, 1, `{"error":"internal error"}`, ""}, {http.StatusNotFound, 2, 1, "404 page not found", ""}} {
+			g.missing, g.body = tc.status, tc.body
+			before, docs := g.snapshot(t)
+			code, out, stderr := runCLI(t, bin, env, "policy", "verify-store")
+			require.Equal(t, tc.exit, code, "row %d %s: %s", tc.status, tc.body, stderr)
+			require.Equal(t, tc.out, out)
+			after, final := g.snapshot(t)
+			require.Equal(t, []string{"GET /api/v1/config", "GET /api/v1/config"}[:tc.gets], after[len(before):])
+			require.Equal(t, docs, final)
+		}
 	})
 }
 
