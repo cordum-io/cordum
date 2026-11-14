@@ -1,7 +1,7 @@
 # Incident-to-dataset extraction
 
 Cordum can turn real production incidents from the **Policy Decision Log**
-into immutable eval datasets with one API call:
+into write-once eval dataset versions with one API call:
 
 - scan decision-log incidents for a tenant and time window
 - project each incident to a **minimal** job-input snapshot
@@ -29,7 +29,7 @@ The extraction pipeline intentionally stays narrow:
    - a stable `input_hash`
 4. **Deduplicate** incidents by the tuple:
    `(topic, rule, verdict, input shape)`.
-5. **Preview or persist** the resulting eval entries as a new immutable
+5. **Preview or persist** the resulting eval entries as a new write-once
    dataset version.
 
 The extractor defaults to the **last 24 hours** and to verdicts
@@ -134,7 +134,7 @@ payloads into the dataset. Instead, the snapshot keeps a minimal subset of
 fields plus an `input_hash`. Raw payload fragments and `_content.*` style
 fields are dropped before persistence.
 
-The created dataset itself is still immutable and versioned like any other
+The created dataset itself is still write-once and versioned like any other
 eval dataset. If you need to refresh the dataset with newer incidents, create
 another version instead of editing an existing one.
 

@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Docs: the eval dataset, extraction and runner pages describe dataset versions as write-once
+  through the API (CLM-080) instead of immutable. The LangChain tutorial, the Edge P0 threat
+  model and the Edge P0 acceptance evidence record now state their safety-gating,
+  destructive-command, invariant-floor and approval statements at the status recorded in
+  docs/contract/claims.yaml (CLM-002, CLM-013, CLM-016, CLM-084). The decision-log page labels
+  its 500 ms figure as a nightly benchmark threshold, not a measured result or a performance
+  commitment (M0-07-DOCS-INTERNAL, task-18dca3ee).
 - Docs: the policy-authority pages (docs/policy/global-authority.md, docs/policy/tiers.md,
   docs/safety/decision-thresholds.md, docs/topics/registry.md and
   docs/operations/safetykernel-constraints.md) now state the invariants floor, the decision

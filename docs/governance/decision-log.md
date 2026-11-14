@@ -179,9 +179,12 @@ falls back to `go run ./cmd/cordumctl-governance-helper ...`.
 
 ## Performance expectations
 
-The store is designed to keep a 7-day query under **500 ms** on the task
-benchmark gate. The benchmark seeds 50k records and exercises the query
-path with time-index scans plus secondary indexes.
+`BenchmarkQueryDecisions7Day` in `core/infra/store` seeds 50,000 records
+into an in-process miniredis server, queries a 7-day window for deny
+verdicts through the time and verdict indexes, and fails if the average
+query takes 500 ms or more. CI runs it only in the advisory nightly
+benchmark step. The 500 ms figure is that benchmark's threshold, not a
+result measured for the current release and not a performance commitment.
 
 Operationally:
 
