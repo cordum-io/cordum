@@ -45,11 +45,12 @@ curl -sk -X POST https://<gateway>:8081/api/v1/agents \
   }'
 ```
 
-Note the returned agent `id`. Then give Copilot a credential that
-authenticates as `<principal-id>` in `<tenant>`: a static API key with that
-principal configured (`<tenant>:<key>:<role>:<principal-id>` in
-`CORDUM_API_KEYS`) or a JWT/SSO subject. Runtime-created API keys carry no
-principal of their own, so they cannot bind Copilot to this identity. See
+Note the returned agent `id`. Then give Copilot a static API key that
+authenticates as `<principal-id>` in `<tenant>`, with that principal
+configured (`<tenant>:<key>:<role>:<principal-id>` in `CORDUM_API_KEYS`).
+The `mcp.json` from step 3 sends only an `X-API-Key` header, so a JWT or SSO
+token does not work here. Runtime-created API keys carry no principal of
+their own, so they cannot bind Copilot to this identity. See
 [Agent identity binding](../mcp-server.md#agent-identity-binding-x-agent-id).
 Keep `preapproved_mutating_tools` empty so that none of the seven
 [mutating tools](mutating-tools.md) skips human approval if you later allow one.
