@@ -412,15 +412,14 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		// X-Agent-Id disagrees), never the raw header, and it is the only
 		// agent value any metadata sink below records.
 		agentID, identity := s.resolveMCPIdentity(r)
-		// The principal the approval and policy gates act on comes only from
-		// a credential: one the caller merely asserted with X-Principal-Id is
-		// "" here, exactly as for identity. principalID keeps the caller's
-		// principal for attribution only (Edge trace evidence), and
-		// RequesterIdentity stays the composite submitter identity, so the
-		// self-approval guard still counts an asserted principal and can
-		// only refuse more.
+		// The principal the approval and policy gates act on, and the owner
+		// of the Edge trace parents below, come only from a credential: one
+		// the caller merely asserted with X-Principal-Id is "" here, exactly
+		// as for identity. ensureMCPHTTPTraceParents keeps an asserted
+		// principal as an attribution label only, and RequesterIdentity
+		// stays the composite submitter identity, so the self-approval guard
+		// still counts an asserted principal and can only refuse more.
 		authenticatedPrincipal := authCtx.AuthenticatedPrincipal()
-		principalID := strings.TrimSpace(authCtx.PrincipalID)
 		mcpCtx := WithMCPCallMetadata(r.Context(), MCPCallMetadata{
 			Tenant:            tenantID,
 			AgentID:           agentID,
@@ -448,7 +447,7 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		}
 		if transportSessionID != "" {
 			executionID := "mcp-" + transportSessionID
-			if err := s.ensureMCPHTTPTraceParents(r.Context(), tenantID, agentID, principalID, transportSessionID, executionID); err != nil {
+			if err := s.ensureMCPHTTPTraceParents(r.Context(), tenantID, agentID, authenticatedPrincipal, transportSessionID, executionID); err != nil {
 				writeErrorJSON(w, http.StatusInternalServerError, "mcp trace unavailable")
 				return
 			}
@@ -502,7 +501,7 @@ func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentI
 			PolicyMode: edge.PolicyModeEnforce, Status: edge.SessionStatusRunning,
 			StartedAt: now, EnforcementLayers: edge.EnforcementLayers{"mcp": true},
 			RiskSummary: edge.RiskSummary{MaxRisk: edge.RiskLevelLow},
-			Labels:      edge.Labels{"agent_id": agentID},
+			Labels:      mcpTraceParentLabels(ctx, agentID),
 		}); err != nil {
 			return err
 		}
@@ -514,10 +513,24 @@ func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentI
 			ExecutionID: executionID, SessionID: sessionID, TenantID: tenantID,
 			Adapter: edge.AdapterMCPGateway, Mode: edge.ExecutionModeLocalDev,
 			WorkerID: principalID, Status: edge.ExecutionStatusRunning,
-			StartedAt: now, Labels: edge.Labels{"agent_id": agentID},
+			StartedAt: now, Labels: mcpTraceParentLabels(ctx, agentID),
 		})
 	}
 	return nil
+}
+
+// mcpTraceParentLabels returns the labels of a new MCP trace parent. A
+// principal the caller only asserted with X-Principal-Id is kept as
+// asserted_principal_id for attribution; it never owns the parent. A value
+// longer than an Edge label allows is left out rather than failing the request.
+func mcpTraceParentLabels(ctx context.Context, agentID string) edge.Labels {
+	labels := edge.Labels{"agent_id": agentID}
+	if ac := auth.FromContext(ctx); ac != nil && ac.PrincipalAsserted {
+		if asserted := strings.TrimSpace(ac.PrincipalID); asserted != "" && len(asserted) <= edge.MaxLabelValueBytes {
+			labels["asserted_principal_id"] = asserted
+		}
+	}
+	return labels
 }
 
 // resolveMCPIdentity resolves the agent identity bound to the request's
