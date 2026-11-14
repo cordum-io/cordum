@@ -2014,8 +2014,8 @@ func migrateLegacyPolicyBundles(ctx context.Context, svc *configsvc.Service) (bo
 	if !ok || len(legacyBundles) == 0 {
 		return false, 0, nil
 	}
-	if !legacyPolicyBundlesMayMigrate(legacyBundles) {
-		return false, 0, nil
+	if err := legacyPolicyBundlesMayMigrate(legacyBundles); err != nil {
+		return false, 0, err
 	}
 	if err := svc.SetWithRetry(ctx, configsvc.ScopeSystem, packs.PolicyConfigID, 3, func(doc *configsvc.Document) error {
 		if doc.Data == nil {
@@ -2046,23 +2046,27 @@ func migrateLegacyPolicyBundles(ctx context.Context, svc *configsvc.Service) (bo
 // legacyPolicyBundlesMayMigrate decides whether the boot-time migration may
 // copy the legacy bundles. The copy is never signed, so under enforce it runs
 // only when every legacy bundle with content already verifies under the
-// policy trust store. Otherwise nothing moves and the gateway keeps booting.
-func legacyPolicyBundlesMayMigrate(legacyBundles map[string]any) bool {
+// policy trust store. Otherwise it returns an error, nothing moves, and the
+// gateway refuses to start: the kernel reads only system/policy, so booting
+// without the legacy rules would silently stop enforcing them.
+func legacyPolicyBundlesMayMigrate(legacyBundles map[string]any) error {
 	mode, modeErr := policysign.ResolveMode()
 	if modeErr != nil {
 		mode = policysign.ModeEnforce
 	}
 	unverified := countUnverifiedLegacyPolicyBundles(legacyBundles)
 	if unverified == 0 {
-		return true
+		return nil
 	}
 	attrs := []any{"code", "policy.legacy_migration_unverified", "unverified", unverified, "legacy_bundles", len(legacyBundles), "mode", mode.String()}
 	if mode == policysign.ModeEnforce {
-		slog.Error("legacy policy bundles left in system/default: they do not verify under the policy trust store", attrs...)
-		return false
+		slog.Error("legacy policy bundles in system/default do not verify under the policy trust store: refusing to start", attrs...)
+		return fmt.Errorf("refusing to start: policy.legacy_migration_unverified: %d of %d legacy policy bundles in system/default do not verify under the policy trust store; "+
+			"re-sign them: start the gateway once with CORDUM_POLICY_STRICT=warn to move them to system/policy, "+
+			"run `cordumctl policy resign --all` (reinstall any pack it reports), then restore enforce", unverified, len(legacyBundles))
 	}
 	slog.Warn("legacy policy bundles migrated without a verified signature", attrs...)
-	return true
+	return nil
 }
 
 // countUnverifiedLegacyPolicyBundles counts, in sorted key order, the legacy
