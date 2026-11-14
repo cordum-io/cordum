@@ -96,3 +96,23 @@ func (g frontedIdentityGate) Call(ctx context.Context, name string, params json.
 	}
 	return g.upstream.Call(ctx, name, params)
 }
+
+// invariantFlooredTools runs the SecOps invariant floor
+// (gatewayApprovalGate.CheckInvariants) before each tools/call it forwards to
+// a fronted upstream, as ToolRegistry.Call does for the built-in tools.
+// MCPServer sends every tools/call through Call, directly or, with
+// mcp.policy_gate_enabled, once the action gates allow it, so this one check
+// covers both paths. The upstream's name is the MCP server the rules match.
+type invariantFlooredTools struct {
+	mcp.ToolService
+	floor  *gatewayApprovalGate
+	server string
+}
+
+// Call implements mcp.ToolService.
+func (t invariantFlooredTools) Call(ctx context.Context, name string, args json.RawMessage) (*mcp.ToolCallResult, error) {
+	if err := t.floor.CheckInvariants(ctx, mcp.Tool{Name: name, ApprovalScope: t.server}); err != nil {
+		return nil, err
+	}
+	return t.ToolService.Call(ctx, name, args)
+}

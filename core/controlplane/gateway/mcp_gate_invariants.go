@@ -49,7 +49,8 @@ func (f MCPInvariantLookupFunc) InvariantsForMCPTool(ctx context.Context) []conf
 // CheckInvariants enforces the SecOps invariant floor on a tools/call,
 // approval-gated or not (mcp.InvariantFloor): ToolRegistry.Call runs it
 // before approval gating, so a deny invariant also blocks tools that never
-// reach Check. A call without MCPCallMetadata is matched with an empty
+// reach Check, and invariantFlooredTools runs it before forwarding a call to
+// a fronted upstream. A call without MCPCallMetadata is matched with an empty
 // tenant, so tenant-scoped invariants skip it and the rest still apply.
 //
 // ponytail: one configsvc read and invariants YAML parse per tools/call;
