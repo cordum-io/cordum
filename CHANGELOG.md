@@ -126,6 +126,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- `cordum-mcp --cacert` / `CORDUM_TLS_CA` trusts the gateway's private CA, and
+  the pinned-IP transport keeps the caller's TLS config (#492, task-9a3e9e6c).
+
 - Added `docs/contract/data-inventory.yaml` (PR2-07): data classes with storage,
   content, retention, deletion-path and legal-hold fields, separating local
   endpoint copies from control-plane data. `tests/contract` checks its setting
