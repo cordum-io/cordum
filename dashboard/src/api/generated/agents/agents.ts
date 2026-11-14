@@ -492,6 +492,7 @@ export const getUpdateAgentMutationOptions = <
     | UnauthorizedResponse
     | ForbiddenResponse
     | NotFoundResponse
+    | ConflictResponse
     | ServiceUnavailableResponse,
   TContext = unknown,
 >(options?: {
@@ -537,6 +538,7 @@ export type UpdateAgentMutationError =
   | UnauthorizedResponse
   | ForbiddenResponse
   | NotFoundResponse
+  | ConflictResponse
   | ServiceUnavailableResponse;
 export type UpdateAgentMutationVariables = {
   id: string;
@@ -552,6 +554,7 @@ export const useUpdateAgent = <
     | UnauthorizedResponse
     | ForbiddenResponse
     | NotFoundResponse
+    | ConflictResponse
     | ServiceUnavailableResponse,
   TContext = unknown,
 >(
