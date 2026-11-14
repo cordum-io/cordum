@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -301,12 +300,11 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 	if err := validateMCPApprovalRequest(req); err != nil {
 		return nil, fmt.Errorf("mcp gate: enqueue: %w", err)
 	}
-	rec, err := g.store.EnqueueMCPApproval(ctx, req)
-	if err != nil {
-		return nil, fmt.Errorf("%w: mcp gate: enqueue: %w", mcp.ErrApprovalStoreUnavailable, err)
-	}
 	// EDGE-103: try to dual-write an EdgeApproval when the gate is
 	// wired for it AND mcp.CallMetadata has SessionID/ExecutionID.
+	// The Edge approval is minted first, naming the legacy record id it
+	// is dual-written with, so the record can name it back
+	// (EdgeApprovalRef) and either approvals page resolves both halves.
 	// On success the returned ApprovalRef is the Edge ref consumable
 	// by the new `_approval_ref` resume path. On legitimate miss (no
 	// Edge wiring or no Edge metadata), ApprovalRef falls back to the
@@ -315,16 +313,27 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 	// outage (wired + metadata present but EnqueueApproval errored),
 	// fail-closed per DoD #5 — no silent fallback to a non-resumable
 	// legacy approval_id.
-	approvalRef, policySnapshot, expiresAt, mintErr := g.dualWriteEdgeApproval(ctx, meta, tool, params, rec)
+	if req.ID, err = mcpApprovalID(); err != nil {
+		return nil, fmt.Errorf("%w: mcp gate: approval id: %w", mcp.ErrApprovalStoreUnavailable, err)
+	}
+	approvalRef, policySnapshot, expiresAt, mintErr := g.dualWriteEdgeApproval(ctx, meta, tool, params, req)
 	if mintErr != nil {
-		// The record is correlation-only under the policy gate and nothing
-		// will ever reference it, so withdraw it (task-fbe79532).
-		g.withdrawCorrelationRecord(ctx, rec)
 		// A policy change is retryable, not a store outage.
 		if errors.Is(mintErr, mcp.ErrPolicySnapshotChanged) {
 			return nil, mintErr
 		}
 		return nil, fmt.Errorf("%w: edge approval mint failed: %w", mcp.ErrApprovalStoreUnavailable, mintErr)
+	}
+	if approvalRef != req.ID {
+		req.EdgeApprovalRef = approvalRef
+	}
+	rec, err := g.store.EnqueueMCPApproval(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("%w: mcp gate: enqueue: %w", mcp.ErrApprovalStoreUnavailable, err)
+	}
+	if expiresAt.IsZero() && rec.ExpiresAt > 0 {
+		// MCPApprovalRecord.ExpiresAt is UnixMicro (mcp_approvals.go).
+		expiresAt = time.UnixMicro(rec.ExpiresAt).UTC()
 	}
 	// Advertise `_approval_ref` only for a minted Edge ref; the legacy
 	// record resumes via ClaimPreApproved on byte-identical args.
@@ -336,8 +345,7 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 	// approval_status=required + approval_id=<rec.ID> — lets SIEM
 	// consumers find the pending approval by correlating on the same
 	// id that lands on the mcp.tool_approval(outcome=enqueue) event.
-	// Stamped only once the mint succeeded: a failed mint withdraws the
-	// record above, so it must not be advertised.
+	// Stamped only once the mint succeeded and the record was written.
 	if h := mcp.InvocationHandleFromContext(ctx); h != nil {
 		h.MarkApprovalRequired(rec.ID)
 	}
@@ -351,19 +359,6 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 		Reason:         rec.Reason,
 		Tool:           tool.Name,
 	}, nil
-}
-
-// withdrawCorrelationRecord expires rec after a failed Edge mint. The cleanup
-// outlives a cancelled call (a client that hung up mid-mint is exactly when an
-// Edge store is slow or down) but is bounded. It is best-effort: on failure the
-// record is logged, never the arguments, and the sweeper stays the backstop.
-func (g *gatewayApprovalGate) withdrawCorrelationRecord(ctx context.Context, rec *MCPApprovalRecord) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
-	defer cancel()
-	if !g.store.WithdrawPending(ctx, rec.ID, time.Now()) {
-		slog.Warn("mcp gate: correlation approval record not withdrawn after edge mint failure",
-			"approval_id", rec.ID, "tenant", rec.Tenant)
-	}
 }
 
 // useConsumedEdgeApproval reports whether this call carries the Edge
@@ -392,12 +387,13 @@ func (g *gatewayApprovalGate) useConsumedEdgeApproval(ctx context.Context, meta 
 	return true
 }
 
-// dualWriteEdgeApproval mints an EdgeApproval alongside the legacy
-// MCPApprovalStore record when the gate has been wired for Edge mint
-// AND mcp.CallMetadata carries SessionID + ExecutionID. The Edge
-// record's ref is the EDGE-103 `_approval_ref` resume handle; without
-// it, the response falls back to the legacy ID (resumable via
-// retry-with-same-args, not via `_approval_ref`).
+// dualWriteEdgeApproval mints the EdgeApproval a legacy MCPApprovalStore
+// record is dual-written with, before the record is written, when the
+// gate has been wired for Edge mint AND mcp.CallMetadata carries
+// SessionID + ExecutionID. The Edge approval names req.ID, the record's
+// pre-generated id. Its ref is the EDGE-103 `_approval_ref` resume
+// handle; without it, the response falls back to the legacy ID
+// (resumable via retry-with-same-args, not via `_approval_ref`).
 //
 // Returns a four-tuple — the last field is non-nil when Edge mint was
 // ATTEMPTED (transport metadata present) and FAILED. Caller surfaces
@@ -410,12 +406,8 @@ func (g *gatewayApprovalGate) useConsumedEdgeApproval(ctx context.Context, meta 
 // the policy evaluator hands down the upstream ctx. A wired mint without
 // it fails closed rather than binding to a non-event (task-63400922 E1).
 // A confirmed snapshot change refuses the mint before EnqueueApproval.
-func (g *gatewayApprovalGate) dualWriteEdgeApproval(ctx context.Context, meta MCPCallMetadata, tool mcp.Tool, params json.RawMessage, rec *MCPApprovalRecord) (approvalRef, policySnapshot string, expiresAt time.Time, mintErr error) {
-	approvalRef = rec.ID
-	if rec.ExpiresAt > 0 {
-		// MCPApprovalRecord.ExpiresAt is UnixMicro (mcp_approvals.go).
-		expiresAt = time.UnixMicro(rec.ExpiresAt).UTC()
-	}
+func (g *gatewayApprovalGate) dualWriteEdgeApproval(ctx context.Context, meta MCPCallMetadata, tool mcp.Tool, params json.RawMessage, req *MCPApprovalRequest) (approvalRef, policySnapshot string, expiresAt time.Time, mintErr error) {
+	approvalRef = req.ID
 	if g.edgeStore == nil {
 		return approvalRef, "", expiresAt, nil
 	}
@@ -444,13 +436,13 @@ func (g *gatewayApprovalGate) dualWriteEdgeApproval(ctx context.Context, meta MC
 		EventID:        pre.EventID,
 		PrincipalID:    edgeMeta.Principal,
 		Requester:      mcpRequesterIdentity(meta),
-		Reason:         rec.Reason,
+		Reason:         req.Reason,
 		RuleID:         tool.ApprovalScope,
 		PolicySnapshot: policySnapshot,
 		ActionHash:     actionHash,
 		InputHash:      inputHash,
 		Labels:         edge.Labels{mcpApprovalAgentLabel: strings.TrimSpace(edgeMeta.AgentID)},
-		Metadata:       edge.Metadata{mcpLegacyApprovalIDKey: rec.ID},
+		Metadata:       edge.Metadata{mcpLegacyApprovalIDKey: req.ID},
 	})
 	if err != nil {
 		return "", policySnapshot, expiresAt, err
@@ -495,12 +487,11 @@ func mcpApprovalRequired(tool, argsHash, approvalID string, approval *edge.EdgeA
 // pendingMCPPair returns the caller's pending registry-gate pair for this call
 // when the gate mints an Edge approval for it: the Edge approval
 // (pendingMCPApproval) and the legacy record id dual-written with it. The pair
-// is reused only while its legacy record is pending too: a reviewer who
-// resolved it on the MCP approvals page leaves the Edge half pending, and the
-// re-ask then gets a fresh pair. The lookup binds to the policy snapshot on the
-// call's policy pre-event, so it reads no snapshot of its own; a call the mint
-// would refuse is a miss here, and dualWriteEdgeApproval then refuses it as
-// before.
+// is reused only while its legacy record is pending too, so the reply never
+// names a legacy record that is gone or resolved. The lookup binds to the
+// policy snapshot on the call's policy pre-event, so it reads no snapshot of
+// its own; a call the mint would refuse is a miss here, and
+// dualWriteEdgeApproval then refuses it as before.
 func (g *gatewayApprovalGate) pendingMCPPair(ctx context.Context, tool string, params json.RawMessage) (string, *edge.EdgeApproval) {
 	if g.edgeStore == nil {
 		return "", nil
