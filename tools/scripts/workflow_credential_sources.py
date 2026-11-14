@@ -180,6 +180,12 @@ def run_lines(text: str) -> dict:  # (job id, step index) -> file line just befo
 def guarded(cmds: list, k: int, guard: str) -> bool:  # the source or a block around it, or every (>= 1) call site of its function
     def under(cmd: Cmd, own: tuple = ()) -> bool: return any(re.fullmatch(guard, cmds[s].text) for s in cmd.stack + own)
     return under(cmds[k], (k,)) or (bool(calls := [c for c in cmds if cmds[k].func and cmds[k].func in c.words]) and all(under(c) for c in calls))
+NATIVE = (b"\x7fELF", b"MZ", b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf", b"\xce\xfa\xed\xfe", b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe")  # ELF, PE, Mach-O (32- and 64-bit, both byte orders), fat Mach-O
+def native(path: pathlib.Path) -> bool:  # a native executable whose first line holds a NUL, which bash's own binary test refuses: the kernel runs it, bash never reads it as a script
+    try:
+        with path.open("rb") as handle: head = handle.read(80)  # bash tests at most the first 80 bytes
+    except OSError: return False  # unreadable: it stays oversized
+    return head.startswith(NATIVE) and b"\x00" in head.split(b"\n", 1)[0]
 class Scan:  # walks each job's run steps through their transitive shell and make edges
     def __init__(self, root: pathlib.Path) -> None: self.root, self.cache, self.issues, self.inventory, self.exec_skip, self.bang_x = root, {}, set(), set(), set(), set()
     def report(self, code: str, rel: str, line: int, source: bool = False) -> None: self.issues.add((self.wf, self.job, f"{code}@{rel}:{line}")) if self.credential or not source else None  # SOURCE_*: credential jobs only
@@ -204,7 +210,7 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
     def load(self, key: str) -> object:  # facts for a script; for a make target, a list: its prerequisite rules as a make line, then each shell its recipe runs in
         if key not in self.cache and not key.startswith("Makefile#"):
             text, code = self.read(key); self.cache[key] = code or ("NOT_SHELL" if "\x00" in text else facts(text))  # noqa: E702  # source and bash read any text as shell
-            if not (code or key.endswith(".sh") or re.match(r"#!.*\b(?:ba)?sh\b", text) or not text.startswith("#!") and self.root.joinpath(key).stat().st_mode & 0o100): self.exec_skip.add(key)  # exec: sh #! or ENOEXEC
+            if not (code or key.endswith(".sh") or re.match(r"#!.*\b(?:ba)?sh\b", text) or not text.startswith("#!") and self.root.joinpath(key).stat().st_mode & 0o100) or code == "OVERSIZE" and native(self.root.joinpath(key)): self.exec_skip.add(key)  # exec: sh #! or ENOEXEC; an oversized native executable runs natively: an exec edge skips it, source and bash still report it
             if re.match(r"#![^\n]*?(?<!\S)-[a-zA-Z]*x", text): self.bang_x.add(key)  # a #! -x flag traces the file, assumed on every edge
         elif key not in self.cache:
             rules, found = self.rules(), self.rule(key[9:])
