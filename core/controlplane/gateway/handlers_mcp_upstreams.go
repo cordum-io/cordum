@@ -77,14 +77,14 @@ func (s *server) handleCreateMCPUpstream(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	upstream, ok := s.decodeMCPUpstreamRequest(w, r, tenantID, "")
+	upstream, opts, ok := s.decodeMCPUpstreamRequest(w, r, tenantID, "")
 	if !ok {
 		return
 	}
 	if s.handleMCPUpstreamValidateOnly(w, r, upstream) {
 		return
 	}
-	if err := registry.Create(r.Context(), upstream); err != nil {
+	if err := registry.Create(edgecore.WithMCPUpstreamValidationOptions(r.Context(), opts), upstream); err != nil {
 		writeMCPUpstreamStoreError(w, r, err, "create", tenantID, upstream.Name)
 		return
 	}
@@ -106,11 +106,11 @@ func (s *server) handleUpdateMCPUpstream(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	upstream, ok := s.decodeMCPUpstreamRequest(w, r, tenantID, name)
+	upstream, opts, ok := s.decodeMCPUpstreamRequest(w, r, tenantID, name)
 	if !ok {
 		return
 	}
-	if err := registry.Update(r.Context(), upstream); err != nil {
+	if err := registry.Update(edgecore.WithMCPUpstreamValidationOptions(r.Context(), opts), upstream); err != nil {
 		writeMCPUpstreamStoreError(w, r, err, "update", tenantID, name)
 		return
 	}
@@ -153,19 +153,22 @@ func (s *server) handleSetMCPUpstreamEnabled(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, upstream)
 }
 
-func (s *server) decodeMCPUpstreamRequest(w http.ResponseWriter, r *http.Request, tenantID, pathName string) (*edgecore.UpstreamServer, bool) {
+// decodeMCPUpstreamRequest decodes and validates an upstream. It also returns
+// the trusted validation options it used, for the registry's own re-check.
+func (s *server) decodeMCPUpstreamRequest(w http.ResponseWriter, r *http.Request, tenantID, pathName string) (*edgecore.UpstreamServer, edgecore.MCPUpstreamValidationOptions, bool) {
 	var upstream edgecore.UpstreamServer
+	var opts edgecore.MCPUpstreamValidationOptions
 	if err := decodeJSONBody(w, r, &upstream); err != nil {
 		writeEdgeJSONDecodeError(w, r, err, "invalid mcp upstream request")
-		return nil, false
+		return nil, opts, false
 	}
 	if err := validateMCPUpstreamTenant(r, tenantID, upstream.TenantID); err != nil {
 		writeEdgeForbidden(w, r, err)
-		return nil, false
+		return nil, opts, false
 	}
 	if pathName != "" && upstream.Name != "" && strings.TrimSpace(upstream.Name) != pathName {
 		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "mcp upstream name mismatch", nil)
-		return nil, false
+		return nil, opts, false
 	}
 	if pathName != "" {
 		upstream.Name = pathName
@@ -176,15 +179,15 @@ func (s *server) decodeMCPUpstreamRequest(w http.ResponseWriter, r *http.Request
 	// ONLY policy source.
 	if err := mcpUpstreamRejectsCallerPolicyParams(r); err != nil {
 		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, err.Error(), nil)
-		return nil, false
+		return nil, opts, false
 	}
 	settings := s.mcpUpstreamPolicySettings(r, tenantID)
-	opts := edgecore.MCPUpstreamValidationOptions{AllowPlainHTTP: settings.allowPlainHTTP}
+	opts.AllowPlainHTTP = settings.allowPlainHTTP
 	if err := edgecore.ValidateMCPUpstreamWithOptions(r.Context(), &upstream, settings.policyMode, settings.allowlist, opts); err != nil {
 		writeMCPUpstreamValidationError(w, r, err, tenantID, upstream.Name)
-		return nil, false
+		return nil, opts, false
 	}
-	return &upstream, true
+	return &upstream, opts, true
 }
 
 func (s *server) handleMCPUpstreamValidateOnly(w http.ResponseWriter, r *http.Request, upstream *edgecore.UpstreamServer) bool {
