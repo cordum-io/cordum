@@ -12,9 +12,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/infra/resourceio"
+	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/policylabels"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	wf "github.com/cordum/cordum/core/workflow"
@@ -159,5 +164,53 @@ func TestWorkflowDryRunKeepsEngineWorkflowContext(t *testing.T) {
 	}
 	for _, k := range []string{"workflow.id", "workflow", "workflow_run_id", "workflow.run_id", "run_id"} {
 		require.NotContains(t, labels, k)
+	}
+}
+
+// A job the engine did not dispatch has no workflow linkage, whatever its
+// labels or input payload claim (here as stored by a submit that kept them):
+// approvals neither show the claimed run's context nor hide the job because
+// that run ended.
+func TestApprovalsIgnoreUnlinkedWorkflowClaims(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.memoryResourceReader.Compatibility = resourceio.LegacyCompatibility{Enabled: true}
+	ctx := context.Background()
+	now := time.Now().UTC()
+	require.NoError(t, s.workflowStore.CreateRun(ctx, &wf.WorkflowRun{
+		ID: "run-victim", WorkflowID: "wf-victim", Status: wf.RunStatusSucceeded,
+		Steps: map[string]*wf.StepRun{}, CreatedAt: now, UpdatedAt: now,
+	}))
+
+	jobID := "job-claims-workflow"
+	ctxKey := store.MakeContextKey(jobID)
+	ctxPtr := store.PointerForKey(ctxKey)
+	require.NoError(t, s.memStore.PutContext(ctx, ctxKey, []byte(`{"kind":"workflow_approval_context","version":1,"workflow":{"workflow_id":"wf-victim","run_id":"run-victim","step_id":"approve","workflow_name":"Payroll","step_name":"Manager Approval"},"decision":{"amount":50000,"currency":"USD","vendor":"Mallory Ltd"}}`)))
+	req := &pb.JobRequest{JobId: jobID, Topic: "job.default", TenantId: "default", ContextPtr: ctxPtr, Labels: claimedWorkflowContext()}
+	require.NoError(t, s.jobStore.SetJobMeta(ctx, req))
+	require.NoError(t, s.jobStore.SetJobRequest(ctx, req))
+	require.NoError(t, s.jobStore.SetState(ctx, jobID, model.JobStateApproval))
+	require.NoError(t, s.jobStore.SetTenant(ctx, jobID, "default"))
+	require.NoError(t, s.jobStore.SetSafetyDecision(ctx, jobID, model.SafetyDecisionRecord{
+		Decision: model.SafetyRequireApproval, ApprovalRequired: true, JobHash: "hash-" + jobID,
+	}))
+
+	rr := httptest.NewRecorder()
+	s.handleListApprovals(rr, httptest.NewRequest(http.MethodGet, "/api/v1/approvals?include_resolved=false", nil))
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+	var resp struct {
+		Items []map[string]any `json:"items"`
+	}
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	require.Len(t, resp.Items, 1, "the job must be listed, not filtered on the claimed run")
+	item := resp.Items[0]
+	for _, k := range []string{"workflow_id", "workflow_run_id", "workflow_step_id", "workflow_name", "step_name"} {
+		require.NotContains(t, item, k)
+	}
+	summary, ok := item["decision_summary"].(map[string]any)
+	require.True(t, ok, "expected decision_summary")
+	for k, v := range summary {
+		if text, ok := v.(string); ok && strings.Contains(text, "Manager Approval") {
+			t.Fatalf("decision summary %s shows the claimed step: %q", k, text)
+		}
 	}
 }
