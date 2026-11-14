@@ -565,9 +565,9 @@ var successCallPattern = regexp.MustCompile(`\bsuccess\s*\(`)
 // A job below a release.yml caller therefore has top-level !cancelled() and
 // !failure() with no || and no success(), and requires success from each
 // direct need that can be skipped: a caller, or a job with its own if or
-// needs. A job that needs every caller (the record job) does not check the
-// callers' results, because one of them is always skipped; it checks the
-// record's content instead.
+// needs. Only the record job, when it needs every caller, omits the callers'
+// result checks because one caller is always skipped; it checks the record's
+// content instead.
 func checkSkippedCaller(wf releaseWorkflow, name string) []string {
 	var out []string
 	job := wf.Jobs[name]
@@ -586,7 +586,7 @@ func checkSkippedCaller(wf releaseWorkflow, name string) []string {
 		}
 	}
 	needs := jobNeeds(job)
-	merge := len(callers) > 1 && !slices.ContainsFunc(callers, func(c string) bool { return !slices.Contains(needs, c) })
+	merge := name == recordJob && len(callers) > 1 && !slices.ContainsFunc(callers, func(c string) bool { return !slices.Contains(needs, c) })
 	for _, need := range needs {
 		dep := wf.Jobs[need]
 		caller := dep.Uses == releaseCallerUses
@@ -838,6 +838,16 @@ func testSkippedCallerMutations(t *testing.T) {
 		{"publish-binaries always()", setIf("publish-binaries", "${{ always() && needs.binaries.result == 'success' && "+
 			"needs.qualification-record.result == 'success' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-rc') }}")},
 		{"record drops !failure()", func(t *testing.T, wf *releaseWorkflow) { dropConjunct(t, wf, recordJob, "!failure()") }},
+		{"only the record job merges callers without result checks", func(t *testing.T, wf *releaseWorkflow) {
+			if _, ok := wf.Jobs["announce"]; ok {
+				t.Fatal("mutation target announce already exists")
+			}
+			job := releaseWorkflowJob{If: "${{ !cancelled() && !failure() && " + realReleaseCondition + " }}"}
+			if err := job.Needs.Encode([]string{"binaries", "binaries-dry-run"}); err != nil {
+				t.Fatal(err)
+			}
+			wf.Jobs["announce"] = job
+		}},
 		{"job below the chart with the default success condition", func(t *testing.T, wf *releaseWorkflow) {
 			if _, ok := wf.Jobs["announce"]; ok {
 				t.Fatal("mutation target announce already exists")
