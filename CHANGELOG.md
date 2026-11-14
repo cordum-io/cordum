@@ -71,6 +71,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- Policy signing upgrade tools: the safety kernel's boot check uses
+  `policysign.ResolveMode`, reporting `enforce` in production when
+  `CORDUM_POLICY_STRICT` is unset and refusing startup without a trusted
+  `CORDUM_POLICY_PUBLIC_KEY_<ID>`. `cordumctl policy verify-store` lists unsigned,
+  malformed, untrusted-key, stale-signature and bad-signature store bundles,
+  reports pack reinstallation remedies, exits nonzero on refusals and writes
+  nothing. `cordumctl policy resign --bundle <id>` (or explicit `--all`) signs
+  current stored content through `POST /api/v1/policy/bundles/{id}/resign` using
+  the gateway's trusted signing key. This admin-role action stores one audit
+  entry per bundle, never runs automatically and refuses pack-owned fragments
+  or a missing or untrusted signing key.
+
 - Gateway: policy audit entries are stored independently of the client
   request's lifetime. A concurrent change to the audit log is retried, and an
   entry that still cannot be stored is logged at ERROR. Policy writes that need
