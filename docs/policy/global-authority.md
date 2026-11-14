@@ -14,7 +14,7 @@ floor, and the wire surface (`/api/v1/policy/global`).
                 │   OutputRules                                │
                 │   EdgeActionRules                            │
                 │   MCPToolRules                               │
-                │   Invariants  (DENY-uncrossable floor)       │
+                │   Invariants  (DENY-first security floor)    │
                 └──────────────────────────────────────────────┘
                                      │
         ┌────────────────────────────┼────────────────────────────────┐
@@ -54,7 +54,7 @@ Invariants are rules authored ONCE in the dedicated
 `secops/invariants` bundle and applied to ALL FOUR evaluators with
 SECURITY-FLOOR precedence:
 
-1. **Invariant DENY rules are uncrossable.** They are prepended to
+1. **Invariant DENY rules come first.** They are prepended to
    `merged.Rules` so a first-match evaluator returns DENY before
    reaching any pack-contributed ALLOW that targets the same input.
 2. **Invariant ALLOW rules are a default fallback.** They are
@@ -64,7 +64,12 @@ SECURITY-FLOOR precedence:
    ALLOW default would become unenforceable.
 3. **Invariant `output_rules` quarantine/redact at the front.** They
    are prepended to `merged.OutputRules` so an allow-mode pack output
-   rule cannot silently override a content-pattern invariant.
+   rule comes after any content-pattern invariant in that list.
+
+These three placements are CLM-084 in the [claims register](../contract/claims.yaml),
+status supported: they set rule order inside the four evaluators. The
+[invariant catalog](../contract/invariants.yaml) records I03 and I10 as not holding,
+so the floor is not qualified across all entry points.
 
 Authoring example (a single Invariants bundle YAML):
 
@@ -94,7 +99,8 @@ output_rules:
 
 The cross-evaluator integration test
 (`core/controlplane/safetykernel/global_invariants_integration_test.go`,
-build-tagged `//go:build integration`) pins this guarantee with four
+build-tagged `//go:build integration`, so only integration runs execute
+it) covers this ordering with four
 subtests sharing ONE SnapshotHash.
 
 ## Bundle layout
@@ -102,7 +108,7 @@ subtests sharing ONE SnapshotHash.
 The unified Global authority is expressed via the existing policy
 bundle map (configsvc scope=`system`, id=`policy`, key=`bundles`):
 
-| Bundle key                  | Authored by   | Section it feeds            | Pack-uninstall safe |
+| Bundle key                  | Authored by   | Section it feeds            | Pack-uninstall safe (not measured) |
 |-----------------------------|---------------|-----------------------------|---------------------|
 | `secops/global-input`       | Studio (PUT)  | `input_rules`               | Yes                 |
 | `secops/global-output`      | Studio (PUT)  | `output_rules`              | Yes                 |
@@ -113,11 +119,12 @@ bundle map (configsvc scope=`system`, id=`policy`, key=`bundles`):
 
 **Pack uninstall is deterministic.** `handlers_packs.go
 removePolicyOverlay` deletes by the pack overlay's FragmentID. The
-invariants bundle is keyed under `secops/invariants` and is NEVER a
-pack overlay's FragmentID, so total pack uninstall preserves the
-security floor. The unit test
-`pack_uninstall_removes_pack_rules_test.go
-TestPackUninstallDoesNotTouchInvariantsBundleKey` pins this.
+invariants bundle has its own key, listed in the table above. The unit
+test `pack_uninstall_removes_pack_rules_test.go
+TestPackUninstallDoesNotTouchInvariantsBundleKey` deletes the
+pack-sourced keys from a test bundle map and checks that the invariant
+rule stays; it does not run `removePolicyOverlay`. Whether pack
+uninstall keeps the security floor in place is not measured.
 
 ## Snapshot / cache invalidation
 
@@ -222,7 +229,7 @@ that bundle entry; the unified GET projects it as part of the
   logical server for registry-gate-only deployments.
 - **Decision string typos silently no-op.** Invariant rules with
   unknown `decision` values (e.g. `dney` instead of `deny`) skip the
-  DENY-uncrossable enforcement — they fall into the ALLOW bucket per
+  invariant DENY placement — they fall into the ALLOW bucket per
   `isInvariantDeny` semantics. Authors should validate via
   `config.ParseSafetyPolicy` errors at upload time.
 
