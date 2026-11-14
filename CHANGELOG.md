@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Docs: README.md, SECURITY.md and ROADMAP.md now state protection, support and release
+  claims at the status recorded in docs/contract/claims.yaml: scoped Edge, approval,
+  provenance, quarantine, audit and plan-limit statements; a three-class demo without
+  a timing claim; qualified Copilot phases; and 1.0.x listed as not supported.
 - Docs: the Safety Kernel guide, scheduler internals, configuration reference, production
   runbook, threat model and dashboard page spec now name the settings that select each fail
   mode. The scheduler's input and output modes are the config-service keys
