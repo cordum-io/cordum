@@ -22,6 +22,7 @@ const (
 
 type httpSession struct {
 	id     string
+	owner  string // owner key of the caller that opened the stream
 	events chan []byte
 	closed atomic.Bool // set before events channel is closed
 }
@@ -30,6 +31,7 @@ type httpSession struct {
 type HTTPTransport struct {
 	maxMessageBytes int
 	responseTimeout time.Duration
+	sessionOwner    func(*http.Request) string
 
 	incoming chan *JSONRPCMessage
 	done     chan struct{}
@@ -74,6 +76,18 @@ func NewHTTPTransport(maxMessageBytes int, responseTimeout time.Duration) *HTTPT
 		sessions:        make(map[string]*httpSession),
 		pending:         make(map[string]chan *JSONRPCMessage),
 	}
+}
+
+// WithSessionOwner binds each SSE session to the caller that opened it. fn maps
+// a request to an opaque key for its authenticated principal, and HandleMessage
+// only accepts a session id whose stream was opened under the same key. Without
+// it every caller shares one anonymous owner, which only suits a transport that
+// is served with no authentication at all. Set it before serving requests.
+func (t *HTTPTransport) WithSessionOwner(fn func(*http.Request) string) *HTTPTransport {
+	if t != nil {
+		t.sessionOwner = fn
+	}
+	return t
 }
 
 func (t *HTTPTransport) ReadMessage() (*JSONRPCMessage, error) {
@@ -171,6 +185,7 @@ func (t *HTTPTransport) HandleSSE(w http.ResponseWriter, r *http.Request) {
 
 	session := &httpSession{
 		id:     uuid.NewString(),
+		owner:  t.ownerKey(r),
 		events: make(chan []byte, defaultSSEEventBuffer),
 	}
 	t.mu.Lock()
@@ -212,6 +227,8 @@ func (t *HTTPTransport) HandleSSE(w http.ResponseWriter, r *http.Request) {
 
 // HandleMessage accepts a single JSON-RPC message over HTTP POST.
 // This doubles as streamable HTTP mode because request and response travel in one POST.
+// A request may name an SSE session (X-MCP-Session-ID or ?session_id) only if
+// the same owner opened it (see WithSessionOwner); anything else gets 404.
 func (t *HTTPTransport) HandleMessage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -246,6 +263,13 @@ func (t *HTTPTransport) HandleMessage(w http.ResponseWriter, r *http.Request) {
 	sessionID := sessionIDFromRequest(r)
 	if sessionID == "" {
 		sessionID = "direct-" + uuid.NewString()
+	} else if !t.OwnsSession(r, sessionID) {
+		// One answer for unknown and foreign sessions, so it never reveals
+		// whether another caller's session exists. A caller can therefore
+		// never route replies into a stream it did not open, nor collide with
+		// that stream's pending replies.
+		t.writeJSONRPCError(w, msg.ID, -32001, "session not found", http.StatusNotFound)
+		return
 	}
 	msg.sessionID = sessionID
 	// Carry request-scoped agent identity through dispatcher.
@@ -334,6 +358,27 @@ func (t *HTTPTransport) removeSession(sessionID string) {
 	close(session.events)
 }
 
+func (t *HTTPTransport) ownerKey(r *http.Request) string {
+	if t.sessionOwner == nil {
+		return ""
+	}
+	return t.sessionOwner(r)
+}
+
+// OwnsSession reports whether sessionID is a live SSE session opened by the
+// same owner as r, i.e. whether HandleMessage would accept it from r. Callers
+// in front of the transport use it before acting on a client-supplied id.
+func (t *HTTPTransport) OwnsSession(r *http.Request, sessionID string) bool {
+	if t == nil {
+		return false
+	}
+	owner := t.ownerKey(r)
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	session, ok := t.sessions[sessionID]
+	return ok && session.owner == owner
+}
+
 func (t *HTTPTransport) removePending(key string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -396,6 +441,9 @@ func sessionIDFromRequest(r *http.Request) string {
 	return ""
 }
 
+// pendingKey correlates a reply with the POST waiting for it. Keys cannot
+// collide across callers: HandleMessage only accepts an SSE session id from
+// the caller that opened it and mints a fresh direct-<uuid> id otherwise.
 func pendingKey(sessionID string, id json.RawMessage) string {
 	return sessionID + "|" + string(id)
 }
