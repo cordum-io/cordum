@@ -140,7 +140,11 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	// Strip reserved labels from client input (same as HTTP path).
+	// Same label handling as the HTTP path: loud reject for spoofed
+	// governance/multi-agent labels, then strip the rest of the reserved set.
+	if err := rejectReservedGovernanceLabels(payloadReq.Labels); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
 	payloadReq.Labels = stripReservedLabels(payloadReq.Labels)
 
 	// Inject request source for policy rules.

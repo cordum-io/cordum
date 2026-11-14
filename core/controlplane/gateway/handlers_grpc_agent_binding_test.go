@@ -70,6 +70,42 @@ func TestSubmitJobGRPCBindsClientAgentID(t *testing.T) {
 	}
 }
 
+// TestSubmitJobGRPCRejectsReservedGovernanceLabels pins gRPC SubmitJob to the
+// HTTP rule: a client _governance.* or _ma.* label is refused with
+// InvalidArgument before any policy check, job write or publish, and an
+// ordinary label still submits.
+func TestSubmitJobGRPCRejectsReservedGovernanceLabels(t *testing.T) {
+	cases := []struct {
+		name     string
+		label    string
+		wantCode codes.Code
+	}{
+		{name: "governance_label", label: "_governance.tenant", wantCode: codes.InvalidArgument},
+		{name: "multi_agent_label", label: "_ma.parent_agent_id", wantCode: codes.InvalidArgument},
+		{name: "ordinary_label", label: "team", wantCode: codes.OK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, bus, safetyClient := newTestGateway(t)
+			s.tenant = "default"
+			req := &pb.SubmitJobRequest{Prompt: "hello", Topic: "job.default", OrgId: "default", PrincipalId: "p",
+				Labels: map[string]string{tc.label: "x"}}
+			_, err := s.SubmitJob(grpcAgentBindingCaller(""), req)
+			if got := status.Code(err); got != tc.wantCode {
+				t.Fatalf("SubmitJob code = %v (err %v), want %v", got, err, tc.wantCode)
+			}
+			jobs, err := s.jobStore.ListRecentJobs(context.Background(), 10)
+			if err != nil {
+				t.Fatalf("ListRecentJobs: %v", err)
+			}
+			reached := safetyClient.lastReq != nil || len(bus.published) != 0 || len(jobs) != 0
+			if reached != (tc.wantCode == codes.OK) {
+				t.Fatalf("submit reached policy=%v publishes=%d jobs=%d", safetyClient.lastReq != nil, len(bus.published), len(jobs))
+			}
+		})
+	}
+}
+
 func grpcAgentBindingCaller(caller string) context.Context {
 	switch caller {
 	case "anonymous":

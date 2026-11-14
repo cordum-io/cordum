@@ -191,6 +191,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- Gateway: job submit over HTTP, gRPC and MCP drops client `approval_*`,
+  `gate_type`, `cordum.bus_msg_id` and `policy.attachment_id` labels and logs
+  the dropped keys, and a workflow step's `route_labels` can't set them. gRPC
+  `SubmitJob` rejects `_governance.*` and `_ma.*` labels with
+  `InvalidArgument`, as HTTP submit answers 400 (#492, task-5e03cb28).
+
 - Upgrade note, production signed-content enforcement. In the production
   profile (`CORDUM_ENV=production` or `CORDUM_PRODUCTION=true`) with no
   override, the safety kernel activates config-store policy only when its

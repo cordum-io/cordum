@@ -14,6 +14,7 @@ import (
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	jobidentity "github.com/cordum/cordum/core/protocol/identity"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/cordum/cordum/core/protocol/reqhash"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -259,6 +260,13 @@ func (e *Engine) buildJobRequest(ctx context.Context, wfDef *Workflow, run *Work
 	if len(step.RouteLabels) > 0 {
 		scope := buildEvalScope(run, nil)
 		for k, v := range step.RouteLabels {
+			// Route labels come from the workflow author. Server-owned labels
+			// (approval state, gate marker, policy scope) are not routing hints.
+			if reqhash.ServerOwnedLabel(k) {
+				slog.Warn("workflow route label dropped: reserved for Cordum services",
+					"workflow_id", wfDef.ID, "step_id", stepID, "label", k)
+				continue
+			}
 			if req.Labels == nil {
 				req.Labels = map[string]string{}
 			}
