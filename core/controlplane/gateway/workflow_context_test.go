@@ -17,6 +17,8 @@ import (
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/policylabels"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	wf "github.com/cordum/cordum/core/workflow"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -129,5 +131,33 @@ func TestSubmitDropsClaimedWorkflowContext(t *testing.T) {
 			}
 			assertNoWorkflowContext(t, "submit-time policy check", checked.GetLabels())
 		})
+	}
+}
+
+// The dry-run checks each step with the labels its job carries in a real run.
+func TestWorkflowDryRunKeepsEngineWorkflowContext(t *testing.T) {
+	s, _, safety := newTestGateway(t)
+	route := claimedWorkflowContext()
+	route["_source"] = "api"
+	wfDef := &wf.Workflow{ID: "wf-dryrun-context", OrgID: "default", Steps: map[string]*wf.Step{
+		"deploy": {ID: "deploy", Type: wf.StepTypeWorker, Topic: "job.deploy", RouteLabels: route},
+	}}
+	require.NoError(t, s.workflowStore.SaveWorkflow(context.Background(), wfDef))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/"+wfDef.ID+"/dry-run", bytes.NewReader([]byte(`{}`)))
+	req.Header.Set("X-Tenant-ID", "default")
+	req.SetPathValue("id", wfDef.ID)
+	rec := httptest.NewRecorder()
+	s.handleWorkflowDryRun(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	safety.mu.Lock()
+	labels := safety.lastReq.GetLabels()
+	safety.mu.Unlock()
+	for k, want := range map[string]string{"workflow_id": wfDef.ID, "step_id": "deploy", "_source": "workflow", "team": "alpha"} {
+		require.Equal(t, want, labels[k], "label %s in %v", k, labels)
+	}
+	for _, k := range []string{"workflow.id", "workflow", "workflow_run_id", "workflow.run_id", "run_id"} {
+		require.NotContains(t, labels, k)
 	}
 }
