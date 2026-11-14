@@ -596,6 +596,11 @@ type DirectServiceBridgeConfig struct {
 	UpdatePolicyBundleFunc  func(ctx context.Context, req UpdatePolicyBundleInput) (*UpdatePolicyBundleOutput, error)
 	RevokeWorkerSessionFunc func(ctx context.Context, req RevokeWorkerSessionInput) error
 	SetAgentScopeFunc       func(ctx context.Context, req SetAgentScopeInput) (*SetAgentScopeOutput, error)
+
+	// Read hooks. A nil hook, and every read method without one, answers
+	// 501 read_only_unsupported.
+	GetJobFunc    func(ctx context.Context, jobID string) (*ResourceItem, error)
+	GetStatusFunc func(ctx context.Context) (*ResourceItem, error)
 }
 
 // DirectServiceBridge is an in-process ServiceBridge based on function hooks.
@@ -615,6 +620,10 @@ type DirectServiceBridge struct {
 	updatePolicyBundle  func(ctx context.Context, req UpdatePolicyBundleInput) (*UpdatePolicyBundleOutput, error)
 	revokeWorkerSession func(ctx context.Context, req RevokeWorkerSessionInput) error
 	setAgentScope       func(ctx context.Context, req SetAgentScopeInput) (*SetAgentScopeOutput, error)
+
+	// Read hooks
+	getJob    func(ctx context.Context, jobID string) (*ResourceItem, error)
+	getStatus func(ctx context.Context) (*ResourceItem, error)
 }
 
 // NewDirectServiceBridge creates a direct bridge.
@@ -633,6 +642,8 @@ func NewDirectServiceBridge(cfg DirectServiceBridgeConfig) *DirectServiceBridge 
 		updatePolicyBundle:  cfg.UpdatePolicyBundleFunc,
 		revokeWorkerSession: cfg.RevokeWorkerSessionFunc,
 		setAgentScope:       cfg.SetAgentScopeFunc,
+		getJob:              cfg.GetJobFunc,
+		getStatus:           cfg.GetStatusFunc,
 	}
 }
 

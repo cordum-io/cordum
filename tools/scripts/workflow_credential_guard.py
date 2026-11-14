@@ -12,9 +12,13 @@ SOURCE = "tools/scripts/github_actions_mask_env.sh"
 PLACEHOLDER = "credential-unavailable-for-redaction"
 CREDENTIAL_NAME = r"[A-Z0-9_]*(?:API_KEYS?|REDIS_PASSWORD|ADMIN_PASSWORD|LICENSE_(?:TOKEN|PUBLIC_KEY))"
 CREDENTIAL = re.compile(rf"\b{CREDENTIAL_NAME}\b")
-EXPECTED_WORKFLOWS = set("binaries-pr-validation.yml ci.yml codeql.yml demo-mock-bank-e2e.yml docker-main.yml docker.yml docs-linkcheck.yml e2e.yml edge-fake-hook-e2e.yml grafana-dashboard.yml integration-nightly.yml nightly.yml platform-smoke.yml recover-dashboard-v1.2.0.yml release.yml sdk-conformance.yml sdk-python.yml sdk-typescript.yml star-tracker.yml".split())
+EXPECTED_WORKFLOWS = set("binaries-pr-validation.yml ci.yml codeql.yml demo-cap-mcp-governed-e2e.yml demo-mock-bank-e2e.yml docker-main.yml docker.yml docs-linkcheck.yml e2e.yml edge-fake-hook-e2e.yml grafana-dashboard.yml integration-nightly.yml nightly.yml platform-smoke.yml recover-dashboard-v1.2.0.yml release.yml sdk-conformance.yml sdk-python.yml sdk-typescript.yml star-tracker.yml".split())
 LICENSED = ("CORDUM_API_KEY", "REDIS_PASSWORD", "CORDUM_ADMIN_PASSWORD", "CORDUM_LICENSE_TOKEN", "CORDUM_LICENSE_PUBLIC_KEY")
 EXPECTED = {
+    ("demo-cap-mcp-governed-e2e.yml", "demo-cap-mcp-governed-e2e"): (
+        "CORDUM_API_KEY", "CAP_MCP_WORKER_API_KEY", "CAP_MCP_OPERATOR_API_KEY",
+        "REDIS_PASSWORD", "CORDUM_LICENSE_TOKEN", "CORDUM_LICENSE_PUBLIC_KEY",
+    ),
     ("integration-nightly.yml", "integration"): LICENSED,
     ("nightly.yml", "full-production-gate"): LICENSED,
     ("nightly.yml", "release-gate"): LICENSED,
@@ -24,7 +28,7 @@ EXPECTED = {
     ("edge-fake-hook-e2e.yml", "edge-fake-hook-e2e"): ("CORDUM_API_KEY", "CORDUM_APPROVER_API_KEY", "CORDUM_API_KEYS", "REDIS_PASSWORD"),
     ("e2e.yml", "e2e-tls"): ("CORDUM_API_KEY", "REDIS_PASSWORD", "CORDUM_ADMIN_PASSWORD"),
 }
-FALLBACK_KEYS = {key for key in EXPECTED if key[0] in {"demo-mock-bank-e2e.yml", "e2e.yml", "edge-fake-hook-e2e.yml", "platform-smoke.yml"}}
+FALLBACK_KEYS = {key for key in EXPECTED if key[0] in {"demo-cap-mcp-governed-e2e.yml", "demo-mock-bank-e2e.yml", "e2e.yml", "edge-fake-hook-e2e.yml", "platform-smoke.yml"}}
 PREPARED = {("nightly.yml", "soak-test"): "touch soak_results.json soak_metrics.log soak_http.log"}
 UNSAFE_ENV = {"BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS", "BASH_XTRACEFD", "GITHUB_ACTIONS", "PATH", "PYTHONHOME", "PYTHONPATH", "PYTHONSTARTUP"}
 OUTPUT = re.compile(r"^\s*(?:echo|printf|cat|tee|printenv|declare\s+-p|typeset\s+-p|export\s+-p)\b")

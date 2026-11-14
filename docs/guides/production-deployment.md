@@ -14,7 +14,11 @@ production-only hardening across all services:
 - **Client TLS enforced** for NATS and Redis connections (insecure rejected)
 - **gRPC reflection disabled** by default
 - **Anonymous auth blocked** (`CORDUM_ALLOW_INSECURE_NO_AUTH` ignored)
-- **Header principal override disabled** (`CORDUM_ALLOW_HEADER_PRINCIPAL` ignored)
+- **Header principal ignored by default**: static and managed API keys ignore
+  `X-Principal-Id`. `CORDUM_ALLOW_HEADER_PRINCIPAL=true` is honored as an
+  explicit downgrade that the gateway logs as a startup warning; header
+  principals are then recorded for attribution only and never bind identity,
+  such as a job's `labels.agent_id`.
 
 ## Environment Variables Reference
 
