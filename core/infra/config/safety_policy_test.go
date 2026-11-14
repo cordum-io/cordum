@@ -108,22 +108,61 @@ func TestNormalizeDecision(t *testing.T) {
 
 func TestMatchRuleSecretsAndMCP(t *testing.T) {
 	flag := true
-	match := PolicyMatch{
+	rule := PolicyRule{Decision: "allow", Match: PolicyMatch{
 		SecretsPresent: &flag,
 		MCP: MCPPolicy{
 			AllowServers: []string{"srv"},
 		},
-	}
+	}}
 	input := PolicyInput{
 		SecretsPresent: true,
 		MCP:            MCPRequest{Server: "srv"},
 	}
-	if !matchRule(match, input) {
+	if !matchRule(rule, input) {
 		t.Fatalf("expected rule to match")
 	}
 	input.SecretsPresent = false
-	if matchRule(match, input) {
+	if matchRule(rule, input) {
 		t.Fatalf("expected rule to fail on secrets")
+	}
+}
+
+// TestMatchRuleMCPLists pins the match.mcp semantics shared with the gateway
+// MCP gate (TestMCPGateMatchesKernelRuleSemantics): the lists only apply to
+// MCP calls, a deny-class rule hits what they forbid, an allow-class rule
+// hits what they permit.
+func TestMatchRuleMCPLists(t *testing.T) {
+	nonMCP := MCPRequest{}
+	call := func(server, tool string) MCPRequest { return MCPRequest{Server: server, Tool: tool} }
+	for _, tc := range []struct {
+		name     string
+		decision string
+		lists    MCPPolicy
+		req      MCPRequest
+		want     bool
+	}{
+		{"deny_tools hits listed tool", "deny", MCPPolicy{DenyTools: []string{"fs.read"}}, call("fs", "fs.read"), true},
+		{"deny_tools skips other tool", "deny", MCPPolicy{DenyTools: []string{"fs.read"}}, call("fs", "fs.write"), false},
+		{"deny_tools skips non-MCP job", "deny", MCPPolicy{DenyTools: []string{"fs.read"}}, nonMCP, false},
+		{"allow_tools hits unlisted tool", "deny", MCPPolicy{AllowTools: []string{"calculator"}}, call("", "shell.exec"), true},
+		{"allow_tools skips listed tool", "deny", MCPPolicy{AllowTools: []string{"calculator"}}, call("", "calculator"), false},
+		{"allow_tools skips non-MCP job", "deny", MCPPolicy{AllowTools: []string{"calculator"}}, nonMCP, false},
+		{"deny_servers hits listed server", "deny", MCPPolicy{DenyServers: []string{"internal"}}, call("internal", "x"), true},
+		{"deny_servers skips other server", "deny", MCPPolicy{DenyServers: []string{"internal"}}, call("github", "x"), false},
+		{"allow_servers hits other server", "deny", MCPPolicy{AllowServers: []string{"github"}}, call("jira", "x"), true},
+		{"allow_servers hits missing server", "deny", MCPPolicy{AllowServers: []string{"github"}}, call("", "x"), true},
+		{"allow_servers skips listed server", "deny", MCPPolicy{AllowServers: []string{"github"}}, call("github", "x"), false},
+		{"require_approval reads like deny", "require_approval", MCPPolicy{DenyTools: []string{"fs.write"}}, call("fs", "fs.write"), true},
+		{"allow rule hits permitted tool", "allow", MCPPolicy{AllowTools: []string{"fs.read"}}, call("fs", "fs.read"), true},
+		{"allow rule skips forbidden tool", "allow", MCPPolicy{AllowTools: []string{"fs.read"}}, call("fs", "fs.write"), false},
+		{"allow rule skips non-MCP job", "allow", MCPPolicy{AllowTools: []string{"fs.read"}}, nonMCP, false},
+		{"no lists match MCP call", "deny", MCPPolicy{}, call("fs", "fs.read"), true},
+		{"no lists match non-MCP job", "deny", MCPPolicy{}, nonMCP, true},
+	} {
+		rule := PolicyRule{Decision: tc.decision, Match: PolicyMatch{MCP: tc.lists}}
+		if got := matchRule(rule, PolicyInput{Topic: "job.x", MCP: tc.req}); got != tc.want {
+			t.Errorf("%s: matchRule = %v; want %v", tc.name, got, tc.want)
+		}
 	}
 }
 
@@ -507,26 +546,25 @@ func TestMCPAllowedDenyTakesPrecedence(t *testing.T) {
 func TestMatchRuleEmptyMatchMatchesEverything(t *testing.T) {
 	// A rule with empty match criteria matches all inputs — this is by design
 	// for "catch-all" rules, but we want to document the behavior.
-	match := PolicyMatch{}
 	input := PolicyInput{Tenant: "t1", Topic: "job.test"}
-	if !matchRule(match, input) {
+	if !matchRule(PolicyRule{}, input) {
 		t.Fatalf("expected empty match to match any input")
 	}
 }
 
 func TestMatchRuleLabels_InternalLabel(t *testing.T) {
 	// Rule requires _internal=true label.
-	match := PolicyMatch{
+	rule := PolicyRule{Match: PolicyMatch{
 		Topics: []string{"job.default"},
 		Labels: map[string]string{"_internal": "true"},
-	}
+	}}
 
 	// With label → match.
 	withLabel := PolicyInput{
 		Topic:  "job.default",
 		Labels: map[string]string{"_internal": "true"},
 	}
-	if !matchRule(match, withLabel) {
+	if !matchRule(rule, withLabel) {
 		t.Fatal("expected match when _internal label present")
 	}
 
@@ -535,7 +573,7 @@ func TestMatchRuleLabels_InternalLabel(t *testing.T) {
 		Topic:  "job.default",
 		Labels: map[string]string{},
 	}
-	if matchRule(match, withoutLabel) {
+	if matchRule(rule, withoutLabel) {
 		t.Fatal("expected no match when _internal label missing")
 	}
 
@@ -544,13 +582,13 @@ func TestMatchRuleLabels_InternalLabel(t *testing.T) {
 		Topic:  "job.default",
 		Labels: map[string]string{"_internal": "false"},
 	}
-	if matchRule(match, wrongValue) {
+	if matchRule(rule, wrongValue) {
 		t.Fatal("expected no match when _internal label has wrong value")
 	}
 
 	// Nil labels → no match.
 	nilLabels := PolicyInput{Topic: "job.default"}
-	if matchRule(match, nilLabels) {
+	if matchRule(rule, nilLabels) {
 		t.Fatal("expected no match when labels are nil")
 	}
 }
