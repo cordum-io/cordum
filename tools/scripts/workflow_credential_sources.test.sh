@@ -332,8 +332,20 @@ else
 fi
 
 if python - "${WORK}" "${SOURCES}" <<'PY'
-import pathlib, runpy, sys; ns = runpy.run_path(sys.argv[2]); root = pathlib.Path(sys.argv[1]) / "source-fanout"; root.mkdir(); [(root / f"n{i}.sh").write_text(f"source n{i + 1}.sh\n" * 5 if i < 5 else "true\n") for i in range(6)]; scan = ns["Scan"](root); calls = []; effect = getattr(scan, "effect", None); setattr(scan, "effect", lambda *args: (calls.append(None), effect(*args))[1]) if effect else None; scan.run_job("probe.yml", "job", {"steps": [{"run": "source n0.sh"}]}, {}, {}, True); assert len(calls) <= ns["MAX_VISITS"] and not scan.issues, (len(calls), scan.issues)
+import pathlib, runpy, sys; ns = runpy.run_path(sys.argv[2]); root = pathlib.Path(sys.argv[1]) / "source-fanout"; root.mkdir(); [(root / f"n{i}.sh").write_text(f"source n{i + 1}.sh\n" * 5 if i < 5 else "true\n") for i in range(6)]; scan = ns["Scan"](root); calls = []; effect = getattr(scan, "effect", None); setattr(scan, "effect", lambda *args: (calls.append(None), effect(*args))[1]) if effect else None; scan.run_job("probe.yml", "job", {"steps": [{"run": "source n0.sh"}]}, {}, {}, True); assert len(calls) <= 60 and not scan.issues, (len(calls), scan.issues)
 PY
 then record PASS "repeated sources reuse option effects"; else record FAIL "repeated sources reuse option effects"; fi
+if python - "${WORK}" "${SOURCES}" <<'PY'
+import pathlib, runpy, sys, time; ns, work, mint = runpy.run_path(sys.argv[2]), pathlib.Path(sys.argv[1]), 'minted="$(printf %s "${resp}" | jq -r .secret)"\ngha_mask_value "${minted}"\n'
+def tree(name: str, files: dict) -> pathlib.Path: root = work / name; root.mkdir(); [(root / rel).write_text(text) for rel, text in files.items()]; return root  # noqa: E702
+def scan(root: pathlib.Path, run: str) -> tuple: s, calls = ns["Scan"](root), []; effect = getattr(s, "effect", None); setattr(s, "effect", lambda *a: (calls.append(None), effect(*a))[1]) if effect else None; s.run_job("probe.yml", "job", {"steps": [{"run": run}]}, {}, {}, True); return {i[2].split("@")[0] for i in s.issues}, sorted(s.issues), len(calls)  # noqa: E702
+pairs, layers, start = tree("all-pairs", {f"n{i}.sh": "".join(f"source n{j}.sh\n" for j in range(i + 1, 15)) or "true\n" for i in range(15)}), tree("layered", {f"l{d}_{w}.sh": "".join(f"source l{d + 1}_{v}.sh\n" for v in range(4)) if d < 5 else "true\n" for d in range(6) for w in range(4 if d else 1)}), time.monotonic(); first, again = scan(pairs, "source n0.sh\n" + mint), scan(pairs, "source n0.sh\n" + mint)  # noqa: E702
+assert {"SOURCE_LIMIT", "CREDENTIAL_UNREGISTERED"} <= first[0] and first[1] == again[1] and first[2] <= 3 * ns["MAX_DRY"] and "SOURCE_LIMIT" in scan(layers, "source l0_0.sh")[0] and time.monotonic() - start < 60, (first[0], first[2])  # layered: depth 6 and 21 files stay under MAX_DEPTH and MAX_VISITS, so only the dry budget reports
+PY
+then record PASS "dry analysis budget fails closed"; else record FAIL "dry analysis budget fails closed"; fi
+if python - "${WORK}" "${SOURCES}" <<'PY'
+import pathlib, runpy, sys; ns, root = runpy.run_path(sys.argv[2]), pathlib.Path(sys.argv[1]) / "layered-jobs"; root.mkdir(); [(root / f"l{d}_{w}.sh").write_text("".join(f"source l{d + 1}_{v}.sh\n" for v in range(4)) if d < 5 else "true\n") for d in range(6) for w in range(4 if d else 1)]; scan = ns["Scan"](root); [scan.run_job("probe.yml", job, {"steps": [{"run": run}]}, {}, {}, True) for job, run in (("spent", "source l0_0.sh"), ("fresh", 'source l5_0.sh\nminted="$(printf %s "${resp}" | jq -r .secret)"\ngha_mask_value "${minted}"\n'))]; assert any(i[1] == "spent" for i in scan.issues) and not [i for i in scan.issues if i[1] == "fresh"], sorted(scan.issues)  # noqa: E702
+PY
+then record PASS "dry analysis budget resets per job"; else record FAIL "dry analysis budget resets per job"; fi
 echo "SUMMARY: ${PASS} pass, ${FAIL} fail, ${SKIP} skip"
 [[ "${FAIL}" -eq 0 ]]
