@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Docs: BENCHMARKS.md now says its figures are dated January 2026, have not been re-measured for
+  the current release and are not a performance commitment or SLA, and that the benchmarks and
+  scripts it named are not in this repository. It drops the production-grade, production-ready
+  and battle-tested wording, three summary lines that went beyond the file's own figures and the
+  commands that called the missing scripts, and qualifies the competitor comparison and the
+  anonymized deployment figures (M0-07-DOCS-BENCH, task-4290ac28).
+
 - Docs: the Safety Kernel guide, scheduler internals, configuration reference, production
   runbook, threat model and dashboard page spec now name the settings that select each fail
   mode. The scheduler's input and output modes are the config-service keys
