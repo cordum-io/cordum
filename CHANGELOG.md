@@ -700,6 +700,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- On Redis Cluster (the production K8s overlay), every audit chain append
+  failed with `CROSSSLOT`. The chain now has a cluster path built from
+  single-key steps: a compare-and-append on the stream. The single-node
+  scripts are unchanged. Integration tests run against a real cluster when
+  `CORDUM_TEST_REDIS_CLUSTER_ADDRESSES` is set (#492, task-871667e0).
+
 - MCP upstreams: `safety.mcp.allow_plain_http` is honoured by the Redis
   upstream registry on create and update (#492, task-3bbc0e1d).
 
