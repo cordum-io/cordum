@@ -266,6 +266,9 @@ func policyStoreCheck(client *restClient, pubEnv string) ([]storeBundleRefusal, 
 		exitPolicyVerify(2, "no trusted policy keys: export the safety kernel's CORDUM_POLICY_PUBLIC_KEY_<ID> values; "+err.Error())
 	}
 	doc, err := client.getConfig(context.Background(), "system", "policy")
+	if isNotFound(err) {
+		doc, err = &configDoc{}, nil
+	}
 	if err != nil {
 		exitPolicyVerify(2, err.Error())
 	}
