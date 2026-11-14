@@ -226,6 +226,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- MCP gateway: an invariant floor deny is answered like an action-gate deny
+  (an `isError` result, audited as deny) instead of JSON-RPC `-32603` with
+  decision=allow (#492, task-5244dea7).
+
 - MCP gateway: invariants also run on `tools/call` forwarded to a fronted
   upstream, with `mcp.policy_gate_enabled` on or off. `deny_servers` and
   `allow_servers` match the upstream's name (#492, task-d41ed620).
