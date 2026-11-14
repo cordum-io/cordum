@@ -21,10 +21,10 @@ import (
 // write. Implementations here just call the gateway over HTTP and
 // reshape the response into a ListPage or ResourceItem.
 //
-// The DirectServiceBridge in bridge.go is a test-only bridge that
-// bypasses HTTP; its read-only methods return ErrReadOnlyUnsupported
-// because building an in-process index of every read endpoint is out
-// of scope for the local harness.
+// The DirectServiceBridge in bridge.go bypasses HTTP: the gateway's HTTP
+// MCP runtime binds it to in-process handlers. GetJob and GetStatus call
+// the hooks it was given; every other read method, and either of those
+// two without a hook, returns a 501 read_only_unsupported BridgeError.
 
 // ErrReadOnlyUnsupported signals that a ServiceBridge implementation
 // does not provide the read-only surface (e.g. DirectServiceBridge).
@@ -298,16 +298,25 @@ func (b *HTTPServiceBridge) GetStatus(ctx context.Context) (*ResourceItem, error
 	return &ResourceItem{Kind: "status", Data: raw}, nil
 }
 
-// DirectServiceBridge read-only stubs. Returning ErrReadOnlyUnsupported
-// wrapped with BridgeError(501) keeps the local test harness compiling
-// without dragging every Redis store type into this file. Production
-// paths never hit these; the stdio cordum-mcp binary uses HTTPServiceBridge.
+// DirectServiceBridge read methods. GetJob and GetStatus call their bound
+// hooks. The rest return ErrReadOnlyUnsupported's 501 BridgeError, and the
+// gateway's HTTP MCP runtime reaches them too: only the stdio cordum-mcp
+// binary, which uses HTTPServiceBridge, serves every read.
 
 func (b *DirectServiceBridge) ListJobs(context.Context, ListInput) (*ListPage, error) {
 	return nil, NewBridgeError(http.StatusNotImplemented, "read_only_unsupported", "ListJobs", nil)
 }
-func (b *DirectServiceBridge) GetJob(context.Context, string) (*ResourceItem, error) {
-	return nil, NewBridgeError(http.StatusNotImplemented, "read_only_unsupported", "GetJob", nil)
+
+// GetJob — direct bridge implementation through the GetJobFunc hook.
+func (b *DirectServiceBridge) GetJob(ctx context.Context, jobID string) (*ResourceItem, error) {
+	if b == nil || b.getJob == nil {
+		return nil, NewBridgeError(http.StatusNotImplemented, "read_only_unsupported", "GetJob", nil)
+	}
+	jobID = strings.TrimSpace(jobID)
+	if jobID == "" {
+		return nil, fmt.Errorf("%w: job_id required", ErrInvalidParams)
+	}
+	return b.getJob(ctx, jobID)
 }
 func (b *DirectServiceBridge) ListRuns(context.Context, ListInput) (*ListPage, error) {
 	return nil, NewBridgeError(http.StatusNotImplemented, "read_only_unsupported", "ListRuns", nil)
@@ -342,6 +351,11 @@ func (b *DirectServiceBridge) QueryAudit(context.Context, AuditQueryInput) (*Lis
 func (b *DirectServiceBridge) VerifyAudit(context.Context, string) (*ResourceItem, error) {
 	return nil, NewBridgeError(http.StatusNotImplemented, "read_only_unsupported", "VerifyAudit", nil)
 }
-func (b *DirectServiceBridge) GetStatus(context.Context) (*ResourceItem, error) {
-	return nil, NewBridgeError(http.StatusNotImplemented, "read_only_unsupported", "GetStatus", nil)
+
+// GetStatus — direct bridge implementation through the GetStatusFunc hook.
+func (b *DirectServiceBridge) GetStatus(ctx context.Context) (*ResourceItem, error) {
+	if b == nil || b.getStatus == nil {
+		return nil, NewBridgeError(http.StatusNotImplemented, "read_only_unsupported", "GetStatus", nil)
+	}
+	return b.getStatus(ctx)
 }
