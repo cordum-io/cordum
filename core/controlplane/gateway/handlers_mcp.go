@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -195,7 +196,8 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 	// MCP clients dereference Cordum records by stable URI. Must run on
 	// the production bootstrap (not just in tests) or resources/list
 	// omits the templates and dereference returns 404 — QA reopen fix
-	// for task-466b6a6a.
+	// for task-466b6a6a. Its cordum://jobs/{id} replaces the data bridge's
+	// template of the same name, so serviceBridge must serve GetJob.
 	if err := mcp.RegisterCordumURIResources(resourceRegistry, serviceBridge); err != nil {
 		return fmt.Errorf("register cordum:// resources: %w", err)
 	}
@@ -1295,7 +1297,57 @@ func (s *server) newMCPServiceBridge() mcp.ServiceBridge {
 			}
 			return out, nil
 		},
+		GetJobFunc: func(ctx context.Context, jobID string) (*mcp.ResourceItem, error) {
+			payload, err := s.mcpGetJobPayload(ctx, jobID)
+			if err != nil {
+				return nil, err
+			}
+			return &mcp.ResourceItem{ID: jobID, Kind: "job", Data: payload}, nil
+		},
+		GetStatusFunc: func(ctx context.Context) (*mcp.ResourceItem, error) {
+			payload, err := s.mcpGetStatusPayload(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return &mcp.ResourceItem{Kind: "status", Data: payload}, nil
+		},
 	})
+}
+
+// mcpGetJobPayload reads one job through handleGetJob for both MCP bridges.
+// The handler reads the raw ID from the path value; the request target
+// carries it path-escaped, as HTTPServiceBridge.GetJob does.
+func (s *server) mcpGetJobPayload(ctx context.Context, id string) (map[string]any, error) {
+	id = strings.TrimSpace(id)
+	status, payload, raw, err := s.invokeMCPJSONHandler(
+		ctx,
+		http.MethodGet,
+		"/api/v1/jobs/"+url.PathEscape(id),
+		nil,
+		map[string]string{"id": id},
+		nil,
+		s.handleGetJob,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if status < 200 || status >= 300 {
+		return nil, mcp.NewBridgeErrorFromHTTP(status, raw)
+	}
+	return payload, nil
+}
+
+// mcpGetStatusPayload reads the system status through handleStatus for
+// both MCP bridges.
+func (s *server) mcpGetStatusPayload(ctx context.Context) (map[string]any, error) {
+	status, payload, raw, err := s.invokeMCPJSONHandler(ctx, http.MethodGet, "/api/v1/status", nil, nil, nil, s.handleStatus)
+	if err != nil {
+		return nil, err
+	}
+	if status < 200 || status >= 300 {
+		return nil, mcp.NewBridgeErrorFromHTTP(status, raw)
+	}
+	return payload, nil
 }
 
 // mcpCreateWorkflow backs cordum_create_workflow. It runs the real
@@ -1522,20 +1574,9 @@ func (s *server) newMCPDataBridge() mcp.DataBridge {
 	}
 	return mcp.NewDirectDataBridge(mcp.DirectDataBridgeConfig{
 		GetJobFunc: func(ctx context.Context, id string) (*mcp.JobDetail, error) {
-			status, payload, raw, err := s.invokeMCPJSONHandler(
-				ctx,
-				http.MethodGet,
-				"/api/v1/jobs/"+strings.TrimSpace(id),
-				nil,
-				map[string]string{"id": strings.TrimSpace(id)},
-				nil,
-				s.handleGetJob,
-			)
+			payload, err := s.mcpGetJobPayload(ctx, id)
 			if err != nil {
 				return nil, err
-			}
-			if status < 200 || status >= 300 {
-				return nil, mcp.NewBridgeErrorFromHTTP(status, raw)
 			}
 			out := mcp.JobDetail(payload)
 			return &out, nil
@@ -1648,12 +1689,9 @@ func (s *server) newMCPDataBridge() mcp.DataBridge {
 			return out, nil
 		},
 		GetSystemHealthFunc: func(ctx context.Context) (*mcp.HealthStatus, error) {
-			status, payload, raw, err := s.invokeMCPJSONHandler(ctx, http.MethodGet, "/api/v1/status", nil, nil, nil, s.handleStatus)
+			payload, err := s.mcpGetStatusPayload(ctx)
 			if err != nil {
 				return nil, err
-			}
-			if status < 200 || status >= 300 {
-				return nil, mcp.NewBridgeErrorFromHTTP(status, raw)
 			}
 			out := mcp.HealthStatus(payload)
 			return &out, nil
