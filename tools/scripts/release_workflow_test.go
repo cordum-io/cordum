@@ -1050,6 +1050,41 @@ func TestReleaseFinalStageUpgradeFixtures(t *testing.T) {
 			wantErr:    true,
 		},
 		{
+			name:       "upgrade skipped inside a command substitution",
+			dockerfile: "FROM alpine:3.24\nRUN echo $(false && apk upgrade --no-cache && true)\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade skipped inside a backtick command substitution",
+			dockerfile: "FROM alpine:3.24\nRUN echo `false && apk upgrade --no-cache && true`\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade skipped inside a command substitution in double quotes",
+			dockerfile: "FROM alpine:3.24\nRUN echo \"$(echo \" && apk upgrade --no-cache && \")\"\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade skipped inside a parameter expansion",
+			dockerfile: "FROM alpine:3.24\nRUN echo ${X:-false && apk upgrade --no-cache && true}\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade skipped inside a process substitution",
+			dockerfile: "FROM alpine:3.24\nRUN echo >(false && apk upgrade --no-cache && true)\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade skipped inside a negated subshell",
+			dockerfile: "FROM alpine:3.24\nRUN ! (false && apk upgrade --no-cache && true)\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade only inside an ANSI-C quoted argument",
+			dockerfile: "FROM alpine:3.24\nRUN echo $'\\' && apk upgrade --no-cache && true '\\'\n",
+			wantErr:    true,
+		},
+		{
 			name:       "upgrade after an escaped quote outside quotes",
 			dockerfile: "FROM alpine:3.24\nRUN echo \\\" && apk upgrade --no-cache\n",
 		},
