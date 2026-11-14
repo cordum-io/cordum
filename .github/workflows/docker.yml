@@ -547,10 +547,13 @@ jobs:
           if-no-files-found: error
           overwrite: true
 
+  # One release.yml caller is skipped on every run, and GitHub skips every job
+  # below a skipped job unless its if uses a status function. The jobs below
+  # the callers therefore check their needs' results themselves.
   publish-binaries:
     name: Publish Edge binaries
     needs: [binaries, qualification-record]
-    if: ${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-rc') }}
+    if: ${{ !cancelled() && !failure() && needs.binaries.result == 'success' && needs.qualification-record.result == 'success' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-rc') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -721,8 +724,9 @@ jobs:
             --title "release-break: ${TAG} smoke test failed" \
             --body "${body}"
 
+  # Below a release.yml caller through qualification-record; see publish-binaries.
   helm-chart:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: ${{ !cancelled() && !failure() && needs.smoke-published-images.result == 'success' && needs.qualification-record.result == 'success' && startsWith(github.ref, 'refs/tags/v') }}
     needs: [smoke-published-images, qualification-record]
     runs-on: ubuntu-latest
     steps:
