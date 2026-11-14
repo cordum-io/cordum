@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Docs: the cordum-agentd, cordum-hook, Edge configuration and edge doctor pages and the
+  configuration references now state Edge outage behavior as the failure and partition
+  behavior contract records it. In enforce mode the hook denies `PreToolUse` when agentd times
+  out or returns a degraded answer, without needing `CORDUM_AGENTD_FAIL_CLOSED`; that flag also
+  fails the other hook events closed and makes agentd stop instead of running degraded when the
+  Gateway times out at startup or heartbeats keep failing. Outcomes the contract does not
+  measure are written as not measured (M0-06-DOCS-EDGE, task-911d525a).
 - Docs: the output-policy, output-safety, gRPC services and Docker pages and ADR-005 now state
   the output checks' fail modes as the failure and partition behavior contract records them. The
   synchronous metadata check is fail-open. The asynchronous content check follows the
