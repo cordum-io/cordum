@@ -709,6 +709,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- MCP approvals: a re-ask returns the caller's pending approval instead of
+  minting another (#492, task-2a9d0a7c).
+
 - MCP server: a policy-gate call without metadata gets `-32097`, as
   documented (#492, task-11710a81).
 
