@@ -56,7 +56,9 @@ when enterprise RBAC is enabled.
 stored under `cfg:system:policy` (`data.bundles`) and must be managed through the
 policy bundle APIs or a wrapped `/api/v1/config` write targeting `scope=system`,
 `scope_id=policy`. The gateway rejects `bundles` writes to `system/default` and
-migrates legacy startup data from `system/default` into `system/policy`.
+migrates legacy startup data from `system/default` into `system/policy`. Under
+policy signature enforcement it refuses to start instead when a legacy bundle
+does not verify; see [Policy Bundle Signing](../deployment/policy-signing.md#legacy-policy-bundles).
 
 Example:
 

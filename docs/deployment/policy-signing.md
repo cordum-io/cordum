@@ -149,6 +149,29 @@ INFO policy signing: enabled component=gateway mode=enforce key_id=prod-2026-04
 INFO policy signing: enabled component=kernel mode=enforce trusted_keys=prod-2026-04
 ```
 
+#### Legacy policy bundles
+
+On startup the gateway moves policy bundles that older releases left in
+`system/default` to `system/policy`, byte for byte and unsigned, because
+the kernel reads bundles only from `system/policy`. Under `enforce` it
+moves them only when every legacy bundle with content, disabled ones
+included, verifies under the policy trust store. Otherwise it moves
+nothing and refuses to start, with an error naming
+`policy.legacy_migration_unverified` and how many bundles do not verify.
+
+To remediate:
+
+1. Start the gateway once with `CORDUM_POLICY_STRICT=warn`. It moves the
+   legacy bundles to `system/policy` and logs a warning with the count.
+2. Run `cordumctl policy verify-store` (with the kernel's
+   `CORDUM_POLICY_PUBLIC_KEY_<ID>` values exported) to list the bundles
+   the enforced kernel would refuse.
+3. Run `cordumctl policy resign --all`. The gateway signs each refused
+   bundle with its signing key, so that key's public half must be in the
+   gateway's trust store. A bundle reported as `reinstall-pack:<pack>` is
+   a pack's policy fragment: reinstall that pack instead.
+4. Restore `CORDUM_POLICY_STRICT=enforce`.
+
 ## 5. Key rotation
 
 Rotation is done additively — never swap keys in place.
