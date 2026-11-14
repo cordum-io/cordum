@@ -1079,8 +1079,10 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 			// with a blocked terminal event, as a policy deny is closed, so
 			// the Edge stream never keeps an allowed call with no outcome.
 			blocked := newPostEvent(evalResult.PreEvent, deps.Clock, edge.EventKindMCPToolFailed, dec)
-			blocked.Status = edge.ActionStatusBlocked
-			blocked.ErrorMessage = sanitizeUpstreamError(finalErr)
+			if !markPolicyDenied(blocked, err) {
+				blocked.Status = edge.ActionStatusBlocked
+				blocked.ErrorMessage = sanitizeUpstreamError(finalErr)
+			}
 			if emitErr := deps.EventEmitter.Emit(ctx, blocked); emitErr != nil {
 				finalErr = errors.Join(finalErr, fmt.Errorf("emit blocked event: %w", emitErr))
 			}
@@ -1138,6 +1140,14 @@ func resumeConsumedApproval(ctx context.Context, deps ToolCallDeps, params ToolC
 		Args:       params.Arguments,
 		EventID:    evalResult.PreEvent.EventID,
 	}); err != nil {
+		// A PolicyDenied closes the pre-event with a blocked deny event naming
+		// the consumed approval; any other error writes none.
+		if blocked := newPostEvent(evalResult.PreEvent, deps.Clock, edge.EventKindMCPToolFailed, evalResult.Decision); markPolicyDenied(blocked, err) {
+			blocked.ApprovalRef = consumed.Ref
+			if emitErr := deps.EventEmitter.Emit(ctx, blocked); emitErr != nil {
+				return nil, fmt.Errorf("emit failed event: %w", emitErr)
+			}
+		}
 		return nil, fmt.Errorf("approval handoff: %w", err)
 	}
 	if h := InvocationHandleFromContext(ctx); h != nil {
