@@ -234,6 +234,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- MCP approvals: the approval args hash keeps string whitespace, empty
+  values and nulls; only JSON formatting and key order are canonical. An
+  approval therefore matches only a call that sends the same argument
+  values. A pending approval whose arguments held such values must be
+  approved again after the upgrade (task-6a6c26d5).
+
 - MCP gateway: an invariant floor deny is answered like an action-gate deny
   (an `isError` result, audited as deny) instead of JSON-RPC `-32603` with
   decision=allow (#492, task-5244dea7).
