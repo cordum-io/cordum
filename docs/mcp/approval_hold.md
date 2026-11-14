@@ -263,7 +263,7 @@ not run.
 - **Where the hold comes from.** The production pipeline is a fixed gate
   list, and only the MCPGate answers `REQUIRE_HUMAN` for an `mcp_call`:
   its fail-closed taint hold (sub-reason
-  `taint_lookup_unavailable_failclosed`). It holds a call when all three
+  `taint_lookup_unavailable_failclosed`). It holds a call when all four
   apply:
   1. `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` is on: by default in
      production profiles (`CORDUM_ENV=production` or `prod`, or
@@ -272,6 +272,9 @@ not run.
   2. The tool is destructive (default globs `*delete*`, `*remove*`,
      `*archive*`).
   3. The session-taint lookup failed.
+  4. `CORDUM_MCP_TAINT_FAILCLOSED_APPROVER` is `true`: a reviewer acts on
+     approval holds. Without it, a call that meets 1-3 is denied
+     (`service_unavailable`) instead of held.
 
   MutationGate never fires for `mcp_call`: it acts only on mutation
   actions, and TenantGate only on tenant-query and mutation actions. MCP
