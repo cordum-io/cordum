@@ -122,6 +122,11 @@ TRACE = {  # (shell, run[, job]): xtrace on at a fail-closed registration; run-t
 NOEXT = {  # (#! line, run, mode) for a credential file without a shell suffix
     "noext_source": ("", "source " + INC, 0o644), "noext_exec": ("", "./" + INC, 0o755), "noext_data": ("", "./" + INC, 0o644),
     "noext_python": ("#!/usr/bin/env python3\n", "./" + INC, 0o755)}
+ELF, CERTS, BIG = b"\x7fELF\x02\x01\x01\x00", "./bin/cordumctl generate-certs --dir ./certs\n", 300 * 1024  # BIG: over the scanner's 256 KiB MAX_BYTES
+NATIVE = {  # (first bytes of an oversized bin/cordumctl, run step): three demo workflows exec it for generate-certs; only a native executable on an exec edge is skipped
+    "native_elf": (ELF, ""), "native_pe": (b"MZ\x90\x00\x03\x00", ""), "native_macho": (b"\xcf\xfa\xed\xfe\x07\x00\x00\x01", ""), "native_fat": (b"\xca\xfe\xba\xbe\x00\x00\x00\x02", ""),
+    "native_source": (ELF, CERTS + "source bin/cordumctl"), "native_bash": (ELF, "bash bin/cordumctl"), "native_then_mint": (ELF, CERTS + RUN_MINT), "native_unreadable": (ELF, ""),
+    "native_late_nul": (b"MZ synthetic\n\x00", ""), "native_no_magic": (b"true\x00\n", ""), "native_script": (b"#!/usr/bin/env bash\n", "")}  # late_nul: bash runs a file whose first line has no NUL
 def edit(rel, old, new):
     text = (root / rel).read_bytes().decode("utf-8")
     if text.count(old) != 1: raise SystemExit(case + ": fixture anchor is not unique in " + rel)
@@ -208,6 +213,19 @@ elif case == "edge_oversize":
     step("bash tools/scripts/zz_synthetic_big.sh")
 elif case == "edge_missing":
     step("bash tools/scripts/zz_synthetic_missing.sh")
+elif case in NATIVE:  # NUL padding keeps a binary head binary; a text head gets text padding
+    first, path = NATIVE[case][0], root / "bin/cordumctl"
+    path.parent.mkdir(exist_ok=True)
+    path.write_bytes(first + (b"\x00" * BIG if b"\x00" in first else b"# synthetic padding line\n" * (BIG // 25)))
+    if case == "native_unreadable":  # an unreadable file stays oversized; skipped where chmod cannot hide it (Windows, root)
+        os.chmod(path, 0)
+        if os.access(path, os.R_OK): raise SystemExit(3)
+    if case == "native_then_mint": mint()
+    if NATIVE[case][1]: step(NATIVE[case][1])
+elif case == "exec_missing":
+    step("./tools/scripts/zz_synthetic_missing.sh")
+elif case == "exec_dynamic":
+    step("./tools/scripts/${SYNTHETIC_UNSET_NAME}.sh")
 elif case == "edge_depth":
     for depth in range(16):
         script("zz_synthetic_depth_%d.sh" % depth, "bash tools/scripts/zz_synthetic_depth_%d.sh" % (depth + 1) if depth < 15 else "true")
@@ -310,6 +328,12 @@ edge_escape e2e.yml:e2e-tls:SOURCE_ESCAPE
 edge_symlink e2e.yml:e2e-tls:SOURCE_SYMLINK
 edge_oversize e2e.yml:e2e-tls:SOURCE_OVERSIZE
 edge_missing e2e.yml:e2e-tls:SOURCE_MISSING
+native_elf native_pe native_macho native_fat clean
+native_source native_bash e2e.yml:e2e-tls:SOURCE_OVERSIZE
+native_late_nul native_no_magic native_script native_unreadable demo-mock-bank-e2e.yml:demo-mock-bank-e2e:SOURCE_OVERSIZE
+native_then_mint e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
+exec_missing e2e.yml:e2e-tls:SOURCE_MISSING
+exec_dynamic e2e.yml:e2e-tls:SOURCE_DYNAMIC
 edge_depth e2e.yml:e2e-tls:SOURCE_LIMIT
 CASES
 
