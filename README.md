@@ -10,8 +10,8 @@
 
 <p align="center">
   <strong>Know What Your AI Agents Are Doing. Before They Do It.</strong><br/>
-  The Source-Available <strong>Agent Control Plane</strong> for Governance, Safety, and Trust.<br/>
-  <em>Includes <strong>Cordum Edge</strong> — a Compliance Firewall for Claude Code and other local AI-agent actions.</em>
+  The Source-Available <strong>Agent Control Plane</strong> for policy checks, approvals, and audit of the agent actions it mediates.<br/>
+  <em>Includes <strong>Cordum Edge</strong> — hook-based policy evaluation for Claude Code tool calls through <code>cordumctl edge claude</code>, the developer/demo path.</em>
 </p>
 
 <p align="center">
@@ -65,7 +65,7 @@ cd cordum
 - Gateway at http://localhost:8081 with a generated `CORDUM_API_KEY` in
   `.env`.
 - TLS CA, server, and client keypairs under `./certs/`.
-- A working approval-gate workflow proven by the built-in
+- An approval-gate workflow exercised, unless you pass `--skip-smoke`, by the built-in
   `platform_smoke.sh` run.
 
 Full walkthrough, platform notes, and troubleshooting:
@@ -97,14 +97,14 @@ with your `CORDUM_API_KEY`. To enable `admin` password login instead, set
 this for you.)
 
 Pin a specific release by exporting `CORDUM_VERSION=1.2.3` before
-`docker compose pull`. Defaults to `:latest`, which only moves on stable
-release tags (pre-release suffixes such as `-rc.1` never promote
-`:latest`).
+`docker compose pull`. Defaults to `:latest`; the
+[image workflow](.github/workflows/docker.yml) adds that tag only when the tag name
+lacks `-rc`, `-beta`, and `-alpha`.
 
 <details>
 <summary>Verifying image signatures</summary>
 
-Every release-tag image is signed with [cosign] keyless OIDC. The example
+The `docker.yml` tag workflow signs the images it builds with [cosign] keyless OIDC. The example
 below verifies `api-gateway`; repeat the same command (swapping the image
 name) for each of the seven Cordum images before deploying to production —
 verifying one image does not attest the rest:
@@ -239,7 +239,7 @@ cordumctl demo run quickstart
 ```
 
 A single `hello, operator!` workflow fans out to three topics and
-exercises every safety-kernel decision class in under 30 seconds:
+exercises three decision classes (ALLOW, DENY and REQUIRE_APPROVAL):
 
 ```
   +--------------------+--------------------------+--------------------+---------
@@ -254,11 +254,11 @@ exercises every safety-kernel decision class in under 30 seconds:
 Full walkthrough, rule-by-rule explanation, and extension recipe:
 [demo/quickstart/README.md](demo/quickstart/README.md).
 
-### Edge Quickstart (Compliance Firewall for Claude Code)
+### Edge Quickstart (Claude Code hook policy checks)
 
-Cordum Edge governs Claude Code tool calls in the developer's terminal — the
-hook denies risky actions before they run, requires approval on edits, and
-exports a redacted evidence bundle for every session. Once the platform stack
+Cordum Edge evaluates Claude Code tool calls through the `cordumctl edge claude`
+hook, the developer/demo path. Its metadata-only session export leaves raw prompts,
+transcripts, and tool payloads out of the exported evidence. Once the platform stack
 is up (above), point Claude Code at Cordum:
 
 ```bash
@@ -270,15 +270,15 @@ export CORDUM_TENANT_ID=default
 
 The wrapper renders a temporary `settings.json`, spawns `cordum-agentd` on a
 local loopback nonce, and starts Claude Code with the command hook installed.
-Read .env is denied; Edit/Write requires approval; safe reads pass through
+With the demo Edge policy, reading .env is denied; Edit/Write requires approval; safe reads pass through
 untouched. The dashboard shows the live session timeline at
 [/edge/sessions](http://localhost:8082/edge/sessions).
 
-For approved destructive actions, Edge does not trust the approval store alone:
-the ProvenanceGate also requires a resolved approval audit event for the same
-tenant, `approval_ref`, and `action_hash`. An approval-requested event by itself
-does not satisfy provenance, and raw prompts, transcripts, and tool payloads are
-kept out of audit evidence.
+On the Edge approval-retry path, the configured ProvenanceGate requires a
+resolved approval audit event for the same tenant, `approval_ref`, and
+`action_hash`; a requested-only event is not approval proof.
+The metadata-only session export excludes raw prompts, transcripts, and tool payloads;
+redaction protection is not yet qualified end to end.
 
 Full 30-minute walkthrough: [docs/quickstart-edge.md](docs/quickstart-edge.md).
 Reference: [docs/edge/README.md](docs/edge/README.md).
@@ -307,20 +307,23 @@ Cordum puts a policy decision at that dispatch boundary:
   requests are each reduced to a canonical form and hashed with SHA-256.
 - **Explicit verdicts.** Policy evaluation yields `ALLOW`, `DENY`,
   `REQUIRE_APPROVAL`, `THROTTLE` or `ALLOW_WITH_CONSTRAINTS`. The gateway,
-  scheduler and Edge evaluate path treat an unknown verdict as `DENY`.
-- **Hash-bound approvals.** A gated action's approval is looked up by tenant and
-  `approval_ref` and must carry the same SHA-256 `action_hash` as the action
-  being run; a changed payload is rejected as `approval_mismatch`. Self-approval,
-  expired and already-consumed approvals are rejected too.
+  scheduler and Edge evaluate routes convert an unknown verdict to `DENY` at their decision-conversion points.
+- **Hash-bound approvals.** For Cordum approval-gated actions, lookup uses tenant and
+  `approval_ref`; an approval whose SHA-256 `action_hash` differs is rejected as
+  `approval_mismatch`. These checks also reject self-approval,
+  expired and already-consumed approvals on those paths.
 - **Declarative YAML policies.** Rules in [`config/safety.yaml`](config/safety.yaml)
   match on tenant, topic, capability, risk tags, actor and labels; the shipped
-  policy denies anything no rule matches (`default_decision: deny`).
+  file sets `default_decision: deny`, so the Safety Kernel denies unmatched requests when it loads that file.
 - **Risk tags and agent risk tiers.** Rules can match `risk_tags` on any plan.
   Agent identities, which carry the risk tier that `agent_risk_tiers` rules
   match, require an Enterprise license.
 - **Cordum Edge.** A local hook evaluates coding-agent tool calls (Claude Code
   today) against the gateway before they run. See
-  [Edge Quickstart](#edge-quickstart-compliance-firewall-for-claude-code).
+  [Edge Quickstart](#edge-quickstart-claude-code-hook-policy-checks).
+
+The [claim register](docs/contract/claims.yaml) records these mechanisms as
+supported: the mechanism exists; its protection is not yet qualified.
 
 ## The Solution: Cordum Agent Control Plane
 
