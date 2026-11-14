@@ -121,7 +121,7 @@ func (h *agrHarness) paPreapprove(t *testing.T) {
 	}
 }
 
-// paCall issues tools/call for tool as agr-alice on agrSessionID.
+// paCall issues tools/call for tool as agr-alice on h.sessionID.
 func (h *agrHarness) paCall(t *testing.T, tool, args string) agrReply {
 	t.Helper()
 	id := strconv.FormatInt(h.rpcID.Add(1), 10)

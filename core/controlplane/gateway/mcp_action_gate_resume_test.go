@@ -45,10 +45,9 @@ import (
 )
 
 const (
-	agrToolName  = "agr_delete_record"
-	agrAgentID   = "agent-agr-alice"
-	agrSessionID = "agr-sess-1"
-	agrTenant    = "default"
+	agrToolName = "agr_delete_record"
+	agrAgentID  = "agent-agr-alice"
+	agrTenant   = "default"
 	// agrInvariantDeny is a SecOps invariant bundle that hard-denies the tool.
 	agrInvariantDeny = `version: "1"
 rules:
@@ -101,6 +100,8 @@ type agrHarness struct {
 	calls  atomic.Int64
 	sawRef atomic.Int64
 	rpcID  atomic.Int64
+	// sessionID is the SSE session agr-alice opened; every MCP call names it.
+	sessionID string
 }
 
 // agrNewServer boots the HTTP MCP routes as production does with the policy
@@ -129,9 +130,10 @@ func agrNewServer(t *testing.T) *agrHarness {
 	}
 	mux.HandleFunc("POST /api/v1/edge/approvals/{approval_ref}/approve", s.handleApproveEdgeApproval)
 	h.registerTool(t)
-	h.poisonTaintLookup(t)
 	h.srv = httptest.NewServer(apiKeyMiddleware(s.auth, mux))
 	t.Cleanup(h.srv.Close)
+	h.sessionID = openMCPSSE(t, h.srv.URL, "key-agr-alice", "")
+	h.poisonTaintLookup(t)
 	return h
 }
 
@@ -189,11 +191,11 @@ func agrDeleted(args json.RawMessage) string {
 func (h *agrHarness) poisonTaintLookup(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
-	key := mcp.MCPTaintKeyPrefix + agrTenant + ":" + agrSessionID
+	key := mcp.MCPTaintKeyPrefix + agrTenant + ":" + h.sessionID
 	if err := h.redis.HSet(ctx, key, "poison", "wrongtype").Err(); err != nil {
 		t.Fatalf("poison taint key: %v", err)
 	}
-	if _, _, err := mcp.NewRedisTaintStore(h.redis, time.Minute).GetTaint(ctx, agrTenant, agrSessionID); err == nil {
+	if _, _, err := mcp.NewRedisTaintStore(h.redis, time.Minute).GetTaint(ctx, agrTenant, h.sessionID); err == nil {
 		t.Fatal("taint lookup succeeded; want the WRONGTYPE failure that drives the MCPGate hold")
 	}
 }
@@ -208,12 +210,12 @@ func (h *agrHarness) post(key, path, body string, mcpCall bool) (*http.Response,
 	req.Header.Set("X-Tenant-ID", agrTenant)
 	if mcpCall {
 		req.Header.Set("X-Agent-Id", agrAgentID)
-		req.Header.Set("X-MCP-Session-ID", agrSessionID)
+		req.Header.Set("X-MCP-Session-ID", h.sessionID)
 	}
 	return h.client.Do(req)
 }
 
-// call issues tools/call for the tool as agr-alice on agrSessionID.
+// call issues tools/call for the tool as agr-alice on h.sessionID.
 // Goroutine-safe: reports with t.Errorf.
 func (h *agrHarness) call(t *testing.T, args string) agrReply {
 	t.Helper()
@@ -300,7 +302,7 @@ func (h *agrHarness) approval(t *testing.T, ref string) *edge.EdgeApproval {
 func (h *agrHarness) events(t *testing.T, kind edge.EventKind) []edge.AgentActionEvent {
 	t.Helper()
 	page, err := h.store.ListEvents(context.Background(), edge.ListEventsQuery{
-		TenantID: agrTenant, SessionID: agrSessionID, ExecutionID: "mcp-" + agrSessionID, Kind: kind, Limit: 50,
+		TenantID: agrTenant, SessionID: h.sessionID, ExecutionID: "mcp-" + h.sessionID, Kind: kind, Limit: 50,
 	})
 	if err != nil {
 		t.Fatalf("ListEvents(%s): %v", kind, err)
