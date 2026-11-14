@@ -17,4 +17,6 @@ func ensure(js interface{ AddStream(*nats.StreamConfig) }) {
 	add := func(name string) { js.AddStream(&nats.StreamConfig{Name: name}) }
 	add(streamName)
 	js.AddStream(&nats.StreamConfig{Name: "FIX_DIRECT"})
+	shadow := func(streamName string) { js.AddStream(&nats.StreamConfig{Name: streamName}) }
+	shadow("FIX_SHADOW")
 }

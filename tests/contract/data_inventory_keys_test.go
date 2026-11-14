@@ -287,7 +287,7 @@ func TestDataInventoryKeyCoverageFixture(t *testing.T) {
 		return &DataInventory{ControlPlane: []DataEntry{
 			{ID: "DI-C01", Storage: &DataStorage{Kind: "redis_key", RedisKeys: []DataKeyRef{{Pattern: "fix:covered:{id}", Path: path}, {Pattern: "fix:unknown:{id}", Path: path}}}},
 			{ID: "DI-C02", Storage: &DataStorage{Kind: "redis_stream", Writers: []CodeRef{{Path: path, Symbol: "appendScript"}}}},
-			{ID: "DI-C03", Storage: &DataStorage{Kind: "jetstream", Streams: []DataLiteralRef{{Name: "FIX_EVENTS", Path: path}, {Name: "FIX_DIRECT", Path: path}}}},
+			{ID: "DI-C03", Storage: &DataStorage{Kind: "jetstream", Streams: []DataLiteralRef{{Name: "FIX_EVENTS", Path: path}, {Name: "FIX_DIRECT", Path: path}, {Name: "FIX_SHADOW", Path: path}}}},
 		}, NotTenantData: []DataKeyClass{{Path: path, Patterns: []string{"fix:label:{name}"}, Reason: "fixture label names, not Redis keys"}}}
 	}
 	if got := uncoveredDataKeys(complete(), found); len(got) != 0 {
@@ -298,12 +298,31 @@ func TestDataInventoryKeyCoverageFixture(t *testing.T) {
 	if _, err := discoverDataKeys(broken, "core"); err == nil {
 		t.Fatal("a file that does not parse must fail the scan, not hide its keys")
 	}
+	shadowed := t.TempDir()
+	write(t, filepath.Join(shadowed, "core", "pkg", "shadow.go"), `package pkg
+
+const streamName = "TMP_CONST"
+
+func ensure(js X, streamName string) {
+	js.AddStream(&nats.StreamConfig{Name: streamName})
+	add := func(name string) { js.AddStream(&nats.StreamConfig{Name: name}) }
+	add(streamName)
+}
+`)
+	shadowFound, err := discoverDataKeys(shadowed, "core")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(shadowFound, []dataFound{{"jetstream", "<unresolved>", "core/pkg/shadow.go", 6}, {"jetstream", "<unresolved>", "core/pkg/shadow.go", 7}}) {
+		t.Errorf("a function parameter that shadows a file-level const must stay unresolved, got %q", shadowFound)
+	}
 	cases := map[string]struct {
 		edit func(*DataInventory)
 		want string
 	}{
 		"unclassified key prefix":      {func(d *DataInventory) { d.ControlPlane[0].Storage.RedisKeys = d.ControlPlane[0].Storage.RedisKeys[:1] }, `unclassified key "fix:unknown:" at core/fixture/store.go:`},
 		"unclassified jetstream":       {func(d *DataInventory) { d.ControlPlane[2].Storage.Streams = d.ControlPlane[2].Storage.Streams[:1] }, `unclassified jetstream "FIX_DIRECT" at core/fixture/store.go:`},
+		"shadowed jetstream":           {func(d *DataInventory) { d.ControlPlane[2].Storage.Streams = d.ControlPlane[2].Storage.Streams[:2] }, `unclassified jetstream "FIX_SHADOW" at core/fixture/store.go:`},
 		"unclassified redis stream":    {func(d *DataInventory) { d.ControlPlane[1].Storage.Kind = "redis_key" }, `unclassified redis-stream "XADD" at core/fixture/store.go:`},
 		"label without classification": {func(d *DataInventory) { d.NotTenantData = nil }, `unclassified key "fix:label:" at core/fixture/store.go:`},
 		"stale classification": {func(d *DataInventory) {
