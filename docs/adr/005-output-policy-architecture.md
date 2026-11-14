@@ -34,8 +34,8 @@ A single deep scan on hot path increases p99 latency and risks scheduler through
 ## Why Not Reuse Input Policy Objects Directly
 Input policy rules match request intent (topic/capability/risk labels) and pre-dispatch constraints. Output checks require result-specific artifacts (content pointers, findings, scanners, matched patterns, redaction pointers). A dedicated output contract avoids overloading input semantics.
 
-## Why Fail-Open on Checker Errors
-Result processing is part of core control-plane reliability path. Blocking all completions on transient checker errors creates systemic availability risk. Scheduler therefore degrades to skip-on-error and records observability signals (`output_policy_skipped`).
+## Why Fail-Open on Synchronous Checker Errors
+Result processing is part of the core control-plane reliability path. Blocking all completions on transient checker errors creates systemic availability risk. The synchronous metadata check therefore skips on error and records observability signals (`output_policy_skipped`). Current behavior: the asynchronous content check follows the config-service key `scheduler.output_fail_mode`, which is closed when unset and forced closed by the production identity profile; output-check outage outcomes are not measured ([failure and partition behavior](../contract/failure-behavior.md#scope-and-operator-modes)).
 
 ## Why QUARANTINE Instead of DENY
 `DENY` semantics are request-time and binary. Output incidents need operational review workflows, evidence preservation, and optional release/remediation actions. `QUARANTINE` provides a terminal, auditable hold state without conflating it with pre-execution denial.
