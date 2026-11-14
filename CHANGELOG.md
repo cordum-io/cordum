@@ -703,6 +703,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- `safety_policy.schema.json` now matches the Go struct. It used to reject
+  fields the kernel reads: top-level `require_human`,
+  `match.delegation.delegation_required`.
+  `TestSafetyPolicySchemaMatchesStruct` now fails on drift in either
+  direction. `max_output_bytes`, `allowed_destinations` and
+  `redact_patterns` stay accepted but are documented as deprecated no-ops;
+  the kernel never enforced them. Rejecting them now could stop a kernel
+  from loading a policy that followed the docs (#492, task-885597c3).
+
 - On Redis Cluster (the production K8s overlay), every audit chain append
   failed with `CROSSSLOT`. The chain now has a cluster path built from
   single-key steps: a compare-and-append on the stream. The single-node

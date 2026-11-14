@@ -621,7 +621,7 @@ claims:
     invariants: []
     findings: []
     enforcement_points: [{"path":"core/infra/config/safety_policy.go","symbol":"ParseSafetyPolicy"},{"path":"core/infra/config/schema/safety_policy.schema.json","symbol":"16777216"}]
-    tests: [{"package":"core/infra/config","name":"TestSafetyPolicyRejectsOversizedMaxOutputBytes"}]
+    tests: [{"package":"core/infra/config","name":"TestSafetyPolicyDeprecatedMaxOutputBytesBounds"}]
     evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 ParseSafetyPolicy validates the document against the embedded safety policy schema, which sets a maximum of 16777216 for max_output_bytes, and TestSafetyPolicyRejectsOversizedMaxOutputBytes covers it."
     public_sources: ["cordum:docs/operations/safetykernel-constraints.md:23"]
   - id: CLM-083
