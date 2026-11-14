@@ -103,6 +103,18 @@ DYNAMIC = {
 SHELLS, PROG = {"shell_env_bash": "/usr/bin/env bash {0}", "shell_pwsh": "pwsh"}, ' \'synthetic_key="$(openssl rand -hex 16)"; curl -fsS -u "synthetic:${synthetic_key}" https://127.0.0.1:9/ >/dev/null\''
 INLINE = {"shell_c_stdin": "bash -s -c" + PROG, "shell_c_option": "bash -c -e" + PROG, "shell_c_dashdash": "bash -c --" + PROG, "inline_redirect_first": "bash -c '> /dev/null " + RUN_MINT + "'", "inline_redirect": "bash -c 'exec >\"${SYNTHETIC_LOG:-/dev/null}\" 2>&1; true'"}  # bash runs the -c program after any later option, over -s; a redirection is not its command word
 INLINE.update({"shell_c_rcfile": "bash --rcfile /dev/null -c" + PROG, "shell_c_initfile": "bash --init-file /dev/null -c" + PROG, "shell_c_norc": "bash --norc -c" + PROG})  # --rcfile and --init-file take a file operand, never the program; --norc takes none
+INLINE.update({"shell_ic_rcfile": "bash --rcfile " + MINT_SH + " -ic" + PROG, "shell_i_initfile": "bash --init-file " + MINT_SH + " -i -c" + PROG, "shell_i_rcfile_script": "bash --rcfile " + MINT_SH + " -i tools/scripts/github_actions_mask_env.sh", "shell_c_rcfile_unread": "bash --rcfile " + MINT_SH + " -c true", "shell_i_rcfile_shadowed": "SYNTH_RC=" + MINT_SH + " bash -c 'SYNTH_RC=tools/scripts/github_actions_mask_env.sh bash --rcfile ${SYNTH_RC} -ic true'", "shell_i_rcfile_unknown": "SYNTH_RC=tools/scripts/github_actions_mask_env.sh bash --rcfile ${SYNTH_RC} -ic true"})  # -i: bash runs the rcfile first, then the program or script; without -i it never reads it; the caller, not the prefix, names it
+RCTRACE = {"shell_i_rcfile_traced": "set -x\n", "shell_i_rcfile_untraced": "set -x\nset +x\n"}  # bash runs the -i rcfile in the shell that then runs the program: tracing the rcfile leaves on traces it
+X, XE, XG = "tools/scripts/zz_synthetic_set.sh", "tools/scripts/zz_synthetic_set_e.sh", "tools/scripts/zz_synthetic_outer.sh"
+SOURCED = {  # (run, {sourced file: text}, mint() keywords[, workflow, anchor]): source and . leave options in the caller, as a set at that line would; a subshell keeps them
+    "sourced_trace": ("source " + X + "\n" + RUN_MINT, {X: "set -x\n"}, {}), "sourced_dot_trace": (". " + X + "\n" + RUN_MINT, {X: "set -x\n"}, {}),
+    "sourced_nested_trace": ("source " + XG + "\n" + RUN_MINT, {XG: "source " + X + "\n", X: "set -x\n"}, {}), "sourced_function_trace": ("source " + X + "\n" + RUN_MINT, {X: "trace_on() { set -x; }\n"}, {}),
+    "sourced_in_function": ("load() { source " + X + "; }\nload\n" + RUN_MINT, {X: "set -x\n"}, {}), "sourced_unparsable": ("source " + X + "\n" + RUN_MINT, {X: "echo 'unterminated\n"}, {}),
+    "sourced_own_trace": (RUN_MINT, {X: "set -x\n"}, {"head": STRICT + "source " + X + "\n"}), "sourced_own_errexit": (RUN_MINT, {XE: "set +e\n"}, {"head": STRICT + "source " + XE + "\n"}),
+    "rc_sources_trace": ("bash --rcfile " + XG + " -ic '" + RUN_MINT + "'", {XG: "source " + X + "\n", X: "set -x\n"}, {}), "rc_trace_script": ("bash --rcfile " + X + " -ic '" + RUN_MINT + "'", {X: "set -x\n"}, {}),
+    "sourced_trace_off": ("source " + X + "\n" + RUN_MINT, {X: "set -x\nset +x\n"}, {}), "sourced_subshell": ("( source " + X + " )\n" + RUN_MINT, {X: "set -x\n"}, {}),
+    "sourced_after_registration": (RUN_MINT, {X: "set -x\n"}, {"before": SAFE + "\nsource " + X}), "sourced_errexit_restored": (RUN_MINT, {XE: "set +e\n"}, {"head": STRICT + "source " + XE + "\nset -e\n"}),
+    "sourced_errexit_window": (RUN_MINT, {XE: "probe() {\nset +e\nfalse\nset -e\n}\n"}, {"head": STRICT + "source " + XE + "\n"}), "sourced_caller_untraces": ("source " + X + "\nset +x\n" + RUN_MINT, {X: "set -x\n"}, {}, *LINK)}
 TRACE = {  # (shell, run[, job]): xtrace on at a fail-closed registration; run-text tracing in a job the guard leaves open
     "trace_shell": ("bash -x {0}", "source " + MINT_SH), "trace_env": ("", "SHELLOPTS=xtrace " + RUN_MINT),
     "trace_bash_x": ("", "bash -x " + MINT_SH, *LINK), "trace_set_x": ("", "set -x\nsource " + MINT_SH, *LINK),
@@ -152,6 +164,12 @@ elif case == "nonce_bypass_overridden":
     edit(EDGE, "run: bash tools/scripts/edge_fake_hook_e2e.sh", "run: CORDUM_EDGE_E2E_BYPASS_HOOK=0 bash tools/scripts/edge_fake_hook_e2e.sh")
 elif case == "quickstart_unseeded":
     step("bash tools/scripts/quickstart.sh --skip-build", *LINK)
+elif case in SOURCED:
+    mint(**{"before": SAFE, **SOURCED[case][2]}); [write(rel, body) for rel, body in SOURCED[case][1].items()]  # noqa: E702
+    step(SOURCED[case][0], *SOURCED[case][3:])
+elif case in RCTRACE:
+    write("tools/scripts/zz_synthetic_trace_rc.sh", RCTRACE[case])
+    step("bash --rcfile tools/scripts/zz_synthetic_trace_rc.sh -ic" + PROG.replace('"; curl', '"; gha_mask_value "${synthetic_key}" || exit 1; curl', 1))
 elif case in DYNAMIC or case in INLINE:
     mint()
     step(DYNAMIC.get(case) or INLINE[case])
@@ -268,6 +286,15 @@ mint_inline shell_c_stdin shell_c_option shell_c_dashdash e2e.yml:e2e-tls:CREDEN
 errexit_redirect_tested errexit_redirect_assign errexit_redirect_spaced e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 shell_c_rcfile shell_c_initfile shell_c_norc e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED
 errexit_redirect_plain clean
+shell_ic_rcfile shell_i_initfile shell_i_rcfile_script shell_i_rcfile_shadowed e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
+shell_ic_rcfile shell_i_initfile e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@.github/workflows/e2e.yml
+shell_c_rcfile_unread clean
+shell_i_rcfile_unknown e2e.yml:e2e-tls:SOURCE_DYNAMIC@.github/workflows/e2e.yml
+shell_i_rcfile_untraced clean
+shell_i_rcfile_traced e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@.github/workflows/e2e.yml
+sourced_trace sourced_dot_trace sourced_nested_trace sourced_function_trace sourced_in_function sourced_unparsable sourced_own_trace rc_sources_trace rc_trace_script e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
+sourced_own_errexit e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
+sourced_trace_off sourced_subshell sourced_after_registration sourced_errexit_restored sourced_errexit_window sourced_caller_untraces clean
 gen_openssl gen_uuidgen gen_urandom gen_random gen_date gen_python gen_quoted_paren errexit_substitution mask_captured mask_env_captured e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_gen.sh
 gen_nested mask_fd_captured clean
 nonce_bypass_removed edge-fake-hook-e2e.yml:edge-fake-hook-e2e:CREDENTIAL_UNREGISTERED@tools/scripts/edge_fake_hook_e2e.sh
@@ -304,5 +331,21 @@ else
   record FAIL "inventory: rc=${inv_rc}: ${inv}"
 fi
 
+if python - "${WORK}" "${SOURCES}" <<'PY'
+import pathlib, runpy, sys; ns = runpy.run_path(sys.argv[2]); root = pathlib.Path(sys.argv[1]) / "source-fanout"; root.mkdir(); [(root / f"n{i}.sh").write_text(f"source n{i + 1}.sh\n" * 5 if i < 5 else "true\n") for i in range(6)]; scan = ns["Scan"](root); calls = []; effect = getattr(scan, "effect", None); setattr(scan, "effect", lambda *args: (calls.append(None), effect(*args))[1]) if effect else None; scan.run_job("probe.yml", "job", {"steps": [{"run": "source n0.sh"}]}, {}, {}, True); assert len(calls) <= 60 and not scan.issues, (len(calls), scan.issues)
+PY
+then record PASS "repeated sources reuse option effects"; else record FAIL "repeated sources reuse option effects"; fi
+if python - "${WORK}" "${SOURCES}" <<'PY'
+import pathlib, runpy, sys, time; ns, work, mint = runpy.run_path(sys.argv[2]), pathlib.Path(sys.argv[1]), 'minted="$(printf %s "${resp}" | jq -r .secret)"\ngha_mask_value "${minted}"\n'
+def tree(name: str, files: dict) -> pathlib.Path: root = work / name; root.mkdir(); [(root / rel).write_text(text) for rel, text in files.items()]; return root  # noqa: E702
+def scan(root: pathlib.Path, run: str) -> tuple: s, calls = ns["Scan"](root), []; effect = getattr(s, "effect", None); setattr(s, "effect", lambda *a: (calls.append(None), effect(*a))[1]) if effect else None; s.run_job("probe.yml", "job", {"steps": [{"run": run}]}, {}, {}, True); return {i[2].split("@")[0] for i in s.issues}, sorted(s.issues), len(calls)  # noqa: E702
+pairs, layers, start = tree("all-pairs", {f"n{i}.sh": "".join(f"source n{j}.sh\n" for j in range(i + 1, 15)) or "true\n" for i in range(15)}), tree("layered", {f"l{d}_{w}.sh": "".join(f"source l{d + 1}_{v}.sh\n" for v in range(4)) if d < 5 else "true\n" for d in range(6) for w in range(4 if d else 1)}), time.monotonic(); first, again = scan(pairs, "source n0.sh\n" + mint), scan(pairs, "source n0.sh\n" + mint)  # noqa: E702
+assert {"SOURCE_LIMIT", "CREDENTIAL_UNREGISTERED"} <= first[0] and first[1] == again[1] and first[2] <= 3 * ns["MAX_DRY"] and "SOURCE_LIMIT" in scan(layers, "source l0_0.sh")[0] and time.monotonic() - start < 60, (first[0], first[2])  # layered: depth 6 and 21 files stay under MAX_DEPTH and MAX_VISITS, so only the dry budget reports
+PY
+then record PASS "dry analysis budget fails closed"; else record FAIL "dry analysis budget fails closed"; fi
+if python - "${WORK}" "${SOURCES}" <<'PY'
+import pathlib, runpy, sys; ns, root = runpy.run_path(sys.argv[2]), pathlib.Path(sys.argv[1]) / "layered-jobs"; root.mkdir(); [(root / f"l{d}_{w}.sh").write_text("".join(f"source l{d + 1}_{v}.sh\n" for v in range(4)) if d < 5 else "true\n") for d in range(6) for w in range(4 if d else 1)]; scan = ns["Scan"](root); [scan.run_job("probe.yml", job, {"steps": [{"run": run}]}, {}, {}, True) for job, run in (("spent", "source l0_0.sh"), ("fresh", 'source l5_0.sh\nminted="$(printf %s "${resp}" | jq -r .secret)"\ngha_mask_value "${minted}"\n'))]; assert any(i[1] == "spent" for i in scan.issues) and not [i for i in scan.issues if i[1] == "fresh"], sorted(scan.issues)  # noqa: E702
+PY
+then record PASS "dry analysis budget resets per job"; else record FAIL "dry analysis budget resets per job"; fi
 echo "SUMMARY: ${PASS} pass, ${FAIL} fail, ${SKIP} skip"
 [[ "${FAIL}" -eq 0 ]]

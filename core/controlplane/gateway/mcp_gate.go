@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -20,10 +21,11 @@ import (
 // Principal is the authenticated subject (API-key principal, SSO subject,
 // etc.) — it is the identity used by the self-approval guard to decide
 // whether the approver and the requester are the same person.
-// AgentID is the display-facing MCP agent identifier resolved from the
-// X-Agent-Id header; it may differ from Principal (e.g. a human operator
-// invoking tools-call on behalf of an agent). Auditing records both so
-// the dashboard can show "agent-alpha called by alice@corp".
+// AgentID is the agent identity ID bound to Principal (its worker link in
+// the request tenant), empty when there is none; it is never the raw
+// X-Agent-Id header, which may only confirm the binding (ruling Q4).
+// Auditing records both so the dashboard can show "agent-alpha called
+// by alice@corp".
 type MCPCallMetadata struct {
 	Tenant            string
 	AgentID           string
@@ -299,13 +301,6 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 	if err != nil {
 		return nil, fmt.Errorf("%w: mcp gate: enqueue: %w", mcp.ErrApprovalStoreUnavailable, err)
 	}
-	// Mark the handle so the invocation event records
-	// approval_status=required + approval_id=<rec.ID> — lets SIEM
-	// consumers find the pending approval by correlating on the same
-	// id that lands on the mcp.tool_approval(outcome=enqueue) event.
-	if h := mcp.InvocationHandleFromContext(ctx); h != nil {
-		h.MarkApprovalRequired(rec.ID)
-	}
 	// EDGE-103: try to dual-write an EdgeApproval when the gate is
 	// wired for it AND mcp.CallMetadata has SessionID/ExecutionID.
 	// On success the returned ApprovalRef is the Edge ref consumable
@@ -318,6 +313,9 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 	// legacy approval_id.
 	approvalRef, policySnapshot, expiresAt, mintErr := g.dualWriteEdgeApproval(ctx, meta, tool, params, rec)
 	if mintErr != nil {
+		// The record is correlation-only under the policy gate and nothing
+		// will ever reference it, so withdraw it (task-fbe79532).
+		g.withdrawCorrelationRecord(ctx, rec)
 		// A policy change is retryable, not a store outage.
 		if errors.Is(mintErr, mcp.ErrPolicySnapshotChanged) {
 			return nil, mintErr
@@ -330,6 +328,15 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 	if approvalRef != rec.ID {
 		retryHint = mcp.RetryHintApprovalRef
 	}
+	// Mark the handle so the invocation event records
+	// approval_status=required + approval_id=<rec.ID> — lets SIEM
+	// consumers find the pending approval by correlating on the same
+	// id that lands on the mcp.tool_approval(outcome=enqueue) event.
+	// Stamped only once the mint succeeded: a failed mint withdraws the
+	// record above, so it must not be advertised.
+	if h := mcp.InvocationHandleFromContext(ctx); h != nil {
+		h.MarkApprovalRequired(rec.ID)
+	}
 	return &mcp.ApprovalRequired{
 		ApprovalID:     rec.ID,
 		ApprovalRef:    approvalRef,
@@ -340,6 +347,19 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 		Reason:         rec.Reason,
 		Tool:           tool.Name,
 	}, nil
+}
+
+// withdrawCorrelationRecord expires rec after a failed Edge mint. The cleanup
+// outlives a cancelled call (a client that hung up mid-mint is exactly when an
+// Edge store is slow or down) but is bounded. It is best-effort: on failure the
+// record is logged, never the arguments, and the sweeper stays the backstop.
+func (g *gatewayApprovalGate) withdrawCorrelationRecord(ctx context.Context, rec *MCPApprovalRecord) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	if !g.store.WithdrawPending(ctx, rec.ID, time.Now()) {
+		slog.Warn("mcp gate: correlation approval record not withdrawn after edge mint failure",
+			"approval_id", rec.ID, "tenant", rec.Tenant)
+	}
 }
 
 // useConsumedEdgeApproval reports whether this call carries the Edge

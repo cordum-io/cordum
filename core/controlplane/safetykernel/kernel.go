@@ -479,6 +479,9 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 		}()
 	}
 
+	// Report this kernel's loader configuration on the same lifecycle.
+	startPolicySignatureReporter(lifecycleCtx, &wg, resultClient)
+
 	grpcServer := grpc.NewServer(
 		serverCreds,
 		grpc.StatsHandler(otelgrpc.NewServerHandler()),

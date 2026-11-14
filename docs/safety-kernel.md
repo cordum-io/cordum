@@ -346,7 +346,7 @@ When the safety kernel is unreachable during pre-dispatch policy checks, the sch
 | `SAFETY_POLICY_SIGNATURE_PATH` | safety kernel loader | unset | Detached signature file path. |
 | `SAFETY_KERNEL_TLS_CERT` | safety kernel server | unset | TLS certificate path for server listener. |
 | `SAFETY_KERNEL_TLS_KEY` | safety kernel server | unset | TLS private key path for server listener. |
-| `SAFETY_KERNEL_TLS_CA` | scheduler/gateway clients | unset | CA bundle for mTLS/TLS verification. |
+| `SAFETY_KERNEL_TLS_CA` | scheduler/gateway clients | unset | CA bundle used to verify the Safety Kernel's TLS server certificate. |
 | `SAFETY_KERNEL_TLS_REQUIRED` | scheduler/gateway clients | `true` in production | Require TLS when dialing safety kernel. |
 | `SAFETY_KERNEL_INSECURE` | scheduler/gateway clients | `false` | Allow insecure client transport outside production. |
 

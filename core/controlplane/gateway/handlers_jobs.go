@@ -204,9 +204,19 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The response carries admin-only fields and per-tenant pipeline counts,
+	// so the role and tenant are resolved before the cache lookup and form
+	// its key: a cached response is only served to the same role and tenant.
+	isAdmin := s.requireRole(r, "admin") == nil
+	tenantID := tenantFromRequest(r)
+	if resolvedTenant, err := s.resolveTenant(r, ""); err == nil {
+		tenantID = resolvedTenant
+	}
+	cacheKey := statusCacheKey(isAdmin, tenantID)
+
 	// Check cache first — avoids repeated Redis PING + snapshot reads on
 	// every dashboard poll (dashboard polls /api/v1/status every 5-10s).
-	if cached := s.statusCacheObj.Get(); cached != nil {
+	if cached := s.statusCacheObj.Get(cacheKey); cached != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Cache", "HIT")
 		writeJSON(w, cached)
@@ -245,8 +255,6 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	cancel()
 	redisPoolStats := redisPoolStatsResponse(s.redisClient())
 
-	isAdmin := s.requireRole(r, "admin") == nil
-
 	natsInfo := map[string]any{
 		"connected": natsConnected,
 		"status":    natsStatus,
@@ -261,11 +269,6 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	if isAdmin && redisErr != "" {
 		redisInfo["error"] = redisErr
-	}
-
-	tenantID := tenantFromRequest(r)
-	if resolvedTenant, err := s.resolveTenant(r, ""); err == nil {
-		tenantID = resolvedTenant
 	}
 
 	resp := map[string]any{
@@ -306,6 +309,7 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			"input":  readCircuitBreakerStatus(r.Context(), cbRedis, "cordum:cb:safety"),
 			"output": readCircuitBreakerStatus(r.Context(), cbRedis, "cordum:cb:safety:output"),
 		}
+		resp["signature_enforcement"] = s.signatureEnforcementStatus(r.Context())
 
 		if cbRedis != nil {
 			if val, err := cbRedis.Get(r.Context(), "cordum:scheduler:input_fail_open_total").Int64(); err == nil {
@@ -335,8 +339,8 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Cache the response for subsequent requests
-	s.statusCacheObj.Set(resp)
+	// Cache the response for subsequent requests from the same role and tenant.
+	s.statusCacheObj.Set(cacheKey, resp)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Cache", "MISS")
@@ -1252,6 +1256,30 @@ func (s *server) handleRemediateJob(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"job_id": newJobID, "trace_id": traceID})
 }
 
+// errAgentLinkUnavailable is the client-safe description of a failed
+// worker-link lookup. The store error itself is only logged.
+var errAgentLinkUnavailable = errors.New("agent identity store unavailable")
+
+// linkedAgentID returns the ID of the agent linked to principalID in tenant,
+// or "" when there is no agent store, no link, a dangling link, or a blank
+// tenant or principal. A store failure is returned as an error and must never
+// be read as "no link": the submit and delegation paths that bind an agent
+// fail closed with 503 / Unavailable instead of running policy and audit
+// without the agent.
+func (s *server) linkedAgentID(ctx context.Context, tenant, principalID string) (string, error) {
+	if s.agentIdentityStore == nil || strings.TrimSpace(tenant) == "" || strings.TrimSpace(principalID) == "" {
+		return "", nil
+	}
+	agent, err := s.agentIdentityStore.GetByWorkerIDForTenant(ctx, tenant, principalID)
+	if err != nil {
+		return "", err
+	}
+	if agent == nil {
+		return "", nil
+	}
+	return agent.ID, nil
+}
+
 func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	// RBAC: custom roles may submit when they hold jobs.write. When advanced
 	// RBAC is disabled, preserve the historical admin/user fallback.
@@ -1478,19 +1506,25 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		meta.Labels = req.Labels
 	}
 
-	// Bind agent_id to the authenticated principal. Never trust
-	// client-supplied labels.agent_id: a client that can reach this
-	// handler already has a worker credential, and that credential's
-	// agent identity is the only authoritative one. A mismatch between
-	// client-asserted and credential-derived agent_id is an
-	// impersonation attempt and rejects 403.
-	var authDerivedAgentID string
-	if s.agentIdentityStore != nil {
-		if agent, err := s.agentIdentityStore.GetByWorkerIDForTenant(r.Context(), orgID, principalID); err == nil && agent != nil {
-			authDerivedAgentID = agent.ID
-		}
+	// Worker-link injection, the labels.agent_id check and the delegation-
+	// audience gate follow only the credential-backed principal, and only when
+	// the job is attributed to it: a request-named principal (body
+	// principal_id or X-Principal-Id) never selects a worker link.
+	authenticated := auth.FromRequest(r).AuthenticatedPrincipal()
+	lookupPrincipal := ""
+	if authenticated != "" && authenticated == strings.TrimSpace(principalID) {
+		lookupPrincipal = authenticated
+	}
+	authDerivedAgentID, err := s.linkedAgentID(r.Context(), orgID, lookupPrincipal)
+	if err != nil {
+		writeServiceUnavailable(w, r, "submit agent link lookup", err)
+		return
 	}
 	if clientAgentID := req.Labels["agent_id"]; clientAgentID != "" {
+		if authenticated == "" || authenticated != strings.TrimSpace(principalID) {
+			writeErrorJSON(w, http.StatusForbidden, "client-supplied agent_id requires an authenticated principal")
+			return
+		}
 		if authDerivedAgentID == "" {
 			writeErrorJSON(w, http.StatusForbidden, "client-supplied agent_id requires an authenticated worker credential")
 			return

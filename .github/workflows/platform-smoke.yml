@@ -1,12 +1,14 @@
 name: Platform Smoke
 
+# Nightly tier: this smoke test boots the whole stack, so it runs on the
+# schedule below and on demand (`gh workflow run "Platform Smoke" --ref
+# <branch>`), not on every PR. It is no longer a required check on main.
+# See the tier note in ci.yml.
 on:
-  pull_request:
-  merge_group:
-    types: [checks_requested]
-  push:
-    branches:
-      - main
+  schedule:
+    # 03:33 UTC daily. The odd minute avoids top-of-hour runner contention.
+    - cron: '33 3 * * *'
+  workflow_dispatch:
 
 jobs:
   platform-smoke:

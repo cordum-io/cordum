@@ -211,11 +211,15 @@ that bundle entry; the unified GET projects it as part of the
   `s.policy.Rules`, but the dashboard's typed view shows the rule in
   one bucket only. Authoring a rule with multiple topic intents is
   uncommon; if needed, duplicate the rule per intended bucket.
-- **MCP server-scope matching uses `tool.ApprovalScope`.** `mcp.Tool`
-  has no `Server` field, so invariant `Match.MCP.DenyServers` matches
-  against `tool.ApprovalScope` (a tag the tool advertises). For
-  fine-grained server-scope invariants, ensure tools advertise a
-  consistent ApprovalScope per logical server.
+- **MCP server-scope matching depends on the call path.** With
+  `mcp.policy_gate_enabled`, invariant `deny_servers` matches both the serving
+  registry's effective `ApprovalScope` (including runtime `mcp_policy`
+  overrides) and the MCP server name (`cordum.builtin` or a fronted upstream's
+  name), at approval mint, `_approval_ref` resume and every ALLOW. The
+  registry gate's per-tool `Check` still matches `ApprovalScope` only for
+  `RequiresApproval` tools, including when the policy gate is off; ungated
+  tools have no registry-gate check. Use a consistent `ApprovalScope` per
+  logical server for registry-gate-only deployments.
 - **Decision string typos silently no-op.** Invariant rules with
   unknown `decision` values (e.g. `dney` instead of `deny`) skip the
   DENY-uncrossable enforcement — they fall into the ALLOW bucket per

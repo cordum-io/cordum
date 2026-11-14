@@ -1,5 +1,23 @@
 name: CI
 
+# Two tiers.
+#
+# Merge CI runs on pull_request, merge_group and pushes. It is kept small:
+# fast static checks and unit tests (Test, Lint, Build, Security Scan,
+# OpenAPI Validate). Dashboard Tests and Lighthouse also run when a change
+# touches the dashboard or the OpenAPI spec.
+#
+# Nightly runs on the schedule below, or on demand through workflow_dispatch
+# (`gh workflow run CI --ref <branch>`). It covers the jobs that boot
+# services or run long suites: benchmarks, Handshake Trust Interop and
+# Quickstart Env Sharing.
+# - Integration-tagged tests run nightly in integration-nightly.yml, so the
+#   Integration Tests job here runs only on workflow_dispatch.
+# - The E2E suites run nightly in their own workflows: platform-smoke.yml,
+#   demo-mock-bank-e2e.yml, e2e.yml and edge-fake-hook-e2e.yml.
+#
+# A job that its `if:` skips reports success, so moving a job to the
+# nightly tier never leaves a required check pending on a PR.
 on:
   push:
     branches: [ main, develop ]
@@ -9,8 +27,59 @@ on:
     branches: [ main, develop, 'moe/**' ]
   merge_group:
     types: [checks_requested]
+  schedule:
+    # 02:41 UTC daily. The odd minute avoids top-of-hour runner contention.
+    - cron: '41 2 * * *'
+  workflow_dispatch:
+
+# Cancel superseded runs of the same pull request. Every other event (push,
+# merge_group, schedule, workflow_dispatch) gets its own group, so no run on
+# main or in the merge queue is ever cancelled or replaced.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      dashboard: ${{ steps.diff.outputs.dashboard }}
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+
+    - name: Diff against the event's base
+      id: diff
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        MERGE_GROUP_BASE: ${{ github.event.merge_group.base_sha }}
+        PUSH_BEFORE: ${{ github.event.before }}
+      run: |
+        case "${EVENT_NAME}" in
+          pull_request) base="$(git rev-parse HEAD^1)" ;;
+          merge_group)  base="${MERGE_GROUP_BASE}" ;;
+          push)         base="${PUSH_BEFORE}" ;;
+          *)            echo "dashboard=true" >> "${GITHUB_OUTPUT}"; exit 0 ;;
+        esac
+        if [[ -z "${base}" ]] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+          echo "::notice::no usable diff base for ${EVENT_NAME}; running every conditional job"
+          echo "dashboard=true" >> "${GITHUB_OUTPUT}"
+          exit 0
+        fi
+        changed="$(git diff --no-renames --name-only "${base}" HEAD)"  # a move out of dashboard/ still lists its source path
+        if grep -Eq '^(dashboard/|docs/api/openapi/|tools/scripts/check_dashboard_deps\.sh$|\.github/workflows/ci\.yml$)' <<<"${changed}"; then
+          echo "dashboard=true" >> "${GITHUB_OUTPUT}"
+        else
+          echo "dashboard=false" >> "${GITHUB_OUTPUT}"
+        fi
+
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -49,8 +118,11 @@ jobs:
     # working tree after `> benchmark_raw.txt` creates an untracked
     # file) should not block merges. The benchmark-action writes to a
     # separate gh-pages branch, so skipping a run has no impact on
-    # code correctness.
+    # code correctness. They run in the nightly tier only, so the
+    # required Test check stays fast; the nightly run is on main and
+    # stores the results there.
     - name: Run benchmarks
+      if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
       continue-on-error: true
       run: |
         go test -run=^$ -bench=. -benchmem ./... > benchmark_raw.txt
@@ -61,6 +133,7 @@ jobs:
 
     - name: Check benchmark output
       id: benchmark_check
+      if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
       continue-on-error: true
       run: |
         if [ -f benchmark.txt ] && grep -q '^Benchmark' benchmark.txt; then
@@ -79,8 +152,11 @@ jobs:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         auto-push: true
 
+  # integration-nightly.yml runs the same integration-tagged suite every night,
+  # with services up. This job is kept for on-demand runs only.
   integration-tests:
     name: Integration Tests
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
@@ -103,6 +179,7 @@ jobs:
 
   handshake-trust-interop:
     name: Handshake Trust Interop
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 12
     env:
@@ -158,7 +235,7 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
 
     steps:
     - uses: actions/checkout@v7
@@ -212,7 +289,7 @@ jobs:
       run: python -m pip install --disable-pip-version-check PyYAML==6.0.2
 
     - name: Set up Helm for deployment manifest self-tests
-      uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+      uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
       with:
         version: v4.2.0
 
@@ -233,6 +310,8 @@ jobs:
 
   dashboard-test:
     name: Dashboard Tests
+    needs: [changes]
+    if: needs.changes.outputs.dashboard == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -338,7 +417,8 @@ jobs:
     name: Lighthouse CI (/login)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    if: github.event_name == 'pull_request'
+    needs: [changes]
+    if: github.event_name == 'pull_request' && needs.changes.outputs.dashboard == 'true'
     permissions:
       contents: read
       pull-requests: write
@@ -578,6 +658,7 @@ jobs:
 
   quickstart-env-sharing:
     name: Quickstart Env Sharing
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     needs: [build]
     timeout-minutes: 15

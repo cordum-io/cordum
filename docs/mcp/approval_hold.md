@@ -213,15 +213,18 @@ runs. That event carries `input_hash` (the canonical argument hash, with
   without running the tool again.
 - **Outages.** An Edge store error on the mint, the approval lookup or the
   claim returns `-32096` with `kind=approval_store_unavailable`, and the
-  tool does not run.
+  tool does not run. When the mint fails, the registry gate expires its
+  correlation record at once, so approvers see no orphan PENDING record.
 - **Policy change during the call.** Both mint sites compare the snapshot
   stamped on the call's `mcp.tool.pre` event with the current snapshot.
   If a policy publish changed it between those reads, nothing is minted:
   the call returns `-32096` `kind=policy_snapshot_changed` with a fixed
-  reason. Retry the call without `_approval_ref`: it is evaluated under
-  the current policy, and the error is never cached. A blank snapshot on
-  either side is not a confirmed change; a blank current snapshot still
-  fails with `approval_store_unavailable` (see **Snapshot**). A publish
+  reason. The registry gate expires its correlation record at once, so
+  approvers see no orphan PENDING record. Retry the call without
+  `_approval_ref`: it is evaluated under the current policy, and the error
+  is never cached. A blank snapshot on either side is not a confirmed
+  change; a blank current snapshot still fails with
+  `approval_store_unavailable` (see **Snapshot**). A publish
   after the comparison, including after minting, remains possible: an
   approval with an older snapshot is refused at resume with
   `policy_mismatch`, as before.
@@ -238,9 +241,11 @@ runs. That event carries `input_hash` (the canonical argument hash, with
   store refuses an approval without one, so a deployment with no policy
   snapshot fails every gate-on mint with `-32096`.
 - **Audit join.** The held call's `mcp.tool_invocation` records
-  `approval_status=required` with the MCP record id as `approval_id`. The
-  resumed call's records `approval_status=consumed` with the Edge
-  `approval_ref` as `approval_id`. The `-32099` data carries both ids, and
+  `approval_status=required` with the MCP record id as `approval_id`, only
+  when the Edge mint succeeded: a failed mint withdraws the record and the
+  event does not report it. The resumed call's records
+  `approval_status=consumed` with the Edge `approval_ref` as `approval_id`.
+  The `-32099` data carries both ids, and
   the Edge approval's `event_id` names the held call's `mcp.tool.pre`
   event.
 - **Action-gate holds.** A call the action-gate pipeline holds resumes the
@@ -258,8 +263,10 @@ not run.
   its fail-closed taint hold (sub-reason
   `taint_lookup_unavailable_failclosed`). It holds a call when all three
   apply:
-  1. `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` is set to a true value. The
-     gateway reads it once at boot; unset means off.
+  1. `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` is on: by default in
+     production profiles (`CORDUM_ENV=production` or `prod`, or
+     `CORDUM_PRODUCTION=true`), or explicitly `true`. An explicit `false`
+     turns it off in every profile. The gateway reads it once at boot.
   2. The tool is destructive (default globs `*delete*`, `*remove*`,
      `*archive*`).
   3. The session-taint lookup failed.
