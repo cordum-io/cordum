@@ -52,20 +52,44 @@ type ManagedSettingsDrift struct {
 }
 
 // ManagedSettingsVerifyResult is the outcome of a single verify call. OK is
-// true only when Drifts is empty. Source is opaque metadata describing where
-// the verified bytes came from (e.g. "managed-settings.json"); callers use
-// it for diagnostics only.
+// true only when Drifts is empty for these settings bytes and the independent
+// gateway baseline. It does not verify managed-mcp.json, other policy sources
+// or runtime server inventory. Source is diagnostic metadata only.
 type ManagedSettingsVerifyResult struct {
 	OK     bool                   `json:"ok"`
 	Drifts []ManagedSettingsDrift `json:"drifts"`
 	Source string                 `json:"source"`
 }
 
-// VerifyManagedSettings parses a managed-settings.json payload and reports
-// every Cordum Edge invariant violation. A nil error indicates the payload
-// was structurally valid JSON; check ManagedSettingsVerifyResult.OK to
-// learn whether the contents matched the enterprise contract.
+// ManagedSettingsVerifyOptions carries an independent operator-supplied
+// baseline. Never derive it from the settings being verified or their env.
+type ManagedSettingsVerifyOptions struct {
+	MCPGatewayURL string
+}
+
+// VerifyManagedSettings retains the original structural-check entry point.
+// Without an independent gateway baseline it reports a critical drift and
+// cannot return OK. Use VerifyManagedSettingsWithOptions for compliance.
 func VerifyManagedSettings(data []byte) (ManagedSettingsVerifyResult, error) {
+	return VerifyManagedSettingsWithOptions(data, ManagedSettingsVerifyOptions{})
+}
+
+// VerifyManagedSettingsWithOptions checks settings against a trusted MCP
+// endpoint as well as structural invariants. URLs must match literally after
+// trimming surrounding whitespace; paths, ports, queries and trailing slashes
+// are not silently rewritten. Missing baseline reports a critical drift.
+func VerifyManagedSettingsWithOptions(data []byte, opts ManagedSettingsVerifyOptions) (ManagedSettingsVerifyResult, error) {
+	if err := validateManagedSettingsJSON(data); err != nil {
+		return ManagedSettingsVerifyResult{}, err
+	}
+	expected := strings.TrimSpace(opts.MCPGatewayURL)
+	if expected != "" {
+		var err error
+		expected, err = validateManagedMCPGatewayURL(expected)
+		if err != nil {
+			return ManagedSettingsVerifyResult{}, fmt.Errorf("trusted gateway baseline: %w", err)
+		}
+	}
 	var doc managedSettingsDocument
 	dec := json.NewDecoder(strings.NewReader(string(data)))
 	dec.DisallowUnknownFields()
@@ -79,6 +103,14 @@ func VerifyManagedSettings(data []byte) (ManagedSettingsVerifyResult, error) {
 		}
 	}
 	drifts := collectManagedSettingsDrifts(doc, data)
+	if expected == "" {
+		drifts = append(drifts, ManagedSettingsDrift{Field: "trusted.mcpGatewayURL", Got: "missing", Want: "independent trusted MCP gateway URL", Severity: managedSettingsDriftCritical})
+	} else if len(doc.AllowedMcpServers) == 1 {
+		actual, err := validateManagedMCPGatewayURL(doc.AllowedMcpServers[0].ServerURL)
+		if err != nil || actual != expected {
+			drifts = append(drifts, ManagedSettingsDrift{Field: "allowedMcpServers[0].serverUrl", Got: "does not match trusted endpoint", Want: "exact trusted MCP gateway URL", Severity: managedSettingsDriftCritical})
+		}
+	}
 	return ManagedSettingsVerifyResult{
 		OK:     len(drifts) == 0,
 		Drifts: drifts,
@@ -90,6 +122,12 @@ func VerifyManagedSettings(data []byte) (ManagedSettingsVerifyResult, error) {
 // VerifyManagedSettings on the contents. Returns a non-nil error for IO
 // failures, oversized files, or unparseable JSON.
 func VerifyManagedSettingsFromPath(path string) (ManagedSettingsVerifyResult, error) {
+	return VerifyManagedSettingsFromPathWithOptions(path, ManagedSettingsVerifyOptions{})
+}
+
+// VerifyManagedSettingsFromPathWithOptions reads a bounded settings file and
+// applies the independent gateway baseline supplied by its caller.
+func VerifyManagedSettingsFromPathWithOptions(path string, opts ManagedSettingsVerifyOptions) (ManagedSettingsVerifyResult, error) {
 	f, err := os.Open(path) // #nosec G304 -- operator/config-supplied managed-settings.json path, read locally with a size cap; no remote-attacker input
 	if err != nil {
 		return ManagedSettingsVerifyResult{}, fmt.Errorf("open managed-settings.json: %w", err)
@@ -103,7 +141,7 @@ func VerifyManagedSettingsFromPath(path string) (ManagedSettingsVerifyResult, er
 	if int64(len(data)) > maxManagedSettingsFileBytes {
 		return ManagedSettingsVerifyResult{}, fmt.Errorf("managed-settings.json exceeds %d bytes", maxManagedSettingsFileBytes)
 	}
-	res, err := VerifyManagedSettings(data)
+	res, err := VerifyManagedSettingsWithOptions(data, opts)
 	if err != nil {
 		return ManagedSettingsVerifyResult{}, err
 	}
@@ -181,11 +219,31 @@ func collectManagedSettingsDrifts(doc managedSettingsDocument, raw []byte) []Man
 	// HTTP hook, MCP allowlist, or hook-command boundaries.
 	drifts = append(drifts, allowedHTTPHookURLDrifts(doc.AllowedHTTPHookURLs)...)
 	drifts = append(drifts, allowedMCPServerDrifts(doc.AllowedMcpServers)...)
+	drifts = append(drifts, managedMCPExceptionDrifts(doc)...)
 	drifts = append(drifts, requiredHookEventDrifts(doc.Hooks)...)
 	drifts = append(drifts, requiredEnvDrifts(doc.Env)...)
 	drifts = append(drifts, reservedEnvDrifts(doc.Env)...)
 	drifts = append(drifts, agentdURLDrifts(doc.Env)...)
 	drifts = append(drifts, serializedMarkerDrifts(raw)...)
+	return drifts
+}
+
+// These settings add servers outside the URL allowlist. Cordum's generated
+// contract supplies its gateway through managed-mcp.json only. RawMessage
+// keeps malformed security-sensitive values visible instead of letting the
+// unknown-field compatibility fallback silently ignore them.
+// https://code.claude.com/docs/en/managed-mcp#servers-that-skip-the-allowlist-check
+func managedMCPExceptionDrifts(doc managedSettingsDocument) []ManagedSettingsDrift {
+	var drifts []ManagedSettingsDrift
+	if len(doc.ManagedMCPServers) > 0 {
+		var servers map[string]json.RawMessage
+		if err := json.Unmarshal(doc.ManagedMCPServers, &servers); err != nil || servers == nil || len(servers) > 0 {
+			drifts = append(drifts, ManagedSettingsDrift{Field: "managedMcpServers", Got: "inline servers or malformed value", Want: "omitted or empty object; gateway supplied through managed-mcp.json", Severity: managedSettingsDriftCritical})
+		}
+	}
+	if len(doc.AllowChromeWithManagedMCP) > 0 && strings.TrimSpace(string(doc.AllowChromeWithManagedMCP)) != "false" {
+		drifts = append(drifts, ManagedSettingsDrift{Field: "allowClaudeInChromeWithManagedMcp", Got: "enabled or malformed value", Want: "false or omitted", Severity: managedSettingsDriftCritical})
+	}
 	return drifts
 }
 
