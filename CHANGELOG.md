@@ -223,6 +223,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- MCP gateway: invariants run on every built-in `tools/call`, not only on
+  approval-gated tools, with `mcp.policy_gate_enabled` on or off
+  (#492, task-950b90b1).
+
 - Gateway: job submit over HTTP, gRPC and MCP drops client workflow-context
   labels (`workflow_id`, `run_id`, `step_id`, `workflow`, `workflow_run_id`
   and `workflow.*`), and a workflow step's `route_labels` can't set them
