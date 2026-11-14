@@ -1229,6 +1229,21 @@ func TestReleaseFinalStageUpgradeFixtures(t *testing.T) {
 			wantErr:    true,
 		},
 		{
+			name:       "upgrade after a double-quoted exit",
+			dockerfile: "FROM alpine:3.24\nRUN \"exit\" 0 && apk upgrade --no-cache\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade after a backslash-escaped exit",
+			dockerfile: "FROM alpine:3.24\nRUN \\exit 0 && apk upgrade --no-cache\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade after an exit quoted mid-word",
+			dockerfile: "FROM alpine:3.24\nRUN e\"xi\"t 0 && apk upgrade --no-cache\n",
+			wantErr:    true,
+		},
+		{
 			name:       "upgrade only simulated",
 			dockerfile: "FROM alpine:3.24\nRUN apk upgrade --no-cache --simulate\n",
 			wantErr:    true,
