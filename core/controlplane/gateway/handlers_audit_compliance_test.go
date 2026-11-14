@@ -764,3 +764,73 @@ func TestHandleAuditExport_RejectsUnknownCategory(t *testing.T) {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
 }
+
+// exportChainVerification exports the default tenant in the given format and
+// returns the manifest's chain_verification block.
+func exportChainVerification(t *testing.T, s *server, format string) audit.VerifyResult {
+	t.Helper()
+	req := adminCtx(httptest.NewRequest(http.MethodGet, "/api/v1/audit/export?format="+format+rangeQS(), nil))
+	rec := httptest.NewRecorder()
+	s.handleAuditExport(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%s export status = %d: %s", format, rec.Code, rec.Body.String())
+	}
+	first, _, _ := strings.Cut(rec.Body.String(), "\n")
+	first = strings.TrimPrefix(first, "# cordum-manifest: ")
+	var manifest struct {
+		ChainVerification *audit.VerifyResult `json:"chain_verification"`
+	}
+	if err := json.Unmarshal([]byte(first), &manifest); err != nil || manifest.ChainVerification == nil {
+		t.Fatalf("%s manifest chain_verification missing (err=%v): %q", format, err, first)
+	}
+	return *manifest.ChainVerification
+}
+
+// TestHandleAuditExport_ChecksEventHMACTags asserts the export verifies event
+// HMAC tags with the server key: an event carrying a foreign tag makes the
+// manifest's chain verification compromised, in JSON and CSV.
+func TestHandleAuditExport_ChecksEventHMACTags(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	grantExportEntitlement(t, s)
+	client := s.redisClient()
+	s.auditChainer = audit.NewChainer(client, "", audit.WithHMACKey(bytes.Repeat([]byte{0x11}, 32)))
+	appendEvents := func(c *audit.Chainer, n int) {
+		t.Helper()
+		for i := 0; i < n; i++ {
+			ev := audit.SIEMEvent{
+				Timestamp: time.Now().UTC(), EventType: audit.EventSafetyDecision,
+				Severity: audit.SeverityInfo, TenantID: "default", Action: "hmac-check", Decision: "allow",
+			}
+			if err := c.Append(context.Background(), &ev); err != nil {
+				t.Fatalf("append: %v", err)
+			}
+		}
+	}
+	appendEvents(s.auditChainer, 2)
+
+	// A time-bounded window reads partial until a retention anchor exists, so
+	// assert on gaps and compromise rather than ok.
+	for _, format := range []string{"json", "csv"} {
+		if v := exportChainVerification(t, s, format); len(v.Gaps) != 0 || v.Status == audit.VerifyStatusCompromised {
+			t.Fatalf("%s control: status=%s gaps=%v, want no gaps", format, v.Status, v.Gaps)
+		}
+	}
+
+	// The chain head lives in Redis, so the hash chain stays intact and only
+	// this event's tag is foreign.
+	appendEvents(audit.NewChainer(client, "", audit.WithHMACKey(bytes.Repeat([]byte{0x22}, 32))), 1)
+
+	for _, format := range []string{"json", "csv"} {
+		v := exportChainVerification(t, s, format)
+		if v.Status != audit.VerifyStatusCompromised {
+			t.Errorf("%s status = %s, want compromised", format, v.Status)
+		}
+		found := false
+		for _, g := range v.Gaps {
+			found = found || g.Type == audit.GapTypeHMACMismatch
+		}
+		if !found {
+			t.Errorf("%s gaps = %v, want an %s gap", format, v.Gaps, audit.GapTypeHMACMismatch)
+		}
+	}
+}

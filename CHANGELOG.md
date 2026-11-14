@@ -223,6 +223,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   v2.1.295 or later. The managed MCP allowlist matches the Cordum MCP gateway
   by `serverUrl` instead of `serverName` (#492, task-514d2456).
 
+- When HMAC is enabled, compliance exports (`GET /api/v1/audit/export`) check
+  event HMAC tags with the server key, as `/api/v1/audit/verify` does, so an
+  event whose tag does not verify makes the export's chain verification
+  compromised (#492, task-e8ceef5d).
 - Safety Kernel: `block`, and every alias `normalizeDecision` maps to deny, is
   now deny-class. In the Safety Kernel and its GlobalPolicy view, a `block`
   invariant, like every invariant whose decision is not allow-class
