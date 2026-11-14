@@ -113,6 +113,37 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- Upgrade note, production signed-content enforcement. In the production
+  profile (`CORDUM_ENV=production` or `CORDUM_PRODUCTION=true`) with no
+  override, the safety kernel activates config-store policy only when its
+  signature verifies, and the gateway refuses unsigned packs and stores signed
+  pack policy fragments.
+  - `deploy/k8s/production`, and any deployment with `CORDUM_ENV=production`
+    and no explicit override, now refuses unsigned packs.
+  - The packs in the official catalog are not yet signed. Until they are,
+    production refuses them unless `CORDUM_GATEWAY_PACK_STRICT=false` is set.
+    That override restores the previous pack behavior, and the admin-only
+    `signature_enforcement.packs.strict` field of `GET /api/v1/status`
+    reports it.
+  - `CORDUM_POLICY_STRICT=warn` explicitly restores the previous policy-store
+    behavior.
+  - A production gateway with no policy signing key boots, then refuses policy
+    writes with 503 `POLICY_SIGNING_REQUIRED`. Configure a policy signing key
+    whose public half the policy trust store holds
+    (`CORDUM_POLICY_PUBLIC_KEY_<ID>`), or set an explicit
+    `CORDUM_POLICY_STRICT=warn` to restore the previous write behavior.
+  - Before upgrading, export the safety kernel's
+    `CORDUM_POLICY_PUBLIC_KEY_<ID>` and run
+    `cordumctl policy verify-store --gateway <url> --api-key <admin key>`.
+    It exits 0 when the store is clean, 1 when it lists bundles that would be
+    refused, and 2 on a configuration error. Against a gateway at v1.0.0 or
+    older that has no policy document, it exits 2.
+  - Re-sign the listed bundles that no pack owns with
+    `cordumctl policy resign --bundle <id> [--bundle <id> ...]` or
+    `cordumctl policy resign --all`. Both need an admin key, and the gateway
+    needs a policy signing key its trust store holds.
+  - Fix pack-owned policy fragments by reinstalling the pack.
+
 - Policy signing upgrade tools: the safety kernel's boot check uses
   `policysign.ResolveMode`, reporting `enforce` in production when
   `CORDUM_POLICY_STRICT` is unset and refusing startup without a trusted
