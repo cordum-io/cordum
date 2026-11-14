@@ -732,9 +732,10 @@ func TestMCPAuthRuntimeCollectorOwnsTraceParents(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/mcp/message", nil)
 	req.Header.Set("X-API-Key", "test-key")
 	req.Header.Set("X-Tenant-ID", "default")
-	req.Header.Set("X-MCP-Session-ID", "trace-owned")
 	rec := httptest.NewRecorder()
+	var callMeta mcp.CallMetadata
 	s.mcpAuth(func(w http.ResponseWriter, r *http.Request) {
+		callMeta, _ = mcp.CallMetadataFromContext(r.Context())
 		identity := mcp.IdentityFromContext(r.Context())
 		if identity == nil || identity.ID != "agent-trace" {
 			t.Fatalf("bound MCP identity=%+v", identity)
@@ -744,7 +745,10 @@ func TestMCPAuthRuntimeCollectorOwnsTraceParents(t *testing.T) {
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("MCP auth: status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	execution, found, err := s.edgeStore.GetExecution(context.Background(), "default", "mcp-trace-owned")
+	if !strings.HasPrefix(callMeta.SessionID, "direct-") || callMeta.ExecutionID != "mcp-"+callMeta.SessionID {
+		t.Fatalf("call metadata session=%q execution=%q, want the minted direct- session", callMeta.SessionID, callMeta.ExecutionID)
+	}
+	execution, found, err := s.edgeStore.GetExecution(context.Background(), "default", callMeta.ExecutionID)
 	if err != nil || !found {
 		t.Fatalf("GetExecution: found=%v err=%v", found, err)
 	}
@@ -753,7 +757,7 @@ func TestMCPAuthRuntimeCollectorOwnsTraceParents(t *testing.T) {
 	}
 	validator := newRuntimeIngestParentValidator(s.edgeStore)
 	if err := validator.validate(context.Background(), edge.AgentActionEvent{
-		TenantID: "default", SessionID: "trace-owned", ExecutionID: "mcp-trace-owned",
+		TenantID: "default", SessionID: callMeta.SessionID, ExecutionID: callMeta.ExecutionID,
 	}, "tester"); err != nil {
 		t.Fatalf("authenticated principal cannot ingest its MCP trace: %v", err)
 	}
@@ -794,4 +798,23 @@ func TestLoadMCPConfigDefaultsAndOverrides(t *testing.T) {
 	if cfg.Port != 8089 {
 		t.Fatalf("expected mcp.port=8089, got %d", cfg.Port)
 	}
+}
+
+// openMCPSSE opens /mcp/sse as key (query is an optional raw query string) and
+// returns the server-assigned session id; the stream closes at test cleanup.
+func openMCPSSE(t *testing.T, baseURL, key, query string) string {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, baseURL+"/mcp/sse?"+query, nil)
+	req.Header.Set("X-API-Key", key)
+	req.Header.Set("X-Tenant-ID", "default")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("open sse: %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	sessionID := resp.Header.Get("X-MCP-Session-ID")
+	if resp.StatusCode != http.StatusOK || sessionID == "" {
+		t.Fatalf("open sse: status %d session %q", resp.StatusCode, sessionID)
+	}
+	return sessionID
 }

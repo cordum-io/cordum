@@ -435,7 +435,6 @@ func TestMCPAuthRecordsBoundAgentIDNeverRawHeader(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/mcp/message", nil)
 			req.Header.Set("X-API-Key", "test-key")
 			req.Header.Set("X-Tenant-ID", "default")
-			req.Header.Set("X-MCP-Session-ID", "sess-bind")
 			if tc.header != "" {
 				req.Header.Set(mcpAgentIDHeader, tc.header)
 			}
