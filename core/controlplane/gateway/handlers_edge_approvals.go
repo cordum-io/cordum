@@ -415,11 +415,12 @@ func (s *server) edgeApprovalCallerCanListAll(r *http.Request) bool {
 	return s.requireRole(r, "admin", "operator") == nil
 }
 
+// edgeApprovalAuthenticatedPrincipal is the caller's credential-backed
+// principal. A principal only asserted through X-Principal-Id grants no
+// own-approval access (list filter, get, wait) and is never recorded as
+// resolver.
 func edgeApprovalAuthenticatedPrincipal(r *http.Request) string {
-	if authCtx := auth.FromRequest(r); authCtx != nil {
-		return strings.TrimSpace(authCtx.PrincipalID)
-	}
-	return ""
+	return auth.FromRequest(r).AuthenticatedPrincipal()
 }
 
 func writeEdgeApprovalNotFound(w http.ResponseWriter, r *http.Request) {
@@ -447,13 +448,11 @@ func writeEdgeApprovalStoreError(w http.ResponseWriter, r *http.Request, err err
 }
 
 func edgeApprovalResolverID(r *http.Request) string {
-	if authCtx := auth.FromRequest(r); authCtx != nil {
-		if strings.TrimSpace(authCtx.PrincipalID) != "" {
-			return strings.TrimSpace(authCtx.PrincipalID)
-		}
+	if principal := edgeApprovalAuthenticatedPrincipal(r); principal != "" {
+		return principal
 	}
-	if identity := submitterIdentity(r); strings.TrimSpace(identity) != "" {
-		return strings.TrimSpace(identity)
+	if identity := edgeApprovalKeyIdentity(r); identity != "" {
+		return identity
 	}
 	return "unknown"
 }
@@ -461,8 +460,8 @@ func edgeApprovalResolverID(r *http.Request) string {
 func edgeApprovalResolvedBy(r *http.Request) string {
 	if authCtx := auth.FromRequest(r); authCtx != nil {
 		parts := make([]string, 0, 2)
-		if strings.TrimSpace(authCtx.PrincipalID) != "" {
-			parts = append(parts, "principal:"+strings.TrimSpace(authCtx.PrincipalID))
+		if principal := authCtx.AuthenticatedPrincipal(); principal != "" {
+			parts = append(parts, "principal:"+principal)
 		}
 		if strings.TrimSpace(authCtx.Role) != "" {
 			parts = append(parts, "role:"+auth.NormalizeRole(authCtx.Role))
@@ -471,10 +470,20 @@ func edgeApprovalResolvedBy(r *http.Request) string {
 			return strings.Join(parts, "|")
 		}
 	}
-	if identity := submitterIdentity(r); strings.TrimSpace(identity) != "" {
-		return strings.TrimSpace(identity)
+	if identity := edgeApprovalKeyIdentity(r); identity != "" {
+		return identity
 	}
 	return "unknown"
+}
+
+// edgeApprovalKeyIdentity is the resolver identity of a caller without an
+// authenticated principal: its API key identity only, so an asserted
+// X-Principal-Id resolves exactly like the same key without the header.
+func edgeApprovalKeyIdentity(r *http.Request) string {
+	if authCtx := auth.FromRequest(r); authCtx != nil {
+		return apiKeyIdentity(authCtx.APIKey)
+	}
+	return ""
 }
 
 func edgeApprovalRequesterMatchesResolver(approval *edgecore.EdgeApproval, r *http.Request) bool {

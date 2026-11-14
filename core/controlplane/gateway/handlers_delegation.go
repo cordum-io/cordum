@@ -109,13 +109,15 @@ func (s *server) handleDelegateAgent(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Bind the caller's authoritative agent from the authenticated worker
-	// credential, not from authCtx.PrincipalID (which is the worker ID and
-	// has a distinct namespace from agent IDs in this codebase). Admins
-	// bypass the per-agent check; everyone else must prove they are the
-	// delegating agent via their linked credential.
+	// Bind the caller's authoritative agent from its authenticated worker
+	// credential (a worker ID, a distinct namespace from agent IDs). A
+	// principal the caller only asserted (X-Principal-Id) is never that
+	// credential: AuthenticatedPrincipal() returns "" for it, so no agent is
+	// bound and the request is refused below. Admins bypass the per-agent
+	// check; everyone else must prove they are the delegating agent via their
+	// linked credential.
 	if !strings.EqualFold(strings.TrimSpace(authCtx.Role), "admin") {
-		callerAgentID, err := s.linkedAgentID(r.Context(), tenantFromRequest(r), authCtx.PrincipalID)
+		callerAgentID, err := s.linkedAgentID(r.Context(), tenantFromRequest(r), authCtx.AuthenticatedPrincipal())
 		if err != nil {
 			writeServiceUnavailable(w, r, "delegation caller agent link lookup", err)
 			s.emitDelegationAudit(r, "issue", tenantFromRequest(r), delegatingAgentID, "", "", 0, "error", errAgentLinkUnavailable)

@@ -1012,19 +1012,25 @@ tenant's binding for the same principal. Rotating a worker credential without
 | Linked to an identity in the request tenant | equal to the bound identity `id` | The bound identity |
 | Linked to an identity in the request tenant | any other value | No identity, and the gateway logs `mcp X-Agent-Id does not match the principal's bound agent identity` |
 | Not linked, or linked to another tenant's identity | any | No identity |
+| None, or one named only by `X-Principal-Id` | any | No identity |
 
 The header is compared exactly after trimming surrounding whitespace, so IDs
 are case-sensitive. A suspended or revoked bound identity also resolves to no
 identity.
 
-With no identity, the built-in tool registry lists no tools and refuses every
-`tools/call`:
+With no identity, the built-in tool registry lists no tools, and every
+`tools/call` fails with `-32098` and `error.data.sub_reason` `no_identity`,
+whether `mcp.policy_gate_enabled` is off or on:
 
-- With `mcp.policy_gate_enabled` off, the call fails with `-32098`
-  `no_identity`.
-- With `mcp.policy_gate_enabled` on, the policy gate refuses the call first
-  because it carries no agent ID. Today that surfaces as a `-32603` error whose
-  `error.data` starts with `missing_mcp_metadata`.
+- With the gate on, the server refuses the call before it looks at any
+  approval. A call that carries an `_approval_ref` therefore neither claims nor
+  consumes that approval, and gets the same `-32098` instead of a `-32097`
+  error.
+- With the gate on, a request that is missing its tenant, session or execution
+  metadata still fails closed with its own error: `-32603` for a plain call, or
+  `-32097` for one that carries an `_approval_ref`, both with
+  `missing_mcp_metadata`. The `-32098` answer applies only when that metadata
+  is present and the agent ID is blank.
 
 When `/mcp` fronts a registered upstream (EDGE-101), the upstream catalog is
 not scope-filtered, and the bound ID only feeds the policy gate.
@@ -1041,9 +1047,13 @@ They never carry the header value.
 
 The binding is only as strong as the credential's principal. Use a static API
 key with a configured principal (`<tenant>:<key>:<role>:<principal>` in
-`CORDUM_API_KEYS`, or `principal_id` in its JSON form), or a JWT or SSO login,
-whose subject becomes the principal. Runtime-created API keys carry no
-principal of their own and are not a supported way to bind an MCP client.
+`CORDUM_API_KEYS`, or `principal_id` in its JSON form), or a session, JWT or
+SSO login, whose subject becomes the principal. Runtime-created API keys carry
+no principal of their own and are not a supported way to bind an MCP client.
+A principal named only by the `X-Principal-Id` header, which development
+accepts by default and production only with `CORDUM_ALLOW_HEADER_PRINCIPAL=true`,
+is kept for attribution only: it binds no identity, so the caller gets no tools
+and requests no approvals.
 
 ## Integration Examples
 
@@ -1138,8 +1148,7 @@ See [Dashboard Guide](dashboard-guide.md#how-to-configure-mcp-server) for the fu
 - `tools/list` or `resources/list` empty: entries are disabled by config
   (`mcp.tools.<tool_id>.enabled=false`,
   `mcp.resources.<resource_name>.enabled=false`).
-- `tools/list` empty, or `tools/call` fails with `-32098` `no_identity` (or
-  `-32603` `missing_mcp_metadata` with the policy gate on), while
+- `tools/list` empty, or `tools/call` fails with `-32098` `no_identity`, while
   `X-Agent-Id` is set: the header does not match the identity bound to the
   authenticated principal, or the principal is not linked to an identity in
   the request tenant. Look for `mcp X-Agent-Id does not match the principal's

@@ -266,11 +266,11 @@ claims:
     public_sources: ["cordum:README.md:658","cordum:README.md:659","cordum:README.md:660","cordum:README.md:661","cordum:README.md:662","cordum:README.md:663","cordum:README.md:664","cordum:README.md:665","cordum:docs/configuration-reference.md:732","cordum:docs/internal/security/enterprise-entitlement-matrix.md:30","Cordum-site:docs-site/docs/operations/config-reference.md:714","Cordum-site:docs-site/docs/operations/enterprise.md:39","Cordum-site:site/src/app/compare/cordum-vs-openfga/page.tsx:118","Cordum-site:site/src/app/compare/cordum-vs-permit-io/page.tsx:121","Cordum-site:site/src/app/blog/ai-agent-audit-trail/page.tsx:412"]
   - id: CLM-026
     statement: "Desktop-binary publication requires the signed-manifest gate."
-    boundary: "Canonical cordum-io/cordum release.yml publication workflow, not independently distributed binaries."
+    boundary: "Canonical cordum-io/cordum docker.yml publish-binaries job, with release.yml as its reusable build workflow; not independently distributed binaries."
     status: supported
     invariants: ["I09"]
     findings: []
-    enforcement_points: [{"path":".github/workflows/release.yml","symbol":"Require signed manifest on canonical release"}]
+    enforcement_points: [{"path":".github/workflows/docker.yml","symbol":"Require signed manifest on canonical release"}]
     tests: []
     evidence: "The canonical publish gate exists; no current signed artifact set or release qualification is attached."
     public_sources: ["cordum:README.md:676","cordum:README.md:677","cordum:README.md:678","cordum:docs/release-notes/v1.3.0.md:91","cordum:docs/release-notes/v1.3.1.md:41"]

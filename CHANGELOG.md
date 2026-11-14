@@ -99,6 +99,119 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   or dangling link and an empty principal behave as before. This was
   CodeRabbit's finding on #570.
 
+#### core/controlplane/gateway — Edge LLM and runtime ingest accept only an authenticated proxy or collector identity (2026-11-13, task-3b633938)
+
+- **Behavior change** for `POST /api/v1/edge/llm/events` and
+  `POST /api/v1/edge/runtime/events`. The LLM proxy or runtime collector
+  identity now comes only from an authenticated principal. A principal named
+  only by the `X-Principal-Id` header is refused with 403, like a missing
+  one, in every profile, and nothing is ingested. Callers notice this where
+  the header is read as a principal: development, and production with
+  `CORDUM_ALLOW_HEADER_PRINCIPAL=true`. Principals bound by an API key, a
+  session, or JWT/OIDC ingest as before.
+- Migration: authenticate each proxy and collector with a static API key
+  bound to its principal (`principal_id` in `CORDUM_API_KEYS`, equal to its
+  `source.source_id`), or with a session or OIDC login. Managed API keys
+  carry no principal and cannot name one.
+
+#### core/controlplane/gateway — copilot session detail is returned only to its authenticated owner (2026-11-13, task-3b633938)
+
+- **Behavior change** for `GET /api/v1/copilot/sessions/{sessionId}`. The
+  session owner now comes only from an authenticated principal. A principal
+  named only by the `X-Principal-Id` header gets 401 and no session data, in
+  every profile. Callers notice this where the header is read as a
+  principal: development, and production with
+  `CORDUM_ALLOW_HEADER_PRINCIPAL=true`. Principals bound by an API key, a
+  session, or JWT/OIDC read their own sessions as before.
+- Migration: sign in to the dashboard with a session or OIDC login, or use a
+  static API key bound to the owning principal.
+
+#### core/controlplane/gateway — delegation tokens are issued only to an authenticated caller's linked agent (2026-11-14, task-fe3faf16)
+
+- **Behavior change.** A non-admin caller of
+  `POST /api/v1/agents/{id}/delegate` must be authenticated as the worker
+  linked to the delegating agent.
+- A principal named only by the `X-Principal-Id` header no longer identifies
+  that worker, in any profile: the request gets 403 and a denied
+  `delegation.issue` audit event, and no token is issued.
+- Admin callers are unchanged.
+- `Migration:` managed API keys carry no principal, so a managed key with only
+  an operator or write scope can no longer issue delegation tokens. Issue them
+  with an admin credential, or with a session or OIDC login whose principal is
+  the linked worker.
+
+#### core/controlplane/gateway — Edge approvals use only an authenticated principal for access and resolver identity (2026-11-14, task-fe3faf16)
+
+- **Behavior change.** A principal named only by `X-Principal-Id` (an unbound
+  static or managed API key) is no longer the caller's own principal for Edge
+  approvals. A user or viewer caller without an authenticated principal lists
+  no approvals and gets 404 for a single approval and for `POST .../wait`.
+  Admin and operator callers still see every approval in the tenant.
+- When such a caller approves or rejects, `resolver_id` and `resolved_by`
+  record the API key identity and role, not the header value. A caller whose
+  `X-Principal-Id` matches the requester is still refused as self-approval.
+- `Migration:` give each approver, and each `cordum-agentd` that waits on
+  approvals with a user or viewer key, a credential that carries its
+  principal: a static API key with `principal_id` in `CORDUM_API_KEYS`, or a
+  session or OIDC login.
+
+#### Header-asserted principals never authorize a job's agent identity (2026-11-13, task-850216cf)
+
+- **Behavior change** for job submit, in every profile. A principal taken
+  from the `X-Principal-Id` header or `x-principal-id` gRPC metadata is
+  caller-asserted: it is still recorded for attribution, but it never
+  authorizes a client `labels.agent_id`. Such a submit is refused (HTTP 403,
+  gRPC `PermissionDenied`) before the policy check and publish, and gRPC
+  `SubmitJob` infers no agent for it. Principals bound by an API key, a
+  session, or JWT/OIDC bind as before.
+- **Production default change.** Managed API keys now ignore
+  `X-Principal-Id` in the production profile, as static keys do, unless
+  `CORDUM_ALLOW_HEADER_PRINCIPAL=true`. When that flag is set in production,
+  the gateway logs a startup warning naming it.
+- Migration: callers that send `labels.agent_id` authenticate as the worker,
+  with a worker credential (an API key bound to the worker principal), a
+  session, OIDC or a delegation token. Production dashboard or edge
+  deployments that sent `X-Principal-Id` with a managed key move to a session
+  or OIDC login or a principal-bound key, or set
+  `CORDUM_ALLOW_HEADER_PRINCIPAL=true` for attribution only.
+
+#### core/controlplane/gateway — job submit infers an agent only from the authenticated principal (2026-11-14, task-491f974b)
+
+- **Behavior change** for job submit on HTTP and gRPC, in every profile. A
+  submit without `labels.agent_id` gets the agent linked to its principal
+  only when that principal is authenticated (by an API key bound to it, a
+  session, or JWT/OIDC) and the job is attributed to it.
+- A principal named by the request (`principal_id` in the HTTP body or the
+  gRPC request, or the `X-Principal-Id` header) never selects a worker link.
+  Such a job carries no inferred `agent_id`, so policy rules keyed on that
+  agent no longer match it, and allow rules fail closed. A
+  `delegation_audience_agent_id` override on such a submit now requires the
+  `delegation.impersonate` permission.
+- This is a behavior change for static API keys whose callers name a
+  `principal_id`.
+- Migration: authenticate as the worker with a worker credential (an API key
+  bound to the worker principal), a session or an OIDC login, or use a
+  delegation token.
+
+#### core/controlplane/gateway — MCP requests take identity only from an authenticated principal (2026-11-14, task-e3562f91)
+
+- **Behavior change** for HTTP MCP clients (`/mcp/sse` and `/mcp/message`).
+  The agent identity, and the principal that MCP approvals and the policy
+  gate use, now come only from an authenticated principal. A principal named
+  only by the `X-Principal-Id` header resolves no agent identity, in every
+  profile: `tools/list` is empty and `tools/call` is refused with `-32098`
+  `no_identity`, so no approval is requested for it. Callers notice this
+  where the header is read as a principal: development, and production with
+  `CORDUM_ALLOW_HEADER_PRINCIPAL=true`. Principals bound by an API key, a
+  session, or JWT/OIDC resolve their identity as before.
+- The self-approval check still compares the approver with the requesting
+  API key and any principal the request named, so a header principal can
+  only make it refuse more.
+- Migration: give each MCP client a credential that carries the principal
+  linked to its agent identity: a static API key with `principal_id` in
+  `CORDUM_API_KEYS`, or a session or OIDC login. Managed API keys carry no
+  principal and cannot bind an MCP client.
+
 #### MCP `X-Agent-Id` can only confirm the principal-bound agent identity (2026-10-26, task-eb2d6f28)
 
 - **Behavior change** for MCP clients that select an agent identity with the
@@ -106,8 +219,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   to the authenticated principal in the request tenant. No header, or a header
   equal to that identity's `id`, resolves to it. Any other header value, an
   unlinked principal, or a link to another tenant resolves to no identity:
-  `tools/list` is empty and `tools/call` is refused (`-32098` `no_identity`,
-  or `-32603` `missing_mcp_metadata` when `mcp.policy_gate_enabled` is on).
+  `tools/list` is empty and `tools/call` is refused with `-32098`
+  `no_identity`, with `mcp.policy_gate_enabled` on or off (task-f6d83860).
 - Approval records, preapproval checks, policy-gate call metadata and Edge
   trace labels now carry the bound identity `id` (empty when there is none),
   never the header value. The principal no longer stands in for a missing
@@ -252,6 +365,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- On the gateway's HTTP MCP transport (`/mcp/sse` and `/mcp/message`),
+  `resources/read` of `cordum://jobs/{id}` and the `cordum_get_job` and
+  `cordum_status` tools return the job and the system status instead of a
+  `read_only_unsupported` error. They run the checks of
+  `GET /api/v1/jobs/{id}` and `GET /api/v1/status`, so a job in another
+  tenant, or a missing job, returns an error and no job data
+  (task-43c69929).
+
 - The dashboard image's build stage runs on the build host's platform. Its
   linux/arm64 image copies the same static dist/ as linux/amd64 instead of
   running pnpm, tsc and Vite under QEMU emulation, where a release dry run's
@@ -369,6 +490,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   opening the job. `DataTable` skipped its interactive-child check when the
   click landed on the icon's SVG element, because the check accepted only HTML
   elements (task-30740b03).
+
+- MCP over HTTP with `mcp.policy_gate_enabled=true`: a `tools/call` without a
+  bound agent identity now returns `-32098` `no_identity`, matching the
+  gate-off path, instead of `-32603` or `-32097` `missing_mcp_metadata`
+  (task-f6d83860). The server refuses it before any approval is read, so a call
+  that carries an `_approval_ref` no longer touches that approval. A request
+  missing its tenant, session or execution metadata still fails closed with its
+  old error.
 
 ### CI and documentation
 
