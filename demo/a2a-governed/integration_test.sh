@@ -380,7 +380,7 @@ cp "$HTTP_BODY_FILE" "$artifacts/worker-jobs.json"
 jq -e --arg a "$job1" --arg b "$job2" --arg c "$job3" \
   'any(.items[]?; .id == $a) and any(.items[]?; .id == $b) and all(.items[]?; .id != $c)' \
   "$artifacts/worker-jobs.json" >/dev/null || fail "the worker's jobs must hold $job1 and $job2 and not $job3"
-if grep -qF "$job1" "$artifacts/worker.log" && grep -qF "$job3" "$artifacts/worker.log"; then
+if grep -qF "$job3" "$artifacts/worker.log"; then
   fail "the worker log names the denied job $job3"
 fi
 echo "PASS denied_topic_rejected_cordum_denied"
