@@ -327,7 +327,7 @@ supported: the mechanism exists; its protection is not yet qualified.
 
 ## The Solution: Cordum Agent Control Plane
 
-Cordum is an **Agent Control Plane** that provides a deterministic governance layer for probabilistic AI minds. It allows you to define, enforce, and audit the behavior of your **Autonomous AI Agents** across any framework or model.
+Cordum is an **Agent Control Plane** for policy checks, approvals, and audit of actions submitted through its integrated submission, dispatch, and hook paths, whatever framework or model the agent uses.
 
 ```mermaid
 graph TB
@@ -373,25 +373,25 @@ graph LR
 ```
 
 - **BEFORE (Governance)**: Define declarative policies that evaluate job requests *before* an agent executes. Trigger safety kernel checks, throttle risky actions, or flag operations for human approval.
-- **DURING (Safety)**: Real-time visibility into active agent runs. Monitor progress, handle step-level approvals, and enforce timeouts or circuit breakers on the fly.
-- **ACROSS (Observability)**: Manage your entire fleet from a single control plane. Aggregate audit trails, track capability-based routing, and observe agent pool health in real-time.
+- **DURING (Safety)**: Monitor Cordum jobs and workflow runs, handle step-level approvals, and apply timeouts or circuit breakers.
+- **ACROSS (Observability)**: Observe connected workers from a single control plane. Aggregate audit trails, track capability-based routing, and observe agent pool health.
 
 
-### Cordum Edge: Compliance Firewall for AI agents
+### Cordum Edge: Claude Code hook policy checks
 
 Cordum Edge extends the control plane to local AI-agent actions. For Claude Code,
 `cordumctl edge claude` launches the real P0 path — command hook, local
 `cordum-agentd`, Gateway Edge APIs, Safety Kernel policy/evaluate, approvals,
 artifact pointers, and dashboard evidence.
 
-Cordum stays quiet until governance matters. Developers see Cordum exactly when
-it protects them, their team, and production: before risky tools run, when an
-action needs approval, and when evidence must be exported. The wrapper is the
+Through `cordumctl edge claude`, the hook evaluates Claude Code tool calls.
+With the demo Edge policy, reading .env is denied and Edit/Write needs approval;
+session evidence can be exported. The wrapper is the
 developer/demo path; enterprise enforcement requires managed Claude settings and
 endpoint controls.
 
-Approval provenance is resolved-only: destructive retries must have a matching
-approved approval record and a canonical resolved approval audit event for the
+On the Edge approval-retry path, the configured ProvenanceGate requires a matching
+approved approval record and a resolved approval audit event for the
 same tenant/ref/hash. Requested-only audit rows are lifecycle context, not proof
 that the action was approved.
 
@@ -431,14 +431,14 @@ Other useful contributor commands:
 
 | Governance Feature | Why It Matters for Enterprise |
 |--------------------|--------------------------------|
-| **Safety Gating** | Prevents agents from executing destructive or unauthorized actions *before* they occur. |
-| **Output Quarantine** | Automatically blocks PII leaks, secrets, or hallucinated results from reaching the client. |
-| **Human-in-the-Loop** | Mandates human oversight for high-risk operations (e.g., financial transfers, prod access). |
-| **Pool Segmentation** | Ensures sensitive data only reaches agents in trusted environments. |
-| **Deterministic Audit** | Prove exactly *why* a decision was made with a full chain-of-thought audit trail. |
+| **Safety Gating** | Checks actions routed through Cordum's configured policy entry points before dispatch and stops those the policy denies. |
+| **Output Quarantine** | Quarantines results the configured output policy flags, such as PII or secrets. |
+| **Human-in-the-Loop** | Requests human oversight in policy-selected Cordum approval flows. |
+| **Pool Segmentation** | Routes jobs according to pool placement configuration; this establishes neither endpoint trust nor data confinement. |
+| **Deterministic Audit** | Records a decision's verdict, rule id, policy version, and reason in a verifiable audit chain, not model reasoning. |
 | **Governance Policies** | Declarative YAML-based rules that map enterprise risk to agent behavior. |
 | **Policy Simulator** | Test your governance rules against historical data before rolling them out to production. |
-| **Cordum Edge** | Compliance Firewall for local AI-agent actions (Claude Code today, more agents next): hook → local agentd → Gateway evaluate → resolved approval provenance → redacted evidence export. See [docs/edge/README.md](docs/edge/README.md). |
+| **Cordum Edge** | Claude Code tool-call evaluation through `cordumctl edge claude` (developer/demo path): hook → local agentd → Gateway evaluate → configured resolved approval provenance → metadata-only session export. See [docs/edge/README.md](docs/edge/README.md). |
 
 ## Architecture
 
@@ -482,7 +482,7 @@ cordum/
 
 ## Protocol: CAP — The Open Standard for Agent Governance
 
-Cordum implements [CAP (Cordum Agent Protocol)](https://github.com/cordum-io/cap), an open protocol specifically designed for distributed AI agent governance. CAP provides a unified interface for defining agent capabilities, submitting jobs, and enforcing safety policies across heterogeneous agent pools.
+Cordum implements [CAP (Cordum Agent Protocol)](https://github.com/cordum-io/cap), an open protocol for connected agents to declare capabilities and submit jobs that Cordum checks and routes to configured pools.
 
 ### CAP vs. MCP: Why You Need Both
 
@@ -491,10 +491,10 @@ While both are essential, they solve different parts of the agent stack:
 | Protocol | Focus | Level | Responsibility |
 |----------|-------|-------|----------------|
 | **MCP** (Model Context Protocol) | **Tool Calling** | Local | How a model interacts with a tool. |
-| **CAP** (Cordum Agent Protocol) | **Governance** | Network | How an agent is governed within an enterprise. |
+| **CAP** (Cordum Agent Protocol) | **Governance** | Network | How connected agents submit jobs for Cordum policy checks and routing. |
 
 - **MCP** is for *within* the agent — it defines how a model calls local tools.
-- **CAP** is for *above* the agent — it defines the governance control plane for the entire agent fleet.
+- **CAP** is for *above* the agent — it defines how connected agents submit jobs to Cordum's control plane for policy checks and routing.
 
 Use CAP for high-level orchestration and safety gating, and MCP inside your agents for fine-grained tool integration.
 
@@ -564,13 +564,13 @@ Extend Cordum with [integration packs](https://github.com/cordum-io/cordum-packs
 | Pack | Category | Description |
 |------|----------|-------------|
 | Slack | Communication | Approval notifications and agent alerts |
-| GitHub | DevOps | Govern agent actions on repositories |
+| GitHub | DevOps | Policy checks for repository actions the pack runs through Cordum |
 | AWS | Cloud | Policy-gated cloud operations |
-| Kubernetes | DevOps | Governed incident remediation |
-| Terraform | DevOps | Pre-apply governance for IaC |
-| Datadog | Monitoring | Alert-triggered governed workflows |
-| LangChain | AI Framework | Governance for LangChain tool calls |
-| MCP Bridge | AI Framework | Gateway governance for MCP tools |
+| Kubernetes | DevOps | Policy checks for remediation actions the pack runs through Cordum |
+| Terraform | DevOps | Pre-apply policy checks for IaC actions the pack runs through Cordum |
+| Datadog | Monitoring | Alert-triggered workflows for actions the pack runs through Cordum |
+| LangChain | AI Framework | Policy checks for tool calls the pack runs through Cordum |
+| MCP Bridge | AI Framework | Gateway policy checks for tool calls the pack runs through Cordum |
 
 [Browse all integrations →](https://github.com/cordum-io/cordum-packs)
 
@@ -611,7 +611,7 @@ See [CHANGELOG.md](CHANGELOG.md) for a detailed log of all changes by version.
 
 ## Where Cordum Fits in the Agent Stack
 
-Each layer below enforces at a different boundary, and they can be combined.
+Each layer below applies its checks at a different boundary, and they can be combined.
 Cordum is the action control plane layer; it is meant to run alongside the
 others, not to replace them. Descriptions of other projects paraphrase their
 own documentation.
@@ -621,7 +621,7 @@ own documentation.
 | Model and prompt guardrails | Inputs to and outputs from an LLM | [Guardrails AI](https://github.com/guardrails-ai/guardrails) runs Input/Output Guards in your application. [NeMo Guardrails](https://github.com/NVIDIA-NeMo/Guardrails) adds programmable guardrails to LLM-based conversational applications. [Llama Guard](https://github.com/meta-llama/PurpleLlama) is a family of input and output moderation models. |
 | Traffic and MCP gateways | The network path between clients, models, tools and APIs | [IBM ContextForge](https://github.com/IBM/mcp-context-forge) is a registry and proxy that federates MCP, A2A and REST/gRPC APIs. [LiteLLM](https://github.com/BerriAI/litellm) is an AI gateway with a single interface to many LLM providers. |
 | In-process hooks | Checks inside the agent's own process, such as framework callbacks or function wrappers | — |
-| Action control plane (Cordum) | The point where an action is submitted or dispatched | Gateway submit-time policy checks, scheduler pre-dispatch safety checks, the [MCP server](#mcp-server) policy pipeline, and the [Cordum Edge](#cordum-edge-compliance-firewall-for-ai-agents) hook. |
+| Action control plane (Cordum) | The point where an action is submitted or dispatched | Gateway submit-time policy checks, scheduler pre-dispatch safety checks, the [MCP server](#mcp-server) policy pipeline, and the [Cordum Edge](#cordum-edge-claude-code-hook-policy-checks) hook. |
 | Runtime sandboxes | The process, OS or VM the action runs in | [Docker](https://docs.docker.com/get-started/docker-overview/) runs applications in a loosely isolated environment called a container. [gVisor](https://github.com/google/gvisor) is an application kernel that isolates applications from the host OS. [Firecracker](https://github.com/firecracker-microvm/firecracker) runs workloads in lightweight virtual machines called microVMs. [E2B](https://github.com/e2b-dev/E2B) runs AI-generated code in isolated cloud sandboxes. |
 
 ## Contributing
@@ -659,10 +659,10 @@ The BUSL-1.1 parameters in [LICENSE](LICENSE):
 See [LICENSE](LICENSE) for the full terms.
 
 **Runtime entitlements are separate from the license.** The control plane
-enforces plan limits in code. Without a valid Cordum license it runs on the
+applies plan limits in code; the listed limits are not yet qualified end to end. Without a valid Cordum license it runs on the
 Community defaults in [`core/licensing/tiers.go`](core/licensing/tiers.go):
 3 workers, 3 concurrent jobs, 500 requests per second, 7-day audit retention,
-single approval mode and no custom policy bundles. It also falls back to these
+single approval mode and no custom policy bundles. Entitlement resolution also falls back to these
 defaults when a license cannot be loaded or fails verification
 ([`core/licensing/resolver.go`](core/licensing/resolver.go)). These are product
 limits, not BUSL-1.1 terms; see [Enterprise](#enterprise).
@@ -678,7 +678,7 @@ Cordum core and CAP release independently, each with its own tags
   the Helm chart ([docker.yml](.github/workflows/docker.yml)). The separate
   [desktop binary workflow](.github/workflows/release.yml) builds
   `cordum-hook`, `cordum-agentd` and `cordum-claude`; publication requires its
-  signed-manifest gate to pass. `cordumctl` is built from
+  canonical `docker.yml` publish-binaries gate to find `SHA256SUMS.asc`; no signed release set is qualified. `cordumctl` is built from
   source (`make build`). The default `docker compose` stack runs api-gateway,
   scheduler, safety-kernel, workflow-engine, context-engine and dashboard with
   NATS and Redis. Cordum's own Python and TypeScript SDKs use separate
