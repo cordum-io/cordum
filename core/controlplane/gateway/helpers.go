@@ -362,9 +362,11 @@ func isPolicyFailOpen() bool {
 // with "_" are reserved for system use (e.g., _internal, _content.prompt); the
 // gateway re-adds the ones it needs after this step. Server-owned labels
 // (reqhash.ServerOwnedLabel: approval_*, gate_type, the bus dedupe override,
-// policy.attachment_id) are state that the scheduler and approval code act on:
-// approval_granted plus approval_snapshot would make a job look human-approved.
-// Those are dropped too, and logged, so a client cannot forge them.
+// policy.attachment_id, the workflow context) are state that the scheduler,
+// approval code and Safety Kernel act on: approval_granted plus
+// approval_snapshot would make a job look human-approved, and workflow_id
+// would claim a workflow's policy scope. Those are dropped too, and logged, so
+// a client cannot forge them.
 func stripReservedLabels(labels map[string]string) map[string]string {
 	if len(labels) == 0 {
 		return labels
