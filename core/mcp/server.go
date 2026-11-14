@@ -765,6 +765,12 @@ func (s *MCPServer) mapHandlerError(err error) *JSONRPCError {
 			"reason": policySnapshotChangedReason,
 		})
 	}
+	// The policy gate and the approval hold refuse a call that carries no
+	// CallMetadata (errMissingMCPMetadata): the same wiring defect.
+	if errors.Is(err, errMissingMCPMetadata) {
+		slog.Warn("mcp: call metadata missing", "error", err)
+		return s.rpcError(jsonRPCGatewayMisconfiguredCode, "approval gate misconfigured", "missing_mcp_metadata")
+	}
 	// Approval-store outage signal — an approval store (the Edge store
 	// at mint time, or the legacy MCP approval store during claim or
 	// enqueue) errored. Distinct from -32603 generic internal so clients
