@@ -21,9 +21,10 @@ Signing closes the following attack surfaces:
 | Backup/restore replays an old bundle             | Applied silently        | Operator sees untrusted key     |
 | Stolen signing key                               | N/A                     | Rotate key_id, re-sign, retire  |
 
-The gateway holds the private signing key. Clients and agents never see
-it. The kernel holds only public keys. Both sides log key ids but never
-key material.
+The gateway holds the private signing key, and the kernel is configured
+only with public keys. The gateway logs the key id of each signature it
+makes. See CLM-052 in the [claim register](../contract/claims.yaml) for
+the status of bundle signing.
 
 ## 2. Generate a signing key pair
 

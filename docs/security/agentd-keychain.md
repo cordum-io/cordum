@@ -91,9 +91,10 @@ Notes:
 - **Windows** `cmdkey` has no stdin mode — the only API path is
   `/pass:<value>` on the command line. The supplied PowerShell installer
   (`tools/scripts/agentd-install/install.ps1`) reads the value via
-  `Read-Host -AsSecureString` and unwraps it to a discrete process
-  argument exactly once; the in-process string copy is zeroed
-  immediately after the call.
+  `Read-Host -AsSecureString` and unwraps it into the `cmdkey`
+  argument. It zeroes the unmanaged copy (`ZeroFreeBSTR`) after
+  unwrapping; the managed string and the `cmdkey` command line are not
+  covered. See CLM-087 in the [claim register](../contract/claims.yaml).
 
 For all three backends, cordum-agentd calls
 `go-keyring.Get("cordum-agentd", <key>)`, where `<key>` is one of
