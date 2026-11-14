@@ -223,14 +223,20 @@ log "Collecting baseline metrics..."
 # baseline window starts at the "# drift-baseline" marker written after warm-up.
 sample_metrics baseline "pre-load baseline" fail || true
 
-# Check for container restarts (baseline)
+# Compose Status shows an exit code ("Restarting (1)", "Exited (137)"), not
+# a restart count: a container that restarted and is Up again looks like zero.
+# Read Docker's RestartCount directly and keep unreadable counts fail-closed.
 get_restart_counts() {
-  if command -v docker >/dev/null 2>&1; then
-    docker compose ps --format '{{.Name}} {{.Status}}' 2>/dev/null | while read -r name status; do
-      restarts=$(echo "${status}" | grep -oP '\(\d+\)' | tr -d '()' || echo "0")
-      echo "${name}:${restarts:-0}"
-    done
-  fi
+  command -v docker >/dev/null 2>&1 || return 0
+  docker compose ps -q 2>/dev/null | while read -r id; do
+    [[ -n "${id}" ]] || continue
+    if line=$(docker inspect -f '{{.Name}}:{{.RestartCount}}' "${id}" 2>/dev/null) &&
+      [[ "${line}" =~ ^/?[^:[:space:]]+:[0-9]+$ ]]; then
+      echo "${line#/}"
+    else
+      echo "${id}:unknown"
+    fi
+  done
 }
 
 BASELINE_RESTARTS=""
