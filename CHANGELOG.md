@@ -175,6 +175,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   or OIDC login or a principal-bound key, or set
   `CORDUM_ALLOW_HEADER_PRINCIPAL=true` for attribution only.
 
+#### core/controlplane/gateway — job submit infers an agent only from the authenticated principal (2026-11-14, task-491f974b)
+
+- **Behavior change** for job submit on HTTP and gRPC, in every profile. A
+  submit without `labels.agent_id` gets the agent linked to its principal
+  only when that principal is authenticated (by an API key bound to it, a
+  session, or JWT/OIDC) and the job is attributed to it.
+- A principal named by the request (`principal_id` in the HTTP body or the
+  gRPC request, or the `X-Principal-Id` header) never selects a worker link.
+  Such a job carries no inferred `agent_id`, so policy rules keyed on that
+  agent no longer match it, and allow rules fail closed. A
+  `delegation_audience_agent_id` override on such a submit now requires the
+  `delegation.impersonate` permission.
+- This is a behavior change for static API keys whose callers name a
+  `principal_id`.
+- Migration: authenticate as the worker with a worker credential (an API key
+  bound to the worker principal), a session or an OIDC login, or use a
+  delegation token.
+
 #### core/controlplane/gateway — MCP requests take identity only from an authenticated principal (2026-11-14, task-e3562f91)
 
 - **Behavior change** for HTTP MCP clients (`/mcp/sse` and `/mcp/message`).
