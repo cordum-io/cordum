@@ -45,36 +45,34 @@ func managedBoundaryDriftCases() []managedBoundaryDriftCase {
 			name: "extra_mcp_server",
 			mutate: func(doc map[string]any) {
 				doc["allowedMcpServers"] = []any{
-					map[string]any{"serverName": "cordum-edge"},
-					map[string]any{"serverName": "untrusted-server"},
+					map[string]any{"serverUrl": "https://mcp.cordum.example/mcp"},
+					map[string]any{"serverUrl": "https://untrusted.example.invalid/mcp"},
 				}
 			},
 			wantField: "allowedMcpServers",
 		},
 		{
-			name: "missing_cordum_edge_mcp_server",
+			// The pre-fix template shape: users pick server names, so a name
+			// match is not a security control.
+			name: "server_name_entry",
 			mutate: func(doc map[string]any) {
-				doc["allowedMcpServers"] = []any{map[string]any{"serverName": "untrusted-server"}}
-			},
-			wantField: "allowedMcpServers",
-		},
-		{
-			name: "case_variant_mcp_server",
-			mutate: func(doc map[string]any) {
-				doc["allowedMcpServers"] = []any{map[string]any{"serverName": "Cordum-Edge"}}
-			},
-			wantField: "allowedMcpServers",
-		},
-		{
-			name: "mcp_server_runtime_command_fields",
-			mutate: func(doc map[string]any) {
-				doc["allowedMcpServers"] = []any{map[string]any{
-					"serverName": "cordum-edge",
-					"command":    "/bin/sh",
-					"args":       []any{"-c", "echo untrusted"},
-				}}
+				doc["allowedMcpServers"] = []any{map[string]any{"serverName": "cordum-edge"}}
 			},
 			wantField: "allowedMcpServers[0]",
+		},
+		{
+			name: "server_command_entry",
+			mutate: func(doc map[string]any) {
+				doc["allowedMcpServers"] = []any{map[string]any{"serverCommand": []any{"/bin/sh", "-c", "echo untrusted"}}}
+			},
+			wantField: "allowedMcpServers[0]",
+		},
+		{
+			name: "wildcard_server_url",
+			mutate: func(doc map[string]any) {
+				doc["allowedMcpServers"] = []any{map[string]any{"serverUrl": "https://*"}}
+			},
+			wantField: "allowedMcpServers[0].serverUrl",
 		},
 		{
 			name: "arbitrary_hook_command",
@@ -90,7 +88,37 @@ func managedBoundaryDriftCases() []managedBoundaryDriftCase {
 			},
 			wantField: "hooks.PreToolUse[0].command",
 		},
+		{
+			name:      "pre_tool_use_without_on_failure_block",
+			mutate:    func(doc map[string]any) { setManagedHookOnFailure(doc, "PreToolUse", nil) },
+			wantField: "hooks.PreToolUse[0].onFailure",
+		},
+		{
+			name:      "user_prompt_submit_without_on_failure_block",
+			mutate:    func(doc map[string]any) { setManagedHookOnFailure(doc, "UserPromptSubmit", nil) },
+			wantField: "hooks.UserPromptSubmit[0].onFailure",
+		},
+		{
+			name:      "config_change_on_failure_continue",
+			mutate:    func(doc map[string]any) { setManagedHookOnFailure(doc, "ConfigChange", "continue") },
+			wantField: "hooks.ConfigChange[0].onFailure",
+		},
 	}
+}
+
+// setManagedHookOnFailure sets (or, for nil, deletes) onFailure on the first
+// command hook of event.
+func setManagedHookOnFailure(doc map[string]any, event string, value any) {
+	hooks, _ := doc["hooks"].(map[string]any)
+	sets, _ := hooks[event].([]any)
+	set, _ := sets[0].(map[string]any)
+	commands, _ := set["hooks"].([]any)
+	hook, _ := commands[0].(map[string]any)
+	if value == nil {
+		delete(hook, "onFailure")
+		return
+	}
+	hook["onFailure"] = value
 }
 
 func mustManagedSettingsMap(t *testing.T) map[string]any {
