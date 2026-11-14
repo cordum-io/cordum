@@ -70,6 +70,7 @@ jobs:
           CAP_MCP_WORKER_BIN: ${{ github.workspace }}/bin/cap-mcp-governed-worker
           CAP_MCP_ARTIFACT_DIR: /tmp/cap-mcp-governed-logs
         run: |
+          set -o pipefail
           mkdir -p /tmp/cap-mcp-governed-logs
           bash demo/cap-mcp-governed/integration_test.sh 2>&1 | tee /tmp/cap-mcp-governed-logs/integration.log
       - name: Assert exact success markers
