@@ -406,18 +406,25 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		}
 		// Stash MCP call metadata so the approval gate (wired into the
 		// ToolRegistry) can evaluate per-tool approval policy without
-		// knowing about gateway identity types. Tenant + principal come
-		// from the auth context. agentID and identity come from ONE
-		// resolveMCPIdentity lookup: agentID is the principal-bound agent
-		// identity ID ("" when there is none or X-Agent-Id disagrees),
-		// never the raw header, and it is the only agent value any
-		// metadata sink below records.
+		// knowing about gateway identity types. agentID and identity come
+		// from ONE resolveMCPIdentity lookup: agentID is the agent identity
+		// ID bound to the authenticated principal ("" when there is none or
+		// X-Agent-Id disagrees), never the raw header, and it is the only
+		// agent value any metadata sink below records.
 		agentID, identity := s.resolveMCPIdentity(r)
+		// The principal the approval and policy gates act on comes only from
+		// a credential: one the caller merely asserted with X-Principal-Id is
+		// "" here, exactly as for identity. principalID keeps the caller's
+		// principal for attribution only (Edge trace evidence), and
+		// RequesterIdentity stays the composite submitter identity, so the
+		// self-approval guard still counts an asserted principal and can
+		// only refuse more.
+		authenticatedPrincipal := authCtx.AuthenticatedPrincipal()
 		principalID := strings.TrimSpace(authCtx.PrincipalID)
 		mcpCtx := WithMCPCallMetadata(r.Context(), MCPCallMetadata{
 			Tenant:            tenantID,
 			AgentID:           agentID,
-			Principal:         principalID,
+			Principal:         authenticatedPrincipal,
 			RequesterIdentity: submitterIdentity(r),
 		})
 		// Resolve the transport session id exactly as the HTTP transport
@@ -447,7 +454,7 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 			}
 			mcpCtx = mcp.WithCallMetadata(mcpCtx, mcp.CallMetadata{
 				Tenant:      tenantID,
-				Principal:   principalID,
+				Principal:   authenticatedPrincipal,
 				AgentID:     agentID,
 				SessionID:   transportSessionID,
 				ExecutionID: executionID,
@@ -514,12 +521,15 @@ func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentI
 }
 
 // resolveMCPIdentity resolves the agent identity bound to the request's
-// authenticated principal (its worker link in the request tenant). Per
-// ruling Q4, X-Agent-Id may confirm that identity but never select one: a
-// header that names any other ID resolves to nothing.
+// authenticated principal (its worker link in the request tenant). Only a
+// principal that a credential vouches for counts, per
+// AuthContext.AuthenticatedPrincipal: one the caller merely asserted with
+// X-Principal-Id resolves nothing. Per ruling Q4, X-Agent-Id may confirm that
+// identity but never select one: a header that names any other ID resolves
+// to nothing.
 //
-// agentID is the bound identity ID, or "" when the principal is unbound,
-// bound to another tenant, or contradicted by the header. It is the only
+// agentID is the bound identity ID, or "" when the principal is asserted,
+// unbound, bound to another tenant, or contradicted by the header. It is the only
 // agent value request metadata may record. identity is nil whenever agentID
 // is "", and also for a revoked/suspended binding; ToolRegistry treats a nil
 // identity as fail-closed (zero tools visible, all calls denied).
@@ -536,7 +546,7 @@ func (s *server) resolveMCPIdentity(r *http.Request) (agentID string, identity *
 	if authCtx == nil {
 		return "", nil
 	}
-	principal := strings.TrimSpace(authCtx.PrincipalID)
+	principal := authCtx.AuthenticatedPrincipal()
 	if principal == "" {
 		return "", nil
 	}

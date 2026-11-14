@@ -1506,17 +1506,22 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		meta.Labels = req.Labels
 	}
 
-	// resolvePrincipal may return a request-chosen principal_id. Honor a
-	// client agent_id label only for the authenticated principal, as in gRPC
-	// SubmitJob. Injection without a label is unchanged here (task-491f974b).
-	authDerivedAgentID, err := s.linkedAgentID(r.Context(), orgID, principalID)
+	// Worker-link injection, the labels.agent_id check and the delegation-
+	// audience gate follow only the credential-backed principal, and only when
+	// the job is attributed to it: a request-named principal (body
+	// principal_id or X-Principal-Id) never selects a worker link.
+	authenticated := auth.FromRequest(r).AuthenticatedPrincipal()
+	lookupPrincipal := ""
+	if authenticated != "" && authenticated == strings.TrimSpace(principalID) {
+		lookupPrincipal = authenticated
+	}
+	authDerivedAgentID, err := s.linkedAgentID(r.Context(), orgID, lookupPrincipal)
 	if err != nil {
 		writeServiceUnavailable(w, r, "submit agent link lookup", err)
 		return
 	}
 	if clientAgentID := req.Labels["agent_id"]; clientAgentID != "" {
-		ac := auth.FromRequest(r)
-		if ac == nil || strings.TrimSpace(ac.PrincipalID) == "" || strings.TrimSpace(ac.PrincipalID) != strings.TrimSpace(principalID) {
+		if authenticated == "" || authenticated != strings.TrimSpace(principalID) {
 			writeErrorJSON(w, http.StatusForbidden, "client-supplied agent_id requires an authenticated principal")
 			return
 		}
