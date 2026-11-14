@@ -557,6 +557,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- On the gateway's HTTP MCP transport, the job, workflow and run ids that
+  `cordum_cancel_job`, `cordum_trigger_workflow`, `cordum_approve_job`,
+  `cordum_reject_job` and the `cordum://workflows/{id}/runs` and
+  `cordum://workflows/{id}/runs/{runId}` resources send to the REST handlers
+  are path-escaped in the gateway's in-process requests, and the
+  `cordum://jobs` status filter is query-escaped, so a value that contains
+  reserved URL characters is looked up as itself. A tool or resource handler
+  that fails unexpectedly returns JSON-RPC `-32603` with a fixed message
+  (task-7efdf077).
+
 - On the gateway's HTTP MCP transport (`/mcp/sse` and `/mcp/message`),
   `resources/read` of `cordum://jobs/{id}` and the `cordum_get_job` and
   `cordum_status` tools return the job and the system status instead of a
