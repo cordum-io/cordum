@@ -107,7 +107,7 @@ INLINE.update({"shell_ic_rcfile": "bash --rcfile " + MINT_SH + " -ic" + PROG, "s
 INLINE.update({"edge_redir_env": "</dev/null env FOO=1 " + RUN_MINT, "edge_redir_timeout": "</dev/null timeout 10m " + RUN_MINT, "edge_redir_assign": "</dev/null FOO=1 ./" + MINT_SH, "edge_redir_assign_spaced": "< /dev/null FOO=1 ./" + MINT_SH, "edge_redir_two": "</dev/null 2>&1 env FOO=1 " + RUN_MINT})  # a redirection word before a wrapper or an assignment is neither a prefix nor the command name: bash still runs the script
 INLINE.update({"ctl_env_assign": "env FOO=1 " + RUN_MINT, "ctl_redir_bash": "</dev/null " + RUN_MINT, "ctl_assign_redir": "FOO=1 </dev/null ./" + MINT_SH, "ctl_plain_exec": "./" + MINT_SH, "ctl_redir_dyn_wrapper": "</dev/null timeout -s KILL 10m " + RUN_MINT})  # controls: no leading redirection, or timeout -s, whose option argument stays unsupported
 RCTRACE = {"shell_i_rcfile_traced": "set -x\n", "shell_i_rcfile_untraced": "set -x\nset +x\n"}  # bash runs the -i rcfile in the shell that then runs the program: tracing the rcfile leaves on traces it
-X, XE, XG = "tools/scripts/zz_synthetic_set.sh", "tools/scripts/zz_synthetic_set_e.sh", "tools/scripts/zz_synthetic_outer.sh"
+X, XE, XG, XR = "tools/scripts/zz_synthetic_set.sh", "tools/scripts/zz_synthetic_set_e.sh", "tools/scripts/zz_synthetic_outer.sh", "tools/scripts/zz_synthetic_reset.sh"
 SOURCED = {  # (run, {sourced file: text}, mint() keywords[, workflow, anchor]): source and . leave options in the caller, as a set at that line would; a subshell keeps them
     "sourced_trace": ("source " + X + "\n" + RUN_MINT, {X: "set -x\n"}, {}), "sourced_dot_trace": (". " + X + "\n" + RUN_MINT, {X: "set -x\n"}, {}),
     "sourced_nested_trace": ("source " + XG + "\n" + RUN_MINT, {XG: "source " + X + "\n", X: "set -x\n"}, {}), "sourced_function_trace": ("source " + X + "\n" + RUN_MINT, {X: "trace_on() { set -x; }\n"}, {}),
@@ -117,6 +117,15 @@ SOURCED = {  # (run, {sourced file: text}, mint() keywords[, workflow, anchor]):
     "sourced_trace_off": ("source " + X + "\n" + RUN_MINT, {X: "set -x\nset +x\n"}, {}), "sourced_subshell": ("( source " + X + " )\n" + RUN_MINT, {X: "set -x\n"}, {}),
     "sourced_after_registration": (RUN_MINT, {X: "set -x\n"}, {"before": SAFE + "\nsource " + X}), "sourced_errexit_restored": (RUN_MINT, {XE: "set +e\n"}, {"head": STRICT + "source " + XE + "\nset -e\n"}),
     "sourced_errexit_window": (RUN_MINT, {XE: "probe() {\nset +e\nfalse\nset -e\n}\n"}, {"head": STRICT + "source " + XE + "\n"}), "sourced_caller_untraces": ("source " + X + "\nset +x\n" + RUN_MINT, {X: "set -x\n"}, {}, *LINK)}
+CONDRET, RELAXED = '[[ -n "${HOME:-}" ]] && return 0\n', STRICT + "source " + XE + "\n"  # a return bash may run; the mint head after a sourced set +e
+SOURCED.update({  # a sourced file leaves the options in force at each return it runs in its own shell, and at its end; a later file that resets an option on every path restores it
+    "sourced_return_trace": ("source " + X + "\n" + RUN_MINT, {X: "set -x\nreturn 0\nset +x\n"}, {}), "sourced_cond_return_trace": ("source " + X + "\n" + RUN_MINT, {X: "set -x\n" + CONDRET + "set +x\n"}, {}),
+    "sourced_case_return_trace": ("source " + X + "\n" + RUN_MINT, {X: 'set -x\ncase "${HOME:-}" in (*) return 0;; esac\nset +x\n'}, {}), "rc_return_trace": ("bash --rcfile " + X + " -ic '" + RUN_MINT + "'", {X: "set -x\n" + CONDRET + "set +x\n"}, {}),
+    "sourced_case_paren_trace": ("source " + X + "\n" + RUN_MINT, {X: 'case "${HOME:-}" in (*) set -x;; esac\n'}, {}), "sourced_return_errexit": (RUN_MINT, {XE: "set +e\nreturn 0\nset -e\n"}, {"head": RELAXED}),  # a case arm written with a leading ( runs in the case's shell
+    "sourced_errexit_reset": (RUN_MINT, {XE: "set +e\n", XR: "set -e\n"}, {"head": RELAXED + "source " + XR + "\n"}), "sourced_trace_reset": ("source " + X + "\nsource " + XR + "\n" + RUN_MINT, {X: "set -x\n", XR: "set +x\n"}, {}),
+    "sourced_return_elsewhere": ("source " + X + "\n" + RUN_MINT, {X: 'set -x\n( return 0 )\nv="$(return 0)"\ntrue | return 0\nreturn 0 &\nset +x\n'}, {}), "sourced_nested_return": ("source " + XG + "\n" + RUN_MINT, {XG: "source " + X + "\nset +x\n", X: "set -x\nreturn 0\n"}, {}),  # controls: a return in another shell, or one that ends only the inner file
+    "sourced_reset_guarded": (RUN_MINT, {XE: "set +e\n", XR: 'if [[ -n "${HOME:-}" ]]; then set -e; fi\n'}, {"head": RELAXED + "source " + XR + "\n"}), "sourced_reset_after_return": (RUN_MINT, {XE: "set +e\n", XR: CONDRET + "set -e\n"}, {"head": RELAXED + "source " + XR + "\n"}),
+    "sourced_reset_cond_source": (RUN_MINT, {XE: "set +e\n", XR: "set -e\n"}, {"head": RELAXED + 'if [[ -n "${HOME:-}" ]]; then source ' + XR + "; fi\n"}), "sourced_untrace_after_return": ("source " + X + "\nsource " + XR + "\n" + RUN_MINT, {X: "set -x\n", XR: CONDRET + "set +x\n"}, {})})  # a reset bash may skip restores nothing
 TRACE = {  # (shell, run[, job]): xtrace on at a fail-closed registration; run-text tracing in a job the guard leaves open
     "trace_shell": ("bash -x {0}", "source " + MINT_SH), "trace_env": ("", "SHELLOPTS=xtrace " + RUN_MINT),
     "trace_bash_x": ("", "bash -x " + MINT_SH, *LINK), "trace_set_x": ("", "set -x\nsource " + MINT_SH, *LINK),
@@ -318,6 +327,9 @@ shell_i_rcfile_traced e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@.github
 sourced_trace sourced_dot_trace sourced_nested_trace sourced_function_trace sourced_in_function sourced_unparsable sourced_own_trace rc_sources_trace rc_trace_script e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 sourced_own_errexit e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 sourced_trace_off sourced_subshell sourced_after_registration sourced_errexit_restored sourced_errexit_window sourced_caller_untraces clean
+sourced_return_trace sourced_cond_return_trace sourced_case_return_trace rc_return_trace sourced_case_paren_trace sourced_untrace_after_return e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
+sourced_return_errexit sourced_reset_guarded sourced_reset_after_return sourced_reset_cond_source e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
+sourced_errexit_reset sourced_trace_reset sourced_return_elsewhere sourced_nested_return clean
 gen_openssl gen_uuidgen gen_urandom gen_random gen_date gen_python gen_quoted_paren errexit_substitution mask_captured mask_env_captured e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_gen.sh
 gen_nested mask_fd_captured clean
 nonce_bypass_removed edge-fake-hook-e2e.yml:edge-fake-hook-e2e:CREDENTIAL_UNREGISTERED@tools/scripts/edge_fake_hook_e2e.sh
