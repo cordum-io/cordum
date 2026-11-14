@@ -1258,3 +1258,100 @@ func TestListAgentsIncludesLastActive(t *testing.T) {
 		t.Fatalf("agent B: expected last_active=0 (no jobs), got %d", found[agentB.ID])
 	}
 }
+
+// TestUpdateAgent_LinksWorkerForExistingIdentity: an identity created without
+// a worker link can be bound on update (agent_id) instead of being re-created,
+// with create's checks. A worker linked to another identity is refused,
+// re-linking the same worker is fine, and an identity in another tenant is
+// not found and links nothing.
+func TestUpdateAgent_LinksWorkerForExistingIdentity(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
+	ctx := context.Background()
+	newIdentity := func(name string) *store.AgentIdentity {
+		t.Helper()
+		identity, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+			TenantID: "default", Name: name, Owner: "ops", RiskTier: "low", Status: "active",
+		})
+		if err != nil {
+			t.Fatalf("create %s: %v", name, err)
+		}
+		return identity
+	}
+	unbound, other := newIdentity("legacy-agent"), newIdentity("other-agent")
+	if err := s.agentIdentityStore.LinkWorker(ctx, other.ID, "key-other"); err != nil {
+		t.Fatalf("link other: %v", err)
+	}
+	update := func(tenant, body string) *httptest.ResponseRecorder {
+		req := withAuth(httptest.NewRequest(http.MethodPut, "/api/v1/agents/"+unbound.ID, bytes.NewBufferString(body)),
+			&auth.AuthContext{Tenant: tenant, Role: "admin"})
+		req.Header.Set("Content-Type", "application/json")
+		req.SetPathValue("id", unbound.ID)
+		rr := httptest.NewRecorder()
+		s.handleUpdateAgent(rr, req)
+		return rr
+	}
+
+	for range 2 {
+		if rr := update("default", `{"agent_id":"alice"}`); rr.Code != http.StatusOK {
+			t.Fatalf("bind alice on update: %d %s", rr.Code, rr.Body.String())
+		}
+	}
+	if linked, err := s.agentIdentityStore.GetByWorkerIDForTenant(ctx, "default", "alice"); err != nil || linked == nil || linked.ID != unbound.ID {
+		t.Fatalf("alice linked to %+v (err %v), want %s", linked, err, unbound.ID)
+	}
+	requireStableErrorCode(t, update("default", `{"agent_id":"key-other"}`), http.StatusConflict, "AGENT_WORKER_CONFLICT")
+	if linked, _ := s.agentIdentityStore.GetByWorkerIDForTenant(ctx, "default", "key-other"); linked == nil || linked.ID != other.ID {
+		t.Fatalf("refused update moved key-other's link to %+v", linked)
+	}
+	if rr := update("tenant-b", `{"agent_id":"bob"}`); rr.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant bind: %d %s, want 404", rr.Code, rr.Body.String())
+	}
+	if linked, _ := s.agentIdentityStore.GetByWorkerIDForTenant(ctx, "default", "bob"); linked != nil {
+		t.Fatalf("cross-tenant update linked bob to %s", linked.ID)
+	}
+}
+
+// TestUpdateAgent_WorkerLookupFailureFailsClosed: a failed worker-link read is
+// not a confirmed missing link, so agent update answers 500, writes no link and
+// leaves the identity unchanged, as agent create does.
+func TestUpdateAgent_WorkerLookupFailureFailsClosed(t *testing.T) {
+	for _, source := range []string{"tenant_hash", "legacy_fallback"} {
+		t.Run(source, func(t *testing.T) {
+			s, _, _ := newTestGateway(t)
+			enableAgentIdentityEntitlement(t, s)
+			ctx := context.Background()
+			identity, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+				TenantID: "default", Name: "legacy-agent", Owner: "ops", RiskTier: "low", Status: "active",
+			})
+			if err != nil {
+				t.Fatalf("create identity: %v", err)
+			}
+			client := s.jobStore.Client() // Also passed to agentIdentityStore by newTestGateway.
+			const workerID = "lookup-failure-worker"
+			keys := [2]string{"agent:worker-links:default", "agent:by-worker:" + workerID}
+			if source == "tenant_hash" {
+				if err := client.Set(ctx, keys[0], "not-a-hash", 0).Err(); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := client.HSet(ctx, keys[1], "not-a-string", "sentinel").Err(); err != nil {
+				t.Fatal(err)
+			}
+			before := workerLookupFailureLinkSnapshot(t, client, keys)
+			req := withAuth(httptest.NewRequest(http.MethodPut, "/api/v1/agents/"+identity.ID,
+				strings.NewReader(`{"agent_id":"lookup-failure-worker","name":"renamed"}`)),
+				&auth.AuthContext{Tenant: "default", Role: "admin"})
+			req.Header.Set("Content-Type", "application/json")
+			req.SetPathValue("id", identity.ID)
+			rr := httptest.NewRecorder()
+			s.handleUpdateAgent(rr, req)
+			requireStableErrorCode(t, rr, http.StatusInternalServerError, "internal_error")
+			if after := workerLookupFailureLinkSnapshot(t, client, keys); after != before {
+				t.Error("worker-link keys changed after a failed lookup")
+			}
+			if got, err := s.agentIdentityStore.Get(ctx, "default", identity.ID); err != nil || got == nil || got.Name != "legacy-agent" {
+				t.Errorf("identity after a failed lookup = %+v (err %v), want it unchanged", got, err)
+			}
+		})
+	}
+}
