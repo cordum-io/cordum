@@ -211,6 +211,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   approval record; a legacy label-only approval also needs its recorded
   approver (`approval_by`) (#492, task-211fb5da).
 
+- Scheduler: the approval fast path and the pending replayer require the job's
+  stored approval record (decision `approve` plus `approval_by`, written only
+  by the approve and repair paths) on top of the job-hash and snapshot binding
+  (#492, task-d0b0f0ce).
+
 - Upgrade note, production signed-content enforcement. In the production
   profile (`CORDUM_ENV=production` or `CORDUM_PRODUCTION=true`) with no
   override, the safety kernel activates config-store policy only when its
