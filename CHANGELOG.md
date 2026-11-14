@@ -223,6 +223,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- Scheduler: the Safety Kernel check and the saga take a job's workflow link
+  from the engine-set `WorkflowId` (#492, task-cb754b80).
+
 - MCP gateway: invariants run on every built-in `tools/call`, not only on
   approval-gated tools, with `mcp.policy_gate_enabled` on or off
   (#492, task-950b90b1).

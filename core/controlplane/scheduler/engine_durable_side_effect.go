@@ -20,11 +20,8 @@ func (e *Engine) processDurableSaga(ctx context.Context, result *pb.JobResult) e
 	case pb.JobStatus_JOB_STATUS_SUCCEEDED:
 		return e.saga.RecordCompensation(ctx, req)
 	case pb.JobStatus_JOB_STATUS_FAILED_FATAL:
-		workflowID := strings.TrimSpace(req.GetWorkflowId())
-		if workflowID == "" {
-			workflowID = strings.TrimSpace(req.GetLabels()["workflow_id"])
-		}
-		if workflowID != "" {
+		// WorkflowId only: the workflow_id label does not link a job to a saga.
+		if workflowID := strings.TrimSpace(req.GetWorkflowId()); workflowID != "" {
 			return e.saga.Rollback(ctx, workflowID)
 		}
 	}
