@@ -358,11 +358,11 @@ func TestPolicyVerifyStore_CleanStoreExitsZero(t *testing.T) {
 		for _, tc := range []struct {
 			status, exit, gets int
 			body, out          string
-		}{{http.StatusNotFound, 0, 2, g.body, "all 0 enabled policy bundles verify\n"}, {http.StatusNotFound, 2, 1, "404 page not found", ""}, {http.StatusInternalServerError, 2, 1, `{"error":"internal error"}`, ""}} {
+		}{{http.StatusNotFound, 0, 2, g.body, "all 0 enabled policy bundles verify\n"}, {http.StatusInternalServerError, 2, 1, `{"error":"internal error"}`, ""}, {http.StatusNotFound, 2, 1, "404 page not found", ""}} {
 			g.missing, g.body = tc.status, tc.body
 			before, docs := g.snapshot(t)
 			code, out, stderr := runCLI(t, bin, env, "policy", "verify-store")
-			require.Equal(t, tc.exit, code, stderr)
+			require.Equal(t, tc.exit, code, "row %d %s: %s", tc.status, tc.body, stderr)
 			require.Equal(t, tc.out, out)
 			after, final := g.snapshot(t)
 			require.Equal(t, []string{"GET /api/v1/config", "GET /api/v1/config"}[:tc.gets], after[len(before):])
