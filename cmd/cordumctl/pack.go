@@ -248,7 +248,7 @@ func writePackArchiveEntry(tw *tar.Writer, path, name string, info os.FileInfo) 
 		header.Name += "/"
 		return tw.WriteHeader(header)
 	}
-	file, err := os.Open(path)
+	file, err := os.Open(path) // #nosec G304 -- path is a walk entry under the operator's own pack directory; the stat check below refuses a swapped file.
 	if err != nil {
 		return err
 	}

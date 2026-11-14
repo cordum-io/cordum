@@ -261,6 +261,15 @@ func (g *policyStoreTestGateway) snapshot(t *testing.T) ([]string, []byte) {
 	return append([]string{}, g.requests...), docs
 }
 
+// set applies a test's change under the fake's lock. The CLI reaches the fake
+// from another process, so without the lock nothing orders the change before
+// ServeHTTP reads it.
+func (g *policyStoreTestGateway) set(change func()) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	change()
+}
+
 func policyStoreTestSetup(t *testing.T, bundles map[string]any) (*policyStoreTestGateway, string, []string) {
 	t.Helper()
 	for _, item := range os.Environ() {
@@ -339,7 +348,8 @@ func TestPolicyVerifyStore_ListsEveryBundleTheEnforcedStoreRefuses(t *testing.T)
 func TestPolicyVerifyStore_CleanStoreExitsZero(t *testing.T) {
 	bundles := map[string]any{}
 	g, bin, env := policyStoreTestSetup(t, bundles)
-	bundles["valid"] = policyStoreTestBundle(t, "rules: []\n", policysign.EnvPublicKeyPrefix+"STORE-TEST")
+	valid := policyStoreTestBundle(t, "rules: []\n", policysign.EnvPublicKeyPrefix+"STORE-TEST")
+	g.set(func() { bundles["valid"] = valid })
 	code, out, stderr := runCLI(t, bin, env, "policy", "verify-store")
 	require.Equal(t, 0, code, stderr)
 	require.Equal(t, "all 1 enabled policy bundles verify\n", out)
@@ -391,7 +401,8 @@ func TestPolicyResign_SignsOnlyNamedBundles(t *testing.T) {
 func TestPolicyResign_AllListedSkipsPackOwned(t *testing.T) {
 	bundles := map[string]any{"b": "rules: []\n", "a": "rules: []\n", "demo/default": "rules: []\n"}
 	g, bin, env := policyStoreTestSetup(t, bundles)
-	bundles["valid"] = policyStoreTestBundle(t, "rules: []\n", policysign.EnvPublicKeyPrefix+"STORE-TEST")
+	valid := policyStoreTestBundle(t, "rules: []\n", policysign.EnvPublicKeyPrefix+"STORE-TEST")
+	g.set(func() { bundles["valid"] = valid })
 	code, out, stderr := runCLI(t, bin, env, "policy", "resign", "--all")
 	require.Equal(t, 1, code, stderr)
 	require.Contains(t, out, "SKIPPED demo/default reinstall-pack:demo")
@@ -401,7 +412,7 @@ func TestPolicyResign_AllListedSkipsPackOwned(t *testing.T) {
 
 func TestPolicyResign_StopsAtFirstRefusal(t *testing.T) {
 	g, bin, env := policyStoreTestSetup(t, nil)
-	g.refusal = http.StatusServiceUnavailable
+	g.set(func() { g.refusal = http.StatusServiceUnavailable })
 	code, _, stderr := runCLI(t, bin, env, "policy", "resign", "--bundle", "a,b")
 	require.Equal(t, 1, code)
 	require.Contains(t, stderr, "POLICY_SIGNING_REQUIRED")

@@ -175,6 +175,8 @@ func storeWriterKernelLoad(t *testing.T, s *server) ([]string, error) {
 		}
 	}()
 	t.Setenv("SAFETY_KERNEL_ADMIN_ADDR", reserveLocalAddr(t))
+	// As in startRealSafetyKernel: a kernel that boots outlives the test, so it must not poll.
+	t.Setenv("SAFETY_POLICY_RELOAD_INTERVAL", "24h")
 	addr := reserveLocalAddr(t)
 	errCh := make(chan error, 1)
 	go func() {
