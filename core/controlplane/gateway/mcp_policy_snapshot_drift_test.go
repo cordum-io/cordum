@@ -194,9 +194,10 @@ func TestEdgeMintPolicySnapshotDrift_BlankSnapshotsKeepTodaysOutcome(t *testing.
 	}
 }
 
-// task-fbe79532: when the registry gate's Edge mint fails after the
-// correlation record was enqueued, the record must not stay PENDING and the
-// invocation event must not report approval_status=required for it.
+// task-fbe79532: when the registry gate's Edge mint fails, no correlation
+// record may stay PENDING and the invocation event must not report
+// approval_status=required. The gate mints the Edge approval before it
+// writes the record, so a failed mint leaves no record at all.
 
 // mgAudit is the invocation auditor the MCP server installs per tools/call,
 // wired to a recording sink.
@@ -250,7 +251,7 @@ func (s *cancelOnMintStore) EnqueueApproval(ctx context.Context, _ edge.EdgeAppr
 	return nil, ctx.Err()
 }
 
-func TestRegistryGateMintError_WithdrawsCorrelationRecord(t *testing.T) {
+func TestRegistryGateMintError_LeavesNoCorrelationRecord(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name    string
@@ -295,16 +296,11 @@ func TestRegistryGateMintError_WithdrawsCorrelationRecord(t *testing.T) {
 				t.Fatalf("Edge approvals minted = %d; want 0", n)
 			}
 			pending, expired := mgRecords(t, h, model.ApprovalStatusPending), mgRecords(t, h, model.ApprovalStatusExpired)
-			if len(pending) != 0 || len(expired) != 1 {
-				t.Errorf("legacy records: %d pending, %d expired; want 0 pending, 1 withdrawn (expired)", len(pending), len(expired))
+			if len(pending) != 0 || len(expired) != 0 {
+				t.Errorf("legacy records: %d pending, %d expired; want none", len(pending), len(expired))
 			}
 			if got := event.Extra["approval_status"]; got == "required" {
 				t.Errorf("approval_status = %q; the failed mint must not report required", got)
-			}
-			for _, rec := range append(pending, expired...) {
-				if got := event.Extra["approval_id"]; got == rec.ID {
-					t.Errorf("approval_id = %q; it names the orphaned correlation record", got)
-				}
 			}
 		})
 	}
