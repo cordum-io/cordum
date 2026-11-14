@@ -234,6 +234,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   approval record; a legacy label-only approval also needs its recorded
   approver (`approval_by`) (#492, task-211fb5da).
 
+- Scheduler and gateway: the approval repair loop no longer re-approves a job
+  whose approval snapshot changed; it waits for a fresh human decision.
+  Approve answers `already_approved` only from the stored approval record
+  (#492, task-4c3bb574).
+
 - Scheduler: the approval fast path and the pending replayer require the job's
   stored approval record (decision `approve` plus `approval_by`, written only
   by the approve and repair paths) on top of the job-hash and snapshot binding
