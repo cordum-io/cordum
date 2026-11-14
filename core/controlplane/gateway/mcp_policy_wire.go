@@ -181,6 +181,8 @@ func (g *gatewayApprovalGate) actionGateInvariantDeny(ctx context.Context, ctxDa
 // (ProcessApprovalClaim) computes. Without this match, edge.RedisStore
 // classifyApprovalClaimMismatch surfaces ApprovalConflictKindArgsMismatch
 // on every legitimate retry — the EDGE-103 reopen #1 core bug QA flagged.
+// While the same caller's approval for this call is still pending, a re-ask
+// gets that ref back instead of a new approval.
 func (g *gatewayApprovalGate) mintEdgeApprovalForActionGate(ctx context.Context, ctxData mcp.ToolCallApprovalContext) (string, error, bool) {
 	if g == nil || g.edgeStore == nil {
 		return "", nil, false
@@ -203,10 +205,10 @@ func (g *gatewayApprovalGate) mintEdgeApprovalForActionGate(ctx context.Context,
 		mcp.ToolCallParams{Name: ctxData.Tool, Arguments: ctxData.Args},
 		policySnapshot,
 	)
-	requester := strings.TrimSpace(meta.Principal)
-	if gatewayMeta, ok := MCPCallMetadataFromContext(ctx); ok {
-		requester = mcpRequesterIdentity(gatewayMeta)
+	if pending := g.pendingMCPApproval(ctx, meta, actionHash, inputHash, policySnapshot); pending != nil {
+		return pending.ApprovalRef, nil, true
 	}
+	requester, agentID := mcpCallRequester(ctx)
 	approval, err := g.edgeStore.EnqueueApproval(ctx, edge.EdgeApprovalRequest{
 		TenantID:       meta.Tenant,
 		SessionID:      meta.SessionID,
@@ -218,6 +220,7 @@ func (g *gatewayApprovalGate) mintEdgeApprovalForActionGate(ctx context.Context,
 		ActionHash:     actionHash,
 		InputHash:      inputHash,
 		PolicySnapshot: policySnapshot,
+		Labels:         edge.Labels{mcpApprovalAgentLabel: agentID},
 	})
 	if err != nil {
 		return "", err, true

@@ -23,6 +23,12 @@ type captureEdgeStore struct {
 	enqueueErr   error
 	approvalID   string
 	enqueueCalls int
+	pending      []edge.EdgeApproval
+}
+
+// ListApprovals serves the pending approvals a mint checks for reuse.
+func (c *captureEdgeStore) ListApprovals(context.Context, edge.ListApprovalsQuery) (edge.ApprovalPage, error) {
+	return edge.ApprovalPage{Items: c.pending}, nil
 }
 
 func (c *captureEdgeStore) EnqueueApproval(_ context.Context, req edge.EdgeApprovalRequest) (*edge.EdgeApproval, error) {
@@ -133,6 +139,9 @@ func TestMintEdgeApproval_InputHashMatchesConsumeBinding(t *testing.T) {
 		t.Errorf("EnqueueApproval EventID = %q; want the policy pre-event id %q (not AgentID %q)",
 			store.lastReq.EventID, "evt-pre-1", agentID)
 	}
+	if store.lastReq.Labels[mcpApprovalAgentLabel] != agentID {
+		t.Errorf("approval labels = %v; want %s=%s", store.lastReq.Labels, mcpApprovalAgentLabel, agentID)
+	}
 }
 
 // TestMintEdgeApproval_FailsClosedOnEdgeStoreError is the DoD #5
@@ -227,5 +236,39 @@ func TestMintEdgeApproval_EmptyEventIDFailsClosed(t *testing.T) {
 	}
 	if len(pending) != 0 {
 		t.Errorf("legacy store holds %d pending records; want 0 (no silent legacy fallback)", len(pending))
+	}
+}
+
+// TestMintEdgeApproval_ReusesCallersPendingApproval: a policy-gate
+// REQUIRE_HUMAN re-ask returns the caller's pending approval for the same
+// call instead of minting another; a different requester, or the same one
+// acting as another agent, gets a new one.
+func TestMintEdgeApproval_ReusesCallersPendingApproval(t *testing.T) {
+	t.Parallel()
+	args := json.RawMessage(`{"path":"/x"}`)
+	action, input := mcp.BuildMCPApprovalBinding("tnt_a", "cordum.builtin",
+		mcp.ToolCallParams{Name: "fs.write", Arguments: args}, "policy-v7")
+	pending := edge.EdgeApproval{
+		ApprovalRef: "edge_appr_pending", Requester: "alice", Status: edge.ApprovalStatusPending,
+		ActionHash: action, InputHash: input, PolicySnapshot: "policy-v7",
+		Labels: edge.Labels{mcpApprovalAgentLabel: "agent_alpha"},
+	}
+	for _, tc := range []struct {
+		principal, agent, want string
+	}{{"alice", "agent_alpha", "edge_appr_pending"}, {"bob", "agent_alpha", "edge_appr_new"}, {"alice", "agent_beta", "edge_appr_new"}} {
+		store := &captureEdgeStore{approvalID: "edge_appr_new", pending: []edge.EdgeApproval{pending}}
+		gate := &gatewayApprovalGate{
+			store: &MCPApprovalStore{}, edgeStore: store, serverName: "cordum.builtin",
+			policySnapshot: func(context.Context) string { return "policy-v7" },
+		}
+		ctx := mcp.WithCallMetadata(context.Background(), mcp.CallMetadata{
+			Tenant: "tnt_a", Principal: tc.principal, AgentID: tc.agent, SessionID: "sess_99", ExecutionID: "exec_88",
+		})
+		ref, err := gate.ConsumeActionGateDecision(ctx, mcp.PolicyDecision{}, mcp.ToolCallApprovalContext{
+			Tenant: "tnt_a", AgentID: tc.agent, Server: "cordum.builtin", Tool: "fs.write", Args: args, EventID: "evt-pre-1",
+		})
+		if err != nil || ref != tc.want {
+			t.Fatalf("%s as %s re-ask: ref = %q, err = %v; want %q", tc.principal, tc.agent, ref, err, tc.want)
+		}
 	}
 }

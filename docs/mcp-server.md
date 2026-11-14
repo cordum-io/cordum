@@ -177,6 +177,13 @@ expired / consumed / args_mismatch / policy_mismatch / self_approval /
 cross_tenant / not_found) surface as JSON-RPC `-32096` with
 `error.data.kind` carrying the typed conflict family.
 
+A client that asks again without `_approval_ref` while its approval is
+still pending gets that approval back instead of a new one, when the
+requester identity, agent, tool, args and policy snapshot all match.
+Once a reviewer resolves either half of the pair (the Edge approval or
+its record on the MCP approvals page), the pair is no longer reused.
+Another requester asking for the same call gets their own approval.
+
 #### Retry dedupe
 
 `InvokeToolWithPolicy` collapses idempotent retries of the same MCP
