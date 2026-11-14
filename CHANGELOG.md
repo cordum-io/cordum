@@ -11,6 +11,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   (`100.64.0.0/10`) endpoints at registration and at use, the same as
   `url_guard`. There is no opt-in for private upstreams, so an upstream hosted
   on a Tailscale tailnet needs a public endpoint. (#492, task-35d6ac5b)
+
 - Safety Kernel: a rule's `match.mcp` lists now have one meaning
   (`config.MCPRuleMatch`). A rule with MCP lists never matches a non-MCP job.
   On a deny-class rule the lists name the calls the rule blocks; on an
