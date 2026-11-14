@@ -129,8 +129,8 @@ func TestNoIdentity_BoundIdentityUnaffected(t *testing.T) {
 }
 
 // TestNoIdentity_MissingTenantSessionExecutionStillFailsClosed: metadata gaps
-// other than the agent ID keep today's codes, with or without a bound agent:
-// -32603 for a plain call and -32097 for a ref-bearing one, never -32098.
+// other than the agent ID answer -32097 missing_mcp_metadata, with or without
+// a bound agent, for a plain call and a ref-bearing one, never -32098.
 func TestNoIdentity_MissingTenantSessionExecutionStillFailsClosed(t *testing.T) {
 	t.Parallel()
 	blank := map[string]func(*CallMetadata){
@@ -145,7 +145,7 @@ func TestNoIdentity_MissingTenantSessionExecutionStillFailsClosed(t *testing.T) 
 				args map[string]any
 				code int
 			}{
-				{"refless", idArgs, jsonRPCInternalErrorCode},
+				{"refless", idArgs, jsonRPCGatewayMisconfiguredCode},
 				{"ref_bearing", idRefArgs, jsonRPCGatewayMisconfiguredCode},
 			} {
 				t.Run(field+"/agent="+agent+"/"+tc.name, func(t *testing.T) {
@@ -163,7 +163,7 @@ func TestNoIdentity_MissingTenantSessionExecutionStillFailsClosed(t *testing.T) 
 		for _, tc := range []struct {
 			args map[string]any
 			code int
-		}{{idArgs, jsonRPCInternalErrorCode}, {idRefArgs, jsonRPCGatewayMisconfiguredCode}} {
+		}{{idArgs, jsonRPCGatewayMisconfiguredCode}, {idRefArgs, jsonRPCGatewayMisconfiguredCode}} {
 			f := newIDFixture(pb.DecisionType_DECISION_TYPE_ALLOW, nil)
 			res, rpcErr := f.call(context.Background(), tc.args)
 			if res != nil || rpcErr == nil || rpcErr.Code != tc.code {
