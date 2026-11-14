@@ -2295,7 +2295,7 @@ var (
 // config-overlay churn). ResolveApproval rotates that snapshot to the one the
 // human approved under, so a mismatch means the safety record drifted since.
 func approvalBinding(req *pb.JobRequest, prev SafetyDecisionRecord, approval ApprovalRecord) error {
-	if !(prev.ApprovalRequired || prev.Decision == SafetyRequireApproval) || prev.JobHash == "" {
+	if (!prev.ApprovalRequired && prev.Decision != SafetyRequireApproval) || prev.JobHash == "" {
 		return errNoRecordedApproval
 	}
 	if hash, err := HashJobRequest(req); err != nil || hash != prev.JobHash {
