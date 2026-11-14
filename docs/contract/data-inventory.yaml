@@ -4,7 +4,7 @@
 # in non-test Go under core/ and cmd/ to an entry pattern or a file-scoped not_tenant_data classification.
 # endpoint_only describes local copies/raw bytes; derived metadata may be sent separately.
 schema_version: 1
-reviewed_at: 3a274df35a0e289746765bc739bd5fa6e11e6938
+reviewed_at: 469e6284ea6f90209a528b720dcb60715443e0cb
 classes:
   - {id: raw-local-inputs, title: Endpoint inputs and local state}
   - {id: redacted-events, title: Redacted Edge records}
