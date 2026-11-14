@@ -310,8 +310,8 @@ Cordum puts a policy decision at that dispatch boundary:
   scheduler and Edge evaluate routes convert an unknown verdict to `DENY` at their decision-conversion points.
 - **Hash-bound approvals.** For Cordum approval-gated actions, lookup uses tenant and
   `approval_ref`; an approval whose SHA-256 `action_hash` differs is rejected as
-  `approval_mismatch`. These checks also reject self-approval,
-  expired and already-consumed approvals on those paths.
+  `approval_mismatch`. On those paths, self-approved,
+  expired and already-consumed approvals are rejected too.
 - **Declarative YAML policies.** Rules in [`config/safety.yaml`](config/safety.yaml)
   match on tenant, topic, capability, risk tags, actor and labels; the shipped
   file sets `default_decision: deny`, so the Safety Kernel denies unmatched requests when it loads that file.
