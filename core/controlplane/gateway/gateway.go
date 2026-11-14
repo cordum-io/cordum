@@ -905,6 +905,9 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		TenantID:          tenantID,
 	})
 	s.telemetry.Start(context.Background())
+	packPostureCtx, packPostureCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	logGatewayPackStrictPosture(packPostureCtx, s.redisClient())
+	packPostureCancel()
 	if legacyPolicyBundlesMigrated {
 		s.publishConfigChanged(string(configsvc.ScopeSystem), "default")
 		s.publishConfigChanged(string(configsvc.ScopeSystem), packs.PolicyConfigID)
@@ -1697,6 +1700,7 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 	s.registerRoute(mux, "PUT /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handlePutPolicyBundle))
 	s.registerRoute(mux, "DELETE /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handleDeletePolicyBundle))
 	s.registerRoute(mux, "POST /api/v1/policy/bundles/{id}/simulate", s.instrumented("/api/v1/policy/bundles/{id}/simulate", s.handleSimulatePolicyBundle))
+	s.registerRoute(mux, "POST /api/v1/policy/bundles/{id}/resign", s.instrumented("/api/v1/policy/bundles/{id}/resign", s.handleResignPolicyBundle))
 	// Policy shadow (task-44807b2c) — shadow-evaluation surface for a bundle.
 	// PUT upserts the shadow policy, GET fetches current status, DELETE removes it.
 	// The three results endpoints expose dashboard analytics (summary counters,
@@ -2010,6 +2014,9 @@ func migrateLegacyPolicyBundles(ctx context.Context, svc *configsvc.Service) (bo
 	if !ok || len(legacyBundles) == 0 {
 		return false, 0, nil
 	}
+	if !legacyPolicyBundlesMayMigrate(legacyBundles) {
+		return false, 0, nil
+	}
 	if err := svc.SetWithRetry(ctx, configsvc.ScopeSystem, packs.PolicyConfigID, 3, func(doc *configsvc.Document) error {
 		if doc.Data == nil {
 			doc.Data = map[string]any{}
@@ -2034,6 +2041,102 @@ func migrateLegacyPolicyBundles(ctx context.Context, svc *configsvc.Service) (bo
 		return false, 0, fmt.Errorf("remove legacy bundles from system/default: %w", err)
 	}
 	return true, len(legacyBundles), nil
+}
+
+// legacyPolicyBundlesMayMigrate decides whether the boot-time migration may
+// copy the legacy bundles. The copy is never signed, so under enforce it runs
+// only when every legacy bundle with content already verifies under the
+// policy trust store. Otherwise nothing moves and the gateway keeps booting.
+func legacyPolicyBundlesMayMigrate(legacyBundles map[string]any) bool {
+	mode, modeErr := policysign.ResolveMode()
+	if modeErr != nil {
+		mode = policysign.ModeEnforce
+	}
+	unverified := countUnverifiedLegacyPolicyBundles(legacyBundles)
+	if unverified == 0 {
+		return true
+	}
+	attrs := []any{"code", "policy.legacy_migration_unverified", "unverified", unverified, "legacy_bundles", len(legacyBundles), "mode", mode.String()}
+	if mode == policysign.ModeEnforce {
+		slog.Error("legacy policy bundles left in system/default: they do not verify under the policy trust store", attrs...)
+		return false
+	}
+	slog.Warn("legacy policy bundles migrated without a verified signature", attrs...)
+	return true
+}
+
+// countUnverifiedLegacyPolicyBundles counts, in sorted key order, the legacy
+// bundles the enforced store source would refuse. Disabled bundles count too,
+// since they can be enabled later.
+func countUnverifiedLegacyPolicyBundles(legacyBundles map[string]any) int {
+	ids := make([]string, 0, len(legacyBundles))
+	for id := range legacyBundles {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	trust, err := policysign.LoadTrustStoreFromEnv()
+	if err != nil {
+		trust = nil // a trust store that does not load verifies nothing
+	}
+	unverified := 0
+	for _, id := range ids {
+		if !legacyPolicyBundleVerifies(legacyBundles[id], trust) {
+			unverified++
+		}
+	}
+	return unverified
+}
+
+// legacyPolicyBundleVerifies mirrors the store source's content selection: a
+// string bundle is its own content, a map bundle uses the first string among
+// content, policy and data, and empty content needs no signature. The
+// signature is read as the store source reads it (storeSourceSignature).
+func legacyPolicyBundleVerifies(raw any, trust *policysign.TrustStore) bool {
+	content, _ := raw.(string)
+	var rawSig any
+	if bundle, ok := raw.(map[string]any); ok {
+		for _, field := range []string{"content", "policy", "data"} {
+			if text, isText := bundle[field].(string); isText {
+				content = text
+				break
+			}
+		}
+		rawSig = bundle[policyBundleSignatureKey]
+	}
+	if strings.TrimSpace(content) == "" {
+		return true
+	}
+	sig, ok := storeSourceSignature(rawSig)
+	if !ok {
+		return false
+	}
+	pub, found := trust.Lookup(sig.KeyID)
+	return found && policysign.Verify(pub, []byte(content), sig) == nil
+}
+
+// storeSourceSignature reads a stored _signature the way the safety kernel's
+// store source does: each field counts only as trimmed text, so a value of
+// any other type reads as empty. Verify refuses an empty algorithm or value,
+// and an empty key id names no trusted key.
+func storeSourceSignature(raw any) (policysign.Signature, bool) {
+	fields, ok := raw.(map[string]any)
+	if !ok || len(fields) == 0 {
+		return policysign.Signature{}, false
+	}
+	text := func(name string) string {
+		value, _ := fields[name].(string)
+		return strings.TrimSpace(value)
+	}
+	sig := policysign.Signature{Algorithm: text("algorithm"), KeyID: text("key_id"), Value: text("value"), Hash: text("hash")}
+	switch n := fields["signed_bytes"].(type) {
+	case int:
+		sig.SignedBytes = n
+	case int64:
+		sig.SignedBytes = int(n)
+	case float64:
+		sig.SignedBytes = int(n)
+	}
+	return sig, true
 }
 
 func deleteSystemDefaultKeyWithRetry(ctx context.Context, svc *configsvc.Service, key string, maxAttempts int) error {
