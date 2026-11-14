@@ -1,9 +1,14 @@
 # MCP mutating tools
 
-Cordum's MCP surface exposes seven mutating tools that let an operator fully provision
-and administer the platform over natural language. Every one of them is gated by a
-per-call human approval by default — the LLM client cannot execute the call until a
-human in the loop signs off in the dashboard or via `cordumctl mcp approve`.
+Cordum's MCP surface defines seven mutating tools for provisioning and administering
+the platform over natural language. Each requires a per-call human approval by default.
+On the API gateway the first call returns `-32099`, and the tool handler does not run until
+a human approves that exact call in the dashboard or with `cordumctl mcp approve`; with
+`mcp.policy_gate_enabled=true` the Edge approval flow in
+[Approval-Required Tools](../mcp-tools-reference.md#approval-required-tools) applies instead.
+Only `cordum_create_workflow` is wired on the gateway's HTTP MCP endpoint today, and
+scope-based preapproval (below) can exempt an identity's listed tools. CLM-018 in the
+[claims register](../contract/claims.yaml) records this approval flow as supported.
 
 This document is the canonical reference for each tool: purpose, input schema,
 approval flow, failure modes, idempotency semantics, and the audit trail fields an
@@ -298,7 +303,8 @@ resource/entitlement allowlists and mutating-tool preapproval.
 | `idempotency_key` | string | no | Retry-safe key |
 
 **MCPGate fail-closed semantics.** `AllowedServers`, `AllowedResources`, and
-`Entitlements` are enforced by the action-gate layer after identity resolution.
+`Entitlements` are checked by the action-gate layer after identity resolution (CLM-051 in
+the [claims register](../contract/claims.yaml), status supported).
 Leaving a list absent or empty does **not** mean wildcard; server-guarded,
 resource-guarded, and required-entitlement MCP actions deny with
 `server_not_allowlisted`, `resource_not_allowlisted`, or `unlicensed`.

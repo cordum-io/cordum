@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Docs: the MCP approval pages (docs/mcp-server.md, docs/mcp-tools-reference.md and, under docs/mcp,
+  approval_hold.md, mutating-tools.md, per-tool-approval.md and quickstart-vscode-copilot.md) now
+  state approval, single-use, provenance and scope claims at the status recorded in
+  docs/contract/claims.yaml. They name the preapproval exemption, the six mutating tools not yet
+  wired on the gateway's HTTP MCP endpoint and the cross-tenant access rule of the MCP approve
+  call, and no longer use `cordum_submit_job` as an approval example (M0-07-DOCS-MCP-APPROVAL,
+  task-3adad44c).
 - Docs: corrected overstated statements in the MCP prerequisites, outbound-signing, prompts and
   scope-preapproval pages. The prerequisites page drops the 100 req/s per API key figure, the
   `Retry-After` header and a `cordumctl` command that does not exist, and says the MCP endpoints
