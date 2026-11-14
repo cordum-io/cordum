@@ -976,7 +976,7 @@ docker compose logs scheduler 2>&1 | grep "config.changed"
 docker compose restart scheduler
 ```
 
-**Fix**: Config changes propagate via `sys.config.changed` NATS broadcast (instant) with a 30s polling fallback. If NATS is partitioned, wait up to 30s for the polling cycle. All replicas always reload from Redis (not from the NATS message), so consistency is guaranteed once the poll fires.
+**Fix**: Config changes propagate via `sys.config.changed` NATS broadcast (instant) with a 30s polling fallback. If NATS is partitioned, wait up to 30s for the polling cycle. Each replica reloads from Redis (not from the NATS message) when its poll fires. Recovery and partition behavior is not measured; see the [failure and partition behavior contract](contract/failure-behavior.md).
 
 ### Circuit breaker stuck open across all replicas
 
