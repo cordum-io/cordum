@@ -17,8 +17,8 @@ The risks per-tool approval addresses:
 
 | Risk | How the gate mitigates it |
 |------|---------------------------|
-| **Compromised agent makes a destructive call** (e.g. an LLM jailbreak invokes `db.drop`) | The kernel intercepts the call before the worker handler runs. The agent only ever sees an "approval pending" response; the destructive code path is unreachable until a human approves. |
-| **Misconfigured agent calls the wrong tool** (e.g. a code-review agent issues `files.delete` because of a prompt typo) | Same gate — the call never executes without an approver acknowledging the args. |
+| **Compromised agent makes a destructive call** (e.g. an LLM jailbreak invokes `db.drop`) | The gateway's MCP approval gate answers a call to a flagged tool with `-32099` and the approval ID before the tool handler runs. The handler runs only after a human approves that exact call, unless the caller's identity preapproves the tool ([scope-preapproval.md](scope-preapproval.md)). |
+| **Misconfigured agent calls the wrong tool** (e.g. a code-review agent issues `files.delete` because of a prompt typo) | Same gate: a call to a flagged tool waits for a human to approve that exact call, arguments included. CLM-018 in the [claims register](../contract/claims.yaml) records this approval flow as supported. |
 | **Insider attempts to escalate through their own agent** | The self-approval guard refuses any approval whose approver principal matches the requesting agent's identity. |
 | **Replay attack on a previously approved call** | Approvals are consume-once; any second call with identical args re-enqueues a fresh approval. |
 | **Approval rubber-stamped without seeing the args** | The approval record carries a SHA-256 hash of the canonical args JSON; the dashboard's "Review args" modal fetches and renders the full args before the approver clicks Approve. |

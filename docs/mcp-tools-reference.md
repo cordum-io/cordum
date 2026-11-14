@@ -59,7 +59,7 @@ Tools that do not require approval are unaffected.
 On the API gateway's HTTP MCP endpoint (`/mcp/message`), with the default `mcp.policy_gate_enabled=false`:
 
 1. The first `tools/call` returns `-32099` with an `approval_id`. Nothing is created.
-2. A distinct operator approves with `POST /api/v1/mcp/approvals/{id}/approve`. The requesting principal cannot approve its own call, and an operator in another tenant cannot see or approve it.
+2. A distinct operator approves with `POST /api/v1/mcp/approvals/{id}/approve`. The handler refuses an approval from the requesting principal (`self_approval_denied`), and answers an operator in another tenant with `approval_not_found` unless that operator's credential allows cross-tenant access. The [claims register](contract/claims.yaml) records these checks as CLM-013, status supported.
 3. The client retries with byte-identical arguments. The workflow is created once, and the result carries its `workflow_id`.
 
 Approvals are consume-once. A further identical retry, or a concurrent duplicate retry, gets a new `-32099` instead of a second workflow. Changed arguments also need a new approval.
