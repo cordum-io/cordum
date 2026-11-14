@@ -703,6 +703,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- The MCP gateway policy fields `tenants.<tenant>.mcp.gateway_enabled`,
+  `upstream_servers` and `allowed_upstreams` are flagged as reserved, not
+  enforced. The Safety Kernel logs one warning, naming the tenants, whenever
+  it installs a policy that sets them (#492, task-54af6cf7).
+
 - `safety_policy.schema.json` now matches the Go struct. It used to reject
   fields the kernel reads: top-level `require_human`,
   `match.delegation.delegation_required`.
