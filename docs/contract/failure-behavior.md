@@ -2,8 +2,9 @@
 
 Status: contract document, roadmap M0. It records what Cordum must do with each class of action
 when a dependency is unavailable, and what it does today. Current behavior was read and tested at
-cordum `ee58be379d3927f3aec0cac13ce5e09cf605a67d`; every current-behavior cell cites a characterization test by name or says
-`not measured`. It changes no runtime behavior. Gaps are owned by the rows named in the Gaps table.
+cordum `ee58be379d3927f3aec0cac13ce5e09cf605a67d`, as changed by the rows named under Scope and operator modes;
+every cited test passed again at cordum `da5f9bdab527084523ebc99c1c771c7f94b82f77`. Every current-behavior cell
+cites a characterization test by name or says `not measured`. It changes no runtime behavior. Gaps are owned by the rows named in the Gaps table.
 
 "Unavailable" means down, unreachable, timing out, or returning errors. Partitions are covered only
 as seen by one component; split-brain behavior belongs to M4-07.
@@ -103,11 +104,11 @@ returns to the agent runtime; whether the runtime honors that decision is outsid
 ### Scope and operator modes
 
 The class is unknown while the kernel or policy source is unavailable: the common kernel-outage
-probes above do not establish class-specific authorization. New tests on this branch exercise the
-unchanged runtime at the source revision above, except the redis/approval [c] statement, which
-describes the Gateway approve and reject handlers as changed by row PR1-17 on this branch, and the
+probes above do not establish class-specific authorization. The characterization tests that row
+M0-06 added exercise the runtime at the source revision above, except the redis/approval [c]
+statement, which describes the Gateway approve and reject handlers as changed by row PR1-17, and the
 PR1-16 tests cited in the redis and safety-kernel rows, which exercise the scoped input fail-open
-behavior added on this branch. Isolated store errors are not full Redis outages, and a decision or
+behavior that row PR1-16 added. Isolated store errors are not full Redis outages, and a decision or
 status code alone does not prove that a downstream action did not run.
 
 Edge observe is the default for both the hook and newly created sessions. It is an evidence-recording,

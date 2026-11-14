@@ -7,6 +7,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Docs: the Safety Kernel guide, scheduler internals, configuration reference, production
+  runbook, threat model and dashboard page spec now name the settings that select each fail
+  mode. The scheduler's input and output modes are the config-service keys
+  `scheduler.input_fail_mode` and `scheduler.output_fail_mode`, closed when unset;
+  `POLICY_CHECK_FAIL_MODE` selects the Gateway submit pre-check; and open input mode admits
+  only topics listed in `scheduler.input_fail_open_scope`. The rate-limit pages no longer say
+  that a Redis outage falls back to in-memory limits: the Redis-backed limiter denies while
+  Redis is unreachable. The failure and partition behavior contract records that its cited
+  tests pass at `da5f9bda` (task-ca72211e).
 - `cordumctl pack install`, upgrades and uninstall use the gateway pack API,
   applying the gateway's checks to every install. Install requires `packs.install`
   (`auth.PermPacksInstall`) or admin, and prints the returned pack worker credential
@@ -103,6 +112,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - The test asserts that a policy-denied job creates no approval and no workflow, that the worker cannot approve its own request (403 `self_approval_denied`), that an operator approval runs the call once and adds exactly one workflow, and that no credential reaches the artifacts. It prints `CAP-MCP GOVERNED DEMO OK` once.
 - Limits: unsigned worker on the compat CAP profile, and MCP with `policy_gate_enabled=false`.
 - `tools/scripts/workflow_credential_guard.py` registers the new workflow and its six masked credentials. Failure artifacts are redacted before upload.
+
+#### demo/a2a-governed — governed A2A end-to-end test in CI: input-required resume, Cordum safety decisions and policy deny (2026-11-13, task-171d7f02)
+
+- New `demo/a2a-governed`. Its pack registers `job.a2a-governed.turns` and `job.a2a-governed.denied`, routes both to pool `a2a-governed`, and adds the rules `a2a-governed-denied` and `a2a-governed-allow`. It also has `integration_test.sh` and the `demo-a2a-governed-e2e` workflow. The workflow builds `cap-a2a-bridge` and the example worker from cordum-io/cap at pinned commit `3216b280`, then runs them on the host against the default compose stack, with TLS on HTTP, NATS and Redis.
+- The test asserts four outcomes. An allowed A2A turn ends `INPUT_REQUIRED`, and its resume ends `COMPLETED`. Each of those jobs is `SUCCEEDED`, with an `ALLOW` decision by `a2a-governed-allow`. A turn on the denied topic ends `REJECTED`, and its job is `DENIED` by `a2a-governed-denied` and never dispatched. On success it prints `A2A GOVERNED DEMO OK` once.
+- Compat profile only. Cordum admits the bridge's raw, unsigned `sys.job.submit` only while handshake is `off` or `warn`, so the bridge and the worker run with `CAP_A2A_DEV_UNSIGNED=1`. The A2A result does not reflect Cordum's output-safety verdict. `demo/a2a-governed/README.md` lists the limitations.
+- `tools/scripts/workflow_credential_guard.py` adds an inventory row for the new workflow and its three generated credentials.
 
 ### Changed
 
