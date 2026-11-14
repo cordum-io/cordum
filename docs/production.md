@@ -347,7 +347,7 @@ cluster once the pods are ready. Re-run it if you replace the cluster.
 
 **Symptoms**: `cordum_safety_unavailable_total` rising, jobs stuck in PENDING.
 
-**Impact**: The scheduler cannot evaluate safety policies. Jobs requiring safety checks are deferred with exponential backoff (up to `safetyThrottleDelay = 5s`). No jobs are auto-approved — the system fails closed.
+**Impact**: Policy checks cannot be evaluated. In the default closed modes, the Gateway rejects new submits (HTTP 403, gRPC `PermissionDenied`) and the scheduler requeues accepted jobs without publishing them (backoff up to `safetyThrottleDelay = 5s`). Operator-selected open modes change this: Gateway `POLICY_CHECK_FAIL_MODE=open` accepts submits, and scheduler `scheduler.input_fail_mode=open` admits only topics listed in `scheduler.input_fail_open_scope`. For Edge, the Gateway's evaluate returns deny for enforce and enterprise-strict sessions, and allow marked degraded for observe sessions. See the [failure and partition behavior contract](contract/failure-behavior.md).
 
 **Steps**:
 
@@ -377,7 +377,7 @@ cluster once the pods are ready. Re-run it if you replace the cluster.
    kubectl logs -l app=cordum-safety-kernel -n cordum | grep -i "error\|panic"
    ```
 
-5. **Escalation**: If the safety kernel cannot be restored quickly, all new jobs will queue indefinitely. There is no bypass — this is by design (safety-first). Scale the safety kernel if it's a capacity issue:
+5. **Escalation**: If the safety kernel cannot be restored quickly, the default closed modes keep rejecting new submits and requeueing accepted jobs until it recovers. The open modes in the Impact line are operator choices with the risks described in [Safety Kernel section 10](safety-kernel.md#10-input-policy-fail-mode). Scale the safety kernel if it's a capacity issue:
    ```bash
    kubectl scale deployment cordum-safety-kernel --replicas=3 -n cordum
    ```

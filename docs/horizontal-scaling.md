@@ -221,7 +221,7 @@ redis-cli GET "cordum:reconciler:default"
 redis-cli KEYS "cordum:rl:*"
 ```
 
-**Resolution**: Ensure `REDIS_RATE_LIMIT` is not set to `false`/`0`/`no`. If Redis is unreachable, each replica falls back to per-replica in-memory rate limiting (effectively multiplying the limit by replica count).
+**Resolution**: Ensure `REDIS_RATE_LIMIT` is not set to `false`/`0`/`no`. With it disabled, each replica uses per-replica in-memory rate limiting (effectively multiplying the limit by replica count). While Redis is unreachable, the Redis-backed limiter denies requests instead (measured at the limiter only; see the [failure and partition behavior contract](contract/failure-behavior.md)).
 
 ### Stale Worker List
 
