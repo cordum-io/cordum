@@ -2250,7 +2250,17 @@ func ClassifyApprovalRepair(snapshot ApprovalRepairSnapshot, opts ApprovalRepair
 		isApprovedResolution = strings.TrimSpace(approval.ApprovedBy) != "" &&
 			strings.EqualFold(strings.TrimSpace(snapshot.Request.Labels["approval_granted"]), "true")
 	}
-	if isApprovedResolution {
+	staleRequest := snapshot.SafetyRecord.JobHash != "" && snapshot.RequestHash != "" && snapshot.RequestHash != snapshot.SafetyRecord.JobHash
+	// Re-queue an approval only while the scheduler will still honor it.
+	// Otherwise the scheduler re-gates the job and the next sweep re-queues it
+	// again. A stale request or snapshot is invalidated below, like an
+	// unresolved approval; an approval granted under another policy snapshot
+	// than the stored decision waits for a fresh human decision.
+	if isApprovedResolution && !staleRequest && !opts.StaleSnapshot {
+		if !approvalSnapshotBinds(snapshot) {
+			plan.Reason = "approval was granted under a different policy snapshot than the stored decision; it needs a fresh human decision"
+			return plan
+		}
 		plan.Kind = ApprovalRepairApplyApprovedResolution
 		plan.Repairable = true
 		plan.Reason = "approval was already resolved as approved while the job remained awaiting approval"
@@ -2300,7 +2310,7 @@ func ClassifyApprovalRepair(snapshot ApprovalRepairSnapshot, opts ApprovalRepair
 		return plan
 	}
 
-	if snapshot.SafetyRecord.JobHash != "" && snapshot.RequestHash != "" && snapshot.RequestHash != snapshot.SafetyRecord.JobHash {
+	if staleRequest {
 		plan.Kind = ApprovalRepairInvalidateStaleRequest
 		plan.Repairable = true
 		plan.Reason = "job request changed since the approval request was created"
@@ -2312,6 +2322,22 @@ func ClassifyApprovalRepair(snapshot ApprovalRepairSnapshot, opts ApprovalRepair
 	}
 
 	return plan
+}
+
+// approvalSnapshotBinds mirrors the scheduler's approval snapshot check: the
+// approval_snapshot label the approve path stamped must match the stored
+// decision's policy snapshot (base only). Workflow approval gates carry no
+// policy snapshot and skip the check.
+func approvalSnapshotBinds(snapshot ApprovalRepairSnapshot) bool {
+	if snapshot.Request == nil || snapshot.Topic == capsdk.SubjectWorkflowApprovalGate || snapshot.Topic == capsdk.SubjectApprovalGate {
+		return true
+	}
+	base := func(s string) string {
+		b, _, _ := strings.Cut(strings.TrimSpace(s), "|")
+		return b
+	}
+	asserted := base(snapshot.Request.GetLabels()["approval_snapshot"])
+	return asserted != "" && asserted == base(snapshot.SafetyRecord.PolicySnapshot)
 }
 
 func (s *RedisJobStore) ApplyApprovalRepair(ctx context.Context, params ApprovalRepairApplyParams) (*ApprovalRepairResult, error) {
