@@ -1022,7 +1022,7 @@ RBAC roles are stored in Redis (key prefix `rbac:role:`). Default roles (admin, 
 | `JOB_META_TTL_SECONDS` | — | Job metadata TTL in seconds (takes precedence) |
 | `WORKER_SNAPSHOT_INTERVAL` | — | Worker state snapshot interval |
 | `OUTPUT_POLICY_ENABLED` | `false` | Enable output policy: `true`, `1` |
-| `POLICY_CHECK_FAIL_MODE` | `closed` | Does not select the scheduler's input fail mode. That mode is the config-service key `scheduler.input_fail_mode`: closed when unset, and `open` admits only topics listed in `scheduler.input_fail_open_scope`. See [safety-kernel.md](safety-kernel.md#10-input-policy-fail-mode) for the risk implications. |
+| `POLICY_CHECK_FAIL_MODE` | `closed` | Does not select the scheduler's input fail mode. That mode is the config-service key `scheduler.input_fail_mode`: closed when unset, and `open` admits only topics listed in `scheduler.input_fail_open_scope`. Under the CAP-PRODUCTION profile, `open` here makes the scheduler refuse to start (exit 1): the scheduler sets its input fail-open flag from this variable, and the production startup check (`ValidateProductionStartup`) rejects that flag. A `scheduler.input_fail_mode` value overrides the flag only on config reloads, which start after that check, so it cannot avoid the refusal. See [safety-kernel.md](safety-kernel.md#10-input-policy-fail-mode) for the risk implications. |
 
 ### Gateway + Scheduler — Boundary Hardening
 

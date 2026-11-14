@@ -92,13 +92,7 @@ func scanDataFile(fset *token.FileSet, f *ast.File, rel string) []dataFound {
 		}
 		return true
 	})
-	var stack []ast.Node
-	ast.Inspect(f, func(n ast.Node) bool {
-		if n == nil {
-			stack = stack[:len(stack)-1]
-			return false
-		}
-		stack = append(stack, n)
+	dataWalk(f, func(n ast.Node, stack []ast.Node) {
 		switch x := n.(type) {
 		case *ast.BasicLit:
 			if s, ok := dataString(x); ok && dataKeyShapeRE.MatchString(s) {
@@ -120,9 +114,22 @@ func scanDataFile(fset *token.FileSet, f *ast.File, rel string) []dataFound {
 				}
 			}
 		}
-		return true
 	})
 	return found
+}
+
+// dataWalk calls visit for each node of f with the path from f to that node.
+func dataWalk(f *ast.File, visit func(n ast.Node, stack []ast.Node)) {
+	var stack []ast.Node
+	ast.Inspect(f, func(n ast.Node) bool {
+		if n == nil {
+			stack = stack[:len(stack)-1]
+			return false
+		}
+		stack = append(stack, n)
+		visit(n, stack)
+		return true
+	})
 }
 
 func dataString(e ast.Expr) (string, bool) {
@@ -134,67 +141,83 @@ func dataString(e ast.Expr) (string, bool) {
 	return s, err == nil
 }
 
-// dataStreamNames resolves a StreamConfig Name: a literal, a file-level const
-// or var, or a parameter of the enclosing function literal, resolved at the
-// call sites of the variable it is assigned to. Anything else is "<unresolved>".
+// dataStreamNames resolves the Name of a StreamConfig; see dataName.
 func dataStreamNames(f *ast.File, cfg *ast.CompositeLit, stack []ast.Node, values map[string]string, funcs map[*ast.FuncLit]string) []string {
-	var expr ast.Expr
 	for _, el := range cfg.Elts {
 		if kv, ok := el.(*ast.KeyValueExpr); ok {
 			if k, ok := kv.Key.(*ast.Ident); ok && k.Name == "Name" {
-				expr = kv.Value
+				return dataName(f, kv.Value, stack, values, funcs, true)
 			}
 		}
 	}
-	resolve := func(e ast.Expr) (string, bool) {
-		if s, ok := dataString(e); ok {
-			return s, true
-		}
-		if id, ok := e.(*ast.Ident); ok {
-			s, ok := values[id.Name]
-			return s, ok
-		}
-		return "", false
-	}
-	if s, ok := resolve(expr); ok || expr == nil {
+	return []string{""}
+}
+
+// dataName resolves a stream-name expression by lexical scope: a literal; an
+// identifier that a parameter of an enclosing function declares, where the
+// innermost such function binds it; otherwise a file-level const or var. A
+// parameter of a function literal assigned to a variable resolves at that
+// variable's call sites (one level, when atCalls). Any other parameter, and
+// anything else, is "<unresolved>".
+func dataName(f *ast.File, e ast.Expr, stack []ast.Node, values map[string]string, funcs map[*ast.FuncLit]string, atCalls bool) []string {
+	if s, ok := dataString(e); ok {
 		return []string{s}
 	}
-	id, _ := expr.(*ast.Ident)
-	for i := len(stack) - 1; i >= 0 && id != nil; i-- {
-		fl, ok := stack[i].(*ast.FuncLit)
-		if !ok || funcs[fl] == "" {
+	unresolved := []string{"<unresolved>"}
+	id, ok := e.(*ast.Ident)
+	if !ok {
+		return unresolved
+	}
+	for i := len(stack) - 1; i >= 0; i-- {
+		index := dataParamIndex(stack[i], id.Name)
+		if index < 0 {
 			continue
 		}
-		index, n := -1, 0
-		for _, field := range fl.Type.Params.List {
-			for _, name := range field.Names {
-				if name.Name == id.Name {
-					index = n
-				}
-				n++
-			}
-		}
-		if index < 0 {
-			break
+		fl, ok := stack[i].(*ast.FuncLit)
+		if !ok || funcs[fl] == "" || !atCalls {
+			return unresolved
 		}
 		var names []string
-		ast.Inspect(f, func(n ast.Node) bool {
+		dataWalk(f, func(n ast.Node, stack []ast.Node) {
 			if call, ok := n.(*ast.CallExpr); ok && len(call.Args) > index {
 				if fn, ok := call.Fun.(*ast.Ident); ok && fn.Name == funcs[fl] {
-					s, ok := resolve(call.Args[index])
-					if !ok {
-						s = "<unresolved>"
-					}
-					names = append(names, s)
+					names = append(names, dataName(f, call.Args[index], stack, values, funcs, false)...)
 				}
 			}
-			return true
 		})
-		if len(names) > 0 {
-			return names
+		if len(names) == 0 {
+			return unresolved
+		}
+		return names
+	}
+	if s, ok := values[id.Name]; ok {
+		return []string{s}
+	}
+	return unresolved
+}
+
+// dataParamIndex is the position of name among the parameters of fn, a
+// function literal or declaration, or -1 when fn declares no such parameter.
+func dataParamIndex(fn ast.Node, name string) int {
+	var ft *ast.FuncType
+	switch fn := fn.(type) {
+	case *ast.FuncLit:
+		ft = fn.Type
+	case *ast.FuncDecl:
+		ft = fn.Type
+	default:
+		return -1
+	}
+	n := 0
+	for _, field := range ft.Params.List {
+		for _, id := range field.Names {
+			if id.Name == name {
+				return n
+			}
+			n++
 		}
 	}
-	return []string{"<unresolved>"}
+	return -1
 }
 
 // uncoveredDataKeys lists each discovered item no entry or not_tenant_data
@@ -287,7 +310,7 @@ func TestDataInventoryKeyCoverageFixture(t *testing.T) {
 		return &DataInventory{ControlPlane: []DataEntry{
 			{ID: "DI-C01", Storage: &DataStorage{Kind: "redis_key", RedisKeys: []DataKeyRef{{Pattern: "fix:covered:{id}", Path: path}, {Pattern: "fix:unknown:{id}", Path: path}}}},
 			{ID: "DI-C02", Storage: &DataStorage{Kind: "redis_stream", Writers: []CodeRef{{Path: path, Symbol: "appendScript"}}}},
-			{ID: "DI-C03", Storage: &DataStorage{Kind: "jetstream", Streams: []DataLiteralRef{{Name: "FIX_EVENTS", Path: path}, {Name: "FIX_DIRECT", Path: path}}}},
+			{ID: "DI-C03", Storage: &DataStorage{Kind: "jetstream", Streams: []DataLiteralRef{{Name: "FIX_EVENTS", Path: path}, {Name: "FIX_DIRECT", Path: path}, {Name: "FIX_SHADOW", Path: path}}}},
 		}, NotTenantData: []DataKeyClass{{Path: path, Patterns: []string{"fix:label:{name}"}, Reason: "fixture label names, not Redis keys"}}}
 	}
 	if got := uncoveredDataKeys(complete(), found); len(got) != 0 {
@@ -298,12 +321,31 @@ func TestDataInventoryKeyCoverageFixture(t *testing.T) {
 	if _, err := discoverDataKeys(broken, "core"); err == nil {
 		t.Fatal("a file that does not parse must fail the scan, not hide its keys")
 	}
+	shadowed := t.TempDir()
+	write(t, filepath.Join(shadowed, "core", "pkg", "shadow.go"), `package pkg
+
+const streamName = "TMP_CONST"
+
+func ensure(js X, streamName string) {
+	js.AddStream(&nats.StreamConfig{Name: streamName})
+	add := func(name string) { js.AddStream(&nats.StreamConfig{Name: name}) }
+	add(streamName)
+}
+`)
+	shadowFound, err := discoverDataKeys(shadowed, "core")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(shadowFound, []dataFound{{"jetstream", "<unresolved>", "core/pkg/shadow.go", 6}, {"jetstream", "<unresolved>", "core/pkg/shadow.go", 7}}) {
+		t.Errorf("a function parameter that shadows a file-level const must stay unresolved, got %q", shadowFound)
+	}
 	cases := map[string]struct {
 		edit func(*DataInventory)
 		want string
 	}{
 		"unclassified key prefix":      {func(d *DataInventory) { d.ControlPlane[0].Storage.RedisKeys = d.ControlPlane[0].Storage.RedisKeys[:1] }, `unclassified key "fix:unknown:" at core/fixture/store.go:`},
 		"unclassified jetstream":       {func(d *DataInventory) { d.ControlPlane[2].Storage.Streams = d.ControlPlane[2].Storage.Streams[:1] }, `unclassified jetstream "FIX_DIRECT" at core/fixture/store.go:`},
+		"shadowed jetstream":           {func(d *DataInventory) { d.ControlPlane[2].Storage.Streams = d.ControlPlane[2].Storage.Streams[:2] }, `unclassified jetstream "FIX_SHADOW" at core/fixture/store.go:`},
 		"unclassified redis stream":    {func(d *DataInventory) { d.ControlPlane[1].Storage.Kind = "redis_key" }, `unclassified redis-stream "XADD" at core/fixture/store.go:`},
 		"label without classification": {func(d *DataInventory) { d.NotTenantData = nil }, `unclassified key "fix:label:" at core/fixture/store.go:`},
 		"stale classification": {func(d *DataInventory) {

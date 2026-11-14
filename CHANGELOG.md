@@ -399,6 +399,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   bound to the worker principal), a session or an OIDC login, or use a
   delegation token.
 
+#### core/controlplane/gateway — HTTP MCP trace parents and fronted upstreams act only for an authenticated, bound caller (2026-11-14, task-d78b4830)
+
+- The Edge session and execution that the gateway creates for an HTTP MCP
+  session are owned by the authenticated principal. A principal named only by
+  the `X-Principal-Id` header owns neither and is kept as the
+  `asserted_principal_id` label for attribution.
+- A fronted MCP upstream serves only a caller with an active bound agent
+  identity, like the built-in tool registry. With no identity, or a suspended
+  or revoked binding, `tools/list` is empty and `tools/call` is refused with
+  `-32098` `no_identity` before the upstream is called, whether
+  `mcp.policy_gate_enabled` is off or on.
+
 #### core/controlplane/gateway — MCP requests take identity only from an authenticated principal (2026-11-14, task-e3562f91)
 
 - **Behavior change** for HTTP MCP clients (`/mcp/sse` and `/mcp/message`).
@@ -731,6 +743,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### CI and documentation
 
+- Five review corrections (task-127a7dba). The VS Code Copilot MCP quickstart asks for a static API key with a configured principal, because the generated `mcp.json` carries the credential only in `X-API-Key`. The data-inventory contract test binds a JetStream stream name to the innermost function parameter that declares it, so a parameter that shadows a file-level const no longer reads as that const's value. The A2A governed demo fails whenever the worker log names the denied job. The configuration reference states that `POLICY_CHECK_FAIL_MODE=open` makes the scheduler refuse to start under CAP-PRODUCTION. The release Alpine upgrade guard reads each word before `apk upgrade --no-cache` after removing quotes and backslashes, so `"exit" 0`, `\exit 0` and `e"xi"t 0` fail closed.
 - The workflow credential scanner no longer reports `SOURCE_OVERSIZE` for a locally built native binary that a workflow runs, such as the `bin/cordumctl` that three demo workflows run for `generate-certs`, so a clean checkout and a built one scan the same. A file over the 256 KiB source bound counts as a program on an exec edge only when it starts with an ELF, PE or Mach-O header and has a NUL byte in its first line. An oversized script, and a `source` or `bash` edge to any oversized file, still report `SOURCE_OVERSIZE` (task-13b4b48c).
 - Added `docs/contract/threat-model.md`, the platform threat model for the M0 security contract: assets, adversaries, trust boundaries, a trusted-component inventory covering every `cmd/` service, reference-monitor properties with their current status, five explicit non-promises and the deployment boundary. Documentation only; no behavior changes.
 - Qualified three platform security-posture statements against `docs/contract/threat-model.md` (task-d056042e): ADR-001's "Zero-trust guarantee" bullet is now marked as design intent with a dated status note, and `docs/mcp/scope-filtering.md` no longer labels the MCP controls a "zero-trust stack" or "zero-trust controls". The threat model rates these mechanisms `supported`, not `enforced` or `verified`. Clarified that qualification requires protected transport on every Gateway client/proxy hop; deployment remains unverified.
