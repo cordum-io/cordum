@@ -140,6 +140,7 @@ func TestListApprovalsIncludesWorkflowApprovalJobInput(t *testing.T) {
 		JobId:      jobID,
 		Topic:      capsdk.SubjectWorkflowApprovalGate,
 		ContextPtr: ctxPtr,
+		WorkflowId: "wf-1",
 		Labels: map[string]string{
 			"workflow_id": "wf-1",
 			"run_id":      "run-1",
@@ -261,6 +262,7 @@ func TestListApprovalsDecisionSummaryMarksMalformedContext(t *testing.T) {
 		JobId:      jobID,
 		Topic:      capsdk.SubjectWorkflowApprovalGate,
 		ContextPtr: ctxPtr,
+		WorkflowId: "wf-2",
 		Labels: map[string]string{
 			"workflow_id": "wf-2",
 			"run_id":      "run-2",
@@ -313,6 +315,7 @@ func TestListApprovalsDecisionSummaryMarksPartialAvailableContext(t *testing.T) 
 		JobId:      jobID,
 		Topic:      capsdk.SubjectWorkflowApprovalGate,
 		ContextPtr: ctxPtr,
+		WorkflowId: "wf-3",
 		Labels: map[string]string{
 			"workflow_id": "wf-3",
 			"run_id":      "run-3",
@@ -369,6 +372,7 @@ func TestListApprovalsDecisionSummaryMarksMissingContext(t *testing.T) {
 		JobId:      jobID,
 		Topic:      capsdk.SubjectWorkflowApprovalGate,
 		ContextPtr: ctxPtr,
+		WorkflowId: "wf-4",
 		Labels: map[string]string{
 			"workflow_id": "wf-4",
 			"run_id":      "run-4",
@@ -427,6 +431,7 @@ func TestListApprovalsDecisionSummaryMarksUnavailableWhenMemoryStoreMissing(t *t
 		JobId:      jobID,
 		Topic:      capsdk.SubjectWorkflowApprovalGate,
 		ContextPtr: ctxPtr,
+		WorkflowId: "wf-5",
 		Labels: map[string]string{
 			"workflow_id": "wf-5",
 			"run_id":      "run-5",
@@ -529,6 +534,7 @@ func TestListResolvedDeniedWorkflowApprovalsRetainDecisionSummaryAndAuditFields(
 		Topic:      capsdk.SubjectWorkflowApprovalGate,
 		ContextPtr: ctxPtr,
 		TenantId:   "default",
+		WorkflowId: "wf-b2b-denied",
 		Labels: map[string]string{
 			"workflow_id": "wf-b2b-denied",
 			"run_id":      "run-b2b-denied",
