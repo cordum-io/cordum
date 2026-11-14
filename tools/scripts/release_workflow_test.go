@@ -864,7 +864,17 @@ var shellLeavers = []string{"exit", "exec", "return", ".", "source", "eval"}
 // anywhere fails closed, so a prefix such as `X=1 exit 0` cannot hide one.
 // This is a token check, not a shell parser: keep the release Dockerfiles in
 // the plain `RUN apk upgrade --no-cache && apk add ...` form.
+//
+// Any `$`, backtick or `(` in the text fails closed, even inside quotes or a
+// comment. A command, process or parameter substitution, a subshell or a
+// `$'...'` string can hold an && list that splitting on && reads as top
+// level: `echo $(false && apk upgrade --no-cache && true)` succeeds without
+// upgrading. The check reads the raw text, because quotes nested in a
+// substitution inside double quotes defeat the masking.
 func runExecutesApkUpgrade(script string) bool {
+	if strings.ContainsAny(script, "$`(") {
+		return false
+	}
 	script = quotedShellText.ReplaceAllString(script, "Q")
 	script = shellComment.ReplaceAllString(script, "")
 	if strings.ContainsAny(script, `'"`) {
@@ -1047,6 +1057,41 @@ func TestReleaseFinalStageUpgradeFixtures(t *testing.T) {
 		{
 			name:       "upgrade limited to one package",
 			dockerfile: "FROM alpine:3.24\nRUN apk upgrade --no-cache zlib\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade skipped inside a command substitution",
+			dockerfile: "FROM alpine:3.24\nRUN echo $(false && apk upgrade --no-cache && true)\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade skipped inside a backtick command substitution",
+			dockerfile: "FROM alpine:3.24\nRUN echo `false && apk upgrade --no-cache && true`\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade skipped inside a command substitution in double quotes",
+			dockerfile: "FROM alpine:3.24\nRUN echo \"$(echo \" && apk upgrade --no-cache && \")\"\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade skipped inside a parameter expansion",
+			dockerfile: "FROM alpine:3.24\nRUN echo ${X:-false && apk upgrade --no-cache && true}\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade skipped inside a process substitution",
+			dockerfile: "FROM alpine:3.24\nRUN echo >(false && apk upgrade --no-cache && true)\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade skipped inside a negated subshell",
+			dockerfile: "FROM alpine:3.24\nRUN ! (false && apk upgrade --no-cache && true)\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade only inside an ANSI-C quoted argument",
+			dockerfile: "FROM alpine:3.24\nRUN echo $'\\' && apk upgrade --no-cache && true '\\'\n",
 			wantErr:    true,
 		},
 		{
