@@ -166,10 +166,11 @@ To remediate:
 2. Run `cordumctl policy verify-store` (with the kernel's
    `CORDUM_POLICY_PUBLIC_KEY_<ID>` values exported) to list the bundles
    the enforced kernel would refuse.
-3. Run `cordumctl policy resign --all`. The gateway signs each refused
-   bundle with its signing key, so that key's public half must be in the
-   gateway's trust store. A bundle reported as `reinstall-pack:<pack>` is
-   a pack's policy fragment: reinstall that pack instead.
+3. Run `cordumctl policy resign --all` with the same keys exported. The
+   gateway signs each refused bundle with its signing key, so that key's
+   public half must be in the gateway's trust store. A bundle reported as
+   `reinstall-pack:<pack>` is a pack's policy fragment: reinstall that
+   pack instead.
 4. Restore `CORDUM_POLICY_STRICT=enforce`.
 
 ## 5. Key rotation
