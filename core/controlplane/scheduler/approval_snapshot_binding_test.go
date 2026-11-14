@@ -73,6 +73,7 @@ func TestCheckSafetyDecision_ApprovalFastPathRequiresSnapshotBinding(t *testing.
 			PolicySnapshot:   snapshotV2,
 			JobHash:          hash,
 		}
+		jobStore.approve(jobID)
 		return engine, sink, jobStore, req
 	}
 
