@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Breaking changes
+
+- `cordum-mcp` HTTP mode binds `127.0.0.1:8090` by default and needs an
+  inbound bearer token (`--http-auth-token` / `CORDUM_MCP_HTTP_AUTH_TOKEN`)
+  for any other bind; without one it refuses to start unless
+  `--allow-unauthenticated-http` is passed (#492, task-ee0dc819).
+
 ### Changed
 
 - Docs: the cordum-agentd, cordum-hook, Edge configuration and edge doctor pages and the

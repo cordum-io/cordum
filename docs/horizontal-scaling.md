@@ -34,7 +34,7 @@ Redis is the **single source of truth** for jobs, workflows, contexts, results, 
 | `REDIS_MIN_IDLE_CONNS` | `5` | All | Warm connections kept in the pool |
 | `REDIS_RATE_LIMIT` | `true` | api-gateway | Enable Redis-backed distributed rate limiting |
 | `MCP_TRANSPORT` | `stdio` | cordum-mcp | Transport mode: `stdio` or `http` |
-| `MCP_HTTP_ADDR` | `:8090` | cordum-mcp | Listen address when `MCP_TRANSPORT=http` |
+| `MCP_HTTP_ADDR` | `127.0.0.1:8090` | cordum-mcp | Listen address when `MCP_TRANSPORT=http`; a non-loopback address also needs `CORDUM_MCP_HTTP_AUTH_TOKEN` |
 | `AUDIT_TRANSPORT` | (local buffer) | api-gateway | Set to `nats` for durable cross-replica audit export |
 | `CORDUM_INSTANCE_ID` | `os.Hostname()` | All | Pod/instance label for Prometheus metrics |
 | `SAFETY_DECISION_CACHE_TTL` | `0` (disabled) | safety-kernel | Per-replica decision cache TTL (e.g. `30s`) |
