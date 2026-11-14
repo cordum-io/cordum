@@ -365,8 +365,8 @@ not_tenant_data:
   - {path: cmd/cordumctl/doctor.go, patterns: ['doctor:{message}'], reason: 'CLI stderr message prefix, not a Redis key'}
   - {path: cmd/cordumctl/evals.go, patterns: ['warnings:{text}'], reason: 'CLI output heading, not a Redis key'}
   - {path: cmd/cordumctl/mcp.go, patterns: ['note:{text}'], reason: 'CLI output label, not a Redis key'}
-  - {path: cmd/cordumctl/pack.go, patterns: ['cordumctl:{host}', 'pack:{pack}', 'packs:global'], reason: 'Pack-install lock resource names and the CLI owner label; the lock keys are lock:{resource} (DI-C49)'}
   - {path: cmd/cordumctl/pack_trust.go, patterns: ['env:{kid}'], reason: 'Publisher id and display-name label for trust keys loaded from the environment, not a Redis key'}
+  - {path: cmd/cordumctl/policy.go, patterns: ['reinstall-pack:{pack}'], reason: 'verify-store remedy label printed by the CLI, not a Redis key'}
   - {path: core/audit/datadog.go, patterns: ['service:cordum-gateway'], reason: 'Datadog tag string sent with exported events, not a Redis key'}
   - {path: core/auth/delegation/keys.go, patterns: ['ed25519:{key}'], reason: 'Key-encoding scheme prefix stripped when parsing configured keys, not a Redis key'}
   - {path: core/controlplane/gateway/actiongate_chain_verifier.go, patterns: ['approval_evidence_missing:{ref}'], reason: 'Action-gate outcome detail code, not a Redis key'}
@@ -384,6 +384,7 @@ not_tenant_data:
   - {path: core/controlplane/gateway/handlers_jobs.go, patterns: ['cordum:cb:safety', 'cordum:scheduler:input_fail_open_total'], reason: 'Safety circuit-breaker state and a global fail-open counter read for status; no tenant data'}
   - {path: core/controlplane/gateway/handlers_packs.go, patterns: ['api-gateway:{nanos}', 'pack:{pack}', 'packs:global'], reason: 'Pack-install lock resource names and the gateway owner label; the lock keys are lock:{resource} (DI-C49)'}
   - {path: core/controlplane/gateway/handlers_policy_bundles.go, patterns: ['output:{entry}'], reason: 'Entry id inside an output-quarantine rule document, not a Redis key'}
+  - {path: core/controlplane/gateway/handlers_policy_resign.go, patterns: ['packs:global'], reason: 'Pack-install lock resource name taken by the re-sign handler; the lock key is lock:{resource} (DI-C49)'}
   - {path: core/controlplane/gateway/helpers.go, patterns: ['principal:{name}'], reason: 'Identity label part compared in memory, not a Redis key'}
   - {path: core/controlplane/gateway/mcp_approval_handlers.go, patterns: ['principal:{name}'], reason: 'Identity label part compared in memory, not a Redis key'}
   - {path: core/controlplane/gateway/pack_install_verify.go, patterns: ['packs:publishers:{kid}', 'packs:trusted_keys:{kid}'], reason: 'Global pack-signing public keys and publisher records read for trust checks; no tenant content'}

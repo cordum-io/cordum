@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -22,6 +23,41 @@ import (
 )
 
 // Config handlers
+
+var errManagedConfigKey = errors.New("config.managed_key")
+
+func managedConfigKey(scope configsvc.Scope, scopeID string) string {
+	if scope != configsvc.ScopeSystem {
+		return ""
+	}
+	switch scopeID {
+	case packs.PolicyConfigID:
+		return packs.PolicyConfigKey
+	case packs.PackRegistryID:
+		return "installed"
+	default:
+		return ""
+	}
+}
+
+func sameConfigJSON(a, b any) bool {
+	var canonical [2][]byte
+	for i, value := range []any{a, b} {
+		data, err := json.Marshal(value)
+		if err != nil {
+			return false
+		}
+		var decoded any
+		if err := json.Unmarshal(data, &decoded); err != nil {
+			return false
+		}
+		canonical[i], err = json.Marshal(decoded)
+		if err != nil {
+			return false
+		}
+	}
+	return bytes.Equal(canonical[0], canonical[1])
+}
 
 func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermConfigWrite, []string{"admin"}, s.configSvc) {
@@ -79,6 +115,12 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	err := s.configSvc.SetWithRetry(r.Context(), scope, scopeID, 3, func(doc *configsvc.Document) error {
+		// Compare against the revision being replaced, including on CAS retries.
+		if key := managedConfigKey(scope, scopeID); key != "" {
+			if value, present := data[key]; present && !sameConfigJSON(value, doc.Data[key]) {
+				return errManagedConfigKey
+			}
+		}
 		for k, v := range data {
 			doc.Data[k] = v
 		}
@@ -91,7 +133,15 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	if err != nil {
-		if errors.Is(err, configsvc.ErrRevisionConflict) {
+		if errors.Is(err, errManagedConfigKey) {
+			msg := "system/policy bundles are written only by the policy bundle and pack APIs"
+			if scopeID == packs.PackRegistryID {
+				msg = "system/packs installed is written only by the pack install and uninstall APIs"
+			}
+			slog.Warn("config managed key refused", "scope", scopeStr, "scope_id", scopeID, "key", managedConfigKey(scope, scopeID), "actor", policybundles.PolicyActorID(r))
+			s.appendAuditEntryNamed(r.Context(), "config.set.rejected", "config", scopeStr+"/"+scopeID, scopeStr, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), msg)
+			writeJSONError(w, http.StatusBadRequest, errorCodeConfigKeyForbidden, "config.managed_key: "+msg)
+		} else if errors.Is(err, configsvc.ErrRevisionConflict) {
 			writeJSONError(w, http.StatusConflict, errorCodeConfigVersionConflict, "config update conflict — retry")
 		} else {
 			slog.Error("config set failed", "error", err, "scope", scopeStr, "scope_id", scopeID)

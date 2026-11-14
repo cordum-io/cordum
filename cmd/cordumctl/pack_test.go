@@ -1,20 +1,340 @@
 package main
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 )
+
+func TestPackServerInstall_SignedPackLifecycle(t *testing.T) {
+	root, trust := packServerFixture(t)
+	for _, action := range []string{"install", "upgrade", "uninstall", "refusal", "force-inactive"} {
+		t.Run(action, func(t *testing.T) { packServerLifecycle(t, root, trust, action) })
+	}
+}
+
+func packServerFixture(t *testing.T) (string, string) {
+	t.Helper()
+	root, trust := signInstallTestPack(t, "pack-test")
+	manifestPath := filepath.Join(root, "pack.yaml")
+	manifest, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The signing fixture is format-only; add install-compatible names/version.
+	text := strings.ReplaceAll(string(manifest), "t/In", "toolchain-test/In")
+	text = strings.ReplaceAll(text, "t.echo", "toolchain-test.echo")
+	text += fmt.Sprintf("compatibility:\n  protocolVersion: %d\n", capsdk.DefaultProtocolVersion)
+	if err := os.WriteFile(manifestPath, []byte(text), 0600); err != nil {
+		t.Fatal(err)
+	}
+	keyPath, pub := writeTestPrivateKey(t)
+	if err := runPackSign([]string{"--key", keyPath, root}); err != nil {
+		t.Fatal(err)
+	}
+	key := fmt.Sprintf("kid: pack-test\nalgorithm: ed25519\npublic_key_b64: %s\n", base64.StdEncoding.EncodeToString(pub))
+	if err := os.WriteFile(filepath.Join(trust, "pack-test.pub"), []byte(key), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return root, trust
+}
+
+func packServerLifecycle(t *testing.T, root, trust, action string) {
+	t.Helper()
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		packServerRequest(t, w, r, root, action)
+	}))
+	defer srv.Close()
+	args := []string{"--gateway", srv.URL, "--api-key", "test-key", "--tenant", "test-tenant"}
+	var err error
+	var output string
+	stderr := captureStderr(t, func() {
+		output = captureStdout(t, func() {
+			if action == "uninstall" {
+				err = runPackUninstall(append(args, "--purge", "toolchain/test ?"))
+				return
+			}
+			args = append(args, "--strict", "--trusted-keys", trust)
+			if action == "upgrade" {
+				args = append(args, "--upgrade")
+			}
+			if action == "force-inactive" {
+				args = append(args, "--force", "--inactive", "--no-verify")
+			}
+			err = runPackInstall(append(args, root))
+		})
+	})
+	if calls != 1 {
+		t.Errorf("requests=%d, want exactly one pack API call", calls)
+	}
+	if action == "refusal" {
+		if err == nil || !strings.Contains(err.Error(), `"code":"PACK_INSTALL_INVALID"`) || !strings.Contains(err.Error(), "pack.unsigned: required") || output != "" {
+			t.Errorf("refusal: err=%v output=%q", err, output)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	packServerOutput(t, action, output, stderr)
+}
+
+func packServerOutput(t *testing.T, action, output, stderr string) {
+	t.Helper()
+	want := "installed pack toolchain-test 0.1.0 (ACTIVE)\nworker_id: pack-worker\nworker_token: test-worker-token\n"
+	if action == "uninstall" {
+		want = "uninstalled pack toolchain/test ?\n"
+	}
+	if output != want || strings.Contains(stderr, "test-worker-token") {
+		t.Errorf("output=%q stderr=%q", output, stderr)
+	}
+}
+
+func packServerRequest(t *testing.T, w http.ResponseWriter, r *http.Request, root, action string) {
+	t.Helper()
+	if r.Header.Get("X-API-Key") != "test-key" || r.Header.Get("X-Tenant-ID") != "test-tenant" {
+		t.Error("credential headers not forwarded")
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if action == "uninstall" && r.Method == "POST" && r.URL.EscapedPath() == "/api/v1/packs/"+url.PathEscape("toolchain/test ?")+"/uninstall" {
+		var body map[string]bool
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || !reflect.DeepEqual(body, map[string]bool{"purge": true}) {
+			t.Errorf("purge: body=%v err=%v", body, err)
+		}
+		w.WriteHeader(204)
+		return
+	}
+	if r.Method != "POST" || r.URL.Path != "/api/v1/packs/install" {
+		t.Errorf("unexpected client request: %s %s", r.Method, r.URL)
+		http.Error(w, "pack API required", 400)
+		return
+	}
+	if err := packServerMultipart(root, r, action); err != nil {
+		t.Error(err)
+		http.Error(w, "invalid install", 400)
+		return
+	}
+	if action == "refusal" {
+		w.WriteHeader(400)
+		_, _ = io.WriteString(w, `{"code":"PACK_INSTALL_INVALID","error":"pack.unsigned: required"}`)
+		return
+	}
+	_, _ = io.WriteString(w, `{"id":"toolchain-test","version":"0.1.0","status":"ACTIVE","verification":{"signed":true},"worker_credential":{"worker_id":"pack-worker","token":"test-worker-token","allowed_pools":["test"],"allowed_topics":["job.test"]}}`)
+}
+
+func packServerMultipart(root string, r *http.Request, action string) error {
+	if err := r.ParseMultipartForm(1 << 20); err != nil {
+		return err
+	}
+	defer func() { _ = r.MultipartForm.RemoveAll() }()
+	for _, field := range []string{"force", "upgrade", "inactive"} {
+		want := "false"
+		if (field == "upgrade" && action == "upgrade") || (field != "upgrade" && action == "force-inactive") {
+			want = "true"
+		}
+		if values := r.MultipartForm.Value[field]; !reflect.DeepEqual(values, []string{want}) {
+			return fmt.Errorf("%s=%v want [%s]", field, values, want)
+		}
+	}
+	file, header, err := r.FormFile("bundle")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = file.Close() }()
+	if header.Filename != "bundle.tgz" {
+		return fmt.Errorf("filename=%s", header.Filename)
+	}
+	return packServerArchiveMatches(root, file)
+}
+
+func packServerArchiveMatches(root string, reader io.Reader) error {
+	gz, err := gzip.NewReader(reader)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = gz.Close() }()
+	got := map[string]string{}
+	tr := tar.NewReader(gz)
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if strings.Contains(header.Name, "\\") || strings.HasPrefix(header.Name, "./") {
+			return fmt.Errorf("non-portable archive name %q", header.Name)
+		}
+		if header.Typeflag == tar.TypeDir {
+			continue
+		}
+		data, err := io.ReadAll(tr)
+		if err != nil {
+			return err
+		}
+		if _, exists := got[header.Name]; exists {
+			return fmt.Errorf("duplicate archive entry %s", header.Name)
+		}
+		got[header.Name] = string(data)
+	}
+	want, err := packServerFiles(root)
+	if err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(got, want) {
+		return fmt.Errorf("archive files differ from verified root")
+	}
+	return nil
+}
+
+func packServerFiles(root string) (map[string]string, error) {
+	want := map[string]string{}
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		want[filepath.ToSlash(rel)] = string(data)
+		return err
+	})
+	return want, err
+}
+
+func TestPackArchiveDeterministicAndPortable(t *testing.T) {
+	root := writeTestPack(t)
+	first, err := packArchive(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(filepath.Join(root, "pack.yaml"), time.Now(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	second, err := packArchive(root)
+	if err != nil || !bytes.Equal(first, second) {
+		t.Fatalf("non-deterministic archive: %v", err)
+	}
+	if err := packServerArchiveMatches(root, bytes.NewReader(first)); err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range []string{"archive", "url"} {
+		t.Run(source, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "pack.tgz")
+			if err := os.WriteFile(path, first, 0600); err != nil {
+				t.Fatal(err)
+			}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(first) }))
+			defer srv.Close()
+			if source == "url" {
+				path = srv.URL + "/pack.tgz"
+			}
+			bundle, err := loadPackBundle(path, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer bundle.Cleanup()
+			archive, err := packArchive(bundle.Dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := packServerArchiveMatches(root, bytes.NewReader(archive)); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestPackArchiveRefusesInvalidEntries(t *testing.T) {
+	t.Run("missing", func(t *testing.T) {
+		if data, err := packArchive(filepath.Join(t.TempDir(), "missing")); err == nil || data != nil {
+			t.Fatalf("missing root: bytes=%d err=%v", len(data), err)
+		}
+	})
+	t.Run("symlink", func(t *testing.T) {
+		root := writeTestPack(t)
+		path := filepath.Join(root, "link")
+		if err := os.Symlink(filepath.Join(root, "pack.yaml"), path); err != nil {
+			if runtime.GOOS == "windows" {
+				t.Skipf("Windows symlink privilege unavailable: %v", err)
+			}
+			t.Fatal(err)
+		}
+		if data, err := packArchive(root); err == nil || data != nil || !strings.Contains(err.Error(), path) {
+			t.Fatalf("symlink: bytes=%d err=%v", len(data), err)
+		}
+	})
+	t.Run("oversized", func(t *testing.T) {
+		root := t.TempDir()
+		file, err := os.Create(filepath.Join(root, "large"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = file.Truncate(maxPackFileBytes + 1)
+		closeErr := file.Close()
+		if err != nil || closeErr != nil {
+			t.Fatalf("fixture: %v %v", err, closeErr)
+		}
+		if data, err := packArchive(root); err == nil || data != nil {
+			t.Fatalf("oversized file: bytes=%d err=%v", len(data), err)
+		}
+	})
+}
+
+type packRoundTrip func(*http.Request) (*http.Response, error)
+
+func (f packRoundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestPackInstallTransportTimeoutAndResult(t *testing.T) {
+	client := newRestClient("http://gateway.invalid", "", "", nil)
+	remaining := time.Duration(0)
+	client.httpClient.Transport = packRoundTrip(func(r *http.Request) (*http.Response, error) {
+		deadline, ok := r.Context().Deadline()
+		if !ok {
+			t.Error("missing request timeout")
+		}
+		remaining = time.Until(deadline)
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"id":"p","verification":{"signed":true},"worker_credential":{"allowed_pools":["pool"],"allowed_topics":["topic"]}}`)), Header: make(http.Header)}, nil
+	})
+	result, err := client.installPack(context.Background(), nil, false, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if remaining < 110*time.Second || remaining > 2*time.Minute || client.httpClient.Timeout != 20*time.Second {
+		t.Fatalf("install timeout=%v shared=%v", remaining, client.httpClient.Timeout)
+	}
+	if result.ID != "p" || result.Verification == nil || !result.Verification.Signed || result.WorkerCredential == nil || !reflect.DeepEqual(result.WorkerCredential.AllowedPools, []string{"pool"}) || !reflect.DeepEqual(result.WorkerCredential.AllowedTopics, []string{"topic"}) {
+		t.Fatalf("result=%+v", result)
+	}
+	if err := client.doJSON(context.Background(), "GET", "/status", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if remaining < 15*time.Second || remaining > 20*time.Second {
+		t.Fatalf("JSON timeout=%v", remaining)
+	}
+}
 
 func captureStderr(t *testing.T, fn func()) string {
 	t.Helper()
@@ -42,60 +362,6 @@ func captureStderr(t *testing.T, fn func()) string {
 		t.Fatalf("close stderr reader: %v", err)
 	}
 	return string(data)
-}
-
-func writeTopicRegistryPackFixture(t *testing.T) string {
-	t.Helper()
-
-	packDir := t.TempDir()
-	manifest := fmt.Sprintf(`
-apiVersion: cordum.io/v1
-kind: Pack
-metadata:
-  id: demo-pack
-  version: 1.0.0
-compatibility:
-  protocolVersion: %d
-topics:
-  - name: job.demo-pack.echo
-    capability: demo.echo
-    inputSchema: demo-pack/Input
-    outputSchema: demo-pack/Output
-    riskTags:
-      - safe
-    requires:
-      - local
-resources:
-  schemas:
-    - id: demo-pack/Input
-      path: schemas/input.json
-    - id: demo-pack/Output
-      path: schemas/output.json
-overlays:
-  config:
-    - name: pools
-      key: pools
-      path: overlays/pools.patch.yaml
-`, capsdk.DefaultProtocolVersion)
-	if err := os.WriteFile(filepath.Join(packDir, "pack.yaml"), []byte(strings.TrimSpace(manifest)), 0o600); err != nil {
-		t.Fatalf("write pack manifest: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Join(packDir, "schemas"), 0o700); err != nil {
-		t.Fatalf("mkdir schemas: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Join(packDir, "overlays"), 0o700); err != nil {
-		t.Fatalf("mkdir overlays: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(packDir, "schemas", "input.json"), []byte(`{"type":"object","required":["message"],"properties":{"message":{"type":"string"}}}`), 0o600); err != nil {
-		t.Fatalf("write input schema: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(packDir, "schemas", "output.json"), []byte(`{"type":"object","required":["message"],"properties":{"message":{"type":"string"}}}`), 0o600); err != nil {
-		t.Fatalf("write output schema: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(packDir, "overlays", "pools.patch.yaml"), []byte("topics:\n  job.demo-pack.echo: demo-pack\npools:\n  demo-pack:\n    requires:\n      - local\n"), 0o600); err != nil {
-		t.Fatalf("write pools overlay: %v", err)
-	}
-	return packDir
 }
 
 func TestValidatePackManifest(t *testing.T) {
@@ -225,29 +491,6 @@ func TestEnsureProtocolCompatible(t *testing.T) {
 	}
 }
 
-func TestOverlayHelpers(t *testing.T) {
-	overlay := packConfigOverlay{Key: "pools"}
-	if !shouldSkipConfigOverlay(true, overlay) {
-		t.Fatalf("expected pools overlay to be skipped when inactive")
-	}
-	if shouldSkipConfigOverlay(false, overlay) {
-		t.Fatalf("did not expect skip when active")
-	}
-	overlays := []packAppliedConfigOverlay{{Key: "timeouts"}, {Key: "pools"}}
-	if !hasPoolOverlay(overlays) {
-		t.Fatalf("expected pool overlay detected")
-	}
-}
-
-func TestPolicyFragmentID(t *testing.T) {
-	if got := policyFragmentID("pack1", ""); got != "pack1/default" {
-		t.Fatalf("unexpected fragment id: %s", got)
-	}
-	if got := policyFragmentID("pack1", "custom"); got != "pack1/custom" {
-		t.Fatalf("unexpected fragment id: %s", got)
-	}
-}
-
 func TestNormalizeDecision(t *testing.T) {
 	cases := map[string]string{
 		"allow":                  "ALLOW",
@@ -261,157 +504,6 @@ func TestNormalizeDecision(t *testing.T) {
 		if got := normalizeDecision(raw); got != expect {
 			t.Fatalf("decision %s expected %s got %s", raw, expect, got)
 		}
-	}
-}
-
-func TestRecordsToAny(t *testing.T) {
-	records := map[string]packRecord{
-		"pack1": {ID: "pack1", Version: "1.0.0", Status: "ACTIVE"},
-	}
-	out := recordsToAny(records)
-	if _, ok := out["pack1"]; !ok {
-		t.Fatalf("expected pack record in map")
-	}
-}
-
-func TestRecordsToAnyPreservesTestFields(t *testing.T) {
-	expectedTests := packTests{
-		PolicySimulations: []packPolicySimulation{
-			{
-				Name: "allow namespaced pack topic",
-				Request: packPolicySimulationRequest{
-					TenantId:   "tenant-1",
-					Topic:      "job.pack1.topic",
-					Capability: "pack1.capability",
-					RiskTags:   []string{"trusted", "internal"},
-					Requires:   []string{"approval"},
-					PackId:     "pack1",
-					ActorId:    "actor-1",
-					ActorType:  "service",
-				},
-				ExpectDecision: "ALLOW",
-			},
-		},
-	}
-	records := map[string]packRecord{
-		"pack1": {
-			ID:      "pack1",
-			Version: "1.0.0",
-			Status:  "ACTIVE",
-			Tests:   expectedTests,
-		},
-	}
-
-	out := recordsToAny(records)
-	data, err := json.Marshal(out)
-	if err != nil {
-		t.Fatalf("marshal round-trip payload: %v", err)
-	}
-
-	jsonText := string(data)
-	for _, key := range []string{
-		`"policySimulations"`,
-		`"name"`,
-		`"request"`,
-		`"expectDecision"`,
-		`"tenantId"`,
-		`"topic"`,
-		`"capability"`,
-		`"riskTags"`,
-		`"requires"`,
-		`"packId"`,
-		`"actorId"`,
-		`"actorType"`,
-	} {
-		if !strings.Contains(jsonText, key) {
-			t.Fatalf("expected JSON output to contain %s: %s", key, jsonText)
-		}
-	}
-	for _, key := range []string{
-		`"PolicySimulations"`,
-		`"Name"`,
-		`"Request"`,
-		`"ExpectDecision"`,
-		`"TenantId"`,
-		`"Topic"`,
-		`"Capability"`,
-		`"RiskTags"`,
-		`"Requires"`,
-		`"PackId"`,
-		`"ActorId"`,
-		`"ActorType"`,
-	} {
-		if strings.Contains(jsonText, key) {
-			t.Fatalf("expected JSON output to omit %s: %s", key, jsonText)
-		}
-	}
-
-	var roundTrip map[string]packRecord
-	if err := json.Unmarshal(data, &roundTrip); err != nil {
-		t.Fatalf("unmarshal round-trip payload: %v", err)
-	}
-
-	got, ok := roundTrip["pack1"]
-	if !ok {
-		t.Fatalf("expected pack1 record in round-trip payload")
-	}
-	if !reflect.DeepEqual(got.Tests, expectedTests) {
-		t.Fatalf("unexpected round-trip tests:\nwant: %#v\ngot:  %#v", expectedTests, got.Tests)
-	}
-}
-
-func TestValidatePoolsPatch(t *testing.T) {
-	patch := map[string]any{
-		"topics": map[string]any{"job.bad": map[string]any{}},
-	}
-	if err := validatePoolsPatch(patch, "pack1", nil, nil); err == nil {
-		t.Fatalf("expected namespacing error")
-	}
-
-	patch = map[string]any{
-		"pools": map[string]any{"shared": map[string]any{}},
-	}
-	if err := validatePoolsPatch(patch, "pack1", nil, nil); err == nil {
-		t.Fatalf("expected pool namespacing error")
-	}
-
-	current := map[string]any{"pools": map[string]any{"shared": map[string]any{}}}
-	if err := validatePoolsPatch(patch, "pack1", nil, current); err != nil {
-		t.Fatalf("expected existing pool to be allowed: %v", err)
-	}
-
-	patch = map[string]any{"topics": map[string]any{"job.pack1.ok": map[string]any{}}, "extra": 1}
-	if err := validatePoolsPatch(patch, "pack1", nil, nil); err == nil {
-		t.Fatalf("expected unsupported key error")
-	}
-}
-
-func TestValidateTimeoutsPatch(t *testing.T) {
-	patch := map[string]any{
-		"topics": map[string]any{"job.bad": map[string]any{}},
-	}
-	if err := validateTimeoutsPatch(patch, "pack1", nil); err == nil {
-		t.Fatalf("expected namespacing error")
-	}
-
-	patch = map[string]any{
-		"workflows": map[string]any{"bad.workflow": map[string]any{}},
-	}
-	if err := validateTimeoutsPatch(patch, "pack1", nil); err == nil {
-		t.Fatalf("expected workflow namespacing error")
-	}
-
-	patch = map[string]any{"topics": map[string]any{"job.pack1.ok": map[string]any{}}, "extra": 1}
-	if err := validateTimeoutsPatch(patch, "pack1", nil); err == nil {
-		t.Fatalf("expected unsupported key error")
-	}
-
-	patch = map[string]any{
-		"topics":    map[string]any{"job.pack1.ok": map[string]any{}},
-		"workflows": map[string]any{"pack1.workflow": map[string]any{}},
-	}
-	if err := validateTimeoutsPatch(patch, "pack1", nil); err != nil {
-		t.Fatalf("expected valid timeouts patch: %v", err)
 	}
 }
 
@@ -433,10 +525,19 @@ func TestRestClientEscapesResourceIDs(t *testing.T) {
 
 	for _, id := range dangerousIDs {
 		gotRawPaths = nil
-		_, _ = c.getSchema(ctx, id)
-		_ = c.deleteSchema(ctx, id)
-		_, _ = c.getWorkflow(ctx, id)
-		_ = c.deleteWorkflow(ctx, id)
+		if _, err := c.getSchema(ctx, id); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.getWorkflow(ctx, id); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.uninstallPack(ctx, id, false); err != nil {
+			t.Fatal(err)
+		}
+		want := []string{"/api/v1/schemas/" + url.PathEscape(id), "/api/v1/workflows/" + url.PathEscape(id), "/api/v1/packs/" + url.PathEscape(id) + "/uninstall"}
+		if !reflect.DeepEqual(gotRawPaths, want) {
+			t.Errorf("paths=%v want=%v", gotRawPaths, want)
+		}
 
 		for _, p := range gotRawPaths {
 			// After PathEscape, "../" becomes "..%2F" and spaces become "%20".
@@ -444,138 +545,6 @@ func TestRestClientEscapesResourceIDs(t *testing.T) {
 				t.Errorf("path not properly escaped: %s (from id %q)", p, id)
 			}
 		}
-	}
-}
-
-func TestBuildDeletePatch(t *testing.T) {
-	patch := map[string]any{
-		"topics": map[string]any{"job.pack1.ok": map[string]any{"timeout": 10}},
-		"pools":  map[string]any{"pack1.pool": map[string]any{"requires": []any{"gpu"}}},
-	}
-	out := buildDeletePatch(patch)
-	topics, ok := out["topics"].(map[string]any)
-	if !ok || topics["job.pack1.ok"] == nil {
-		t.Fatalf("expected delete patch for topics")
-	}
-}
-
-func TestAcquirePackLocks_RetriesGlobalReleaseOnPackLockFailure(t *testing.T) {
-	var globalReleaseCalls int
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Resource string `json:"resource"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
-
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/locks/acquire" && req.Resource == "packs:global":
-			w.WriteHeader(http.StatusNoContent)
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/locks/acquire" && req.Resource == "pack:demo-pack":
-			http.Error(w, "pack lock unavailable", http.StatusConflict)
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/locks/release" && req.Resource == "packs:global":
-			globalReleaseCalls++
-			if globalReleaseCalls == 1 {
-				http.Error(w, "transient global release failure", http.StatusInternalServerError)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			t.Fatalf("unexpected request: %s %s resource=%q", r.Method, r.URL.Path, req.Resource)
-		}
-	}))
-	defer srv.Close()
-
-	client := &restClient{baseURL: srv.URL, httpClient: srv.Client()}
-	release, err := acquirePackLocks(context.Background(), client, "demo-pack", "owner-1")
-	if err == nil {
-		t.Fatal("expected pack lock acquisition error")
-	}
-	if globalReleaseCalls != 1 {
-		t.Fatalf("expected one immediate global release attempt, got %d", globalReleaseCalls)
-	}
-
-	release()
-	if globalReleaseCalls != 2 {
-		t.Fatalf("expected cleanup to retry global release, got %d calls", globalReleaseCalls)
-	}
-
-	release()
-	if globalReleaseCalls != 2 {
-		t.Fatalf("expected cleanup to become a no-op after successful release, got %d calls", globalReleaseCalls)
-	}
-}
-
-func TestRunPackInstallReleasesLocksOnError(t *testing.T) {
-	packDir := t.TempDir()
-	manifest := fmt.Sprintf(`
-apiVersion: cordum.io/v1
-kind: Pack
-metadata:
-  id: demo-pack
-  version: 1.0.0
-compatibility:
-  protocolVersion: %d
-`, capsdk.DefaultProtocolVersion)
-	if err := os.WriteFile(filepath.Join(packDir, "pack.yaml"), []byte(strings.TrimSpace(manifest)), 0o600); err != nil {
-		t.Fatalf("write pack manifest: %v", err)
-	}
-
-	var releaseCalls []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/locks/acquire":
-			var req struct {
-				Resource string `json:"resource"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Fatalf("decode acquire lock request: %v", err)
-			}
-			switch req.Resource {
-			case "packs:global", "pack:demo-pack":
-				w.WriteHeader(http.StatusNoContent)
-			default:
-				t.Fatalf("unexpected acquire lock resource: %q", req.Resource)
-			}
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/locks/release":
-			var req struct {
-				Resource string `json:"resource"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Fatalf("decode release lock request: %v", err)
-			}
-			releaseCalls = append(releaseCalls, req.Resource)
-			w.WriteHeader(http.StatusNoContent)
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/config":
-			if got := r.URL.Query().Get("scope"); got != packRegistryScope {
-				t.Fatalf("unexpected config scope: %q", got)
-			}
-			if got := r.URL.Query().Get("scope_id"); got != packRegistryID {
-				t.Fatalf("unexpected config scope_id: %q", got)
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"scope":"system","scope_id":"packs","data":{}}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/config":
-			http.Error(w, "simulated registry failure", http.StatusInternalServerError)
-		default:
-			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
-		}
-	}))
-	defer srv.Close()
-
-	err := runPackInstall([]string{"--gateway", srv.URL, "--force", packDir})
-	if err == nil {
-		t.Fatal("expected runPackInstall to return an error")
-	}
-	if !strings.Contains(err.Error(), "update pack registry") {
-		t.Fatalf("expected updatePackRegistry error, got: %v", err)
-	}
-
-	wantReleaseCalls := []string{"pack:demo-pack", "packs:global"}
-	if !reflect.DeepEqual(releaseCalls, wantReleaseCalls) {
-		t.Fatalf("unexpected release calls\n got: %v\nwant: %v", releaseCalls, wantReleaseCalls)
 	}
 }
 
@@ -645,10 +614,6 @@ steps:
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/locks/acquire":
-			w.WriteHeader(http.StatusNoContent)
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/locks/release":
-			w.WriteHeader(http.StatusNoContent)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/schemas/"):
 			http.NotFound(w, r)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/workflows/"):
@@ -661,498 +626,6 @@ steps:
 
 	if err := runPackInstall([]string{"--gateway", srv.URL, "--force", "--dry-run", packDir}); err != nil {
 		t.Fatalf("expected dry-run install to succeed with topic schema bindings, got: %v", err)
-	}
-}
-
-func TestRunPackUninstallReleasesLocksOnError(t *testing.T) {
-	var releaseCalls []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/locks/acquire":
-			var req struct {
-				Resource string `json:"resource"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Fatalf("decode acquire lock request: %v", err)
-			}
-			switch req.Resource {
-			case "packs:global", "pack:demo-pack":
-				w.WriteHeader(http.StatusNoContent)
-			default:
-				t.Fatalf("unexpected acquire lock resource: %q", req.Resource)
-			}
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/locks/release":
-			var req struct {
-				Resource string `json:"resource"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Fatalf("decode release lock request: %v", err)
-			}
-			releaseCalls = append(releaseCalls, req.Resource)
-			w.WriteHeader(http.StatusNoContent)
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/config":
-			if got := r.URL.Query().Get("scope"); got != packRegistryScope {
-				t.Fatalf("unexpected config scope: %q", got)
-			}
-			if got := r.URL.Query().Get("scope_id"); got != packRegistryID {
-				t.Fatalf("unexpected config scope_id: %q", got)
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"scope":"system","scope_id":"packs","data":{"installed":{"demo-pack":{"id":"demo-pack","version":"1.0.0","status":"ACTIVE","overlays":{"config":[],"policy":[]},"resources":{"schemas":{},"workflows":{}}}}}}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/config":
-			http.Error(w, "simulated registry failure", http.StatusInternalServerError)
-		default:
-			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
-		}
-	}))
-	defer srv.Close()
-
-	err := runPackUninstall([]string{"--gateway", srv.URL, "demo-pack"})
-	if err == nil {
-		t.Fatal("expected runPackUninstall to return an error")
-	}
-	if !strings.Contains(err.Error(), "update pack registry") {
-		t.Fatalf("expected updatePackRegistry error, got: %v", err)
-	}
-
-	wantReleaseCalls := []string{"pack:demo-pack", "packs:global"}
-	if !reflect.DeepEqual(releaseCalls, wantReleaseCalls) {
-		t.Fatalf("unexpected release calls\n got: %v\nwant: %v", releaseCalls, wantReleaseCalls)
-	}
-}
-
-func TestRollbackPackInstallWithHooks_ReversesInstallOrderPerStage(t *testing.T) {
-	tests := []struct {
-		name      string
-		topics    []topicRegistration
-		policies  []appliedPolicyChange
-		configs   []appliedConfigChange
-		workflows []workflowPlan
-		schemas   []schemaPlan
-		want      []string
-	}{
-		{
-			name: "topic stage failure rolls back topics before remaining stages",
-			topics: []topicRegistration{
-				{Name: "job.pack.topic.one"},
-				{Name: "job.pack.topic.two"},
-			},
-			policies: []appliedPolicyChange{
-				{Overlay: packAppliedPolicyOverlay{Name: "policy.one"}},
-			},
-			configs: []appliedConfigChange{
-				{Overlay: packAppliedConfigOverlay{Name: "config.one"}},
-			},
-			workflows: []workflowPlan{
-				{ID: "workflow.one"},
-			},
-			schemas: []schemaPlan{
-				{ID: "schema.one"},
-			},
-			want: []string{
-				"topic:job.pack.topic.two",
-				"topic:job.pack.topic.one",
-				"policy:policy.one",
-				"config:config.one",
-				"workflow:workflow.one",
-				"schema:schema.one",
-			},
-		},
-		{
-			name: "schema stage failure rolls back schemas only",
-			schemas: []schemaPlan{
-				{ID: "schema.one"},
-				{ID: "schema.two"},
-			},
-			want: []string{
-				"schema:schema.two",
-				"schema:schema.one",
-			},
-		},
-		{
-			name: "workflow stage failure rolls back workflows before schemas",
-			workflows: []workflowPlan{
-				{ID: "workflow.one"},
-				{ID: "workflow.two"},
-			},
-			schemas: []schemaPlan{
-				{ID: "schema.one"},
-			},
-			want: []string{
-				"workflow:workflow.two",
-				"workflow:workflow.one",
-				"schema:schema.one",
-			},
-		},
-		{
-			name: "config stage failure rolls back config overlays before workflows and schemas",
-			configs: []appliedConfigChange{
-				{Overlay: packAppliedConfigOverlay{Name: "config.one"}},
-				{Overlay: packAppliedConfigOverlay{Name: "config.two"}},
-			},
-			workflows: []workflowPlan{
-				{ID: "workflow.one"},
-			},
-			schemas: []schemaPlan{
-				{ID: "schema.one"},
-			},
-			want: []string{
-				"config:config.two",
-				"config:config.one",
-				"workflow:workflow.one",
-				"schema:schema.one",
-			},
-		},
-		{
-			name: "policy stage failure rolls back policies before configs workflows and schemas",
-			policies: []appliedPolicyChange{
-				{Overlay: packAppliedPolicyOverlay{Name: "policy.one", FragmentID: "pack/policy.one"}},
-				{Overlay: packAppliedPolicyOverlay{Name: "policy.two", FragmentID: "pack/policy.two"}},
-			},
-			configs: []appliedConfigChange{
-				{Overlay: packAppliedConfigOverlay{Name: "config.one"}},
-			},
-			workflows: []workflowPlan{
-				{ID: "workflow.one"},
-			},
-			schemas: []schemaPlan{
-				{ID: "schema.one"},
-			},
-			want: []string{
-				"policy:policy.two",
-				"policy:policy.one",
-				"config:config.one",
-				"workflow:workflow.one",
-				"schema:schema.one",
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var got []string
-			hooks := packInstallRollbackHooks{
-				rollbackTopic: func(_ context.Context, _ *restClient, topic topicRegistration) error {
-					got = append(got, "topic:"+topic.Name)
-					return nil
-				},
-				restorePolicyOverlay: func(_ context.Context, _ *restClient, change appliedPolicyChange) error {
-					got = append(got, "policy:"+change.Overlay.Name)
-					return nil
-				},
-				restoreConfigOverlay: func(_ context.Context, _ *restClient, change appliedConfigChange) error {
-					got = append(got, "config:"+change.Overlay.Name)
-					return nil
-				},
-				rollbackWorkflow: func(_ context.Context, _ *restClient, plan workflowPlan) error {
-					got = append(got, "workflow:"+plan.ID)
-					return nil
-				},
-				rollbackSchema: func(_ context.Context, _ *restClient, plan schemaPlan) error {
-					got = append(got, "schema:"+plan.ID)
-					return nil
-				},
-			}
-
-			_ = rollbackPackInstallWithHooks(
-				context.Background(),
-				nil,
-				tt.topics,
-				tt.policies,
-				tt.configs,
-				tt.workflows,
-				tt.schemas,
-				hooks,
-			)
-
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Fatalf("rollback order mismatch\n got: %v\nwant: %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestRunPackInstallReportsRollbackErrors(t *testing.T) {
-	packDir := writeTopicRegistryPackFixture(t)
-
-	docs := map[string]configDoc{}
-	var removedTopics []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/locks/acquire":
-			w.WriteHeader(http.StatusNoContent)
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/locks/release":
-			w.WriteHeader(http.StatusNoContent)
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/schemas/"):
-			http.NotFound(w, r)
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/schemas":
-			w.WriteHeader(http.StatusCreated)
-		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/schemas/"):
-			w.WriteHeader(http.StatusNoContent)
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/config":
-			key := r.URL.Query().Get("scope") + "|" + r.URL.Query().Get("scope_id")
-			doc, ok := docs[key]
-			if !ok {
-				http.NotFound(w, r)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			if err := json.NewEncoder(w).Encode(doc); err != nil {
-				t.Fatalf("encode config doc: %v", err)
-			}
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/config":
-			var req configDoc
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Fatalf("decode config request: %v", err)
-			}
-			if req.Scope == packRegistryScope && req.ScopeID == packRegistryID {
-				http.Error(w, "simulated registry failure", http.StatusInternalServerError)
-				return
-			}
-			docs[req.Scope+"|"+req.ScopeID] = req
-			w.WriteHeader(http.StatusOK)
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/topics":
-			w.WriteHeader(http.StatusCreated)
-		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/topics/"):
-			removedTopics = append(removedTopics, strings.TrimPrefix(r.URL.Path, "/api/v1/topics/"))
-			http.Error(w, "simulated topic delete failure", http.StatusInternalServerError)
-		default:
-			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
-		}
-	}))
-	defer srv.Close()
-
-	var err error
-	stderr := captureStderr(t, func() {
-		err = runPackInstall([]string{"--gateway", srv.URL, "--force", packDir})
-	})
-	if err == nil {
-		t.Fatal("expected runPackInstall to return an error")
-	}
-	if !strings.Contains(err.Error(), "update pack registry") {
-		t.Fatalf("expected install error in returned error, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "rollback cleanup failed") {
-		t.Fatalf("expected rollback failure in returned error, got: %v", err)
-	}
-	if !strings.Contains(stderr, "WARNING: pack install rollback encountered errors") {
-		t.Fatalf("expected rollback warning on stderr, got %q", stderr)
-	}
-	if !reflect.DeepEqual(removedTopics, []string{"job.demo-pack.echo"}) {
-		t.Fatalf("expected rollback cleanup attempt for registered topic, got %v", removedTopics)
-	}
-}
-
-func TestRunPackInstallRegistersTopics(t *testing.T) {
-	packDir := writeTopicRegistryPackFixture(t)
-
-	docs := map[string]configDoc{}
-	var topicRequests []topicRegistration
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/locks/acquire":
-			w.WriteHeader(http.StatusNoContent)
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/locks/release":
-			w.WriteHeader(http.StatusNoContent)
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/schemas/"):
-			http.NotFound(w, r)
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/schemas":
-			w.WriteHeader(http.StatusCreated)
-		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/schemas/"):
-			w.WriteHeader(http.StatusNoContent)
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/config":
-			key := r.URL.Query().Get("scope") + "|" + r.URL.Query().Get("scope_id")
-			doc, ok := docs[key]
-			if !ok {
-				http.NotFound(w, r)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			if err := json.NewEncoder(w).Encode(doc); err != nil {
-				t.Fatalf("encode config doc: %v", err)
-			}
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/config":
-			var req configDoc
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Fatalf("decode config request: %v", err)
-			}
-			docs[req.Scope+"|"+req.ScopeID] = req
-			w.WriteHeader(http.StatusOK)
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/topics":
-			var req topicRegistration
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Fatalf("decode topic request: %v", err)
-			}
-			topicRequests = append(topicRequests, req)
-			w.WriteHeader(http.StatusCreated)
-		default:
-			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
-		}
-	}))
-	defer srv.Close()
-
-	if err := runPackInstall([]string{"--gateway", srv.URL, "--force", packDir}); err != nil {
-		t.Fatalf("expected install to succeed, got: %v", err)
-	}
-	if len(topicRequests) != 1 {
-		t.Fatalf("expected one topic registration, got %d", len(topicRequests))
-	}
-	got := topicRequests[0]
-	if got.Name != "job.demo-pack.echo" {
-		t.Fatalf("expected topic name job.demo-pack.echo, got %+v", got)
-	}
-	if got.Pool != "demo-pack" || got.InputSchemaID != "demo-pack/Input" || got.OutputSchemaID != "demo-pack/Output" {
-		t.Fatalf("unexpected topic schema/pool fields: %+v", got)
-	}
-	if got.PackID != "demo-pack" || got.Status != "active" {
-		t.Fatalf("unexpected topic ownership/status fields: %+v", got)
-	}
-	if !reflect.DeepEqual(got.Requires, []string{"local"}) || !reflect.DeepEqual(got.RiskTags, []string{"safe"}) {
-		t.Fatalf("unexpected topic policy fields: %+v", got)
-	}
-}
-
-func TestRunPackInstallRollbackRemovesTopics(t *testing.T) {
-	packDir := writeTopicRegistryPackFixture(t)
-
-	docs := map[string]configDoc{}
-	var registeredTopics []string
-	var removedTopics []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/locks/acquire":
-			w.WriteHeader(http.StatusNoContent)
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/locks/release":
-			w.WriteHeader(http.StatusNoContent)
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/schemas/"):
-			http.NotFound(w, r)
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/schemas":
-			w.WriteHeader(http.StatusCreated)
-		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/schemas/"):
-			w.WriteHeader(http.StatusNoContent)
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/config":
-			key := r.URL.Query().Get("scope") + "|" + r.URL.Query().Get("scope_id")
-			doc, ok := docs[key]
-			if !ok {
-				http.NotFound(w, r)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			if err := json.NewEncoder(w).Encode(doc); err != nil {
-				t.Fatalf("encode config doc: %v", err)
-			}
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/config":
-			var req configDoc
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Fatalf("decode config request: %v", err)
-			}
-			if req.Scope == packRegistryScope && req.ScopeID == packRegistryID {
-				http.Error(w, "simulated registry failure", http.StatusInternalServerError)
-				return
-			}
-			docs[req.Scope+"|"+req.ScopeID] = req
-			w.WriteHeader(http.StatusOK)
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/topics":
-			var req topicRegistration
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Fatalf("decode topic request: %v", err)
-			}
-			registeredTopics = append(registeredTopics, req.Name)
-			w.WriteHeader(http.StatusCreated)
-		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/topics/"):
-			removedTopics = append(removedTopics, strings.TrimPrefix(r.URL.Path, "/api/v1/topics/"))
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
-		}
-	}))
-	defer srv.Close()
-
-	err := runPackInstall([]string{"--gateway", srv.URL, "--force", packDir})
-	if err == nil {
-		t.Fatal("expected runPackInstall to return an error")
-	}
-	if !strings.Contains(err.Error(), "update pack registry") {
-		t.Fatalf("expected updatePackRegistry error, got: %v", err)
-	}
-	if !reflect.DeepEqual(registeredTopics, []string{"job.demo-pack.echo"}) {
-		t.Fatalf("unexpected registered topics: %v", registeredTopics)
-	}
-	if !reflect.DeepEqual(removedTopics, []string{"job.demo-pack.echo"}) {
-		t.Fatalf("expected rollback to remove registered topic, got %v", removedTopics)
-	}
-}
-
-func TestRunPackUninstallRemovesTopics(t *testing.T) {
-	record := packRecord{
-		ID:      "demo-pack",
-		Version: "1.0.0",
-		Status:  "ACTIVE",
-		Manifest: packRecordManifest{
-			Metadata: packMetadata{ID: "demo-pack", Version: "1.0.0"},
-			Topics: []packTopic{
-				{Name: "job.demo-pack.echo"},
-			},
-		},
-		Overlays: packRecordOverlays{
-			Config: []packAppliedConfigOverlay{},
-			Policy: []packAppliedPolicyOverlay{},
-		},
-		Resources: packRecordResources{
-			Schemas:   map[string]string{},
-			Workflows: map[string]string{},
-		},
-	}
-	docs := map[string]configDoc{
-		packRegistryScope + "|" + packRegistryID: {
-			Scope:   packRegistryScope,
-			ScopeID: packRegistryID,
-			Data: map[string]any{
-				"installed": recordsToAny(map[string]packRecord{
-					"demo-pack": record,
-				}),
-			},
-		},
-	}
-	var removedTopics []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/locks/acquire":
-			w.WriteHeader(http.StatusNoContent)
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/locks/release":
-			w.WriteHeader(http.StatusNoContent)
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/config":
-			key := r.URL.Query().Get("scope") + "|" + r.URL.Query().Get("scope_id")
-			doc, ok := docs[key]
-			if !ok {
-				http.NotFound(w, r)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			if err := json.NewEncoder(w).Encode(doc); err != nil {
-				t.Fatalf("encode config doc: %v", err)
-			}
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/config":
-			var req configDoc
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Fatalf("decode config request: %v", err)
-			}
-			docs[req.Scope+"|"+req.ScopeID] = req
-			w.WriteHeader(http.StatusOK)
-		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/topics/"):
-			removedTopics = append(removedTopics, strings.TrimPrefix(r.URL.Path, "/api/v1/topics/"))
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
-		}
-	}))
-	defer srv.Close()
-
-	if err := runPackUninstall([]string{"--gateway", srv.URL, "demo-pack"}); err != nil {
-		t.Fatalf("expected uninstall to succeed, got: %v", err)
-	}
-	if !reflect.DeepEqual(removedTopics, []string{"job.demo-pack.echo"}) {
-		t.Fatalf("expected uninstall to remove pack topic, got %v", removedTopics)
 	}
 }
 
@@ -1180,115 +653,5 @@ func TestLoadPackRegistryInitializesNilDataMap(t *testing.T) {
 	}
 	if doc.Data == nil {
 		t.Fatalf("expected doc.Data to be initialized, got nil")
-	}
-}
-
-func TestUpdatePackRegistryHandlesNilConfigData(t *testing.T) {
-	var posted map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/config":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"scope":"system","scope_id":"packs","data":null}`))
-			return
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/config":
-			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
-				t.Fatalf("decode posted config: %v", err)
-			}
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{}`))
-			return
-		default:
-			http.NotFound(w, r)
-			return
-		}
-	}))
-	defer srv.Close()
-
-	client := &restClient{baseURL: srv.URL, httpClient: srv.Client()}
-	err := updatePackRegistry(context.Background(), client, packRecord{
-		ID:      "pack.demo",
-		Version: "1.0.0",
-		Status:  "ACTIVE",
-	})
-	if err != nil {
-		t.Fatalf("updatePackRegistry returned error: %v", err)
-	}
-
-	if posted == nil {
-		t.Fatalf("expected setConfig POST body")
-	}
-	data, ok := posted["data"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected data map in POST body, got %T", posted["data"])
-	}
-	installed, ok := data["installed"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected installed map in data, got %T", data["installed"])
-	}
-	record, ok := installed["pack.demo"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected posted record for pack.demo, got %T", installed["pack.demo"])
-	}
-	if got := record["id"]; got != "pack.demo" {
-		t.Fatalf("expected posted id pack.demo, got %v", got)
-	}
-}
-
-func TestApplyPolicyOverlayWritesSystemPolicyScope(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "policy.fragment.yaml"), []byte("tenants:\n  default:\n    allow_topics:\n      - job.pack.demo\n"), 0o600); err != nil {
-		t.Fatalf("write policy fragment: %v", err)
-	}
-
-	var getScope string
-	var getScopeID string
-	var posted map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/config":
-			getScope = r.URL.Query().Get("scope")
-			getScopeID = r.URL.Query().Get("scope_id")
-			http.NotFound(w, r)
-			return
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/config":
-			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
-				t.Fatalf("decode posted config: %v", err)
-			}
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{}`))
-			return
-		default:
-			http.NotFound(w, r)
-			return
-		}
-	}))
-	defer srv.Close()
-
-	client := &restClient{baseURL: srv.URL, httpClient: srv.Client()}
-	overlay := packPolicyOverlay{Name: "safety", Path: "policy.fragment.yaml", Strategy: "bundle_fragment"}
-	if _, err := applyPolicyOverlay(context.Background(), client, overlay, "pack.demo", "1.2.3", dir); err != nil {
-		t.Fatalf("applyPolicyOverlay returned error: %v", err)
-	}
-
-	if getScope != policyConfigScope || getScopeID != policyConfigID {
-		t.Fatalf("expected GET scope %s/%s, got %s/%s", policyConfigScope, policyConfigID, getScope, getScopeID)
-	}
-	if posted == nil {
-		t.Fatal("expected setConfig POST body")
-	}
-	if posted["scope"] != policyConfigScope || posted["scope_id"] != policyConfigID {
-		t.Fatalf("expected POST scope %s/%s, got %v/%v", policyConfigScope, policyConfigID, posted["scope"], posted["scope_id"])
-	}
-	data, ok := posted["data"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected data map in POST body, got %T", posted["data"])
-	}
-	bundles, ok := data[policyConfigKey].(map[string]any)
-	if !ok {
-		t.Fatalf("expected bundles map in POST body, got %T", data[policyConfigKey])
-	}
-	if bundles["pack.demo/safety"] == nil {
-		t.Fatalf("expected bundle stored under pack.demo/safety, got %v", bundles)
 	}
 }

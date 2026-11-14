@@ -7,6 +7,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Docs: the Safety Kernel guide, scheduler internals, configuration reference, production
+  runbook, threat model and dashboard page spec now name the settings that select each fail
+  mode. The scheduler's input and output modes are the config-service keys
+  `scheduler.input_fail_mode` and `scheduler.output_fail_mode`, closed when unset;
+  `POLICY_CHECK_FAIL_MODE` selects the Gateway submit pre-check; and open input mode admits
+  only topics listed in `scheduler.input_fail_open_scope`. The rate-limit pages no longer say
+  that a Redis outage falls back to in-memory limits: the Redis-backed limiter denies while
+  Redis is unreachable. The failure and partition behavior contract records that its cited
+  tests pass at `da5f9bda` (task-ca72211e).
+- `cordumctl pack install`, upgrades and uninstall use the gateway pack API,
+  applying the gateway's checks to every install. Install requires `packs.install`
+  (`auth.PermPacksInstall`) or admin, and prints the returned pack worker credential
+  to stdout. `/api/v1/config` preserves server-managed `system/policy` bundles and
+  the `system/packs` registry, returning `CONFIG_KEY_FORBIDDEN` for changes; use
+  the policy bundle API or the pack API instead. Older cordumctl versions must
+  be upgraded to install or uninstall packs against this gateway.
 - Migrated the shared dashboard DataTable to TanStack React Table 9.3.1 with
   explicit sorting, sizing and visibility features, preserving its existing
   rendering and interaction contracts (task-fa2b4cef).
@@ -97,6 +113,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Limits: unsigned worker on the compat CAP profile, and MCP with `policy_gate_enabled=false`.
 - `tools/scripts/workflow_credential_guard.py` registers the new workflow and its six masked credentials. Failure artifacts are redacted before upload.
 
+#### demo/a2a-governed — governed A2A end-to-end test in CI: input-required resume, Cordum safety decisions and policy deny (2026-11-13, task-171d7f02)
+
+- New `demo/a2a-governed`. Its pack registers `job.a2a-governed.turns` and `job.a2a-governed.denied`, routes both to pool `a2a-governed`, and adds the rules `a2a-governed-denied` and `a2a-governed-allow`. It also has `integration_test.sh` and the `demo-a2a-governed-e2e` workflow. The workflow builds `cap-a2a-bridge` and the example worker from cordum-io/cap at pinned commit `3216b280`, then runs them on the host against the default compose stack, with TLS on HTTP, NATS and Redis.
+- The test asserts four outcomes. An allowed A2A turn ends `INPUT_REQUIRED`, and its resume ends `COMPLETED`. Each of those jobs is `SUCCEEDED`, with an `ALLOW` decision by `a2a-governed-allow`. A turn on the denied topic ends `REJECTED`, and its job is `DENIED` by `a2a-governed-denied` and never dispatched. On success it prints `A2A GOVERNED DEMO OK` once.
+- Compat profile only. Cordum admits the bridge's raw, unsigned `sys.job.submit` only while handshake is `off` or `warn`, so the bridge and the worker run with `CAP_A2A_DEV_UNSIGNED=1`. The A2A result does not reflect Cordum's output-safety verdict. `demo/a2a-governed/README.md` lists the limitations.
+- `tools/scripts/workflow_credential_guard.py` adds an inventory row for the new workflow and its three generated credentials.
+
 ### Changed
 
 - The eight required checks also run on `merge_group` events, with OpenAPI
@@ -105,6 +128,73 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   ruleset (task-fd34e921).
 
 ### Security
+
+- Upgrade note, production signed-content enforcement. In the production
+  profile (`CORDUM_ENV=production` or `CORDUM_PRODUCTION=true`) with no
+  override, the safety kernel activates config-store policy only when its
+  signature verifies, and the gateway refuses unsigned packs and stores signed
+  pack policy fragments.
+  - `deploy/k8s/production`, and any deployment with `CORDUM_ENV=production`
+    and no explicit override, now refuses unsigned packs.
+  - The packs in the official catalog are not yet signed. Until they are,
+    production refuses them unless `CORDUM_GATEWAY_PACK_STRICT=false` is set.
+    That override restores the previous pack behavior, and the admin-only
+    `signature_enforcement.packs.strict` field of `GET /api/v1/status`
+    reports it.
+  - `CORDUM_POLICY_STRICT=warn` explicitly restores the previous policy-store
+    behavior.
+  - A production gateway with no policy signing key boots, then refuses policy
+    writes with 503 `POLICY_SIGNING_REQUIRED`. Configure a policy signing key
+    whose public half the policy trust store holds
+    (`CORDUM_POLICY_PUBLIC_KEY_<ID>`), or set an explicit
+    `CORDUM_POLICY_STRICT=warn` to restore the previous write behavior.
+  - Before upgrading, export the safety kernel's
+    `CORDUM_POLICY_PUBLIC_KEY_<ID>` and run
+    `cordumctl policy verify-store --gateway <url> --api-key <admin key>`.
+    It exits 0 when the store is clean, 1 when it lists bundles that would be
+    refused, and 2 on a configuration error. Against a gateway at v1.0.0 or
+    older that has no policy document, it exits 2.
+  - Re-sign the listed bundles that no pack owns with
+    `cordumctl policy resign --bundle <id> [--bundle <id> ...]` or
+    `cordumctl policy resign --all`. Both need an admin key, and the gateway
+    needs a policy signing key its trust store holds.
+  - Fix pack-owned policy fragments by reinstalling the pack.
+
+- Policy signing upgrade tools: the safety kernel's boot check uses
+  `policysign.ResolveMode`, reporting `enforce` in production when
+  `CORDUM_POLICY_STRICT` is unset and refusing startup without a trusted
+  `CORDUM_POLICY_PUBLIC_KEY_<ID>`. `cordumctl policy verify-store` lists unsigned,
+  malformed, untrusted-key, stale-signature and bad-signature store bundles,
+  reports pack reinstallation remedies, exits nonzero on refusals and writes
+  nothing. `cordumctl policy resign --bundle <id>` (or explicit `--all`) signs
+  current stored content through `POST /api/v1/policy/bundles/{id}/resign` using
+  the gateway's trusted signing key. This admin-role action stores one audit
+  entry per bundle, never runs automatically and refuses pack-owned fragments
+  or a missing or untrusted signing key.
+
+- Gateway: policy audit entries are stored independently of the client
+  request's lifetime. A concurrent change to the audit log is retried, and an
+  entry that still cannot be stored is logged at ERROR. Policy writes that need
+  an atomic audit record can commit the policy document and its audit entry in
+  one Redis transaction. A co-located audit document keeps both keys in one
+  Redis Cluster slot, and the policy audit API (`GET /api/v1/policy/audit`)
+  returns entries from both audit documents.
+
+- Gateway: velocity-rule create and update, and the output-rule enable toggle,
+  store their policy bundle with a signature from the configured policy signing
+  key (`CORDUM_POLICY_SIGNING_KEY`). When the policy store's signature mode is
+  enforce, these writes are refused before any change with 503
+  `POLICY_SIGNING_REQUIRED` unless a signing key whose public half the policy
+  trust store holds (`CORDUM_POLICY_PUBLIC_KEY_<ID>`) is configured. Enforce
+  means `policysign.ResolveMode` resolves enforce (for example the production
+  profile with `CORDUM_POLICY_STRICT` unset, or an explicit `enforce`) or the
+  value is unrecognised. Under an explicit `CORDUM_POLICY_STRICT=warn` or `off`,
+  a write that cannot be signed with a trusted key still proceeds, with a
+  warning. The gateway's boot-time move of legacy policy bundles from
+  `system/default` to `system/policy` never signs content. Under enforce it moves
+  them only when every legacy bundle with content already carries a signature
+  that verifies under the policy trust store; otherwise it leaves them in place
+  and logs `policy.legacy_migration_unverified` with the count.
 
 - Job submit and delegation token issue fail closed when the agent identity
   store cannot be read (task-7ded46ca). HTTP job submit and gRPC `SubmitJob`
@@ -116,6 +206,35 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   returns 503 and audits outcome `error` instead of a 403 `denied`. An absent
   or dangling link and an empty principal behave as before. This was
   CodeRabbit's finding on #570.
+
+#### core/controlplane/gateway — production pack trust (2026-11-13, task-a9787d2f)
+- In the production profile (`CORDUM_ENV=production` or `CORDUM_PRODUCTION=true`),
+  upload and marketplace installs default to requiring a pack signature verified
+  against a trusted publisher key. With no trusted publisher key, every pack is
+  refused. The development profile is unchanged.
+- Explicit downgrade: `CORDUM_GATEWAY_PACK_STRICT=false` or Redis
+  `cfg:packs:strict_mode=false` disables pack enforcement unless either setting
+  is explicitly true. The gateway logs the downgrade at startup and on every
+  unsigned install. The release compose sets this downgrade until official packs
+  are signed; production deployments without an override remain strict.
+- Pack policy fragments are signed with the configured usable policy signing key.
+  Enforced policy-store mode refuses an install before any write when its fragment
+  cannot be signed under the policy trust store (`pack.policy_unsigned`). An
+  undetermined mode is enforced. Explicit `CORDUM_POLICY_STRICT=warn` or `off`
+  permits unsigned storage with a warning when no usable signing key is available.
+
+- Safety kernel: one signature rule now covers every policy source (file, URL
+  and config store), and `policysign.ResolveMode` exposes it. In the production
+  profile (`CORDUM_ENV=production` or `CORDUM_PRODUCTION=true`) with
+  `CORDUM_POLICY_STRICT` unset, a config-store policy bundle becomes active only
+  when its signature verifies against the policy trust store
+  (`CORDUM_POLICY_PUBLIC_KEY_<ID>`); a refused bundle leaves the active policy in
+  place. With `CORDUM_POLICY_STRICT` unset, `SAFETY_POLICY_SIGNATURE_REQUIRED=true`
+  also enforces for every source. Signature metadata with a missing or
+  unsupported algorithm, or a missing, undecodable or wrong-length value, is
+  refused as malformed for every source. An explicit `CORDUM_POLICY_STRICT` still
+  wins: `warn` logs signature failures and keeps loading, and `off` skips
+  verification. The development profile is unchanged.
 
 #### core/controlplane/gateway — Edge LLM and runtime ingest accept only an authenticated proxy or collector identity (2026-11-13, task-3b633938)
 
@@ -401,9 +520,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 - Audit publishing tolerates a missing fallback or exporter: events without a
   usable sink are dropped, logged and counted in
-  `cordum_audit_events_dropped_total{reason}`. The Safety Kernel's shadow sender
-  has a discard fallback, and cordum-mcp's NATS audit fallback writes to stderr
-  when no SIEM exporter is configured.
+  `cordum_audit_events_dropped_total{reason}`. cordum-mcp's NATS audit fallback
+  writes to stderr when no SIEM exporter is configured.
+
+- The Safety Kernel now counts shadow_eval audit events that fail to publish to
+  NATS in `cordum_audit_events_dropped_total{reason="no_fallback"}`. They were
+  discarded uncounted before. Shadow events are diagnostic, so this is an
+  observability fix; failed events are still never republished.
 
 - cordum-mcp writes its stderr audit events at every `CORDUM_LOG_LEVEL`, and
   the text log format prints each event as JSON text. cordum-mcp also closes

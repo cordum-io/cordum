@@ -304,24 +304,28 @@ In `cmd/cordum-scheduler/main.go`:
 - `SafetyClient` is created with a local-only breaker, then upgraded to Redis-backed via `safetyClient.WithRedis(sagaRedis)`.
 - `OutputSafetyClient` uses its internal Redis connection (`resultClient`) for the distributed breaker automatically.
 
-When the input circuit is open, the scheduler receives `SafetyUnavailable` decisions instead of blocking on RPC. The input fail mode (`POLICY_CHECK_FAIL_MODE`) then determines whether the job is requeued or allowed through.
+When the input circuit is open, the scheduler receives `SafetyUnavailable` decisions instead of blocking on RPC. The scheduler's input fail mode (section 10) then determines whether the job is requeued or admitted.
 
 ## 10. Input Policy Fail Mode
 
-When the safety kernel is unreachable during pre-dispatch policy checks, the scheduler's behavior is controlled by the `POLICY_CHECK_FAIL_MODE` setting:
+When the safety kernel is unreachable during pre-dispatch policy checks, the scheduler's behavior is set by its input fail mode: the config-service key `scheduler.input_fail_mode`, set system-wide or per tenant. An unset mode is closed, and the production identity profile forces closed.
 
 | Mode | Behavior | Risk |
 |------|----------|------|
-| `closed` (default) | Job is requeued with exponential backoff until the safety kernel recovers | No unsafe jobs pass through; availability impact during outages |
-| `open` | Job is allowed through with a warning log and metric increment | Jobs bypass safety checks; use only when availability is prioritized over safety |
+| `closed` (default) | Job is requeued and not published until the safety kernel recovers | Availability impact during outages |
+| `open` | A job whose topic a `scheduler.input_fail_open_scope` rule lists is admitted, and its audit event and the fail-open metric name the rule; every other job is requeued as in `closed` | Listed topics run without a policy decision |
 
-**Risk implications of fail-open**: In `open` mode, jobs that would normally be denied or require approval are allowed through without evaluation. This should only be used in environments where safety violations are tolerable (e.g., staging) or where compensating controls exist downstream. Production deployments should use the default `closed` mode.
+**Risk implications of fail-open**: In `open` mode, a job on a listed topic runs without evaluation, including a job that would normally be denied or require approval. The operator's scope rule, not the kernel, classes a listed topic as low risk, so list only topics whose jobs are acceptable without a policy decision. Production deployments should use the default `closed` mode.
 
 **Configuration**:
-- Environment variable: `POLICY_CHECK_FAIL_MODE` (values: `closed`, `open`)
-- Config file: `config/safety.yaml` under `input_policy.fail_mode`
+- Mode: config-service key `scheduler.input_fail_mode` (values: `closed`, `open`), system-wide or per tenant.
+- Scope: config-service key `scheduler.input_fail_open_scope`, a system- or tenant-level list of named rules with exact topics. A tenant list replaces the system list, and an empty list opts out. Malformed entries, wildcard topics and approval-gate subjects are ignored.
+- `POLICY_CHECK_FAIL_MODE` selects the Gateway's submit-time pre-check: `closed` (default) rejects a submit while the kernel is unavailable, and `open` accepts it. It does not select the scheduler's mode.
+- `input_policy.fail_mode` in `config/safety.yaml` selects neither mode.
 
-**Prometheus metric**: `cordum_scheduler_input_fail_open_total` (counter, labels: `topic`) — incremented each time a job is allowed through under fail-open mode. Alert on this metric to detect safety kernel outages that are silently bypassing policy checks.
+**Prometheus metric**: `cordum_scheduler_input_fail_open_total` (counter, labels: `topic`, `scope_rule`) — incremented each time a job is admitted under fail-open mode. Alert on this metric to detect safety kernel outages during which listed topics run without policy checks.
+
+What is measured is recorded in the [failure and partition behavior contract](contract/failure-behavior.md).
 
 ## 11. Environment Variables
 
