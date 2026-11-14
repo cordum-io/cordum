@@ -84,7 +84,8 @@ in `core/controlplane/gateway/handlers_packs.go`):
 
 If any of steps 4–6 fails, step 3's writes are rolled back via
 `DeleteMany(registeredTopicNames)` and the other pack-lifecycle
-mutations unwind too. The scheduler never sees a partial installation.
+mutations unwind too (CLM-089 in the [claims register](../contract/claims.yaml),
+status supported).
 
 ## Pack uninstall flow
 

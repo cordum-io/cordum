@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Docs: the policy-authority pages (docs/policy/global-authority.md, docs/policy/tiers.md,
+  docs/safety/decision-thresholds.md, docs/topics/registry.md and
+  docs/operations/safetykernel-constraints.md) now state the invariants floor, the decision
+  threshold, pack-install rollback and the constraint extension fields at the status recorded
+  in docs/contract/claims.yaml and docs/contract/invariants.yaml. The floor is described as rule
+  order inside the four evaluators, and enforcement of the three constraint extension fields as
+  not measured (M0-07-DOCS-POLICY, task-a961d583).
 - Docs: the audit-verify API page, two OpenAPI operation descriptions, and the audit-chain,
   image-tag, policy-signing, pack-signing, binary-signing and agentd-keychain pages now qualify
   their integrity, signing and key-handling statements against the claim register (CLM-052,
