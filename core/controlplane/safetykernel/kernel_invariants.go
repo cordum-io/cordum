@@ -70,16 +70,17 @@ func applyKernelInvariants(base, inv *config.SafetyPolicy) *config.SafetyPolicy 
 }
 
 // splitKernelInvariantRulesByDecision partitions invariant rules into the
-// DENY-uncrossable bucket (decisions that block or escalate execution)
-// and the ALLOW fallback bucket. Mirrors splitInvariantRulesByDecision in
-// the gateway-side policybundles package.
+// DENY-uncrossable bucket (every decision that is not allow-class: deny and
+// its aliases such as block, require_approval, throttle) and the ALLOW
+// fallback bucket. config.IsAllowClassDecision draws the line, as it does
+// for splitInvariantRulesByDecision in the gateway-side policybundles
+// package and for the MCP gate.
 func splitKernelInvariantRulesByDecision(rules []config.PolicyRule) (denies, allows []config.PolicyRule) {
 	for _, r := range rules {
-		switch strings.ToLower(strings.TrimSpace(r.Decision)) {
-		case "deny", "require_approval", "require-approval", "require_human", "throttle":
-			denies = append(denies, r)
-		default:
+		if config.IsAllowClassDecision(r.Decision) {
 			allows = append(allows, r)
+		} else {
+			denies = append(denies, r)
 		}
 	}
 	return denies, allows
