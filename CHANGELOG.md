@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Safety Kernel: a rule's `match.mcp` lists now have one meaning
+  (`config.MCPRuleMatch`). A rule with MCP lists never matches a non-MCP job.
+  On a deny-class rule the lists name the calls the rule blocks; on an
+  allow-class rule they name the calls it permits. Tenant `mcp` lists are no
+  longer copied into the generated topic rules; `MCPAllowed` still enforces
+  them. Go callers of `config.MatchRule` pass the rule (#492, task-ad7ba6ce).
+
 - Legal-hold endpoints check tenant access, and creating a legal hold without
   `tenant_id` now applies it to the caller's tenant (#492, task-4ab53a76).
 
@@ -200,6 +207,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   ruleset (task-fd34e921).
 
 ### Security
+
+- Safety Kernel: `label_threshold` resolves an unreadable label value
+  restrictively. A value that does not parse as a number makes a `deny`,
+  `require_approval` or `throttle` rule match and an `allow` or
+  `allow_with_constraints` rule not match (#492, task-ad7ba6ce).
 
 - Gateway: job submit over HTTP, gRPC and MCP drops client `approval_*`,
   `gate_type`, `cordum.bus_msg_id` and `policy.attachment_id` labels and logs
