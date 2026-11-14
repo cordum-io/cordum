@@ -54,7 +54,8 @@ type packSignatureBundle struct {
 var packSignatureSources = map[string][]string{
 	"upload":      {"handleInstallPack", "installPackFromDir", "updatePackRegistry", "savePackRegistry"},
 	"marketplace": {"handleMarketplaceInstall", "installPackFromDir", "updatePackRegistry", "savePackRegistry"},
-	"cordumctl":   {"handleSetConfig"},
+	"cordumctl":   {"handleInstallPack", "installPackFromDir", "updatePackRegistry", "savePackRegistry"},
+	"config-api":  {"handleSetConfig"},
 }
 
 func packMatrixRefusal(code, prefix string) packSignatureWant {
@@ -64,6 +65,20 @@ func packMatrixRefusal(code, prefix string) packSignatureWant {
 
 func TestPackSignatureMatrix(t *testing.T) {
 	cells := []packSignatureCell{
+		{"production", "config-api", "signed", packMatrixConfigRefusal()},
+		{"production", "config-api", "unsigned", packMatrixConfigRefusal()},
+		{"production", "config-api", "unknown-kid", packMatrixConfigRefusal()},
+		{"production", "config-api", "wrong-key", packMatrixConfigRefusal()},
+		{"production", "config-api", "tampered", packMatrixConfigRefusal()},
+		{"production", "config-api", "malformed", packMatrixConfigRefusal()},
+		{"production", "config-api", "signed-fragment", packMatrixConfigRefusal()},
+		{"development", "config-api", "signed", packMatrixConfigRefusal()},
+		{"development", "config-api", "unsigned", packMatrixConfigRefusal()},
+		{"development", "config-api", "unknown-kid", packMatrixConfigRefusal()},
+		{"development", "config-api", "wrong-key", packMatrixConfigRefusal()},
+		{"development", "config-api", "tampered", packMatrixConfigRefusal()},
+		{"development", "config-api", "malformed", packMatrixConfigRefusal()},
+		{"development", "config-api", "signed-fragment", packMatrixConfigRefusal()},
 		{"production", "marketplace", "signed", packSignatureWant{status: 200, signed: true}},
 		{"production", "marketplace", "unknown-kid", packMatrixRefusal("PACK_INSTALL_INVALID", "pack.unknown_kid: ")},
 		{"production", "marketplace", "wrong-key", packMatrixRefusal("PACK_INVALID_SIGNATURE", "pack.bad_signature: ")},
@@ -75,9 +90,9 @@ func TestPackSignatureMatrix(t *testing.T) {
 		{"development", "marketplace", "wrong-key", packMatrixRefusal("PACK_INVALID_SIGNATURE", "pack.bad_signature: ")},
 		{"development", "marketplace", "tampered", packMatrixRefusal("PACK_INSTALL_INVALID", "pack.tampered: ")},
 		{"development", "marketplace", "malformed", packMatrixRefusal("PACK_INVALID_SIGNATURE", "pack.malformed: ")},
-		{"production", "cordumctl", "signed", packSignatureWant{status: 204, signed: true}},
-		{"development", "cordumctl", "signed", packSignatureWant{status: 204, signed: true}},
-		{"development", "cordumctl", "unsigned", packSignatureWant{status: 204}},
+		{"production", "cordumctl", "signed", packSignatureWant{status: 200, signed: true}},
+		{"development", "cordumctl", "signed", packSignatureWant{status: 200, signed: true}},
+		{"development", "cordumctl", "unsigned", packSignatureWant{status: 200}},
 		{"production", "upload", "signed", packSignatureWant{status: 200, signed: true}},
 		{"production", "upload", "unknown-kid", packMatrixRefusal("PACK_INSTALL_INVALID", "pack.unknown_kid: ")},
 		{"production", "upload", "wrong-key", packMatrixRefusal("PACK_INVALID_SIGNATURE", "pack.bad_signature: ")},
@@ -131,13 +146,17 @@ func runPackSignatureCell(t *testing.T, cell packSignatureCell) {
 	case "marketplace":
 		drive = preparePackMarketplace(t, s, bundle)
 	case "cordumctl":
+		drive = func() *httptest.ResponseRecorder { return installPackLikeCordumctl(t, s, bundle) }
+	case "config-api":
 		drive = func() *httptest.ResponseRecorder { return replayPackConfig(t, s, bundle, cell.state) }
 	default:
 		t.Fatalf("unknown source %q", cell.source)
 	}
 	before := snapshotPackKeyspace(t, s)
 	resp := drive()
-	if cell.want.status >= 400 {
+	if cell.source == "config-api" {
+		assertPackConfigWriteRefused(t, s, before, resp, cell.want)
+	} else if cell.want.status >= 400 {
 		assertPackRefused(t, s, before, resp, cell.want)
 	} else {
 		assertPackAccepted(t, s, before, resp, cell.want, bundle.content, cell.source)
@@ -145,6 +164,51 @@ func runPackSignatureCell(t *testing.T, cell packSignatureCell) {
 			assertPackFragmentSignatureVerifies(t, s, matrixPackID, "safety")
 		}
 	}
+}
+
+func packMatrixConfigRefusal() packSignatureWant {
+	return packSignatureWant{status: 400, code: "CONFIG_KEY_FORBIDDEN", prefix: "config.managed_key: ", allowedKeys: []string{"cfg:system:policy_audit"}}
+}
+
+func installPackLikeCordumctl(t *testing.T, s *server, bundle packSignatureBundle) *httptest.ResponseRecorder {
+	t.Helper()
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	part, err := mw.CreateFormFile("bundle", "bundle.tgz")
+	packMatrixOK(t, err)
+	_, err = part.Write(bundle.tgz)
+	packMatrixOK(t, err)
+	packMatrixOK(t, mw.WriteField("force", "true"))
+	packMatrixOK(t, mw.WriteField("upgrade", "false"))
+	packMatrixOK(t, mw.WriteField("inactive", "false"))
+	packMatrixOK(t, mw.Close())
+	req := httptest.NewRequest("POST", "/api/v1/packs/install", &body)
+	req.Header.Set("X-Tenant-ID", "default")
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp := httptest.NewRecorder()
+	s.handleInstallPack(resp, req)
+	return resp
+}
+
+func assertPackConfigWriteRefused(t *testing.T, s *server, before map[string]string, resp *httptest.ResponseRecorder, want packSignatureWant) {
+	t.Helper()
+	if resp.Code != want.status {
+		t.Errorf("status=%d want=%d body=%s", resp.Code, want.status, resp.Body.String())
+	}
+	var body struct{ Code, Error string }
+	packMatrixOK(t, json.Unmarshal(resp.Body.Bytes(), &body))
+	if body.Code != want.code || !strings.HasPrefix(body.Error, want.prefix) {
+		t.Errorf("error response=%+v want code=%s prefix=%q", body, want.code, want.prefix)
+	}
+	if diff := diffPackKeyspace(before, snapshotPackKeyspace(t, s)); !reflect.DeepEqual(diff, want.allowedKeys) {
+		t.Errorf("keyspace changed=%v permitted=%v", diff, want.allowedKeys)
+	}
+	audit, err := s.loadPolicyAudit(context.Background())
+	packMatrixOK(t, err)
+	if len(audit) != 1 || audit[0].Action != "config.set.rejected" || audit[0].ResourceID != "system/policy" {
+		t.Errorf("unexpected rejection audit: %+v", audit)
+	}
+	assertPackAbsent(t, s)
 }
 
 func setPackSignatureProfile(t *testing.T, profile string) ed25519.PrivateKey {
@@ -629,8 +693,8 @@ func TestPackSignatureSourceInventory(t *testing.T) {
 		}
 	}
 	fn := functions["handleSetConfig"]
-	if !packMatrixServerMethod(fn) || !slices.Contains(packSignatureSources["cordumctl"], "handleSetConfig") {
-		t.Error("cordumctl must inventory the generic config *server method")
+	if !packMatrixServerMethod(fn) || !slices.Contains(packSignatureSources["config-api"], "handleSetConfig") {
+		t.Error("the config-api source must inventory the generic config *server method")
 	}
 }
 

@@ -8,14 +8,13 @@ import (
 	"os"
 	"strings"
 
-	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/policysign"
 )
 
 // envLegacyRequireSig preserves compatibility with the first-generation
 // "on/off" signature flag so existing deployments do not need to switch
 // env vars in the same release that ships strict-mode.
-const envLegacyRequireSig = "SAFETY_POLICY_SIGNATURE_REQUIRED"
+const envLegacyRequireSig = policysign.EnvLegacyRequireSig
 
 // verifyFilePolicySignature verifies a file-based policy (SAFETY_POLICY_PATH
 // or SAFETY_POLICY_URL) using the new .sig sidecar format while staying
@@ -83,31 +82,15 @@ func verifyFilePolicySignature(data []byte, source string) error {
 	return verifyFileSigLegacy(data, rawLegacy, mode, store)
 }
 
-// resolveFileLoaderMode reads CORDUM_POLICY_STRICT and maps the legacy
-// SAFETY_POLICY_SIGNATURE_REQUIRED flag onto the new modes.
-// Production without any explicit mode upgrades to enforce so we do not
-// regress operators who previously relied on the env.IsProduction()
-// default-to-required behaviour.
+// resolveFileLoaderMode is the file and URL loaders' mode resolution:
+// policysign.ResolveMode, the rule every policy source shares, logging an
+// invalid CORDUM_POLICY_STRICT.
 func resolveFileLoaderMode() policysign.Mode {
-	if raw := strings.TrimSpace(os.Getenv(policysign.EnvStrictMode)); raw != "" {
-		mode, err := policysign.ParseMode(raw)
-		if err != nil {
-			fallback := policysign.ModeWarn
-			if env.IsProduction() {
-				fallback = policysign.ModeEnforce
-			}
-			slog.Warn("safety-kernel: CORDUM_POLICY_STRICT invalid; falling back", "err", err, "mode", fallback.String())
-			return fallback
-		}
-		return mode
+	mode, err := policysign.ResolveMode()
+	if err != nil {
+		slog.Warn("safety-kernel: CORDUM_POLICY_STRICT invalid; falling back", "err", err, "mode", mode.String())
 	}
-	if env.Bool(envLegacyRequireSig) {
-		return policysign.ModeEnforce
-	}
-	if env.IsProduction() {
-		return policysign.ModeEnforce
-	}
-	return policysign.ModeWarn
+	return mode
 }
 
 // readFilePolicySignature returns either a decoded policysign.Signature
@@ -180,7 +163,7 @@ func verifyFileSigStructured(data []byte, sig policysign.Signature, mode policys
 				"reason", "invalid_signature",
 				"err", err,
 			)
-			return err
+			return malformedSignature(err)
 		}
 		slog.Warn("safety-kernel: file policy signature invalid", "key_id", sig.KeyID, "err", err)
 		return nil
