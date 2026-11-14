@@ -792,6 +792,9 @@ const (
 	pgArgsC    = `{"target":"prod","count":5}`
 )
 
+// pgCarolAgentID is pg-carol's agent identity: a second MCP caller.
+const pgCarolAgentID = "agent-pg-carol"
+
 type pgReply struct {
 	Result *struct {
 		IsError bool `json:"isError"`
@@ -838,6 +841,7 @@ func pgNewPolicyGateServer(t *testing.T) *pgHarness {
 	s.auth = pwAuth{keys: map[string]auth.AuthContext{
 		"key-pg-alice": {Tenant: "default", PrincipalID: "pg-alice", Role: "admin"},
 		"key-pg-bob":   {Tenant: "default", PrincipalID: "pg-bob", Role: "admin"},
+		"key-pg-carol": {Tenant: "default", PrincipalID: "pg-carol", Role: "admin"},
 	}}
 	h := &pgHarness{
 		client: &http.Client{Timeout: 30 * time.Second},
@@ -853,14 +857,16 @@ func pgNewPolicyGateServer(t *testing.T) *pgHarness {
 		ScopeID: packs.PolicyConfigID, Data: map[string]any{packs.PolicyConfigKey: map[string]any{}}}); err != nil {
 		t.Fatalf("seed policy bundle doc: %v", err)
 	}
-	if _, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
-		ID: pgAgentID, TenantID: "default", Name: pgAgentID, Owner: "ops@example.com", RiskTier: "high",
-		AllowedServers: []string{mcpPolicyServerName}, AllowedTools: []string{"cordum_pg_*"},
-	}); err != nil {
-		t.Fatalf("create identity: %v", err)
-	}
-	if err := s.agentIdentityStore.LinkWorker(ctx, pgAgentID, "pg-alice"); err != nil {
-		t.Fatalf("link worker: %v", err)
+	for agent, principal := range map[string]string{pgAgentID: "pg-alice", pgCarolAgentID: "pg-carol"} {
+		if _, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+			ID: agent, TenantID: "default", Name: agent, Owner: "ops@example.com", RiskTier: "high",
+			AllowedServers: []string{mcpPolicyServerName}, AllowedTools: []string{"cordum_pg_*"},
+		}); err != nil {
+			t.Fatalf("create identity %s: %v", agent, err)
+		}
+		if err := s.agentIdentityStore.LinkWorker(ctx, agent, principal); err != nil {
+			t.Fatalf("link worker %s: %v", agent, err)
+		}
 	}
 	if snapshot := s.mcpPolicySnapshotFunc()(ctx); snapshot == "" {
 		t.Fatal("policy snapshot is empty; the approval hold needs a policy bundle snapshot")
@@ -892,7 +898,7 @@ func pgNewPolicyGateServer(t *testing.T) *pgHarness {
 	return h
 }
 
-func (h *pgHarness) post(key, path, body string, mcpCall bool) (*http.Response, error) {
+func (h *pgHarness) post(key, path, body, agent, session string) (*http.Response, error) {
 	req, err := http.NewRequest(http.MethodPost, h.srv.URL+path, strings.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -900,21 +906,30 @@ func (h *pgHarness) post(key, path, body string, mcpCall bool) (*http.Response, 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-API-Key", key)
 	req.Header.Set("X-Tenant-ID", "default")
-	if mcpCall {
-		req.Header.Set("X-Agent-Id", pgAgentID)
-		req.Header.Set("X-MCP-Session-ID", h.sessionID)
+	if agent != "" {
+		req.Header.Set("X-Agent-Id", agent)
+	}
+	if session != "" {
+		req.Header.Set("X-MCP-Session-ID", session)
 	}
 	return h.client.Do(req)
 }
 
-// call issues tools/call for the counting tool as alice on h.sessionID, with
-// a distinct JSON-RPC id per request. Goroutine-safe: reports with t.Errorf.
+// call issues tools/call for the counting tool as alice on h.sessionID.
 func (h *pgHarness) call(t *testing.T, args string) pgReply {
+	t.Helper()
+	return h.callAs(t, "key-pg-alice", pgAgentID, h.sessionID, args)
+}
+
+// callAs issues tools/call for the counting tool as key acting as agent, on
+// session, or session-less (VS Code's type:"http" shape) when session is "",
+// with a distinct JSON-RPC id per request. Goroutine-safe: reports with t.Errorf.
+func (h *pgHarness) callAs(t *testing.T, key, agent, session, args string) pgReply {
 	t.Helper()
 	id := strconv.FormatInt(h.rpcID.Add(1), 10)
 	body := `{"jsonrpc":"2.0","id":` + id + `,"method":"tools/call","params":{"name":"` + pgToolName + `","arguments":` + args + `}}`
 	var reply pgReply
-	resp, err := h.post("key-pg-alice", "/mcp/message", body, true)
+	resp, err := h.post(key, "/mcp/message", body, agent, session)
 	if err != nil {
 		t.Errorf("tools/call: %v", err)
 		return reply
@@ -932,7 +947,7 @@ func (h *pgHarness) call(t *testing.T, args string) pgReply {
 
 func (h *pgHarness) approveEdge(t *testing.T, key, ref string) int {
 	t.Helper()
-	resp, err := h.post(key, "/api/v1/edge/approvals/"+ref+"/approve", `{"reason":"ok"}`, false)
+	resp, err := h.post(key, "/api/v1/edge/approvals/"+ref+"/approve", `{"reason":"ok"}`, "", "")
 	if err != nil {
 		t.Fatalf("approve %s: %v", ref, err)
 	}
@@ -1151,4 +1166,44 @@ func TestPolicyGateEdgeResume_HTTPClaimOutageFailsClosed(t *testing.T) {
 	}
 	h.requireExecuted(t, h.call(t, resume))
 	h.requireCalls(t, 1)
+}
+
+// TestMCPApprovalReaskReusesPendingApproval: a client that repeats a held
+// call without `_approval_ref` (VS Code re-asks) used to mint a new approval
+// pair every time. While the caller's approval for the call is pending, the
+// re-ask gets that one back; another requester still gets their own.
+func TestMCPApprovalReaskReusesPendingApproval(t *testing.T) {
+	t.Parallel()
+	h := pgNewPolicyGateServer(t)
+	ctx := context.Background()
+	alice := func() (string, string) {
+		return h.requireEdgeHold(t, h.callAs(t, "key-pg-alice", pgAgentID, "", pgArgsA))
+	}
+	firstRef, firstID := alice()
+	if againRef, againID := alice(); againRef != firstRef || againID != firstID {
+		t.Fatalf("re-ask got %s/%s, want the pending %s/%s", againRef, againID, firstRef, firstID)
+	}
+	if carols, _ := h.requireEdgeHold(t, h.callAs(t, "key-pg-carol", pgCarolAgentID, "", pgArgsA)); carols == firstRef {
+		t.Fatalf("another requester got alice's approval %s", carols)
+	}
+	for principal, want := range map[string]int{"pg-alice": 1, "pg-carol": 1} {
+		page, err := h.store.ListApprovals(ctx, edge.ListApprovalsQuery{
+			TenantID: "default", PrincipalID: principal, Status: edge.ApprovalStatusPending,
+		})
+		if err != nil || len(page.Items) != want {
+			t.Fatalf("%s's pending Edge approvals = %d (err %v), want %d", principal, len(page.Items), err, want)
+		}
+	}
+	legacy, _, err := h.legacy.ListByStatus(ctx, string(model.ApprovalStatusPending), 0, 100)
+	if err != nil || len(legacy) != 2 {
+		t.Fatalf("pending legacy MCP approvals = %d (err %v), want one per requester", len(legacy), err)
+	}
+	// A reviewer rejecting the legacy half on the MCP approvals page leaves
+	// the Edge half pending; the next re-ask gets a fresh pair.
+	if _, err := h.legacy.Resolve(ctx, firstID, model.ApprovalDecisionReject, "reviewer", "no"); err != nil {
+		t.Fatalf("reject legacy approval: %v", err)
+	}
+	if freshRef, freshID := alice(); freshRef == firstRef || freshID == firstID {
+		t.Fatalf("re-ask after the legacy rejection reused %s/%s", freshRef, freshID)
+	}
 }

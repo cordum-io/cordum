@@ -52,6 +52,12 @@ scopes see [`scope-preapproval.md`](scope-preapproval.md).
                               invokeTool with `_approval_ref`-stripped args
 ```
 
+Before minting, both mint paths look for the caller's pending approval
+for the same call (same requester identity, agent, `(ActionHash,
+InputHash)` and policy snapshot) and return it, so a client that re-asks
+without `_approval_ref` does not pile up approvals. Another requester
+gets their own.
+
 The mint and consume paths each compute a `(ActionHash, InputHash)`
 pair through `BuildMCPApprovalBinding`. Any drift between the two
 sides surfaces as `ApprovalConflictKindArgsMismatch` on the consume —

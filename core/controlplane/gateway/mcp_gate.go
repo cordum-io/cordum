@@ -11,6 +11,7 @@ import (
 
 	"github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/mcp"
+	"github.com/cordum/cordum/core/model"
 )
 
 // MCPCallMetadata carries the request-scoped context an ApprovalGate
@@ -268,6 +269,16 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 		return nil, nil
 	}
 
+	// While the caller's approval pair for this call is still pending, a
+	// re-ask without `_approval_ref` gets that pair back instead of a second
+	// one (pendingMCPPair).
+	if approvalID, pending := g.pendingMCPPair(ctx, tool.Name, params); pending != nil {
+		if h := mcp.InvocationHandleFromContext(ctx); h != nil {
+			h.MarkApprovalRequired(approvalID)
+		}
+		return mcpApprovalRequired(tool.Name, argsHash, approvalID, pending), nil
+	}
+
 	// Requester is the authenticated composite identity when HTTP middleware
 	// can supply one (API-key hash + principal) so the self-approval guard
 	// can block same-key/principal-spoof attempts. Non-HTTP transports fall
@@ -438,6 +449,8 @@ func (g *gatewayApprovalGate) dualWriteEdgeApproval(ctx context.Context, meta MC
 		PolicySnapshot: policySnapshot,
 		ActionHash:     actionHash,
 		InputHash:      inputHash,
+		Labels:         edge.Labels{mcpApprovalAgentLabel: strings.TrimSpace(edgeMeta.AgentID)},
+		Metadata:       edge.Metadata{mcpLegacyApprovalIDKey: rec.ID},
 	})
 	if err != nil {
 		return "", policySnapshot, expiresAt, err
@@ -450,6 +463,121 @@ func (g *gatewayApprovalGate) dualWriteEdgeApproval(ctx context.Context, meta MC
 		expiresAt = edgeApproval.ExpiresAt.UTC()
 	}
 	return approvalRef, policySnapshot, expiresAt, nil
+}
+
+const (
+	// mcpApprovalAgentLabel is the Edge approval label naming the agent
+	// identity an MCP approval was minted for. A re-ask reuses the approval
+	// only for the same caller acting as the same agent (mcpApprovalIsCallers).
+	mcpApprovalAgentLabel = "agent_id"
+	// mcpLegacyApprovalIDKey is the Edge approval metadata key holding the
+	// legacy MCPApprovalStore record id dual-written with it.
+	mcpLegacyApprovalIDKey = "mcp_approval_id"
+)
+
+// mcpApprovalRequired is the -32099 payload for an Edge approval.
+func mcpApprovalRequired(tool, argsHash, approvalID string, approval *edge.EdgeApproval) *mcp.ApprovalRequired {
+	out := &mcp.ApprovalRequired{
+		ApprovalID:     approvalID,
+		ApprovalRef:    approval.ApprovalRef,
+		ArgsHash:       argsHash,
+		PolicySnapshot: approval.PolicySnapshot,
+		RetryHint:      mcp.RetryHintApprovalRef,
+		Reason:         approval.Reason,
+		Tool:           tool,
+	}
+	if approval.ExpiresAt != nil {
+		out.ExpiresAt = approval.ExpiresAt.UTC()
+	}
+	return out
+}
+
+// pendingMCPPair returns the caller's pending registry-gate pair for this call
+// when the gate mints an Edge approval for it: the Edge approval
+// (pendingMCPApproval) and the legacy record id dual-written with it. The pair
+// is reused only while its legacy record is pending too: a reviewer who
+// resolved it on the MCP approvals page leaves the Edge half pending, and the
+// re-ask then gets a fresh pair. The lookup binds to the policy snapshot on the
+// call's policy pre-event, so it reads no snapshot of its own; a call the mint
+// would refuse is a miss here, and dualWriteEdgeApproval then refuses it as
+// before.
+func (g *gatewayApprovalGate) pendingMCPPair(ctx context.Context, tool string, params json.RawMessage) (string, *edge.EdgeApproval) {
+	if g.edgeStore == nil {
+		return "", nil
+	}
+	meta, ok := mcp.CallMetadataFromContext(ctx)
+	pre, preOK := mcp.PolicyPreEventFromContext(ctx)
+	if !ok || meta.SessionID == "" || meta.ExecutionID == "" || !preOK || pre.EventID == "" {
+		return "", nil
+	}
+	actionHash, inputHash := mcp.BuildMCPApprovalBinding(meta.Tenant, g.serverName, mcp.ToolCallParams{Name: tool, Arguments: params}, pre.PolicySnapshot)
+	pending := g.pendingMCPApproval(ctx, meta, actionHash, inputHash, pre.PolicySnapshot)
+	if pending == nil {
+		return "", nil
+	}
+	approvalID := pending.Metadata[mcpLegacyApprovalIDKey]
+	if !g.legacyApprovalPending(ctx, approvalID) {
+		return "", nil
+	}
+	return approvalID, pending
+}
+
+// pendingMCPApproval returns the caller's pending Edge approval for this call
+// (same requester identity, agent, tool and target, args and policy snapshot),
+// so a re-ask without `_approval_ref` does not mint another.
+// ponytail: scans the principal's 50 newest pending approvals and does not
+// re-check that the approval's Edge session is still open; a miss mints a new
+// approval, as before.
+func (g *gatewayApprovalGate) pendingMCPApproval(ctx context.Context, meta mcp.CallMetadata, actionHash, inputHash, policySnapshot string) *edge.EdgeApproval {
+	if policySnapshot == "" {
+		return nil
+	}
+	page, err := g.edgeStore.ListApprovals(ctx, edge.ListApprovalsQuery{
+		TenantID: meta.Tenant, PrincipalID: meta.Principal, Status: edge.ApprovalStatusPending, Limit: 50,
+	})
+	if err != nil {
+		return nil
+	}
+	now := time.Now().UTC()
+	for i := range page.Items {
+		a := &page.Items[i]
+		if a.ActionHash == actionHash && a.InputHash == inputHash && a.PolicySnapshot == policySnapshot &&
+			(a.ExpiresAt == nil || a.ExpiresAt.After(now)) && mcpApprovalIsCallers(ctx, a) {
+			return a
+		}
+	}
+	return nil
+}
+
+// legacyApprovalPending reports whether the legacy MCPApprovalStore record id
+// is still pending.
+func (g *gatewayApprovalGate) legacyApprovalPending(ctx context.Context, id string) bool {
+	if id == "" {
+		return false
+	}
+	rec, err := g.store.Get(ctx, id)
+	return err == nil && rec != nil && rec.Status == model.ApprovalStatusPending
+}
+
+// mcpCallRequester returns who is making this MCP call, the way approvals
+// record it: the authenticated requester identity (credential hash and
+// principal) when the HTTP middleware supplied one, else the principal; and
+// the agent identity the call acts as.
+func mcpCallRequester(ctx context.Context) (requester, agentID string) {
+	meta, _ := mcp.CallMetadataFromContext(ctx)
+	requester, agentID = strings.TrimSpace(meta.Principal), strings.TrimSpace(meta.AgentID)
+	if gatewayMeta, ok := MCPCallMetadataFromContext(ctx); ok {
+		requester = mcpRequesterIdentity(gatewayMeta)
+	}
+	return requester, agentID
+}
+
+// mcpApprovalIsCallers reports whether approval was minted for the caller of
+// ctx acting as the same agent.
+func mcpApprovalIsCallers(ctx context.Context, approval *edge.EdgeApproval) bool {
+	requester, agentID := mcpCallRequester(ctx)
+	return approval != nil && requester != "" && approval.Requester == requester &&
+		approval.Labels[mcpApprovalAgentLabel] == agentID
 }
 
 // approvalReasonFor builds the reason string stored on the approval
