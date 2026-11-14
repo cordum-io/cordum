@@ -1499,14 +1499,22 @@ func submitterIdentity(r *http.Request) string {
 		return ""
 	}
 	var parts []string
-	if ac.APIKey != "" {
-		h := sha256.Sum256([]byte(ac.APIKey))
-		parts = append(parts, "apikey:"+hex.EncodeToString(h[:8]))
+	if key := apiKeyIdentity(ac.APIKey); key != "" {
+		parts = append(parts, key)
 	}
 	if ac.PrincipalID != "" {
 		parts = append(parts, "principal:"+ac.PrincipalID)
 	}
 	return strings.Join(parts, "|")
+}
+
+// apiKeyIdentity is the non-secret identity of a raw API key in composite submitter identities; "" without a key.
+func apiKeyIdentity(apiKey string) string {
+	if apiKey == "" {
+		return ""
+	}
+	h := sha256.Sum256([]byte(apiKey))
+	return "apikey:" + hex.EncodeToString(h[:8])
 }
 
 // identitiesOverlap returns true if two composite identity strings share the
@@ -1544,9 +1552,8 @@ func submitterIdentityFromContext(ctx context.Context) string {
 		return ""
 	}
 	var parts []string
-	if ac.APIKey != "" {
-		h := sha256.Sum256([]byte(ac.APIKey))
-		parts = append(parts, "apikey:"+hex.EncodeToString(h[:8]))
+	if key := apiKeyIdentity(ac.APIKey); key != "" {
+		parts = append(parts, key)
 	}
 	if ac.PrincipalID != "" {
 		parts = append(parts, "principal:"+ac.PrincipalID)

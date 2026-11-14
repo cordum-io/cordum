@@ -254,7 +254,9 @@ func (s *server) requireRuntimeIngestCollector(w http.ResponseWriter, r *http.Re
 		writeEdgeForbidden(w, r, errors.New("runtime collector authentication required"))
 		return "", false
 	}
-	collectorID := strings.TrimSpace(authCtx.PrincipalID)
+	// The collector id binds the batch source and parent execution, so only an authenticated
+	// principal can name it; an asserted X-Principal-Id is refused below like a missing one.
+	collectorID := authCtx.AuthenticatedPrincipal()
 	if collectorID == "" {
 		writeEdgeForbidden(w, r, errors.New("runtime collector principal required"))
 		return "", false

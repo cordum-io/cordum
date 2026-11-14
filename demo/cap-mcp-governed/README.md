@@ -92,8 +92,9 @@ for a new approval.
     `risk_tier` must be `high` or `critical`: `cordum_status` declares no
     tier, which the scope filter treats as `high`
     (`cordum_create_workflow` is `medium`).
-- A route from the topic to the pool in the scheduler's pool map
-  (`config/pools.yaml`):
+- A route from the topic to the pool. The demo pack in `pack/` installs it
+  (`cordumctl pack install demo/cap-mcp-governed/pack`), or add it to the
+  scheduler's pool map (`config/pools.yaml`) yourself:
 
   ```yaml
   topics:
@@ -223,3 +224,76 @@ The tests deliver jobs over an embedded NATS server to a fake gateway built
 from the `core/mcp` wire types, and check the call order, the byte-identical
 single retry, every error code and that the worker never calls approve or
 reject.
+
+## Governed end-to-end test
+
+`integration_test.sh` runs the worker against the real compose stack. It
+prints these four lines and then `CAP-MCP GOVERNED DEMO OK` once:
+
+| Line | What it checks |
+|------|----------------|
+| `PASS policy_denied_no_approval_no_workflow` | A job tagged `cap-mcp-governed-denied` is refused at submit (403, `DENIED` by rule `cap-mcp-governed-denied`). It creates 0 approvals and 0 workflows. |
+| `PASS self_approval_denied` | The worker's own key cannot approve its pending approval (403 `self_approval_denied`). The approval stays pending and no workflow is created. |
+| `PASS operator_approval_executes_once` | The operator approves. The job succeeds with that `approval_id`, the workflow count grows by exactly 1, the workflow has the requested name, and the approval is consumed. |
+| `PASS final_invariants` | Still no approval or workflow for the denied job, its id is absent from the worker log, and no key or password appears in the artifacts. |
+
+The stack is `docker compose -f docker-compose.yml -f docker-compose.ci.yml
+--profile demo`, built from source. `docker-compose.ci.yml` passes
+`CORDUM_API_KEYS` to the gateway, which is the only way to give a static key
+a principal. The compose defaults keep the compat CAP profile with
+`CORDUM_SDK_HANDSHAKE=off`, which the unsigned worker needs. The script runs
+the prebuilt worker on the host, over TLS to NATS, Redis and the gateway.
+
+| Key | Role | Principal | Used for |
+|-----|------|-----------|----------|
+| `CORDUM_API_KEY` | admin | none | Setup, job submits and counts |
+| `CAP_MCP_WORKER_API_KEY` | admin | `cap-mcp-governed` | The worker, and the refused self-approval |
+| `CAP_MCP_OPERATOR_API_KEY` | admin | `cap-mcp-governed-operator` | The approval |
+
+The worker key is admin because a static key's `operator` role normalizes to
+admin and a viewer key lacks `workflows.write`. The self-approval refusal
+therefore comes from the identity check, not from RBAC.
+
+The script creates the agent identity with `agent_id` `cap-mcp-governed`,
+`risk_tier` `high`, `allowed_tools` `cordum_status` and
+`cordum_create_workflow`, `allowed_resources` `cordum://jobs/*` and no
+preapproved tools. `high` is needed because `cordum_status` declares no tier.
+`POST /api/v1/agents` needs the `agent_identity` entitlement, so the stack
+runs with the CI test license from `go run ./tools/cilicense`.
+
+The pack (`pack/`, id `cap-mcp-governed`) routes
+`job.cap-mcp-governed.create-workflow` to pool `cap-mcp-governed` and adds
+two policy rules, in order: `cap-mcp-governed-denied` denies the topic when
+the job carries risk tag `cap-mcp-governed-denied`, and
+`cap-mcp-governed-allow` allows the topic. It installs no workflows. The
+script enables MCP with `policy_gate_enabled=false`; resuming with the policy
+gate on is open work (task-63400922).
+
+Linux or WSL only; Git Bash is not supported. The stack must be fresh: a
+second run on the same stack exits 2. From the repository root:
+
+```bash
+mkdir -p bin
+go build -o bin/cordumctl ./cmd/cordumctl
+go build -o bin/cap-mcp-governed-worker ./demo/cap-mcp-governed/worker
+./bin/cordumctl generate-certs --dir ./certs --force && chmod -R a+rX ./certs
+for v in CORDUM_API_KEY CAP_MCP_WORKER_API_KEY CAP_MCP_OPERATOR_API_KEY REDIS_PASSWORD; do
+  export "$v=$(openssl rand -hex 32)"
+done
+while IFS='=' read -r name value; do
+  case "$name" in CORDUM_LICENSE_TOKEN|CORDUM_LICENSE_PUBLIC_KEY) export "$name=$value" ;; esac
+done < <(go run ./tools/cilicense)
+export CORDUM_API_KEYS="$(jq -nc '[
+  {key: env.CAP_MCP_WORKER_API_KEY, role: "admin", tenant: "default", principal_id: "cap-mcp-governed"},
+  {key: env.CAP_MCP_OPERATOR_API_KEY, role: "admin", tenant: "default", principal_id: "cap-mcp-governed-operator"}]')"
+docker compose -f docker-compose.yml -f docker-compose.ci.yml --profile demo up -d --build
+CORDUM_INTEGRATION=1 CORDUM_TLS_CA="$PWD/certs/ca/ca.crt" \
+  CORDUMCTL_BIN="$PWD/bin/cordumctl" CAP_MCP_WORKER_BIN="$PWD/bin/cap-mcp-governed-worker" \
+  bash demo/cap-mcp-governed/integration_test.sh
+docker compose -f docker-compose.yml -f docker-compose.ci.yml --profile demo down -v
+```
+
+In CI, `.github/workflows/demo-cap-mcp-governed-e2e.yml` runs the same test
+nightly, on manual dispatch, and on pull requests that change this demo. It
+masks every generated credential and redacts failure artifacts before
+uploading them.

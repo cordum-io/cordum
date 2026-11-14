@@ -63,8 +63,9 @@ func (s *server) handleGetCopilotSession(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	authCtx := auth.FromRequest(r)
-	if authCtx == nil || strings.TrimSpace(authCtx.PrincipalID) == "" {
+	// The session owner is the authenticated principal; one only asserted via X-Principal-Id gets 401, like none.
+	userID := auth.FromRequest(r).AuthenticatedPrincipal()
+	if userID == "" {
 		writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -84,7 +85,6 @@ func (s *server) handleGetCopilotSession(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	userID := strings.TrimSpace(authCtx.PrincipalID)
 	slog.Info("copilot session detail start",
 		"session_id", sessionID,
 		"principal", copilotLogPrincipal(userID),

@@ -7,6 +7,6 @@ RUN go mod download
 COPY examples/hello-worker-go ./examples/hello-worker-go
 RUN CGO_ENABLED=0 go build -o /bin/worker ./examples/hello-worker-go
 
-FROM alpine:3.20
+FROM alpine:3.24
 COPY --from=builder /bin/worker /usr/local/bin/worker
 ENTRYPOINT ["/usr/local/bin/worker"]
