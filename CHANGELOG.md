@@ -79,6 +79,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Failed jobs report one of 10 documented codes (`invalid_input`, `mcp_unavailable`, `mcp_protocol_error`, `mcp_call_failed`, `mcp_approval_rejected`, `mcp_approval_expired`, `mcp_approval_not_found`, `mcp_approval_timeout`, `mcp_approval_invalid`, `worker_shutdown`), never server text or the API key.
 - Unsigned agent, so compat CAP profile only. It needs the default `mcp.policy_gate_enabled=false`, because it does not send `_approval_ref`. `demo/cap-mcp-governed/README.md` covers setup.
 
+#### demo/cap-mcp-governed — governed end-to-end test in CI: operator approval, self-approval refusal and policy deny (2026-11-14, task-4ec9af00)
+
+- New `demo/cap-mcp-governed/pack` (topic route plus a deny and an allow rule), `demo/cap-mcp-governed/integration_test.sh`, and the `demo-cap-mcp-governed-e2e` workflow, which runs the demo worker against the source-built compose demo stack nightly, on dispatch and on pull requests that change the demo.
+- The test asserts that a policy-denied job creates no approval and no workflow, that the worker cannot approve its own request (403 `self_approval_denied`), that an operator approval runs the call once and adds exactly one workflow, and that no credential reaches the artifacts. It prints `CAP-MCP GOVERNED DEMO OK` once.
+- Limits: unsigned worker on the compat CAP profile, and MCP with `policy_gate_enabled=false`.
+- `tools/scripts/workflow_credential_guard.py` registers the new workflow and its six masked credentials. Failure artifacts are redacted before upload.
+
 ### Changed
 
 - The eight required checks also run on `merge_group` events, with OpenAPI
