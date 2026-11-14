@@ -18,10 +18,14 @@ import (
 const (
 	DefaultMaxInputBytes int64 = 1 << 20
 
-	// ClaudeHookDeadline is Claude Code's documented per-hook command deadline.
+	// ClaudeHookDeadline matches the `"timeout": 5` Cordum writes on each
+	// generated command hook (Claude Code's own default is 600s). Claude Code
+	// kills the hook at this point; onFailure:"block" then decides whether
+	// that blocks the action.
 	ClaudeHookDeadline time.Duration = 5 * time.Second
-	// DefaultHookTimeout MUST stay under Claude Code's 5s hook deadline
-	// (PRD §7.4); runner.go splits it into agentd-POST + response-write budgets.
+	// DefaultHookTimeout MUST stay under ClaudeHookDeadline (PRD §7.4) so the
+	// hook answers before Claude Code kills it; runner.go splits it into
+	// agentd-POST + response-write budgets.
 	DefaultHookTimeout      time.Duration = 4500 * time.Millisecond
 	DefaultAgentdPostBudget time.Duration = 4 * time.Second
 	ResponseWriteReserve    time.Duration = 500 * time.Millisecond
@@ -172,7 +176,7 @@ func parseHookTimeout(raw string) (time.Duration, bool) {
 
 func validateHookTimeout(source string, d time.Duration) (time.Duration, error) {
 	if d >= ClaudeHookDeadline {
-		return 0, fmt.Errorf("%s=%s must stay strictly below Claude Code's %s hook deadline", source, d, ClaudeHookDeadline)
+		return 0, fmt.Errorf("%s=%s must stay strictly below the generated %s Claude Code hook timeout", source, d, ClaudeHookDeadline)
 	}
 	return d, nil
 }
