@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -29,6 +30,7 @@ import (
 	"github.com/cordum/cordum/core/model"
 	jobidentity "github.com/cordum/cordum/core/protocol/identity"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/cordum/cordum/core/protocol/reqhash"
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
@@ -356,20 +358,32 @@ func isPolicyFailOpen() bool {
 	return strings.EqualFold(mode, "open")
 }
 
-// stripReservedLabels removes labels with an underscore prefix from client
-// input. Labels starting with "_" are reserved for system use (e.g., _internal,
-// _content.prompt). The gateway re-adds the system labels it needs after this
-// sanitization step.
+// stripReservedLabels removes system labels from client input. Labels starting
+// with "_" are reserved for system use (e.g., _internal, _content.prompt); the
+// gateway re-adds the ones it needs after this step. Server-owned labels
+// (reqhash.ServerOwnedLabel: approval_*, gate_type, the bus dedupe override,
+// policy.attachment_id) are state that the scheduler and approval code act on:
+// approval_granted plus approval_snapshot would make a job look human-approved.
+// Those are dropped too, and logged, so a client cannot forge them.
 func stripReservedLabels(labels map[string]string) map[string]string {
 	if len(labels) == 0 {
 		return labels
 	}
 	clean := make(map[string]string, len(labels))
+	var dropped []string
 	for k, v := range labels {
 		if strings.HasPrefix(k, "_") {
 			continue
 		}
+		if reqhash.ServerOwnedLabel(k) {
+			dropped = append(dropped, k)
+			continue
+		}
 		clean[k] = v
+	}
+	if len(dropped) > 0 {
+		sort.Strings(dropped)
+		slog.Warn("dropped server-owned labels from client job input", "labels", dropped)
 	}
 	return clean
 }
