@@ -423,7 +423,7 @@ func showPackWorkerToken(token, tokenFile string) error {
 }
 
 func writePackWorkerToken(path, token string) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	f, err := os.OpenFile(filepath.Clean(path), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
 	}
