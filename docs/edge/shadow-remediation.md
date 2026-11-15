@@ -364,7 +364,7 @@ When `audience=enterprise` or `audience=both`, a third step is
 emitted recommending the env block be rolled into the platform team's
 central CI templates so new repos inherit it.
 
-### Q5 enforce-scope-out — structural guarantee
+### Q5 enforce-scope-out — by builder signature
 
 Every new template builder function takes only `findingFeatures` (the
 shape-agnostic projection of the finding) plus an optional audience
