@@ -121,6 +121,7 @@ func runEdgeManagedSettingsExportCmd(args []string, stdout, stderr io.Writer) in
 func runEdgeManagedSettingsVerifyCmd(args []string, stdout, stderr io.Writer) int {
 	fs := newManagedFlagSet("edge managed-settings verify", stderr)
 	path := fs.String("path", "", "path to managed-settings.json to verify")
+	mcpURL := fs.String("mcp-gateway-url", "", "independent trusted MCP gateway endpoint URL")
 	emitJSON := fs.Bool("json", false, "emit machine-readable JSON envelope")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -129,7 +130,11 @@ func runEdgeManagedSettingsVerifyCmd(args []string, stdout, stderr io.Writer) in
 		_, _ = fmt.Fprintln(stderr, "edge managed-settings verify: --path required")
 		return 2
 	}
-	res, err := claude.VerifyManagedSettingsFromPath(*path)
+	if strings.TrimSpace(*mcpURL) == "" {
+		_, _ = fmt.Fprintln(stderr, "edge managed-settings verify: --mcp-gateway-url required as an independent trusted baseline")
+		return 2
+	}
+	res, err := claude.VerifyManagedSettingsFromPathWithOptions(*path, claude.ManagedSettingsVerifyOptions{MCPGatewayURL: *mcpURL})
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "edge managed-settings verify: %s\n", redactManagedSettingsError(err))
 		return 2
@@ -147,7 +152,7 @@ func runEdgeManagedSettingsVerifyCmd(args []string, stdout, stderr io.Writer) in
 		return 0
 	}
 	if res.OK {
-		_, _ = fmt.Fprintln(stdout, "ok: managed-settings.json matches Cordum Edge invariants")
+		_, _ = fmt.Fprintln(stdout, "ok: managed-settings.json matches Cordum Edge invariants and trusted MCP endpoint; paired MCP files and runtime inventory were not inspected")
 		return 0
 	}
 	for _, d := range res.Drifts {
@@ -196,7 +201,7 @@ func runEdgeManagedSettingsRollbackCmd(args []string, stdout, stderr io.Writer) 
 		_, _ = fmt.Fprintf(stderr, "edge managed-settings rollback-template: %s\n", err)
 		return 1
 	}
-	res, err := claude.VerifyManagedSettingsFromPath(*path)
+	res, err := claude.VerifyManagedSettingsFromPathWithOptions(*path, claude.ManagedSettingsVerifyOptions{MCPGatewayURL: *mcpURL})
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "edge managed-settings rollback-template: %s\n", redactManagedSettingsError(err))
 		return 1
