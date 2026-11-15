@@ -235,12 +235,13 @@ Controlled by `CORDUM_AUDIT_CHAIN_FAIL`:
 
 ## Retention
 
-Audit retention is entitlement-gated:
+Audit retention is entitlement-gated (`AuditRetentionDays` in
+`core/licensing/tiers.go`):
 
 | Plan | Retention |
 |---|---|
 | Community | 7 days |
-| Pro | Configurable |
+| Team | 90 days |
 | Enterprise | Unlimited + legal hold |
 
 The verify endpoint distinguishes retention-trimmed gaps from tampering

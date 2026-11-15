@@ -1,7 +1,9 @@
 # Delegation tokens
 
-Cordum delegation tokens let one Enterprise agent identity delegate a reduced,
-time-bounded scope to another agent identity. The gateway issues Ed25519-signed
+Cordum delegation tokens let one agent identity delegate a reduced,
+time-bounded scope to another agent identity. The delegation endpoints are not
+license-gated; managing the agent identities themselves (`/api/v1/agents`)
+requires the `agent_identity` entitlement. The gateway issues Ed25519-signed
 JWTs, verifies them on `POST /api/v1/jobs`, injects only reserved delegation
 labels into the Safety Kernel request, and records lineage in the audit trail.
 
