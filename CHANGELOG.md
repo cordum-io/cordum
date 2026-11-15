@@ -804,6 +804,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   approval resolves both, that only a retry carrying `_approval_ref` resumes
   the call, and that a failed Edge mint leaves no record (task-918d58bd).
 
+- MCP approvals: the policy-gate steps for `cordum_create_workflow` in the
+  MCP tools reference now say that approving or rejecting either the MCP
+  approval record or its Edge approval resolves both, and that the Edge
+  approval is the pair's single consume token (task-9f1c174f).
+
 - MCP approvals: a re-ask returns the caller's pending approval instead of
   minting another (#492, task-2a9d0a7c).
 
