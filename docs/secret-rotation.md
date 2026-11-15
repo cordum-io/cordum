@@ -12,6 +12,7 @@ Cordum uses five credential groups that must be rotated periodically or after an
 | API key | `CORDUM_API_KEY` | 32 chars | `openssl rand -hex 32` | Gateway, dashboard |
 | Admin password | `CORDUM_ADMIN_PASSWORD` | 16 chars | `openssl rand -base64 24` | Gateway (user auth) |
 | TLS certificates (NATS client auth) | files in `./certs/` (gitignored) | n/a | `cordumctl generate-certs --force` | NATS, Redis, gateway (HTTPS + gRPC), safety kernel, context engine |
+| NATS token | `NATS_TOKEN` | 16 chars | `openssl rand -hex 16` | Services connecting to a NATS server with token auth (not the default compose stack) |
 | License token | `CORDUM_LICENSE_TOKEN` | n/a | Issued by licensing portal | Gateway, scheduler, safety kernel, workflow engine |
 
 ## Rotation Procedures
@@ -47,7 +48,7 @@ Compose starts Redis with `--requirepass "$REDIS_PASSWORD"` and passes the same 
 
 ### NATS Client Certificates
 
-Under Docker Compose, NATS has no token to rotate. `config/nats.dev-tls.conf` (and `config/nats.release.conf` for `docker-compose.release.yml`) has no `authorization` block; its `tls` block sets `verify: true`, so NATS accepts any client that presents a certificate signed by the CA in `./certs/ca/`. Services present `./certs/client/tls.crt`. The server never checks the `NATS_TOKEN` that Compose passes to services, so changing it does nothing.
+Under Docker Compose, NATS has no token to rotate. `config/nats.dev-tls.conf` (and `config/nats.release.conf` for `docker-compose.release.yml`) has no `authorization` block; its `tls` block sets `verify: true`, so NATS accepts any client that presents a certificate signed by the CA in `./certs/ca/`. Services present `./certs/client/tls.crt`.
 
 Rotate the certificates instead. `cordumctl generate-certs` writes one set (CA, server and client certificates) that NATS, Redis, the gateway, the safety kernel and the context engine all use, so they rotate together:
 
@@ -57,6 +58,16 @@ Rotate the certificates instead. `cordumctl generate-certs` writes one set (CA, 
 4. Verify: `docker compose ps` shows every service healthy, and `curl --cacert ./certs/ca/ca.crt -H "X-API-Key: $CORDUM_API_KEY" https://localhost:8081/api/v1/health` succeeds.
 
 **Note:** The new CA replaces the old one, so old and new certificates can't overlap. Plan a short restart window.
+
+### NATS Token (token-auth servers only)
+
+`NATS_TOKEN` applies when your NATS server enforces token auth, such as your own server with `authorization { token: ... }` or the Helm chart's `nats.auth.token`. The server and every service must use the same token.
+
+1. Generate new token: `openssl rand -hex 16`
+2. Update the token on the NATS server (`authorization.token`; in the Helm chart, `nats.auth.token`, which also sets `NATS_TOKEN` for the chart's services)
+3. Update `NATS_TOKEN` for every other service that connects to NATS
+4. Restart NATS and all dependent services together
+5. Verify: check service logs for NATS connection errors
 
 ## After a Suspected Compromise
 
