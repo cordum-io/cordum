@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- K8s production overlay: before `kubectl apply -k`, delete the
+  `cordum-redis-cluster-init` Job and the `cordum-nats` StatefulSet (its PVCs
+  stay), since both changes touch immutable fields (#492, task-6654d7e5).
+
 - Helm installs with TLS verify the gateway certificate by its Service FQDN
   (`<release>-api-gateway.<namespace>.svc.cluster.local`). Certificates from
   `cordumctl generate-certs` need `--san` for that name, or the dashboard gets
@@ -760,6 +764,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - typedoc, typedoc-plugin-coverage and typedoc-plugin-markdown are removed from the install with pnpm `-` overrides. typedoc 0.28 calls `Minimatch#matchOne`, which 11.x removed. orval 8.31.0 loads typedoc only for its `docs` output, which the dashboard does not configure. Until typedoc supports minimatch 11, enabling that output fails at import. orval stays at 8.31.0.
 
 ### Fixed
+
+- K8s: the production NATS cluster could not start: the `nats:2.10` image has
+  no shell, and ordered startup stalled on pod 0 until JetStream had a meta
+  leader. The flags are passed as args, and the pods start in parallel (#492,
+  task-6654d7e5).
+
+- K8s: the production Redis cluster never formed, because its init Job sent no
+  password. Its bus listened on 10000, not 16379; Redis never got SIGTERM, so
+  every stop ended in SIGKILL; and replicas never synced. Replication now runs
+  over TLS with the client certificate and `masterauth` (#492, task-6654d7e5).
 
 - K8s: the base Redis ran `--appendonly yes` on a read-only root filesystem
   with nothing mounted at `/data`. It now has an `emptyDir` there (#492,

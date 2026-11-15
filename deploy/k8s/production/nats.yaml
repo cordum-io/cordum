@@ -5,6 +5,10 @@ metadata:
   namespace: cordum
 spec:
   clusterIP: None
+  # The route URLs in nats.conf name the pods through this Service. A server
+  # turns ready only after JetStream has a meta leader, which needs the routes,
+  # so publish the pods before they are ready.
+  publishNotReadyAddresses: true
   selector:
     app: nats
   ports:
@@ -41,6 +45,10 @@ metadata:
 spec:
   serviceName: cordum-nats
   replicas: 3
+  # Start all three servers together: one server alone never passes /healthz
+  # ("JetStream has not established contact with a meta leader"), so ordered
+  # startup would wait on cordum-nats-0 forever.
+  podManagementPolicy: Parallel
   selector:
     matchLabels:
       app: nats
@@ -62,9 +70,8 @@ spec:
       containers:
       - name: nats
         image: nats:2.10
-        command: ["sh", "-c"]
-        args:
-        - nats-server -c /etc/nats/nats.conf -n ${POD_NAME}
+        # The image has no shell; Kubernetes expands $(POD_NAME) itself.
+        args: ["-c", "/etc/nats/nats.conf", "-n", "$(POD_NAME)"]
         env:
         - name: POD_NAME
           valueFrom:
