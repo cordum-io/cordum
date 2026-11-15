@@ -110,9 +110,10 @@ the audit chain. A retry is allowed only when the chain contains an approved
 `approval_ref`, and `action_hash`; an approval-requested row by itself remains
 a pending-review signal, not proof of approval.
 
-The wrapper enables local/demo inline approval wait for convenience. Rejection,
-timeout, pending, or wait errors deny the action and ask the user to retry after
-review.
+The wrapper enables local/demo inline approval wait for convenience. The wait
+ends 1s before the hook's agentd budget, so it lasts about 3 seconds. Rejection
+denies the action. An approval still pending then, or a wait error, gets the
+same deny as without inline wait: `approval_ref` plus retry guidance.
 
 ## Fail modes
 
@@ -121,6 +122,12 @@ review.
 | `observe` | Allow degraded and write evidence where possible. | Discovery/local visibility. |
 | `enforce` | Allow only known-safe degraded actions; deny risky/unknown actions. The wrapper renders `CORDUM_AGENTD_FAIL_CLOSED=true` and `"onFailure": "block"` on the blocking hooks (Claude Code v2.1.295+), so agentd errors/timeouts and a failed hook process block too. | Developer enforcement and demos. |
 | `enterprise-strict` | Fail closed. | Managed enterprise rollout. |
+
+Before launching Claude Code in any mode except `observe`, the wrapper runs
+`claude --version`. On a version older than 2.1.295, `enterprise-strict`
+refuses to launch and the other modes print a warning, because those versions
+ignore `"onFailure": "block"`. A version that cannot be read only produces a
+warning.
 
 Malformed hook input fails closed with redacted stderr. Hook timeout values must
 stay below the command-hook `"timeout": 5` the wrapper generates (Claude Code's

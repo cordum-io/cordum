@@ -94,6 +94,12 @@ out blocks the action instead of letting it through. `onFailure` requires
 Claude Code v2.1.295 or later; older versions do not honor it. `observe` stays
 fail-open by design.
 
+Before it launches Claude Code in a fail-closed mode, the wrapper runs
+`claude --version`. `enterprise-strict` refuses to launch a version older than
+2.1.295; the other fail-closed modes print a warning and launch. If the version
+cannot be read, the wrapper prints a warning and launches. `cordumctl edge
+doctor` runs the same check as `claude_code_version`.
+
 `CORDUM_AGENTD_FAIL_CLOSED` defaults to `false`, so fail-open is only possible
 for hook settings you wire by hand without `CORDUM_AGENTD_FAIL_CLOSED=true` and
 `"onFailure": "block"`: an `enforce` hook wired that way still denies
@@ -106,11 +112,12 @@ below the command-hook `"timeout": 5` that Cordum generates (Claude Code's own
 default is 600 seconds).
 
 The same budget bounds the inline approval wait.
-`CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` defaults to `30s`, but the wait
-runs inside the hook's `4.5s` budget: an approval that is not resolved within a
-few seconds ends the wait, and fail-closed sessions deny the action before
-Claude Code's timeout fires. Disable inline wait or use deny-and-retry instead
-of block-and-wait. See [edge/configuration.md](edge/configuration.md) for
+`CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` defaults to `30s`, but agentd ends
+the wait 1s before the hook's `4s` agentd budget runs out, so an approval has
+about 3 seconds to arrive. One still pending then gets the usual deny with
+`approval_ref` and retry guidance, well before Claude Code's timeout fires.
+Disable inline wait or use deny-and-retry instead of block-and-wait. See
+[edge/configuration.md](edge/configuration.md) for
 details.
 
 ## Token tradeoffs
