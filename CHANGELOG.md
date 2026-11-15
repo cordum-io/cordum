@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Edge managed settings: managed-settings verification fails closed on
+  unsupported conditional or background hook modifiers, and command hooks
+  must have the correct type and tool-event coverage (#492, task-99f50a3d).
+
 - Python SDK: `cordum_sdk._generated` is regenerated from the OpenAPI spec.
   `CreateWorkerCredentialBody` is now `CreateWorkerCredentialRequest`. The
   `CreateShadowAgentFindingRequest*` models are gone and
@@ -785,6 +789,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - typedoc, typedoc-plugin-coverage and typedoc-plugin-markdown are removed from the install with pnpm `-` overrides. typedoc 0.28 calls `Minimatch#matchOne`, which 11.x removed. orval 8.31.0 loads typedoc only for its `docs` output, which the dashboard does not configure. Until typedoc supports minimatch 11, enabling that output fails at import. orval stays at 8.31.0.
 
 ### Fixed
+
+- Python SDK: an error response whose body is not the `Error` schema, such as
+  a proxy's HTML page or the nested `{"error": {...}}` envelope, now raises the
+  typed `CordumError` subclass for its status instead of `KeyError` or
+  `JSONDecodeError`. The client maps the status from the raw response before
+  the generated parser reads the body (task-4458e689).
 
 - Python SDK: `scripts/generate.sh` and `scripts/generate.ps1` run from a
   fresh virtualenv on Python 3.11 to 3.13. The `generator` extra pins
