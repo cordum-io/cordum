@@ -153,6 +153,13 @@ func (s *server) handleCreateEdgeSession(w http.ResponseWriter, r *http.Request)
 	normalizedReq := req
 	normalizedReq.TenantID = tenantID
 	normalizedReq.PrincipalID = principalID
+	// Only a principal the credential vouches for owns the session. A principal
+	// the caller only asserted (X-Principal-Id on a key with no bound principal)
+	// is kept as the display label, never as the owner (task-cf94ebba).
+	ownerID := auth.FromRequest(r).AuthenticatedPrincipal()
+	if ownerID == "" && strings.TrimSpace(req.PrincipalDisplayName) == "" {
+		req.PrincipalDisplayName = principalID
+	}
 	idempotencyReq, idempotent, handled := s.prepareEdgeIdempotencyRequest(w, r, tenantID, edgeSessionCreateEndpoint, normalizedReq)
 	if handled {
 		return
@@ -160,7 +167,7 @@ func (s *server) handleCreateEdgeSession(w http.ResponseWriter, r *http.Request)
 	if idempotent {
 		s.applyEdgeIdempotency(w, r, store, idempotencyReq,
 			func() (edgeIdempotentWriteResult, error) {
-				return s.executeCreateEdgeSession(r, store, req, tenantID, principalID)
+				return s.executeCreateEdgeSession(r, store, req, tenantID, ownerID)
 			},
 			func(err error) {
 				writeCreateEdgeSessionDomainError(w, r, err)
@@ -168,7 +175,7 @@ func (s *server) handleCreateEdgeSession(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	result, err := s.executeCreateEdgeSession(r, store, req, tenantID, principalID)
+	result, err := s.executeCreateEdgeSession(r, store, req, tenantID, ownerID)
 	if err != nil {
 		writeCreateEdgeSessionDomainError(w, r, err)
 		return

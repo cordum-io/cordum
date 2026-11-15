@@ -351,7 +351,9 @@ func (s *server) prepareEdgeEvaluateContext(w http.ResponseWriter, r *http.Reque
 		writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge event parent not found", nil)
 		return edgeEvaluateContext{}, false
 	}
-	if strings.TrimSpace(session.PrincipalID) != "" && strings.TrimSpace(session.PrincipalID) != principalID {
+	// The owner matches only a principal the credential vouches for, never one
+	// the caller merely asserted (task-cf94ebba).
+	if owner := strings.TrimSpace(session.PrincipalID); owner != "" && owner != auth.FromRequest(r).AuthenticatedPrincipal() {
 		writeEdgeForbidden(w, r, fmt.Errorf("edge session principal mismatch"))
 		return edgeEvaluateContext{}, false
 	}
