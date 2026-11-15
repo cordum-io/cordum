@@ -244,10 +244,10 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 	}
 
 	// Under the policy gate (Edge mint wired, task-f44be149) the Edge
-	// approval is the single resume authority and the MCP record
-	// dual-written below is correlation-only: ClaimPreApproved is never
-	// consulted (task-63400922 E4). The invariant floor above still wins,
-	// and gate-off behaviour is unchanged.
+	// approval is the single resume authority: ClaimPreApproved is never
+	// consulted (task-63400922 E4). It is dual-written with the MCP record
+	// below, and approving or rejecting either one resolves both. The
+	// invariant floor above still wins, and gate-off behaviour is unchanged.
 	if g.edgeStore != nil {
 		if g.useConsumedEdgeApproval(ctx, meta, tool, params) {
 			return nil, nil
