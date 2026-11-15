@@ -714,6 +714,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- The gateway exports its Edge metrics; it built its Edge store on a no-op
+  recorder (#492, task-483967bb).
+
 - `POST /api/v1/jobs` honors the `Idempotency-Key` header when the body key is
   empty; the body wins if both are set. The spec advertised the header, but the
   handler ignored it, so Python SDK and curl retries could create duplicate
