@@ -1,28 +1,30 @@
-# LLM-proxy governance — every chat turn redacted + audited
+# LLM-proxy governance — redaction and audit of proxied chat turns
 
 > Total Copilot governance, **Phase 2**. Phase 1 ([Copilot agent
 > hooks](cordum-hook.md#github-copilot)) records every chat and governs tool actions cooperatively, within the limits listed there. This phase adds the
-> **mandatory network-layer backstop**: an enterprise LLM proxy intercepts every
-> model request/response and routes it through Cordum for redaction + audit, so
-> secrets cannot reach a provider and every chat turn lands in the Edge audit
-> trail even if a cooperative hook is bypassed.
+> **network-layer path**: an enterprise LLM proxy submits the model requests and
+> responses it intercepts to Cordum, which records a redacted `layer=llm` event
+> and returns a `record`/`redact` advisory for each one (CLM-028, `supported` in
+> the [claims register](../contract/claims.yaml)). A secret is kept from the
+> provider only if the proxy applies the advisory. How model traffic is routed
+> through the proxy, and what the provider receives, are not qualified.
 
 ## The two endpoints a proxy uses
 
 A governed LLM proxy pairs **two existing gateway endpoints** per chat turn —
-this keeps the safety-kernel decision single-sourced and the redaction/audit
-mandatory:
+this keeps the safety-kernel decision single-sourced and gives redaction and
+audit their own endpoint:
 
 | Concern | Endpoint | Who decides |
 |---|---|---|
 | **Block a prompt/response** (ALLOW / DENY / REQUIRE_APPROVAL) | `POST /api/v1/edge/evaluate` | Safety kernel (layer-agnostic; already classifies `layer=llm`) |
-| **Redact + audit** every prompt/response (mandatory) | `POST /api/v1/edge/llm/events` *(new)* | The Edge redactor; advisory `record`/`redact` returned to the proxy |
+| **Redact + audit** each prompt/response the proxy submits | `POST /api/v1/edge/llm/events` *(new)* | The Edge redactor; advisory `record`/`redact` returned to the proxy |
 
 > The LLM ingest endpoint deliberately does **not** make the allow/deny policy
 > decision. That stays in `/evaluate` so there is exactly one kernel contract.
-> The ingest endpoint owns the part that must hold unconditionally: nothing
-> sensitive is persisted (or forwarded, if the proxy honors the advisory), and
-> the chat turn is recorded for compliance.
+> The ingest endpoint owns redaction and recording: it stores the redacted
+> event for each submitted turn and returns the advisory; whether a secret is
+> forwarded depends on the proxy applying it (CLM-028, `supported`).
 
 ### Per-turn flow
 
@@ -207,12 +209,12 @@ interception). See `core/edge/claude/managed_settings.go` and
 forwarder that calls these two endpoints) is an infrastructure component; this
 phase delivers the gateway-side governance it depends on.
 
-## Enforcement bar
+## Coverage
 
-| Surface | Guarantee |
+| Surface | Coverage ([claims register](../contract/claims.yaml)) |
 |---|---|
-| Secret never reaches the provider | Mandatory (proxy honors `redact`; nothing raw is persisted) — **except** a secret split across `llm.stream.chunk` boundaries; see "Streaming chunk redaction limits" |
-| Every chat turn audited | Mandatory (recorded `layer=llm` event) |
+| Secret kept from the provider | Only if the proxy applies the `redact` advisory; the gateway stores the redacted event (CLM-028, `supported`) — **except** a secret split across `llm.stream.chunk` boundaries; see "Streaming chunk redaction limits" |
+| Chat turn audited | Each turn the proxy submits is recorded as a `layer=llm` event (CLM-028, `supported`) |
 | Prompt/response policy block | Via `/evaluate` (safety kernel) |
-| Holds against hook bypass | Yes — the proxy is in the network path |
+| Proxy routing | Not qualified: the operator routes model traffic through the proxy, and Cordum does not check that routing |
 | Execution ownership (cross-proxy isolation) | Mandatory — `worker_id` must match the authenticated proxy; fails closed, not just logged |
