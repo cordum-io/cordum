@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/policysign"
 	"github.com/stretchr/testify/require"
 )
@@ -218,6 +220,7 @@ type policyStoreTestGateway struct {
 	mu       sync.Mutex
 	docs     map[string]configDoc
 	requests []string
+	resigned []string
 	refusal  int
 	missing  int
 	body     string
@@ -244,7 +247,10 @@ func (g *policyStoreTestGateway) ServeHTTP(w http.ResponseWriter, r *http.Reques
 			_ = json.NewEncoder(w).Encode(map[string]string{"code": "POLICY_SIGNING_REQUIRED", "error": "no trusted signing key"})
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]string{"key_id": "store-test"})
+		r.SetPathValue("id", strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/policy/bundles/"), "/resign"))
+		id := policybundles.BundleIDFromRequest(r)
+		g.resigned = append(g.resigned, id)
+		_ = json.NewEncoder(w).Encode(map[string]string{"id": id, "key_id": "store-test"})
 		return
 	}
 	// Make an unexpected write visible in both the request and document oracles.
@@ -394,6 +400,54 @@ func TestPolicyResign_SignsOnlyNamedBundles(t *testing.T) {
 			requests, _ := g.snapshot(t)
 			require.Equal(t, want, requests)
 			require.Equal(t, len(want), strings.Count(out, " key_id=store-test\n"))
+		})
+	}
+}
+
+func TestPolicyResign_AllNeverSignsAnotherBundle(t *testing.T) {
+	g, bin, env := policyStoreTestSetup(t, map[string]any{"team/a": "rules: []\n", "team~a": "rules: []\n", "zeta": "rules: []\n"})
+	policyStoreTestBundle(t, "rules: []\n", policysign.EnvPublicKeyPrefix+"STORE-TEST")
+	code, out, stderr := runCLI(t, bin, env, "policy", "resign", "--all")
+	require.Equal(t, 1, code, stderr)
+	require.Equal(t, "RESIGNED team/a key_id=store-test\nSKIPPED \"team~a\" unencodable-id: the bundle API cannot address this ID, so it was not re-signed\nRESIGNED zeta key_id=store-test\n", out)
+	requests, _ := g.snapshot(t)
+	require.Equal(t, []string{"GET /api/v1/config", "GET /api/v1/config", "POST /api/v1/policy/bundles/team~a/resign", "POST /api/v1/policy/bundles/zeta/resign"}, requests)
+	g.set(func() { require.Equal(t, []string{"team/a", "zeta"}, g.resigned) })
+}
+
+func TestPolicyResign_RefusesUnencodableIDsBeforeAnyRequest(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ids  []string
+		all  bool
+	}{
+		{name: "literal tilde", ids: []string{"custom~a"}},
+		{name: "leading space", ids: []string{" team"}},
+		{name: "trailing space", ids: []string{"team "}},
+		{name: "dot", ids: []string{"."}},
+		{name: "dot dot", ids: []string{".."}},
+		{name: "all", ids: []string{"", " team", ".", ".."}, all: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bundles, want := map[string]any{}, ""
+			for _, id := range tc.ids {
+				bundles[id] = "rules: []\n"
+				want += fmt.Sprintf("SKIPPED %q unencodable-id: the bundle API cannot address this ID, so it was not re-signed\n", id)
+			}
+			g, bin, env := policyStoreTestSetup(t, bundles)
+			policyStoreTestBundle(t, "rules: []\n", policysign.EnvPublicKeyPrefix+"STORE-TEST")
+			_, before := g.snapshot(t)
+			args, requests := []string{"policy", "resign", "--bundle", tc.ids[0]}, []string{}
+			if tc.all {
+				args, requests = []string{"policy", "resign", "--all"}, []string{"GET /api/v1/config", "GET /api/v1/config"}
+			}
+			code, out, stderr := runCLI(t, bin, env, args...)
+			require.Equal(t, 1, code, stderr)
+			require.Equal(t, want, out)
+			after, final := g.snapshot(t)
+			require.Equal(t, requests, after)
+			require.Equal(t, before, final)
+			g.set(func() { require.Empty(t, g.resigned) })
 		})
 	}
 }
