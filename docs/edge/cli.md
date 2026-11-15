@@ -122,6 +122,12 @@ review.
 | `enforce` | Allow only known-safe degraded actions; deny risky/unknown actions. The wrapper renders `CORDUM_AGENTD_FAIL_CLOSED=true` and `"onFailure": "block"` on the blocking hooks (Claude Code v2.1.295+), so agentd errors/timeouts and a failed hook process block too. | Developer enforcement and demos. |
 | `enterprise-strict` | Fail closed. | Managed enterprise rollout. |
 
+Before launching Claude Code in any mode except `observe`, the wrapper runs
+`claude --version`. On a version older than 2.1.295, `enterprise-strict`
+refuses to launch and the other modes print a warning, because those versions
+ignore `"onFailure": "block"`. A version that cannot be read only produces a
+warning.
+
 Malformed hook input fails closed with redacted stderr. Hook timeout values must
 stay below the command-hook `"timeout": 5` the wrapper generates (Claude Code's
 own default is 600 seconds); generated settings use `4.5s`.

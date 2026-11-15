@@ -94,6 +94,12 @@ out blocks the action instead of letting it through. `onFailure` requires
 Claude Code v2.1.295 or later; older versions do not honor it. `observe` stays
 fail-open by design.
 
+Before it launches Claude Code in a fail-closed mode, the wrapper runs
+`claude --version`. `enterprise-strict` refuses to launch a version older than
+2.1.295; the other fail-closed modes print a warning and launch. If the version
+cannot be read, the wrapper prints a warning and launches. `cordumctl edge
+doctor` runs the same check as `claude_code_version`.
+
 `CORDUM_AGENTD_FAIL_CLOSED` defaults to `false`, so fail-open is only possible
 for hook settings you wire by hand without `CORDUM_AGENTD_FAIL_CLOSED=true` and
 `"onFailure": "block"`: an `enforce` hook wired that way still denies
