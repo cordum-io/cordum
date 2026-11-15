@@ -849,6 +849,7 @@ Invalid values (non-numeric, zero, negative) are silently replaced with defaults
 Read by the gateway's built-in MCP server (`/mcp/*`). The standalone
 `cordum-mcp` bridge has its own variables under [MCP Server](#mcp-server).
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_MCP_DESTRUCTIVE_TOOL_GLOBS` | `*delete*,*remove*,*archive*` | Comma-separated `path.Match` globs for tool names the MCP gate treats as destructive. A destructive call in a session that an earlier tool result tainted with a prompt injection is denied; the globs only scope that deny and never deny on their own. See [Session-taint destructive scope](edge/mcp-tool-policy.md#session-taint-destructive-scope) |
@@ -871,7 +872,7 @@ Read by the gateway's built-in MCP server (`/mcp/*`). The standalone
 | `CORDUM_API_KEYS` | — | Multiple keys: comma-separated or JSON array |
 | `CORDUM_API_KEYS_PATH` | — | Path to keys file (reloads on change) |
 | `CORDUM_ALLOW_INSECURE_NO_AUTH` | — | Set to `1` for no-auth mode (dev only). In production the gateway refuses to start with it set. |
-| `CORDUM_ALLOW_HEADER_PRINCIPAL` | — | Set to `true` for header-based principal (disabled in production) |
+| `CORDUM_ALLOW_HEADER_PRINCIPAL` | — | Set to `true` to honour `X-Principal-Id` in production, for static keys without `principal_id` and for managed keys (always honoured outside production). A header principal is recorded for attribution only and never binds identity |
 
 ### Gateway — Rate Limiting
 
