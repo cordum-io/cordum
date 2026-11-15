@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Edge managed settings: managed-settings verification fails closed on
+  unsupported conditional or background hook modifiers, and command hooks
+  must have the correct type and tool-event coverage (#492, task-99f50a3d).
+
 - Python SDK: `cordum_sdk._generated` is regenerated from the OpenAPI spec.
   `CreateWorkerCredentialBody` is now `CreateWorkerCredentialRequest`. The
   `CreateShadowAgentFindingRequest*` models are gone and
@@ -136,6 +140,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   performance target is not measured. The released v1.3.0 MCP highlight is kept as written,
   with a dated qualification after it. The ADR decisions and statuses are unchanged
   (M0-07-DOCS-ADR, task-7d6203ff).
+- Docs: the LLM-proxy governance, observability, shadow-scanner, shadow-remediation and
+  managed-settings deploy pages and the edge-doctor CLI page now state their redaction,
+  observe-only, error-detail and managed-settings statements at the status recorded in
+  docs/contract/claims.yaml (CLM-028, CLM-074, CLM-075, CLM-076, CLM-077). The LLM-proxy page
+  says a secret is kept from the provider only if the proxy applies the `redact` advisory and
+  that proxy routing is not qualified, verifier dependency outages are written as not
+  measured, and the managed-settings verifier checks its 18 invariants and reports drift
+  (M0-07-DOCS-EDGE-2, task-40f56a8f).
 
 - Docs: the Safety Kernel guide, scheduler internals, configuration reference, production
   runbook, threat model and dashboard page spec now name the settings that select each fail
@@ -162,6 +174,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Gateway: MCP env defaults (from PR #591). When the stored system config has no
+  `mcp.enabled`, `mcp.transport` or `mcp.policy_gate_enabled` key, the gateway reads
+  `CORDUM_MCP_ENABLED`, `CORDUM_MCP_TRANSPORT` and `CORDUM_MCP_POLICY_GATE_ENABLED`
+  instead. A stored key always wins, and a failed config read leaves MCP disabled
+  whatever the environment says. `docker-compose.dev.yml` sets both flags to `true`
+  for the dev gateway, and the sample `config/system.yaml` gains an `mcp` block
+  (enabled, HTTP transport, policy gate on) (task-314e6394).
 - cordumctl: `generate-certs --san` adds names such as the Helm gateway FQDN
   (#492, task-fb3f0bbb).
 
@@ -272,6 +291,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   ruleset (task-fd34e921).
 
 ### Security
+
+- `cordumctl policy resign` skips bundle IDs the API cannot address without changing their identity, continues past them under `--all`, and reports the ID returned by the gateway (task-64199d9b).
+- Policy: toggling an output rule (`PUT /api/v1/policy/output/rules/{id}`)
+  re-signs the bundle that holds the rule only when its stored content
+  verifies against its stored signature and the policy trust store. Under
+  the enforce signature mode an unverified bundle is refused with 409
+  `POLICY_SIGNING_REQUIRED` and nothing is written; re-sign it with
+  `cordumctl policy resign --bundle <id>` or reinstall its pack. In warn or
+  off mode the toggled content is stored unsigned. The audit entry names the
+  bundle and the new signature's key id and hash (task-90788e98).
 
 - MCP: `tools/call` refuses arguments that repeat an object key, at any
   depth, with JSON-RPC -32602 `invalid params`, before the policy check and
@@ -780,6 +809,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - MCP approvals: VS Code `type:"http"` (session-less) callers can claim
   their approval on retry, and their prompt-injection taint now carries
   across POSTs. Two callers never share either (#492, task-dcd2a4fb).
+
+- Python SDK: an error response whose body is not the `Error` schema, such as
+  a proxy's HTML page or the nested `{"error": {...}}` envelope, now raises the
+  typed `CordumError` subclass for its status instead of `KeyError` or
+  `JSONDecodeError`. The client maps the status from the raw response before
+  the generated parser reads the body (task-4458e689).
 
 - Python SDK: `scripts/generate.sh` and `scripts/generate.ps1` run from a
   fresh virtualenv on Python 3.11 to 3.13. The `generator` extra pins
