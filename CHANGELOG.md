@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Edge managed settings: managed-settings verification fails closed on
+  unsupported conditional or background hook modifiers, and command hooks
+  must have the correct type and tool-event coverage (#492, task-99f50a3d).
+
 - Python SDK: `cordum_sdk._generated` is regenerated from the OpenAPI spec.
   `CreateWorkerCredentialBody` is now `CreateWorkerCredentialRequest`. The
   `CreateShadowAgentFindingRequest*` models are gone and
@@ -279,6 +283,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   ruleset (task-fd34e921).
 
 ### Security
+
+- Policy: toggling an output rule (`PUT /api/v1/policy/output/rules/{id}`)
+  re-signs the bundle that holds the rule only when its stored content
+  verifies against its stored signature and the policy trust store. Under
+  the enforce signature mode an unverified bundle is refused with 409
+  `POLICY_SIGNING_REQUIRED` and nothing is written; re-sign it with
+  `cordumctl policy resign --bundle <id>` or reinstall its pack. In warn or
+  off mode the toggled content is stored unsigned. The audit entry names the
+  bundle and the new signature's key id and hash (task-90788e98).
 
 - MCP: `tools/call` refuses arguments that repeat an object key, at any
   depth, with JSON-RPC -32602 `invalid params`, before the policy check and
@@ -783,6 +796,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - typedoc, typedoc-plugin-coverage and typedoc-plugin-markdown are removed from the install with pnpm `-` overrides. typedoc 0.28 calls `Minimatch#matchOne`, which 11.x removed. orval 8.31.0 loads typedoc only for its `docs` output, which the dashboard does not configure. Until typedoc supports minimatch 11, enabling that output fails at import. orval stays at 8.31.0.
 
 ### Fixed
+
+- Python SDK: an error response whose body is not the `Error` schema, such as
+  a proxy's HTML page or the nested `{"error": {...}}` envelope, now raises the
+  typed `CordumError` subclass for its status instead of `KeyError` or
+  `JSONDecodeError`. The client maps the status from the raw response before
+  the generated parser reads the body (task-4458e689).
 
 - Python SDK: `scripts/generate.sh` and `scripts/generate.ps1` run from a
   fresh virtualenv on Python 3.11 to 3.13. The `generator` extra pins
