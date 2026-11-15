@@ -45,7 +45,12 @@ Decisions are normalized to:
 - `throttle`
 - `allow_with_constraints`
 
-If constraints are present, response can be `ALLOW_WITH_CONSTRAINTS` even when decision is `allow`.
+If the matched rule has `constraints` (`budgets`, `sandbox`, `toolchain`,
+`diff`, `redaction_level`; see
+[operations/safetykernel-constraints.md](operations/safetykernel-constraints.md)),
+the response is `ALLOW_WITH_CONSTRAINTS` even when the decision is `allow`.
+Remediations (replacement topic or capability, label edits) are separate; see
+section 7.
 
 Approval binding behavior:
 

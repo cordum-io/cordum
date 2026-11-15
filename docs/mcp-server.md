@@ -39,13 +39,21 @@ Primary code paths:
 Run:
 
 ```bash
-go run ./cmd/cordum-mcp --addr http://localhost:8081 --api-key "$CORDUM_API_KEY"
+go run ./cmd/cordum-mcp --addr http://localhost:8081 --api-key "$CORDUM_API_KEY" --allow-private-gateway
 ```
 
 Flags:
 
 - `--addr` (default `http://localhost:8081`)
 - `--api-key` (or `CORDUM_API_KEY`)
+- `--allow-private-gateway` (or `CORDUM_MCP_ALLOW_PRIVATE_GATEWAY=true`;
+  default `false`): allow a gateway on `localhost` or a private or loopback
+  address. Without it, every gateway call to such an `--addr`, the default
+  included, fails with `target host resolves to private address`.
+- `--gateway-allowlist` (or `CORDUM_MCP_GATEWAY_ALLOWLIST`): comma-separated
+  hosts or domains that the `--addr` host must match. A domain also matches
+  its subdomains. It applies even with `--allow-private-gateway`. See
+  [Endpoint validation](#endpoint-validation).
 - `--request-timeout` (default `30s`)
 
 ### 2) Gateway HTTP + SSE (remote clients)
@@ -237,9 +245,9 @@ Each registry entry stores:
 
 - `name` - stable upstream identifier (`A-Z`, `a-z`, `0-9`, `.`, `-`).
 - `transport` - one of `http`, `sse`, or `stdio`.
-- `endpoint` - HTTPS/HTTP URL for remote transports. Enterprise-strict mode
-  rejects unsafe local endpoints and rejects any host that resolves to loopback
-  or unspecified IPs.
+- `endpoint` - URL for the `http` and `sse` transports. It must be `https://`,
+  and internal or cloud-metadata hosts are rejected in every policy mode (see
+  [Endpoint validation](#endpoint-validation)).
 - `command` - shell-free argv vector for `stdio`; shell metacharacters such as
   `;`, `&&`, pipes, redirects, backticks, and `$(` are rejected.
 - `tenant_id` - tenant scope; `*` is reserved for system-wide entries and
@@ -271,9 +279,59 @@ emit only redacted error details.
 | `POST` | `/api/v1/edge/mcp/upstreams/{name}/disable` | Disable an entry without deleting it. |
 | `POST` | `/api/v1/edge/mcp/upstreams/{name}/enable` | Re-enable a disabled entry. |
 
-Create/update validation rejects raw secret refs, unsafe strict-mode endpoints,
-invalid transports, unsafe `stdio` argv elements, name/tenant key escapes, and
-enterprise-strict entries that are not allowlisted.
+Create, update and validate-only requests reject an `auth_secret_ref` that is
+not a `secret://` reference, an unsafe endpoint (in every mode), a transport
+other than `http`, `sse` or `stdio`, empty or shell-metacharacter `stdio` argv
+elements, a name or a tenant ID (other than `*`) outside `[A-Za-z0-9.-]`
+(first character alphanumeric), an unknown `risk`, and, in enterprise-strict
+mode, a name that is not allowlisted.
+
+### Endpoint validation
+
+`core/edge/mcp_upstream_validation.go` checks `http` and `sse` endpoints in
+every policy mode:
+
+- The URL needs a scheme and a host, and the scheme must be `https`. Plain
+  `http` is rejected unless trusted tenant config sets
+  `safety.mcp.allow_plain_http: true`. The opt-in covers `?validate_only=true`,
+  create and update. The Redis-backed registry validates again on create and
+  update, and the gateway passes it the same opt-in.
+- Cloud-metadata hostnames are rejected before any DNS lookup:
+  `metadata.google.internal`, `metadata.azure.com` and
+  `instance-data.ec2.internal` (case-insensitive, trailing dot ignored).
+- `localhost` is rejected, and so is any IP literal or resolved address in an
+  internal range: loopback (`127.0.0.0/8`, `::1`), "this network"
+  (`0.0.0.0/8`) and IPv6 unspecified (`::`), RFC 1918 (`10.0.0.0/8`,
+  `172.16.0.0/12`, `192.168.0.0/16`), carrier-grade NAT (`100.64.0.0/10`),
+  link-local (`169.254.0.0/16`, which includes the cloud metadata IP
+  `169.254.169.254`, and `fe80::/10`), IPv6 unique-local (`fc00::/7`) and
+  multicast. These are the same IPv4 and IPv6 ranges the gateway guard below
+  rejects. IPv4-mapped IPv6 addresses are checked as IPv4. One internal
+  address among a host's DNS answers is enough to reject it. There is no
+  opt-in for private upstreams. Tailscale gives tailnet devices addresses in
+  `100.64.0.0/10`, so an upstream hosted on a tailnet needs a public
+  endpoint.
+- A failed DNS lookup rejects the endpoint only in enterprise-strict mode.
+
+The addresses a host resolves to at registration are stored as
+`resolved_ips`. Right before Cordum dials an upstream,
+`RevalidateMCPUpstreamAtUse` resolves the host again and refuses the call if
+the host is a cloud-metadata name, the lookup fails, any address is internal,
+or the set of addresses differs from `resolved_ips` (DNS-rebinding
+protection). An entry stored without `resolved_ips` is therefore never dialed.
+`stdio` entries skip the use-time check.
+
+The `cordum-mcp` server's own calls to the gateway (`--addr`) go through a
+separate guard, `core/mcp/url_guard.go`. The scheme must be `http` or `https`,
+and the host must match `--gateway-allowlist` (`CORDUM_MCP_GATEWAY_ALLOWLIST`)
+when one is set. Unless `--allow-private-gateway`
+(`CORDUM_MCP_ALLOW_PRIVATE_GATEWAY=true`) is set, the host must not be
+`localhost` or `metadata.google.internal`, must resolve, and must not resolve
+to `0.0.0.0/8`, `10.0.0.0/8`, `100.64.0.0/10`, `127.0.0.0/8`,
+`169.254.0.0/16`, `172.16.0.0/12`, `192.168.0.0/16`, `::1`, `fe80::/10`,
+`fc00::/7` or a multicast address. The connection is then pinned to the
+checked addresses. A local gateway such as the default
+`http://localhost:8081` therefore needs `--allow-private-gateway`.
 
 ### `cordumctl mcp upstream`
 
@@ -297,10 +355,14 @@ provider API keys or bearer tokens on the command line.
 
 ### Enterprise-strict allowlist
 
-In enterprise-strict mode, registry writes are allowed only when the upstream
-`name` appears in the effective MCP allowlist (`safety.mcp.allowed_upstreams`,
-or the handler's explicit validation query parameters in tests/tools). This
-prevents unmanaged upstreams from being introduced by local attach flows.
+The policy mode comes only from trusted tenant config: `safety.mcp.policy_mode`
+(`enterprise-strict`), which defaults to enterprise-strict when
+`safety.mcp.allowed_upstreams` is set. Requests that pass `policy_mode`,
+`allowed_upstream`, `allowed_upstreams` or `allow_plain_http` as query
+parameters are rejected with 400. In enterprise-strict mode, registry writes
+are allowed only when the upstream `name` appears in
+`safety.mcp.allowed_upstreams`. This prevents unmanaged upstreams from being
+introduced by local attach flows.
 
 ### Backup-on-update
 
@@ -1099,7 +1161,7 @@ and requests no approvals.
   "mcpServers": {
     "cordum": {
       "command": "cordum-mcp",
-      "args": ["--addr", "http://localhost:8081"],
+      "args": ["--addr", "http://localhost:8081", "--allow-private-gateway"],
       "env": {
         "CORDUM_API_KEY": "replace-with-api-key"
       }
@@ -1111,7 +1173,7 @@ and requests no approvals.
 ### Claude Code CLI
 
 ```bash
-claude mcp add cordum -- cordum-mcp --addr http://localhost:8081
+claude mcp add cordum -- cordum-mcp --addr http://localhost:8081 --allow-private-gateway
 ```
 
 ### HTTP/SSE test call
@@ -1147,22 +1209,24 @@ console.log(payload);
 
 ## Dashboard Configuration
 
-The dashboard provides a full MCP management UI at **Settings > MCP Server** (`/settings/mcp`).
+**Settings > MCP Server** (`/settings/mcp`) shows the MCP server's state:
 
-### Setup Flow
+- **Status**: running or not, connected clients, uptime, and the configured
+  transport, port and whether an API key is required. A warning card appears
+  while MCP is disabled.
+- **Tools and Resources**: the registered MCP tools (e.g. `cordum_submit_job`)
+  and resources (e.g. `cordum://jobs/{id}`), each marked enabled or disabled.
+  The lists are read-only; change them with the config API below.
+- **Enable runtime / Disable runtime** sets `mcp.enabled`.
+- **Copy URL** copies `<mcp.transport>://<dashboard host>:<mcp.port>`, and the
+  page shows port 3001 when `mcp.port` is unset. `mcp.port` is metadata only:
+  the gateway serves `/mcp/sse` and `/mcp/message` on its own port
+  (`http://localhost:8081` in the default stack).
 
-1. **Enable MCP**: Navigate to `/settings/mcp` and toggle **Enable MCP Server** on.
-2. **Configure transport**: Expand the Transport Configuration card and choose a mode:
-   - **HTTP + SSE** (recommended) — for remote Claude Desktop / Claude Code connections
-   - **stdio** — for local process integration
-   - **Both** — enable both simultaneously
-   Set the HTTP port (default 3001) and allowed CORS origins as needed, then click **Save Transport Settings**.
-3. **Set up authentication**: In the Authentication card, ensure **Require API Key** is on, then click **Generate MCP API Key**. Copy the generated secret immediately — it is only shown once.
-4. **Copy config snippet**: The Quick Start card provides ready-to-paste snippets:
-   - **Claude Desktop**: JSON for `claude_desktop_config.json`
-   - **Claude Code**: CLI command `claude mcp add cordum -- cordum-mcp --addr http://localhost:3001`
-5. **Verify connection**: The status indicator in the page header turns green when the MCP server is running. It shows the connected client count and uptime.
-6. **Manage tools and resources**: The Tools and Resources tables let you enable or disable individual MCP tools (e.g., `cordum_submit_job`) and resources (e.g., `cordum://jobs/{id}`) with per-item toggles. Expand any tool row to preview its input schema.
+The page has no client config snippets. Create an API key under
+**Settings > API Keys** (`/settings/keys`), then configure the client as in
+[Integration Examples](#integration-examples), which point `cordum-mcp` at the
+gateway with `--addr http://localhost:8081 --allow-private-gateway`.
 
 ### API-based Configuration
 
