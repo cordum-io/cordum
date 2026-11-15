@@ -1,12 +1,17 @@
 package edge
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
+	miniredis "github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/audit"
+	"github.com/redis/go-redis/v9"
 )
 
 func TestSessionSweeperRemovesAgedSessionAndPreservesFresh(t *testing.T) {
@@ -291,5 +296,55 @@ func TestSessionSweeperKeepsSessionsUnderLegalHold(t *testing.T) {
 	}
 	if _, ok, err := store.GetSession(ctx, "tenant-broken", "sess-tenant-broken"); err != nil || !ok {
 		t.Fatalf("tenant-broken session exists=%v err=%v, want kept", ok, err)
+	}
+}
+
+// TestSessionSweeperKeepsSessionsWhenHoldStoreUnreachable covers the fail-closed
+// half of the legal_hold row in docs/contract/license-behavior.md ("Held
+// evidence is retained, or the incompatible operation fails closed") for Edge
+// sessions: while the legal hold store cannot be read, the sweeper keeps every
+// expired session with its execution, and logs why once per tenant per sweep.
+func TestSessionSweeperKeepsSessionsWhenHoldStoreUnreachable(t *testing.T) {
+	ctx := context.Background()
+	store, _, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+
+	now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	for _, id := range []string{"1", "2"} {
+		createSessionAndExecution(t, ctx, store, "tenant-down", "sess-down-"+id, "exec-down-"+id, now.Add(-40*24*time.Hour))
+	}
+	holdRedis := miniredis.RunT(t)
+	holdRedis.SetError("ERR hold store unavailable")
+	holdClient := redis.NewClient(&redis.Options{Addr: holdRedis.Addr()})
+	defer func() { _ = holdClient.Close() }()
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	sweeper, err := NewSessionSweeper(store, SessionSweeperOptions{
+		Now:        func() time.Time { return now },
+		LegalHolds: audit.NewLegalHoldStoreFromClient(holdClient),
+	})
+	if err != nil {
+		t.Fatalf("NewSessionSweeper: %v", err)
+	}
+	if swept, err := sweeper.SweepOnce(ctx); err != nil || swept != 0 {
+		t.Fatalf("SweepOnce = %d, %v; want nothing swept", swept, err)
+	}
+	for _, id := range []string{"1", "2"} {
+		if _, ok, err := store.GetSession(ctx, "tenant-down", "sess-down-"+id); err != nil || !ok {
+			t.Fatalf("session %s exists=%v err=%v, want kept", id, ok, err)
+		}
+		if _, ok, err := store.GetExecution(ctx, "tenant-down", "exec-down-"+id); err != nil || !ok {
+			t.Fatalf("execution %s exists=%v err=%v, want kept", id, ok, err)
+		}
+	}
+	out := logs.String()
+	if got := strings.Count(out, "keeping tenant's expired sessions"); got != 1 {
+		t.Fatalf("hold-check warnings = %d, want 1 per tenant per sweep; logs:\n%s", got, out)
+	}
+	if !strings.Contains(out, "tenant_id=tenant-down") || !strings.Contains(out, "hold_check_error=") {
+		t.Fatalf("warning lacks the tenant or the hold-check error; logs:\n%s", out)
 	}
 }

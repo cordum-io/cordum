@@ -277,6 +277,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- Edge: the session sweeper keeps sessions under legal hold. Before each
+  deletion it checks the tenant's audit legal hold, and it keeps the
+  expired sessions, executions and events of a tenant under an active hold
+  or whose hold check fails. If the gateway's legal hold store fails to
+  start, Edge session retention deletes nothing until the gateway restarts
+  (task-eab83dcc).
+
 - MCP: `tools/call` refuses arguments that repeat an object key, at any
   depth, with JSON-RPC -32602 `invalid params`, before the policy check and
   any approval. A tool therefore runs only with the argument values that
