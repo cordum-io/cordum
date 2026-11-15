@@ -37,8 +37,14 @@ spec:
                 secretKeyRef:
                   name: {{ include "cordum.fullname" . }}-secrets
                   key: apiKey
+            # Same name and trust as the dashboard proxy: with TLS, verify the
+            # gateway against clientCertSecret's ca.crt, else encrypt only.
             - name: GATEWAY_URL
-              value: "http://{{ include "cordum.fullname" . }}-api-gateway:{{ .Values.gateway.service.httpPort }}"
+              value: {{ printf "%s://%s-api-gateway.%s.svc.cluster.local:%d" (ternary "https" "http" .Values.global.tls.enabled) (include "cordum.fullname" .) .Release.Namespace (int .Values.gateway.service.httpPort) | quote }}
+            {{- if .Values.global.tls.enabled }}
+            - name: CURL_TLS_OPTS
+              value: {{ ternary "--cacert /etc/cordum/tls/ca/ca.crt" "--insecure" (not (empty .Values.global.tls.clientCertSecret)) | quote }}
+            {{- end }}
             - name: MAX_RETRIES
               value: {{ .Values.configBootstrap.retries | quote }}
           command:
@@ -50,7 +56,8 @@ spec:
               attempt=0
               while [ "$attempt" -lt "$MAX_RETRIES" ]; do
                 attempt=$((attempt + 1))
-                status=$(curl -s -o /dev/null -w '%{http_code}' \
+                # CURL_TLS_OPTS is unquoted on purpose: it holds flag words.
+                status=$(curl -s $CURL_TLS_OPTS -o /dev/null -w '%{http_code}' \
                   -H "X-API-Key: $CORDUM_API_KEY" \
                   -H "X-Tenant-ID: default" \
                   "$GATEWAY_URL/api/v1/config" 2>/dev/null || echo "000")
@@ -63,6 +70,12 @@ spec:
               done
               echo "ERROR: Gateway config endpoint not reachable after $MAX_RETRIES attempts."
               exit 1
+          {{- if and .Values.global.tls.enabled .Values.global.tls.clientCertSecret }}
+          volumeMounts:
+            - name: gateway-ca
+              mountPath: /etc/cordum/tls/ca
+              readOnly: true
+          {{- end }}
           resources:
             limits:
               cpu: 100m
@@ -70,4 +83,13 @@ spec:
             requests:
               cpu: 10m
               memory: 16Mi
+      {{- if and .Values.global.tls.enabled .Values.global.tls.clientCertSecret }}
+      volumes:
+        - name: gateway-ca
+          secret:
+            secretName: {{ .Values.global.tls.clientCertSecret }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+      {{- end }}
 {{- end }}
