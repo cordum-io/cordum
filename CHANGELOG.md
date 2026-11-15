@@ -7,6 +7,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Edge managed settings: `cordumctl edge managed-settings verify` and the
+  doctor's compliance check require an independent expected MCP gateway URL
+  (`--mcp-gateway-url`) and cannot report OK without it. Ambiguous URLs or
+  JSON and inline MCP exceptions fail verification (#492, task-15747cc6).
+
 - K8s production overlay: before `kubectl apply -k`, delete the
   `cordum-redis-cluster-init` Job and the `cordum-nats` StatefulSet (its PVCs
   stay), since both changes touch immutable fields (#492, task-6654d7e5).

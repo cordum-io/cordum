@@ -481,7 +481,7 @@ func buildClaudeWrapperSteps(kind RemediationActionKind, audience RemediationAud
 				Title: "Backup existing user settings before deploying managed payload",
 				Kind:  kind,
 				Command: "cordumctl edge managed-settings export --output <output-dir>" +
-					" --mcp-gateway-url <gateway-url> --llm-proxy-base-url <llm-proxy-url> --api-key-helper-command <api-key-helper-command>",
+					" --mcp-gateway-url <mcp-gateway-url> --llm-proxy-base-url <llm-proxy-url> --api-key-helper-command <api-key-helper-command>",
 				RequiresBackup: true,
 				DocsURL:        "docs/edge/managed-settings-deploy.md",
 			},
@@ -489,8 +489,8 @@ func buildClaudeWrapperSteps(kind RemediationActionKind, audience RemediationAud
 				ID:    "use_cordumctl_edge_claude.enterprise.deploy",
 				Title: "Deploy managed settings via MDM and verify",
 				Kind:  kind,
-				Command: "cordumctl edge managed-settings verify --managed-settings-path <path-to-managed-settings.json>" +
-					" --managed-mcp-path <path-to-managed-mcp.json>",
+				Command: "cordumctl edge managed-settings verify --path <path-to-managed-settings.json>" +
+					" --mcp-gateway-url <mcp-gateway-url>",
 				DocsURL: "docs/edge/managed-settings-deploy.md",
 				Conditions: []string{
 					"requires MDM access; do NOT push managed settings without sign-off",
@@ -518,7 +518,7 @@ func buildMCPGatewaySteps(kind RemediationActionKind, audience RemediationAudien
 			Title: "Export managed MCP payload and redeploy via MDM",
 			Kind:  kind,
 			Command: "cordumctl edge managed-settings export --output <output-dir>" +
-				" --mcp-gateway-url <gateway-url> --llm-proxy-base-url <llm-proxy-url> --api-key-helper-command <api-key-helper-command>",
+				" --mcp-gateway-url <mcp-gateway-url> --llm-proxy-base-url <llm-proxy-url> --api-key-helper-command <api-key-helper-command>",
 			DocsURL: "docs/edge/managed-settings-deploy.md",
 			Conditions: []string{
 				"requires MDM access",
@@ -546,7 +546,7 @@ func buildLLMProxySteps(kind RemediationActionKind, audience RemediationAudience
 			Title: "Bind the LLM proxy URL into managed settings",
 			Kind:  kind,
 			Command: "cordumctl edge managed-settings export --output <output-dir>" +
-				" --mcp-gateway-url <gateway-url> --llm-proxy-base-url <llm-proxy-url> --api-key-helper-command <api-key-helper-command>",
+				" --mcp-gateway-url <mcp-gateway-url> --llm-proxy-base-url <llm-proxy-url> --api-key-helper-command <api-key-helper-command>",
 			DocsURL: "docs/edge/managed-settings-deploy.md",
 		})
 	}
@@ -582,15 +582,15 @@ func buildManagedSettingsSteps(kind RemediationActionKind) []RemediationStep {
 			Title: "Export managed settings + managed MCP payload",
 			Kind:  kind,
 			Command: "cordumctl edge managed-settings export --output <output-dir>" +
-				" --mcp-gateway-url <gateway-url> --llm-proxy-base-url <llm-proxy-url> --api-key-helper-command <api-key-helper-command>",
+				" --mcp-gateway-url <mcp-gateway-url> --llm-proxy-base-url <llm-proxy-url> --api-key-helper-command <api-key-helper-command>",
 			DocsURL: "docs/edge/managed-settings-deploy.md",
 		},
 		{
 			ID:    "deploy_managed_settings.verify",
 			Title: "Verify deployment with the doctor",
 			Kind:  kind,
-			Command: "cordumctl edge managed-settings verify --managed-settings-path <path-to-managed-settings.json>" +
-				" --managed-mcp-path <path-to-managed-mcp.json>",
+			Command: "cordumctl edge managed-settings verify --path <path-to-managed-settings.json>" +
+				" --mcp-gateway-url <mcp-gateway-url>",
 			DocsURL: "docs/edge/managed-settings-deploy.md",
 		},
 	}
