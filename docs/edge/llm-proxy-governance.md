@@ -216,5 +216,5 @@ phase delivers the gateway-side governance it depends on.
 | Secret kept from the provider | Only if the proxy applies the `redact` advisory; the gateway stores the redacted event (CLM-028, `supported`) — **except** a secret split across `llm.stream.chunk` boundaries; see "Streaming chunk redaction limits" |
 | Chat turn audited | Each turn the proxy submits is recorded as a `layer=llm` event (CLM-028, `supported`) |
 | Prompt/response policy block | Via `/evaluate` (safety kernel) |
-| Proxy routing | Not qualified: the operator routes model traffic through the proxy, and Cordum does not check that routing |
+| Proxy routing | Not qualified: the operator deploys the proxy and routes model traffic through it (CLM-028 boundary) |
 | Execution ownership (cross-proxy isolation) | Mandatory — `worker_id` must match the authenticated proxy; fails closed, not just logged |
