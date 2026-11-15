@@ -224,3 +224,39 @@ func TestEnsureDevCLIContextWritesValidYAMLAndDoesNotOverwrite(t *testing.T) {
 		t.Fatalf("cordum.yaml was modified unexpectedly: %q", string(after))
 	}
 }
+
+// TestAPIKeyDefaultsReadDotEnvOnlyWhenEnvUnset pins #591's .env readers: the
+// --api-key default and loadEdgeClaudeConfigForRun take CORDUM_API_KEY from
+// ./.env only when the environment does not set it.
+func TestAPIKeyDefaultsReadDotEnvOnlyWhenEnvUnset(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("CORDUM_API_KEY=from-dotenv"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("CORDUM_API_KEY", "")
+	if err := os.Unsetenv("CORDUM_API_KEY"); err != nil {
+		t.Fatal(err)
+	}
+	checkAPIKeyDefaults(t, "unset", "from-dotenv")
+
+	t.Setenv("CORDUM_API_KEY", "from-env")
+	checkAPIKeyDefaults(t, "set", "from-env")
+}
+
+func checkAPIKeyDefaults(t *testing.T, env, want string) {
+	t.Helper()
+	if got := *newFlagSet("test").apiKey; got != want {
+		t.Errorf("CORDUM_API_KEY %s: --api-key default = %q, want %q", env, got, want)
+	}
+	cfg, _, err := loadEdgeClaudeConfigForRun()
+	if err != nil {
+		t.Fatalf("CORDUM_API_KEY %s: loadEdgeClaudeConfigForRun: %v", env, err)
+	}
+	if cfg.APIKey != want {
+		t.Errorf("CORDUM_API_KEY %s: loadEdgeClaudeConfigForRun APIKey = %q, want %q", env, cfg.APIKey, want)
+	}
+}
