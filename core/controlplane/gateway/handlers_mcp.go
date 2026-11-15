@@ -1448,9 +1448,17 @@ func (s *server) mcpGetStatusPayload(ctx context.Context) (map[string]any, error
 // POST /api/v1/workflows handler under the caller's ctx, so permission
 // (workflows-write or admin), tenant resolution and validation are
 // identical to the REST endpoint. The registry's approval gate has
-// already admitted the call before this runs. Idempotency-Key is not
-// forwarded: handleCreateWorkflow does not honor it.
+// already admitted the call before this runs. A call with an
+// idempotency_key and no id gets the workflow id derived from the caller's
+// tenant, org_id, agent and that key. handleCreateWorkflow upserts by id,
+// so a repeated delivery of the call writes the same workflow, not a second.
 func (s *server) mcpCreateWorkflow(ctx context.Context, req mcp.CreateWorkflowInput) (*mcp.CreateWorkflowOutput, error) {
+	if key := strings.TrimSpace(req.IdempotencyKey); key != "" && strings.TrimSpace(req.ID) == "" {
+		meta, _ := MCPCallMetadataFromContext(ctx)
+		name := fmt.Sprintf("%q", []string{mcp.ToolCreateWorkflow, s.mcpTenantFromContext(ctx),
+			strings.TrimSpace(req.OrgID), meta.AgentID, key})
+		req.ID = uuid.NewSHA1(uuid.NameSpaceOID, []byte(name)).String()
+	}
 	body := map[string]any{"steps": req.Steps}
 	for key, value := range map[string]string{
 		"id": req.ID, "name": req.Name, "description": req.Description,

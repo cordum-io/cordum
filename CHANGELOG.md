@@ -932,6 +932,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - MCP approvals: a re-ask returns the caller's pending approval instead of
   minting another (#492, task-2a9d0a7c).
 
+- MCP approvals: a repeat of a gated call whose legacy approval is still
+  pending, such as a redelivered or concurrent duplicate, gets the caller's
+  pending approval back instead of queuing a second one, as re-asks already
+  did under the policy gate. `cordum_create_workflow` called with an
+  `idempotency_key` and no `id` writes one workflow per key, so a repeated
+  delivery returns the same `workflow_id` instead of creating a second
+  workflow (task-1bf8c325).
+
 - MCP server: a policy-gate call without metadata gets `-32097`, as
   documented (#492, task-11710a81).
 
