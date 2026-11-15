@@ -258,6 +258,9 @@ func (f edgeDoctorFixture) args(extra ...string) []string {
 
 func runEdgeDoctorForTest(t *testing.T, args ...string) (int, string, string) {
 	t.Helper()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	t.Setenv("CORDUM_API_KEY", "")
 	// --fail-closed defaults from CORDUM_AGENTD_FAIL_CLOSED, and an inherited
 	// unparseable value makes the policy-mode check warn (exit 2). Clear it so

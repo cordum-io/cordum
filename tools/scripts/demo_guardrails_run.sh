@@ -14,10 +14,50 @@ require curl
 require jq
 require go
 
+read_dotenv_var() {
+  local key="$1"
+  local env_file="${ROOT_DIR}/.env"
+  [[ -f "${env_file}" ]] || return 0
+  local line k v
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line="${line%$'\r'}"
+    [[ -z "${line}" || "${line}" == \#* ]] && continue
+    [[ "${line}" == *=* ]] || continue
+    k="${line%%=*}"
+    k="${k#"${k%%[![:space:]]*}"}"
+    k="${k%"${k##*[![:space:]]}"}"
+    [[ "${k}" == "${key}" ]] || continue
+    v="${line#*=}"
+    v="${v#"${v%%[![:space:]]*}"}"
+    v="${v%"${v##*[![:space:]]}"}"
+    if [[ ${#v} -ge 2 && ( ( "${v:0:1}" == '"' && "${v: -1}" == '"' ) || ( "${v:0:1}" == "'" && "${v: -1}" == "'" ) ) ]]; then
+      v="${v:1:${#v}-2}"
+    fi
+    printf '%s' "${v}"
+    return 0
+  done < "${env_file}"
+}
+
+if [[ -z "${CORDUM_API_KEY:-}" && -z "${API_KEY:-}" ]]; then
+  _dotenv_key="$(read_dotenv_var CORDUM_API_KEY)"
+  if [[ -z "${_dotenv_key}" ]]; then
+    _dotenv_key="$(read_dotenv_var API_KEY)"
+  fi
+  if [[ -n "${_dotenv_key}" ]]; then
+    CORDUM_API_KEY="${_dotenv_key}"
+  fi
+fi
+if [[ -z "${REDIS_PASSWORD:-}" ]]; then
+  _dotenv_redis="$(read_dotenv_var REDIS_PASSWORD)"
+  if [[ -n "${_dotenv_redis}" ]]; then
+    export REDIS_PASSWORD="${_dotenv_redis}"
+  fi
+fi
+
 API_BASE=${CORDUM_API_BASE:-https://localhost:8081}
 API_KEY=${CORDUM_API_KEY:-${API_KEY:-}}
 if [[ -z "${API_KEY}" ]]; then
-  echo "CORDUM_API_KEY is required; export it before running the demo." >&2
+  echo "CORDUM_API_KEY is required; run 'cordumctl up --dev' or export CORDUM_API_KEY before running the demo." >&2
   exit 1
 fi
 ORG_ID=${CORDUM_ORG_ID:-${CORDUM_TENANT_ID:-default}}

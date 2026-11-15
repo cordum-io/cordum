@@ -265,7 +265,11 @@ type flagSet struct {
 func newFlagSet(name string) *flagSet {
 	fs := flag.NewFlagSet(name, flag.ExitOnError)
 	gateway := fs.String("gateway", envOr("CORDUM_GATEWAY", defaultGateway), "gateway base URL; use http:// for a gateway without TLS (also: CORDUM_GATEWAY)")
-	apiKey := fs.String("api-key", envOr("CORDUM_API_KEY", ""), "api key")
+	apiKeyDefault := envOr("CORDUM_API_KEY", "")
+	if _, apiKeySet := os.LookupEnv("CORDUM_API_KEY"); !apiKeySet && apiKeyDefault == "" {
+		apiKeyDefault = readEnvFile(".env", "CORDUM_API_KEY", "API_KEY")
+	}
+	apiKey := fs.String("api-key", apiKeyDefault, "api key")
 	tenant := fs.String("tenant", envOr("CORDUM_TENANT_ID", "default"), "tenant id")
 	insecure := fs.Bool("insecure", false, "skip TLS certificate verification (also: CORDUM_TLS_INSECURE=1|true)")
 	cacert := fs.String("cacert", envOr("CORDUM_TLS_CA", ""), "CA certificate for TLS verification; for https://localhost, ./certs/ca/ca.crt is used when present (also: CORDUM_TLS_CA)")
@@ -399,7 +403,7 @@ Usage:
   cordumctl mcp upstream add|validate --name NAME (--endpoint URL|--command ARG...) [--auth-secret-ref secret://...] [--validate-only]
   cordumctl mcp upstream list|get|disable|enable [NAME]
   cordumctl dev [--file docker-compose.yml] [--build] [--detach]
-  cordumctl up [--file docker-compose.yml] [--build] [--detach]
+  cordumctl up [--dev] [--file docker-compose.yml] [--build] [--detach]
   cordumctl status [--json]
   cordumctl license install <path>
   cordumctl license info [--json]

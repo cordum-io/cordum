@@ -86,3 +86,33 @@ License on the Change Date (see `LICENSE`).
 
 - Include steps to reproduce, expected vs actual behavior, and logs.
 - For security issues, see `SECURITY.md`.
+
+## Maintainer smoke tests & local E2E harness
+
+When verifying runtime changes locally before pushing:
+
+### Minimal stack smoke test
+
+Use `./tools/scripts/platform_smoke.sh` (or `make smoke`) after booting the local Compose stack to exercise gateway readiness, worker registration, job submission, and status polling:
+
+```bash
+cordumctl up --dev
+CORDUM_API_KEY=$(grep '^CORDUM_API_KEY=' .env | cut -d= -f2-) CORDUM_TENANT_ID=default ./tools/scripts/platform_smoke.sh
+```
+
+### Local E2E suites
+
+- `./tools/scripts/e2e_test.sh`: full Docker Compose end-to-end verification (TLS detection, NATS/Redis wiring, gateway + worker roundtrip).
+- `./tools/scripts/edge_fake_hook_e2e.sh`: exercises `cordumctl edge claude`, local `cordum-agentd`, and fake hook pre-tool approval flow without requiring live Anthropic credentials.
+- `./tools/scripts/doctor_integration_test.sh`: integration validation for `cordumctl doctor`.
+
+### Recording demo GIFs
+
+The terminal capture recipe for the platform guardrails demo lives in `./tools/scripts/demo_guardrails.tape` alongside `./tools/scripts/demo_guardrails.sh`:
+
+- **Linux / macOS (`vhs`):** install Charmbracelet `vhs` (`brew install vhs` or Go install) and run `vhs tools/scripts/demo_guardrails.tape`.
+- **GUI screen capture:** use `Peek` on Linux or `ShareX` on Windows if recording dashboard approval clicks alongside terminal panes.
+
+### `CAP-PRODUCTION` profile notes
+
+When testing strict `CORDUM_CAP_PROFILE=production` startup behavior (`docs/cap_production_profile.md`), remember that gateway, scheduler, safety-kernel, and workflow-engine intentionally fail closed (refusing startup) unless every mandatory production dependency (signed packets, TLS, persistent stores, and fail-closed safety policies) is configured. Leave `CORDUM_CAP_PROFILE=compat` for standard local development and quickstarts.

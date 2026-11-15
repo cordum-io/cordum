@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -699,6 +700,7 @@ func (s *server) loadMCPConfig(ctx context.Context) mcpGatewayConfig {
 		Raw:       nil,
 	}
 	if s == nil || s.configSvc == nil {
+		applyMCPEnvFallbacks(&cfg, nil)
 		return cfg
 	}
 	if ctx == nil {
@@ -708,6 +710,7 @@ func (s *server) loadMCPConfig(ctx context.Context) mcpGatewayConfig {
 	defer cancel()
 	effective, err := s.configSvc.Effective(cctx, "", "", "", "")
 	if err != nil || effective == nil {
+		applyMCPEnvFallbacks(&cfg, nil)
 		return cfg
 	}
 	cfg.Raw = effective
@@ -723,7 +726,29 @@ func (s *server) loadMCPConfig(ctx context.Context) mcpGatewayConfig {
 	if enabled, ok := lookupBoolPath(effective, "mcp", "policy_gate_enabled"); ok {
 		cfg.PolicyGateEnabled = enabled
 	}
+	applyMCPEnvFallbacks(&cfg, effective)
 	return cfg
+}
+
+func applyMCPEnvFallbacks(cfg *mcpGatewayConfig, effective map[string]any) {
+	if cfg == nil {
+		return
+	}
+	if _, ok := lookupBoolPath(effective, "mcp", "enabled"); !ok {
+		if v, okEnv := parseBoolString(os.Getenv("CORDUM_MCP_ENABLED")); okEnv {
+			cfg.Enabled = v
+		}
+	}
+	if transport, ok := lookupStringPath(effective, "mcp", "transport"); !ok || transport == "" {
+		if v := strings.TrimSpace(os.Getenv("CORDUM_MCP_TRANSPORT")); v != "" {
+			cfg.Transport = v
+		}
+	}
+	if _, ok := lookupBoolPath(effective, "mcp", "policy_gate_enabled"); !ok {
+		if v, okEnv := parseBoolString(os.Getenv("CORDUM_MCP_POLICY_GATE_ENABLED")); okEnv {
+			cfg.PolicyGateEnabled = v
+		}
+	}
 }
 
 func (s *server) mcpHTTPTransport() *mcp.HTTPTransport {
@@ -1072,14 +1097,20 @@ func lookupBoolPath(data map[string]any, keys ...string) (bool, bool) {
 	case bool:
 		return v, true
 	case string:
-		switch strings.ToLower(strings.TrimSpace(v)) {
-		case "1", "true", "yes", "on":
-			return true, true
-		case "0", "false", "no", "off":
-			return false, true
-		}
+		return parseBoolString(v)
 	}
 	return false, false
+}
+
+func parseBoolString(raw string) (bool, bool) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true, true
+	case "0", "false", "no", "off":
+		return false, true
+	default:
+		return false, false
+	}
 }
 
 func lookupStringPath(data map[string]any, keys ...string) (string, bool) {

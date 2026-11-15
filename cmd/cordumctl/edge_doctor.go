@@ -64,19 +64,32 @@ type edgeDoctorJSONEnvelope struct {
 
 func runEdgeDoctorCmd(args []string, stdout, stderr io.Writer) int {
 	stdout, stderr = edgeDoctorWriters(stdout, stderr)
+	cfg, _, err := loadEdgeClaudeConfigForRun()
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "cordumctl edge doctor: %s\n", err)
+		return 1
+	}
+
 	fs := newFlagSet("edge doctor")
+	*fs.gateway = cfg.Gateway
+	*fs.apiKey = cfg.APIKey
+	*fs.tenant = cfg.Tenant
+	if cfg.CACert != "" {
+		*fs.cacert = cfg.CACert
+	}
+
 	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON diagnostics")
 	timeoutSec := fs.Int("timeout", int(defaultEdgeDoctorDeadline/time.Second), "overall deadline in seconds")
-	policyMode := fs.String("policy-mode", firstEnvDefault("enforce", "CORDUM_EDGE_POLICY_MODE"), "policy mode: observe, enforce, or enterprise-strict")
+	policyMode := fs.String("policy-mode", cfg.PolicyMode, "policy mode: observe, enforce, or enterprise-strict")
 	failClosed := fs.String("fail-closed", firstEnv("CORDUM_AGENTD_FAIL_CLOSED"), "effective fail-closed posture (true/false); empty = not explicitly configured")
 	claudePath := fs.String("claude-path", firstEnv("CLAUDE_PATH"), "Claude Code binary path")
-	hookCommand := fs.String("hook-command", firstEnvDefault("cordum-hook", "CORDUM_HOOK_COMMAND"), "cordum-hook command/path from generated settings")
-	agentdPath := fs.String("agentd-path", firstEnv("CORDUM_AGENTD_PATH"), "cordum-agentd binary path")
+	hookCommand := fs.String("hook-command", cfg.HookCommand, "cordum-hook command/path from generated settings")
+	agentdPath := fs.String("agentd-path", cfg.AgentdPath, "cordum-agentd binary path")
 	agentdURL := fs.String("agentd-url", firstEnvDefault(defaultEdgeAgentdURL, "CORDUM_AGENTD_URL", "CORDUM_AGENTD_SOCKET"), "local cordum-agentd hook URL")
 	settingsPath := fs.String("settings-path", firstEnvDefault(defaultClaudeSettingsPath(), "CORDUM_EDGE_SETTINGS_PATH", "CLAUDE_SETTINGS_PATH"), "Claude settings.json path to validate")
 	managedSettingsPath := fs.String("managed-settings-path", firstEnv("CORDUM_EDGE_MANAGED_SETTINGS_PATH"), "managed-settings.json path for the managed_settings_compliance check (empty = skip)")
 	copilotHooksPath := fs.String("copilot-hooks-path", firstEnv("CORDUM_EDGE_COPILOT_HOOKS_PATH"), "GitHub Copilot hooks file that runs cordum-hook copilot, for the copilot_hooks check (empty = skip)")
-	dashboardURL := fs.String("dashboard-url", firstEnv("CORDUM_EDGE_DASHBOARD_URL", "CORDUM_DASHBOARD_URL"), "dashboard URL to probe")
+	dashboardURL := fs.String("dashboard-url", cfg.DashboardURL, "dashboard URL to probe")
 	shadowCluster, shadowCI := registerEdgeDoctorShadowFlags(fs.FlagSet)
 	fs.ParseArgs(args)
 
