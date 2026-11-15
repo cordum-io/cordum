@@ -445,10 +445,13 @@ The script writes `production_gate_results.json`, which can be consumed by CI ar
 `.github/workflows/ci.yml` runs on pushes to `main` and `develop` and on pull
 requests into them:
 
-- `test`: `go test -v -race -coverprofile=coverage.out -covermode=atomic ./...`,
-  then the benchmarks.
+- `test`: `go test -v -race -coverprofile=coverage.out -covermode=atomic ./...`.
+  The job's benchmark step runs only on the nightly schedule and on
+  `workflow_dispatch`.
 - `integration-tests`: `go test -v -tags=integration -timeout 10m ./...`, with
-  no service containers.
+  no service containers. It runs only on `workflow_dispatch`, because
+  `integration-nightly.yml` (below) runs the integration-tagged tests every
+  night.
 
 `.github/workflows/integration-nightly.yml` generates TLS certificates, starts
 the Compose stack, and runs the platform smoke test, the integration-tagged
