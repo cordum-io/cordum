@@ -177,7 +177,8 @@ func WithMaxEventBytes(max int) StoreOption {
 }
 
 // WithMaxExecutionsPerSession overrides the per-session execution fanout cap.
-// It is primarily intended for tests that exercise cleanup pagination.
+// The gateway sets it from CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION; tests use
+// it to exercise cleanup pagination.
 func WithMaxExecutionsPerSession(max int) StoreOption {
 	return func(s *RedisStore) {
 		s.maxExecutionsPerSession = max
@@ -931,6 +932,14 @@ func (s *RedisStore) CountSessionExecutions(ctx context.Context, tenantID, sessi
 		return 0, fmt.Errorf("count edge session executions %s: %w", sessionID, err)
 	}
 	return count, nil
+}
+
+// ExecutionCaps reports how many executions one session may hold, and how
+// many events one execution may hold while approvals bound to its events can
+// still be minted and claimed: the smaller of the event cap and the approval
+// validation cap.
+func (s *RedisStore) ExecutionCaps() (maxExecutions, maxEvents int) {
+	return s.maxExecutionsPerSession, min(s.maxEventsPerExecution, maxEventsPerApprovalValidation)
 }
 
 func (s *RedisStore) EndExecution(ctx context.Context, tenantID, executionID string, endedAt time.Time, status ExecutionStatus) (*AgentExecution, error) {
