@@ -35,13 +35,18 @@ This builds the local stack, starts the services, and runs a smoke test.
 
 ```bash
 # Remote installer
-CORDUM_API_KEY="$(openssl rand -hex 32)" \
-CORDUM_TENANT_ID=default \
 curl -fsSL https://raw.githubusercontent.com/cordum-io/cordum/main/tools/scripts/install.sh | bash
 
 # Local installer
-CORDUM_API_KEY="$(openssl rand -hex 32)" CORDUM_TENANT_ID=default ./tools/scripts/install.sh
+./tools/scripts/install.sh
 ```
+
+The installer clones the repo into `DEST_DIR` (default `./cordum`, reused if it
+is already a clone) and runs `tools/scripts/quickstart.sh --skip-smoke`, which
+writes `.env` with a generated `CORDUM_API_KEY` and `REDIS_PASSWORD`, generates
+the dev certificates in `./certs` (with `cordumctl` or `go run`), and starts
+the HTTPS stack. An exported
+`CORDUM_API_KEY` or `REDIS_PASSWORD` is used instead of a generated one.
 
 ## Option C: Docker Compose (manual)
 
