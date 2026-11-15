@@ -268,6 +268,12 @@ jobs:
     - name: Repo-root vet
       run: go vet ./...
 
+    - name: Check generated docs tables
+      # tools/scripts/gen_docs_tables renders the RBAC permission, REST route and MCP
+      # tool tables in docs/ from code. A new route, permission or tool therefore needs
+      # a `make docs-tables` commit, and this step fails on drift (task-8a2d6b77).
+      run: make docs-tables-check
+
     - name: golangci-lint
       uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
       with:
