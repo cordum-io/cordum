@@ -281,7 +281,7 @@ claims:
     invariants: ["I01","I02","I10"]
     findings: ["R01","R02","R14","R15"]
     enforcement_points: [{"path":"cmd/cordum-hook/main.go","symbol":"dispatchCopilot"},{"path":"core/edge/agentd/evaluator.go","symbol":"Evaluator.evaluateHook"}]
-    tests: [{"package":"cmd/cordum-hook","name":"TestRunCLICopilotPreToolUseGovernsAndBlocks"},{"package":"cmd/cordum-hook","name":"TestRunCLICopilotUserPromptSubmitGoverned"}]
+    tests: [{"package":"cmd/cordum-hook","name":"TestRunCLICopilotPreToolUseDenyExitsTwoWithTopLevelDecision"},{"package":"cmd/cordum-hook","name":"TestRunCLICopilotUserPromptSubmitDenyExitsTwo"}]
     evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 the adapter and hook-decision tests exist; the tests use a fake agentd and do not qualify universal endpoint protection. Open findings R01, R02, R14, R15."
     public_sources: ["cordum:ROADMAP.md:59"]
   - id: CLM-028
