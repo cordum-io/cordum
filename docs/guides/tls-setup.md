@@ -50,16 +50,17 @@ Certificates are EC P-256 with PKCS8-encoded keys. Serial numbers use 128-bit
 
 ### Default SANs
 
-Auto-generated server certificates include these Subject Alternative Names:
+Auto-generated server certificates include these Subject Alternative Names
+(`DefaultSANs` in `tools/certgen/certgen.go`):
 
-- `localhost`
+- `localhost`, `127.0.0.1`, `::1`
 - `nats`, `redis`
-- `cordum-api-gateway`, `api-gateway`
-- `safety-kernel`, `cordum-safety-kernel`
-- `scheduler`, `cordum-scheduler`
-- `workflow-engine`, `cordum-workflow-engine`
-- `context-engine`, `cordum-context-engine`
-- `dashboard`, `cordum-dashboard`
+- `cordum-api-gateway`
+- `safety-kernel`, `scheduler`, `workflow-engine`, `context-engine`
+- `dashboard`
+
+Add names or IPs with `cordumctl generate-certs --san`, for example a
+Kubernetes Service FQDN.
 
 ## Dev Setup
 
@@ -89,10 +90,14 @@ cordumctl generate-certs
 | `--dir` | `./certs` | Output directory |
 | `--force` | `false` | Overwrite existing certificates |
 | `--days` | `365` | Certificate validity in days |
+| `--san` | *(none)* | Extra DNS name or IP for the server certificate, added to the default SANs; repeatable |
 
 ```bash
 # Custom directory
 cordumctl generate-certs --dir /path/to/certs
+
+# Extra server certificate names
+cordumctl generate-certs --san gateway.internal.example --san 10.0.0.12
 
 # Regenerate expired certificates
 cordumctl generate-certs --force
