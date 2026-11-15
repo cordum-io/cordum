@@ -799,6 +799,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   or the legacy record) resolves both, and the Edge approval is the pair's
   single consume token, so one approval runs one call (#492, task-1e1f64c7).
 
+- MCP approvals: the approval docs and the mutating tools' approval hint now
+  say that approving or rejecting either the MCP approval record or its Edge
+  approval resolves both, that only a retry carrying `_approval_ref` resumes
+  the call, and that a failed Edge mint leaves no record (task-918d58bd).
+
 - MCP approvals: a re-ask returns the caller's pending approval instead of
   minting another (#492, task-2a9d0a7c).
 
