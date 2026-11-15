@@ -75,7 +75,8 @@ security notes. The short version:
   `X-Cordum-Agentd-Nonce`. Neither value belongs in Claude settings, managed
   settings, logs, metrics, state, or evidence exports.
 - Hook deadline: generated Claude settings use `CORDUM_AGENTD_HOOK_TIMEOUT=4.5s`
-  so Cordum stays below Claude Code's 5s command-hook deadline.
+  so Cordum answers before the `"timeout": 5` it sets on each command hook
+  (Claude Code's own default is 600s).
 - Modes: `CORDUM_EDGE_POLICY_MODE` accepts `observe`, `enforce`, and
   `enterprise-strict`. In `enforce`, `cordum-hook` denies `PreToolUse` when
   local agentd times out, without any other setting.
