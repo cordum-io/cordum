@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"sort"
 )
 
@@ -131,4 +133,56 @@ func writeCanonical(buf *bytes.Buffer, v any) error {
 		buf.Write(raw)
 	}
 	return nil
+}
+
+// checkUniqueObjectKeys fails when one JSON object in raw, at any depth,
+// repeats a key. encoding/json keeps the last value of a repeated key,
+// and so do the approval hash and the approver's view, but a fronted
+// upstream's parser may keep the first. Refusing the call keeps the
+// arguments a tool runs with to the ones that were checked and bound.
+func checkUniqueObjectKeys(raw json.RawMessage) error {
+	type frame struct {
+		keys    map[string]struct{} // nil for an array
+		wantKey bool
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	// Numbers stay json.Number. A float64 decode would refuse 1e400,
+	// which CanonicaliseArgs accepts.
+	dec.UseNumber()
+	var stack []*frame
+	for {
+		tok, err := dec.Token()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		var top *frame
+		if n := len(stack); n > 0 {
+			top = stack[n-1]
+		}
+		if d, ok := tok.(json.Delim); ok && (d == '}' || d == ']') {
+			stack = stack[:len(stack)-1]
+			continue
+		}
+		if key, ok := tok.(string); ok && top != nil && top.keys != nil && top.wantKey {
+			if _, seen := top.keys[key]; seen {
+				return fmt.Errorf("arguments repeat the object key %q", key)
+			}
+			top.keys[key] = struct{}{}
+			top.wantKey = false
+			continue
+		}
+		if top != nil && top.keys != nil {
+			top.wantKey = true // a value: the object's next token is a key
+		}
+		if d, ok := tok.(json.Delim); ok {
+			f := &frame{wantKey: d == '{'}
+			if d == '{' {
+				f.keys = map[string]struct{}{}
+			}
+			stack = append(stack, f)
+		}
+	}
 }

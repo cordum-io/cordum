@@ -116,12 +116,11 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 
 ### Prometheus Metrics
 
-The audit pipeline exposes counters via the `/metrics` endpoint:
+The gateway exposes these audit metrics via the `/metrics` endpoint:
 
-- `cordum_audit_chain_append_total` — total events chained
-- `cordum_audit_chain_append_errors_total` — chain failures
-- `cordum_audit_export_total` — events exported to SIEM
-- `cordum_audit_export_errors_total` — export failures
+- `cordum_audit_batch_drops_total` — SIEM export batches dropped after exhausting retries
+- `cordum_audit_export_total{format,status}` / `cordum_audit_export_events` — compliance export requests and events per export
+- `cordum_audit_verify_duration_seconds`, `cordum_audit_verify_events_total`, `cordum_audit_verify_inflight`, `cordum_audit_verify_coalesced_total` — `/api/v1/audit/verify` walks
 
 ### Automated Verification
 
@@ -235,11 +234,15 @@ unknown ID.
 # Create a legal hold
 curl -X POST -H "Authorization: Bearer $API_KEY" \
   -d '{"tenant_id":"acme-corp","reason":"SEC investigation ref-2024-001"}' \
+  "https://your-cordum/api/v1/audit/legal-hold"
+
+# List holds (optionally ?tenant=acme-corp)
+curl -H "Authorization: Bearer $API_KEY" \
   "https://your-cordum/api/v1/audit/legal-holds"
 
 # Release when investigation concludes
 curl -X DELETE -H "Authorization: Bearer $API_KEY" \
-  "https://your-cordum/api/v1/audit/legal-holds/<hold_id>"
+  "https://your-cordum/api/v1/audit/legal-hold/<hold_id>"
 ```
 
 ## Compliance

@@ -265,7 +265,13 @@ function SessionFacts({ session }: { session: ReturnType<typeof useEdgeSession>[
       className="grid gap-3 rounded-3xl border border-border bg-surface-1/70 p-4 sm:grid-cols-2 lg:grid-cols-4"
       data-testid="edge-session-facts"
     >
-      <Fact icon={Shield} label="Principal" value={session.principalId ?? "—"} mono />
+      <Fact
+        icon={Shield}
+        label="Principal"
+        value={session.principalId ?? session.principalDisplayName ?? "—"}
+        sub={session.principalId ? undefined : session.principalDisplayName && "display name"}
+        mono
+      />
       <Fact icon={ShieldCheck} label="Agent" value={session.agentProduct ?? "—"} sub={session.agentVersion} />
       <Fact icon={Layers} label="Mode" value={session.mode} />
       <Fact icon={ShieldAlert} label="Policy snapshot" value={session.policySnapshot ?? "—"} mono />

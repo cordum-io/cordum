@@ -614,7 +614,7 @@ cluster once the pods are ready. Re-run it if you replace the cluster.
 - Base: ~100 bytes per job record, ~500 bytes per workflow run, ~1KB per DLQ entry
 - Estimate: 1 million concurrent jobs = ~100MB job state + context/result pointers
 - Rule of thumb: 2x your estimated working set for headroom
-- Monitor with: `redis-cli INFO memory`
+- Monitor with `INFO memory` on each node. The production overlay's Redis Cluster (`deploy/k8s/production`) requires TLS client certificates and the password: `kubectl exec -n cordum cordum-redis-0 -c redis -- sh -c 'redis-cli --tls --cacert /etc/redis/tls/ca.crt --cert /etc/redis/tls/tls.crt --key /etc/redis/tls/tls.key -a "$REDIS_PASSWORD" INFO memory'` (repeat for `cordum-redis-1` through `cordum-redis-5`)
 
 **NATS JetStream storage**:
 - Each JetStream stream has a configurable max size and message TTL
@@ -805,7 +805,7 @@ Complete list of production-relevant environment variables:
 | `CORDUM_TLS_MIN_VERSION` | All | Minimum TLS version (`1.2` or `1.3`; defaults to 1.3 in production) |
 | `CORDUM_GRPC_REFLECTION` | Gateway | Enable gRPC reflection (`1` to enable) |
 | `CORDUM_DASHBOARD_EMBED_API_KEY` | Gateway | Embed API key in dashboard JS (DO NOT use in production) |
-| `CORDUM_ALLOW_HEADER_PRINCIPAL` | Gateway | Allow `X-Principal` header override (disabled in production) |
+| `CORDUM_ALLOW_HEADER_PRINCIPAL` | Gateway | Set to `true` to honour `X-Principal-Id` in production, for static keys without `principal_id` and for managed keys (always honoured outside production). A header principal is recorded for attribution only and never binds identity |
 | `GATEWAY_HTTP_ADDR` | Gateway | HTTP listen address (default `:8081`) |
 | `GATEWAY_GRPC_ADDR` | Gateway | gRPC listen address (default `:8080`) |
 | `GATEWAY_METRICS_ADDR` | Gateway | Metrics listen address (default `:9092`) |

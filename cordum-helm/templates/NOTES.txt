@@ -55,8 +55,8 @@ Cordum {{ .Chart.Version }} has been deployed to namespace {{ .Release.Namespace
 
 {{- end }}
 
-To access the API gateway:
-  kubectl port-forward svc/{{ include "cordum.fullname" . }}-gateway {{ .Values.gateway.service.httpPort }}:{{ .Values.gateway.service.httpPort }} -n {{ .Release.Namespace }}
+To access the API gateway ({{ ternary "https" "http" .Values.global.tls.enabled }}://localhost:{{ .Values.gateway.service.httpPort }}):
+  kubectl port-forward svc/{{ include "cordum.fullname" . }}-api-gateway {{ .Values.gateway.service.httpPort }}:{{ .Values.gateway.service.httpPort }} -n {{ .Release.Namespace }}
 
 {{- if .Values.dashboard.enabled }}
 To access the dashboard:

@@ -525,6 +525,9 @@ func (s *MCPServer) handleToolsCall(ctx context.Context, params json.RawMessage)
 	if strings.TrimSpace(req.Name) == "" {
 		return nil, s.rpcError(jsonRPCInvalidParamsCode, "invalid params", "name is required")
 	}
+	if err := checkUniqueObjectKeys(req.Arguments); err != nil {
+		return nil, s.rpcError(jsonRPCInvalidParamsCode, "invalid params", err.Error())
+	}
 	if rpcErr, denied := s.denyMissingAgentIdentity(ctx, req); denied {
 		return nil, rpcErr
 	}
@@ -764,6 +767,12 @@ func (s *MCPServer) mapHandlerError(err error) *JSONRPCError {
 			"kind":   "policy_snapshot_changed",
 			"reason": policySnapshotChangedReason,
 		})
+	}
+	// The policy gate and the approval hold refuse a call that carries no
+	// CallMetadata (errMissingMCPMetadata): the same wiring defect.
+	if errors.Is(err, errMissingMCPMetadata) {
+		slog.Warn("mcp: call metadata missing", "error", err)
+		return s.rpcError(jsonRPCGatewayMisconfiguredCode, "approval gate misconfigured", "missing_mcp_metadata")
 	}
 	// Approval-store outage signal — an approval store (the Edge store
 	// at mint time, or the legacy MCP approval store during claim or

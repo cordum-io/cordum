@@ -32,6 +32,9 @@ PH = "credential-unavailable-for-redaction"
 E2E, EDGE = ".github/workflows/e2e.yml", ".github/workflows/edge-fake-hook-e2e.yml"
 CAPTURE = "      - name: Capture compose logs on failure\n"
 LINK = (".github/workflows/docs-linkcheck.yml", "      - name: Run lychee (offline, gating)\n")
+QS_MASK = '    if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then\n      gha_mask_value "${%s}" || exit 1\n    fi\n'
+QUICKSTART = {"quickstart_api_key_unmasked": (QS_MASK % "api_key", ""), "quickstart_redis_unmasked": (QS_MASK % "REDIS_PASSWORD", ""),  # each undoes one part of quickstart.sh's CI masking
+              "quickstart_prefix_printed": ("API Key:        CORDUM_API_KEY in .env                 ", "API Key:        ${API_KEY:0:8}... (see .env)           ")}
 API = "          CORDUM_API_KEY: ${{ env.CORDUM_API_KEY || '" + PH + "' }}\n"
 REG, STRICT = 'gha_mask_value "${minted}"', "set -euo pipefail\n"
 SAFE = '[[ -n "${minted}" ]] || exit 1\n' + REG
@@ -178,7 +181,8 @@ elif case == "nonce_bypass_removed":
     edit(EDGE, '          CORDUM_EDGE_E2E_BYPASS_HOOK: "1"\n', "")
 elif case == "nonce_bypass_overridden":
     edit(EDGE, "run: bash tools/scripts/edge_fake_hook_e2e.sh", "run: CORDUM_EDGE_E2E_BYPASS_HOOK=0 bash tools/scripts/edge_fake_hook_e2e.sh")
-elif case == "quickstart_unseeded":
+elif case == "quickstart_unseeded" or case in QUICKSTART:
+    edit("tools/scripts/quickstart.sh", *QUICKSTART[case]) if case in QUICKSTART else None
     step("bash tools/scripts/quickstart.sh --skip-build", *LINK)
 elif case in SOURCED:
     mint(**{"before": SAFE, **SOURCED[case][2]}); [write(rel, body) for rel, body in SOURCED[case][1].items()]  # noqa: E702
@@ -334,7 +338,9 @@ gen_openssl gen_uuidgen gen_urandom gen_random gen_date gen_python gen_quoted_pa
 gen_nested mask_fd_captured clean
 nonce_bypass_removed edge-fake-hook-e2e.yml:edge-fake-hook-e2e:CREDENTIAL_UNREGISTERED@tools/scripts/edge_fake_hook_e2e.sh
 nonce_bypass_overridden edge-fake-hook-e2e.yml:edge-fake-hook-e2e:CREDENTIAL_UNREGISTERED@tools/scripts/edge_fake_hook_e2e.sh
-quickstart_unseeded docs-linkcheck.yml:link-check:CREDENTIAL_UNREGISTERED@tools/scripts/quickstart.sh
+quickstart_unseeded clean
+quickstart_api_key_unmasked quickstart_redis_unmasked docs-linkcheck.yml:link-check:CREDENTIAL_UNREGISTERED@tools/scripts/quickstart.sh
+quickstart_prefix_printed docs-linkcheck.yml:link-check:CREDENTIAL_PREFIX_PRINT@tools/scripts/quickstart.sh
 dyn_var dyn_c dyn_c_prefixed dyn_heredoc dyn_pipe dyn_eval dyn_make dyn_source dyn_procsub dyn_wrapper dyn_cmdword dyn_stdin_s e2e.yml:e2e-tls:SOURCE_DYNAMIC
 dyn_script e2e.yml:e2e-tls:SOURCE_DYNAMIC@tools/scripts/zz_synthetic_dyn.sh
 uses_local e2e.yml:e2e-tls:SOURCE_DYNAMIC@.github/workflows/e2e.yml

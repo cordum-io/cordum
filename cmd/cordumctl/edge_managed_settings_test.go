@@ -231,16 +231,18 @@ func TestManagedSettingsUnknownSubcommandExits2(t *testing.T) {
 }
 
 // TestManagedSettingsExportHookTimeoutBelowClaudeDeadline guards the
-// invariant in `core/edge/claude/hook_input.go:23-25`: the agentd-internal
-// CORDUM_AGENTD_HOOK_TIMEOUT MUST stay strictly below Claude Code's 5s
-// per-hook deadline so agentd's internal deadline fires before Claude
-// SIGKILLs the hook. The QA reopen on task-ebed169a flagged a regression
-// where `cordumctl edge managed-settings export` was emitting "5s" (equal
-// to the deadline) instead of reusing `claude.DefaultHookTimeout` (4.5s).
+// DefaultHookTimeout invariant in `core/edge/claude/hook_input.go`: the
+// agentd-internal CORDUM_AGENTD_HOOK_TIMEOUT MUST stay strictly below the
+// `"timeout": 5` Cordum generates on each command hook (ClaudeHookDeadline;
+// Claude Code's own default is 600s) so the hook's internal deadline fires
+// before Claude Code kills it. The QA reopen on task-ebed169a flagged a
+// regression where `cordumctl edge managed-settings export` was emitting
+// "5s" (equal to that timeout) instead of reusing `claude.DefaultHookTimeout`
+// (4.5s).
 //
 // The per-hook JSON `timeout` integer is bounded separately: it is the
-// kill-after-N-seconds value Claude Code itself enforces, so it may equal
-// ClaudeHookDeadline but never exceed it.
+// kill-after-N-seconds value Claude Code enforces for each hook, and Cordum
+// generates 5, so it may equal ClaudeHookDeadline but never exceed it.
 func TestManagedSettingsExportHookTimeoutBelowClaudeDeadline(t *testing.T) {
 	dir := t.TempDir()
 	code, _, stderr := runManagedSettingsForTest(t, exportArgs(dir)...)
@@ -264,10 +266,10 @@ func TestManagedSettingsExportHookTimeoutBelowClaudeDeadline(t *testing.T) {
 	}
 
 	// Hard invariant: agentd's internal deadline must be STRICTLY below
-	// Claude Code's per-hook deadline. The QA-flagged regression
-	// emitted CORDUM_AGENTD_HOOK_TIMEOUT="5s" which equals
-	// ClaudeHookDeadline and lets Claude SIGKILL before agentd's
-	// graceful-shutdown path runs. The fix is to thread
+	// the generated per-hook `"timeout": 5` (ClaudeHookDeadline). The
+	// QA-flagged regression emitted CORDUM_AGENTD_HOOK_TIMEOUT="5s" which
+	// equals ClaudeHookDeadline and lets Claude Code kill the hook before
+	// agentd's graceful-shutdown path runs. The fix is to thread
 	// claude.DefaultHookTimeout (4.5s) through the export path.
 	envTimeout := strings.TrimSpace(doc.Env["CORDUM_AGENTD_HOOK_TIMEOUT"])
 	if envTimeout == "" {
@@ -278,7 +280,7 @@ func TestManagedSettingsExportHookTimeoutBelowClaudeDeadline(t *testing.T) {
 		t.Fatalf("CORDUM_AGENTD_HOOK_TIMEOUT = %q not parseable as duration: %v", envTimeout, err)
 	}
 	if parsed >= claude.ClaudeHookDeadline {
-		t.Fatalf("CORDUM_AGENTD_HOOK_TIMEOUT = %s; must stay strictly below claude.ClaudeHookDeadline (%s) per hook_input.go:23-25 — reuse claude.DefaultHookTimeout in cmd/cordumctl/edge_managed_settings.go",
+		t.Fatalf("CORDUM_AGENTD_HOOK_TIMEOUT = %s; must stay strictly below claude.ClaudeHookDeadline (%s) per core/edge/claude/hook_input.go — reuse claude.DefaultHookTimeout in cmd/cordumctl/edge_managed_settings.go",
 			parsed, claude.ClaudeHookDeadline)
 	}
 	if parsed != claude.DefaultHookTimeout {
@@ -287,8 +289,9 @@ func TestManagedSettingsExportHookTimeoutBelowClaudeDeadline(t *testing.T) {
 	}
 
 	// Soft invariant on the per-hook JSON timeout integer: must be
-	// positive and not exceed ClaudeHookDeadline-in-seconds (Claude
-	// Code rejects integer values above its own per-hook deadline).
+	// positive and not exceed ClaudeHookDeadline-in-seconds, the 5s
+	// timeout Cordum generates to match the hook's internal budget.
+	// (Claude Code itself accepts larger values; its default is 600s.)
 	deadlineSeconds := int(claude.ClaudeHookDeadline / time.Second)
 	for family, entries := range doc.Hooks {
 		for i, entry := range entries {

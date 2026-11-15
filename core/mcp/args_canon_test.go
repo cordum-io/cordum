@@ -125,3 +125,26 @@ func TestBuildMCPApprovalBinding_InputHashBindsExactArgs(t *testing.T) {
 		t.Errorf("an added null field must change InputHash")
 	}
 }
+
+func TestCheckUniqueObjectKeys(t *testing.T) {
+	refused := map[string]string{ // args -> the repeated key
+		`{"a":1,"a":2}`:                  "a",
+		`{"o":{"k":1,"k":2}}`:            "k",
+		`[{"k":1},{"x":{"k":1,"k":1}}]`:  "k",
+		`{"b":1,"\u0062":2}`:             "b",
+		`{"a":{"b":1},"a":{"c":1}}`:      "a",
+		`{"l":[1,{"z":0,"z":0}],"m":{}}`: "z",
+		`{"n":1e400,"n":0}`:              "n",
+	}
+	for args, key := range refused {
+		err := checkUniqueObjectKeys(json.RawMessage(args))
+		if err == nil || err.Error() != `arguments repeat the object key "`+key+`"` {
+			t.Errorf("checkUniqueObjectKeys(%s) = %v, want the repeated key %q", args, err, key)
+		}
+	}
+	for _, args := range []string{``, `null`, `{}`, `[]`, `"s"`, `{"a":{"k":1},"b":{"k":1}}`, `[{"k":1},{"k":2}]`, `{"a":"a","b":["a","a"],"c":{"a":"b"}}`, `{"n":1e400}`, `[-1e999]`, `{"n":1e400,"m":-1e999}`} {
+		if err := checkUniqueObjectKeys(json.RawMessage(args)); err != nil {
+			t.Errorf("checkUniqueObjectKeys(%s) = %v, want nil", args, err)
+		}
+	}
+}

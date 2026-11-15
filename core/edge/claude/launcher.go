@@ -115,6 +115,11 @@ func LaunchEdgeClaude(ctx context.Context, opts LaunchOptions) (LaunchResult, er
 	if err != nil && !opts.DryRun && !opts.NoLaunch {
 		return LaunchResult{}, err
 	}
+	if !opts.DryRun && !opts.NoLaunch {
+		if err := preflightClaudeHookOnFailure(ctx, claudePath, cfg.PolicyMode, mergeEnv(opts.Env, nil), stderr); err != nil {
+			return LaunchResult{}, err
+		}
+	}
 	if err := rejectSettingsOverride(opts.ClaudeArgs); err != nil {
 		return LaunchResult{}, err
 	}

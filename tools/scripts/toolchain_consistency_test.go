@@ -35,8 +35,12 @@ func TestActiveToolchainDocsMatchGoDirective(t *testing.T) {
 	assertFilesContain(t, root, fmt.Sprintf("Go toolchain: `go %s`", version), []string{
 		"CONTRIBUTING.md",
 	})
-	assertFileCount(t, root, "TESTING.md", fmt.Sprintf("go-version: '%s'", version), 3)
+	assertGoVersionPinsMatch(t, root, "TESTING.md", version)
 }
+
+// goVersionPin matches a setup-go `go-version:` pin with a literal version,
+// quoted or bare, alone or as the first entry of a matrix list.
+var goVersionPin = regexp.MustCompile(`go-version:\s*\[?\s*['"]?([0-9][0-9A-Za-z.-]*)`)
 
 func rootGoVersion(t *testing.T, root string) string {
 	t.Helper()
@@ -73,13 +77,17 @@ func assertFilesContain(t *testing.T, root, want string, paths []string) {
 	}
 }
 
-func assertFileCount(t *testing.T, root, path, want string, count int) {
+// assertGoVersionPinsMatch fails for every `go-version:` pin in path that is
+// not go.mod's version. A file with no pins passes.
+func assertGoVersionPinsMatch(t *testing.T, root, path, version string) {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
-	if got := strings.Count(string(data), want); got != count {
-		t.Errorf("%s contains %q %d times, want %d", path, want, got, count)
+	for _, match := range goVersionPin.FindAllSubmatch(data, -1) {
+		if got := string(match[1]); got != version {
+			t.Errorf("%s pins go-version %q, want go.mod's %q", path, got, version)
+		}
 	}
 }

@@ -2,7 +2,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-  - ../base.yaml
+  - ../base
   - nats.yaml
   - redis.yaml
   - ingress.yaml
@@ -13,6 +13,7 @@ resources:
   - otel-collector-config.yaml
 
 patches:
+  - path: patches/nats-config.yaml
   - path: patches/delete-nats-deployment.yaml
   - path: patches/delete-redis-deployment.yaml
   - path: patches/tls-env.yaml

@@ -987,6 +987,11 @@ All DLQ endpoints require admin role.
 ```
 
 - Errors: `400`, `403`, `404`, `500`, `503`
+- The retry is a new job built from the original request, workflow link
+  included. The original job's server-owned labels (`approval_*`, `gate_type`,
+  `cordum.bus_msg_id`, `policy.attachment_id`, `run_id`, `step_id` and the
+  workflow scope labels) are not carried over; its own labels and `_` system
+  labels are, plus `retry`, `dlq_entry` and `retry_of_job`.
 
 ### Example: retry DLQ entry
 
@@ -1249,7 +1254,7 @@ curl -sS -X POST http://localhost:8081/api/v1/workflows/WF_ID/runs \
 {
   "items": [
     {
-      "job": { "id": "job-id", "state": "APPROVAL" },
+      "job": { "id": "job-id", "state": "APPROVAL_REQUIRED" },
       "decision": "REQUIRE_APPROVAL",
       "policy_snapshot": "cfg:...",
       "policy_rule_id": "rule-1",
@@ -3074,7 +3079,7 @@ The following routes are registered in the gateway (`registerRoute` calls). Gene
 
 <!-- BEGIN:rest-routes -->
 
-_Generated from `core/controlplane/gateway/gateway.go`, `core/controlplane/gateway/handlers_mcp.go` (registration order) — do not edit by hand; run `make docs-tables`. 228 routes._
+_Generated from `core/controlplane/gateway/gateway.go`, `core/controlplane/gateway/handlers_mcp.go` (registration order) — do not edit by hand; run `make docs-tables`. 229 routes._
 
 | Method | Path |
 |--------|------|
@@ -3282,6 +3287,7 @@ _Generated from `core/controlplane/gateway/gateway.go`, `core/controlplane/gatew
 | PUT | `/api/v1/policy/bundles/{id}` |
 | DELETE | `/api/v1/policy/bundles/{id}` |
 | POST | `/api/v1/policy/bundles/{id}/simulate` |
+| POST | `/api/v1/policy/bundles/{id}/resign` |
 | PUT | `/api/v1/policy/shadows/{id}` |
 | GET | `/api/v1/policy/shadows/{id}` |
 | DELETE | `/api/v1/policy/shadows/{id}` |

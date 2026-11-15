@@ -187,7 +187,11 @@ func (s *server) handleResolveEdgeApproval(w http.ResponseWriter, r *http.Reques
 	}
 
 	resolveFn := func() (edgeIdempotentWriteResult, error) {
-		return s.executeResolveEdgeApproval(r, store, decision, tenantID, approvalRef, resolverID, resolvedBy, reason)
+		result, err := s.executeResolveEdgeApproval(r, store, decision, tenantID, approvalRef, resolverID, resolvedBy, reason)
+		if err == nil {
+			s.resolveMCPLegacyTwin(r.Context(), existing, decision, resolverID, reason)
+		}
+		return result, err
 	}
 	errFn := func(err error) {
 		writeEdgeApprovalStoreError(w, r, err, "resolve edge approval")

@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Helm installs with TLS verify the gateway certificate by its Service FQDN
+  (`<release>-api-gateway.<namespace>.svc.cluster.local`). Certificates from
+  `cordumctl generate-certs` need `--san` for that name, or the dashboard gets
+  502 (#492, task-22fc92b7).
+
+- `cordumctl` defaults to `https://localhost:8081`; a gateway without TLS needs
+  `--gateway http://...` (#492, task-75cb9729).
+
 - MCP gate: in production, a destructive MCP call whose taint lookup fails is
   denied instead of held. Deployments that want the hold, from the production
   default or `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE=true`, must also set
@@ -105,6 +113,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   and battle-tested wording, three summary lines that went beyond the file's own figures and the
   commands that called the missing scripts, and qualifies the competitor comparison and the
   anonymized deployment figures (M0-07-DOCS-BENCH, task-4290ac28).
+- Docs: ADR-001, ADR-005, ADR-008 and the v1.3.0 and unreleased release notes now state their
+  pre-dispatch, CSP, eval-dataset and MCP-approval statements at the status recorded in
+  docs/contract/claims.yaml (CLM-010, CLM-013, CLM-016, CLM-050, CLM-080). ADR-001 gets a
+  neutral title and a dated status note: a `THROTTLE` decision requeues the job, and its
+  performance target is not measured. The released v1.3.0 MCP highlight is kept as written,
+  with a dated qualification after it. The ADR decisions and statuses are unchanged
+  (M0-07-DOCS-ADR, task-7d6203ff).
 
 - Docs: the Safety Kernel guide, scheduler internals, configuration reference, production
   runbook, threat model and dashboard page spec now name the settings that select each fail
@@ -130,6 +145,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   instead of TanStack, without changing table behavior (task-fc8b600a).
 
 ### Added
+
+- cordumctl: `generate-certs --san` adds names such as the Helm gateway FQDN
+  (#492, task-fb3f0bbb).
+
+- Cordum Edge checks the Claude Code version before relying on `onFailure`
+  (v2.1.295+): `cordumctl edge doctor` gains a `claude_code_version` check,
+  and `cordumctl edge claude` in enterprise-strict refuses to launch an older
+  Claude Code (#492, task-d9dd5d4e).
 
 - `PUT /api/v1/agents/{id}` accepts `agent_id` to link a worker, with the same
   checks as create (#492, task-bc7181da).
@@ -233,6 +256,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   ruleset (task-fd34e921).
 
 ### Security
+
+- MCP: `tools/call` refuses arguments that repeat an object key, at any
+  depth, with JSON-RPC -32602 `invalid params`, before the policy check and
+  any approval. A tool therefore runs only with the argument values that
+  were checked and bound by the approval hash. Clients must send each key
+  once (task-891fcef5).
 
 - MCP approvals: the approval args hash keeps string whitespace, empty
   values and nulls; only JSON formatting and key order are canonical. An
@@ -477,6 +506,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   principal: a static API key with `principal_id` in `CORDUM_API_KEYS`, or a
   session or OIDC login.
 
+#### core/controlplane/gateway — Edge session ownership binds to the authenticated key (2026-11-15, task-cf94ebba)
+
+- **Behavior change** for `POST /api/v1/edge/sessions` and
+  `POST /api/v1/edge/evaluate`. A session's `principal_id`, its owner, now
+  comes only from an authenticated principal: a static API key bound to a
+  `principal_id`, a session, or a JWT/OIDC login. Evaluate on a session that
+  has a `principal_id` accepts only a caller authenticated as that principal.
+- A credential with no bound principal, such as an unbound static API key or
+  a managed API key, creates a session with an empty `principal_id`, and the
+  name it sends in `X-Principal-Id` is kept as `principal_display_name`
+  unless the request sets one. Such sessions no longer match
+  `GET /api/v1/edge/sessions?principal_id=`. Callers notice this where the
+  header is read as a principal: development, and production with
+  `CORDUM_ALLOW_HEADER_PRINCIPAL=true`.
+- The dashboard's Edge sessions list, its search and the session detail page
+  show `principal_display_name` when a session has no `principal_id`, and
+  the detail page marks it as a display name (task-b5d2cde2).
+- `Migration:` a session that such a credential created before this change
+  keeps the header name as its `principal_id`, so evaluate refuses it with
+  403; start a new session. To own sessions and list them by principal, use
+  a static API key with a `principal_id` in `CORDUM_API_KEYS`, or a session
+  or OIDC login.
+
 #### Header-asserted principals never authorize a job's agent identity (2026-11-13, task-850216cf)
 
 - **Behavior change** for job submit, in every profile. A principal taken
@@ -708,6 +760,109 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - typedoc, typedoc-plugin-coverage and typedoc-plugin-markdown are removed from the install with pnpm `-` overrides. typedoc 0.28 calls `Minimatch#matchOne`, which 11.x removed. orval 8.31.0 loads typedoc only for its `docs` output, which the dashboard does not configure. Until typedoc supports minimatch 11, enabling that output fails at import. orval stays at 8.31.0.
 
 ### Fixed
+
+- K8s: the base Redis ran `--appendonly yes` on a read-only root filesystem
+  with nothing mounted at `/data`. It now has an `emptyDir` there (#492,
+  task-df8c78f8).
+
+- cordumctl: `pack install` prints the generated worker token only when stdout
+  is a terminal; otherwise it prints a note on stderr in its place. Pass
+  `--worker-token-file <path>` to save the token to a file with mode 0600
+  instead (task-e1c892cb).
+
+- Quickstart: the ready banner no longer prints the first 8 characters of the API
+  key, and on a GitHub Actions runner `quickstart.sh` registers the API key and
+  Redis password it generates as log masks before their first use (task-d09113ce).
+
+- K8s: `kubectl apply -k` works for the production and local overlays. There
+  is a new `deploy/k8s/base/` kustomization, and the production NATS config is
+  a patch (#492, task-023a084d).
+
+- Helm: with TLS on, the dashboard nginx verifies the gateway certificate on
+  `/api/v1/stream` too. A `gateway.service.httpPort` other than 8081 works, and
+  `nats.auth.token` reaches the services instead of locking them out (#492,
+  task-18cf3f3d).
+
+- Helm: the default install shipped a broken dashboard: the browser was given
+  the in-cluster gateway name as its API base. It now uses `/api/v1` through
+  the dashboard nginx, and that nginx verifies the gateway certificate when TLS
+  is on (#492, task-22fc92b7).
+
+- Dashboard Copy URL: the K8s ingresses route `/mcp` (#492, task-4b713944).
+
+- Dashboard Copy URL: it now copies a URL that works. In compose it is
+  `http://localhost:8082/mcp/sse`, through a new SSE-safe `/mcp/` location in
+  the dashboard nginx (#492, task-b60c84c4).
+
+- Dashboard tiles: the MCP Port and "Auth required" tiles showed settings the
+  gateway never reads; both are removed, and the settings hook no longer
+  writes `mcp.require_auth` back (#492, task-b60c84c4).
+
+- The dashboard dev server proxies to `https://localhost:8081`, including the
+  stream WebSocket, and verifies the dev CA (#492, task-f770fda9).
+
+- `install.sh` brings the stack up through `quickstart.sh` (certs, `.env`,
+  `REDIS_PASSWORD`). The guardrails and mock-bank demos use `tls://` and
+  `rediss://` with the client certificate (#492, task-f770fda9).
+
+- Compose drops the `NATS_TOKEN` that the dev NATS server never checked
+  (#492, task-f770fda9).
+
+- The `cordumctl init` scaffold starts, and serves its gateway over HTTPS
+  (#492, task-75cb9729).
+
+- `CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION` now reaches the gateway's store
+  (#492, task-52cd466b).
+
+- The gateway exports its Edge metrics; it built its Edge store on a no-op
+  recorder (#492, task-483967bb).
+
+- `POST /api/v1/jobs` honors the `Idempotency-Key` header when the body key is
+  empty; the body wins if both are set. The spec advertised the header, but the
+  handler ignored it, so Python SDK and curl retries could create duplicate
+  jobs. The TypeScript SDK now sends the body field too (#492, task-e5c933b8).
+
+- OpenAPI: `POST /mcp/message` lists the status codes the transport returns
+  (202, 404, 408, 413, 429, 500 and 504), `createAgent` documents `agent_id`
+  and `AGENT_WORKER_CONFLICT`, and `createAgent` and `updateAgent` list their
+  500. The dashboard and TypeScript SDK clients are regenerated (#492,
+  task-b698a3fe).
+
+- Cordum Edge: agentd ends an inline approval wait 1 s before cordum-hook's
+  budget runs out. So an approval nobody resolved in time returns its
+  `approval_ref`, not a generic timeout (#492, task-c2664488).
+
+- Copilot hooks: the generated file has `"version": 1`; denies exit 2, with a
+  top-level `permissionDecision`, so they block in both the Copilot CLI and
+  VS Code harnesses; the approval URL stays in the deny reason; the doctor
+  warns only on problems a corrected file fixes; the docs explain how to write
+  the file by hand and list what Copilot hooks cannot enforce. None of this
+  has been verified in a live Copilot session yet (#492, task-1fdbc65a).
+
+- A DLQ retry drops the original job's server-owned labels. With
+  `cordum.bus_msg_id`, a retried approved job went out with the approval
+  republish's JetStream msg-id and could be dropped as a duplicate. The
+  retry keeps `WorkflowId` (#492, task-95631c1a).
+
+- MCP approvals: rejecting either half of an MCP approval (the Edge approval
+  or the legacy record) resolves both, and the Edge approval is the pair's
+  single consume token, so one approval runs one call (#492, task-1e1f64c7).
+
+- MCP approvals: the approval docs and the mutating tools' approval hint now
+  say that approving or rejecting either the MCP approval record or its Edge
+  approval resolves both, that only a retry carrying `_approval_ref` resumes
+  the call, and that a failed Edge mint leaves no record (task-918d58bd).
+
+- MCP approvals: the policy-gate steps for `cordum_create_workflow` in the
+  MCP tools reference now say that approving or rejecting either the MCP
+  approval record or its Edge approval resolves both, and that the Edge
+  approval is the pair's single consume token (task-9f1c174f).
+
+- MCP approvals: a re-ask returns the caller's pending approval instead of
+  minting another (#492, task-2a9d0a7c).
+
+- MCP server: a policy-gate call without metadata gets `-32097`, as
+  documented (#492, task-11710a81).
 
 - The MCP gateway policy fields `tenants.<tenant>.mcp.gateway_enabled`,
   `upstream_servers` and `allowed_upstreams` are flagged as reserved, not
