@@ -720,6 +720,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Dashboard Copy URL: the K8s ingresses route `/mcp` (#492, task-4b713944).
+
 - Dashboard Copy URL: it now copies a URL that works. In compose it is
   `http://localhost:8082/mcp/sse`, through a new SSE-safe `/mcp/` location in
   the dashboard nginx (#492, task-b60c84c4).
