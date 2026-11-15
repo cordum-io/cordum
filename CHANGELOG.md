@@ -166,6 +166,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Gateway: MCP env defaults (from PR #591). When the stored system config has no
+  `mcp.enabled`, `mcp.transport` or `mcp.policy_gate_enabled` key, the gateway reads
+  `CORDUM_MCP_ENABLED`, `CORDUM_MCP_TRANSPORT` and `CORDUM_MCP_POLICY_GATE_ENABLED`
+  instead. A stored key always wins, and a failed config read leaves MCP disabled
+  whatever the environment says. `docker-compose.dev.yml` sets both flags to `true`
+  for the dev gateway, and the sample `config/system.yaml` gains an `mcp` block
+  (enabled, HTTP transport, policy gate on) (task-314e6394).
 - cordumctl: `generate-certs --san` adds names such as the Helm gateway FQDN
   (#492, task-fb3f0bbb).
 

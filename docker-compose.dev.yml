@@ -44,6 +44,9 @@ services:
       dockerfile: Dockerfile
       args:
         SERVICE: cordum-api-gateway
+    environment:
+      CORDUM_MCP_ENABLED: "${CORDUM_MCP_ENABLED:-true}"
+      CORDUM_MCP_POLICY_GATE_ENABLED: "${CORDUM_MCP_POLICY_GATE_ENABLED:-true}"
 
   workflow-engine:
     image: cordum/workflow-engine:dev
