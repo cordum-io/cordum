@@ -525,6 +525,9 @@ func (s *MCPServer) handleToolsCall(ctx context.Context, params json.RawMessage)
 	if strings.TrimSpace(req.Name) == "" {
 		return nil, s.rpcError(jsonRPCInvalidParamsCode, "invalid params", "name is required")
 	}
+	if err := checkUniqueObjectKeys(req.Arguments); err != nil {
+		return nil, s.rpcError(jsonRPCInvalidParamsCode, "invalid params", err.Error())
+	}
 	if rpcErr, denied := s.denyMissingAgentIdentity(ctx, req); denied {
 		return nil, rpcErr
 	}
