@@ -42,6 +42,8 @@ spec:
               value: {{ printf "%s-api-gateway.%s.svc.cluster.local" (include "cordum.fullname" .) .Release.Namespace | quote }}
             - name: CORDUM_API_UPSTREAM_SCHEME
               value: {{ .Values.dashboard.env.apiUpstreamScheme | default (ternary "https" "http" .Values.global.tls.enabled) | quote }}
+            - name: CORDUM_API_UPSTREAM_PORT
+              value: {{ .Values.gateway.service.httpPort | quote }}
             - name: CORDUM_API_KEY
               valueFrom:
                 secretKeyRef:
