@@ -74,6 +74,7 @@ locally:
 | Placeholder                              | Source                                            |
 |------------------------------------------|---------------------------------------------------|
 | `<gateway-url>`                          | Cordum Gateway base URL for the tenant.           |
+| `<mcp-gateway-url>`                      | Independent trusted MCP endpoint, including its configured path, from deployment configuration. Do not infer it from the control-plane URL or inspected settings. |
 | `<tenant-id>`                            | Cordum tenant id (matches `X-Tenant-ID`).         |
 | `<principal-id>`                         | Operator principal initiating remediation.        |
 | `<output-dir>`                           | Path for `managed-settings.json` + `managed-mcp.json`. |
