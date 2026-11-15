@@ -202,6 +202,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   When the environment does not set `CORDUM_API_KEY`, the `--api-key` default and
   `cordumctl edge claude` read it from `./.env`, and `cordumctl edge doctor` takes its
   flag defaults from the edge config (task-4d382942).
+- cordumctl: `cordumctl up --dev` (from PR #591) also runs `docker-compose.dev.yml` when
+  it sits next to the compose file and `--file` is not given. With `--detach` (the
+  default) it then waits for the gateway and fills in missing MCP keys of the stored
+  system config: `mcp.transport: http`, `mcp.policy_gate_enabled: true`, and
+  `mcp.enabled: true` only when `CORDUM_MCP_ENABLED` (environment first, then `.env`)
+  reads as true, so seeding never overrides an explicit `false` (task-ada11a03).
 - cordumctl: `generate-certs --san` adds names such as the Helm gateway FQDN
   (#492, task-fb3f0bbb).
 

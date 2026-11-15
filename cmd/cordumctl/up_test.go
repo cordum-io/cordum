@@ -355,3 +355,65 @@ func TestSeedDevMCPConfigSeedsCleanInstallAndPreservesExistingTools(t *testing.T
 		t.Fatalf("expected existing mcp.tools to be preserved: %#v", mcpCfg2)
 	}
 }
+
+// CodeRabbit up.go:538 on #591: seeding must not write mcp.enabled over an explicit
+// CORDUM_MCP_ENABLED=false. It seeds mcp.enabled only for a value the gateway reads as true.
+func TestUpDevSeedingKeepsExplicitMCPDisabled(t *testing.T) {
+	cases := []struct {
+		name, env, dotEnv string
+		wantEnabled       bool
+	}{
+		{name: "env_false", env: "false"},
+		{name: "dotenv_false", dotEnv: "CORDUM_MCP_ENABLED=false"},
+		{name: "env_off", env: "off"},
+		{name: "env_unreadable", env: "maybe"},
+		{name: "env_yes", env: "yes", wantEnabled: true},
+		{name: "unset", wantEnabled: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("CORDUM_MCP_ENABLED", tc.env)
+			if tc.dotEnv != "" {
+				if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(tc.dotEnv), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var posted map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodGet && (r.URL.Path == "/api/v1/status" || r.URL.Path == "/api/v1/config"):
+					_, _ = w.Write([]byte(`{}`))
+				case r.Method == http.MethodPost && r.URL.Path == "/api/v1/config":
+					if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
+						t.Errorf("decode posted config: %v", err)
+					}
+					w.WriteHeader(http.StatusNoContent)
+				default:
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+			}))
+			defer srv.Close()
+
+			devBoot, err := ensureDevBootstrapEnv(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			devBoot.Gateway = srv.URL
+			ctx, cancel := context.WithTimeout(context.Background(), defaultDevMCPReadyTimeout)
+			defer cancel()
+			if err := waitAndSeedDevMCP(ctx, devBoot); err != nil {
+				t.Fatalf("waitAndSeedDevMCP: %v", err)
+			}
+			data, _ := posted["data"].(map[string]any)
+			mcpCfg, _ := data["mcp"].(map[string]any)
+			enabled, seeded := mcpCfg["enabled"]
+			if seeded != tc.wantEnabled || seeded && enabled != true {
+				t.Fatalf("CORDUM_MCP_ENABLED env=%q .env=%q: seeded mcp.enabled=%v (%v), want seeded=%v", tc.env, tc.dotEnv, seeded, enabled, tc.wantEnabled)
+			}
+			if mcpCfg["policy_gate_enabled"] != true || mcpCfg["transport"] != "http" {
+				t.Fatalf("policy_gate_enabled and transport must still be seeded: %#v", mcpCfg)
+			}
+		})
+	}
+}

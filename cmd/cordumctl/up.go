@@ -33,6 +33,7 @@ type devBootstrapResult struct {
 	Tenant     string
 	Gateway    string
 	CACert     string
+	MCPEnabled string
 	AddedKeys  []string
 	ConfigPath string
 	ConfigNew  bool
@@ -403,16 +404,24 @@ func ensureDevBootstrapEnv(composeDir string) (devBootstrapResult, error) {
 		}
 	}
 
+	// The seed must not override an explicit CORDUM_MCP_ENABLED: report the value the
+	// gateway will read, or the "true" written above.
+	mcpEnabled, ok := hasKey("CORDUM_MCP_ENABLED")
+	if !ok {
+		mcpEnabled = "true"
+	}
+
 	tenant, okTenant := hasKey("CORDUM_TENANT_ID")
 	if !okTenant || tenant == "" {
 		tenant = "default"
 	}
 
 	return devBootstrapResult{
-		EnvPath:   envPath,
-		APIKey:    apiKey,
-		Tenant:    tenant,
-		AddedKeys: added,
+		EnvPath:    envPath,
+		APIKey:     apiKey,
+		Tenant:     tenant,
+		MCPEnabled: mcpEnabled,
+		AddedKeys:  added,
 	}, nil
 }
 
@@ -519,7 +528,7 @@ func waitAndSeedDevMCP(ctx context.Context, devBoot devBootstrapResult) error {
 	if err := waitForGatewayStatus(ctx, client); err != nil {
 		return err
 	}
-	return seedDevMCPConfig(ctx, client, true)
+	return seedDevMCPConfig(ctx, client, gatewayReadsTrue(devBoot.MCPEnabled))
 }
 
 func waitForGatewayStatus(ctx context.Context, client *restClient) error {
@@ -590,4 +599,14 @@ func seedDevMCPConfig(ctx context.Context, client *restClient, seedEnabled bool)
 		"meta":     doc.Meta,
 	}
 	return client.doJSON(ctx, http.MethodPost, "/api/v1/config", req, nil)
+}
+
+// gatewayReadsTrue reports whether the gateway's parseBoolString reads v as true. A false or
+// unreadable CORDUM_MCP_ENABLED seeds no mcp.enabled, so the gateway's env fallback stays in charge.
+func gatewayReadsTrue(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
