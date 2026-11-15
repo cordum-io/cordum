@@ -38,7 +38,7 @@ const (
       retries: 3
 
   cordum-context-engine:
-    image: ghcr.io/cordum-io/cordum/control-plane:${CORDUM_VERSION:-latest}-context-engine
+    image: ghcr.io/cordum-io/cordum/context-engine:${CORDUM_VERSION:-latest}
     depends_on:
       redis:
         condition: service_healthy
@@ -54,7 +54,7 @@ const (
       retries: 3
 
   cordum-safety-kernel:
-    image: ghcr.io/cordum-io/cordum/control-plane:${CORDUM_VERSION:-latest}-safety-kernel
+    image: ghcr.io/cordum-io/cordum/safety-kernel:${CORDUM_VERSION:-latest}
     restart: unless-stopped
     depends_on:
       nats:
@@ -77,7 +77,7 @@ const (
       retries: 3
 
   cordum-scheduler:
-    image: ghcr.io/cordum-io/cordum/control-plane:${CORDUM_VERSION:-latest}-scheduler
+    image: ghcr.io/cordum-io/cordum/scheduler:${CORDUM_VERSION:-latest}
     restart: unless-stopped
     depends_on:
       nats:
@@ -89,6 +89,7 @@ const (
     environment:
       - NATS_URL=nats://nats:4222
       - NATS_USE_JETSTREAM=1
+      - CORDUM_SDK_HANDSHAKE=${CORDUM_SDK_HANDSHAKE:-off}
       - REDIS_URL=redis://:${REDIS_PASSWORD:-cordum-dev}@redis:6379
       - SAFETY_KERNEL_ADDR=cordum-safety-kernel:50051
       - POOL_CONFIG_PATH=/etc/cordum/pools.yaml
@@ -100,7 +101,7 @@ const (
       - ./config/timeouts.yaml:/etc/cordum/timeouts.yaml:ro
 
   cordum-api-gateway:
-    image: ghcr.io/cordum-io/cordum/control-plane:${CORDUM_VERSION:-latest}-api-gateway
+    image: ghcr.io/cordum-io/cordum/api-gateway:${CORDUM_VERSION:-latest}
     depends_on:
       nats:
         condition: service_healthy
@@ -111,14 +112,19 @@ const (
     environment:
       - NATS_URL=nats://nats:4222
       - NATS_USE_JETSTREAM=1
+      - CORDUM_SDK_HANDSHAKE=${CORDUM_SDK_HANDSHAKE:-off}
       - REDIS_URL=redis://:${REDIS_PASSWORD:-cordum-dev}@redis:6379
       - SAFETY_KERNEL_ADDR=cordum-safety-kernel:50051
-      - CORDUM_API_KEY=${CORDUM_API_KEY:?error: CORDUM_API_KEY is not set}
+      - "CORDUM_API_KEY=${CORDUM_API_KEY:?error: CORDUM_API_KEY is not set}"
       - TENANT_ID=default
       - API_RATE_LIMIT_RPS=${API_RATE_LIMIT_RPS:-30}
       - API_RATE_LIMIT_BURST=${API_RATE_LIMIT_BURST:-50}
       - REDIS_DATA_TTL=24h
       - JOB_META_TTL=168h
+      - GATEWAY_HTTP_TLS_CERT=/etc/cordum/tls/server/tls.crt
+      - GATEWAY_HTTP_TLS_KEY=/etc/cordum/tls/server/tls.key
+    volumes:
+      - ./certs:/etc/cordum/tls:ro
     ports:
       - "8080:8080"
       - "8081:8081"
@@ -130,7 +136,7 @@ const (
       retries: 3
 
   cordum-workflow-engine:
-    image: ghcr.io/cordum-io/cordum/control-plane:${CORDUM_VERSION:-latest}-workflow-engine
+    image: ghcr.io/cordum-io/cordum/workflow-engine:${CORDUM_VERSION:-latest}
     depends_on:
       nats:
         condition: service_healthy
@@ -141,6 +147,7 @@ const (
     environment:
       - NATS_URL=nats://nats:4222
       - NATS_USE_JETSTREAM=1
+      - CORDUM_SDK_HANDSHAKE=${CORDUM_SDK_HANDSHAKE:-off}
       - REDIS_URL=redis://:${REDIS_PASSWORD:-cordum-dev}@redis:6379
       - WORKFLOW_ENGINE_HTTP_ADDR=:9093
       - WORKFLOW_ENGINE_SCAN_INTERVAL=5s
@@ -159,11 +166,14 @@ const (
       cordum-api-gateway:
         condition: service_healthy
     environment:
-      - CORDUM_API_BASE_URL=${CORDUM_API_BASE_URL:-http://localhost:8081}
+      - CORDUM_API_BASE_URL=${CORDUM_API_BASE_URL:-}
       - CORDUM_API_KEY=${CORDUM_API_KEY:-}
       - CORDUM_TENANT_ID=${CORDUM_TENANT_ID:-default}
       - CORDUM_PRINCIPAL_ID=${CORDUM_PRINCIPAL_ID:-}
       - CORDUM_PRINCIPAL_ROLE=${CORDUM_PRINCIPAL_ROLE:-}
+      - CORDUM_API_UPSTREAM_SCHEME=https
+    volumes:
+      - ./certs:/etc/cordum/tls:ro
     ports:
       - "8082:8080"
     healthcheck:
@@ -319,15 +329,18 @@ CORDUM_VERSION=latest
 # Generate an API key
 export CORDUM_API_KEY="$(openssl rand -hex 32)"
 
-# This stack serves the gateway over plain HTTP; cordumctl defaults to https://localhost:8081
-export CORDUM_GATEWAY=http://localhost:8081
-
 # Start all services
 docker compose up -d
 
 # Verify everything is healthy
 docker compose ps
 `+"```"+`
+
+The gateway serves HTTPS at https://localhost:8081 with the certificates in
+`+"`certs/`"+` (written by `+"`cordumctl init`"+`; `+"`cordumctl generate-certs --force`"+`
+regenerates them). Run `+"`cordumctl`"+` from this directory and it trusts
+`+"`certs/ca/ca.crt`"+` with no extra flags. The dashboard proxies `+"`/api/`"+` to the
+gateway and verifies it with the same CA.
 
 ## Create the sample workflow
 
@@ -341,7 +354,7 @@ cordumctl workflow create --file workflows/hello.json
 run_id=$(cordumctl run start <workflow_id>)
 
 # Find the workflow gate job in the approvals queue, then approve it
-job_id=$(curl -sS http://localhost:8081/api/v1/approvals \
+job_id=$(curl -sS --cacert certs/ca/ca.crt https://localhost:8081/api/v1/approvals \
   -H "X-API-Key: $CORDUM_API_KEY" \
   -H "X-Tenant-ID: default" | jq -r '.items[0].job.id')
 cordumctl approval job ${job_id} --approve
