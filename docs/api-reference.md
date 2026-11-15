@@ -3079,7 +3079,7 @@ The following routes are registered in the gateway (`registerRoute` calls). Gene
 
 <!-- BEGIN:rest-routes -->
 
-_Generated from `core/controlplane/gateway/gateway.go`, `core/controlplane/gateway/handlers_mcp.go` (registration order) — do not edit by hand; run `make docs-tables`. 228 routes._
+_Generated from `core/controlplane/gateway/gateway.go`, `core/controlplane/gateway/handlers_mcp.go` (registration order) — do not edit by hand; run `make docs-tables`. 229 routes._
 
 | Method | Path |
 |--------|------|
@@ -3287,6 +3287,7 @@ _Generated from `core/controlplane/gateway/gateway.go`, `core/controlplane/gatew
 | PUT | `/api/v1/policy/bundles/{id}` |
 | DELETE | `/api/v1/policy/bundles/{id}` |
 | POST | `/api/v1/policy/bundles/{id}/simulate` |
+| POST | `/api/v1/policy/bundles/{id}/resign` |
 | PUT | `/api/v1/policy/shadows/{id}` |
 | GET | `/api/v1/policy/shadows/{id}` |
 | DELETE | `/api/v1/policy/shadows/{id}` |
