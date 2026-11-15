@@ -2,17 +2,21 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strings"
+	"time"
 
+	sdk "github.com/cordum/cordum/sdk/client"
 	"github.com/cordum/cordum/tools/certgen"
 )
 
@@ -20,12 +24,15 @@ const (
 	defaultComposeTimeoutSeconds = "1800"
 	defaultDevGatewayURL         = "https://localhost:8081"
 	defaultDevDashboardURL       = "http://localhost:8082"
+	defaultDevMCPReadyTimeout    = 45 * time.Second
 )
 
 type devBootstrapResult struct {
 	EnvPath    string
 	APIKey     string
 	Tenant     string
+	Gateway    string
+	CACert     string
 	AddedKeys  []string
 	ConfigPath string
 	ConfigNew  bool
@@ -36,10 +43,17 @@ func runUpCmd(args []string) {
 	file := fs.String("file", "docker-compose.yml", "compose file path")
 	build := fs.Bool("build", true, "build images before starting")
 	detach := fs.Bool("detach", true, "run in background")
-	dev := fs.Bool("dev", false, "bootstrap local dev credentials and CLI context")
+	dev := fs.Bool("dev", false, "bootstrap local dev credentials, CLI context, and MCP policy gate")
 	if err := fs.Parse(args); err != nil {
 		fail(err.Error())
 	}
+
+	fileExplicit := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "file" {
+			fileExplicit = true
+		}
+	})
 
 	composeDir := filepath.Dir(*file)
 	var source string
@@ -58,6 +72,8 @@ func runUpCmd(args []string) {
 		}
 		devBoot.ConfigPath = cfgPath
 		devBoot.ConfigNew = created
+		devBoot.Gateway = defaultDevGatewayURL
+		devBoot.CACert = detectInitCACert("", devBoot.Gateway, composeDir)
 		source = "dev-bootstrap"
 	} else {
 		source = apiKeySource(*file)
@@ -67,8 +83,17 @@ func runUpCmd(args []string) {
 		ensureDevCerts(composeDir)
 	}
 
-	if err := runCompose(*file, *build, *detach); err != nil {
+	composeFiles := resolveUpComposeFiles(*file, *dev, fileExplicit)
+	if err := runComposeFiles(composeFiles, *build, *detach); err != nil {
 		fail(err.Error())
+	}
+
+	if *dev && *detach {
+		ctx, cancel := context.WithTimeout(context.Background(), defaultDevMCPReadyTimeout)
+		defer cancel()
+		if err := waitAndSeedDevMCP(ctx, devBoot); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not seed MCP policy gate config yet (%v); Gateway env defaults still enable MCP policy gate on dev builds\n", err)
+		}
 	}
 
 	caPath := filepath.ToSlash(filepath.Join(filepath.Dir(*file), "certs", "ca", "ca.crt"))
@@ -99,15 +124,34 @@ func runUpCmd(args []string) {
 	}
 }
 
+func resolveUpComposeFiles(composeFile string, dev, fileExplicit bool) []string {
+	files := []string{composeFile}
+	if dev && !fileExplicit {
+		devOverride := filepath.Join(filepath.Dir(composeFile), "docker-compose.dev.yml")
+		if info, err := os.Stat(devOverride); err == nil && !info.IsDir() {
+			files = append(files, devOverride)
+		}
+	}
+	return files
+}
+
 func runCompose(composeFile string, build, detach bool) error {
-	if composeFile == "" {
+	return runComposeFiles([]string{composeFile}, build, detach)
+}
+
+func runComposeFiles(composeFiles []string, build, detach bool) error {
+	if len(composeFiles) == 0 || composeFiles[0] == "" {
 		return fmt.Errorf("compose file required")
 	}
-	if _, err := os.Stat(composeFile); err != nil {
-		return fmt.Errorf("compose file not found: %s", composeFile)
+	args := make([]string, 0, len(composeFiles)*2+4)
+	for _, composeFile := range composeFiles {
+		if _, err := os.Stat(composeFile); err != nil {
+			return fmt.Errorf("compose file not found: %s", composeFile)
+		}
+		args = append(args, "-f", composeFile)
 	}
 
-	args := []string{"-f", composeFile, "up"}
+	args = append(args, "up")
 	if detach {
 		args = append(args, "-d")
 	}
@@ -464,4 +508,86 @@ func devPrincipal() string {
 		return strings.TrimSpace(u.Username)
 	}
 	return "local-dev"
+}
+
+func waitAndSeedDevMCP(ctx context.Context, devBoot devBootstrapResult) error {
+	tlsTransport, err := sdk.BuildTLSTransportErr(sdk.TLSOptions{CACertPath: devBoot.CACert})
+	if err != nil {
+		return fmt.Errorf("tls transport: %w", err)
+	}
+	client := newRestClient(devBoot.Gateway, devBoot.APIKey, devBoot.Tenant, tlsTransport)
+	if err := waitForGatewayStatus(ctx, client); err != nil {
+		return err
+	}
+	return seedDevMCPConfig(ctx, client, true)
+}
+
+func waitForGatewayStatus(ctx context.Context, client *restClient) error {
+	var lastErr error
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	for {
+		var status map[string]any
+		err := client.doJSON(ctx, http.MethodGet, "/api/v1/status", nil, &status)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		select {
+		case <-ctx.Done():
+			if lastErr != nil {
+				return fmt.Errorf("timed out waiting for gateway status: %w", lastErr)
+			}
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func seedDevMCPConfig(ctx context.Context, client *restClient, seedEnabled bool) error {
+	doc, err := client.getConfig(ctx, "system", "default")
+	if err != nil {
+		if !isNotFound(err) {
+			return err
+		}
+		doc = &configDoc{
+			Scope:   "system",
+			ScopeID: "default",
+			Data:    map[string]any{},
+		}
+	}
+	if doc == nil {
+		doc = &configDoc{}
+	}
+	doc.Scope = "system"
+	doc.ScopeID = "default"
+	if doc.Data == nil {
+		doc.Data = map[string]any{}
+	}
+
+	mcpCfg := map[string]any{}
+	if existing, ok := doc.Data["mcp"].(map[string]any); ok {
+		for k, v := range existing {
+			mcpCfg[k] = v
+		}
+	}
+	if _, ok := mcpCfg["enabled"]; !ok && seedEnabled {
+		mcpCfg["enabled"] = true
+	}
+	if _, ok := mcpCfg["transport"]; !ok {
+		mcpCfg["transport"] = "http"
+	}
+	if _, ok := mcpCfg["policy_gate_enabled"]; !ok {
+		mcpCfg["policy_gate_enabled"] = true
+	}
+	doc.Data["mcp"] = mcpCfg
+
+	req := map[string]any{
+		"scope":    doc.Scope,
+		"scope_id": doc.ScopeID,
+		"data":     doc.Data,
+		"meta":     doc.Meta,
+	}
+	return client.doJSON(ctx, http.MethodPost, "/api/v1/config", req, nil)
 }
