@@ -412,6 +412,12 @@ are applied, so installed packs pass submit-time unknown-topic validation.
 | `--force` | `false` | Skip core version compatibility check |
 | `--upgrade` | `false` | Overwrite existing resources (schemas/workflows) |
 | `--inactive` | `false` | Install without pool mappings |
+| `--worker-token-file` | | Write the generated worker token to this file (mode 0600) instead of printing it |
+
+When the gateway issues a worker credential for the pack, `pack install` prints
+its `worker_id`, and prints the worker token only when stdout is a terminal.
+Otherwise a note on stderr takes the token's place. Automation that needs the
+token passes `--worker-token-file <path>`.
 
 **Validation checks:**
 - Pack manifest syntax
