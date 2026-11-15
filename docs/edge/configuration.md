@@ -122,9 +122,9 @@ Policy-mode summary. What is measured is recorded in the
   `true`.
 - `enterprise-strict`: fail closed when Cordum governance is unavailable. The
   contract measures agentd's deny when the Gateway or the policy is
-  unavailable, the deny for an inline approval wait that fails or times out,
-  the hook's deny for a malformed agentd response, and Gateway evaluate's
-  deny while the Safety Kernel is unavailable.
+  unavailable, its `REQUIRE_APPROVAL` answer with `approval_ref` for an inline
+  approval wait that fails or times out, the hook's deny for a malformed agentd
+  response, and Gateway evaluate's deny while the Safety Kernel is unavailable.
 - Workflow actions tagged `requires-edge-governance` fail closed on Gateway miss
   regardless of session mode.
   This is not measured.

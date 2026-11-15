@@ -135,8 +135,9 @@ policy as unavailable. What is measured is recorded in the
   [cordum-hook fail modes](cordum-hook.md#fail-modes).
 - `enterprise-strict`: deny when Cordum governance is unavailable. agentd returns
   deny when the Gateway or the policy is unavailable, an inline approval wait
-  that fails or times out returns deny, and while the Safety Kernel is
-  unavailable Gateway evaluate returns deny for enterprise-strict sessions.
+  that fails or times out returns `REQUIRE_APPROVAL` with its `approval_ref`,
+  which the hook turns into a deny, and while the Safety Kernel is unavailable
+  Gateway evaluate returns deny for enterprise-strict sessions.
 - Workflow actions tagged `requires-edge-governance` fail closed on a Gateway
   miss even if the session policy mode is observe.
   This is not measured.
