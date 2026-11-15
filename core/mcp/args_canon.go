@@ -146,6 +146,9 @@ func checkUniqueObjectKeys(raw json.RawMessage) error {
 		wantKey bool
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
+	// Numbers stay json.Number. A float64 decode would refuse 1e400,
+	// which CanonicaliseArgs accepts.
+	dec.UseNumber()
 	var stack []*frame
 	for {
 		tok, err := dec.Token()

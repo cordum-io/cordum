@@ -134,6 +134,7 @@ func TestCheckUniqueObjectKeys(t *testing.T) {
 		`{"b":1,"\u0062":2}`:             "b",
 		`{"a":{"b":1},"a":{"c":1}}`:      "a",
 		`{"l":[1,{"z":0,"z":0}],"m":{}}`: "z",
+		`{"n":1e400,"n":0}`:              "n",
 	}
 	for args, key := range refused {
 		err := checkUniqueObjectKeys(json.RawMessage(args))
@@ -141,7 +142,7 @@ func TestCheckUniqueObjectKeys(t *testing.T) {
 			t.Errorf("checkUniqueObjectKeys(%s) = %v, want the repeated key %q", args, err, key)
 		}
 	}
-	for _, args := range []string{``, `null`, `{}`, `[]`, `"s"`, `{"a":{"k":1},"b":{"k":1}}`, `[{"k":1},{"k":2}]`, `{"a":"a","b":["a","a"],"c":{"a":"b"}}`} {
+	for _, args := range []string{``, `null`, `{}`, `[]`, `"s"`, `{"a":{"k":1},"b":{"k":1}}`, `[{"k":1},{"k":2}]`, `{"a":"a","b":["a","a"],"c":{"a":"b"}}`, `{"n":1e400}`, `[-1e999]`, `{"n":1e400,"m":-1e999}`} {
 		if err := checkUniqueObjectKeys(json.RawMessage(args)); err != nil {
 			t.Errorf("checkUniqueObjectKeys(%s) = %v, want nil", args, err)
 		}
