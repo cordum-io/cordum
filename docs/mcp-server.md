@@ -1212,16 +1212,27 @@ console.log(payload);
 **Settings > MCP Server** (`/settings/mcp`) shows the MCP server's state:
 
 - **Status**: running or not, connected clients, uptime, and the configured
-  transport, port and whether an API key is required. A warning card appears
-  while MCP is disabled.
+  transport. A warning card appears while MCP is disabled. `/mcp/*` always
+  requires authentication (see [HTTP/SSE mode](#httpsse-mode)); the gateway
+  does not read `mcp.require_auth`, so the page does not show it.
 - **Tools and Resources**: the registered MCP tools (e.g. `cordum_submit_job`)
   and resources (e.g. `cordum://jobs/{id}`), each marked enabled or disabled.
   The lists are read-only; change them with the config API below.
 - **Enable runtime / Disable runtime** sets `mcp.enabled`.
-- **Copy URL** copies `<mcp.transport>://<dashboard host>:<mcp.port>`, and the
-  page shows port 3001 when `mcp.port` is unset. `mcp.port` is metadata only:
-  the gateway serves `/mcp/sse` and `/mcp/message` on its own port
-  (`http://localhost:8081` in the default stack).
+- **Copy URL** copies the gateway's MCP SSE endpoint, `/mcp/sse`, on the
+  origin of the dashboard's API base URL: `CORDUM_API_BASE_URL` when it is an
+  absolute URL, else the dashboard's own origin. The bundled dashboard nginx
+  proxies `/mcp/` to the gateway the same way as `/api/`, unbuffered for SSE,
+  so in the default compose stack the copied URL is
+  `http://localhost:8082/mcp/sse` (plain HTTP, like the dashboard). Send the
+  same `X-API-Key` and `X-Tenant-ID` headers as on the gateway. The K8s
+  ingress manifests route `/mcp` to the gateway. With the Helm chart the
+  dashboard host proxies `/mcp/` the same way and the API host routes every
+  path to the gateway, but `dashboard.env.apiBaseUrl` defaults to the
+  in-cluster gateway service URL, which a browser cannot reach: set it to
+  `/api/v1`, or to the public API URL.
+  `mcp.port` is metadata only: nothing listens on it, so the page does not
+  show it.
 
 The page has no client config snippets. Create an API key under
 **Settings > API Keys** (`/settings/keys`), then configure the client as in
