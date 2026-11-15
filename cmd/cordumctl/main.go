@@ -265,7 +265,12 @@ type flagSet struct {
 func newFlagSet(name string) *flagSet {
 	fs := flag.NewFlagSet(name, flag.ExitOnError)
 	gateway := fs.String("gateway", envOr("CORDUM_GATEWAY", defaultGateway), "gateway base URL; use http:// for a gateway without TLS (also: CORDUM_GATEWAY)")
-	apiKey := fs.String("api-key", envOr("CORDUM_API_KEY", ""), "api key")
+	apiKeyDefault, apiKeySet := os.LookupEnv("CORDUM_API_KEY")
+	apiKeyDefault = strings.TrimSpace(apiKeyDefault)
+	if !apiKeySet {
+		apiKeyDefault = readEnvFile(".env", "CORDUM_API_KEY", "API_KEY")
+	}
+	apiKey := fs.String("api-key", apiKeyDefault, "api key")
 	tenant := fs.String("tenant", envOr("CORDUM_TENANT_ID", "default"), "tenant id")
 	insecure := fs.Bool("insecure", false, "skip TLS certificate verification (also: CORDUM_TLS_INSECURE=1|true)")
 	cacert := fs.String("cacert", envOr("CORDUM_TLS_CA", ""), "CA certificate for TLS verification; for https://localhost, ./certs/ca/ca.crt is used when present (also: CORDUM_TLS_CA)")

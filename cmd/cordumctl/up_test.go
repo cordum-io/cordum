@@ -164,3 +164,63 @@ func TestEnsureDevBootstrapEnvRestrictsExistingEnvBeforeWriting(t *testing.T) {
 		t.Fatalf(".env mode = %v, want 0600", info.Mode().Perm())
 	}
 }
+
+func TestEnsureDevCLIContextWritesValidYAMLAndDoesNotOverwrite(t *testing.T) {
+	dir := t.TempDir()
+	caDir := filepath.Join(dir, "certs", "ca")
+	if err := os.MkdirAll(caDir, 0o755); err != nil {
+		t.Fatalf("mkdir certs: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(caDir, "ca.crt"), []byte("dummy-ca"), 0o600); err != nil {
+		t.Fatalf("write ca.crt: %v", err)
+	}
+
+	cfgPath, created, err := ensureDevCLIContext(dir, "tenant-alpha")
+	if err != nil {
+		t.Fatalf("ensureDevCLIContext() error: %v", err)
+	}
+	if !created {
+		t.Fatal("expected created = true")
+	}
+
+	raw, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read cordum.yaml: %v", err)
+	}
+	if !strings.Contains(string(raw), `api_key: "${CORDUM_API_KEY}"`) && !strings.Contains(string(raw), `api_key: ${CORDUM_API_KEY}`) {
+		t.Fatalf("expected ${CORDUM_API_KEY} env reference in cordum.yaml:\n%s", string(raw))
+	}
+
+	cfg, _, err := LoadEdgeClaudeConfig([]string{"CORDUM_API_KEY=secret-from-env"}, dir, t.TempDir())
+	if err != nil {
+		t.Fatalf("LoadEdgeClaudeConfig() failed on generated cordum.yaml: %v", err)
+	}
+	if cfg.Gateway != defaultDevGatewayURL {
+		t.Fatalf("Gateway = %q, want %q", cfg.Gateway, defaultDevGatewayURL)
+	}
+	if cfg.Tenant != "tenant-alpha" {
+		t.Fatalf("Tenant = %q, want tenant-alpha", cfg.Tenant)
+	}
+	if cfg.APIKey != "secret-from-env" {
+		t.Fatalf("APIKey = %q, want secret-from-env", cfg.APIKey)
+	}
+	if cfg.CACert != "./certs/ca/ca.crt" {
+		t.Fatalf("CACert = %q, want ./certs/ca/ca.crt", cfg.CACert)
+	}
+
+	custom := []byte("gateway: https://custom.example.com\n")
+	if err := os.WriteFile(cfgPath, custom, 0o600); err != nil {
+		t.Fatalf("overwrite cordum.yaml: %v", err)
+	}
+	_, created2, err := ensureDevCLIContext(dir, "tenant-alpha")
+	if err != nil {
+		t.Fatalf("second ensureDevCLIContext() error: %v", err)
+	}
+	if created2 {
+		t.Fatal("expected created = false when cordum.yaml already exists")
+	}
+	after, _ := os.ReadFile(cfgPath)
+	if string(after) != string(custom) {
+		t.Fatalf("cordum.yaml was modified unexpectedly: %q", string(after))
+	}
+}

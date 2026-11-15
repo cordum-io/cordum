@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 
@@ -17,13 +18,17 @@ import (
 
 const (
 	defaultComposeTimeoutSeconds = "1800"
+	defaultDevGatewayURL         = "https://localhost:8081"
+	defaultDevDashboardURL       = "http://localhost:8082"
 )
 
 type devBootstrapResult struct {
-	EnvPath   string
-	APIKey    string
-	Tenant    string
-	AddedKeys []string
+	EnvPath    string
+	APIKey     string
+	Tenant     string
+	AddedKeys  []string
+	ConfigPath string
+	ConfigNew  bool
 }
 
 func runUpCmd(args []string) {
@@ -47,6 +52,12 @@ func runUpCmd(args []string) {
 		if err != nil {
 			fail(fmt.Sprintf("dev bootstrap .env: %v", err))
 		}
+		cfgPath, created, err := ensureDevCLIContext(composeDir, devBoot.Tenant)
+		if err != nil {
+			fail(fmt.Sprintf("dev bootstrap cordum.yaml: %v", err))
+		}
+		devBoot.ConfigPath = cfgPath
+		devBoot.ConfigNew = created
 		source = "dev-bootstrap"
 	} else {
 		source = apiKeySource(*file)
@@ -73,6 +84,15 @@ func runUpCmd(args []string) {
 			} else {
 				fmt.Printf("Dev .env: preserved existing values in %s\n", devBoot.EnvPath)
 			}
+			if devBoot.ConfigNew {
+				fmt.Printf("CLI context: wrote %s\n", devBoot.ConfigPath)
+			} else {
+				fmt.Printf("CLI context: preserved existing %s\n", devBoot.ConfigPath)
+			}
+			fmt.Println("Next steps:")
+			fmt.Println("  cordumctl status")
+			fmt.Println("  cordumctl edge claude --no-launch")
+			fmt.Println("  ./tools/scripts/demo_guardrails_run.sh")
 		} else {
 			fmt.Println("Smoke (from repo root): CORDUM_API_KEY=<your-key> CORDUM_TENANT_ID=<tenant> ./tools/scripts/platform_smoke.sh")
 		}
@@ -406,4 +426,42 @@ func randomHexString(numBytes int) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(buf), nil
+}
+
+func ensureDevCLIContext(composeDir, tenant string) (string, bool, error) {
+	cfgPath := filepath.Join(composeDir, "cordum.yaml")
+	if _, err := os.Stat(cfgPath); err == nil {
+		return cfgPath, false, nil
+	} else if !os.IsNotExist(err) {
+		return "", false, fmt.Errorf("stat %s: %w", cfgPath, err)
+	}
+	if strings.TrimSpace(tenant) == "" {
+		tenant = "default"
+	}
+	scaffold := edgeInitScaffold{
+		Gateway:             defaultDevGatewayURL,
+		APIKeyEnvVar:        "CORDUM_API_KEY",
+		Tenant:              tenant,
+		Principal:           devPrincipal(),
+		PolicyMode:          "enforce",
+		CACert:              detectInitCACert("", defaultDevGatewayURL, composeDir),
+		DashboardURL:        defaultDevDashboardURL,
+		AgentdPath:          detectInitBinary("", "cordum-agentd"),
+		HookCommand:         detectInitBinary("", "cordum-hook"),
+		ApprovalWaitTimeout: "30s",
+	}
+	if err := writeInitYAML(cfgPath, scaffold); err != nil {
+		return "", false, err
+	}
+	return cfgPath, true, nil
+}
+
+func devPrincipal() string {
+	if p := firstNonEmptyEnv("CORDUM_PRINCIPAL_ID", "CORDUM_EDGE_PRINCIPAL_ID"); p != "" {
+		return p
+	}
+	if u, err := user.Current(); err == nil && strings.TrimSpace(u.Username) != "" {
+		return strings.TrimSpace(u.Username)
+	}
+	return "local-dev"
 }
