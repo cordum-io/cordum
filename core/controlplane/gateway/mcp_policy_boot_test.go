@@ -327,6 +327,45 @@ func TestMCPProdBoot_ApprovalHoldWiredWhenFlagOn(t *testing.T) {
 	}
 }
 
+func TestMCPProdBoot_EnvFallbackWiresApprovalHoldWhenUnseeded(t *testing.T) {
+	t.Setenv("CORDUM_MCP_ENABLED", "true")
+	t.Setenv("CORDUM_MCP_POLICY_GATE_ENABLED", "true")
+
+	s, _, _ := newTestGateway(t)
+	s.auth = mcpTestAuth{apiKey: "test-key", tenant: "default"}
+	s.shutdownCh = make(chan struct{})
+	t.Cleanup(func() { close(s.shutdownCh) })
+	configurePolicyGateBootDeps(t, s)
+
+	mux := http.NewServeMux()
+	if err := s.registerMCPRoutes(mux); err != nil {
+		t.Fatalf("register mcp routes: %v", err)
+	}
+	runtime := s.getMCPRuntime()
+	if runtime == nil || runtime.server == nil {
+		t.Fatal("expected booted MCP runtime from CORDUM_MCP_* env fallback, got nil")
+	}
+	if !runtime.server.HasApprovalHold() {
+		t.Fatal("MCPServer.HasApprovalHold() = false with CORDUM_MCP_POLICY_GATE_ENABLED=true; want true")
+	}
+}
+
+func TestLoadMCPConfig_ExplicitRedisOverridesEnvFallback(t *testing.T) {
+	t.Setenv("CORDUM_MCP_ENABLED", "true")
+	t.Setenv("CORDUM_MCP_POLICY_GATE_ENABLED", "true")
+
+	s, _, _ := newTestGateway(t)
+	setMCPConfigForBoot(t, s, true, false)
+
+	cfg := s.loadMCPConfig(context.Background())
+	if !cfg.Enabled {
+		t.Fatal("expected Enabled=true from explicit config")
+	}
+	if cfg.PolicyGateEnabled {
+		t.Fatal("expected explicit config policy_gate_enabled=false to override CORDUM_MCP_POLICY_GATE_ENABLED=true")
+	}
+}
+
 // Silence the unused-import / non-test reference warnings: ensure the
 // mcp accessor names are referenced once at compile time so future
 // refactors that rename them break the boot-wiring tests immediately.
