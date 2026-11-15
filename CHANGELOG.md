@@ -292,6 +292,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- `cordumctl policy resign` skips bundle IDs the API cannot address without changing their identity, continues past them under `--all`, and reports the ID returned by the gateway (task-64199d9b).
 - Policy: toggling an output rule (`PUT /api/v1/policy/output/rules/{id}`)
   re-signs the bundle that holds the rule only when its stored content
   verifies against its stored signature and the policy trust store. Under
