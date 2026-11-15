@@ -364,6 +364,21 @@ func TestMCPInvariantBlockDecisionDenies(t *testing.T) {
 	}
 }
 
+// A deny-class invariant with no match.mcp lists (a topic-only rule, for one)
+// never denies an MCP tools/call: the gate reads only an invariant's MCP lists.
+func TestMCPInvariantWithoutMCPListsNeverDeniesToolCall(t *testing.T) {
+	for _, rule := range []config.PolicyRule{
+		{ID: "inv-topic-only", Decision: "deny", Match: config.PolicyMatch{Topics: []string{"job.*"}}},
+		{ID: "inv-risk-tag-only", Decision: "block", Match: config.PolicyMatch{RiskTags: []string{"secrets"}}},
+		{ID: "inv-empty-match", Decision: "deny"},
+	} {
+		if _, denied := matchMCPInvariantDeny([]config.PolicyRule{rule},
+			mcp.Tool{Name: "fs.read", ApprovalScope: "fs"}, MCPCallMetadata{Tenant: "default"}); denied {
+			t.Errorf("%s (decision %s, no match.mcp lists) denied an MCP tool call", rule.ID, rule.Decision)
+		}
+	}
+}
+
 // TestMCPInvariantFloorCoversNonGatedTools runs tools/call through the
 // production pieces (ToolRegistry plus wireMCPApprovalGate, as
 // registerMCPRoutes wires them). A deny invariant blocks a tool that is not
