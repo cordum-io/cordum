@@ -499,6 +499,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   principal: a static API key with `principal_id` in `CORDUM_API_KEYS`, or a
   session or OIDC login.
 
+#### core/controlplane/gateway — Edge session ownership binds to the authenticated key (2026-11-15, task-cf94ebba)
+
+- **Behavior change** for `POST /api/v1/edge/sessions` and
+  `POST /api/v1/edge/evaluate`. A session's `principal_id`, its owner, now
+  comes only from an authenticated principal: a static API key bound to a
+  `principal_id`, a session, or a JWT/OIDC login. Evaluate on a session that
+  has a `principal_id` accepts only a caller authenticated as that principal.
+- A credential with no bound principal, such as an unbound static API key or
+  a managed API key, creates a session with an empty `principal_id`, and the
+  name it sends in `X-Principal-Id` is kept as `principal_display_name`
+  unless the request sets one. Such sessions no longer match
+  `GET /api/v1/edge/sessions?principal_id=`. Callers notice this where the
+  header is read as a principal: development, and production with
+  `CORDUM_ALLOW_HEADER_PRINCIPAL=true`.
+- `Migration:` a session that such a credential created before this change
+  keeps the header name as its `principal_id`, so evaluate refuses it with
+  403; start a new session. To own sessions and list them by principal, use
+  a static API key with a `principal_id` in `CORDUM_API_KEYS`, or a session
+  or OIDC login.
+
 #### Header-asserted principals never authorize a job's agent identity (2026-11-13, task-850216cf)
 
 - **Behavior change** for job submit, in every profile. A principal taken
