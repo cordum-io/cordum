@@ -1,4 +1,4 @@
-# ADR-001: Policy-Before-Dispatch Guarantee
+# ADR-001: Policy Evaluation Before Dispatch
 
 - Status: Accepted
 - Date: 2026-01-10
@@ -31,6 +31,15 @@ Performance target: **< 5 ms p99** for policy evaluation. Achieved by:
 - In-memory policy cache in the Safety Kernel (no Redis/disk on hot path)
 - Policy reloaded asynchronously on NATS events or file change
 - Matcher uses indexed capability/tag sets, not linear scans
+
+Status note (2026-11, M0-07): the Decision above records the design at decision time,
+not a current assurance. Pre-dispatch evaluation is a `supported` mechanism for jobs
+that the scheduler dispatches through Cordum's integrated entry points. It is not a
+guarantee for every agent action: see CLM-010 and CLM-016 in the
+[claim register](../contract/claims.yaml). Step 6 is out of date. A `DENY` decision
+ends the job, but a `THROTTLE` decision requeues it for a later dispatch attempt. The
+performance target is a design target. It has not been measured for the current
+release and is not a performance commitment.
 
 Key source files:
 - `core/controlplane/safetykernel/kernel.go` — Evaluate/Explain/Simulate
