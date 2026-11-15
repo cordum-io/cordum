@@ -720,6 +720,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Dashboard Copy URL: it now copies a URL that works. In compose it is
+  `http://localhost:8082/mcp/sse`, through a new SSE-safe `/mcp/` location in
+  the dashboard nginx (#492, task-b60c84c4).
+
+- Dashboard tiles: the MCP Port and "Auth required" tiles showed settings the
+  gateway never reads; both are removed, and the settings hook no longer
+  writes `mcp.require_auth` back (#492, task-b60c84c4).
+
 - The dashboard dev server proxies to `https://localhost:8081`, including the
   stream WebSocket, and verifies the dev CA (#492, task-f770fda9).
 
