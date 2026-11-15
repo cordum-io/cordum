@@ -6849,6 +6849,8 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** @description Worker id to link to the new identity. A worker already linked to an agent identity is refused with 409 AGENT_WORKER_CONFLICT. */
+                    agent_id?: string;
                     allowed_pools?: string[];
                     /** @description cordum:// resource URI glob allowlist. Empty or omitted fail-closes resource-guarded MCP actions. */
                     allowed_resources?: string[];
@@ -6885,6 +6887,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalServerError"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };
@@ -6974,6 +6977,7 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalServerError"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };
@@ -15335,7 +15339,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description JSON-RPC response */
+            /** @description JSON-RPC response to a request that carries an `id`. Tool and approval failures are JSON-RPC errors inside this 200 (for example `-32099` approval required, `-32096` approval lifecycle error). */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -15344,9 +15348,71 @@ export interface operations {
                     "application/json": components["schemas"]["JsonRpcResponse"];
                 };
             };
+            /** @description A notification (no `id`) was accepted. No body. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
+            /** @description Tenant missing or not allowed, upstream fronting not configured for the tenant. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The `X-MCP-Session-ID` header or `session_id` query names a session that does not exist or that another caller opened (the two look the same). JSON-RPC error `-32001`; open `/mcp/sse` for a new session id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "jsonrpc": "2.0",
+                     *       "id": 1,
+                     *       "error": {
+                     *         "code": -32001,
+                     *         "message": "session not found"
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["JsonRpcResponse"];
+                };
+            };
+            /** @description The client went away before the reply. JSON-RPC error `-32603` (`request canceled`). */
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JsonRpcResponse"];
+                };
+            };
+            /** @description The message exceeds the transport size limit. JSON-RPC error `-32600` (`request too large`). */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JsonRpcResponse"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            /** @description The Edge session for the call could not be recorded (`mcp trace unavailable`). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             /** @description MCP HTTP transport is unavailable. Stable error `code`: `MCP_HTTP_TRANSPORT_UNAVAILABLE`. */
             503: {
                 headers: {
@@ -15354,6 +15420,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No reply within the transport response timeout. JSON-RPC error `-32603` (`request timeout`). */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JsonRpcResponse"];
                 };
             };
         };
