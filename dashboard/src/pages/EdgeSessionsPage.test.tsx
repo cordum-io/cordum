@@ -152,6 +152,23 @@ describe("EdgeSessionsPage", () => {
     expect(rows[0].getAttribute("data-session-id")).toBe("edge_sess_beta");
   });
 
+  it("shows and searches the display name of a session that has no principal id", () => {
+    setupHook({
+      sessions: [
+        makeSession({ sessionId: "edge_sess_bound", principalId: "bob" }),
+        makeSession({ sessionId: "edge_sess_header", principalId: undefined, principalDisplayName: "dev-alice" }),
+      ],
+    });
+    renderPage();
+    expect(screen.getAllByTestId("edge-sessions-row")[1].textContent).toContain("dev-alice");
+    fireEvent.change(screen.getByTestId("edge-sessions-filter-search"), {
+      target: { value: "alice" },
+    });
+    const rows = screen.getAllByTestId("edge-sessions-row");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].getAttribute("data-session-id")).toBe("edge_sess_header");
+  });
+
   it("navigates to the detail route when a row is clicked", () => {
     setupHook({ sessions: [makeSession()] });
     renderPage();

@@ -70,7 +70,7 @@ function applyClientFilter(items: EdgeSession[], filter: PageFilter): EdgeSessio
     if (
       search &&
       !session.sessionId.toLowerCase().includes(search) &&
-      !(session.principalId ?? "").toLowerCase().includes(search)
+      !(session.principalId ?? session.principalDisplayName ?? "").toLowerCase().includes(search)
     ) {
       return false;
     }
@@ -349,6 +349,7 @@ function SessionRow({
   session: EdgeSession;
   onSelect: () => void;
 }) {
+  const owner = session.principalId ?? session.principalDisplayName;
   return (
     <motion.li
       layout
@@ -380,11 +381,7 @@ function SessionRow({
           {session.agentProduct ? (
             <span className="text-xs text-muted-foreground">{session.agentProduct}</span>
           ) : null}
-          {session.principalId ? (
-            <span className="font-mono text-[10px] text-muted-foreground">
-              {session.principalId}
-            </span>
-          ) : null}
+          {owner ? <span className="font-mono text-[10px] text-muted-foreground">{owner}</span> : null}
         </div>
         <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
           {session.riskSummary?.deniedCount ? (

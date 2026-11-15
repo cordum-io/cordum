@@ -101,6 +101,8 @@ export interface EdgeSession {
   sessionId: string;
   tenantId: string;
   principalId?: string;
+  /** Display label only, never an authenticated principal (task-b5d2cde2). */
+  principalDisplayName?: string;
   principalType: EdgePrincipalType | string;
   agentProduct?: string;
   agentVersion?: string;

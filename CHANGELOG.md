@@ -520,6 +520,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `GET /api/v1/edge/sessions?principal_id=`. Callers notice this where the
   header is read as a principal: development, and production with
   `CORDUM_ALLOW_HEADER_PRINCIPAL=true`.
+- The dashboard's Edge sessions list, its search and the session detail page
+  show `principal_display_name` when a session has no `principal_id`, and
+  the detail page marks it as a display name (task-b5d2cde2).
 - `Migration:` a session that such a credential created before this change
   keeps the header name as its `principal_id`, so evaluate refuses it with
   403; start a new session. To own sessions and list them by principal, use
