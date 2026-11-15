@@ -761,6 +761,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- K8s: the base Redis ran `--appendonly yes` on a read-only root filesystem
+  with nothing mounted at `/data`. It now has an `emptyDir` there (#492,
+  task-df8c78f8).
+
 - cordumctl: `pack install` prints the generated worker token only when stdout
   is a terminal; otherwise it prints a note on stderr in its place. Pass
   `--worker-token-file <path>` to save the token to a file with mode 0600
