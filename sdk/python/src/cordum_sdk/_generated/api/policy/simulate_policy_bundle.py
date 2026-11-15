@@ -7,6 +7,7 @@ from ...client import AuthenticatedClient, Client
 from ...types import Response, UNSET
 from ... import errors
 
+from ...models.error import Error
 from ...models.policy_check_response import PolicyCheckResponse
 from ...models.simulate_policy_bundle_body import SimulatePolicyBundleBody
 from typing import cast
@@ -40,13 +41,14 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Optional[Union[Any, PolicyCheckResponse]]:
+) -> Optional[Union[Any, Error, PolicyCheckResponse]]:
     if response.status_code == 200:
         response_200 = PolicyCheckResponse.from_dict(response.json())
 
         return response_200
     if response.status_code == 400:
-        response_400 = cast(Any, None)
+        response_400 = Error.from_dict(response.json())
+
         return response_400
     if response.status_code == 401:
         response_401 = cast(Any, None)
@@ -65,7 +67,7 @@ def _parse_response(
 
 def _build_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Response[Union[Any, PolicyCheckResponse]]:
+) -> Response[Union[Any, Error, PolicyCheckResponse]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -80,7 +82,7 @@ def sync_detailed(
     client: Union[AuthenticatedClient, Client],
     body: SimulatePolicyBundleBody,
     x_tenant_id: str,
-) -> Response[Union[Any, PolicyCheckResponse]]:
+) -> Response[Union[Any, Error, PolicyCheckResponse]]:
     """Simulate a policy bundle against a request
 
     Args:
@@ -93,7 +95,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Any, PolicyCheckResponse]]
+        Response[Union[Any, Error, PolicyCheckResponse]]
     """
 
     kwargs = _get_kwargs(
@@ -115,7 +117,7 @@ def sync(
     client: Union[AuthenticatedClient, Client],
     body: SimulatePolicyBundleBody,
     x_tenant_id: str,
-) -> Optional[Union[Any, PolicyCheckResponse]]:
+) -> Optional[Union[Any, Error, PolicyCheckResponse]]:
     """Simulate a policy bundle against a request
 
     Args:
@@ -128,7 +130,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Any, PolicyCheckResponse]
+        Union[Any, Error, PolicyCheckResponse]
     """
 
     return sync_detailed(
@@ -145,7 +147,7 @@ async def asyncio_detailed(
     client: Union[AuthenticatedClient, Client],
     body: SimulatePolicyBundleBody,
     x_tenant_id: str,
-) -> Response[Union[Any, PolicyCheckResponse]]:
+) -> Response[Union[Any, Error, PolicyCheckResponse]]:
     """Simulate a policy bundle against a request
 
     Args:
@@ -158,7 +160,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Any, PolicyCheckResponse]]
+        Response[Union[Any, Error, PolicyCheckResponse]]
     """
 
     kwargs = _get_kwargs(
@@ -178,7 +180,7 @@ async def asyncio(
     client: Union[AuthenticatedClient, Client],
     body: SimulatePolicyBundleBody,
     x_tenant_id: str,
-) -> Optional[Union[Any, PolicyCheckResponse]]:
+) -> Optional[Union[Any, Error, PolicyCheckResponse]]:
     """Simulate a policy bundle against a request
 
     Args:
@@ -191,7 +193,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Any, PolicyCheckResponse]
+        Union[Any, Error, PolicyCheckResponse]
     """
 
     return (

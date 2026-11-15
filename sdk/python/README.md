@@ -154,9 +154,9 @@ from cordum_sdk.errors import NotFoundError
 
 ## Compatibility
 
-- Python 3.9+
+- Python 3.10+
 - Generated from `docs/api/openapi/cordum-api.yaml`
-- Current bundled spec version: `2026-04-13`
+- Current bundled spec version: `2026-05-09.2`
 
 ## Examples
 
@@ -166,14 +166,24 @@ from cordum_sdk.errors import NotFoundError
 
 ## Regenerating from the spec
 
+The `generator` extra pins the toolchain: openapi-python-client 0.21.7,
+click 8.1.8, typer 0.12.5, pydantic 2.9.2, Jinja2 3.1.6 and ruff 0.7.4. Use
+Python 3.12; 3.11 and 3.13 give the same output. Python 3.10 orders some
+imports differently, and pydantic 2.9.2 has no Python 3.14 wheel.
+
 ```bash
-python -m pip install -e ".[generator]"
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -e ".[generator]"
 bash scripts/generate.sh
 ```
 
 On Windows PowerShell:
 
 ```powershell
-python -m pip install -e ".[generator]"
+py -3.12 -m venv .venv
+.venv\Scripts\python -m pip install -e ".[generator]"
 .\scripts\generate.ps1
 ```
+
+The scripts prefer `.venv`, set `PYTHONHASHSEED=0` and run `ruff format` with
+LF line endings, so two runs give byte-identical output.

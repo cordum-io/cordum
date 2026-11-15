@@ -16,9 +16,6 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-    from ..models.get_approval_context_response_200_policy_snapshot_summary import (
-        GetApprovalContextResponse200PolicySnapshotSummary,
-    )
     from ..models.get_approval_context_response_200_prior_approvals_item import (
         GetApprovalContextResponse200PriorApprovalsItem,
     )
@@ -27,6 +24,9 @@ if TYPE_CHECKING:
     )
     from ..models.get_approval_context_response_200_approval import (
         GetApprovalContextResponse200Approval,
+    )
+    from ..models.get_approval_context_response_200_policy_snapshot_summary import (
+        GetApprovalContextResponse200PolicySnapshotSummary,
     )
     from ..models.get_approval_context_response_200_blast_radius import (
         GetApprovalContextResponse200BlastRadius,
@@ -63,9 +63,6 @@ class GetApprovalContextResponse200:
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.get_approval_context_response_200_policy_snapshot_summary import (
-            GetApprovalContextResponse200PolicySnapshotSummary,
-        )
         from ..models.get_approval_context_response_200_prior_approvals_item import (
             GetApprovalContextResponse200PriorApprovalsItem,
         )
@@ -74,6 +71,9 @@ class GetApprovalContextResponse200:
         )
         from ..models.get_approval_context_response_200_approval import (
             GetApprovalContextResponse200Approval,
+        )
+        from ..models.get_approval_context_response_200_policy_snapshot_summary import (
+            GetApprovalContextResponse200PolicySnapshotSummary,
         )
         from ..models.get_approval_context_response_200_blast_radius import (
             GetApprovalContextResponse200BlastRadius,
@@ -136,9 +136,6 @@ class GetApprovalContextResponse200:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.get_approval_context_response_200_policy_snapshot_summary import (
-            GetApprovalContextResponse200PolicySnapshotSummary,
-        )
         from ..models.get_approval_context_response_200_prior_approvals_item import (
             GetApprovalContextResponse200PriorApprovalsItem,
         )
@@ -147,6 +144,9 @@ class GetApprovalContextResponse200:
         )
         from ..models.get_approval_context_response_200_approval import (
             GetApprovalContextResponse200Approval,
+        )
+        from ..models.get_approval_context_response_200_policy_snapshot_summary import (
+            GetApprovalContextResponse200PolicySnapshotSummary,
         )
         from ..models.get_approval_context_response_200_blast_radius import (
             GetApprovalContextResponse200BlastRadius,

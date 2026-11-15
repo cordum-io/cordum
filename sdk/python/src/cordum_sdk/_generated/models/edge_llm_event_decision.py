@@ -14,10 +14,7 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.edge_llm_message import EdgeLLMMessage
-
-
-
+    from ..models.edge_llm_message import EdgeLLMMessage
 
 
 T = TypeVar("T", bound="EdgeLLMEventDecision")
@@ -25,7 +22,7 @@ T = TypeVar("T", bound="EdgeLLMEventDecision")
 
 @_attrs_define
 class EdgeLLMEventDecision:
-    """ Per-event advisory outcome. `decision=redact` means a secret was detected and the proxy should forward
+    """Per-event advisory outcome. `decision=redact` means a secret was detected and the proxy should forward
     `redacted_content` (subject to `truncated`) instead of the original. This is NOT a policy allow/deny decision.
 
         Attributes:
@@ -46,7 +43,7 @@ class EdgeLLMEventDecision:
                 submitted event used `messages`. Absent for content-only (single-string) envelopes.
             findings (Union[Unset, List[str]]): Detected secret finding TYPES (never values), e.g. aws_credential,
                 bearer_token, private_key.
-     """
+    """
 
     source_event_id: str
     kind: str
@@ -55,12 +52,12 @@ class EdgeLLMEventDecision:
     redaction_complete: bool
     truncated: Union[Unset, bool] = UNSET
     redacted_content: Union[Unset, str] = UNSET
-    redacted_messages: Union[Unset, List['EdgeLLMMessage']] = UNSET
+    redacted_messages: Union[Unset, List["EdgeLLMMessage"]] = UNSET
     findings: Union[Unset, List[str]] = UNSET
-
 
     def to_dict(self) -> Dict[str, Any]:
         from ..models.edge_llm_message import EdgeLLMMessage
+
         source_event_id = self.source_event_id
 
         kind = self.kind
@@ -82,23 +79,20 @@ class EdgeLLMEventDecision:
                 redacted_messages_item = redacted_messages_item_data.to_dict()
                 redacted_messages.append(redacted_messages_item)
 
-
-
         findings: Union[Unset, List[str]] = UNSET
         if not isinstance(self.findings, Unset):
             findings = self.findings
 
-
-
-
         field_dict: Dict[str, Any] = {}
-        field_dict.update({
-            "source_event_id": source_event_id,
-            "kind": kind,
-            "decision": decision,
-            "redacted": redacted,
-            "redaction_complete": redaction_complete,
-        })
+        field_dict.update(
+            {
+                "source_event_id": source_event_id,
+                "kind": kind,
+                "decision": decision,
+                "redacted": redacted,
+                "redaction_complete": redaction_complete,
+            }
+        )
         if truncated is not UNSET:
             field_dict["truncated"] = truncated
         if redacted_content is not UNSET:
@@ -110,20 +104,16 @@ class EdgeLLMEventDecision:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.edge_llm_message import EdgeLLMMessage
+
         d = src_dict.copy()
         source_event_id = d.pop("source_event_id")
 
         kind = d.pop("kind")
 
         decision = EdgeLLMEventDecisionDecision(d.pop("decision"))
-
-
-
 
         redacted = d.pop("redacted")
 
@@ -135,16 +125,12 @@ class EdgeLLMEventDecision:
 
         redacted_messages = []
         _redacted_messages = d.pop("redacted_messages", UNSET)
-        for redacted_messages_item_data in (_redacted_messages or []):
+        for redacted_messages_item_data in _redacted_messages or []:
             redacted_messages_item = EdgeLLMMessage.from_dict(redacted_messages_item_data)
-
-
 
             redacted_messages.append(redacted_messages_item)
 
-
         findings = cast(List[str], d.pop("findings", UNSET))
-
 
         edge_llm_event_decision = cls(
             source_event_id=source_event_id,
@@ -159,4 +145,3 @@ class EdgeLLMEventDecision:
         )
 
         return edge_llm_event_decision
-

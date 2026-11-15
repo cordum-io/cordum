@@ -7,6 +7,7 @@ from ...client import AuthenticatedClient, Client
 from ...types import Response, UNSET
 from ... import errors
 
+from ...models.error import Error
 from ...models.get_policy_shadow_results_timeseries_bucket import (
     GetPolicyShadowResultsTimeseriesBucket,
 )
@@ -51,13 +52,14 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Optional[Union[Any, ShadowTimeseriesResponse]]:
+) -> Optional[Union[Any, Error, ShadowTimeseriesResponse]]:
     if response.status_code == 200:
         response_200 = ShadowTimeseriesResponse.from_dict(response.json())
 
         return response_200
     if response.status_code == 400:
-        response_400 = cast(Any, None)
+        response_400 = Error.from_dict(response.json())
+
         return response_400
     if response.status_code == 401:
         response_401 = cast(Any, None)
@@ -76,7 +78,7 @@ def _parse_response(
 
 def _build_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Response[Union[Any, ShadowTimeseriesResponse]]:
+) -> Response[Union[Any, Error, ShadowTimeseriesResponse]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -93,7 +95,7 @@ def sync_detailed(
     to: int,
     bucket: GetPolicyShadowResultsTimeseriesBucket,
     x_tenant_id: str,
-) -> Response[Union[Any, ShadowTimeseriesResponse]]:
+) -> Response[Union[Any, Error, ShadowTimeseriesResponse]]:
     """Zero-filled bucketed timeseries of shadow outcomes
 
      Returns one row per bucket (including empty buckets) so the
@@ -113,7 +115,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Any, ShadowTimeseriesResponse]]
+        Response[Union[Any, Error, ShadowTimeseriesResponse]]
     """
 
     kwargs = _get_kwargs(
@@ -139,7 +141,7 @@ def sync(
     to: int,
     bucket: GetPolicyShadowResultsTimeseriesBucket,
     x_tenant_id: str,
-) -> Optional[Union[Any, ShadowTimeseriesResponse]]:
+) -> Optional[Union[Any, Error, ShadowTimeseriesResponse]]:
     """Zero-filled bucketed timeseries of shadow outcomes
 
      Returns one row per bucket (including empty buckets) so the
@@ -159,7 +161,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Any, ShadowTimeseriesResponse]
+        Union[Any, Error, ShadowTimeseriesResponse]
     """
 
     return sync_detailed(
@@ -180,7 +182,7 @@ async def asyncio_detailed(
     to: int,
     bucket: GetPolicyShadowResultsTimeseriesBucket,
     x_tenant_id: str,
-) -> Response[Union[Any, ShadowTimeseriesResponse]]:
+) -> Response[Union[Any, Error, ShadowTimeseriesResponse]]:
     """Zero-filled bucketed timeseries of shadow outcomes
 
      Returns one row per bucket (including empty buckets) so the
@@ -200,7 +202,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Any, ShadowTimeseriesResponse]]
+        Response[Union[Any, Error, ShadowTimeseriesResponse]]
     """
 
     kwargs = _get_kwargs(
@@ -224,7 +226,7 @@ async def asyncio(
     to: int,
     bucket: GetPolicyShadowResultsTimeseriesBucket,
     x_tenant_id: str,
-) -> Optional[Union[Any, ShadowTimeseriesResponse]]:
+) -> Optional[Union[Any, Error, ShadowTimeseriesResponse]]:
     """Zero-filled bucketed timeseries of shadow outcomes
 
      Returns one row per bucket (including empty buckets) so the
@@ -244,7 +246,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Any, ShadowTimeseriesResponse]
+        Union[Any, Error, ShadowTimeseriesResponse]
     """
 
     return (

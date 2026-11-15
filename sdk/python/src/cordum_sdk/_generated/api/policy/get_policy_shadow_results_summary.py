@@ -7,6 +7,7 @@ from ...client import AuthenticatedClient, Client
 from ...types import Response, UNSET
 from ... import errors
 
+from ...models.error import Error
 from ...models.shadow_results_summary import ShadowResultsSummary
 from typing import cast
 from typing import Dict
@@ -44,13 +45,14 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Optional[Union[Any, ShadowResultsSummary]]:
+) -> Optional[Union[Any, Error, ShadowResultsSummary]]:
     if response.status_code == 200:
         response_200 = ShadowResultsSummary.from_dict(response.json())
 
         return response_200
     if response.status_code == 400:
-        response_400 = cast(Any, None)
+        response_400 = Error.from_dict(response.json())
+
         return response_400
     if response.status_code == 401:
         response_401 = cast(Any, None)
@@ -69,7 +71,7 @@ def _parse_response(
 
 def _build_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Response[Union[Any, ShadowResultsSummary]]:
+) -> Response[Union[Any, Error, ShadowResultsSummary]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -85,7 +87,7 @@ def sync_detailed(
     from_: int,
     to: int,
     x_tenant_id: str,
-) -> Response[Union[Any, ShadowResultsSummary]]:
+) -> Response[Union[Any, Error, ShadowResultsSummary]]:
     """Aggregate shadow-evaluation counts over a time window
 
      Counts shadow-eval outcomes (escalated / relaxed / approval_differ /
@@ -104,7 +106,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Any, ShadowResultsSummary]]
+        Response[Union[Any, Error, ShadowResultsSummary]]
     """
 
     kwargs = _get_kwargs(
@@ -128,7 +130,7 @@ def sync(
     from_: int,
     to: int,
     x_tenant_id: str,
-) -> Optional[Union[Any, ShadowResultsSummary]]:
+) -> Optional[Union[Any, Error, ShadowResultsSummary]]:
     """Aggregate shadow-evaluation counts over a time window
 
      Counts shadow-eval outcomes (escalated / relaxed / approval_differ /
@@ -147,7 +149,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Any, ShadowResultsSummary]
+        Union[Any, Error, ShadowResultsSummary]
     """
 
     return sync_detailed(
@@ -166,7 +168,7 @@ async def asyncio_detailed(
     from_: int,
     to: int,
     x_tenant_id: str,
-) -> Response[Union[Any, ShadowResultsSummary]]:
+) -> Response[Union[Any, Error, ShadowResultsSummary]]:
     """Aggregate shadow-evaluation counts over a time window
 
      Counts shadow-eval outcomes (escalated / relaxed / approval_differ /
@@ -185,7 +187,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Any, ShadowResultsSummary]]
+        Response[Union[Any, Error, ShadowResultsSummary]]
     """
 
     kwargs = _get_kwargs(
@@ -207,7 +209,7 @@ async def asyncio(
     from_: int,
     to: int,
     x_tenant_id: str,
-) -> Optional[Union[Any, ShadowResultsSummary]]:
+) -> Optional[Union[Any, Error, ShadowResultsSummary]]:
     """Aggregate shadow-evaluation counts over a time window
 
      Counts shadow-eval outcomes (escalated / relaxed / approval_differ /
@@ -226,7 +228,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Any, ShadowResultsSummary]
+        Union[Any, Error, ShadowResultsSummary]
     """
 
     return (

@@ -7,15 +7,15 @@ from ...client import AuthenticatedClient, Client
 from ...types import Response, UNSET
 from ... import errors
 
-from ...models.create_shadow_agent_finding_request import CreateShadowAgentFindingRequest
 from ...models.shadow_agent_finding import ShadowAgentFinding
 from typing import cast
+from typing import cast, Union
 from typing import Dict
 
 
 def _get_kwargs(
     *,
-    body: CreateShadowAgentFindingRequest,
+    body: Any,
     x_tenant_id: str,
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
@@ -26,7 +26,8 @@ def _get_kwargs(
         "url": "/api/v1/edge/shadow-agents",
     }
 
-    _body = body.to_dict()
+    _body: Any
+    _body = body
 
     _kwargs["json"] = _body
     headers["Content-Type"] = "application/json"
@@ -83,7 +84,7 @@ def _build_response(
 def sync_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
-    body: CreateShadowAgentFindingRequest,
+    body: Any,
     x_tenant_id: str,
 ) -> Response[Union[Any, ShadowAgentFinding]]:
     """Ingest one redacted shadow-agent finding
@@ -95,7 +96,7 @@ def sync_detailed(
 
     Args:
         x_tenant_id (str):
-        body (CreateShadowAgentFindingRequest):
+        body (Any):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -120,7 +121,7 @@ def sync_detailed(
 def sync(
     *,
     client: Union[AuthenticatedClient, Client],
-    body: CreateShadowAgentFindingRequest,
+    body: Any,
     x_tenant_id: str,
 ) -> Optional[Union[Any, ShadowAgentFinding]]:
     """Ingest one redacted shadow-agent finding
@@ -132,7 +133,7 @@ def sync(
 
     Args:
         x_tenant_id (str):
-        body (CreateShadowAgentFindingRequest):
+        body (Any):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -152,7 +153,7 @@ def sync(
 async def asyncio_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
-    body: CreateShadowAgentFindingRequest,
+    body: Any,
     x_tenant_id: str,
 ) -> Response[Union[Any, ShadowAgentFinding]]:
     """Ingest one redacted shadow-agent finding
@@ -164,7 +165,7 @@ async def asyncio_detailed(
 
     Args:
         x_tenant_id (str):
-        body (CreateShadowAgentFindingRequest):
+        body (Any):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -187,7 +188,7 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: Union[AuthenticatedClient, Client],
-    body: CreateShadowAgentFindingRequest,
+    body: Any,
     x_tenant_id: str,
 ) -> Optional[Union[Any, ShadowAgentFinding]]:
     """Ingest one redacted shadow-agent finding
@@ -199,7 +200,7 @@ async def asyncio(
 
     Args:
         x_tenant_id (str):
-        body (CreateShadowAgentFindingRequest):
+        body (Any):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

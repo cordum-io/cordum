@@ -8,6 +8,7 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
+from ..models.worker_credential_proof_algorithm import WorkerCredentialProofAlgorithm
 from ..types import UNSET, Unset
 from dateutil.parser import isoparse
 from typing import cast
@@ -24,27 +25,37 @@ class WorkerCredentialIssue:
     """
     Attributes:
         worker_id (str):
+        tenant_id (str):
         created_by (str):
         created_at (datetime.datetime):
         token (str):
         allowed_pools (Union[Unset, List[str]]):
         allowed_topics (Union[Unset, List[str]]):
         pack_id (Union[Unset, str]):
+        agent_id (Union[Unset, str]):
+        proof_key_id (Union[Unset, str]):
+        proof_algorithm (Union[Unset, WorkerCredentialProofAlgorithm]):
         revoked_at (Union[Unset, datetime.datetime]):
     """
 
     worker_id: str
+    tenant_id: str
     created_by: str
     created_at: datetime.datetime
     token: str
     allowed_pools: Union[Unset, List[str]] = UNSET
     allowed_topics: Union[Unset, List[str]] = UNSET
     pack_id: Union[Unset, str] = UNSET
+    agent_id: Union[Unset, str] = UNSET
+    proof_key_id: Union[Unset, str] = UNSET
+    proof_algorithm: Union[Unset, WorkerCredentialProofAlgorithm] = UNSET
     revoked_at: Union[Unset, datetime.datetime] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         worker_id = self.worker_id
+
+        tenant_id = self.tenant_id
 
         created_by = self.created_by
 
@@ -62,6 +73,14 @@ class WorkerCredentialIssue:
 
         pack_id = self.pack_id
 
+        agent_id = self.agent_id
+
+        proof_key_id = self.proof_key_id
+
+        proof_algorithm: Union[Unset, str] = UNSET
+        if not isinstance(self.proof_algorithm, Unset):
+            proof_algorithm = self.proof_algorithm.value
+
         revoked_at: Union[Unset, str] = UNSET
         if not isinstance(self.revoked_at, Unset):
             revoked_at = self.revoked_at.isoformat()
@@ -71,6 +90,7 @@ class WorkerCredentialIssue:
         field_dict.update(
             {
                 "worker_id": worker_id,
+                "tenant_id": tenant_id,
                 "created_by": created_by,
                 "created_at": created_at,
                 "token": token,
@@ -82,6 +102,12 @@ class WorkerCredentialIssue:
             field_dict["allowed_topics"] = allowed_topics
         if pack_id is not UNSET:
             field_dict["pack_id"] = pack_id
+        if agent_id is not UNSET:
+            field_dict["agent_id"] = agent_id
+        if proof_key_id is not UNSET:
+            field_dict["proof_key_id"] = proof_key_id
+        if proof_algorithm is not UNSET:
+            field_dict["proof_algorithm"] = proof_algorithm
         if revoked_at is not UNSET:
             field_dict["revoked_at"] = revoked_at
 
@@ -91,6 +117,8 @@ class WorkerCredentialIssue:
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
         worker_id = d.pop("worker_id")
+
+        tenant_id = d.pop("tenant_id")
 
         created_by = d.pop("created_by")
 
@@ -104,6 +132,17 @@ class WorkerCredentialIssue:
 
         pack_id = d.pop("pack_id", UNSET)
 
+        agent_id = d.pop("agent_id", UNSET)
+
+        proof_key_id = d.pop("proof_key_id", UNSET)
+
+        _proof_algorithm = d.pop("proof_algorithm", UNSET)
+        proof_algorithm: Union[Unset, WorkerCredentialProofAlgorithm]
+        if isinstance(_proof_algorithm, Unset):
+            proof_algorithm = UNSET
+        else:
+            proof_algorithm = WorkerCredentialProofAlgorithm(_proof_algorithm)
+
         _revoked_at = d.pop("revoked_at", UNSET)
         revoked_at: Union[Unset, datetime.datetime]
         if isinstance(_revoked_at, Unset):
@@ -113,12 +152,16 @@ class WorkerCredentialIssue:
 
         worker_credential_issue = cls(
             worker_id=worker_id,
+            tenant_id=tenant_id,
             created_by=created_by,
             created_at=created_at,
             token=token,
             allowed_pools=allowed_pools,
             allowed_topics=allowed_topics,
             pack_id=pack_id,
+            agent_id=agent_id,
+            proof_key_id=proof_key_id,
+            proof_algorithm=proof_algorithm,
             revoked_at=revoked_at,
         )
 

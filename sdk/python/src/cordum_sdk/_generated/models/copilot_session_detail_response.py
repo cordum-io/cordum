@@ -13,9 +13,9 @@ from typing import cast, List
 from typing import Dict
 
 if TYPE_CHECKING:
-    from ..models.copilot_session import CopilotSession
-    from ..models.copilot_session_decision import CopilotSessionDecision
     from ..models.copilot_session_job import CopilotSessionJob
+    from ..models.copilot_session_decision import CopilotSessionDecision
+    from ..models.copilot_session import CopilotSession
 
 
 T = TypeVar("T", bound="CopilotSessionDetailResponse")
@@ -38,9 +38,9 @@ class CopilotSessionDetailResponse:
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.copilot_session import CopilotSession
-        from ..models.copilot_session_decision import CopilotSessionDecision
         from ..models.copilot_session_job import CopilotSessionJob
+        from ..models.copilot_session_decision import CopilotSessionDecision
+        from ..models.copilot_session import CopilotSession
 
         session = self.session.to_dict()
 
@@ -71,9 +71,9 @@ class CopilotSessionDetailResponse:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.copilot_session import CopilotSession
-        from ..models.copilot_session_decision import CopilotSessionDecision
         from ..models.copilot_session_job import CopilotSessionJob
+        from ..models.copilot_session_decision import CopilotSessionDecision
+        from ..models.copilot_session import CopilotSession
 
         d = src_dict.copy()
         session = CopilotSession.from_dict(d.pop("session"))
