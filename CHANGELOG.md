@@ -720,6 +720,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- The dashboard dev server proxies to `https://localhost:8081`, including the
+  stream WebSocket, and verifies the dev CA (#492, task-f770fda9).
+
+- `install.sh` brings the stack up through `quickstart.sh` (certs, `.env`,
+  `REDIS_PASSWORD`). The guardrails and mock-bank demos use `tls://` and
+  `rediss://` with the client certificate (#492, task-f770fda9).
+
+- Compose drops the `NATS_TOKEN` that the dev NATS server never checked
+  (#492, task-f770fda9).
+
 - The `cordumctl init` scaffold starts, and serves its gateway over HTTPS
   (#492, task-75cb9729).
 
