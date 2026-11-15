@@ -714,6 +714,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- `CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION` now reaches the gateway's store
+  (#492, task-52cd466b).
+
 - The gateway exports its Edge metrics; it built its Edge store on a no-op
   recorder (#492, task-483967bb).
 
