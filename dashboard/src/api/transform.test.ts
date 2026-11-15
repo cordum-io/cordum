@@ -997,6 +997,15 @@ describe("api/transform edge mappers", () => {
   const token = "Bearer edge022-secret-token";
   const apiKey = "sk-edge022-secret-value";
 
+  it("maps an Edge session's principal_display_name apart from its principal_id", () => {
+    const base = { session_id: "edge_sess_dn", tenant_id: "tenant-a", principal_type: "unknown", trace_id: "trace-dn" };
+    const labelled = mapEdgeSession({ ...base, principal_id: "", principal_display_name: "dev-alice" });
+    expect(labelled.principalDisplayName).toBe("dev-alice");
+    expect(labelled.principalId).toBeUndefined();
+    expect(mapEdgeSession({ ...base, principal_id: "user-1" }).principalDisplayName).toBeUndefined();
+    expect(mapEdgeSession({ ...base, principal_display_name: "" }).principalDisplayName).toBeUndefined();
+  });
+
   it("maps Edge session pages with camelCase fields, future enum preservation, and cursor pagination", () => {
     const minimal = mapEdgeSession({
       session_id: "edge_sess_min",

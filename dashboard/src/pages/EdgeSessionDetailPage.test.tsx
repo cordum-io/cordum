@@ -163,6 +163,23 @@ describe("EdgeSessionDetailPage", () => {
     expect(screen.getByText(/2 events/)).toBeTruthy();
   });
 
+  it("shows the display name, marked as one, when the session has no principal id", () => {
+    setupHooks({ session: makeSession({ principalId: undefined, principalDisplayName: "dev-alice" }) });
+    renderPage();
+    const facts = screen.getByTestId("edge-session-facts").textContent;
+    expect(facts).toContain("dev-alice");
+    expect(facts).toContain("display name");
+  });
+
+  it("shows the principal id, not the display name, when both are set", () => {
+    setupHooks({ session: makeSession({ principalId: "user-a", principalDisplayName: "Alice Example" }) });
+    renderPage();
+    const facts = screen.getByTestId("edge-session-facts").textContent;
+    expect(facts).toContain("user-a");
+    expect(facts).not.toContain("Alice Example");
+    expect(facts).not.toContain("display name");
+  });
+
   it("orders events by seq within an execution (one group per distinct hook fire)", () => {
     setupHooks({
       events: [
