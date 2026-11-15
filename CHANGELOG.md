@@ -731,6 +731,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- cordumctl: `pack install` prints the generated worker token only when stdout
+  is a terminal; otherwise it prints a note on stderr in its place. Pass
+  `--worker-token-file <path>` to save the token to a file with mode 0600
+  instead (task-e1c892cb).
+
 - Quickstart: the ready banner no longer prints the first 8 characters of the API
   key, and on a GitHub Actions runner `quickstart.sh` registers the API key and
   Redis password it generates as log masks before their first use (task-d09113ce).
