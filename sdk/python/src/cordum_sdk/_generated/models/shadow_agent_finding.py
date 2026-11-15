@@ -23,8 +23,8 @@ from typing import Union
 import datetime
 
 if TYPE_CHECKING:
-    from ..models.shadow_evidence_pointer import ShadowEvidencePointer
     from ..models.shadow_agent_finding_metadata import ShadowAgentFindingMetadata
+    from ..models.shadow_evidence_pointer import ShadowEvidencePointer
 
 
 T = TypeVar("T", bound="ShadowAgentFinding")
@@ -139,8 +139,8 @@ class ShadowAgentFinding:
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.shadow_evidence_pointer import ShadowEvidencePointer
         from ..models.shadow_agent_finding_metadata import ShadowAgentFindingMetadata
+        from ..models.shadow_evidence_pointer import ShadowEvidencePointer
 
         finding_id = self.finding_id
 
@@ -354,8 +354,8 @@ class ShadowAgentFinding:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.shadow_evidence_pointer import ShadowEvidencePointer
         from ..models.shadow_agent_finding_metadata import ShadowAgentFindingMetadata
+        from ..models.shadow_evidence_pointer import ShadowEvidencePointer
 
         d = src_dict.copy()
         finding_id = d.pop("finding_id")

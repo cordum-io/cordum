@@ -1,3 +1,4 @@
 package_name_override: "cordum_sdk._generated"
 use_path_prefixes_for_title_model_names: false
-post_hooks: []
+post_hooks:
+  - "ruff format ."

@@ -7,6 +7,7 @@ from ...client import AuthenticatedClient, Client
 from ...types import Response, UNSET
 from ... import errors
 
+from ...models.error import Error
 from ...models.json_rpc_request import JsonRpcRequest
 from ...models.json_rpc_response import JsonRpcResponse
 from typing import cast
@@ -37,22 +38,50 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Optional[Union[Any, JsonRpcResponse]]:
+) -> Optional[Union[Any, Error, JsonRpcResponse]]:
     if response.status_code == 200:
         response_200 = JsonRpcResponse.from_dict(response.json())
 
         return response_200
+    if response.status_code == 202:
+        response_202 = cast(Any, None)
+        return response_202
     if response.status_code == 400:
         response_400 = cast(Any, None)
         return response_400
+    if response.status_code == 404:
+        response_404 = JsonRpcResponse.from_dict(response.json())
+
+        return response_404
+    if response.status_code == 408:
+        response_408 = JsonRpcResponse.from_dict(response.json())
+
+        return response_408
+    if response.status_code == 413:
+        response_413 = JsonRpcResponse.from_dict(response.json())
+
+        return response_413
+    if response.status_code == 429:
+        response_429 = cast(Any, None)
+        return response_429
+    if response.status_code == 500:
+        response_500 = Error.from_dict(response.json())
+
+        return response_500
     if response.status_code == 503:
-        response_503 = cast(Any, None)
+        response_503 = Error.from_dict(response.json())
+
         return response_503
+    if response.status_code == 504:
+        response_504 = JsonRpcResponse.from_dict(response.json())
+
+        return response_504
     if response.status_code == 401:
         response_401 = cast(Any, None)
         return response_401
     if response.status_code == 403:
-        response_403 = cast(Any, None)
+        response_403 = Error.from_dict(response.json())
+
         return response_403
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -62,7 +91,7 @@ def _parse_response(
 
 def _build_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Response[Union[Any, JsonRpcResponse]]:
+) -> Response[Union[Any, Error, JsonRpcResponse]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -76,7 +105,7 @@ def sync_detailed(
     client: AuthenticatedClient,
     body: JsonRpcRequest,
     x_tenant_id: str,
-) -> Response[Union[Any, JsonRpcResponse]]:
+) -> Response[Union[Any, Error, JsonRpcResponse]]:
     """Send a JSON-RPC 2.0 message to MCP server
 
     Args:
@@ -88,7 +117,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Any, JsonRpcResponse]]
+        Response[Union[Any, Error, JsonRpcResponse]]
     """
 
     kwargs = _get_kwargs(
@@ -108,7 +137,7 @@ def sync(
     client: AuthenticatedClient,
     body: JsonRpcRequest,
     x_tenant_id: str,
-) -> Optional[Union[Any, JsonRpcResponse]]:
+) -> Optional[Union[Any, Error, JsonRpcResponse]]:
     """Send a JSON-RPC 2.0 message to MCP server
 
     Args:
@@ -120,7 +149,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Any, JsonRpcResponse]
+        Union[Any, Error, JsonRpcResponse]
     """
 
     return sync_detailed(
@@ -135,7 +164,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient,
     body: JsonRpcRequest,
     x_tenant_id: str,
-) -> Response[Union[Any, JsonRpcResponse]]:
+) -> Response[Union[Any, Error, JsonRpcResponse]]:
     """Send a JSON-RPC 2.0 message to MCP server
 
     Args:
@@ -147,7 +176,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Any, JsonRpcResponse]]
+        Response[Union[Any, Error, JsonRpcResponse]]
     """
 
     kwargs = _get_kwargs(
@@ -165,7 +194,7 @@ async def asyncio(
     client: AuthenticatedClient,
     body: JsonRpcRequest,
     x_tenant_id: str,
-) -> Optional[Union[Any, JsonRpcResponse]]:
+) -> Optional[Union[Any, Error, JsonRpcResponse]]:
     """Send a JSON-RPC 2.0 message to MCP server
 
     Args:
@@ -177,7 +206,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Any, JsonRpcResponse]
+        Union[Any, Error, JsonRpcResponse]
     """
 
     return (

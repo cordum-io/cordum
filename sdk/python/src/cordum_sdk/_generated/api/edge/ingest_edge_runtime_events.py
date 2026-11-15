@@ -39,6 +39,10 @@ def _get_kwargs(
 def _parse_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
 ) -> Optional[Union[Any, EdgeError, EdgeRuntimeIngestResponse]]:
+    if response.status_code == 200:
+        response_200 = EdgeRuntimeIngestResponse.from_dict(response.json())
+
+        return response_200
     if response.status_code == 201:
         response_201 = EdgeRuntimeIngestResponse.from_dict(response.json())
 
@@ -97,12 +101,15 @@ def sync_detailed(
     value), the route returns 503 `service_unavailable` and persists nothing. When enabled, the endpoint
     accepts a bounded, redacted runtime event batch (process exec, file read/write, network connect, DNS
     query) from an authenticated runtime collector holding `edge.runtime.ingest`; generic job writers
-    are forbidden. The request `source.source_id` must match the authenticated collector principal and
-    the referenced session/execution must be bound to that collector before mapped `AgentActionEvent`
-    records with `layer=runtime` and `decision=RECORDED` are persisted through the existing Edge store.
-    Raw argv, file contents, packet payloads, DNS response bodies, request bodies, headers, secrets, and
-    tokens are rejected at the strict-schema decode boundary. All-or-nothing batch acceptance — a single
-    invalid envelope aborts the whole batch. See `docs/edge/runtime-ingestion.md` for the full contract.
+    are forbidden. A bounded `nonce` is required by default and is checked against a Redis replay window
+    scoped to `(tenant, collector)`; duplicate nonce submissions return idempotent success without
+    appending another copy. The request `source.source_id` must match the authenticated collector
+    principal and the referenced session/execution must be bound to that collector before mapped
+    `AgentActionEvent` records with `layer=runtime` and `decision=RECORDED` are persisted through the
+    existing Edge store. Raw argv, file contents, packet payloads, DNS response bodies, request bodies,
+    headers, secrets, and tokens are rejected at the strict-schema decode boundary. All-or-nothing batch
+    acceptance — a single invalid envelope aborts the whole batch. See `docs/edge/runtime-ingestion.md`
+    for the full contract.
 
     Args:
         x_tenant_id (str):
@@ -140,12 +147,15 @@ def sync(
     value), the route returns 503 `service_unavailable` and persists nothing. When enabled, the endpoint
     accepts a bounded, redacted runtime event batch (process exec, file read/write, network connect, DNS
     query) from an authenticated runtime collector holding `edge.runtime.ingest`; generic job writers
-    are forbidden. The request `source.source_id` must match the authenticated collector principal and
-    the referenced session/execution must be bound to that collector before mapped `AgentActionEvent`
-    records with `layer=runtime` and `decision=RECORDED` are persisted through the existing Edge store.
-    Raw argv, file contents, packet payloads, DNS response bodies, request bodies, headers, secrets, and
-    tokens are rejected at the strict-schema decode boundary. All-or-nothing batch acceptance — a single
-    invalid envelope aborts the whole batch. See `docs/edge/runtime-ingestion.md` for the full contract.
+    are forbidden. A bounded `nonce` is required by default and is checked against a Redis replay window
+    scoped to `(tenant, collector)`; duplicate nonce submissions return idempotent success without
+    appending another copy. The request `source.source_id` must match the authenticated collector
+    principal and the referenced session/execution must be bound to that collector before mapped
+    `AgentActionEvent` records with `layer=runtime` and `decision=RECORDED` are persisted through the
+    existing Edge store. Raw argv, file contents, packet payloads, DNS response bodies, request bodies,
+    headers, secrets, and tokens are rejected at the strict-schema decode boundary. All-or-nothing batch
+    acceptance — a single invalid envelope aborts the whole batch. See `docs/edge/runtime-ingestion.md`
+    for the full contract.
 
     Args:
         x_tenant_id (str):
@@ -178,12 +188,15 @@ async def asyncio_detailed(
     value), the route returns 503 `service_unavailable` and persists nothing. When enabled, the endpoint
     accepts a bounded, redacted runtime event batch (process exec, file read/write, network connect, DNS
     query) from an authenticated runtime collector holding `edge.runtime.ingest`; generic job writers
-    are forbidden. The request `source.source_id` must match the authenticated collector principal and
-    the referenced session/execution must be bound to that collector before mapped `AgentActionEvent`
-    records with `layer=runtime` and `decision=RECORDED` are persisted through the existing Edge store.
-    Raw argv, file contents, packet payloads, DNS response bodies, request bodies, headers, secrets, and
-    tokens are rejected at the strict-schema decode boundary. All-or-nothing batch acceptance — a single
-    invalid envelope aborts the whole batch. See `docs/edge/runtime-ingestion.md` for the full contract.
+    are forbidden. A bounded `nonce` is required by default and is checked against a Redis replay window
+    scoped to `(tenant, collector)`; duplicate nonce submissions return idempotent success without
+    appending another copy. The request `source.source_id` must match the authenticated collector
+    principal and the referenced session/execution must be bound to that collector before mapped
+    `AgentActionEvent` records with `layer=runtime` and `decision=RECORDED` are persisted through the
+    existing Edge store. Raw argv, file contents, packet payloads, DNS response bodies, request bodies,
+    headers, secrets, and tokens are rejected at the strict-schema decode boundary. All-or-nothing batch
+    acceptance — a single invalid envelope aborts the whole batch. See `docs/edge/runtime-ingestion.md`
+    for the full contract.
 
     Args:
         x_tenant_id (str):
@@ -219,12 +232,15 @@ async def asyncio(
     value), the route returns 503 `service_unavailable` and persists nothing. When enabled, the endpoint
     accepts a bounded, redacted runtime event batch (process exec, file read/write, network connect, DNS
     query) from an authenticated runtime collector holding `edge.runtime.ingest`; generic job writers
-    are forbidden. The request `source.source_id` must match the authenticated collector principal and
-    the referenced session/execution must be bound to that collector before mapped `AgentActionEvent`
-    records with `layer=runtime` and `decision=RECORDED` are persisted through the existing Edge store.
-    Raw argv, file contents, packet payloads, DNS response bodies, request bodies, headers, secrets, and
-    tokens are rejected at the strict-schema decode boundary. All-or-nothing batch acceptance — a single
-    invalid envelope aborts the whole batch. See `docs/edge/runtime-ingestion.md` for the full contract.
+    are forbidden. A bounded `nonce` is required by default and is checked against a Redis replay window
+    scoped to `(tenant, collector)`; duplicate nonce submissions return idempotent success without
+    appending another copy. The request `source.source_id` must match the authenticated collector
+    principal and the referenced session/execution must be bound to that collector before mapped
+    `AgentActionEvent` records with `layer=runtime` and `decision=RECORDED` are persisted through the
+    existing Edge store. Raw argv, file contents, packet payloads, DNS response bodies, request bodies,
+    headers, secrets, and tokens are rejected at the strict-schema decode boundary. All-or-nothing batch
+    acceptance — a single invalid envelope aborts the whole batch. See `docs/edge/runtime-ingestion.md`
+    for the full contract.
 
     Args:
         x_tenant_id (str):

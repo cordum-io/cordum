@@ -97,7 +97,8 @@ def sync_detailed(
 ) -> Response[Union[Any, AuditVerifyResult]]:
     """Verify audit chain integrity
 
-     Walks the tenant's audit stream and attests integrity of the hash chain. Reports
+     Walks the tenant's audit stream and checks its hash links and sequence numbers;
+    chain verification is rated supported in docs/contract/claims.yaml (CLM-057). Reports
     `status=ok` on a contiguous chain, `status=partial` when gaps are below the
     retention boundary, and `status=compromised` for missing sequence numbers or a
     broken hash link. Admin-only and entitlement-gated; NEVER returns raw event bodies — this is an
@@ -144,7 +145,8 @@ def sync(
 ) -> Optional[Union[Any, AuditVerifyResult]]:
     """Verify audit chain integrity
 
-     Walks the tenant's audit stream and attests integrity of the hash chain. Reports
+     Walks the tenant's audit stream and checks its hash links and sequence numbers;
+    chain verification is rated supported in docs/contract/claims.yaml (CLM-057). Reports
     `status=ok` on a contiguous chain, `status=partial` when gaps are below the
     retention boundary, and `status=compromised` for missing sequence numbers or a
     broken hash link. Admin-only and entitlement-gated; NEVER returns raw event bodies — this is an
@@ -186,7 +188,8 @@ async def asyncio_detailed(
 ) -> Response[Union[Any, AuditVerifyResult]]:
     """Verify audit chain integrity
 
-     Walks the tenant's audit stream and attests integrity of the hash chain. Reports
+     Walks the tenant's audit stream and checks its hash links and sequence numbers;
+    chain verification is rated supported in docs/contract/claims.yaml (CLM-057). Reports
     `status=ok` on a contiguous chain, `status=partial` when gaps are below the
     retention boundary, and `status=compromised` for missing sequence numbers or a
     broken hash link. Admin-only and entitlement-gated; NEVER returns raw event bodies — this is an
@@ -231,7 +234,8 @@ async def asyncio(
 ) -> Optional[Union[Any, AuditVerifyResult]]:
     """Verify audit chain integrity
 
-     Walks the tenant's audit stream and attests integrity of the hash chain. Reports
+     Walks the tenant's audit stream and checks its hash links and sequence numbers;
+    chain verification is rated supported in docs/contract/claims.yaml (CLM-057). Reports
     `status=ok` on a contiguous chain, `status=partial` when gaps are below the
     retention boundary, and `status=compromised` for missing sequence numbers or a
     broken hash link. Admin-only and entitlement-gated; NEVER returns raw event bodies — this is an

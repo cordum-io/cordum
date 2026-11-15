@@ -7,7 +7,7 @@ from ...client import AuthenticatedClient, Client
 from ...types import Response, UNSET
 from ... import errors
 
-from ...models.create_worker_credential_body import CreateWorkerCredentialBody
+from ...models.create_worker_credential_request import CreateWorkerCredentialRequest
 from ...models.worker_credential_issue import WorkerCredentialIssue
 from typing import cast
 from typing import Dict
@@ -15,7 +15,7 @@ from typing import Dict
 
 def _get_kwargs(
     *,
-    body: CreateWorkerCredentialBody,
+    body: CreateWorkerCredentialRequest,
     x_tenant_id: str,
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
@@ -81,14 +81,19 @@ def _build_response(
 def sync_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
-    body: CreateWorkerCredentialBody,
+    body: CreateWorkerCredentialRequest,
     x_tenant_id: str,
 ) -> Response[Union[Any, WorkerCredentialIssue]]:
     """Create or rotate a worker credential
 
     Args:
         x_tenant_id (str):
-        body (CreateWorkerCredentialBody):
+        body (CreateWorkerCredentialRequest): Creates or rotates a worker credential. Proof-key
+            fields are optional for legacy credentials, but when any proof-key field is supplied all
+            three and agent_id must be supplied together. Rotating an active proof credential without
+            proof-key fields preserves its enrolled key and authoritative agent link after
+            revalidation; changing agent_id for a proof-bearing credential requires a full proof-key
+            replacement bundle.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -113,14 +118,19 @@ def sync_detailed(
 def sync(
     *,
     client: Union[AuthenticatedClient, Client],
-    body: CreateWorkerCredentialBody,
+    body: CreateWorkerCredentialRequest,
     x_tenant_id: str,
 ) -> Optional[Union[Any, WorkerCredentialIssue]]:
     """Create or rotate a worker credential
 
     Args:
         x_tenant_id (str):
-        body (CreateWorkerCredentialBody):
+        body (CreateWorkerCredentialRequest): Creates or rotates a worker credential. Proof-key
+            fields are optional for legacy credentials, but when any proof-key field is supplied all
+            three and agent_id must be supplied together. Rotating an active proof credential without
+            proof-key fields preserves its enrolled key and authoritative agent link after
+            revalidation; changing agent_id for a proof-bearing credential requires a full proof-key
+            replacement bundle.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -140,14 +150,19 @@ def sync(
 async def asyncio_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
-    body: CreateWorkerCredentialBody,
+    body: CreateWorkerCredentialRequest,
     x_tenant_id: str,
 ) -> Response[Union[Any, WorkerCredentialIssue]]:
     """Create or rotate a worker credential
 
     Args:
         x_tenant_id (str):
-        body (CreateWorkerCredentialBody):
+        body (CreateWorkerCredentialRequest): Creates or rotates a worker credential. Proof-key
+            fields are optional for legacy credentials, but when any proof-key field is supplied all
+            three and agent_id must be supplied together. Rotating an active proof credential without
+            proof-key fields preserves its enrolled key and authoritative agent link after
+            revalidation; changing agent_id for a proof-bearing credential requires a full proof-key
+            replacement bundle.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -170,14 +185,19 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: Union[AuthenticatedClient, Client],
-    body: CreateWorkerCredentialBody,
+    body: CreateWorkerCredentialRequest,
     x_tenant_id: str,
 ) -> Optional[Union[Any, WorkerCredentialIssue]]:
     """Create or rotate a worker credential
 
     Args:
         x_tenant_id (str):
-        body (CreateWorkerCredentialBody):
+        body (CreateWorkerCredentialRequest): Creates or rotates a worker credential. Proof-key
+            fields are optional for legacy credentials, but when any proof-key field is supplied all
+            three and agent_id must be supplied together. Rotating an active proof credential without
+            proof-key fields preserves its enrolled key and authoritative agent link after
+            revalidation; changing agent_id for a proof-bearing credential requires a full proof-key
+            replacement bundle.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

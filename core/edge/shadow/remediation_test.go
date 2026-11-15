@@ -27,6 +27,31 @@ func fixedTime() time.Time {
 	return time.Date(2026, 5, 17, 16, 0, 0, 0, time.UTC)
 }
 
+func TestManagedSettingsRemediationUsesTrustedVerifierFlags(t *testing.T) {
+	for name, steps := range map[string][]RemediationStep{
+		"Claude enterprise wrapper": buildClaudeWrapperSteps(RemediationManualReview, RemediationAudienceEnterprise),
+		"managed deployment":        buildManagedSettingsSteps(RemediationManualReview),
+	} {
+		t.Run(name, func(t *testing.T) {
+			found := false
+			for _, step := range steps {
+				if !strings.Contains(step.Command, "managed-settings verify") {
+					continue
+				}
+				found = true
+				if !strings.Contains(step.Command, "--path <path-to-managed-settings.json>") ||
+					!strings.Contains(step.Command, "--mcp-gateway-url <mcp-gateway-url>") ||
+					strings.Contains(step.Command, "--managed-settings-path") || strings.Contains(step.Command, "--managed-mcp-path") {
+					t.Fatalf("verifier command lacks its independent MCP baseline or uses unsupported flags: %s", step.Command)
+				}
+			}
+			if !found {
+				t.Fatal("managed deployment has no verifier step")
+			}
+		})
+	}
+}
+
 // fixedClock returns fixedTime in the GeneratorOptions.Now shape.
 func fixedClock() func() time.Time { return fixedTime }
 

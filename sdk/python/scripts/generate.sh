@@ -40,9 +40,15 @@ if [[ "${GENERATOR[0]}" == *.exe ]]; then
   fi
 fi
 
+# openapi-python-client orders some imports by iterating a set, so fix the hash seed.
+export PYTHONHASHSEED=0
+# The config's post-hook runs the first `ruff` on PATH: use the venv's pinned one.
+export PATH="${ROOT_DIR}/.venv/Scripts:${ROOT_DIR}/.venv/bin:${PATH}"
+
 "${GENERATOR[@]}" generate \
   --meta none \
   --path "${SPEC_PATH}" \
   --config "${CONFIG_PATH}" \
   --overwrite \
+  --fail-on-warning \
   --output-path "${OUTPUT_PATH}"

@@ -34,9 +34,13 @@ def _parse_response(
         return None
     if response.status_code == 401:
         return None
+    if response.status_code == 403:
+        return None
     if response.status_code == 404:
         return None
     if response.status_code == 500:
+        return None
+    if response.status_code == 503:
         return None
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)

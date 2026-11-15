@@ -15,8 +15,8 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-    from ..models.approval_analytics_response_window import ApprovalAnalyticsResponseWindow
     from ..models.approval_analytics_group import ApprovalAnalyticsGroup
+    from ..models.approval_analytics_response_window import ApprovalAnalyticsResponseWindow
     from ..models.approval_analytics_summary import ApprovalAnalyticsSummary
 
 
@@ -38,8 +38,8 @@ class ApprovalAnalyticsResponse:
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.approval_analytics_response_window import ApprovalAnalyticsResponseWindow
         from ..models.approval_analytics_group import ApprovalAnalyticsGroup
+        from ..models.approval_analytics_response_window import ApprovalAnalyticsResponseWindow
         from ..models.approval_analytics_summary import ApprovalAnalyticsSummary
 
         window = self.window.to_dict()
@@ -68,8 +68,8 @@ class ApprovalAnalyticsResponse:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.approval_analytics_response_window import ApprovalAnalyticsResponseWindow
         from ..models.approval_analytics_group import ApprovalAnalyticsGroup
+        from ..models.approval_analytics_response_window import ApprovalAnalyticsResponseWindow
         from ..models.approval_analytics_summary import ApprovalAnalyticsSummary
 
         d = src_dict.copy()

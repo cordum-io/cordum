@@ -326,6 +326,12 @@ The production overlay deploys a 3-node NATS cluster as a StatefulSet.
 - **Cluster routes**: Hardcoded in ConfigMap for deterministic discovery
 - **Monitoring**: Port 8222 exposed for `/healthz` probes and metrics
 - **Anti-affinity**: Pods spread across nodes via `preferredDuringSchedulingIgnoredDuringExecution`
+- **Startup**: `podManagementPolicy: Parallel`, and the headless Service publishes pods before
+  they are ready (`publishNotReadyAddresses: true`). A server alone fails `/healthz` until
+  JetStream has a meta leader, which needs the routes, so ordered startup would never get past
+  `cordum-nats-0`. Kubernetes cannot change `podManagementPolicy` in place: if an older
+  `cordum-nats` StatefulSet exists, delete it first (`kubectl delete statefulset cordum-nats -n cordum`;
+  the PVCs stay).
 
 ### NATS ConfigMap (production)
 
@@ -381,6 +387,9 @@ The production overlay deploys a 6-node Redis cluster (3 masters + 3 replicas).
 - **TLS**: Full TLS with `tls-auth-clients yes`
 - **Persistence**: AOF enabled (`appendonly yes`), 20Gi PVC per node
 - **Cluster mode**: `cluster-enabled yes`, `cluster-node-timeout 5000`
+- **Cluster bus**: port 16379 (`cluster-port 16379`; with `port 0` it would default to 10000)
+- **Replication**: replicas connect to their primary's TLS port (`tls-replication yes`),
+  presenting the `cordum-client-tls` certificate and authenticating with `masterauth`
 - **Exporter sidecar**: `oliver006/redis_exporter:v1.58.0` on port 9121
 
 ### Cluster Init Job
@@ -397,7 +406,8 @@ kubectl logs job/cordum-redis-cluster-init -n cordum
 ```
 
 The init job:
-1. Waits for all 6 nodes to respond to `PING`
+1. Waits for all 6 nodes to respond to `PING`, authenticating with the
+   `REDIS_PASSWORD` key of `cordum-redis-secret` (passed as `REDISCLI_AUTH`)
 2. Runs `redis-cli --cluster create ... --cluster-replicas 1 --cluster-yes`
 
 ### Pre-Flight Checks

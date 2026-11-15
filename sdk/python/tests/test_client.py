@@ -109,7 +109,7 @@ def test_client_raises_typed_errors() -> None:
             return httpx.Response(
                 429,
                 headers={"Retry-After": "5", "X-Request-Id": "req-429"},
-                json={"error": {"code": "rate_limited", "message": "slow down"}},
+                json={"error": "slow down", "code": "rate_limited", "status": 429},
             )
         raise AssertionError("Unexpected request")
 

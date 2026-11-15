@@ -18,13 +18,10 @@ from typing import Union
 import datetime
 
 if TYPE_CHECKING:
-  from ..models.edge_llm_message import EdgeLLMMessage
-  from ..models.edge_llm_tokens import EdgeLLMTokens
-  from ..models.edge_llm_event_envelope_labels import EdgeLLMEventEnvelopeLabels
-  from ..models.edge_artifact_pointer import EdgeArtifactPointer
-
-
-
+    from ..models.edge_llm_tokens import EdgeLLMTokens
+    from ..models.edge_llm_event_envelope_labels import EdgeLLMEventEnvelopeLabels
+    from ..models.edge_llm_message import EdgeLLMMessage
+    from ..models.edge_artifact_pointer import EdgeArtifactPointer
 
 
 T = TypeVar("T", bound="EdgeLLMEventEnvelope")
@@ -32,7 +29,7 @@ T = TypeVar("T", bound="EdgeLLMEventEnvelope")
 
 @_attrs_define
 class EdgeLLMEventEnvelope:
-    """ One intercepted LLM interaction. Smuggled keys (authorization, headers, cookies, api_key, provider keys) are
+    """One intercepted LLM interaction. Smuggled keys (authorization, headers, cookies, api_key, provider keys) are
     rejected at the strict-schema decode boundary; content and messages are redacted by the gateway before persistence.
 
         Attributes:
@@ -67,7 +64,7 @@ class EdgeLLMEventEnvelope:
             final (Union[Unset, bool]): Marks the last chunk of a stream. When true, content (or messages) MUST carry the
                 full aggregated response text, not just the last delta — required for the mandatory redaction scan to be
                 complete. A final=true chunk with no content or messages is rejected.
-     """
+    """
 
     tenant_id: str
     session_id: str
@@ -81,21 +78,21 @@ class EdgeLLMEventEnvelope:
     model: Union[Unset, str] = UNSET
     direction: Union[Unset, EdgeLLMEventEnvelopeDirection] = UNSET
     content: Union[Unset, str] = UNSET
-    messages: Union[Unset, List['EdgeLLMMessage']] = UNSET
-    tokens: Union[Unset, 'EdgeLLMTokens'] = UNSET
+    messages: Union[Unset, List["EdgeLLMMessage"]] = UNSET
+    tokens: Union[Unset, "EdgeLLMTokens"] = UNSET
     cost_usd: Union[Unset, float] = UNSET
-    labels: Union[Unset, 'EdgeLLMEventEnvelopeLabels'] = UNSET
-    artifact_ptrs: Union[Unset, List['EdgeArtifactPointer']] = UNSET
+    labels: Union[Unset, "EdgeLLMEventEnvelopeLabels"] = UNSET
+    artifact_ptrs: Union[Unset, List["EdgeArtifactPointer"]] = UNSET
     stream_id: Union[Unset, str] = UNSET
     sequence: Union[Unset, int] = UNSET
     final: Union[Unset, bool] = UNSET
 
-
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.edge_llm_message import EdgeLLMMessage
         from ..models.edge_llm_tokens import EdgeLLMTokens
         from ..models.edge_llm_event_envelope_labels import EdgeLLMEventEnvelopeLabels
+        from ..models.edge_llm_message import EdgeLLMMessage
         from ..models.edge_artifact_pointer import EdgeArtifactPointer
+
         tenant_id = self.tenant_id
 
         session_id = self.session_id
@@ -112,7 +109,6 @@ class EdgeLLMEventEnvelope:
         if not isinstance(self.outcome_status, Unset):
             outcome_status = self.outcome_status.value
 
-
         agent_product = self.agent_product
 
         provider = self.provider
@@ -123,7 +119,6 @@ class EdgeLLMEventEnvelope:
         if not isinstance(self.direction, Unset):
             direction = self.direction.value
 
-
         content = self.content
 
         messages: Union[Unset, List[Dict[str, Any]]] = UNSET
@@ -132,8 +127,6 @@ class EdgeLLMEventEnvelope:
             for messages_item_data in self.messages:
                 messages_item = messages_item_data.to_dict()
                 messages.append(messages_item)
-
-
 
         tokens: Union[Unset, Dict[str, Any]] = UNSET
         if not isinstance(self.tokens, Unset):
@@ -152,24 +145,23 @@ class EdgeLLMEventEnvelope:
                 artifact_ptrs_item = artifact_ptrs_item_data.to_dict()
                 artifact_ptrs.append(artifact_ptrs_item)
 
-
-
         stream_id = self.stream_id
 
         sequence = self.sequence
 
         final = self.final
 
-
         field_dict: Dict[str, Any] = {}
-        field_dict.update({
-            "tenant_id": tenant_id,
-            "session_id": session_id,
-            "execution_id": execution_id,
-            "source_event_id": source_event_id,
-            "observed_at": observed_at,
-            "kind": kind,
-        })
+        field_dict.update(
+            {
+                "tenant_id": tenant_id,
+                "session_id": session_id,
+                "execution_id": execution_id,
+                "source_event_id": source_event_id,
+                "observed_at": observed_at,
+                "kind": kind,
+            }
+        )
         if outcome_status is not UNSET:
             field_dict["outcome_status"] = outcome_status
         if agent_product is not UNSET:
@@ -201,14 +193,13 @@ class EdgeLLMEventEnvelope:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.edge_llm_message import EdgeLLMMessage
         from ..models.edge_llm_tokens import EdgeLLMTokens
         from ..models.edge_llm_event_envelope_labels import EdgeLLMEventEnvelopeLabels
+        from ..models.edge_llm_message import EdgeLLMMessage
         from ..models.edge_artifact_pointer import EdgeArtifactPointer
+
         d = src_dict.copy()
         tenant_id = d.pop("tenant_id")
 
@@ -220,23 +211,14 @@ class EdgeLLMEventEnvelope:
 
         observed_at = isoparse(d.pop("observed_at"))
 
-
-
-
         kind = EdgeLLMEventEnvelopeKind(d.pop("kind"))
-
-
-
 
         _outcome_status = d.pop("outcome_status", UNSET)
         outcome_status: Union[Unset, EdgeLLMEventEnvelopeOutcomeStatus]
-        if isinstance(_outcome_status,  Unset):
+        if isinstance(_outcome_status, Unset):
             outcome_status = UNSET
         else:
             outcome_status = EdgeLLMEventEnvelopeOutcomeStatus(_outcome_status)
-
-
-
 
         agent_product = d.pop("agent_product", UNSET)
 
@@ -246,57 +228,42 @@ class EdgeLLMEventEnvelope:
 
         _direction = d.pop("direction", UNSET)
         direction: Union[Unset, EdgeLLMEventEnvelopeDirection]
-        if isinstance(_direction,  Unset):
+        if isinstance(_direction, Unset):
             direction = UNSET
         else:
             direction = EdgeLLMEventEnvelopeDirection(_direction)
-
-
-
 
         content = d.pop("content", UNSET)
 
         messages = []
         _messages = d.pop("messages", UNSET)
-        for messages_item_data in (_messages or []):
+        for messages_item_data in _messages or []:
             messages_item = EdgeLLMMessage.from_dict(messages_item_data)
-
-
 
             messages.append(messages_item)
 
-
         _tokens = d.pop("tokens", UNSET)
         tokens: Union[Unset, EdgeLLMTokens]
-        if isinstance(_tokens,  Unset):
+        if isinstance(_tokens, Unset):
             tokens = UNSET
         else:
             tokens = EdgeLLMTokens.from_dict(_tokens)
-
-
-
 
         cost_usd = d.pop("cost_usd", UNSET)
 
         _labels = d.pop("labels", UNSET)
         labels: Union[Unset, EdgeLLMEventEnvelopeLabels]
-        if isinstance(_labels,  Unset):
+        if isinstance(_labels, Unset):
             labels = UNSET
         else:
             labels = EdgeLLMEventEnvelopeLabels.from_dict(_labels)
 
-
-
-
         artifact_ptrs = []
         _artifact_ptrs = d.pop("artifact_ptrs", UNSET)
-        for artifact_ptrs_item_data in (_artifact_ptrs or []):
+        for artifact_ptrs_item_data in _artifact_ptrs or []:
             artifact_ptrs_item = EdgeArtifactPointer.from_dict(artifact_ptrs_item_data)
 
-
-
             artifact_ptrs.append(artifact_ptrs_item)
-
 
         stream_id = d.pop("stream_id", UNSET)
 
@@ -328,4 +295,3 @@ class EdgeLLMEventEnvelope:
         )
 
         return edge_llm_event_envelope
-

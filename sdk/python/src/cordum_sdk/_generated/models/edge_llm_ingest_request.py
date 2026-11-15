@@ -13,11 +13,8 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.edge_llm_event_envelope import EdgeLLMEventEnvelope
-  from ..models.edge_llm_ingest_source import EdgeLLMIngestSource
-
-
-
+    from ..models.edge_llm_ingest_source import EdgeLLMIngestSource
+    from ..models.edge_llm_event_envelope import EdgeLLMEventEnvelope
 
 
 T = TypeVar("T", bound="EdgeLLMIngestRequest")
@@ -25,24 +22,24 @@ T = TypeVar("T", bound="EdgeLLMIngestRequest")
 
 @_attrs_define
 class EdgeLLMIngestRequest:
-    """ 
-        Attributes:
-            source (EdgeLLMIngestSource):
-            events (List['EdgeLLMEventEnvelope']):
-            nonce (Union[Unset, str]): Optional replay-protection nonce. When present it is deduplicated against a Redis
-                replay window scoped to `(tenant, llm-proxy)`. Set `CORDUM_EDGE_LLM_REPLAY_REQUIRED=true` to mandate it.
-            batch_id (Union[Unset, str]): Operator correlation identifier only; not used for replay protection.
-     """
+    """
+    Attributes:
+        source (EdgeLLMIngestSource):
+        events (List['EdgeLLMEventEnvelope']):
+        nonce (Union[Unset, str]): Optional replay-protection nonce. When present it is deduplicated against a Redis
+            replay window scoped to `(tenant, llm-proxy)`. Set `CORDUM_EDGE_LLM_REPLAY_REQUIRED=true` to mandate it.
+        batch_id (Union[Unset, str]): Operator correlation identifier only; not used for replay protection.
+    """
 
-    source: 'EdgeLLMIngestSource'
-    events: List['EdgeLLMEventEnvelope']
+    source: "EdgeLLMIngestSource"
+    events: List["EdgeLLMEventEnvelope"]
     nonce: Union[Unset, str] = UNSET
     batch_id: Union[Unset, str] = UNSET
 
-
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.edge_llm_event_envelope import EdgeLLMEventEnvelope
         from ..models.edge_llm_ingest_source import EdgeLLMIngestSource
+        from ..models.edge_llm_event_envelope import EdgeLLMEventEnvelope
+
         source = self.source.to_dict()
 
         events = []
@@ -50,18 +47,17 @@ class EdgeLLMIngestRequest:
             events_item = events_item_data.to_dict()
             events.append(events_item)
 
-
-
         nonce = self.nonce
 
         batch_id = self.batch_id
 
-
         field_dict: Dict[str, Any] = {}
-        field_dict.update({
-            "source": source,
-            "events": events,
-        })
+        field_dict.update(
+            {
+                "source": source,
+                "events": events,
+            }
+        )
         if nonce is not UNSET:
             field_dict["nonce"] = nonce
         if batch_id is not UNSET:
@@ -69,27 +65,20 @@ class EdgeLLMIngestRequest:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.edge_llm_event_envelope import EdgeLLMEventEnvelope
         from ..models.edge_llm_ingest_source import EdgeLLMIngestSource
+        from ..models.edge_llm_event_envelope import EdgeLLMEventEnvelope
+
         d = src_dict.copy()
         source = EdgeLLMIngestSource.from_dict(d.pop("source"))
 
-
-
-
         events = []
         _events = d.pop("events")
-        for events_item_data in (_events):
+        for events_item_data in _events:
             events_item = EdgeLLMEventEnvelope.from_dict(events_item_data)
 
-
-
             events.append(events_item)
-
 
         nonce = d.pop("nonce", UNSET)
 
@@ -103,4 +92,3 @@ class EdgeLLMIngestRequest:
         )
 
         return edge_llm_ingest_request
-

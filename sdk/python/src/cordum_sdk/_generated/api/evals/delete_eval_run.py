@@ -7,7 +7,10 @@ from ...client import AuthenticatedClient, Client
 from ...types import Response, UNSET
 from ... import errors
 
+from ...models.error import Error
 from ...types import UNSET, Unset
+from typing import cast
+from typing import Dict
 from typing import Union
 
 
@@ -40,19 +43,26 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Optional[Any]:
+) -> Optional[Union[Any, Error]]:
     if response.status_code == 204:
-        return None
+        response_204 = cast(Any, None)
+        return response_204
     if response.status_code == 400:
-        return None
+        response_400 = Error.from_dict(response.json())
+
+        return response_400
     if response.status_code == 401:
-        return None
+        response_401 = cast(Any, None)
+        return response_401
     if response.status_code == 403:
-        return None
+        response_403 = cast(Any, None)
+        return response_403
     if response.status_code == 404:
-        return None
+        response_404 = cast(Any, None)
+        return response_404
     if response.status_code == 503:
-        return None
+        response_503 = cast(Any, None)
+        return response_503
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -61,7 +71,7 @@ def _parse_response(
 
 def _build_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Response[Any]:
+) -> Response[Union[Any, Error]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -76,7 +86,7 @@ def sync_detailed(
     client: Union[AuthenticatedClient, Client],
     force: Union[Unset, bool] = UNSET,
     x_tenant_id: str,
-) -> Response[Any]:
+) -> Response[Union[Any, Error]]:
     """Delete a historical eval run
 
     Args:
@@ -89,7 +99,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any]
+        Response[Union[Any, Error]]
     """
 
     kwargs = _get_kwargs(
@@ -105,13 +115,13 @@ def sync_detailed(
     return _build_response(client=client, response=response)
 
 
-async def asyncio_detailed(
+def sync(
     run_id: str,
     *,
     client: Union[AuthenticatedClient, Client],
     force: Union[Unset, bool] = UNSET,
     x_tenant_id: str,
-) -> Response[Any]:
+) -> Optional[Union[Any, Error]]:
     """Delete a historical eval run
 
     Args:
@@ -124,7 +134,37 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any]
+        Union[Any, Error]
+    """
+
+    return sync_detailed(
+        run_id=run_id,
+        client=client,
+        force=force,
+        x_tenant_id=x_tenant_id,
+    ).parsed
+
+
+async def asyncio_detailed(
+    run_id: str,
+    *,
+    client: Union[AuthenticatedClient, Client],
+    force: Union[Unset, bool] = UNSET,
+    x_tenant_id: str,
+) -> Response[Union[Any, Error]]:
+    """Delete a historical eval run
+
+    Args:
+        run_id (str):
+        force (Union[Unset, bool]):
+        x_tenant_id (str):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[Union[Any, Error]]
     """
 
     kwargs = _get_kwargs(
@@ -136,3 +176,35 @@ async def asyncio_detailed(
     response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
+
+
+async def asyncio(
+    run_id: str,
+    *,
+    client: Union[AuthenticatedClient, Client],
+    force: Union[Unset, bool] = UNSET,
+    x_tenant_id: str,
+) -> Optional[Union[Any, Error]]:
+    """Delete a historical eval run
+
+    Args:
+        run_id (str):
+        force (Union[Unset, bool]):
+        x_tenant_id (str):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Union[Any, Error]
+    """
+
+    return (
+        await asyncio_detailed(
+            run_id=run_id,
+            client=client,
+            force=force,
+            x_tenant_id=x_tenant_id,
+        )
+    ).parsed

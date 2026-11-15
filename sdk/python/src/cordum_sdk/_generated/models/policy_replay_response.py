@@ -16,10 +16,10 @@ from typing import Union
 from uuid import UUID
 
 if TYPE_CHECKING:
-    from ..models.policy_replay_response_time_range import PolicyReplayResponseTimeRange
-    from ..models.policy_replay_response_summary import PolicyReplayResponseSummary
-    from ..models.policy_replay_response_rule_hits_item import PolicyReplayResponseRuleHitsItem
     from ..models.policy_replay_response_changes_item import PolicyReplayResponseChangesItem
+    from ..models.policy_replay_response_summary import PolicyReplayResponseSummary
+    from ..models.policy_replay_response_time_range import PolicyReplayResponseTimeRange
+    from ..models.policy_replay_response_rule_hits_item import PolicyReplayResponseRuleHitsItem
 
 
 T = TypeVar("T", bound="PolicyReplayResponse")
@@ -50,10 +50,10 @@ class PolicyReplayResponse:
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.policy_replay_response_time_range import PolicyReplayResponseTimeRange
-        from ..models.policy_replay_response_summary import PolicyReplayResponseSummary
-        from ..models.policy_replay_response_rule_hits_item import PolicyReplayResponseRuleHitsItem
         from ..models.policy_replay_response_changes_item import PolicyReplayResponseChangesItem
+        from ..models.policy_replay_response_summary import PolicyReplayResponseSummary
+        from ..models.policy_replay_response_time_range import PolicyReplayResponseTimeRange
+        from ..models.policy_replay_response_rule_hits_item import PolicyReplayResponseRuleHitsItem
 
         replay_id = str(self.replay_id)
 
@@ -102,10 +102,10 @@ class PolicyReplayResponse:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.policy_replay_response_time_range import PolicyReplayResponseTimeRange
-        from ..models.policy_replay_response_summary import PolicyReplayResponseSummary
-        from ..models.policy_replay_response_rule_hits_item import PolicyReplayResponseRuleHitsItem
         from ..models.policy_replay_response_changes_item import PolicyReplayResponseChangesItem
+        from ..models.policy_replay_response_summary import PolicyReplayResponseSummary
+        from ..models.policy_replay_response_time_range import PolicyReplayResponseTimeRange
+        from ..models.policy_replay_response_rule_hits_item import PolicyReplayResponseRuleHitsItem
 
         d = src_dict.copy()
         replay_id = UUID(d.pop("replay_id"))

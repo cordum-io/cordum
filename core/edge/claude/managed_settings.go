@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"path"
 	"strings"
 
 	"github.com/cordum/cordum/core/edge"
@@ -20,6 +22,8 @@ type managedSettingsDocument struct {
 	AllowManagedMcpServersOnly bool                       `json:"allowManagedMcpServersOnly"`
 	AllowedHTTPHookURLs        []string                   `json:"allowedHttpHookUrls"`
 	AllowedMcpServers          []managedMCPAllow          `json:"allowedMcpServers"`
+	ManagedMCPServers          json.RawMessage            `json:"managedMcpServers,omitempty"`
+	AllowChromeWithManagedMCP  json.RawMessage            `json:"allowClaudeInChromeWithManagedMcp,omitempty"`
 	DisableBypassPermissions   string                     `json:"disableBypassPermissionsMode"`
 	ForceRemoteRefresh         *bool                      `json:"forceRemoteSettingsRefresh,omitempty"`
 	APIKeyHelper               string                     `json:"apiKeyHelper,omitempty"`
@@ -52,13 +56,12 @@ type managedMCPServer struct {
 // managed-mcp.json templates. The templates intentionally contain placeholders
 // and helper commands rather than long-lived tokens.
 func GenerateManagedSettingsTemplate(opts ManagedSettingsOptions) (ManagedSettingsBundle, error) {
-	llmProxyBaseURL, err := validateManagedSettingsOptions(opts)
+	llmProxyBaseURL, mcpURL, err := validateManagedSettingsOptions(opts)
 	if err != nil {
 		return ManagedSettingsBundle{}, err
 	}
 	hookCommand := hookCommandOrDefault(opts.HookCommand)
 	timeout := hookTimeoutOrDefault(opts.HookTimeout)
-	mcpURL := strings.TrimSpace(opts.MCPGatewayURL)
 	env := map[string]string{
 		"CORDUM_EDGE_MODE":           "enterprise-strict",
 		managedPolicyModeEnv:         "enterprise-strict",
@@ -110,7 +113,7 @@ func GenerateManagedSettingsTemplate(opts ManagedSettingsOptions) (ManagedSettin
 	}, nil
 }
 
-func validateManagedSettingsOptions(opts ManagedSettingsOptions) (string, error) {
+func validateManagedSettingsOptions(opts ManagedSettingsOptions) (string, string, error) {
 	// hook_command is intentionally absent: GenerateManagedSettingsTemplate
 	// fills in the built-in default via hookCommandOrDefault when the caller
 	// leaves opts.HookCommand empty, so requiring it here would make the
@@ -123,21 +126,49 @@ func validateManagedSettingsOptions(opts ManagedSettingsOptions) (string, error)
 		"api_key_helper_command": opts.APIKeyHelperCommand,
 	}
 	if opts.HookCommand != "" && containsSensitiveValue(opts.HookCommand) {
-		return "", fmt.Errorf("hook_command contains sensitive value")
+		return "", "", fmt.Errorf("hook_command contains sensitive value")
 	}
 	for name, value := range required {
 		if strings.TrimSpace(value) == "" {
-			return "", fmt.Errorf("%s required", name)
+			return "", "", fmt.Errorf("%s required", name)
 		}
 		if containsSensitiveValue(value) {
-			return "", fmt.Errorf("%s contains sensitive value", name)
+			return "", "", fmt.Errorf("%s contains sensitive value", name)
 		}
+	}
+	mcpURL, err := validateManagedMCPGatewayURL(opts.MCPGatewayURL)
+	if err != nil {
+		return "", "", err
 	}
 	llmProxyBaseURL, err := edge.ValidateProviderBaseURL(context.Background(), opts.LLMProxyBaseURL)
 	if err != nil {
-		return "", fmt.Errorf("llm_proxy_base_url: %w", err)
+		return "", "", fmt.Errorf("llm_proxy_base_url: %w", err)
 	}
-	return llmProxyBaseURL, nil
+	return llmProxyBaseURL, mcpURL, nil
+}
+
+// A host-only Claude serverUrl allowlist pattern admits every path on that
+// host. Require a literal endpoint, while allowing private gateways and custom
+// ingress paths without DNS or SSRF checks on this local configuration input.
+func validateManagedMCPGatewayURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") || u.Opaque != "" {
+		return "", fmt.Errorf("mcp_gateway_url must be an absolute HTTP(S) URL")
+	}
+	if u.User != nil {
+		return "", fmt.Errorf("mcp_gateway_url must not contain credentials; use headersHelper")
+	}
+	if strings.Contains(raw, "*") || strings.Contains(u.Path, "*") || strings.Contains(raw, "${") {
+		return "", fmt.Errorf("mcp_gateway_url must be a literal URL without wildcards or variables")
+	}
+	if strings.ContainsRune(u.Path, '\\') {
+		return "", fmt.Errorf("mcp_gateway_url path must not contain ambiguous backslashes")
+	}
+	if u.Path == "" || path.Clean(u.Path) == "/" {
+		return "", fmt.Errorf("mcp_gateway_url requires a non-root endpoint path")
+	}
+	return raw, nil
 }
 
 func containsSensitiveValue(value string) bool {

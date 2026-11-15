@@ -17,8 +17,8 @@ from typing import Union
 import datetime
 
 if TYPE_CHECKING:
-    from ..models.generic_object import GenericObject
     from ..models.velocity_stats import VelocityStats
+    from ..models.generic_object import GenericObject
 
 
 T = TypeVar("T", bound="GetVelocityRuleStatsResponse200")
@@ -41,8 +41,8 @@ class GetVelocityRuleStatsResponse200:
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.generic_object import GenericObject
         from ..models.velocity_stats import VelocityStats
+        from ..models.generic_object import GenericObject
 
         items = []
         for items_item_data in self.items:
@@ -79,8 +79,8 @@ class GetVelocityRuleStatsResponse200:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.generic_object import GenericObject
         from ..models.velocity_stats import VelocityStats
+        from ..models.generic_object import GenericObject
 
         d = src_dict.copy()
         items = []

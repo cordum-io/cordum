@@ -1,13 +1,17 @@
 from http import HTTPStatus
-from typing import Any, Dict, Optional, Union, cast
+from typing import Any, Dict, List, Optional, Union, cast
 
 import httpx
 
-from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...types import Response, UNSET
+from ... import errors
+
+from ...models.error import Error
 from ...models.policy_shadow import PolicyShadow
 from ...models.policy_shadow_upsert_request import PolicyShadowUpsertRequest
-from ...types import Response
+from typing import cast
+from typing import Dict
 
 
 def _get_kwargs(
@@ -37,13 +41,14 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Optional[Union[Any, PolicyShadow]]:
+) -> Optional[Union[Any, Error, PolicyShadow]]:
     if response.status_code == 200:
         response_200 = PolicyShadow.from_dict(response.json())
 
         return response_200
     if response.status_code == 400:
-        response_400 = cast(Any, None)
+        response_400 = Error.from_dict(response.json())
+
         return response_400
     if response.status_code == 401:
         response_401 = cast(Any, None)
@@ -52,7 +57,8 @@ def _parse_response(
         response_403 = cast(Any, None)
         return response_403
     if response.status_code == 409:
-        response_409 = cast(Any, None)
+        response_409 = Error.from_dict(response.json())
+
         return response_409
     if response.status_code == 500:
         response_500 = cast(Any, None)
@@ -68,7 +74,7 @@ def _parse_response(
 
 def _build_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Response[Union[Any, PolicyShadow]]:
+) -> Response[Union[Any, Error, PolicyShadow]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -83,7 +89,7 @@ def sync_detailed(
     client: AuthenticatedClient,
     body: PolicyShadowUpsertRequest,
     x_tenant_id: str,
-) -> Response[Union[Any, PolicyShadow]]:
+) -> Response[Union[Any, Error, PolicyShadow]]:
     """Activate or replace the shadow policy for a bundle
 
      PUT upserts the shadow policy for the given bundle. A bundle has at
@@ -101,7 +107,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Any, PolicyShadow]]
+        Response[Union[Any, Error, PolicyShadow]]
     """
 
     kwargs = _get_kwargs(
@@ -123,7 +129,7 @@ def sync(
     client: AuthenticatedClient,
     body: PolicyShadowUpsertRequest,
     x_tenant_id: str,
-) -> Optional[Union[Any, PolicyShadow]]:
+) -> Optional[Union[Any, Error, PolicyShadow]]:
     """Activate or replace the shadow policy for a bundle
 
      PUT upserts the shadow policy for the given bundle. A bundle has at
@@ -141,7 +147,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Any, PolicyShadow]
+        Union[Any, Error, PolicyShadow]
     """
 
     return sync_detailed(
@@ -158,7 +164,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient,
     body: PolicyShadowUpsertRequest,
     x_tenant_id: str,
-) -> Response[Union[Any, PolicyShadow]]:
+) -> Response[Union[Any, Error, PolicyShadow]]:
     """Activate or replace the shadow policy for a bundle
 
      PUT upserts the shadow policy for the given bundle. A bundle has at
@@ -176,7 +182,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Any, PolicyShadow]]
+        Response[Union[Any, Error, PolicyShadow]]
     """
 
     kwargs = _get_kwargs(
@@ -196,7 +202,7 @@ async def asyncio(
     client: AuthenticatedClient,
     body: PolicyShadowUpsertRequest,
     x_tenant_id: str,
-) -> Optional[Union[Any, PolicyShadow]]:
+) -> Optional[Union[Any, Error, PolicyShadow]]:
     """Activate or replace the shadow policy for a bundle
 
      PUT upserts the shadow policy for the given bundle. A bundle has at
@@ -214,7 +220,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Any, PolicyShadow]
+        Union[Any, Error, PolicyShadow]
     """
 
     return (
