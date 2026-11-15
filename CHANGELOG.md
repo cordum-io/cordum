@@ -725,6 +725,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Helm: with TLS on, the dashboard nginx verifies the gateway certificate on
+  `/api/v1/stream` too. A `gateway.service.httpPort` other than 8081 works, and
+  `nats.auth.token` reaches the services instead of locking them out (#492,
+  task-18cf3f3d).
+
 - Helm: the default install shipped a broken dashboard: the browser was given
   the in-cluster gateway name as its API base. It now uses `/api/v1` through
   the dashboard nginx, and that nginx verifies the gateway certificate when TLS
