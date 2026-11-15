@@ -66,7 +66,7 @@ Approvals are consume-once. A further identical retry, or a concurrent duplicate
 
 With `mcp.policy_gate_enabled=true` the Edge approval is the only resume authority, and the steps differ:
 
-1. The first `tools/call` returns `-32099` whose data carries an Edge `approval_ref`, `retry_hint: "retry_with_approval_ref"` and an `approval_id`. The `approval_id` names an MCP record kept for correlation only. Approving it, in the default view of the dashboard's `/approvals` page or with `POST /api/v1/mcp/approvals/{id}/approve`, does not resume the call.
+1. The first `tools/call` returns `-32099` whose data carries an Edge `approval_ref`, `retry_hint: "retry_with_approval_ref"` and an `approval_id`. The `approval_id` names the record the registry gate dual-writes with the Edge approval. Approving or rejecting either one resolves both, and the other page then answers `409`. The Edge approval is the pair's single consume token.
 2. A distinct operator approves the Edge approval with `POST /api/v1/edge/approvals/{approval_ref}/approve`. In the dashboard it is on the Edge lane of the Approvals page, `/approvals?lane=edge` (`/edge/approvals` redirects there).
 3. The client retries with the same arguments plus `_approval_ref` set to the `approval_ref`. The workflow is created once. A second retry with the same `_approval_ref` gets `-32096` `not_found`.
 
