@@ -7,6 +7,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Edge managed settings: `cordumctl edge managed-settings verify` and the
+  doctor's compliance check require an independent expected MCP gateway URL
+  (`--mcp-gateway-url`) and cannot report OK without it. Ambiguous URLs or
+  JSON and inline MCP exceptions fail verification (#492, task-15747cc6).
+
 - Helm installs with TLS verify the gateway certificate by its Service FQDN
   (`<release>-api-gateway.<namespace>.svc.cluster.local`). Certificates from
   `cordumctl generate-certs` need `--san` for that name, or the dashboard gets
