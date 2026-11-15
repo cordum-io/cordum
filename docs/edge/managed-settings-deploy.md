@@ -42,7 +42,7 @@ managed Claude Code workstation
                 ▼
 cordumctl edge doctor --managed-settings-path <path>
   └─ managed_settings_compliance check
-       ├─ ok      : 14 invariants satisfied
+       ├─ ok      : 17 invariants satisfied
        ├─ skip    : path not configured (non-enterprise host)
        └─ fail    : drift, missing file, or parse error
 ```
@@ -137,7 +137,7 @@ cordumctl edge doctor \
   --managed-settings-path "/Library/Application Support/ClaudeCode/managed-settings.json"
 ```
 
-The `managed_settings_compliance` row reports `ok` when the 14 invariants
+The `managed_settings_compliance` row reports `ok` when the 17 invariants
 are satisfied. Operators can also run the standalone verifier without
 contacting the gateway:
 
@@ -148,6 +148,17 @@ cordumctl edge managed-settings verify \
 
 Exit `0` = ok, `1` = drift detected (each drifting field printed), `2` =
 missing or unparseable file.
+
+Both commands read a file. If you delivered the payload through the
+`com.anthropic.claudecode` preference domain (§3.3) rather than as a file, there
+is nothing at that path: convert the delivered managed preferences to JSON and
+verify that instead.
+
+```bash
+plutil -convert json -o /tmp/managed-settings.json \
+  "/Library/Managed Preferences/com.anthropic.claudecode.plist"
+cordumctl edge managed-settings verify --path /tmp/managed-settings.json
+```
 
 ## 4. Windows / Intune playbook
 
@@ -204,6 +215,18 @@ cordumctl edge doctor `
 
 For PowerShell pipelines that need a non-zero exit gate, use `cordumctl edge
 managed-settings verify --path <…> --json` and parse the `ok` field.
+
+Both commands read a file. If the policy landed in the registry (the
+`Settings` value under `HKLM\SOFTWARE\Policies\ClaudeCode`) rather than as a
+file, there is nothing at that path: write the delivered value to a file and
+verify that instead. `WriteAllText` writes UTF-8 without a byte-order mark,
+which the verifier's JSON parser requires.
+
+```powershell
+$settings = (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\ClaudeCode').Settings
+[IO.File]::WriteAllText("$env:TEMP\managed-settings.json", $settings)
+cordumctl edge managed-settings verify --path "$env:TEMP\managed-settings.json"
+```
 
 ## 5. Linux / WSL playbook
 
@@ -278,6 +301,13 @@ Every supported channel ends with the same verifier:
 cordumctl edge managed-settings verify --path <path>
 ```
 
+`verify` and the doctor's `managed_settings_compliance` check read a JSON file
+only; they cannot read macOS managed preferences or the Windows registry. For a
+managed-preferences or registry rollout, verify the payload file before you
+upload it (the profile or policy carries exactly that content; pin its SHA as
+in §3.2), and for a post-deploy check write the delivered policy to a file first
+(§3.4, §4.3).
+
 The verifier enforces the **17 invariants** baked into the template:
 
 | # | Invariant | Severity |
@@ -296,11 +326,11 @@ The verifier enforces the **17 invariants** baked into the template:
 | 12 | `env.CORDUM_AGENTD_FAIL_CLOSED == "true"` | critical |
 | 13 | `env.CORDUM_EDGE_MANAGED_POLICY_MODE == "enterprise-strict"` | critical |
 | 14 | `env.CORDUM_EDGE_MANAGED_HOOKS_ONLY == "true"` | critical |
-| 15 | `env.CORDUM_AGENTD_URL` non-empty + no query string | critical |
-| 16 | The hook command boundary is local `cordum-hook` -> local `cordum-agentd`; arbitrary shell/python/curl commands are rejected | critical |
-| 17 | No nonce/key markers in env or serialised form: `CORDUM_AGENTD_HOOK_NONCE`, `ANTHROPIC_API_KEY`, `sk-…` provider keys, `ghp_…` GitHub tokens, `AKIA…` AWS access keys, or `Authorization` headers carrying bearer tokens. | high |
+| 15 | `env.CORDUM_AGENTD_URL` is a loopback `http(s)` URL (`127.0.0.1`, `::1`, or `localhost`) with an explicit port, path `/v1/edge/hooks/claude`, and no userinfo, query string, or fragment | critical |
+| 16 | `env` carries none of the reserved secret keys (`CORDUM_AGENTD_HOOK_NONCE`, `ANTHROPIC_API_KEY`, `CORDUM_API_KEY`) and no value that looks like a secret | high |
+| 17 | The serialised file contains no secret markers: `sk-…` provider keys, `ghp_…` GitHub tokens, `AKIA…` AWS access keys, or `Authorization: Bearer` headers | high |
 
-Canonical hook paths are `/opt/cordum/bin/cordum-hook`, `/usr/local/bin/cordum-hook`, `/Applications/Cordum Edge/cordum-hook`, and `C:\Program Files\Cordum\cordum-hook.exe`. The verifier has no settings-file override for HTTP hook URLs, alternate MCP servers, or arbitrary hook commands. A future power-user exception must be a separately verified, signed trusted-config input; managed settings bytes alone are not trusted to weaken the production boundary.
+Canonical hook paths are `/opt/cordum/bin/cordum-hook`, `/usr/local/bin/cordum-hook`, `/Applications/Cordum Edge/cordum-hook`, and `C:\Program Files\Cordum\cordum-hook.exe`. Invariants 6–11 reject any other hook command (arbitrary shell/python/curl), which keeps the boundary at local `cordum-hook` -> local `cordum-agentd`. The verifier has no settings-file override for HTTP hook URLs, alternate MCP servers, or arbitrary hook commands. A future power-user exception must be a separately verified, signed trusted-config input; managed settings bytes alone are not trusted to weaken the production boundary.
 
 The same checks run inside `cordumctl edge doctor` when you pass
 `--managed-settings-path` (or set `CORDUM_EDGE_MANAGED_SETTINGS_PATH`).
@@ -376,7 +406,7 @@ relocation):
 4. Run the verifier on a sample workstation before broad rollout.
 5. Monitor the scheduled drift report to confirm fleet adoption.
 
-The 14 invariants do not change between minor Cordum releases; if they
+The 17 invariants do not change between minor Cordum releases; if they
 materially change, the upgrade notes will say so explicitly. The
 `cordumctl edge managed-settings verify` exit code is the operator's
 shippable signal that a fleet has converged.
@@ -520,7 +550,7 @@ provider is operator-only.
 
 No new managed-settings JSON invariants are introduced — the OIDC
 trust config lives in the operator's environment / fleet config, not
-in `managed-settings.json`. Cordum's verifier checks the 14 invariants
+in `managed-settings.json`. Cordum's verifier checks the 17 invariants
 in §6 above; CI OIDC config is read by the detector at boot and
 re-checked at every Detector instantiation via `LoadOIDCConfigFromEnv`.
 

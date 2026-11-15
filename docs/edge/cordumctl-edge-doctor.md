@@ -73,7 +73,7 @@ The doctor reports `ok`, `warn`, `fail`, or `skip` for each check:
 - Policy-mode implications.
 - Managed settings compliance: when `--managed-settings-path` (or
   `CORDUM_EDGE_MANAGED_SETTINGS_PATH`) is set, validates the deployed
-  `managed-settings.json` against the 14 enterprise invariants documented
+  `managed-settings.json` against the 17 enterprise invariants documented
   in [managed-settings-deploy.md § 6](managed-settings-deploy.md#6-verification-reference).
   Empty path → `skip` so non-enterprise hosts do not see a spurious failure.
 - Copilot hooks (`copilot_hooks`): when `--copilot-hooks-path` (or
