@@ -8,6 +8,7 @@ from ...types import Response, UNSET
 from ... import errors
 
 from ...models.delegation_list_response import DelegationListResponse
+from ...models.error import Error
 from ...models.list_delegations_for_agent_status import ListDelegationsForAgentStatus
 from ...types import UNSET, Unset
 from dateutil.parser import isoparse
@@ -77,13 +78,14 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Optional[Union[Any, DelegationListResponse]]:
+) -> Optional[Union[Any, DelegationListResponse, Error]]:
     if response.status_code == 200:
         response_200 = DelegationListResponse.from_dict(response.json())
 
         return response_200
     if response.status_code == 400:
-        response_400 = cast(Any, None)
+        response_400 = Error.from_dict(response.json())
+
         return response_400
     if response.status_code == 401:
         response_401 = cast(Any, None)
@@ -102,7 +104,7 @@ def _parse_response(
 
 def _build_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Response[Union[Any, DelegationListResponse]]:
+) -> Response[Union[Any, DelegationListResponse, Error]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -123,7 +125,7 @@ def sync_detailed(
     cursor: Union[Unset, str] = UNSET,
     limit: Union[Unset, int] = UNSET,
     x_tenant_id: str,
-) -> Response[Union[Any, DelegationListResponse]]:
+) -> Response[Union[Any, DelegationListResponse, Error]]:
     """List delegation tokens issued by a specific agent
 
     Args:
@@ -142,7 +144,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Any, DelegationListResponse]]
+        Response[Union[Any, DelegationListResponse, Error]]
     """
 
     kwargs = _get_kwargs(
@@ -176,7 +178,7 @@ def sync(
     cursor: Union[Unset, str] = UNSET,
     limit: Union[Unset, int] = UNSET,
     x_tenant_id: str,
-) -> Optional[Union[Any, DelegationListResponse]]:
+) -> Optional[Union[Any, DelegationListResponse, Error]]:
     """List delegation tokens issued by a specific agent
 
     Args:
@@ -195,7 +197,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Any, DelegationListResponse]
+        Union[Any, DelegationListResponse, Error]
     """
 
     return sync_detailed(
@@ -224,7 +226,7 @@ async def asyncio_detailed(
     cursor: Union[Unset, str] = UNSET,
     limit: Union[Unset, int] = UNSET,
     x_tenant_id: str,
-) -> Response[Union[Any, DelegationListResponse]]:
+) -> Response[Union[Any, DelegationListResponse, Error]]:
     """List delegation tokens issued by a specific agent
 
     Args:
@@ -243,7 +245,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Any, DelegationListResponse]]
+        Response[Union[Any, DelegationListResponse, Error]]
     """
 
     kwargs = _get_kwargs(
@@ -275,7 +277,7 @@ async def asyncio(
     cursor: Union[Unset, str] = UNSET,
     limit: Union[Unset, int] = UNSET,
     x_tenant_id: str,
-) -> Optional[Union[Any, DelegationListResponse]]:
+) -> Optional[Union[Any, DelegationListResponse, Error]]:
     """List delegation tokens issued by a specific agent
 
     Args:
@@ -294,7 +296,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Any, DelegationListResponse]
+        Union[Any, DelegationListResponse, Error]
     """
 
     return (

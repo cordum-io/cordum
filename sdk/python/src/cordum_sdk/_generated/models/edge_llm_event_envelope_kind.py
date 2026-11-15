@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class EdgeLLMEventEnvelopeKind(str, Enum):
     LLM_COST_RECORDED = "llm.cost.recorded"
     LLM_REQUEST_POST = "llm.request.post"

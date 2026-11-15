@@ -13,18 +13,11 @@ from typing import cast
 from typing import Dict
 
 
-
 def _get_kwargs(
     *,
     body: ResolveMemoryResourceBody,
-
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
-
-
-    
-
-    
 
     _kwargs: Dict[str, Any] = {
         "method": "post",
@@ -33,7 +26,6 @@ def _get_kwargs(
 
     _body = body.to_dict()
 
-
     _kwargs["json"] = _body
     headers["Content-Type"] = "application/json"
 
@@ -41,11 +33,11 @@ def _get_kwargs(
     return _kwargs
 
 
-def _parse_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Optional[Union[Any, ResolveMemoryResourceResponse200]]:
+def _parse_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Optional[Union[Any, ResolveMemoryResourceResponse200]]:
     if response.status_code == 200:
         response_200 = ResolveMemoryResourceResponse200.from_dict(response.json())
-
-
 
         return response_200
     if response.status_code == 400:
@@ -69,7 +61,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         return None
 
 
-def _build_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Response[Union[Any, ResolveMemoryResourceResponse200]]:
+def _build_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Response[Union[Any, ResolveMemoryResourceResponse200]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -82,9 +76,8 @@ def sync_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     body: ResolveMemoryResourceBody,
-
 ) -> Response[Union[Any, ResolveMemoryResourceResponse200]]:
-    """ Resolve a structured resource in an authenticated job scope
+    """Resolve a structured resource in an authenticated job scope
 
     Args:
         body (ResolveMemoryResourceBody):
@@ -95,12 +88,10 @@ def sync_detailed(
 
     Returns:
         Response[Union[Any, ResolveMemoryResourceResponse200]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         body=body,
-
     )
 
     response = client.get_httpx_client().request(
@@ -109,13 +100,13 @@ def sync_detailed(
 
     return _build_response(client=client, response=response)
 
+
 def sync(
     *,
     client: Union[AuthenticatedClient, Client],
     body: ResolveMemoryResourceBody,
-
 ) -> Optional[Union[Any, ResolveMemoryResourceResponse200]]:
-    """ Resolve a structured resource in an authenticated job scope
+    """Resolve a structured resource in an authenticated job scope
 
     Args:
         body (ResolveMemoryResourceBody):
@@ -126,22 +117,20 @@ def sync(
 
     Returns:
         Union[Any, ResolveMemoryResourceResponse200]
-     """
-
+    """
 
     return sync_detailed(
         client=client,
-body=body,
-
+        body=body,
     ).parsed
+
 
 async def asyncio_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     body: ResolveMemoryResourceBody,
-
 ) -> Response[Union[Any, ResolveMemoryResourceResponse200]]:
-    """ Resolve a structured resource in an authenticated job scope
+    """Resolve a structured resource in an authenticated job scope
 
     Args:
         body (ResolveMemoryResourceBody):
@@ -152,27 +141,23 @@ async def asyncio_detailed(
 
     Returns:
         Response[Union[Any, ResolveMemoryResourceResponse200]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         body=body,
-
     )
 
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
+
 
 async def asyncio(
     *,
     client: Union[AuthenticatedClient, Client],
     body: ResolveMemoryResourceBody,
-
 ) -> Optional[Union[Any, ResolveMemoryResourceResponse200]]:
-    """ Resolve a structured resource in an authenticated job scope
+    """Resolve a structured resource in an authenticated job scope
 
     Args:
         body (ResolveMemoryResourceBody):
@@ -183,11 +168,11 @@ async def asyncio(
 
     Returns:
         Union[Any, ResolveMemoryResourceResponse200]
-     """
+    """
 
-
-    return (await asyncio_detailed(
-        client=client,
-body=body,
-
-    )).parsed
+    return (
+        await asyncio_detailed(
+            client=client,
+            body=body,
+        )
+    ).parsed

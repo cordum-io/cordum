@@ -7,6 +7,7 @@ from ...client import AuthenticatedClient, Client
 from ...types import Response, UNSET
 from ... import errors
 
+from ...models.error import Error
 from ...models.list_mcp_outbound_response_200 import ListMcpOutboundResponse200
 from ...types import UNSET, Unset
 from dateutil.parser import isoparse
@@ -57,11 +58,15 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Optional[Union[Any, ListMcpOutboundResponse200]]:
+) -> Optional[Union[Any, Error, ListMcpOutboundResponse200]]:
     if response.status_code == 200:
         response_200 = ListMcpOutboundResponse200.from_dict(response.json())
 
         return response_200
+    if response.status_code == 400:
+        response_400 = Error.from_dict(response.json())
+
+        return response_400
     if response.status_code == 401:
         response_401 = cast(Any, None)
         return response_401
@@ -79,7 +84,7 @@ def _parse_response(
 
 def _build_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Response[Union[Any, ListMcpOutboundResponse200]]:
+) -> Response[Union[Any, Error, ListMcpOutboundResponse200]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -96,7 +101,7 @@ def sync_detailed(
     limit: Union[Unset, int] = 100,
     cursor: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-) -> Response[Union[Any, ListMcpOutboundResponse200]]:
+) -> Response[Union[Any, Error, ListMcpOutboundResponse200]]:
     """List outbound MCP signed-call events
 
      Walks the tenant's audit chain stream and returns observed outbound MCP calls, filtered by time
@@ -114,7 +119,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Any, ListMcpOutboundResponse200]]
+        Response[Union[Any, Error, ListMcpOutboundResponse200]]
     """
 
     kwargs = _get_kwargs(
@@ -140,7 +145,7 @@ def sync(
     limit: Union[Unset, int] = 100,
     cursor: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-) -> Optional[Union[Any, ListMcpOutboundResponse200]]:
+) -> Optional[Union[Any, Error, ListMcpOutboundResponse200]]:
     """List outbound MCP signed-call events
 
      Walks the tenant's audit chain stream and returns observed outbound MCP calls, filtered by time
@@ -158,7 +163,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Any, ListMcpOutboundResponse200]
+        Union[Any, Error, ListMcpOutboundResponse200]
     """
 
     return sync_detailed(
@@ -179,7 +184,7 @@ async def asyncio_detailed(
     limit: Union[Unset, int] = 100,
     cursor: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-) -> Response[Union[Any, ListMcpOutboundResponse200]]:
+) -> Response[Union[Any, Error, ListMcpOutboundResponse200]]:
     """List outbound MCP signed-call events
 
      Walks the tenant's audit chain stream and returns observed outbound MCP calls, filtered by time
@@ -197,7 +202,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Any, ListMcpOutboundResponse200]]
+        Response[Union[Any, Error, ListMcpOutboundResponse200]]
     """
 
     kwargs = _get_kwargs(
@@ -221,7 +226,7 @@ async def asyncio(
     limit: Union[Unset, int] = 100,
     cursor: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-) -> Optional[Union[Any, ListMcpOutboundResponse200]]:
+) -> Optional[Union[Any, Error, ListMcpOutboundResponse200]]:
     """List outbound MCP signed-call events
 
      Walks the tenant's audit chain stream and returns observed outbound MCP calls, filtered by time
@@ -239,7 +244,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Any, ListMcpOutboundResponse200]
+        Union[Any, Error, ListMcpOutboundResponse200]
     """
 
     return (

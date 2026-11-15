@@ -9,6 +9,7 @@ from ... import errors
 
 from ...models.create_eval_dataset_body import CreateEvalDatasetBody
 from ...models.create_eval_dataset_response_201 import CreateEvalDatasetResponse201
+from ...models.error import Error
 from typing import cast
 from typing import Dict
 
@@ -37,13 +38,14 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Optional[Union[Any, CreateEvalDatasetResponse201]]:
+) -> Optional[Union[Any, CreateEvalDatasetResponse201, Error]]:
     if response.status_code == 201:
         response_201 = CreateEvalDatasetResponse201.from_dict(response.json())
 
         return response_201
     if response.status_code == 400:
-        response_400 = cast(Any, None)
+        response_400 = Error.from_dict(response.json())
+
         return response_400
     if response.status_code == 401:
         response_401 = cast(Any, None)
@@ -52,10 +54,12 @@ def _parse_response(
         response_403 = cast(Any, None)
         return response_403
     if response.status_code == 409:
-        response_409 = cast(Any, None)
+        response_409 = Error.from_dict(response.json())
+
         return response_409
     if response.status_code == 413:
-        response_413 = cast(Any, None)
+        response_413 = Error.from_dict(response.json())
+
         return response_413
     if response.status_code == 503:
         response_503 = cast(Any, None)
@@ -68,7 +72,7 @@ def _parse_response(
 
 def _build_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Response[Union[Any, CreateEvalDatasetResponse201]]:
+) -> Response[Union[Any, CreateEvalDatasetResponse201, Error]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -82,7 +86,7 @@ def sync_detailed(
     client: Union[AuthenticatedClient, Client],
     body: CreateEvalDatasetBody,
     x_tenant_id: str,
-) -> Response[Union[Any, CreateEvalDatasetResponse201]]:
+) -> Response[Union[Any, CreateEvalDatasetResponse201, Error]]:
     """Create a curated eval dataset
 
     Args:
@@ -94,7 +98,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Any, CreateEvalDatasetResponse201]]
+        Response[Union[Any, CreateEvalDatasetResponse201, Error]]
     """
 
     kwargs = _get_kwargs(
@@ -114,7 +118,7 @@ def sync(
     client: Union[AuthenticatedClient, Client],
     body: CreateEvalDatasetBody,
     x_tenant_id: str,
-) -> Optional[Union[Any, CreateEvalDatasetResponse201]]:
+) -> Optional[Union[Any, CreateEvalDatasetResponse201, Error]]:
     """Create a curated eval dataset
 
     Args:
@@ -126,7 +130,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Any, CreateEvalDatasetResponse201]
+        Union[Any, CreateEvalDatasetResponse201, Error]
     """
 
     return sync_detailed(
@@ -141,7 +145,7 @@ async def asyncio_detailed(
     client: Union[AuthenticatedClient, Client],
     body: CreateEvalDatasetBody,
     x_tenant_id: str,
-) -> Response[Union[Any, CreateEvalDatasetResponse201]]:
+) -> Response[Union[Any, CreateEvalDatasetResponse201, Error]]:
     """Create a curated eval dataset
 
     Args:
@@ -153,7 +157,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Any, CreateEvalDatasetResponse201]]
+        Response[Union[Any, CreateEvalDatasetResponse201, Error]]
     """
 
     kwargs = _get_kwargs(
@@ -171,7 +175,7 @@ async def asyncio(
     client: Union[AuthenticatedClient, Client],
     body: CreateEvalDatasetBody,
     x_tenant_id: str,
-) -> Optional[Union[Any, CreateEvalDatasetResponse201]]:
+) -> Optional[Union[Any, CreateEvalDatasetResponse201, Error]]:
     """Create a curated eval dataset
 
     Args:
@@ -183,7 +187,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Any, CreateEvalDatasetResponse201]
+        Union[Any, CreateEvalDatasetResponse201, Error]
     """
 
     return (

@@ -7,6 +7,7 @@ from ...client import AuthenticatedClient, Client
 from ...types import Response, UNSET
 from ... import errors
 
+from ...models.error import Error
 from ...models.generic_object import GenericObject
 from ...models.repair_approval_body import RepairApprovalBody
 from typing import cast
@@ -40,7 +41,7 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Optional[Union[Any, GenericObject]]:
+) -> Optional[Union[Any, Error, GenericObject]]:
     if response.status_code == 200:
         response_200 = GenericObject.from_dict(response.json())
 
@@ -52,10 +53,12 @@ def _parse_response(
         response_401 = cast(Any, None)
         return response_401
     if response.status_code == 403:
-        response_403 = cast(Any, None)
+        response_403 = Error.from_dict(response.json())
+
         return response_403
     if response.status_code == 404:
-        response_404 = cast(Any, None)
+        response_404 = Error.from_dict(response.json())
+
         return response_404
     if response.status_code == 409:
         response_409 = GenericObject.from_dict(response.json())
@@ -72,7 +75,7 @@ def _parse_response(
 
 def _build_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Response[Union[Any, GenericObject]]:
+) -> Response[Union[Any, Error, GenericObject]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -87,7 +90,7 @@ def sync_detailed(
     client: Union[AuthenticatedClient, Client],
     body: RepairApprovalBody,
     x_tenant_id: str,
-) -> Response[Union[Any, GenericObject]]:
+) -> Response[Union[Any, Error, GenericObject]]:
     """Inspect or apply approval repair
 
     Args:
@@ -100,7 +103,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Any, GenericObject]]
+        Response[Union[Any, Error, GenericObject]]
     """
 
     kwargs = _get_kwargs(
@@ -122,7 +125,7 @@ def sync(
     client: Union[AuthenticatedClient, Client],
     body: RepairApprovalBody,
     x_tenant_id: str,
-) -> Optional[Union[Any, GenericObject]]:
+) -> Optional[Union[Any, Error, GenericObject]]:
     """Inspect or apply approval repair
 
     Args:
@@ -135,7 +138,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Any, GenericObject]
+        Union[Any, Error, GenericObject]
     """
 
     return sync_detailed(
@@ -152,7 +155,7 @@ async def asyncio_detailed(
     client: Union[AuthenticatedClient, Client],
     body: RepairApprovalBody,
     x_tenant_id: str,
-) -> Response[Union[Any, GenericObject]]:
+) -> Response[Union[Any, Error, GenericObject]]:
     """Inspect or apply approval repair
 
     Args:
@@ -165,7 +168,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Any, GenericObject]]
+        Response[Union[Any, Error, GenericObject]]
     """
 
     kwargs = _get_kwargs(
@@ -185,7 +188,7 @@ async def asyncio(
     client: Union[AuthenticatedClient, Client],
     body: RepairApprovalBody,
     x_tenant_id: str,
-) -> Optional[Union[Any, GenericObject]]:
+) -> Optional[Union[Any, Error, GenericObject]]:
     """Inspect or apply approval repair
 
     Args:
@@ -198,7 +201,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Any, GenericObject]
+        Union[Any, Error, GenericObject]
     """
 
     return (

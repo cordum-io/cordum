@@ -7,6 +7,7 @@ from ...client import AuthenticatedClient, Client
 from ...types import Response, UNSET
 from ... import errors
 
+from ...models.error import Error
 from ...models.list_mcp_tools_response_200 import ListMcpToolsResponse200
 from ...types import UNSET, Unset
 from typing import cast
@@ -40,7 +41,7 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Optional[Union[Any, ListMcpToolsResponse200]]:
+) -> Optional[Union[Any, Error, ListMcpToolsResponse200]]:
     if response.status_code == 200:
         response_200 = ListMcpToolsResponse200.from_dict(response.json())
 
@@ -51,6 +52,10 @@ def _parse_response(
     if response.status_code == 403:
         response_403 = cast(Any, None)
         return response_403
+    if response.status_code == 404:
+        response_404 = Error.from_dict(response.json())
+
+        return response_404
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -59,7 +64,7 @@ def _parse_response(
 
 def _build_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Response[Union[Any, ListMcpToolsResponse200]]:
+) -> Response[Union[Any, Error, ListMcpToolsResponse200]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -73,7 +78,7 @@ def sync_detailed(
     client: AuthenticatedClient,
     agent_id: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-) -> Response[Union[Any, ListMcpToolsResponse200]]:
+) -> Response[Union[Any, Error, ListMcpToolsResponse200]]:
     """List MCP tools visible to an agent or the full catalogue
 
      Returns the MCP tool catalogue. Without an `agent_id` query parameter, returns the unfiltered admin
@@ -89,7 +94,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Any, ListMcpToolsResponse200]]
+        Response[Union[Any, Error, ListMcpToolsResponse200]]
     """
 
     kwargs = _get_kwargs(
@@ -109,7 +114,7 @@ def sync(
     client: AuthenticatedClient,
     agent_id: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-) -> Optional[Union[Any, ListMcpToolsResponse200]]:
+) -> Optional[Union[Any, Error, ListMcpToolsResponse200]]:
     """List MCP tools visible to an agent or the full catalogue
 
      Returns the MCP tool catalogue. Without an `agent_id` query parameter, returns the unfiltered admin
@@ -125,7 +130,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Any, ListMcpToolsResponse200]
+        Union[Any, Error, ListMcpToolsResponse200]
     """
 
     return sync_detailed(
@@ -140,7 +145,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient,
     agent_id: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-) -> Response[Union[Any, ListMcpToolsResponse200]]:
+) -> Response[Union[Any, Error, ListMcpToolsResponse200]]:
     """List MCP tools visible to an agent or the full catalogue
 
      Returns the MCP tool catalogue. Without an `agent_id` query parameter, returns the unfiltered admin
@@ -156,7 +161,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Any, ListMcpToolsResponse200]]
+        Response[Union[Any, Error, ListMcpToolsResponse200]]
     """
 
     kwargs = _get_kwargs(
@@ -174,7 +179,7 @@ async def asyncio(
     client: AuthenticatedClient,
     agent_id: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-) -> Optional[Union[Any, ListMcpToolsResponse200]]:
+) -> Optional[Union[Any, Error, ListMcpToolsResponse200]]:
     """List MCP tools visible to an agent or the full catalogue
 
      Returns the MCP tool catalogue. Without an `agent_id` query parameter, returns the unfiltered admin
@@ -190,7 +195,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Any, ListMcpToolsResponse200]
+        Union[Any, Error, ListMcpToolsResponse200]
     """
 
     return (

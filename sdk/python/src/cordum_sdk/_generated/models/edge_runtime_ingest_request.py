@@ -25,11 +25,15 @@ class EdgeRuntimeIngestRequest:
     """
     Attributes:
         source (EdgeRuntimeIngestSource): Authenticated trusted sidecar identity that produced the batch.
+        nonce (str): Required by default replay-protection nonce (UUIDv7 or random 128-bit value). Set
+            `CORDUM_EDGE_RUNTIME_REPLAY_REQUIRED=false` only for transitional non-production clients that cannot yet send
+            this field.
         events (List['EdgeRuntimeEventEnvelope']):
-        batch_id (Union[Unset, str]):
+        batch_id (Union[Unset, str]): Operator correlation identifier only; it is not used for replay protection.
     """
 
     source: "EdgeRuntimeIngestSource"
+    nonce: str
     events: List["EdgeRuntimeEventEnvelope"]
     batch_id: Union[Unset, str] = UNSET
 
@@ -38,6 +42,8 @@ class EdgeRuntimeIngestRequest:
         from ..models.edge_runtime_ingest_source import EdgeRuntimeIngestSource
 
         source = self.source.to_dict()
+
+        nonce = self.nonce
 
         events = []
         for events_item_data in self.events:
@@ -50,6 +56,7 @@ class EdgeRuntimeIngestRequest:
         field_dict.update(
             {
                 "source": source,
+                "nonce": nonce,
                 "events": events,
             }
         )
@@ -66,6 +73,8 @@ class EdgeRuntimeIngestRequest:
         d = src_dict.copy()
         source = EdgeRuntimeIngestSource.from_dict(d.pop("source"))
 
+        nonce = d.pop("nonce")
+
         events = []
         _events = d.pop("events")
         for events_item_data in _events:
@@ -77,6 +86,7 @@ class EdgeRuntimeIngestRequest:
 
         edge_runtime_ingest_request = cls(
             source=source,
+            nonce=nonce,
             events=events,
             batch_id=batch_id,
         )

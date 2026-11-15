@@ -19,8 +19,8 @@ from typing import Union
 import datetime
 
 if TYPE_CHECKING:
-    from ..models.edge_approval_metadata import EdgeApprovalMetadata
     from ..models.edge_labels import EdgeLabels
+    from ..models.edge_approval_metadata import EdgeApprovalMetadata
 
 
 T = TypeVar("T", bound="EdgeApproval")
@@ -84,8 +84,8 @@ class EdgeApproval:
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.edge_approval_metadata import EdgeApprovalMetadata
         from ..models.edge_labels import EdgeLabels
+        from ..models.edge_approval_metadata import EdgeApprovalMetadata
 
         approval_ref = self.approval_ref
 
@@ -197,8 +197,8 @@ class EdgeApproval:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.edge_approval_metadata import EdgeApprovalMetadata
         from ..models.edge_labels import EdgeLabels
+        from ..models.edge_approval_metadata import EdgeApprovalMetadata
 
         d = src_dict.copy()
         approval_ref = d.pop("approval_ref")

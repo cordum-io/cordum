@@ -7,6 +7,7 @@ from ...client import AuthenticatedClient, Client
 from ...types import Response, UNSET
 from ... import errors
 
+from ...models.error import Error
 from ...models.submit_job_request import SubmitJobRequest
 from ...models.submit_job_response import SubmitJobResponse
 from ...types import UNSET, Unset
@@ -44,7 +45,7 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Optional[Union[Any, SubmitJobResponse]]:
+) -> Optional[Union[Any, Error, SubmitJobResponse]]:
     if response.status_code == 200:
         response_200 = SubmitJobResponse.from_dict(response.json())
 
@@ -55,11 +56,20 @@ def _parse_response(
     if response.status_code == 401:
         response_401 = cast(Any, None)
         return response_401
+    if response.status_code == 403:
+        response_403 = Error.from_dict(response.json())
+
+        return response_403
+    if response.status_code == 409:
+        response_409 = Error.from_dict(response.json())
+
+        return response_409
     if response.status_code == 413:
         response_413 = cast(Any, None)
         return response_413
     if response.status_code == 429:
-        response_429 = cast(Any, None)
+        response_429 = Error.from_dict(response.json())
+
         return response_429
     if response.status_code == 500:
         response_500 = cast(Any, None)
@@ -72,7 +82,7 @@ def _parse_response(
 
 def _build_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Response[Union[Any, SubmitJobResponse]]:
+) -> Response[Union[Any, Error, SubmitJobResponse]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -87,7 +97,7 @@ def sync_detailed(
     body: SubmitJobRequest,
     x_tenant_id: str,
     idempotency_key: Union[Unset, UUID] = UNSET,
-) -> Response[Union[Any, SubmitJobResponse]]:
+) -> Response[Union[Any, Error, SubmitJobResponse]]:
     """Submit a new job
 
     Args:
@@ -100,7 +110,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Any, SubmitJobResponse]]
+        Response[Union[Any, Error, SubmitJobResponse]]
     """
 
     kwargs = _get_kwargs(
@@ -122,7 +132,7 @@ def sync(
     body: SubmitJobRequest,
     x_tenant_id: str,
     idempotency_key: Union[Unset, UUID] = UNSET,
-) -> Optional[Union[Any, SubmitJobResponse]]:
+) -> Optional[Union[Any, Error, SubmitJobResponse]]:
     """Submit a new job
 
     Args:
@@ -135,7 +145,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Any, SubmitJobResponse]
+        Union[Any, Error, SubmitJobResponse]
     """
 
     return sync_detailed(
@@ -152,7 +162,7 @@ async def asyncio_detailed(
     body: SubmitJobRequest,
     x_tenant_id: str,
     idempotency_key: Union[Unset, UUID] = UNSET,
-) -> Response[Union[Any, SubmitJobResponse]]:
+) -> Response[Union[Any, Error, SubmitJobResponse]]:
     """Submit a new job
 
     Args:
@@ -165,7 +175,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Any, SubmitJobResponse]]
+        Response[Union[Any, Error, SubmitJobResponse]]
     """
 
     kwargs = _get_kwargs(
@@ -185,7 +195,7 @@ async def asyncio(
     body: SubmitJobRequest,
     x_tenant_id: str,
     idempotency_key: Union[Unset, UUID] = UNSET,
-) -> Optional[Union[Any, SubmitJobResponse]]:
+) -> Optional[Union[Any, Error, SubmitJobResponse]]:
     """Submit a new job
 
     Args:
@@ -198,7 +208,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Any, SubmitJobResponse]
+        Union[Any, Error, SubmitJobResponse]
     """
 
     return (

@@ -7,6 +7,10 @@ from ...client import AuthenticatedClient, Client
 from ...types import Response, UNSET
 from ... import errors
 
+from ...models.error import Error
+from typing import cast
+from typing import Dict
+
 
 def _get_kwargs(
     id: str,
@@ -29,23 +33,33 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Optional[Any]:
+) -> Optional[Union[Any, Error]]:
     if response.status_code == 204:
-        return None
+        response_204 = cast(Any, None)
+        return response_204
     if response.status_code == 400:
-        return None
+        response_400 = Error.from_dict(response.json())
+
+        return response_400
     if response.status_code == 401:
-        return None
+        response_401 = cast(Any, None)
+        return response_401
     if response.status_code == 403:
-        return None
+        response_403 = cast(Any, None)
+        return response_403
     if response.status_code == 404:
-        return None
+        response_404 = cast(Any, None)
+        return response_404
     if response.status_code == 409:
-        return None
+        response_409 = Error.from_dict(response.json())
+
+        return response_409
     if response.status_code == 500:
-        return None
+        response_500 = cast(Any, None)
+        return response_500
     if response.status_code == 503:
-        return None
+        response_503 = cast(Any, None)
+        return response_503
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -54,7 +68,7 @@ def _parse_response(
 
 def _build_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Response[Any]:
+) -> Response[Union[Any, Error]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -68,7 +82,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient,
     x_tenant_id: str,
-) -> Response[Any]:
+) -> Response[Union[Any, Error]]:
     """Remove the shadow policy for a bundle
 
      Deactivates the shadow. Emits a `safety.policy_change` audit event
@@ -84,7 +98,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any]
+        Response[Union[Any, Error]]
     """
 
     kwargs = _get_kwargs(
@@ -99,12 +113,12 @@ def sync_detailed(
     return _build_response(client=client, response=response)
 
 
-async def asyncio_detailed(
+def sync(
     id: str,
     *,
     client: AuthenticatedClient,
     x_tenant_id: str,
-) -> Response[Any]:
+) -> Optional[Union[Any, Error]]:
     """Remove the shadow policy for a bundle
 
      Deactivates the shadow. Emits a `safety.policy_change` audit event
@@ -120,7 +134,38 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any]
+        Union[Any, Error]
+    """
+
+    return sync_detailed(
+        id=id,
+        client=client,
+        x_tenant_id=x_tenant_id,
+    ).parsed
+
+
+async def asyncio_detailed(
+    id: str,
+    *,
+    client: AuthenticatedClient,
+    x_tenant_id: str,
+) -> Response[Union[Any, Error]]:
+    """Remove the shadow policy for a bundle
+
+     Deactivates the shadow. Emits a `safety.policy_change` audit event
+    with `action=shadow_deactivate` and the outgoing shadow's
+    `shadow_bundle_id` so the activate/deactivate pair correlates.
+
+    Args:
+        id (str):
+        x_tenant_id (str):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[Union[Any, Error]]
     """
 
     kwargs = _get_kwargs(
@@ -131,3 +176,36 @@ async def asyncio_detailed(
     response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
+
+
+async def asyncio(
+    id: str,
+    *,
+    client: AuthenticatedClient,
+    x_tenant_id: str,
+) -> Optional[Union[Any, Error]]:
+    """Remove the shadow policy for a bundle
+
+     Deactivates the shadow. Emits a `safety.policy_change` audit event
+    with `action=shadow_deactivate` and the outgoing shadow's
+    `shadow_bundle_id` so the activate/deactivate pair correlates.
+
+    Args:
+        id (str):
+        x_tenant_id (str):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Union[Any, Error]
+    """
+
+    return (
+        await asyncio_detailed(
+            id=id,
+            client=client,
+            x_tenant_id=x_tenant_id,
+        )
+    ).parsed

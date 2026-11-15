@@ -7,6 +7,7 @@ from ...client import AuthenticatedClient, Client
 from ...types import Response, UNSET
 from ... import errors
 
+from ...models.error import Error
 from ...models.get_policy_shadow_results_comparisons_diff import (
     GetPolicyShadowResultsComparisonsDiff,
 )
@@ -62,13 +63,14 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Optional[Union[Any, ShadowComparisonsResponse]]:
+) -> Optional[Union[Any, Error, ShadowComparisonsResponse]]:
     if response.status_code == 200:
         response_200 = ShadowComparisonsResponse.from_dict(response.json())
 
         return response_200
     if response.status_code == 400:
-        response_400 = cast(Any, None)
+        response_400 = Error.from_dict(response.json())
+
         return response_400
     if response.status_code == 401:
         response_401 = cast(Any, None)
@@ -87,7 +89,7 @@ def _parse_response(
 
 def _build_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Response[Union[Any, ShadowComparisonsResponse]]:
+) -> Response[Union[Any, Error, ShadowComparisonsResponse]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -106,7 +108,7 @@ def sync_detailed(
     cursor: Union[Unset, str] = UNSET,
     limit: Union[Unset, int] = UNSET,
     x_tenant_id: str,
-) -> Response[Union[Any, ShadowComparisonsResponse]]:
+) -> Response[Union[Any, Error, ShadowComparisonsResponse]]:
     """Paginated shadow-vs-active decision comparisons
 
      Returns individual shadow-eval entries with both the active verdict
@@ -129,7 +131,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Any, ShadowComparisonsResponse]]
+        Response[Union[Any, Error, ShadowComparisonsResponse]]
     """
 
     kwargs = _get_kwargs(
@@ -159,7 +161,7 @@ def sync(
     cursor: Union[Unset, str] = UNSET,
     limit: Union[Unset, int] = UNSET,
     x_tenant_id: str,
-) -> Optional[Union[Any, ShadowComparisonsResponse]]:
+) -> Optional[Union[Any, Error, ShadowComparisonsResponse]]:
     """Paginated shadow-vs-active decision comparisons
 
      Returns individual shadow-eval entries with both the active verdict
@@ -182,7 +184,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Any, ShadowComparisonsResponse]
+        Union[Any, Error, ShadowComparisonsResponse]
     """
 
     return sync_detailed(
@@ -207,7 +209,7 @@ async def asyncio_detailed(
     cursor: Union[Unset, str] = UNSET,
     limit: Union[Unset, int] = UNSET,
     x_tenant_id: str,
-) -> Response[Union[Any, ShadowComparisonsResponse]]:
+) -> Response[Union[Any, Error, ShadowComparisonsResponse]]:
     """Paginated shadow-vs-active decision comparisons
 
      Returns individual shadow-eval entries with both the active verdict
@@ -230,7 +232,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Any, ShadowComparisonsResponse]]
+        Response[Union[Any, Error, ShadowComparisonsResponse]]
     """
 
     kwargs = _get_kwargs(
@@ -258,7 +260,7 @@ async def asyncio(
     cursor: Union[Unset, str] = UNSET,
     limit: Union[Unset, int] = UNSET,
     x_tenant_id: str,
-) -> Optional[Union[Any, ShadowComparisonsResponse]]:
+) -> Optional[Union[Any, Error, ShadowComparisonsResponse]]:
     """Paginated shadow-vs-active decision comparisons
 
      Returns individual shadow-eval entries with both the active verdict
@@ -281,7 +283,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Any, ShadowComparisonsResponse]
+        Union[Any, Error, ShadowComparisonsResponse]
     """
 
     return (

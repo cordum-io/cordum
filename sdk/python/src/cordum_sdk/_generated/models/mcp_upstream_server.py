@@ -41,6 +41,14 @@ class MCPUpstreamServer:
         auth_secret_ref (Union[Unset, str]): Reference to auth material. Raw secrets are rejected and never resolved in
             registry responses.
         labels (Union[Unset, MCPUpstreamServerLabels]):
+        resolved_ips (Union[Unset, List[str]]): Registration-time DNS resolution of the upstream hostname.
+            Server-managed; clients MUST NOT submit values here on write.
+            Use-time callers (`RevalidateMCPUpstreamAtUse`) re-resolve the
+            hostname and refuse the dial if any current IP falls into the
+            SSRF deny-set (loopback, RFC1918, link-local incl.
+            169.254.169.254, IPv6 ULA, multicast, unspecified). Omitted
+            for `stdio` transports and for hostnames that fail to resolve
+            at registration.
         created_at (Union[Unset, datetime.datetime]):
         updated_at (Union[Unset, datetime.datetime]):
     """
@@ -54,6 +62,7 @@ class MCPUpstreamServer:
     command: Union[Unset, List[str]] = UNSET
     auth_secret_ref: Union[Unset, str] = UNSET
     labels: Union[Unset, "MCPUpstreamServerLabels"] = UNSET
+    resolved_ips: Union[Unset, List[str]] = UNSET
     created_at: Union[Unset, datetime.datetime] = UNSET
     updated_at: Union[Unset, datetime.datetime] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -83,6 +92,10 @@ class MCPUpstreamServer:
         if not isinstance(self.labels, Unset):
             labels = self.labels.to_dict()
 
+        resolved_ips: Union[Unset, List[str]] = UNSET
+        if not isinstance(self.resolved_ips, Unset):
+            resolved_ips = self.resolved_ips
+
         created_at: Union[Unset, str] = UNSET
         if not isinstance(self.created_at, Unset):
             created_at = self.created_at.isoformat()
@@ -110,6 +123,8 @@ class MCPUpstreamServer:
             field_dict["auth_secret_ref"] = auth_secret_ref
         if labels is not UNSET:
             field_dict["labels"] = labels
+        if resolved_ips is not UNSET:
+            field_dict["resolved_ips"] = resolved_ips
         if created_at is not UNSET:
             field_dict["created_at"] = created_at
         if updated_at is not UNSET:
@@ -145,6 +160,8 @@ class MCPUpstreamServer:
         else:
             labels = MCPUpstreamServerLabels.from_dict(_labels)
 
+        resolved_ips = cast(List[str], d.pop("resolved_ips", UNSET))
+
         _created_at = d.pop("created_at", UNSET)
         created_at: Union[Unset, datetime.datetime]
         if isinstance(_created_at, Unset):
@@ -169,6 +186,7 @@ class MCPUpstreamServer:
             command=command,
             auth_secret_ref=auth_secret_ref,
             labels=labels,
+            resolved_ips=resolved_ips,
             created_at=created_at,
             updated_at=updated_at,
         )
