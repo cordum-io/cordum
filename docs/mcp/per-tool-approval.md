@@ -137,10 +137,13 @@ Response on a gated MCP tools/call:
 ## Args hash semantics
 
 Each approval is keyed on the canonical SHA-256 of the args JSON. Two
-calls with semantically identical args (different key order, varying
-whitespace) hash to the same value — the canonicaliser does an
-`Unmarshal → Marshal` round-trip, and Go's `encoding/json` sorts map
-keys at every depth.
+calls whose args differ only in object key order, or in the whitespace
+between JSON tokens, hash to the same value: the canonicaliser decodes
+the args and re-encodes them with keys sorted at every depth. Values are
+hashed as sent, so whitespace inside a string, an empty string, `[]`, `{}`
+and `null` all change the hash. `tools/call` refuses arguments that
+repeat an object key, at any depth, with JSON-RPC `-32602` before the
+policy check and any approval.
 
 Two calls with **different** args produce different hashes and require
 **separate approvals**. This is intentional: an approval to delete

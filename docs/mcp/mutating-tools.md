@@ -60,11 +60,12 @@ approval modal, and clicks **Approve** (or rejects).
 The LLM then retries the same tool call with **identical arguments** (when the
 error's `retry_hint` is `retry_with_approval_ref`, it also sends `approval_ref`
 back as `_approval_ref`; see
-[below](#when-retry_hint-is-retry_with_approval_ref)). The gateway
-canonical args hash from task-94b27344 is computed with whitespace / key-order /
-empty-field normalisation (task-2d989055 step 4), so the retry matches even if the
-LLM reformats the JSON. On the retry, the gate consumes the approval record
-atomically (CAS) and the handler runs.
+[below](#when-retry_hint-is-retry_with_approval_ref)). In the gateway's
+canonical args hash from task-94b27344 only the JSON formatting (whitespace
+between tokens) and the object key order are canonical, so the retry matches
+even if the LLM reformats the JSON. String values, empty values and nulls are
+part of the hash, so the retry must send the same values. On the retry, the
+gate consumes the approval record atomically (CAS) and the handler runs.
 
 If the operator rejects, the retry hits the rejection and returns
 `approval_rejected`. The LLM should stop rather than loop.
