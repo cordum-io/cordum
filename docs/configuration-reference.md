@@ -710,7 +710,7 @@ scanners:
 | `CORDUM_AGENTD_SAFE_ALLOW_CACHE_TTL` | `5m` | No | Safe-allow cache TTL when the cache is enabled; bounded and validated by agentd. |
 | `CORDUM_AGENTD_SAFE_ALLOW_CACHE_MAX_ENTRIES` | `128` | No | Safe-allow cache entry cap when the cache is enabled; invalid non-positive or very large values are rejected. |
 | `CORDUM_AGENTD_INLINE_APPROVAL_WAIT` | `false` | No | Local/demo-only inline approval wait for Gateway `REQUIRE_APPROVAL`. Default behavior returns an approval ref/URL and asks the user to approve then retry. |
-| `CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` | `30s` | No | Strict inline approval wait budget. Approval allows the action; rejection, timeout, pending, or wait errors return `DENY` and do not consume/cache an allow. |
+| `CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` | `30s` | No | Upper bound on the inline approval wait. For hook requests agentd ends the wait 1s before `cordum-hook`'s agentd budget (`4s` by default), so the wait lasts about 3s and the `30s` default never applies there. Approval allows the action and rejection denies it. An approval still pending when the wait ends, or a failed wait, gets the usual deny with `approval_ref` and retry guidance, and never consumes or caches an allow. |
 | `CORDUM_EDGE_HEARTBEAT_TTL` | `30s` | No | Agentd Gateway heartbeat TTL for active Edge sessions. |
 | `CORDUM_EDGE_HEARTBEAT_INTERVAL` | `TTL/2` | No | Agentd heartbeat interval; must be positive and no greater than half the TTL. |
 | `CORDUM_EDGE_APPROVAL_WAIT_TIMEOUT` | — | No | Legacy/settings-generator placeholder for approval-wait UX. Agentd runtime inline wait uses `CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT`. |
@@ -844,6 +844,24 @@ Invalid values (non-numeric, zero, negative) are silently replaced with defaults
 | `WORKFLOW_FOREACH_MAX_ITEMS` | — | Max items in workflow for-each expansion |
 | `POLICY_CHECK_FAIL_MODE` | `closed` | Gateway submit-time pre-check behavior when the Safety Kernel is unreachable. `closed` (default): reject the submit. `open`: accept it. The scheduler's dispatch-time mode is the config-service key `scheduler.input_fail_mode` ([safety-kernel.md](safety-kernel.md#10-input-policy-fail-mode)). |
 
+### Gateway — MCP
+
+Read by the gateway's built-in MCP server (`/mcp/*`). The standalone
+`cordum-mcp` bridge has its own variables under [MCP Server](#mcp-server).
+
+<!-- docscheck: env -->
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CORDUM_MCP_DESTRUCTIVE_TOOL_GLOBS` | `*delete*,*remove*,*archive*` | Comma-separated `path.Match` globs for tool names the MCP gate treats as destructive. A destructive call in a session that an earlier tool result tainted with a prompt injection is denied; the globs only scope that deny and never deny on their own. See [Session-taint destructive scope](edge/mcp-tool-policy.md#session-taint-destructive-scope) |
+| `CORDUM_MCP_DESTRUCTIVE_MUTATION_ARG_KEYS` | `query,mutation,gql,graphql` | Comma-separated string arguments scanned for a GraphQL `mutation` document, so a passthrough tool that carries a destructive mutation counts as destructive |
+| `CORDUM_MCP_DESTRUCTIVE_MUTATION_GLOBS` | `delete_*,archive_*,remove_*,delete,archive,remove` | Comma-separated globs for GraphQL mutation field names treated as destructive |
+| `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` | On in production (`CORDUM_ENV=production` or `prod`, or `CORDUM_PRODUCTION=true`), off elsewhere | Whether a destructive call fails closed when the session-taint lookup fails, since the session cannot be confirmed clean (reason `taint_lookup_unavailable_failclosed`). Failing closed denies the call (`service_unavailable`) unless `CORDUM_MCP_TAINT_FAILCLOSED_APPROVER` is `true`. An explicit `true` or `false` overrides the profile default; an unrecognized value logs a warning and keeps it |
+| `CORDUM_MCP_TAINT_FAILCLOSED_APPROVER` | `false` | Set to `true` when a reviewer acts on approval holds: a call that fails closed under `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` is then held for human approval instead of denied |
+| `CORDUM_MCP_TAINT_BACKEND` | `redis` when the gateway has Redis | Session-taint store: `redis` (shared by gateway replicas) or `memory` (per process). An unknown value, or `redis` without Redis, selects `memory` |
+| `CORDUM_MCP_TAINT_TTL` | `3600` | Seconds a session taint lasts in Redis. Keep it longer than an agent session: once the taint expires, a destructive call goes through. Invalid or non-positive values use the default |
+| `CORDUM_MCP_DEDUPE_BACKEND` | `redis` when the gateway has Redis | Store behind the tools/call [retry dedupe](mcp-server.md#retry-dedupe): `redis` (shared by gateway replicas) or `memory` (per process). An unknown value, or `redis` without Redis, selects `memory` |
+| `CORDUM_MCP_INBOUND_TRUSTED_KEY_<ID>` | — | ECDSA P-256 public key (base64 SPKI or PEM) that `POST /api/v1/mcp/verify-signature` trusts for key id `<ID>`; one variable per key. With no key, or a malformed one, the endpoint answers `503`. See [MCP outbound signing](mcp/outbound-signing.md) |
+
 ### Gateway — API Keys
 
 <!-- docscheck: env -->
@@ -853,8 +871,8 @@ Invalid values (non-numeric, zero, negative) are silently replaced with defaults
 | `API_KEY` | — | Fallback if `CORDUM_API_KEY` not set |
 | `CORDUM_API_KEYS` | — | Multiple keys: comma-separated or JSON array |
 | `CORDUM_API_KEYS_PATH` | — | Path to keys file (reloads on change) |
-| `CORDUM_ALLOW_INSECURE_NO_AUTH` | — | Set to `1` for no-auth mode (dev only) |
-| `CORDUM_ALLOW_HEADER_PRINCIPAL` | — | Set to `true` for header-based principal (disabled in production) |
+| `CORDUM_ALLOW_INSECURE_NO_AUTH` | — | Set to `1` for no-auth mode (dev only). In production the gateway refuses to start with it set. |
+| `CORDUM_ALLOW_HEADER_PRINCIPAL` | — | Set to `true` to honour `X-Principal-Id` in production, for static keys without `principal_id` and for managed keys (always honoured outside production). A header principal is recorded for attribution only and never binds identity |
 
 ### Gateway — Rate Limiting
 
@@ -1149,15 +1167,27 @@ that authority. Tokenless JobRequest traffic is rejected in enforce mode.
 
 ### MCP Server
 
+The standalone `cordum-mcp` bridge. Where a flag is named, the flag wins over
+the variable.
+
 <!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `CORDUM_GATEWAY_ADDR` | `http://localhost:8081` | Gateway the tools call (`--addr`). The compose stack serves `https://localhost:8081`, which also needs `CORDUM_MCP_ALLOW_PRIVATE_GATEWAY` |
 | `CORDUM_API_KEY` | — | API key for gateway-backed MCP handlers |
-| `CORDUM_TENANT_ID` | — | Tenant ID for MCP bridge/resource operations |
+| `CORDUM_TENANT_ID` | `default` | Tenant ID for MCP bridge/resource operations and signed calls. Outbound audit events record the value as set, with no fallback |
+| `CORDUM_MCP_AGENT_ID` | — | Agent identity that scopes a stdio session (`--agent-id`). Resolved once at boot through `GET /api/v1/agents/<id>`; startup fails if it cannot be resolved. Unset, no scope filter applies. See [MCP scope filtering](mcp/scope-filtering.md#stdio-transport-cordum-mcp) |
+| `CORDUM_MCP_GATEWAY_ALLOWLIST` | — | Comma-separated hosts or domains the gateway host must match (`--gateway-allowlist`); a domain also matches its subdomains. Unset, any host passes the allowlist check. See [Endpoint validation](mcp-server.md#endpoint-validation) |
+| `CORDUM_MCP_ALLOW_PRIVATE_GATEWAY` | `false` | Allow a gateway on `localhost` or a private or loopback address (`--allow-private-gateway`). Accepts `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off`; any other value keeps the default |
 | `MCP_TRANSPORT` | `stdio` | Transport mode: `stdio` (default) or `http` |
 | `MCP_HTTP_ADDR` | `127.0.0.1:8090` | HTTP listen address (only used when `MCP_TRANSPORT=http`) |
 | `CORDUM_MCP_HTTP_AUTH_TOKEN` | — | Bearer token every `/sse` and `/message` request must send (`--http-auth-token`). Required for a non-loopback `MCP_HTTP_ADDR` unless `--allow-unauthenticated-http` is passed |
 | `CORDUM_TLS_CA` | — | PEM CA certificate(s) to trust for the gateway's TLS in addition to the system roots (`--cacert`), for example the compose stack's `./certs/ca/ca.crt`. Startup fails if the file cannot be read or holds no certificate |
+| `CORDUM_MCP_OUTBOUND_SIGNING_KEY` | — | ECDSA P-256 private key (PEM, or base64 DER) that signs every gateway call. Unset along with `_PATH`, calls go unsigned and startup logs a warning; a malformed key fails startup. See [MCP outbound signing](mcp/outbound-signing.md) |
+| `CORDUM_MCP_OUTBOUND_SIGNING_KEY_PATH` | — | File holding the signing key, read when `CORDUM_MCP_OUTBOUND_SIGNING_KEY` is unset |
+| `CORDUM_MCP_OUTBOUND_SIGNING_KEY_ID` | `default` | Key ID sent in `X-Cordum-Key-Id`; verifiers look the public key up under it |
+| `CORDUM_MCP_OUTBOUND_AGENT_ID` | `--agent-id` | Agent ID recorded on outbound audit events and sent in `X-Cordum-Agent-Id` on signed calls, where an empty value falls back to the tenant |
+| `CORDUM_NATS_URL` | — | Sends `mcp.tool_outbound_invocation` audit events over NATS to the gateway's audit chain. Unset, or when NATS cannot be reached at startup, they are logged to stderr |
 
 **HA note — HTTP transport**: Set `MCP_TRANSPORT=http` to enable HTTP mode, which exposes
 `/sse` (SSE stream) and `/message` (POST JSON-RPC) endpoints. This allows running multiple
