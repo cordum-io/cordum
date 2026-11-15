@@ -10,8 +10,16 @@ when approval is needed, and when evidence must be exported.
 ## Command
 
 ```bash
-CORDUM_GATEWAY=http://localhost:8081 CORDUM_API_KEY=<cordum-api-key> CORDUM_TENANT_ID=default cordumctl edge claude -- --print "summarize this repo"
+CORDUM_GATEWAY=https://localhost:8081 \
+CORDUM_TLS_CA=<cordum-checkout>/certs/ca/ca.crt \
+CORDUM_API_KEY=<cordum-api-key> \
+CORDUM_TENANT_ID=default \
+cordumctl edge claude -- --print "summarize this repo"
 ```
+
+The default stack serves the gateway over HTTPS with a development CA in the
+Cordum checkout's `certs/ca/ca.crt`. `CORDUM_TLS_CA` (or `--cacert`) names
+that CA, and the launcher passes it to `cordum-agentd` for its Gateway calls.
 
 Use `cordumctl edge claude [edge flags] -- [claude args...]`. Cordum flags stay
 before `--`; Claude arguments go after it. The wrapper supplies the governed

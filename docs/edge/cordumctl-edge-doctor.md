@@ -11,7 +11,8 @@ local governed Claude session.
 ## Usage
 
 ```bash
-CORDUM_GATEWAY=http://localhost:8081 \
+CORDUM_GATEWAY=https://localhost:8081 \
+CORDUM_TLS_CA=<cordum-checkout>/certs/ca/ca.crt \
 CORDUM_API_KEY=<cordum-api-key> \
 CORDUM_TENANT_ID=default \
 cordumctl edge doctor
@@ -38,7 +39,7 @@ cordumctl edge doctor \
 
 | Flag | Env/default | Purpose |
 | --- | --- | --- |
-| `--gateway` | `CORDUM_GATEWAY` or `http://localhost:8081` | Gateway base URL. |
+| `--gateway` | `CORDUM_GATEWAY` or `http://localhost:8081` | Gateway base URL. The compose stack needs `https://localhost:8081` with `--cacert` (`CORDUM_TLS_CA`). |
 | `--api-key` | `CORDUM_API_KEY` | Gateway API key. The value is never printed. |
 | `--tenant` | `CORDUM_TENANT_ID` or `default` | Tenant sent as `X-Tenant-ID`. |
 | `--policy-mode` | `CORDUM_EDGE_POLICY_MODE` or `enforce` | Reports degraded/fail-closed implications. |
