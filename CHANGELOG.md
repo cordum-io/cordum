@@ -277,6 +277,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- Policy: toggling an output rule (`PUT /api/v1/policy/output/rules/{id}`)
+  re-signs the bundle that holds the rule only when its stored content
+  verifies against its stored signature and the policy trust store. Under
+  the enforce signature mode an unverified bundle is refused with 409
+  `POLICY_SIGNING_REQUIRED` and nothing is written; re-sign it with
+  `cordumctl policy resign --bundle <id>` or reinstall its pack. In warn or
+  off mode the toggled content is stored unsigned. The audit entry names the
+  bundle and the new signature's key id and hash (task-90788e98).
+
 - MCP: `tools/call` refuses arguments that repeat an object key, at any
   depth, with JSON-RPC -32602 `invalid params`, before the policy check and
   any approval. A tool therefore runs only with the argument values that
