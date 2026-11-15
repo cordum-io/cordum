@@ -134,6 +134,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- cordumctl: `generate-certs --san` adds names such as the Helm gateway FQDN
+  (#492, task-fb3f0bbb).
+
 - Cordum Edge checks the Claude Code version before relying on `onFailure`
   (v2.1.295+): `cordumctl edge doctor` gains a `claude_code_version` check,
   and `cordumctl edge claude` in enterprise-strict refuses to launch an older
