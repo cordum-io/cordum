@@ -1,13 +1,13 @@
 # Cordum Dashboard
 
-Production dashboard for Cordum. Built with React 18, TypeScript, and Tailwind.
+Production dashboard for Cordum. Built with React 19, TypeScript, Vite, and Tailwind.
 
 ## Local Development
 
 ```bash
 cd dashboard
-npm install
-npm run dev
+pnpm install
+pnpm run dev
 ```
 
 The dev server proxies `/api`, including the `/api/v1/stream` WebSocket, to the
@@ -102,7 +102,7 @@ Example:
 docker build -t cordum-dashboard -f dashboard/Dockerfile dashboard
 ```
 
-Run the container and point it at the API gateway:
+Run the container and point it at the API gateway (plain HTTP only when the gateway runs without `GATEWAY_HTTP_TLS_CERT`, outside production):
 
 ```bash
 docker run --rm -p 8082:8080 \
