@@ -50,5 +50,12 @@ Use these instead:
   `CORDUM_MAX_RETRIES` and `CORDUM_MAX_CONCURRENT_JOBS`.
 - Output rules (see [output-policy.md](../output-policy.md)).
   `output_rules[].match.max_output_bytes` matches outputs larger than the
-  given size, and the rule's `decision` (`quarantine` or `redact`) applies.
-  An `output_rules[]` entry with `decision: redact` redacts matching content.
+  given size. Use `decision: quarantine` when matching sensitive output must
+  be withheld. Synchronous `redact` handling replaces the result pointer with
+  sanitized content, or quarantines when sanitized content is unavailable.
+  The asynchronous content check records a `REDACT` decision but does not
+  replace the job's result pointer or quarantine that decision, so matching
+  content can remain accessible through the original pointer. Do not rely on
+  asynchronous `redact` for sanitization. Asynchronous quarantine also runs
+  after job completion; it does not guarantee that output was never visible
+  before the check finished.
