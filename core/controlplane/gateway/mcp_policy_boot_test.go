@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/configsvc"
 	edgecore "github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/mcp"
@@ -363,6 +364,25 @@ func TestLoadMCPConfig_ExplicitRedisOverridesEnvFallback(t *testing.T) {
 	}
 	if cfg.PolicyGateEnabled {
 		t.Fatal("expected explicit config policy_gate_enabled=false to override CORDUM_MCP_POLICY_GATE_ENABLED=true")
+	}
+}
+
+func TestLoadMCPConfig_ReadErrorKeepsMCPDisabled(t *testing.T) {
+	t.Setenv("CORDUM_MCP_ENABLED", "true")
+	t.Setenv("CORDUM_MCP_POLICY_GATE_ENABLED", "true")
+
+	// A closed config service fails every Effective() call, as a Redis outage or a
+	// startup timeout would. A failed read is not missing config: MCP stays disabled.
+	svc, err := configsvc.New("redis://" + miniredis.RunT(t).Addr())
+	if err != nil {
+		t.Fatalf("config svc: %v", err)
+	}
+	_ = svc.Close()
+	s := &server{configSvc: svc}
+
+	cfg := s.loadMCPConfig(context.Background())
+	if cfg.Enabled || cfg.PolicyGateEnabled {
+		t.Fatalf("loadMCPConfig after a failed config read = %+v; want MCP disabled despite CORDUM_MCP_* env", cfg)
 	}
 }
 

@@ -709,7 +709,12 @@ func (s *server) loadMCPConfig(ctx context.Context) mcpGatewayConfig {
 	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 	defer cancel()
 	effective, err := s.configSvc.Effective(cctx, "", "", "", "")
-	if err != nil || effective == nil {
+	if err != nil {
+		// A failed read is not missing config. Keep the disabled default: the
+		// CORDUM_MCP_* fallbacks must never enable what stored config may disable.
+		return cfg
+	}
+	if effective == nil {
 		applyMCPEnvFallbacks(&cfg, nil)
 		return cfg
 	}
