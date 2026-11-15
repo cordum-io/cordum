@@ -731,6 +731,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Quickstart: the ready banner no longer prints the first 8 characters of the API
+  key, and on a GitHub Actions runner `quickstart.sh` registers the API key and
+  Redis password it generates as log masks before their first use (task-d09113ce).
+
 - K8s: `kubectl apply -k` works for the production and local overlays. There
   is a new `deploy/k8s/base/` kustomization, and the production NATS config is
   a patch (#492, task-023a084d).

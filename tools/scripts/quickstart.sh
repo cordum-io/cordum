@@ -133,6 +133,9 @@ preflight_deploy() {
   # invocation.
   if [[ -z "${api_key}" ]]; then
     api_key="$(openssl rand -hex 32)"
+    if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+      gha_mask_value "${api_key}" || exit 1
+    fi
     export CORDUM_API_KEY="${api_key}"
     persist_env_var CORDUM_API_KEY "${api_key}"
     mark_env_source CORDUM_API_KEY "auto-generated" ".env"
@@ -141,6 +144,9 @@ preflight_deploy() {
 
   if [[ -z "${REDIS_PASSWORD:-}" ]]; then
     REDIS_PASSWORD="$(openssl rand -hex 24)"
+    if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+      gha_mask_value "${REDIS_PASSWORD}" || exit 1
+    fi
     export REDIS_PASSWORD
     persist_env_var REDIS_PASSWORD "${REDIS_PASSWORD}"
     mark_env_source REDIS_PASSWORD "auto-generated" ".env"
@@ -281,6 +287,12 @@ capture_artifacts() {
 # --- Parse arguments ---
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/../.." && pwd)"
+# On a GitHub Actions runner, preflight_deploy registers each credential it
+# mints as a log mask before its first use (workflow_credential_guard.py).
+if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+  # shellcheck source=tools/scripts/github_actions_mask_env.sh
+  source "${script_dir}/github_actions_mask_env.sh"
+fi
 if [[ ! -f "docker-compose.yml" && -f "${repo_root}/docker-compose.yml" ]]; then
   cd "${repo_root}"
 fi
@@ -603,7 +615,7 @@ echo "  │  Cordum is running!                                     │"
 echo "  ├─────────────────────────────────────────────────────────┤"
 echo "  │  Dashboard:      http://localhost:8082                  │"
 echo "  │  API Gateway:    ${API_BASE}                            │"
-echo "  │  API Key:        ${API_KEY:0:8}... (see .env)           │"
+echo "  │  API Key:        CORDUM_API_KEY in .env                 │"
 echo "  ├─────────────────────────────────────────────────────────┤"
 echo "  │  Login:          ${CREDS_SUMMARY}"
 echo "  │  (auto-generated — rotate before exposing publicly)     │"
