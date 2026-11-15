@@ -307,6 +307,31 @@ TLS env vars for gateway (gRPC + HTTP), safety kernel, and context engine.
 See [Production Deployment Guide](../docs/guides/production-deployment.md) for
 full details.
 
+The dashboard's nginx then proxies to the gateway over HTTPS, by the Service's
+cluster DNS name: `<fullname>-api-gateway.<namespace>.svc.cluster.local`
+(`cordum-api-gateway.cordum.svc.cluster.local` for release `cordum` in
+namespace `cordum`). With `global.tls.clientCertSecret` set, it verifies the
+gateway certificate against that secret's `ca.crt`, so the server certificate
+must list that name or every dashboard API call returns 502. Without it, the
+connection is encrypted but not verified.
+
+With a dev CA from `cordumctl generate-certs`, add the name with `--san`
+(repeatable; the default SANs stay in the certificate):
+
+```bash
+cordumctl generate-certs --dir ./cordum-certs \
+  --san cordum-api-gateway.cordum.svc.cluster.local
+kubectl -n cordum create secret tls cordum-server-tls \
+  --cert=./cordum-certs/server/tls.crt --key=./cordum-certs/server/tls.key
+kubectl -n cordum create secret generic cordum-client-tls \
+  --from-file=ca.crt=./cordum-certs/ca/ca.crt \
+  --from-file=tls.crt=./cordum-certs/client/tls.crt \
+  --from-file=tls.key=./cordum-certs/client/tls.key
+```
+
+Then install with `--set global.tls.clientCertSecret=cordum-client-tls` in
+addition to the flags above.
+
 ## Migration Notes
 
 When upgrading from a chart version that did not include these security features:
@@ -321,6 +346,12 @@ When upgrading from a chart version that did not include these security features
   no breaking change on upgrade.
 - **Production mode**: New `global.production` (default `false`) and
   `global.tls` settings have no effect unless explicitly enabled.
+- **Dashboard API base**: `dashboard.env.apiBaseUrl` used to default to the
+  in-cluster gateway URL, which a browser cannot reach. It now defaults to
+  `/api/v1` on the dashboard's origin, which its nginx proxies to the gateway;
+  the dashboard's CSP blocks API calls to other origins. With
+  `global.tls.enabled` that proxy now uses HTTPS (see
+  [Production Install with TLS](#production-install-with-tls)).
 
 ## Notes
 

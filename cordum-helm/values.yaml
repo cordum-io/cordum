@@ -498,13 +498,13 @@ dashboard:
     type: ClusterIP
     port: 8080
   env:
-    apiBaseUrl: ""
+    apiBaseUrl: "" # CORDUM_API_BASE_URL; empty = /api/v1 on the dashboard origin, proxied to the gateway
     embedApiKey: false
     tenantId: default
     principalId: ""
     principalRole: ""
     traceUrlTemplate: "" # CORDUM_TRACE_URL_TEMPLATE
-    apiUpstreamScheme: "" # CORDUM_API_UPSTREAM_SCHEME
+    apiUpstreamScheme: "" # CORDUM_API_UPSTREAM_SCHEME; empty = https with global.tls.enabled, else http
   resources:
     limits:
       cpu: 500m
