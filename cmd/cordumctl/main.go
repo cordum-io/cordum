@@ -390,7 +390,7 @@ func usage() {
 
 Usage:
   cordumctl init <dir> [--force] [--framework langchain|crewai|autogen]
-  cordumctl generate-certs [--dir ./certs] [--force] [--days 365]
+  cordumctl generate-certs [--dir ./certs] [--force] [--days 365] [--san name-or-ip ...]
   cordumctl demo run <demo_id> [--timeout 30] [--json]
   cordumctl mcp pending [--status pending] [--json]
   cordumctl mcp approve <approval_id> [--reason text]
