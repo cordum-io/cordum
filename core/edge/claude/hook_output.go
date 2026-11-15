@@ -1,6 +1,9 @@
 package claude
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 type ClaudeHookOutput struct {
 	Continue           *bool               `json:"continue,omitempty"`
@@ -48,7 +51,8 @@ func preToolUseOutput(d AgentdDecision) ClaudeHookOutput {
 		if reason == "" {
 			reason = "approval required"
 		}
-		if d.ApprovalRef != "" {
+		// agentd's reason already carries the approval_ref guidance.
+		if d.ApprovalRef != "" && !strings.Contains(reason, "approval_ref=") {
 			reason = fmt.Sprintf("%s; approval_ref=%s; approve then retry the tool call", reason, d.ApprovalRef)
 		}
 	default:
