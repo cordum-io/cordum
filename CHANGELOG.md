@@ -7,6 +7,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Helm installs with TLS verify the gateway certificate by its Service FQDN
+  (`<release>-api-gateway.<namespace>.svc.cluster.local`). Certificates from
+  `cordumctl generate-certs` need `--san` for that name, or the dashboard gets
+  502 (#492, task-22fc92b7).
+
 - `cordumctl` defaults to `https://localhost:8081`; a gateway without TLS needs
   `--gateway http://...` (#492, task-75cb9729).
 
@@ -719,6 +724,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - typedoc, typedoc-plugin-coverage and typedoc-plugin-markdown are removed from the install with pnpm `-` overrides. typedoc 0.28 calls `Minimatch#matchOne`, which 11.x removed. orval 8.31.0 loads typedoc only for its `docs` output, which the dashboard does not configure. Until typedoc supports minimatch 11, enabling that output fails at import. orval stays at 8.31.0.
 
 ### Fixed
+
+- Helm: the default install shipped a broken dashboard: the browser was given
+  the in-cluster gateway name as its API base. It now uses `/api/v1` through
+  the dashboard nginx, and that nginx verifies the gateway certificate when TLS
+  is on (#492, task-22fc92b7).
 
 - Dashboard Copy URL: the K8s ingresses route `/mcp` (#492, task-4b713944).
 
