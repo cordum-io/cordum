@@ -614,7 +614,7 @@ cluster once the pods are ready. Re-run it if you replace the cluster.
 - Base: ~100 bytes per job record, ~500 bytes per workflow run, ~1KB per DLQ entry
 - Estimate: 1 million concurrent jobs = ~100MB job state + context/result pointers
 - Rule of thumb: 2x your estimated working set for headroom
-- Monitor with: `redis-cli INFO memory`
+- Monitor with `INFO memory` on each node. The production overlay's Redis Cluster (`deploy/k8s/production`) requires TLS client certificates and the password: `kubectl exec -n cordum cordum-redis-0 -c redis -- sh -c 'redis-cli --tls --cacert /etc/redis/tls/ca.crt --cert /etc/redis/tls/tls.crt --key /etc/redis/tls/tls.key -a "$REDIS_PASSWORD" INFO memory'` (repeat for `cordum-redis-1` through `cordum-redis-5`)
 
 **NATS JetStream storage**:
 - Each JetStream stream has a configurable max size and message TTL

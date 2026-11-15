@@ -732,10 +732,9 @@ kubectl get events -n cordum --sort-by=.lastTimestamp | tail -20
 # Logs for a specific service
 kubectl logs -n cordum deployment/cordum-api-gateway --tail=100
 
-# Check Redis cluster status
-kubectl exec -n cordum cordum-redis-0 -- redis-cli --tls \
-  --cacert /etc/redis/tls/ca.crt --cert /etc/redis/tls/tls.crt \
-  --key /etc/redis/tls/tls.key cluster info
+# Check Redis cluster status (production overlay: TLS client certs + password)
+kubectl exec -n cordum cordum-redis-0 -c redis -- \
+  sh -c 'redis-cli --tls --cacert /etc/redis/tls/ca.crt --cert /etc/redis/tls/tls.crt --key /etc/redis/tls/tls.key -a "$REDIS_PASSWORD" cluster info'
 
 # Check NATS JetStream streams
 kubectl exec -n cordum cordum-nats-0 -- nats --tlscacert /etc/nats/tls/ca.crt \
@@ -744,9 +743,14 @@ kubectl exec -n cordum cordum-nats-0 -- nats --tlscacert /etc/nats/tls/ca.crt \
 # Check network policies
 kubectl get networkpolicy -n cordum
 
-# Force config reload (delete cached config in Redis)
-kubectl exec -n cordum deployment/cordum-api-gateway -- \
-  redis-cli -h redis -p 6379 DEL cfg:system:default
+# Force config reload (delete cached config in Redis). The control-plane images
+# don't ship redis-cli, so run it in the Redis pod.
+# Base manifests (deploy/k8s/base.yaml): single Redis, no TLS, password required
+kubectl exec -n cordum deployment/redis -- \
+  sh -c 'redis-cli -a "$REDIS_PASSWORD" DEL cfg:system:default'
+# Production overlay (deploy/k8s/production): Redis Cluster, TLS with client certs
+kubectl exec -n cordum cordum-redis-0 -c redis -- \
+  sh -c 'redis-cli -c --tls --cacert /etc/redis/tls/ca.crt --cert /etc/redis/tls/tls.crt --key /etc/redis/tls/tls.key -a "$REDIS_PASSWORD" DEL cfg:system:default'
 ```
 
 ---
