@@ -2,7 +2,7 @@
 
 ## Overview
 
-Cordum uses five credential groups that must be rotated periodically or after any suspected compromise. Secrets live in `.env` and the TLS certificates in `./certs/` (neither is committed — see `.gitignore`). Reference `.env.example` for the full variable catalog.
+Cordum uses the credential groups in the Secrets table below, which must be rotated periodically or after any suspected compromise. Secrets live in `.env` and the TLS certificates in `./certs/` (neither is committed — see `.gitignore`). Reference `.env.example` for the full variable catalog.
 
 ## Secrets
 
