@@ -374,6 +374,23 @@ supported.
 
 Canonical hook paths are `/opt/cordum/bin/cordum-hook`, `/usr/local/bin/cordum-hook`, `/Applications/Cordum Edge/cordum-hook`, and `C:\Program Files\Cordum\cordum-hook.exe`. Invariants 6–11 reject any other hook command (arbitrary shell/python/curl), which keeps the boundary at local `cordum-hook` -> local `cordum-agentd`. The verifier has no settings-file override for HTTP hook URLs, alternate MCP servers, or arbitrary hook commands. A future power-user exception must be a separately verified, signed trusted-config input; managed settings bytes alone are not trusted to weaken the production boundary.
 
+Each required hook must have `type: "command"`. For `PreToolUse`, `PostToolUse`
+and `PostToolUseFailure`, its group must use an omitted/empty matcher, `"*"`,
+or `".*"` so a tool-name filter cannot limit the required hook to selected
+tools. Matcher values are compared without trimming. These are the known
+universal forms under [Claude's matcher rules](https://code.claude.com/docs/en/hooks#matcher-patterns);
+`".*"` follows from its documented unanchored regular-expression semantics.
+Hook-set objects accept only `matcher` and `hooks`; command-hook objects
+accept only `type`, `command`, `timeout` and `onFailure`. Unsupported fields,
+including conditional `if` and `async`, fail verification rather than being
+ignored. This conservative contract verifies the generated synchronous
+command hooks; advanced or future hook options require explicit verifier
+support. Unrelated optional top-level settings remain accepted.
+`ConfigChange` and `FileChanged` intentionally retain configuration-source
+and filename-watchlist matchers. This payload check does not validate those
+matchers against an independent fleet watchlist; operators must review their
+intended coverage separately.
+
 The same checks run inside `cordumctl edge doctor` when you pass
 `--managed-settings-path` (or set `CORDUM_EDGE_MANAGED_SETTINGS_PATH`) and the
 independent `--mcp-gateway-url`. With no managed-settings path, doctor still
