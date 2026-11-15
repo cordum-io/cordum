@@ -204,11 +204,12 @@ describe("SettingsMcpPage", () => {
     expect(container.textContent).toContain("List jobs");
   });
 
-  it("does not show mcp.port, which nothing listens on", () => {
+  it("does not show mcp.port or mcp.require_auth, which the gateway does not act on", () => {
     renderPage();
     const labels = Array.from(container.querySelectorAll("p")).map((p) => p.textContent);
     expect(labels).toContain("Transport");
     expect(labels).not.toContain("Port");
+    expect(labels).not.toContain("Auth required");
     expect(container.textContent).not.toContain("8787");
   });
 

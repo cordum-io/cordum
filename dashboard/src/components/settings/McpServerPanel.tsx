@@ -127,9 +127,8 @@ export function McpServerPanel({
           }
           contentClassName="space-y-6"
         >
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <DetailItem label="Transport" value={config.transport} />
-            <DetailItem label="Auth required" value={config.requireAuth ? "Yes" : "No"} />
             <DetailItem label="Uptime" value={uptimeLabel} />
           </div>
 
