@@ -37,7 +37,7 @@ Cordum uses three configuration layers:
 | `config/safety.yaml` | Safety kernel input/output rules, MCP allow/deny lists | Yes (JSON Schema) |
 | `config/output_scanners.yaml` | Output content scanner regex patterns (secret, PII, injection) | No |
 | `config/system.yaml` | System-wide config (budgets, rate limits, models, SLOs) — stored via config service | No |
-| `config/nats.conf` | NATS server config (JetStream `sync_interval`) | N/A |
+| `config/nats.dev-tls.conf` | NATS server config that Compose mounts as `/etc/nats/nats.conf` (JetStream `sync_interval`, TLS with client certificates). `config/nats.conf` is a no-TLS variant for local runs; `docker-compose.release.yml` uses `config/nats.release.conf` | N/A |
 
 The control plane validates pools, timeouts, and safety files against embedded JSON schemas in `core/infra/config/schema/`. Invalid configs return errors; for timeouts, the system falls back to defaults.
 
@@ -306,8 +306,8 @@ Config changes propagate to all replicas through two mechanisms:
 To force a config reload from files:
 
 ```bash
-# Delete the Redis config key
-redis-cli DEL cfg:system:default
+# Delete the Redis config key (Compose stack: TLS-only Redis with a password)
+docker compose exec redis redis-cli --tls --cacert /etc/cordum/tls/ca/ca.crt -a "$REDIS_PASSWORD" DEL cfg:system:default
 
 # The next scheduler tick (or restart) will re-bootstrap from files
 ```
@@ -685,7 +685,7 @@ scanners:
 | `CORDUM_LOG_FORMAT` | `text` | No | Log format: `json` or `text` |
 | `CORDUM_GRPC_REFLECTION` | — | No | Set to `1` to enable gRPC reflection (dev only) |
 | `NATS_URL` | `nats://localhost:4222` | Yes | NATS server URL |
-| `REDIS_URL` | `redis://localhost:6379` | Yes | Redis URL (Compose: `redis://:${REDIS_PASSWORD}@redis:6379` — password required) |
+| `REDIS_URL` | `redis://localhost:6379` | Yes | Redis URL (Compose: `rediss://:${REDIS_PASSWORD}@redis:6379` over TLS with `REDIS_TLS_*` — password required) |
 | `NATS_USE_JETSTREAM` | `0` | No | Enable NATS JetStream: `0` or `1` |
 | `POOL_CONFIG_PATH` | `config/pools.yaml` | No | Path to pools config |
 | `TIMEOUT_CONFIG_PATH` | `config/timeouts.yaml` | No | Path to timeouts config. **Production mode**: if explicitly set and the file cannot be loaded or parsed, the scheduler exits with an error. In dev mode, falls back to built-in defaults with a warning. |
@@ -969,7 +969,7 @@ If Redis is unavailable, replicas fall back to direct IdP fetches (same behavior
 | `CORDUM_SAML_ENABLED` | `false` | Enable the SAML service-provider endpoints on the gateway |
 | `CORDUM_SAML_IDP_METADATA_URL` | — | Remote IdP metadata URL the gateway should fetch on startup |
 | `CORDUM_SAML_IDP_METADATA` | — | Inline IdP metadata XML (use instead of the URL for air-gapped installs) |
-| `CORDUM_SAML_BASE_URL` | `http://localhost:8081` | External gateway base URL used to publish metadata, ACS, and login endpoints |
+| `CORDUM_SAML_BASE_URL` | `http://localhost:8081` | External gateway base URL used to publish metadata, ACS, and login endpoints. The compose stack needs `https://localhost:8081` (or its external HTTPS URL) |
 | `CORDUM_SAML_CERT_PATH` | — | PEM certificate path for the service-provider signing / TLS cert |
 | `CORDUM_SAML_KEY_PATH` | — | PEM private-key path paired with `CORDUM_SAML_CERT_PATH` |
 | `CORDUM_SAML_ENTITY_ID` | metadata URL | Explicit SAML entity ID override for the service provider |
