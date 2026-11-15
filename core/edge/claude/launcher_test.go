@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/url"
 	"os"
@@ -262,6 +263,9 @@ func TestResolveLaunchMetadataFallbacks(t *testing.T) {
 
 func TestMain(m *testing.M) {
 	if os.Getenv("CORDUM_TEST_HELPER_PROCESS") == "1" {
+		if len(os.Args) == 2 && os.Args[1] == "--version" {
+			os.Exit(runLauncherClaudeVersionHelper())
+		}
 		if os.Getenv("CORDUM_AGENTD_NONCE") != "" {
 			os.Exit(runLauncherAgentdHelper())
 		}
@@ -338,6 +342,18 @@ func writeLauncherHijackProbe(path, host string) {
 		result["bind_error"] = err.Error()
 	}
 	captureEnv(path, result)
+}
+
+// runLauncherClaudeVersionHelper answers the launcher's `claude --version`
+// preflight. CORDUM_TEST_CLAUDE_VERSION overrides the printed line; the
+// default is the first version that honors "onFailure": "block".
+func runLauncherClaudeVersionHelper() int {
+	version := os.Getenv("CORDUM_TEST_CLAUDE_VERSION")
+	if version == "" {
+		version = MinHookOnFailureVersion + " (Claude Code)"
+	}
+	fmt.Println(version)
+	return 0
 }
 
 func runLauncherClaudeHelper() int {

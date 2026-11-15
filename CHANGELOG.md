@@ -131,6 +131,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Cordum Edge checks the Claude Code version before relying on `onFailure`
+  (v2.1.295+): `cordumctl edge doctor` gains a `claude_code_version` check,
+  and `cordumctl edge claude` in enterprise-strict refuses to launch an older
+  Claude Code (#492, task-d9dd5d4e).
+
 - `PUT /api/v1/agents/{id}` accepts `agent_id` to link a worker, with the same
   checks as create (#492, task-bc7181da).
 
