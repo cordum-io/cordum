@@ -4,7 +4,7 @@
 - Date: 2026-02-13
 
 ## Context
-Cordum already enforces input policy before dispatch. That protects execution boundaries, but does not guarantee safe result payloads. Successful jobs can still return secrets, PII, or unsafe generated content.
+Cordum already checks input policy at submission and before dispatch on its integrated entry points, a `supported` mechanism (CLM-010 in the [claim register](../contract/claims.yaml)). That check does not cover result payloads. Successful jobs can still return secrets, PII, or unsafe generated content.
 
 We need an output policy architecture that:
 - fits scheduler hot-path latency requirements

@@ -113,6 +113,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   and battle-tested wording, three summary lines that went beyond the file's own figures and the
   commands that called the missing scripts, and qualifies the competitor comparison and the
   anonymized deployment figures (M0-07-DOCS-BENCH, task-4290ac28).
+- Docs: ADR-001, ADR-005, ADR-008 and the v1.3.0 and unreleased release notes now state their
+  pre-dispatch, CSP, eval-dataset and MCP-approval statements at the status recorded in
+  docs/contract/claims.yaml (CLM-010, CLM-013, CLM-016, CLM-050, CLM-080). ADR-001 gets a
+  neutral title and a dated status note: a `THROTTLE` decision requeues the job, and its
+  performance target is not measured. The released v1.3.0 MCP highlight is kept as written,
+  with a dated qualification after it. The ADR decisions and statuses are unchanged
+  (M0-07-DOCS-ADR, task-7d6203ff).
 
 - Docs: the Safety Kernel guide, scheduler internals, configuration reference, production
   runbook, threat model and dashboard page spec now name the settings that select each fail
