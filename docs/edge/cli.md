@@ -119,11 +119,12 @@ review.
 | Mode | Gateway/agentd unavailable | Intended use |
 | --- | --- | --- |
 | `observe` | Allow degraded and write evidence where possible. | Discovery/local visibility. |
-| `enforce` | Allow only known-safe degraded actions; deny risky/unknown actions — requires `CORDUM_AGENTD_FAIL_CLOSED=true`, which is not the default. Without it the session fails **open** on agentd error/timeout. | Developer enforcement and demos. |
+| `enforce` | Allow only known-safe degraded actions; deny risky/unknown actions. The wrapper renders `CORDUM_AGENTD_FAIL_CLOSED=true` and `"onFailure": "block"` on the blocking hooks (Claude Code v2.1.295+), so agentd errors/timeouts and a failed hook process block too. | Developer enforcement and demos. |
 | `enterprise-strict` | Fail closed. | Managed enterprise rollout. |
 
 Malformed hook input fails closed with redacted stderr. Hook timeout values must
-stay below Claude Code's 5s command-hook deadline; generated settings use `4.5s`.
+stay below the command-hook `"timeout": 5` the wrapper generates (Claude Code's
+own default is 600 seconds); generated settings use `4.5s`.
 
 ## Token tradeoffs
 
@@ -148,7 +149,7 @@ schedule, and synthetic-rollback test surface live in
 | Subcommand | Purpose |
 | --- | --- |
 | `export` | Render `managed-settings.json` + `managed-mcp.json` into `--output <dir>`. Refuses to overwrite without `--force`. Rejects flag values containing secret markers (`sk-…`, `ghp_…`, bearer tokens). |
-| `verify` | Validate a deployed `managed-settings.json` at `--path <file>` against the 14 enterprise invariants (see [managed-settings-deploy.md § 6](managed-settings-deploy.md#6-verification-reference)). `--json` emits `{ok, drifts[], source}`. |
+| `verify` | Validate a deployed `managed-settings.json` at `--path <file>` against the 17 enterprise invariants (see [managed-settings-deploy.md § 6](managed-settings-deploy.md#6-verification-reference)). `--json` emits `{ok, drifts[], source}`. |
 | `rollback-template` | **Synthetic test fixture only — not a production rollback.** Atomically regenerates the template at `--path <file>` (mode `0600`) and re-runs `verify`. Production rollback is MDM-orchestrated; see [managed-settings-deploy.md § 8](managed-settings-deploy.md#8-rollback). |
 
 ### Common flags
