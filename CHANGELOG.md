@@ -783,6 +783,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   handler ignored it, so Python SDK and curl retries could create duplicate
   jobs. The TypeScript SDK now sends the body field too (#492, task-e5c933b8).
 
+- OpenAPI: `POST /mcp/message` lists the status codes the transport returns
+  (202, 404, 408, 413, 429, 500 and 504), `createAgent` documents `agent_id`
+  and `AGENT_WORKER_CONFLICT`, and `createAgent` and `updateAgent` list their
+  500. The dashboard and TypeScript SDK clients are regenerated (#492,
+  task-b698a3fe).
+
 - Cordum Edge: agentd ends an inline approval wait 1 s before cordum-hook's
   budget runs out. So an approval nobody resolved in time returns its
   `approval_ref`, not a generic timeout (#492, task-c2664488).
