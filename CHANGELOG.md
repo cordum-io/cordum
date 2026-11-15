@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Python SDK: `cordum_sdk._generated` is regenerated from the OpenAPI spec.
+  `CreateWorkerCredentialBody` is now `CreateWorkerCredentialRequest`. The
+  `CreateShadowAgentFindingRequest*` models are gone and
+  `create_shadow_agent_finding` takes an untyped JSON body, because that
+  schema's `anyOf` yields no model in openapi-python-client 0.21.7
+  (task-e8e6840b).
+
 - Helm installs with TLS verify the gateway certificate by its Service FQDN
   (`<release>-api-gateway.<namespace>.svc.cluster.local`). Certificates from
   `cordumctl generate-certs` need `--san` for that name, or the dashboard gets
@@ -760,6 +767,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - typedoc, typedoc-plugin-coverage and typedoc-plugin-markdown are removed from the install with pnpm `-` overrides. typedoc 0.28 calls `Minimatch#matchOne`, which 11.x removed. orval 8.31.0 loads typedoc only for its `docs` output, which the dashboard does not configure. Until typedoc supports minimatch 11, enabling that output fails at import. orval stays at 8.31.0.
 
 ### Fixed
+
+- Python SDK: `scripts/generate.sh` and `scripts/generate.ps1` run from a
+  fresh virtualenv on Python 3.11 to 3.13. The `generator` extra pins
+  openapi-python-client 0.21.7 and the packages that break or change its
+  output, and the scripts fix `PYTHONHASHSEED` and run `ruff format`, so two
+  runs give byte-identical output. The regenerated client gains the
+  operations and fields added to the spec since #403, such as
+  `resign_policy_bundle` and `UpdateAgentBody.agent_id`. The package now
+  depends on `python-dateutil`, which the generated models import
+  (task-e8e6840b).
 
 - K8s: the base Redis ran `--appendonly yes` on a read-only root filesystem
   with nothing mounted at `/data`. It now has an `emptyDir` there (#492,
