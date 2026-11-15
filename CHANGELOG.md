@@ -714,6 +714,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Cordum Edge: agentd ends an inline approval wait 1 s before cordum-hook's
+  budget runs out. So an approval nobody resolved in time returns its
+  `approval_ref`, not a generic timeout (#492, task-c2664488).
+
 - Copilot hooks: the generated file has `"version": 1`; denies exit 2, with a
   top-level `permissionDecision`, so they block in both the Copilot CLI and
   VS Code harnesses; the approval URL stays in the deny reason; the doctor

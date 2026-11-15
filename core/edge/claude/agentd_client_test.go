@@ -66,6 +66,35 @@ func TestHTTPAgentdClientPostsBoundedRequestToLoopback(t *testing.T) {
 	}
 }
 
+// agentd needs the hook's remaining budget to end an inline approval wait in
+// time; the header carries the shorter of the client timeout and ctx deadline.
+func TestHTTPAgentdClientSendsHookBudgetHeader(t *testing.T) {
+	budgets := make(chan string, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		budgets <- r.Header.Get(AgentdHookBudgetHeader)
+		_, _ = w.Write([]byte(`{"decision":"allow"}`))
+	}))
+	defer server.Close()
+	client, err := NewHTTPAgentdClient(server.URL, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	for _, c := range []context.Context{context.Background(), ctx} {
+		if _, err := client.EvaluateHook(c, AgentdRequest{EventName: "PreToolUse"}); err != nil {
+			t.Fatalf("EvaluateHook: %v", err)
+		}
+	}
+	for _, maxMS := range []int{2000, 1000} {
+		var ms int
+		raw := <-budgets
+		if _, err := fmt.Sscan(raw, &ms); err != nil || ms > maxMS || ms < maxMS-200 {
+			t.Fatalf("%s = %q, want about %dms", AgentdHookBudgetHeader, raw, maxMS)
+		}
+	}
+}
+
 func TestRunAuthenticatesViaHeaderFromEnv(t *testing.T) {
 	handlerErr := make(chan error, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
