@@ -413,7 +413,7 @@ func checkNATSConnected(_ context.Context, env *doctorEnv) checkResult {
 		return checkResult{
 			State:  stateFail,
 			Detail: "gateway reports NATS disconnected",
-			Fix:    "docker compose logs nats  (verify NATS_TOKEN + nats service health)",
+			Fix:    "docker compose logs nats  (NATS authenticates clients by certificate: check ./certs/client from cordumctl generate-certs, and restart the whole stack after regenerating)",
 		}
 	}
 	return checkResult{State: stateOK, Detail: "NATS connected: " + env.status.NATS.Status}
