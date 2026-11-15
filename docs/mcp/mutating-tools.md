@@ -382,7 +382,7 @@ Edge approval named by `approval_ref`, and step 5 adds `_approval_ref`; see
 [When `retry_hint` is `retry_with_approval_ref`](#when-retry_hint-is-retry_with_approval_ref).
 
 Claude Code surfaces: *"This tool needs approval. Open
-http://localhost:8081/approvals and approve request apr-1a2b3c"*
+http://localhost:8082/approvals and approve request apr-1a2b3c"*
 
 **Step 4.** The operator opens the dashboard's Approvals page, finds the request
 with approval ID `apr-1a2b3c`, reviews the canonical args in the modal, and clicks
