@@ -1249,6 +1249,9 @@ func newGatewayEdgeStore(client redis.UniversalClient, reg prometheus.Registerer
 		client,
 		edgecore.WithRecorder(recorder),
 		edgecore.WithApprovalMaxTTL(approvalMaxTTL),
+		// The store enforces the same execution cap as the Edge executions
+		// API pre-check.
+		edgecore.WithMaxExecutionsPerSession(edgeMaxExecutionsPerSession()),
 	)
 	return store, recorder
 }
