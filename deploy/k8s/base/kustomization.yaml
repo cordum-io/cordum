@@ -1,0 +1,15 @@
+# Base for the kustomize overlays (../local, ../production).
+#
+# base.yaml here is a byte-for-byte copy of ../base.yaml, which stays the
+# single-file manifest for `kubectl apply -f deploy/k8s/base.yaml`. Kustomize
+# cannot load ../base.yaml from here or from an overlay (its load restrictor
+# rejects files outside the kustomization root, and an ancestor directory is
+# a cycle), so the overlays build from this copy instead.
+#
+# Edit ../base.yaml, then: cp deploy/k8s/base.yaml deploy/k8s/base/base.yaml
+# tools/scripts/validate_deploy_manifests.sh fails CI when the two differ.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - base.yaml

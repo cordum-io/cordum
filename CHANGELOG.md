@@ -725,6 +725,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- K8s: `kubectl apply -k` works for the production and local overlays. There
+  is a new `deploy/k8s/base/` kustomization, and the production NATS config is
+  a patch (#492, task-023a084d).
+
 - Helm: with TLS on, the dashboard nginx verifies the gateway certificate on
   `/api/v1/stream` too. A `gateway.service.httpPort` other than 8081 works, and
   `nats.auth.token` reaches the services instead of locking them out (#492,
