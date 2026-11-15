@@ -777,6 +777,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- MCP approvals: VS Code `type:"http"` (session-less) callers can claim
+  their approval on retry, and their prompt-injection taint now carries
+  across POSTs. Two callers never share either (#492, task-dcd2a4fb).
+
 - Python SDK: `scripts/generate.sh` and `scripts/generate.ps1` run from a
   fresh virtualenv on Python 3.11 to 3.13. The `generator` extra pins
   openapi-python-client 0.21.7 and the packages that break or change its

@@ -185,6 +185,15 @@ expired / consumed / args_mismatch / policy_mismatch / self_approval /
 cross_tenant / not_found) surface as JSON-RPC `-32096` with
 `error.data.kind` carrying the typed conflict family.
 
+A `/mcp/message` POST
+that names no MCP session (a `"type": "http"` client) runs in its own
+one-shot Edge session. The claim therefore binds to the approval's own
+session, execution and parent event, but only when the approval was
+minted for the same caller (same API key or login and the same
+principal) acting as the same agent. The args, policy snapshot, status,
+expiry and self-approval checks still apply, and a claim for anyone
+else's approval is refused.
+
 The registry's `RequiresApproval` gate dual-writes each Edge approval
 with a record on the MCP approvals page. Approving or rejecting either
 one resolves both, and the other page then answers `409`. The Edge
