@@ -714,6 +714,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- `POST /api/v1/jobs` honors the `Idempotency-Key` header when the body key is
+  empty; the body wins if both are set. The spec advertised the header, but the
+  handler ignored it, so Python SDK and curl retries could create duplicate
+  jobs. The TypeScript SDK now sends the body field too (#492, task-e5c933b8).
+
 - Cordum Edge: agentd ends an inline approval wait 1 s before cordum-hook's
   budget runs out. So an approval nobody resolved in time returns its
   `approval_ref`, not a generic timeout (#492, task-c2664488).

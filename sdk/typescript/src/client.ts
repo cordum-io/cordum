@@ -271,7 +271,9 @@ export class CordumClient {
         options: { idempotencyKey?: string } = {},
       ) =>
         this.request<"/api/v1/jobs", "POST">("POST", "/api/v1/jobs", {
-          body,
+          // The gateway dedupes on the body field; the header marks the POST
+          // as safe to retry for the retry middleware.
+          body: options.idempotencyKey ? { ...body, idempotency_key: options.idempotencyKey } : body,
           headers: options.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : undefined,
         }),
       decisions: (id: GetPath<"/api/v1/jobs/{id}/decisions">["id"]) =>
