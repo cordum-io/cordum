@@ -6,7 +6,13 @@ from cordum_sdk._generated.models.job_detail import JobDetail
 from cordum_sdk._generated.models.list_jobs_response_200 import ListJobsResponse200
 from cordum_sdk._generated.models.submit_job_request import SubmitJobRequest
 from cordum_sdk._generated.models.submit_job_response import SubmitJobResponse
-from cordum_sdk.errors import AuthenticationError, NotFoundError, RateLimitError
+from cordum_sdk.errors import (
+    AuthenticationError,
+    AuthorizationError,
+    CordumError,
+    NotFoundError,
+    RateLimitError,
+)
 
 
 def _job_summary_payload(job_id: str) -> dict[str, object]:
@@ -162,3 +168,76 @@ async def test_async_client_dispatch_and_context_manager() -> None:
         assert client._httpx_client.is_closed is False
 
     assert client._httpx_client.is_closed is True
+
+
+# submit_job documents 403 and 429 with the Error schema, so before task-4458e689 the
+# generated parser read these bodies first and raised on any shape but {error, code, status}.
+_ERROR_BODIES = [
+    pytest.param(
+        429,
+        {"json": {"error": {"code": "rate_limited", "message": "slow down"}}},
+        RateLimitError,
+        id="nested-envelope",
+    ),
+    pytest.param(
+        403,
+        {"text": "<html><body>Forbidden</body></html>"},
+        AuthorizationError,
+        id="non-json",
+    ),
+    pytest.param(
+        429,
+        {"json": {"error": "slow down", "code": "rate_limited", "status": 429}},
+        RateLimitError,
+        id="canonical",
+    ),
+]
+
+
+def _error_transport(status: int, body: dict[str, object]) -> httpx.MockTransport:
+    def handler(request: httpx.Request) -> httpx.Response:
+        headers = {"Retry-After": "5", "X-Request-Id": "req-err"}
+        return httpx.Response(status, headers=headers, **body)
+
+    return httpx.MockTransport(handler)
+
+
+def _assert_typed_error(error: CordumError, status: int, body: dict[str, object]) -> None:
+    assert error.status_code == status
+    assert error.request_id == "req-err"
+    assert error.payload == body.get("json", body.get("text"))
+    if isinstance(error, RateLimitError):
+        assert error.retry_after == 5
+
+
+@pytest.mark.parametrize(("status", "body", "error_cls"), _ERROR_BODIES)
+def test_client_maps_error_status_whatever_the_body_shape(
+    status: int, body: dict[str, object], error_cls: type[CordumError]
+) -> None:
+    client = CordumClient(
+        "https://api.example.test",
+        auth="secret-key",
+        tenant_id="tenant-123",
+        transport=_error_transport(status, body),
+    )
+    with pytest.raises(error_cls) as caught:
+        client.jobs.submit_job(body=SubmitJobRequest(prompt="hello"))
+    _assert_typed_error(caught.value, status, body)
+    client.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("status", "body", "error_cls"), _ERROR_BODIES)
+async def test_async_client_maps_error_status_whatever_the_body_shape(
+    status: int, body: dict[str, object], error_cls: type[CordumError]
+) -> None:
+    client = AsyncCordumClient(
+        "https://api.example.test",
+        auth="secret-key",
+        tenant_id="tenant-123",
+        transport=_error_transport(status, body),
+    )
+    with pytest.raises(error_cls) as caught:
+        await client.jobs.submit_job(body=SubmitJobRequest(prompt="hello"))
+    _assert_typed_error(caught.value, status, body)
+    await client.aclose()

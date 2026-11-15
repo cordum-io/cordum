@@ -777,6 +777,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Python SDK: an error response whose body is not the `Error` schema, such as
+  a proxy's HTML page or the nested `{"error": {...}}` envelope, now raises the
+  typed `CordumError` subclass for its status instead of `KeyError` or
+  `JSONDecodeError`. The client maps the status from the raw response before
+  the generated parser reads the body (task-4458e689).
+
 - Python SDK: `scripts/generate.sh` and `scripts/generate.ps1` run from a
   fresh virtualenv on Python 3.11 to 3.13. The `generator` extra pins
   openapi-python-client 0.21.7 and the packages that break or change its
