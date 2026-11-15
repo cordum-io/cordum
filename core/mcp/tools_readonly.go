@@ -108,7 +108,7 @@ const (
 		"happened around time T?', or 'did tool Y get called?'. Returns chain-verified events " +
 		"(seq + event_hash + prev_hash) so callers can prove integrity downstream."
 
-	descAuditVerify = "Walk the tenant's audit Merkle chain and report integrity: ok / compromised / " +
+	descAuditVerify = "Walk the tenant's audit hash chain and report integrity: ok / compromised / " +
 		"partial. Use this when the operator asks 'is our audit log clean?' or before handing " +
 		"a compliance auditor evidence. Response includes any gaps with sequence numbers."
 
