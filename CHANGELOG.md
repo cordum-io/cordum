@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Edge managed settings: managed-settings verification fails closed on
+  unsupported conditional or background hook modifiers, and command hooks
+  must have the correct type and tool-event coverage (#492, task-99f50a3d).
+
 - Python SDK: `cordum_sdk._generated` is regenerated from the OpenAPI spec.
   `CreateWorkerCredentialBody` is now `CreateWorkerCredentialRequest`. The
   `CreateShadowAgentFindingRequest*` models are gone and

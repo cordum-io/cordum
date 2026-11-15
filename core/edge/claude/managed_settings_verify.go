@@ -308,8 +308,8 @@ func requiredHookEventDrifts(hooks map[string][]claudeHookSet) []ManagedSettings
 		if !ok {
 			drifts = append(drifts, ManagedSettingsDrift{
 				Field:    "hooks." + event + "[0].command",
-				Got:      "missing or non-canonical command",
-				Want:     "canonical cordum-hook command",
+				Got:      "missing or ineligible canonical command hook",
+				Want:     "canonical cordum-hook command with required event coverage",
 				Severity: managedSettingsDriftCritical,
 			})
 			continue
@@ -331,8 +331,17 @@ func requiredHookEventDrifts(hooks map[string][]claudeHookSet) []ManagedSettings
 func canonicalManagedHook(event string, sets []claudeHookSet) (claudeCommandHook, bool) {
 	subcommand := requiredManagedHookSubcommands[event]
 	for _, set := range sets {
+		switch event {
+		case "PreToolUse", "PostToolUse", "PostToolUseFailure":
+			// Claude documents empty/omitted and "*" as match-all, and
+			// evaluates ".*" with unanchored JavaScript RegExp.test.
+			// Do not trim: whitespace changes matcher semantics.
+			if set.Matcher != "" && set.Matcher != "*" && set.Matcher != ".*" {
+				continue
+			}
+		}
 		for _, hook := range set.Hooks {
-			if isCanonicalManagedHookCommand(hook.Command, subcommand) {
+			if hook.Type == "command" && isCanonicalManagedHookCommand(hook.Command, subcommand) {
 				return hook, true
 			}
 		}
