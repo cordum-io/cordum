@@ -14,6 +14,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   schema's `anyOf` yields no model in openapi-python-client 0.21.7
   (task-e8e6840b).
 
+- Edge managed settings: `cordumctl edge managed-settings verify` and the
+  doctor's compliance check require an independent expected MCP gateway URL
+  (`--mcp-gateway-url`) and cannot report OK without it. Ambiguous URLs or
+  JSON and inline MCP exceptions fail verification (#492, task-15747cc6).
+
+- K8s production overlay: before `kubectl apply -k`, delete the
+  `cordum-redis-cluster-init` Job and the `cordum-nats` StatefulSet (its PVCs
+  stay), since both changes touch immutable fields (#492, task-6654d7e5).
+
 - Helm installs with TLS verify the gateway certificate by its Service FQDN
   (`<release>-api-gateway.<namespace>.svc.cluster.local`). Certificates from
   `cordumctl generate-certs` need `--san` for that name, or the dashboard gets
@@ -777,6 +786,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `resign_policy_bundle` and `UpdateAgentBody.agent_id`. The package now
   depends on `python-dateutil`, which the generated models import
   (task-e8e6840b).
+
+- K8s: the production NATS cluster could not start: the `nats:2.10` image has
+  no shell, and ordered startup stalled on pod 0 until JetStream had a meta
+  leader. The flags are passed as args, and the pods start in parallel (#492,
+  task-6654d7e5).
+
+- K8s: the production Redis cluster never formed, because its init Job sent no
+  password. Its bus listened on 10000, not 16379; Redis never got SIGTERM, so
+  every stop ended in SIGKILL; and replicas never synced. Replication now runs
+  over TLS with the client certificate and `masterauth` (#492, task-6654d7e5).
 
 - K8s: the base Redis ran `--appendonly yes` on a read-only root filesystem
   with nothing mounted at `/data`. It now has an `emptyDir` there (#492,
