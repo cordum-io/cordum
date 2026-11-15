@@ -79,8 +79,9 @@ The flow above is the default one, where the `-32099` data carries
 (`edge_appr_…`), which differs from `approval_id`. Clients branch on
 `retry_hint`. Identical arguments alone never resume the call:
 
-1. The `approval_id` is correlation-only. Approving that request in the default
-   view of the Approvals page does not resume the call.
+1. The `approval_id` names the record the registry gate dual-writes with the
+   Edge approval. Approving or rejecting either one resolves both, and the other
+   page then answers `409`. The Edge approval is the pair's single consume token.
 2. The operator approves the Edge approval named by `approval_ref`: on the Edge
    lane of the Approvals page (`/approvals?lane=edge`), or with
    `POST /api/v1/edge/approvals/{approval_ref}/approve`.
