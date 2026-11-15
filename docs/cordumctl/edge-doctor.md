@@ -55,8 +55,9 @@ detector lists pods, namespaces, services, and network policies, runs the nine
 so the loader never prompts. The supplied path is read once at startup and
 never written to. We recommend running with an RBAC role limited to `get` /
 `list` / `watch` on `pods`, `namespaces`, `services`, `serviceaccounts`, and
-`networkpolicies`; the detector code itself cannot reach a mutating verb, but
-constraining RBAC is best practice.
+`networkpolicies`. `TestK8sDetector_ObserveMode_NoMutation` checks that a scan
+makes no write calls (CLM-077, `supported`); constraining RBAC is still best
+practice.
 
 ### `--shadow-ci=<provider>:<token-or-config-path>`
 

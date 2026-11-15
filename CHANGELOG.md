@@ -140,6 +140,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   performance target is not measured. The released v1.3.0 MCP highlight is kept as written,
   with a dated qualification after it. The ADR decisions and statuses are unchanged
   (M0-07-DOCS-ADR, task-7d6203ff).
+- Docs: the LLM-proxy governance, observability, shadow-scanner, shadow-remediation and
+  managed-settings deploy pages and the edge-doctor CLI page now state their redaction,
+  observe-only, error-detail and managed-settings statements at the status recorded in
+  docs/contract/claims.yaml (CLM-028, CLM-074, CLM-075, CLM-076, CLM-077). The LLM-proxy page
+  says a secret is kept from the provider only if the proxy applies the `redact` advisory and
+  that proxy routing is not qualified, verifier dependency outages are written as not
+  measured, and the managed-settings verifier checks its 18 invariants and reports drift
+  (M0-07-DOCS-EDGE-2, task-40f56a8f).
 
 - Docs: the Safety Kernel guide, scheduler internals, configuration reference, production
   runbook, threat model and dashboard page spec now name the settings that select each fail

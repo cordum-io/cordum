@@ -328,7 +328,7 @@ Go callers use `VerifyManagedSettingsWithOptions` or
 function signatures remain available, but report a critical missing-baseline
 drift and cannot report `OK` on their own.
 
-The verifier enforces the **18 invariants**, using that independent baseline
+The verifier checks the **18 invariants** and reports drift, using that independent baseline
 for the MCP endpoint:
 
 | # | Invariant | Severity |
