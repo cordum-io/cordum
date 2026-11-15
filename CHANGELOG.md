@@ -273,6 +273,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- `cordumctl policy resign` skips bundle IDs the API cannot address without changing their identity, continues past them under `--all`, and reports the ID returned by the gateway (task-64199d9b).
+
 - MCP: `tools/call` refuses arguments that repeat an object key, at any
   depth, with JSON-RPC -32602 `invalid params`, before the policy check and
   any approval. A tool therefore runs only with the argument values that
