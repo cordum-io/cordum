@@ -250,6 +250,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- MCP: `tools/call` refuses arguments that repeat an object key, at any
+  depth, with JSON-RPC -32602 `invalid params`, before the policy check and
+  any approval. A tool therefore runs only with the argument values that
+  were checked and bound by the approval hash. Clients must send each key
+  once (task-891fcef5).
+
 - MCP approvals: the approval args hash keeps string whitespace, empty
   values and nulls; only JSON formatting and key order are canonical. An
   approval therefore matches only a call that sends the same argument
