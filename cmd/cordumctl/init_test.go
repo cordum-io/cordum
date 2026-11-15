@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func scaffoldToDir(t *testing.T) string {
@@ -172,6 +174,82 @@ func TestScaffoldInit_TimeoutsTemplate900s(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "running_timeout_seconds: 900") {
 		t.Error("timeouts.yaml should have running_timeout_seconds: 900")
+	}
+}
+
+// Images must be published names, and every environment entry a plain string:
+// an unquoted "KEY=${X:?msg: y}" parses as a YAML map and docker compose
+// rejects the whole file.
+func TestScaffoldInit_ComposeIsValid(t *testing.T) {
+	var compose struct {
+		Services map[string]struct {
+			Image       string `yaml:"image"`
+			Environment []any  `yaml:"environment"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal([]byte(readCompose(t, scaffoldToDir(t))), &compose); err != nil {
+		t.Fatalf("parse compose: %v", err)
+	}
+	for name, svc := range compose.Services {
+		// Releases publish ghcr.io/cordum-io/cordum/<service>:<version>.
+		if strings.Contains(svc.Image, "/control-plane:") {
+			t.Errorf("%s uses unpublished image %s", name, svc.Image)
+		}
+		for i, entry := range svc.Environment {
+			if _, ok := entry.(string); !ok {
+				t.Errorf("%s environment[%d] is %T, want string: %v", name, i, entry, entry)
+			}
+		}
+	}
+}
+
+// The scaffold's gateway serves HTTPS with the certs `cordumctl init` writes,
+// so cordumctl's https://localhost:8081 default works from the project dir.
+func TestScaffoldInit_GatewayServesHTTPS(t *testing.T) {
+	target := scaffoldToDir(t)
+	content := readCompose(t, target)
+
+	section := func(name string) string {
+		idx := strings.Index(content, "\n  "+name+":\n")
+		if idx < 0 {
+			t.Fatalf("expected service %s in compose", name)
+		}
+		s := content[idx+1:]
+		if next := strings.Index(s[1:], "\n  cordum-"); next > 0 {
+			s = s[:next+1]
+		}
+		return s
+	}
+	for _, want := range []string{
+		"GATEWAY_HTTP_TLS_CERT=/etc/cordum/tls/server/tls.crt",
+		"GATEWAY_HTTP_TLS_KEY=/etc/cordum/tls/server/tls.key",
+		"./certs:/etc/cordum/tls:ro",
+	} {
+		if !strings.Contains(section("cordum-api-gateway"), want) {
+			t.Errorf("cordum-api-gateway should contain %q", want)
+		}
+	}
+	dashboard := section("cordum-dashboard")
+	for _, want := range []string{
+		"CORDUM_API_BASE_URL=${CORDUM_API_BASE_URL:-}\n",
+		"CORDUM_API_UPSTREAM_SCHEME=https",
+		"./certs:/etc/cordum/tls:ro",
+	} {
+		if !strings.Contains(dashboard, want) {
+			t.Errorf("cordum-dashboard should contain %q", want)
+		}
+	}
+
+	data, err := os.ReadFile(filepath.Join(target, "README.md"))
+	if err != nil {
+		t.Fatalf("read README.md: %v", err)
+	}
+	readme := string(data)
+	if strings.Contains(readme, "http://localhost:8081") {
+		t.Error("README should not point at a plain-HTTP gateway")
+	}
+	if !strings.Contains(readme, "--cacert certs/ca/ca.crt https://localhost:8081/") {
+		t.Error("README curl should trust certs/ca/ca.crt over https")
 	}
 }
 
