@@ -31,15 +31,15 @@ func TestReloadFailModesAppliesInputFailOpenScope(t *testing.T) {
 			return nil
 		}))
 		reloadFailModes(ctx, svc, engine, "test")
-		rule, ok := r.InputFailOpenScopeRule("", "job.reports.read")
+		rule, _, ok := r.InputFailOpenRule("", "job.reports.read")
 		assert.True(t, ok)
 		assert.Equal(t, "reports", rule)
-		_, ok = r.InputFailOpenScopeRule("", "job.default")
+		_, _, ok = r.InputFailOpenRule("", "job.default")
 		assert.False(t, ok)
 		cancelled, cancel := context.WithCancel(ctx)
 		cancel()
 		reloadFailModes(cancelled, svc, engine, "read-error")
-		rule, ok = r.InputFailOpenScopeRule("", "job.reports.read")
+		rule, _, ok = r.InputFailOpenRule("", "job.reports.read")
 		assert.True(t, ok)
 		assert.Equal(t, "reports", rule)
 		doc, err := svc.Get(ctx, configsvc.ScopeSystem, "default")
@@ -47,8 +47,54 @@ func TestReloadFailModesAppliesInputFailOpenScope(t *testing.T) {
 		doc.Data = next
 		require.NoError(t, svc.Set(ctx, doc))
 		reloadFailModes(ctx, svc, engine, "test-clear")
-		_, ok = r.InputFailOpenScopeRule("", "job.reports.read")
+		_, _, ok = r.InputFailOpenRule("", "job.reports.read")
 		assert.False(t, ok)
+	}
+}
+
+func TestReloadFailModesPublishesModeAndScopeTogether(t *testing.T) {
+	svc, err := configsvc.New("redis://" + miniredis.RunT(t).Addr())
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, svc.Close()) })
+	ctx := context.Background()
+	r := scheduler.NewFailModeResolver(svc, time.Hour)
+	engine := scheduler.NewEngine(nil, nil, nil, nil, nil, nil).WithFailModeResolver(r)
+	scope := func(rule, topic string) []any {
+		return []any{map[string]any{"rule": rule, "topics": []any{topic}}}
+	}
+	openA := map[string]any{"input_fail_mode": "open", "input_fail_open_scope": scope("rule-a", "job.a")}
+	// SetWithRetry keeps existing system keys, so each step replaces the doc with Get+Set.
+	require.NoError(t, svc.SetWithRetry(ctx, configsvc.ScopeSystem, "default", 3, func(*configsvc.Document) error { return nil }))
+	for _, step := range []struct {
+		name     string
+		cfg      map[string]any // the system "scheduler" map; nil removes it
+		admitted string         // the only topic admitted after the reload
+	}{
+		{"open A", openA, "job.a"},
+		{"closed B", map[string]any{"input_fail_mode": "closed", "input_fail_open_scope": scope("rule-b", "job.b")}, ""},
+		{"open A again", openA, "job.a"},
+		{"mode key removed", map[string]any{"input_fail_open_scope": scope("rule-b", "job.b")}, ""},
+		{"open A once more", openA, "job.a"},
+		{"scheduler map removed", nil, ""},
+	} {
+		doc, err := svc.Get(ctx, configsvc.ScopeSystem, "default")
+		require.NoError(t, err)
+		doc.Data = map[string]any{}
+		if step.cfg != nil {
+			doc.Data["scheduler"] = step.cfg
+		}
+		require.NoError(t, svc.Set(ctx, doc))
+		reloadFailModes(ctx, svc, engine, "test")
+		for _, topic := range []string{"job.a", "job.b"} {
+			rule, _, ok := r.InputFailOpenRule("", topic)
+			if topic == step.admitted {
+				assert.True(t, ok, "%s: %s must be admitted", step.name, topic)
+				assert.Equal(t, "rule-a", rule, step.name)
+				continue
+			}
+			assert.False(t, ok, "%s: %s must not be admitted", step.name, topic)
+			assert.Empty(t, rule, step.name)
+		}
 	}
 }
 

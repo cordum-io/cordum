@@ -313,9 +313,12 @@ func reloadFailModes(ctx context.Context, svc *configsvc.Service, engine *schedu
 	}
 	schedulerCfg, ok := doc.Data["scheduler"].(map[string]any)
 	if r := engine.FailModeResolver(); r != nil {
-		r.SetSystemInputScope(schedulerCfg["input_fail_open_scope"])
+		// One store publishes mode and scope together. An absent key publishes
+		// its unset default (closed, no topics), never the previous value.
+		mode, _ := schedulerCfg["input_fail_mode"].(string)
+		r.SetSystemInput(mode, schedulerCfg["input_fail_open_scope"])
 		rules, _ := schedulerCfg["input_fail_open_scope"].([]any)
-		slog.Info("scheduler input fail-open scope updated", "configured_rules", len(rules), "trigger", trigger)
+		slog.Info("scheduler input fail-open scope updated", "input_fail_mode", mode, "configured_rules", len(rules), "trigger", trigger)
 	}
 	if !ok {
 		return
@@ -333,9 +336,6 @@ func reloadFailModes(ctx context.Context, svc *configsvc.Service, engine *schedu
 		slog.Info("scheduler output policy enabled updated", "enabled", enabled, "trigger", trigger)
 	}
 	if r := engine.FailModeResolver(); r != nil {
-		if mode, ok := schedulerCfg["input_fail_mode"].(string); ok {
-			r.SetSystemInputMode(mode)
-		}
 		if mode, ok := schedulerCfg["output_fail_mode"].(string); ok {
 			r.SetSystemAsyncMode(mode)
 		}

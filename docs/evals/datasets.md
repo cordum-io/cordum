@@ -7,12 +7,13 @@ in the same epic) replays these fixtures against current or candidate
 policies to detect regressions: *a previously-denied action is now
 allowed by a new policy*.
 
-## Immutability contract
+## Write-once versions
 
-> **Datasets are immutable. Create a new version to change entries —
-> updates are forbidden by design.**
+> **Each dataset version is write-once through the API. Create a new
+> version to change entries; deleting a version is a separate admin
+> operation (see Retention semantics below).**
 
-The HTTP surface enforces immutability at three layers:
+The API and the store handle versions at three layers:
 
 1. **Routing:** `PUT /api/v1/evals/datasets/{id}` does **not** mutate
    the referenced dataset in place. Instead it creates a **new version**
@@ -24,7 +25,10 @@ The HTTP surface enforces immutability at three layers:
 3. **Hashing:** every dataset carries a `content_hash` (SHA-256 over the
    canonical-JSON `entries` slice, with sorted keys) captured at create
    time. Operators auditing a long-lived dataset can re-compute the
-   hash and compare it against the stored value to detect tampering.
+   hash and compare it against the stored value.
+
+Write-once dataset versions are rated `supported`, not `verified`: see
+CLM-080 in the [claim register](../contract/claims.yaml).
 
 To evolve a dataset, either call `POST /api/v1/evals/datasets` with the
 same `name` and an incremented `version`, or call
@@ -140,13 +144,13 @@ Set these once:
 ```bash
 export TENANT=acme
 export AUTH="X-API-Key: $CORDUM_API_KEY"
-export BASE=http://localhost:8081
+export BASE=https://localhost:8081   # default stack; curl gets --cacert ./certs/ca/ca.crt
 ```
 
 ### Create a dataset
 
 ```bash
-curl -sS -X POST "$BASE/api/v1/evals/datasets" \
+curl -sS --cacert ./certs/ca/ca.crt -X POST "$BASE/api/v1/evals/datasets" \
   -H "X-Tenant-ID: $TENANT" \
   -H "$AUTH" \
   -H "Content-Type: application/json" \
@@ -169,7 +173,7 @@ curl -sS -X POST "$BASE/api/v1/evals/datasets" \
 ### List datasets (paginated)
 
 ```bash
-curl -sS "$BASE/api/v1/evals/datasets?limit=50&name_prefix=pii-" \
+curl -sS --cacert ./certs/ca/ca.crt "$BASE/api/v1/evals/datasets?limit=50&name_prefix=pii-" \
   -H "X-Tenant-ID: $TENANT" -H "$AUTH"
 ```
 
@@ -179,7 +183,7 @@ Pass the `next_cursor` from the response on the next call as
 ### Create a successor version
 
 ```bash
-curl -sS -X PUT "$BASE/api/v1/evals/datasets/<id>" \
+curl -sS --cacert ./certs/ca/ca.crt -X PUT "$BASE/api/v1/evals/datasets/<id>" \
   -H "X-Tenant-ID: $TENANT" \
   -H "$AUTH" \
   -H "Content-Type: application/json" \
@@ -212,22 +216,22 @@ dataset remains queryable and unchanged.
 
 ```bash
 # By id
-curl -sS "$BASE/api/v1/evals/datasets/<id>" \
+curl -sS --cacert ./certs/ca/ca.crt "$BASE/api/v1/evals/datasets/<id>" \
   -H "X-Tenant-ID: $TENANT" -H "$AUTH"
 
 # All versions of a named dataset, newest-first
-curl -sS "$BASE/api/v1/evals/datasets/by-name/pii-leaks-q1" \
+curl -sS --cacert ./certs/ca/ca.crt "$BASE/api/v1/evals/datasets/by-name/pii-leaks-q1" \
   -H "X-Tenant-ID: $TENANT" -H "$AUTH"
 
 # Exact (name, version)
-curl -sS "$BASE/api/v1/evals/datasets/by-name/pii-leaks-q1/versions/2" \
+curl -sS --cacert ./certs/ca/ca.crt "$BASE/api/v1/evals/datasets/by-name/pii-leaks-q1/versions/2" \
   -H "X-Tenant-ID: $TENANT" -H "$AUTH"
 ```
 
 ### Force-delete (admin only)
 
 ```bash
-curl -sS -X DELETE "$BASE/api/v1/evals/datasets/<id>?force=true" \
+curl -sS --cacert ./certs/ca/ca.crt -X DELETE "$BASE/api/v1/evals/datasets/<id>?force=true" \
   -H "X-Tenant-ID: $TENANT" -H "$AUTH"
 ```
 

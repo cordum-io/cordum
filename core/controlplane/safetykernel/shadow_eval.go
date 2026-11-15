@@ -115,8 +115,10 @@ func envTruthy(v string) bool {
 // Prefer the NATS publisher so shadow events ride the same chain as
 // safety.decision events — downstream consumers (gateway's
 // NATSAuditConsumer + Chainer) treat them uniformly. When NATS is
-// unavailable the sender is nil and the evaluator emits nothing; drop
-// callback still fires so the dropped_total counter reflects reality.
+// unavailable the sender is nil: the evaluator still evaluates and counts
+// cordum_shadow_eval_total, but emits no shadow_eval audit events and counts
+// no drop for them (audit is disabled, nothing failed to publish). Events that
+// fail to publish are counted as newShadowAuditSender describes.
 func chooseShadowAuditSender(natsBus *bus.NatsBus) audit.AuditSender {
 	if natsBus == nil {
 		return nil
@@ -125,10 +127,11 @@ func chooseShadowAuditSender(natsBus *bus.NatsBus) audit.AuditSender {
 }
 
 func newShadowAuditSender(b audit.AuditBus) audit.AuditSender {
-	// Events that fail to publish are logged by the publisher and discarded
-	// locally. A forwarding exporter would double-count events in the
-	// gateway's NATS consumer, which also reads from the bus.
-	return audit.NewNATSAuditPublisher(b, audit.NewBufferedExporter(audit.NewDiscardExporter()))
+	// The publisher has no fallback. An event that fails to publish is logged,
+	// counted in cordum_audit_events_dropped_total{reason="no_fallback"}, and
+	// discarded; it is never republished. A forwarding fallback would
+	// double-count, because the gateway's NATS consumer also reads the bus.
+	return audit.NewNATSAuditPublisher(b, nil)
 }
 
 // auditSenderName is used only for the boot log; tells operators

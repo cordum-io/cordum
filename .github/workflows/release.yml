@@ -1,6 +1,8 @@
 name: Release binaries
 
-# EDGE-151 — release-time binary integrity. On every `v*` tag this workflow:
+# EDGE-151 — release-time binary integrity. docker.yml calls this workflow:
+# binaries on v* tags inherits secrets; binaries-dry-run on release-dry-run/**
+# passes no secrets. The called workflow:
 #   1. Cross-compiles cordum-hook, cordum-agentd, and cordum-claude for 5
 #      desktop targets (Linux amd64/arm64, macOS amd64/arm64, Windows amd64)
 #      with the production release fingerprint pinned at link time.
@@ -11,19 +13,27 @@ name: Release binaries
 #      Apple Developer ID codesign + notarization for the darwin binaries,
 #      Authenticode signtool for the windows binary. Forks degrade
 #      gracefully to Tier 1 via `continue-on-error: true`.
-#   4. Publishes the signed manifest + binaries via `gh release create`.
+#   4. Writes the binary qualification entry; docker.yml's publish-binaries
+#      job publishes the manifest and binaries against the run's record.
 #
 # Fork behaviour: missing secrets cause the matching job to log a banner
 # and exit success-skipped; the workflow still succeeds with Tier 1 only.
 # See docs/security/binary-signing.md for the trust boundary.
 
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_call:
 
 permissions:
-  contents: write
+  contents: read
+
+env:
+  EXPECTED_BINARIES: >-
+    cordum-agentd-darwin-amd64 cordum-agentd-darwin-arm64 cordum-agentd-linux-amd64
+    cordum-agentd-linux-arm64 cordum-agentd-windows-amd64.exe cordum-claude-darwin-amd64
+    cordum-claude-darwin-arm64 cordum-claude-linux-amd64 cordum-claude-linux-arm64
+    cordum-claude-windows-amd64.exe cordum-hook-darwin-amd64 cordum-hook-darwin-arm64
+    cordum-hook-linux-amd64 cordum-hook-linux-arm64 cordum-hook-windows-amd64.exe
+  BINARY_NO_RELEASE_GATE_REASON: "No release-time test or scan runs against the Edge binaries; the record pins their sha256 digests."
 
 jobs:
   version-monotonicity:
@@ -46,6 +56,7 @@ jobs:
         run: git fetch --tags --force
       - name: Resolve pushed and prior tags
         id: tags
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           set -euo pipefail
           pushed="${GITHUB_REF#refs/tags/}"
@@ -60,6 +71,7 @@ jobs:
           echo "prior=$prior"   >>"$GITHUB_OUTPUT"
           echo "Pushed: $pushed, Prior: $prior"
       - name: Enforce monotonicity
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           set -euo pipefail
           go run ./tools/sign/cmd/version-cli monotonic-or-fail \
@@ -263,6 +275,45 @@ jobs:
             done
           done
           ls -la release/
+      - name: Build release-qual
+        run: |
+          go build -trimpath -o "$RUNNER_TEMP/release-qual" ./tools/releasequal/cmd/release-qual
+          echo "RELEASE_QUAL=$RUNNER_TEMP/release-qual" >> "$GITHUB_ENV"
+      - name: Qualify staged binaries
+        id: qualify-binaries
+        env:
+          DRY_RUN: ${{ startsWith(github.ref, 'refs/heads/release-dry-run/') }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          staged=(release/cordum-*)
+          names=()
+          files=()
+          for f in "${staged[@]}"; do
+            [[ -f "$f" && ! -L "$f" ]] || { echo "::error::not a regular binary: $f"; exit 1; }
+            names+=("${f##*/}")
+            files+=(--file "$f")
+          done
+          diff <(printf '%s\n' $EXPECTED_BINARIES | sort) <(printf '%s\n' "${names[@]}" | sort)
+          mkdir -p "$RUNNER_TEMP/qual"
+          "$RELEASE_QUAL" entry --kind binary "${files[@]}" \
+            --exception "binary-no-release-gate=$BINARY_NO_RELEASE_GATE_REASON" \
+            --out "$RUNNER_TEMP/qual/entry-binaries.json"
+          dry_run=()
+          if [[ "$DRY_RUN" == true ]]; then dry_run=(--dry-run); fi
+          "$RELEASE_QUAL" assemble --out "$RUNNER_TEMP/qual/binary-record.json" \
+            --ref "$GITHUB_REF" --run-url "$RUN_URL" --repository "$GITHUB_REPOSITORY" \
+            --sha "$GITHUB_SHA" "${dry_run[@]}" "$RUNNER_TEMP/qual/entry-binaries.json"
+          "$RELEASE_QUAL" validate "$RUNNER_TEMP/qual/binary-record.json"
+          "$RELEASE_QUAL" check --record "$RUNNER_TEMP/qual/binary-record.json" "${files[@]}"
+      - name: Upload binary qualification entry
+        uses: actions/upload-artifact@v7
+        with:
+          name: qual-entry-binaries
+          path: ${{ runner.temp }}/qual/entry-binaries.json
+          overwrite: true
+          if-no-files-found: error
       - name: Build manifest-cli
         run: go build -trimpath -o release/.manifest-cli ./tools/sign/cmd/manifest-cli
       - name: Generate SHA256SUMS
@@ -334,42 +385,3 @@ jobs:
             release/SHA256SUMS.asc
           if-no-files-found: error
           retention-days: 7
-
-  publish:
-    name: gh release create
-    needs: [sign-manifest]
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    if: ${{ !contains(github.ref, '-rc') }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
-        with:
-          name: release-bundle
-          path: release/
-      - name: Require signed manifest on canonical release
-        if: github.repository == 'cordum-io/cordum'
-        run: |
-          set -euo pipefail
-          if [ ! -f release/SHA256SUMS.asc ]; then
-            echo "::error::canonical release tag ${GITHUB_REF#refs/tags/} requires a signed SHA256SUMS.asc; sign-manifest job did not produce one (GPG_RELEASE_KEY_PRIVATE missing or signing failed). Refusing to publish an unsigned release."
-            exit 1
-          fi
-          if [ ! -f release/SHA256SUMS ]; then
-            echo "::error::release/SHA256SUMS missing"
-            exit 1
-          fi
-      - name: Create release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          tag="${GITHUB_REF#refs/tags/}"
-          assets=()
-          for f in release/cordum-* release/SHA256SUMS release/SHA256SUMS.asc; do
-            [ -f "$f" ] && assets+=("$f")
-          done
-          gh release create "$tag" \
-            --title "$tag" \
-            --notes "Cordum desktop binaries for $tag. Verify via SHA256SUMS + SHA256SUMS.asc — see docs/security/binary-signing.md." \
-            "${assets[@]}"

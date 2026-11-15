@@ -1,0 +1,14 @@
+rules:
+  - id: a2a-governed-denied
+    match:
+      topics:
+        - job.a2a-governed.denied
+    decision: deny
+    reason: "Governed A2A demo: the denied skill topic is refused by policy."
+
+  - id: a2a-governed-allow
+    match:
+      topics:
+        - job.a2a-governed.turns
+    decision: allow
+    reason: "Governed A2A demo turns are allowed."

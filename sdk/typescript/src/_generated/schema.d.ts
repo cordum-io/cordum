@@ -487,7 +487,8 @@ export interface paths {
         };
         /**
          * Verify audit chain integrity
-         * @description Walks the tenant's audit stream and attests integrity of the hash chain. Reports
+         * @description Walks the tenant's audit stream and checks its hash links and sequence numbers;
+         *     chain verification is rated supported in docs/contract/claims.yaml (CLM-057). Reports
          *     `status=ok` on a contiguous chain, `status=partial` when gaps are below the
          *     retention boundary, and `status=compromised` for missing sequence numbers or a
          *     broken hash link. Admin-only and entitlement-gated; NEVER returns raw event bodies — this is an
@@ -941,7 +942,7 @@ export interface paths {
         put?: never;
         /**
          * Bounded blocking wait for an Edge approval to leave Pending
-         * @description Agentd/local-dev affordance that polls the Edge approval store until the approval is non-pending or the bounded timeout elapses, then returns the current EdgeApproval. The wait is principal-bound: the caller must be the original requester principal (`auth.PrincipalID` matches the approval `principal_id`) or hold an admin/operator role. The server clamps `timeout_ms` to a 5 minute maximum and uses a 30 second default when omitted or non-positive. Tenant isolation is enforced; cross-tenant references and same-tenant callers that fail the principal binding return 404 with no metadata leakage. This endpoint is not required by the dashboard approve/reject UX — callers there should use the standard list/detail/approve/reject flow.
+         * @description Agentd/local-dev affordance that polls the Edge approval store until the approval is non-pending or the bounded timeout elapses, then returns the current EdgeApproval. The wait is principal-bound: the caller must be the original requester principal (`auth.PrincipalID` matches the approval `principal_id`) or hold an admin/operator role. The server clamps `timeout_ms` to a 5 minute maximum and uses a 30 second default when omitted or non-positive. Cross-tenant references are refused with 403 or 404, and same-tenant callers that fail the principal binding get 404. This endpoint is not required by the dashboard approve/reject UX — callers there should use the standard list/detail/approve/reject flow.
          */
         post: operations["waitEdgeApproval"];
         delete?: never;
@@ -2551,6 +2552,23 @@ export interface paths {
         post?: never;
         /** Delete a policy bundle */
         delete: operations["deletePolicyBundle"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/policy/bundles/{id}/resign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Explicitly re-sign a stored policy bundle (admin only) */
+        post: operations["resignPolicyBundle"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -6831,6 +6849,8 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** @description Worker id to link to the new identity. A worker already linked to an agent identity is refused with 409 AGENT_WORKER_CONFLICT. */
+                    agent_id?: string;
                     allowed_pools?: string[];
                     /** @description cordum:// resource URI glob allowlist. Empty or omitted fail-closes resource-guarded MCP actions. */
                     allowed_resources?: string[];
@@ -6867,6 +6887,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalServerError"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };
@@ -6916,6 +6937,8 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** @description Worker id to link to this identity, so an existing identity can be bound without being re-created. A worker already linked to another identity is refused with 409 AGENT_WORKER_CONFLICT. */
+                    agent_id?: string;
                     allowed_pools?: string[];
                     /** @description Full replacement cordum:// resource URI glob allowlist. Send [] to clear. */
                     allowed_resources?: string[];
@@ -6953,6 +6976,8 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalServerError"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };
@@ -12543,6 +12568,63 @@ export interface operations {
             500: components["responses"]["InternalServerError"];
         };
     };
+    resignPolicyBundle: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                /** @description Bundle ID; '/' may be sent as '~'. Pack fragments require reinstalling the pack. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current content signed with a trusted key and one audit entry stored atomically */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        hash: string;
+                        id: string;
+                        key_id: string;
+                        /** Format: date-time */
+                        updated_at: string;
+                    };
+                };
+            };
+            /** @description POLICY_VALIDATION_FAILED: empty content or pack-owned fragment */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description POLICY_VERSION_CONFLICT: concurrent change, or a pack install or uninstall in progress */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            500: components["responses"]["InternalServerError"];
+            /** @description POLICY_SIGNING_REQUIRED: no trusted policy signing key configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     simulatePolicyBundle: {
         parameters: {
             query?: never;
@@ -15257,7 +15339,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description JSON-RPC response */
+            /** @description JSON-RPC response to a request that carries an `id`. Tool and approval failures are JSON-RPC errors inside this 200 (for example `-32099` approval required, `-32096` approval lifecycle error). */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -15266,9 +15348,71 @@ export interface operations {
                     "application/json": components["schemas"]["JsonRpcResponse"];
                 };
             };
+            /** @description A notification (no `id`) was accepted. No body. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
+            /** @description Tenant missing or not allowed, upstream fronting not configured for the tenant. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The `X-MCP-Session-ID` header or `session_id` query names a session that does not exist or that another caller opened (the two look the same). JSON-RPC error `-32001`; open `/mcp/sse` for a new session id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "jsonrpc": "2.0",
+                     *       "id": 1,
+                     *       "error": {
+                     *         "code": -32001,
+                     *         "message": "session not found"
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["JsonRpcResponse"];
+                };
+            };
+            /** @description The client went away before the reply. JSON-RPC error `-32603` (`request canceled`). */
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JsonRpcResponse"];
+                };
+            };
+            /** @description The message exceeds the transport size limit. JSON-RPC error `-32600` (`request too large`). */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JsonRpcResponse"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            /** @description The Edge session for the call could not be recorded (`mcp trace unavailable`). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             /** @description MCP HTTP transport is unavailable. Stable error `code`: `MCP_HTTP_TRANSPORT_UNAVAILABLE`. */
             503: {
                 headers: {
@@ -15276,6 +15420,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No reply within the transport response timeout. JSON-RPC error `-32603` (`request timeout`). */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JsonRpcResponse"];
                 };
             };
         };
@@ -15443,6 +15596,7 @@ export enum ApiPaths {
     updatePolicyBundle = "/api/v1/policy/bundles/{id}",
     deletePolicyBundle = "/api/v1/policy/bundles/{id}",
     simulatePolicyBundle = "/api/v1/policy/bundles/{id}/simulate",
+    resignPolicyBundle = "/api/v1/policy/bundles/{id}/resign",
     listBundleSnapshots = "/api/v1/policy/bundles/snapshots",
     createBundleSnapshot = "/api/v1/policy/bundles/snapshots",
     getBundleSnapshot = "/api/v1/policy/bundles/snapshots/{id}",

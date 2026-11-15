@@ -15,7 +15,11 @@ const (
 	PolicyAuditScope     = "system"
 	PolicyAuditID        = "policy_audit"
 	PolicyAuditKey       = "entries"
-	PolicyStudioPrefix   = "secops/"
+	// PolicyWriteAuditID holds the audit entries committed in one transaction
+	// with a system/policy write. Its hash tag is the policy document's key,
+	// so both documents share one Redis Cluster slot.
+	PolicyWriteAuditID = "policy_write_audit{cfg:system:policy}"
+	PolicyStudioPrefix = "secops/"
 
 	// PolicyInvariantsBundleKey identifies the dedicated security-floor
 	// bundle authored by SecOps. Rules from this bundle are applied with

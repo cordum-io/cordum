@@ -45,13 +45,16 @@ YAML_FILES=(
   docker-compose.ha.yaml
   docker-compose.enterprise.override.yml
   deploy/k8s/base.yaml
+  deploy/k8s/base/kustomization.yaml
   deploy/k8s/ingress.yaml
+  deploy/k8s/local/kustomization.yaml
   deploy/k8s/production/kustomization.yaml
   deploy/k8s/production/networkpolicy.yaml
   deploy/k8s/production/ha.yaml
   deploy/k8s/production/monitoring.yaml
   deploy/k8s/production/ingress.yaml
   deploy/k8s/production/patches/tls-env.yaml
+  deploy/k8s/production/patches/nats-config.yaml
   deploy/k8s/production/nats.yaml
   deploy/k8s/production/redis.yaml
   deploy/k8s/production/backup.yaml
@@ -268,6 +271,37 @@ if [ -f "$TRUST_CHECKER" ]; then
   [ "$TRUST_EXIT" -ne 0 ] && fail "worker trust manifest checker failed (exit $TRUST_EXIT)"
 else
   fail "worker trust manifest checker is missing"
+fi
+
+# ─────────────────────────────────────────────────────────
+# Gate 10: Every kustomization under deploy/k8s must build
+# ─────────────────────────────────────────────────────────
+# `kubectl apply -k` uses kustomize's default load restrictor, so build the
+# same way. The overlays build from deploy/k8s/base/, a copy of base.yaml.
+echo ""
+echo "=== Gate 10: Kustomize builds ==="
+if cmp -s deploy/k8s/base.yaml deploy/k8s/base/base.yaml; then
+  info "deploy/k8s/base/base.yaml matches deploy/k8s/base.yaml"
+else
+  fail "deploy/k8s/base/base.yaml differs from deploy/k8s/base.yaml — run: cp deploy/k8s/base.yaml deploy/k8s/base/base.yaml"
+fi
+KUSTOMIZE=()
+if command -v kubectl >/dev/null 2>&1; then
+  KUSTOMIZE=(kubectl kustomize)
+elif command -v kustomize >/dev/null 2>&1; then
+  KUSTOMIZE=(kustomize build)
+fi
+if [ ${#KUSTOMIZE[@]} -eq 0 ]; then
+  warn "neither kubectl nor kustomize found — kustomizations not built"
+else
+  while IFS= read -r kustomization; do
+    dir="$(dirname "$kustomization")"
+    if err="$("${KUSTOMIZE[@]}" "$dir" 2>&1 >/dev/null)"; then
+      info "$dir — builds"
+    else
+      fail "$dir — kustomize build failed: $err"
+    fi
+  done < <(find deploy/k8s -name kustomization.yaml | sort)
 fi
 
 # ─────────────────────────────────────────────────────────

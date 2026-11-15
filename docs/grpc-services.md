@@ -386,7 +386,7 @@ When Safety RPC fails, scheduler records `SafetyUnavailable` (decision fallback)
 - Content cap: `2 MiB`
 - Circuit breaker constants mirror Safety client (`3` failures, `30s` open, half-open probes `3`, close after `2` successes)
 
-If output checks fail, scheduler currently treats that as skipped/fail-open for output policy evaluation path.
+If the synchronous metadata check fails or times out, the scheduler counts it as skipped and the result continues (fail-open). If the asynchronous content check fails, the scheduler follows the config-service key `scheduler.output_fail_mode`: `closed`, the default when unset and the mode the production identity profile forces, is documented to quarantine the job, and `open` allows the result. Output-check outage outcomes are not measured ([failure and partition behavior](contract/failure-behavior.md#scope-and-operator-modes)).
 
 ## Regenerating Protobuf Code
 

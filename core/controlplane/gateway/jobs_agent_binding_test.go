@@ -119,12 +119,14 @@ func TestHandleSubmitJobHTTPHonorsAgentLabelForAuthenticatedPrincipal(t *testing
 	}
 }
 
-func TestHandleSubmitJobHTTPWithoutAgentLabelKeepsLinkInjection(t *testing.T) {
-	// The keyed and request-chosen cases pin CURRENT behavior; task-491f974b will flip them by ruling.
-	for _, tc := range []struct{ name, authenticated, requested string }{
-		{"authenticated_worker", "worker-b", ""},
-		{"keyed_caller", "", "worker-b"},
-		{"request_chosen_principal", "worker-a", "worker-b"},
+func TestHandleSubmitJobHTTPWithoutAgentLabelInjectsOnlyAuthenticatedLink(t *testing.T) {
+	// Without a label, only the worker link of the authenticated principal the
+	// job is attributed to is injected; a request-named principal_id never
+	// selects one.
+	for _, tc := range []struct{ name, authenticated, requested, want string }{
+		{"authenticated_worker", "worker-b", "", "agent-b"},
+		{"keyed_caller", "", "worker-b", ""},
+		{"request_chosen_principal", "worker-a", "worker-b", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, _, safety := newAgentBindingGateway(t)
@@ -136,8 +138,8 @@ func TestHandleSubmitJobHTTPWithoutAgentLabelKeepsLinkInjection(t *testing.T) {
 			if rec.Code != http.StatusOK || safety.lastReq == nil {
 				t.Fatalf("status=%d, policy captured=%v, body=%s", rec.Code, safety.lastReq != nil, rec.Body.String())
 			}
-			if got := safety.lastReq.GetLabels()["agent_id"]; got != "agent-b" {
-				t.Errorf("agent_id=%q, want agent-b", got)
+			if got := safety.lastReq.GetLabels()["agent_id"]; got != tc.want {
+				t.Errorf("agent_id=%q, want %q", got, tc.want)
 			}
 		})
 	}

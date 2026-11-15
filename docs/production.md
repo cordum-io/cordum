@@ -347,7 +347,7 @@ cluster once the pods are ready. Re-run it if you replace the cluster.
 
 **Symptoms**: `cordum_safety_unavailable_total` rising, jobs stuck in PENDING.
 
-**Impact**: The scheduler cannot evaluate safety policies. Jobs requiring safety checks are deferred with exponential backoff (up to `safetyThrottleDelay = 5s`). No jobs are auto-approved — the system fails closed.
+**Impact**: Policy checks cannot be evaluated. In the default closed modes, the Gateway rejects new submits (HTTP 403, gRPC `PermissionDenied`) and the scheduler requeues accepted jobs without publishing them (backoff up to `safetyThrottleDelay = 5s`). Operator-selected open modes change this: Gateway `POLICY_CHECK_FAIL_MODE=open` accepts submits, and scheduler `scheduler.input_fail_mode=open` admits only topics listed in `scheduler.input_fail_open_scope`. For Edge, the Gateway's evaluate returns deny for enforce and enterprise-strict sessions, and allow marked degraded for observe sessions. See the [failure and partition behavior contract](contract/failure-behavior.md).
 
 **Steps**:
 
@@ -377,7 +377,7 @@ cluster once the pods are ready. Re-run it if you replace the cluster.
    kubectl logs -l app=cordum-safety-kernel -n cordum | grep -i "error\|panic"
    ```
 
-5. **Escalation**: If the safety kernel cannot be restored quickly, all new jobs will queue indefinitely. There is no bypass — this is by design (safety-first). Scale the safety kernel if it's a capacity issue:
+5. **Escalation**: If the safety kernel cannot be restored quickly, the default closed modes keep rejecting new submits and requeueing accepted jobs until it recovers. The open modes in the Impact line are operator choices with the risks described in [Safety Kernel section 10](safety-kernel.md#10-input-policy-fail-mode). Scale the safety kernel if it's a capacity issue:
    ```bash
    kubectl scale deployment cordum-safety-kernel --replicas=3 -n cordum
    ```
@@ -614,7 +614,7 @@ cluster once the pods are ready. Re-run it if you replace the cluster.
 - Base: ~100 bytes per job record, ~500 bytes per workflow run, ~1KB per DLQ entry
 - Estimate: 1 million concurrent jobs = ~100MB job state + context/result pointers
 - Rule of thumb: 2x your estimated working set for headroom
-- Monitor with: `redis-cli INFO memory`
+- Monitor with `INFO memory` on each node. The production overlay's Redis Cluster (`deploy/k8s/production`) requires TLS client certificates and the password: `kubectl exec -n cordum cordum-redis-0 -c redis -- sh -c 'redis-cli --tls --cacert /etc/redis/tls/ca.crt --cert /etc/redis/tls/tls.crt --key /etc/redis/tls/tls.key -a "$REDIS_PASSWORD" INFO memory'` (repeat for `cordum-redis-1` through `cordum-redis-5`)
 
 **NATS JetStream storage**:
 - Each JetStream stream has a configurable max size and message TTL
@@ -805,7 +805,7 @@ Complete list of production-relevant environment variables:
 | `CORDUM_TLS_MIN_VERSION` | All | Minimum TLS version (`1.2` or `1.3`; defaults to 1.3 in production) |
 | `CORDUM_GRPC_REFLECTION` | Gateway | Enable gRPC reflection (`1` to enable) |
 | `CORDUM_DASHBOARD_EMBED_API_KEY` | Gateway | Embed API key in dashboard JS (DO NOT use in production) |
-| `CORDUM_ALLOW_HEADER_PRINCIPAL` | Gateway | Allow `X-Principal` header override (disabled in production) |
+| `CORDUM_ALLOW_HEADER_PRINCIPAL` | Gateway | Set to `true` to honour `X-Principal-Id` in production, for static keys without `principal_id` and for managed keys (always honoured outside production). A header principal is recorded for attribution only and never binds identity |
 | `GATEWAY_HTTP_ADDR` | Gateway | HTTP listen address (default `:8081`) |
 | `GATEWAY_GRPC_ADDR` | Gateway | gRPC listen address (default `:8080`) |
 | `GATEWAY_METRICS_ADDR` | Gateway | Metrics listen address (default `:9092`) |

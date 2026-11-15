@@ -1,0 +1,30 @@
+apiVersion: cordum.io/v1alpha1
+kind: Pack
+
+metadata:
+  id: a2a-governed
+  version: 0.1.0
+  title: Governed A2A Demo
+  description: Registers the two A2A bridge skill topics, routes them to the demo worker pool, and adds the allow and deny rules its end-to-end test uses.
+
+compatibility:
+  protocolVersion: 1
+  minCoreVersion: 0.6.0
+
+topics:
+  - name: job.a2a-governed.turns
+    capability: a2a-governed.turns
+  - name: job.a2a-governed.denied
+    capability: a2a-governed.denied
+
+overlays:
+  config:
+    - name: pools
+      scope: system
+      key: pools
+      strategy: json_merge_patch
+      path: overlays/pools.patch.yaml
+  policy:
+    - name: a2a-governed
+      strategy: bundle_fragment
+      path: overlays/policy.fragment.yaml

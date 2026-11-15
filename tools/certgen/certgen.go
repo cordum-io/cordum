@@ -17,6 +17,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -53,8 +54,8 @@ type Options struct {
 	// Force overwrites existing files when true.
 	Force bool
 
-	// SANs are additional DNS names to include in the server certificate.
-	// DefaultSANs are always included.
+	// SANs are additional DNS names or IP addresses to include in the server
+	// certificate. DefaultSANs are always included.
 	SANs []string
 }
 
@@ -90,10 +91,16 @@ func GenerateAll(opts Options) error {
 	serverDir := filepath.Join(opts.BaseDir, "server")
 	clientDir := filepath.Join(opts.BaseDir, "client")
 
+	// Reject a bad SAN before writing anything, so a typo cannot leave a new
+	// CA without a server certificate behind.
+	sans := opts.serverSANs()
+	if _, _, err := splitSANs(sans); err != nil {
+		return err
+	}
 	if err := GenerateCA(caDir, opts.Days, opts.Force); err != nil {
 		return fmt.Errorf("generate ca: %w", err)
 	}
-	if err := GenerateServerCert(caDir, serverDir, opts.days(), opts.serverSANs(), opts.Force); err != nil {
+	if err := GenerateServerCert(caDir, serverDir, opts.days(), sans, opts.Force); err != nil {
 		return fmt.Errorf("generate server cert: %w", err)
 	}
 	if err := GenerateClientCert(caDir, clientDir, "cordum-client", opts.days(), opts.Force); err != nil {
@@ -155,11 +162,20 @@ func GenerateCA(dir string, days int, force bool) error {
 	return writeKey(keyPath, key)
 }
 
-// GenerateServerCert creates a server certificate signed by the CA.
+// GenerateServerCert creates a server certificate signed by the CA. Each SAN
+// must be an IP address or a DNS name.
 func GenerateServerCert(caDir, serverDir string, days int, sans []string, force bool) error {
 	if days <= 0 {
 		days = 365
 	}
+	dnsNames, ips, err := splitSANs(sans)
+	if err != nil {
+		return err
+	}
+	// Always include loopback IPs.
+	ips = appendUniqueIP(ips, net.ParseIP("127.0.0.1"))
+	ips = appendUniqueIP(ips, net.ParseIP("::1"))
+
 	caCert, caKey, err := loadCA(caDir)
 	if err != nil {
 		return err
@@ -185,19 +201,6 @@ func GenerateServerCert(caDir, serverDir string, days int, sans []string, force 
 	if err != nil {
 		return err
 	}
-
-	var dnsNames []string
-	var ips []net.IP
-	for _, san := range sans {
-		if ip := net.ParseIP(san); ip != nil {
-			ips = append(ips, ip)
-		} else {
-			dnsNames = append(dnsNames, san)
-		}
-	}
-	// Always include loopback IPs.
-	ips = appendUniqueIP(ips, net.ParseIP("127.0.0.1"))
-	ips = appendUniqueIP(ips, net.ParseIP("::1"))
 
 	now := time.Now()
 	tmpl := &x509.Certificate{
@@ -351,6 +354,44 @@ func writeKey(path string, key *ecdsa.PrivateKey) error {
 	}
 	defer func() { _ = f.Close() }()
 	return pem.Encode(f, &pem.Block{Type: "PRIVATE KEY", Bytes: der})
+}
+
+// splitSANs sorts SANs into DNS names and IP addresses and rejects anything
+// that is neither.
+func splitSANs(sans []string) ([]string, []net.IP, error) {
+	var dnsNames []string
+	var ips []net.IP
+	for _, san := range sans {
+		if ip := net.ParseIP(san); ip != nil {
+			ips = append(ips, ip)
+		} else if validDNSName(san) {
+			dnsNames = append(dnsNames, san)
+		} else {
+			return nil, nil, fmt.Errorf("invalid SAN %q: want a DNS name or an IP address", san)
+		}
+	}
+	return dnsNames, ips, nil
+}
+
+// validDNSName reports whether name is a hostname a certificate can carry:
+// dot-separated letter/digit/hyphen labels of 1-63 bytes that do not start or
+// end with a hyphen, 253 bytes at most, optionally led by a "*." wildcard.
+func validDNSName(name string) bool {
+	name = strings.TrimPrefix(name, "*.")
+	if name == "" || len(name) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(name, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, c := range label {
+			if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '-' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func appendUniqueIP(ips []net.IP, ip net.IP) []net.IP {

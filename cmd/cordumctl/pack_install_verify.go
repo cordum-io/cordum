@@ -254,26 +254,3 @@ func resolvePackStrict(flagStrict bool) bool {
 	}
 	return false
 }
-
-// verificationFromResult converts a verify-gate outcome into the
-// on-the-wire packRecord.Verification shape. Returns nil when the
-// result is nil so the JSON field is omitted entirely for callers
-// that skipped the gate.
-func verificationFromResult(r *PackVerificationResult) *packRecordVerification {
-	if r == nil {
-		return nil
-	}
-	out := &packRecordVerification{
-		Signed:              r.Signed,
-		PublisherID:         r.PublisherID,
-		KID:                 r.KID,
-		HasCordumCounterSig: r.HasCordumCounterSig,
-		SignatureAlgorithm:  r.SignatureAlgorithm,
-		PackSignatureVer:    r.PackSignatureVer,
-		Warnings:            append([]string(nil), r.Warnings...),
-	}
-	if !r.VerifiedAt.IsZero() {
-		out.VerifiedAt = r.VerifiedAt.UTC().Format(time.RFC3339)
-	}
-	return out
-}

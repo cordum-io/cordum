@@ -2,14 +2,20 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
@@ -24,7 +30,10 @@ import (
 
 const (
 	defaultGatewayAddr = "http://localhost:8081"
-	defaultHTTPAddr    = ":8090"
+	// defaultHTTPAddr is loopback-only: HTTP mode acts with this process's
+	// gateway API key, so exposing it beyond the host takes an explicit
+	// MCP_HTTP_ADDR plus --http-auth-token (or --allow-unauthenticated-http).
+	defaultHTTPAddr = "127.0.0.1:8090"
 )
 
 func main() {
@@ -37,9 +46,15 @@ func main() {
 	allowPrivateGateway := flag.Bool("allow-private-gateway", envBoolOrDefault("CORDUM_MCP_ALLOW_PRIVATE_GATEWAY", false), "Allow private/loopback gateway hosts (disabled by default)")
 	requestTimeout := flag.Duration("request-timeout", 30*time.Second, "per-request MCP handler timeout")
 	agentID := flag.String("agent-id", strings.TrimSpace(os.Getenv("CORDUM_MCP_AGENT_ID")), "Agent identity ID to scope this MCP session (resolved at boot)")
+	httpAuthToken := flag.String("http-auth-token", strings.TrimSpace(os.Getenv("CORDUM_MCP_HTTP_AUTH_TOKEN")), "HTTP mode: bearer token every /sse and /message request must send (prefer the CORDUM_MCP_HTTP_AUTH_TOKEN env)")
+	allowUnauthenticatedHTTP := flag.Bool("allow-unauthenticated-http", false, "HTTP mode: serve a non-loopback MCP_HTTP_ADDR without --http-auth-token (anyone who can reach it acts with this server's API key)")
+	caCert := flag.String("cacert", strings.TrimSpace(os.Getenv("CORDUM_TLS_CA")), "PEM CA certificate(s) to trust for the gateway's TLS, in addition to the system roots (also: CORDUM_TLS_CA)")
 	flag.Parse()
 
 	transportMode, httpAddr, cfgErr := resolveTransportConfig()
+	if cfgErr == nil && transportMode == "http" {
+		cfgErr = checkHTTPExposure(httpAddr, strings.TrimSpace(*httpAuthToken), *allowUnauthenticatedHTTP)
+	}
 	if cfgErr != nil {
 		slog.Error("transport config failed", "error", cfgErr)
 		os.Exit(1)
@@ -61,7 +76,11 @@ func main() {
 	toolRegistry := mcp.NewToolRegistry()
 	resourceRegistry := mcp.NewResourceRegistry()
 
-	httpClient := &http.Client{Timeout: 10 * time.Second}
+	httpClient, err := gatewayHTTPClient(strings.TrimSpace(*caCert))
+	if err != nil {
+		slog.Error("cordum-mcp: gateway CA certificate unusable, refusing to start", "error", err)
+		os.Exit(1)
+	}
 	allowedHosts := splitCSV(*gatewayAllowlist)
 
 	// Outbound-signing wiring per epic rail "Every MCP tool call signed,
@@ -94,6 +113,8 @@ func main() {
 	// is out of reach. See handlers_mcp_outbound_integration_test.go
 	// for the end-to-end wiring proof.
 	auditSender := resolveAuditSender(os.Getenv("CORDUM_NATS_URL"))
+	shutdown := &auditShutdown{sender: auditSender, osExit: os.Exit}
+	defer shutdown.close()
 	invocationAuditor := mcp.NewToolInvocationAuditor(auditSender, mcp.DefaultRedactor())
 	outboundAuditor := mcp.NewToolInvocationOutboundAuditor(
 		invocationAuditor,
@@ -109,7 +130,7 @@ func main() {
 		WithOutboundAuditor(outboundAuditor)
 	if err := mcptools.Register(toolRegistry, toolClient); err != nil {
 		slog.Error("register mcp tools failed", "error", err)
-		os.Exit(1)
+		shutdown.exit(1)
 	}
 	resourceClient := mcpresources.NewGatewayClient(*gatewayAddr, *apiKey, httpClient).
 		WithAllowedHosts(allowedHosts).
@@ -118,7 +139,7 @@ func main() {
 		WithOutboundAuditor(outboundAuditor)
 	if err := mcpresources.Register(resourceRegistry, resourceClient); err != nil {
 		slog.Error("register mcp resources failed", "error", err)
-		os.Exit(1)
+		shutdown.exit(1)
 	}
 	slog.Info("mcp outbound invocation auditor enabled",
 		"event_type", "mcp.tool_outbound_invocation",
@@ -139,12 +160,13 @@ func main() {
 			if err != nil {
 				slog.Error("cordum-mcp: resolve agent identity failed, refusing to start",
 					"agent_id", id, "error", err)
-				os.Exit(1)
+				shutdown.exit(1)
 			}
 			if identity == nil {
 				slog.Error("cordum-mcp: agent identity not found or revoked, refusing to start",
 					"agent_id", id)
-				os.Exit(1)
+				shutdown.exit(1)
+				return // exit does not return in main; this lets staticcheck see identity is non-nil below
 			}
 			stdio.SetDefaultIdentity(identity)
 			slog.Info("cordum-mcp: bound to agent identity",
@@ -174,18 +196,19 @@ func main() {
 	if transportMode == "http" {
 		httpTransport := transport.(*mcp.HTTPTransport)
 		mux := http.NewServeMux()
-		mux.HandleFunc("/sse", httpTransport.HandleSSE)
-		mux.HandleFunc("/message", httpTransport.HandleMessage)
+		token := strings.TrimSpace(*httpAuthToken)
+		mux.HandleFunc("/sse", requireBearer(token, httpTransport.HandleSSE))
+		mux.HandleFunc("/message", requireBearer(token, httpTransport.HandleMessage))
 		httpSrv := &http.Server{
 			Addr:              httpAddr,
 			Handler:           mux,
 			ReadHeaderTimeout: 10 * time.Second,
 		}
 		go func() {
-			slog.Info("cordum-mcp listening", "transport", "http", "addr", httpAddr, "gateway", strings.TrimSpace(*gatewayAddr))
+			slog.Info("cordum-mcp listening", "transport", "http", "addr", httpAddr, "gateway", strings.TrimSpace(*gatewayAddr), "inbound_auth", token != "")
 			if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				slog.Error("mcp http server failed", "error", err)
-				os.Exit(1)
+				shutdown.exit(1)
 			}
 		}()
 	} else {
@@ -194,7 +217,7 @@ func main() {
 
 	if err := server.Serve(); err != nil {
 		slog.Error("mcp server failed", "error", err)
-		os.Exit(1)
+		shutdown.exit(1)
 	}
 }
 
@@ -266,6 +289,82 @@ func resolveTransportConfig() (mode string, httpAddr string, err error) {
 	}
 }
 
+// gatewayHTTPClient returns the client for gateway calls. caCertPath, when set,
+// names PEM CA certificates added to the system roots, so a gateway with a
+// certificate from a private CA (the compose stack's certs/ca/ca.crt)
+// verifies. Verification is never disabled.
+func gatewayHTTPClient(caCertPath string) (*http.Client, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	if caCertPath == "" {
+		return client, nil
+	}
+	pemBytes, err := os.ReadFile(caCertPath) // #nosec G304 -- operator-supplied CA path.
+	if err != nil {
+		return nil, fmt.Errorf("read CA certificate %s: %w", caCertPath, err)
+	}
+	roots, err := x509.SystemCertPool()
+	if err != nil {
+		roots = x509.NewCertPool()
+	}
+	if !roots.AppendCertsFromPEM(pemBytes) {
+		return nil, fmt.Errorf("CA certificate %s: no PEM certificates found", caCertPath)
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}
+	client.Transport = transport
+	return client, nil
+}
+
+// checkHTTPExposure refuses HTTP mode on a non-loopback address without an
+// inbound token: every caller would act with this server's gateway API key.
+// allowUnauthenticated overrides that with a loud warning.
+func checkHTTPExposure(addr, token string, allowUnauthenticated bool) error {
+	if token != "" || isLoopbackListenAddr(addr) {
+		return nil
+	}
+	if !allowUnauthenticated {
+		return fmt.Errorf("refusing to serve MCP over HTTP on non-loopback address %q without --http-auth-token (or CORDUM_MCP_HTTP_AUTH_TOKEN); pass --allow-unauthenticated-http to override", addr)
+	}
+	slog.Warn("cordum-mcp: SERVING MCP OVER HTTP WITHOUT AUTHENTICATION on a non-loopback address; anyone who can reach it acts with this server's Cordum API key",
+		"addr", addr, "flag", "--allow-unauthenticated-http")
+	return nil
+}
+
+// isLoopbackListenAddr reports whether a host:port listen address binds only
+// loopback. An empty host binds every interface, and hostnames other than
+// localhost may resolve anywhere, so both count as exposed.
+func isLoopbackListenAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// requireBearer wraps h so each request must carry "Authorization: Bearer
+// <token>". Digests are compared in constant time, so neither the token's
+// bytes nor its length leak. An empty token disables the check.
+func requireBearer(token string, h http.HandlerFunc) http.HandlerFunc {
+	if token == "" {
+		return h
+	}
+	want := sha256.Sum256([]byte(token))
+	return func(w http.ResponseWriter, r *http.Request) {
+		scheme, got, _ := strings.Cut(strings.TrimSpace(r.Header.Get("Authorization")), " ")
+		sum := sha256.Sum256([]byte(strings.TrimSpace(got)))
+		if !strings.EqualFold(scheme, "Bearer") || subtle.ConstantTimeCompare(sum[:], want[:]) != 1 {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="cordum-mcp"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		h(w, r)
+	}
+}
+
 // stderrAuditSender is the stdio MCP's minimal audit.AuditSender. The
 // stdio process has no SIEM exporter of its own — the gateway IS the
 // SIEM terminus for inbound audit — but outbound MCP calls originate
@@ -326,16 +425,57 @@ func resolveAuditSender(natsURL string) audit.AuditSender {
 	return audit.NewNATSAuditPublisher(natsBus, fallback)
 }
 
+// Send writes the event as one "audit.event" record at INFO through the
+// process log handler. It calls the handler directly rather than slog.Info:
+// CORDUM_LOG_LEVEL selects diagnostic output, and audit events are written at
+// every level. The record keeps the handler's text or JSON format.
 func (stderrAuditSender) Send(event audit.SIEMEvent) {
 	payload, err := json.Marshal(event)
 	if err != nil {
 		slog.Warn("audit event marshal failed", "error", err, "event_type", event.EventType)
 		return
 	}
-	slog.Info("audit.event", "event", json.RawMessage(payload))
+	record := slog.NewRecord(time.Now(), slog.LevelInfo, "audit.event", 0)
+	record.AddAttrs(slog.Any("event", auditEventJSON(payload)))
+	// A failed stderr write has nowhere else to be reported.
+	_ = slog.Default().Handler().Handle(context.Background(), record)
 }
 
+// auditEventJSON is a marshalled SIEMEvent. The JSON log format embeds it as
+// an object, and the text log format prints it as JSON text.
+type auditEventJSON []byte
+
+func (e auditEventJSON) MarshalJSON() ([]byte, error) { return e, nil }
+
+func (e auditEventJSON) String() string { return string(e) }
+
 func (stderrAuditSender) Close() error { return nil }
+
+// auditShutdown closes the process audit sender exactly once, so events
+// queued in the NATS publisher's fallback buffer are exported before
+// cordum-mcp stops. main defers close for a normal return, and every later
+// exit path calls exit, because os.Exit does not run deferred calls.
+type auditShutdown struct {
+	sender audit.AuditSender
+	osExit func(int) // os.Exit in main; tests record the code instead
+	once   sync.Once
+}
+
+func (s *auditShutdown) close() {
+	s.once.Do(func() {
+		if s.sender == nil {
+			return
+		}
+		if err := s.sender.Close(); err != nil {
+			slog.Error("cordum-mcp: audit sender close failed", "error", err)
+		}
+	})
+}
+
+func (s *auditShutdown) exit(code int) {
+	s.close()
+	s.osExit(code)
+}
 
 func splitCSV(raw string) []string {
 	if strings.TrimSpace(raw) == "" {

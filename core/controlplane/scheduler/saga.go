@@ -140,10 +140,8 @@ func (s *SagaManager) RecordCompensation(ctx context.Context, req *pb.JobRequest
 	if isCompensationJob(req) || req.Compensation == nil {
 		return nil
 	}
+	// WorkflowId, not the workflow_id label: only the workflow engine sets it.
 	workflowID := strings.TrimSpace(req.WorkflowId)
-	if workflowID == "" && req.Labels != nil {
-		workflowID = strings.TrimSpace(req.Labels["workflow_id"])
-	}
 	key := sagaStackKey(workflowID)
 	if key == "" {
 		return nil

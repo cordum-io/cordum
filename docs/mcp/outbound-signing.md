@@ -81,9 +81,11 @@ cat pub.b64
 
 ## Clock-skew tuning
 
-Default window: ±5 minutes. Both sides enforce the window on verify,
-so a peer with a drifted clock will reject the gateway's calls. Sync
-clocks via NTP; emergency widening lives in task plan as a future knob.
+Default window: ±5 minutes. Only the verifying side checks the window
+(`Verifier.VerifyRequest`); the signing side does not. A verifier whose
+clock differs from the signer's by more than the window rejects the
+request as expired, so sync clocks via NTP. The gateway's verify
+endpoint uses a fixed 5-minute window.
 
 ## Interop with non-Cordum MCP servers
 

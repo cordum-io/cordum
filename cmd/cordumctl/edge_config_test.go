@@ -18,7 +18,7 @@ func TestEdgeClaudeConfigDefaultsBaseline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadEdgeClaudeConfig returned error: %v", err)
 	}
-	if got, want := cfg.Gateway, "http://localhost:8081"; got != want {
+	if got, want := cfg.Gateway, "https://localhost:8081"; got != want {
 		t.Errorf("Gateway = %q, want %q", got, want)
 	}
 	if got, want := cfg.Tenant, "default"; got != want {

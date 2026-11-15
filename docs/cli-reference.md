@@ -17,10 +17,10 @@ is not provided on the command line.
 
 | Flag | Env Variable | Default | Description |
 |------|-------------|---------|-------------|
-| `--gateway` | `CORDUM_GATEWAY` | `http://localhost:8081` | Gateway base URL |
+| `--gateway` | `CORDUM_GATEWAY` | `https://localhost:8081` | Gateway base URL (`http://...` for a gateway without TLS) |
 | `--api-key` | `CORDUM_API_KEY` | *(none)* | API authentication key |
 | `--tenant` | `CORDUM_TENANT_ID` | `default` | Tenant ID |
-| `--cacert` | `CORDUM_TLS_CA` | *(none)* | CA certificate for TLS verification |
+| `--cacert` | `CORDUM_TLS_CA` | *(none)* | CA certificate for TLS verification; for an `https://localhost` gateway, `./certs/ca/ca.crt` is used when present |
 | `--insecure` | `CORDUM_TLS_INSECURE` | `false` | Skip TLS verification (dev/debug only) |
 
 ```bash
@@ -86,6 +86,7 @@ workflow.
 
 ```
 <dir>/
+├── certs/              # dev CA + server/client certs; the gateway serves HTTPS with them
 ├── docker-compose.yml
 ├── config/
 │   ├── pools.yaml
@@ -101,6 +102,9 @@ workflow.
 ```bash
 cordumctl init my-project
 cd my-project
+export CORDUM_API_KEY="$(openssl rand -hex 32)"
+docker compose up -d
+cordumctl status   # https://localhost:8081, trusting ./certs/ca/ca.crt
 ```
 
 ---
@@ -117,6 +121,7 @@ Generate a full TLS certificate chain: CA certificate, server certificate
 | `--dir` | `./certs` | Output directory |
 | `--force` | `false` | Overwrite existing certificates |
 | `--days` | `365` | Certificate validity in days |
+| `--san` | *(none)* | Extra DNS name or IP for the server certificate, added to the default SANs; repeatable |
 
 Certificates use EC P-256 keys with PKCS8 encoding.
 
@@ -129,6 +134,9 @@ cordumctl generate-certs --dir /path/to/certs
 
 # Regenerate expired certificates
 cordumctl generate-certs --force --days 730
+
+# Also cover a Kubernetes Service name (see cordum-helm/README.md)
+cordumctl generate-certs --san cordum-api-gateway.cordum.svc.cluster.local
 ```
 
 **Output structure:**
@@ -404,6 +412,12 @@ are applied, so installed packs pass submit-time unknown-topic validation.
 | `--force` | `false` | Skip core version compatibility check |
 | `--upgrade` | `false` | Overwrite existing resources (schemas/workflows) |
 | `--inactive` | `false` | Install without pool mappings |
+| `--worker-token-file` | | Write the generated worker token to this file (mode 0600) instead of printing it |
+
+When the gateway issues a worker credential for the pack, `pack install` prints
+its `worker_id`, and prints the worker token only when stdout is a terminal.
+Otherwise a note on stderr takes the token's place. Automation that needs the
+token passes `--worker-token-file <path>`.
 
 **Validation checks:**
 - Pack manifest syntax
@@ -484,7 +498,7 @@ started with `up`/`dev`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CORDUM_GATEWAY` | `http://localhost:8081` | Gateway base URL |
+| `CORDUM_GATEWAY` | `https://localhost:8081` | Gateway base URL |
 | `CORDUM_API_KEY` | *(none)* | API authentication key |
 | `CORDUM_TENANT_ID` | `default` | Tenant ID |
 

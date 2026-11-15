@@ -462,6 +462,7 @@ export * from "./repairApprovalBody.ts";
 export * from "./rerunWorkflow200.ts";
 export * from "./rerunWorkflowBody.ts";
 export * from "./resetUserPasswordBody.ts";
+export * from "./resignPolicyBundle200.ts";
 export * from "./resolveMemoryResource200.ts";
 export * from "./resolveMemoryResourceBody.ts";
 export * from "./resolveMemoryResourceBodyReference.ts";

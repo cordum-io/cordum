@@ -115,7 +115,8 @@ func (s *server) wireActionGatePipeline() {
 		DestructiveToolGlobs:                    destructiveToolGlobsFromEnv(),
 		DestructiveMutationArgKeys:              destructiveMutationArgKeysFromEnv(),
 		DestructiveMutationFieldGlobs:           destructiveMutationFieldGlobsFromEnv(),
-		FailClosedDestructiveOnTaintLookupError: failClosedDestructiveTaintFromEnv(),
+		FailClosedDestructiveOnTaintLookupError: actiongates.ResolveFailClosedDestructiveOnTaintLookupError(),
+		TaintFailClosedApprover:                 actiongates.ApproverConfiguredForTaintFailClosed(),
 	})
 	// actionGatePipeline is set once during boot before any handler can
 	// observe it, so the field assignment needs no lock — Go's
@@ -153,16 +154,6 @@ func destructiveMutationArgKeysFromEnv() []string {
 // built-in defaults (delete/remove/archive mutation fields).
 func destructiveMutationFieldGlobsFromEnv() []string {
 	return splitCommaEnv("CORDUM_MCP_DESTRUCTIVE_MUTATION_GLOBS")
-}
-
-func failClosedDestructiveTaintFromEnv() bool {
-	raw := strings.TrimSpace(os.Getenv("CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE"))
-	switch strings.ToLower(raw) {
-	case "1", "true", "t", "yes", "y", "on":
-		return true
-	default:
-		return false
-	}
 }
 
 func splitCommaEnv(name string) []string {

@@ -74,15 +74,15 @@ func CheckGatewayBoot() error {
 	}
 }
 
-// CheckKernelBoot validates the safety kernel's trust store at boot.
+// CheckKernelBoot validates the safety kernel's trust store using ResolveMode.
 // It returns an error in enforce mode when the trust store is empty.
 //
 // In all modes it emits a single structured INFO line summarising the
 // active mode and the list of trusted key ids.
 func CheckKernelBoot() error {
-	mode, modeErr := ModeFromEnv()
+	mode, modeErr := ResolveMode()
 	if modeErr != nil {
-		slog.Warn("policy signing: invalid CORDUM_POLICY_STRICT; defaulting to warn", "err", modeErr)
+		slog.Warn("policy signing: invalid CORDUM_POLICY_STRICT; falling back", "err", modeErr, "mode", mode.String())
 	}
 
 	store, err := LoadTrustStoreFromEnv()

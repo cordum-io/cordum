@@ -35,16 +35,20 @@ MDM payload (Jamf Configuration Profile / Intune Settings Catalog / Ansible)
                 ▼
 managed Claude Code workstation
   └─ /Library/Application Support/ClaudeCode/managed-settings.json   (macOS)
-  └─ C:\ProgramData\ClaudeCode\managed-settings.json                 (Windows)
+  └─ C:\Program Files\ClaudeCode\managed-settings.json               (Windows)
   └─ /etc/claude-code/managed-settings.json                          (Linux/WSL)
+     (managed-mcp.json sits next to managed-settings.json in the same directory)
                 │
                 ▼
 cordumctl edge doctor --managed-settings-path <path>
   └─ managed_settings_compliance check
-       ├─ ok      : 14 invariants satisfied
+       ├─ ok      : 17 invariants satisfied
        ├─ skip    : path not configured (non-enterprise host)
        └─ fail    : drift, missing file, or parse error
 ```
+
+Claude Code does not read the legacy `C:\ProgramData\ClaudeCode\managed-settings.json`
+path; files left there are ignored.
 
 `cordumctl edge managed-settings export` is byte-stable: re-running with the
 same flag inputs produces identical files. This makes the output suitable for
@@ -110,8 +114,11 @@ In Jamf Pro:
 3. Source: **Custom Schema**.
 4. Preference Domain: `com.anthropic.claudecode` (Custom Settings payload).
 5. Upload `managed-settings.json` as the JSON payload.
-6. Add a second **External Applications** payload for `com.anthropic.claudecode.mcp`
-   carrying `managed-mcp.json`.
+6. Deploy `managed-mcp.json` as a file at
+   `/Library/Application Support/ClaudeCode/managed-mcp.json` (for example with a
+   Jamf **Files and Processes** policy or a package). It is a standalone file:
+   there is no managed-preferences domain for it, and server-managed settings
+   cannot deliver it.
 7. Scope to the managed-Claude smart group.
 8. Save and let the next Jamf check-in apply the profile.
 
@@ -130,7 +137,7 @@ cordumctl edge doctor \
   --managed-settings-path "/Library/Application Support/ClaudeCode/managed-settings.json"
 ```
 
-The `managed_settings_compliance` row reports `ok` when the 14 invariants
+The `managed_settings_compliance` row reports `ok` when the 17 invariants
 are satisfied. Operators can also run the standalone verifier without
 contacting the gateway:
 
@@ -142,6 +149,17 @@ cordumctl edge managed-settings verify \
 Exit `0` = ok, `1` = drift detected (each drifting field printed), `2` =
 missing or unparseable file.
 
+Both commands read a file. If you delivered the payload through the
+`com.anthropic.claudecode` preference domain (§3.3) rather than as a file, there
+is nothing at that path: convert the delivered managed preferences to JSON and
+verify that instead.
+
+```bash
+plutil -convert json -o /tmp/managed-settings.json \
+  "/Library/Managed Preferences/com.anthropic.claudecode.plist"
+cordumctl edge managed-settings verify --path /tmp/managed-settings.json
+```
+
 ## 4. Windows / Intune playbook
 
 Three deployable shapes are supported on Windows:
@@ -150,7 +168,11 @@ Three deployable shapes are supported on Windows:
 | --- | --- | --- |
 | Settings Catalog | Intune-managed registry/file via the catalog UI | Modern Intune-managed devices with the catalog enabled. |
 | OMA-URI custom policy | `HKLM\SOFTWARE\Policies\ClaudeCode` | Mixed estates that need a fallback custom policy. |
-| File-based | `C:\Program Files\Cordum\managed-settings.json` (per-machine) or `%PROGRAMDATA%\ClaudeCode\managed-settings.json` (per-tenant) | When you ship via a Win32 app / configuration management. |
+| File-based | `C:\Program Files\ClaudeCode\managed-settings.json` (Claude Code does not read the legacy `%PROGRAMDATA%\ClaudeCode\` path) | When you ship via a Win32 app / configuration management. |
+
+Whichever shape delivers `managed-settings.json`, deploy `managed-mcp.json` as a
+file at `C:\Program Files\ClaudeCode\managed-mcp.json`; it is a standalone file
+and cannot be delivered through the policy channel or server-managed settings.
 
 ### 4.1 Generate the payload
 
@@ -174,7 +196,8 @@ Cordum tests cover Windows paths with spaces (e.g. `C:\Program Files\Cordum\cord
 3. Add settings under **Anthropic Claude Code → Managed Settings JSON** (the
    schema name your tenant exposes — the catalog identifier may evolve).
 4. Paste the contents of `managed-settings.json`.
-5. Repeat for `managed-mcp.json` under **Managed MCP Servers JSON**.
+5. Ship `managed-mcp.json` as a file to `C:\Program Files\ClaudeCode\managed-mcp.json`
+   (for example with a Win32 app); the policy channel carries managed settings only.
 6. Assign to the managed Claude Code device group.
 
 OMA-URI fallback (when the catalog node is not available):
@@ -187,11 +210,23 @@ OMA-URI fallback (when the catalog node is not available):
 
 ```powershell
 cordumctl edge doctor `
-  --managed-settings-path "C:\Program Files\Cordum\managed-settings.json"
+  --managed-settings-path "C:\Program Files\ClaudeCode\managed-settings.json"
 ```
 
 For PowerShell pipelines that need a non-zero exit gate, use `cordumctl edge
 managed-settings verify --path <…> --json` and parse the `ok` field.
+
+Both commands read a file. If the policy landed in the registry (the
+`Settings` value under `HKLM\SOFTWARE\Policies\ClaudeCode`) rather than as a
+file, there is nothing at that path: write the delivered value to a file and
+verify that instead. `WriteAllText` writes UTF-8 without a byte-order mark,
+which the verifier's JSON parser requires.
+
+```powershell
+$settings = (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\ClaudeCode').Settings
+[IO.File]::WriteAllText("$env:TEMP\managed-settings.json", $settings)
+cordumctl edge managed-settings verify --path "$env:TEMP\managed-settings.json"
+```
 
 ## 5. Linux / WSL playbook
 
@@ -266,6 +301,13 @@ Every supported channel ends with the same verifier:
 cordumctl edge managed-settings verify --path <path>
 ```
 
+`verify` and the doctor's `managed_settings_compliance` check read a JSON file
+only; they cannot read macOS managed preferences or the Windows registry. For a
+managed-preferences or registry rollout, verify the payload file before you
+upload it (the profile or policy carries exactly that content; pin its SHA as
+in §3.2), and for a post-deploy check write the delivered policy to a file first
+(§3.4, §4.3).
+
 The verifier enforces the **17 invariants** baked into the template:
 
 | # | Invariant | Severity |
@@ -274,21 +316,21 @@ The verifier enforces the **17 invariants** baked into the template:
 | 2 | `allowManagedMcpServersOnly == true` | critical |
 | 3 | `disableBypassPermissionsMode == "disable"` | critical |
 | 4 | `allowedHttpHookUrls == []`; HTTP hooks are spike-only and must not be part of production enforcement | critical |
-| 5 | `allowedMcpServers == [{ "serverName": "cordum-edge" }]` with no extra/missing/case-variant entries | critical |
-| 6 | `hooks.PreToolUse` present with a canonical `cordum-hook claude pre-tool-use` command | critical |
+| 5 | `allowedMcpServers` is exactly one `{ "serverUrl": "<MCP gateway URL>" }` entry with no `*` wildcard and no `serverName`/`serverCommand` fields (a `serverName` entry is not a security control: users pick server names) | critical |
+| 6 | `hooks.PreToolUse` present with a canonical `cordum-hook claude pre-tool-use` command carrying `"onFailure": "block"` | critical |
 | 7 | `hooks.PostToolUse` present with a canonical `cordum-hook claude post-tool-use` command | critical |
 | 8 | `hooks.PostToolUseFailure` present with a canonical `cordum-hook claude post-tool-use-failure` command | critical |
-| 9 | `hooks.UserPromptSubmit` present with a canonical `cordum-hook claude user-prompt-submit` command | critical |
-| 10 | `hooks.ConfigChange` present with a canonical `cordum-hook claude config-change` command | critical |
+| 9 | `hooks.UserPromptSubmit` present with a canonical `cordum-hook claude user-prompt-submit` command carrying `"onFailure": "block"` | critical |
+| 10 | `hooks.ConfigChange` present with a canonical `cordum-hook claude config-change` command carrying `"onFailure": "block"` | critical |
 | 11 | `hooks.FileChanged` present with a canonical `cordum-hook claude file-changed` command | critical |
 | 12 | `env.CORDUM_AGENTD_FAIL_CLOSED == "true"` | critical |
 | 13 | `env.CORDUM_EDGE_MANAGED_POLICY_MODE == "enterprise-strict"` | critical |
 | 14 | `env.CORDUM_EDGE_MANAGED_HOOKS_ONLY == "true"` | critical |
-| 15 | `env.CORDUM_AGENTD_URL` non-empty + no query string | critical |
-| 16 | The hook command boundary is local `cordum-hook` -> local `cordum-agentd`; arbitrary shell/python/curl commands are rejected | critical |
-| 17 | No nonce/key markers in env or serialised form: `CORDUM_AGENTD_HOOK_NONCE`, `ANTHROPIC_API_KEY`, `sk-…` provider keys, `ghp_…` GitHub tokens, `AKIA…` AWS access keys, or `Authorization` headers carrying bearer tokens. | high |
+| 15 | `env.CORDUM_AGENTD_URL` is a loopback `http(s)` URL (`127.0.0.1`, `::1`, or `localhost`) with an explicit port, path `/v1/edge/hooks/claude`, and no userinfo, query string, or fragment | critical |
+| 16 | `env` carries none of the reserved secret keys (`CORDUM_AGENTD_HOOK_NONCE`, `ANTHROPIC_API_KEY`, `CORDUM_API_KEY`) and no value that looks like a secret | high |
+| 17 | The serialised file contains no secret markers: `sk-…` provider keys, `ghp_…` GitHub tokens, `AKIA…` AWS access keys, or `Authorization: Bearer` headers | high |
 
-Canonical hook paths are `/opt/cordum/bin/cordum-hook`, `/usr/local/bin/cordum-hook`, `/Applications/Cordum Edge/cordum-hook`, and `C:\Program Files\Cordum\cordum-hook.exe`. The verifier has no settings-file override for HTTP hook URLs, alternate MCP servers, or arbitrary hook commands. A future power-user exception must be a separately verified, signed trusted-config input; managed settings bytes alone are not trusted to weaken the production boundary.
+Canonical hook paths are `/opt/cordum/bin/cordum-hook`, `/usr/local/bin/cordum-hook`, `/Applications/Cordum Edge/cordum-hook`, and `C:\Program Files\Cordum\cordum-hook.exe`. Invariants 6–11 reject any other hook command (arbitrary shell/python/curl), which keeps the boundary at local `cordum-hook` -> local `cordum-agentd`. The verifier has no settings-file override for HTTP hook URLs, alternate MCP servers, or arbitrary hook commands. A future power-user exception must be a separately verified, signed trusted-config input; managed settings bytes alone are not trusted to weaken the production boundary.
 
 The same checks run inside `cordumctl edge doctor` when you pass
 `--managed-settings-path` (or set `CORDUM_EDGE_MANAGED_SETTINGS_PATH`).
@@ -364,7 +406,7 @@ relocation):
 4. Run the verifier on a sample workstation before broad rollout.
 5. Monitor the scheduled drift report to confirm fleet adoption.
 
-The 14 invariants do not change between minor Cordum releases; if they
+The 17 invariants do not change between minor Cordum releases; if they
 materially change, the upgrade notes will say so explicitly. The
 `cordumctl edge managed-settings verify` exit code is the operator's
 shippable signal that a fleet has converged.
@@ -508,7 +550,7 @@ provider is operator-only.
 
 No new managed-settings JSON invariants are introduced — the OIDC
 trust config lives in the operator's environment / fleet config, not
-in `managed-settings.json`. Cordum's verifier checks the 14 invariants
+in `managed-settings.json`. Cordum's verifier checks the 17 invariants
 in §6 above; CI OIDC config is read by the detector at boot and
 re-checked at every Detector instantiation via `LoadOIDCConfigFromEnv`.
 

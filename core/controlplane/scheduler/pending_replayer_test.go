@@ -132,12 +132,12 @@ func TestPendingReplayerReplaysApprovedJobs(t *testing.T) {
 	registry := newTestRegistry(t)
 	engine := NewEngine(bus, NewSafetyBasic(), registry, NewNaiveStrategy(), store, nil)
 
-	// Create a job in APPROVAL_REQUIRED state with approval_granted label
+	// A job a human approved that is still in APPROVAL_REQUIRED.
 	req := &pb.JobRequest{
 		JobId:    "job-approved",
 		Topic:    "job.test",
 		TenantId: "default",
-		Labels:   map[string]string{"approval_granted": "true"},
+		Labels:   map[string]string{"approval_granted": "true", "approval_snapshot": "snap-1"},
 	}
 	if err := store.SetJobRequest(context.Background(), req); err != nil {
 		t.Fatalf("set job request: %v", err)
@@ -145,6 +145,14 @@ func TestPendingReplayerReplaysApprovedJobs(t *testing.T) {
 	if err := store.SetState(context.Background(), req.JobId, JobStateApproval); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
+	hash, err := HashJobRequest(req)
+	if err != nil {
+		t.Fatalf("hash: %v", err)
+	}
+	store.safety[req.JobId] = SafetyDecisionRecord{
+		Decision: SafetyRequireApproval, ApprovalRequired: true, PolicySnapshot: "snap-1", JobHash: hash,
+	}
+	store.approve(req.JobId)
 
 	replayer := NewPendingReplayer(engine, store, 0, time.Millisecond)
 	replayer.replayApproved(context.Background(), time.Now())

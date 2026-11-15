@@ -1,16 +1,14 @@
 # Audit Hash Chain — Tamper Evidence for SIEM Events
 
-Cordum's audit pipeline emits every governance event (safety decisions,
+Cordum's audit pipeline passes governance events (safety decisions,
 approvals, policy changes, MCP tool resolutions, legal-hold transitions,
-…) through a per-tenant append-only **hash chain** before forwarding to
-the configured SIEM backend. The chain gives you cryptographic evidence
-that:
-
-- no event has been silently mutated in place,
-- no event has been removed from the sequence,
-- no event has been re-ordered,
-
-within the audit retention window.
+…) through a per-tenant **hash chain** before forwarding them to the
+configured SIEM backend, when the chain is configured. Chain verification
+recomputes each event's hash and its link to the previous event, and
+reports a mismatch or a missing seq inside the audit retention window as a
+gap. The chain is rated `supported`, not `verified`, and which events
+reach it is not qualified: see CLM-057 in the
+[claim register](../contract/claims.yaml).
 
 This document covers the threat model, the on-disk shape, the operator
 commands, how to interpret the verify response, how retention is
@@ -240,12 +238,12 @@ integrity-reporting endpoint, not an event-retrieval API.
 ## 6. Retention vs tampering
 
 Both retention expiry and tampering produce absent seq numbers. The
-chain distinguishes them by construction:
+verifier classifies each gap by its position against the retention
+boundary:
 
 1. **`retention_boundary_seq`** is the oldest seq still present in the
-   stream. It is a concrete, cryptographically grounded cutoff — the
-   chain cannot lie about it without breaking every downstream hash.
-2. **Gaps below the boundary** were trimmed by retention policy: either
+   stream.
+2. **Gaps below the boundary** are treated as retention trimming: either
    stream max-length eviction or explicit admin-driven XDEL. They are
    reported as `retention_trimmed` and do **not** flip status to
    compromised.
@@ -281,9 +279,9 @@ bad; surface it on the dashboard.
    exactly what was altered.
 6. **Rotate access.** If the tampering was deliberate, the actor had
    Redis ACL or network access; assume the credential is compromised.
-7. **Do NOT attempt to repair the chain.** The chain is append-only and
-   cannot be retro-fitted. A compromised chain stays compromised from
-   that seq forward — the integrity signal itself is the record.
+7. **Do NOT attempt to repair the chain.** Cordum has no repair path for
+   it: a compromised chain stays compromised from that seq forward —
+   the integrity signal itself is the record.
 
 If `GET /api/v1/audit/verify` returns `503 audit chainer not installed`
 on a current build, the gateway failed to construct the chainer at

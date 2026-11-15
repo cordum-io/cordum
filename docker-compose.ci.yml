@@ -3,8 +3,9 @@
 # Usage:
 #   docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d
 #
-# Only `.github/workflows/edge-fake-hook-e2e.yml` is expected to use this
-# override. It is NOT part of the default contributor path or any compose
+# Used by `.github/workflows/edge-fake-hook-e2e.yml` and
+# `.github/workflows/demo-cap-mcp-governed-e2e.yml`; the latter needs distinct
+# principal-bearing worker and operator keys. NOT part of the default compose
 # adoption story — `docker compose up -d` (no override) is the documented
 # single-key default and stays intact.
 #

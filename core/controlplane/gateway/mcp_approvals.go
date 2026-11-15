@@ -63,9 +63,9 @@ type MCPApprovalRequest struct {
 	// Tenant is the org/tenant the calling agent belongs to. Drives both
 	// the storage namespace and the audit-chain partition.
 	Tenant string
-	// AgentID is the display-facing MCP agent identifier (X-Agent-Id).
-	// Persisted for audit clarity; the self-approval guard uses
-	// Principal, not AgentID.
+	// AgentID is the agent identity ID bound to the authenticated
+	// principal, never the raw X-Agent-Id header. Persisted for audit
+	// clarity; the self-approval guard uses Principal, not AgentID.
 	AgentID string
 	// Principal is the authenticated subject that initiated the call
 	// (API-key principal, SSO subject). The self-approval guard
@@ -93,6 +93,13 @@ type MCPApprovalRequest struct {
 	// trigger reason and never overwritten by a resolver's free-form
 	// reason — see ResolutionReason on the record.
 	Reason string
+	// ID, when set, is the record id to use instead of a generated one. The
+	// gate pre-generates it so the Edge approval minted first can name the
+	// record it is dual-written with.
+	ID string
+	// EdgeApprovalRef names the Edge approval this record is dual-written
+	// with; see MCPApprovalRecord.EdgeApprovalRef.
+	EdgeApprovalRef string
 }
 
 // MCPApprovalRecord is the persisted shape stored at mcp:approvals:<id>.
@@ -122,6 +129,11 @@ type MCPApprovalRecord struct {
 	ResolvedBy       string                 `json:"resolved_by,omitempty"`
 	Decision         model.ApprovalDecision `json:"decision,omitempty"`
 	ConsumedAt       int64                  `json:"consumed_at,omitempty"`
+	// EdgeApprovalRef names the Edge approval dual-written with this record.
+	// The Edge approval is the pair's consume token and is resolved together
+	// with the record from either approvals page; ClaimPreApproved never
+	// consumes such a record.
+	EdgeApprovalRef string `json:"edge_approval_ref,omitempty"`
 }
 
 // MCPApprovalStore is the per-server handle for MCP approval persistence.
@@ -272,9 +284,12 @@ func (s *MCPApprovalStore) EnqueueMCPApproval(ctx context.Context, req *MCPAppro
 		ttl = mcpApprovalDefaultTTL
 	}
 
-	id, err := mcpApprovalID()
-	if err != nil {
-		return nil, fmt.Errorf("mcp approval: generate id: %w", err)
+	id := strings.TrimSpace(req.ID)
+	if id == "" {
+		var err error
+		if id, err = mcpApprovalID(); err != nil {
+			return nil, fmt.Errorf("mcp approval: generate id: %w", err)
+		}
 	}
 	now := time.Now().UTC()
 
@@ -303,6 +318,8 @@ func (s *MCPApprovalStore) EnqueueMCPApproval(ctx context.Context, req *MCPAppro
 		Status:    model.ApprovalStatusPending,
 		CreatedAt: now.UnixMicro(),
 		ExpiresAt: now.Add(ttl).UnixMicro(),
+
+		EdgeApprovalRef: strings.TrimSpace(req.EdgeApprovalRef),
 	}
 	raw, err := json.Marshal(rec)
 	if err != nil {
@@ -410,6 +427,12 @@ func (s *MCPApprovalStore) ClaimPreApproved(ctx context.Context, tenant, agentID
 	// first — the CAS then decides the winner consistently.
 	sort.Strings(ids)
 	for _, id := range ids {
+		// A record dual-written with an Edge approval is consumed only through
+		// that approval, the pair's single consume token, so one approval
+		// cannot run the call once per path.
+		if rec, err := s.Get(ctx, id); err == nil && rec.EdgeApprovalRef != "" {
+			continue
+		}
 		consumed, rec, err := s.consumeRecord(ctx, id)
 		if err != nil {
 			if errors.Is(err, redis.Nil) {
@@ -695,9 +718,7 @@ func (s *MCPApprovalStore) SweepExpired(ctx context.Context, now time.Time) (int
 	return matched, nil
 }
 
-// WithdrawPending expires a PENDING record now, whatever its deadline. The
-// registry gate calls it when the Edge mint fails after the correlation
-// record was enqueued (task-fbe79532), so approvers see no orphan row. A
+// WithdrawPending expires a PENDING record now, whatever its deadline. A
 // record that is no longer PENDING is left alone, and the sweeper stays the
 // backstop. Reports whether this call expired the record.
 func (s *MCPApprovalStore) WithdrawPending(ctx context.Context, id string, now time.Time) bool {

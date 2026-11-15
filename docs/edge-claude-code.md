@@ -10,8 +10,16 @@ when approval is needed, and when evidence must be exported.
 ## Command
 
 ```bash
-CORDUM_GATEWAY=http://localhost:8081 CORDUM_API_KEY=<cordum-api-key> CORDUM_TENANT_ID=default cordumctl edge claude -- --print "summarize this repo"
+CORDUM_GATEWAY=https://localhost:8081 \
+CORDUM_TLS_CA=<cordum-checkout>/certs/ca/ca.crt \
+CORDUM_API_KEY=<cordum-api-key> \
+CORDUM_TENANT_ID=default \
+cordumctl edge claude -- --print "summarize this repo"
 ```
+
+The default stack serves the gateway over HTTPS with a development CA in the
+Cordum checkout's `certs/ca/ca.crt`. `CORDUM_TLS_CA` (or `--cacert`) names
+that CA, and the launcher passes it to `cordum-agentd` for its Gateway calls.
 
 Use `cordumctl edge claude [edge flags] -- [claude args...]`. Cordum flags stay
 before `--`; Claude arguments go after it. The wrapper supplies the governed
@@ -83,23 +91,42 @@ persisted as audit evidence.
 | Mode | Behavior |
 | --- | --- |
 | `observe` | Allow degraded actions and record evidence where possible. |
-| `enforce` | Allow known-safe degraded actions only; deny risky/unknown actions — **only when `CORDUM_AGENTD_FAIL_CLOSED` is enabled**. |
+| `enforce` | Allow known-safe degraded actions only; deny risky/unknown actions. |
 | `enterprise-strict` | Fail closed when Cordum governance is unavailable. |
 
-`CORDUM_AGENTD_FAIL_CLOSED` defaults to `false`. An `enforce` session that does
-not enable it fails **open**: if agentd errors or times out, the action is
-allowed. Run `cordumctl edge doctor` to see the effective posture — it warns
-when an enforce session is fail-open.
+The wrapper renders every mode except `observe` fail-closed: the generated
+settings set `CORDUM_AGENTD_FAIL_CLOSED=true`, and the `PreToolUse`,
+`UserPromptSubmit`, and `ConfigChange` command hooks carry
+`"onFailure": "block"`, so a `cordum-hook` that cannot start, crashes, or times
+out blocks the action instead of letting it through. `onFailure` requires
+Claude Code v2.1.295 or later; older versions do not honor it. `observe` stays
+fail-open by design.
+
+Before it launches Claude Code in a fail-closed mode, the wrapper runs
+`claude --version`. `enterprise-strict` refuses to launch a version older than
+2.1.295; the other fail-closed modes print a warning and launch. If the version
+cannot be read, the wrapper prints a warning and launches. `cordumctl edge
+doctor` runs the same check as `claude_code_version`.
+
+`CORDUM_AGENTD_FAIL_CLOSED` defaults to `false`, so fail-open is only possible
+for hook settings you wire by hand without `CORDUM_AGENTD_FAIL_CLOSED=true` and
+`"onFailure": "block"`: an `enforce` hook wired that way still denies
+`PreToolUse` when agentd errors or times out, but lets prompts and config
+changes through, and lets any action through when the hook process itself
+fails. Run `cordumctl edge doctor` to see the effective posture.
 
 Malformed hook input fails closed with redacted stderr. Hook timeout must stay
-below Claude Code's 5s command-hook deadline.
+below the command-hook `"timeout": 5` that Cordum generates (Claude Code's own
+default is 600 seconds).
 
-The same 5s deadline bounds the inline approval wait.
-`CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` defaults to `30s`, which exceeds
-it: when the wait outlives the deadline Claude Code times out the hook and
-**fails open**, with no user-visible warning. Set the inline-wait timeout
-strictly below `5s`, disable inline wait, or use deny-and-retry instead of
-block-and-wait. See [edge/configuration.md](edge/configuration.md) for details.
+The same budget bounds the inline approval wait.
+`CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` defaults to `30s`, but agentd ends
+the wait 1s before the hook's `4s` agentd budget runs out, so an approval has
+about 3 seconds to arrive. One still pending then gets the usual deny with
+`approval_ref` and retry guidance, well before Claude Code's timeout fires.
+Disable inline wait or use deny-and-retry instead of block-and-wait. See
+[edge/configuration.md](edge/configuration.md) for
+details.
 
 ## Token tradeoffs
 

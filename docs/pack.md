@@ -490,9 +490,16 @@ services:
   my-worker:
     build: .
     environment:
-      - NATS_URL=nats://nats:4222
-      - REDIS_URL=redis://:$REDIS_PASSWORD@redis:6379
+      # The Cordum stack runs NATS and Redis TLS-only; mount its ./certs.
+      - NATS_URL=tls://nats:4222
+      - NATS_TLS_CA=/etc/cordum/tls/ca/ca.crt
+      - NATS_TLS_CERT=/etc/cordum/tls/client/tls.crt
+      - NATS_TLS_KEY=/etc/cordum/tls/client/tls.key
+      - REDIS_URL=rediss://:$REDIS_PASSWORD@redis:6379
+      - REDIS_TLS_CA=/etc/cordum/tls/ca/ca.crt
       - WORKER_ID=my-worker
+    volumes:
+      - <cordum-checkout>/certs:/etc/cordum/tls:ro
     depends_on:
       nats:
         condition: service_healthy
@@ -609,7 +616,7 @@ The scheduler's `bootstrapConfig()` is write-once — it caches pool config in R
 
 ```bash
 # Delete the cached config key
-docker compose exec redis redis-cli -a "$REDIS_PASSWORD" DEL cfg:system:default
+docker compose exec redis redis-cli --tls --cacert /etc/cordum/tls/ca/ca.crt -a "$REDIS_PASSWORD" DEL cfg:system:default
 docker compose restart scheduler
 ```
 
@@ -627,14 +634,23 @@ Using the Go SDK (`sdk/runtime`):
 
 ```go
 import (
+    "os"
+
     "github.com/cordum/cordum/sdk/runtime"
     "github.com/nats-io/nats.go"
 )
 
+// The Cordum stack runs NATS and Redis TLS-only. The Agent's own dialers
+// don't read NATS_TLS_* / REDIS_TLS_*, so connect NATS and open the store
+// with the helpers that do, then hand both to the agent.
+tlsCfg, _ := runtime.NATSTLSConfigFromEnv()
+nc, _ := nats.Connect("tls://nats:4222", nats.Secure(tlsCfg))
+store, _ := runtime.NewRedisBlobStoreWithPing("rediss://:" + os.Getenv("REDIS_PASSWORD") + "@redis:6379")
+
 // 1. Create an agent
 agent := &runtime.Agent{
-    NATSURL:  "nats://nats:4222",
-    RedisURL: "redis://:$REDIS_PASSWORD@redis:6379",
+    NATS:     nc,
+    Store:    store,
     SenderID: "my-worker",
     // Required when the worker holds no signing keys: CAP fails closed
     // at startup otherwise. Provision worker trust keys instead of this
@@ -652,8 +668,7 @@ runtime.Register(agent, runtime.DirectSubject("my-worker"), analyzeHandler)
 agent.Start()
 defer agent.Close()
 
-// 4. Start heartbeat loop
-nc, _ := nats.Connect("nats://nats:4222")
+// 4. Start heartbeat loop (on the same TLS connection)
 heartbeatFn := func() ([]byte, error) {
     return runtime.HeartbeatPayload(
         "my-worker",   // worker ID
@@ -683,6 +698,10 @@ Workers emit heartbeats on `sys.heartbeat` every 5 seconds (default). The schedu
 | `NATS_URL` | `nats://127.0.0.1:4222` | NATS connection URL |
 | `REDIS_URL` | `redis://:$REDIS_PASSWORD@127.0.0.1:6379/0` | Redis connection URL |
 | `WORKER_ID` | *(required)* | Unique worker identifier |
+
+Against the default Cordum stack, use `tls://` and `rediss://` URLs and set
+`NATS_TLS_CA`, `NATS_TLS_CERT`, `NATS_TLS_KEY` and `REDIS_TLS_CA` to the
+certificates in `./certs/` (see the hello-worker-go example below).
 
 See [sdk-reference.md](sdk-reference.md) for the full SDK API reference.
 
@@ -745,17 +764,28 @@ Located at `examples/hello-worker-go/`. A minimal Go worker demonstrating:
 - Heartbeat loop with pool registration (`pool=hello-pack`)
 - Graceful shutdown with signal handling
 
+The default stack runs NATS and Redis TLS-only, so the worker needs the `tls://` and `rediss://` schemes plus the generated certificates in `./certs/`:
+
 ```bash
-# Run locally
-NATS_URL=nats://localhost:4222 \
-REDIS_URL=redis://:$REDIS_PASSWORD@localhost:6379 \
+# Run locally (from the repo root)
+NATS_URL=tls://localhost:4222 \
+NATS_TLS_CA=./certs/ca/ca.crt \
+NATS_TLS_CERT=./certs/client/tls.crt \
+NATS_TLS_KEY=./certs/client/tls.key \
+REDIS_URL=rediss://:$REDIS_PASSWORD@localhost:6379 \
+REDIS_TLS_CA=./certs/ca/ca.crt \
 go run ./examples/hello-worker-go
 
 # Or via Docker
 docker build -f examples/hello-worker-go/Dockerfile -t hello-worker .
 docker run --network cordum_default \
-  -e NATS_URL=nats://nats:4222 \
-  -e REDIS_URL=redis://:$REDIS_PASSWORD@redis:6379 \
+  -v "$PWD/certs:/etc/cordum/tls:ro" \
+  -e NATS_URL=tls://nats:4222 \
+  -e NATS_TLS_CA=/etc/cordum/tls/ca/ca.crt \
+  -e NATS_TLS_CERT=/etc/cordum/tls/client/tls.crt \
+  -e NATS_TLS_KEY=/etc/cordum/tls/client/tls.key \
+  -e REDIS_URL=rediss://:$REDIS_PASSWORD@redis:6379 \
+  -e REDIS_TLS_CA=/etc/cordum/tls/ca/ca.crt \
   hello-worker
 ```
 

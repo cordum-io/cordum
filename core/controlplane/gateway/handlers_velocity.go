@@ -163,6 +163,11 @@ func (s *server) handleCreateVelocityRule(w http.ResponseWriter, r *http.Request
 		writeJSONError(w, http.StatusBadRequest, errorCodeVelocityRuleInvalid, err.Error())
 		return
 	}
+	signer, err := resolvePolicyStoreSigner("velocity rule " + def.ID)
+	if err != nil {
+		writeJSONError(w, http.StatusServiceUnavailable, errorCodePolicySigningRequired, err.Error())
+		return
+	}
 
 	doc, bundles, err := s.loadVelocityRuleBundleDoc(r.Context())
 	if err != nil {
@@ -184,6 +189,10 @@ func (s *server) handleCreateVelocityRule(w http.ResponseWriter, r *http.Request
 	bundle, err := velocityRuleBundleMap(def, now, "")
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, errorCodeVelocityRuleInvalid, err.Error())
+		return
+	}
+	if err := signPolicyStoreBundle(signer, bundle); err != nil {
+		writeInternalError(w, r, "velocity rule operation", err)
 		return
 	}
 	bundles[bundleID] = bundle
@@ -285,6 +294,11 @@ func (s *server) handlePutVelocityRule(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, errorCodeVelocityRuleInvalid, err.Error())
 		return
 	}
+	signer, err := resolvePolicyStoreSigner("velocity rule " + def.ID)
+	if err != nil {
+		writeJSONError(w, http.StatusServiceUnavailable, errorCodePolicySigningRequired, err.Error())
+		return
+	}
 
 	doc, bundles, err := s.loadVelocityRuleBundleDoc(r.Context())
 	if err != nil {
@@ -310,6 +324,10 @@ func (s *server) handlePutVelocityRule(w http.ResponseWriter, r *http.Request) {
 		if enabledRaw, ok := existingBundle["enabled"]; ok {
 			bundle["enabled"] = enabledRaw
 		}
+	}
+	if err := signPolicyStoreBundle(signer, bundle); err != nil {
+		writeInternalError(w, r, "velocity rule operation", err)
+		return
 	}
 
 	bundles[bundleID] = bundle
@@ -570,6 +588,21 @@ func velocityRuleBundleMap(def velocityRuleDefinition, updatedAt, createdAt stri
 		bundle["enabled"] = *def.Enabled
 	}
 	return bundle, nil
+}
+
+// signPolicyStoreBundle signs the bundle's content for the policy store. A
+// nil signer (explicit warn or off without a key) leaves the bundle as built.
+func signPolicyStoreBundle(signer *policyStoreSigner, bundle map[string]any) error {
+	if signer == nil {
+		return nil
+	}
+	content, _ := bundle["content"].(string)
+	sig, err := signer.sign([]byte(content))
+	if err != nil {
+		return err
+	}
+	bundle[policyBundleSignatureKey] = sig
+	return nil
 }
 
 func marshalVelocityRuleBundle(def velocityRuleDefinition) (string, error) {

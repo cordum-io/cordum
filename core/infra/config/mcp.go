@@ -30,6 +30,19 @@ type MCPPolicy struct {
 	AllowedUpstreams []string `json:"allowed_upstreams,omitempty" yaml:"allowed_upstreams,omitempty"`
 }
 
+// setsGatewayFields reports whether the reserved MCP gateway fields are set.
+func (p MCPPolicy) setsGatewayFields() bool {
+	return p.GatewayEnabled || len(p.UpstreamServers) > 0 || len(p.AllowedUpstreams) > 0
+}
+
+// HasLists reports whether any allow_*/deny_* list is set.
+func (p MCPPolicy) HasLists() bool {
+	return len(p.AllowServers) > 0 || len(p.DenyServers) > 0 ||
+		len(p.AllowTools) > 0 || len(p.DenyTools) > 0 ||
+		len(p.AllowResources) > 0 || len(p.DenyResources) > 0 ||
+		len(p.AllowActions) > 0 || len(p.DenyActions) > 0
+}
+
 // UpstreamServerConfig is the minimal config-layer contract for an approved
 // upstream MCP server. Runtime registry metadata (tenant scope, timestamps,
 // backup records, validation state) belongs to EDGE-101's edge registry.

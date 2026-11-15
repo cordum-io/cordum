@@ -179,7 +179,7 @@ EDGE-017.4.1 removal.
 ```bash
 export CORDUM_API_KEY=<your-api-key>
 export CORDUM_TENANT_ID=default
-curl -sS -X POST http://localhost:8081/api/v1/workflows \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/workflows \
   -H 'Content-Type: application/json' \
   -H "X-API-Key: $CORDUM_API_KEY" \
   -H "X-Tenant-ID: $CORDUM_TENANT_ID" \
@@ -189,7 +189,7 @@ curl -sS -X POST http://localhost:8081/api/v1/workflows \
 2) Start a run:
 
 ```bash
-curl -sS -X POST http://localhost:8081/api/v1/workflows/<workflow_id>/runs \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/workflows/<workflow_id>/runs \
   -H 'Content-Type: application/json' \
   -H "X-API-Key: $CORDUM_API_KEY" \
   -H "X-Tenant-ID: $CORDUM_TENANT_ID" \
@@ -199,7 +199,7 @@ curl -sS -X POST http://localhost:8081/api/v1/workflows/<workflow_id>/runs \
 3) Approve the step:
 
 ```bash
-curl -sS -X POST http://localhost:8081/api/v1/workflows/<workflow_id>/runs/<run_id>/steps/approve/approve \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/workflows/<workflow_id>/runs/<run_id>/steps/approve/approve \
   -H 'Content-Type: application/json' \
   -H "X-API-Key: $CORDUM_API_KEY" \
   -H "X-Tenant-ID: $CORDUM_TENANT_ID" \
@@ -209,11 +209,11 @@ curl -sS -X POST http://localhost:8081/api/v1/workflows/<workflow_id>/runs/<run_
 4) Delete the run and workflow:
 
 ```bash
-curl -sS -X DELETE http://localhost:8081/api/v1/workflow-runs/<run_id> \
+curl -sS --cacert ./certs/ca/ca.crt -X DELETE https://localhost:8081/api/v1/workflow-runs/<run_id> \
   -H "X-API-Key: $CORDUM_API_KEY" \
   -H "X-Tenant-ID: $CORDUM_TENANT_ID"
 
-curl -sS -X DELETE http://localhost:8081/api/v1/workflows/<workflow_id> \
+curl -sS --cacert ./certs/ca/ca.crt -X DELETE https://localhost:8081/api/v1/workflows/<workflow_id> \
   -H "X-API-Key: $CORDUM_API_KEY" \
   -H "X-Tenant-ID: $CORDUM_TENANT_ID"
 ```

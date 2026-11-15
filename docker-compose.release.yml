@@ -228,6 +228,12 @@ services:
       CORDUM_POLICY_SIGNING_KEY: "${CORDUM_POLICY_SIGNING_KEY:-}"
       CORDUM_POLICY_SIGNING_KEY_ID: "${CORDUM_POLICY_SIGNING_KEY_ID:-default}"
       CORDUM_POLICY_STRICT: "${CORDUM_POLICY_STRICT:-warn}"
+      # Pack signatures: explicit DOWNGRADE. In the production profile the
+      # gateway refuses unsigned packs unless this is false, and the official
+      # catalog packs are not signed yet. The gateway logs this downgrade at
+      # startup and on every unsigned install, and the admin status API
+      # reports it. Remove this line once the official packs are signed.
+      CORDUM_GATEWAY_PACK_STRICT: "${CORDUM_GATEWAY_PACK_STRICT:-false}"
     volumes:
       - "${CORDUM_TLS_DIR:?error: CORDUM_TLS_DIR is not set}:/etc/cordum/tls:ro"
     ports:

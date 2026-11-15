@@ -105,13 +105,42 @@ the primitive does not stretch to fill the page; it owns its own scroll.
 ### Sort
 
 Client-side via TanStack `createSortedRowModel()` and the stock `sortFns`,
-both registered in DataTable's module-level `tableFeatures`. Toggle order is
-**asc → desc → unsorted** on repeated header clicks. Headers expose
+both registered in DataTable's module-level `tableFeatures`. Headers expose
 `aria-sort`, are keyboard-focusable when sortable, and respond to Enter or
-Space. The default sorting function places `undefined` at the end ascending
-and the beginning descending — override via `columnDef.sortFn` (a comparator
+Space.
+
+The behavior below is checked against **@tanstack/table-core 9.3.1
+(dashboard/pnpm-lock.yaml)**. Source paths are relative to that package.
+
+The first header click sorts in the column's first direction, the second
+reverses it, and the third clears sorting. DataTable keeps TanStack's default
+`enableSortingRemoval` (checked against `column_getNextSortingOrder` in
+`dist/features/row-sorting/rowSortingFeature.utils.js`).
+
+The first direction comes from the first non-nullish value among the first
+10 filtered rows: a string column cycles **asc → desc → unsorted**; other
+columns (numbers, dates, booleans, or no non-nullish sampled value) cycle
+**desc → asc → unsorted**. `columnDef.sortDescFirst` overrides that first
+direction (checked against `column_getAutoSortDir` and
+`column_getFirstSortDir` in `dist/features/row-sorting/rowSortingFeature.utils.js`).
+
+Automatic sorting samples the first 10 filtered rows and selects from the
+registered stock `sortFns`: string values containing digits select
+`alphanumeric` for natural order (`item2` before `item10`); other strings
+select case-insensitive `text`; Dates select `datetime`. For mixed types,
+the first Date or digit-containing string in the sample wins. Without the
+`sortFns` slot these fall back to `basic` (checked against
+`column_getAutoSortFn` in `dist/features/row-sorting/rowSortingFeature.utils.js`
+and the comparators in `dist/features/row-sorting/sortFns.js`).
+`DataTable.sortfns.test.tsx` pins natural order, case-insensitive order, and
+the numeric toggle cycle.
+
+The default sorting function places `undefined` at the end ascending and
+the beginning descending — override via `columnDef.sortFn` (a comparator
 function or a registered stock name such as `text` or `alphanumeric`) /
-`columnDef.sortUndefined` when this is wrong for your data.
+`columnDef.sortUndefined` when this is wrong for your data (checked against
+`getDefaultColumnDef`, which sets `sortFn: "auto"` and `sortUndefined: 1`,
+in `dist/features/row-sorting/rowSortingFeature.js`).
 
 For server-side sort + paging (e.g. an admin audit list with a backend
 ORDER BY), keep using `ui/LegacyDataTable` until a server-sort sibling

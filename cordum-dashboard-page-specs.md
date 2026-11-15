@@ -332,7 +332,7 @@ The current `DLQPage.tsx` mixes two fundamentally different things: operational 
 
 **Existing features from `InputSafetySettings.tsx` (10KB):**
 
-Fail-mode configuration: toggle between fail-closed (deny all jobs when Safety Kernel is unreachable) and fail-open (allow jobs when kernel is unreachable). This is the most critical security setting in the entire dashboard.
+Fail-mode configuration: toggle between fail-closed (the scheduler requeues jobs while the Safety Kernel is unreachable) and fail-open (the scheduler admits only jobs on topics listed in `scheduler.input_fail_open_scope` while the kernel is unreachable). This is the most critical security setting in the entire dashboard.
 
 Safety Kernel connection status: shows whether the kernel is connected, last ping time, and connectivity health.
 

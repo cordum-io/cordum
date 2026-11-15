@@ -48,6 +48,9 @@ func NewBasicAuthProvider(defaultTenant string) (*BasicAuthProvider, error) {
 	if err != nil {
 		return nil, err
 	}
+	if env.IsProduction() && env.Bool("CORDUM_ALLOW_HEADER_PRINCIPAL") {
+		slog.Warn("auth: CORDUM_ALLOW_HEADER_PRINCIPAL is set in production: X-Principal-Id is accepted for attribution only and never binds identity")
+	}
 	allowAnonymous := env.Bool("CORDUM_ALLOW_INSECURE_NO_AUTH")
 	jwtValidator, jwtRequired, err := NewReloadableJWTValidator()
 	if err != nil {
@@ -317,9 +320,10 @@ func (b *BasicAuthProvider) authenticateWithScope(ctx context.Context, key, prin
 			principalID = ""
 		}
 		return &AuthContext{
-			Tenant:      b.defaultTenant,
-			PrincipalID: strings.TrimSpace(principalID),
-			Role:        "anonymous",
+			Tenant:            b.defaultTenant,
+			PrincipalID:       strings.TrimSpace(principalID),
+			PrincipalAsserted: strings.TrimSpace(principalID) != "",
+			Role:              "anonymous",
 		}, nil
 	}
 	// Check session tokens (from user/password login)
@@ -369,14 +373,21 @@ func (b *BasicAuthProvider) authenticateWithScope(ctx context.Context, key, prin
 						slog.Warn("failed to record api key usage", "key_id", keyID, "error", err) // #nosec -- key id is validated and safe for logs.
 					}
 				}(mk.ID)
+				// A ManagedKey carries no principal, so any principal here
+				// came from the caller: honored only where header principals
+				// are allowed, and then only as an asserted one.
+				if !b.allowHeaderPrincipal {
+					principalID = ""
+				}
 				return &AuthContext{
-					APIKey:      key,
-					Tenant:      tenant,
-					PrincipalID: strings.TrimSpace(principalID),
-					KeyID:       mk.ID,
-					KeyName:     mk.Name,
-					Role:        role,
-					AuthSource:  AuthSourceAPIKey,
+					APIKey:            key,
+					Tenant:            tenant,
+					PrincipalID:       strings.TrimSpace(principalID),
+					PrincipalAsserted: strings.TrimSpace(principalID) != "",
+					KeyID:             mk.ID,
+					KeyName:           mk.Name,
+					Role:              role,
+					AuthSource:        AuthSourceAPIKey,
 				}, nil
 			}
 		}
@@ -399,13 +410,15 @@ func (b *BasicAuthProvider) authenticateWithScope(ctx context.Context, key, prin
 		role = "admin"
 	}
 	return &AuthContext{
-		APIKey:           key,
-		Tenant:           tenant,
-		PrincipalID:      strings.TrimSpace(principalID),
-		KeyID:            "static:" + APIKeyFingerprint(key),
-		Role:             role,
-		AllowCrossTenant: meta.AllowCrossTenant,
-		AuthSource:       AuthSourceAPIKey,
+		APIKey:      key,
+		Tenant:      tenant,
+		PrincipalID: strings.TrimSpace(principalID),
+		// Only an unbound key takes the caller's header principal.
+		PrincipalAsserted: meta.PrincipalID == "" && strings.TrimSpace(principalID) != "",
+		KeyID:             "static:" + APIKeyFingerprint(key),
+		Role:              role,
+		AllowCrossTenant:  meta.AllowCrossTenant,
+		AuthSource:        AuthSourceAPIKey,
 	}, nil
 }
 

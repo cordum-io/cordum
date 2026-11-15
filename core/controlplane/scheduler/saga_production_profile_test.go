@@ -206,10 +206,14 @@ func TestProductionForcesTenantFailModesClosed(t *testing.T) {
 	resolver := NewFailModeResolver(nil, time.Minute)
 	resolver.tenants.Store("tenant-a", &tenantFailModes{
 		inputMode: "open", asyncMode: "open", fetchedAt: time.Now(),
+		inputScope: failOpenScope{"job.default": "low-risk"}, hasInputScope: true,
 	})
+	if _, _, ok := resolver.InputFailOpenRule("tenant-a", "job.default"); !ok {
+		t.Fatal("fixture must admit job.default outside production")
+	}
 	engine := productionReadyEngineForTest()
 	engine.WithFailModeResolver(resolver)
-	if engine.isInputFailOpenForTenant("tenant-a") || engine.isAsyncFailOpenForTenant("tenant-a") {
+	if _, _, ok := engine.inputFailOpenRule("tenant-a", "job.default"); ok || engine.isAsyncFailOpenForTenant("tenant-a") {
 		t.Fatal("production engine honored a per-tenant fail-open override")
 	}
 }

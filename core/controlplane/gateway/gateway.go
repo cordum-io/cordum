@@ -59,6 +59,7 @@ import (
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/cordum/cordum/core/telemetry"
 	"github.com/gorilla/websocket"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/sync/singleflight"
 	"google.golang.org/grpc"
@@ -228,10 +229,9 @@ type server struct {
 	auditVerifyCoalesce singleflight.Group
 
 	// edgeRecorder is the EDGE-014 observability recorder used by Edge
-	// handlers to emit metrics. Defaults to NoopRecorder so a missing
-	// Prometheus registerer never panics on first metric emission;
-	// production wiring sets this to NewPrometheusRecorder via the
-	// metrics initializer.
+	// handlers to emit metrics, shared with the Edge store
+	// (newGatewayEdgeStore). Nil-safe at every call site, so test gateways
+	// may leave it unset.
 	edgeRecorder      edgecore.Recorder
 	edgeSweeperCancel context.CancelFunc
 
@@ -755,9 +755,6 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		return fmt.Errorf("init audit exporter: %w", err)
 	}
 
-	// Hoist edgeRecorder before edgeStore so the store and handlers share the
-	// same Recorder instance. EDGE-054 store-level metrics flow through this.
-	edgeRecorder := edgecore.NewNoopRecorder()
 	edgeRetentionTTL, err := edgeSessionRetentionTTLFromEnv()
 	if err != nil {
 		return err
@@ -770,11 +767,7 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	if err != nil {
 		return err
 	}
-	edgeStore := edgecore.NewRedisStoreFromClient(
-		jobStore.Client(),
-		edgecore.WithRecorder(edgeRecorder),
-		edgecore.WithApprovalMaxTTL(edgeApprovalMaxTTL),
-	)
+	edgeStore, edgeRecorder := newGatewayEdgeStore(jobStore.Client(), prometheus.DefaultRegisterer, edgeApprovalMaxTTL)
 	runtimeReplayWindow := runtimeingest.NewReplayWindow(
 		jobStore.Client(),
 		runtimeingest.ReplayWindowTTL,
@@ -905,6 +898,9 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		TenantID:          tenantID,
 	})
 	s.telemetry.Start(context.Background())
+	packPostureCtx, packPostureCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	logGatewayPackStrictPosture(packPostureCtx, s.redisClient())
+	packPostureCancel()
 	if legacyPolicyBundlesMigrated {
 		s.publishConfigChanged(string(configsvc.ScopeSystem), "default")
 		s.publishConfigChanged(string(configsvc.ScopeSystem), packs.PolicyConfigID)
@@ -1240,6 +1236,24 @@ func newHTTPHandler(s *server) (http.Handler, error) {
 	readAuditRate := parseFloatEnv("CORDUM_AUDIT_READ_SAMPLE_RATE", 0.0)
 	inner := auditReadMiddleware(s.auditExporter, readAuditRate, tenantMiddleware(s.auth, maxBodyMiddleware(mux, s.entitlements)))
 	return requestLoggingMiddleware(tracingMiddleware(corsMiddleware(rateLimitMiddleware(s.auth, s.apiRL, s.publicRL, apiKeyMiddleware(s.auth, inner, s.auditExporter))))), nil
+}
+
+// newGatewayEdgeStore builds the gateway's Edge store and the recorder that
+// the store and the gateway's Edge handlers share, so store-level (EDGE-054)
+// and handler metrics land in one place. The recorder registers the Edge
+// metrics on reg; RunWithAuth passes the default registry, which the metrics
+// listener serves.
+func newGatewayEdgeStore(client redis.UniversalClient, reg prometheus.Registerer, approvalMaxTTL time.Duration) (*edgecore.RedisStore, edgecore.Recorder) {
+	recorder := edgecore.NewPrometheusRecorder(reg)
+	store := edgecore.NewRedisStoreFromClient(
+		client,
+		edgecore.WithRecorder(recorder),
+		edgecore.WithApprovalMaxTTL(approvalMaxTTL),
+		// The store enforces the same execution cap as the Edge executions
+		// API pre-check.
+		edgecore.WithMaxExecutionsPerSession(edgeMaxExecutionsPerSession()),
+	)
+	return store, recorder
 }
 
 func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.Server) error {
@@ -1697,6 +1711,7 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 	s.registerRoute(mux, "PUT /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handlePutPolicyBundle))
 	s.registerRoute(mux, "DELETE /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handleDeletePolicyBundle))
 	s.registerRoute(mux, "POST /api/v1/policy/bundles/{id}/simulate", s.instrumented("/api/v1/policy/bundles/{id}/simulate", s.handleSimulatePolicyBundle))
+	s.registerRoute(mux, "POST /api/v1/policy/bundles/{id}/resign", s.instrumented("/api/v1/policy/bundles/{id}/resign", s.handleResignPolicyBundle))
 	// Policy shadow (task-44807b2c) — shadow-evaluation surface for a bundle.
 	// PUT upserts the shadow policy, GET fetches current status, DELETE removes it.
 	// The three results endpoints expose dashboard analytics (summary counters,
@@ -2010,6 +2025,9 @@ func migrateLegacyPolicyBundles(ctx context.Context, svc *configsvc.Service) (bo
 	if !ok || len(legacyBundles) == 0 {
 		return false, 0, nil
 	}
+	if err := legacyPolicyBundlesMayMigrate(legacyBundles); err != nil {
+		return false, 0, err
+	}
 	if err := svc.SetWithRetry(ctx, configsvc.ScopeSystem, packs.PolicyConfigID, 3, func(doc *configsvc.Document) error {
 		if doc.Data == nil {
 			doc.Data = map[string]any{}
@@ -2034,6 +2052,106 @@ func migrateLegacyPolicyBundles(ctx context.Context, svc *configsvc.Service) (bo
 		return false, 0, fmt.Errorf("remove legacy bundles from system/default: %w", err)
 	}
 	return true, len(legacyBundles), nil
+}
+
+// legacyPolicyBundlesMayMigrate decides whether the boot-time migration may
+// copy the legacy bundles. The copy is never signed, so under enforce it runs
+// only when every legacy bundle with content already verifies under the
+// policy trust store. Otherwise it returns an error, nothing moves, and the
+// gateway refuses to start: the kernel reads only system/policy, so booting
+// without the legacy rules would silently stop enforcing them.
+func legacyPolicyBundlesMayMigrate(legacyBundles map[string]any) error {
+	mode, modeErr := policysign.ResolveMode()
+	if modeErr != nil {
+		mode = policysign.ModeEnforce
+	}
+	unverified := countUnverifiedLegacyPolicyBundles(legacyBundles)
+	if unverified == 0 {
+		return nil
+	}
+	attrs := []any{"code", "policy.legacy_migration_unverified", "unverified", unverified, "legacy_bundles", len(legacyBundles), "mode", mode.String()}
+	if mode == policysign.ModeEnforce {
+		slog.Error("legacy policy bundles in system/default do not verify under the policy trust store: refusing to start", attrs...)
+		return fmt.Errorf("refusing to start: policy.legacy_migration_unverified: %d of %d legacy policy bundles in system/default do not verify under the policy trust store; "+
+			"re-sign them: start the gateway once with CORDUM_POLICY_STRICT=warn to move them to system/policy, "+
+			"run `cordumctl policy resign --all` (reinstall any pack it reports), then restore enforce", unverified, len(legacyBundles))
+	}
+	slog.Warn("legacy policy bundles migrated without a verified signature", attrs...)
+	return nil
+}
+
+// countUnverifiedLegacyPolicyBundles counts, in sorted key order, the legacy
+// bundles the enforced store source would refuse. Disabled bundles count too,
+// since they can be enabled later.
+func countUnverifiedLegacyPolicyBundles(legacyBundles map[string]any) int {
+	ids := make([]string, 0, len(legacyBundles))
+	for id := range legacyBundles {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	trust, err := policysign.LoadTrustStoreFromEnv()
+	if err != nil {
+		trust = nil // a trust store that does not load verifies nothing
+	}
+	unverified := 0
+	for _, id := range ids {
+		if !legacyPolicyBundleVerifies(legacyBundles[id], trust) {
+			unverified++
+		}
+	}
+	return unverified
+}
+
+// legacyPolicyBundleVerifies mirrors the store source's content selection: a
+// string bundle is its own content, a map bundle uses the first string among
+// content, policy and data, and empty content needs no signature. The
+// signature is read as the store source reads it (storeSourceSignature).
+func legacyPolicyBundleVerifies(raw any, trust *policysign.TrustStore) bool {
+	content, _ := raw.(string)
+	var rawSig any
+	if bundle, ok := raw.(map[string]any); ok {
+		for _, field := range []string{"content", "policy", "data"} {
+			if text, isText := bundle[field].(string); isText {
+				content = text
+				break
+			}
+		}
+		rawSig = bundle[policyBundleSignatureKey]
+	}
+	if strings.TrimSpace(content) == "" {
+		return true
+	}
+	sig, ok := storeSourceSignature(rawSig)
+	if !ok {
+		return false
+	}
+	pub, found := trust.Lookup(sig.KeyID)
+	return found && policysign.Verify(pub, []byte(content), sig) == nil
+}
+
+// storeSourceSignature reads a stored _signature the way the safety kernel's
+// store source does: each field counts only as trimmed text, so a value of
+// any other type reads as empty. Verify refuses an empty algorithm or value,
+// and an empty key id names no trusted key.
+func storeSourceSignature(raw any) (policysign.Signature, bool) {
+	fields, ok := raw.(map[string]any)
+	if !ok || len(fields) == 0 {
+		return policysign.Signature{}, false
+	}
+	text := func(name string) string {
+		value, _ := fields[name].(string)
+		return strings.TrimSpace(value)
+	}
+	sig := policysign.Signature{Algorithm: text("algorithm"), KeyID: text("key_id"), Value: text("value"), Hash: text("hash")}
+	switch n := fields["signed_bytes"].(type) {
+	case int:
+		sig.SignedBytes = n
+	case int64:
+		sig.SignedBytes = int(n)
+	case float64:
+		sig.SignedBytes = int(n)
+	}
+	return sig, true
 }
 
 func deleteSystemDefaultKeyWithRetry(ctx context.Context, svc *configsvc.Service, key string, maxAttempts int) error {

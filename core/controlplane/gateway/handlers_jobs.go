@@ -647,18 +647,9 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	var delegationLineage model.DelegationLineage
 	if s.jobStore != nil {
 		if jobRequest != nil {
-			if jobRequest.WorkflowId != "" {
-				workflowID = jobRequest.WorkflowId
-			}
-			if len(jobRequest.Labels) > 0 {
-				for k, v := range jobRequest.Labels {
-					labels[k] = v
-				}
-				if workflowID == "" {
-					workflowID = jobRequest.Labels["workflow_id"]
-				}
-				runID = jobRequest.Labels["run_id"]
-				stepID = jobRequest.Labels["step_id"]
+			workflowID, runID, stepID = jobWorkflowLink(jobRequest)
+			for k, v := range jobRequest.Labels {
+				labels[k] = v
 			}
 		}
 		if lineage, err := s.jobStore.GetDelegationLineage(r.Context(), id); err == nil {
@@ -1256,6 +1247,30 @@ func (s *server) handleRemediateJob(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"job_id": newJobID, "trace_id": traceID})
 }
 
+// errAgentLinkUnavailable is the client-safe description of a failed
+// worker-link lookup. The store error itself is only logged.
+var errAgentLinkUnavailable = errors.New("agent identity store unavailable")
+
+// linkedAgentID returns the ID of the agent linked to principalID in tenant,
+// or "" when there is no agent store, no link, a dangling link, or a blank
+// tenant or principal. A store failure is returned as an error and must never
+// be read as "no link": the submit and delegation paths that bind an agent
+// fail closed with 503 / Unavailable instead of running policy and audit
+// without the agent.
+func (s *server) linkedAgentID(ctx context.Context, tenant, principalID string) (string, error) {
+	if s.agentIdentityStore == nil || strings.TrimSpace(tenant) == "" || strings.TrimSpace(principalID) == "" {
+		return "", nil
+	}
+	agent, err := s.agentIdentityStore.GetByWorkerIDForTenant(ctx, tenant, principalID)
+	if err != nil {
+		return "", err
+	}
+	if agent == nil {
+		return "", nil
+	}
+	return agent.ID, nil
+}
+
 func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	// RBAC: custom roles may submit when they hold jobs.write. When advanced
 	// RBAC is disabled, preserve the historical admin/user fallback.
@@ -1374,6 +1389,12 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	teamID := req.TeamId
 	projectID := req.ProjectId
 
+	// The body idempotency_key wins. Without it, take the Idempotency-Key
+	// header that HTTP clients (Python SDK, curl) send, like other write
+	// endpoints do.
+	if strings.TrimSpace(req.IdempotencyKey) == "" {
+		req.IdempotencyKey = idempotencyKeyFromRequest(r)
+	}
 	key := strings.TrimSpace(req.IdempotencyKey)
 	if key != "" && s.jobStore != nil {
 		existingID, err := s.jobStore.GetJobByIdempotencyKeyScoped(r.Context(), orgID, key)
@@ -1482,18 +1503,22 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		meta.Labels = req.Labels
 	}
 
-	// resolvePrincipal may return a request-chosen principal_id. Honor a
-	// client agent_id label only for the authenticated principal, as in gRPC
-	// SubmitJob. Injection without a label is unchanged here (task-491f974b).
-	var authDerivedAgentID string
-	if s.agentIdentityStore != nil {
-		if agent, err := s.agentIdentityStore.GetByWorkerIDForTenant(r.Context(), orgID, principalID); err == nil && agent != nil {
-			authDerivedAgentID = agent.ID
-		}
+	// Worker-link injection, the labels.agent_id check and the delegation-
+	// audience gate follow only the credential-backed principal, and only when
+	// the job is attributed to it: a request-named principal (body
+	// principal_id or X-Principal-Id) never selects a worker link.
+	authenticated := auth.FromRequest(r).AuthenticatedPrincipal()
+	lookupPrincipal := ""
+	if authenticated != "" && authenticated == strings.TrimSpace(principalID) {
+		lookupPrincipal = authenticated
+	}
+	authDerivedAgentID, err := s.linkedAgentID(r.Context(), orgID, lookupPrincipal)
+	if err != nil {
+		writeServiceUnavailable(w, r, "submit agent link lookup", err)
+		return
 	}
 	if clientAgentID := req.Labels["agent_id"]; clientAgentID != "" {
-		ac := auth.FromRequest(r)
-		if ac == nil || strings.TrimSpace(ac.PrincipalID) == "" || strings.TrimSpace(ac.PrincipalID) != strings.TrimSpace(principalID) {
+		if authenticated == "" || authenticated != strings.TrimSpace(principalID) {
 			writeErrorJSON(w, http.StatusForbidden, "client-supplied agent_id requires an authenticated principal")
 			return
 		}

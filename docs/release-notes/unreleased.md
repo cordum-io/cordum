@@ -581,7 +581,7 @@ these entries into a versioned release note and reset this file.
   for historical reindexing and `cordumctl governance tail` for
   self-healing replay from `sys.audit.export`.
 - **Eval dataset store (`/api/v1/evals/datasets`):** Redis-backed CRUD
-  API for curated, versioned, immutable policy-regression test fixtures.
+  API for curated, versioned, write-once policy-regression test fixtures.
   `PUT /api/v1/evals/datasets/{id}` creates a successor version instead
   of mutating in place, so historical datasets remain queryable.
   Datasets are durable by design and can only be destroyed via the

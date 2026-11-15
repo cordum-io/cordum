@@ -27,7 +27,24 @@ func (*failingAuditBus) Subscribe(_, _ string, _ func(*pb.BusPacket) error) erro
 	return nil
 }
 
-func TestShadowEvaluator_SurvivesAuditPublishFailure(t *testing.T) {
+// successAuditBus accepts every publish and counts the attempts.
+type successAuditBus struct{ attempts atomic.Int64 }
+
+func (b *successAuditBus) Publish(_ string, _ *pb.BusPacket) error {
+	b.attempts.Add(1)
+	return nil
+}
+
+func (*successAuditBus) Subscribe(_, _ string, _ func(*pb.BusPacket) error) error {
+	return nil
+}
+
+// submitShadowAndClose submits n shadow evaluations through a sender built on
+// the bus, waits for each publish attempt, then drains the evaluator and the
+// sender. The caller must not run in parallel: the drop counter is
+// process-global and the tests assert deltas.
+func submitShadowAndClose(t *testing.T, bus audit.AuditBus, attempts *atomic.Int64, n int64) {
+	t.Helper()
 	loader := seedLoader(t, map[string]map[string]string{"tenant-a": {"b-1": `version: "1"
 rules:
   - id: shadow-deny
@@ -35,51 +52,75 @@ rules:
       topics: ["job.foo"]
     decision: deny
 `}})
-	bus := &failingAuditBus{}
 	sender := newShadowAuditSender(bus)
-	t.Cleanup(func() {
-		if err := sender.Close(); err != nil {
-			t.Error(err)
-		}
-	})
 	eval := NewShadowEvaluator(loader, sender, ShadowEvaluatorOptions{Workers: 1, QueueSize: 8})
 	t.Cleanup(eval.Close)
-	before := noFallbackDropCount(t)
-	for job := int64(1); job <= 3; job++ {
+	for job := int64(1); job <= n; job++ {
 		eval.Submit(config.PolicyDecision{Decision: "allow"}, allowInput("tenant-a"), "tenant-a", fmt.Sprintf("job-%d", job))
 		deadline := time.Now().Add(2 * time.Second)
-		for bus.attempts.Load() < job && time.Now().Before(deadline) {
+		for attempts.Load() < job && time.Now().Before(deadline) {
 			time.Sleep(time.Millisecond)
 		}
-		if got := bus.attempts.Load(); got != job {
+		if got := attempts.Load(); got != job {
 			t.Fatalf("publish attempts = %d, want %d", got, job)
 		}
 	}
 	eval.Close()
-	if got := noFallbackDropCount(t) - before; got != 0 {
-		t.Fatalf("no_fallback drops = %v, want 0", got)
+	if err := sender.Close(); err != nil {
+		t.Error(err)
 	}
 }
 
-func noFallbackDropCount(t *testing.T) float64 {
+func TestShadowEvaluator_CountsAuditPublishFailures(t *testing.T) {
+	const n = 3
+	bus := &failingAuditBus{}
+	before := dropCounts(t)
+	submitShadowAndClose(t, bus, &bus.attempts, n)
+	after := dropCounts(t)
+	if got := after["no_fallback"] - before["no_fallback"]; got != n {
+		t.Fatalf("no_fallback drops = %v, want %d", got, n)
+	}
+	for reason, v := range after {
+		if reason != "no_fallback" && v != before[reason] {
+			t.Fatalf("unexpected drop reason %q moved: %v -> %v", reason, before[reason], v)
+		}
+	}
+}
+
+func TestShadowEvaluator_SuccessfulPublishCountsNoDrop(t *testing.T) {
+	const n = 3
+	bus := &successAuditBus{}
+	before := dropCounts(t)
+	submitShadowAndClose(t, bus, &bus.attempts, n)
+	after := dropCounts(t)
+	for reason, v := range after {
+		if v != before[reason] {
+			t.Fatalf("drop reason %q moved on successful publishes: %v -> %v", reason, before[reason], v)
+		}
+	}
+}
+
+// dropCounts snapshots every cordum_audit_events_dropped_total series by reason.
+func dropCounts(t *testing.T) map[string]float64 {
 	t.Helper()
 	families, err := prometheus.DefaultGatherer.Gather()
 	if err != nil {
 		t.Fatal(err)
 	}
+	out := map[string]float64{}
 	for _, family := range families {
 		if family.GetName() != "cordum_audit_events_dropped_total" {
 			continue
 		}
 		for _, metric := range family.GetMetric() {
 			for _, label := range metric.GetLabel() {
-				if label.GetName() == "reason" && label.GetValue() == "no_fallback" {
-					return metric.GetCounter().GetValue()
+				if label.GetName() == "reason" {
+					out[label.GetValue()] += metric.GetCounter().GetValue()
 				}
 			}
 		}
 	}
-	return 0
+	return out
 }
 
 // capturingSender is an audit.AuditSender that retains every event it

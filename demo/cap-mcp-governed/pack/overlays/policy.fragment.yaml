@@ -1,0 +1,12 @@
+rules:
+  - id: cap-mcp-governed-denied
+    match:
+      topics: [job.cap-mcp-governed.create-workflow]
+      risk_tags: [cap-mcp-governed-denied]
+    decision: deny
+    reason: "Governed demo deny variant: jobs tagged cap-mcp-governed-denied are refused by policy."
+  - id: cap-mcp-governed-allow
+    match:
+      topics: [job.cap-mcp-governed.create-workflow]
+    decision: allow
+    reason: Governed demo jobs are allowed; the MCP mutation they request still needs human approval.

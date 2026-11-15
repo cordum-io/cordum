@@ -32,6 +32,13 @@ on:
     - cron: '41 2 * * *'
   workflow_dispatch:
 
+# Cancel superseded runs of the same pull request. Every other event (push,
+# merge_group, schedule, workflow_dispatch) gets its own group, so no run on
+# main or in the merge queue is ever cancelled or replaced.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   changes:
     name: Detect changed areas
@@ -228,7 +235,7 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
 
     steps:
     - uses: actions/checkout@v7
@@ -260,6 +267,12 @@ jobs:
 
     - name: Repo-root vet
       run: go vet ./...
+
+    - name: Check generated docs tables
+      # tools/scripts/gen_docs_tables renders the RBAC permission, REST route and MCP
+      # tool tables in docs/ from code. A new route, permission or tool therefore needs
+      # a `make docs-tables` commit, and this step fails on drift (task-8a2d6b77).
+      run: make docs-tables-check
 
     - name: golangci-lint
       uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0

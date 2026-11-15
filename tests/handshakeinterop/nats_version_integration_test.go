@@ -23,8 +23,8 @@ import (
 const natsServerModulePath = "github.com/nats-io/nats-server/v2"
 
 var (
-	errNATSBuildInfoMissing = errors.New("Go build information is unavailable")
-	errNATSDepsMissing      = errors.New("Go build information lists no dependencies")
+	errNATSBuildInfoMissing = errors.New("the Go build information is unavailable")
+	errNATSDepsMissing      = errors.New("the Go build information lists no dependencies")
 	errNATSModuleResolve    = errors.New("go list could not resolve the NATS server module")
 	errNATSModuleMissing    = errors.New("NATS server module is not in the build information")
 	errNATSModuleDuplicated = errors.New("NATS server module appears more than once in the build information")
