@@ -151,6 +151,10 @@ func (s *server) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if !s.requireNoAgentSelfPreapproval(w, r, tenant, "", workerID, req.PreapprovedMutatingTools) {
+		return
+	}
+
 	identity := store.AgentIdentity{
 		TenantID:                 tenant,
 		Name:                     strings.TrimSpace(req.Name),
@@ -413,6 +417,10 @@ func (s *server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if !s.requireNoAgentSelfPreapproval(w, r, tenant, id, workerID, req.PreapprovedMutatingTools) {
+		return
+	}
+
 	updates := store.AgentIdentity{
 		Name:                     strings.TrimSpace(req.Name),
 		Description:              strings.TrimSpace(req.Description),
@@ -459,6 +467,47 @@ func (s *server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 	s.appendAuditEntryNamed(r.Context(), "update", "agent_identity", updated.ID, updated.Name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "update agent identity "+updated.Name)
 
 	writeJSON(w, agentResponseFromIdentity(updated))
+}
+
+// requireNoAgentSelfPreapproval refuses (403) a create or update that would
+// let the caller's credential-bound principal choose preapproved mutating
+// tools for the identity its own MCP calls run as (resolveMCPIdentity): a
+// non-empty list on the identity that principal is linked to, or a link of
+// that principal (agent_id) to an identity that has or gets one. Preapproval
+// skips the human approval (gatewayApprovalGate.Check), so an agent must not
+// grant it to itself. id is "" on create. A failed read fails closed. Each
+// request is checked alone; agents.write remains the boundary between them.
+func (s *server) requireNoAgentSelfPreapproval(w http.ResponseWriter, r *http.Request, tenant, id, workerID string, requested []string) bool {
+	principal := auth.FromRequest(r).AuthenticatedPrincipal()
+	if principal == "" {
+		return true
+	}
+	self := workerID == principal
+	tools := requested
+	if self && tools == nil && id != "" {
+		existing, err := s.agentIdentityStore.Get(r.Context(), tenant, id)
+		if err != nil {
+			writeInternalError(w, r, "get agent identity", err)
+			return false
+		}
+		if existing != nil {
+			tools = existing.PreapprovedMutatingTools
+		}
+	}
+	if !self && len(tools) > 0 && id != "" {
+		linked, err := s.agentIdentityStore.GetByWorkerIDForTenant(r.Context(), tenant, principal)
+		if err != nil {
+			writeInternalError(w, r, "look up caller agent link", err)
+			return false
+		}
+		self = linked != nil && linked.ID == id
+	}
+	if self && len(tools) > 0 {
+		writeJSONError(w, http.StatusForbidden, errorCodeAgentSelfPreapprove,
+			"an agent identity's own principal cannot set its preapproved mutating tools")
+		return false
+	}
+	return true
 }
 
 func (s *server) handleDeleteAgent(w http.ResponseWriter, r *http.Request) {

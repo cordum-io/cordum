@@ -292,6 +292,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- Agent identities: an agent can no longer exempt its own mutating MCP calls from human approval. `POST /api/v1/agents` and `PUT /api/v1/agents/{id}` answer 403 `AGENT_SELF_PREAPPROVAL_DENIED` when the caller's own principal would set `preapproved_mutating_tools` on the identity it is linked to, or link itself (`agent_id`) to an identity that has or gets such tools. Another admin can still grant them (task-2f34e241).
 - `cordumctl policy resign` skips bundle IDs the API cannot address without changing their identity, continues past them under `--all`, and reports the ID returned by the gateway (task-64199d9b).
 - Policy: toggling an output rule (`PUT /api/v1/policy/output/rules/{id}`)
   re-signs the bundle that holds the rule only when its stored content
