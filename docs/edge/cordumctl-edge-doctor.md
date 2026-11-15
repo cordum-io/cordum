@@ -39,7 +39,7 @@ cordumctl edge doctor \
 
 | Flag | Env/default | Purpose |
 | --- | --- | --- |
-| `--gateway` | `CORDUM_GATEWAY` or `http://localhost:8081` | Gateway base URL. The compose stack needs `https://localhost:8081` with `--cacert` (`CORDUM_TLS_CA`). |
+| `--gateway` | `CORDUM_GATEWAY` or `https://localhost:8081` | Gateway base URL. The compose stack needs `https://localhost:8081` with `--cacert` (`CORDUM_TLS_CA`). |
 | `--api-key` | `CORDUM_API_KEY` | Gateway API key. The value is never printed. |
 | `--tenant` | `CORDUM_TENANT_ID` or `default` | Tenant sent as `X-Tenant-ID`. |
 | `--policy-mode` | `CORDUM_EDGE_POLICY_MODE` or `enforce` | Reports degraded/fail-closed implications. |
