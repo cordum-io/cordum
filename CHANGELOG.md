@@ -861,6 +861,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Data inventory: general `cfg:{scope}:{id}` config documents have their own
+  entry, DI-C54, and DI-C05 now covers only the policy audit document. The
+  inventory key scanner reads file-level values from top-level declarations
+  only, so a local const or var no longer overrides one (task-4420e46c).
+
 - `cordumctl pack install` no longer counts directories against the
   2,048-file pack limit. A pack with 2,048 regular files spread over
   subdirectories was refused before upload, although both the CLI and the
