@@ -217,17 +217,7 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 	go rec.Start(ctx)
 
 	// Use context-aware subscription for trace propagation from NATS headers.
-	if err := natsBus.SubscribeWithContext(capsdk.SubjectAcceptedResult, workflowEngineQueue, func(traceCtx context.Context, p *pb.BusPacket) error {
-		if p == nil || strings.TrimSpace(p.GetSenderId()) != servicetoken.IdentityScheduler {
-			return nil
-		}
-		if jr := p.GetJobResult(); jr != nil {
-			handlerCtx, handlerCancel := context.WithTimeout(traceCtx, 30*time.Second)
-			defer handlerCancel()
-			return rec.HandleJobResult(handlerCtx, jr)
-		}
-		return nil
-	}); err != nil {
+	if err := natsBus.SubscribeWithContext(capsdk.SubjectAcceptedResult, workflowEngineQueue, acceptedResultHandler(rec)); err != nil {
 		return fmt.Errorf("subscribe %s: %w", capsdk.SubjectAcceptedResult, err)
 	}
 
@@ -296,4 +286,19 @@ func startHealthServer(addr string, probes *health.ProbeServer) *http.Server {
 		}
 	}()
 	return srv
+}
+
+// acceptedResultHandler handles sys.internal.job.result.accepted packets.
+func acceptedResultHandler(rec *reconciler) func(context.Context, *pb.BusPacket) error {
+	return func(traceCtx context.Context, p *pb.BusPacket) error {
+		if p == nil || strings.TrimSpace(p.GetSenderId()) != servicetoken.IdentityScheduler {
+			return nil
+		}
+		if jr := p.GetJobResult(); jr != nil {
+			handlerCtx, handlerCancel := context.WithTimeout(traceCtx, 30*time.Second)
+			defer handlerCancel()
+			return rec.HandleJobResult(handlerCtx, jr)
+		}
+		return nil
+	}
 }

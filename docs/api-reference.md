@@ -471,6 +471,12 @@ curl -sS -X POST http://localhost:8081/api/v1/users \
 
 All endpoints require admin role.
 
+A managed key authenticates as its own principal, its `id`. A job it submits records that `id`
+as its principal and actor, in the production profile too. Where `X-Principal-Id` is honored
+(outside production, or with `CORDUM_ALLOW_HEADER_PRINCIPAL=true`), the header replaces it as
+an asserted principal, kept for attribution only. Keys created before this change also take
+their `id` as principal; a stored key without an `id` is refused.
+
 ### GET `/api/v1/auth/keys`
 
 - Auth: required + admin
