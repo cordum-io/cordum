@@ -97,6 +97,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- With `CORDUM_SDK_HANDSHAKE=enforce`, the workflow engine verifies the
+  `cordum-scheduler` service token before applying a result from
+  `sys.internal.job.result.accepted`. Verification uses
+  `CORDUM_POLICY_PUBLIC_KEY_<ID>` or the public half of the engine's own
+  `CORDUM_POLICY_SIGNING_KEY` when its key id is not already configured.
+  Other results are dropped and logged without credentials or payloads.
+  Off and warn modes are unchanged.
+
 - A managed API key (`ck_`) now authenticates as its own principal, its key id. In the
   production profile, where `X-Principal-Id` is ignored by default, it can therefore submit a
   job through `POST /api/v1/jobs` or gRPC `SubmitJob`, and the job records that id as its
