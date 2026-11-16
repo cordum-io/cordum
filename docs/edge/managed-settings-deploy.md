@@ -316,17 +316,16 @@ Supply `--mcp-gateway-url` from trusted deployment configuration, independently
 of the file being inspected. The verifier never derives it from that file,
 its environment, a sibling `managed-mcp.json`, or the control-plane `--gateway`.
 Both the expected URL and the allowlist entry must be absolute HTTP(S) URLs
-with a non-root path, without userinfo credentials (`user:pass@host`),
-wildcards or variable placeholders (`validateManagedMCPGatewayURL`,
-`core/edge/claude/managed_settings.go:153`, which `verify` applies to both URLs
-at `core/edge/claude/managed_settings_verify.go:88` and `:109`). `verify` does
-not look for credentials in the query string, so one there, such as
-`?access_token=...`, is not detected. `generate` also refuses a URL that
-matches its secret patterns, such as `access_token=` or `api_key=`
-(`core/edge/claude/managed_settings.go:135`, patterns at
-`core/edge/claude/redaction.go:12`), but that check is a heuristic and other
-query parameters pass. Keep credentials out of the URL; the MCP client gets
-them from `headersHelper`.
+with a non-root path, without credentials, wildcards or variable
+placeholders. Credentials means userinfo (`user:pass@host`) and anything
+`generate`'s secret patterns flag, such as `access_token=` or `api_key=` in the
+query string (patterns at `core/edge/claude/redaction.go:12`). `generate` and
+`verify` share that check through `validateManagedMCPGatewayURL`
+(`core/edge/claude/managed_settings.go:153`), which `verify` applies to both
+URLs at `core/edge/claude/managed_settings_verify.go:88` and `:109`; `generate`
+also checks the field at `core/edge/claude/managed_settings.go:135`. The check
+is a heuristic and other query parameters pass. Keep credentials out of the
+URL; the MCP client gets them from `headersHelper`.
 They must match literally after trimming surrounding whitespace: ports,
 paths, trailing slashes, queries and fragments are not silently rewritten.
 Missing baseline fails verification; a missing CLI flag is a configuration

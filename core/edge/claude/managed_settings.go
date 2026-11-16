@@ -159,6 +159,11 @@ func validateManagedMCPGatewayURL(raw string) (string, error) {
 	if u.User != nil {
 		return "", fmt.Errorf("mcp_gateway_url must not contain credentials; use headersHelper")
 	}
+	// Generate and both verify paths share this check, so a credential in the
+	// query string fails verification as it fails generation.
+	if containsSensitiveValue(raw) {
+		return "", fmt.Errorf("mcp_gateway_url must not contain credentials; use headersHelper")
+	}
 	if strings.Contains(raw, "*") || strings.Contains(u.Path, "*") || strings.Contains(raw, "${") {
 		return "", fmt.Errorf("mcp_gateway_url must be a literal URL without wildcards or variables")
 	}
