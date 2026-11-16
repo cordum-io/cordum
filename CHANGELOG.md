@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+- Gateway and scheduler NATS audit publishers attach a control-plane service
+  token (`servicetoken`, type `cordum-service`, subjects `api-gateway` and
+  `cordum-scheduler`) to events on `sys.audit.export` when
+  `CORDUM_POLICY_SIGNING_KEY`, `CORDUM_POLICY_SIGNING_KEY_PATH`, or
+  `CORDUM_POLICY_DEV_SIGNING_SEED` is configured. With `CORDUM_ENV=production`
+  and `AUDIT_TRANSPORT=nats`, the gateway requires that key when the NATS audit
+  pipeline is enabled.
+
 ### Breaking changes
 
 - Worker ids `cordum-mcp` and `cordum-safety-kernel` are reserved. The handshake
@@ -25,6 +33,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   (`signing-key`, `key-id`) for the scheduler and `cordum-audit-trust`
   (`cordum-safety-kernel`, `cordum-mcp`) for the gateway are optional.
   `docker-compose.release.yml` requires `CORDUM_AUDIT_SIGNING_KEY`.
+
+- cordum-mcp and the safety kernel attach a service token, with subject
+  `cordum-mcp` or `cordum-safety-kernel`, to the audit events they publish on
+  `sys.audit.export`. The token is minted with `CORDUM_AUDIT_SIGNING_KEY`,
+  `CORDUM_AUDIT_SIGNING_KEY_PATH` or `CORDUM_AUDIT_DEV_SIGNING_SEED`, with the
+  key id in `CORDUM_AUDIT_SIGNING_KEY_ID`. Under the production profile each
+  refuses to start without that key: cordum-mcp once `CORDUM_NATS_URL` dials,
+  and the safety kernel with NATS and shadow evaluation on. Provision the key
+  before upgrading.
 
 - Edge managed settings: managed-settings verification fails closed on
   unsupported conditional or background hook modifiers, and command hooks
@@ -96,6 +113,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `--allow-unauthenticated-http` is passed (#492, task-ee0dc819).
 
 ### Changed
+
+- With `CORDUM_SDK_HANDSHAKE=enforce`, the workflow engine verifies the
+  `cordum-scheduler` service token before applying a result from
+  `sys.internal.job.result.accepted`. Verification uses
+  `CORDUM_POLICY_PUBLIC_KEY_<ID>` or the public half of the engine's own
+  `CORDUM_POLICY_SIGNING_KEY` when its key id is not already configured.
+  Other results are dropped and logged without credentials or payloads.
+  Off and warn modes are unchanged.
 
 - A managed API key (`ck_`) now authenticates as its own principal, its key id. In the
   production profile, where `X-Principal-Id` is ignored by default, it can therefore submit a

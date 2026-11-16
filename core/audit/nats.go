@@ -32,13 +32,31 @@ type AuditBus interface {
 type NATSAuditPublisher struct {
 	bus      AuditBus
 	fallback *BufferedExporter
+	mint     func() (string, error)
+}
+
+// PublisherOption configures a NATSAuditPublisher.
+type PublisherOption func(*NATSAuditPublisher)
+
+// WithServiceToken mints a fresh token for each Send. A nil mint is a no-op.
+// The mint must support concurrent calls and return errors without secrets.
+func WithServiceToken(mint func() (string, error)) PublisherOption {
+	return func(p *NATSAuditPublisher) {
+		if mint != nil {
+			p.mint = mint
+		}
+	}
 }
 
 // NewNATSAuditPublisher creates a publisher that sends audit events via NATS
 // subject sys.audit.export. The fallback BufferedExporter handles events when
 // NATS is unavailable. A nil fallback drops, logs and counts those events.
-func NewNATSAuditPublisher(bus AuditBus, fallback *BufferedExporter) *NATSAuditPublisher {
-	return &NATSAuditPublisher{bus: bus, fallback: fallback}
+func NewNATSAuditPublisher(bus AuditBus, fallback *BufferedExporter, opts ...PublisherOption) *NATSAuditPublisher {
+	p := &NATSAuditPublisher{bus: bus, fallback: fallback}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p
 }
 
 // Send marshals the event to JSON and publishes it to NATS. On failure the
@@ -74,6 +92,15 @@ func (p *NATSAuditPublisher) Send(event SIEMEvent) {
 		},
 	}
 
+	if p.mint != nil {
+		token, err := p.mint()
+		if err != nil {
+			slog.Error("audit service token mint failed, using fallback", "error", err, "event_type", event.EventType)
+			p.sendFallback(event)
+			return
+		}
+		packet.AuthToken = token
+	}
 	if err := p.bus.Publish(capsdk.SubjectAuditExport, packet); err != nil {
 		if p.fallback != nil {
 			slog.Warn("audit nats publish failed, using fallback buffer",
