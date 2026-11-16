@@ -188,6 +188,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Decision records: for a job dispatched under a delegation token, the Policy
+  Decision Log record and the job's stored safety decision carry
+  `delegation_issuer_chain`, the issuer agent ids of the job's delegation lineage,
+  root issuer first. Jobs without delegation produce the same records as before
+  (task-be2a9f2e).
+
 - Gateway: MCP env defaults (from PR #591). When the stored system config has no
   `mcp.enabled`, `mcp.transport` or `mcp.policy_gate_enabled` key, the gateway reads
   `CORDUM_MCP_ENABLED`, `CORDUM_MCP_TRANSPORT` and `CORDUM_MCP_POLICY_GATE_ENABLED`

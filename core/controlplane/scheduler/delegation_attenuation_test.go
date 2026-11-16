@@ -264,7 +264,6 @@ func TestDelegationAttenuationDispatchRecords(t *testing.T) {
 			return event
 		}},
 		{name: "decision_log", record: func(t *testing.T) any {
-			t.Skip("PR1-29")
 			records := d.log.snapshotRecords()
 			if len(records) != 1 {
 				t.Fatalf("decision log records = %d, want 1", len(records))
@@ -272,7 +271,6 @@ func TestDelegationAttenuationDispatchRecords(t *testing.T) {
 			return records[0]
 		}},
 		{name: "safety_decision", record: func(t *testing.T) any {
-			t.Skip("PR1-29")
 			record, err := chain.jobStore.GetSafetyDecision(context.Background(), jobID)
 			if err != nil {
 				t.Fatalf("GetSafetyDecision() error = %v", err)
