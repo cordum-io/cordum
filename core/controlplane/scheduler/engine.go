@@ -1851,44 +1851,20 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 		}
 	}
 
-	if maxConcurrent := maxConcurrentFromConstraints(record.Constraints); maxConcurrent > 0 && e.jobStore != nil {
-		tenant := ExtractTenant(req)
-		ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
-		active, err := e.jobStore.CountActiveByTenant(ctx, tenant)
-		cancel()
-		if err != nil {
-			return RetryAfter(err, retryDelayStore)
-		}
-		if int64(active) >= maxConcurrent {
-			slog.Info("tenant concurrency limit reached",
-				"job_id", jobID,
-				"tenant", tenant,
-				"active", active,
-				"limit", maxConcurrent,
-			)
-			return RetryAfter(ErrTenantLimit, retryDelayNoWorkers)
-		}
+	slotTenant := ExtractTenant(req)
+	reserved, err := e.reserveTenantSlot(lockCtx, slotTenant, jobID, record.Constraints)
+	if err != nil {
+		return err
 	}
-	if e.jobStore != nil {
-		tenant := ExtractTenant(req)
-		if strings.TrimSpace(tenant) != "" {
-			ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
-			active, err := e.jobStore.CountActiveByTenant(ctx, tenant)
-			cancel()
-			if err != nil {
-				return RetryAfter(err, retryDelayStore)
+	// The slot goes back on every return below unless the job was published,
+	// or a failed publish could not be rolled back and may still run.
+	keepSlot := false
+	if reserved {
+		defer func() {
+			if !keepSlot {
+				e.releaseTenantSlot(lockCtx, slotTenant, jobID)
 			}
-			if limitErr := licensing.CheckJobConcurrency(int64(active+1), e.currentEntitlements()); limitErr != nil {
-				slog.Info("tier concurrency limit reached",
-					"job_id", jobID,
-					"tenant", tenant,
-					"active", active,
-					"allowed", limitErr.Allowed,
-					"upgrade_url", limitErr.UpgradeURL,
-				)
-				return RetryAfter(limitErr, retryDelayNoWorkers)
-			}
-		}
+		}()
 	}
 
 	if budget := req.GetBudget(); budget != nil && budget.GetDeadlineMs() > 0 && e.jobStore != nil {
@@ -2066,16 +2042,19 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			"subject", subject,
 			"error", err,
 		)
-		if rbErr := e.rollbackFailedDispatch(lockCtx, jobID, dispatchID, dispatchAttempt); rbErr != nil {
+		rolledBack, rbErr := e.rollbackFailedDispatch(lockCtx, jobID, dispatchID, dispatchAttempt)
+		if rbErr != nil {
 			slog.Error("dispatch rollback failed",
 				"job_id", jobID, "error", rbErr)
 		}
+		keepSlot = !rolledBack
 		if e.metrics != nil {
 			e.metrics.IncDispatchRollback(topic)
 		}
 		return RetryAfter(err, backoffDelay(attempts, backoffBase, backoffMax))
 	}
 
+	keepSlot = true
 	e.incJobsDispatched(topic)
 	if e.metrics != nil {
 		e.metrics.ObserveDispatchLatency(topic, time.Since(dispatchStart).Seconds())
@@ -2086,20 +2065,74 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 	return nil
 }
 
+// rollbackFailedDispatch puts a job whose publish failed back to SCHEDULED
+// and reports whether it did. It does not when the dispatch fence has moved on.
 func (e *Engine) rollbackFailedDispatch(
 	ctx context.Context, jobID, dispatchID string, attempt int,
-) error {
+) (bool, error) {
 	if durable, ok := e.jobStore.(model.DurableJobEventStore); ok && dispatchID != "" {
 		rolledBack, err := durable.RollbackDispatch(ctx, jobID, dispatchID, attempt)
-		if err != nil {
-			return err
+		if err != nil || !rolledBack {
+			return false, err
 		}
-		if rolledBack {
-			return e.setJobState(ctx, jobID, JobStateScheduled)
-		}
-		return nil
 	}
-	return e.setJobState(ctx, jobID, JobStateScheduled)
+	if err := e.setJobState(ctx, jobID, JobStateScheduled); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// reserveTenantSlot takes one of tenant's concurrency slots for jobID when the
+// policy cap (max_concurrent_jobs) or the tier limit applies, at the lower of
+// the two. At the cap it returns a retryable ErrTenantLimit, or the tier-limit
+// error when the tier limit is the one reached. It reports false when no limit
+// applies.
+func (e *Engine) reserveTenantSlot(ctx context.Context, tenant, jobID string, constraints *pb.PolicyConstraints) (bool, error) {
+	if e.jobStore == nil {
+		return false, nil
+	}
+	policyCap := maxConcurrentFromConstraints(constraints)
+	entitlements := e.currentEntitlements()
+	limit := int64(-1)
+	if policyCap > 0 {
+		limit = policyCap
+	}
+	if tierCap := entitlements.MaxConcurrentJobs; tierCap != licensing.Unlimited && (limit < 0 || tierCap < limit) {
+		limit = max(tierCap, 0)
+	}
+	if limit < 0 {
+		return false, nil
+	}
+	storeCtx, cancel := context.WithTimeout(ctx, storeOpTimeout)
+	reserved, others, err := e.jobStore.ReserveTenantSlot(storeCtx, tenant, jobID, limit)
+	cancel()
+	if err != nil {
+		return false, RetryAfter(err, retryDelayStore)
+	}
+	if reserved {
+		return true, nil
+	}
+	limitErr := licensing.CheckJobConcurrency(int64(others)+1, entitlements)
+	if limitErr == nil || (policyCap > 0 && int64(others) >= policyCap) {
+		slog.Info("tenant concurrency limit reached",
+			"job_id", jobID, "tenant", tenant, "active", others, "limit", limit)
+		return false, RetryAfter(ErrTenantLimit, retryDelayNoWorkers)
+	}
+	slog.Info("tier concurrency limit reached",
+		"job_id", jobID, "tenant", tenant, "active", others,
+		"allowed", limitErr.Allowed, "upgrade_url", limitErr.UpgradeURL)
+	return false, RetryAfter(limitErr, retryDelayNoWorkers)
+}
+
+// releaseTenantSlot gives back a slot reserveTenantSlot took for a job that
+// was not dispatched. It runs even when the job lock's context is done.
+func (e *Engine) releaseTenantSlot(ctx context.Context, tenant, jobID string) {
+	storeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), storeOpTimeout)
+	defer cancel()
+	if err := e.jobStore.ReleaseTenantSlot(storeCtx, tenant, jobID); err != nil {
+		slog.Warn("tenant slot release failed; the job holds it until a terminal state",
+			"job_id", jobID, "tenant", tenant, "error", err)
+	}
 }
 
 func isRetryableSchedulingError(err error) bool {
