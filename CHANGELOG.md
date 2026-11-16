@@ -894,6 +894,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   their approval on retry, and their prompt-injection taint now carries
   across POSTs. Two callers never share either (#492, task-dcd2a4fb).
 
+- cordumctl reads and writes `.env` by Docker Compose's rules, so the CLI, `.env` and
+  the Gateway agree on each credential. `.env` values lose an inline ` #` comment and
+  take Compose's quoting, escapes and `${VAR}` interpolation, and the last definition
+  of a key wins. `up --dev` quotes a credential it copies when Compose would otherwise
+  read it differently, and a blank `CORDUM_API_KEY` or `REDIS_PASSWORD` exported in the
+  shell no longer hides the `.env` value from Compose (#591 CodeRabbit r4580272519,
+  r4580272522 and r4580272526; task-2dfac489).
 - Python SDK: an error response whose body is not the `Error` schema, such as
   a proxy's HTML page or the nested `{"error": {...}}` envelope, now raises the
   typed `CordumError` subclass for its status instead of `KeyError` or
