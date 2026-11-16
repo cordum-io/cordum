@@ -854,6 +854,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- In production mode, the scheduler applies the API gateway's cancel and
+  approval-rejection job results, which carry no dispatch fence, and forwards
+  them to the workflow engine. Any other result without a fence is dropped and
+  logged as `no_dispatch_fence`.
+
 - K8s restore runbooks: NATS restores run from a nats-box pod and remove each
   stream first, and `redis-operations.md` has a Redis "Restore From Backup"
   procedure. The old steps copied an RDB into a running pod, which Redis

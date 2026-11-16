@@ -69,7 +69,7 @@ func TestAudienceMatrixBusControl(t *testing.T) {
 			matrixProbe{"sys.job.result control-plane job store", func() string { return f.jobState(t, "job-matrix-control-result") }},
 		)...)
 		return matrixResult(observations...)
-	}, identity.Skip(identity.ServiceToken, "PR1-21"), identity.Baseline(func(t *testing.T) identity.Result {
+	}, identity.Baseline(func(t *testing.T) identity.Result {
 		return matrixResult(newBusMatrixFixture(t, true).controlCancelAndConfig(t, identity.ServiceToken)...)
 	}))
 }
