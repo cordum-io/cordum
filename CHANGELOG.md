@@ -320,6 +320,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   start, Edge session retention deletes nothing until the gateway restarts
   (task-eab83dcc).
 
+- Edge: retention cleanup commits each page of an expired session, including
+  the pages of a background continuation, in one Redis transaction that
+  watches and reads the tenant's audit legal hold, so once a legal hold is
+  created no more of that tenant's sessions are deleted. A page whose hold
+  cannot be read, or changes before it commits, is kept until a later sweep
+  and counted in `cordum_edge_fail_closed_total`. On Redis Cluster
+  deployments the transaction cannot span hash slots, so Edge session
+  retention is paused there until legal holds support Redis Cluster
+  (task-6f8621c4).
+
 - Gateway: a stored `mcp.enabled`, `mcp.transport` or `mcp.policy_gate_enabled`
   key now blocks its `CORDUM_MCP_*` env default even when the gateway cannot
   read the value (null, a number, an unknown string, or an `mcp` value that is
