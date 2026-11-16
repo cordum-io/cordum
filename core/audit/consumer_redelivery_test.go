@@ -18,6 +18,7 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/redis/go-redis/v9"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type auditDelivery struct {
@@ -109,6 +110,10 @@ func newAuditRedeliveryHarness(t *testing.T, retry bool) *auditRedeliveryHarness
 	}
 	packet := packetFor(t, testEvent())
 	packet.SenderId = "private-audit-sender"
+	// The bus naks a packet that fails CAP envelope validation before any handler runs.
+	packet.TraceId = "audit-redelivery-trace"
+	packet.CreatedAt = timestamppb.Now()
+	packet.ProtocolVersion = capsdk.DefaultProtocolVersion
 	packet.AuthToken = publisherAuthToken(t, priv, "cp", servicetoken.IdentityGateway, issued)
 	observed := &redeliveryAuditBus{NatsBus: consumer, deliveries: make(chan auditDelivery, 8)}
 	expires := issued.Add(servicetoken.DefaultServiceTTL + servicetoken.DefaultSkew)
