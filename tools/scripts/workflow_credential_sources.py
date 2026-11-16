@@ -14,10 +14,25 @@ NAME, PREFIX = re.compile(r"(?i)^(?!.*idem).*(?:passw|secret|token|key|nonce)"),
 DEVNULL, TESTCMD, TOPLEVEL = re.compile(r"(?:^|\s)(?:1|&)?>>?\s*/dev/null(?=\s|$)"), re.compile(r"(?:(?:if|elif|while|until|then|do|else|!) )*(?:\[\[?|test) "), re.compile(r"\$\(\s*(?:pwd(?:\s+-P)?|git\s+rev-parse\s+--show-toplevel)\s*\)")
 DIRNAME, VAR = re.compile(r"\$\(\s*dirname\s+(?:--\s+)?\"?\$\{?(?:BASH_SOURCE(?:\[0\])?|0)\}?\"?\s*\)|\$\{BASH_SOURCE(?:\[0\])?%/\*\}"), re.compile(r"\$\{([A-Za-z_]\w*)(?:(:?[-=])((?:[^{}]|\{[^{}]*\})*))?\}|\$([A-Za-z_]\w*)")
 CDPWD, PREFIX_WORDS = re.compile(r"\$\(\s*cd\s+(?:--\s+)?(\"[^\"$]*\"|'[^']*'|[^\s;&|)$\"']+)\s*(?:>\s*/dev/null\s*)?(?:2>&1\s*)?&&\s*pwd(?:\s+-P)?\s*\)"), {"if", "then", "else", "elif", "do", "while", "until", "!", "time", "exec", "command", "builtin", "nohup", "env", "sudo", "timeout"}
+LEAD = r"(?:(?:if|elif|while|until|then|do|else|!|builtin|command) )*"  # before a set or return: a reserved word, builtin or command; bash still runs it in this shell
 Cmd = collections.namedtuple("Cmd", "line words op sub stack func text sets", defaults=((), "", "", ""))  # sets: what a file sourced here leaves set, e (errexit off) or E (errexit on), x (tracing on) or X (tracing off); r or t: a function it defines may leave errexit off (r) or tracing on (t) after any later call
 def seeded(env: dict, name: str) -> bool: return (value := env.get(name, "")) != "" and (value[0] != "$" or value.startswith("$("))
 def literal(value: str) -> int: return len(re.match(r"[^$\x00]*", value).group())
-def flag(cmd: Cmd, on: bool, short: str, name: str) -> bool: return short == "x" if short in cmd.sets else short == "e" if short.upper() in cmd.sets else next((sign == "-" for sign in reversed(re.findall(r"(?<!\S)([-+])(?:[a-zA-Z]*" + short + r"[a-zA-Z]*|o\s+" + name + r")(?!\S)", cmd.text))), on) if cmd.words[cmd.words[:1] in (["then"], ["do"], ["else"]):][:1] == ["set"] else on  # after a `set`
+def flag(cmd: Cmd, on: bool, short: str, name: str) -> bool:
+    if short in cmd.sets: return short == "x"
+    if short.upper() in cmd.sets: return short == "e"
+    match = re.match(LEAD + r"set(?: |$)", cmd.text)
+    if not match: return on
+    try: words = iter(shlex.split(cmd.text[match.end():]))
+    except ValueError: return short == "x"  # unparsable shell must not establish safe options
+    for word in words:
+        # Bash stops option processing at -- or the first positional word.
+        if word == "--" or not re.fullmatch(r"[-+][a-zA-Z]+", word): break
+        for option in word[1:]:
+            if option == "o":
+                if next(words, "") == name: on = word[0] == "-"
+            elif option == short: on = word[0] == "-"
+    return on
 def pg_runs_gate_1(argv: list) -> bool: return "--skip-rebuild" not in argv and (not (gates := [v for f, v in zip(argv, argv[1:]) if f == "--gate"]) or not gates[-1].isdigit() or gates[-1] == "1")
 EXEMPT = {  # reviewed exemptions: the source, a block around it, or every call site of its function matches the guard; the entry env holds the condition
     ("tools/scripts/edge_fake_hook_e2e.sh", "AGENTD_NONCE"): ("if ! want_bypass_hook", lambda env: env.get("CORDUM_EDGE_E2E_BYPASS_HOOK", "").lower() in ("1", "true", "yes", "on")),
@@ -92,7 +107,7 @@ def exits(cmds: list, start: int, level: tuple, var: str, k: int) -> bool:  # ex
     fn, stop = next((s for s in reversed(cmds[k].stack) if cmds[s].op == "{" and cmds[s].words), -1), next((i for i in range(start, len(cmds)) if len(cmds[i].stack) < len(level) or cmds[i].stack == level and cmds[i].words[cmds[i].words[:1] == ["then"]:][:1] in (["else"], ["elif"], ["exit"], ["return"])), len(cmds))
     words = cmds[stop].words[cmds[stop].words[:1] == ["then"]:][:1] if stop < len(cmds) and cmds[stop].stack == level and runs(cmds, stop, start, cmds[k].sub) else []  # in the value's shell: not skipped, piped, backgrounded or captured
     held = fn >= 0 and any(c.stack[-1:] == (fn,) and c.words[:1] == ["local"] and var in [w.split("=")[0] for w in c.words[1:]] and runs(cmds, i) for i, c in enumerate(cmds[:k + 1]))  # the caller cannot read it after the return
-    return words == ["exit"] or words == ["return"] and (held or any(c.stack == level and re.fullmatch(r"(?:then )?(?:unset (?:-v )?" + var + "|" + var + r"=(?:\"\"|'')?)", c.text) and runs(cmds, i) and not any(re.match(r"(?:(?:then|do|else) )?return\b", d.text) for d in cmds[start:i]) for i, c in enumerate(cmds[start:stop], start)))  # cleared before any return
+    return words == ["exit"] or words == ["return"] and (held or any(c.stack == level and re.fullmatch(r"(?:then )?(?:unset (?:-v )?" + var + "|" + var + r"=(?:\"\"|'')?)", c.text) and runs(cmds, i) and not any(re.match(LEAD + r"return\b", d.text) for d in cmds[start:i]) for i, c in enumerate(cmds[start:stop], start)))  # cleared before any return
 def registered_at(cmds: list, j: int, k: int, var: str, errexit: bool, captured: set = frozenset()) -> bool:  # cmds[j] registers var; a failure stops before any use
     words, nxt = list(cmds[j].words), cmds[j + 1] if j + 1 < len(cmds) else Cmd(0, [], "", 0)
     lead = words.pop(0) if words[:1] in (["if"], ["then"], ["do"]) else ""; negated = words[:1] == ["!"] and bool(words.pop(0))  # noqa: E702
@@ -132,7 +147,7 @@ def callers(cmds: list, flags: list, prev: tuple, ign: set = frozenset()) -> tup
 def scope(cmds: list, c: Cmd) -> int: return next((s for s in reversed(c.stack) if subshell(cmds, s) or cmds[s].op == "{" and cmds[s].words), -1)  # the innermost subshell or function body around c, -1 at the top level
 def flat(cmds: list, i: int) -> bool: return runs(cmds, i) and (cmds[i].stack[-1:] or (-1,))[0] == scope(cmds, cmds[i])  # runs in straight line in its scope
 def kept(cmds: list, i: int, o: tuple, v: bool) -> bool:  # cmds[i] sets o to v in a function body, and the function may return with it so: its next change of o, before any return, does not reset it in straight line
-    s = scope(cmds, cmds[i]); m = next((h for h in range(i + 1, len(cmds)) if not (d := cmds[h]).sub and scope(cmds, d) == s and (flag(d, True, *o) == flag(d, False, *o) or re.match(r"(?:(?:then|do|else) )?return\b", d.text))), None)  # noqa: E702
+    s = scope(cmds, cmds[i]); m = next((h for h in range(i + 1, len(cmds)) if not (d := cmds[h]).sub and scope(cmds, d) == s and (flag(d, True, *o) == flag(d, False, *o) or re.match(LEAD + r"return\b", d.text))), None)  # noqa: E702
     return s >= 0 and cmds[s].op == "{" and not (m is not None and flat(cmds, m) and flag(cmds[m], v, *o) != v)
 def options(cmds: list, errexit: bool, quiet: set = frozenset(), cold: set = frozenset(), ign: set = frozenset(), xtrace: bool = False) -> list:  # [k]: (errexit, xtrace) at cmds[k]; a set applies in text order within its scope: top level, function body or subshell; quiet functions and ign blocks ignore errexit, cold functions start without it
     shells, fns = lambda c: {-1, *(s for s in c.stack if subshell(cmds, s))}, any(c.op == "{" and c.words for c in cmds)  # the subshells around it; the file defines a function
@@ -146,7 +161,7 @@ def options(cmds: list, errexit: bool, quiet: set = frozenset(), cold: set = fro
     return out + [(now[-1][0] and -1 not in off, now[-1][1] or -1 in on)]  # then the top level after the last command
 def subshell(cmds: list, s: int) -> bool: return cmds[s].op == "(" and cmds[s].words[:1] != ["case"]  # a ( ) block; case x in (pattern) puts its first pattern's ( on the case line
 def left(cmds: list, flags: list) -> tuple:  # (errexit, xtrace) a sourced file may leave in its caller: its end state, merged with the state at each return bash runs in the file's own shell
-    ret = [flags[k] for k, c in enumerate(cmds) if re.match(r"(?:(?:if|elif|while|until|then|do|else|!) )*return\b", c.text) and not c.sub and not c.func and not any(subshell(cmds, s) for s in c.stack) and c.op not in ("|", "|&", "&") and next((d.op for d in reversed(cmds[:k]) if not d.sub), "") not in ("|", "|&")]
+    ret = [flags[k] for k, c in enumerate(cmds) if re.match(LEAD + r"return\b", c.text) and not c.sub and not c.func and not any(subshell(cmds, s) for s in c.stack) and c.op not in ("|", "|&", "&") and next((d.op for d in reversed(cmds[:k]) if not d.sub), "") not in ("|", "|&")]
     return all(e for e, _ in ret + flags[-1:]), any(x for _, x in ret + flags[-1:])
 def called(cmds: list) -> str:  # r or t: a function a sourced file leaves defined in its caller may leave errexit off (kept, or r from a file it sources) or turn tracing on (anywhere in its body, or t), at any later call
     top = [(i, c) for i, c in enumerate(cmds) if not c.sub and not any(subshell(cmds, s) for s in c.stack)]  # a function defined in a $(...) or ( ) is gone when it ends

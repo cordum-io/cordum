@@ -286,7 +286,7 @@ claims:
     public_sources: ["cordum:ROADMAP.md:59"]
   - id: CLM-028
     statement: "LLM-proxy ingestion supplies redacted event records and redaction advisories for submitted model traffic."
-    boundary: "Enabled authenticated gateway LLM ingestion and the event content of the submissions it accepts, each content value scanned up to 16 KiB; rejected submissions (which record nothing), content past that bound, external proxy routing and provider delivery are not qualified here."
+    boundary: "Enabled authenticated gateway LLM ingestion and the event content of the submissions it accepts, each content value scanned up to 16 KiB; rejections before AppendEvents add no events, but append errors may already have committed and require reconciliation. Content past that bound, external proxy routing and provider delivery are not qualified here."
     status: supported
     invariants: ["I02","I09","I10"]
     findings: ["R08","R12","R14","R15"]
@@ -535,14 +535,14 @@ claims:
     evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 llmIngestParentValidator.validate rejects an execution owned by another proxy and validateRuntimeIngestSourceID rejects a missing or mismatched source id, and both tests cover them."
     public_sources: ["cordum:docs/edge/llm-proxy-governance.md:218","cordum:docs/edge/runtime-ingestion.md:181"]
   - id: CLM-074
-    statement: "cordumctl edge managed-settings verify reports drift of a managed-settings.json from the template's seventeen production invariants."
+    statement: "cordumctl edge managed-settings verify reports drift of a managed-settings.json from the template's eighteen production invariants."
     boundary: "The local managed-settings file checked by cordumctl edge managed-settings verify or cordumctl edge doctor; MDM delivery and Claude Code's enforcement of the settings are not covered."
     status: supported
     invariants: []
     findings: []
     enforcement_points: [{"path":"core/edge/claude/managed_settings_verify.go","symbol":"collectManagedSettingsDrifts"}]
-    tests: [{"package":"core/edge/claude","name":"TestVerifyManagedSettingsDetectsAllInvariantViolations"}]
-    evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 collectManagedSettingsDrifts checks the documented invariants with no settings-file bypass, and TestVerifyManagedSettingsDetectsAllInvariantViolations covers it."
+    tests: [{"package":"core/edge/claude","name":"TestVerifyManagedSettingsDetectsAllInvariantViolations"},{"package":"core/edge/claude","name":"TestVerifyManagedSettingsRejectsManagedMCPAllowlistExceptions"}]
+    evidence: "collectManagedSettingsDrifts checks the documented invariants with no settings-file bypass. TestVerifyManagedSettingsDetectsAllInvariantViolations covers the original template fields; TestVerifyManagedSettingsRejectsManagedMCPAllowlistExceptions in core/edge/claude/managed_settings_mcp_url_test.go exercises managedMcpServers and allowClaudeInChromeWithManagedMcp through the verifier."
     public_sources: ["cordum:docs/edge/managed-settings-deploy.md:269"]
   - id: CLM-075
     statement: "Shadow agent detection collects minimized metadata: environment-variable names or presence rather than values, a fixed field catalogue for network log records, and principal identifiers under the configured PII mode."
