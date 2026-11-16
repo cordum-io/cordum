@@ -813,6 +813,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- MCP approvals: VS Code `type:"http"` (session-less) callers can claim
+  their approval on retry, and their prompt-injection taint now carries
+  across POSTs. Two callers never share either (#492, task-dcd2a4fb).
+
 - Python SDK: an error response whose body is not the `Error` schema, such as
   a proxy's HTML page or the nested `{"error": {...}}` envelope, now raises the
   typed `CordumError` subclass for its status instead of `KeyError` or

@@ -133,6 +133,19 @@ type CallMetadata struct {
 	AgentID     string
 	SessionID   string
 	ExecutionID string
+	// MCPSessionID is the client's MCP session when it differs from the Edge
+	// session (SessionID): a session-less POST runs in a one-shot Edge
+	// session but keeps one MCP session per caller and agent. The session
+	// taint is kept per MCP session. Empty means SessionID.
+	MCPSessionID string
+}
+
+// taintSession is the session a prompt-injection taint is kept for.
+func (m CallMetadata) taintSession() string {
+	if m.MCPSessionID != "" {
+		return m.MCPSessionID
+	}
+	return m.SessionID
 }
 
 type callMetadataKey struct{}
@@ -613,10 +626,10 @@ func EvaluateToolCall(ctx context.Context, deps ToolCallDeps, params ToolCallPar
 	// persist path remains fail-open by design. Decision captured in
 	// Monday-demo/artifacts/taint-fail-open-decision.md (task-098b8d02).
 	if deps.TaintStore != nil {
-		if t, ok, terr := deps.TaintStore.GetTaint(ctx, meta.Tenant, meta.SessionID); terr != nil {
+		if t, ok, terr := deps.TaintStore.GetTaint(ctx, meta.Tenant, meta.taintSession()); terr != nil {
 			descriptor.TaintLookupFailed = true
 			slog.WarnContext(ctx, "mcp.session_taint.lookup_failed",
-				"tenant", meta.Tenant, "session_id", meta.SessionID, "error", terr.Error())
+				"tenant", meta.Tenant, "session_id", meta.taintSession(), "error", terr.Error())
 		} else if ok && t != nil {
 			descriptor.RiskTags = append(descriptor.RiskTags, config.RiskTagSessionPromptInjection)
 			descriptor.SessionTaint = &config.ActionSessionTaint{
@@ -1251,7 +1264,7 @@ func scanResultForSessionTaint(ctx context.Context, deps ToolCallDeps, tool stri
 	if !found {
 		return
 	}
-	if err := deps.TaintStore.Taint(ctx, meta.Tenant, meta.SessionID, SessionTaint{
+	if err := deps.TaintStore.Taint(ctx, meta.Tenant, meta.taintSession(), SessionTaint{
 		Tool:          tool,
 		Pattern:       f.Pattern,
 		Snippet:       f.Snippet,
@@ -1261,7 +1274,7 @@ func scanResultForSessionTaint(ctx context.Context, deps ToolCallDeps, tool stri
 		SourceEventID: eventID,
 	}); err != nil {
 		slog.WarnContext(ctx, "mcp.session_taint.persist_failed",
-			"tenant", meta.Tenant, "session_id", meta.SessionID, "tool", tool, "error", err.Error())
+			"tenant", meta.Tenant, "session_id", meta.taintSession(), "tool", tool, "error", err.Error())
 	}
 }
 
