@@ -361,6 +361,8 @@ func TestPackPolicyFragment_ExplicitWarnStoresUnsignedFragment(t *testing.T) {
 				}
 				h := prodPackPrepare(t, key, "signed", "upload")
 				logs := prodPackLogs(t)
+				// Unrelated process-global WARN noise, with the attributes the policy warning carries.
+				slog.Warn("test-only unrelated warning", "subject", "pack "+matrixPackID, "policy_mode", mode)
 				assertPackAccepted(t, h.s, h.before, h.drive(), packSignatureWant{status: 200, signed: true}, h.bundle.content, "upload")
 				fragment := packMatrixFragment(t, h.s)
 				if keyState == "untrusted" {
