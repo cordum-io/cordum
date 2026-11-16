@@ -861,6 +861,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- `cordumctl up --dev` seeds through an absolute CA path when the compose
+  file is in another directory, and posts only the `mcp` config key so
+  unrelated config edits are preserved (task-e49aae16).
+
 - Data inventory: general `cfg:{scope}:{id}` config documents have their own
   entry, DI-C54, and DI-C05 now covers only the policy audit document. The
   inventory key scanner reads file-level values from top-level declarations

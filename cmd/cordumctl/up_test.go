@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestEnsureDevBootstrapEnvCreatesAndPreserves(t *testing.T) {
@@ -178,6 +180,9 @@ func TestEnsureDevCLIContextWritesValidYAMLAndDoesNotOverwrite(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(caDir, "ca.crt"), []byte("dummy-ca"), 0o600); err != nil {
 		t.Fatalf("write ca.crt: %v", err)
 	}
+	if got := detectInitCACert("", defaultDevGatewayURL, dir); got != "./certs/ca/ca.crt" {
+		t.Fatalf("detectInitCACert = %q, want ./certs/ca/ca.crt", got)
+	}
 
 	cfgPath, created, err := ensureDevCLIContext(dir, "tenant-alpha")
 	if err != nil {
@@ -341,8 +346,8 @@ func TestSeedDevMCPConfigSeedsCleanInstallAndPreservesExistingTools(t *testing.T
 		t.Fatalf("seedDevMCPConfig existing error: %v", err)
 	}
 	data2, _ := posted["data"].(map[string]any)
-	if _, ok := data2["safety"]; !ok {
-		t.Fatalf("expected unrelated system/default keys to be preserved: %#v", data2)
+	if _, ok := data2["safety"]; ok {
+		t.Fatalf("unrelated system/default keys must not be posted: %#v", data2)
 	}
 	mcpCfg2, _ := data2["mcp"].(map[string]any)
 	if mcpCfg2["enabled"] != true || mcpCfg2["transport"] != "http" {
@@ -353,6 +358,112 @@ func TestSeedDevMCPConfigSeedsCleanInstallAndPreservesExistingTools(t *testing.T
 	}
 	if _, ok := mcpCfg2["tools"]; !ok {
 		t.Fatalf("expected existing mcp.tools to be preserved: %#v", mcpCfg2)
+	}
+}
+
+func TestDevSeederCACertSeedsTLSFromRelativeComposePath(t *testing.T) {
+	dir := t.TempDir()
+	composeDir := filepath.Join(dir, "sandbox")
+	ensureDevCerts(composeDir)
+	t.Chdir(dir)
+	caPath, err := devSeederCACert(filepath.Dir("sandbox/docker-compose.yml"), defaultDevGatewayURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if caPath != filepath.Join(composeDir, "certs", "ca", "ca.crt") || !filepath.IsAbs(caPath) {
+		t.Fatalf("seeder CA = %q, want absolute path under %q", caPath, composeDir)
+	}
+	if _, err := os.Stat(caPath); err != nil {
+		t.Fatalf("seeder CA must exist: %v", err)
+	}
+	pair, err := tls.LoadX509KeyPair(filepath.Join(composeDir, "certs", "server", "tls.crt"), filepath.Join(composeDir, "certs", "server", "tls.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	posted := make(chan bool, 1)
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/config" {
+			var doc configDoc
+			if err := json.NewDecoder(r.Body).Decode(&doc); err != nil {
+				t.Errorf("decode config: %v", err)
+			}
+			mcpCfg, _ := doc.Data["mcp"].(map[string]any)
+			posted <- mcpCfg["policy_gate_enabled"] == true
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	srv.TLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{pair}}
+	srv.StartTLS()
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := waitAndSeedDevMCP(ctx, devBootstrapResult{Gateway: srv.URL, CACert: caPath, APIKey: "dev-key", Tenant: "default", MCPEnabled: "true"}); err != nil {
+		t.Fatalf("TLS seeding from foreign cwd: %v", err)
+	}
+	select {
+	case seeded := <-posted:
+		if !seeded {
+			t.Fatal("MCP policy gate was not seeded over TLS")
+		}
+	default:
+		t.Fatal("MCP config was not posted")
+	}
+}
+
+func TestDevSeederCACertWithoutLocalCAUsesSystemRoots(t *testing.T) {
+	got, err := devSeederCACert(t.TempDir(), defaultDevGatewayURL)
+	if err != nil || got != "" {
+		t.Fatalf("missing CA = (%q, %v), want empty path and no error", got, err)
+	}
+}
+
+func TestSeedDevMCPConfigPreservesConcurrentUnrelatedEdit(t *testing.T) {
+	store := map[string]any{"safety": "old", "mcp": map[string]any{"transport": "http"}}
+	posted := make(chan map[string]json.RawMessage, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			if err := json.NewEncoder(w).Encode(configDoc{Scope: "system", ScopeID: "default", Data: store, Meta: map[string]string{"owner": "old"}}); err != nil {
+				t.Errorf("encode snapshot: %v", err)
+			}
+			store["safety"] = "new"
+		case http.MethodPost:
+			var req map[string]json.RawMessage
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("decode config: %v", err)
+			}
+			var doc configDoc
+			if err := json.Unmarshal(req["data"], &doc.Data); err != nil {
+				t.Errorf("decode data: %v", err)
+			}
+			for key, value := range doc.Data {
+				store[key] = value
+			}
+			posted <- req
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer srv.Close()
+	client := newRestClient(srv.URL, "dev-key", "default", nil)
+	if err := seedDevMCPConfig(context.Background(), client, true); err != nil {
+		t.Fatal(err)
+	}
+	req := <-posted
+	var data map[string]json.RawMessage
+	if err := json.Unmarshal(req["data"], &data); err != nil {
+		t.Fatal(err)
+	}
+	if store["safety"] != "new" {
+		t.Fatalf("concurrent safety edit overwritten: %v", store["safety"])
+	}
+	if len(data) != 1 || data["mcp"] == nil || req["meta"] != nil {
+		t.Fatalf("POST must contain only data.mcp and no meta: %s", req)
+	}
+	mcpCfg, _ := store["mcp"].(map[string]any)
+	if mcpCfg["enabled"] != true || mcpCfg["policy_gate_enabled"] != true {
+		t.Fatalf("MCP config not seeded: %v", mcpCfg)
 	}
 }
 
