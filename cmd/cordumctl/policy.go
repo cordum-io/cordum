@@ -334,7 +334,6 @@ func runPolicyResignCmd(args []string) {
 	var ids []string
 	fs.Func("bundle", "bundle id (repeatable or comma-separated)", func(raw string) error {
 		for _, id := range strings.Split(raw, ",") {
-			id = strings.TrimSpace(id)
 			if id == "" {
 				return errors.New("bundle id must not be empty")
 			}
@@ -361,14 +360,29 @@ func runPolicyResignCmd(args []string) {
 		}
 	}
 	for _, id := range ids {
-		path := "/api/v1/policy/bundles/" + url.PathEscape(strings.ReplaceAll(id, "/", "~")) + "/resign"
+		segment, ok := policyResignBundleSegment(id)
+		if !ok {
+			fmt.Printf("SKIPPED %q unencodable-id: the bundle API cannot address this ID, so it was not re-signed\n", id)
+			code = 1
+			continue
+		}
+		path := "/api/v1/policy/bundles/" + segment + "/resign"
 		var result struct {
+			ID    string `json:"id"`
 			KeyID string `json:"key_id"`
 		}
 		if err := client.doJSON(context.Background(), http.MethodPost, path, nil, &result); err != nil {
 			exitPolicyVerify(1, err.Error())
 		}
-		fmt.Printf("RESIGNED %s key_id=%s\n", id, result.KeyID)
+		fmt.Printf("RESIGNED %s key_id=%s\n", result.ID, result.KeyID)
 	}
 	os.Exit(code)
+}
+
+func policyResignBundleSegment(id string) (string, bool) {
+	// The gateway trims IDs and decodes every tilde as a slash; ServeMux redirects dot segments.
+	if id == "" || id == "." || id == ".." || strings.TrimSpace(id) != id || strings.Contains(id, "~") {
+		return "", false
+	}
+	return url.PathEscape(strings.ReplaceAll(id, "/", "~")), true
 }
