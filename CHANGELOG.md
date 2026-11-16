@@ -820,6 +820,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Kubernetes: `cordum-quota` now admits the production overlay. Its default
+  install, with each HPA at minReplicas, sets about 20.7 CPU and 20.6Gi of
+  limits, over the quota's 16 CPU and 16Gi, so ResourceQuota admission
+  refused some of its pods. The quota is now 12 CPU and 16Gi of requests and
+  48 CPU and 48Gi of limits, which also fits every HPA at maxReplicas plus
+  the surge pods of a rolling update (task-de0abf3f).
 - K8s: the production NATS backup CronJob failed on every run: natscli has no
   `--tlscacert`. It passes `--tlsca` (#492, task-81fe0880).
 

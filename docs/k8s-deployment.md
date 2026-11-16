@@ -116,13 +116,15 @@ The base manifest includes a `ResourceQuota` and `LimitRange` for the `cordum` n
 
 | Quota | Value | Notes |
 |-------|-------|-------|
-| `requests.cpu` | 8 | Total CPU requests across all pods |
-| `limits.cpu` | 16 | Total CPU limits |
-| `requests.memory` | 8Gi | Total memory requests |
-| `limits.memory` | 16Gi | Total memory limits |
+| `requests.cpu` | 12 | Total CPU requests across all pods |
+| `limits.cpu` | 48 | Total CPU limits |
+| `requests.memory` | 16Gi | Total memory requests |
+| `limits.memory` | 48Gi | Total memory limits |
 | `pods` | 50 | Max pod count (accommodates HPA max replicas + headroom) |
 | `services` | 20 | Max Service count |
 | `persistentvolumeclaims` | 10 | Max PVC count |
+
+These values fit the production overlay with every HPA at `maxReplicas`, together with its NATS and Redis StatefulSets, the backup CronJobs, the Redis cluster init Job and the extra pods of a default rolling update, so ResourceQuota admission does not refuse a full install, an upgrade or an HPA scale-out.
 
 The `LimitRange` assigns default resource requests (100m CPU, 128Mi memory) and limits (500m CPU, 256Mi memory) to containers that don't specify them.
 
@@ -139,7 +141,7 @@ The `LimitRange` assigns default resource requests (100m CPU, 128Mi memory) and 
       value: "100"
     - op: replace
       path: /spec/hard/limits.cpu
-      value: "32"
+      value: "96"
 ```
 
 ### Resource Requests/Limits
