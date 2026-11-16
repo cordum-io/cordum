@@ -72,6 +72,7 @@ services:
       CONTEXT_ENGINE_METRICS_PUBLIC: "true"
       CONTEXT_ENGINE_TLS_CERT: /etc/cordum/tls/server/tls.crt
       CONTEXT_ENGINE_TLS_KEY: /etc/cordum/tls/server/tls.key
+      CONTEXT_ENGINE_TLS_CLIENT_CA: /etc/cordum/tls/ca/ca.crt
     volumes:
       - "${CORDUM_TLS_DIR:?error: CORDUM_TLS_DIR is not set}:/etc/cordum/tls:ro"
     # No host port exposure — internal gRPC service accessible via Docker network only.
@@ -117,6 +118,7 @@ services:
       CORDUM_AUDIT_SIGNING_KEY_ID: "${CORDUM_AUDIT_SIGNING_KEY_ID:-default}"
       SAFETY_KERNEL_TLS_CERT: /etc/cordum/tls/server/tls.crt
       SAFETY_KERNEL_TLS_KEY: /etc/cordum/tls/server/tls.key
+      SAFETY_KERNEL_TLS_CLIENT_CA: /etc/cordum/tls/ca/ca.crt
     volumes:
       - ./config/safety.yaml:/etc/cordum/safety.yaml:ro
       - "${CORDUM_TLS_DIR:?error: CORDUM_TLS_DIR is not set}:/etc/cordum/tls:ro"
@@ -155,6 +157,8 @@ services:
       REDIS_TLS_SERVER_NAME: redis
       SAFETY_KERNEL_ADDR: "safety-kernel:50051"
       SAFETY_KERNEL_TLS_CA: /etc/cordum/tls/ca/ca.crt
+      SAFETY_KERNEL_TLS_CLIENT_CERT: /etc/cordum/tls/client/tls.crt
+      SAFETY_KERNEL_TLS_CLIENT_KEY: /etc/cordum/tls/client/tls.key
       OUTPUT_POLICY_ENABLED: "${OUTPUT_POLICY_ENABLED:-true}"
       POOL_CONFIG_PATH: /etc/cordum/pools.yaml
       TIMEOUT_CONFIG_PATH: /etc/cordum/timeouts.yaml
@@ -208,6 +212,8 @@ services:
       REDIS_TLS_SERVER_NAME: redis
       SAFETY_KERNEL_ADDR: "safety-kernel:50051"
       SAFETY_KERNEL_TLS_CA: /etc/cordum/tls/ca/ca.crt
+      SAFETY_KERNEL_TLS_CLIENT_CERT: /etc/cordum/tls/client/tls.crt
+      SAFETY_KERNEL_TLS_CLIENT_KEY: /etc/cordum/tls/client/tls.key
       CONTEXT_ENGINE_ADDR: "context-engine:50070"
       CONTEXT_ENGINE_TLS_CA: /etc/cordum/tls/ca/ca.crt
       CORDUM_API_KEY: "${CORDUM_API_KEY:?error: CORDUM_API_KEY is not set}"
