@@ -3,6 +3,7 @@ package workflow_test
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/policysign"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/cordum/cordum/core/workflow"
@@ -29,6 +31,7 @@ const (
 	matrixRunID  = "run-matrix"
 	matrixStepID = "step"
 	matrixJobID  = matrixRunID + ":" + matrixStepID + "@1"
+	matrixKeyID  = "matrix-scheduler"
 )
 
 // TestAudienceMatrixBusWorkflowResult presents every credential on
@@ -37,21 +40,20 @@ const (
 func TestAudienceMatrixBusWorkflowResult(t *testing.T) {
 	setMatrixProductionBus(t)
 	identity.Run(t, identity.BusWorkflowResult, func(t *testing.T, c identity.Credential) identity.Result {
-		token := audienceCredential(t, c)
-		f := newWorkflowMatrixFixture(t)
-		packet := &pb.BusPacket{
-			SenderId: servicetoken.IdentityScheduler, TraceId: uuid.NewString(),
-			CreatedAt: timestamppb.Now(), ProtocolVersion: capsdk.DefaultProtocolVersion,
-			Payload: &pb.BusPacket_JobResult{JobResult: &pb.JobResult{
-				JobId: matrixJobID, WorkerId: servicetoken.IdentityScheduler,
-				Status: pb.JobStatus_JOB_STATUS_SUCCEEDED, Identity: matrixRunIdentity(),
-			}},
+		f := newWorkflowMatrixFixture(t, true)
+		var token string
+		if c == identity.ServiceToken {
+			var err error
+			token, err = servicetoken.MintService(f.key, matrixKeyID, servicetoken.IdentityScheduler, time.Now())
+			require.NoError(t, err)
+		} else {
+			token = audienceCredential(t, c)
 		}
+		packet := matrixAcceptedResult(token)
 		if c == identity.AgentIDHeader {
 			// CAP requires job_result.worker_id to equal sender_id, as the scheduler sends it.
 			packet.SenderId, packet.GetJobResult().WorkerId = token, token
-		} else {
-			packet.AuthToken = token
+			packet.AuthToken = ""
 		}
 		runBefore, stepBefore := f.state(t)
 		require.NoError(t, f.publisher.Publish(capsdk.SubjectAcceptedResult, packet))
@@ -63,21 +65,18 @@ func TestAudienceMatrixBusWorkflowResult(t *testing.T) {
 			Evidence: fmt.Sprintf("state snapshots (Accepted from the same snapshots); workflow run status %s -> %s; workflow step status %s -> %s",
 				runBefore, runAfter, stepBefore, stepAfter),
 		}
-	},
-		identity.Skip(identity.Anonymous, "PR1-23"),
-		identity.Skip(identity.UserSession, "PR1-23"),
-		identity.Skip(identity.APIKeyStatic, "PR1-23"),
-		identity.Skip(identity.APIKeyManaged, "PR1-23"),
-		identity.Skip(identity.GatewayJWT, "PR1-23"),
-		identity.Skip(identity.GatewayJWTWrongAudience, "PR1-23"),
-		identity.Skip(identity.OIDCBearer, "PR1-23"),
-		identity.Skip(identity.OIDCBearerWrongAudience, "PR1-23"),
-		identity.Skip(identity.DelegationToken, "PR1-23"),
-		identity.Skip(identity.WorkerCredential, "PR1-23"),
-		identity.Skip(identity.WorkerSession, "PR1-23"),
-		identity.Skip(identity.WorkerSessionWrongAudience, "PR1-23"),
-		identity.Skip(identity.SCIMBearer, "PR1-23"),
-		identity.Skip(identity.AgentdNonce, "PR1-23"))
+	})
+}
+
+func matrixAcceptedResult(token string) *pb.BusPacket {
+	return &pb.BusPacket{
+		SenderId: servicetoken.IdentityScheduler, TraceId: uuid.NewString(), AuthToken: token,
+		CreatedAt: timestamppb.Now(), ProtocolVersion: capsdk.DefaultProtocolVersion,
+		Payload: &pb.BusPacket_JobResult{JobResult: &pb.JobResult{
+			JobId: matrixJobID, WorkerId: servicetoken.IdentityScheduler,
+			Status: pb.JobStatus_JOB_STATUS_SUCCEEDED, Identity: matrixRunIdentity(),
+		}},
+	}
 }
 
 // setMatrixProductionBus sets the production profile with only the embedded
@@ -98,12 +97,13 @@ type workflowMatrixFixture struct {
 	store     *workflow.RedisStore
 	publisher *bus.NatsBus
 	handled   chan error
+	key       ed25519.PrivateKey
 }
 
 // newWorkflowMatrixFixture wires a fresh workflow store, engine and reconciler
 // the way RunWithEntitlements does, subscribes the accepted-result handler on
 // a production NatsBus, and returns a publisher signing like the scheduler's.
-func newWorkflowMatrixFixture(t *testing.T) *workflowMatrixFixture {
+func newWorkflowMatrixFixture(t *testing.T, enforce bool) *workflowMatrixFixture {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -128,8 +128,15 @@ func newWorkflowMatrixFixture(t *testing.T) *workflowMatrixFixture {
 	consumer := matrixNatsBus(t, ns)
 	engine := workflow.NewEngine(workflows, consumer).WithProductionIdentityEnforcement(true)
 	rec := workflow.NewReconciler(workflows, engine, store.NewRedisJobStoreFromClient(rdb), 0, 0)
-	handler := workflow.AcceptedResultHandler(rec)
-	f := &workflowMatrixFixture{store: workflows, handled: make(chan error, 1)}
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	var trust *policysign.TrustStore
+	if enforce {
+		trust = policysign.NewTrustStore()
+		require.NoError(t, trust.Add(matrixKeyID, pub))
+	}
+	handler := workflow.AcceptedResultHandler(rec, trust)
+	f := &workflowMatrixFixture{store: workflows, handled: make(chan error, 1), key: priv}
 	subs := ns.NumSubscriptions()
 	require.NoError(t, consumer.SubscribeWithContext(capsdk.SubjectAcceptedResult, workflow.WorkflowEngineQueue,
 		func(ctx context.Context, p *pb.BusPacket) error {
