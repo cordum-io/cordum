@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 from typing import List
 
@@ -10,8 +10,7 @@ from ..types import UNSET, Unset
 
 from ..models.audit_verify_result_status import AuditVerifyResultStatus
 from ..types import UNSET, Unset
-from typing import cast
-from typing import cast, List
+from typing import List
 from typing import Dict
 from typing import Union
 
@@ -47,8 +46,6 @@ class AuditVerifyResult:
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.audit_verify_gap import AuditVerifyGap
-
         status = self.status.value
 
         total_events = self.total_events

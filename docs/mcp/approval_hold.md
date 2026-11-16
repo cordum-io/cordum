@@ -133,9 +133,13 @@ the active policy bundle digest.
 
 ## Blank-linkage fail-closed behaviour
 
-The direct helpers `EvaluateToolCall` and `ProcessApprovalClaim` refuse the
-call with `errMissingMCPMetadata` when ANY of the four identity fields on
-`CallMetadata` is blank:
+The direct helper `EvaluateToolCall` always refuses the call with
+`errMissingMCPMetadata` when ANY of the four identity fields on `CallMetadata`
+is blank. `ProcessApprovalClaim` runs the same check only on the claim path,
+with a wired `Store` and a non-blank `_approval_ref` string. Without a store,
+arguments, a JSON object or an `_approval_ref` key it returns no outcome and no
+error. A non-string or blank `_approval_ref` returns an `invalid _approval_ref`
+error before the metadata check. The four fields are:
 
 | Field | Source | Used for |
 |-------|--------|----------|
@@ -145,8 +149,8 @@ call with `errMissingMCPMetadata` when ANY of the four identity fields on
 | `AgentID` | edge identity middleware | caller identity, audit attribution |
 
 Each helper emits no events and consumes no approval on its own rejection path.
-`ProcessApprovalClaim` also trims whitespace before this check; `EvaluateToolCall`
-tests for an empty string.
+Both helpers trim whitespace first (`callMetadataComplete`), so a whitespace-only
+field counts as blank.
 
 A policy-gated `tools/call` adds an earlier check. When Tenant, SessionID and
 ExecutionID are present and the AgentID is empty or whitespace-only, the server
