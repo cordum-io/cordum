@@ -26,6 +26,7 @@ assert_not_contains() {
 env_refs() {
   python -c '
 import sys, yaml
+sys.stdout.reconfigure(newline="")
 for doc in yaml.safe_load_all(sys.stdin.buffer.read().decode("utf-8")):
     if not doc or doc.get("kind") != "Deployment":
         continue
@@ -203,6 +204,29 @@ test_production_chart_requires_kernel_audit_key() {
     "$gateway api-gateway CORDUM_AUDIT_PUBLIC_KEY_CORDUM_MCP secret:audit-trust/cordum-mcp"
 }
 
+test_production_overlay_provides_audit_key_refs() {
+  local kustomize=() rendered expected
+  if command -v kubectl >/dev/null 2>&1; then
+    kustomize=(kubectl kustomize)
+  elif command -v kustomize >/dev/null 2>&1; then
+    kustomize=(kustomize build)
+  else
+    echo "SKIP: kubectl/kustomize not installed; production overlay key refs not checked"
+    return 0
+  fi
+  rendered=$'\n'"$("${kustomize[@]}" "$ROOT/deploy/k8s/production" | env_refs)"$'\n'
+  for expected in \
+    "cordum-safety-kernel safety CORDUM_AUDIT_SIGNING_KEY secret:cordum-audit-signing/signing-key optional=false" \
+    "cordum-safety-kernel safety CORDUM_AUDIT_SIGNING_KEY_ID secret:cordum-audit-signing/key-id optional=true" \
+    "cordum-scheduler scheduler CORDUM_POLICY_SIGNING_KEY secret:cordum-policy-signing/signing-key optional=true" \
+    "cordum-scheduler scheduler CORDUM_POLICY_SIGNING_KEY_ID secret:cordum-policy-signing/key-id optional=true" \
+    "cordum-api-gateway gateway CORDUM_AUDIT_PUBLIC_KEY_CORDUM_SAFETY_KERNEL secret:cordum-audit-trust/cordum-safety-kernel optional=true" \
+    "cordum-api-gateway gateway CORDUM_AUDIT_PUBLIC_KEY_CORDUM_MCP secret:cordum-audit-trust/cordum-mcp optional=true"; do
+    assert_contains "$rendered" $'\n'"$expected"$'\n'
+  done
+  assert_not_contains "$rendered" " AUDIT_TRANSPORT "
+}
+
 copy_validation_fixture() {
   local target="$1" path
   while IFS= read -r path; do
@@ -347,6 +371,7 @@ test_active_chart_requires_and_renders_all_authorities
 test_chart_enforces_mode_classes
 test_audit_nats_chart_requires_control_plane_key
 test_production_chart_requires_kernel_audit_key
+test_production_overlay_provides_audit_key_refs
 test_strict_validator_rejects_trust_default_drift
 test_strict_validator_rejects_missing_workflow_handshake_default
 test_strict_validator_rejects_checker_crash
