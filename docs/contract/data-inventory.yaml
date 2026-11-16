@@ -47,7 +47,7 @@ control_plane:
      content: {description: Principal/session metadata and redacted action-event facts; redaction is not anonymity, personal_data: possible},
      retention: {settings: [{name: CORDUM_EDGE_SESSION_RETENTION_TTL, path: core/controlplane/gateway/gateway.go}], default: '30d; session sweeper uses the session lifecycle anchor'},
      deletion: {paths: [{path: core/edge/sweeper.go, symbol: SessionSweeper.SweepOnce}, {path: core/edge/store_redis.go, symbol: RedisStore.DeleteSession}]},
-     legal_hold: {applies: false, reason: Session cleanup does not consult LegalHoldStore}}
+     legal_hold: {applies: true, reason: 'SessionSweeper checks LegalHoldStore.IsUnderHold before each deletion; it keeps the sessions of a tenant under an active hold or whose hold check fails, and deletes nothing without a hold store', refs: [{path: core/edge/sweeper.go, symbol: SessionSweeper.sweepSessionKeys}, {path: core/audit/legal_hold.go, symbol: LegalHoldStore.IsUnderHold}]}}
   - {id: DI-C02, class: redacted-events,
      storage: {kind: redis_key, location: Edge approval records and their tenant/status/principal/tuple/hash indexes, redis_keys: [{pattern: 'edge:approvals:{ref}', path: core/edge/approval_store_redis.go}, {pattern: 'edge:approvals:index:{suffix}', path: core/edge/approval_store_redis.go}], writers: [{path: core/edge/approval_store_redis.go, symbol: RedisStore.EnqueueApproval}, {path: core/edge/approval_store_redis.go, symbol: RedisStore.ExpireApprovals}, {path: core/edge/sweeper.go, symbol: ApprovalSweeper.SweepOnce}]},
      content: {description: Approval identity/action facts and lifecycle state, personal_data: possible},

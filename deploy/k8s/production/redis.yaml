@@ -183,6 +183,9 @@ metadata:
   namespace: cordum
 spec:
   template:
+    metadata:
+      labels:
+        app: cordum-redis-cluster-init
     spec:
       restartPolicy: OnFailure
       containers:
@@ -200,6 +203,19 @@ spec:
               sleep 2
             done
           done
+          # An upgrade keeps the PVCs, so the nodes already know each other and --cluster create would fail.
+          # redis-cli ends each line with a carriage return, so cluster_state:ok is not matched at the line end.
+          ready=0
+          for node in $nodes; do
+            host="${node%%:*}"
+            if redis-cli --tls --cacert /etc/cordum/tls/client/ca.crt --cert /etc/cordum/tls/client/tls.crt --key /etc/cordum/tls/client/tls.key -h "$host" -p 6379 cluster info | grep -q 'cluster_state:ok'; then
+              ready=$((ready + 1))
+            fi
+          done
+          if [ "$ready" -eq 6 ]; then
+            echo "Redis cluster already initialized: cluster_state:ok on all 6 nodes; skipping --cluster create"
+            exit 0
+          fi
           redis-cli --tls --cacert /etc/cordum/tls/client/ca.crt --cert /etc/cordum/tls/client/tls.crt --key /etc/cordum/tls/client/tls.key --cluster create $nodes --cluster-replicas 1 --cluster-yes
         env:
         # redis-cli sends this password to every node.

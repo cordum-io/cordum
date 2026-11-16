@@ -77,6 +77,12 @@ principal, plus the API key or login session used), so a `/mcp/message` naming
 an unknown session or another caller's session gets HTTP `404` with JSON-RPC
 error `-32001` (`session not found`); reconnect to `/mcp/sse` for a new id.
 
+A new login session token does not inherit the previous token's MCP stream,
+even for the same tenant and principal. After signing in again or rotating an
+API key, reopen `/mcp/sse` with the new credential and use its new session ID.
+Refreshing a JWT with the same verified tenant and principal does not by
+itself change stream ownership; JWT ownership does not include the raw token.
+
 ### 3) `cordum-mcp` over HTTP + SSE
 
 `MCP_TRANSPORT=http` serves the stdio tool set on `/sse` and `/message`,
@@ -184,6 +190,15 @@ as the consume-time `PolicySnapshot`. Lifecycle conflicts (rejected /
 expired / consumed / args_mismatch / policy_mismatch / self_approval /
 cross_tenant / not_found) surface as JSON-RPC `-32096` with
 `error.data.kind` carrying the typed conflict family.
+
+A `/mcp/message` POST
+that names no MCP session (a `"type": "http"` client) runs in its own
+one-shot Edge session. The claim therefore binds to the approval's own
+session, execution and parent event, but only when the approval was
+minted for the same caller (same API key or login and the same
+principal) acting as the same agent. The args, policy snapshot, status,
+expiry and self-approval checks still apply, and a claim for anyone
+else's approval is refused.
 
 The registry's `RequiresApproval` gate dual-writes each Edge approval
 with a record on the MCP approvals page. Approving or rejecting either

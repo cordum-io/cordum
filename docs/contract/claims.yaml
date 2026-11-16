@@ -286,7 +286,7 @@ claims:
     public_sources: ["cordum:ROADMAP.md:59"]
   - id: CLM-028
     statement: "LLM-proxy ingestion supplies redacted event records and redaction advisories for submitted model traffic."
-    boundary: "Enabled authenticated gateway LLM ingestion and its supplied event content; external proxy routing and provider delivery are not qualified here."
+    boundary: "Enabled authenticated gateway LLM ingestion and the event content of the submissions it accepts, each content value scanned up to 16 KiB; rejected submissions (which record nothing), content past that bound, external proxy routing and provider delivery are not qualified here."
     status: supported
     invariants: ["I02","I09","I10"]
     findings: ["R08","R12","R14","R15"]

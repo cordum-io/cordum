@@ -170,7 +170,10 @@ whose `approval_ref` and `action_hash` exactly match the `EdgeApproval`. An
 was requested, but it does not prove that the destructive retry was approved and
 does not satisfy `ProvenanceGate` by itself.
 
-Verifier dependencies fail closed. If Redis or the audit chainer/verifier is
+Verifier dependency outages are not measured (approval-store/protected [c]
+and audit-sink/protected [b] in the
+[failure and partition behavior contract](../contract/failure-behavior.md#behavior-table)).
+As implemented, if Redis or the audit chainer/verifier is
 missing or unavailable, the gate returns `service_unavailable` with an
 `audit_chain_verifier_unavailable` / `audit_chain_verify_failed` sub-reason so
 operators see a dependency outage instead of a surprise `internal_error` after
@@ -302,9 +305,10 @@ successful event enqueues, and drops. Tenant filtering and quarantine/redaction
 behavior are preserved.
 
 Edge event idempotency conflicts return the standard Edge error envelope
-`{code, message, request_id, details?}`. Error details are centrally redacted
-before serialization, so idempotency keys, signed URLs, bearer tokens, and raw
-payload snippets cannot leak to clients.
+`{code, message, request_id, details?}`. The envelope's `details` field is
+redacted before serialization (`sanitizeEdgeErrorDetails`), which masks secret
+values in it, such as the idempotency key, bearer token and signed-URL token in
+`TestWriteEdgeErrorRedactsSecretDetails` (CLM-076, `supported`).
 
 ## See also
 

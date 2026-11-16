@@ -10,7 +10,8 @@ import (
 
 // Go merges duplicate map values and folds struct field names, whereas Claude
 // uses exact JSON keys. Reject ambiguity before decoding the typed document.
-// Unknown settings remain accepted; only known typed fields require exact case.
+// Unknown unrelated settings remain accepted. Hook objects implement only the
+// generated command contract; unknown execution modifiers must fail closed.
 func validateManagedSettingsJSON(data []byte) error {
 	if int64(len(data)) > maxManagedSettingsFileBytes {
 		return fmt.Errorf("managed-settings.json exceeds %d bytes", maxManagedSettingsFileBytes)
@@ -47,10 +48,17 @@ func scanManagedSettingsJSON(dec *json.Decoder, scope string, depth int) error {
 				return fmt.Errorf("duplicate JSON object field")
 			}
 			seen[key] = true
+			known := false
 			for _, canonical := range managedSettingsJSONFields(scope) {
+				if key == canonical {
+					known = true
+				}
 				if key != canonical && strings.EqualFold(key, canonical) {
 					return fmt.Errorf("noncanonical JSON field spelling; use %s", canonical)
 				}
+			}
+			if (scope == "hook-set" || scope == "hook-command") && !known {
+				return fmt.Errorf("unsupported field in managed hook object")
 			}
 			child := ""
 			switch {
