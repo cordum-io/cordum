@@ -227,12 +227,12 @@ func packArchive(dir string) ([]byte, error) {
 		if err != nil || rel == "." {
 			return err
 		}
-		files++
 		if !info.IsDir() {
+			files++
 			total += info.Size()
-		}
-		if files > maxPackFiles || info.Size() > maxPackFileBytes || total > maxPackUncompressedBytes {
-			return fmt.Errorf("pack archive limit exceeded at %s", path)
+			if files > maxPackFiles || info.Size() > maxPackFileBytes || total > maxPackUncompressedBytes {
+				return fmt.Errorf("pack archive limit exceeded at %s", path)
+			}
 		}
 		return writePackArchiveEntry(tw, path, filepath.ToSlash(rel), info)
 	})
