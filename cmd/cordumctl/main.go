@@ -399,7 +399,7 @@ Usage:
   cordumctl mcp upstream add|validate --name NAME (--endpoint URL|--command ARG...) [--auth-secret-ref secret://...] [--validate-only]
   cordumctl mcp upstream list|get|disable|enable [NAME]
   cordumctl dev [--file docker-compose.yml] [--build] [--detach]
-  cordumctl up [--file docker-compose.yml] [--build] [--detach]
+  cordumctl up [--dev] [--file docker-compose.yml] [--build] [--detach]
   cordumctl status [--json]
   cordumctl license install <path>
   cordumctl license info [--json]

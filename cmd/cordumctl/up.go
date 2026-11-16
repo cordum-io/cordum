@@ -2,6 +2,8 @@ package main
 
 import (
 	"bufio"
+	"crypto/rand"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -17,21 +19,42 @@ const (
 	defaultComposeTimeoutSeconds = "1800"
 )
 
+type devBootstrapResult struct {
+	EnvPath   string
+	APIKey    string
+	Tenant    string
+	AddedKeys []string
+}
+
 func runUpCmd(args []string) {
 	fs := flag.NewFlagSet("up", flag.ExitOnError)
 	file := fs.String("file", "docker-compose.yml", "compose file path")
 	build := fs.Bool("build", true, "build images before starting")
 	detach := fs.Bool("detach", true, "run in background")
+	dev := fs.Bool("dev", false, "bootstrap local dev credentials in .env")
 	if err := fs.Parse(args); err != nil {
 		fail(err.Error())
 	}
 
-	source := apiKeySource(*file)
-	if source == "" {
-		fail("CORDUM_API_KEY is required (set it in the environment or .env before running)")
-	}
+	composeDir := filepath.Dir(*file)
+	var source string
+	var devBoot devBootstrapResult
 
-	ensureDevCerts(filepath.Dir(*file))
+	if *dev {
+		ensureDevCerts(composeDir)
+		var err error
+		devBoot, err = ensureDevBootstrapEnv(composeDir)
+		if err != nil {
+			fail(fmt.Sprintf("dev bootstrap .env: %v", err))
+		}
+		source = "dev-bootstrap"
+	} else {
+		source = apiKeySource(*file)
+		if source == "" {
+			fail("CORDUM_API_KEY is required (set it in the environment or .env before running, or pass --dev)")
+		}
+		ensureDevCerts(composeDir)
+	}
 
 	if err := runCompose(*file, *build, *detach); err != nil {
 		fail(err.Error())
@@ -44,7 +67,15 @@ func runUpCmd(args []string) {
 	if source != "" {
 		fmt.Println("API Key: configured (value hidden)")
 		fmt.Println("Status: curl -sS --cacert " + caPath + " " + defaultGateway + "/api/v1/status -H \"X-API-Key: <your-key>\" -H \"X-Tenant-ID: <tenant>\"")
-		fmt.Println("Smoke (from repo root): CORDUM_API_KEY=<your-key> CORDUM_TENANT_ID=<tenant> ./tools/scripts/platform_smoke.sh")
+		if *dev {
+			if len(devBoot.AddedKeys) > 0 {
+				fmt.Printf("Dev .env: initialized %s (%s)\n", devBoot.EnvPath, strings.Join(devBoot.AddedKeys, ", "))
+			} else {
+				fmt.Printf("Dev .env: preserved existing values in %s\n", devBoot.EnvPath)
+			}
+		} else {
+			fmt.Println("Smoke (from repo root): CORDUM_API_KEY=<your-key> CORDUM_TENANT_ID=<tenant> ./tools/scripts/platform_smoke.sh")
+		}
 	}
 }
 
@@ -189,4 +220,190 @@ func ensureDevCerts(composeDir string) {
 		fmt.Fprintf(os.Stderr, "warning: certificate generation failed: %v\n", err)
 		fmt.Fprintln(os.Stderr, "  run 'cordumctl generate-certs' manually")
 	}
+}
+
+func ensureDevBootstrapEnv(composeDir string) (devBootstrapResult, error) {
+	envPath := filepath.Join(composeDir, ".env")
+	var existing string
+	// #nosec G304 -- local compose directory .env managed by CLI.
+	data, err := os.ReadFile(envPath)
+	if err == nil {
+		existing = string(data)
+	} else if !os.IsNotExist(err) {
+		return devBootstrapResult{}, fmt.Errorf("read %s: %w", envPath, err)
+	}
+
+	existingMap := parseEnvContent(existing)
+	hasKey := func(k string) (string, bool) {
+		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+			return v, true
+		}
+		if v := strings.TrimSpace(existingMap[k]); v != "" {
+			return v, true
+		}
+		return "", false
+	}
+
+	apiKey, ok := hasKey("CORDUM_API_KEY")
+	var missing []string
+	var added []string
+	if !ok {
+		if fallback, okFallback := hasKey("API_KEY"); okFallback {
+			apiKey = fallback
+		} else {
+			hexPart, err := randomHexString(16)
+			if err != nil {
+				return devBootstrapResult{}, fmt.Errorf("generate CORDUM_API_KEY: %w", err)
+			}
+			apiKey = "cordum_dev_" + hexPart
+		}
+		missing = append(missing, "CORDUM_API_KEY="+apiKey)
+		added = append(added, "CORDUM_API_KEY")
+	}
+
+	type kvDefault struct {
+		key string
+		val func() (string, error)
+	}
+	defaults := []kvDefault{
+		{
+			key: "REDIS_PASSWORD",
+			val: func() (string, error) {
+				hexPart, err := randomHexString(12)
+				if err != nil {
+					return "", err
+				}
+				return "cordum_redis_" + hexPart, nil
+			},
+		},
+		{
+			key: "CORDUM_ADMIN_USERNAME",
+			val: func() (string, error) { return "admin", nil },
+		},
+		{
+			key: "CORDUM_ADMIN_PASSWORD",
+			val: func() (string, error) {
+				hexPart, err := randomHexString(12)
+				if err != nil {
+					return "", err
+				}
+				return "cordum_admin_" + hexPart, nil
+			},
+		},
+		{
+			key: "CORDUM_MCP_ENABLED",
+			val: func() (string, error) { return "true", nil },
+		},
+		{
+			key: "CORDUM_MCP_POLICY_GATE_ENABLED",
+			val: func() (string, error) { return "true", nil },
+		},
+	}
+
+	for _, item := range defaults {
+		if _, exists := hasKey(item.key); exists {
+			continue
+		}
+		val, err := item.val()
+		if err != nil {
+			return devBootstrapResult{}, fmt.Errorf("generate %s: %w", item.key, err)
+		}
+		missing = append(missing, item.key+"="+val)
+		added = append(added, item.key)
+	}
+
+	if len(missing) > 0 {
+		var b strings.Builder
+		if existing != "" {
+			existing, missing = fillEmptyEnvDefinitions(existing, missing)
+			b.WriteString(existing)
+			if len(missing) > 0 {
+				if !strings.HasSuffix(existing, "\n") {
+					b.WriteString("\n")
+				}
+				b.WriteString("\n")
+			}
+		} else {
+			b.WriteString("# Generated by `cordumctl up --dev`\n")
+		}
+		for _, line := range missing {
+			b.WriteString(line)
+			b.WriteString("\n")
+		}
+		// os.WriteFile keeps an existing file's mode, so restrict .env before it gets credentials.
+		if err := os.Chmod(envPath, 0o600); err != nil && !os.IsNotExist(err) {
+			return devBootstrapResult{}, fmt.Errorf("chmod %s: %w", envPath, err)
+		}
+		if err := os.WriteFile(envPath, []byte(b.String()), 0o600); err != nil {
+			return devBootstrapResult{}, fmt.Errorf("write %s: %w", envPath, err)
+		}
+	}
+
+	tenant, okTenant := hasKey("CORDUM_TENANT_ID")
+	if !okTenant || tenant == "" {
+		tenant = "default"
+	}
+
+	return devBootstrapResult{
+		EnvPath:   envPath,
+		APIKey:    apiKey,
+		Tenant:    tenant,
+		AddedKeys: added,
+	}, nil
+}
+
+func parseEnvContent(content string) map[string]string {
+	out := map[string]string{}
+	scanner := bufio.NewScanner(strings.NewReader(content))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, val, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		out[strings.TrimSpace(key)] = trimQuotes(strings.TrimSpace(val))
+	}
+	return out
+}
+
+// fillEmptyEnvDefinitions writes each generated KEY=value line over every empty
+// definition of KEY in content and returns the lines still to append.
+// readEnvFile reads a key's first definition, so a value appended after an empty
+// one (.env.example ships CORDUM_API_KEY=) would never reach the CLI.
+func fillEmptyEnvDefinitions(content string, generated []string) (string, []string) {
+	byKey := make(map[string]string, len(generated))
+	for _, line := range generated {
+		key, _, _ := strings.Cut(line, "=")
+		byKey[key] = line
+	}
+	placed := map[string]bool{}
+	lines := strings.SplitAfter(content, "\n")
+	for i, line := range lines {
+		key, val, ok := strings.Cut(strings.TrimSpace(line), "=")
+		key = strings.TrimSpace(key)
+		gen, isGen := byKey[key]
+		if !ok || !isGen || trimQuotes(strings.TrimSpace(val)) != "" {
+			continue
+		}
+		lines[i] = gen + line[len(strings.TrimRight(line, "\r\n")):]
+		placed[key] = true
+	}
+	var rest []string
+	for _, line := range generated {
+		if key, _, _ := strings.Cut(line, "="); !placed[key] {
+			rest = append(rest, line)
+		}
+	}
+	return strings.Join(lines, ""), rest
+}
+
+func randomHexString(numBytes int) (string, error) {
+	buf := make([]byte, numBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
 }
