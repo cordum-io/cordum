@@ -60,6 +60,11 @@ The sweeper:
 - Delegates deletion to `DeleteSession`, so it inherits the same ZSCAN,
   batched-DEL, and deadline behavior.
 - Respects context cancellation during Gateway shutdown.
+- Checks the tenant's audit legal hold before each deletion. It keeps the
+  expired sessions, with their executions and events, of a tenant under an
+  active hold and of a tenant whose hold check fails. Without a legal hold
+  store it deletes nothing (see
+  [audit-operations.md](../audit-operations.md#legal-hold-integration)).
 - Emits `cordum_edge_session_swept_total` once for each session it removes.
 
 ## Operational notes
