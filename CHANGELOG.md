@@ -7,6 +7,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Delegation tokens: child issuance requires the parent's tenant and caps expiry
+  at the parent's expiry. Chain-link expiry checks use the configured clock leeway.
+  Upgrade note: a token with an expired chain link beyond that leeway is no longer
+  accepted (PR1-25).
+
 - Edge managed settings: managed-settings verification fails closed on
   unsupported conditional or background hook modifiers, and command hooks
   must have the correct type and tool-event coverage (#492, task-99f50a3d).
