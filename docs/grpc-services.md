@@ -407,7 +407,7 @@ When Safety RPC fails, scheduler records `SafetyUnavailable` (decision fallback)
 
 ### Output safety client (`core/controlplane/scheduler/output_safety_client.go`)
 
-- Metadata check timeout: `100ms`
+- Metadata check timeout: `500ms` by default; `CORDUM_OUTPUT_META_TIMEOUT_MS` sets it in milliseconds, and a value that is not a positive integer keeps the default
 - Content check timeout: `30s`
 - Content cap: `2 MiB`
 - Circuit breaker constants mirror Safety client (`3` failures, `30s` open, half-open probes `3`, close after `2` successes)

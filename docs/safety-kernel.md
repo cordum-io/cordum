@@ -312,7 +312,7 @@ HALF_OPEN --(failure)------> OPEN
 
 | Parameter | Input Safety | Output Safety |
 |-----------|-------------|--------------|
-| Request timeout | `2s` | `100ms` (meta), `30s` (content) |
+| Request timeout | `2s` | `500ms` (meta, `defaultOutputMetaTimeout`, override via `CORDUM_OUTPUT_META_TIMEOUT_MS`), `30s` (content) |
 | Open duration | `30s` | `30s` |
 | Fail budget to open | `3` | `3` |
 | Half-open max probes | `3` | `3` |
