@@ -865,6 +865,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Policy output-rule toggles with no usable policy signing key (warn or off
+  mode) now drop the bundle's previous signature instead of retaining one
+  that no longer matches the changed content. The audit entry records that
+  the bundle was stored unsigned (task-b75f9f8a).
+
 - `cordumctl up --dev` seeds through an absolute CA path when the compose
   file is in another directory, and posts only the `mcp` config key so
   unrelated config edits are preserved (task-e49aae16).
