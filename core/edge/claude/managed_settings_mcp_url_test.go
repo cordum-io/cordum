@@ -18,6 +18,8 @@ func TestManagedSettingsMCPGatewayURLMustBeLiteralEndpoint(t *testing.T) {
 		{"private ingress", "https://gateway.internal:8443/team/mcp", true},
 		{"local gateway", "http://127.0.0.1:8081/mcp", true},
 		{"query preserved", "https://mcp.cordum.example/mcp?tenant=acme", true},
+		{"access_token query", "https://mcp.cordum.example/mcp?access_token=abc123", false},
+		{"api_key query", "https://mcp.cordum.example/mcp?api_key=abc123", false},
 		{"relative", "/mcp", false},
 		{"scheme relative", "//mcp.cordum.example/mcp", false},
 		{"other scheme", "ftp://mcp.cordum.example/mcp", false},
@@ -57,7 +59,7 @@ func TestManagedSettingsMCPGatewayURLMustBeLiteralEndpoint(t *testing.T) {
 			if err == nil {
 				t.Fatal("unsafe or non-endpoint MCP URL accepted")
 			}
-			if !strings.Contains(err.Error(), "mcp_gateway_url") || strings.Contains(err.Error(), tc.url) || strings.Contains(err.Error(), "private-value") {
+			if !strings.Contains(err.Error(), "mcp_gateway_url") || strings.Contains(err.Error(), tc.url) || strings.Contains(err.Error(), "private-value") || strings.Contains(err.Error(), "abc123") {
 				t.Fatalf("error must identify the field without echoing its value: %v", err)
 			}
 		})
@@ -103,6 +105,9 @@ func TestVerifyManagedSettingsComparesIndependentGateway(t *testing.T) {
 		{"wildcard", trustedManagedMCPGatewayURL + "*", trustedManagedMCPGatewayURL, false, false},
 		{"query differs", trustedManagedMCPGatewayURL + "?tenant=other", trustedManagedMCPGatewayURL, false, false},
 		{"baseline host only", trustedManagedMCPGatewayURL, "https://mcp.cordum.example", false, true},
+		{"matching query", trustedManagedMCPGatewayURL + "?tenant=acme", trustedManagedMCPGatewayURL + "?tenant=acme", true, false},
+		{"baseline access_token", trustedManagedMCPGatewayURL + "?access_token=abc123", trustedManagedMCPGatewayURL + "?access_token=abc123", false, true},
+		{"baseline api_key", trustedManagedMCPGatewayURL + "?api_key=abc123", trustedManagedMCPGatewayURL + "?api_key=abc123", false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var doc map[string]any
@@ -115,6 +120,9 @@ func TestVerifyManagedSettingsComparesIndependentGateway(t *testing.T) {
 			if tc.invalidBaseline {
 				if err == nil {
 					t.Fatal("invalid trusted baseline accepted")
+				}
+				if !strings.Contains(err.Error(), "trusted gateway baseline") || strings.Contains(err.Error(), "abc123") {
+					t.Fatalf("baseline error must name the baseline without echoing the URL: %v", err)
 				}
 				return
 			}

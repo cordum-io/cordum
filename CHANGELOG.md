@@ -313,6 +313,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- Edge: `cordumctl edge managed-settings verify` now applies generate's
+  secret-pattern check to the trusted and configured MCP gateway URLs, so a
+  credential such as `access_token=` or `api_key=` in the query string fails
+  verification as it already failed generation (task-c0c679b6).
 - Edge: the session sweeper keeps sessions under legal hold. Before each
   deletion it checks the tenant's audit legal hold, and it keeps the
   expired sessions, executions and events of a tenant under an active hold
