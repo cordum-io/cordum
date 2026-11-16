@@ -1229,6 +1229,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - The docs check (`tools/docscheck`) no longer reads a flag definition's default value and usage text, as in `fs.String("api-key-env", "CORDUM_API_KEY", ...)`, as that variable's code default, so CORDUM_API_KEY's no-default rows no longer fail TestDocsMatchProduct (task-342b89d0).
 - `COMMANDS.md`'s NATS Operations commands now connect to the Compose NATS over mutual TLS: each passes `--server tls://localhost:4222` and the dev CA, client certificate and key that `cordumctl generate-certs` writes, and the stream commands name `CORDUM_JOBS` instead of `JOBS` (task-45ebb83b).
 - The Redis restore in `docs/redis-operations.md` imports each backup file into the running cluster, so every key reaches the primary that owns its slot under any slot layout, including a cluster re-created after a full loss, and no Redis pod restarts. Before it empties the cluster it checks every node and backup file, and afterwards it compares the count of keys without a TTL with the backup's. The toolbox pod now sets memory requests and limits (task-4dd14329).
+- `docs/edge/observability.md` cites every call site of `cordum_edge_fail_closed_total` by file and line: agentd and the Claude hook runner when they fail closed, and the Edge retention sweeper, which counts a cleanup page that the legal-hold guard keeps with `mode="unknown"` and `reason_code` `retention_hold_unverifiable` or `retention_hold_changed` (task-49549242).
 
 ### Added
 
