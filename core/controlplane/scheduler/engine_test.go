@@ -810,6 +810,14 @@ func (s *fakeJobStore) CountActiveByTenant(_ context.Context, _ string) (int, er
 	return 0, nil
 }
 
+func (s *fakeJobStore) ReserveTenantSlot(context.Context, string, string, int64) (bool, int, error) {
+	return true, 0, nil
+}
+
+func (s *fakeJobStore) ReleaseTenantSlot(context.Context, string, string) error {
+	return nil
+}
+
 func (s *fakeJobStore) TryAcquireLock(_ context.Context, key string, ttl time.Duration) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

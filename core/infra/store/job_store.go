@@ -1610,6 +1610,59 @@ func (s *RedisJobStore) CountActiveByTenant(ctx context.Context, tenant string) 
 	return int(count), nil
 }
 
+// reserveTenantSlotScript checks the tenant's active set and claims a slot in
+// it as one Redis operation, so admissions on any number of scheduler replicas
+// cannot both take the last slot. The job never counts against itself, and a
+// refused job leaves the set, so queued jobs cannot keep each other out.
+var reserveTenantSlotScript = redis.NewScript(`
+local member = redis.call('SISMEMBER', KEYS[1], ARGV[1])
+local others = redis.call('SCARD', KEYS[1]) - member
+if others >= tonumber(ARGV[2]) then
+  if member == 1 then
+    redis.call('SREM', KEYS[1], ARGV[1])
+  end
+  return {0, others}
+end
+redis.call('SADD', KEYS[1], ARGV[1])
+if tonumber(ARGV[3]) > 0 then
+  redis.call('EXPIRE', KEYS[1], ARGV[3])
+end
+return {1, others}
+`)
+
+// ReserveTenantSlot adds jobID to tenant's active set when fewer than limit
+// other jobs are in it. See model.JobStore.ReserveTenantSlot.
+func (s *RedisJobStore) ReserveTenantSlot(ctx context.Context, tenant, jobID string, limit int64) (bool, int, error) {
+	if tenant == "" || jobID == "" {
+		return false, 0, fmt.Errorf("tenant and jobID required")
+	}
+	ttl := int64(s.metaTTL / time.Second)
+	res, err := reserveTenantSlotScript.Run(ctx, s.client, []string{tenantActiveKey(tenant)},
+		jobID, strconv.FormatInt(limit, 10), strconv.FormatInt(ttl, 10)).Result()
+	if err != nil {
+		return false, 0, fmt.Errorf("job store reserve tenant slot %s: %w", tenant, err)
+	}
+	values, ok := res.([]interface{})
+	if !ok || len(values) != 2 {
+		return false, 0, fmt.Errorf("job store reserve tenant slot %s: malformed script result", tenant)
+	}
+	reserved, _ := values[0].(int64)
+	others, _ := values[1].(int64)
+	return reserved == 1, int(others), nil
+}
+
+// ReleaseTenantSlot removes jobID from tenant's active set. See
+// model.JobStore.ReleaseTenantSlot.
+func (s *RedisJobStore) ReleaseTenantSlot(ctx context.Context, tenant, jobID string) error {
+	if tenant == "" || jobID == "" {
+		return fmt.Errorf("tenant and jobID required")
+	}
+	if err := s.client.SRem(ctx, tenantActiveKey(tenant), jobID).Err(); err != nil {
+		return fmt.Errorf("job store release tenant slot %s: %w", tenant, err)
+	}
+	return nil
+}
+
 func (s *RedisJobStore) SetFailureReason(ctx context.Context, jobID, reason string) error {
 	if jobID == "" {
 		return fmt.Errorf("jobID required")
