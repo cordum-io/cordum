@@ -19,8 +19,10 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/auth/servicetoken"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
+	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/logging"
 	"github.com/cordum/cordum/core/mcp"
 	mcpoutbound "github.com/cordum/cordum/core/mcp/outbound"
@@ -112,7 +114,11 @@ func main() {
 	// Fallback to the stderr sender for dev deploys + CI where NATS
 	// is out of reach. See handlers_mcp_outbound_integration_test.go
 	// for the end-to-end wiring proof.
-	auditSender := resolveAuditSender(os.Getenv("CORDUM_NATS_URL"))
+	auditSender, err := resolveAuditSender(os.Getenv("CORDUM_NATS_URL"))
+	if err != nil {
+		slog.Error("cordum-mcp: audit sender unavailable", "error", err)
+		os.Exit(1)
+	}
 	shutdown := &auditShutdown{sender: auditSender, osExit: os.Exit}
 	defer shutdown.close()
 	invocationAuditor := mcp.NewToolInvocationAuditor(auditSender, mcp.DefaultRedactor())
@@ -411,23 +417,53 @@ func newStderrAuditSender() audit.AuditSender {
 // NATSAuditConsumer → tenant audit chain → /api/v1/mcp/outbound.
 // When NATS is unavailable or the env var is unset, the stderr
 // placeholder stays in place so dev/CI deploys continue to work.
-func resolveAuditSender(natsURL string) audit.AuditSender {
+// An error from newNATSAuditSender closes the dialed bus and is returned.
+func resolveAuditSender(natsURL string) (audit.AuditSender, error) {
 	natsURL = strings.TrimSpace(natsURL)
 	if natsURL == "" {
-		return newStderrAuditSender()
+		return newStderrAuditSender(), nil
 	}
 	natsBus, err := bus.NewNatsBus(natsURL)
 	if err != nil {
 		slog.Warn("cordum-mcp: NATS audit sender unavailable, falling back to stderr",
 			"error", err, "nats_url", natsURL)
-		return newStderrAuditSender()
+		return newStderrAuditSender(), nil
 	}
 	// On publish failure, buffer events for the configured SIEM exporter,
 	// or write them to stderr when no exporter is configured.
-	fallback := newAuditFallback(audit.NewExporterFromEnv)
+	sender, err := newNATSAuditSender(natsBus, func() *audit.BufferedExporter {
+		return newAuditFallback(audit.NewExporterFromEnv)
+	})
+	if err != nil {
+		natsBus.Close()
+		return nil, err
+	}
 	slog.Info("cordum-mcp: NATS audit sender enabled",
 		"subject", "sys.audit.export", "nats_url", natsURL)
-	return audit.NewNATSAuditPublisher(natsBus, fallback)
+	return sender, nil
+}
+
+// newNATSAuditSender loads the cordum-mcp audit publisher key before it builds
+// the fallback, so a refused start builds nothing. With a key, every published
+// event carries a service token minted as servicetoken.IdentityMCP. Without
+// one, production refuses and other profiles publish without a token.
+func newNATSAuditSender(b audit.AuditBus, newFallback func() *audit.BufferedExporter) (audit.AuditSender, error) {
+	key, kid, err := audit.LoadPublisherKeyFromEnv(servicetoken.IdentityMCP)
+	switch {
+	case err == nil:
+		mint := func() (string, error) {
+			return servicetoken.MintService(key, kid, servicetoken.IdentityMCP, time.Now())
+		}
+		return audit.NewNATSAuditPublisher(b, newFallback(), audit.WithServiceToken(mint)), nil
+	case !errors.Is(err, audit.ErrPublisherKeyNotConfigured):
+		return nil, err
+	case env.IsProduction():
+		return nil, fmt.Errorf("cordum-mcp: production audit publishing requires %s or %s: %w",
+			audit.EnvPublisherSigningKey, audit.EnvPublisherSigningKeyPath, err)
+	}
+	slog.Warn("cordum-mcp: audit events are published without a service token",
+		"variable", audit.EnvPublisherSigningKey)
+	return audit.NewNATSAuditPublisher(b, newFallback()), nil
 }
 
 // Send writes the event as one "audit.event" record at INFO through the
