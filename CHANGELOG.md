@@ -292,6 +292,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- Gateway: a stored `mcp.enabled`, `mcp.transport` or `mcp.policy_gate_enabled`
+  key now blocks its `CORDUM_MCP_*` env default even when the gateway cannot
+  read the value (null, a number, an unknown string, or an `mcp` value that is
+  not an object). An unreadable `mcp.enabled` keeps MCP disabled, an unreadable
+  `mcp.policy_gate_enabled` turns the policy gate on, and a stored empty
+  `mcp.transport` keeps the default transport (task-9127e6e8).
+
 - `cordumctl policy resign` skips bundle IDs the API cannot address without changing their identity, continues past them under `--all`, and reports the ID returned by the gateway (task-64199d9b).
 - Policy: toggling an output rule (`PUT /api/v1/policy/output/rules/{id}`)
   re-signs the bundle that holds the rule only when its stored content

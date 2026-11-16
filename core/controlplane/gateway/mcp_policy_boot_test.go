@@ -386,6 +386,81 @@ func TestLoadMCPConfig_ReadErrorKeepsMCPDisabled(t *testing.T) {
 	}
 }
 
+// storeSystemConfig stores data as the system config document unvalidated, as
+// handlers_config.go and configsvc.Set accept it.
+func storeSystemConfig(t *testing.T, s *server, data map[string]any) {
+	t.Helper()
+	if err := s.configSvc.Set(context.Background(), &configsvc.Document{
+		Scope: configsvc.ScopeSystem, ScopeID: "default", Data: data,
+	}); err != nil {
+		t.Fatalf("set system config: %v", err)
+	}
+}
+
+// TestLoadMCPConfig_UnreadableStoredFlagsFailClosed: a stored mcp.enabled or
+// mcp.policy_gate_enabled the gateway cannot read still counts as set, so
+// CORDUM_MCP_* never overrides it: MCP stays disabled and the policy gate on.
+func TestLoadMCPConfig_UnreadableStoredFlagsFailClosed(t *testing.T) {
+	t.Setenv("CORDUM_MCP_ENABLED", "true")
+	t.Setenv("CORDUM_MCP_POLICY_GATE_ENABLED", "false")
+	for name, stored := range map[string]any{
+		"null values":       map[string]any{"enabled": nil, "policy_gate_enabled": nil},
+		"numbers":           map[string]any{"enabled": 1, "policy_gate_enabled": 0},
+		"unknown strings":   map[string]any{"enabled": "invalid", "policy_gate_enabled": "maybe"},
+		"objects":           map[string]any{"enabled": map[string]any{}, "policy_gate_enabled": []any{}},
+		"mcp not an object": "on",
+		"mcp null":          nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, _, _ := newTestGateway(t)
+			storeSystemConfig(t, s, map[string]any{"mcp": stored})
+			if cfg := s.loadMCPConfig(context.Background()); cfg.Enabled || !cfg.PolicyGateEnabled {
+				t.Fatalf("unreadable stored flags gave enabled=%t policy_gate=%t; want MCP disabled and the gate on despite CORDUM_MCP_*",
+					cfg.Enabled, cfg.PolicyGateEnabled)
+			}
+		})
+	}
+}
+
+// TestLoadMCPConfig_StoredTransportBlocksEnvFallback: a stored mcp.transport,
+// even an empty one, wins over CORDUM_MCP_TRANSPORT.
+func TestLoadMCPConfig_StoredTransportBlocksEnvFallback(t *testing.T) {
+	t.Setenv("CORDUM_MCP_TRANSPORT", "stdio")
+	s, _, _ := newTestGateway(t)
+	storeSystemConfig(t, s, map[string]any{"mcp": map[string]any{"enabled": false, "transport": ""}})
+	if cfg := s.loadMCPConfig(context.Background()); cfg.Transport != "http" {
+		t.Fatalf("stored empty transport gave %q; want the default http, not CORDUM_MCP_TRANSPORT", cfg.Transport)
+	}
+}
+
+// TestLoadMCPConfig_EnvFallbackOnlyForMissingKeys: readable stored values win
+// over CORDUM_MCP_*, and the env applies only to a key the stored config does
+// not set.
+func TestLoadMCPConfig_EnvFallbackOnlyForMissingKeys(t *testing.T) {
+	t.Setenv("CORDUM_MCP_ENABLED", "true")
+	t.Setenv("CORDUM_MCP_POLICY_GATE_ENABLED", "true")
+	t.Setenv("CORDUM_MCP_TRANSPORT", "stdio")
+	for name, tc := range map[string]struct {
+		data          map[string]any
+		enabled, gate bool
+		transport     string
+	}{
+		"readable stored values win": {map[string]any{"mcp": map[string]any{"enabled": "no", "policy_gate_enabled": false, "transport": "http"}}, false, false, "http"},
+		"missing keys fall back":     {map[string]any{"mcp": map[string]any{"port": 8090}}, true, true, "stdio"},
+		"no mcp block falls back":    {map[string]any{"other": true}, true, true, "stdio"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, _, _ := newTestGateway(t)
+			storeSystemConfig(t, s, tc.data)
+			cfg := s.loadMCPConfig(context.Background())
+			if cfg.Enabled != tc.enabled || cfg.PolicyGateEnabled != tc.gate || cfg.Transport != tc.transport {
+				t.Fatalf("loadMCPConfig = enabled=%t policy_gate=%t transport=%q; want %t %t %q",
+					cfg.Enabled, cfg.PolicyGateEnabled, cfg.Transport, tc.enabled, tc.gate, tc.transport)
+			}
+		})
+	}
+}
+
 // Silence the unused-import / non-test reference warnings: ensure the
 // mcp accessor names are referenced once at compile time so future
 // refactors that rename them break the boot-wiring tests immediately.

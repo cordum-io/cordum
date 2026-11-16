@@ -783,25 +783,50 @@ func (s *server) loadMCPConfig(ctx context.Context) mcpGatewayConfig {
 	return cfg
 }
 
+// applyMCPEnvFallbacks reads CORDUM_MCP_ENABLED, CORDUM_MCP_TRANSPORT and
+// CORDUM_MCP_POLICY_GATE_ENABLED only for an mcp.* key the stored config does
+// not set. A stored key always wins, even one the gateway cannot read (null, a
+// number, an unknown string, or an "mcp" value that is not an object): an
+// unreadable mcp.enabled keeps MCP disabled, an unreadable
+// mcp.policy_gate_enabled turns the policy gate on, and a stored empty
+// mcp.transport keeps the default transport.
 func applyMCPEnvFallbacks(cfg *mcpGatewayConfig, effective map[string]any) {
 	if cfg == nil {
 		return
 	}
-	if _, ok := lookupBoolPath(effective, "mcp", "enabled"); !ok {
-		if v, okEnv := parseBoolString(os.Getenv("CORDUM_MCP_ENABLED")); okEnv {
-			cfg.Enabled = v
+	if mcpStoredKeyPresent(effective, "enabled") {
+		if _, ok := lookupBoolPath(effective, "mcp", "enabled"); !ok {
+			cfg.Enabled = false
 		}
+	} else if v, okEnv := parseBoolString(os.Getenv("CORDUM_MCP_ENABLED")); okEnv {
+		cfg.Enabled = v
 	}
-	if transport, ok := lookupStringPath(effective, "mcp", "transport"); !ok || transport == "" {
+	if !mcpStoredKeyPresent(effective, "transport") {
 		if v := strings.TrimSpace(os.Getenv("CORDUM_MCP_TRANSPORT")); v != "" {
 			cfg.Transport = v
 		}
 	}
-	if _, ok := lookupBoolPath(effective, "mcp", "policy_gate_enabled"); !ok {
-		if v, okEnv := parseBoolString(os.Getenv("CORDUM_MCP_POLICY_GATE_ENABLED")); okEnv {
-			cfg.PolicyGateEnabled = v
+	if mcpStoredKeyPresent(effective, "policy_gate_enabled") {
+		if _, ok := lookupBoolPath(effective, "mcp", "policy_gate_enabled"); !ok {
+			cfg.PolicyGateEnabled = true
 		}
+	} else if v, okEnv := parseBoolString(os.Getenv("CORDUM_MCP_POLICY_GATE_ENABLED")); okEnv {
+		cfg.PolicyGateEnabled = v
 	}
+}
+
+// mcpStoredKeyPresent reports whether the stored config sets mcp.<key>,
+// readable or not. A stored "mcp" that is not an object sets every key.
+func mcpStoredKeyPresent(effective map[string]any, key string) bool {
+	if _, ok := lookupAnyPath(effective, "mcp", key); ok {
+		return true
+	}
+	raw, ok := lookupAnyPath(effective, "mcp")
+	if !ok {
+		return false
+	}
+	_, isObject := raw.(map[string]any)
+	return !isObject
 }
 
 func (s *server) mcpHTTPTransport() *mcp.HTTPTransport {
