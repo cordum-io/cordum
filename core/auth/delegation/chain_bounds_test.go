@@ -10,6 +10,7 @@ import (
 )
 
 func TestDelegationChainBoundsChildExpiry(t *testing.T) {
+	t.Setenv(envDelegationMaxDepth, "3")
 	for _, ttl := range []time.Duration{5 * time.Minute, 10 * time.Minute, 20 * time.Minute} {
 		t.Run(ttl.String(), func(t *testing.T) {
 			service, _ := attenuationService(t)
@@ -38,6 +39,7 @@ func TestDelegationChainBoundsChildExpiry(t *testing.T) {
 }
 
 func TestDelegationChainBoundsRootTTL(t *testing.T) {
+	t.Setenv(envDelegationMaxDepth, "3")
 	service, _, _ := newTestTokenService(t)
 	token, _, err := service.IssueDelegationToken(context.Background(), IssueRequest{
 		Tenant: "T", DelegatingAgentID: "agent-a", TargetAgentID: "agent-b", TTL: 20 * time.Minute,
@@ -52,6 +54,7 @@ func TestDelegationChainBoundsRootTTL(t *testing.T) {
 }
 
 func TestDelegationChainBoundsParentLeeway(t *testing.T) {
+	t.Setenv(envDelegationMaxDepth, "3")
 	for _, elapsed := range []time.Duration{0, time.Second} {
 		t.Run(elapsed.String(), func(t *testing.T) {
 			service, _ := attenuationService(t)
@@ -69,6 +72,7 @@ func TestDelegationChainBoundsParentLeeway(t *testing.T) {
 }
 
 func TestDelegationChainBoundsVerifyLinkExpiry(t *testing.T) {
+	t.Setenv(envDelegationMaxDepth, "3")
 	for _, row := range []struct {
 		name    string
 		link    int
