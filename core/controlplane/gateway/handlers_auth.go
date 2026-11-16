@@ -1311,6 +1311,38 @@ func (s *server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Static keys are identified by the authentication provider, not by the
+	// secret's prefix. Revalidate managed keys before granting their scopes.
+	if caller := auth.FromRequest(r); caller != nil && caller.AuthSource == auth.AuthSourceAPIKey &&
+		caller.KeyID != "static:"+auth.APIKeyFingerprint(caller.APIKey) {
+		parent, err := s.keyStore.ValidateKey(r.Context(), caller.APIKey)
+		if err != nil && !errors.Is(err, auth.ErrInvalidKey) {
+			writeErrorJSON(w, http.StatusServiceUnavailable, "key validation unavailable")
+			return
+		}
+		if err != nil || parent == nil || parent.ID == "" || parent.ID != caller.KeyID {
+			writeErrorJSON(w, http.StatusForbidden, "key grant denied")
+			return
+		}
+		for _, requested := range req.Scopes {
+			// MatchedScope's empty-grant compatibility rule is not authority
+			// to mint a scope: a nonempty matching grant is required here.
+			if matched, ok := auth.MatchedScope(parent.Scopes, requested); ok && matched != "" {
+				continue
+			}
+			held := false
+			for _, scope := range parent.Scopes {
+				if strings.ReplaceAll(strings.TrimSpace(strings.ToLower(scope)), " ", "") == requested {
+					held = true
+					break
+				}
+			}
+			if !held {
+				writeErrorJSON(w, http.StatusForbidden, "key scope grant denied")
+				return
+			}
+		}
+	}
 
 	var expiresAt time.Time
 	if req.ExpiresAt != "" {
