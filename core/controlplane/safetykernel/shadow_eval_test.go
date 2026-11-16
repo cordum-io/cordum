@@ -175,6 +175,31 @@ func TestShadowAuditSenderAttachesSafetyKernelServiceToken(t *testing.T) {
 	}
 }
 
+func TestShadowAuditSenderProductionDevSeed(t *testing.T) {
+	blankAuditPublisherEnv(t)
+	t.Setenv(policysign.EnvSigningKey, "")
+	t.Setenv(policysign.EnvSigningKeyPath, "")
+	t.Setenv(policysign.EnvDevSigningSeed, "")
+	t.Setenv(env.EnvMode, "production")
+	t.Setenv(audit.EnvPublisherDevSigningSeed, "production-profile-test-seed")
+	rec := &recordingAuditBus{}
+	sender, err := newShadowAuditSender(rec)
+	if sender != nil {
+		sender.Send(audit.SIEMEvent{EventType: "test.shadow.production-seed"})
+		if closeErr := sender.Close(); closeErr != nil {
+			t.Error(closeErr)
+		}
+	}
+	packets := rec.published()
+	if sender != nil || len(packets) != 0 {
+		signed := len(packets) != 0 && packets[0].GetAuthToken() != ""
+		t.Errorf("sender=%T packets=%d signed=%t", sender, len(packets), signed)
+	}
+	if !errors.Is(err, audit.ErrPublisherKeyNotConfigured) || !strings.Contains(err.Error(), audit.EnvPublisherDevSigningSeed) {
+		t.Fatalf("want missing-key error naming %s, got %v", audit.EnvPublisherDevSigningSeed, err)
+	}
+}
+
 // TestShadowAuditSenderWithoutUsableKey pins the outcomes without a usable
 // key. Production and a malformed key build no publisher and publish nothing;
 // other profiles publish without a token and name the variable.

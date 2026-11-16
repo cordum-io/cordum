@@ -303,3 +303,29 @@ func TestResolveAuditSenderWithoutNATSStartsInProduction(t *testing.T) {
 		t.Fatalf("resolveAuditSender(\"\") = %T, %v; want stderrAuditSender, nil", sender, err)
 	}
 }
+
+func TestNATSAuditSenderProductionDevSeed(t *testing.T) {
+	blankAuditPublisherEnv(t)
+	t.Setenv(policysign.EnvSigningKey, "")
+	t.Setenv(policysign.EnvSigningKeyPath, "")
+	t.Setenv(policysign.EnvDevSigningSeed, "")
+	t.Setenv(env.EnvMode, "production")
+	t.Setenv(audit.EnvPublisherDevSigningSeed, "production-profile-test-seed")
+	rec := &recordingAuditBus{}
+	fallbacks := 0
+	sender, err := newNATSAuditSender(rec, func() *audit.BufferedExporter { fallbacks++; return nil })
+	if sender != nil {
+		sender.Send(audit.SIEMEvent{EventType: "test.mcp.production-seed"})
+		if closeErr := sender.Close(); closeErr != nil {
+			t.Error(closeErr)
+		}
+	}
+	packets := rec.published()
+	if sender != nil || fallbacks != 0 || len(packets) != 0 {
+		signed := len(packets) != 0 && packets[0].GetAuthToken() != ""
+		t.Errorf("sender=%T fallbacks=%d packets=%d signed=%t", sender, fallbacks, len(packets), signed)
+	}
+	if !errors.Is(err, audit.ErrPublisherKeyNotConfigured) || !strings.Contains(err.Error(), audit.EnvPublisherDevSigningSeed) {
+		t.Fatalf("want missing-key error naming %s, got %v", audit.EnvPublisherDevSigningSeed, err)
+	}
+}

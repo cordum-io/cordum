@@ -1,14 +1,20 @@
 package audit
 
 import (
+	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordum/cordum/core/auth/servicetoken"
 	"github.com/cordum/cordum/core/policysign"
@@ -17,6 +23,7 @@ import (
 func clearPublisherEnv(t *testing.T) {
 	t.Helper()
 	for _, name := range []string{
+		"CORDUM_ENV", "CORDUM_PRODUCTION",
 		"CORDUM_AUDIT_SIGNING_KEY", "CORDUM_AUDIT_SIGNING_KEY_PATH",
 		"CORDUM_AUDIT_SIGNING_KEY_ID", "CORDUM_AUDIT_DEV_SIGNING_SEED",
 		"CORDUM_AUDIT_PUBLIC_KEY_CORDUM_MCP", "CORDUM_AUDIT_PUBLIC_KEY_CORDUM_SAFETY_KERNEL",
@@ -59,6 +66,7 @@ func TestPublisherKeySources(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			clearPublisherEnv(t)
+			t.Setenv("CORDUM_ENV", "production")
 			t.Setenv("CORDUM_AUDIT_SIGNING_KEY", tc.raw)
 			t.Setenv("CORDUM_AUDIT_SIGNING_KEY_PATH", tc.path)
 			t.Setenv("CORDUM_AUDIT_DEV_SIGNING_SEED", tc.seed)
@@ -239,6 +247,119 @@ func TestPublisherSharedSeedIsolation(t *testing.T) {
 	for _, key := range trust {
 		if public.Equal(key) {
 			t.Fatal("audit seed derived a control-plane key")
+		}
+	}
+}
+
+func TestPublisherKeyProductionDevSeed(t *testing.T) {
+	clearPublisherPolicyEnv(t)
+	t.Setenv("CORDUM_ENV", "production")
+	t.Setenv(EnvPublisherDevSigningSeed, "production-profile-test-seed")
+	key, id, err := LoadPublisherKeyFromEnv(servicetoken.IdentityMCP)
+	if key != nil || id != "" {
+		t.Errorf("returned signing key length=%d, id=%q", len(key), id)
+	}
+	if !errors.Is(err, ErrPublisherKeyNotConfigured) || !strings.Contains(err.Error(), EnvPublisherDevSigningSeed) {
+		t.Fatalf("want missing-key error naming %s, got %v", EnvPublisherDevSigningSeed, err)
+	}
+}
+
+func TestPublisherTrustProductionDevSeed(t *testing.T) {
+	clearPublisherPolicyEnv(t)
+	t.Setenv("CORDUM_ENV", "production")
+	t.Setenv(EnvPublisherDevSigningSeed, "production-profile-test-seed")
+	trust, err := LoadPublisherTrustFromEnv()
+	if len(trust) != 0 {
+		t.Errorf("returned %d trusted keys", len(trust))
+	}
+	if err == nil || !strings.Contains(err.Error(), EnvPublisherDevSigningSeed) {
+		t.Fatalf("want error naming %s, got %v", EnvPublisherDevSigningSeed, err)
+	}
+}
+
+func TestPublisherProductionExplicitTrust(t *testing.T) {
+	public := publisherTestKey(t).Public().(ed25519.PublicKey)
+	for _, tc := range []struct {
+		name     string
+		complete bool
+	}{{"partial", false}, {"complete", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			clearPublisherEnv(t)
+			t.Setenv("CORDUM_PRODUCTION", "true")
+			t.Setenv(EnvPublisherDevSigningSeed, "unused-seed")
+			t.Setenv("CORDUM_AUDIT_PUBLIC_KEY_CORDUM_MCP", base64.StdEncoding.EncodeToString(public))
+			if tc.complete {
+				t.Setenv("CORDUM_AUDIT_PUBLIC_KEY_CORDUM_SAFETY_KERNEL", base64.StdEncoding.EncodeToString(public))
+			}
+			trust, err := LoadPublisherTrustFromEnv()
+			if !tc.complete {
+				if trust != nil || err == nil || !strings.Contains(err.Error(), EnvPublisherDevSigningSeed) {
+					t.Fatalf("partial explicit trust: count=%d, err=%v", len(trust), err)
+				}
+				return
+			}
+			if err != nil || len(trust) != 2 || !public.Equal(trust[servicetoken.IdentityMCP]) ||
+				!public.Equal(trust[servicetoken.IdentitySafetyKernel]) {
+				t.Fatalf("complete explicit trust: count=%d, err=%v", len(trust), err)
+			}
+		})
+	}
+}
+
+func TestPublisherDevSeedWarning(t *testing.T) {
+	const helper = "CORDUM_TEST_PUBLISHER_SEED_WARNING"
+	if first := os.Getenv(helper); first != "" {
+		checkPublisherDevSeedWarning(t, first)
+		return
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, first := range []string{"key", "trust"} {
+		t.Run(first, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, executable, "-test.run=^TestPublisherDevSeedWarning$")
+			cmd.Env = append(os.Environ(), helper+"="+first)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("isolated warning test: %v\n%s", err, output)
+			}
+		})
+	}
+}
+
+func checkPublisherDevSeedWarning(t *testing.T, first string) {
+	t.Helper()
+	clearPublisherEnv(t)
+	const seed = "warning-test-secret"
+	t.Setenv(EnvPublisherDevSigningSeed, " "+seed+" ")
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	for _, loader := range []string{first, "key", "trust", first} {
+		if loader == "key" {
+			sum := sha256.Sum256([]byte("cordum-audit-publisher:cordum-mcp:" + seed))
+			key, id, err := LoadPublisherKeyFromEnv(servicetoken.IdentityMCP)
+			if err != nil || id != "default" || !ed25519.NewKeyFromSeed(sum[:]).Equal(key) {
+				t.Fatalf("non-production key changed: id=%q, err=%v", id, err)
+			}
+		} else {
+			trust, err := LoadPublisherTrustFromEnv()
+			if err != nil || len(trust) != 2 {
+				t.Fatalf("non-production trust count=%d, err=%v", len(trust), err)
+			}
+			for _, identity := range []string{servicetoken.IdentityMCP, servicetoken.IdentitySafetyKernel} {
+				sum := sha256.Sum256([]byte("cordum-audit-publisher:" + identity + ":" + seed))
+				if !ed25519.NewKeyFromSeed(sum[:]).Public().(ed25519.PublicKey).Equal(trust[identity]) {
+					t.Fatalf("non-production trust changed for %s", identity)
+				}
+			}
+		}
+		if strings.Count(logs.String(), "level=WARN") != 1 ||
+			!strings.Contains(logs.String(), EnvPublisherDevSigningSeed) || strings.Contains(logs.String(), seed) {
+			t.Fatalf("want one variable-named warning without seed material, got %q", logs.String())
 		}
 	}
 }

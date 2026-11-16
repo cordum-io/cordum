@@ -15,6 +15,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Under the production profile, `CORDUM_AUDIT_DEV_SIGNING_SEED` and `CORDUM_POLICY_DEV_SIGNING_SEED` are refused; set a real signing key. (task-b0318ca0)
+
 - Worker ids `cordum-mcp` and `cordum-safety-kernel` are reserved. The handshake
   and bound session tokens refuse these worker ids; rename any worker registered
   under either id before upgrading.
