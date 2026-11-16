@@ -5,6 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+- The audit consumer checks publisher service tokens at `bus.PublishedAt`
+  when JetStream delivery metadata is present, otherwise at receive time.
+
 - Gateway and scheduler NATS audit publishers attach a control-plane service
   token (`servicetoken`, type `cordum-service`, subjects `api-gateway` and
   `cordum-scheduler`) to events on `sys.audit.export` when
