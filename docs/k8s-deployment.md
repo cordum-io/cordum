@@ -330,8 +330,13 @@ The production overlay deploys a 3-node NATS cluster as a StatefulSet.
   they are ready (`publishNotReadyAddresses: true`). A server alone fails `/healthz` until
   JetStream has a meta leader, which needs the routes, so ordered startup would never get past
   `cordum-nats-0`. Kubernetes cannot change `podManagementPolicy` in place: if an older
-  `cordum-nats` StatefulSet exists, delete it first (`kubectl delete statefulset cordum-nats -n cordum`;
-  the PVCs stay).
+  `cordum-nats` StatefulSet exists, delete it without deleting its pods:
+  `kubectl delete statefulset cordum-nats -n cordum --cascade=orphan`. The pods keep serving and
+  the PVCs stay. Never delete it without `--cascade=orphan`: that deletes all three pods and
+  stops NATS until the replacements start. Then re-apply the overlay with
+  `kubectl apply -k deploy/k8s/production`. The new StatefulSet adopts the running pods and
+  replaces any pod whose template changed, one at a time (`nats.yaml` sets no `updateStrategy`,
+  so the default `RollingUpdate` applies).
 
 ### NATS ConfigMap (production)
 
