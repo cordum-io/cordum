@@ -122,26 +122,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	server := grpc.NewServer(
-		serverCreds,
-		grpc.KeepaliveParams(keepalive.ServerParameters{
-			MaxConnectionAge:      env.DurationOr(envGRPCServerMaxConnectionAge, 2*time.Hour),
-			MaxConnectionAgeGrace: env.DurationOr(envGRPCServerMaxConnectionGrace, 30*time.Second),
-			Time:                  env.DurationOr(envGRPCServerKeepaliveTime, 30*time.Second),
-			Timeout:               env.DurationOr(envGRPCServerKeepaliveTimeout, 10*time.Second),
-		}),
-		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-			MinTime:             env.DurationOr(envGRPCServerEnforcementMinTime, 15*time.Second),
-			PermitWithoutStream: true,
-		}),
-	)
-	pb.RegisterContextEngineServer(server, svc)
-	healthSrv := health.NewServer()
-	healthpb.RegisterHealthServer(server, healthSrv)
-	healthSrv.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
-	if env.Bool(env.EnvGRPCReflection) {
-		reflection.Register(server)
-	}
+	server := newGRPCServer(svc, serverCreds)
 
 	ceProbes.SetStartupComplete()
 	slog.Info("context engine listening", "addr", addr, "redis", cfg.RedisURL)
@@ -181,4 +162,28 @@ func main() {
 		slog.Error("context engine server error", "error", err)
 		os.Exit(1)
 	}
+}
+
+func newGRPCServer(svc *engine.Service, serverCreds grpc.ServerOption) *grpc.Server {
+	server := grpc.NewServer(
+		serverCreds,
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			MaxConnectionAge:      env.DurationOr(envGRPCServerMaxConnectionAge, 2*time.Hour),
+			MaxConnectionAgeGrace: env.DurationOr(envGRPCServerMaxConnectionGrace, 30*time.Second),
+			Time:                  env.DurationOr(envGRPCServerKeepaliveTime, 30*time.Second),
+			Timeout:               env.DurationOr(envGRPCServerKeepaliveTimeout, 10*time.Second),
+		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             env.DurationOr(envGRPCServerEnforcementMinTime, 15*time.Second),
+			PermitWithoutStream: true,
+		}),
+	)
+	pb.RegisterContextEngineServer(server, svc)
+	healthSrv := health.NewServer()
+	healthpb.RegisterHealthServer(server, healthSrv)
+	healthSrv.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
+	if env.Bool(env.EnvGRPCReflection) {
+		reflection.Register(server)
+	}
+	return server
 }
