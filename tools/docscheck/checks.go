@@ -294,6 +294,12 @@ func (idx codeIndex) visit(n ast.Node) bool {
 		}
 	case *ast.CallExpr:
 		for k := 0; k+1 < len(n.Args); k++ {
+			// A flag's default value followed by its usage text is not an env lookup.
+			if sel, ok := n.Fun.(*ast.SelectorExpr); ok &&
+				((sel.Sel.Name == "String" && len(n.Args) == 3 && k == 1) ||
+					(sel.Sel.Name == "StringVar" && len(n.Args) == 4 && k == 2)) {
+				continue
+			}
 			name, ok := strLit(n.Args[k])
 			def, okDef := strLit(n.Args[k+1])
 			if ok && okDef && envNameRe.MatchString(name) && !secondNameRe.MatchString(def) {
