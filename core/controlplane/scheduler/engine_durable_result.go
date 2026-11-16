@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/auth/servicetoken"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
@@ -24,6 +25,8 @@ type durableResultEffect struct {
 	Packet []byte         `json:"packet"`
 }
 
+var errNoDispatchFence = errors.New("missing authenticated dispatch evidence")
+
 func (e *Engine) handleProductionJobResult(
 	authority *bus.RawAdmissionAuthority,
 	packet *pb.BusPacket, result *pb.JobResult, claims *SessionTokenClaims,
@@ -32,11 +35,18 @@ func (e *Engine) handleProductionJobResult(
 	if !ok {
 		return RetryAfter(errors.New("production durable job event store unavailable"), retryDelayStore)
 	}
+	if result.GetDispatch() == nil && claims != nil && strings.TrimSpace(claims.Subject) == servicetoken.IdentityGateway {
+		return e.handleProductionControlResult(durable, authority, packet, result, claims)
+	}
 	apply, err := e.buildDurableResultApply(authority, packet, result, claims)
 	if err != nil {
 		var retryable interface{ RetryDelay() time.Duration }
 		if !errors.As(err, &retryable) {
-			slog.Warn("production job result rejected", "job_id", result.GetJobId(), "reason", "raw_authority_mismatch")
+			reason := "raw_authority_mismatch"
+			if errors.Is(err, errNoDispatchFence) {
+				reason = "no_dispatch_fence"
+			}
+			slog.Warn("production job result rejected", "job_id", result.GetJobId(), "reason", reason)
 			return nil
 		}
 		return err
@@ -54,6 +64,42 @@ func (e *Engine) handleProductionJobResult(
 		return nil
 	}
 	return e.drainPendingJobEffects(e.ctx, durable, 100)
+}
+
+// handleProductionControlResult makes the scheduler the owner of the gateway's
+// fence-less control-plane outcomes, projecting them before forwarding them.
+func (e *Engine) handleProductionControlResult(
+	durable model.DurableJobEventStore, authority *bus.RawAdmissionAuthority,
+	packet *pb.BusPacket, result *pb.JobResult, claims *SessionTokenClaims,
+) error {
+	if _, _, err := trustedEventEvidence(authority, packet, claims); err != nil {
+		slog.Warn("production job result rejected", "job_id", result.GetJobId(), "reason", "raw_authority_mismatch")
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
+	defer cancel()
+	var state model.JobState
+	var err error
+	switch result.GetStatus() {
+	case pb.JobStatus_JOB_STATUS_CANCELLED:
+		state, err = durable.CancelAllJobAttempts(ctx, result.GetJobId())
+	case pb.JobStatus_JOB_STATUS_DENIED:
+		state, err = e.jobStore.GetState(ctx, result.GetJobId())
+	default:
+		slog.Warn("production job result rejected", "job_id", result.GetJobId(), "reason", "no_dispatch_fence")
+		return nil
+	}
+	if err != nil {
+		return RetryAfter(err, retryDelayStore)
+	}
+	if state != stateForJobResult(result.GetStatus()) {
+		slog.Warn("production job result rejected", "job_id", result.GetJobId(), "reason", "control_result_state_mismatch")
+		return nil
+	}
+	if err := durable.ProjectJobResult(ctx, result.GetJobId(), state, "", ""); err != nil {
+		return RetryAfter(err, retryDelayStore)
+	}
+	return e.publishSchedulerAcceptedPacket(capsdk.SubjectAcceptedResult, packet)
 }
 
 func (e *Engine) buildDurableResultApply(
@@ -94,7 +140,7 @@ func nilDispatchFenceError(result *pb.JobResult) error {
 	if result != nil {
 		jobID = result.GetJobId()
 	}
-	return fmt.Errorf("production result %s missing authenticated dispatch evidence", jobID)
+	return fmt.Errorf("production result %s %w", jobID, errNoDispatchFence)
 }
 
 func trustedEventEvidence(
