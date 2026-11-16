@@ -16,10 +16,32 @@ assert_contains() {
   [[ "$haystack" == *"$needle"* ]] || fail "missing expected text: $needle"
 }
 
+assert_not_contains() {
+  local haystack="$1" needle="$2"
+  [[ "$haystack" != *"$needle"* ]] || fail "unexpected text: $needle"
+}
+
+# Reads rendered manifests on stdin and prints "<deployment> <container> <env>
+# <secret ref or ->" per env entry. Values are never printed.
+env_refs() {
+  python -c '
+import sys, yaml
+for doc in yaml.safe_load_all(sys.stdin.buffer.read().decode("utf-8")):
+    if not doc or doc.get("kind") != "Deployment":
+        continue
+    for container in doc["spec"]["template"]["spec"]["containers"]:
+        for entry in container.get("env") or []:
+            ref = (entry.get("valueFrom") or {}).get("secretKeyRef")
+            source = "-" if ref is None else "secret:%s/%s optional=%s" % (
+                ref.get("name"), ref.get("key"), str(ref.get("optional", False)).lower())
+            print(doc["metadata"]["name"], container["name"], entry["name"], source)
+'
+}
+
 render_default_chart() {
   helm template trust-default "$HELM_CHART" \
     --set secrets.apiKey=test-api-key \
-    --set redis.auth.password=test-redis-password
+    --set redis.auth.password=test-redis-password "$@"
 }
 
 render_active_chart() {
@@ -68,6 +90,11 @@ test_default_chart_is_explicitly_legacy_safe() {
     fail "scheduler and gateway must both render CORDUM_HEARTBEAT_MODE"
   [[ "$(grep -c 'value: \"authority\"' <<<"$rendered")" -ge 2 ]] || \
     fail "default heartbeat mode must render authority twice"
+  rendered="$(env_refs <<<"$rendered")"
+  for absent in CORDUM_AUDIT_SIGNING_KEY CORDUM_AUDIT_PUBLIC_KEY_ \
+    CORDUM_POLICY_SIGNING_KEY CORDUM_POLICY_PUBLIC_KEY_; do
+    assert_not_contains "$rendered" " $absent"
+  done
 }
 
 test_active_chart_requires_and_renders_all_authorities() {
@@ -126,6 +153,54 @@ test_chart_enforces_mode_classes() {
     fail "chart accepted active handshake with legacy worker attestation"
   fi
   assert_contains "$output" "scheduler.env.workerAttestation=off"
+}
+
+test_audit_nats_chart_requires_control_plane_key() {
+  local tmp values rendered output workload
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' RETURN
+  values="$tmp/active.yaml"
+  write_active_values "$values"
+  local nats=(--set workerTrust.mode=off --set workerTrust.heartbeatMode=authority \
+    --set audit.transport=nats)
+  rendered="$(render_active_chart "$values" "${nats[@]}" | env_refs)"
+  for workload in scheduler api-gateway; do
+    assert_contains "$rendered" \
+      "trust-active-cordum-$workload $workload CORDUM_POLICY_SIGNING_KEY secret:session-signing/private.pem"
+    assert_contains "$rendered" \
+      "trust-active-cordum-$workload $workload CORDUM_POLICY_PUBLIC_KEY_SESSION_V1 secret:session-signing/public.pem"
+  done
+  if output="$(render_active_chart "$values" "${nats[@]}" \
+      --set workerTrust.sessionSigning.privateKeySecret.name= 2>&1)"; then
+    fail "audit.transport=nats rendered without a session-signing private secret"
+  fi
+  assert_contains "$output" \
+    "workerTrust.sessionSigning.privateKeySecret.name is required when audit.transport=nats"
+}
+
+test_production_chart_requires_kernel_audit_key() {
+  local rendered output
+  local kernel=trust-default-cordum-safety-kernel gateway=trust-default-cordum-api-gateway
+  local prod=(--set global.production=true --set global.tls.enabled=true)
+  if output="$(render_default_chart "${prod[@]}" 2>&1)"; then
+    fail "production chart rendered without the safety kernel's audit-publisher secret"
+  fi
+  assert_contains "$output" "audit.publisherKeys.safetyKernel.privateKeySecret.name"
+  rendered="$(render_default_chart "${prod[@]}" \
+    --set audit.publisherKeys.keyId=audit_v1 \
+    --set audit.publisherKeys.safetyKernel.privateKeySecret.name=audit-signing \
+    --set audit.publisherKeys.safetyKernel.privateKeySecret.key=signing-key \
+    --set audit.publisherKeys.safetyKernel.publicKeySecret.name=audit-trust \
+    --set audit.publisherKeys.safetyKernel.publicKeySecret.key=cordum-safety-kernel \
+    --set audit.publisherKeys.mcp.publicKeySecret.name=audit-trust \
+    --set audit.publisherKeys.mcp.publicKeySecret.key=cordum-mcp | env_refs)"
+  assert_contains "$rendered" \
+    "$kernel safety-kernel CORDUM_AUDIT_SIGNING_KEY secret:audit-signing/signing-key optional=false"
+  assert_contains "$rendered" "$kernel safety-kernel CORDUM_AUDIT_SIGNING_KEY_ID -"
+  assert_contains "$rendered" \
+    "$gateway api-gateway CORDUM_AUDIT_PUBLIC_KEY_CORDUM_SAFETY_KERNEL secret:audit-trust/cordum-safety-kernel"
+  assert_contains "$rendered" \
+    "$gateway api-gateway CORDUM_AUDIT_PUBLIC_KEY_CORDUM_MCP secret:audit-trust/cordum-mcp"
 }
 
 copy_validation_fixture() {
@@ -270,6 +345,8 @@ test_strict_validator_rejects_broken_kustomization() {
 test_default_chart_is_explicitly_legacy_safe
 test_active_chart_requires_and_renders_all_authorities
 test_chart_enforces_mode_classes
+test_audit_nats_chart_requires_control_plane_key
+test_production_chart_requires_kernel_audit_key
 test_strict_validator_rejects_trust_default_drift
 test_strict_validator_rejects_missing_workflow_handshake_default
 test_strict_validator_rejects_checker_crash

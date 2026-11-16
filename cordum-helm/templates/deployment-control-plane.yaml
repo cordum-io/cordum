@@ -241,6 +241,19 @@ spec:
             {{- end }}
             - name: REDIS_URL
               value: {{ include "cordum.redisUrl" . | quote }}
+            {{- $auditKey := .Values.audit.publisherKeys.safetyKernel.privateKeySecret }}
+            {{- if or .Values.global.production $auditKey.name }}
+            # Signs the safety kernel's sys.audit.export service tokens.
+            - name: CORDUM_AUDIT_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "audit.publisherKeys.safetyKernel.privateKeySecret.name is required when global.production=true" $auditKey.name | quote }}
+                  key: {{ required "audit.publisherKeys.safetyKernel.privateKeySecret.key is required" $auditKey.key | quote }}
+            {{- with .Values.audit.publisherKeys.keyId }}
+            - name: CORDUM_AUDIT_SIGNING_KEY_ID
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.global.tls.enabled }}
             - name: SAFETY_KERNEL_TLS_CERT
               value: /etc/cordum/tls/server/tls.crt
@@ -635,6 +648,25 @@ spec:
               value: "1"
             {{- include "cordum.workerTrustModeEnv" . | nindent 12 }}
             {{- include "cordum.workerSessionSigningEnv" . | nindent 12 }}
+            {{- /* Verify the safety kernel's and cordum-mcp's sys.audit.export service tokens. */}}
+            {{- with .Values.audit.publisherKeys.safetyKernel.publicKeySecret }}
+            {{- if .name }}
+            - name: CORDUM_AUDIT_PUBLIC_KEY_CORDUM_SAFETY_KERNEL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .name | quote }}
+                  key: {{ required "audit.publisherKeys.safetyKernel.publicKeySecret.key is required" .key | quote }}
+            {{- end }}
+            {{- end }}
+            {{- with .Values.audit.publisherKeys.mcp.publicKeySecret }}
+            {{- if .name }}
+            - name: CORDUM_AUDIT_PUBLIC_KEY_CORDUM_MCP
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .name | quote }}
+                  key: {{ required "audit.publisherKeys.mcp.publicKeySecret.key is required" .key | quote }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.redis.auth.enabled }}
             - name: REDIS_PASSWORD
               valueFrom:
