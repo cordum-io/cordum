@@ -16,6 +16,8 @@ data:
     tls-replication yes
     tls-client-cert-file /etc/redis/client-tls/tls.crt
     tls-client-key-file /etc/redis/client-tls/tls.key
+    # The cluster bus (port 16379) uses TLS too, with the same certificates.
+    tls-cluster yes
     protected-mode yes
     appendonly yes
     dir /data
