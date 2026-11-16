@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -337,6 +338,103 @@ func TestHandleHookEventsAreBatchedAfterEvaluatorReturns(t *testing.T) {
 		t.Fatalf("decision = %q, want allow", decision.Decision)
 	}
 	assertAtomicHookEventPair(t, writer, startedAt, edgecore.DecisionAllow)
+}
+
+// TestInlineApprovalPendingPastHookBudgetReturnsApprovalRef runs the real hook
+// runner against agentd's local server while nobody resolves the approval.
+// agentd must end the inline wait before the hook's agentd budget runs out and
+// answer with the pending approval, so Claude Code gets a deny that carries
+// approval_ref and retry guidance, not the hook's generic "Cordum Edge timeout".
+func TestInlineApprovalPendingPastHookBudgetReturnsApprovalRef(t *testing.T) {
+	t.Parallel()
+
+	state := atomicHookTestState()
+	resp := approvalRequiredResponse()
+	waiter := &unresolvedApprovalWaiter{}
+	evaluator := NewEvaluator(EvaluatorConfig{
+		Client:         &stubEvaluateClient{resp: &resp},
+		State:          state,
+		ApprovalWaiter: waiter,
+		ApprovalConfig: ApprovalDecisionConfig{InlineWaitEnabled: true, InlineWaitTimeout: 30 * time.Second, PolicyMode: edgecore.PolicyModeEnforce},
+	})
+	srv := httptest.NewServer(newAtomicHookTestServer(t, state, evaluator, &stubEventWriter{}).Handler())
+	defer srv.Close()
+
+	// A 2s hook budget leaves the agentd POST 1.5s (claude.ResponseWriteReserve).
+	const hookTimeout = 2 * time.Second
+	postBudget := hookTimeout - claude.ResponseWriteReserve
+	var stdout, stderr bytes.Buffer
+	started := time.Now()
+	code := claude.Run(context.Background(), claude.RunOptions{
+		Args:    []string{"claude", "pre-tool-use"},
+		Stdin:   strings.NewReader(`{"session_id":"sess-atomic","hook_event_name":"PreToolUse","tool_name":"Bash","tool_use_id":"toolu-1","tool_input":{"command":"rm -rf build"}}`),
+		Stdout:  &stdout,
+		Stderr:  &stderr,
+		Timeout: hookTimeout,
+		Env: map[string]string{
+			"CORDUM_AGENTD_URL":         srv.URL + "/v1/edge/hooks/claude",
+			"CORDUM_AGENTD_HOOK_NONCE":  "nonce-123",
+			"CORDUM_EDGE_EXECUTION_ID":  "exec-atomic",
+			"CORDUM_AGENTD_FAIL_CLOSED": "true",
+		},
+	})
+	if code != 0 {
+		t.Fatalf("hook exit = %d stderr=%q", code, stderr.String())
+	}
+	if strings.Contains(stdout.String()+stderr.String(), "timeout") {
+		t.Fatalf("hook timed out instead of getting the pending approval: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+	var out claude.ClaudeHookOutput
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil || out.HookSpecificOutput == nil {
+		t.Fatalf("decode hook output %q: %v", stdout.String(), err)
+	}
+	reason := out.HookSpecificOutput.PermissionDecisionReason
+	if out.Decision != "block" || out.HookSpecificOutput.PermissionDecision != "deny" {
+		t.Fatalf("hook output = %s, want a PreToolUse deny", stdout.String())
+	}
+	if strings.Count(reason, "approval_ref=edge_appr_123") != 1 || !strings.Contains(reason, "approve then retry") {
+		t.Fatalf("deny reason = %q, want approval_ref=edge_appr_123 once plus retry guidance", reason)
+	}
+	deadline := time.Unix(0, waiter.deadline.Load())
+	if latest := started.Add(postBudget - inlineApprovalAnswerReserve + 100*time.Millisecond); deadline.IsZero() || deadline.After(latest) {
+		t.Fatalf("inline wait deadline = %s, want it to end %s before the hook's agentd budget (by %s)", deadline, inlineApprovalAnswerReserve, latest)
+	}
+}
+
+// unresolvedApprovalWaiter models a reviewer who never answers: it blocks
+// until the wait context ends and records the deadline agentd set.
+type unresolvedApprovalWaiter struct {
+	deadline atomic.Int64 // UnixNano
+}
+
+func (w *unresolvedApprovalWaiter) WaitForApproval(ctx context.Context, _ ApprovalWaitRequest) (ApprovalWaitResult, error) {
+	if deadline, ok := ctx.Deadline(); ok {
+		w.deadline.Store(deadline.UnixNano())
+	}
+	<-ctx.Done()
+	return ApprovalWaitResult{}, ctx.Err()
+}
+
+func TestHookAnswerByUsesHookBudgetHeader(t *testing.T) {
+	t.Parallel()
+
+	receivedAt := time.Now()
+	for header, want := range map[string]time.Duration{
+		"1500": 1500 * time.Millisecond,
+		"":     claude.DefaultAgentdPostBudget,
+		"abc":  claude.DefaultAgentdPostBudget,
+		"0":    claude.DefaultAgentdPostBudget,
+		"-5":   claude.DefaultAgentdPostBudget,
+		fmt.Sprint(maxAgentdDuration.Milliseconds() + 1): claude.DefaultAgentdPostBudget,
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/v1/edge/hooks/claude", nil)
+		if header != "" {
+			req.Header.Set(claude.AgentdHookBudgetHeader, header)
+		}
+		if got := hookAnswerBy(req, receivedAt).Sub(receivedAt); got != want {
+			t.Errorf("header %q: answer-by = receipt+%s, want receipt+%s", header, got, want)
+		}
+	}
 }
 
 func TestHandleHookEventsAreAtomicAcrossShutdown(t *testing.T) {

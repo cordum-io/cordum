@@ -179,7 +179,21 @@ func newFake(t *testing.T) *fakeCordum {
 		keyStatus: {result(toolText(`{"status":"ok"}`, false))},
 	}}
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /mcp/message", f.serveRPC)
+	// The gateway's own transport gate: a POST may name only a session id
+	// this caller opened over SSE, and the worker opens none.
+	owner := mcp.NewHTTPTransport(mcp.DefaultMaxMessageBytes, mcp.DefaultHTTPResponseTimeout).
+		WithSessionOwner(func(r *http.Request) string { return r.Header.Get("X-API-Key") })
+	t.Cleanup(func() { _ = owner.Close() })
+	mux.HandleFunc("POST /mcp/message", func(w http.ResponseWriter, r *http.Request) {
+		for _, id := range []string{r.Header.Get("X-MCP-Session-ID"), r.URL.Query().Get("session_id")} {
+			if id != "" && !owner.OwnsSession(r, id) {
+				writeJSON(w, http.StatusNotFound, mcp.JSONRPCResponse{JSONRPC: "2.0",
+					Error: &mcp.JSONRPCError{Code: -32001, Message: "session not found"}})
+				return
+			}
+		}
+		f.serveRPC(w, r)
+	})
 	mux.HandleFunc("GET /api/v1/mcp/approvals/{id}", f.servePoll)
 	mux.HandleFunc("POST /api/v1/mcp/approvals/{id}/approve", f.refuse("approve"))
 	mux.HandleFunc("POST /api/v1/mcp/approvals/{id}/reject", f.refuse("reject"))
@@ -640,61 +654,31 @@ func TestReadOrStatusFailureBlocksMutation(t *testing.T) {
 
 // ---- transport, headers and protocol ----
 
-func TestHeadersAndSession(t *testing.T) {
+// TestMCPCallsCarryNoClientSessionID: every call, the approval poll
+// included, is a session-less request that carries the key and the tenant.
+func TestMCPCallsCarryNoClientSessionID(t *testing.T) {
 	f := newFake(t)
 	f.script(keyCreate, approvalRequired(testApproval), created("wf-123"))
 	f.pollScript(pollStatus(model.ApprovalStatusApproved))
 	cfg := testConfig(t, f.srv.URL)
-
-	// The worker sends nothing after publishing a result, so the request
-	// count after job 1 splits the two jobs' traffic.
-	var split int
-	for i, jobID := range []string{"job-headers-1", "job-headers-2"} {
+	for _, jobID := range []string{"job-headers-1", "job-headers-2"} {
 		res, _ := runJob(t, newTestWorker(t, cfg), topic, jobID, directInput(t))
 		if res.GetStatus() != agentv1.JobStatus_JOB_STATUS_SUCCEEDED {
 			t.Fatalf("%s: %s %q", jobID, res.GetStatus(), res.GetErrorMessage())
 		}
-		if i == 0 {
-			split = len(f.requests())
-		}
 	}
-	all := f.requests()
-	first, second := all[:split], all[split:]
-	if f.count("poll") != 1 || first[len(first)-2].kind != "poll" {
-		t.Fatal("job 1 must include the approval poll, so poll headers are checked")
+	if f.count("poll") != 1 {
+		t.Fatal("the approval poll must run, so its headers are checked")
 	}
-
-	s1 := sessionOf(t, first)
-	s2 := sessionOf(t, second)
-	if s1 == s2 {
-		t.Fatalf("two jobs share session id %q", s1)
-	}
-	if len(s1) < 16 {
-		t.Fatalf("session id %q is too short to be random", s1)
-	}
-}
-
-// sessionOf asserts the per-request header contract and returns the single
-// X-MCP-Session-ID the requests share.
-func sessionOf(t *testing.T, reqs []fakeReq) string {
-	t.Helper()
-	if len(reqs) == 0 {
-		t.Fatal("no requests recorded")
-	}
-	session := reqs[0].header.Get("X-MCP-Session-ID")
-	for _, r := range reqs {
+	for _, r := range f.requests() {
 		h := r.header
 		if h.Get("X-API-Key") != testAPIKey || h.Get("X-Tenant-ID") != testTenant {
 			t.Fatalf("%s: missing X-API-Key/X-Tenant-ID", r.label())
 		}
-		if h.Get("X-Agent-Id") != "" {
-			t.Fatalf("%s: sent X-Agent-Id", r.label())
-		}
-		if got := h.Get("X-MCP-Session-ID"); got == "" || got != session {
-			t.Fatalf("%s: session %q, want one session %q per job", r.label(), got, session)
+		if h.Get("X-Agent-Id") != "" || h.Get("X-MCP-Session-ID") != "" {
+			t.Fatalf("%s: sent X-Agent-Id or X-MCP-Session-ID", r.label())
 		}
 	}
-	return session
 }
 
 func TestOutage(t *testing.T) {

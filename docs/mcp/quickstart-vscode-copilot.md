@@ -45,11 +45,13 @@ curl -sk -X POST https://<gateway>:8081/api/v1/agents \
   }'
 ```
 
-Note the returned agent `id`. Then give Copilot a credential that
-authenticates as `<principal-id>` in `<tenant>`: a static API key with that
-principal configured (`<tenant>:<key>:<role>:<principal-id>` in
-`CORDUM_API_KEYS`) or a JWT/SSO subject. Runtime-created API keys carry no
-principal of their own, so they cannot bind Copilot to this identity. See
+Note the returned agent `id`. Then give Copilot a static API key that
+authenticates as `<principal-id>` in `<tenant>`, with that principal
+configured (`<tenant>:<key>:<role>:<principal-id>` in `CORDUM_API_KEYS`).
+The `mcp.json` from step 3 carries the credential only in an `X-API-Key`
+header, so a JWT or SSO token does not work here. Runtime-created API keys
+carry no principal of their own, so they cannot bind Copilot to this
+identity. See
 [Agent identity binding](../mcp-server.md#agent-identity-binding-x-agent-id).
 Keep `preapproved_mutating_tools` empty so that none of the seven
 [mutating tools](mutating-tools.md) skips human approval if you later allow one.
@@ -109,7 +111,9 @@ agent id are non-secret literals.
 > **Group calls into one audit session (optional):** add
 > `"X-Copilot-Session-Id": "<some-id>"` to `headers` to group a workspace's
 > calls under one Copilot session and label spawned jobs with it. If omitted,
-> the MCP transport session id is used.
+> the MCP transport session id is used; a `"type": "http"` server, which opens
+> no session, gets one Copilot session per API key and agent id. Its
+> prompt-injection taint is kept per API key and agent id too.
 
 ## 4. Use it
 

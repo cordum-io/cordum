@@ -25,7 +25,7 @@ import (
 
 func TestPackServerInstall_SignedPackLifecycle(t *testing.T) {
 	root, trust := packServerFixture(t)
-	for _, action := range []string{"install", "upgrade", "uninstall", "refusal", "force-inactive"} {
+	for _, action := range []string{"install", "upgrade", "uninstall", "refusal", "force-inactive", "terminal", "token-file", "token-file-error"} {
 		t.Run(action, func(t *testing.T) { packServerLifecycle(t, root, trust, action) })
 	}
 }
@@ -65,6 +65,7 @@ func packServerLifecycle(t *testing.T, root, trust, action string) {
 	}))
 	defer srv.Close()
 	args := []string{"--gateway", srv.URL, "--api-key", "test-key", "--tenant", "test-tenant"}
+	tokenFile := packServerTokenArgs(t, action, &args)
 	var err error
 	var output string
 	stderr := captureStderr(t, func() {
@@ -92,20 +93,74 @@ func packServerLifecycle(t *testing.T, root, trust, action string) {
 		}
 		return
 	}
+	if action == "token-file-error" {
+		if err == nil || !strings.Contains(err.Error(), "writing the worker token file failed") || strings.Contains(output+stderr, "test-worker-token") {
+			t.Errorf("token-file-error: err=%v output=%q stderr=%q", err, output, stderr)
+		}
+		return
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
-	packServerOutput(t, action, output, stderr)
+	packServerOutput(t, action, output, stderr, tokenFile)
 }
 
-func packServerOutput(t *testing.T, action, output, stderr string) {
+// packServerTokenArgs sets up the worker-token cases. A test's stdout is a pipe,
+// so every other install case runs with stdout that is not a terminal.
+func packServerTokenArgs(t *testing.T, action string, args *[]string) string {
 	t.Helper()
-	want := "installed pack toolchain-test 0.1.0 (ACTIVE)\nworker_id: pack-worker\nworker_token: test-worker-token\n"
-	if action == "uninstall" {
-		want = "uninstalled pack toolchain/test ?\n"
+	tokenFile := filepath.Join(t.TempDir(), "worker.token")
+	switch action {
+	case "terminal":
+		restore := stdoutIsTerminal
+		stdoutIsTerminal = func() bool { return true }
+		t.Cleanup(func() { stdoutIsTerminal = restore })
+	case "token-file":
+		// A file that already exists with a wider mode is tightened to 0600.
+		if err := os.WriteFile(tokenFile, []byte("stale"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		*args = append(*args, "--worker-token-file", tokenFile)
+	case "token-file-error":
+		*args = append(*args, "--worker-token-file", filepath.Join(tokenFile, "missing", "worker.token"))
 	}
-	if output != want || strings.Contains(stderr, "test-worker-token") {
+	return tokenFile
+}
+
+func packServerOutput(t *testing.T, action, output, stderr, tokenFile string) {
+	t.Helper()
+	const note = "worker_token: not printed because stdout is not a terminal; use --worker-token-file <path> to save it\n"
+	want := "installed pack toolchain-test 0.1.0 (ACTIVE)\nworker_id: pack-worker\n"
+	wantNote := true
+	switch action {
+	case "uninstall":
+		want, wantNote = "uninstalled pack toolchain/test ?\n", false
+	case "terminal":
+		want, wantNote = want+"worker_token: test-worker-token\n", false
+	case "token-file":
+		want, wantNote = want+"worker_token: written to "+tokenFile+"\n", false
+		packServerTokenFile(t, tokenFile)
+	}
+	if output != want || strings.Contains(stderr, note) != wantNote || strings.Contains(stderr, "test-worker-token") {
 		t.Errorf("output=%q stderr=%q", output, stderr)
+	}
+}
+
+func packServerTokenFile(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "test-worker-token\n" {
+		t.Errorf("token file=%q, want the token and a newline", data)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		t.Errorf("token file mode=%v, want 0600", info.Mode().Perm())
 	}
 }
 

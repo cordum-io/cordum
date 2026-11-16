@@ -647,18 +647,9 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	var delegationLineage model.DelegationLineage
 	if s.jobStore != nil {
 		if jobRequest != nil {
-			if jobRequest.WorkflowId != "" {
-				workflowID = jobRequest.WorkflowId
-			}
-			if len(jobRequest.Labels) > 0 {
-				for k, v := range jobRequest.Labels {
-					labels[k] = v
-				}
-				if workflowID == "" {
-					workflowID = jobRequest.Labels["workflow_id"]
-				}
-				runID = jobRequest.Labels["run_id"]
-				stepID = jobRequest.Labels["step_id"]
+			workflowID, runID, stepID = jobWorkflowLink(jobRequest)
+			for k, v := range jobRequest.Labels {
+				labels[k] = v
 			}
 		}
 		if lineage, err := s.jobStore.GetDelegationLineage(r.Context(), id); err == nil {
@@ -1398,6 +1389,12 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	teamID := req.TeamId
 	projectID := req.ProjectId
 
+	// The body idempotency_key wins. Without it, take the Idempotency-Key
+	// header that HTTP clients (Python SDK, curl) send, like other write
+	// endpoints do.
+	if strings.TrimSpace(req.IdempotencyKey) == "" {
+		req.IdempotencyKey = idempotencyKeyFromRequest(r)
+	}
 	key := strings.TrimSpace(req.IdempotencyKey)
 	if key != "" && s.jobStore != nil {
 		existingID, err := s.jobStore.GetJobByIdempotencyKeyScoped(r.Context(), orgID, key)

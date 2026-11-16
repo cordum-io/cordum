@@ -7,6 +7,7 @@ from ...client import AuthenticatedClient, Client
 from ...types import Response, UNSET
 from ... import errors
 
+from ...models.error import Error
 from ...models.policy_replay_request import PolicyReplayRequest
 from ...models.policy_replay_response import PolicyReplayResponse
 from typing import cast
@@ -37,13 +38,14 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Optional[Union[Any, PolicyReplayResponse]]:
+) -> Optional[Union[Any, Error, PolicyReplayResponse]]:
     if response.status_code == 200:
         response_200 = PolicyReplayResponse.from_dict(response.json())
 
         return response_200
     if response.status_code == 400:
-        response_400 = cast(Any, None)
+        response_400 = Error.from_dict(response.json())
+
         return response_400
     if response.status_code == 401:
         response_401 = cast(Any, None)
@@ -65,7 +67,7 @@ def _parse_response(
 
 def _build_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Response[Union[Any, PolicyReplayResponse]]:
+) -> Response[Union[Any, Error, PolicyReplayResponse]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -79,7 +81,7 @@ def sync_detailed(
     client: Union[AuthenticatedClient, Client],
     body: PolicyReplayRequest,
     x_tenant_id: str,
-) -> Response[Union[Any, PolicyReplayResponse]]:
+) -> Response[Union[Any, Error, PolicyReplayResponse]]:
     """Replay historical jobs against a candidate policy
 
     Args:
@@ -91,7 +93,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Any, PolicyReplayResponse]]
+        Response[Union[Any, Error, PolicyReplayResponse]]
     """
 
     kwargs = _get_kwargs(
@@ -111,7 +113,7 @@ def sync(
     client: Union[AuthenticatedClient, Client],
     body: PolicyReplayRequest,
     x_tenant_id: str,
-) -> Optional[Union[Any, PolicyReplayResponse]]:
+) -> Optional[Union[Any, Error, PolicyReplayResponse]]:
     """Replay historical jobs against a candidate policy
 
     Args:
@@ -123,7 +125,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Any, PolicyReplayResponse]
+        Union[Any, Error, PolicyReplayResponse]
     """
 
     return sync_detailed(
@@ -138,7 +140,7 @@ async def asyncio_detailed(
     client: Union[AuthenticatedClient, Client],
     body: PolicyReplayRequest,
     x_tenant_id: str,
-) -> Response[Union[Any, PolicyReplayResponse]]:
+) -> Response[Union[Any, Error, PolicyReplayResponse]]:
     """Replay historical jobs against a candidate policy
 
     Args:
@@ -150,7 +152,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Any, PolicyReplayResponse]]
+        Response[Union[Any, Error, PolicyReplayResponse]]
     """
 
     kwargs = _get_kwargs(
@@ -168,7 +170,7 @@ async def asyncio(
     client: Union[AuthenticatedClient, Client],
     body: PolicyReplayRequest,
     x_tenant_id: str,
-) -> Optional[Union[Any, PolicyReplayResponse]]:
+) -> Optional[Union[Any, Error, PolicyReplayResponse]]:
     """Replay historical jobs against a candidate policy
 
     Args:
@@ -180,7 +182,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Any, PolicyReplayResponse]
+        Union[Any, Error, PolicyReplayResponse]
     """
 
     return (

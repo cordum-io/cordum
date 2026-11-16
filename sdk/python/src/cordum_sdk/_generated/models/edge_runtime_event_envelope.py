@@ -19,12 +19,12 @@ from typing import Union
 import datetime
 
 if TYPE_CHECKING:
-    from ..models.edge_runtime_network_summary import EdgeRuntimeNetworkSummary
-    from ..models.edge_runtime_dns_summary import EdgeRuntimeDNSSummary
-    from ..models.edge_runtime_event_envelope_labels import EdgeRuntimeEventEnvelopeLabels
-    from ..models.edge_artifact_pointer import EdgeArtifactPointer
-    from ..models.edge_runtime_process_summary import EdgeRuntimeProcessSummary
     from ..models.edge_runtime_file_summary import EdgeRuntimeFileSummary
+    from ..models.edge_runtime_process_summary import EdgeRuntimeProcessSummary
+    from ..models.edge_runtime_event_envelope_labels import EdgeRuntimeEventEnvelopeLabels
+    from ..models.edge_runtime_dns_summary import EdgeRuntimeDNSSummary
+    from ..models.edge_runtime_network_summary import EdgeRuntimeNetworkSummary
+    from ..models.edge_artifact_pointer import EdgeArtifactPointer
 
 
 T = TypeVar("T", bound="EdgeRuntimeEventEnvelope")
@@ -69,12 +69,12 @@ class EdgeRuntimeEventEnvelope:
     artifact_ptrs: Union[Unset, List["EdgeArtifactPointer"]] = UNSET
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.edge_runtime_network_summary import EdgeRuntimeNetworkSummary
-        from ..models.edge_runtime_dns_summary import EdgeRuntimeDNSSummary
-        from ..models.edge_runtime_event_envelope_labels import EdgeRuntimeEventEnvelopeLabels
-        from ..models.edge_artifact_pointer import EdgeArtifactPointer
-        from ..models.edge_runtime_process_summary import EdgeRuntimeProcessSummary
         from ..models.edge_runtime_file_summary import EdgeRuntimeFileSummary
+        from ..models.edge_runtime_process_summary import EdgeRuntimeProcessSummary
+        from ..models.edge_runtime_event_envelope_labels import EdgeRuntimeEventEnvelopeLabels
+        from ..models.edge_runtime_dns_summary import EdgeRuntimeDNSSummary
+        from ..models.edge_runtime_network_summary import EdgeRuntimeNetworkSummary
+        from ..models.edge_artifact_pointer import EdgeArtifactPointer
 
         tenant_id = self.tenant_id
 
@@ -149,12 +149,12 @@ class EdgeRuntimeEventEnvelope:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.edge_runtime_network_summary import EdgeRuntimeNetworkSummary
-        from ..models.edge_runtime_dns_summary import EdgeRuntimeDNSSummary
-        from ..models.edge_runtime_event_envelope_labels import EdgeRuntimeEventEnvelopeLabels
-        from ..models.edge_artifact_pointer import EdgeArtifactPointer
-        from ..models.edge_runtime_process_summary import EdgeRuntimeProcessSummary
         from ..models.edge_runtime_file_summary import EdgeRuntimeFileSummary
+        from ..models.edge_runtime_process_summary import EdgeRuntimeProcessSummary
+        from ..models.edge_runtime_event_envelope_labels import EdgeRuntimeEventEnvelopeLabels
+        from ..models.edge_runtime_dns_summary import EdgeRuntimeDNSSummary
+        from ..models.edge_runtime_network_summary import EdgeRuntimeNetworkSummary
+        from ..models.edge_artifact_pointer import EdgeArtifactPointer
 
         d = src_dict.copy()
         tenant_id = d.pop("tenant_id")

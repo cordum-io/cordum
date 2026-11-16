@@ -732,21 +732,27 @@ Per-tenant immutable retention holds on audit data. All endpoints require admin 
 }
 ```
 
-- `tenant_id` defaults to the server default tenant if omitted
+- `tenant_id` defaults to the caller's tenant if omitted; the caller must have
+  access to it (`403` otherwise)
 - Duplicate hold on same tenant returns `409`
 - Response: `201` with `{"hold": {...}}`
-- Errors: `400` (missing reason), `403` (not entitled), `409` (active hold exists), `500`
+- Errors: `400` (missing reason), `403` (not entitled or no tenant access), `409` (active hold exists), `500`
 
 ### GET `/api/v1/audit/legal-holds`
 
 - Auth: required + admin + LegalHold entitlement
-- Query params: `?tenant=<id>` (optional filter)
+- Query params: `?tenant=<id>` (optional filter; `403` if the caller has no
+  access to that tenant)
+- Returns only holds in tenants the caller can access: its own tenant, or every
+  tenant for a cross-tenant principal
 - Response: `{"holds": [...]}`
 
 ### DELETE `/api/v1/audit/legal-hold/{id}`
 
 - Auth: required + admin + LegalHold entitlement
-- Releases the hold. Does NOT delete retained data — normal TTL resumes.
+- Releases the hold. Does NOT delete retained data — normal retention resumes.
+- A hold in a tenant the caller cannot access returns the same `404` as an
+  unknown ID
 - Response: `{"released": true, "id": "..."}`
 - Errors: `404` (hold not found), `409` (already released), `403`, `500`
 
@@ -801,6 +807,13 @@ Per-tenant immutable retention holds on audit data. All endpoints require admin 
 ```
 
 - Errors: `400`, `403`, `409`, `429`, `503`
+- Labels Cordum sets itself are dropped from `labels` (and logged): keys
+  starting with `_`, any `approval_*` key, `gate_type`, `cordum.bus_msg_id`,
+  `policy.attachment_id`, and the workflow context the workflow engine writes
+  (`workflow_id`, `run_id`, `step_id`, plus `workflow`, `workflow_run_id` and
+  `workflow.*`, which the Safety Kernel reads as the workflow policy scope).
+  The gRPC `SubmitJob` call and the MCP submit tool do the same. Only jobs the
+  workflow engine dispatches belong to a workflow run.
 
 ### GET `/api/v1/jobs`
 
@@ -974,6 +987,11 @@ All DLQ endpoints require admin role.
 ```
 
 - Errors: `400`, `403`, `404`, `500`, `503`
+- The retry is a new job built from the original request, workflow link
+  included. The original job's server-owned labels (`approval_*`, `gate_type`,
+  `cordum.bus_msg_id`, `policy.attachment_id`, `run_id`, `step_id` and the
+  workflow scope labels) are not carried over; its own labels and `_` system
+  labels are, plus `retry`, `dlq_entry` and `retry_of_job`.
 
 ### Example: retry DLQ entry
 
@@ -1236,7 +1254,7 @@ curl -sS -X POST http://localhost:8081/api/v1/workflows/WF_ID/runs \
 {
   "items": [
     {
-      "job": { "id": "job-id", "state": "APPROVAL" },
+      "job": { "id": "job-id", "state": "APPROVAL_REQUIRED" },
       "decision": "REQUIRE_APPROVAL",
       "policy_snapshot": "cfg:...",
       "policy_rule_id": "rule-1",
@@ -3061,7 +3079,7 @@ The following routes are registered in the gateway (`registerRoute` calls). Gene
 
 <!-- BEGIN:rest-routes -->
 
-_Generated from `core/controlplane/gateway/gateway.go`, `core/controlplane/gateway/handlers_mcp.go` (registration order) — do not edit by hand; run `make docs-tables`. 228 routes._
+_Generated from `core/controlplane/gateway/gateway.go`, `core/controlplane/gateway/handlers_mcp.go` (registration order) — do not edit by hand; run `make docs-tables`. 229 routes._
 
 | Method | Path |
 |--------|------|
@@ -3269,6 +3287,7 @@ _Generated from `core/controlplane/gateway/gateway.go`, `core/controlplane/gatew
 | PUT | `/api/v1/policy/bundles/{id}` |
 | DELETE | `/api/v1/policy/bundles/{id}` |
 | POST | `/api/v1/policy/bundles/{id}/simulate` |
+| POST | `/api/v1/policy/bundles/{id}/resign` |
 | PUT | `/api/v1/policy/shadows/{id}` |
 | GET | `/api/v1/policy/shadows/{id}` |
 | DELETE | `/api/v1/policy/shadows/{id}` |

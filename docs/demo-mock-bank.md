@@ -13,15 +13,27 @@ This demo shows:
 
 ## 1) Start the stack
 
+The stack needs `CORDUM_API_KEY` and `REDIS_PASSWORD` (from your shell or
+`.env`) and TLS certificates in `./certs/`:
+
 ```bash
 export CORDUM_API_KEY=<your-api-key>
 export CORDUM_TENANT_ID=default
+export REDIS_PASSWORD="$(openssl rand -hex 24)"
+
+# cordumctl up generates ./certs/ when it's missing:
 go run ./cmd/cordumctl up
 # or:
 ./bin/cordumctl up
-# or:
+# or, with plain Compose, generate the certificates first:
+go run ./cmd/cordumctl generate-certs
 docker compose up -d
 ```
+
+Put both values in `.env` too if you'll run `docker compose` from another
+shell ([Installation, Option C](install.md#option-c-docker-compose-manual)).
+`./tools/scripts/quickstart.sh` does all of this in one step: it creates
+`./certs/`, writes any missing values to `.env` and starts the stack.
 
 ## 2) Install the demo pack
 
@@ -80,6 +92,9 @@ MOCK_BANK_UI_PORT=13000 ./tools/scripts/demo_mock_bank.sh
 ## Notes
 
 - The dashboard defaults to `http://localhost:8082`.
-- The demo UI uses the Cordum API at `http://localhost:8081` and requires an API key.
-- Open `http://localhost:8099/?tenantId=default` (add `apiBaseUrl=http://localhost:8081` if needed) and paste the API key when prompted.
+- The demo UI defaults to the Cordum API at `http://localhost:8081` and requires an API key. The stack's gateway serves HTTPS, so pass `apiBaseUrl`:
+  - Docker mode: open the link `demo_mock_bank.sh` prints, `http://localhost:3000/?apiBaseUrl=http://localhost:3000`. The UI's nginx proxies `/api/` to the gateway.
+  - Manual mode: open `http://localhost:8099/?apiBaseUrl=https://localhost:8081&tenantId=default`. Your browser must trust `./certs/ca/ca.crt`.
+- `demo_mock_bank.sh` defaults to `https://localhost:8081`, `tls://localhost:4222` and `rediss://localhost:6379`, with the CA and client certificate from `./certs`.
+- Paste the API key when prompted.
 - Query parameters (`apiBaseUrl`, `tenantId`, `principalId`, `principalRole`, `orgId`) persist to localStorage after the first load (API keys stay in-memory).

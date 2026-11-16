@@ -291,12 +291,36 @@ case "\$1" in
       n=0
       if [[ -f "\${STUB_PS_COUNT:-}" ]]; then n=\$(<"\${STUB_PS_COUNT}"); fi
       if [[ -n "\${STUB_PS_COUNT:-}" ]]; then echo \$((n + 1)) >"\${STUB_PS_COUNT}"; fi
+      status='Up 5 seconds'
       case "\${STUB_PS:-ok}" in
-        ok) echo "api-1 Up 5 seconds" ;;
-        gone) if [[ \$n -eq 0 ]]; then echo "api-1 Up 5 seconds"; fi ;;
-        restart) if [[ \$n -eq 0 ]]; then echo "api-1 Up 5 seconds"; else echo "api-1 Restarting (2) 3 seconds ago"; fi ;;
+        gone) if [[ \$n -gt 0 ]]; then exit 0; fi ;;
+        restart) if [[ \$n -gt 0 ]]; then status='Restarting (2) 3 seconds ago'; fi ;;
+        restarted-up) if [[ \$n -gt 0 ]]; then status='Up 3 seconds'; fi ;;
       esac
+      if [[ "\$3" == -q ]]; then
+        echo c0ffee
+      else
+        template=\$4
+        template=\${template//'{{.ID}}'/c0ffee}
+        template=\${template//'{{.Name}}'/api-1}
+        echo "\${template//'{{.Status}}'/\$status}"
+      fi
     fi ;;
+  inspect)
+    n=0
+    if [[ -f "\${STUB_PS_COUNT:-}" ]]; then n=\$(<"\${STUB_PS_COUNT}"); fi
+    count=0
+    if [[ \$n -gt 1 ]]; then
+      case "\${STUB_PS:-ok}" in
+        restart) count=2 ;;
+        restarted-up) count=1 ;;
+        inspect-fail) exit 1 ;;
+      esac
+    fi
+    template=\$3
+    name=/api-1
+    template=\${template//'{{.Name}}'/\$name}
+    echo "\${template//'{{.RestartCount}}'/\$count}" ;;
 esac
 EOF
 chmod +x "${stubs}/curl" "${stubs}/docker"
@@ -362,6 +386,15 @@ assert_eq "a container running at the start and gone at the end fails the run" "
 run_soak STUB_PS=restart STUB_PS_COUNT="${tmpdir}/soak.pscount" >/dev/null
 assert_eq "a container whose restart count grows fails the run" "1" \
   "$(in_failures "${tmpdir}/soak.json" 'Container api-1 restarted during soak (0 -> 2)')"
+run_soak STUB_PS=restarted-up STUB_PS_COUNT="${tmpdir}/soak.pscount" >/dev/null
+assert_eq "a container that restarted and is Up again at the end fails the run" "1" \
+  "$(in_failures "${tmpdir}/soak.json" 'Container api-1 restarted during soak (0 -> 1)')"
+run_soak STUB_PS=inspect-fail STUB_PS_COUNT="${tmpdir}/soak.pscount" >/dev/null
+assert_eq "an unreadable restart count at the end fails the run" "1" \
+  "$(in_failures "${tmpdir}/soak.json" "Container c0ffee reported a malformed restart count 'unknown'")"
+restart_body="$(sed -n '/^get_restart_counts()/,/^}/p' "${SOAK}")"
+assert_eq "get_restart_counts reads docker inspect RestartCount, not the compose ps Status" "1 0" \
+  "$(echo "${restart_body}" | grep -cF 'RestartCount' || true) $(echo "${restart_body}" | grep -cF '.Status' || true)"
 run_soak >/dev/null
 assert_eq "a steady container is not reported as a restart" "0" \
   "$(count_in "${tmpdir}/soak.json" 'restarted during soak')"

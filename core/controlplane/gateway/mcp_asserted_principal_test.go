@@ -214,7 +214,6 @@ func TestMCPAssertedPrincipal_MetadataUsesAuthenticatedPrincipal(t *testing.T) {
 					w.WriteHeader(http.StatusNoContent)
 				})
 				req := mcpAssertedRequest(http.MethodPost, "/mcp/message", "", tc.key, tc.header)
-				req.Header.Set("X-MCP-Session-ID", "sess-asserted")
 				mcpAssertedAuth(t, p, req, tc.principal, tc.asserted)
 				rr := httptest.NewRecorder()
 				handler(rr, req)

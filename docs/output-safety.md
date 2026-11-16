@@ -75,16 +75,16 @@ For succeeded jobs, scheduler output safety handling is:
 Output safety runs in two phases with **different** failure semantics:
 
 - **Sync metadata check** (`CheckOutputMeta`, hot path): always **fail-open** on checker error or timeout. The record stays at `ALLOW`, `cordum_output_policy_skipped_total` is incremented, and the job stays `SUCCEEDED`. This phase has no configurable fail mode — it is always fail-open so a degraded checker cannot block the result pipeline (`engine.go`, `CheckOutputMeta` error branch).
-- **Async content check** (background): **fail-closed by default** (quarantine on error). This phase is configurable:
+- **Async content check** (background): follows the config-service key `scheduler.output_fail_mode`. Unset is `closed`, and the production identity profile forces `closed`. The table gives the documented behavior of each mode; output-check outage outcomes are not measured ([failure and partition behavior](contract/failure-behavior.md#scope-and-operator-modes)):
 
 | Mode | Behavior | When to use |
 |------|----------|-------------|
 | `closed` (default) | Quarantine job on checker error/timeout | Production, regulated, high-risk tenants |
 | `open` | Allow result through, count as skipped | Development, low-risk tenants |
 
-Configure the async fail mode via environment variable `OUTPUT_POLICY_FAIL_MODE` at scheduler startup, or at runtime through the config service (`PUT /api/v1/config` with `{"scheduler":{"output_fail_mode":"open"}}`). Runtime changes are hot-reloaded every 30 seconds.
+In the scheduler binary the config service selects the async fail mode: set `scheduler.output_fail_mode` at system or tenant level (`PUT /api/v1/config` with `{"scheduler":{"output_fail_mode":"open"}}`). Runtime changes are hot-reloaded every 30 seconds. `OUTPUT_POLICY_FAIL_MODE` does not select the mode; it sets a startup flag that only the startup log and the production startup check read.
 
-A Redis-backed circuit breaker (3 failures → open for 30s → half-open probe) protects against cascading failures when the output safety checker is persistently unavailable.
+A Redis-backed circuit breaker (3 failures → open for 30s → half-open probe) stops calling the checker while it is open. Each check it stops is handled as a checker error, so each phase applies its fail mode above. Its effect during a checker outage is not measured.
 
 ## Dashboard Data Shape
 `GET /api/v1/jobs/{id}` now includes optional:
@@ -105,8 +105,8 @@ Scheduler exports output safety metrics:
 - `cordum_output_check_latency_seconds{phase="sync|async"}`
 
 ## Failure Modes
-- Checker unavailable/error: behavior depends on `output_fail_mode` setting. Default (`closed`) quarantines the job; `open` allows the result and increments `cordum_output_policy_skipped_total`.
-- Circuit breaker open (3+ consecutive failures): all output checks are blocked until the breaker transitions to half-open after 30 seconds.
+- Checker unavailable/error: the sync metadata check is fail-open. The async content check follows `scheduler.output_fail_mode`: `closed` (the default when unset) is documented to quarantine the job, and `open` allows the result and increments `cordum_output_policy_skipped_total`. Outage outcomes are not measured.
+- Circuit breaker open (3+ consecutive failures): the checker is not called until the breaker goes half-open after 30 seconds; each check in that window is handled as a checker error (above).
 - Missing request context for result: check skipped (metadata unavailable, not a checker failure).
 - Corrupt stored output safety payload: gateway/store tolerate and return empty record.
 

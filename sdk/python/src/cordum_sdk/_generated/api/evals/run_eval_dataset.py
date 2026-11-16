@@ -7,6 +7,7 @@ from ...client import AuthenticatedClient, Client
 from ...types import Response, UNSET
 from ... import errors
 
+from ...models.error import Error
 from ...models.eval_run_accepted_response import EvalRunAcceptedResponse
 from ...models.eval_run_request import EvalRunRequest
 from ...models.eval_run_result import EvalRunResult
@@ -41,7 +42,7 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Optional[Union[Any, EvalRunAcceptedResponse, EvalRunResult]]:
+) -> Optional[Union[Any, Error, EvalRunAcceptedResponse, EvalRunResult]]:
     if response.status_code == 200:
         response_200 = EvalRunResult.from_dict(response.json())
 
@@ -51,7 +52,8 @@ def _parse_response(
 
         return response_202
     if response.status_code == 400:
-        response_400 = cast(Any, None)
+        response_400 = Error.from_dict(response.json())
+
         return response_400
     if response.status_code == 401:
         response_401 = cast(Any, None)
@@ -63,7 +65,8 @@ def _parse_response(
         response_404 = cast(Any, None)
         return response_404
     if response.status_code == 409:
-        response_409 = cast(Any, None)
+        response_409 = Error.from_dict(response.json())
+
         return response_409
     if response.status_code == 429:
         response_429 = cast(Any, None)
@@ -79,7 +82,7 @@ def _parse_response(
 
 def _build_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Response[Union[Any, EvalRunAcceptedResponse, EvalRunResult]]:
+) -> Response[Union[Any, Error, EvalRunAcceptedResponse, EvalRunResult]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -94,7 +97,7 @@ def sync_detailed(
     client: Union[AuthenticatedClient, Client],
     body: EvalRunRequest,
     x_tenant_id: str,
-) -> Response[Union[Any, EvalRunAcceptedResponse, EvalRunResult]]:
+) -> Response[Union[Any, Error, EvalRunAcceptedResponse, EvalRunResult]]:
     """Run an eval dataset against the active or candidate policy
 
      Synchronous for ≤500 entries (returns 200 with full result), asynchronous for larger datasets
@@ -110,7 +113,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Any, EvalRunAcceptedResponse, EvalRunResult]]
+        Response[Union[Any, Error, EvalRunAcceptedResponse, EvalRunResult]]
     """
 
     kwargs = _get_kwargs(
@@ -132,7 +135,7 @@ def sync(
     client: Union[AuthenticatedClient, Client],
     body: EvalRunRequest,
     x_tenant_id: str,
-) -> Optional[Union[Any, EvalRunAcceptedResponse, EvalRunResult]]:
+) -> Optional[Union[Any, Error, EvalRunAcceptedResponse, EvalRunResult]]:
     """Run an eval dataset against the active or candidate policy
 
      Synchronous for ≤500 entries (returns 200 with full result), asynchronous for larger datasets
@@ -148,7 +151,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Any, EvalRunAcceptedResponse, EvalRunResult]
+        Union[Any, Error, EvalRunAcceptedResponse, EvalRunResult]
     """
 
     return sync_detailed(
@@ -165,7 +168,7 @@ async def asyncio_detailed(
     client: Union[AuthenticatedClient, Client],
     body: EvalRunRequest,
     x_tenant_id: str,
-) -> Response[Union[Any, EvalRunAcceptedResponse, EvalRunResult]]:
+) -> Response[Union[Any, Error, EvalRunAcceptedResponse, EvalRunResult]]:
     """Run an eval dataset against the active or candidate policy
 
      Synchronous for ≤500 entries (returns 200 with full result), asynchronous for larger datasets
@@ -181,7 +184,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Any, EvalRunAcceptedResponse, EvalRunResult]]
+        Response[Union[Any, Error, EvalRunAcceptedResponse, EvalRunResult]]
     """
 
     kwargs = _get_kwargs(
@@ -201,7 +204,7 @@ async def asyncio(
     client: Union[AuthenticatedClient, Client],
     body: EvalRunRequest,
     x_tenant_id: str,
-) -> Optional[Union[Any, EvalRunAcceptedResponse, EvalRunResult]]:
+) -> Optional[Union[Any, Error, EvalRunAcceptedResponse, EvalRunResult]]:
     """Run an eval dataset against the active or candidate policy
 
      Synchronous for ≤500 entries (returns 200 with full result), asynchronous for larger datasets
@@ -217,7 +220,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Any, EvalRunAcceptedResponse, EvalRunResult]
+        Union[Any, Error, EvalRunAcceptedResponse, EvalRunResult]
     """
 
     return (

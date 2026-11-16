@@ -23,6 +23,7 @@ import (
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/policyshadow"
+	"github.com/cordum/cordum/core/policysign"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/protobuf/encoding/protojson"
 	"gopkg.in/yaml.v3"
@@ -293,7 +294,7 @@ func (s *server) handlePutPolicyOutputRule(w http.ResponseWriter, r *http.Reques
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	updatedBundleID := ""
+	updatedBundleID, auditNote := "", ""
 	updated := false
 
 	keys := make([]string, 0, len(bundles))
@@ -326,6 +327,17 @@ func (s *server) handlePutPolicyOutputRule(w http.ResponseWriter, r *http.Reques
 		if !foundInBundle {
 			continue
 		}
+		// Re-sign only content derived from stored content that verifies, so
+		// this endpoint never signs content the store source would refuse.
+		unverified := signer != nil && !storedPolicyContentVerifies(rawBundle, content)
+		if unverified {
+			// Enforce is decided as resolvePolicyStoreSigner decides it.
+			if mode, modeErr := policysign.ResolveMode(); modeErr != nil || mode == policysign.ModeEnforce {
+				writeJSONError(w, http.StatusConflict, errorCodePolicySigningRequired, fmt.Sprintf("policy bundle %q holding output rule %q does not verify "+
+					"against its stored signature and the policy trust store; re-sign it with `cordumctl policy resign --bundle %s`, or reinstall its pack", key, ruleID, key))
+				return
+			}
+		}
 		payload, err := yaml.Marshal(policy)
 		if err != nil {
 			writeErrorJSON(w, http.StatusInternalServerError, "failed to encode policy bundle")
@@ -336,9 +348,18 @@ func (s *server) handlePutPolicyOutputRule(w http.ResponseWriter, r *http.Reques
 			bundle = map[string]any{}
 		}
 		bundle["content"] = string(payload)
-		if err := signPolicyStoreBundle(signer, bundle); err != nil {
-			writeErrorJSON(w, http.StatusInternalServerError, "failed to sign policy bundle")
-			return
+		switch {
+		case unverified:
+			delete(bundle, policyBundleSignatureKey)
+			slog.Warn("output rule toggle stored a policy bundle unsigned: its stored content does not verify", "bundle_id", key, "rule_id", ruleID)
+			auditNote = "; stored unsigned: its stored content did not verify"
+		case signer != nil:
+			if err := signPolicyStoreBundle(signer, bundle); err != nil {
+				writeErrorJSON(w, http.StatusInternalServerError, "failed to sign policy bundle")
+				return
+			}
+			sig, _ := bundle[policyBundleSignatureKey].(map[string]any)
+			auditNote = fmt.Sprintf("; re-signed with key_id=%v hash=%v", sig["key_id"], sig["hash"])
 		}
 		bundle["updated_at"] = now
 		bundles[key] = bundle
@@ -368,7 +389,7 @@ func (s *server) handlePutPolicyOutputRule(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	message := fmt.Sprintf("set output rule %s enabled=%t", ruleID, *body.Enabled)
+	message := fmt.Sprintf("set output rule %s enabled=%t in policy bundle %s%s", ruleID, *body.Enabled, updatedBundleID, auditNote)
 	s.appendAuditEntryNamed(r.Context(), "edit", "output_rule", ruleID, updatedBundleID, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), message)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -378,6 +399,21 @@ func (s *server) handlePutPolicyOutputRule(w http.ResponseWriter, r *http.Reques
 		"bundle_id":  updatedBundleID,
 		"updated_at": now,
 	})
+}
+
+// storedPolicyContentVerifies reports whether content verifies against the
+// bundle's stored _signature and the policy trust store, read as the safety
+// kernel's store source reads them. A trust store that does not load
+// verifies nothing.
+func storedPolicyContentVerifies(rawBundle any, content string) bool {
+	bundle, _ := rawBundle.(map[string]any)
+	sig, ok := storeSourceSignature(bundle[policyBundleSignatureKey])
+	trust, err := policysign.LoadTrustStoreFromEnv()
+	if !ok || err != nil {
+		return false
+	}
+	pub, found := trust.Lookup(sig.KeyID)
+	return found && policysign.Verify(pub, []byte(content), sig) == nil
 }
 
 func (s *server) handleGetPolicyBundle(w http.ResponseWriter, r *http.Request) {

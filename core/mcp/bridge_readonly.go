@@ -74,11 +74,7 @@ func (b *HTTPServiceBridge) getJSON(ctx context.Context, path string, query url.
 	// private address between validation and dial. Mirror doRequest's
 	// transport build so behaviour stays uniform across GET/POST.
 	if len(pinnedIPs) > 0 {
-		client = &http.Client{
-			Timeout:       client.Timeout,
-			CheckRedirect: client.CheckRedirect,
-			Transport:     &http.Transport{DialContext: pinnedDialer(pinnedIPs)},
-		}
+		client = pinnedClient(client, pinnedIPs)
 	}
 
 	resp, err := client.Do(req)

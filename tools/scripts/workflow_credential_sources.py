@@ -14,10 +14,10 @@ NAME, PREFIX = re.compile(r"(?i)^(?!.*idem).*(?:passw|secret|token|key|nonce)"),
 DEVNULL, TESTCMD, TOPLEVEL = re.compile(r"(?:^|\s)(?:1|&)?>>?\s*/dev/null(?=\s|$)"), re.compile(r"(?:(?:if|elif|while|until|then|do|else|!) )*(?:\[\[?|test) "), re.compile(r"\$\(\s*(?:pwd(?:\s+-P)?|git\s+rev-parse\s+--show-toplevel)\s*\)")
 DIRNAME, VAR = re.compile(r"\$\(\s*dirname\s+(?:--\s+)?\"?\$\{?(?:BASH_SOURCE(?:\[0\])?|0)\}?\"?\s*\)|\$\{BASH_SOURCE(?:\[0\])?%/\*\}"), re.compile(r"\$\{([A-Za-z_]\w*)(?:(:?[-=])((?:[^{}]|\{[^{}]*\})*))?\}|\$([A-Za-z_]\w*)")
 CDPWD, PREFIX_WORDS = re.compile(r"\$\(\s*cd\s+(?:--\s+)?(\"[^\"$]*\"|'[^']*'|[^\s;&|)$\"']+)\s*(?:>\s*/dev/null\s*)?(?:2>&1\s*)?&&\s*pwd(?:\s+-P)?\s*\)"), {"if", "then", "else", "elif", "do", "while", "until", "!", "time", "exec", "command", "builtin", "nohup", "env", "sudo", "timeout"}
-Cmd = collections.namedtuple("Cmd", "line words op sub stack func text sets", defaults=((), "", "", ""))  # sets: what a file sourced here leaves set, e (errexit off) and x (tracing on)
+Cmd = collections.namedtuple("Cmd", "line words op sub stack func text sets", defaults=((), "", "", ""))  # sets: what a file sourced here leaves set, e (errexit off) or E (errexit on), x (tracing on) or X (tracing off); r or t: a function it defines may leave errexit off (r) or tracing on (t) after any later call
 def seeded(env: dict, name: str) -> bool: return (value := env.get(name, "")) != "" and (value[0] != "$" or value.startswith("$("))
 def literal(value: str) -> int: return len(re.match(r"[^$\x00]*", value).group())
-def flag(cmd: Cmd, on: bool, short: str, name: str) -> bool: return short == "x" if short in cmd.sets else next((sign == "-" for sign in reversed(re.findall(r"(?<!\S)([-+])(?:[a-zA-Z]*" + short + r"[a-zA-Z]*|o\s+" + name + r")(?!\S)", cmd.text))), on) if cmd.words[cmd.words[:1] in (["then"], ["do"], ["else"]):][:1] == ["set"] else on  # after a `set`
+def flag(cmd: Cmd, on: bool, short: str, name: str) -> bool: return short == "x" if short in cmd.sets else short == "e" if short.upper() in cmd.sets else next((sign == "-" for sign in reversed(re.findall(r"(?<!\S)([-+])(?:[a-zA-Z]*" + short + r"[a-zA-Z]*|o\s+" + name + r")(?!\S)", cmd.text))), on) if cmd.words[cmd.words[:1] in (["then"], ["do"], ["else"]):][:1] == ["set"] else on  # after a `set`
 def pg_runs_gate_1(argv: list) -> bool: return "--skip-rebuild" not in argv and (not (gates := [v for f, v in zip(argv, argv[1:]) if f == "--gate"]) or not gates[-1].isdigit() or gates[-1] == "1")
 EXEMPT = {  # reviewed exemptions: the source, a block around it, or every call site of its function matches the guard; the entry env holds the condition
     ("tools/scripts/edge_fake_hook_e2e.sh", "AGENTD_NONCE"): ("if ! want_bypass_hook", lambda env: env.get("CORDUM_EDGE_E2E_BYPASS_HOOK", "").lower() in ("1", "true", "yes", "on")),
@@ -129,22 +129,32 @@ def callers(cmds: list, flags: list, prev: tuple, ign: set = frozenset()) -> tup
         if (name := (c.words + [""])[(lead := next((n for n, w in enumerate(c.words) if w not in PREFIX_WORDS and not WORD_ASSIGN.fullmatch(w) and not RWORD.match(w)), len(c.words)))]) in defs:  # a redirection word (</dev/null main) is not the command name
             for names, hit in zip(found, (ends(cmds, i) in ("&&", "||") or not {"if", "elif", "while", "until", "!"}.isdisjoint(c.words[:lead]) or cond(cmds, i) or c.func in prev[0] or not ign.isdisjoint(c.stack), not flags[i][0], c.sub or c.func in prev[2])): names.add(name) if hit else None
     return found
-def options(cmds: list, errexit: bool, quiet: set = frozenset(), cold: set = frozenset(), ign: set = frozenset()) -> list:  # [k]: (errexit, xtrace) at cmds[k]; a set applies in text order within its scope: top level, function body or subshell; quiet functions and ign blocks ignore errexit, cold functions start without it
-    scope = lambda c: next((s for s in reversed(c.stack) if cmds[s].op == "(" or cmds[s].op == "{" and cmds[s].words), -1)
-    shells, flat, fns = lambda c: {-1, *(s for s in c.stack if cmds[s].op == "(")}, lambda i: runs(cmds, i) and (cmds[i].stack[-1:] or (-1,))[0] == scope(cmds[i]), any(c.op == "{" and c.words for c in cmds)  # the subshells around it; runs in straight line in its scope; the file defines a function
-    def wide(i: int, c: Cmd, o: tuple, v: bool) -> bool:  # c sets o to v and may apply out of text order, throughout its innermost subshell: in a loop there, tracing where a function may run, or left by a function
+def scope(cmds: list, c: Cmd) -> int: return next((s for s in reversed(c.stack) if subshell(cmds, s) or cmds[s].op == "{" and cmds[s].words), -1)  # the innermost subshell or function body around c, -1 at the top level
+def flat(cmds: list, i: int) -> bool: return runs(cmds, i) and (cmds[i].stack[-1:] or (-1,))[0] == scope(cmds, cmds[i])  # runs in straight line in its scope
+def kept(cmds: list, i: int, o: tuple, v: bool) -> bool:  # cmds[i] sets o to v in a function body, and the function may return with it so: its next change of o, before any return, does not reset it in straight line
+    s = scope(cmds, cmds[i]); m = next((h for h in range(i + 1, len(cmds)) if not (d := cmds[h]).sub and scope(cmds, d) == s and (flag(d, True, *o) == flag(d, False, *o) or re.match(r"(?:(?:then|do|else) )?return\b", d.text))), None)  # noqa: E702
+    return s >= 0 and cmds[s].op == "{" and not (m is not None and flat(cmds, m) and flag(cmds[m], v, *o) != v)
+def options(cmds: list, errexit: bool, quiet: set = frozenset(), cold: set = frozenset(), ign: set = frozenset(), xtrace: bool = False) -> list:  # [k]: (errexit, xtrace) at cmds[k]; a set applies in text order within its scope: top level, function body or subshell; quiet functions and ign blocks ignore errexit, cold functions start without it
+    shells, fns = lambda c: {-1, *(s for s in c.stack if subshell(cmds, s))}, any(c.op == "{" and c.words for c in cmds)  # the subshells around it; the file defines a function
+    def wide(i: int, c: Cmd, o: tuple, v: bool) -> bool:  # c sets o to v and may apply out of text order, throughout its innermost subshell: in a loop there, tracing where a function may run, or left by a function, here or in a file sourced here (t, r)
         if c.sub or flag(c, not v, *o) != v: return False
-        m = next((h for h in range(i + 1, len(cmds)) if not (d := cmds[h]).sub and scope(d) == scope(c) and (flag(d, True, *o) == flag(d, False, *o) or re.match(r"(?:(?:then|do|else) )?return\b", d.text))), None)
-        return any(cmds[s].words[:1] in (["while"], ["until"], ["for"], ["select"]) and s > max(shells(c)) for s in c.stack) or v and fns or scope(c) >= 0 and cmds[scope(c)].op == "{" and not (m is not None and flat(m) and flag(cmds[m], v, *o) != v)  # a function's next change of o, before any return, must reset it in straight line
-    off, on, traced, now, out = {max(shells(c)) for i, c in enumerate(cmds) if wide(i, c, ERREXIT, False)}, {max(shells(c)) for i, c in enumerate(cmds) if wide(i, c, XTRACE, True)}, any(c.sub and flag(c, False, *XTRACE) for c in cmds), {-1: (errexit, False)}, []  # traced: a $(...) turns tracing on, assumed in every $(...)
+        return any(cmds[s].words[:1] in (["while"], ["until"], ["for"], ["select"]) and s > max(shells(c)) for s in c.stack) or v and fns or kept(cmds, i, o, v) or ("t" if v else "r") in c.sets
+    off, on, traced, now, out = {max(shells(c)) for i, c in enumerate(cmds) if wide(i, c, ERREXIT, False)}, {max(shells(c)) for i, c in enumerate(cmds) if wide(i, c, XTRACE, True)}, any(c.sub and flag(c, False, *XTRACE) for c in cmds), {-1: (errexit, xtrace)}, []  # traced: a $(...) turns tracing on, assumed in every $(...)
     for i, c in enumerate(cmds):
-        e, x = now[s] if (s := scope(c)) in now else now.setdefault(s, ((p := now[scope(cmds[s])])[0] and not (cmds[s].op == "{" and c.func in cold), p[1])); out.append((e and not c.sub and not off & shells(c) and c.func not in quiet and ign.isdisjoint(c.stack), x or bool(on & shells(c)) or bool(c.sub) and traced))  # noqa: E702  # a subshell or function body starts from its parent; bash clears errexit in a $(...)
-        if not c.sub: now[s] = (flag(c, e, *ERREXIT), flag(c, x, *XTRACE)) if flat(i) else (e and flag(c, True, *ERREXIT), x or flag(c, False, *XTRACE))  # one that may not run, or runs in another shell, only disables errexit or starts tracing
+        e, x = now[s] if (s := scope(cmds, c)) in now else now.setdefault(s, ((p := now[scope(cmds, cmds[s])])[0] and not (cmds[s].op == "{" and c.func in cold), p[1])); out.append((e and not c.sub and not off & shells(c) and c.func not in quiet and ign.isdisjoint(c.stack), x or bool(on & shells(c)) or bool(c.sub) and traced))  # noqa: E702  # a subshell or function body starts from its parent; bash clears errexit in a $(...)
+        if not c.sub: now[s] = (flag(c, e, *ERREXIT), flag(c, x, *XTRACE)) if flat(cmds, i) else (e and flag(c, True, *ERREXIT), x or flag(c, False, *XTRACE))  # one that may not run, or runs in another shell, only disables errexit or starts tracing
     return out + [(now[-1][0] and -1 not in off, now[-1][1] or -1 in on)]  # then the top level after the last command
-def facts(text: str, line: int = 1, errexit: bool = False, parsed: tuple = ()) -> tuple:  # (cmds, unparsable line, [(k, var, kind, state)], [(k, var, bytes)], options, errexit)
+def subshell(cmds: list, s: int) -> bool: return cmds[s].op == "(" and cmds[s].words[:1] != ["case"]  # a ( ) block; case x in (pattern) puts its first pattern's ( on the case line
+def left(cmds: list, flags: list) -> tuple:  # (errexit, xtrace) a sourced file may leave in its caller: its end state, merged with the state at each return bash runs in the file's own shell
+    ret = [flags[k] for k, c in enumerate(cmds) if re.match(r"(?:(?:if|elif|while|until|then|do|else|!) )*return\b", c.text) and not c.sub and not c.func and not any(subshell(cmds, s) for s in c.stack) and c.op not in ("|", "|&", "&") and next((d.op for d in reversed(cmds[:k]) if not d.sub), "") not in ("|", "|&")]
+    return all(e for e, _ in ret + flags[-1:]), any(x for _, x in ret + flags[-1:])
+def called(cmds: list) -> str:  # r or t: a function a sourced file leaves defined in its caller may leave errexit off (kept, or r from a file it sources) or turn tracing on (anywhere in its body, or t), at any later call
+    top = [(i, c) for i, c in enumerate(cmds) if not c.sub and not any(subshell(cmds, s) for s in c.stack)]  # a function defined in a $(...) or ( ) is gone when it ends
+    return "r" * any("r" in c.sets or not flag(c, True, *ERREXIT) and kept(cmds, i, ERREXIT, False) for i, c in top) + "t" * any("t" in c.sets or c.func and flag(c, False, *XTRACE) for _, c in top)
+def facts(text: str, line: int = 1, errexit: bool = False, parsed: tuple = (), xtrace: bool = False) -> tuple:  # (cmds, unparsable line, [(k, var, kind, state)], [(k, var, bytes)], options, errexit)
     cmds, error = parsed or parse(text, line)
     ctx, seen, acqs, ign = (set(), set(), set()), None, [], hot(cmds)
-    while ctx != seen: seen, flags = ctx, options(cmds, errexit, *ctx[:2], ign); ctx = callers(cmds, flags, ctx, ign)  # noqa: E702  # each round only adds names, so it ends
+    while ctx != seen: seen, flags = ctx, options(cmds, errexit, *ctx[:2], ign, xtrace); ctx = callers(cmds, flags, ctx, ign)  # noqa: E702  # each round only adds names, so it ends
     for k, cmd in enumerate(cmds):
         var, rhs = (m.group(1), m.group(2)) if (m := ASSIGN.fullmatch(cmd.text)) else ("-", "")
         kind = "" if "idem" in var.lower() else "auth-response" if JQ.search(rhs) else "generated" if NAME.search(var) and GEN.search(shallow(rhs)) else ""
@@ -180,6 +190,12 @@ def run_lines(text: str) -> dict:  # (job id, step index) -> file line just befo
 def guarded(cmds: list, k: int, guard: str) -> bool:  # the source or a block around it, or every (>= 1) call site of its function
     def under(cmd: Cmd, own: tuple = ()) -> bool: return any(re.fullmatch(guard, cmds[s].text) for s in cmd.stack + own)
     return under(cmds[k], (k,)) or (bool(calls := [c for c in cmds if cmds[k].func and cmds[k].func in c.words]) and all(under(c) for c in calls))
+NATIVE = (b"\x7fELF", b"MZ", b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf", b"\xce\xfa\xed\xfe", b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe")  # ELF, PE, Mach-O (32- and 64-bit, both byte orders), fat Mach-O
+def native(path: pathlib.Path) -> bool:  # a native executable whose first line holds a NUL, which bash's own binary test refuses: the kernel runs it, bash never reads it as a script
+    try:
+        with path.open("rb") as handle: head = handle.read(80)  # bash tests at most the first 80 bytes
+    except OSError: return False  # unreadable: it stays oversized
+    return head.startswith(NATIVE) and b"\x00" in head.split(b"\n", 1)[0]
 class Scan:  # walks each job's run steps through their transitive shell and make edges
     def __init__(self, root: pathlib.Path) -> None: self.root, self.cache, self.issues, self.inventory, self.exec_skip, self.bang_x = root, {}, set(), set(), set(), set()
     def report(self, code: str, rel: str, line: int, source: bool = False) -> None: self.issues.add((self.wf, self.job, f"{code}@{rel}:{line}")) if self.credential or not source else None  # SOURCE_*: credential jobs only
@@ -204,7 +220,7 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
     def load(self, key: str) -> object:  # facts for a script; for a make target, a list: its prerequisite rules as a make line, then each shell its recipe runs in
         if key not in self.cache and not key.startswith("Makefile#"):
             text, code = self.read(key); self.cache[key] = code or ("NOT_SHELL" if "\x00" in text else facts(text))  # noqa: E702  # source and bash read any text as shell
-            if not (code or key.endswith(".sh") or re.match(r"#!.*\b(?:ba)?sh\b", text) or not text.startswith("#!") and self.root.joinpath(key).stat().st_mode & 0o100): self.exec_skip.add(key)  # exec: sh #! or ENOEXEC
+            if not (code or key.endswith(".sh") or re.match(r"#!.*\b(?:ba)?sh\b", text) or not text.startswith("#!") and self.root.joinpath(key).stat().st_mode & 0o100) or code == "OVERSIZE" and native(self.root.joinpath(key)): self.exec_skip.add(key)  # exec: sh #! or ENOEXEC; an oversized native executable runs natively: an exec edge skips it, source and bash still report it
             if re.match(r"#![^\n]*?(?<!\S)-[a-zA-Z]*x", text): self.bang_x.add(key)  # a #! -x flag traces the file, assumed on every edge
         elif key not in self.cache:
             rules, found = self.rules(), self.rule(key[9:])
@@ -241,11 +257,11 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
     def settle(self, rel: str, unit: tuple, env: dict, argv: list, chain: tuple, quiet: bool, cwd: str, errexit: bool) -> tuple:  # the unit with each sourced file's leftover options applied at its source command, as a set there is
         sets = self.walk(rel, unit, env, argv, chain, quiet, cwd, True)
         return facts("", 0, errexit, ([c._replace(sets=sets.get(k, "")) for k, c in enumerate(unit[0])], unit[1])) if sets or errexit != unit[5] else unit
-    def effect(self, key: str, env: dict, argv: list, chain: tuple, quiet: bool, rel: str, line: int) -> str:  # what a file run in its caller's shell may leave set there: e, x, or both if unparsable or past the job's dry budget; a refused, cyclic or too-deep file leaves nothing (its edge reports it)
+    def effect(self, key: str, env: dict, argv: list, chain: tuple, quiet: bool, rel: str, line: int) -> str:  # what a file run in its caller's shell leaves set there, at its end or a return: e (errexit may be off) or E (on at every exit), x (tracing may be on) or X (off at every exit), plus r or t (called()); exrt if unparsable or past the job's dry budget; a refused, cyclic or too-deep file leaves nothing (its edge reports it)
         if posixpath.isabs(key) or key == ".." or key.startswith("../") or not isinstance(unit := "CYCLE" if key in chain else "LIMIT" if len(chain) >= MAX_DEPTH else self.load(key), tuple): return ""  # an absolute or escaping file is refused unread, as edge() refuses a sourced one; the rcfile call reaches here without that check
         if (request := (key, tuple(sorted(env.items())), tuple(argv), chain, quiet)) in self.dry: return self.dry[request]  # this job's analyses; chain keeps cycle and depth context
-        if len(self.dry) >= MAX_DRY: return self.dry.get(None) or self.report("SOURCE_LIMIT", rel, line, True) or self.dry.setdefault(None, "ex")  # the job's dry budget, apart from MAX_VISITS, is spent: report once, then fail closed with both options
-        if (memo := ("effect", key, tuple(sorted(self.walk(key, unit, env, argv, chain + (key,), quiet, ".", True).items())))) not in self.cache: flags = facts("", 0, True, ([c._replace(sets=dict(memo[2]).get(k, "")) for k, c in enumerate(unit[0])], unit[1]))[4]; self.cache[memo] = "ex" if unit[1] else ("" if flags[-1][0] else "e") + ("x" if flags[-1][1] else "")  # noqa: E702
+        if len(self.dry) >= MAX_DRY: return self.dry.get(None) or self.report("SOURCE_LIMIT", rel, line, True) or self.dry.setdefault(None, "exrt")  # the job's dry budget, apart from MAX_VISITS, is spent: report once, then fail closed with every letter
+        if (memo := ("effect", key, tuple(sorted(self.walk(key, unit, env, argv, chain + (key,), quiet, ".", True).items())))) not in self.cache: parsed = ([c._replace(sets=dict(memo[2]).get(k, "")) for k, c in enumerate(unit[0])], unit[1]); (e1, x1), (e0, x0) = (left(parsed[0], facts("", 0, s, parsed, not s)[4]) for s in (True, False)); self.cache[memo] = "exrt" if unit[1] else ("e" if not e1 else "E" if e0 else "") + ("x" if x1 else "X" if not x0 else "") + called(parsed[0])  # noqa: E702
         self.dry[request] = self.cache[memo]; return self.cache[memo]  # noqa: E702
     def track(self, words: list, table: dict, env: dict, here: str) -> None:  # a pure assignment, export, declaration or unset
         keyword = words[0] if words[:1] and words[0] in ("export", "local", "declare", "typeset", "readonly", "unset") else ""
@@ -258,11 +274,11 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
             if keyword == "export" or (keyword == "declare" and "-x" in words) or (m and name in env and keyword != "local"): env[name] = table.get(name, env.get(name, ""))
     def edge(self, cmd: Cmd, rel: str, table: dict, env: dict, argv: list, chain: tuple, quiet: bool, cwd: str, dry: bool = False) -> object:
         here, words, child = posixpath.dirname(rel) or ".", list(cmd.words), dict(env)
+        quiet, words = quiet or any(re.fullmatch(r"(?:1|&)?>>?/dev/null", w) for w in words), [w for w in words if not RWORD.match(w)]  # a redirection word is neither a prefix nor the command name (</dev/null env FOO=1 bash x.sh)
         while words and (words[0] in PREFIX_WORDS or WORD_ASSIGN.fullmatch(words[0])):
             if m := WORD_ASSIGN.fullmatch(word := words.pop(0)): child[m.group(1)] = expand(m.group(2), table, env, here)
             while word in ("env", "sudo", "timeout") and words and (words[0][:1] == "-" or (word == "timeout" and re.fullmatch(r"[\d.]+[smhd]?", words[0]))):
                 if words.pop(0) in ("-u", "--unset") and words: child.pop(words.pop(0), None)
-        quiet, words = quiet or any(re.fullmatch(r"(?:1|&)?>>?/dev/null", w) for w in words), [w for w in words if not RWORD.match(w)]
         name, program, dynamic = expand(words[0], table, env, here) if words else "", False, lambda: None if dry else self.report("SOURCE_DYNAMIC", rel, cmd.line, True)
         if dry and name not in ("source", "."): return ""
         if name == "eval": return dynamic()

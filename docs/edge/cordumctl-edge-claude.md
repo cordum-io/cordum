@@ -74,7 +74,7 @@ order, with the first non-empty match winning:
    `CORDUM_EDGE_DASHBOARD_URL`.
 3. **Project config** — `./cordum.yaml` in the current working directory.
 4. **User config** — `~/.cordum/config.yaml`.
-5. **Built-in default** — `gateway: http://localhost:8081`,
+5. **Built-in default** — `gateway: https://localhost:8081`,
    `tenant: default`, `policy_mode: enforce`, `hook_command: cordum-hook`,
    `approval_wait_timeout: 30s`.
 

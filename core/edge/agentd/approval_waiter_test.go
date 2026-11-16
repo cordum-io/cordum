@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -85,39 +86,80 @@ func TestAgentdDecisionFromEvaluateInlineWaitApprovedConsumesThenAllows(t *testi
 	}
 }
 
-func TestAgentdDecisionFromEvaluateInlineWaitRejectedTimeoutAndErrorDeny(t *testing.T) {
+func TestAgentdDecisionFromEvaluateInlineWaitRejectedDenies(t *testing.T) {
 	t.Parallel()
 
+	waiter := &fakeApprovalWaiter{result: ApprovalWaitResult{Status: ApprovalWaitRejected, Reason: "too risky"}}
+	decision := AgentdDecisionFromEvaluateResponse(context.Background(), approvalRequiredResponse(), ApprovalDecisionConfig{
+		InlineWaitEnabled: true,
+		InlineWaitTimeout: 500 * time.Millisecond,
+		PolicyMode:        edgecore.PolicyModeEnterpriseStrict,
+	}, waiter, nil)
+	if decision.Decision != claude.DecisionDeny {
+		t.Fatalf("decision = %q, want deny", decision.Decision)
+	}
+	if !strings.Contains(decision.Reason, "rejected") || !strings.Contains(decision.Reason, "edge_appr_123") {
+		t.Fatalf("reason = %q, want rejection naming the approval ref", decision.Reason)
+	}
+}
+
+// An inline wait that ends unresolved (Gateway timeout/pending status, the
+// wait budget running out, or a wait error) must answer exactly like the
+// non-inline REQUIRE_APPROVAL path: the hook maps that to a deny carrying
+// approval_ref and retry guidance.
+func TestAgentdDecisionFromEvaluateInlineWaitUnresolvedReturnsPendingApproval(t *testing.T) {
+	t.Parallel()
+
+	want := AgentdDecisionFromEvaluateResponse(context.Background(), approvalRequiredResponse(), ApprovalDecisionConfig{}, nil, nil)
 	cases := []struct {
-		name       string
-		waiter     *fakeApprovalWaiter
-		wantReason string
+		name   string
+		waiter ApprovalWaiter
 	}{
-		{name: "rejected", waiter: &fakeApprovalWaiter{result: ApprovalWaitResult{Status: ApprovalWaitRejected, Reason: "too risky"}}, wantReason: "rejected"},
-		{name: "timeout status", waiter: &fakeApprovalWaiter{result: ApprovalWaitResult{Status: ApprovalWaitTimeout}}, wantReason: "timed out"},
-		{name: "pending status", waiter: &fakeApprovalWaiter{result: ApprovalWaitResult{Status: ApprovalWaitPending}}, wantReason: "timed out"},
-		{name: "gateway error", waiter: &fakeApprovalWaiter{err: errors.New("gateway unavailable: Bearer should-not-leak")}, wantReason: "unavailable"},
+		{name: "timeout status", waiter: &fakeApprovalWaiter{result: ApprovalWaitResult{Status: ApprovalWaitTimeout}}},
+		{name: "pending status", waiter: &fakeApprovalWaiter{result: ApprovalWaitResult{Status: ApprovalWaitPending}}},
+		{name: "gateway error", waiter: &fakeApprovalWaiter{err: errors.New("gateway unavailable: Bearer should-not-leak")}},
+		{name: "budget runs out", waiter: blockingApprovalWaiter{}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			decision := AgentdDecisionFromEvaluateResponse(context.Background(), approvalRequiredResponse(), ApprovalDecisionConfig{
 				InlineWaitEnabled: true,
-				InlineWaitTimeout: 500 * time.Millisecond,
+				InlineWaitTimeout: 50 * time.Millisecond,
 				PolicyMode:        edgecore.PolicyModeEnterpriseStrict,
 			}, tc.waiter, nil)
-			if decision.Decision != claude.DecisionDeny {
-				t.Fatalf("decision = %q, want deny", decision.Decision)
-			}
-			if !strings.Contains(strings.ToLower(decision.Reason), tc.wantReason) {
-				t.Fatalf("reason = %q, want to mention %q", decision.Reason, tc.wantReason)
-			}
-			if !strings.Contains(decision.Reason, "edge_appr_123") {
-				t.Fatalf("reason = %q, want approval ref for retry guidance", decision.Reason)
+			if !reflect.DeepEqual(decision, want) {
+				t.Fatalf("decision = %#v, want the non-inline approval decision %#v", decision, want)
 			}
 			if strings.Contains(decision.Reason, "should-not-leak") || strings.Contains(decision.AdditionalContext, "should-not-leak") {
 				t.Fatalf("decision leaked waiter error secret: %#v", decision)
 			}
 		})
+	}
+}
+
+func TestInlineApprovalWaitBudgetLeavesAnswerReserve(t *testing.T) {
+	t.Parallel()
+
+	answerBy := func(d time.Duration) context.Context {
+		return withHookAnswerBy(context.Background(), time.Now().Add(d))
+	}
+	if got := inlineApprovalWaitBudget(context.Background(), 30*time.Second); got != 30*time.Second {
+		t.Fatalf("no answer-by: budget = %s, want the configured 30s", got)
+	}
+	got := inlineApprovalWaitBudget(answerBy(4*time.Second), 30*time.Second)
+	if got > 4*time.Second-inlineApprovalAnswerReserve || got < 4*time.Second-inlineApprovalAnswerReserve-100*time.Millisecond {
+		t.Fatalf("4s hook budget: wait budget = %s, want about %s", got, 4*time.Second-inlineApprovalAnswerReserve)
+	}
+	if got := inlineApprovalWaitBudget(answerBy(4*time.Second), time.Second); got != time.Second {
+		t.Fatalf("short configured wait: budget = %s, want 1s", got)
+	}
+	if got := inlineApprovalWaitBudget(answerBy(inlineApprovalAnswerReserve/2), 30*time.Second); got > 0 {
+		t.Fatalf("hook budget inside the reserve: wait budget = %s, want none", got)
+	}
+	parent, cancel := context.WithTimeout(answerBy(4*time.Second), 200*time.Millisecond)
+	defer cancel()
+	if got := inlineApprovalWaitBudget(parent, 30*time.Second); got > 200*time.Millisecond {
+		t.Fatalf("earlier parent deadline: budget = %s, want <= 200ms", got)
 	}
 }
 
@@ -273,22 +315,24 @@ func (blockingApprovalWaiter) WaitForApproval(ctx context.Context, _ ApprovalWai
 }
 
 // TestApprovalRequiredDecisionClampedByParentContextNotNominalTimeout is the
-// regression test for the EDGE-4 doctor finding: "CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT
-// defaults to 30s, which exceeds Claude Code's 5s hook deadline — does an
-// unresolved inline wait fail OPEN when Claude kills the hook first?"
+// regression test for the EDGE-4 doctor finding that
+// CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT defaults to 30s, which exceeds
+// the `"timeout": 5` Cordum generates on each Claude Code command hook
+// (Claude Code's own default is 600s): does an unresolved inline wait fail
+// OPEN when Claude Code kills the hook first?
 //
 // It doesn't. approvalRequiredDecision derives its wait context from the
 // PARENT context via context.WithTimeout(ctx, timeout) — Go's context package
 // always honors the EARLIER of the two deadlines. In production the parent is
 // ultimately the incoming hook HTTP request's context, which is already
-// bounded well under Claude's 5s deadline (agentd's own per-request
+// bounded well under that generated 5s timeout (agentd's own per-request
 // evaluationContext, and cordum-hook's own CORDUM_AGENTD_HOOK_TIMEOUT client
 // budget, are both configured/validated to stay under 5s independent of
 // CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT). So a 30s nominal wait timeout
 // can never actually run anywhere near 30s here: this test proves the call
 // returns promptly once the (short) parent deadline elapses, not the (long)
-// nominal one, and that an unresolved wait denies rather than allowing the
-// action through.
+// nominal one, and that an unresolved wait returns the pending approval (which
+// the hook denies) rather than allowing the action through.
 func TestApprovalRequiredDecisionClampedByParentContextNotNominalTimeout(t *testing.T) {
 	t.Parallel()
 
@@ -308,7 +352,7 @@ func TestApprovalRequiredDecisionClampedByParentContextNotNominalTimeout(t *test
 	if elapsed > 2*time.Second {
 		t.Fatalf("approval wait ran for %s, want it clamped to the ~50ms parent deadline (not the 30s nominal InlineWaitTimeout)", elapsed)
 	}
-	if decision.Decision != claude.DecisionDeny {
-		t.Fatalf("decision = %q, want deny — an unresolved wait must fail closed, not allow the action through", decision.Decision)
+	if decision.Decision != claude.DecisionRequireApproval || decision.ApprovalRef != "edge_appr_123" {
+		t.Fatalf("decision = %#v, want the pending approval (the hook denies it) — an unresolved wait must fail closed, not allow the action through", decision)
 	}
 }

@@ -8,7 +8,7 @@ execution, event index, and compact event records needed for policy/audit flows.
 
 | Cap | Default | Where enforced | Failure behavior |
 | --- | ---: | --- | --- |
-| Executions per session | `100` | `RedisStore.CreateExecution` under WATCH on the session execution index, plus the Gateway pre-check controlled by `CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION`. | The create is rejected with `ErrSessionExecutionFanoutExceeded` / HTTP `429 max_executions_exceeded`; no execution is written. |
+| Executions per session | `100` | `RedisStore.CreateExecution` under WATCH on the session execution index, plus the Gateway pre-check; both use `CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION`. | The create is rejected with `ErrSessionExecutionFanoutExceeded` / HTTP `429 max_executions_exceeded`; no execution is written. |
 | Events per execution | `5000` | `RedisStore.AppendEvents` and `AppendEventsWithIdempotency` inside the watched append transaction. | The append is rejected with `ErrExecutionEventCapExceeded` / HTTP `429 event_cap_exceeded`; no event in the batch is written. |
 
 Worst-case P0 session fanout is therefore bounded at:
@@ -60,6 +60,11 @@ The sweeper:
 - Delegates deletion to `DeleteSession`, so it inherits the same ZSCAN,
   batched-DEL, and deadline behavior.
 - Respects context cancellation during Gateway shutdown.
+- Checks the tenant's audit legal hold before each deletion. It keeps the
+  expired sessions, with their executions and events, of a tenant under an
+  active hold and of a tenant whose hold check fails. Without a legal hold
+  store it deletes nothing (see
+  [audit-operations.md](../audit-operations.md#legal-hold-integration)).
 - Emits `cordum_edge_session_swept_total` once for each session it removes.
 
 ## Operational notes

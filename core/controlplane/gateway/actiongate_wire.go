@@ -116,6 +116,7 @@ func (s *server) wireActionGatePipeline() {
 		DestructiveMutationArgKeys:              destructiveMutationArgKeysFromEnv(),
 		DestructiveMutationFieldGlobs:           destructiveMutationFieldGlobsFromEnv(),
 		FailClosedDestructiveOnTaintLookupError: actiongates.ResolveFailClosedDestructiveOnTaintLookupError(),
+		TaintFailClosedApprover:                 actiongates.ApproverConfiguredForTaintFailClosed(),
 	})
 	// actionGatePipeline is set once during boot before any handler can
 	// observe it, so the field assignment needs no lock — Go's

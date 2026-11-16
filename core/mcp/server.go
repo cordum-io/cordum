@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -352,10 +353,21 @@ func (s *MCPServer) Serve() error {
 	}
 }
 
-func (s *MCPServer) handleMessage(msg *JSONRPCMessage) *JSONRPCMessage {
+func (s *MCPServer) handleMessage(msg *JSONRPCMessage) (resp *JSONRPCMessage) {
 	if msg == nil {
 		return nil
 	}
+	// A handler panic is answered on this request with a fixed -32603
+	// that carries no panic detail, and is logged once with its stack.
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("mcp: recovered handler panic", "method", msg.Method, "panic", fmt.Sprint(r), "stack", string(debug.Stack()))
+			resp = nil
+			if messageHasID(msg.ID) {
+				resp = &JSONRPCMessage{JSONRPC: JSONRPCVersion, ID: msg.ID, Error: s.rpcError(jsonRPCInternalErrorCode, "internal error", nil)}
+			}
+		}
+	}()
 	// Derive the dispatch ctx from the ORIGINAL request ctx when the
 	// transport attached one. This preserves tenant (mcp.WithTenant),
 	// MCPCallMetadata (approval gate key), and any request-scoped
@@ -513,6 +525,9 @@ func (s *MCPServer) handleToolsCall(ctx context.Context, params json.RawMessage)
 	if strings.TrimSpace(req.Name) == "" {
 		return nil, s.rpcError(jsonRPCInvalidParamsCode, "invalid params", "name is required")
 	}
+	if err := checkUniqueObjectKeys(req.Arguments); err != nil {
+		return nil, s.rpcError(jsonRPCInvalidParamsCode, "invalid params", err.Error())
+	}
 	if rpcErr, denied := s.denyMissingAgentIdentity(ctx, req); denied {
 		return nil, rpcErr
 	}
@@ -563,7 +578,7 @@ func (s *MCPServer) handleToolsCall(ctx context.Context, params json.RawMessage)
 	}
 	// Bracket every terminal tools/call with the invocation auditor so
 	// success + handler-error + approval-required + scope-deny all
-	// land on the Merkle audit chain. Start happens BEFORE the call so
+	// land on the audit hash chain. Start happens BEFORE the call so
 	// latency_ms measures everything downstream including the filter
 	// + approval gate.
 	var handle *InvocationHandle
@@ -572,6 +587,9 @@ func (s *MCPServer) handleToolsCall(ctx context.Context, params json.RawMessage)
 		ctx, handle = s.auditor.StartInbound(ctx, agentID, tenantID, req.Name, req.Arguments)
 	}
 	result, err := s.invokeTool(ctx, req)
+	if denied, ok := policyDeniedResult(ctx, err); ok {
+		result, err = denied, nil
+	}
 	if s.auditor != nil {
 		s.auditor.FinishInbound(handle, result, err)
 	}
@@ -636,6 +654,20 @@ func (s *MCPServer) invokeTool(ctx context.Context, req ToolCallParams) (*ToolCa
 		deps.Upstream = toolServiceAdapter{tools: s.tools}
 	}
 	return InvokeToolWithPolicy(ctx, deps, req, s.policyServerName)
+}
+
+// policyDeniedResult answers a PolicyDenied like InvokeToolWithPolicy answers
+// an action-gate DENY: an isError result carrying the reason, stamped as a
+// deny on the invocation audit. ok is false for any other error.
+func policyDeniedResult(ctx context.Context, err error) (*ToolCallResult, bool) {
+	var denied *PolicyDenied
+	if !errors.As(err, &denied) {
+		return nil, false
+	}
+	if h := InvocationHandleFromContext(ctx); h != nil {
+		h.MarkPolicyDenied(denied.Reason, denied.SubReason)
+	}
+	return &ToolCallResult{Content: []ContentItem{{Type: "text", Text: denied.Reason}}, IsError: true}, true
 }
 
 // toolServiceAdapter adapts the existing ToolService.Call signature
@@ -735,6 +767,12 @@ func (s *MCPServer) mapHandlerError(err error) *JSONRPCError {
 			"kind":   "policy_snapshot_changed",
 			"reason": policySnapshotChangedReason,
 		})
+	}
+	// The policy gate and the approval hold refuse a call that carries no
+	// CallMetadata (errMissingMCPMetadata): the same wiring defect.
+	if errors.Is(err, errMissingMCPMetadata) {
+		slog.Warn("mcp: call metadata missing", "error", err)
+		return s.rpcError(jsonRPCGatewayMisconfiguredCode, "approval gate misconfigured", "missing_mcp_metadata")
 	}
 	// Approval-store outage signal — an approval store (the Edge store
 	// at mint time, or the legacy MCP approval store during claim or

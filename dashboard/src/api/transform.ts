@@ -2256,6 +2256,7 @@ export interface BackendEdgeSession {
   tenant_id?: unknown;
   principal_id?: unknown;
   principal_type?: unknown;
+  principal_display_name?: unknown;
   agent_product?: unknown;
   agent_version?: unknown;
   mode?: unknown;
@@ -2796,6 +2797,7 @@ export function mapEdgeSession(raw: BackendEdgeSession): EdgeSession {
     tenantId: edgeString(raw.tenant_id),
     principalId: edgeOptionalString(raw.principal_id),
     principalType: normalizeEdgeLower(raw.principal_type, new Set(["human", "service", "unknown"]), "unknown"),
+    principalDisplayName: edgeOptionalString(raw.principal_display_name),
     agentProduct: edgeOptionalString(raw.agent_product),
     agentVersion: edgeOptionalString(raw.agent_version),
     mode: edgeSafeText(raw.mode, "local-dev"),

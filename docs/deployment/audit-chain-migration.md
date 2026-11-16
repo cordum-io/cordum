@@ -39,14 +39,16 @@ For dev environments the simplest path is to wipe the old SIEM state
 and start clean so the chain is end-to-end verifiable:
 
 ```bash
-# Stop the gateway + consumer.
-make dev-down
+# Stop the gateway (it runs the audit consumer). Redis keeps running;
+# `make dev-down` would stop it too.
+docker compose stop api-gateway
 
-# Flush the old audit state — only safe on dev / staging.
-redis-cli FLUSHDB
+# Flush the old audit state — only safe on dev / staging. The compose
+# Redis is TLS-only with a password (run from the repo root).
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" FLUSHDB
 # OR, more surgically:
-redis-cli --scan --pattern 'audit:chain:*' | xargs -r redis-cli DEL
-redis-cli --scan --pattern 'audit:stream:*' | xargs -r redis-cli DEL
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" --scan --pattern 'audit:chain:*' | xargs -r redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" DEL
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" --scan --pattern 'audit:stream:*' | xargs -r redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" DEL
 
 # Bring the stack back up. The first event emitted per tenant becomes
 # that tenant's genesis.

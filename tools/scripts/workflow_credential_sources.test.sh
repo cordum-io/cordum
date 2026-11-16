@@ -32,6 +32,9 @@ PH = "credential-unavailable-for-redaction"
 E2E, EDGE = ".github/workflows/e2e.yml", ".github/workflows/edge-fake-hook-e2e.yml"
 CAPTURE = "      - name: Capture compose logs on failure\n"
 LINK = (".github/workflows/docs-linkcheck.yml", "      - name: Run lychee (offline, gating)\n")
+QS_MASK = '    if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then\n      gha_mask_value "${%s}" || exit 1\n    fi\n'
+QUICKSTART = {"quickstart_api_key_unmasked": (QS_MASK % "api_key", ""), "quickstart_redis_unmasked": (QS_MASK % "REDIS_PASSWORD", ""),  # each undoes one part of quickstart.sh's CI masking
+              "quickstart_prefix_printed": ("API Key:        CORDUM_API_KEY in .env                 ", "API Key:        ${API_KEY:0:8}... (see .env)           ")}
 API = "          CORDUM_API_KEY: ${{ env.CORDUM_API_KEY || '" + PH + "' }}\n"
 REG, STRICT = 'gha_mask_value "${minted}"', "set -euo pipefail\n"
 SAFE = '[[ -n "${minted}" ]] || exit 1\n' + REG
@@ -104,8 +107,10 @@ SHELLS, PROG = {"shell_env_bash": "/usr/bin/env bash {0}", "shell_pwsh": "pwsh"}
 INLINE = {"shell_c_stdin": "bash -s -c" + PROG, "shell_c_option": "bash -c -e" + PROG, "shell_c_dashdash": "bash -c --" + PROG, "inline_redirect_first": "bash -c '> /dev/null " + RUN_MINT + "'", "inline_redirect": "bash -c 'exec >\"${SYNTHETIC_LOG:-/dev/null}\" 2>&1; true'"}  # bash runs the -c program after any later option, over -s; a redirection is not its command word
 INLINE.update({"shell_c_rcfile": "bash --rcfile /dev/null -c" + PROG, "shell_c_initfile": "bash --init-file /dev/null -c" + PROG, "shell_c_norc": "bash --norc -c" + PROG})  # --rcfile and --init-file take a file operand, never the program; --norc takes none
 INLINE.update({"shell_ic_rcfile": "bash --rcfile " + MINT_SH + " -ic" + PROG, "shell_i_initfile": "bash --init-file " + MINT_SH + " -i -c" + PROG, "shell_i_rcfile_script": "bash --rcfile " + MINT_SH + " -i tools/scripts/github_actions_mask_env.sh", "shell_c_rcfile_unread": "bash --rcfile " + MINT_SH + " -c true", "shell_i_rcfile_shadowed": "SYNTH_RC=" + MINT_SH + " bash -c 'SYNTH_RC=tools/scripts/github_actions_mask_env.sh bash --rcfile ${SYNTH_RC} -ic true'", "shell_i_rcfile_unknown": "SYNTH_RC=tools/scripts/github_actions_mask_env.sh bash --rcfile ${SYNTH_RC} -ic true"})  # -i: bash runs the rcfile first, then the program or script; without -i it never reads it; the caller, not the prefix, names it
+INLINE.update({"edge_redir_env": "</dev/null env FOO=1 " + RUN_MINT, "edge_redir_timeout": "</dev/null timeout 10m " + RUN_MINT, "edge_redir_assign": "</dev/null FOO=1 ./" + MINT_SH, "edge_redir_assign_spaced": "< /dev/null FOO=1 ./" + MINT_SH, "edge_redir_two": "</dev/null 2>&1 env FOO=1 " + RUN_MINT})  # a redirection word before a wrapper or an assignment is neither a prefix nor the command name: bash still runs the script
+INLINE.update({"ctl_env_assign": "env FOO=1 " + RUN_MINT, "ctl_redir_bash": "</dev/null " + RUN_MINT, "ctl_assign_redir": "FOO=1 </dev/null ./" + MINT_SH, "ctl_plain_exec": "./" + MINT_SH, "ctl_redir_dyn_wrapper": "</dev/null timeout -s KILL 10m " + RUN_MINT})  # controls: no leading redirection, or timeout -s, whose option argument stays unsupported
 RCTRACE = {"shell_i_rcfile_traced": "set -x\n", "shell_i_rcfile_untraced": "set -x\nset +x\n"}  # bash runs the -i rcfile in the shell that then runs the program: tracing the rcfile leaves on traces it
-X, XE, XG = "tools/scripts/zz_synthetic_set.sh", "tools/scripts/zz_synthetic_set_e.sh", "tools/scripts/zz_synthetic_outer.sh"
+X, XE, XG, XR = "tools/scripts/zz_synthetic_set.sh", "tools/scripts/zz_synthetic_set_e.sh", "tools/scripts/zz_synthetic_outer.sh", "tools/scripts/zz_synthetic_reset.sh"
 SOURCED = {  # (run, {sourced file: text}, mint() keywords[, workflow, anchor]): source and . leave options in the caller, as a set at that line would; a subshell keeps them
     "sourced_trace": ("source " + X + "\n" + RUN_MINT, {X: "set -x\n"}, {}), "sourced_dot_trace": (". " + X + "\n" + RUN_MINT, {X: "set -x\n"}, {}),
     "sourced_nested_trace": ("source " + XG + "\n" + RUN_MINT, {XG: "source " + X + "\n", X: "set -x\n"}, {}), "sourced_function_trace": ("source " + X + "\n" + RUN_MINT, {X: "trace_on() { set -x; }\n"}, {}),
@@ -115,6 +120,24 @@ SOURCED = {  # (run, {sourced file: text}, mint() keywords[, workflow, anchor]):
     "sourced_trace_off": ("source " + X + "\n" + RUN_MINT, {X: "set -x\nset +x\n"}, {}), "sourced_subshell": ("( source " + X + " )\n" + RUN_MINT, {X: "set -x\n"}, {}),
     "sourced_after_registration": (RUN_MINT, {X: "set -x\n"}, {"before": SAFE + "\nsource " + X}), "sourced_errexit_restored": (RUN_MINT, {XE: "set +e\n"}, {"head": STRICT + "source " + XE + "\nset -e\n"}),
     "sourced_errexit_window": (RUN_MINT, {XE: "probe() {\nset +e\nfalse\nset -e\n}\n"}, {"head": STRICT + "source " + XE + "\n"}), "sourced_caller_untraces": ("source " + X + "\nset +x\n" + RUN_MINT, {X: "set -x\n"}, {}, *LINK)}
+CONDRET, RELAXED = '[[ -n "${HOME:-}" ]] && return 0\n', STRICT + "source " + XE + "\n"  # a return bash may run; the mint head after a sourced set +e
+SOURCED.update({  # a sourced file leaves the options in force at each return it runs in its own shell, and at its end; a later file that resets an option on every path restores it
+    "sourced_return_trace": ("source " + X + "\n" + RUN_MINT, {X: "set -x\nreturn 0\nset +x\n"}, {}), "sourced_cond_return_trace": ("source " + X + "\n" + RUN_MINT, {X: "set -x\n" + CONDRET + "set +x\n"}, {}),
+    "sourced_case_return_trace": ("source " + X + "\n" + RUN_MINT, {X: 'set -x\ncase "${HOME:-}" in (*) return 0;; esac\nset +x\n'}, {}), "rc_return_trace": ("bash --rcfile " + X + " -ic '" + RUN_MINT + "'", {X: "set -x\n" + CONDRET + "set +x\n"}, {}),
+    "sourced_case_paren_trace": ("source " + X + "\n" + RUN_MINT, {X: 'case "${HOME:-}" in (*) set -x;; esac\n'}, {}), "sourced_return_errexit": (RUN_MINT, {XE: "set +e\nreturn 0\nset -e\n"}, {"head": RELAXED}),  # a case arm written with a leading ( runs in the case's shell
+    "sourced_errexit_reset": (RUN_MINT, {XE: "set +e\n", XR: "set -e\n"}, {"head": RELAXED + "source " + XR + "\n"}), "sourced_trace_reset": ("source " + X + "\nsource " + XR + "\n" + RUN_MINT, {X: "set -x\n", XR: "set +x\n"}, {}),
+    "sourced_return_elsewhere": ("source " + X + "\n" + RUN_MINT, {X: 'set -x\n( return 0 )\nv="$(return 0)"\ntrue | return 0\nreturn 0 &\nset +x\n'}, {}), "sourced_nested_return": ("source " + XG + "\n" + RUN_MINT, {XG: "source " + X + "\nset +x\n", X: "set -x\nreturn 0\n"}, {}),  # controls: a return in another shell, or one that ends only the inner file
+    "sourced_reset_guarded": (RUN_MINT, {XE: "set +e\n", XR: 'if [[ -n "${HOME:-}" ]]; then set -e; fi\n'}, {"head": RELAXED + "source " + XR + "\n"}), "sourced_reset_after_return": (RUN_MINT, {XE: "set +e\n", XR: CONDRET + "set -e\n"}, {"head": RELAXED + "source " + XR + "\n"}),
+    "sourced_reset_cond_source": (RUN_MINT, {XE: "set +e\n", XR: "set -e\n"}, {"head": RELAXED + 'if [[ -n "${HOME:-}" ]]; then source ' + XR + "; fi\n"}), "sourced_untrace_after_return": ("source " + X + "\nsource " + XR + "\n" + RUN_MINT, {X: "set -x\n", XR: CONDRET + "set +x\n"}, {})})  # a reset bash may skip restores nothing
+FNTRACE, FNRELAX = "trace_on() { set -x; }\n", "relax() { set +e; }\n"  # functions a sourced file leaves defined in its caller
+SOURCED.update({  # a function a sourced file defines may change an option at any later call, so no later inline or sourced reset restores it; an unparsable file may define one
+    "sourced_function_inline_reset": ("source " + X + "\nset +x\ntrace_on\n" + RUN_MINT, {X: FNTRACE}, {}), "sourced_function_trace_reset": ("source " + X + "\nsource " + XR + "\ntrace_on\n" + RUN_MINT, {X: FNTRACE, XR: "set +x\n"}, {}),
+    "sourced_function_errexit_reset": (RUN_MINT, {XE: FNRELAX, XR: "set -e\n"}, {"head": RELAXED + "source " + XR + "\nrelax\n"}), "sourced_function_called_in_reset": (RUN_MINT, {XE: FNRELAX, XR: "set -e\nrelax\n"}, {"head": RELAXED + "source " + XR + "\n"}),
+    "sourced_nested_function_reset": ("source " + XG + "\nset +x\ntrace_on\n" + RUN_MINT, {XG: "source " + X + "\n", X: FNTRACE}, {}),
+    "sourced_nested_function_errexit": (RUN_MINT, {XG: "source " + XE + "\n", XE: FNRELAX, XR: "set -e\n"}, {"head": STRICT + "source " + XG + "\nsource " + XR + "\nrelax\n"}), "sourced_unparsable_reset": ("source " + X + "\nset +x\n" + RUN_MINT, {X: "echo 'unterminated\n"}, {}),
+    "same_file_function_reset": (FNTRACE + "set +x\ntrace_on\n" + RUN_MINT, {}, {}),  # controls: a function defined in the run itself, already wide there;
+    "sourced_subshell_function": ("source " + X + "\nset +x\n" + RUN_MINT, {X: "( trace_on() { set -x; }; trace_on )\nset -x\n"}, {}),  # a function a sourced file defines in a subshell is gone when it ends,
+    "sourced_errexit_window_restored": (RUN_MINT, {XE: "probe() {\nset +e\nfalse\nset -e\n}\nset +e\n"}, {"head": STRICT + "source " + XE + "\nset -e\n"})})  # and one that restores errexit adds nothing: the caller's reset of the file's own set holds
 TRACE = {  # (shell, run[, job]): xtrace on at a fail-closed registration; run-text tracing in a job the guard leaves open
     "trace_shell": ("bash -x {0}", "source " + MINT_SH), "trace_env": ("", "SHELLOPTS=xtrace " + RUN_MINT),
     "trace_bash_x": ("", "bash -x " + MINT_SH, *LINK), "trace_set_x": ("", "set -x\nsource " + MINT_SH, *LINK),
@@ -122,6 +145,11 @@ TRACE = {  # (shell, run[, job]): xtrace on at a fail-closed registration; run-t
 NOEXT = {  # (#! line, run, mode) for a credential file without a shell suffix
     "noext_source": ("", "source " + INC, 0o644), "noext_exec": ("", "./" + INC, 0o755), "noext_data": ("", "./" + INC, 0o644),
     "noext_python": ("#!/usr/bin/env python3\n", "./" + INC, 0o755)}
+ELF, CERTS, BIG = b"\x7fELF\x02\x01\x01\x00", "./bin/cordumctl generate-certs --dir ./certs\n", 300 * 1024  # BIG: over the scanner's 256 KiB MAX_BYTES
+NATIVE = {  # (first bytes of an oversized bin/cordumctl, run step): three demo workflows exec it for generate-certs; only a native executable on an exec edge is skipped
+    "native_elf": (ELF, ""), "native_pe": (b"MZ\x90\x00\x03\x00", ""), "native_macho": (b"\xcf\xfa\xed\xfe\x07\x00\x00\x01", ""), "native_fat": (b"\xca\xfe\xba\xbe\x00\x00\x00\x02", ""),
+    "native_source": (ELF, CERTS + "source bin/cordumctl"), "native_bash": (ELF, "bash bin/cordumctl"), "native_then_mint": (ELF, CERTS + RUN_MINT), "native_unreadable": (ELF, ""),
+    "native_late_nul": (b"MZ synthetic\n\x00", ""), "native_no_magic": (b"true\x00\n", ""), "native_script": (b"#!/usr/bin/env bash\n", "")}  # late_nul: bash runs a file whose first line has no NUL
 def edit(rel, old, new):
     text = (root / rel).read_bytes().decode("utf-8")
     if text.count(old) != 1: raise SystemExit(case + ": fixture anchor is not unique in " + rel)
@@ -162,7 +190,8 @@ elif case == "nonce_bypass_removed":
     edit(EDGE, '          CORDUM_EDGE_E2E_BYPASS_HOOK: "1"\n', "")
 elif case == "nonce_bypass_overridden":
     edit(EDGE, "run: bash tools/scripts/edge_fake_hook_e2e.sh", "run: CORDUM_EDGE_E2E_BYPASS_HOOK=0 bash tools/scripts/edge_fake_hook_e2e.sh")
-elif case == "quickstart_unseeded":
+elif case == "quickstart_unseeded" or case in QUICKSTART:
+    edit("tools/scripts/quickstart.sh", *QUICKSTART[case]) if case in QUICKSTART else None
     step("bash tools/scripts/quickstart.sh --skip-build", *LINK)
 elif case in SOURCED:
     mint(**{"before": SAFE, **SOURCED[case][2]}); [write(rel, body) for rel, body in SOURCED[case][1].items()]  # noqa: E702
@@ -208,6 +237,19 @@ elif case == "edge_oversize":
     step("bash tools/scripts/zz_synthetic_big.sh")
 elif case == "edge_missing":
     step("bash tools/scripts/zz_synthetic_missing.sh")
+elif case in NATIVE:  # NUL padding keeps a binary head binary; a text head gets text padding
+    first, path = NATIVE[case][0], root / "bin/cordumctl"
+    path.parent.mkdir(exist_ok=True)
+    path.write_bytes(first + (b"\x00" * BIG if b"\x00" in first else b"# synthetic padding line\n" * (BIG // 25)))
+    if case == "native_unreadable":  # an unreadable file stays oversized; skipped where chmod cannot hide it (Windows, root)
+        os.chmod(path, 0)
+        if os.access(path, os.R_OK): raise SystemExit(3)
+    if case == "native_then_mint": mint()
+    if NATIVE[case][1]: step(NATIVE[case][1])
+elif case == "exec_missing":
+    step("./tools/scripts/zz_synthetic_missing.sh")
+elif case == "exec_dynamic":
+    step("./tools/scripts/${SYNTHETIC_UNSET_NAME}.sh")
 elif case == "edge_depth":
     for depth in range(16):
         script("zz_synthetic_depth_%d.sh" % depth, "bash tools/scripts/zz_synthetic_depth_%d.sh" % (depth + 1) if depth < 15 else "true")
@@ -281,6 +323,9 @@ noext_source noext_exec e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz
 mint_make e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 make_errexit make_line_errexit e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@Makefile
 inline_redirect_first e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
+edge_redir_env edge_redir_timeout edge_redir_assign edge_redir_assign_spaced edge_redir_two e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
+ctl_env_assign ctl_redir_bash ctl_assign_redir ctl_plain_exec e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
+ctl_redir_dyn_wrapper e2e.yml:e2e-tls:SOURCE_DYNAMIC
 mint_untracked_job docs-linkcheck.yml:link-check:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 mint_inline shell_c_stdin shell_c_option shell_c_dashdash e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED
 errexit_redirect_tested errexit_redirect_assign errexit_redirect_spaced e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
@@ -295,11 +340,19 @@ shell_i_rcfile_traced e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@.github
 sourced_trace sourced_dot_trace sourced_nested_trace sourced_function_trace sourced_in_function sourced_unparsable sourced_own_trace rc_sources_trace rc_trace_script e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 sourced_own_errexit e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 sourced_trace_off sourced_subshell sourced_after_registration sourced_errexit_restored sourced_errexit_window sourced_caller_untraces clean
+sourced_return_trace sourced_cond_return_trace sourced_case_return_trace rc_return_trace sourced_case_paren_trace sourced_untrace_after_return e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
+sourced_return_errexit sourced_reset_guarded sourced_reset_after_return sourced_reset_cond_source e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
+sourced_errexit_reset sourced_trace_reset sourced_return_elsewhere sourced_nested_return clean
+sourced_function_inline_reset sourced_function_trace_reset sourced_nested_function_reset sourced_unparsable_reset same_file_function_reset e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
+sourced_function_errexit_reset sourced_function_called_in_reset sourced_nested_function_errexit e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
+sourced_subshell_function sourced_errexit_window_restored clean
 gen_openssl gen_uuidgen gen_urandom gen_random gen_date gen_python gen_quoted_paren errexit_substitution mask_captured mask_env_captured e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_gen.sh
 gen_nested mask_fd_captured clean
 nonce_bypass_removed edge-fake-hook-e2e.yml:edge-fake-hook-e2e:CREDENTIAL_UNREGISTERED@tools/scripts/edge_fake_hook_e2e.sh
 nonce_bypass_overridden edge-fake-hook-e2e.yml:edge-fake-hook-e2e:CREDENTIAL_UNREGISTERED@tools/scripts/edge_fake_hook_e2e.sh
-quickstart_unseeded docs-linkcheck.yml:link-check:CREDENTIAL_UNREGISTERED@tools/scripts/quickstart.sh
+quickstart_unseeded clean
+quickstart_api_key_unmasked quickstart_redis_unmasked docs-linkcheck.yml:link-check:CREDENTIAL_UNREGISTERED@tools/scripts/quickstart.sh
+quickstart_prefix_printed docs-linkcheck.yml:link-check:CREDENTIAL_PREFIX_PRINT@tools/scripts/quickstart.sh
 dyn_var dyn_c dyn_c_prefixed dyn_heredoc dyn_pipe dyn_eval dyn_make dyn_source dyn_procsub dyn_wrapper dyn_cmdword dyn_stdin_s e2e.yml:e2e-tls:SOURCE_DYNAMIC
 dyn_script e2e.yml:e2e-tls:SOURCE_DYNAMIC@tools/scripts/zz_synthetic_dyn.sh
 uses_local e2e.yml:e2e-tls:SOURCE_DYNAMIC@.github/workflows/e2e.yml
@@ -310,6 +363,12 @@ edge_escape e2e.yml:e2e-tls:SOURCE_ESCAPE
 edge_symlink e2e.yml:e2e-tls:SOURCE_SYMLINK
 edge_oversize e2e.yml:e2e-tls:SOURCE_OVERSIZE
 edge_missing e2e.yml:e2e-tls:SOURCE_MISSING
+native_elf native_pe native_macho native_fat clean
+native_source native_bash e2e.yml:e2e-tls:SOURCE_OVERSIZE
+native_late_nul native_no_magic native_script native_unreadable demo-mock-bank-e2e.yml:demo-mock-bank-e2e:SOURCE_OVERSIZE
+native_then_mint e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
+exec_missing e2e.yml:e2e-tls:SOURCE_MISSING
+exec_dynamic e2e.yml:e2e-tls:SOURCE_DYNAMIC
 edge_depth e2e.yml:e2e-tls:SOURCE_LIMIT
 CASES
 

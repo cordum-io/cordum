@@ -9,6 +9,8 @@ package gateway
 // production seam is involved:
 //   - CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE=true is set before boot, because
 //     wireActionGatePipeline reads it once;
+//   - CORDUM_MCP_TAINT_FAILCLOSED_APPROVER=true is set before boot too, so the
+//     fail-closed call is held for an approver instead of denied;
 //   - the tool agr_delete_record matches the MCPGate's default destructive glob
 //     *delete*, and RequiresApproval=false keeps the registry approval gate out;
 //   - the session-taint key mcp:taint:default:<session> holds a Redis hash, so
@@ -45,10 +47,9 @@ import (
 )
 
 const (
-	agrToolName  = "agr_delete_record"
-	agrAgentID   = "agent-agr-alice"
-	agrSessionID = "agr-sess-1"
-	agrTenant    = "default"
+	agrToolName = "agr_delete_record"
+	agrAgentID  = "agent-agr-alice"
+	agrTenant   = "default"
 	// agrInvariantDeny is a SecOps invariant bundle that hard-denies the tool.
 	agrInvariantDeny = `version: "1"
 rules:
@@ -101,6 +102,8 @@ type agrHarness struct {
 	calls  atomic.Int64
 	sawRef atomic.Int64
 	rpcID  atomic.Int64
+	// sessionID is the SSE session agr-alice opened; every MCP call names it.
+	sessionID string
 }
 
 // agrNewServer boots the HTTP MCP routes as production does with the policy
@@ -108,6 +111,7 @@ type agrHarness struct {
 func agrNewServer(t *testing.T) *agrHarness {
 	t.Helper()
 	t.Setenv("CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE", "true")
+	t.Setenv("CORDUM_MCP_TAINT_FAILCLOSED_APPROVER", "true")
 	t.Setenv(mcp.TaintBackendEnvVar, "redis")
 	t.Setenv(mcp.DedupeBackendEnvVar, "redis")
 	s, _, _ := newTestGateway(t)
@@ -129,9 +133,10 @@ func agrNewServer(t *testing.T) *agrHarness {
 	}
 	mux.HandleFunc("POST /api/v1/edge/approvals/{approval_ref}/approve", s.handleApproveEdgeApproval)
 	h.registerTool(t)
-	h.poisonTaintLookup(t)
 	h.srv = httptest.NewServer(apiKeyMiddleware(s.auth, mux))
 	t.Cleanup(h.srv.Close)
+	h.sessionID = openMCPSSE(t, h.srv.URL, "key-agr-alice", "")
+	h.poisonTaintLookup(t)
 	return h
 }
 
@@ -189,11 +194,11 @@ func agrDeleted(args json.RawMessage) string {
 func (h *agrHarness) poisonTaintLookup(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
-	key := mcp.MCPTaintKeyPrefix + agrTenant + ":" + agrSessionID
+	key := mcp.MCPTaintKeyPrefix + agrTenant + ":" + h.sessionID
 	if err := h.redis.HSet(ctx, key, "poison", "wrongtype").Err(); err != nil {
 		t.Fatalf("poison taint key: %v", err)
 	}
-	if _, _, err := mcp.NewRedisTaintStore(h.redis, time.Minute).GetTaint(ctx, agrTenant, agrSessionID); err == nil {
+	if _, _, err := mcp.NewRedisTaintStore(h.redis, time.Minute).GetTaint(ctx, agrTenant, h.sessionID); err == nil {
 		t.Fatal("taint lookup succeeded; want the WRONGTYPE failure that drives the MCPGate hold")
 	}
 }
@@ -208,12 +213,12 @@ func (h *agrHarness) post(key, path, body string, mcpCall bool) (*http.Response,
 	req.Header.Set("X-Tenant-ID", agrTenant)
 	if mcpCall {
 		req.Header.Set("X-Agent-Id", agrAgentID)
-		req.Header.Set("X-MCP-Session-ID", agrSessionID)
+		req.Header.Set("X-MCP-Session-ID", h.sessionID)
 	}
 	return h.client.Do(req)
 }
 
-// call issues tools/call for the tool as agr-alice on agrSessionID.
+// call issues tools/call for the tool as agr-alice on h.sessionID.
 // Goroutine-safe: reports with t.Errorf.
 func (h *agrHarness) call(t *testing.T, args string) agrReply {
 	t.Helper()
@@ -300,7 +305,7 @@ func (h *agrHarness) approval(t *testing.T, ref string) *edge.EdgeApproval {
 func (h *agrHarness) events(t *testing.T, kind edge.EventKind) []edge.AgentActionEvent {
 	t.Helper()
 	page, err := h.store.ListEvents(context.Background(), edge.ListEventsQuery{
-		TenantID: agrTenant, SessionID: agrSessionID, ExecutionID: "mcp-" + agrSessionID, Kind: kind, Limit: 50,
+		TenantID: agrTenant, SessionID: h.sessionID, ExecutionID: "mcp-" + h.sessionID, Kind: kind, Limit: 50,
 	})
 	if err != nil {
 		t.Fatalf("ListEvents(%s): %v", kind, err)
@@ -448,9 +453,7 @@ func (h *agrHarness) invariantDeniesResume(t *testing.T, args string) {
 	restore := h.addInvariantDeny(t)
 	defer restore()
 	before := h.calls.Load()
-	if r := h.resume(t, args, ref); r.Error == nil || !strings.Contains(string(r.Error.Data), "denied by invariant") {
-		t.Fatalf("resume under an invariant DENY = %s; want an invariant-deny error", r)
-	}
+	h.requireInvariantDeny(t, "agr-inv-deny-delete", func() agrReply { return h.resume(t, args, ref) })
 	if n := h.calls.Load(); n != before {
 		t.Fatalf("tool executions = %d, want %d", n, before)
 	}
@@ -517,8 +520,7 @@ func TestActionGateInvariantScopeFloor(t *testing.T) {
 	t.Run("b_resume", func(t *testing.T) { h.scopeDeniesResume(t, calls["agr_delete_scoped"]) })
 	t.Run("c_allow_scope", func(t *testing.T) {
 		defer h.denyScope(t, "agr_records")()
-		r := h.callTool(t, "agr_get_scoped", `{"record":"scope-c"}`)
-		agrRequireInvariantDeny(t, r)
+		h.requireInvariantDeny(t, "agr-scope-deny", func() agrReply { return h.callTool(t, "agr_get_scoped", `{"record":"scope-c"}`) })
 		if n := calls["agr_get_scoped"].Load(); n != 0 {
 			t.Errorf("scoped ALLOW executed %d times, want 0", n)
 		}
@@ -527,7 +529,7 @@ func TestActionGateInvariantScopeFloor(t *testing.T) {
 		defer h.denyScope(t, mcpPolicyServerName)()
 		for _, name := range []string{"agr_get_plain", "agr_get_scoped"} {
 			before := calls[name].Load()
-			agrRequireInvariantDeny(t, h.callTool(t, name, `{"record":"scope-d"}`))
+			h.requireInvariantDeny(t, "agr-scope-deny", func() agrReply { return h.callTool(t, name, `{"record":"scope-d"}`) })
 			if n := calls[name].Load(); n != before {
 				t.Errorf("%s executed under server deny: %d -> %d", name, before, n)
 			}
@@ -571,10 +573,22 @@ func (h *agrHarness) denyScope(t *testing.T, scope string) func() {
 	return h.addInvariant(t, bundle, mcp.Tool{ApprovalScope: scope})
 }
 
-func agrRequireInvariantDeny(t *testing.T, reply agrReply) {
+// requireInvariantDeny runs call and asserts it is answered like an
+// action-gate DENY: an isError result ending "(invariant <ruleID>)", not a
+// JSON-RPC error, and one new mcp.tool.failed event, blocked with decision deny.
+func (h *agrHarness) requireInvariantDeny(t *testing.T, ruleID string, call func() agrReply) {
 	t.Helper()
-	if reply.Error == nil || !strings.Contains(string(reply.Error.Data), "denied by invariant") || reply.Result != nil {
-		t.Errorf("got %s; want invariant denial with no pending result", reply)
+	before := len(h.events(t, edge.EventKindMCPToolFailed))
+	reply := call()
+	if reply.Error != nil || reply.Result == nil || !reply.Result.IsError || !strings.HasSuffix(reply.text(), "(invariant "+ruleID+")") {
+		t.Errorf("got %s; want an isError result ending (invariant %s)", reply, ruleID)
+	}
+	failed := h.events(t, edge.EventKindMCPToolFailed)
+	if len(failed) != before+1 {
+		t.Fatalf("mcp.tool.failed events = %d, want %d", len(failed), before+1)
+	}
+	if last := failed[len(failed)-1]; last.Status != edge.ActionStatusBlocked || last.Decision != edge.DecisionDeny {
+		t.Errorf("newest mcp.tool.failed = status %q decision %q; want blocked deny", last.Status, last.Decision)
 	}
 }
 
@@ -582,7 +596,7 @@ func (h *agrHarness) scopeDeniesMint(t *testing.T, calls *atomic.Int64) {
 	t.Helper()
 	defer h.denyScope(t, "agr_records")()
 	before := pgApprovalCount(t, h.store, agrTenant)
-	agrRequireInvariantDeny(t, h.callTool(t, "agr_delete_scoped", `{"record":"scope-a"}`))
+	h.requireInvariantDeny(t, "agr-scope-deny", func() agrReply { return h.callTool(t, "agr_delete_scoped", `{"record":"scope-a"}`) })
 	if n := pgApprovalCount(t, h.store, agrTenant); n != before {
 		t.Errorf("approvals = %d, want %d (no mint)", n, before)
 	}
@@ -596,7 +610,7 @@ func (h *agrHarness) scopeDeniesResume(t *testing.T, calls *atomic.Int64) {
 	const args = `{"record":"scope-b"}`
 	ref := h.heldAndApprovedTool(t, "agr_delete_scoped", args)
 	defer h.denyScope(t, "agr_records")()
-	agrRequireInvariantDeny(t, h.resumeTool(t, "agr_delete_scoped", args, ref))
+	h.requireInvariantDeny(t, "agr-scope-deny", func() agrReply { return h.resumeTool(t, "agr_delete_scoped", args, ref) })
 	if n := calls.Load(); n != 0 {
 		t.Errorf("executions = %d, want 0", n)
 	}

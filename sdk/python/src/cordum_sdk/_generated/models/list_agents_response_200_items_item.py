@@ -28,7 +28,15 @@ class ListAgentsResponse200ItemsItem:
         risk_tier (Union[Unset, str]):
         allowed_topics (Union[Unset, List[str]]):
         allowed_pools (Union[Unset, List[str]]):
+        allowed_servers (Union[Unset, List[str]]): MCP server-name glob allowlist. Empty or omitted fail-closes server-
+            guarded MCP actions.
         allowed_tools (Union[Unset, List[str]]):
+        allowed_resources (Union[Unset, List[str]]): cordum:// resource URI glob allowlist. Empty or omitted fail-closes
+            resource-guarded MCP actions.
+        entitlements (Union[Unset, List[str]]): Capability tokens the identity holds for MCP required-entitlement
+            checks.
+        preapproved_mutating_tools (Union[Unset, List[str]]): Mutating MCP tool names/globs this identity may call
+            without human approval. Empty or omitted requires approval for every mutating tool.
         data_classifications (Union[Unset, List[str]]):
         status (Union[Unset, str]):
         created_at (Union[Unset, str]):
@@ -44,7 +52,11 @@ class ListAgentsResponse200ItemsItem:
     risk_tier: Union[Unset, str] = UNSET
     allowed_topics: Union[Unset, List[str]] = UNSET
     allowed_pools: Union[Unset, List[str]] = UNSET
+    allowed_servers: Union[Unset, List[str]] = UNSET
     allowed_tools: Union[Unset, List[str]] = UNSET
+    allowed_resources: Union[Unset, List[str]] = UNSET
+    entitlements: Union[Unset, List[str]] = UNSET
+    preapproved_mutating_tools: Union[Unset, List[str]] = UNSET
     data_classifications: Union[Unset, List[str]] = UNSET
     status: Union[Unset, str] = UNSET
     created_at: Union[Unset, str] = UNSET
@@ -73,9 +85,25 @@ class ListAgentsResponse200ItemsItem:
         if not isinstance(self.allowed_pools, Unset):
             allowed_pools = self.allowed_pools
 
+        allowed_servers: Union[Unset, List[str]] = UNSET
+        if not isinstance(self.allowed_servers, Unset):
+            allowed_servers = self.allowed_servers
+
         allowed_tools: Union[Unset, List[str]] = UNSET
         if not isinstance(self.allowed_tools, Unset):
             allowed_tools = self.allowed_tools
+
+        allowed_resources: Union[Unset, List[str]] = UNSET
+        if not isinstance(self.allowed_resources, Unset):
+            allowed_resources = self.allowed_resources
+
+        entitlements: Union[Unset, List[str]] = UNSET
+        if not isinstance(self.entitlements, Unset):
+            entitlements = self.entitlements
+
+        preapproved_mutating_tools: Union[Unset, List[str]] = UNSET
+        if not isinstance(self.preapproved_mutating_tools, Unset):
+            preapproved_mutating_tools = self.preapproved_mutating_tools
 
         data_classifications: Union[Unset, List[str]] = UNSET
         if not isinstance(self.data_classifications, Unset):
@@ -108,8 +136,16 @@ class ListAgentsResponse200ItemsItem:
             field_dict["allowed_topics"] = allowed_topics
         if allowed_pools is not UNSET:
             field_dict["allowed_pools"] = allowed_pools
+        if allowed_servers is not UNSET:
+            field_dict["allowed_servers"] = allowed_servers
         if allowed_tools is not UNSET:
             field_dict["allowed_tools"] = allowed_tools
+        if allowed_resources is not UNSET:
+            field_dict["allowed_resources"] = allowed_resources
+        if entitlements is not UNSET:
+            field_dict["entitlements"] = entitlements
+        if preapproved_mutating_tools is not UNSET:
+            field_dict["preapproved_mutating_tools"] = preapproved_mutating_tools
         if data_classifications is not UNSET:
             field_dict["data_classifications"] = data_classifications
         if status is not UNSET:
@@ -142,7 +178,15 @@ class ListAgentsResponse200ItemsItem:
 
         allowed_pools = cast(List[str], d.pop("allowed_pools", UNSET))
 
+        allowed_servers = cast(List[str], d.pop("allowed_servers", UNSET))
+
         allowed_tools = cast(List[str], d.pop("allowed_tools", UNSET))
+
+        allowed_resources = cast(List[str], d.pop("allowed_resources", UNSET))
+
+        entitlements = cast(List[str], d.pop("entitlements", UNSET))
+
+        preapproved_mutating_tools = cast(List[str], d.pop("preapproved_mutating_tools", UNSET))
 
         data_classifications = cast(List[str], d.pop("data_classifications", UNSET))
 
@@ -163,7 +207,11 @@ class ListAgentsResponse200ItemsItem:
             risk_tier=risk_tier,
             allowed_topics=allowed_topics,
             allowed_pools=allowed_pools,
+            allowed_servers=allowed_servers,
             allowed_tools=allowed_tools,
+            allowed_resources=allowed_resources,
+            entitlements=entitlements,
+            preapproved_mutating_tools=preapproved_mutating_tools,
             data_classifications=data_classifications,
             status=status,
             created_at=created_at,

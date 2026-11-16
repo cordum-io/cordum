@@ -265,3 +265,14 @@ func ruleIDs(rs []config.PolicyRule) []string {
 	}
 	return out
 }
+
+func TestInvariantBlockIsPrependedLikeDeny(t *testing.T) {
+	base := &config.SafetyPolicy{Rules: []config.PolicyRule{{
+		ID: "tenant-allow", Match: config.PolicyMatch{Tenants: []string{"acme"}}, Decision: "allow",
+	}}}
+	inv := &config.SafetyPolicy{Rules: []config.PolicyRule{{ID: "inv-block", Decision: "block"}}}
+	merged := ApplyInvariants(base, inv)
+	if got := ruleIDs(merged.Rules); len(got) != 2 || got[0] != "inv-block" {
+		t.Fatalf("block invariant must be prepended before the tenant allow; got %v", got)
+	}
+}

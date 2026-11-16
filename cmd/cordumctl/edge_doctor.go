@@ -28,6 +28,8 @@ type edgeDoctorEnv struct {
 	agentdURL           string
 	settingsPath        string
 	managedSettingsPath string
+	mcpGatewayURL       string
+	copilotHooksPath    string
 	dashboardURL        string
 	lookPath            func(string) (string, error)
 	statFile            func(string) (os.FileInfo, error)
@@ -44,6 +46,8 @@ type edgeDoctorOptions struct {
 	agentdURL           string
 	settingsPath        string
 	managedSettingsPath string
+	mcpGatewayURL       string
+	copilotHooksPath    string
 	dashboardURL        string
 }
 
@@ -73,6 +77,8 @@ func runEdgeDoctorCmd(args []string, stdout, stderr io.Writer) int {
 	agentdURL := fs.String("agentd-url", firstEnvDefault(defaultEdgeAgentdURL, "CORDUM_AGENTD_URL", "CORDUM_AGENTD_SOCKET"), "local cordum-agentd hook URL")
 	settingsPath := fs.String("settings-path", firstEnvDefault(defaultClaudeSettingsPath(), "CORDUM_EDGE_SETTINGS_PATH", "CLAUDE_SETTINGS_PATH"), "Claude settings.json path to validate")
 	managedSettingsPath := fs.String("managed-settings-path", firstEnv("CORDUM_EDGE_MANAGED_SETTINGS_PATH"), "managed-settings.json path for the managed_settings_compliance check (empty = skip)")
+	mcpGatewayURL := fs.String("mcp-gateway-url", "", "independent trusted MCP gateway endpoint for managed-settings verification")
+	copilotHooksPath := fs.String("copilot-hooks-path", firstEnv("CORDUM_EDGE_COPILOT_HOOKS_PATH"), "GitHub Copilot hooks file that runs cordum-hook copilot, for the copilot_hooks check (empty = skip)")
 	dashboardURL := fs.String("dashboard-url", firstEnv("CORDUM_EDGE_DASHBOARD_URL", "CORDUM_DASHBOARD_URL"), "dashboard URL to probe")
 	shadowCluster, shadowCI := registerEdgeDoctorShadowFlags(fs.FlagSet)
 	fs.ParseArgs(args)
@@ -90,6 +96,8 @@ func runEdgeDoctorCmd(args []string, stdout, stderr io.Writer) int {
 		agentdURL:           *agentdURL,
 		settingsPath:        *settingsPath,
 		managedSettingsPath: *managedSettingsPath,
+		mcpGatewayURL:       *mcpGatewayURL,
+		copilotHooksPath:    *copilotHooksPath,
 		dashboardURL:        *dashboardURL,
 	})
 	if err != nil {
@@ -163,6 +171,8 @@ func buildEdgeDoctorEnv(fs *flagSet, opts edgeDoctorOptions) (*edgeDoctorEnv, er
 		agentdURL:           strings.TrimSpace(opts.agentdURL),
 		settingsPath:        strings.TrimSpace(opts.settingsPath),
 		managedSettingsPath: strings.TrimSpace(opts.managedSettingsPath),
+		mcpGatewayURL:       strings.TrimSpace(opts.mcpGatewayURL),
+		copilotHooksPath:    strings.TrimSpace(opts.copilotHooksPath),
 		dashboardURL:        strings.TrimSpace(opts.dashboardURL),
 		lookPath:            exec.LookPath,
 		statFile:            os.Stat,
@@ -178,6 +188,7 @@ func defaultEdgeDoctorChecks() []edgeDoctorCheck {
 		{id: "safety_kernel_gateway", label: "Safety Kernel via Gateway", run: edgeCheckSafetyKernelViaGateway},
 		{id: "edge_sessions_api", label: "Edge sessions API", run: edgeCheckSessionsAPI},
 		{id: "claude_binary", label: "Claude binary", run: edgeCheckClaudeBinary},
+		{id: "claude_code_version", label: "Claude Code version", run: edgeCheckClaudeCodeVersion},
 		{id: "cordum_hook_binary", label: "cordum-hook binary", run: edgeCheckHookBinary},
 		{id: "cordum_agentd_binary", label: "cordum-agentd binary", run: edgeCheckAgentdBinary},
 		{id: "generated_settings", label: "Generated settings", run: edgeCheckGeneratedSettings},
@@ -186,6 +197,7 @@ func defaultEdgeDoctorChecks() []edgeDoctorCheck {
 		{id: "dashboard_reachable", label: "Dashboard reachable", run: edgeCheckDashboardReachable},
 		{id: "policy_mode_implications", label: "Policy mode implications", run: edgeCheckPolicyMode},
 		{id: "managed_settings_compliance", label: "Managed settings compliance", run: edgeCheckManagedSettings},
+		{id: "copilot_hooks", label: "Copilot hooks", run: edgeCheckCopilotHooks},
 	}
 }
 

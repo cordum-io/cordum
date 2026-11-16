@@ -116,7 +116,6 @@ services:
       - NATS_TLS_CERT=/etc/cordum/tls/client/tls.crt
       - NATS_TLS_KEY=/etc/cordum/tls/client/tls.key
       - NATS_TLS_SERVER_NAME=nats
-      - NATS_TOKEN=${NATS_TOKEN:-cordum-dev-token}
       - REDIS_URL=rediss://:${REDIS_PASSWORD:?REDIS_PASSWORD_not_set}@redis:6379
       - REDIS_TLS_CA=/etc/cordum/tls/ca/ca.crt
       - REDIS_TLS_CERT=/etc/cordum/tls/client/tls.crt
@@ -176,7 +175,6 @@ services:
       - NATS_TLS_CERT=/etc/cordum/tls/client/tls.crt
       - NATS_TLS_KEY=/etc/cordum/tls/client/tls.key
       - NATS_TLS_SERVER_NAME=nats
-      - NATS_TOKEN=${NATS_TOKEN:-cordum-dev-token}
       # CAP runtime profile. Default "compat" keeps legacy unsigned packets,
       # string resource pointers, and configured fail-open modes reachable.
       # "production" selects CAP-PRODUCTION enforcement and refuses to start
@@ -251,7 +249,6 @@ services:
       - NATS_TLS_CERT=/etc/cordum/tls/client/tls.crt
       - NATS_TLS_KEY=/etc/cordum/tls/client/tls.key
       - NATS_TLS_SERVER_NAME=nats
-      - NATS_TOKEN=${NATS_TOKEN:-cordum-dev-token}
       # CAP runtime profile. Default "compat" keeps legacy unsigned packets,
       # string resource pointers, and configured fail-open modes reachable.
       # "production" selects CAP-PRODUCTION enforcement and refuses to start
@@ -390,7 +387,6 @@ services:
       - NATS_TLS_CERT=/etc/cordum/tls/client/tls.crt
       - NATS_TLS_KEY=/etc/cordum/tls/client/tls.key
       - NATS_TLS_SERVER_NAME=nats
-      - NATS_TOKEN=${NATS_TOKEN:-cordum-dev-token}
       - REDIS_URL=rediss://:${REDIS_PASSWORD:?REDIS_PASSWORD_not_set}@redis:6379
       - REDIS_TLS_CA=/etc/cordum/tls/ca/ca.crt
       - REDIS_TLS_CERT=/etc/cordum/tls/client/tls.crt
@@ -491,7 +487,6 @@ services:
       - NATS_TLS_CERT=/etc/cordum/tls/client/tls.crt
       - NATS_TLS_KEY=/etc/cordum/tls/client/tls.key
       - NATS_TLS_SERVER_NAME=nats
-      - NATS_TOKEN=${NATS_TOKEN:-cordum-dev-token}
       - REDIS_URL=rediss://:${REDIS_PASSWORD:-cordum-dev}@redis:6379
       - REDIS_TLS_CA=/etc/cordum/tls/ca/ca.crt
       - REDIS_TLS_CERT=/etc/cordum/tls/client/tls.crt
@@ -550,7 +545,6 @@ services:
       - NATS_TLS_CERT=/etc/cordum/tls/client/tls.crt
       - NATS_TLS_KEY=/etc/cordum/tls/client/tls.key
       - NATS_TLS_SERVER_NAME=nats
-      - NATS_TOKEN=${NATS_TOKEN:-cordum-dev-token}
       - REDIS_URL=rediss://:${REDIS_PASSWORD:-cordum-dev}@redis:6379
       - REDIS_TLS_CA=/etc/cordum/tls/ca/ca.crt
       - REDIS_TLS_CERT=/etc/cordum/tls/client/tls.crt

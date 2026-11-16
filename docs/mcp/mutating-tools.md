@@ -60,11 +60,12 @@ approval modal, and clicks **Approve** (or rejects).
 The LLM then retries the same tool call with **identical arguments** (when the
 error's `retry_hint` is `retry_with_approval_ref`, it also sends `approval_ref`
 back as `_approval_ref`; see
-[below](#when-retry_hint-is-retry_with_approval_ref)). The gateway
-canonical args hash from task-94b27344 is computed with whitespace / key-order /
-empty-field normalisation (task-2d989055 step 4), so the retry matches even if the
-LLM reformats the JSON. On the retry, the gate consumes the approval record
-atomically (CAS) and the handler runs.
+[below](#when-retry_hint-is-retry_with_approval_ref)). In the gateway's
+canonical args hash from task-94b27344 only the JSON formatting (whitespace
+between tokens) and the object key order are canonical, so the retry matches
+even if the LLM reformats the JSON. String values, empty values and nulls are
+part of the hash, so the retry must send the same values. On the retry, the
+gate consumes the approval record atomically (CAS) and the handler runs.
 
 If the operator rejects, the retry hits the rejection and returns
 `approval_rejected`. The LLM should stop rather than loop.
@@ -78,8 +79,9 @@ The flow above is the default one, where the `-32099` data carries
 (`edge_appr_…`), which differs from `approval_id`. Clients branch on
 `retry_hint`. Identical arguments alone never resume the call:
 
-1. The `approval_id` is correlation-only. Approving that request in the default
-   view of the Approvals page does not resume the call.
+1. The `approval_id` names the record the registry gate dual-writes with the
+   Edge approval. Approving or rejecting either one resolves both, and the other
+   page then answers `409`. The Edge approval is the pair's single consume token.
 2. The operator approves the Edge approval named by `approval_ref`: on the Edge
    lane of the Approvals page (`/approvals?lane=edge`), or with
    `POST /api/v1/edge/approvals/{approval_ref}/approve`.
@@ -322,7 +324,7 @@ appropriate and how to audit it.
 
 ## Audit trail fields
 
-Every mutating call produces two SIEMEvents that land on the Merkle audit chain:
+Every mutating call produces two SIEMEvents that land on the audit hash chain:
 
 1. `mcp.tool_approval(outcome=enqueued)` — emitted by the gate when it enqueues.
    Extra carries `tool_name`, `args_hash`, `approval_id`, `requester`,
@@ -380,7 +382,7 @@ Edge approval named by `approval_ref`, and step 5 adds `_approval_ref`; see
 [When `retry_hint` is `retry_with_approval_ref`](#when-retry_hint-is-retry_with_approval_ref).
 
 Claude Code surfaces: *"This tool needs approval. Open
-http://localhost:8081/approvals and approve request apr-1a2b3c"*
+http://localhost:8082/approvals and approve request apr-1a2b3c"*
 
 **Step 4.** The operator opens the dashboard's Approvals page, finds the request
 with approval ID `apr-1a2b3c`, reviews the canonical args in the modal, and clicks

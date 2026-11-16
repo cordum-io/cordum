@@ -1023,6 +1023,10 @@ var (
 	// character outside quotes, as sh reads them.
 	quotedShellText = regexp.MustCompile(`'[^']*'|"(?:[^"\\]|\\.)*"|\\.`)
 	shellComment    = regexp.MustCompile(`(^|\s)#.*$`)
+	shellWord       = regexp.MustCompile(`\S+`)
+	// shellQuoteRemoval turns a raw word into the command name sh would run
+	// for it (`"exit"`, `\exit` and `e"xi"t` are all exit).
+	shellQuoteRemoval = strings.NewReplacer(`'`, "", `"`, "", `\`, "")
 )
 
 // shellLeavers are words that let a command end the shell with status 0
@@ -1046,8 +1050,11 @@ var shellLeavers = []string{"exit", "exec", "return", ".", "source", "eval"}
 // argument can make it change nothing (`--simulate`, `-s`) or upgrade only
 // some packages. A command before it in the list that has a shellLeavers word
 // anywhere fails closed, so a prefix such as `X=1 exit 0` cannot hide one.
-// This is a token check, not a shell parser: keep the release Dockerfiles in
-// the plain `RUN apk upgrade --no-cache && apk add ...` form.
+// Each word is read from the raw text with its quotes and backslashes removed
+// (masking keeps offsets, since it replaces a span with as many bytes), so
+// quoting cannot hide one either: `"exit" 0`, `\exit 0` and `e"xi"t 0` all
+// fail closed. This is a token check, not a shell parser: keep the release
+// Dockerfiles in the plain `RUN apk upgrade --no-cache && apk add ...` form.
 //
 // Any `$`, backtick or `(` in the text fails closed, even inside quotes or a
 // comment. A command, process or parameter substitution, a subshell or a
@@ -1059,27 +1066,28 @@ func runExecutesApkUpgrade(script string) bool {
 	if strings.ContainsAny(script, "$`(") {
 		return false
 	}
-	script = quotedShellText.ReplaceAllString(script, "Q")
-	script = shellComment.ReplaceAllString(script, "")
-	if strings.ContainsAny(script, `'"`) {
+	masked := quotedShellText.ReplaceAllStringFunc(script, func(s string) string { return strings.Repeat("Q", len(s)) })
+	masked = shellComment.ReplaceAllString(masked, "")
+	if strings.ContainsAny(masked, `'"`) {
 		return false
 	}
-	commands := strings.Split(script, "&&")
+	commands := strings.Split(masked, "&&")
 	for _, command := range commands {
 		if strings.ContainsAny(command, ";|&") {
 			return false
 		}
 	}
+	start := 0
 	for _, command := range commands {
-		words := strings.Fields(command)
-		if slices.Equal(words, []string{"apk", "upgrade", "--no-cache"}) {
+		if slices.Equal(strings.Fields(command), []string{"apk", "upgrade", "--no-cache"}) {
 			return true
 		}
-		for _, word := range words {
-			if slices.Contains(shellLeavers, word) {
+		for _, span := range shellWord.FindAllStringIndex(command, -1) {
+			if slices.Contains(shellLeavers, shellQuoteRemoval.Replace(script[start+span[0]:start+span[1]])) {
 				return false
 			}
 		}
+		start += len(command) + len("&&")
 	}
 	return false
 }
@@ -1226,6 +1234,21 @@ func TestReleaseFinalStageUpgradeFixtures(t *testing.T) {
 		{
 			name:       "upgrade after an exit behind a variable assignment",
 			dockerfile: "FROM alpine:3.24\nRUN X=1 exit 0 && apk upgrade --no-cache\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade after a double-quoted exit",
+			dockerfile: "FROM alpine:3.24\nRUN \"exit\" 0 && apk upgrade --no-cache\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade after a backslash-escaped exit",
+			dockerfile: "FROM alpine:3.24\nRUN \\exit 0 && apk upgrade --no-cache\n",
+			wantErr:    true,
+		},
+		{
+			name:       "upgrade after an exit quoted mid-word",
+			dockerfile: "FROM alpine:3.24\nRUN e\"xi\"t 0 && apk upgrade --no-cache\n",
 			wantErr:    true,
 		},
 		{

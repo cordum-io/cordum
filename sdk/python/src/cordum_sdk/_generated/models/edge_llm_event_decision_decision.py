@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class EdgeLLMEventDecisionDecision(str, Enum):
     RECORD = "record"
     REDACT = "redact"

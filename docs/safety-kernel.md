@@ -45,7 +45,12 @@ Decisions are normalized to:
 - `throttle`
 - `allow_with_constraints`
 
-If constraints are present, response can be `ALLOW_WITH_CONSTRAINTS` even when decision is `allow`.
+If the matched rule has `constraints` (`budgets`, `sandbox`, `toolchain`,
+`diff`, `redaction_level`; see
+[operations/safetykernel-constraints.md](operations/safetykernel-constraints.md)),
+the response is `ALLOW_WITH_CONSTRAINTS` even when the decision is `allow`.
+Remediations (replacement topic or capability, label edits) are separate; see
+section 7.
 
 Approval binding behavior:
 
@@ -68,17 +73,32 @@ MCP policy fields:
 - `allow_resources`, `deny_resources`
 - `allow_actions`, `deny_actions`
 
-Evaluation order:
+The schema also accepts `gateway_enabled`, `upstream_servers` and
+`allowed_upstreams` under `tenants.<tenant>.mcp`. They are reserved for the
+MCP gateway (EDGE-101) and not enforced yet; the kernel logs a warning when a
+loaded policy sets them.
 
-1. Rule-level `match.mcp` (if present)
-2. Tenant-level `tenants.<tenant>.mcp`
-3. Effective runtime safety overlay (`CORDUM_EFFECTIVE_CONFIG` -> `safety.mcp`)
+A value is forbidden by a set of lists when (deny takes precedence):
 
-Within each MCP field, deny takes precedence:
+1. it is in the deny list, or
+2. the allow list is non-empty and the value is not in it.
 
-1. If value is in deny list -> deny
-2. Else if allow list is non-empty and value is not in allow list -> deny
-3. Else -> allow
+Otherwise it is permitted. The lists appear in three places, applied in this
+order:
+
+1. Rule-level `match.mcp`, while rules are matched (`config.MCPRuleMatch`).
+   These lists apply only to MCP calls: a rule with `match.mcp` lists never
+   matches a job without MCP labels. A rule whose decision is `allow` or
+   `allow_with_constraints` matches the calls the lists permit. Any other
+   decision (`deny`, `require_approval`, `throttle`) matches the calls they
+   forbid, so `deny_tools: [fs.read]` on a `deny` rule denies `fs.read` only.
+   The gateway MCP gate reads invariant rules the same way.
+2. Tenant-level `tenants.<tenant>.mcp`, after rule evaluation: a forbidden
+   call is denied.
+3. Effective runtime safety overlay (`CORDUM_EFFECTIVE_CONFIG` ->
+   `safety.mcp`): a forbidden call is denied.
+
+A request with no MCP labels passes the tenant and overlay checks.
 
 MCP list matching is case-insensitive exact match. Topic matching supports glob patterns; MCP fields do not currently use glob pattern matching.
 

@@ -64,8 +64,10 @@ func (a policyDispatcherAdapter) Dispatch(ctx context.Context, in *config.Policy
 //  3. Otherwise -32097 (mcp.ErrApprovalGateMisconfigured): without the
 //     Edge mint and Edge session metadata no resumable approval exists.
 //
-// It returns a non-empty Edge ref or an error. Scope preapproval and the
-// legacy MCP approval store's records are not consulted (task-06784e6d).
+// It returns a non-empty Edge ref or an error. On invariant DENY the error
+// is invariantDenied's *mcp.PolicyDenied, which the MCP server answers like
+// an action-gate DENY. Scope preapproval and the legacy MCP approval
+// store's records are not consulted (task-06784e6d).
 func (g *gatewayApprovalGate) ConsumeActionGateDecision(ctx context.Context, _ mcp.PolicyDecision, ctxData mcp.ToolCallApprovalContext) (string, error) {
 	if g == nil || g.store == nil {
 		return "", fmt.Errorf("mcp gate: approval store unavailable")
@@ -151,8 +153,7 @@ func (g *gatewayApprovalGate) actionGateInvariantDeny(ctx context.Context, ctxDa
 	for _, candidate := range scopes {
 		tool := mcp.Tool{Name: ctxData.Tool, ApprovalScope: candidate}
 		if rule, denied := matchMCPInvariantDeny(rules, tool, meta); denied {
-			return fmt.Errorf("%w: tool %q denied by invariant %q",
-				ErrMCPInvariantDeny, ctxData.Tool, rule.ID)
+			return invariantDenied(ctxData.Tool, rule)
 		}
 	}
 	return nil
@@ -180,6 +181,8 @@ func (g *gatewayApprovalGate) actionGateInvariantDeny(ctx context.Context, ctxDa
 // (ProcessApprovalClaim) computes. Without this match, edge.RedisStore
 // classifyApprovalClaimMismatch surfaces ApprovalConflictKindArgsMismatch
 // on every legitimate retry — the EDGE-103 reopen #1 core bug QA flagged.
+// While the same caller's approval for this call is still pending, a re-ask
+// gets that ref back instead of a new approval.
 func (g *gatewayApprovalGate) mintEdgeApprovalForActionGate(ctx context.Context, ctxData mcp.ToolCallApprovalContext) (string, error, bool) {
 	if g == nil || g.edgeStore == nil {
 		return "", nil, false
@@ -202,10 +205,10 @@ func (g *gatewayApprovalGate) mintEdgeApprovalForActionGate(ctx context.Context,
 		mcp.ToolCallParams{Name: ctxData.Tool, Arguments: ctxData.Args},
 		policySnapshot,
 	)
-	requester := strings.TrimSpace(meta.Principal)
-	if gatewayMeta, ok := MCPCallMetadataFromContext(ctx); ok {
-		requester = mcpRequesterIdentity(gatewayMeta)
+	if pending := g.pendingMCPApproval(ctx, meta, actionHash, inputHash, policySnapshot); pending != nil {
+		return pending.ApprovalRef, nil, true
 	}
+	requester, agentID := mcpCallRequester(ctx)
 	approval, err := g.edgeStore.EnqueueApproval(ctx, edge.EdgeApprovalRequest{
 		TenantID:       meta.Tenant,
 		SessionID:      meta.SessionID,
@@ -217,6 +220,7 @@ func (g *gatewayApprovalGate) mintEdgeApprovalForActionGate(ctx context.Context,
 		ActionHash:     actionHash,
 		InputHash:      inputHash,
 		PolicySnapshot: policySnapshot,
+		Labels:         edge.Labels{mcpApprovalAgentLabel: agentID},
 	})
 	if err != nil {
 		return "", err, true

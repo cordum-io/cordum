@@ -323,6 +323,7 @@ func runPackInstall(args []string) error {
 	requireCordumSig := fs.Bool("require-cordum-sig", false, "require Cordum counter-signature in addition to publisher signature")
 	trustedKeys := fs.String("trusted-keys", "", "directory of trusted publisher public keys (*.pub)")
 	noVerify := fs.Bool("no-verify", false, "skip only client signature check; gateway still verifies (requires --force in strict mode)")
+	tokenFile := fs.String("worker-token-file", "", "write the generated worker token to this file (mode 0600) instead of printing it")
 	fs.ParseArgs(args)
 	if fs.NArg() < 1 {
 		return errors.New("pack path or url required")
@@ -390,9 +391,51 @@ func runPackInstall(args []string) error {
 	}
 	fmt.Printf("installed pack %s %s (%s)\n", result.ID, result.Version, result.Status)
 	if credential := result.WorkerCredential; credential != nil {
-		fmt.Printf("worker_id: %s\nworker_token: %s\n", credential.WorkerID, credential.Token)
+		fmt.Printf("worker_id: %s\n", credential.WorkerID)
+		return showPackWorkerToken(credential.Token, *tokenFile)
 	}
 	return nil
+}
+
+// stdoutIsTerminal reports whether stdout is a terminal. Tests replace it.
+var stdoutIsTerminal = func() bool {
+	fi, err := os.Stdout.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
+
+// showPackWorkerToken shows a generated worker token only on a terminal or in
+// the file the caller named, so a CI log or redirected output never holds it.
+func showPackWorkerToken(token, tokenFile string) error {
+	switch {
+	case token == "":
+		return nil
+	case tokenFile != "":
+		if err := writePackWorkerToken(tokenFile, token); err != nil {
+			return fmt.Errorf("pack installed, but writing the worker token file failed (re-run with --upgrade to issue a new token): %w", err)
+		}
+		fmt.Printf("worker_token: written to %s\n", tokenFile)
+	case stdoutIsTerminal():
+		fmt.Printf("worker_token: %s\n", token)
+	default:
+		fmt.Fprintln(os.Stderr, "worker_token: not printed because stdout is not a terminal; use --worker-token-file <path> to save it")
+	}
+	return nil
+}
+
+func writePackWorkerToken(path, token string) error {
+	f, err := os.OpenFile(filepath.Clean(path), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	// OpenFile applies the mode only on create: tighten an existing file before the token is written.
+	err = f.Chmod(0o600)
+	if err == nil {
+		_, err = f.WriteString(token + "\n")
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	return err
 }
 
 func runPackUninstall(args []string) error {

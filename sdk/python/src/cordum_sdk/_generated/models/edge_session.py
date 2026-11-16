@@ -21,9 +21,9 @@ from typing import Union
 import datetime
 
 if TYPE_CHECKING:
+    from ..models.edge_labels import EdgeLabels
     from ..models.edge_enforcement_layers import EdgeEnforcementLayers
     from ..models.edge_risk_summary import EdgeRiskSummary
-    from ..models.edge_labels import EdgeLabels
 
 
 T = TypeVar("T", bound="EdgeSession")
@@ -89,9 +89,9 @@ class EdgeSession:
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
+        from ..models.edge_labels import EdgeLabels
         from ..models.edge_enforcement_layers import EdgeEnforcementLayers
         from ..models.edge_risk_summary import EdgeRiskSummary
-        from ..models.edge_labels import EdgeLabels
 
         session_id = self.session_id
 
@@ -205,9 +205,9 @@ class EdgeSession:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
+        from ..models.edge_labels import EdgeLabels
         from ..models.edge_enforcement_layers import EdgeEnforcementLayers
         from ..models.edge_risk_summary import EdgeRiskSummary
-        from ..models.edge_labels import EdgeLabels
 
         d = src_dict.copy()
         session_id = d.pop("session_id")
