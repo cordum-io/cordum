@@ -78,6 +78,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Docs: the gRPC services and Safety Kernel pages give the output metadata check's timeout as
+  its `500ms` default, which `CORDUM_OUTPUT_META_TIMEOUT_MS` overrides, instead of `100ms`
+  (task-5295965c).
 - Docs: the cordum-agentd, cordum-hook, Edge configuration and edge doctor pages and the
   configuration references now state Edge outage behavior as the failure and partition
   behavior contract records it. In enforce mode the hook denies `PreToolUse` when agentd times
