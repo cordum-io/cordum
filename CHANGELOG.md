@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Worker ids `cordum-mcp` and `cordum-safety-kernel` are reserved. The handshake
+  and bound session tokens refuse these worker ids; rename any worker registered
+  under either id before upgrading.
+
 - Edge managed settings: managed-settings verification fails closed on
   unsupported conditional or background hook modifiers, and command hooks
   must have the correct type and tool-event coverage (#492, task-99f50a3d).
