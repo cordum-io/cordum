@@ -73,7 +73,10 @@ func runUpCmd(args []string) {
 		devBoot.ConfigPath = cfgPath
 		devBoot.ConfigNew = created
 		devBoot.Gateway = defaultDevGatewayURL
-		devBoot.CACert = detectInitCACert("", devBoot.Gateway, composeDir)
+		devBoot.CACert, err = devSeederCACert(composeDir, devBoot.Gateway)
+		if err != nil {
+			fail(fmt.Errorf("dev bootstrap CA path: %w", err).Error())
+		}
 		source = "dev-bootstrap"
 	} else {
 		source = apiKeySource(*file)
@@ -501,6 +504,13 @@ func devPrincipal() string {
 	return "local-dev"
 }
 
+func devSeederCACert(composeDir, gateway string) (string, error) {
+	if detectInitCACert("", gateway, composeDir) == "" {
+		return "", nil
+	}
+	return filepath.Abs(filepath.Join(composeDir, "certs", "ca", "ca.crt"))
+}
+
 func waitAndSeedDevMCP(ctx context.Context, devBoot devBootstrapResult) error {
 	tlsTransport, err := sdk.BuildTLSTransportErr(sdk.TLSOptions{CACertPath: devBoot.CACert})
 	if err != nil {
@@ -572,13 +582,10 @@ func seedDevMCPConfig(ctx context.Context, client *restClient, seedEnabled bool)
 	if _, ok := mcpCfg["policy_gate_enabled"]; !ok {
 		mcpCfg["policy_gate_enabled"] = true
 	}
-	doc.Data["mcp"] = mcpCfg
-
 	req := map[string]any{
 		"scope":    doc.Scope,
 		"scope_id": doc.ScopeID,
-		"data":     doc.Data,
-		"meta":     doc.Meta,
+		"data":     map[string]any{"mcp": mcpCfg},
 	}
 	return client.doJSON(ctx, http.MethodPost, "/api/v1/config", req, nil)
 }

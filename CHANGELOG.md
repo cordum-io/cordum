@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- K8s production overlay: the Redis cluster bus runs over TLS. A running
+  cluster needs [Runbook H](docs/redis-operations.md#runbook-h-turn-on-tls-for-the-cluster-bus)'s
+  runtime switch on every node before any Redis pod restarts (task-2a7ba91e).
+
 - Edge managed settings: managed-settings verification fails closed on
   unsupported conditional or background hook modifiers, and command hooks
   must have the correct type and tool-event coverage (#492, task-99f50a3d).
@@ -866,6 +870,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   that no longer matches the changed content. The audit entry records that
   the bundle was stored unsigned (task-b75f9f8a).
 
+- `cordumctl up --dev` seeds through an absolute CA path when the compose
+  file is in another directory, and posts only the `mcp` config key so
+  unrelated config edits are preserved (task-e49aae16).
+
 - Data inventory: general `cfg:{scope}:{id}` config documents have their own
   entry, DI-C54, and DI-C05 now covers only the policy audit document. The
   inventory key scanner reads file-level values from top-level declarations
@@ -1234,6 +1242,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - The docs check (`tools/docscheck`) no longer reads a flag definition's default value and usage text, as in `fs.String("api-key-env", "CORDUM_API_KEY", ...)`, as that variable's code default, so CORDUM_API_KEY's no-default rows no longer fail TestDocsMatchProduct (task-342b89d0).
 - `COMMANDS.md`'s NATS Operations commands now connect to the Compose NATS over mutual TLS: each passes `--server tls://localhost:4222` and the dev CA, client certificate and key that `cordumctl generate-certs` writes, and the stream commands name `CORDUM_JOBS` instead of `JOBS` (task-45ebb83b).
 - The Redis restore in `docs/redis-operations.md` imports each backup file into the running cluster, so every key reaches the primary that owns its slot under any slot layout, including a cluster re-created after a full loss, and no Redis pod restarts. Before it empties the cluster it checks every node and backup file, and afterwards it compares the count of keys without a TTL with the backup's. The toolbox pod now sets memory requests and limits (task-4dd14329).
+- The workflow credential scanner reads a `set` or `return` that follows a condition's reserved word (`if`, `elif`, `while`, `until`, `!`), `builtin` or `command` as the command bash runs in that shell. A sourced function such as `relax() { set +e; if return 0; then :; fi; set -e; }` now counts as returning with errexit off, `builtin set -x`, `command set -x` and `if set -x; then :; fi` turn tracing on, `if set -e; then :; fi` turns errexit back on, and a mask-failure block that returns in a condition before it clears the credential no longer counts as clearing it (task-2c63dd9c, task-f33bf0c3).
+- `docs/edge/observability.md` cites every call site of `cordum_edge_fail_closed_total` by file and line: agentd and the Claude hook runner when they fail closed, and the Edge retention sweeper, which counts a cleanup page that the legal-hold guard keeps with `mode="unknown"` and `reason_code` `retention_hold_unverifiable` or `retention_hold_changed` (task-49549242).
 
 ### Added
 
