@@ -1,17 +1,24 @@
 package safetykernel
 
 import (
+	"bytes"
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/auth/servicetoken"
 	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/policyshadow"
+	"github.com/cordum/cordum/core/policysign"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -52,7 +59,10 @@ rules:
       topics: ["job.foo"]
     decision: deny
 `}})
-	sender := newShadowAuditSender(bus)
+	sender, err := newShadowAuditSender(bus)
+	if err != nil {
+		t.Fatal(err)
+	}
 	eval := NewShadowEvaluator(loader, sender, ShadowEvaluatorOptions{Workers: 1, QueueSize: 8})
 	t.Cleanup(eval.Close)
 	for job := int64(1); job <= n; job++ {
@@ -97,6 +107,124 @@ func TestShadowEvaluator_SuccessfulPublishCountsNoDrop(t *testing.T) {
 		if v != before[reason] {
 			t.Fatalf("drop reason %q moved on successful publishes: %v -> %v", reason, before[reason], v)
 		}
+	}
+}
+
+// recordingAuditBus accepts every publish and keeps the packets.
+type recordingAuditBus struct {
+	mu      sync.Mutex
+	packets []*pb.BusPacket
+}
+
+func (b *recordingAuditBus) Publish(_ string, packet *pb.BusPacket) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.packets = append(b.packets, packet)
+	return nil
+}
+
+func (*recordingAuditBus) Subscribe(_, _ string, _ func(*pb.BusPacket) error) error {
+	return nil
+}
+
+func (b *recordingAuditBus) published() []*pb.BusPacket {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]*pb.BusPacket(nil), b.packets...)
+}
+
+// blankAuditPublisherEnv clears the audit publisher key variables and the
+// production profile, so each case sets only what it tests.
+func blankAuditPublisherEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{
+		audit.EnvPublisherSigningKey, audit.EnvPublisherSigningKeyPath, audit.EnvPublisherSigningKeyID,
+		audit.EnvPublisherDevSigningSeed, audit.EnvPublisherPublicKeyPrefix + "CORDUM_SAFETY_KERNEL",
+		env.EnvMode, env.EnvProduction,
+	} {
+		t.Setenv(name, "")
+	}
+}
+
+// TestShadowAuditSenderAttachesSafetyKernelServiceToken pins that a shadow
+// audit packet carries a service token that verifies as cordum-safety-kernel
+// against the audit publisher trust.
+func TestShadowAuditSenderAttachesSafetyKernelServiceToken(t *testing.T) {
+	blankAuditPublisherEnv(t)
+	t.Setenv(audit.EnvPublisherDevSigningSeed, "pr1-22d-test-seed")
+	rec := &recordingAuditBus{}
+	sender, err := newShadowAuditSender(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sender.Send(audit.SIEMEvent{EventType: "test.shadow.token"})
+	packets := rec.published()
+	if len(packets) != 1 {
+		t.Fatalf("published packets = %d, want 1", len(packets))
+	}
+	trust, err := audit.LoadPublisherTrustFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub := trust[servicetoken.IdentitySafetyKernel]
+	lookup := func(string) (ed25519.PublicKey, bool) { return pub, pub != nil }
+	claims, typ, err := servicetoken.Verify(packets[0].GetAuthToken(), lookup, time.Now())
+	if err != nil || typ != servicetoken.TypService || claims.Subject != servicetoken.IdentitySafetyKernel {
+		t.Fatalf("token subject %q typ %q err %v, want subject %q typ %q",
+			claims.Subject, typ, err, servicetoken.IdentitySafetyKernel, servicetoken.TypService)
+	}
+}
+
+// TestShadowAuditSenderWithoutUsableKey pins the outcomes without a usable
+// key. Production and a malformed key build no publisher and publish nothing;
+// other profiles publish without a token and name the variable.
+func TestShadowAuditSenderWithoutUsableKey(t *testing.T) {
+	cases := []struct {
+		name, mode, key string
+		wantErr         error
+	}{
+		{"production without key", "production", "", audit.ErrPublisherKeyNotConfigured},
+		{"malformed key", "", "not-a-key", policysign.ErrInvalidPrivateKey},
+		{"dev without key", "", "", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			blankAuditPublisherEnv(t)
+			t.Setenv(env.EnvMode, tc.mode)
+			t.Setenv(audit.EnvPublisherSigningKey, tc.key)
+			var logs bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
+			t.Cleanup(func() { slog.SetDefault(previous) })
+			rec := &recordingAuditBus{}
+			sender, err := newShadowAuditSender(rec)
+			if sender != nil {
+				sender.Send(audit.SIEMEvent{EventType: "test.shadow.nokey"})
+			}
+			packets := rec.published()
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) || !strings.Contains(err.Error(), audit.EnvPublisherSigningKey) ||
+					sender != nil || len(packets) != 0 {
+					t.Fatalf("err %v sender %T packets %d; want %v naming %s, no sender, nothing published",
+						err, sender, len(packets), tc.wantErr, audit.EnvPublisherSigningKey)
+				}
+				return
+			}
+			if err != nil || len(packets) != 1 || packets[0].GetAuthToken() != "" || !strings.Contains(logs.String(), audit.EnvPublisherSigningKey) {
+				t.Fatalf("err %v packets %d logs %q; want one token-less packet and a warning naming %s",
+					err, len(packets), logs.String(), audit.EnvPublisherSigningKey)
+			}
+		})
+	}
+}
+
+// TestChooseShadowAuditSenderWithoutNATSStartsInProduction pins that the key
+// is required only where a NATS publisher is built.
+func TestChooseShadowAuditSenderWithoutNATSStartsInProduction(t *testing.T) {
+	blankAuditPublisherEnv(t)
+	t.Setenv(env.EnvMode, "production")
+	if sender, err := chooseShadowAuditSender(nil); sender != nil || err != nil {
+		t.Fatalf("chooseShadowAuditSender(nil) = %T, %v; want nil, nil", sender, err)
 	}
 }
 
