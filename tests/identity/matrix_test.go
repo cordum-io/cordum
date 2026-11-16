@@ -230,6 +230,7 @@ func TestContractTable(t *testing.T) {
 		BusWorker:              {WorkerSession},
 		BusControl:             {ServiceToken},
 		BusHandshake:           {WorkerCredential},
+		BusAuditExport:         {ServiceToken},
 		BusWorkflowResult:      {ServiceToken},
 		EdgeAgentdHook:         {AgentdNonce},
 	}
@@ -250,8 +251,8 @@ func TestContractTable(t *testing.T) {
 			}
 		}
 	}
-	if allowed != 29 {
-		t.Errorf("allowed cells = %d, want 29", allowed)
+	if allowed != 30 {
+		t.Errorf("allowed cells = %d, want 30", allowed)
 	}
 	if Allowed("ghost", HTTPAPI) || Allowed(APIKeyStatic, "ghost") {
 		t.Errorf("unknown values must give false")

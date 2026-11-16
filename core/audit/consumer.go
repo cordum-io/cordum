@@ -2,12 +2,16 @@ package audit
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
+	"github.com/cordum/cordum/core/auth/servicetoken"
+	"github.com/cordum/cordum/core/policysign"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
@@ -100,6 +104,9 @@ type NATSAuditConsumer struct {
 	chainer      *Chainer
 	failMode     ChainFailMode
 	stepHashSink StepHashSink
+	// authorized, when set by WithPublisherAuth, must accept a packet's
+	// auth_token before the packet is chained or exported.
+	authorized func(token string) bool
 
 	// lifecycleCtx is cancelled by Close(); handle() derives per-message
 	// timeouts from it so in-flight chain-append and Export calls observe
@@ -164,6 +171,32 @@ func WithStepHashSink(sink StepHashSink) ConsumerOption {
 	return func(n *NATSAuditConsumer) { n.stepHashSink = sink }
 }
 
+// WithPublisherAuth chains and exports only packets whose auth_token is an
+// audit publisher's service token: api-gateway or cordum-scheduler verified
+// under controlPlane, or an identity verified under its own key in
+// publishers, so one publisher's key cannot vouch for another identity. Any
+// other packet is acked, logged and counted, and neither chained nor
+// exported. An empty trust refuses every packet.
+func WithPublisherAuth(controlPlane *policysign.TrustStore, publishers map[string]ed25519.PublicKey) ConsumerOption {
+	return func(n *NATSAuditConsumer) {
+		n.authorized = func(token string) bool {
+			now := time.Now()
+			if claims, err := servicetoken.VerifyService(token, controlPlane, now); err == nil &&
+				(claims.Subject == servicetoken.IdentityGateway || claims.Subject == servicetoken.IdentityScheduler) {
+				return true
+			}
+			for identity, key := range publishers {
+				lookup := func(string) (ed25519.PublicKey, bool) { return key, true }
+				claims, typ, err := servicetoken.Verify(token, lookup, now)
+				if err == nil && typ == servicetoken.TypService && claims.Subject == identity {
+					return true
+				}
+			}
+			return false
+		}
+	}
+}
+
 // NewNATSAuditConsumer creates a consumer and subscribes to sys.audit.export.
 // The exporter receives deserialized SIEMEvents for each NATS message.
 //
@@ -226,6 +259,14 @@ func (c *NATSAuditConsumer) handle(packet *pb.BusPacket) error {
 			"max_bytes", maxAuditEventBytes,
 			"source", alert.SourceComponent,
 		)
+		return nil
+	}
+
+	if c.authorized != nil && !c.authorized(packet.GetAuthToken()) {
+		// Fixed fields only: the token, the sender and the payload are
+		// caller-controlled. Ack, so a refused packet is not redelivered.
+		slog.Warn("audit export event refused", "reason", "service_token")
+		auditEventDrops.WithLabelValues("service_token").Inc()
 		return nil
 	}
 

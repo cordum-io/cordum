@@ -15,6 +15,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- With `AUDIT_TRANSPORT=nats`, the gateway's audit consumer chains and exports
+  only `sys.audit.export` packets that carry a valid audit-publisher service
+  token: `api-gateway` or `cordum-scheduler` signed by a key in
+  `CORDUM_POLICY_PUBLIC_KEY_<ID>` (or derived from
+  `CORDUM_POLICY_DEV_SIGNING_SEED`), or `cordum-mcp` or `cordum-safety-kernel`
+  signed by its own `CORDUM_AUDIT_PUBLIC_KEY_` key (or derived from
+  `CORDUM_AUDIT_DEV_SIGNING_SEED`). Any other packet is acknowledged, logged
+  without its token or payload, counted in
+  `cordum_audit_events_dropped_total{reason="service_token"}`, and neither
+  chained nor exported. A malformed key in either set fails gateway startup.
+  Before upgrading, configure the publishers' signing keys and give the gateway
+  their public keys, in development too: a publisher without a key sends
+  events the consumer drops.
+
 - Under the production profile, `CORDUM_AUDIT_DEV_SIGNING_SEED` and `CORDUM_POLICY_DEV_SIGNING_SEED` are refused; set a real signing key. (task-b0318ca0)
 
 - Worker ids `cordum-mcp` and `cordum-safety-kernel` are reserved. The handshake

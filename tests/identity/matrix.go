@@ -83,7 +83,7 @@ const (
 	BusWorker              Entry = "bus_worker"                // to the scheduler from a worker about itself: sys.heartbeat, sys.job.progress, sys.handshake and its own results on sys.job.result
 	BusControl             Entry = "bus_control"               // to the scheduler from the control plane besides submissions: sys.job.cancel, sys.config.changed and control-plane results on sys.job.result
 	BusHandshake           Entry = "bus_handshake"             // sys.worker.handshake.challenge and .authenticate, core/controlplane/scheduler/handshake_subscriber.go
-	BusAuditExport         Entry = "bus_audit_export"          // sys.audit.export, core/audit/consumer.go; no Credential is meant for it; Run needs a Baseline
+	BusAuditExport         Entry = "bus_audit_export"          // sys.audit.export, core/audit/consumer.go
 	BusWorkflowResult      Entry = "bus_workflow_result"       // sys.internal.job.result.accepted, core/workflow/runner.go
 	MCPStandalone          Entry = "mcp_standalone"            // cmd/cordum-mcp HTTP /sse and /message; no Credential is meant for it; Run needs a Baseline
 	EdgeAgentdHook         Entry = "edge_agentd_hook"          // agentd local hook server, core/edge/agentd/local_server.go
@@ -151,7 +151,9 @@ var grants = map[Entry]map[Credential]string{
 	BusHandshake: {
 		WorkerCredential: "the worker handshake is signed with the proof key registered in the worker's credential, audience cordum-scheduler (core/controlplane/scheduler/handshake_validation.go, core/controlplane/workercredentials/proof_key.go)",
 	},
-	BusAuditExport: {},
+	BusAuditExport: {
+		ServiceToken: "the four audit publishers attach their service token to sys.audit.export, and the consumer chains and exports only packets whose token verifies under that publisher's key (core/audit/nats.go, core/audit/consumer.go)",
+	},
 	BusWorkflowResult: {
 		ServiceToken: "the scheduler publishes sys.internal.job.result.accepted with its service token for the workflow runner (core/controlplane/scheduler/engine_accepted_event.go, core/workflow/runner.go)",
 	},

@@ -2,6 +2,8 @@ package audit_test
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"fmt"
 	"sync"
 	"testing"
@@ -9,8 +11,10 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/auth/servicetoken"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/env"
+	"github.com/cordum/cordum/core/policysign"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/cordum/cordum/tests/identity"
@@ -23,16 +27,25 @@ const matrixTenant = "tenant-matrix"
 
 // TestAudienceMatrixBusAuditExport presents every credential on
 // sys.audit.export in the packet the gateway's NATSAuditPublisher sends. The
-// protected effect is a chained, exported audit event. The baseline is the
-// publisher's own send, which carries no credential.
+// protected effect is a chained, exported audit event. The consumer trusts
+// the fixture's control-plane key. The baseline is the publisher's own send
+// with its service token, and the service_token cell presents a token minted
+// with that key.
 func TestAudienceMatrixBusAuditExport(t *testing.T) {
 	t.Setenv(env.EnvMode, "production")
 	t.Setenv("CORDUM_NATS_ALLOW_PLAINTEXT", "true")
 	t.Setenv("CORDUM_NATS_ALLOW_NOAUTH", "true")
 	t.Setenv("NATS_USE_JETSTREAM", "false")
+	trust, mint := matrixControlPlane(t)
 	present := func(t *testing.T, c identity.Credential) identity.Result {
-		token := audienceCredential(t, c)
-		f := newAuditMatrixFixture(t)
+		// service_token is minted with the trusted key; every other cell keeps
+		// its own issuer.
+		token, err := mint()
+		require.NoError(t, err)
+		if c != identity.ServiceToken {
+			token = audienceCredential(t, c)
+		}
+		f := newAuditMatrixFixture(t, trust)
 		capture := &capturingAuditBus{}
 		audit.NewNATSAuditPublisher(capture, nil).Send(matrixAuditEvent())
 		require.Equal(t, capsdk.SubjectAuditExport, capture.subject)
@@ -45,26 +58,25 @@ func TestAudienceMatrixBusAuditExport(t *testing.T) {
 		return f.observe(t, func() { require.NoError(t, f.publisher.Publish(capsdk.SubjectAuditExport, packet)) })
 	}
 	probe := func(t *testing.T) identity.Result {
-		f := newAuditMatrixFixture(t)
-		return f.observe(t, func() { audit.NewNATSAuditPublisher(f.publisher, nil).Send(matrixAuditEvent()) })
+		f := newAuditMatrixFixture(t, trust)
+		return f.observe(t, func() {
+			audit.NewNATSAuditPublisher(f.publisher, nil, audit.WithServiceToken(mint)).Send(matrixAuditEvent())
+		})
 	}
-	identity.Run(t, identity.BusAuditExport, present, identity.Baseline(probe),
-		identity.Skip(identity.Anonymous, "PR1-22"),
-		identity.Skip(identity.UserSession, "PR1-22"),
-		identity.Skip(identity.APIKeyStatic, "PR1-22"),
-		identity.Skip(identity.APIKeyManaged, "PR1-22"),
-		identity.Skip(identity.GatewayJWT, "PR1-22"),
-		identity.Skip(identity.GatewayJWTWrongAudience, "PR1-22"),
-		identity.Skip(identity.OIDCBearer, "PR1-22"),
-		identity.Skip(identity.OIDCBearerWrongAudience, "PR1-22"),
-		identity.Skip(identity.DelegationToken, "PR1-22"),
-		identity.Skip(identity.ServiceToken, "PR1-22"),
-		identity.Skip(identity.WorkerCredential, "PR1-22"),
-		identity.Skip(identity.WorkerSession, "PR1-22"),
-		identity.Skip(identity.WorkerSessionWrongAudience, "PR1-22"),
-		identity.Skip(identity.SCIMBearer, "PR1-22"),
-		identity.Skip(identity.AgentdNonce, "PR1-22"),
-		identity.Skip(identity.AgentIDHeader, "PR1-22"))
+	identity.Run(t, identity.BusAuditExport, present, identity.Baseline(probe))
+}
+
+// matrixControlPlane returns a trust holding a fresh control-plane key, and a
+// minter of api-gateway service tokens signed with it.
+func matrixControlPlane(t *testing.T) (*policysign.TrustStore, func() (string, error)) {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	trust := policysign.NewTrustStore()
+	require.NoError(t, trust.Add("matrix-control-plane", pub))
+	return trust, func() (string, error) {
+		return servicetoken.MintService(priv, "matrix-control-plane", servicetoken.IdentityGateway, time.Now())
+	}
 }
 
 func matrixAuditEvent() audit.SIEMEvent {
@@ -129,8 +141,9 @@ type auditMatrixFixture struct {
 }
 
 // newAuditMatrixFixture wires a fresh consumer the way the gateway does for
-// AUDIT_TRANSPORT=nats: a NatsBus, the SIEM exporter and the audit chain.
-func newAuditMatrixFixture(t *testing.T) *auditMatrixFixture {
+// AUDIT_TRANSPORT=nats: a NatsBus, the SIEM exporter, the audit chain and
+// publisher auth under the control-plane trust.
+func newAuditMatrixFixture(t *testing.T, trust *policysign.TrustStore) *auditMatrixFixture {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -140,7 +153,7 @@ func newAuditMatrixFixture(t *testing.T) *auditMatrixFixture {
 	ns := startMatrixNATS(t)
 	subs := ns.NumSubscriptions()
 	consumer, err := audit.NewNATSAuditConsumer(observedAuditBus{matrixNatsBus(t, ns), f.handled}, f.exporter,
-		audit.WithChainer(f.chainer))
+		audit.WithChainer(f.chainer), audit.WithPublisherAuth(trust, nil))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, consumer.Close()) })
 	require.Eventually(t, func() bool { return ns.NumSubscriptions() > subs }, 5*time.Second, 5*time.Millisecond,
