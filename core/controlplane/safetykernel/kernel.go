@@ -305,6 +305,34 @@ func Run(cfg *config.Config) error {
 	return RunWithEntitlements(cfg, nil)
 }
 
+func serverTransportCredentials(ctx context.Context) (grpc.ServerOption, error) {
+	serverCreds := grpc.Creds(insecure.NewCredentials())
+	cert := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_TLS_CERT"))
+	key := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_TLS_KEY"))
+	if cert != "" || key != "" {
+		if cert == "" || key == "" {
+			return nil, fmt.Errorf("safety kernel tls requires both SAFETY_KERNEL_TLS_CERT and SAFETY_KERNEL_TLS_KEY")
+		}
+		reloader, err := tlsreload.NewCertReloader(cert, key, "safety-kernel")
+		if err != nil {
+			return nil, fmt.Errorf("safety kernel tls keypair: %w", err)
+		}
+		go reloader.WatchLoop(ctx, 30*time.Second)
+		tlsCfg := &tls.Config{
+			GetCertificate: reloader.GetCertificate,
+			MinVersion:     tls.VersionTLS12,
+		}
+		if env.TLSMinVersion() == tls.VersionTLS13 {
+			tlsCfg.MinVersion = tls.VersionTLS13
+		}
+		serverCreds = grpc.Creds(credentials.NewTLS(tlsCfg))
+	}
+	if env.IsProduction() && cert == "" {
+		return nil, fmt.Errorf("safety kernel tls required in production")
+	}
+	return serverCreds, nil
+}
+
 // RunWithEntitlements starts the Safety Kernel with an optional shared
 // entitlement resolver. Nil falls back to community defaults.
 func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementResolver) error {
@@ -347,29 +375,9 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 		return fmt.Errorf("listen %s: %w", cfg.SafetyKernelAddr, err)
 	}
 
-	serverCreds := grpc.Creds(insecure.NewCredentials())
-	cert := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_TLS_CERT"))
-	key := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_TLS_KEY"))
-	if cert != "" || key != "" {
-		if cert == "" || key == "" {
-			return fmt.Errorf("safety kernel tls requires both SAFETY_KERNEL_TLS_CERT and SAFETY_KERNEL_TLS_KEY")
-		}
-		reloader, err := tlsreload.NewCertReloader(cert, key, "safety-kernel")
-		if err != nil {
-			return fmt.Errorf("safety kernel tls keypair: %w", err)
-		}
-		go reloader.WatchLoop(context.Background(), 30*time.Second)
-		tlsCfg := &tls.Config{
-			GetCertificate: reloader.GetCertificate,
-			MinVersion:     tls.VersionTLS12,
-		}
-		if env.TLSMinVersion() == tls.VersionTLS13 {
-			tlsCfg.MinVersion = tls.VersionTLS13
-		}
-		serverCreds = grpc.Creds(credentials.NewTLS(tlsCfg))
-	}
-	if env.IsProduction() && cert == "" {
-		return fmt.Errorf("safety kernel tls required in production")
+	serverCreds, err := serverTransportCredentials(context.Background())
+	if err != nil {
+		return err
 	}
 
 	cacheMax := resolveDecisionCacheMax()
