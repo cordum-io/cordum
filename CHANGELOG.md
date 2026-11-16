@@ -861,6 +861,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Policy output-rule toggles with no usable policy signing key (warn or off
+  mode) now drop the bundle's previous signature instead of retaining one
+  that no longer matches the changed content. The audit entry records that
+  the bundle was stored unsigned (task-b75f9f8a).
+
 - Data inventory: general `cfg:{scope}:{id}` config documents have their own
   entry, DI-C54, and DI-C05 now covers only the policy audit document. The
   inventory key scanner reads file-level values from top-level declarations
