@@ -3340,15 +3340,14 @@ func (e *Engine) observeOutputEvalDuration(topic string, seconds float64) {
 	}
 }
 
-// attachServiceToken stamps a short-TTL control-plane service token on an
-// internal broadcast the scheduler publishes to a SUBSCRIBED, gated subject
-// (sys.job.submit / sys.job.result / sys.job.cancel), so peer schedulers admit it under
-// CORDUM_SDK_HANDSHAKE=enforce. It is best-effort and fails SAFE: on a mint
+// attachServiceToken stamps a short-TTL control-plane service token on a
+// control-plane packet the scheduler publishes (sys.job.submit / sys.job.result /
+// sys.job.cancel, the DLQ and the output-policy audit subject), so a consumer
+// can tell it came from the scheduler. It is best-effort and fails SAFE: on a mint
 // error it logs at ERROR and proceeds WITHOUT a token, so a peer under enforce
 // REJECTS the token-less packet rather than admitting an unauthenticated one.
 // When the gate is Off/disabled the middleware returns ("",nil) and no token is
-// attached (back-compat). Call this for scheduler-owned authenticated
-// control-plane publishes, never for unsubscribed DLQ/audit traffic.
+// attached (back-compat). Call it immediately before the Publish.
 func (e *Engine) attachServiceToken(pkt *pb.BusPacket) {
 	if e == nil || pkt == nil || e.sessionMiddleware == nil {
 		return
@@ -3445,6 +3444,7 @@ func (e *Engine) replayApprovalPublish(traceID string, req *pb.JobRequest, appro
 				},
 			},
 		}
+		e.attachServiceToken(packet)
 		if err := e.bus.Publish(capsdk.SubjectDLQ, packet); err != nil {
 			return fmt.Errorf("replay approval dlq publish: %w", err)
 		}
@@ -3511,6 +3511,7 @@ func (e *Engine) emitDLQ(jobID, topic string, status pb.JobStatus, reason string
 			},
 		},
 	}
+	e.attachServiceToken(packet)
 	return e.bus.Publish(dlqSubject, packet)
 }
 
@@ -3622,6 +3623,7 @@ func (e *Engine) emitOutputAuditEvent(jobID, topic, code, reason string, decisio
 			},
 		},
 	}
+	e.attachServiceToken(packet)
 	if err := e.bus.Publish(outputPolicyAudit, packet); err != nil {
 		slog.Error("output audit event publish failed", "job_id", jobID, "code", code, "error", err)
 	}
