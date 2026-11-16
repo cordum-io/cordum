@@ -136,7 +136,6 @@ func TestTenantIsolationComplianceExportChain(t *testing.T) {
 	defer cleanup()
 	chainer := NewChainer(client, "")
 	seededA, seededB := seedIsoChains(t, chainer, 3)
-
 	assertChainHead(t, client, chainer, isoTenantA, seededA)
 	assertChainHead(t, client, chainer, isoTenantB, seededB)
 
@@ -199,7 +198,6 @@ func assertUnderHold(t *testing.T, store *LegalHoldStore, tenant string, want bo
 func TestTenantIsolationLegalHoldStore(t *testing.T) {
 	store, _ := newTestLegalHoldStore(t)
 	ctx := context.Background()
-
 	holdA, err := store.CreateHold(ctx, isoTenantA, isoMarkerA+" litigation", "admin-a")
 	if err != nil {
 		t.Fatalf("create hold A: %v", err)
@@ -222,12 +220,10 @@ func TestTenantIsolationLegalHoldStore(t *testing.T) {
 	if got := listHoldIDs(t, store, isoTenantB); !reflect.DeepEqual(got, []string{holdB.ID}) {
 		t.Fatalf("list B = %v, want only B's hold %s", got, holdB.ID)
 	}
-	// Scope fact: the unscoped store list spans tenants; the gateway list
-	// handler filters it (TestTenantIsolationLegalHoldHandlers).
+	// The unscoped store list spans tenants; the gateway test covers its filter.
 	if got, want := listHoldIDs(t, store, ""), holdIDs([]*LegalHold{holdA, holdB}); !reflect.DeepEqual(got, want) {
 		t.Fatalf("unscoped list = %v, want both holds %v", got, want)
 	}
-
 	if err := store.ReleaseHold(ctx, holdA.ID, "admin-a"); err != nil {
 		t.Fatalf("release A: %v", err)
 	}
