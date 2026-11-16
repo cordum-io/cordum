@@ -23,7 +23,7 @@ type attenuationCase struct {
 
 func attenuationCases() []attenuationCase {
 	return []attenuationCase{
-		{"tenant", 1, func(r *IssueRequest) { r.Tenant = "T2" }, nil},
+		{"tenant", 1, func(r *IssueRequest) { r.Tenant = "T2" }, ErrTenantMismatch},
 		{"actions", 1, func(r *IssueRequest) { r.AllowedActions = append(r.AllowedActions, "a3") }, ErrScopeExceeded},
 		{"topics", 1, func(r *IssueRequest) { r.AllowedTopics = append(r.AllowedTopics, "t3") }, ErrScopeExceeded},
 		{"expiry", 1, func(r *IssueRequest) { r.TTL = 20 * time.Minute }, nil},
@@ -80,9 +80,6 @@ func TestDelegationAttenuationWiderChildRefused(t *testing.T) {
 	t.Setenv(envDelegationMaxDepth, "3")
 	for _, row := range attenuationCases() {
 		t.Run(row.name, func(t *testing.T) {
-			if row.name == "tenant" || row.name == "expiry" {
-				t.Skip("PR1-25")
-			}
 			service, _ := attenuationService(t)
 			chain := attenuationChain(t, service, row.parentDepth)
 			parent := chain[len(chain)-1]
@@ -118,16 +115,16 @@ func TestDelegationAttenuationWiderChildRefused(t *testing.T) {
 
 func TestDelegationAttenuationDimensionsComplete(t *testing.T) {
 	classified := map[string]string{
-		"IssueRequest.Tenant": "open-finding:PR1-25", "IssueRequest.DelegatingAgentID": "case:sub-delegator",
+		"IssueRequest.Tenant": "case:tenant", "IssueRequest.DelegatingAgentID": "case:sub-delegator",
 		"IssueRequest.TargetAgentID":  "structural:explicit recipient of the new delegation",
 		"IssueRequest.AllowedActions": "case:actions", "IssueRequest.AllowedTopics": "case:topics",
-		"IssueRequest.TTL": "open-finding:PR1-25", "IssueRequest.ParentToken": "case:depth",
-		"DelegationClaims.Tenant": "open-finding:PR1-25", "DelegationClaims.AllowedActions": "case:actions",
+		"IssueRequest.TTL": "case:expiry", "IssueRequest.ParentToken": "case:depth",
+		"DelegationClaims.Tenant": "case:tenant", "DelegationClaims.AllowedActions": "case:actions",
 		"DelegationClaims.AllowedTopics": "case:topics", "DelegationClaims.DelegationChain": "case:depth",
 		"DelegationClaims.ChainDepth": "case:depth", "DelegationClaims.ParentTokenJTI": "case:depth",
 		"DelegationClaims.RegisteredClaims": "structural:embedded JWT fields enumerated separately",
 		"RegisteredClaims.Issuer":           "structural:fixed cordum issuer", "RegisteredClaims.Subject": "case:sub-delegator",
-		"RegisteredClaims.Audience": "case:sub-delegator", "RegisteredClaims.ExpiresAt": "open-finding:PR1-25",
+		"RegisteredClaims.Audience": "case:sub-delegator", "RegisteredClaims.ExpiresAt": "case:expiry",
 		"RegisteredClaims.NotBefore": "structural:service clock at issuance", "RegisteredClaims.IssuedAt": "structural:service clock at issuance",
 		"RegisteredClaims.ID":             "structural:generated token identifier",
 		"AgentPermissions.AllowedActions": "case:actions", "AgentPermissions.AllowedTopics": "case:topics",
@@ -144,7 +141,7 @@ func TestDelegationAttenuationDimensionsComplete(t *testing.T) {
 				t.Errorf("dimension added without a case: %s", key)
 			}
 			kind, value, found := strings.Cut(classification, ":")
-			valid := (kind == "case" && rows[value]) || kind == "structural" || (kind == "open-finding" && value == "PR1-25")
+			valid := (kind == "case" && rows[value]) || kind == "structural"
 			if !found || value == "" || !valid {
 				t.Errorf("invalid classification: %s = %q", key, classification)
 			}

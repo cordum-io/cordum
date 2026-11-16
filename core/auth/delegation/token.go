@@ -156,6 +156,18 @@ func (s *TokenService) IssueDelegationToken(ctx context.Context, req IssueReques
 	if err != nil {
 		return "", DelegationClaims{}, err
 	}
+	expiresAt := now.Add(ttl)
+	if parent != nil {
+		if req.Tenant != parent.Tenant {
+			return "", DelegationClaims{}, ErrTenantMismatch
+		}
+		if expiresAt.After(parent.ExpiresAt) {
+			expiresAt = parent.ExpiresAt
+		}
+		if !expiresAt.After(now) {
+			return "", DelegationClaims{}, ErrExpired
+		}
+	}
 
 	agentPermissions, err := s.resolveAgentPermissions(ctx, req.DelegatingAgentID)
 	if err != nil {
@@ -189,7 +201,6 @@ func (s *TokenService) IssueDelegationToken(ctx context.Context, req IssueReques
 	if err != nil {
 		return "", DelegationClaims{}, err
 	}
-	expiresAt := now.Add(ttl)
 
 	chain := cloneChain(parentClaims.DelegationChain)
 	parentJTI := strings.TrimSpace(parentClaims.ID)
@@ -269,6 +280,16 @@ func (s *TokenService) VerifyDelegationToken(ctx context.Context, tokenStr, expe
 	}
 	if verified.ChainDepth > s.maxDepth {
 		return VerifiedToken{}, ErrChainTooDeep
+	}
+	now := s.now().UTC()
+	for _, link := range verified.DelegationChain {
+		expiresAt, err := time.Parse(time.RFC3339Nano, link.ExpiresAt)
+		if err != nil {
+			return VerifiedToken{}, ErrMalformed
+		}
+		if !now.Before(expiresAt.Add(s.leeway)) {
+			return VerifiedToken{}, ErrExpired
+		}
 	}
 	if err := s.validateCurrentScope(ctx, verified); err != nil {
 		return VerifiedToken{}, err
