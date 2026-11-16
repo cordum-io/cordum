@@ -3,10 +3,13 @@ package audit
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -361,4 +364,68 @@ func TestAuditSenderInterface(t *testing.T) {
 	// Verify both types satisfy AuditSender.
 	var _ AuditSender = (*BufferedExporter)(nil)
 	var _ AuditSender = (*NATSAuditPublisher)(nil)
+}
+
+func TestNATSAuditPublisher_ServiceTokenPerSend(t *testing.T) {
+	bus := &mockAuditBus{}
+	calls := 0
+	pub := NewNATSAuditPublisher(bus, nil, WithServiceToken(func() (string, error) {
+		calls++
+		return fmt.Sprintf("token-%d", calls), nil
+	}), WithServiceToken(nil))
+	pub.Send(testEvent())
+	pub.Send(testEvent())
+	if calls != 2 || len(bus.published) != 2 {
+		t.Fatalf("mint calls = %d, packets = %d; want 2 each", calls, len(bus.published))
+	}
+	for i, msg := range bus.published {
+		if msg.packet.AuthToken != fmt.Sprintf("token-%d", i+1) {
+			t.Fatalf("packet %d did not carry its freshly minted token", i)
+		}
+	}
+}
+
+func TestNATSAuditPublisher_NilServiceToken(t *testing.T) {
+	bus := &mockAuditBus{}
+	NewNATSAuditPublisher(bus, nil, WithServiceToken(nil)).Send(testEvent())
+	if len(bus.published) != 1 || bus.published[0].packet.AuthToken != "" {
+		t.Fatal("nil mint must preserve token-less publishing")
+	}
+}
+
+func TestNATSAuditPublisher_ServiceTokenFailure(t *testing.T) {
+	for _, withFallback := range []bool{false, true} {
+		t.Run(fmt.Sprintf("fallback=%t", withFallback), func(t *testing.T) {
+			bus := &mockAuditBus{}
+			exporter := &mockExporter{}
+			var fallback *BufferedExporter
+			if withFallback {
+				fallback = NewBufferedExporter(exporter)
+			}
+			before := testutil.ToFloat64(auditEventDrops.WithLabelValues("no_fallback"))
+			pub := NewNATSAuditPublisher(bus, fallback, WithServiceToken(func() (string, error) {
+				return "must-not-publish", errors.New("mint unavailable")
+			}))
+			pub.Send(testEvent())
+			if err := pub.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if len(bus.published) != 0 {
+				t.Fatalf("published %d packets after mint failure", len(bus.published))
+			}
+			wantDrops, wantExports := float64(1), 0
+			if withFallback {
+				wantDrops, wantExports = 0, 1
+			}
+			if got := testutil.ToFloat64(auditEventDrops.WithLabelValues("no_fallback")) - before; got != wantDrops {
+				t.Fatalf("no_fallback drops = %v, want %v", got, wantDrops)
+			}
+			if got := exporter.totalEvents(); got != wantExports {
+				t.Fatalf("fallback events = %d, want %d", got, wantExports)
+			}
+			if withFallback && exporter.batches[0][0].JobID != testEvent().JobID {
+				t.Fatal("fallback received a different event")
+			}
+		})
+	}
 }

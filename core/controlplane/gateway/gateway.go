@@ -1187,11 +1187,29 @@ func initAuditPipeline(client redis.UniversalClient, natsBus audit.AuditBus, ent
 
 	transport := strings.ToLower(strings.TrimSpace(os.Getenv("AUDIT_TRANSPORT")))
 	if transport == "nats" && natsBus != nil {
+		priv, kid, err := policysign.LoadPrivateKeyFromEnv()
+		var mint func() (string, error)
+		switch {
+		case errors.Is(err, policysign.ErrSigningKeyNotConfigured) && !env.IsProduction():
+			slog.Warn("audit publisher service token not configured", "variable", policysign.EnvSigningKey)
+		case err != nil:
+			if closeErr := bufExporter.Close(); closeErr != nil {
+				slog.Warn("audit exporter close failed", "error", closeErr)
+			}
+			if errors.Is(err, policysign.ErrSigningKeyNotConfigured) {
+				return nil, nil, fmt.Errorf("audit NATS publisher: %s or %s is required in production", policysign.EnvSigningKey, policysign.EnvSigningKeyPath)
+			}
+			return nil, nil, err
+		default:
+			mint = func() (string, error) {
+				return servicetoken.MintService(priv, kid, servicetoken.IdentityGateway, time.Now())
+			}
+		}
 		// The NATS consumer (queue-grouped across replicas) performs the
 		// chain append via audit.WithChainer. Do NOT wrap the publisher
 		// with newAuditChainSender here — that would double-append events
 		// to the chain at publish time and again at consume time.
-		auditSender := audit.NewNATSAuditPublisher(natsBus, bufExporter)
+		auditSender := audit.NewNATSAuditPublisher(natsBus, bufExporter, audit.WithServiceToken(mint))
 		if _, err := audit.NewNATSAuditConsumer(
 			natsBus,
 			bufExporter.Backend(),
