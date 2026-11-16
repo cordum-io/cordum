@@ -16,8 +16,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ### Breaking changes
 
 - Managed API key grants are limited to scopes held by the calling key;
-  requests for other scopes return 403. Existing `write` and `operator` keys
-  must use held scopes when creating keys. `/api/v1/audit/legal-hold` and
+  requests for other scopes return 403. A bare scope (`admin`, `write`,
+  `operator`, `read` or `viewer`) is held only by a key that has the same bare
+  scope, and a `<resource>:<verb>` or `<resource>:*` scope by a key whose own
+  scopes match it. Existing `admin`, `write` and `operator` keys must request
+  held scopes when creating keys. `/api/v1/audit/legal-hold` and
   `/api/v1/audit/legal-holds` use the `legalhold` resource: `audit:write` and
   `audit:*` keys no longer authorize those routes. Static keys are unchanged.
 
