@@ -181,6 +181,7 @@ are warned about in NOTES.txt but not blocked (legitimate use cases exist).
 {{- $trust := .Values.workerTrust -}}
 {{- $mode := $trust.mode | default "" -}}
 {{- $heartbeat := $trust.heartbeatMode | default "" -}}
+{{- $auditNats := eq (.Values.audit.transport | default "") "nats" -}}
 {{- if not (has $mode (list "off" "warn" "enforce")) -}}
 {{- fail "FATAL: workerTrust.mode must be off, warn, or enforce" -}}
 {{- end -}}
@@ -212,9 +213,21 @@ are warned about in NOTES.txt but not blocked (legitimate use cases exist).
 {{- range $name, $value := $required -}}
 {{- if not $value -}}{{- fail (printf "FATAL: %s is required for active workerTrust.mode" $name) -}}{{- end -}}
 {{- end -}}
-{{- if not (regexMatch "^[A-Za-z0-9_]+$" $trust.sessionSigning.keyId) -}}
-{{- fail "FATAL: workerTrust.sessionSigning.keyId must contain only letters, digits, or underscore" -}}
+{{- else if $auditNats -}}
+{{- /* The scheduler and gateway sign their sys.audit.export tokens with the session-signing key. */ -}}
+{{- $signing := $trust.sessionSigning -}}
+{{- $required := dict
+  "workerTrust.sessionSigning.keyId" $signing.keyId
+  "workerTrust.sessionSigning.privateKeySecret.name" $signing.privateKeySecret.name
+  "workerTrust.sessionSigning.privateKeySecret.key" $signing.privateKeySecret.key
+  "workerTrust.sessionSigning.publicKeySecret.name" $signing.publicKeySecret.name
+  "workerTrust.sessionSigning.publicKeySecret.key" $signing.publicKeySecret.key -}}
+{{- range $name, $value := $required -}}
+{{- if not $value -}}{{- fail (printf "FATAL: %s is required when audit.transport=nats" $name) -}}{{- end -}}
 {{- end -}}
+{{- end -}}
+{{- if and (or (ne $mode "off") $auditNats) (not (regexMatch "^[A-Za-z0-9_]+$" $trust.sessionSigning.keyId)) -}}
+{{- fail "FATAL: workerTrust.sessionSigning.keyId must contain only letters, digits, or underscore" -}}
 {{- end -}}
 {{- end -}}
 
@@ -226,7 +239,7 @@ are warned about in NOTES.txt but not blocked (legitimate use cases exist).
 {{- end -}}
 
 {{- define "cordum.workerSessionSigningEnv" -}}
-{{- if ne .Values.workerTrust.mode "off" }}
+{{- if or (ne .Values.workerTrust.mode "off") (eq (.Values.audit.transport | default "") "nats") }}
 - name: CORDUM_POLICY_SIGNING_KEY_ID
   value: {{ .Values.workerTrust.sessionSigning.keyId | quote }}
 - name: CORDUM_POLICY_SIGNING_KEY

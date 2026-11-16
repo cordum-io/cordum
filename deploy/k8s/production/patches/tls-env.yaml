@@ -44,6 +44,20 @@ spec:
           value: /etc/cordum/tls/server/tls.crt
         - name: GATEWAY_HTTP_TLS_KEY
           value: /etc/cordum/tls/server/tls.key
+        # Audit-publisher public keys for the safety kernel's and cordum-mcp's
+        # sys.audit.export service tokens (Secret cordum-audit-trust, optional).
+        - name: CORDUM_AUDIT_PUBLIC_KEY_CORDUM_SAFETY_KERNEL
+          valueFrom:
+            secretKeyRef:
+              name: cordum-audit-trust
+              key: cordum-safety-kernel
+              optional: true
+        - name: CORDUM_AUDIT_PUBLIC_KEY_CORDUM_MCP
+          valueFrom:
+            secretKeyRef:
+              name: cordum-audit-trust
+              key: cordum-mcp
+              optional: true
         startupProbe:
           httpGet:
             path: /livez
@@ -117,6 +131,20 @@ spec:
           value: redis
         - name: REDIS_CLUSTER_ADDRESSES
           value: cordum-redis-0.cordum-redis.cordum.svc:6379,cordum-redis-1.cordum-redis.cordum.svc:6379,cordum-redis-2.cordum-redis.cordum.svc:6379,cordum-redis-3.cordum-redis.cordum.svc:6379,cordum-redis-4.cordum-redis.cordum.svc:6379,cordum-redis-5.cordum-redis.cordum.svc:6379
+        # Control-plane key for the scheduler's sys.audit.export service tokens
+        # (Secret cordum-policy-signing, optional).
+        - name: CORDUM_POLICY_SIGNING_KEY
+          valueFrom:
+            secretKeyRef:
+              name: cordum-policy-signing
+              key: signing-key
+              optional: true
+        - name: CORDUM_POLICY_SIGNING_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: cordum-policy-signing
+              key: key-id
+              optional: true
         volumeMounts:
         - name: cordum-client-tls
           mountPath: /etc/cordum/tls/client
@@ -214,6 +242,19 @@ spec:
           value: /etc/cordum/tls/server/tls.crt
         - name: SAFETY_KERNEL_TLS_KEY
           value: /etc/cordum/tls/server/tls.key
+        # Audit-publisher key for the kernel's sys.audit.export service tokens.
+        # Required: create Secret cordum-audit-signing (signing-key, optional key-id).
+        - name: CORDUM_AUDIT_SIGNING_KEY
+          valueFrom:
+            secretKeyRef:
+              name: cordum-audit-signing
+              key: signing-key
+        - name: CORDUM_AUDIT_SIGNING_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: cordum-audit-signing
+              key: key-id
+              optional: true
         volumeMounts:
         - name: cordum-client-tls
           mountPath: /etc/cordum/tls/client

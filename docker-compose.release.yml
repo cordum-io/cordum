@@ -112,6 +112,9 @@ services:
       # once every bundle verifies clean in warn. See policy-signing.md
       # for the staged rollout procedure.
       CORDUM_POLICY_STRICT: "${CORDUM_POLICY_STRICT:-warn}"
+      # Audit-publisher key (Ed25519 PEM or base64): the kernel signs its sys.audit.export tokens with it.
+      CORDUM_AUDIT_SIGNING_KEY: "${CORDUM_AUDIT_SIGNING_KEY:?error: CORDUM_AUDIT_SIGNING_KEY is not set}"
+      CORDUM_AUDIT_SIGNING_KEY_ID: "${CORDUM_AUDIT_SIGNING_KEY_ID:-default}"
       SAFETY_KERNEL_TLS_CERT: /etc/cordum/tls/server/tls.crt
       SAFETY_KERNEL_TLS_KEY: /etc/cordum/tls/server/tls.key
     volumes:
@@ -160,6 +163,9 @@ services:
       # Metrics (exposed on Docker network for Prometheus):
       SCHEDULER_METRICS_ADDR: ":9090"
       SCHEDULER_METRICS_PUBLIC: "true"
+      # Control-plane key: the scheduler signs its sys.audit.export tokens with it (same values as the api-gateway).
+      CORDUM_POLICY_SIGNING_KEY: "${CORDUM_POLICY_SIGNING_KEY:-}"
+      CORDUM_POLICY_SIGNING_KEY_ID: "${CORDUM_POLICY_SIGNING_KEY_ID:-default}"
     volumes:
       - ./config/pools.yaml:/etc/cordum/pools.yaml:ro
       - ./config/timeouts.yaml:/etc/cordum/timeouts.yaml:ro
@@ -228,6 +234,9 @@ services:
       CORDUM_POLICY_SIGNING_KEY: "${CORDUM_POLICY_SIGNING_KEY:-}"
       CORDUM_POLICY_SIGNING_KEY_ID: "${CORDUM_POLICY_SIGNING_KEY_ID:-default}"
       CORDUM_POLICY_STRICT: "${CORDUM_POLICY_STRICT:-warn}"
+      # Audit-publisher public keys: the gateway verifies the safety kernel's and cordum-mcp's sys.audit.export tokens with them.
+      CORDUM_AUDIT_PUBLIC_KEY_CORDUM_SAFETY_KERNEL: "${CORDUM_AUDIT_PUBLIC_KEY_CORDUM_SAFETY_KERNEL:-}"
+      CORDUM_AUDIT_PUBLIC_KEY_CORDUM_MCP: "${CORDUM_AUDIT_PUBLIC_KEY_CORDUM_MCP:-}"
       # Pack signatures: explicit DOWNGRADE. In the production profile the
       # gateway refuses unsigned packs unless this is false, and the official
       # catalog packs are not signed yet. The gateway logs this downgrade at
