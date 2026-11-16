@@ -82,6 +82,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- A managed API key (`ck_`) now authenticates as its own principal, its key id. In the
+  production profile, where `X-Principal-Id` is ignored by default, it can therefore submit a
+  job through `POST /api/v1/jobs` or gRPC `SubmitJob`, and the job records that id as its
+  principal and actor; before, both refused it with `authenticated job identity mismatch`.
+  Existing keys take their id as principal with no migration, and a stored managed key without
+  an id is refused. Where `X-Principal-Id` is honored (outside production, or with
+  `CORDUM_ALLOW_HEADER_PRINCIPAL=true`), the header still replaces the key's principal as an
+  asserted one, for attribution only. Audit records for a managed key keep `identity_source`
+  `api_key:<id>` and the key's name.
 - Docs: the cordum-agentd, cordum-hook, Edge configuration and edge doctor pages and the
   configuration references now state Edge outage behavior as the failure and partition
   behavior contract records it. In enforce mode the hook denies `PreToolUse` when agentd times

@@ -28,7 +28,7 @@ func TestAudienceMatrixHTTPAPI(t *testing.T) {
 		}
 		newReq := func() *http.Request { return matrixRequest("/api/v1/jobs", string(raw)) }
 		return m.presentHTTP(t, identity.HTTPAPI, c, newReq, m.jobEffects, "job:state keys + sys.job.submit publishes")
-	}, identity.Skip(identity.APIKeyManaged, "PR1-19"))
+	})
 }
 
 // TestAudienceMatrixEdgeAPI presents every credential to POST
