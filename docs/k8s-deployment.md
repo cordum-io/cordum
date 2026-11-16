@@ -408,7 +408,9 @@ kubectl logs job/cordum-redis-cluster-init -n cordum
 The init job:
 1. Waits for all 6 nodes to respond to `PING`, authenticating with the
    `REDIS_PASSWORD` key of `cordum-redis-secret` (passed as `REDISCLI_AUTH`)
-2. Runs `redis-cli --cluster create ... --cluster-replicas 1 --cluster-yes`
+2. Exits 0 without changing anything when all 6 nodes already report
+   `cluster_state:ok` (an upgrade keeps the PVCs, so the retained nodes already form a cluster)
+3. Otherwise runs `redis-cli --cluster create ... --cluster-replicas 1 --cluster-yes`
 
 ### Pre-Flight Checks
 
@@ -437,7 +439,8 @@ kubectl get secret cordum-redis-secret -n cordum -o jsonpath='{.data.REDIS_PASSW
 | `ERR Invalid node address` | DNS not resolving | Verify headless service `cordum-redis` exists |
 | `ERR Nodes don't agree about configuration` | Partial previous init | Delete all pods (`kubectl delete pods -l app=redis -n cordum`), wait for restart, re-run |
 
-**Re-running**: Delete the job and re-create it if you need to re-initialize:
+**Re-running**: Delete the job and re-apply the overlay. When all 6 nodes report `cluster_state:ok`,
+the new job exits 0 without changes, and it never resets a node:
 ```bash
 kubectl delete job cordum-redis-cluster-init -n cordum
 kubectl apply -k deploy/k8s/production
