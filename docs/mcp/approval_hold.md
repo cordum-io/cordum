@@ -149,8 +149,8 @@ error before the metadata check. The four fields are:
 | `AgentID` | edge identity middleware | caller identity, audit attribution |
 
 Each helper emits no events and consumes no approval on its own rejection path.
-`ProcessApprovalClaim` also trims whitespace before this check; `EvaluateToolCall`
-tests for an empty string.
+Both helpers trim whitespace first (`callMetadataComplete`), so a whitespace-only
+field counts as blank.
 
 A policy-gated `tools/call` adds an earlier check. When Tenant, SessionID and
 ExecutionID are present and the AgentID is empty or whitespace-only, the server
