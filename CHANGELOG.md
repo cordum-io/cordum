@@ -187,6 +187,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   whatever the environment says. `docker-compose.dev.yml` sets both flags to `true`
   for the dev gateway, and the sample `config/system.yaml` gains an `mcp` block
   (enabled, HTTP transport, policy gate on) (task-314e6394).
+- cordumctl: `cordumctl up --dev` (from PR #591) needs no `CORDUM_API_KEY` beforehand.
+  It writes each missing dev credential to `.env`: a generated `CORDUM_API_KEY`,
+  `REDIS_PASSWORD` and `CORDUM_ADMIN_PASSWORD`, `CORDUM_ADMIN_USERNAME=admin`, and both
+  `CORDUM_MCP_*` flags set to `true`. Values already set are kept, an empty definition
+  such as `.env.example`'s `CORDUM_API_KEY=` is filled in place, and `.env` is
+  restricted to `0600` before any credential is written (task-d4334a04).
 - cordumctl: `generate-certs --san` adds names such as the Helm gateway FQDN
   (#492, task-fb3f0bbb).
 
