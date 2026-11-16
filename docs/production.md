@@ -205,15 +205,36 @@ Both CronJobs use a shared 20Gi PVC (`cordum-backups`) and retain 2 successful +
 
 ### Restore Procedures
 
-Restore Redis and NATS from the same backup timestamp, so that job state in Redis
-and the job streams in NATS agree, with the Cordum services and the backup
-CronJobs stopped:
+The Redis and NATS CronJobs snapshot independently, naming each backup by its own
+container start time. Matching timestamps do not make a consistent snapshot of
+both stores. Choose each store's newest complete backup from before the incident
+from the `cordum-backups` listing: `redis-<ts>-node<N>.rdb` and `nats-<ts>/`.
+Expect Redis job state and the NATS job streams to disagree for jobs that changed
+between the two snapshot times.
+
+Stop the Cordum services, suspend the backup and retention CronJobs, and delete
+their unfinished Jobs before creating either restore pod. Suspending a CronJob
+does not stop its existing Jobs. Select Jobs by their CronJob owner (the retention
+pods have no `app` label), and wait for foreground deletion to release the backup
+volume. Do not select a backup from an interrupted run.
 
 ```bash
-ts=20260213T120000Z   # the backup to restore (the names on the cordum-backups PVC)
+set -eu
+redis_ts=20260213T120002Z   # Redis backup id; use it as ts in the Redis runbook
+nats_ts=20260213T120009Z    # independently selected NATS backup id
 
 kubectl patch cronjob cordum-redis-backup -n cordum -p '{"spec":{"suspend":true}}'
 kubectl patch cronjob cordum-nats-backup -n cordum -p '{"spec":{"suspend":true}}'
+kubectl patch cronjob cordum-backup-retention -n cordum -p '{"spec":{"suspend":true}}'
+jobs=$(kubectl get jobs -n cordum -o go-template='{{range .items}}
+{{- if not .status.completionTime}}{{if .metadata.ownerReferences}}
+{{- $owner := index .metadata.ownerReferences 0}}
+{{- if and (eq $owner.kind "CronJob") (or (eq $owner.name "cordum-redis-backup") (eq $owner.name "cordum-nats-backup") (eq $owner.name "cordum-backup-retention"))}}
+{{- .metadata.name}}{{"\n"}}
+{{- end}}{{end}}{{end}}{{end}}')
+for job in $jobs; do
+  kubectl delete job -n cordum "$job" --cascade=foreground --wait --timeout=5m
+done
 kubectl scale deployment --all --replicas=0 -n cordum
 kubectl wait -n cordum --for=delete pod --timeout=5m \
   -l 'app in (cordum-api-gateway,cordum-scheduler,cordum-safety-kernel,cordum-workflow-engine,cordum-context-engine,cordum-dashboard)'
@@ -232,6 +253,7 @@ CronJob's label, which the production NetworkPolicies admit to NATS's client por
 DNS:
 
 ```bash
+set -eu
 kubectl apply -n cordum -f - <<'EOF'
 apiVersion: v1
 kind: Pod
@@ -261,10 +283,15 @@ spec:
 EOF
 kubectl wait -n cordum --for=condition=Ready pod/cordum-nats-restore --timeout=120s
 
-kubectl exec -n cordum cordum-nats-restore -- env ts=$ts sh -c '
+kubectl exec -n cordum cordum-nats-restore -- env nats_ts="$nats_ts" sh -c '
+  set -eu
+  for s in CORDUM_SYS CORDUM_JOBS; do
+    test -s "/backup/nats-$nats_ts/$s.snapshot/backup.json"
+    test -s "/backup/nats-$nats_ts/$s.snapshot/stream.tar.s2"
+  done
   for s in CORDUM_SYS CORDUM_JOBS; do
     if nats stream info $s >/dev/null 2>&1; then nats stream rm --force $s; fi
-    nats stream restore /backup/nats-$ts/$s.snapshot
+    nats stream restore "/backup/nats-$nats_ts/$s.snapshot"
   done
   nats stream ls'
 
@@ -274,13 +301,17 @@ kubectl delete pod -n cordum cordum-nats-restore
 `cordum-backups` is `ReadWriteOnce`, so run this pod and the Redis toolbox pod one
 after the other, or on the same node.
 
+After a failed restore, leave the services stopped and do not run Resume.
+
 **Resume** the services, which also returns each Deployment to the replica count
-in the overlay, and the backups:
+in the overlay, and the backup and retention CronJobs only after both restores succeed:
 
 ```bash
+set -eu
 kubectl apply -k deploy/k8s/production
 kubectl patch cronjob cordum-redis-backup -n cordum -p '{"spec":{"suspend":false}}'
 kubectl patch cronjob cordum-nats-backup -n cordum -p '{"spec":{"suspend":false}}'
+kubectl patch cronjob cordum-backup-retention -n cordum -p '{"spec":{"suspend":false}}'
 ```
 
 **Configuration backup/restore**:
