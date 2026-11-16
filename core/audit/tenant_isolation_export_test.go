@@ -16,9 +16,6 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// Tenant isolation of the audit exports and legal holds (PR1-03E). Every
-// case seeds both tenants with recognisable markers and checks ids and
-// markers, never counts alone.
 const (
 	isoTenantA = "tenant-iso-a"
 	isoTenantB = "tenant-iso-b"
@@ -39,8 +36,7 @@ func isoEvent(tenant, marker string, i int) SIEMEvent {
 	}
 }
 
-// seedIsoChains appends n events per tenant, interleaved A, B, A, B so both
-// chains share one time window, and returns each tenant's sealed events.
+// seedIsoChains interleaves both tenants in one time window.
 func seedIsoChains(t *testing.T, chainer *Chainer, n int) (a, b []SIEMEvent) {
 	t.Helper()
 	for i := 0; i < n; i++ {
@@ -92,8 +88,6 @@ func assertChainHead(t *testing.T, client redis.UniversalClient, chainer *Chaine
 	}
 }
 
-// exportedEvents runs the compliance writer for tenant over its own stream
-// and returns the manifest tenant, the event lines and the raw body.
 func exportedEvents(t *testing.T, client redis.UniversalClient, chainer *Chainer, tenant string) (string, []SIEMEvent, string) {
 	t.Helper()
 	var buf bytes.Buffer
@@ -131,12 +125,12 @@ func exportedEvents(t *testing.T, client redis.UniversalClient, chainer *Chainer
 			events = append(events, ev)
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("read export %s: %v", tenant, err)
+	}
 	return manifestTenant, events, raw
 }
 
-// TestTenantIsolationComplianceExportChain: the chain is split by event
-// tenant (one stream and one head per tenant), and tenant A's compliance
-// export holds every A record and none of B's.
 func TestTenantIsolationComplianceExportChain(t *testing.T) {
 	client, cleanup := newExportClient(t)
 	defer cleanup()
@@ -202,9 +196,6 @@ func assertUnderHold(t *testing.T, store *LegalHoldStore, tenant string, want bo
 	}
 }
 
-// TestTenantIsolationLegalHoldStore: holds are indexed per tenant, the
-// one-active-hold rule is per tenant, and releasing A's hold leaves B's
-// record byte-for-byte unchanged.
 func TestTenantIsolationLegalHoldStore(t *testing.T) {
 	store, _ := newTestLegalHoldStore(t)
 	ctx := context.Background()
@@ -269,10 +260,7 @@ func chainStreamEvents(t *testing.T, client *redis.Client, chainer *Chainer, ten
 	return out
 }
 
-// TestTenantIsolationSIEMConsumerChainsPerTenant: the consumer chains each
-// event into its own tenant's chain. Scope fact: there is one install-level
-// SIEM sink, so it receives both tenants' events; per-tenant routing is a
-// design gap outside this test.
+// One install-level SIEM sink receives both tenants; only the chains are tenant-scoped.
 func TestTenantIsolationSIEMConsumerChainsPerTenant(t *testing.T) {
 	bus := &mockAuditBus{}
 	sink := &mockExporter{}
