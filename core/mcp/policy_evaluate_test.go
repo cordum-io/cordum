@@ -862,7 +862,7 @@ func TestWhitespaceLinkage_FailsClosed(t *testing.T) {
 				t.Errorf("InvokeToolWithPolicy = (%v, %v); want (nil, errMissingMCPMetadata)", result, err)
 			}
 			f.requireCounts(t, 0, 0)
-			if got := len(f.pipeline.calls); got != 0 {
+			if got := f.pipeline.calls.Load(); got != 0 {
 				t.Errorf("pipeline dispatches = %d; want 0", got)
 			}
 		})
