@@ -202,6 +202,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   When the environment does not set `CORDUM_API_KEY`, the `--api-key` default and
   `cordumctl edge claude` read it from `./.env`, and `cordumctl edge doctor` takes its
   flag defaults from the edge config (task-4d382942).
+- cordumctl: `cordumctl up --dev` (from PR #591) also runs `docker-compose.dev.yml` when
+  it sits next to the compose file and `--file` is not given. With `--detach` (the
+  default) it then waits for the gateway and fills in missing MCP keys of the stored
+  system config: `mcp.transport: http`, `mcp.policy_gate_enabled: true`, and
+  `mcp.enabled: true` only when `CORDUM_MCP_ENABLED` (environment first, then `.env`)
+  reads as true, so seeding never overrides an explicit `false` (task-ada11a03).
 - cordumctl: `generate-certs --san` adds names such as the Helm gateway FQDN
   (#492, task-fb3f0bbb).
 
@@ -855,6 +861,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Data inventory: general `cfg:{scope}:{id}` config documents have their own
+  entry, DI-C54, and DI-C05 now covers only the policy audit document. The
+  inventory key scanner reads file-level values from top-level declarations
+  only, so a local const or var no longer overrides one (task-4420e46c).
+
+- `cordumctl pack install` no longer counts directories against the
+  2,048-file pack limit. A pack with 2,048 regular files spread over
+  subdirectories was refused before upload, although both the CLI and the
+  gateway extractors accept it (task-d1935e3a).
+
 - K8s restore runbooks: NATS restores run from a nats-box pod and remove each
   stream first, and `redis-operations.md` has a Redis "Restore From Backup"
   procedure. The old steps copied an RDB into a running pod, which Redis
@@ -878,6 +894,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   their approval on retry, and their prompt-injection taint now carries
   across POSTs. Two callers never share either (#492, task-dcd2a4fb).
 
+- cordumctl reads and writes `.env` by Docker Compose's rules, so the CLI, `.env` and
+  the Gateway agree on each credential. `.env` values lose an inline ` #` comment and
+  take Compose's quoting, escapes and `${VAR}` interpolation, and the last definition
+  of a key wins. `up --dev` quotes a credential it copies when Compose would otherwise
+  read it differently, and a blank `CORDUM_API_KEY` or `REDIS_PASSWORD` exported in the
+  shell no longer hides the `.env` value from Compose (#591 CodeRabbit r4580272519,
+  r4580272522 and r4580272526; task-2dfac489).
 - Python SDK: an error response whose body is not the `Error` schema, such as
   a proxy's HTML page or the nested `{"error": {...}}` envelope, now raises the
   typed `CordumError` subclass for its status instead of `KeyError` or

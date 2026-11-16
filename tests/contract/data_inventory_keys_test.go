@@ -70,18 +70,28 @@ func scanDataFile(fset *token.FileSet, f *ast.File, rel string) []dataFound {
 		found = append(found, dataFound{kind, value, rel, fset.Position(n.Pos()).Line})
 	}
 	values := map[string]string{} // file-level string consts and vars
-	funcs := map[*ast.FuncLit]string{}
-	ast.Inspect(f, func(n ast.Node) bool {
-		switch x := n.(type) {
-		case *ast.ValueSpec:
-			for i, name := range x.Names {
-				if i < len(x.Values) {
-					if s, ok := dataString(x.Values[i]); ok {
+	for _, d := range f.Decls {
+		gd, ok := d.(*ast.GenDecl)
+		if !ok || (gd.Tok != token.CONST && gd.Tok != token.VAR) {
+			continue
+		}
+		for _, spec := range gd.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			for i, name := range vs.Names {
+				if i < len(vs.Values) {
+					if s, ok := dataString(vs.Values[i]); ok {
 						values[name.Name] = s
 					}
 				}
 			}
-		case *ast.AssignStmt:
+		}
+	}
+	funcs := map[*ast.FuncLit]string{}
+	ast.Inspect(f, func(n ast.Node) bool {
+		if x, ok := n.(*ast.AssignStmt); ok {
 			for i, rhs := range x.Rhs {
 				if fl, ok := rhs.(*ast.FuncLit); ok && i < len(x.Lhs) {
 					if id, ok := x.Lhs[i].(*ast.Ident); ok {
@@ -157,8 +167,9 @@ func dataStreamNames(f *ast.File, cfg *ast.CompositeLit, stack []ast.Node, value
 // identifier that a parameter of an enclosing function declares, where the
 // innermost such function binds it; otherwise a file-level const or var. A
 // parameter of a function literal assigned to a variable resolves at that
-// variable's call sites (one level, when atCalls). Any other parameter, and
-// anything else, is "<unresolved>".
+// variable's call sites (one level, when atCalls). A name declared locally
+// before the use (see dataDeclaresLocal), any other parameter, and anything
+// else, is "<unresolved>".
 func dataName(f *ast.File, e ast.Expr, stack []ast.Node, values map[string]string, funcs map[*ast.FuncLit]string, atCalls bool) []string {
 	if s, ok := dataString(e); ok {
 		return []string{s}
@@ -169,6 +180,9 @@ func dataName(f *ast.File, e ast.Expr, stack []ast.Node, values map[string]strin
 		return unresolved
 	}
 	for i := len(stack) - 1; i >= 0; i-- {
+		if dataDeclaresLocal(stack[i], id) {
+			return unresolved
+		}
 		index := dataParamIndex(stack[i], id.Name)
 		if index < 0 {
 			continue
@@ -218,6 +232,56 @@ func dataParamIndex(fn ast.Node, name string) int {
 		}
 	}
 	return -1
+}
+
+// dataDeclaresLocal reports whether n, a node enclosing the use id, declares
+// id's name before that use: a const, var or := in its statement list, an if,
+// for, switch or type-switch init or assignment, or a range := key or value.
+func dataDeclaresLocal(n ast.Node, id *ast.Ident) bool {
+	var stmts []ast.Stmt
+	switch n := n.(type) {
+	case *ast.BlockStmt:
+		stmts = n.List
+	case *ast.CaseClause:
+		stmts = n.Body
+	case *ast.CommClause:
+		stmts = n.Body
+	case *ast.IfStmt:
+		stmts = []ast.Stmt{n.Init}
+	case *ast.ForStmt:
+		stmts = []ast.Stmt{n.Init}
+	case *ast.SwitchStmt:
+		stmts = []ast.Stmt{n.Init}
+	case *ast.TypeSwitchStmt:
+		stmts = []ast.Stmt{n.Init, n.Assign}
+	case *ast.RangeStmt:
+		return n.Tok == token.DEFINE && (dataIsName(n.Key, id.Name) || dataIsName(n.Value, id.Name))
+	}
+	for _, st := range stmts {
+		if st == nil || st.End() > id.Pos() {
+			continue
+		}
+		switch st := st.(type) {
+		case *ast.DeclStmt:
+			if gd, ok := st.Decl.(*ast.GenDecl); ok {
+				for _, spec := range gd.Specs {
+					if vs, ok := spec.(*ast.ValueSpec); ok && slices.ContainsFunc(vs.Names, func(x *ast.Ident) bool { return x.Name == id.Name }) {
+						return true
+					}
+				}
+			}
+		case *ast.AssignStmt:
+			if st.Tok == token.DEFINE && slices.ContainsFunc(st.Lhs, func(e ast.Expr) bool { return dataIsName(e, id.Name) }) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func dataIsName(e ast.Expr, name string) bool {
+	x, ok := e.(*ast.Ident)
+	return ok && x.Name == name
 }
 
 // uncoveredDataKeys lists each discovered item no entry or not_tenant_data
@@ -362,6 +426,56 @@ func ensure(js X, streamName string) {
 				t.Fatalf("got %q, want an item starting %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestDataInventoryKeyScanLocalShadowing(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "core", "pkg", "local.go"), `package pkg
+
+const streamName = "ACTUAL"
+
+func ensure(js X) {
+	js.AddStream(&nats.StreamConfig{Name: streamName})
+}
+
+func local(js X) {
+	const streamName = "LOCAL"
+	js.AddStream(&nats.StreamConfig{Name: streamName})
+}
+
+func short(js X) {
+	streamName := "SHORT"
+	js.AddStream(&nats.StreamConfig{Name: streamName})
+}
+
+func later(js X) {
+	js.AddStream(&nats.StreamConfig{Name: streamName})
+	streamName := "AFTER"
+	_ = streamName
+}
+
+func ranged(js X, names []string) {
+	for _, streamName := range names {
+		js.AddStream(&nats.StreamConfig{Name: streamName})
+	}
+}
+
+func cond(js X) {
+	if streamName := pick(); streamName != "" {
+		js.AddStream(&nats.StreamConfig{Name: streamName})
+	}
+}
+`)
+	found, err := discoverDataKeys(dir, "core")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const p = "core/pkg/local.go"
+	want := []dataFound{{"jetstream", "ACTUAL", p, 6}, {"jetstream", "<unresolved>", p, 11}, {"jetstream", "<unresolved>", p, 16},
+		{"jetstream", "ACTUAL", p, 20}, {"jetstream", "<unresolved>", p, 27}, {"jetstream", "<unresolved>", p, 33}}
+	if !slices.Equal(found, want) {
+		t.Errorf("a local declaration must neither override the file-level const nor resolve to it:\n got %q\nwant %q", found, want)
 	}
 }
 
