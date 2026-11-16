@@ -235,13 +235,67 @@ func (s *LegalHoldStore) IsUnderHold(ctx context.Context, tenant string) (bool, 
 	if err != nil {
 		return false, fmt.Errorf("redis smembers holds: %w", err)
 	}
+	return anyActiveHold(ctx, s.client, ids)
+}
+
+// DeleteUnlessHeld runs the commands queue adds in one MULTI/EXEC on this
+// store's Redis unless tenant is under an active legal hold. It WATCHes the
+// tenant's hold index and every record it lists, then reads them like
+// IsUnderHold, so a hold committed before EXEC aborts the transaction. It
+// returns ErrUnderHold for an active hold, the read error for an unreadable
+// record, and redis.TxFailedErr when a watched key changed; nothing queued
+// runs on any error. queue must only queue. The queued keys must live on this
+// Redis (the gateway builds this store and the Edge store from REDIS_URL); on
+// Redis Cluster the MULTI cannot span hash slots, so it fails.
+func (s *LegalHoldStore) DeleteUnlessHeld(ctx context.Context, tenant string, queue func(redis.Pipeliner)) error {
+	tenant = strings.TrimSpace(tenant)
+	if tenant == "" {
+		return fmt.Errorf("tenant_id required")
+	}
+	indexKey := legalHoldSetPrefix + tenant
+	return s.client.Watch(ctx, func(tx *redis.Tx) error {
+		ids, err := tx.SMembers(ctx, indexKey).Result()
+		if err != nil {
+			return fmt.Errorf("redis smembers holds: %w", err)
+		}
+		keys := make([]string, len(ids))
+		for i, id := range ids {
+			keys[i] = legalHoldKeyPrefix + id
+		}
+		if len(keys) > 0 {
+			if err := tx.Watch(ctx, keys...).Err(); err != nil {
+				return fmt.Errorf("redis watch holds: %w", err)
+			}
+		}
+		held, err := anyActiveHold(ctx, tx, ids)
+		if err != nil {
+			return err
+		}
+		if held {
+			return ErrUnderHold
+		}
+		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			queue(pipe)
+			return nil
+		})
+		return err
+	}, indexKey)
+}
+
+// anyActiveHold reads the listed hold records through c. A missing record is
+// not a hold; an unreadable or undecodable one is an error.
+func anyActiveHold(ctx context.Context, c redis.Cmdable, ids []string) (bool, error) {
 	for _, id := range ids {
-		hold, err := s.GetHold(ctx, id)
-		if errors.Is(err, ErrHoldNotFound) {
+		data, err := c.Get(ctx, legalHoldKeyPrefix+id).Bytes()
+		if errors.Is(err, redis.Nil) {
 			continue
 		}
 		if err != nil {
-			return false, err
+			return false, fmt.Errorf("redis get hold: %w", err)
+		}
+		var hold LegalHold
+		if err := json.Unmarshal(data, &hold); err != nil {
+			return false, fmt.Errorf("unmarshal hold: %w", err)
 		}
 		if hold.IsActive() {
 			return true, nil
@@ -284,4 +338,5 @@ var (
 	ErrHoldNotFound        = fmt.Errorf("legal hold not found")
 	ErrHoldAlreadyExists   = fmt.Errorf("active legal hold already exists for this tenant")
 	ErrHoldAlreadyReleased = fmt.Errorf("legal hold already released")
+	ErrUnderHold           = fmt.Errorf("tenant is under an active legal hold")
 )

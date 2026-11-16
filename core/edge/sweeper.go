@@ -34,16 +34,16 @@ type SessionSweeperOptions struct {
 	RetentionTTL time.Duration
 	Interval     time.Duration
 	Now          func() time.Time
-	// LegalHolds is checked before every deletion: sessions of a tenant
-	// under an active audit legal hold are kept, and so are those of a
-	// tenant whose hold check fails. Nil keeps every session.
+	// LegalHolds guards every deletion: each cleanup page commits through its
+	// DeleteUnlessHeld, on the store's Redis, and a tenant's sessions are kept
+	// while its hold is active, unreadable or changing. Nil keeps every session.
 	LegalHolds *audit.LegalHoldStore
 }
 
 // SessionSweeper removes Edge sessions that are older than the configured
-// retention TTL, except for tenants under legal hold. It delegates deletion
-// to RedisStore.DeleteSession so cleanup inherits bounded ZSCAN + batched
-// DEL behavior.
+// retention TTL, except for tenants under legal hold. It deletes through
+// DeleteSession's cleanup (deleteSessionUnlessHeld) so cleanup inherits
+// bounded ZSCAN + batched DEL behavior.
 type SessionSweeper struct {
 	store        *RedisStore
 	retentionTTL time.Duration
@@ -265,20 +265,38 @@ func (s *SessionSweeper) sweepSessionKeys(ctx context.Context, keys []string, lo
 		// Checked per session, so a hold placed mid-sweep stops deletion.
 		held, err := s.holds.IsUnderHold(ctx, session.TenantID)
 		if err != nil || held {
-			if !logged[session.TenantID] {
-				logged[session.TenantID] = true
-				slog.Warn("edge session retention: keeping tenant's expired sessions",
-					"tenant_id", session.TenantID, "legal_hold", held, "hold_check_error", err)
-			}
+			warnKeptTenant(logged, session.TenantID, held, err)
 			continue
 		}
-		if err := s.store.DeleteSession(ctx, session.TenantID, session.SessionID); err != nil {
+		// Each cleanup page also commits with the hold read.
+		err = s.store.deleteSessionUnlessHeld(ctx, session.TenantID, session.SessionID, s.holds)
+		switch {
+		case errors.Is(err, audit.ErrUnderHold):
+			warnKeptTenant(logged, session.TenantID, true, nil)
+			continue
+		case errors.Is(err, errSessionKeptForLegalHold):
+			if !logged[""] { // tenant IDs are never empty
+				logged[""] = true
+				slog.Warn("edge session retention: keeping expired sessions whose legal hold could not be verified",
+					"reason", retentionHoldFailureReason(err))
+			}
+			continue
+		case err != nil:
 			return swept, err
 		}
 		s.store.recorder.RecordSessionSwept()
 		swept++
 	}
 	return swept, nil
+}
+
+// warnKeptTenant logs once per sweep that a tenant's expired sessions are kept.
+func warnKeptTenant(logged map[string]bool, tenantID string, held bool, err error) {
+	if !logged[tenantID] {
+		logged[tenantID] = true
+		slog.Warn("edge session retention: keeping tenant's expired sessions",
+			"tenant_id", tenantID, "legal_hold", held, "hold_check_error", err)
+	}
 }
 
 func isSweepSessionDocumentKey(key string) bool {
