@@ -41,7 +41,7 @@ func TestAudienceMatrixEdgeAPI(t *testing.T) {
 			return matrixRequest("/api/v1/edge/sessions", `{"agent_product":"claude-code","mode":"local-dev"}`)
 		}
 		return m.presentHTTP(t, identity.EdgeAPI, c, newReq, m.edgeSessions, "edge:session records")
-	}, identity.Skip(identity.APIKeyManaged, "PR1-20"))
+	})
 }
 
 func matrixRequest(path, body string) *http.Request {
