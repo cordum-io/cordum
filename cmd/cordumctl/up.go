@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -192,7 +191,15 @@ func runDockerCompose(args []string) error {
 }
 
 func composeEnv() []string {
-	env := os.Environ()
+	var env []string
+	for _, kv := range os.Environ() {
+		// Compose prefers the process environment to .env, so a blank credential
+		// exported here would hide the one .env holds (and `up --dev` wrote).
+		if key, val, _ := strings.Cut(kv, "="); (key == "CORDUM_API_KEY" || key == "REDIS_PASSWORD") && strings.TrimSpace(val) == "" {
+			continue
+		}
+		env = append(env, kv)
+	}
 	hasComposeTimeout := os.Getenv("COMPOSE_HTTP_TIMEOUT") != ""
 	hasDockerTimeout := os.Getenv("DOCKER_CLIENT_TIMEOUT") != ""
 	if !hasComposeTimeout {
@@ -227,38 +234,23 @@ func firstNonEmptyEnv(keys ...string) string {
 	return ""
 }
 
+// readEnvFile returns the value Compose would take from the .env file at path
+// for the first of keys that has a non-blank one, or "".
 func readEnvFile(path string, keys ...string) string {
 	// #nosec G304 -- reads local .env file for CLI convenience.
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return ""
 	}
-	defer func() {
-		_ = f.Close()
-	}()
-	allowed := map[string]struct{}{}
+	vals, err := parseDotEnv(string(data), os.LookupEnv)
+	if err != nil {
+		slog.Warn("readEnvFile: parse error", "path", path, "error", err)
+		return ""
+	}
 	for _, key := range keys {
-		allowed[key] = struct{}{}
-	}
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
+		if val := vals[key]; strings.TrimSpace(val) != "" {
+			return val
 		}
-		key, val, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		key = strings.TrimSpace(key)
-		val = strings.TrimSpace(val)
-		if _, ok := allowed[key]; !ok {
-			continue
-		}
-		return trimQuotes(val)
-	}
-	if err := scanner.Err(); err != nil {
-		slog.Warn("readEnvFile: scan error", "path", path, "error", err)
 	}
 	return ""
 }
@@ -298,7 +290,10 @@ func ensureDevBootstrapEnv(composeDir string) (devBootstrapResult, error) {
 		return devBootstrapResult{}, fmt.Errorf("read %s: %w", envPath, err)
 	}
 
-	existingMap := parseEnvContent(existing)
+	existingMap, err := parseEnvContent(existing)
+	if err != nil {
+		return devBootstrapResult{}, fmt.Errorf("parse %s: %w", envPath, err)
+	}
 	hasKey := func(k string) (string, bool) {
 		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
 			return v, true
@@ -322,7 +317,7 @@ func ensureDevBootstrapEnv(composeDir string) (devBootstrapResult, error) {
 			}
 			apiKey = "cordum_dev_" + hexPart
 		}
-		missing = append(missing, "CORDUM_API_KEY="+apiKey)
+		missing = append(missing, "CORDUM_API_KEY="+dotEnvValue(apiKey))
 		added = append(added, "CORDUM_API_KEY")
 	}
 
@@ -373,7 +368,7 @@ func ensureDevBootstrapEnv(composeDir string) (devBootstrapResult, error) {
 		if err != nil {
 			return devBootstrapResult{}, fmt.Errorf("generate %s: %w", item.key, err)
 		}
-		missing = append(missing, item.key+"="+val)
+		missing = append(missing, item.key+"="+dotEnvValue(val))
 		added = append(added, item.key)
 	}
 
@@ -425,27 +420,14 @@ func ensureDevBootstrapEnv(composeDir string) (devBootstrapResult, error) {
 	}, nil
 }
 
-func parseEnvContent(content string) map[string]string {
-	out := map[string]string{}
-	scanner := bufio.NewScanner(strings.NewReader(content))
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		key, val, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		out[strings.TrimSpace(key)] = trimQuotes(strings.TrimSpace(val))
-	}
-	return out
+// parseEnvContent reads .env content with readEnvFile's parser.
+func parseEnvContent(content string) (map[string]string, error) {
+	return parseDotEnv(content, os.LookupEnv)
 }
 
 // fillEmptyEnvDefinitions writes each generated KEY=value line over every empty
-// definition of KEY in content and returns the lines still to append.
-// readEnvFile reads a key's first definition, so a value appended after an empty
-// one (.env.example ships CORDUM_API_KEY=) would never reach the CLI.
+// definition of KEY in content and returns the lines still to append, so .env
+// keeps one definition of KEY (.env.example ships CORDUM_API_KEY=).
 func fillEmptyEnvDefinitions(content string, generated []string) (string, []string) {
 	byKey := make(map[string]string, len(generated))
 	for _, line := range generated {
