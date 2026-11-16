@@ -129,6 +129,15 @@ SOURCED.update({  # a sourced file leaves the options in force at each return it
     "sourced_return_elsewhere": ("source " + X + "\n" + RUN_MINT, {X: 'set -x\n( return 0 )\nv="$(return 0)"\ntrue | return 0\nreturn 0 &\nset +x\n'}, {}), "sourced_nested_return": ("source " + XG + "\n" + RUN_MINT, {XG: "source " + X + "\nset +x\n", X: "set -x\nreturn 0\n"}, {}),  # controls: a return in another shell, or one that ends only the inner file
     "sourced_reset_guarded": (RUN_MINT, {XE: "set +e\n", XR: 'if [[ -n "${HOME:-}" ]]; then set -e; fi\n'}, {"head": RELAXED + "source " + XR + "\n"}), "sourced_reset_after_return": (RUN_MINT, {XE: "set +e\n", XR: CONDRET + "set -e\n"}, {"head": RELAXED + "source " + XR + "\n"}),
     "sourced_reset_cond_source": (RUN_MINT, {XE: "set +e\n", XR: "set -e\n"}, {"head": RELAXED + 'if [[ -n "${HOME:-}" ]]; then source ' + XR + "; fi\n"}), "sourced_untrace_after_return": ("source " + X + "\nsource " + XR + "\n" + RUN_MINT, {X: "set -x\n", XR: CONDRET + "set +x\n"}, {})})  # a reset bash may skip restores nothing
+FNTRACE, FNRELAX = "trace_on() { set -x; }\n", "relax() { set +e; }\n"  # functions a sourced file leaves defined in its caller
+SOURCED.update({  # a function a sourced file defines may change an option at any later call, so no later inline or sourced reset restores it; an unparsable file may define one
+    "sourced_function_inline_reset": ("source " + X + "\nset +x\ntrace_on\n" + RUN_MINT, {X: FNTRACE}, {}), "sourced_function_trace_reset": ("source " + X + "\nsource " + XR + "\ntrace_on\n" + RUN_MINT, {X: FNTRACE, XR: "set +x\n"}, {}),
+    "sourced_function_errexit_reset": (RUN_MINT, {XE: FNRELAX, XR: "set -e\n"}, {"head": RELAXED + "source " + XR + "\nrelax\n"}), "sourced_function_called_in_reset": (RUN_MINT, {XE: FNRELAX, XR: "set -e\nrelax\n"}, {"head": RELAXED + "source " + XR + "\n"}),
+    "sourced_nested_function_reset": ("source " + XG + "\nset +x\ntrace_on\n" + RUN_MINT, {XG: "source " + X + "\n", X: FNTRACE}, {}),
+    "sourced_nested_function_errexit": (RUN_MINT, {XG: "source " + XE + "\n", XE: FNRELAX, XR: "set -e\n"}, {"head": STRICT + "source " + XG + "\nsource " + XR + "\nrelax\n"}), "sourced_unparsable_reset": ("source " + X + "\nset +x\n" + RUN_MINT, {X: "echo 'unterminated\n"}, {}),
+    "same_file_function_reset": (FNTRACE + "set +x\ntrace_on\n" + RUN_MINT, {}, {}),  # controls: a function defined in the run itself, already wide there;
+    "sourced_subshell_function": ("source " + X + "\nset +x\n" + RUN_MINT, {X: "( trace_on() { set -x; }; trace_on )\nset -x\n"}, {}),  # a function a sourced file defines in a subshell is gone when it ends,
+    "sourced_errexit_window_restored": (RUN_MINT, {XE: "probe() {\nset +e\nfalse\nset -e\n}\nset +e\n"}, {"head": STRICT + "source " + XE + "\nset -e\n"})})  # and one that restores errexit adds nothing: the caller's reset of the file's own set holds
 TRACE = {  # (shell, run[, job]): xtrace on at a fail-closed registration; run-text tracing in a job the guard leaves open
     "trace_shell": ("bash -x {0}", "source " + MINT_SH), "trace_env": ("", "SHELLOPTS=xtrace " + RUN_MINT),
     "trace_bash_x": ("", "bash -x " + MINT_SH, *LINK), "trace_set_x": ("", "set -x\nsource " + MINT_SH, *LINK),
@@ -334,6 +343,9 @@ sourced_trace_off sourced_subshell sourced_after_registration sourced_errexit_re
 sourced_return_trace sourced_cond_return_trace sourced_case_return_trace rc_return_trace sourced_case_paren_trace sourced_untrace_after_return e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 sourced_return_errexit sourced_reset_guarded sourced_reset_after_return sourced_reset_cond_source e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 sourced_errexit_reset sourced_trace_reset sourced_return_elsewhere sourced_nested_return clean
+sourced_function_inline_reset sourced_function_trace_reset sourced_nested_function_reset sourced_unparsable_reset same_file_function_reset e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
+sourced_function_errexit_reset sourced_function_called_in_reset sourced_nested_function_errexit e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
+sourced_subshell_function sourced_errexit_window_restored clean
 gen_openssl gen_uuidgen gen_urandom gen_random gen_date gen_python gen_quoted_paren errexit_substitution mask_captured mask_env_captured e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_gen.sh
 gen_nested mask_fd_captured clean
 nonce_bypass_removed edge-fake-hook-e2e.yml:edge-fake-hook-e2e:CREDENTIAL_UNREGISTERED@tools/scripts/edge_fake_hook_e2e.sh
