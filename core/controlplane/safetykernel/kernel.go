@@ -482,28 +482,7 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 	// Report this kernel's loader configuration on the same lifecycle.
 	startPolicySignatureReporter(lifecycleCtx, &wg, resultClient)
 
-	grpcServer := grpc.NewServer(
-		serverCreds,
-		grpc.StatsHandler(otelgrpc.NewServerHandler()),
-		grpc.KeepaliveParams(keepalive.ServerParameters{
-			MaxConnectionAge:      env.DurationOr(envGRPCServerMaxConnectionAge, 2*time.Hour),
-			MaxConnectionAgeGrace: env.DurationOr(envGRPCServerMaxConnectionGrace, 30*time.Second),
-			Time:                  env.DurationOr(envGRPCServerKeepaliveTime, 30*time.Second),
-			Timeout:               env.DurationOr(envGRPCServerKeepaliveTimeout, 10*time.Second),
-		}),
-		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-			MinTime:             env.DurationOr(envGRPCServerEnforcementMinTime, 15*time.Second),
-			PermitWithoutStream: true,
-		}),
-	)
-	pb.RegisterSafetyKernelServer(grpcServer, srv)
-	pb.RegisterOutputPolicyServiceServer(grpcServer, srv)
-	healthSrv := health.NewServer()
-	healthpb.RegisterHealthServer(grpcServer, healthSrv)
-	healthSrv.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
-	if env.Bool(env.EnvGRPCReflection) {
-		reflection.Register(grpcServer)
-	}
+	grpcServer := newGRPCServer(srv, serverCreds)
 
 	// Admin HTTP server for health probes (Docker/K8s).
 	adminAddr := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_ADMIN_ADDR"))
@@ -598,6 +577,32 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 		return fmt.Errorf("grpc serve: %w", serveErr)
 	}
 	return nil
+}
+
+func newGRPCServer(srv *server, serverCreds grpc.ServerOption) *grpc.Server {
+	grpcServer := grpc.NewServer(
+		serverCreds,
+		grpc.StatsHandler(otelgrpc.NewServerHandler()),
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			MaxConnectionAge:      env.DurationOr(envGRPCServerMaxConnectionAge, 2*time.Hour),
+			MaxConnectionAgeGrace: env.DurationOr(envGRPCServerMaxConnectionGrace, 30*time.Second),
+			Time:                  env.DurationOr(envGRPCServerKeepaliveTime, 30*time.Second),
+			Timeout:               env.DurationOr(envGRPCServerKeepaliveTimeout, 10*time.Second),
+		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             env.DurationOr(envGRPCServerEnforcementMinTime, 15*time.Second),
+			PermitWithoutStream: true,
+		}),
+	)
+	pb.RegisterSafetyKernelServer(grpcServer, srv)
+	pb.RegisterOutputPolicyServiceServer(grpcServer, srv)
+	healthSrv := health.NewServer()
+	healthpb.RegisterHealthServer(grpcServer, healthSrv)
+	healthSrv.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
+	if env.Bool(env.EnvGRPCReflection) {
+		reflection.Register(grpcServer)
+	}
+	return grpcServer
 }
 
 func (s *server) currentEntitlements() licensing.Entitlements {
