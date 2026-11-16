@@ -18,7 +18,21 @@ LEAD = r"(?:(?:if|elif|while|until|then|do|else|!|builtin|command) )*"  # before
 Cmd = collections.namedtuple("Cmd", "line words op sub stack func text sets", defaults=((), "", "", ""))  # sets: what a file sourced here leaves set, e (errexit off) or E (errexit on), x (tracing on) or X (tracing off); r or t: a function it defines may leave errexit off (r) or tracing on (t) after any later call
 def seeded(env: dict, name: str) -> bool: return (value := env.get(name, "")) != "" and (value[0] != "$" or value.startswith("$("))
 def literal(value: str) -> int: return len(re.match(r"[^$\x00]*", value).group())
-def flag(cmd: Cmd, on: bool, short: str, name: str) -> bool: return short == "x" if short in cmd.sets else short == "e" if short.upper() in cmd.sets else next((sign == "-" for sign in reversed(re.findall(r"(?<!\S)([-+])(?:[a-zA-Z]*" + short + r"[a-zA-Z]*|o\s+" + name + r")(?!\S)", cmd.text))), on) if re.match(LEAD + r"set(?: |$)", cmd.text) else on  # after a `set`, LEAD first
+def flag(cmd: Cmd, on: bool, short: str, name: str) -> bool:
+    if short in cmd.sets: return short == "x"
+    if short.upper() in cmd.sets: return short == "e"
+    match = re.match(LEAD + r"set(?: |$)", cmd.text)
+    if not match: return on
+    try: words = iter(shlex.split(cmd.text[match.end():]))
+    except ValueError: return short == "x"  # unparsable shell must not establish safe options
+    for word in words:
+        # Bash stops option processing at -- or the first positional word.
+        if word == "--" or not re.fullmatch(r"[-+][a-zA-Z]+", word): break
+        for option in word[1:]:
+            if option == "o":
+                if next(words, "") == name: on = word[0] == "-"
+            elif option == short: on = word[0] == "-"
+    return on
 def pg_runs_gate_1(argv: list) -> bool: return "--skip-rebuild" not in argv and (not (gates := [v for f, v in zip(argv, argv[1:]) if f == "--gate"]) or not gates[-1].isdigit() or gates[-1] == "1")
 EXEMPT = {  # reviewed exemptions: the source, a block around it, or every call site of its function matches the guard; the entry env holds the condition
     ("tools/scripts/edge_fake_hook_e2e.sh", "AGENTD_NONCE"): ("if ! want_bypass_hook", lambda env: env.get("CORDUM_EDGE_E2E_BYPASS_HOOK", "").lower() in ("1", "true", "yes", "on")),

@@ -35,6 +35,39 @@ func TestEdgeDoctorSuccessJSON(t *testing.T) {
 	assertEdgeDoctorCheck(t, payload, "generated_settings", stateOK)
 }
 
+func TestEdgeDoctorGatewayOverrideDropsOnlyAutomaticCA(t *testing.T) {
+	fx := newEdgeDoctorFixture(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("CORDUM_GATEWAY", "https://localhost:8081")
+	t.Setenv("CORDUM_TLS_CA", "")
+	ca := filepath.Join(dir, "certs", "ca", "ca.crt")
+	if err := os.MkdirAll(filepath.Dir(ca), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ca, []byte("invalid local CA"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := runEdgeDoctorForTest(t, fx.args("--json")...)
+	if code != 0 {
+		t.Fatalf("automatic localhost CA used with gateway override: exit=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	for _, args := range [][]string{
+		fx.args("--json", "--cacert", ca),
+		replaceFlag(fx.args("--json"), "--gateway", "https://localhost:8081"),
+	} {
+		code, _, stderr := runEdgeDoctorForTest(t, args...)
+		if code != 2 || !strings.Contains(stderr, "no valid PEM certificates found") {
+			t.Fatalf("explicit or applicable localhost CA was lost: exit=%d stderr=%s", code, stderr)
+		}
+	}
+	t.Setenv("CORDUM_TLS_CA", ca)
+	code, _, stderr = runEdgeDoctorForTest(t, fx.args("--json")...)
+	if code != 2 || !strings.Contains(stderr, "no valid PEM certificates found") {
+		t.Fatalf("configured CA was lost: exit=%d stderr=%s", code, stderr)
+	}
+}
+
 func TestEdgeDoctorMissingAPIKeyFails(t *testing.T) {
 	fx := newEdgeDoctorFixture(t)
 	args := fx.args("--json")
