@@ -825,6 +825,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   procedure. The old steps copied an RDB into a running pod, which Redis
   ignores with `appendonly yes` (#492, task-e01597ea).
 
+- Kubernetes: `cordum-quota` now admits the production overlay. Its default
+  install, with each HPA at minReplicas, sets about 20.7 CPU and 20.6Gi of
+  limits, over the quota's 16 CPU and 16Gi, so ResourceQuota admission
+  refused some of its pods. The quota is now 12 CPU and 16Gi of requests and
+  48 CPU and 48Gi of limits, which also fits every HPA at maxReplicas plus
+  the surge pods of a rolling update (task-de0abf3f).
 - K8s: the production NATS backup CronJob failed on every run: natscli has no
   `--tlscacert`. It passes `--tlsca` (#492, task-81fe0880).
 
@@ -1157,6 +1163,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Nightly soak bounds (task-a7c48ad2): compare post-warm-up memory medians over first/last K snapshots (default 5, minimum 3), retaining the 50% relative limit and 32 MiB floor. Missing/malformed metrics, insufficient samples, missing containers and zero load now fail explicitly. Helm reports drift/restarts as not evaluated rather than passing. Results include evaluation/window/baseline fields; the wiki documents the 20-minute example and metrics-source controls. All 83 contract assertions are retained.
 - Nightly soak restart check (task-14c37ef5): restart counts now come from `docker inspect` RestartCount instead of the `docker compose ps` Status text, which only shows an exit code, so a container that restarted and is Up again now fails the soak; an unreadable count fails instead of reading as 0.
 - The workflow credential scanner carries options that a file run with `source` or `.` leaves set (tracing on, errexit off) into the shell that ran it, as a `set` at that line would. This includes nested sources, functions a sourced file defines, and an rcfile that sources such a file. The analysis is bounded per job at 1000 distinct sourced-file analyses: past that bound each further sourced file counts as leaving tracing on and errexit off, and a credential job reports `SOURCE_LIMIT` (task-3d6be9e2). The options in force at a `return` that ends the sourced file count, as well as those at its end. A sourced file that turns errexit back on, or tracing off, on every path restores that option in the caller. A `case` arm written with a leading `(` runs in the shell that runs the case (task-92a5adaf).
+- The workflow credential scanner treats tracing that a function defined in a sourced file may turn on, and errexit that such a function may leave off, as in force throughout the shell that sourced the file, as it already does for a function defined in that shell's own file. A later `set +x` or `set -e`, inline or in another sourced file, no longer hides a later call to the function, including a call made inside that reset file. A nested source passes the function on, and an unparsable sourced file, or one past the per-job analysis bound, counts as defining such a function (task-9ce68782).
 
 ### Added
 
