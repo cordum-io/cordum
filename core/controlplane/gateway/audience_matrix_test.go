@@ -32,15 +32,15 @@ func TestAudienceMatrixHTTPAPI(t *testing.T) {
 }
 
 // TestAudienceMatrixEdgeAPI presents every credential to POST
-// /api/v1/edge/sessions. The protected effect is a new Edge session in the
-// tenant's session index.
+// /api/v1/edge/sessions. The protected effect is a new Edge session record
+// (edge:session:<id>) in any tenant.
 func TestAudienceMatrixEdgeAPI(t *testing.T) {
 	m := newAudienceMatrix(t)
 	identity.Run(t, identity.EdgeAPI, func(t *testing.T, c identity.Credential) identity.Result {
 		newReq := func() *http.Request {
 			return matrixRequest("/api/v1/edge/sessions", `{"agent_product":"claude-code","mode":"local-dev"}`)
 		}
-		return m.presentHTTP(t, identity.EdgeAPI, c, newReq, m.edgeSessions, "edge:index:tenant:"+matrixTenant+" members")
+		return m.presentHTTP(t, identity.EdgeAPI, c, newReq, m.edgeSessions, "edge:session records")
 	}, identity.Skip(identity.APIKeyManaged, "PR1-20"))
 }
 
@@ -70,9 +70,15 @@ func (m *audienceMatrix) jobEffects(t *testing.T) int {
 
 func (m *audienceMatrix) edgeSessions(t *testing.T) int {
 	t.Helper()
-	n, err := m.s.jobStore.Client().ZCard(context.Background(), "edge:index:tenant:"+matrixTenant).Result()
+	keys, err := m.s.jobStore.Client().Keys(context.Background(), "edge:session:*").Result()
 	if err != nil {
-		t.Fatalf("edge session index: %v", err)
+		t.Fatalf("edge session records: %v", err)
 	}
-	return int(n)
+	n := 0
+	for _, k := range keys {
+		if !strings.HasPrefix(k, "edge:session:heartbeat:") {
+			n++
+		}
+	}
+	return n
 }
