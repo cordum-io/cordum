@@ -114,6 +114,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Managed API key scopes now cover the `/api/v1/edge` routes. `/api/v1/edge/approvals` maps to
+  the `approvals` resource, `/api/v1/edge/mcp` to `mcp`, `/api/v1/edge/shadow-agents`,
+  `/api/v1/edge/shadow` and `/api/v1/edge/binary-integrity` to `audit`, and every other
+  `/api/v1/edge` path to the new `edge` resource. `edge:read`, `edge:write` and `edge:*` can be
+  minted, so an `edge:write` key can create an Edge session, which records the key id as its
+  principal. The legacy role scopes (`read`/`viewer`, `write`/`operator`, `admin`) now reach the
+  Edge routes at their verb level, as on every other mapped resource. Unscoped managed keys still
+  act as `viewer`.
+
 - With `CORDUM_SDK_HANDSHAKE=enforce`, the workflow engine verifies the
   `cordum-scheduler` service token before applying a result from
   `sys.internal.job.result.accepted`. Verification uses
