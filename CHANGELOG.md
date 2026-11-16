@@ -850,6 +850,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Delegation issuance: a parent-token tenant mismatch returns HTTP 400 with
+  `DELEGATION_REQUEST_INVALID` and `tenant_mismatch` (task-9b21101b).
+
 - K8s restore runbooks: NATS restores run from a nats-box pod and remove each
   stream first, and `redis-operations.md` has a Redis "Restore From Backup"
   procedure. The old steps copied an RDB into a running pod, which Redis
