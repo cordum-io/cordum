@@ -394,7 +394,10 @@ The production overlay deploys a 6-node Redis cluster (3 masters + 3 replicas).
 - **TLS**: Full TLS with `tls-auth-clients yes`
 - **Persistence**: AOF enabled (`appendonly yes`), 20Gi PVC per node
 - **Cluster mode**: `cluster-enabled yes`, `cluster-node-timeout 5000`
-- **Cluster bus**: port 16379 (`cluster-port 16379`; with `port 0` it would default to 10000)
+- **Cluster bus**: TLS (`tls-cluster yes`) on port 16379 (`cluster-port 16379`;
+  with `port 0` it would default to 10000), using the existing certificates.
+  For a running cluster, follow [Runbook H](./redis-operations.md#runbook-h-turn-on-tls-for-the-cluster-bus)
+  to switch every node before any Redis pod restarts.
 - **Replication**: replicas connect to their primary's TLS port (`tls-replication yes`),
   presenting the `cordum-client-tls` certificate and authenticating with `masterauth`
 - **Exporter sidecar**: `oliver006/redis_exporter:v1.58.0` on port 9121

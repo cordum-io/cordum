@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- K8s production overlay: the Redis cluster bus runs over TLS. A running
+  cluster needs [Runbook H](docs/redis-operations.md#runbook-h-turn-on-tls-for-the-cluster-bus)'s
+  runtime switch on every node before any Redis pod restarts (task-2a7ba91e).
+
 - Edge managed settings: managed-settings verification fails closed on
   unsupported conditional or background hook modifiers, and command hooks
   must have the correct type and tool-event coverage (#492, task-99f50a3d).

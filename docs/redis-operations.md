@@ -12,7 +12,7 @@ This document covers Redis cluster topology, key inventory, per-service dependen
 - **Node timeout**: 5000ms — a node unresponsive for 5s is marked as potentially failed
 - **Persistence**: AOF enabled (`appendonly yes`), 20Gi PVC per node
 - **TLS**: Full mutual TLS (`tls-auth-clients yes`), plain port disabled (`port 0`)
-- **Cluster bus**: port 16379 (`cluster-port 16379`)
+- **Cluster bus**: TLS on port 16379 (`tls-cluster yes`, `cluster-port 16379`), using the existing server and client certificates
 - **Replication**: over TLS (`tls-replication yes`) with the `cordum-client-tls` certificate and `masterauth`
 - **Exporter**: `oliver006/redis_exporter:v1.58.0` sidecar on port 9121
 - **Anti-affinity**: Preferred pod anti-affinity on `kubernetes.io/hostname` (best-effort spread)
@@ -339,6 +339,68 @@ TTL controlled by `CORDUM_DLQ_ENTRY_TTL_DAYS` (default 30).
    kubectl delete job cordum-redis-cluster-init -n cordum
    kubectl apply -k deploy/k8s/production
    ```
+
+### Runbook H: Turn On TLS for the Cluster Bus
+
+Use this procedure for a running production cluster deployed from an overlay
+without `tls-cluster yes`. Fresh installs form the cluster with TLS on the bus
+through the cluster-init Job; they need no runtime switch.
+
+**Before starting**: schedule downtime, stop the Cordum services and take a backup
+([section 7](#7-backups)). Deleting a primary causes failover to its replica;
+replication is asynchronous, so writes not yet replicated can be lost. Start only
+with all six nodes connected, `cluster_state:ok` on every node and all three
+replicas reporting `master_link_status:up`.
+
+1. Apply the overlay:
+   ```bash
+   kubectl apply -k deploy/k8s/production
+   ```
+   Running Redis pods keep their config: `redis.conf` is a `subPath` mount that
+   Redis reads only at startup. Applying the overlay can restore the Cordum
+   services' replica counts; stop those services again before continuing.
+
+2. Switch **all six running nodes** before restarting any Redis pod:
+   ```bash
+   for i in 0 1 2 3 4 5; do
+     echo "cordum-redis-$i"
+     kubectl exec -n cordum cordum-redis-$i -c redis -- sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli --tls --cacert /etc/redis/tls/ca.crt --cert /etc/redis/client-tls/tls.crt --key /etc/redis/client-tls/tls.key CONFIG SET tls-cluster yes'
+   done
+   ```
+   Require an `OK` from each of the six nodes; stop here if any command fails or
+   returns anything else. Existing bus links stay up; new connections use TLS.
+   A node that starts with the setting while a peer's bus is still plain stays
+   outside the cluster, and rejoins once this runtime switch covers every node.
+
+3. Restart pods **one at a time**, in order **5, 4, 3, 2, 1, 0**. Set `i` to the
+   next ordinal only after the checks below pass; do not put these deletes in an
+   unattended loop:
+   ```bash
+   i=5
+   kubectl delete pod -n cordum cordum-redis-$i
+   kubectl wait -n cordum --for=condition=Ready pod/cordum-redis-$i --timeout=180s
+   ```
+   If the replacement pod is not yet created, wait for it to appear and repeat
+   the Ready check. Then use the same TLS/auth options as step 2 to check
+   `CLUSTER INFO`, `CLUSTER NODES` and `INFO replication` on **every node**.
+   Require `cluster_state:ok` on all six, exactly six connected nodes in each
+   view (no `fail`, `handshake` or `noaddr` flags), and `master_link_status:up` on
+   all three replicas. Do not delete the next pod until these checks pass.
+   Do not use `kubectl rollout restart`: the TCP readiness probe checks port
+   6379, not cluster membership or replica links.
+
+4. Confirm the persisted setting on all six restarted nodes and check the cluster:
+   ```bash
+   for i in 0 1 2 3 4 5; do
+     echo "cordum-redis-$i"
+     kubectl exec -n cordum cordum-redis-$i -c redis -- sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli --tls --cacert /etc/redis/tls/ca.crt --cert /etc/redis/client-tls/tls.crt --key /etc/redis/client-tls/tls.key CONFIG GET tls-cluster'
+   done
+   kubectl exec -n cordum cordum-redis-0 -c redis -- sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli --tls --cacert /etc/redis/tls/ca.crt --cert /etc/redis/client-tls/tls.crt --key /etc/redis/client-tls/tls.key --cluster check cordum-redis-0.cordum-redis.cordum.svc:6379'
+   ```
+   Each `CONFIG GET` must report `yes`, and `--cluster check` must pass before
+   resuming the Cordum services. With the bus on TLS, `redis-cli --cluster reshard`,
+   `--cluster rebalance` and `--cluster fix` can move keys between nodes; use the
+   same TLS/auth options for these operations.
 
 ## 5. Base to Production Migration
 
