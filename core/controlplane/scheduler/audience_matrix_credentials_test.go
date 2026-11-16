@@ -16,7 +16,6 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 	"time"
 
@@ -112,14 +111,6 @@ func (k *matrixKit) token(t *testing.T, c identity.Credential) string {
 	}
 	t.Fatalf("matrix: no issuer for credential %q", c)
 	return ""
-}
-
-// sender is the packet sender for c: agent_id_header claims the worker's agent id.
-func (k *matrixKit) sender(c identity.Credential, normal string) string {
-	if c == identity.AgentIDHeader {
-		return k.binding.AgentID
-	}
-	return normal
 }
 
 func mustMint(t *testing.T, c identity.Credential, token string, err error) string {
@@ -300,19 +291,4 @@ func randomMatrixValue(t *testing.T) string {
 		t.Fatalf("crypto/rand: %v", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(raw[:])
-}
-
-// matrixProductionMode sets the production profile the way cordum-scheduler
-// boots it: handshake enforce, set explicitly, with WORKER_ATTESTATION off
-// (worker_security_modes.go refuses both active), and returns the parsed mode.
-func matrixProductionMode(t *testing.T) HandshakeMode {
-	t.Helper()
-	t.Setenv(EnvHandshakeMode, "enforce")
-	t.Setenv(EnvWorkerAttestation, "off")
-	mode, err := ParseHandshakeModeStrict(os.Getenv(EnvHandshakeMode))
-	attestation, attErr := ParseWorkerAttestationModeStrict(os.Getenv(EnvWorkerAttestation))
-	if err != nil || attErr != nil || mode != HandshakeModeEnforce || attestation.Enabled() {
-		t.Fatalf("production profile: mode=%q err=%v attestation=%q err=%v", mode, err, attestation, attErr)
-	}
-	return mode
 }
