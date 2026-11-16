@@ -820,6 +820,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- K8s restore runbooks: NATS restores run from a nats-box pod and remove each
+  stream first, and `redis-operations.md` has a Redis "Restore From Backup"
+  procedure. The old steps copied an RDB into a running pod, which Redis
+  ignores with `appendonly yes` (#492, task-e01597ea).
+
 - K8s: the production NATS backup CronJob failed on every run: natscli has no
   `--tlscacert`. It passes `--tlsca` (#492, task-81fe0880).
 
