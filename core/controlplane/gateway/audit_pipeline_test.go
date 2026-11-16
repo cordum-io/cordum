@@ -10,6 +10,7 @@ import (
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/auth/servicetoken"
 	"github.com/cordum/cordum/core/policysign"
+	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	wf "github.com/cordum/cordum/core/workflow"
 )
@@ -49,6 +50,8 @@ func (b *auditBusLoopback) Subscribe(subject, queue string, handler func(*pb.Bus
 func TestInitAuditPipeline_NullBackendChainsEvents(t *testing.T) {
 	t.Setenv("CORDUM_AUDIT_EXPORT_TYPE", "null")
 	t.Setenv("AUDIT_TRANSPORT", "nats")
+	// The consumer chains only packets carrying a publisher service token.
+	t.Setenv(policysign.EnvDevSigningSeed, "gateway-audit-chain-test")
 
 	s, _, _ := newTestGateway(t)
 	bus := newAuditBusLoopback()
@@ -134,7 +137,7 @@ func TestInitAuditPipeline_ServiceToken(t *testing.T) {
 	t.Setenv(policysign.EnvDevSigningSeed, "gateway-audit-test")
 	s, _, _ := newTestGateway(t)
 	bus := newAuditBusLoopback()
-	sender, _, err := initAuditPipeline(s.jobStore.Client(), bus, nil)
+	sender, chainer, err := initAuditPipeline(s.jobStore.Client(), bus, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,6 +153,36 @@ func TestInitAuditPipeline_ServiceToken(t *testing.T) {
 	claims, err := servicetoken.VerifyService(bus.packets[0].AuthToken, trust, time.Now())
 	if err != nil || claims.Subject != servicetoken.IdentityGateway {
 		t.Fatalf("service token subject = %q, err = %v", claims.Subject, err)
+	}
+	// The consumer chains the gateway's packet and refuses the same payload
+	// without its token.
+	if err := bus.Publish(capsdk.SubjectAuditExport, &pb.BusPacket{Payload: bus.packets[0].Payload}); err != nil {
+		t.Fatal(err)
+	}
+	chained, err := s.redisClient().XLen(context.Background(), chainer.StreamKey("default")).Result()
+	if err != nil || chained != 1 {
+		t.Fatalf("chained %d events (err %v), want only the token-bearing one", chained, err)
+	}
+}
+
+func TestInitAuditPipeline_PublisherTrustKeyFailure(t *testing.T) {
+	for _, name := range []string{audit.EnvPublisherPublicKeyPrefix + "CORDUM_MCP", policysign.EnvPublicKeyPrefix + "AUDIT_TEST"} {
+		t.Run(name, func(t *testing.T) {
+			setupAuditPublisherEnv(t)
+			s, _, _ := newTestGateway(t)
+			t.Setenv(name, "invalid-key")
+			bus := newAuditBusLoopback()
+			sender, _, err := initAuditPipeline(s.jobStore.Client(), bus, nil)
+			if sender != nil {
+				t.Cleanup(func() { _ = sender.Close() })
+			}
+			if err == nil || !strings.Contains(err.Error(), name) {
+				t.Fatalf("expected an error naming %s, got %v", name, err)
+			}
+			if bus.subs != 0 || len(bus.packets) != 0 {
+				t.Fatalf("trust failure subscribed %d times and published %d packets", bus.subs, len(bus.packets))
+			}
+		})
 	}
 }
 
