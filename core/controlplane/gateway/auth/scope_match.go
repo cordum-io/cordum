@@ -177,6 +177,14 @@ func resourceForPath(path string) (string, bool) {
 		{"/api/v1/artifacts", "artifacts"},
 		{"/api/v1/evals", "evals"},
 		{"/api/v1/governance", "governance"},
+		// Edge routes map by domain, so the specific prefixes come before
+		// the /api/v1/edge catch-all: the first match wins.
+		{"/api/v1/edge/approvals", "approvals"},
+		{"/api/v1/edge/mcp", "mcp"},
+		{"/api/v1/edge/shadow-agents", "audit"},
+		{"/api/v1/edge/shadow", "audit"},
+		{"/api/v1/edge/binary-integrity", "audit"},
+		{"/api/v1/edge", "edge"},
 	} {
 		if path == candidate.prefix || strings.HasPrefix(path, candidate.prefix+"/") {
 			return candidate.resource, true
