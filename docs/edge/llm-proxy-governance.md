@@ -4,7 +4,7 @@
 > hooks](cordum-hook.md#github-copilot)) records every chat and governs tool actions cooperatively, within the limits listed there. This phase adds the
 > **network-layer path**: an enterprise LLM proxy submits the model requests and
 > responses it intercepts to Cordum, which records a redacted `layer=llm` event
-> and returns a `record`/`redact` advisory for each one (CLM-028, `supported` in
+> and returns a `record`/`redact` advisory for each one it accepts (CLM-028, `supported` in
 > the [claims register](../contract/claims.yaml)). A secret is kept from the
 > provider only if the proxy applies the advisory. How model traffic is routed
 > through the proxy, and what the provider receives, are not qualified.
@@ -23,7 +23,7 @@ audit their own endpoint:
 > The LLM ingest endpoint deliberately does **not** make the allow/deny policy
 > decision. That stays in `/evaluate` so there is exactly one kernel contract.
 > The ingest endpoint owns redaction and recording: it stores the redacted
-> event for each submitted turn and returns the advisory; whether a secret is
+> event for each turn it accepts and returns the advisory; whether a secret is
 > forwarded depends on the proxy applying it (CLM-028, `supported`).
 
 ### Per-turn flow
@@ -127,14 +127,19 @@ boundary. The full schema is `EdgeLLMIngestRequest` in
 }
 ```
 
-- `decision=record` — no secret detected; the original content is safe to forward.
+- `decision=record` — no secret detected in the scanned content. The original
+  content is safe to forward only when `truncated=false`.
 - `decision=redact` — a secret was detected and masked. The proxy SHOULD forward
   `redacted_content` (flattened transcript) or, for a `messages`-shaped event,
-  the role-preserving `redacted_messages` array — instead of the original. If
-  `truncated=true` the content exceeded the redacted-evidence cap and the proxy
-  must apply its own full-length redaction before forwarding.
-- `redaction_complete` — whether this decision reflects a scan of the FULL turn
-  content. Always `true` except for `kind=llm.stream.chunk`; see below.
+  the role-preserving `redacted_messages` array — instead of the original.
+- `truncated=true` — a `content` or `messages[i].content` value was longer than
+  16 KiB, and only its first 16 KiB was scanned and stored
+  (`core/edge/llmingest/adapter.go:619`). This holds for `record` as well as
+  `redact`: the proxy must apply its own full-length redaction before
+  forwarding either.
+- `redaction_complete` — whether this decision covers the whole turn rather
+  than one stream fragment. Always `true` except for `kind=llm.stream.chunk`;
+  see below. It does not report the 16 KiB scan bound; `truncated` does.
 
 ### Streaming chunk redaction limits
 
@@ -213,8 +218,8 @@ phase delivers the gateway-side governance it depends on.
 
 | Surface | Coverage ([claims register](../contract/claims.yaml)) |
 |---|---|
-| Secret kept from the provider | Only if the proxy applies the `redact` advisory; the gateway stores the redacted event (CLM-028, `supported`) — **except** a secret split across `llm.stream.chunk` boundaries; see "Streaming chunk redaction limits" |
-| Chat turn audited | Each turn the proxy submits is recorded as a `layer=llm` event (CLM-028, `supported`) |
+| Secret kept from the provider | Only if the proxy applies the `redact` advisory; the gateway stores the redacted event (CLM-028, `supported`) — **except** a secret split across `llm.stream.chunk` boundaries (see "Streaming chunk redaction limits"), and a secret past the first 16 KiB of a `content` or `messages[i].content` value. The adapter scans only those 16 KiB (`core/edge/llmingest/adapter.go:48`, `:563`, `:619`), so a secret found only beyond them gets `decision=record` with `truncated=true` (`adapter.go:502`), and a proxy that forwards `record` unchanged sends it to the provider |
+| Chat turn audited | Each turn the gateway accepts (`201`, counted in `accepted_count`) is recorded as a `layer=llm` event (CLM-028, `supported`). A rejected submission records nothing: ingestion disabled (`503`), a caller that is not an authenticated proxy with `edge.llm.ingest` (`401`, `403`), an invalid or oversized batch or envelope (`400`, `413`), a source or tenant mismatch (`403`), a failed parent check (`403`), or a replay-window or store error (`429`, `5xx`); each returns before the append (`core/controlplane/gateway/handlers_edge_llm_ingest.go:60`, append at `:144`). Operators must monitor rejected submissions at the proxy: the gateway keeps no event for them |
 | Prompt/response policy block | Via `/evaluate` (safety kernel) |
 | Proxy routing | Not qualified: the operator deploys the proxy and routes model traffic through it (CLM-028 boundary) |
 | Execution ownership (cross-proxy isolation) | Mandatory — `worker_id` must match the authenticated proxy; fails closed, not just logged |
