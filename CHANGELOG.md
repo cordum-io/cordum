@@ -1212,6 +1212,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 - Docs: the policy-signing threat model in `docs/deployment/policy-signing.md` now qualifies its entry-point coverage statement against the claims register (task-984731be).
 
+- Restore docs: select per-store backup ids and state their consistency limit;
+  stop backup and retention Jobs before restoring; validate both stream snapshots
+  before deleting either stream and stop at the first restore error (task-35d87632).
+
 ## [v1.3.1] - 2026-11-11
 
 Changes on main since the v1.3.0 tag (d027ae97, 2026-11-11).

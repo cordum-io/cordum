@@ -442,7 +442,8 @@ slots, so it has to go back to the pod that serves those slots now, and it has t
 loaded onto the pod's volume while Redis is stopped: with `appendonly yes`, Redis
 loads its AOF on startup and ignores a `dump.rdb` copied into a running pod.
 
-Stop the Cordum services and the backup CronJobs first
+Stop the Cordum services, suspend the backup and retention CronJobs, and delete
+active backup and retention Jobs with foreground deletion and wait for their pods to stop first
 ([production.md](./production.md#restore-procedures)). Then:
 
 1. **Start a toolbox pod.** It has the client certificate, the password and the
@@ -478,7 +479,7 @@ Stop the Cordum services and the backup CronJobs first
    EOF
    kubectl wait -n cordum --for=condition=Ready pod/cordum-redis-toolbox --timeout=120s
    kubectl exec -n cordum cordum-redis-toolbox -- ls /backup
-   ts=20260213T120000Z   # the backup to restore
+   ts=20260213T120002Z   # Redis backup id (redis-<ts>-node<N>.rdb), chosen independently of the NATS backup
    ```
 
    The commands below run in the toolbox and start with

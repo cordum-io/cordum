@@ -701,7 +701,8 @@ and there are no backup jobs, so the data lasts only as long as the pods. Use th
 production overlay, or add PVCs and backups of your own, for data you need to keep.
 
 **Production overlay**: follow [Backup + Restore](./production.md#restore-procedures).
-Stop the services and the backup CronJobs, restore Redis onto each primary's volume
+Stop the services, suspend the backup and retention CronJobs, and delete active backup and retention Jobs
+with foreground deletion and wait for their pods to stop before creating a restore pod. Restore Redis onto each primary's volume
 with Redis stopped ([Restore From Backup](./redis-operations.md#restore-from-backup)),
 and restore the NATS streams from a nats-box pod. Do not copy an RDB into a running
 Redis pod and restart it: with `appendonly yes`, Redis loads its AOF on startup and
