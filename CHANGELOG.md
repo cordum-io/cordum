@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+- Gateway and scheduler NATS audit publishers attach a control-plane service
+  token (`servicetoken`, type `cordum-service`, subjects `api-gateway` and
+  `cordum-scheduler`) to events on `sys.audit.export` when
+  `CORDUM_POLICY_SIGNING_KEY`, `CORDUM_POLICY_SIGNING_KEY_PATH`, or
+  `CORDUM_POLICY_DEV_SIGNING_SEED` is configured. With `CORDUM_ENV=production`
+  and `AUDIT_TRANSPORT=nats`, the gateway requires that key when the NATS audit
+  pipeline is enabled.
+
 ### Breaking changes
 
 - Worker ids `cordum-mcp` and `cordum-safety-kernel` are reserved. The handshake
