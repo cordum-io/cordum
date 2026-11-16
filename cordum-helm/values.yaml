@@ -570,7 +570,26 @@ auth:
   skipSecretValidation: false # CORDUM_SKIP_SECRET_VALIDATION
 
 audit:
+  # nats: the scheduler and gateway sign sys.audit.export tokens with
+  # workerTrust.sessionSigning, which is then required.
   transport: buffer # AUDIT_TRANSPORT
+  # Audit-publisher keys for sys.audit.export service tokens.
+  publisherKeys:
+    keyId: "" # CORDUM_AUDIT_SIGNING_KEY_ID on the safety kernel
+    safetyKernel:
+      # CORDUM_AUDIT_SIGNING_KEY on the safety kernel; required when global.production=true.
+      privateKeySecret:
+        name: ""
+        key: ""
+      # CORDUM_AUDIT_PUBLIC_KEY_CORDUM_SAFETY_KERNEL on the api-gateway.
+      publicKeySecret:
+        name: ""
+        key: ""
+    mcp:
+      # CORDUM_AUDIT_PUBLIC_KEY_CORDUM_MCP on the api-gateway.
+      publicKeySecret:
+        name: ""
+        key: ""
   export:
     type: none # CORDUM_AUDIT_EXPORT_TYPE
     maxRetries: 3 # CORDUM_AUDIT_EXPORT_MAX_RETRIES

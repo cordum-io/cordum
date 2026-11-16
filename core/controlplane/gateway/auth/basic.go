@@ -343,6 +343,12 @@ func (b *BasicAuthProvider) authenticateWithScope(ctx context.Context, key, prin
 		// Fall back to managed key store (runtime-created keys in Redis)
 		if b.keyStore != nil {
 			mk, err := b.keyStore.ValidateKey(ctx, key)
+			if err == nil && strings.TrimSpace(mk.ID) == "" {
+				// A key's id is its principal and its revocation handle, so a
+				// stored key without one is refused.
+				slog.Warn("api key rejected", "reason", "managed_key_without_id")
+				err = ErrInvalidKey
+			}
 			if err == nil {
 				role := roleFromScopes(mk.Scopes)
 				tenant := strings.TrimSpace(mk.Tenant)
@@ -373,17 +379,18 @@ func (b *BasicAuthProvider) authenticateWithScope(ctx context.Context, key, prin
 						slog.Warn("failed to record api key usage", "key_id", keyID, "error", err) // #nosec -- key id is validated and safe for logs.
 					}
 				}(mk.ID)
-				// A ManagedKey carries no principal, so any principal here
-				// came from the caller: honored only where header principals
-				// are allowed, and then only as an asserted one.
-				if !b.allowHeaderPrincipal {
-					principalID = ""
+				// A managed key's own principal is its id. A caller-named
+				// principal replaces it only where header principals are
+				// allowed, and then only as an asserted one.
+				principal, asserted := strings.TrimSpace(mk.ID), false
+				if named := strings.TrimSpace(principalID); named != "" && b.allowHeaderPrincipal {
+					principal, asserted = named, true
 				}
 				return &AuthContext{
 					APIKey:            key,
 					Tenant:            tenant,
-					PrincipalID:       strings.TrimSpace(principalID),
-					PrincipalAsserted: strings.TrimSpace(principalID) != "",
+					PrincipalID:       principal,
+					PrincipalAsserted: asserted,
 					KeyID:             mk.ID,
 					KeyName:           mk.Name,
 					Role:              role,

@@ -7,6 +7,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Worker ids `cordum-mcp` and `cordum-safety-kernel` are reserved. The handshake
+  and bound session tokens refuse these worker ids; rename any worker registered
+  under either id before upgrading.
+
+- The deployment manifests provision the audit-publisher keys for
+  `sys.audit.export` service tokens; create them before upgrading
+  (task-022f53b0). Helm: `audit.publisherKeys.safetyKernel.privateKeySecret`
+  (`name`, `key`) renders the safety kernel's `CORDUM_AUDIT_SIGNING_KEY` and is
+  required when `global.production=true`; `audit.publisherKeys.keyId` sets its
+  key id; `audit.publisherKeys.safetyKernel.publicKeySecret` and
+  `audit.publisherKeys.mcp.publicKeySecret` give the gateway its
+  `CORDUM_AUDIT_PUBLIC_KEY_` variables. With `audit.transport=nats`,
+  `workerTrust.sessionSigning` is required even when `workerTrust.mode=off`.
+  K8s production overlay: the safety kernel needs Secret `cordum-audit-signing`
+  (`signing-key`, optional `key-id`); Secrets `cordum-policy-signing`
+  (`signing-key`, `key-id`) for the scheduler and `cordum-audit-trust`
+  (`cordum-safety-kernel`, `cordum-mcp`) for the gateway are optional.
+  `docker-compose.release.yml` requires `CORDUM_AUDIT_SIGNING_KEY`.
+
 - Edge managed settings: managed-settings verification fails closed on
   unsupported conditional or background hook modifiers, and command hooks
   must have the correct type and tool-event coverage (#492, task-99f50a3d).
@@ -78,6 +97,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- A managed API key (`ck_`) now authenticates as its own principal, its key id. In the
+  production profile, where `X-Principal-Id` is ignored by default, it can therefore submit a
+  job through `POST /api/v1/jobs` or gRPC `SubmitJob`, and the job records that id as its
+  principal and actor; before, both refused it with `authenticated job identity mismatch`.
+  Existing keys take their id as principal with no migration, and a stored managed key without
+  an id is refused. Where `X-Principal-Id` is honored (outside production, or with
+  `CORDUM_ALLOW_HEADER_PRINCIPAL=true`), the header still replaces the key's principal as an
+  asserted one, for attribution only. Audit records for a managed key keep `identity_source`
+  `api_key:<id>` and the key's name.
 - Docs: the cordum-agentd, cordum-hook, Edge configuration and edge doctor pages and the
   configuration references now state Edge outage behavior as the failure and partition
   behavior contract records it. In enforce mode the hook denies `PreToolUse` when agentd times
