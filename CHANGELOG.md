@@ -140,6 +140,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- A key that a managed API key creates through `POST /api/v1/auth/keys` is
+  stored only while the calling key is unrevoked and unexpired at the write;
+  otherwise the request gets 403 and no key is stored.
+
 - Managed API key scopes now cover the `/api/v1/edge` routes. `/api/v1/edge/approvals` maps to
   the `approvals` resource, `/api/v1/edge/mcp` to `mcp`, `/api/v1/edge/shadow-agents`,
   `/api/v1/edge/shadow` and `/api/v1/edge/binary-integrity` to `audit`, and every other
