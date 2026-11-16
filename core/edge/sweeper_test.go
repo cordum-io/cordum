@@ -241,7 +241,8 @@ func TestExpireApprovalsSweeper_RunsPeriodically(t *testing.T) {
 
 func TestSessionSweeperKeepsSessionsUnderLegalHold(t *testing.T) {
 	ctx := context.Background()
-	store, client, _, cleanup := newRedisEdgeStore(t)
+	rec := &holdRecorder{passes: make(chan struct{}, 8)}
+	store, client, _, cleanup := newRedisEdgeStore(t, WithRecorder(rec))
 	defer cleanup()
 
 	now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
@@ -274,6 +275,9 @@ func TestSessionSweeperKeepsSessionsUnderLegalHold(t *testing.T) {
 
 	if swept, err := sweeper.SweepOnce(ctx); err != nil || swept != 1 {
 		t.Fatalf("SweepOnce = %d, %v; want only tenant-free swept", swept, err)
+	}
+	if got := rec.failClosed; len(got) != 1 || got[0] != "||retention_hold_unverifiable" {
+		t.Fatalf("fail-closed calls = %q, want one fixed-reason call for the malformed hold", got)
 	}
 	for tenant, want := range map[string]bool{"tenant-held": true, "tenant-broken": true, "tenant-free": false} {
 		if _, ok, err := store.GetSession(ctx, tenant, "sess-"+tenant); err != nil || ok != want {
@@ -309,7 +313,8 @@ func TestSessionSweeperKeepsSessionsUnderLegalHold(t *testing.T) {
 // expired session with its execution, and logs why once per tenant per sweep.
 func TestSessionSweeperKeepsSessionsWhenHoldStoreUnreachable(t *testing.T) {
 	ctx := context.Background()
-	store, _, _, cleanup := newRedisEdgeStore(t)
+	rec := &holdRecorder{passes: make(chan struct{}, 8)}
+	store, _, _, cleanup := newRedisEdgeStore(t, WithRecorder(rec))
 	defer cleanup()
 
 	now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
@@ -334,6 +339,9 @@ func TestSessionSweeperKeepsSessionsWhenHoldStoreUnreachable(t *testing.T) {
 	}
 	if swept, err := sweeper.SweepOnce(ctx); err != nil || swept != 0 {
 		t.Fatalf("SweepOnce = %d, %v; want nothing swept", swept, err)
+	}
+	if got := rec.failClosed; len(got) != 2 || got[0] != "||retention_hold_unverifiable" || got[1] != got[0] {
+		t.Fatalf("fail-closed calls = %q, want one fixed-reason call per retained session", got)
 	}
 	for _, id := range []string{"1", "2"} {
 		if _, ok, err := store.GetSession(ctx, "tenant-down", "sess-down-"+id); err != nil || !ok {

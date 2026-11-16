@@ -265,9 +265,9 @@ type flagSet struct {
 func newFlagSet(name string) *flagSet {
 	fs := flag.NewFlagSet(name, flag.ExitOnError)
 	gateway := fs.String("gateway", envOr("CORDUM_GATEWAY", defaultGateway), "gateway base URL; use http:// for a gateway without TLS (also: CORDUM_GATEWAY)")
-	apiKeyDefault, apiKeySet := os.LookupEnv("CORDUM_API_KEY")
+	apiKeyDefault := os.Getenv("CORDUM_API_KEY")
 	apiKeyDefault = strings.TrimSpace(apiKeyDefault)
-	if !apiKeySet {
+	if apiKeyDefault == "" {
 		apiKeyDefault = readEnvFile(".env", "CORDUM_API_KEY", "API_KEY")
 	}
 	apiKey := fs.String("api-key", apiKeyDefault, "api key")
