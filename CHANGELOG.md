@@ -97,6 +97,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Managed API key scopes now cover the `/api/v1/edge` routes. `/api/v1/edge/approvals` maps to
+  the `approvals` resource, `/api/v1/edge/mcp` to `mcp`, `/api/v1/edge/shadow-agents`,
+  `/api/v1/edge/shadow` and `/api/v1/edge/binary-integrity` to `audit`, and every other
+  `/api/v1/edge` path to the new `edge` resource. `edge:read`, `edge:write` and `edge:*` can be
+  minted, so an `edge:write` key can create an Edge session, which records the key id as its
+  principal. The legacy role scopes (`read`/`viewer`, `write`/`operator`, `admin`) now reach the
+  Edge routes at their verb level, as on every other mapped resource. Unscoped managed keys still
+  act as `viewer`. See section 3 of `docs/api-reference.md`.
 - A managed API key (`ck_`) now authenticates as its own principal, its key id. In the
   production profile, where `X-Principal-Id` is ignored by default, it can therefore submit a
   job through `POST /api/v1/jobs` or gRPC `SubmitJob`, and the job records that id as its
