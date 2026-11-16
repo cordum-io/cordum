@@ -9,6 +9,7 @@ var (
 	ErrBadSignature     = errors.New("delegation token signature invalid")
 	ErrUnknownKeyId     = errors.New("delegation token key id unknown")
 	ErrAudienceMismatch = errors.New("delegation token audience mismatch")
+	ErrTenantMismatch   = errors.New("delegation token tenant mismatch")
 	ErrChainTooDeep     = errors.New("delegation token chain too deep")
 	ErrScopeExceeded    = errors.New("delegation token scope exceeded")
 	ErrRevoked          = errors.New("delegation token revoked")
