@@ -133,9 +133,13 @@ the active policy bundle digest.
 
 ## Blank-linkage fail-closed behaviour
 
-The direct helpers `EvaluateToolCall` and `ProcessApprovalClaim` refuse the
-call with `errMissingMCPMetadata` when ANY of the four identity fields on
-`CallMetadata` is blank:
+The direct helper `EvaluateToolCall` always refuses the call with
+`errMissingMCPMetadata` when ANY of the four identity fields on `CallMetadata`
+is blank. `ProcessApprovalClaim` runs the same check only on the claim path,
+with a wired `Store` and a non-blank `_approval_ref` string. Without a store,
+arguments, a JSON object or an `_approval_ref` key it returns no outcome and no
+error. A non-string or blank `_approval_ref` returns an `invalid _approval_ref`
+error before the metadata check. The four fields are:
 
 | Field | Source | Used for |
 |-------|--------|----------|
