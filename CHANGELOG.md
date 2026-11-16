@@ -861,6 +861,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- `cordumctl pack install` no longer counts directories against the
+  2,048-file pack limit. A pack with 2,048 regular files spread over
+  subdirectories was refused before upload, although both the CLI and the
+  gateway extractors accept it (task-d1935e3a).
+
 - K8s restore runbooks: NATS restores run from a nats-box pod and remove each
   stream first, and `redis-operations.md` has a Redis "Restore From Backup"
   procedure. The old steps copied an RDB into a running pod, which Redis
