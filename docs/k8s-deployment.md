@@ -332,8 +332,13 @@ The production overlay deploys a 3-node NATS cluster as a StatefulSet.
   they are ready (`publishNotReadyAddresses: true`). A server alone fails `/healthz` until
   JetStream has a meta leader, which needs the routes, so ordered startup would never get past
   `cordum-nats-0`. Kubernetes cannot change `podManagementPolicy` in place: if an older
-  `cordum-nats` StatefulSet exists, delete it first (`kubectl delete statefulset cordum-nats -n cordum`;
-  the PVCs stay).
+  `cordum-nats` StatefulSet exists, delete it without deleting its pods:
+  `kubectl delete statefulset cordum-nats -n cordum --cascade=orphan`. The pods keep serving and
+  the PVCs stay. Never delete it without `--cascade=orphan`: that deletes all three pods and
+  stops NATS until the replacements start. Then re-apply the overlay with
+  `kubectl apply -k deploy/k8s/production`. The new StatefulSet adopts the running pods and
+  replaces any pod whose template changed, one at a time (`nats.yaml` sets no `updateStrategy`,
+  so the default `RollingUpdate` applies).
 
 ### NATS ConfigMap (production)
 
@@ -410,7 +415,9 @@ kubectl logs job/cordum-redis-cluster-init -n cordum
 The init job:
 1. Waits for all 6 nodes to respond to `PING`, authenticating with the
    `REDIS_PASSWORD` key of `cordum-redis-secret` (passed as `REDISCLI_AUTH`)
-2. Runs `redis-cli --cluster create ... --cluster-replicas 1 --cluster-yes`
+2. Exits 0 without changing anything when all 6 nodes already report
+   `cluster_state:ok` (an upgrade keeps the PVCs, so the retained nodes already form a cluster)
+3. Otherwise runs `redis-cli --cluster create ... --cluster-replicas 1 --cluster-yes`
 
 ### Pre-Flight Checks
 
@@ -439,7 +446,8 @@ kubectl get secret cordum-redis-secret -n cordum -o jsonpath='{.data.REDIS_PASSW
 | `ERR Invalid node address` | DNS not resolving | Verify headless service `cordum-redis` exists |
 | `ERR Nodes don't agree about configuration` | Partial previous init | Delete all pods (`kubectl delete pods -l app=redis -n cordum`), wait for restart, re-run |
 
-**Re-running**: Delete the job and re-create it if you need to re-initialize:
+**Re-running**: Delete the job and re-apply the overlay. When all 6 nodes report `cluster_state:ok`,
+the new job exits 0 without changes, and it never resets a node:
 ```bash
 kubectl delete job cordum-redis-cluster-init -n cordum
 kubectl apply -k deploy/k8s/production

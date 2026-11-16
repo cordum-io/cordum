@@ -27,6 +27,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `cordum-redis-cluster-init` Job and the `cordum-nats` StatefulSet (its PVCs
   stay), since both changes touch immutable fields (#492, task-6654d7e5).
 
+- K8s production overlay: delete the `cordum-nats` StatefulSet with
+  `--cascade=orphan`, so its pods keep serving, and re-apply the overlay: the
+  new StatefulSet adopts the running pods. The `cordum-redis-cluster-init` Job
+  exits 0 when all 6 Redis nodes already report `cluster_state:ok` instead of
+  failing on the existing cluster (task-b24a3699).
+
 - Helm installs with TLS verify the gateway certificate by its Service FQDN
   (`<release>-api-gateway.<namespace>.svc.cluster.local`). Certificates from
   `cordumctl generate-certs` need `--san` for that name, or the dashboard gets
