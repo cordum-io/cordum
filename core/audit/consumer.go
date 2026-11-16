@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/auth/servicetoken"
+	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/policysign"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -106,7 +107,7 @@ type NATSAuditConsumer struct {
 	stepHashSink StepHashSink
 	// authorized, when set by WithPublisherAuth, must accept a packet's
 	// auth_token before the packet is chained or exported.
-	authorized func(token string) bool
+	authorized func(token string, at time.Time) bool
 
 	// lifecycleCtx is cancelled by Close(); handle() derives per-message
 	// timeouts from it so in-flight chain-append and Export calls observe
@@ -176,18 +177,18 @@ func WithStepHashSink(sink StepHashSink) ConsumerOption {
 // under controlPlane, or an identity verified under its own key in
 // publishers, so one publisher's key cannot vouch for another identity. Any
 // other packet is acked, logged and counted, and neither chained nor
-// exported. An empty trust refuses every packet.
+// exported. An empty trust refuses every packet. Tokens are checked at the
+// JetStream stored-message time, or the receive time when it is unavailable.
 func WithPublisherAuth(controlPlane *policysign.TrustStore, publishers map[string]ed25519.PublicKey) ConsumerOption {
 	return func(n *NATSAuditConsumer) {
-		n.authorized = func(token string) bool {
-			now := time.Now()
-			if claims, err := servicetoken.VerifyService(token, controlPlane, now); err == nil &&
+		n.authorized = func(token string, at time.Time) bool {
+			if claims, err := servicetoken.VerifyService(token, controlPlane, at); err == nil &&
 				(claims.Subject == servicetoken.IdentityGateway || claims.Subject == servicetoken.IdentityScheduler) {
 				return true
 			}
 			for identity, key := range publishers {
 				lookup := func(string) (ed25519.PublicKey, bool) { return key, true }
-				claims, typ, err := servicetoken.Verify(token, lookup, now)
+				claims, typ, err := servicetoken.Verify(token, lookup, at)
 				if err == nil && typ == servicetoken.TypService && claims.Subject == identity {
 					return true
 				}
@@ -196,6 +197,12 @@ func WithPublisherAuth(controlPlane *policysign.TrustStore, publishers map[strin
 		}
 	}
 }
+
+type contextAuditSubscriber interface {
+	SubscribeWithContext(string, string, func(context.Context, *pb.BusPacket) error) error
+}
+
+var _ contextAuditSubscriber = (*bus.NatsBus)(nil)
 
 // NewNATSAuditConsumer creates a consumer and subscribes to sys.audit.export.
 // The exporter receives deserialized SIEMEvents for each NATS message.
@@ -214,7 +221,15 @@ func NewNATSAuditConsumer(bus AuditBus, exporter Exporter, opts ...ConsumerOptio
 	for _, o := range opts {
 		o(c)
 	}
-	if err := bus.Subscribe(capsdk.SubjectAuditExport, QueueAuditExporters, c.handle); err != nil {
+	var err error
+	if contextual, ok := bus.(contextAuditSubscriber); ok {
+		err = contextual.SubscribeWithContext(capsdk.SubjectAuditExport, QueueAuditExporters, c.handle)
+	} else {
+		err = bus.Subscribe(capsdk.SubjectAuditExport, QueueAuditExporters, func(packet *pb.BusPacket) error {
+			return c.handle(context.Background(), packet)
+		})
+	}
+	if err != nil {
 		lifecycleCancel()
 		return nil, fmt.Errorf("audit consumer subscribe: %w", err)
 	}
@@ -227,19 +242,21 @@ func NewNATSAuditConsumer(bus AuditBus, exporter Exporter, opts ...ConsumerOptio
 	return c, nil
 }
 
-// handle processes a single BusPacket from NATS. It extracts the SIEMEvent
+// handle verifies publisher tokens using the delivery's stored-message time
+// when available, otherwise the receive time. It extracts the SIEMEvent
 // from the Alert payload, links it into the per-tenant hash chain when a
 // Chainer is configured, and exports it.
 //
 // Return values map to JetStream ack semantics:
 //   - nil: ack (message consumed, no redelivery)
-//   - non-nil: nak (JetStream redelivers after the configured backoff)
+//   - a bus.RetryAfter error: nak with the requested delay
+//   - other errors: ack (the bus does not retry ordinary handler errors)
 //
 // Chain append errors are intentionally NOT returned — the event would be
 // re-chained on redelivery and produce a new seq for a payload that was
 // already partially observed, which is worse than the two documented
 // outcomes (strict: drop-and-ack; permissive: export-and-ack).
-func (c *NATSAuditConsumer) handle(packet *pb.BusPacket) error {
+func (c *NATSAuditConsumer) handle(ctx context.Context, packet *pb.BusPacket) error {
 	alert := packet.GetAlert()
 	if alert == nil || alert.SourceComponent != "audit-export" {
 		// Not an audit event — ack and skip.
@@ -262,7 +279,11 @@ func (c *NATSAuditConsumer) handle(packet *pb.BusPacket) error {
 		return nil
 	}
 
-	if c.authorized != nil && !c.authorized(packet.GetAuthToken()) {
+	at, ok := bus.PublishedAt(ctx)
+	if !ok {
+		at = time.Now()
+	}
+	if c.authorized != nil && !c.authorized(packet.GetAuthToken(), at) {
 		// Fixed fields only: the token, the sender and the payload are
 		// caller-controlled. Ack, so a refused packet is not redelivered.
 		slog.Warn("audit export event refused", "reason", "service_token")

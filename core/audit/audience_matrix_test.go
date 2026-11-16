@@ -103,9 +103,9 @@ type observedAuditBus struct {
 	handled chan error
 }
 
-func (b observedAuditBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) error) error {
-	return b.NatsBus.Subscribe(subject, queue, func(p *pb.BusPacket) error {
-		err := handler(p)
+func (b observedAuditBus) SubscribeWithContext(subject, queue string, handler func(context.Context, *pb.BusPacket) error) error {
+	return b.NatsBus.SubscribeWithContext(subject, queue, func(ctx context.Context, p *pb.BusPacket) error {
+		err := handler(ctx, p)
 		b.handled <- err
 		return err
 	})
