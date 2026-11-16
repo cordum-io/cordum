@@ -18,6 +18,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Production requires `SAFETY_KERNEL_TLS_CLIENT_CA` and
+  `CONTEXT_ENGINE_TLS_CLIENT_CA`; the respective service will not start without
+  its client CA. Safety Kernel callers must set `SAFETY_KERNEL_TLS_CLIENT_CERT`
+  and `SAFETY_KERNEL_TLS_CLIENT_KEY` to a client keypair signed by that CA.
+  External Context Engine callers must present a client certificate from its CA.
+
 - Managed API key grants are limited to scopes held by the calling key;
   requests for other scopes return 403. A bare scope (`admin`, `write`,
   `operator`, `read` or `viewer`) is held only by a key that has the same bare
@@ -389,6 +395,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   ruleset (task-fd34e921).
 
 ### Security
+
+#### Service client certificate requirement (2026-11-16, task-66bee998)
+
+- The Safety Kernel and Context Engine require and verify client certificates
+  against their configured client CA before serving gRPC calls. Outside
+  production, an unset client CA retains server-only TLS or plaintext behavior.
 
 - Edge: the session sweeper keeps sessions under legal hold. Before each
   deletion it checks the tenant's audit legal hold, and it keeps the
