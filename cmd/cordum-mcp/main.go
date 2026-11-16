@@ -194,14 +194,10 @@ func main() {
 	}).WithPrompts(promptRegistry)
 
 	if transportMode == "http" {
-		httpTransport := transport.(*mcp.HTTPTransport)
-		mux := http.NewServeMux()
 		token := strings.TrimSpace(*httpAuthToken)
-		mux.HandleFunc("/sse", requireBearer(token, httpTransport.HandleSSE))
-		mux.HandleFunc("/message", requireBearer(token, httpTransport.HandleMessage))
 		httpSrv := &http.Server{
 			Addr:              httpAddr,
-			Handler:           mux,
+			Handler:           httpMux(token, transport.(*mcp.HTTPTransport)),
 			ReadHeaderTimeout: 10 * time.Second,
 		}
 		go func() {
@@ -343,6 +339,15 @@ func isLoopbackListenAddr(addr string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// httpMux serves the HTTP transport's /sse and /message routes, both behind
+// requireBearer(token).
+func httpMux(token string, t *mcp.HTTPTransport) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/sse", requireBearer(token, t.HandleSSE))
+	mux.HandleFunc("/message", requireBearer(token, t.HandleMessage))
+	return mux
 }
 
 // requireBearer wraps h so each request must carry "Authorization: Bearer
