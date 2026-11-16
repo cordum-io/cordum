@@ -158,6 +158,8 @@ func resourceForPath(path string) (string, bool) {
 		{"/api/v1/workflow-runs", "workflows"},
 		{"/api/v1/workflows", "workflows"},
 		{"/api/v1/jobs", "jobs"},
+		{"/api/v1/audit/legal-hold", "legalhold"},
+		{"/api/v1/audit/legal-holds", "legalhold"},
 		{"/api/v1/audit", "audit"},
 		{"/api/v1/approvals", "approvals"},
 		{"/api/v1/agents", "agents"},
