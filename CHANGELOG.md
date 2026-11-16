@@ -820,6 +820,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- K8s restore runbooks: NATS restores run from a nats-box pod and remove each
+  stream first, and `redis-operations.md` has a Redis "Restore From Backup"
+  procedure. The old steps copied an RDB into a running pod, which Redis
+  ignores with `appendonly yes` (#492, task-e01597ea).
+
 - Kubernetes: `cordum-quota` now admits the production overlay. Its default
   install, with each HPA at minReplicas, sets about 20.7 CPU and 20.6Gi of
   limits, over the quota's 16 CPU and 16Gi, so ResourceQuota admission
