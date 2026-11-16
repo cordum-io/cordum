@@ -13,11 +13,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/auth/servicetoken"
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/policysign"
@@ -28,10 +30,14 @@ type handshakeAuditRecorder struct{}
 
 func (*handshakeAuditRecorder) Emit(context.Context, audit.SIEMEvent) {}
 
-type handshakeAuditBus struct{ published int }
+type handshakeAuditBus struct {
+	published int
+	packets   []*pb.BusPacket
+}
 
-func (b *handshakeAuditBus) Publish(string, *pb.BusPacket) error {
+func (b *handshakeAuditBus) Publish(_ string, packet *pb.BusPacket) error {
 	b.published++
+	b.packets = append(b.packets, packet)
 	return nil
 }
 
@@ -243,4 +249,64 @@ func setSessionSigningEnv(t *testing.T) {
 	t.Setenv(policysign.EnvSigningKey, base64.StdEncoding.EncodeToString(privateKey))
 	t.Setenv(policysign.EnvSigningKeyID, keyID)
 	t.Setenv(policysign.EnvPublicKeyPrefix+"SESSION_V1", base64.StdEncoding.EncodeToString(publicKey))
+}
+
+func TestNewHandshakeAuditSinkServiceToken(t *testing.T) {
+	setSessionSigningEnv(t)
+	t.Setenv("CORDUM_AUDIT_EXPORT_TYPE", "none")
+	bus := &handshakeAuditBus{}
+	sink, sender, err := newHandshakeAuditSink(bus)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sender.Close() })
+	sink.Emit(context.Background(), audit.SIEMEvent{EventType: scheduler.EventWorkerHandshake})
+	if len(bus.packets) != 1 {
+		t.Fatalf("packets = %d, want 1", len(bus.packets))
+	}
+	trust, err := policysign.LoadTrustStoreFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims, err := servicetoken.VerifyService(bus.packets[0].AuthToken, trust, time.Now())
+	if err != nil || claims.Subject != servicetoken.IdentityScheduler {
+		t.Fatalf("service token subject = %q, err = %v", claims.Subject, err)
+	}
+}
+
+func TestNewHandshakeAuditSinkMissingKey(t *testing.T) {
+	for _, mode := range []string{"development", "production"} {
+		t.Run(mode, func(t *testing.T) {
+			clearSigningKeyEnv(t)
+			t.Setenv("CORDUM_ENV", mode)
+			t.Setenv("CORDUM_AUDIT_EXPORT_TYPE", "none")
+			bus := &handshakeAuditBus{}
+			sink, sender, err := newHandshakeAuditSink(bus)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = sender.Close() })
+			sink.Emit(context.Background(), audit.SIEMEvent{EventType: scheduler.EventWorkerHandshake})
+			if len(bus.packets) != 1 || bus.packets[0].AuthToken != "" {
+				t.Fatal("missing key must preserve token-less publishing in every mode")
+			}
+		})
+	}
+}
+
+func TestNewHandshakeAuditSinkMalformedKey(t *testing.T) {
+	clearSigningKeyEnv(t)
+	t.Setenv(policysign.EnvSigningKey, "invalid-key")
+	t.Setenv("CORDUM_AUDIT_EXPORT_TYPE", "none")
+	bus := &handshakeAuditBus{}
+	sink, sender, err := newHandshakeAuditSink(bus)
+	if sender != nil {
+		t.Cleanup(func() { _ = sender.Close() })
+	}
+	if err == nil || !strings.Contains(err.Error(), policysign.EnvSigningKey) {
+		t.Fatalf("expected signing-key error, got %v", err)
+	}
+	if sink != nil || sender != nil || len(bus.packets) != 0 {
+		t.Fatal("malformed key must return no publisher and publish nothing")
+	}
 }
