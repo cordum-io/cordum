@@ -9,8 +9,9 @@ and the `cordumctl policy sign` workflow.
 ## 1. Threat model
 
 Policy bundles govern what agents may do (topic allow/deny, output
-rules, MCP scopes, etc.). Every request flows through the kernel, so a
-bundle the kernel trusts becomes the effective policy for the cluster.
+rules, MCP scopes, etc.). A bundle the kernel trusts becomes the effective
+policy for the cluster. Whether every entry point applies that policy
+equally is not verified (R15 in the [claims register](../contract/claims.yaml)).
 
 Signing closes the following attack surfaces:
 
