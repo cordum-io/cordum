@@ -86,6 +86,9 @@ OPTS = {  # mint() keywords, before defaulting to SAFE: a set applies in its own
 OPTS.update({  # a redirection before the command name is not the name: bash runs main as a tested call (errexit ignored); an untested one holds errexit
     "errexit_redirect_tested": dict(head=STRICT + "main() {\n", tail="}\n</dev/null main || true\n"), "errexit_redirect_assign": dict(head=STRICT + "main() {\n", tail="}\nFOO=1 </dev/null main || true\n"),
     "errexit_redirect_spaced": dict(head=STRICT + "main() {\n", tail="}\n< /dev/null main || true\n"), "errexit_redirect_plain": dict(head=STRICT + "main() {\n", tail="}\n</dev/null main\n")})
+OPTS["return_condition"] = dict(before=SAFE + " || { if return 1; then :; fi; unset minted; return 1; }", head=STRICT + "main() {\n", tail="}\nmain || true\n")  # a return in a condition runs before the clear
+MINTS.update({"mint_builtin_xtrace": ("builtin set -x\n" + SAFE, ""), "mint_command_xtrace": ("command set -x\n" + SAFE, ""), "mint_condition_xtrace": ("if set -x; then :; fi\n" + SAFE, ""),  # bash runs a set behind builtin, command or a condition word in this shell
+              "mint_condition_reset": ("set +e\nif set -e; then :; fi\n" + SAFE, "")})  # so a set -e there turns errexit back on
 GEN = {
     "gen_openssl": "$(openssl rand -hex 16)", "gen_uuidgen": "$(uuidgen)",
     "gen_urandom": "$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \\n')", "gen_random": "syn-${RANDOM}${RANDOM}",
@@ -138,6 +141,9 @@ SOURCED.update({  # a function a sourced file defines may change an option at an
     "same_file_function_reset": (FNTRACE + "set +x\ntrace_on\n" + RUN_MINT, {}, {}),  # controls: a function defined in the run itself, already wide there;
     "sourced_subshell_function": ("source " + X + "\nset +x\n" + RUN_MINT, {X: "( trace_on() { set -x; }; trace_on )\nset -x\n"}, {}),  # a function a sourced file defines in a subshell is gone when it ends,
     "sourced_errexit_window_restored": (RUN_MINT, {XE: "probe() {\nset +e\nfalse\nset -e\n}\nset +e\n"}, {"head": STRICT + "source " + XE + "\nset -e\n"})})  # and one that restores errexit adds nothing: the caller's reset of the file's own set holds
+SOURCED.update({"sourced_function_" + k + "_return": (RUN_MINT, {XE: "relax() {\nset +e\n" + v + "\nset -e\n}\n", XR: "set -e\n"}, {"head": RELAXED + "source " + XR + "\nrelax\n"}) for k, v in {"if": "if return 0; then :; fi", "elif": "if false; then :; elif return 0; then :; fi", "while": "while return 0; do :; done", "until": "until return 0; do :; done", "bang": "! return 0"}.items()})  # a return in a condition ends the function before its set -e
+SOURCED.update({"sourced_function_reset_then_return": (RUN_MINT, {XE: "relax() {\nset +e\nset -e\nif return 0; then :; fi\n}\n", XR: "set -e\n"}, {"head": RELAXED + "source " + XR + "\nrelax\n"}),  # control: the reset comes first
+                "sourced_builtin_return_trace": ("source " + X + "\n" + RUN_MINT, {X: "set -x\nbuiltin return 0\nset +x\n"}, {})})  # builtin return ends the sourced file with tracing on
 TRACE = {  # (shell, run[, job]): xtrace on at a fail-closed registration; run-text tracing in a job the guard leaves open
     "trace_shell": ("bash -x {0}", "source " + MINT_SH), "trace_env": ("", "SHELLOPTS=xtrace " + RUN_MINT),
     "trace_bash_x": ("", "bash -x " + MINT_SH, *LINK), "trace_set_x": ("", "set -x\nsource " + MINT_SH, *LINK),
@@ -346,6 +352,9 @@ sourced_errexit_reset sourced_trace_reset sourced_return_elsewhere sourced_neste
 sourced_function_inline_reset sourced_function_trace_reset sourced_nested_function_reset sourced_unparsable_reset same_file_function_reset e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 sourced_function_errexit_reset sourced_function_called_in_reset sourced_nested_function_errexit e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 sourced_subshell_function sourced_errexit_window_restored clean
+sourced_function_if_return sourced_function_elif_return sourced_function_while_return sourced_function_until_return sourced_function_bang_return return_condition e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
+mint_builtin_xtrace mint_command_xtrace mint_condition_xtrace sourced_builtin_return_trace e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
+mint_condition_reset sourced_function_reset_then_return clean
 gen_openssl gen_uuidgen gen_urandom gen_random gen_date gen_python gen_quoted_paren errexit_substitution mask_captured mask_env_captured e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_gen.sh
 gen_nested mask_fd_captured clean
 nonce_bypass_removed edge-fake-hook-e2e.yml:edge-fake-hook-e2e:CREDENTIAL_UNREGISTERED@tools/scripts/edge_fake_hook_e2e.sh
