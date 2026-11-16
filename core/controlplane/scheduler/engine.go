@@ -1667,7 +1667,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 		e.emitDelegationLineageAudit(lockCtx, req, lineage)
 	}
 
-	record, err := e.checkSafetyDecisionTraced(lockCtx, req)
+	record, err := e.checkSafetyDecisionTraced(lockCtx, req, delegationIssuerChain(lineage)...)
 	if err != nil {
 		if errors.Is(err, errApprovalHashFenceRead) {
 			slog.Error("approval hash fence read failed, retrying without fail-open",
@@ -2263,7 +2263,7 @@ func (e *Engine) failSchemaValidation(ctx context.Context, req *pb.JobRequest, t
 	return true, nil
 }
 
-func (e *Engine) checkSafetyDecisionTraced(ctx context.Context, req *pb.JobRequest) (SafetyDecisionRecord, error) {
+func (e *Engine) checkSafetyDecisionTraced(ctx context.Context, req *pb.JobRequest, issuerChain ...string) (SafetyDecisionRecord, error) {
 	tracer := cordumotel.Tracer("cordum-scheduler")
 	_, safetySpan := tracer.Start(ctx, "scheduler.safety_check",
 		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
@@ -2274,7 +2274,7 @@ func (e *Engine) checkSafetyDecisionTraced(ctx context.Context, req *pb.JobReque
 		safetySpan.SetAttributes(attribute.String("cordum.job_id", strings.TrimSpace(req.JobId)))
 	}
 
-	record, err := e.checkSafetyDecision(ctx, req)
+	record, err := e.checkSafetyDecision(ctx, req, issuerChain...)
 	if err != nil {
 		safetySpan.SetStatus(otelcodes.Error, err.Error())
 		safetySpan.RecordError(err)
@@ -2349,7 +2349,9 @@ func loadApproval(ctx context.Context, store JobStore, jobID string) (SafetyDeci
 // lock-fenced context from withJobLock — any state mutations derived from this
 // call (notably the approval fast-path SetSafetyDecision) must be cancelled
 // when the lock is lost to prevent stale-lock writes racing a takeover handler.
-func (e *Engine) checkSafetyDecision(ctx context.Context, req *pb.JobRequest) (SafetyDecisionRecord, error) {
+// issuerChain names the job's dispatch-time delegation issuers, root first; both
+// persisted records carry it.
+func (e *Engine) checkSafetyDecision(ctx context.Context, req *pb.JobRequest, issuerChain ...string) (SafetyDecisionRecord, error) {
 	if ctx == nil {
 		ctx = e.ctx
 	}
@@ -2379,6 +2381,8 @@ func (e *Engine) checkSafetyDecision(ctx context.Context, req *pb.JobRequest) (S
 				PolicySnapshot: prev.PolicySnapshot,
 				RuleID:         prev.RuleID,
 				JobHash:        prev.JobHash,
+
+				DelegationIssuerChain: issuerChain,
 			}
 			// Derive the store-op timeout from the caller's lock-fenced ctx,
 			// NOT e.ctx. If the lock is lost mid-evaluation the fenced ctx is
@@ -2461,6 +2465,7 @@ func (e *Engine) checkSafetyDecision(ctx context.Context, req *pb.JobRequest) (S
 			slog.Error("job hash failed", "job_id", jobID, "error", err)
 		}
 	}
+	record.DelegationIssuerChain = issuerChain
 	if e.jobStore != nil {
 		storeCtx, cancel := context.WithTimeout(ctx, storeOpTimeout)
 		defer cancel()
