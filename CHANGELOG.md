@@ -292,6 +292,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- MCP gateway: the Edge session that `POST /api/v1/mcp/gateway/clients/connect`
+  creates, and its events, record only the principal a credential vouches
+  for. A principal named only by the `X-Principal-Id` header is no longer
+  recorded as their `principal_id` (task-a4604f76).
 - `cordumctl policy resign` skips bundle IDs the API cannot address without changing their identity, continues past them under `--all`, and reports the ID returned by the gateway (task-64199d9b).
 - Policy: toggling an output rule (`PUT /api/v1/policy/output/rules/{id}`)
   re-signs the bundle that holds the rule only when its stored content

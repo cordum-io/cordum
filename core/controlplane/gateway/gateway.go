@@ -1812,7 +1812,9 @@ func mcpGatewayHandlers(s *server) (health, config, upstream, connect http.Handl
 			if authCtx == nil {
 				return "", "", errors.New("auth context missing")
 			}
-			return tenant, authCtx.PrincipalID, nil
+			// Only a principal a credential vouches for owns the evidence; one
+			// asserted with X-Principal-Id is not recorded (task-a4604f76).
+			return tenant, authCtx.AuthenticatedPrincipal(), nil
 		},
 	})
 	if err != nil {
