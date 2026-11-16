@@ -14,12 +14,38 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"testing"
 
 	"github.com/cordum/cordum/tests/contract"
 )
 
 type storeKeyEntry struct{ Pattern, Package, Binding, Coverage string }
 type notTenantKey struct{ Pattern, Package, Reason string }
+
+func TestTenantIsolationManifestGuard(t *testing.T) {
+	root := filepath.Join("..", "..")
+	if info, err := os.Stat(filepath.Join(root, "go.mod")); err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("module go.mod required at %s: %v", root, err)
+	}
+	inventory, err := contract.LoadDataInventory(filepath.Join(root, "docs", "contract", "data-inventory.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(storeKeyManifest) == 0 {
+		t.Fatal("manifest must not be empty")
+	}
+	tests, err := testFuncDirs(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	literals, err := packageLiterals(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range checkManifest(inventoryKeys(inventory), storeKeyManifest, notTenantKeys, tests, literals) {
+		t.Error(message)
+	}
+}
 
 func inventoryKeys(inventory *contract.DataInventory) []contract.DataKeyRef {
 	var keys []contract.DataKeyRef
@@ -48,7 +74,7 @@ func checkManifest(keys []contract.DataKeyRef, manifest []storeKeyEntry, exclusi
 	for _, entry := range manifest {
 		label := entry.Package + " " + entry.Pattern
 		prefix, _, _ := strings.Cut(entry.Pattern, "{")
-		if !mark(entry.Pattern, entry.Package) && !hasPrefixLiteral(literals[entry.Package], prefix) {
+		if !mark(entry.Pattern, entry.Package) && !hasPrefixLiteral(literals[entry.Package], prefix) && !hasComposedPrefix(literals[entry.Package], prefix) {
 			messages = append(messages, "stale manifest "+label)
 		}
 		messages = append(messages, entryMessages(entry, tests)...)
@@ -111,6 +137,29 @@ func hasPrefixLiteral(literals []string, prefix string) bool {
 	return prefix != "" && slices.ContainsFunc(literals, func(literal string) bool {
 		return strings.HasPrefix(literal, prefix)
 	})
+}
+
+func hasComposedPrefix(literals []string, prefix string) bool {
+	segments := strings.Split(strings.TrimSuffix(prefix, ":"), ":")
+	if slices.Contains(segments, "") {
+		return false
+	}
+	reachable := make([]bool, len(segments)+1)
+	reachable[0] = true
+	for start := range segments {
+		if !reachable[start] {
+			continue
+		}
+		for end := start + 1; end <= len(segments); end++ {
+			run := strings.Join(segments[start:end], ":")
+			if slices.ContainsFunc(literals, func(literal string) bool {
+				return literal == run || strings.HasPrefix(literal, run+":")
+			}) {
+				reachable[end] = true
+			}
+		}
+	}
+	return reachable[len(segments)]
 }
 
 func walkModule(root string, visit func(rel string) error) error {

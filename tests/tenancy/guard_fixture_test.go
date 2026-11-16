@@ -50,6 +50,12 @@ var manifestFixtureCases = []struct {
 	{"collection literal", func(m []storeKeyEntry) ([]storeKeyEntry, []notTenantKey) {
 		return append(m, storeKeyEntry{"collection:{tenant}", "core/collection", "tenant-in-key", "pending:PR1-03H"}), nil
 	}, nil},
+	{"composed literals", func(m []storeKeyEntry) ([]storeKeyEntry, []notTenantKey) {
+		return append(m, storeKeyEntry{"namespace:keys:tenant:{id}", "core/composed", "tenant-in-key", "pending:PR1-03H"}), nil
+	}, nil},
+	{"stale composed literal", func(m []storeKeyEntry) ([]storeKeyEntry, []notTenantKey) {
+		return append(m, storeKeyEntry{"namespace:keys:ten:{id}", "core/composed", "tenant-in-key", "pending:PR1-03H"}), nil
+	}, []string{"stale manifest core/composed namespace:keys:ten:{id}"}},
 	{"accepted annotations", func(m []storeKeyEntry) ([]storeKeyEntry, []notTenantKey) {
 		m[0].Binding = "tenant-in-value, enforced at Store.Get"
 		m[0].Coverage = "open-finding:PR1-03-FIX"
@@ -72,7 +78,7 @@ func TestTenantIsolationManifestGuardFixture(t *testing.T) {
 			manifest, exclusions := tc.change(slices.Clone(base))
 			got := checkManifest(inventoryKeys(inventory), manifest, exclusions,
 				map[string][]string{"TestExisting": {"core/store"}, "TestDup": {"a", "b"}},
-				map[string][]string{"core/collection": {"collection:%s"}})
+				map[string][]string{"core/collection": {"collection:%s"}, "core/composed": {"namespace:keys:", "tenant"}})
 			if !slices.Equal(got, tc.want) {
 				t.Fatalf("messages = %q, want %q", got, tc.want)
 			}
