@@ -535,7 +535,7 @@ claims:
     evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 llmIngestParentValidator.validate rejects an execution owned by another proxy and validateRuntimeIngestSourceID rejects a missing or mismatched source id, and both tests cover them."
     public_sources: ["cordum:docs/edge/llm-proxy-governance.md:218","cordum:docs/edge/runtime-ingestion.md:181"]
   - id: CLM-074
-    statement: "cordumctl edge managed-settings verify reports drift of a managed-settings.json from the template's seventeen production invariants."
+    statement: "cordumctl edge managed-settings verify reports drift of a managed-settings.json from the template's eighteen production invariants."
     boundary: "The local managed-settings file checked by cordumctl edge managed-settings verify or cordumctl edge doctor; MDM delivery and Claude Code's enforcement of the settings are not covered."
     status: supported
     invariants: []
