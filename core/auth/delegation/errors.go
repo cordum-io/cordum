@@ -31,6 +31,8 @@ func ErrorCode(err error) string {
 		return "unknown_kid"
 	case errors.Is(err, ErrAudienceMismatch):
 		return "audience_mismatch"
+	case errors.Is(err, ErrTenantMismatch):
+		return "tenant_mismatch"
 	case errors.Is(err, ErrChainTooDeep):
 		return "chain_too_deep"
 	case errors.Is(err, ErrScopeExceeded):
