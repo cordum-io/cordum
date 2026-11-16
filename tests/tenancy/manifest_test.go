@@ -38,10 +38,16 @@ var storeKeyManifest = []storeKeyEntry{
 	{"edge:shadow:exception:tenant:{tenant}", "core/edge/shadow", "tenant-in-key", "pending:PR1-03F"},
 	{"edge:shadow:index:exception:{exception}", "core/edge/shadow", "global-id", "pending:PR1-03F"},
 	{"edge:rt:nonce:{tenant_hash}:{collector_hash}", "core/edge/runtimeingest", "tenant-in-key", "pending:PR1-03D"},
-	{"audit:chain:{tenant}", "core/audit", "tenant-in-key", "pending:PR1-03E"},
-	{"head:{tenant}", "core/audit", "tenant-in-key", "pending:PR1-03E"},
-	{"audit:legal_hold:{hold}", "core/audit", "global-id", "pending:PR1-03E"},
-	{"audit:legal_holds:{tenant}", "core/audit", "tenant-in-key", "pending:PR1-03E"},
+	// Not store keys; install-level outputs classified beside the audit keys:
+	// - SIEM sink: one exporter per install receives every tenant's events, each
+	//   carrying its tenant_id; per-tenant routing is out of scope. The hash
+	//   chains behind it stay per tenant: TestTenantIsolationSIEMConsumerChainsPerTenant.
+	// - Telemetry export (GET /api/v1/telemetry/export): aggregate counts only,
+	//   no tenant ids or record data: TestTenantIsolationTelemetryExport.
+	{"audit:chain:{tenant}", "core/audit", "tenant-in-key", "TestTenantIsolationComplianceExportChain"},
+	{"head:{tenant}", "core/audit", "tenant-in-key", "TestTenantIsolationComplianceExportChain"},
+	{"audit:legal_hold:{hold}", "core/audit", "global-id", "TestTenantIsolationLegalHoldHandlers"},
+	{"audit:legal_holds:{tenant}", "core/audit", "tenant-in-key", "TestTenantIsolationLegalHoldStore"},
 	{"cfg:org:{tenant}", "core/configsvc", "tenant-in-key", "pending:PR1-03G"},
 	{"cfg:team:{id}", "core/configsvc", "global-id", "pending:PR1-03G"},
 	{"cfg:workflow:{id}", "core/configsvc", "global-id", "pending:PR1-03G"},
@@ -178,7 +184,6 @@ var storeKeyManifest = []storeKeyEntry{
 	{"session:handshake:challenge:{challenge}", "core/controlplane/scheduler", "global-id", "pending:PR1-03D"},
 	{"saga:{workflow}:stack", "core/controlplane/scheduler", "global-id", "pending:PR1-03H"},
 	{"saga:{workflow}:recorded", "core/controlplane/scheduler", "global-id", "pending:PR1-03D"},
-	{"cordum:audit:delegation_lineage:{job}:{jti}", "core/controlplane/scheduler", "global-id", "pending:PR1-03E"},
 	{"cordum:workers:count", "core/controlplane/scheduler", "global-id", "pending:PR1-03C"},
 	{"cordum:safety:snapshots", "core/controlplane/safetykernel", "global-id", "pending:PR1-03H"},
 	{"cordum:velocity:{rule}:{key}", "core/controlplane/safetykernel", "global-id", "pending:PR1-03C"},
@@ -197,4 +202,5 @@ var notTenantKeys = []notTenantKey{
 	{"lock:{resource}", "core/infra/locks", "Resource coordination lock ownership and expiry."},
 	{"tenant:{tenant}:{resource}", "core/controlplane/gateway", "Tenant-qualified resource names for coordination locks."},
 	{"saga:{workflow}:lock", "core/controlplane/scheduler", "Saga coordination lock tokens."},
+	{"cordum:audit:delegation_lineage:{job}:{jti}", "core/controlplane/scheduler", "Delegation-lineage audit emission dedupe markers: constant value, 30-day TTL."},
 }
