@@ -59,3 +59,7 @@ slo:
   error_rate_budget: 0.01
   timeout_seconds: 60
   critical: false
+mcp:
+  enabled: true
+  transport: "http"
+  policy_gate_enabled: true

@@ -707,6 +707,61 @@ func TestMCPAuthStashesCoreCallMetadataForHTTPTransport(t *testing.T) {
 	}
 }
 
+// A session-less POST (VS Code type:"http") gets a fresh one-shot Edge session
+// every time but one Copilot session per caller and agent, unless the client
+// names its own with X-Copilot-Session-Id.
+func TestMCPAuthSessionlessCopilotSessionPerCaller(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.auth = newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"key-alice","tenant":"default","principal_id":"alice","role":"admin"},` +
+			`{"key":"key-alice-2","tenant":"default","principal_id":"alice","role":"admin"},` +
+			`{"key":"key-bob","tenant":"default","principal_id":"bob","role":"admin"}]`,
+	})
+	// The agent comes from alice's binding, never from the header: a header
+	// naming another agent leaves her call with no agent. key-alice-2 is the
+	// same principal and agent under another API key, so only the session
+	// owner key tells the two callers apart.
+	seedMCPBindingAgent(t, s, "default", "agent-a")
+	if err := s.agentIdentityStore.LinkWorker(context.Background(), "agent-a", "alice"); err != nil {
+		t.Fatal(err)
+	}
+	ids := func(key, agent, copilotHeader string) (edgeSession, copilotSession string) {
+		t.Helper()
+		h := s.mcpAuth(func(w http.ResponseWriter, r *http.Request) {
+			meta, _ := mcp.CallMetadataFromContext(r.Context())
+			edgeSession, copilotSession = meta.SessionID, mcp.CopilotSessionIDFromContext(r.Context())
+		})
+		req := httptest.NewRequest(http.MethodPost, "/mcp/message", nil)
+		req.Header.Set("X-API-Key", key)
+		req.Header.Set("X-Tenant-ID", "default")
+		req.Header.Set(mcpAgentIDHeader, agent)
+		if copilotHeader != "" {
+			req.Header.Set(mcpCopilotSessionIDHeader, copilotHeader)
+		}
+		h(httptest.NewRecorder(), req)
+		return edgeSession, copilotSession
+	}
+	edge1, copilot1 := ids("key-alice", "agent-a", "")
+	edge2, copilot2 := ids("key-alice", "agent-a", "")
+	if edge1 == "" || edge1 == edge2 {
+		t.Fatalf("Edge sessions %q, %q: want a distinct one-shot session per POST", edge1, edge2)
+	}
+	if !copilotSessionIDPattern.MatchString(copilot1) || copilot1 != copilot2 || copilot1 == edge1 {
+		t.Fatalf("Copilot sessions %q, %q: want one stable, valid id per caller and agent", copilot1, copilot2)
+	}
+	for _, key := range []string{"key-alice-2", "key-bob"} {
+		if _, other := ids(key, "agent-a", ""); other == copilot1 {
+			t.Fatalf("%s shares Copilot session %q with key-alice", key, other)
+		}
+	}
+	if _, other := ids("key-alice", "agent-b", ""); other == copilot1 {
+		t.Fatalf("two agents of one caller share Copilot session %q", other)
+	}
+	if _, named := ids("key-alice", "agent-a", "workspace-1"); named != "workspace-1" {
+		t.Fatalf("X-Copilot-Session-Id ignored: got %q", named)
+	}
+}
+
 func TestMCPSessionOwnerSeparatesCallers(t *testing.T) {
 	t.Parallel()
 	owner := func(tenant string, ac *auth.AuthContext) string {
