@@ -1,8 +1,7 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 
 from attrs import define as _attrs_define
-from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
@@ -12,8 +11,7 @@ from ..models.edge_runtime_event_envelope_outcome_status import (
 )
 from ..types import UNSET, Unset
 from dateutil.parser import isoparse
-from typing import cast
-from typing import cast, List
+from typing import List
 from typing import Dict
 from typing import Union
 import datetime
@@ -69,13 +67,6 @@ class EdgeRuntimeEventEnvelope:
     artifact_ptrs: Union[Unset, List["EdgeArtifactPointer"]] = UNSET
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.edge_runtime_file_summary import EdgeRuntimeFileSummary
-        from ..models.edge_runtime_process_summary import EdgeRuntimeProcessSummary
-        from ..models.edge_runtime_event_envelope_labels import EdgeRuntimeEventEnvelopeLabels
-        from ..models.edge_runtime_dns_summary import EdgeRuntimeDNSSummary
-        from ..models.edge_runtime_network_summary import EdgeRuntimeNetworkSummary
-        from ..models.edge_artifact_pointer import EdgeArtifactPointer
-
         tenant_id = self.tenant_id
 
         session_id = self.session_id

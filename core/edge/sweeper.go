@@ -265,6 +265,9 @@ func (s *SessionSweeper) sweepSessionKeys(ctx context.Context, keys []string, lo
 		// Checked per session, so a hold placed mid-sweep stops deletion.
 		held, err := s.holds.IsUnderHold(ctx, session.TenantID)
 		if err != nil || held {
+			if err != nil {
+				s.store.recorder.RecordFailClosed("", "", retentionHoldFailureReason(err))
+			}
 			warnKeptTenant(logged, session.TenantID, held, err)
 			continue
 		}

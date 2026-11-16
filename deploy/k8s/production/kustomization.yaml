@@ -10,6 +10,7 @@ resources:
   - monitoring.yaml
   - networkpolicy.yaml
   - backup.yaml
+  - redis-backup-scripts.yaml
   - otel-collector-config.yaml
 
 patches:

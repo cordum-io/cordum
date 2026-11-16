@@ -133,8 +133,13 @@ the active policy bundle digest.
 
 ## Blank-linkage fail-closed behaviour
 
-Both `EvaluateToolCall` and `ProcessApprovalClaim` refuse the call
-when ANY of the four identity fields on `CallMetadata` is blank:
+The direct helper `EvaluateToolCall` always refuses the call with
+`errMissingMCPMetadata` when ANY of the four identity fields on `CallMetadata`
+is blank. `ProcessApprovalClaim` runs the same check only on the claim path,
+with a wired `Store` and a non-blank `_approval_ref` string. Without a store,
+arguments, a JSON object or an `_approval_ref` key it returns no outcome and no
+error. A non-string or blank `_approval_ref` returns an `invalid _approval_ref`
+error before the metadata check. The four fields are:
 
 | Field | Source | Used for |
 |-------|--------|----------|
@@ -143,11 +148,18 @@ when ANY of the four identity fields on `CallMetadata` is blank:
 | `ExecutionID` | edge execution middleware | audit join, approval-store key |
 | `AgentID` | edge identity middleware | caller identity, audit attribution |
 
-Each function emits zero events on the fail-closed path and returns
-`errMissingMCPMetadata`. The JSON-RPC layer maps this to `-32097`
-(`gateway misconfigured`) with `error.data="missing_mcp_metadata"`.
-Operators page on the dedicated code instead of chasing a generic
-`-32603 internal error`.
+Each helper emits no events and consumes no approval on its own rejection path.
+`ProcessApprovalClaim` also trims whitespace before this check; `EvaluateToolCall`
+tests for an empty string.
+
+A policy-gated `tools/call` adds an earlier check. When Tenant, SessionID and
+ExecutionID are present and the AgentID is empty or whitespace-only, the server
+answers `-32098` with `error.data.sub_reason="no_identity"` before it touches
+any approval, so a call carrying an `_approval_ref` neither claims nor consumes
+it. See [Agent identity binding](../mcp-server.md#agent-identity-binding-x-agent-id).
+When Tenant, SessionID or ExecutionID is missing, the JSON-RPC layer maps
+`errMissingMCPMetadata` to `-32097` (`approval gate misconfigured`) with
+`error.data="missing_mcp_metadata"`, for plain and ref-bearing calls alike.
 
 ## Identity-keying rule
 
