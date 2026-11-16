@@ -122,7 +122,7 @@ func seedControlResultState(t *testing.T, f *busMatrixFixture, jobID string, sta
 }
 
 func TestProductionControlResultGuards(t *testing.T) {
-	for _, name := range []string{"nil_claims", "raw_authority_mismatch", "other_service"} {
+	for _, name := range []string{"nil_claims", "raw_authority_mismatch", "other_service", "wrong_raw_tenant", "wrong_service_tenant"} {
 		t.Run(name, func(t *testing.T) {
 			engine, jobs, outbound, result, packet, claims := productionResultFixture(t)
 			result.Dispatch, result.Status = nil, pb.JobStatus_JOB_STATUS_CANCELLED
@@ -133,12 +133,17 @@ func TestProductionControlResultGuards(t *testing.T) {
 				claims.Subject = servicetoken.IdentityScheduler
 			}
 			authority := productionEventAuthority(t, packet)
-			authority.TenantID = claims.Tenant
 			if name == "nil_claims" {
 				claims = nil
 			}
 			if name == "raw_authority_mismatch" {
 				authority.SessionSubject = matrixWorkerID
+			}
+			if name == "wrong_raw_tenant" {
+				authority.TenantID = servicetoken.ReservedTenant
+			}
+			if name == "wrong_service_tenant" {
+				claims.Tenant = authority.TenantID
 			}
 			if err := engine.handleProductionJobResult(authority, packet, result, claims); err != nil {
 				t.Fatalf("handle result: %v", err)
@@ -159,7 +164,6 @@ func TestProductionControlResultRedelivery(t *testing.T) {
 	packet.SenderId, result.WorkerId = servicetoken.IdentityGateway, servicetoken.IdentityGateway
 	claims.Subject, claims.Tenant = servicetoken.IdentityGateway, servicetoken.ReservedTenant
 	authority := productionEventAuthority(t, packet)
-	authority.TenantID = claims.Tenant
 	for want := 1; want <= 2; want++ {
 		if err := engine.handleProductionJobResult(authority, packet, result, claims); err != nil {
 			t.Fatalf("delivery %d: %v", want, err)

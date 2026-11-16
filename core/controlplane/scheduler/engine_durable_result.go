@@ -152,8 +152,17 @@ func trustedEventEvidence(
 		len(authority.MessageID) != 16 || len(authority.UnsignedDigest) != 32 {
 		return nil, nil, errors.New("production event missing verified raw authority")
 	}
+	tenant := strings.TrimSpace(claims.Tenant)
+	if result := packet.GetJobResult(); result != nil && result.GetDispatch() == nil &&
+		strings.TrimSpace(claims.Subject) == servicetoken.IdentityGateway {
+		if tenant != servicetoken.ReservedTenant {
+			return nil, nil, ErrProductionSessionIdentity
+		}
+		// Raw admission binds a service packet to its job tenant, not its token tenant.
+		tenant = packet.GetIdentity().GetTenantId()
+	}
 	if authority.SessionSubject != strings.TrimSpace(claims.Subject) ||
-		authority.TenantID != strings.TrimSpace(claims.Tenant) ||
+		authority.TenantID != tenant ||
 		packet.GetSenderId() != authority.SessionSubject ||
 		!sameProductionIdentity(packet.GetIdentity(), authority.Identity) {
 		return nil, nil, ErrProductionSessionIdentity
