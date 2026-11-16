@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
@@ -157,7 +158,13 @@ func writeEdgeClaudeJSON(w io.Writer, result claude.LaunchResult) error {
 func loadEdgeClaudeConfigForRun() (EdgeClaudeConfig, map[string]configSource, error) {
 	cwd, _ := os.Getwd()
 	home, _ := os.UserHomeDir()
-	return LoadEdgeClaudeConfig(os.Environ(), cwd, home)
+	env := os.Environ()
+	if _, ok := os.LookupEnv("CORDUM_API_KEY"); !ok && cwd != "" {
+		if val := readEnvFile(filepath.Join(cwd, ".env"), "CORDUM_API_KEY", "API_KEY"); val != "" {
+			env = append(env, "CORDUM_API_KEY="+val)
+		}
+	}
+	return LoadEdgeClaudeConfig(env, cwd, home)
 }
 
 // edgeClaudeFlagToConfigField maps a CLI flag name to the matching

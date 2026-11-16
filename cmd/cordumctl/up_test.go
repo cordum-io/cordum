@@ -164,3 +164,99 @@ func TestEnsureDevBootstrapEnvRestrictsExistingEnvBeforeWriting(t *testing.T) {
 		t.Fatalf(".env mode = %v, want 0600", info.Mode().Perm())
 	}
 }
+
+func TestEnsureDevCLIContextWritesValidYAMLAndDoesNotOverwrite(t *testing.T) {
+	dir := t.TempDir()
+	caDir := filepath.Join(dir, "certs", "ca")
+	if err := os.MkdirAll(caDir, 0o755); err != nil {
+		t.Fatalf("mkdir certs: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(caDir, "ca.crt"), []byte("dummy-ca"), 0o600); err != nil {
+		t.Fatalf("write ca.crt: %v", err)
+	}
+
+	cfgPath, created, err := ensureDevCLIContext(dir, "tenant-alpha")
+	if err != nil {
+		t.Fatalf("ensureDevCLIContext() error: %v", err)
+	}
+	if !created {
+		t.Fatal("expected created = true")
+	}
+
+	raw, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read cordum.yaml: %v", err)
+	}
+	if !strings.Contains(string(raw), `api_key: "${CORDUM_API_KEY}"`) && !strings.Contains(string(raw), `api_key: ${CORDUM_API_KEY}`) {
+		t.Fatalf("expected ${CORDUM_API_KEY} env reference in cordum.yaml:\n%s", string(raw))
+	}
+
+	cfg, _, err := LoadEdgeClaudeConfig([]string{"CORDUM_API_KEY=secret-from-env"}, dir, t.TempDir())
+	if err != nil {
+		t.Fatalf("LoadEdgeClaudeConfig() failed on generated cordum.yaml: %v", err)
+	}
+	if cfg.Gateway != defaultDevGatewayURL {
+		t.Fatalf("Gateway = %q, want %q", cfg.Gateway, defaultDevGatewayURL)
+	}
+	if cfg.Tenant != "tenant-alpha" {
+		t.Fatalf("Tenant = %q, want tenant-alpha", cfg.Tenant)
+	}
+	if cfg.APIKey != "secret-from-env" {
+		t.Fatalf("APIKey = %q, want secret-from-env", cfg.APIKey)
+	}
+	if cfg.CACert != "./certs/ca/ca.crt" {
+		t.Fatalf("CACert = %q, want ./certs/ca/ca.crt", cfg.CACert)
+	}
+
+	custom := []byte("gateway: https://custom.example.com\n")
+	if err := os.WriteFile(cfgPath, custom, 0o600); err != nil {
+		t.Fatalf("overwrite cordum.yaml: %v", err)
+	}
+	_, created2, err := ensureDevCLIContext(dir, "tenant-alpha")
+	if err != nil {
+		t.Fatalf("second ensureDevCLIContext() error: %v", err)
+	}
+	if created2 {
+		t.Fatal("expected created = false when cordum.yaml already exists")
+	}
+	after, _ := os.ReadFile(cfgPath)
+	if string(after) != string(custom) {
+		t.Fatalf("cordum.yaml was modified unexpectedly: %q", string(after))
+	}
+}
+
+// TestAPIKeyDefaultsReadDotEnvOnlyWhenEnvUnset pins #591's .env readers: the
+// --api-key default and loadEdgeClaudeConfigForRun take CORDUM_API_KEY from
+// ./.env only when the environment does not set it.
+func TestAPIKeyDefaultsReadDotEnvOnlyWhenEnvUnset(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("CORDUM_API_KEY=from-dotenv"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("CORDUM_API_KEY", "")
+	if err := os.Unsetenv("CORDUM_API_KEY"); err != nil {
+		t.Fatal(err)
+	}
+	checkAPIKeyDefaults(t, "unset", "from-dotenv")
+
+	t.Setenv("CORDUM_API_KEY", "from-env")
+	checkAPIKeyDefaults(t, "set", "from-env")
+}
+
+func checkAPIKeyDefaults(t *testing.T, env, want string) {
+	t.Helper()
+	if got := *newFlagSet("test").apiKey; got != want {
+		t.Errorf("CORDUM_API_KEY %s: --api-key default = %q, want %q", env, got, want)
+	}
+	cfg, _, err := loadEdgeClaudeConfigForRun()
+	if err != nil {
+		t.Fatalf("CORDUM_API_KEY %s: loadEdgeClaudeConfigForRun: %v", env, err)
+	}
+	if cfg.APIKey != want {
+		t.Errorf("CORDUM_API_KEY %s: loadEdgeClaudeConfigForRun APIKey = %q, want %q", env, cfg.APIKey, want)
+	}
+}

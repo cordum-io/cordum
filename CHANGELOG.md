@@ -196,6 +196,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `CORDUM_MCP_*` flags set to `true`. Values already set are kept, an empty definition
   such as `.env.example`'s `CORDUM_API_KEY=` is filled in place, and `.env` is
   restricted to `0600` before any credential is written (task-d4334a04).
+- cordumctl: `cordumctl up --dev` also writes a CLI context: `cordum.yaml` next to the
+  compose file, with the `https://localhost:8081` gateway, the detected dev CA and
+  `enforce` policy mode. It keeps an existing `cordum.yaml` and prints the next steps.
+  When the environment does not set `CORDUM_API_KEY`, the `--api-key` default and
+  `cordumctl edge claude` read it from `./.env`, and `cordumctl edge doctor` takes its
+  flag defaults from the edge config (task-4d382942).
 - cordumctl: `generate-certs --san` adds names such as the Helm gateway FQDN
   (#492, task-fb3f0bbb).
 
