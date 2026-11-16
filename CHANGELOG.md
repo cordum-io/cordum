@@ -875,6 +875,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- The Python SDK's mypy target is now 3.10, the SDK's supported minimum. mypy
+  no longer prints its "Python 3.9 is not supported" configuration warning
+  (task-ec93b7c3).
+
 - Policy output-rule toggles with no usable policy signing key (warn or off
   mode) now drop the bundle's previous signature instead of retaining one
   that no longer matches the changed content. The audit entry records that
