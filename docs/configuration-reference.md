@@ -869,7 +869,7 @@ Read by the gateway's built-in MCP server (`/mcp/*`). The standalone
 |----------|---------|-------------|
 | `CORDUM_API_KEY` | — | Single API key |
 | `API_KEY` | — | Fallback if `CORDUM_API_KEY` not set |
-| `CORDUM_API_KEYS` | — | Multiple keys: comma-separated or JSON array |
+| `CORDUM_API_KEYS` | — | Multiple keys: comma-separated or JSON array. An entry's role `admin`, `operator` or `viewer` is kept as written, and `secops` is an admin alias. Upgrading: an `operator` entry no longer gets admin, so set `role: admin` on any key that needs it |
 | `CORDUM_API_KEYS_PATH` | — | Path to keys file (reloads on change) |
 | `CORDUM_ALLOW_INSECURE_NO_AUTH` | — | Set to `1` for no-auth mode (dev only). In production the gateway refuses to start with it set. |
 | `CORDUM_ALLOW_HEADER_PRINCIPAL` | — | Set to `true` to honour `X-Principal-Id` in production, for static keys without `principal_id` and for managed keys (always honoured outside production). A header principal is recorded for attribution only and never binds identity |

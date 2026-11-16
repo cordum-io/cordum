@@ -56,7 +56,7 @@ jobs:
           chmod -R a+rX ./certs
       - name: Build and start the demo stack
         env:
-          CORDUM_API_KEYS: ${{ format('[{{"key":"{0}","role":"admin","tenant":"default","principal_id":"cap-mcp-governed"}},{{"key":"{1}","role":"admin","tenant":"default","principal_id":"cap-mcp-governed-operator"}}]', env.CAP_MCP_WORKER_API_KEY, env.CAP_MCP_OPERATOR_API_KEY) }}
+          CORDUM_API_KEYS: ${{ format('[{{"key":"{0}","role":"operator","tenant":"default","principal_id":"cap-mcp-governed"}},{{"key":"{1}","role":"admin","tenant":"default","principal_id":"cap-mcp-governed-operator"}}]', env.CAP_MCP_WORKER_API_KEY, env.CAP_MCP_OPERATOR_API_KEY) }}
         run: |
           docker compose -f docker-compose.yml -f docker-compose.ci.yml --profile demo up -d --build
           docker compose -f docker-compose.yml -f docker-compose.ci.yml --profile demo ps

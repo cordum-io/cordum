@@ -7,6 +7,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Auth: a static API key entry (`CORDUM_API_KEYS`, `CORDUM_API_KEYS_PATH`)
+  whose role is `operator` now authenticates as `operator` instead of
+  `admin`. `admin` and `viewer` are also kept as written, and `secops` is
+  still an admin alias. Under the RBAC entitlement such a key gets the
+  operator role's permissions instead of `admin.*`, so it is refused, for
+  example, `agents.write`, `config.write`, `apiKeys.write` and
+  `users.write`. Without the entitlement it still passes the routes' role
+  checks, except where a handler needs the `admin` role itself: it can
+  issue a delegation only for its own linked agent, a high-risk shadow
+  exception asks it for step-up, and chat it posts as `agent` or `system`
+  is recorded as `user`. Set `role: admin` on any static key that needs
+  admin (task-18bdea37).
+
 - Edge managed settings: managed-settings verification fails closed on
   unsupported conditional or background hook modifiers, and command hooks
   must have the correct type and tool-event coverage (#492, task-99f50a3d).

@@ -248,12 +248,16 @@ the prebuilt worker on the host, over TLS to NATS, Redis and the gateway.
 | Key | Role | Principal | Used for |
 |-----|------|-----------|----------|
 | `CORDUM_API_KEY` | admin | none | Setup, job submits and counts |
-| `CAP_MCP_WORKER_API_KEY` | admin | `cap-mcp-governed` | The worker, and the refused self-approval |
+| `CAP_MCP_WORKER_API_KEY` | operator | `cap-mcp-governed` | The worker, and the refused self-approval and admin calls |
 | `CAP_MCP_OPERATOR_API_KEY` | admin | `cap-mcp-governed-operator` | The approval |
 
-The worker key is admin because a static key's `operator` role normalizes to
-admin and a viewer key lacks `workflows.write`. The self-approval refusal
-therefore comes from the identity check, not from RBAC.
+The worker key has the `operator` role, which a static key keeps as written.
+Under the CI license's RBAC entitlement it holds `workflows.write`, `jobs.read`
+and `jobs.approve` but not `agents.write` or `config.write`. Before the
+governed flow, the script checks that the worker key can neither set its own
+identity's `preapproved_mutating_tools` nor change the config: each `PUT`
+answers 403 and nothing changes. The self-approval refusal comes from the
+identity check, because an operator holds `jobs.approve`.
 
 The script creates the agent identity with `agent_id` `cap-mcp-governed`,
 `risk_tier` `high`, `allowed_tools` `cordum_status` and
@@ -285,7 +289,7 @@ while IFS='=' read -r name value; do
   case "$name" in CORDUM_LICENSE_TOKEN|CORDUM_LICENSE_PUBLIC_KEY) export "$name=$value" ;; esac
 done < <(go run ./tools/cilicense)
 export CORDUM_API_KEYS="$(jq -nc '[
-  {key: env.CAP_MCP_WORKER_API_KEY, role: "admin", tenant: "default", principal_id: "cap-mcp-governed"},
+  {key: env.CAP_MCP_WORKER_API_KEY, role: "operator", tenant: "default", principal_id: "cap-mcp-governed"},
   {key: env.CAP_MCP_OPERATOR_API_KEY, role: "admin", tenant: "default", principal_id: "cap-mcp-governed-operator"}]')"
 docker compose -f docker-compose.yml -f docker-compose.ci.yml --profile demo up -d --build
 CORDUM_INTEGRATION=1 CORDUM_TLS_CA="$PWD/certs/ca/ca.crt" \
