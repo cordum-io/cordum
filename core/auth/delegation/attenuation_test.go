@@ -141,7 +141,7 @@ func TestDelegationAttenuationDimensionsComplete(t *testing.T) {
 				t.Errorf("dimension added without a case: %s", key)
 			}
 			kind, value, found := strings.Cut(classification, ":")
-			valid := (kind == "case" && rows[value]) || kind == "structural" || (kind == "open-finding" && value == "PR1-25")
+			valid := (kind == "case" && rows[value]) || kind == "structural"
 			if !found || value == "" || !valid {
 				t.Errorf("invalid classification: %s = %q", key, classification)
 			}
